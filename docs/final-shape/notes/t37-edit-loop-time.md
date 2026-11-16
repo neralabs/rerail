@@ -265,6 +265,13 @@ Before the fix the same turns took 115–183 s wall, 242–270 s CPU, with about
 each turn still redoes is the engine's own crate (its build ID, and `RERAIL_FIXTURES_DIR`, an
 absolute checkout path the build script sets) and the native cargo step.
 
+Two runs at once (2026-11-15), A and C as above, both from the installed Relax under
+`RELAX_SHARE=rerail`, at a load of 55–75. Both cold: 152 s and 156 s wall (376 s and 241 s CPU);
+the second waited on the first's build-script claims (`waits for its claim`) and took their
+outputs. Both again: 28 s and 70 s wall. The first try found that two native builds at once list a
+package's host and target runs (libc) in either order, which gave the same outputs two identities;
+the identity takes every list as a set now.
+
 Hub code under Relax (2026-11-15). Relax rejected `ColMap::of_rel` (plan/table.rs) with E0310, which
 rustc accepts. The reduction: an edition 2024 `impl Iterator` returned from `fn f(&self, _r: &str)`
 (so it captures both lifetimes) that holds a closure built inside another closure, which captures

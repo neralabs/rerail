@@ -15,10 +15,10 @@ index a83c0c4f..f44a8d24 100644
      }
      home().ok().map(|dir| SharedCode { dir, stale: Vec::new() })
 diff --git a/libs/relax/front/src/native.rs b/libs/relax/front/src/native.rs
-index 20d9fcc4..b107a41b 100644
+index 20d9fcc4..2b518851 100644
 --- a/libs/relax/front/src/native.rs
 +++ b/libs/relax/front/src/native.rs
-@@ -572,6 +572,39 @@ pub fn write_receipt(g: &Graph, seeds: &[usize], scripts: &[ScriptOut], lib: Opt
+@@ -572,6 +572,80 @@ pub fn write_receipt(g: &Graph, seeds: &[usize], scripts: &[ScriptOut], lib: Opt
      Ok(path)
  }
  
@@ -32,8 +32,16 @@ index 20d9fcc4..b107a41b 100644
 +/// new OUT_DIR, after any edit of such a package, and every crate whose closure reads an OUT_DIR
 +/// lost its stores.
 +pub fn receipt_identity(g: &Graph, reached: &[usize], scripts: &[ScriptOut], lib: Option<&NativeLib>) -> String {
++    let pkgs: Vec<(&(String, String, String), bool)> = reached.iter().map(|&k| (&g.pkg[k], g.crates[k].registry)).collect();
++    let runs: Vec<(&str, &str, &ScriptOut)> = scripts.iter().map(|o| (g.pkg[o.krate].1.as_str(), g.pkg[o.krate].2.as_str(), o)).collect();
++    identity_of(pkgs, &runs, lib)
++}
++
++/// receipt_identity over the reached packages ((dir, name, version), from a registry) and the
++/// script runs by their package's name and version. Every list is taken as a set: a package's
++/// host and target runs, and the link's archives and packages, come in no fixed order.
++fn identity_of(mut pkgs: Vec<(&(String, String, String), bool)>, scripts: &[(&str, &str, &ScriptOut)], lib: Option<&NativeLib>) -> String {
 +    let mut h = fnv(b"receipt-identity-v1", 0xcbf29ce484222325);
-+    let mut pkgs: Vec<(&(String, String, String), bool)> = reached.iter().map(|&k| (&g.pkg[k], g.crates[k].registry)).collect();
 +    pkgs.sort();
 +    pkgs.dedup();
 +    for ((dir, name, version), registry) in pkgs {
@@ -41,11 +49,13 @@ index 20d9fcc4..b107a41b 100644
 +        if !registry {
 +            hash_package_dir(dir, &mut h);
 +        }
-+        for o in scripts.iter().filter(|o| g.pkg[o.krate].1 == *name && g.pkg[o.krate].2 == *version) {
-+            h = fnv(format!("{}\0{}\0{:?}\0{:?}\0{:?}\0", o.host, o.out_dir, o.cfgs, o.env, o.system).as_bytes(), h);
++        let mut runs: Vec<String> = scripts.iter().filter(|(n, v, _)| n == name && v == version)
++            .map(|(_, _, o)| format!("{}\0{}\0{:?}\0{:?}\0{:?}\0", o.host, o.out_dir, o.cfgs, o.env, o.system)).collect();
++        runs.sort();
++        for r in runs {
++            h = fnv(r.as_bytes(), h);
 +        }
 +    }
-+    // (as sets: the link lists them in no fixed order)
 +    if let Some(lib) = lib {
 +        let (mut statics, mut crates) = (lib.statics.clone(), lib.crates.clone());
 +        statics.sort();
@@ -55,10 +65,41 @@ index 20d9fcc4..b107a41b 100644
 +    format!("{h:016x}")
 +}
 +
++#[cfg(test)]
++mod receipt_identity_tests {
++    use super::*;
++
++    fn run(krate: usize, host: bool, out: &str, env: &[(&str, &str)]) -> ScriptOut {
++        ScriptOut { krate, host, cfgs: vec!["x".into()], env: env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), out_dir: out.into(), system: Vec::new() }
++    }
++
++    /// The identity a script's key holds: the runs and the library's lists in any order are one
++    /// identity; a package the script does not reach changes nothing; one it reaches does.
++    #[test]
++    fn a_receipt_identity_is_of_the_reached_packages_as_sets() {
++        let libc = ("/r/libc".to_string(), "libc".to_string(), "0.2".to_string());
++        let (h, t) = (run(0, true, "/o/libc-h", &[]), run(0, false, "/o/libc-t", &[]));
++        let e1 = run(1, false, "/o/engine", &[("BUILD_ID", "1")]);
++        let e2 = run(1, false, "/o/engine", &[("BUILD_ID", "2")]);
++        let lib = |statics: &[&str]| NativeLib { path: String::new(), statics: statics.iter().map(|s| s.to_string()).collect(), crates: vec!["libc 0.2".into(), "engine 0.1".into()], partial: false };
++        let id = |runs: &[(&str, &str, &ScriptOut)], path: &str, statics: &[&str]| {
++            let mut l = lib(statics);
++            l.path = path.into();
++            identity_of(vec![(&libc, true)], runs, Some(&l))
++        };
++        let base = id(&[("libc", "0.2", &h), ("libc", "0.2", &t), ("engine", "0.1", &e1)], "/n/1/lib.dylib", &["z", "c"]);
++        assert_eq!(base, id(&[("libc", "0.2", &t), ("libc", "0.2", &h), ("engine", "0.1", &e1)], "/n/1/lib.dylib", &["z", "c"]), "the runs' order");
++        assert_eq!(base, id(&[("libc", "0.2", &h), ("libc", "0.2", &t), ("engine", "0.1", &e1)], "/n/1/lib.dylib", &["c", "z"]), "the archives' order");
++        assert_eq!(base, id(&[("libc", "0.2", &h), ("libc", "0.2", &t), ("engine", "0.1", &e2)], "/n/2/lib.dylib", &["z", "c"]), "a package not reached, and the library's folder");
++        let t2 = run(0, false, "/o/libc-t2", &[]);
++        assert_ne!(base, id(&[("libc", "0.2", &h), ("libc", "0.2", &t2), ("engine", "0.1", &e1)], "/n/1/lib.dylib", &["z", "c"]), "a reached package's run");
++    }
++}
++
  /// Writes the file `path` beside it, then renames it over `path`: a reader sees the old file
  /// whole or the new one, and a write that fails leaves the old one.
  fn write_beside(path: &str, data: &[u8]) -> Result<(), String> {
-@@ -1829,9 +1862,24 @@ pub fn wrapper() -> Option<i32> {
+@@ -1829,9 +1903,24 @@ pub fn wrapper() -> Option<i32> {
          if is_bin {
              // the stub script is this executable (wrapper(): a build script stub exits at once)
              let _ = std::fs::remove_file(path);
