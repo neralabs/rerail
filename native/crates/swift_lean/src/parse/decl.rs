@@ -973,6 +973,8 @@ impl<'a> P<'a> {
             loop {
                 match p.peek() {
                     T::RBrace => return Ok(()),
+                    // A `;` in a protocol's body: tree-sitter fails there (seen).
+                    T::Semi if level == Level::Protocol => return p.refuse(),
                     T::Semi => {
                         p.bump()?;
                         continue;
@@ -992,6 +994,9 @@ impl<'a> P<'a> {
                 p.declaration(d, level)?;
                 p.depth -= 1;
                 p.member_comments();
+                if level == Level::Protocol && p.peek() == T::Semi {
+                    return p.refuse();
+                }
                 if !p.semi()? && p.peek() != T::RBrace && !p.directive_next() {
                     return p.refuse();
                 }

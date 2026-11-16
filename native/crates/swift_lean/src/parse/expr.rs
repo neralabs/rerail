@@ -926,10 +926,21 @@ impl<'a> P<'a> {
     /// `\\`: a key path's root; its components are navigation suffixes read after it (a root
     /// type, never seen in the corpus, is refused).
     fn key_path_expression(&mut self) -> R<()> {
-        if self.kind_at(1) != T::Dot || !self.adjacent(0) {
+        if !self.adjacent(0) {
             return self.refuse();
         }
-        self.wrap_tok(K::KeyPathExpression, f::NONE, K::TBackslash)?;
+        let n = self.open(K::KeyPathExpression);
+        self.tk(K::TBackslash)?;
+        if self.peek() == T::Name {
+            // `\Foo.bar`: the root type's name in the key path (generic roots unseen: refused).
+            self.ident_as(K::TypeIdentifier, f::NONE)?;
+            if !matches!(self.peek(), T::Dot) || !self.touching() {
+                return self.refuse();
+            }
+        } else if self.peek() != T::Dot {
+            return self.refuse();
+        }
+        self.close(n);
         Ok(())
     }
 

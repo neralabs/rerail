@@ -2,7 +2,7 @@
 
 Status: decided (user, 2026-11-16: "please create and test Rerail lean parsers for Swift, Kotlin
 and Scala … get to Treesitter-equivalence for direct-to-tape parsers on valid input"). Kotlin
-built; Swift and Scala follow in this record.
+and Swift built; Scala follows in this record.
 
 ## Intro
 
@@ -69,6 +69,55 @@ depends on the GLR versions alive from the text after it. Left open.
 
 About 90 MB/s on one core of an M-series Mac under load (`kotlin_costs`, the corpus 20 times).
 
+## Swift
+
+`rerail-swift-lean` has Kotlin's shape and shares its `block.rs` and `tw.rs` (by path). What is
+Swift's own:
+
+- **No keyword extraction.** tree-sitter-swift's grammar has no `word` rule, so its lexer takes a
+  keyword wherever the state allows one. A modifier's word that starts a statement but no
+  declaration (`indirect(x)`, `open(f)`) is that keyword to tree-sitter, and its parse fails: the
+  parser refuses it. Contextual words (`async`, `each`, `lazy`, …) are `simple_identifier`s holding
+  their token.
+- **Names run through `*` and `#`.** The identifier's pattern continues through `\p{Emoji}`, which
+  holds the keycap bases `*`, `#` and the digits: `i*4` and `width*height` are one name each.
+- **The implicit semicolon** (the external scanner) has no width and sits where the next line's
+  token starts, after any comments: a statement list ends at the `}` or `case` after it, and a
+  comment on the last statement's line is inside the list. The operators that continue a line
+  across a line end (`.`, `=`, `==`, `&&`, `?`, `:`, `{`, `as`, `else`, `catch`, …) are the
+  scanner's. A block comment after a member's line is the scanner's token, not an extra.
+- **Expressions by the parse table's precedences.** A call (`(…)`, `[…]`, a trailing closure) binds
+  looser than every binary operator but assignment: `"a" + f(x)` is a call of `"a" + f`. A binary
+  operator's right operand is `_expr_hack_at_ternary_binary_suffix`, which takes every operator
+  after it (`a == b && c` is `a == (b && c)`) and a call with arguments, not a trailing closure.
+  `try`, `await` and `unsafe` end their operand at a call (their `prec.left(0)` choices win the
+  reduction over `_expression`'s `prec(-1)`), so `try a.f()!.g` is a navigation of `(try a.f())!`.
+- **A property's value splits a trailing closure off a call** with arguments
+  (`let x = f(a) { … }` is `call(call(f, (a)), { … })`), as do `try` and `await` inside it; a
+  statement's call keeps both in one suffix.
+- **GLR choices read from the corpus.** `Name<T>.member` is two comparisons
+  (`Name < T > .member`) unless those cannot parse there (a `>` before `,` or `)`, a `,` outside a
+  list), or an arithmetic operator follows the member, or a call on it is navigated, or it is the
+  right operand of a product whose left one is such a type. `x is A.B` and `x as! A.B` before a `)`
+  are a navigation of the check.
+- **Refused GLR shapes** (both readings seen, or a reading tree-sitter's version pruning picks):
+  an optional chain right after a call in `try`'s operand, `-.x` in a ternary's middle,
+  `.repeat(…)`, `@A (…)` with a space and no `->` after it, a names-only attribute argument (a
+  missing version in tree-sitter's tree), a binary chain over more than six calls (its nesting
+  flips from right to left where tree-sitter prunes versions). Also refused where tree-sitter
+  fails on valid Swift: a directive between switch entries, a `;` in a protocol's body, a
+  condition's `{` after `try`/`await`'s operand.
+
+The writer gained two things for Swift, used by both crates' shape: `field_since` gives a hidden
+rule's field to the tokens held since a mark too (not only the nodes written), and `refield`.
+
+Oracle (`RERAIL_SWIFT_OUT`): 376 files from 25 repositories
+(`~/orca/rerail-shared/lean-corpus/swift`), 335 without errors: **325 the same, 10 refused, none
+differ**; all 41 error texts refused. Golden tests: 15 probe texts (`golden.rs`), the same.
+
+About 140 MB/s on one core under load (`swift_costs`, the corpus 20 times: 53.5 MB in 0.38 s of
+user time, 12 MB resident).
+
 ## Testing loop
 
 The engine writes expected tapes once per corpus (`python_tape_expect`, under Relax, a few
@@ -76,4 +125,4 @@ minutes); the lean crate's oracle compares all files in about a second under Rel
 (`relax test rerail-kotlin-lean --lib -- oracle --ignored`), with the caches shared
 (`RELAX_SHARE=rerail`, `RELAX_SHARED_OPEN=1`). Probing tree-sitter's choice on a short text is
 the same engine run over a list of probe files. Golden unit tests hold tree-sitter's tapes of short
-texts (`parse::tests`).
+texts (`parse::tests` for Kotlin, `golden.rs` for Swift).
