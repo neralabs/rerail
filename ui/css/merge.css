@@ -1,0 +1,138 @@
+/*
+ * Merge Assist (views/merge.js): the heading, then off the consent card (what turning it on does, what Rerail found,
+ * the button), or on the status strip, the Settings fold and the Conflicts section (cards, then the dismissed ones
+ * folded). It reuses the shared heading, list card, badge and empty block (base.css); rows and cards are this page's
+ * own (class names `m…`).
+ */
+
+.mpage{margin-top:16px;max-width:960px;--measure:72ch}
+.mpage > div:empty{display:none}
+
+/* ---- heading ---- */
+.mhead{display:block;margin:0 0 18px}
+.mhead h2{display:flex;align-items:center;gap:10px;font-size:20px;letter-spacing:-.01em;line-height:28px}
+.mhead .mexp{background:var(--info-subtle);color:var(--info-foreground)}
+.mhead p.pitch{margin:6px 0 0;max-width:var(--measure);font-size:13.5px;line-height:20px;color:var(--muted-foreground)}
+.mnote{margin:0 0 16px}
+.mnote > div{min-width:0}
+
+/* ---- off: the consent card ---- */
+.mconsent{padding:20px 24px 22px}
+.mconsent h3{margin:0 0 10px;font-size:14px;font-weight:600;color:var(--foreground)}
+.mconsent h3 + ul{margin-top:0}
+.mconsent ul + h3{margin-top:22px}
+.mbul{margin:0;padding-left:18px;display:grid;gap:8px;font-size:13.5px;line-height:1.5;max-width:var(--measure)}
+.mbul li::marker{color:var(--muted-foreground)}
+.mchecks{list-style:none;margin:0;padding:0;display:grid;gap:8px;font-size:13.5px;line-height:1.5;max-width:var(--measure)}
+.mchecks li{display:flex;align-items:flex-start;gap:10px}
+.mchecks li > .ico{margin-top:3px}
+.mchecks li.mready > .ico{color:var(--success-foreground)}
+.mchecks li.mnotready > .ico{color:var(--warning-foreground)}
+.mon{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin-top:22px;padding-top:18px;border-top:1px solid var(--border)}
+.mon .btn{min-width:196px;justify-content:center}
+.mon p{margin:0;font-size:12.5px;line-height:1.5;color:var(--muted-foreground);flex:1 1 280px}
+
+/* ---- on: the status strip ---- */
+.mstrip{margin-bottom:28px}
+.mcells{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px 24px;padding:14px 16px}
+.mcell{display:flex;flex-direction:column;gap:3px;min-width:0}
+.mcell .k{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
+.mcell .v{font-size:13px;line-height:1.45;color:var(--foreground);overflow-wrap:anywhere}
+.mcell .v .sub{display:block;font-size:12px;color:var(--muted-foreground)}
+.mcell .v .mono{font-size:12px}
+.mcell .marrow{color:var(--muted-foreground)}
+.mon-state{display:inline-flex;align-items:center;gap:6px;color:var(--success-foreground);font-weight:500}
+.mwarn-t{color:var(--warning-foreground)}
+.mstripacts{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:10px 16px;border-top:1px solid var(--border)}
+/* Scan now keeps one width while it reads Scanning…, so nothing beside it moves. */
+.mstripacts .mscan{min-width:104px;justify-content:center}
+.mstripacts .btn.danger.quiet{margin-left:auto}
+.mstrip .mproblems{margin:0;border:0;border-top:1px solid var(--border);border-radius:0}
+.mstrip .mproblems summary{color:var(--warning-foreground);padding:10px 16px}
+.mstrip .mproblems .in{border-top:0;padding:0 16px 14px}
+
+/* ---- on: the Settings fold: the conflict hook command and its timeout ---- */
+.msettings{margin:-16px 0 28px}
+.msettings[hidden]{display:none}
+.msettings > summary{padding:10px 16px}
+.msettings > .in{display:block;padding:14px 16px 16px;border-top:1px solid var(--border)}
+.msetform{display:grid;gap:16px;max-width:var(--measure)}
+.msetform .k{display:block;margin-bottom:6px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
+.mfieldrow{display:grid;gap:4px}
+.mfield{width:100%;padding:6px 10px;font-size:13px;line-height:1.5;color:var(--foreground);background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg)}
+.mfield.mono{font-family:var(--font-mono);font-size:12.5px}
+.mfield.mnum{width:96px}
+.mfield[aria-invalid="true"]{border-color:var(--danger-foreground)}
+.mfield[readonly]{opacity:.7}
+.msetproblem{margin:0;font-size:12.5px;line-height:1.5;color:var(--danger-foreground)}
+.msetproblem[hidden]{display:none}
+
+/* ---- the Conflicts section ---- */
+.msec{margin-bottom:32px}
+.msec[hidden]{display:none}
+.msec > .ghead h2 .n2{vertical-align:1px}
+.msec > div:empty{display:none}
+.mrow{display:grid;gap:8px;padding:14px 16px;border-top:1px solid var(--border)}
+.mlist > .mrow:first-child{border-top:0}
+.mmeta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;font-size:12px;color:var(--muted-foreground)}
+.mmeta .mauthor{font-weight:500;color:var(--foreground)}
+.mlink{color:var(--brand-foreground);text-decoration:underline;text-underline-offset:3px}
+.mlink:hover{text-decoration-thickness:2px}
+.mev{display:grid;gap:10px;padding:10px 12px;background:var(--sheet-inset);border-radius:var(--radius-lg);font-size:12.5px;line-height:1.5}
+.mevb .k,.mside .k{display:block;margin-bottom:3px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
+.macts{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:2px}
+
+/* Both sides of a conflict, side by side. */
+.mvs{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}
+.mside{padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card);min-width:0}
+.mside.theirs{border-color:var(--outside-border)}
+
+/* The dismissed conflicts, folded under the open ones. */
+.mfold{background:var(--card)}
+.msec .mfold > .in{padding:0;border-top:1px solid var(--border)}
+.msec .mfold > .in > .list{border:0;border-radius:0;box-shadow:none}
+
+/* ---- the sidebar's count of open conflicts: a filled pill, unlike the packs' muted on-counts ---- */
+.sn-item .n.due{align-self:center;min-width:20px;padding:0 6px;border-radius:var(--pill);background:var(--brand);color:var(--primary-foreground);font-weight:600;line-height:18px;text-align:center}
+.sn-item[aria-current="page"] .n.due{color:var(--primary-foreground);opacity:1}
+
+/* ---- conflict cards: both sides, the evidence, Dismiss; quiet ones muted ---- */
+.mcards{display:grid;gap:12px}
+.mcards[hidden]{display:none}
+.mcard{display:grid;gap:10px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-xl);box-shadow:var(--card-shadow);min-width:0}
+.mcard.quiet{background:var(--sheet-inset);box-shadow:none}
+.mcard.quiet .mctitle,.mcard.quiet .msum{color:var(--muted-foreground)}
+.mchead{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-width:0}
+.mctitle{margin:0;flex:1 1 220px;min-width:0;font-size:14px;font-weight:600;line-height:1.4;color:var(--foreground);overflow-wrap:anywhere}
+.mcage{font-size:12px;color:var(--muted-foreground)}
+.mshort{font:12px var(--font-mono);color:var(--muted-foreground)}
+.mside.mine{border-color:var(--brand-border)}
+.msum{margin:0;font-size:13px;line-height:1.5;color:var(--foreground);overflow-wrap:anywhere}
+.mhunk{margin:8px 0 0;padding:8px 10px;max-height:24em;overflow:auto;font:12px/1.45 var(--font-mono);background:var(--sheet-inset);border:1px solid var(--border);border-radius:var(--radius-lg);white-space:pre-wrap;overflow-wrap:anywhere}
+.mhunk .add{color:var(--success-foreground)}
+.mhunk .del{color:var(--danger-foreground)}
+.mhunk .meta{color:var(--muted-foreground)}
+.mloc{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:8px;font-size:12px;color:var(--muted-foreground)}
+.mloc code{font-size:11.5px;overflow-wrap:anywhere}
+.mwhy{margin:0;padding-left:18px;display:grid;gap:3px}
+.mwhy li{overflow-wrap:anywhere}
+.mwhy li::marker{color:var(--muted-foreground)}
+.mquiet{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted-foreground)}
+/* The conflict's line (what the other side is doing), a failed conflict hook, and who to talk to. */
+.msummary{margin:0;font-size:13px;line-height:1.5;color:var(--foreground);overflow-wrap:anywhere;max-width:var(--measure)}
+.mhookfail{display:flex;align-items:flex-start;gap:6px;margin:0;font-size:12.5px;line-height:1.5;color:var(--warning-foreground);overflow-wrap:anywhere}
+.mhookfail > .ico{margin-top:2px;flex:none}
+.mtalk{margin:0;font-size:13px;line-height:1.5;color:var(--foreground);overflow-wrap:anywhere;max-width:var(--measure)}
+.mtalk .mauthor{font-weight:600}
+.mtalk .mono{font-size:12px}
+
+.mnote2{margin:0;font-size:12px;line-height:1.5;color:var(--muted-foreground)}
+
+/* Dismissed, folded: who dismissed each and when. */
+.mclosed .mctitle{font-weight:500}
+.mconf .mfold{margin-top:16px}
+
+/* Narrow screens: cards take less padding. */
+@media (max-width:640px){
+  .mcard{padding:12px}
+}

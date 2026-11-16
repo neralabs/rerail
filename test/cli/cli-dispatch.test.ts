@@ -92,6 +92,15 @@ describe("rerail's command dispatch", () => {
   }, 60_000);
 
   // The one case that runs the built `dist/` (the event stream is a child process), so it needs `npm run build`.
+  // Two real runs of the CLI, past argument parsing: allow for a slow Windows runner.
+  it("start asks set-up's sessions question about sessions like the one it is read in only with --relay", { timeout: 60_000 }, () => {
+    const relayed = rerail(["start", "--repo", checkout, "--relay"]);
+    expect(relayed.stdout).toContain("OK for Rerail to read coding agent sessions like this one?");
+    // Piped without --relay, no coding agent need be relaying it.
+    const piped = rerail(["start", "--repo", checkout]);
+    expect(piped.stdout).toContain("OK for Rerail to read your coding agent sessions?");
+  });
+
   it("events answers on the event protocol, whatever its arguments", () => {
     const run = rerail(["events", "--nope"], "nope\n");
     expect(run.stdout).toBe(`${JSON.stringify({ eventId: null, error: { code: "unsupported-version", message: "Expected RERAIL-EVENTS/1" } })}\n`);

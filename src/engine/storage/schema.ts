@@ -156,7 +156,8 @@ export const ruleCatalogIdentities = sqliteTable(
  * `origin` (or sole) remote, else `clone:<clone id>`; `aliases_json` lists other keys that resolve here.
  * `configured_at` null means Not set up, so nothing runs; `started` is the default every checkout follows, and null
  * means nobody started or stopped the repository yet (off). `follow_gitignore` leaves files Git ignores out of every
- * audit of the repository's checkouts; a session reads it when it opens.
+ * audit of the repository's checkouts; a session reads it when it opens. `merge_assist` turns Merge Assist on for the
+ * repository's checkouts; only a person turns it on.
  */
 export const repositories = sqliteTable(
   "repositories",
@@ -167,6 +168,7 @@ export const repositories = sqliteTable(
     configuredAt: integer("configured_at"),
     started: integer("started", { mode: "boolean" }),
     followGitignore: integer("follow_gitignore", { mode: "boolean" }).notNull().default(true),
+    mergeAssist: integer("merge_assist", { mode: "boolean" }).notNull().default(false),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -406,7 +408,10 @@ export const audits = sqliteTable(
      * `audit_rule_provenances` and writes `[]` here; the audit store reads whichever the row has.
      */
     ruleProvenance: text("rule_provenance_json", { mode: "json" }).$type<AuditRuleProvenance[]>().notNull(),
-    /** The run's rule provenance in `audit_rule_provenances`; null when `rule_provenance_json` holds it, or it is empty. */
+    /**
+     * The run's rule provenance in `audit_rule_provenances`, `[]` included; null only in a row a Rerail older than
+     * `audit-rule-provenance-once` wrote, whose `rule_provenance_json` holds the provenance.
+     */
     ruleProvenanceId: integer("rule_provenance_id"),
     paths: text("paths_json", { mode: "json" }).$type<string[]>().notNull(),
     startedAt: integer("started_at").notNull(),
@@ -448,6 +453,16 @@ export const auditRuleProvenances = sqliteTable(
   },
   table => [check("audit_rule_provenances_json", sql`json_type(${table.ruleProvenance}) = 'array'`)],
 );
+
+/**
+ * The last audit a file held when it ran `audit-rule-provenance-once`, which writes the row: the daemon's move of the
+ * provenance older audits hold inline takes the audits up to this one, in the order they were recorded
+ * (`rule-provenance-move.ts`). No row in a new file, in one that held no audit then, or in one that ran the step before
+ * it wrote this table; an older Rerail never reads it.
+ */
+export const auditRuleProvenanceStep = sqliteTable("audit_rule_provenance_step", {
+  lastAuditId: text("last_audit_id").primaryKey(),
+});
 
 /** Workspace-owned ongoing audit defaults; first-repository audits are fixed log-only audits. */
 export const auditResultPages = sqliteTable(
@@ -646,6 +661,13 @@ export const policySessionOwners = sqliteTable("policy_session_owners", {
   processId: integer("process_id").notNull(),
   token: text("token").notNull(),
   updatedAt: integer("updated_at").notNull(),
+});
+
+/** Merge Assist's bookkeeping by key (`runtime/merge-assist/state.ts`): `conflicts:<checkout path>` holds a checkout's conflicts, `scan:<checkout path>` its last scan. */
+export const mergeAssistState = sqliteTable("merge_assist_state", {
+  key: text("key").primaryKey(),
+  valueJson: text("value_json").notNull(),
+  updatedAt: integer("updated_at"),
 });
 
 /** The `migrations.ts` steps a file has run, by id. */
