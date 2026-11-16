@@ -145,17 +145,18 @@ user time, 12 MB resident).
   keeps the parenthesized condition unless a `then` follows; a bound's `<:`/`>:` end it
   (`A >: L <: U`), but not inside brackets; colon arguments (`xs.map: x =>`, `f(a):`) take the
   operand before the `:` as the function; `10 seconds` is a postfix expression.
-- **Refused** where not probed: a postfix operator inside an operation, `'{…}` quotes, given
-  conditionals (`given [T](x) => …`), a type's `a.extension.B`, `macro`, and the rest of the
-  corpus's unread forms (named tuples, `do … while`, `end` markers after some definitions, XML
-  literals).
+- **Refused** where not probed: XML literals, quotes and splices (`'{…}`, `'[T]`, `'*`), type
+  lambdas and polymorphic function types (`[A] => …`), a postfix operator inside an operation,
+  `as` in patterns, given conditionals (`given [T](x) => …`), `a.extension.B` in a type,
+  operators past ASCII where an infix precedence is needed, and a vararg splice after an infix
+  operand (`0 to 9: _*`).
 
 Oracle (`RERAIL_SCALA_OUT`): 440 files from 22 repositories
-(`~/orca/rerail-shared/lean-corpus/scala`), 439 without errors: **382 the same, 56 refused, 1
+(`~/orca/rerail-shared/lean-corpus/scala`), 439 without errors: **422 the same, 16 refused, 1
 differs**; the error text refused. The one that differs: tree-sitter reads
 `new BoxPanel(x) { … }` as a call of an instance with a block argument there, and as an instance
 with a template body when the same text is taken alone: the choice depends on the GLR versions the
-file's later text keeps alive. Left open. Golden tests: 16 probe texts (`golden.rs`), the same.
+file's later text keeps alive. Left open. Golden tests: 19 probe texts (`golden.rs`), the same.
 
 About 58 MB/s on one core while the machine was loaded (`scala_costs`, the corpus 20 times: 71.6 MB
 in 1.24 s of user time, 16 MB resident, `quiet-run --here` with a load average of 78 on 18 cores),
