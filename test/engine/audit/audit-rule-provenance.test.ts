@@ -370,6 +370,38 @@ function move(path: string, options: RuleProvenanceMoveOptions = {}): Promise<nu
   return moveRuleProvenances(path, { pause: () => Promise.resolve(), now: () => 0, ...options });
 }
 
+/** What a later daemon start of the move did (`laterStart`). */
+interface LaterStart {
+  readonly moved: number;
+  readonly waits: readonly number[];
+  readonly logged: string;
+  readonly readMs: number;
+}
+
+/**
+ * A later daemon start of the move on `path`, by the time `clock` gives: what it resolved to, each wait for an older
+ * Rerail it asked its timer for (the first ends the start, as a stop would), what it wrote to stderr, and how long this
+ * thread's reads of audits took.
+ */
+async function laterStart(path: string, clock: () => number): Promise<LaterStart> {
+  const stop = new AbortController();
+  const waits: number[] = [];
+  const timer = (ms: number): Promise<void> => {
+    waits.push(ms);
+    stop.abort();
+    return Promise.reject(new Error("stopped"));
+  };
+  const stderr = spyOnStderr();
+  const timed = timeAuditReads();
+  try {
+    const moved = await moveRuleProvenancesInWorker(path, stop.signal, { clock, timer });
+    return { moved, waits, logged: stderr.logged(), readMs: timed.totalMs() };
+  } finally {
+    timed.restore();
+    stderr.restore();
+  }
+}
+
 /**
  * What `run` resolves to, and the longest time this thread ran no timer meanwhile: the longest gap between two ticks of
  * a 10 ms timer, counting the gap that ends as `run` resolves, which a tick after it would come too late to see.
@@ -1016,15 +1048,17 @@ describe("audit rule provenance", () => {
     expect(moving.totalMs()).toBeLessThan(25);
     expect(inlineAudits(path)).toBe(2_000);
 
-    // A later start finds nothing left to move and starts no thread. On its calling thread, the daemon's, which answers
-    // hooks, reading the start of each of those rows took 18 to 1,134 ms on a real daemon's start.
-    const starting = timeAuditReads();
-    try {
-      expect(await moveRuleProvenancesInWorker(path, undefined, { clock })).toBe(0);
-    } finally {
-      starting.restore();
-    }
-    expect(starting.totalMs()).toBeLessThan(20);
+    // The older Rerail goes on recording: its next audit begins an hour before the clock reads, so a start that found an
+    // audit left to move would wait a week for it. A later start finds nothing left to move: it neither waits nor starts
+    // a thread, and says nothing. A check that read past the last audit the step recorded would find the older Rerail's
+    // audits. On the calling thread, the daemon's, which answers hooks, reading the start of each of those rows took 18
+    // to 1,134 ms on a real daemon's start.
+    recordAsOlder(path, "older-later", provenanceOf("/home/dev/app", 20), clock() - 3_600_000);
+    const later = await laterStart(path, clock);
+    expect(later.moved).toBe(0);
+    expect(later.waits).toEqual([]);
+    expect(later.logged).not.toContain(WAITS_FOR_OLDER);
+    expect(later.readMs).toBeLessThan(20);
   }, 120_000);
 
   it("reads one audit row on its calling thread while it waits for an older Rerail, however many audits this build recorded since", async () => {
@@ -1096,20 +1130,22 @@ describe("audit rule provenance", () => {
     }
     expect(provenanceTexts(readAsOlder(path, ["older-behind"]))).toEqual([JSON.stringify(behind)]);
 
-    // A later start finds nothing left to move and starts no thread.
-    const starting = timeAuditReads();
-    try {
-      expect(await moveRuleProvenancesInWorker(path, undefined, { clock })).toBe(0);
-    } finally {
-      starting.restore();
-    }
-    expect(starting.totalMs()).toBeLessThan(20);
+    // The older Rerail goes on recording: its next audit begins an hour before the clock reads, so a start that found an
+    // audit left to move would wait a week for it. A later start finds nothing left to move: it neither waits nor starts
+    // a thread, and says nothing. A check that read past the last audit the step recorded would find the older Rerail's
+    // audits, the one its clock dated before the step first.
+    recordAsOlder(path, "older-later", behind, clock() - 3_600_000);
+    const later = await laterStart(path, clock);
+    expect(later.moved).toBe(0);
+    expect(later.waits).toEqual([]);
+    expect(later.logged).not.toContain(WAITS_FOR_OLDER);
+    expect(later.readMs).toBeLessThan(20);
   }, 120_000);
 
   it.each([
     ["that ran the step before the step recorded it", "DELETE FROM audit_rule_provenance_step", 30],
     ["whose recorded audit a reset of its repository's history deleted", "DELETE FROM audits WHERE audit_id = 'older-29'", 29],
-  ])("takes the audits up to the first that began after the step, as before, in a file %s", async (_, forget, recorded) => {
+  ])("takes the audits up to the first that began after the step, as before, and a later start finds none left, in a file %s", async (_, forget, recorded) => {
     const path = await fileOfTheBuildBefore();
     const app = provenanceOf("/home/dev/app", 20);
     writeInlineAudits(path, Array.from({ length: 30 }, () => app));
@@ -1122,6 +1158,14 @@ describe("audit rule provenance", () => {
     expect(await move(path, { clock: () => 10 * day })).toBe(recorded);
     expect(auditsNamingNoCopy(path)).toBe(1);
     expect(provenanceTexts(readAsOlder(path, ["older-after"]))).toEqual([JSON.stringify(app)]);
+
+    // The older Rerail records its next audit an hour before the clock reads, so a start that found an audit left to
+    // move would wait a week for it. A later start stops at the first audit that began after the step, and finds none.
+    recordAsOlder(path, "older-later", app, 10 * day - 3_600_000);
+    const later = await laterStart(path, () => 10 * day);
+    expect(later.moved).toBe(0);
+    expect(later.waits).toEqual([]);
+    expect(later.logged).not.toContain(WAITS_FOR_OLDER);
   });
 
   it("ends at once, moving nothing, when a stop comes before it opens its writer while another connection holds the write lock", async () => {
