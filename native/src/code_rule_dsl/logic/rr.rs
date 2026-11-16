@@ -659,7 +659,7 @@ pub(in crate::code_rule_dsl) fn image_store() -> Option<std::sync::Arc<crate::co
 
 /// How long a module's or program's image stays in the store after the last run that read or wrote it
 /// (`keep_image`): collection keeps a source while a pin's lease runs, as it keeps the combined program's entry before
-/// a run names it (`combined::remember`). Naming the images in the run's record is decision 0246 §6's.
+/// a run names it (`combined::record`). Naming the images in the run's record is decision 0246 §6's.
 const IMAGE_LEASE_SECS: i64 = 7 * 24 * 3600;
 
 /// The owner of the images' pins.
@@ -1177,8 +1177,7 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     let program = lower_files_dropping(path, statements, false)?;
     // Kept behind the run (the store's writer), with what it read: the next run's check above.
     if let Some((entry, Some(store), None)) = kept {
-        let (read, program) = (files.clone(), program.clone());
-        store.write_back_syms(crate::content_store::write_back::Syms::None, "a rule file's program", 0, vec![(super::plan::corpus::combined::queued(&entry), None)], Box::new(move |store| super::plan::corpus::combined::remember(store, &entry, &read, &program, &[]).map(drop)));
+        super::plan::corpus::combined::record(&store, "a rule file's program", &entry, &files, &program, &[]);
         super::plan::corpus::combined::read_before_the_run(entry);
     }
     cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
@@ -1205,8 +1204,7 @@ pub fn text_header(src: &str) -> Result<Program, Error> {
     };
     let program = text.header()?;
     if let Some(store) = store {
-        let kept = program.clone();
-        store.write_back_syms(crate::content_store::write_back::Syms::None, "a text's header", 0, vec![(combined::queued(&key), None)], Box::new(move |store| combined::remember(store, &key, &read, &kept, &[]).map(drop)));
+        combined::record(&store, "a text's header", &key, &read, &program, &[]);
         combined::read_before_the_run(key);
     }
     Ok(program)

@@ -163,29 +163,37 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
-/// Keeps `program`, combined from texts `key` after reading library files `read`, in the store. A program that does
-/// not read back as written is not kept.
-pub(in crate::code_rule_dsl) fn remember(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile], program: &Program, images: &[HashKey]) -> StoreResult<bool> {
-    // A program that does not read back the same from its text is not kept: the next run combines it again.
-    let Some((digest, text_source)) = program_text::store(store, program)? else { return Ok(false) };
+/// Keeps `program`, combined from texts `key` after reading library files `read`, in the store: made into facts and
+/// encoded here, written by the store's writer in the run's record as `what` (decisions 0102, 0306). A program that
+/// does not read back as written is not kept: the next run combines it again.
+pub(in crate::code_rule_dsl) fn record(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], program: &Program, images: &[HashKey]) {
+    let Some(encoded) = program_text::encode(program) else { return };
     let mut facts = Facts::new();
-    facts.insert(PROGRAM.to_owned(), vec![[Value::Str(hex(&digest).into())].into()]);
+    facts.insert(PROGRAM.to_owned(), vec![[Value::Str(hex(&encoded.digest).into())].into()]);
     let rows = read.iter().map(|f| [Value::Str(f.path.to_string_lossy().into_owned().into()), Value::Str(f.sha256.map(|d| hex(&d)).unwrap_or_default().into())].into()).collect();
     facts.insert(READ_FILE.to_owned(), rows);
     let images = images.iter().filter_map(|k| k.sha256_bytes()).map(|d| [Value::Str(hex(&d).into())].into()).collect();
     facts.insert(IMAGE.to_owned(), images);
-    let text = source_text(key);
+    let entry = program_facts::encode(&facts);
+    // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`) ships the entry (its program's image ships with
+    // `program_text::encode`).
+    rr::images::export(shipped_key(key), &entry);
+    let (packed, bytes) = program_text::pack(vec![encoded], entry);
+    store.record(what, vec![queued(key)], &(*key, packed), Some(bytes), apply);
+}
+
+fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
+    let (key, packed): ([u8; 32], program_text::Packed) = crate::content_store::record::codec::from_body("the combined program", body)?;
+    let store = cx.store;
+    let (text_source, entry) = program_text::store_packed(store, &packed, cx.bytes)?;
+    let text = source_text(&key);
     let hash = HashKey::sha256(text.as_bytes());
     let source = match store.held_source_by_hash(hash)? {
         Some(id) => id,
         None => store.put_source_hashed(text.as_bytes(), hash, &[])?,
     };
     let set = plan();
-    let entry = program_facts::encode(&facts);
-    // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`) ships the entry (its program's image ships with
-    // `program_text::store`).
-    rr::images::export(shipped_key(key), &entry);
-    store.put_facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry }], &[])?;
+    store.put_facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry: entry.to_vec() }], &[])?;
     // No manifest names the entry until the run that combined it records its own, and the run's hold comes after the
     // combine. Meanwhile a collection (a batch's earlier run's, started once that run's manifest was written) took it:
     // a batch combined its pack again every time. Pinned under the entry's own owner until that run holds it
@@ -193,9 +201,9 @@ pub(in crate::code_rule_dsl) fn remember(store: &ContentStore, key: &[u8; 32], r
     let lease = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64) + LEASE_SECS;
     // The entry, and every source its text was kept as (the text and its image, decision 0173).
     for kept in std::iter::once(source).chain(text_source) {
-        store.pin_source(kept, &owner(key), lease)?;
+        store.pin_source(kept, &owner(&key), lease)?;
     }
-    Ok(true)
+    Ok(())
 }
 
 /// How long an entry stays pinned when no run names it: longer than a run.

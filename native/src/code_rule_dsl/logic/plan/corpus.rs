@@ -772,10 +772,9 @@ fn combine_stored(programs: &[&str], extra: &added::Added, key: &[u8; 32], lists
     let program = program?;
     {
         let _keep = crate::code_rule_dsl::logic::profile::span(|| "keep the combined program in the store, queued".into());
-        // Checked, made into facts and written by the store's writer (decision 0102); one that does not read back as
+        // Made into facts here, written by the store's writer (decisions 0102, 0306); one that does not read back as
         // written is not kept.
-        let (key, files, kept) = (*key, read.clone(), program.clone());
-        store.write_back_syms(crate::content_store::write_back::Syms::None, "the combined program", 0, vec![(combined::queued(&key), None)], Box::new(move |store| combined::remember(store, &key, &files, &kept, &images).map(drop)));
+        combined::record(&store, "the combined program", key, &read, &program, &images);
     }
     crate::code_rule_dsl::logic::profile::decision("combined program (decision 0094 §6)", || format!("combined; kept in the store behind the run, with the {} library files it read", read.len()));
     Ok(program)
@@ -3281,7 +3280,7 @@ fn run_observed(
     let part_keys: std::sync::Mutex<Vec<[u8; 32]>> = Default::default();
     // The combined program's entry (`combined`), when the store keeps it: the manifest names it too.
     // Their sources found (or stored) by the store's writer: the manifest, queued after, reads them.
-    // The pins the combine made (`combined::remember`), released once the run's manifest names the entry.
+    // The pins the combine made (`combined::record`), released once the run's manifest names the entry.
     let _combined_pins = durable.is_some().then(|| combined::Pins::new(store, &texts));
     // And the rule files' entries read before the run (`rr::read_file`, decision 0275), by the outermost run: a nested
     // one (phase 0's) did not read them.
@@ -3306,32 +3305,13 @@ fn run_observed(
         memo::named_source(store, text, true, None, &late_sources);
         program_plans.push(plan);
     }
-    // Keeps `prepared` in the store (decision 0073), queued: made into facts, encoded and written by the store's
-    // writer (decision 0102); its documents' sources reach the manifest, queued after it.
+    // Keeps `prepared` in the store (decision 0073): made into facts and encoded here, written by the store's writer
+    // in the run's record (decisions 0102, 0306), which names its documents' sources. A later run of this process that
+    // holds it in memory asks the store for them once (`documents_in`, below).
     let keep_durably = |prepared: &Arc<Prepared>| {
         let (Some(stored), Some(text)) = (durable, durable_text.clone()) else { return };
         let _keep = crate::code_rule_dsl::logic::profile::span(|| "keep the prepared program in the store (decision 0073), queued".into());
-        let (kept, key) = (Arc::clone(prepared), prepared_key);
-        store.write_back_syms(
-            crate::content_store::write_back::Syms::None, "the prepared program",
-            0,
-            vec![(prepared::queued(&prepared_key), None)],
-            Box::new(move |store| {
-                let source = match stored {
-                    Some(id) => id,
-                    None => {
-                        let id = memo::source(store, &text)?;
-                        store.name_sources([id]);
-                        id
-                    }
-                };
-                if let Some(documents) = prepared::remember(store, source, &key, &kept)? {
-                    kept.keep_documents(store.database_path(), &documents);
-                    store.name_sources(documents);
-                }
-                Ok(())
-            }),
-        );
+        prepared::record(store, stored, text, &prepared_key, prepared);
     };
     let (kept, from) = match (kept, durable) {
         (Some(p), durable) => {

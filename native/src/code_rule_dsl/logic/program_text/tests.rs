@@ -137,7 +137,10 @@ fn a_stored_program_is_read_from_its_image() {
     prog.outputs = vec!["p".into()];
     prog.facts.insert("e".into(), vec![[Value::Int(1)].into()]);
     prog.rules.push(Rule { head: atom("p", vec![v("x")]), body: vec![Literal::Atom(atom("e", vec![v("x")])), Literal::Cmp { l: v("x"), op: "<", r: Term::Int(3) }].into() });
-    let (digest, sources) = super::store(&store, &prog).unwrap().expect("kept");
+    let encoded = super::encode(&prog).expect("kept");
+    assert!(encoded.image, "an image");
+    let digest = encoded.digest;
+    let sources = super::store_encoded(&store, &digest, encoded.image, &encoded.bytes).unwrap();
     assert_eq!(sources.len(), 1, "its image alone");
     assert!(store.source_by_alias(super::image_key(&digest)).unwrap().is_some());
     let found = super::texts(&store, &[digest]).unwrap();

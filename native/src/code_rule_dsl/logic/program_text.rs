@@ -325,57 +325,85 @@ pub fn read_stored_version(stored: &Stored, lists: &crate::code_rule_dsl::logic:
     }
 }
 
-/// Keeps `prog` in `store` as its image (decision 0173), a source by its bytes' sha256 and by `image_key`, held so the
-/// run keeps it (O95): the digest, and the sources written, which the caller names so collection keeps them. With
-/// `RERAIL_PROGRAM_IMAGE=off`, as its text, checked to read back as `prog` (`None` when it does not: nothing is kept),
-/// alone.
-pub fn store(store: &ContentStore, prog: &Program) -> StoreResult<Option<([u8; 32], Vec<SourceId>)>> {
-    // The stored form is the image (decision 0246 §6): encoded once, kept under the digest of its bytes, which is the
-    // source's own hash. Not printed, read back, encoded and decoded again, and digested by `{:?}` to check each.
+/// A program as the store keeps it, made where the program is (the run's thread, decision 0306), kept by the store's
+/// writer (`store_encoded`): its image (decision 0173), or with `RERAIL_PROGRAM_IMAGE=off` its text, checked to read
+/// back as the program. The digest is of its bytes, which is the source's own hash.
+pub struct Encoded {
+    pub digest: [u8; 32],
+    /// Its image's bytes (else its text's).
+    pub image: bool,
+    pub bytes: Vec<u8>,
+}
+
+/// `prog` encoded as the store keeps it (`Encoded`); `None` where its text does not read back as it (nothing is kept).
+pub fn encode(prog: &Program) -> Option<Encoded> {
+    // The stored form is the image (decision 0246 §6): encoded once, kept under the digest of its bytes. Not printed,
+    // read back, encoded and decoded again, and digested by `{:?}` to check each.
     if images() != "off" {
-        let Ok(bytes) = crate::code_rule_dsl::logic::program_image::encode(prog) else { return Ok(None) };
+        let bytes = crate::code_rule_dsl::logic::program_image::encode(prog).ok()?;
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
         let digest: [u8; 32] = Sha256::digest(&bytes).into();
-        let key = image_key(&digest);
         // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`, decision 0264) ships it.
-        crate::code_rule_dsl::logic::rr::images::export(key, &bytes);
-        let id = match store.source_by_alias(key)? {
-            Some(id) => id,
-            None => store.put_source(&bytes, &[key])?,
-        };
-        store.pin_held_sources(&[id])?;
-        return Ok(Some((digest, vec![id])));
+        crate::code_rule_dsl::logic::rr::images::export(image_key(&digest), &bytes);
+        return Some(Encoded { digest, image: true, bytes });
     }
-    let Ok(text) = print(prog) else { return Ok(None) };
+    let text = print(prog).ok()?;
     let want = program_facts::debug_digest(prog);
     if !read(&text).is_ok_and(|back| program_facts::debug_digest(&back) == want) {
-        return Ok(None);
+        return None;
     }
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, text.len() as u64);
-    let hash = HashKey::sha256(text.as_bytes());
+    Some(Encoded { digest: Sha256::digest(text.as_bytes()).into(), image: false, bytes: text.into_bytes() })
+}
+
+/// Programs `encode` made, and a facts entry after them, as a record's item carries them (decision 0306): their
+/// digests and kinds in its body, their bytes, then the entry's, in its byte area.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct Packed {
+    programs: Vec<([u8; 32], bool, usize)>,
+}
+
+/// Packs `programs` and `entry` (`Packed`): the body and the byte area.
+pub fn pack(programs: Vec<Encoded>, entry: Vec<u8>) -> (Packed, Vec<u8>) {
+    let mut bytes = Vec::with_capacity(programs.iter().map(|p| p.bytes.len()).sum::<usize>() + entry.len());
+    let mut packed = Packed { programs: Vec::with_capacity(programs.len()) };
+    for p in programs {
+        packed.programs.push((p.digest, p.image, p.bytes.len()));
+        bytes.extend_from_slice(&p.bytes);
+    }
+    bytes.extend_from_slice(&entry);
+    (packed, bytes)
+}
+
+/// Keeps the programs `pack` packed (`store_encoded`): the sources written, and the entry's bytes.
+pub fn store_packed<'b>(store: &ContentStore, packed: &Packed, bytes: &'b [u8]) -> StoreResult<(Vec<SourceId>, &'b [u8])> {
+    let (mut at, mut sources) = (0, Vec::new());
+    for (digest, image, len) in &packed.programs {
+        let program = bytes.get(at..at + len).ok_or_else(|| crate::content_store::StoreError::Invalid("a record's program: past its bytes".into()))?;
+        sources.extend(store_encoded(store, digest, *image, program)?);
+        at += len;
+    }
+    Ok((sources, &bytes[at..]))
+}
+
+/// Keeps a program `encode` made in `store`, a source by its bytes' sha256 (an image by `image_key` too), held so the
+/// run keeps it (O95): the sources written, which the caller names so collection keeps them.
+pub fn store_encoded(store: &ContentStore, digest: &[u8; 32], image: bool, bytes: &[u8]) -> StoreResult<Vec<SourceId>> {
+    if image {
+        let key = image_key(digest);
+        let id = match store.source_by_alias(key)? {
+            Some(id) => id,
+            None => store.put_source(bytes, &[key])?,
+        };
+        store.pin_held_sources(&[id])?;
+        return Ok(vec![id]);
+    }
+    let hash = HashKey::sha256(bytes);
     let source = match store.held_source_by_hash(hash)? {
         Some(id) => id,
-        None => store.put_source_hashed(text.as_bytes(), hash, &[])?,
+        None => store.put_source_hashed(bytes, hash, &[])?,
     };
-    let digest: [u8; 32] = Sha256::digest(text.as_bytes()).into();
-    let mut sources = vec![source];
-    if images() != "off" {
-        let key = image_key(&digest);
-        if let Some(id) = store.source_by_alias(key)? {
-            store.pin_held_sources(&[id])?;
-            sources.push(id);
-        } else if let Ok(bytes) = crate::code_rule_dsl::logic::program_image::encode(prog)
-            && crate::code_rule_dsl::logic::program_image::decode(&bytes, &crate::code_rule_dsl::logic::front::Lists::default()).is_ok_and(|back| program_facts::debug_digest(&back) == want)
-        {
-            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
-            // An image the store refuses (its alias taken by other bytes) is not kept; the text is.
-            if let Ok(id) = store.put_source(&bytes, &[key]) {
-                store.pin_held_sources(&[id])?;
-                sources.push(id);
-            }
-        }
-    }
-    Ok(Some((digest, sources)))
+    Ok(vec![source])
 }
 
 /// What `store` keeps of the programs of sha256 `digests` (`store`), by digest, with their sources, in two reads: for

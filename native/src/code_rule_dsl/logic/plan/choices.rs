@@ -199,11 +199,10 @@ pub(super) fn remember(key: [u8; 32], chosen: Chosen) {
         let d = d.borrow();
         if let Some((store, prepared, _, _)) = d.as_deref() {
             let _span = super::super::profile::span(|| "planning choices, kept in the store, queued".into());
-            // Made into facts and written by the store's writer (decision 0102).
-            let prepared = *prepared;
-            // Its facts hold strings as text (`program_facts::encode`'s own table), no atom: kept after a fork too
-            // (decision 0170).
-            store.write_back_syms(crate::content_store::write_back::Syms::None, "the planning choices", 0, vec![(queued(&prepared, &key), None)], Box::new(move |store| write(store, &prepared, &key, &chosen).map(drop)));
+            // Made into facts here, written by the store's writer in the run's record (decisions 0102, 0306). Its facts
+            // hold strings as text (`program_facts::encode`'s own table), no atom: kept after a fork too (decision 0170).
+            let Some((packed, bytes)) = encode(&chosen) else { return };
+            store.record("the planning choices", vec![queued(prepared, &key)], &(prepared, key, packed), Some(bytes), apply);
         }
     });
 }
@@ -403,31 +402,40 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
-fn write(store: &ContentStore, prepared: &[u8; 32], key: &[u8; 32], chosen: &Chosen) -> StoreResult<bool> {
+/// `chosen` as its record's item carries it: its rewritten program (decision 0155), decoded from the version, and its
+/// facts entry. `None` for a program that does not read back the same: nothing is kept, and the next run chooses again.
+fn encode(chosen: &Chosen) -> Option<(program_text::Packed, Vec<u8>)> {
     let mut facts = Facts::new();
+    let mut programs = Vec::new();
     if let Some(version) = &chosen.version {
-        // Kept as its text (decision 0155), decoded from the version here, on the store's writer. A program that does
-        // not read back the same is not kept: the next run chooses again.
-        let Ok(program) = version.program(&Default::default()) else { return Ok(false) };
-        let Some((digest, sources)) = program_text::store(store, &program)? else { return Ok(false) };
-        store.name_sources(sources);
-        facts.insert(REWRITTEN.to_owned(), vec![[Value::Str(hex(&digest).into())].into()]);
+        let program = version.program(&Default::default()).ok()?;
+        let encoded = program_text::encode(&program)?;
+        facts.insert(REWRITTEN.to_owned(), vec![[Value::Str(hex(&encoded.digest).into())].into()]);
+        programs.push(encoded);
     }
     facts.insert(SCALE.to_owned(), vec![[Value::Int(chosen.nodes.round() as i64)].into()]);
     let list = |names: &[String]| names.iter().enumerate().map(|(k, s)| [Value::Int(k as i64), Value::Str(s.clone().into())].into()).collect();
     facts.insert(INLINED.to_owned(), list(&chosen.inlined));
     facts.insert(DEMANDED.to_owned(), list(&chosen.demanded));
-    let text = source_text(prepared);
+    Some(program_text::pack(programs, program_facts::encode(&facts)))
+}
+
+/// Writes choices `encode` made for program `key` of prepared program `prepared`: the rewritten program's text, named
+/// by the manifest, and the entry, under the prepared program's source.
+fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
+    let (prepared, key, packed): ([u8; 32], [u8; 32], program_text::Packed) = crate::content_store::record::codec::from_body("the planning choices", body)?;
+    let store = cx.store;
+    let (sources, entry) = program_text::store_packed(store, &packed, cx.bytes)?;
+    cx.name(sources);
+    let text = source_text(&prepared);
     let hash = HashKey::sha256(text.as_bytes());
     let source = match store.held_source_by_hash(hash)? {
         Some(id) => id,
         None => store.put_source_hashed(text.as_bytes(), hash, &[])?,
     };
     let set = plan();
-    let path = path(key);
-    let entry = program_facts::encode(&facts);
-    store.put_facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: &path }, &set, &[FactsResult { plan: set.plans[0], path_dependent: true, entry }], &[])?;
-    Ok(true)
+    let path = path(&key);
+    store.put_facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: &path }, &set, &[FactsResult { plan: set.plans[0], path_dependent: true, entry: entry.to_vec() }], &[]).map(drop)
 }
 
 /// The source and plan a prepared program's choices live under, for the run's manifest: the source is made when the
