@@ -8945,10 +8945,10 @@ fn general_forms() -> bool {
 /// moved reads drive and those every selection keeps, a view of the general form's version with the run's own fields
 /// over it (its inputs: those the run binds, `run_input`, and the old rows). `None` where `g` does not stand for the
 /// form written for `moved`: a moved read is not among its reads or has no delta (an earlier stratum derived again),
-/// the stratum is recursive (its form by levels is chosen from the kept rows), or an old row it reads is not kept.
+/// or an old row it reads is not kept. The caller picks a recursive stratum's general form by its kept rows' levels.
 fn general_selection(g: &maintain::General, moved: &BTreeSet<String>, kept: &retain::Retained, has_delta: &dyn Fn(&str) -> bool, bound_old: &dyn Fn(&str) -> bool, run_input: &dyn Fn(&str) -> bool) -> Result<Option<maintain::Form>> {
     use crate::code_rule_dsl::logic::plan::body::Placed;
-    if g.form.maintained == 0 || g.form.derived_again > 0 || g.form.recursive > 0 || moved.iter().any(|r| !has_delta(r)) {
+    if g.form.maintained == 0 || g.form.derived_again > 0 || moved.iter().any(|r| !has_delta(r)) {
         return Ok(None);
     }
     let Some(at) = maintain::selected(g, moved) else { return Ok(None) };
@@ -8973,7 +8973,7 @@ fn general_selection(g: &maintain::General, moved: &BTreeSet<String>, kept: &ret
     let mut placed = Placed::whole(part);
     placed.maint = pv.maint.clone();
     let m = &g.form;
-    Ok(Some(maintain::Form { placed, sources: Vec::new(), old_reads, maintained: m.maintained, derived_again: m.derived_again, recursive: m.recursive, again: m.again.clone() }))
+    Ok(Some(maintain::Form { placed, sources: Vec::new(), old_reads, maintained: m.maintained, derived_again: m.derived_again, recursive: m.recursive, by_levels: m.by_levels, again: m.again.clone() }))
 }
 
 impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
@@ -9018,7 +9018,12 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
             Some(a) => Arc::clone(a),
             None => Arc::clone(self.atoms.insert(crate::code_rule_dsl::logic::program_image::Builder::under(&v0.v).finish().map_err(Error::Plan)?.0)),
         };
-        let selection = match self.general.as_ref().and_then(|g| g.by_stratum.get(&maintain::stratum_key(scc))) {
+        // A recursive stratum whose kept rows all have levels is maintained by them, where its form can be (its
+        // general form by levels); else as every other stratum.
+        let key = maintain::stratum_key(scc);
+        let by_levels = scc.iter().all(|r| maintain::Olds::levels(self.kept, r).is_some_and(|(has, _)| has));
+        let general = self.general.as_ref().and_then(|g| by_levels.then(|| g.by_levels.get(&key)).flatten().or_else(|| g.by_stratum.get(&key)));
+        let selection = match general {
             Some(g) => general_selection(g, moved, self.kept, &|r| has_delta.contains(r), &|r| bound_olds.contains(r), &|r| inputs.contains(r))?,
             None => None,
         };
@@ -10677,9 +10682,8 @@ fn general_forms_of(slot: &std::sync::OnceLock<((u64, u64), std::result::Result<
         return None;
     }
     let placed = cross.placed().ok()?;
-    let holds = maintain::Holds(kept);
-    let digest = (cross.digest().ok()?, maintain::olds_signature(&placed, &holds).ok()?);
-    let make = || -> std::result::Result<Arc<maintain::GeneralForms>, String> { maintain::general_forms(&placed, &cross.domains, &holds).map(Arc::new).map_err(|e| e.to_string()) };
+    let digest = (cross.digest().ok()?, maintain::olds_signature(&placed, &maintain::Holds(kept, false)).ok()?);
+    let make = || -> std::result::Result<Arc<maintain::GeneralForms>, String> { maintain::general_forms(&placed, &cross.domains, kept).map(Arc::new).map_err(|e| e.to_string()) };
     match slot.get() {
         Some((d, made)) if *d == digest => made.clone().ok(),
         Some(_) => make().ok(),

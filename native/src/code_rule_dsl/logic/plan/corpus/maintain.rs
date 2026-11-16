@@ -264,6 +264,7 @@ pub(in crate::code_rule_dsl) struct Over<'b> {
     pub(in crate::code_rule_dsl) maintained: usize,
     pub(in crate::code_rule_dsl) derived_again: usize,
     pub(in crate::code_rule_dsl) recursive: usize,
+    pub(in crate::code_rule_dsl) by_levels: usize,
     pub(in crate::code_rule_dsl) again: Vec<(String, &'static str)>,
     pub(in crate::code_rule_dsl) views: BTreeSet<String>,
 }
@@ -660,7 +661,7 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
             heads.insert(head_ir(src, &Ir::Copy(k)));
             write_ir(&mut b, src, &Ir::Copy(k)).map_err(Error::Plan)?;
         }
-        return Ok(Over { b, inputs: src.inputs.clone(), domains: src.domains.clone(), groups: Vec::new(), together: Vec::new(), heads, sources: Vec::new(), old_reads: Vec::new(), maintained: 0, derived_again: dirty.len(), recursive: 0, again, views });
+        return Ok(Over { b, inputs: src.inputs.clone(), domains: src.domains.clone(), groups: Vec::new(), together: Vec::new(), heads, sources: Vec::new(), old_reads: Vec::new(), maintained: 0, derived_again: dirty.len(), recursive: 0, by_levels: 0, again, views });
     };
     let views: BTreeMap<String, usize> = input_views_over(src).into_iter().filter(|(_, k)| src.named(*k).atom(0).is_some_and(|a| kept.has_old(src.named(*k).rel(a)))).collect();
     let view_input = |rel: &str| -> Option<String> { views.get(rel).and_then(|&k| { let n = src.named(k); n.atom(0).map(|a| n.rel(a).to_owned()) }) };
@@ -669,7 +670,7 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
     let mut rules: Vec<Ir> = Vec::new();
     let mut olds: BTreeSet<String> = BTreeSet::new();
     let mut deltas: BTreeSet<String> = BTreeSet::new();
-    let (mut maintained, mut derived_again, mut recursive) = (0, 0, 0);
+    let (mut maintained, mut derived_again, mut recursive, mut by_levels) = (0, 0, 0, 0);
     let mut again: Vec<(String, &'static str)> = Vec::new();
     let mut fresh: Vec<(String, String)> = Vec::new();
     let mut maint: BTreeSet<String> = BTreeSet::new();
@@ -766,6 +767,7 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
         let joins = |r: &Named<'_>| r.lits.iter().all(|l| matches!(l.view(), PLit::Atom(_) | PLit::Cmp { .. }));
         let lv = is_recursive && levels_wanted() && mine.iter().all(joins) && scc.iter().all(|r| kept.levels(r).is_some_and(|(has, _)| has));
         if lv {
+            by_levels += 1;
             BY_LEVELS.with(|n| n.set(n.get() + 1));
         }
         if is_recursive && levels_wanted() && std::env::var_os("RERAIL_LEVELS_WHY").is_some() {
@@ -1067,7 +1069,7 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
         .map(|(scc, owned, given, deltas, reads, olds)| Group { scc: scc.into_iter().collect(), owned: owned.into_iter().collect(), given: given.iter().map(|&k| src.p.id(src.rules[k])).collect(), deltas, reads, olds })
         .collect();
     let views = views.into_keys().collect();
-    Ok(Over { b, inputs, domains, groups, together, heads, sources, old_reads, maintained, derived_again, recursive, again, views })
+    Ok(Over { b, inputs, domains, groups, together, heads, sources, old_reads, maintained, derived_again, recursive, by_levels, again, views })
 }
 
 thread_local! {
@@ -1305,6 +1307,8 @@ pub(in crate::code_rule_dsl) struct Form {
     pub(in crate::code_rule_dsl) maintained: usize,
     pub(in crate::code_rule_dsl) derived_again: usize,
     pub(in crate::code_rule_dsl) recursive: usize,
+    /// Of those recursive, strata maintained by levels (decision 0090).
+    pub(in crate::code_rule_dsl) by_levels: usize,
     pub(in crate::code_rule_dsl) again: Vec<(String, &'static str)>,
 }
 
@@ -1424,7 +1428,7 @@ pub(in crate::code_rule_dsl) fn form(atoms: &Arc<Version>, v0: &Placed, rules: &
     over.b.set_inputs(&inputs);
     let fv = over.b.finish_overlay().map_err(Error::Plan)?;
     let maint = if over.groups.is_empty() && over.together.is_empty() { None } else { Some(Arc::new(Maint::written(&fv, v, &over.groups, &over.together)?)) };
-    Ok(Form { placed: Placed::derived(fv, maint), sources: over.sources, old_reads: over.old_reads, maintained: over.maintained, derived_again: over.derived_again, recursive: over.recursive, again: over.again })
+    Ok(Form { placed: Placed::derived(fv, maint), sources: over.sources, old_reads: over.old_reads, maintained: over.maintained, derived_again: over.derived_again, recursive: over.recursive, by_levels: over.by_levels, again: over.again })
 }
 
 // -- General forms (decision 0298) --
@@ -1486,6 +1490,9 @@ fn drivers(p: &Placed, scc: &BTreeSet<String>, reads: &BTreeSet<String>) -> Vec<
 /// version: by stratum (its relations, joined by `,`). A stratum made natively (but a text test) has none.
 pub(in crate::code_rule_dsl) struct GeneralForms {
     pub(in crate::code_rule_dsl) by_stratum: HashMap<String, General>,
+    /// A recursive stratum's general form by levels (decision 0090), for kept rows that have them; where its form
+    /// cannot be by levels (a rule not a join), none, and `by_stratum`'s stands for every kept part.
+    pub(in crate::code_rule_dsl) by_levels: HashMap<String, General>,
 }
 
 /// The signature of the old rows `olds` takes as kept among `part`'s relations: general forms written for one are
@@ -1507,21 +1514,23 @@ pub(in crate::code_rule_dsl) fn stratum_key(scc: &BTreeSet<String>) -> String {
 }
 
 /// What a part's general forms take as kept (decision 0298): the old rows the kept part holds, read or not yet
-/// (`Retained::holds_old`), and no levels, so a recursive stratum's general form is not by levels (a run writes it).
-pub(in crate::code_rule_dsl) struct Holds<'k>(pub(in crate::code_rule_dsl) &'k Retained);
+/// (`Retained::holds_old`); with levels or not (`.1`). Whether kept rows have levels is known when they are read,
+/// so a recursive stratum has a general form for each, and a run takes the one its kept rows match.
+pub(in crate::code_rule_dsl) struct Holds<'k>(pub(in crate::code_rule_dsl) &'k Retained, pub(in crate::code_rule_dsl) bool);
 
 impl Olds for Holds<'_> {
     fn has_old(&self, rel: &str) -> bool {
         self.0.holds_old(rel)
     }
-    fn levels(&self, _: &str) -> Option<(bool, (usize, usize, bool))> {
-        None
+    fn levels(&self, rel: &str) -> Option<(bool, (usize, usize, bool))> {
+        // Only whether there are levels chooses a form; their shape is for diagnostics.
+        self.0.holds_old(rel).then_some((self.1, (0, 0, false)))
     }
 }
 
-/// The general forms of `part`, a maintained cross-file part (decision 0298): each stratum's, once.
-/// `olds`: the old rows taken as kept (`Holds`).
-pub(in crate::code_rule_dsl) fn general_forms(part: &Placed, domains: &lower::Domains, olds: &dyn Olds) -> Result<GeneralForms> {
+/// The general forms of `part`, a maintained cross-file part (decision 0298): each stratum's, once, for the old rows
+/// `kept` holds; a recursive stratum's also by levels, where its form can be.
+pub(in crate::code_rule_dsl) fn general_forms(part: &Placed, domains: &lower::Domains, kept: &Retained) -> Result<GeneralForms> {
     let _s = crate::code_rule_dsl::logic::profile::span(|| "the general forms (decision 0298)".into());
     let f = Fields::of(part).ok_or_else(|| Error::Plan("a maintained part holds its rules alone".into()))?;
     let v: &Version = &part.v;
@@ -1530,7 +1539,8 @@ pub(in crate::code_rule_dsl) fn general_forms(part: &Placed, domains: &lower::Do
         by_head.entry(v.rel_name(part.rule(i).head().rel())).or_default().push(i);
     }
     let atoms = Builder::under(v).finish().map_err(Error::Plan)?.0;
-    let mut by_stratum = HashMap::new();
+    let (plain, levels) = (Holds(kept, false), Holds(kept, true));
+    let (mut by_stratum, mut by_levels) = (HashMap::new(), HashMap::new());
     for scc in part.components()?.iter() {
         if scc.iter().any(|r| f.native(r).is_some_and(|n| !matches!(n.spec, NativeSpec::TextTest { .. }))) {
             continue;
@@ -1539,10 +1549,16 @@ pub(in crate::code_rule_dsl) fn general_forms(part: &Placed, domains: &lower::Do
         if rules.is_empty() {
             continue;
         }
-        let g = general(&atoms, part, &rules, scc, domains, olds, &|_| true)?;
+        let g = general(&atoms, part, &rules, scc, domains, &plain, &|_| true)?;
+        if g.form.recursive > 0 && levels_wanted() {
+            let l = general(&atoms, part, &rules, scc, domains, &levels, &|_| true)?;
+            if l.form.by_levels > 0 {
+                by_levels.insert(stratum_key(scc), l);
+            }
+        }
         by_stratum.insert(stratum_key(scc), g);
     }
-    Ok(GeneralForms { by_stratum })
+    Ok(GeneralForms { by_stratum, by_levels })
 }
 
 /// The places of `g`'s rules a stratum whose reads `moved` changed runs (decision 0298): those driven by a read in

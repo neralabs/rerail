@@ -34,9 +34,10 @@ too.
    view of the general version (`Placed::new` over a set of rule ids, as the split's parts are), not a written
    program. For a read that did not change, the rules the selection keeps read its old rows, which are its rows.
 3. **Today's writer stays as the fallback.** A stratum is written as today when its selection would differ from
-   what the narrow form computes: a read changed whose old rows are not kept, a read changed with no delta (an
-   earlier stratum was derived again), or a recursive stratum whose kept rows lack the levels its general form
-   assumed.
+   what the narrow form computes: a read changed whose old rows are not kept, or a read changed with no delta (an
+   earlier stratum was derived again). A recursive stratum has two general forms, by levels (decision 0090) and
+   not, because whether its kept rows have levels is known only once they are read; the run takes the one its kept
+   rows match (`GeneralForms::by_levels`).
 4. **The general forms are stored with the prepared program**, so a new process reads them with it.
 
 ## Validation (before building)
@@ -66,11 +67,13 @@ step's per-policy outputs hold the same rows in all 421 relations (decoded with 
 |---|---|---|---|
 | cold | 165.9 | 170.7 | – |
 | warm | 2.83 | 2.81 | – |
-| one file edited | 78.8 | 92.4 | 241 / 15 |
+| one file edited | 78.8 | 92.4 | 241 / 15; with recursive strata (below), 256 / 0 |
 | warm again | 2.24 | 2.24 | – |
-| the edit reverted | 55.8 | 71.7 | 237 / 15 |
+| the edit reverted | 55.8 | 71.7 | 237 / 15; with recursive strata, 252 / 0 |
 
-The 15 written are recursive strata (their form by levels is chosen from the kept rows). Profiled edit, CPU:
+The 15 written were recursive strata, whose form by levels is chosen from the kept rows. With a general form by
+levels beside each (decision 3), all are selected, and the five steps again hold the same rows. Profiled edit
+(before that), CPU:
 
 | Span | Today | Selected |
 |---|---|---|
@@ -100,7 +103,6 @@ general form now takes as kept exactly what the kept part holds.
 
 ## Open
 
-- Recursive strata are written per run: a general form by levels needs the levels the kept rows have.
 
 - Placement and spec of the reached strata (about 0.46 s on the same edit) stay per run. With forms fixed per
   program, what placement decides of a stratum can be kept with them.
