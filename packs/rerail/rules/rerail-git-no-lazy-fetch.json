@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "rerail-git-no-lazy-fetch",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Start Git in Rerail's source only through the engine's Git module, with lazy fetch off; otherwise a partial clone fetches missing objects from its remote.",
   "scope": {
@@ -461,7 +461,48 @@
             "regex": "^\\[\\s*(?:[\"'`]-[^\"'`]*[\"'`]\\s*,\\s*)*[\"'`](?:diff|status)[\"'`]\\s*[,\\]]",
             "not": {
               "regex": "[\"'`]--no-renames[\"'`]"
-            }
+            },
+            "any": [
+              {
+                "inside": {
+                  "kind": "arguments",
+                  "inside": {
+                    "kind": "call_expression",
+                    "has": {
+                      "field": "function",
+                      "regex": "(?:^|\\.)(?:git|[a-z][A-Za-z0-9]*Git)(?:[A-Z][A-Za-z0-9]*)?$"
+                    }
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "not": {
+                      "has": {
+                        "nthChild": "n",
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "string"
+                            },
+                            {
+                              "kind": "template_string"
+                            },
+                            {
+                              "kind": "comment"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "regex": "[\"'`]-"
+                  }
+                ]
+              }
+            ]
           }
         }
       },
