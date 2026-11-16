@@ -3,7 +3,7 @@
  * confirms as a checkout's top level, found the same way from the file's lexical and real paths. Whether that
  * checkout judges the file with its own rules, or leaves it to the checkout around it, is the router's decision.
  */
-import { lstatSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { physicalPath } from "./checkout-control.js";
 import { runGit } from "../git.js";
@@ -29,6 +29,61 @@ function holdsGitEntry(directory: string): boolean {
   }
 }
 
+/** A `.git` entry as it was on disk when Git was asked about it. */
+interface GitEntry {
+  /** The Git folder a `.git` file names; undefined for a `.git` folder, or a file that names none. */
+  readonly gitFolder: string | undefined;
+  /** {@link gitEntryStamp} read before Git was asked. */
+  readonly stamp: string;
+}
+
+/**
+ * The `.git` entry `directory` holds, read before Git is asked about it so that a change Git has not seen shows; undefined
+ * when it holds none. Reads a `.git` file for the Git folder it names.
+ */
+function gitEntryAt(directory: string): GitEntry | undefined {
+  const entry = join(directory, ".git");
+  let file: boolean;
+  try {
+    const stats = lstatSync(entry, { throwIfNoEntry: false });
+    if (stats === undefined) return undefined;
+    file = stats.isFile();
+  } catch {
+    return undefined;
+  }
+  let gitFolder: string | undefined;
+  if (file) {
+    try {
+      // A `.git` file holds `gitdir: <path>`, relative to the folder or absolute.
+      const named = /^gitdir: (.+)/u.exec(readFileSync(entry, "utf8"))?.[1]?.trim();
+      gitFolder = named === undefined ? undefined : resolve(directory, named);
+    } catch {
+      gitFolder = undefined;
+    }
+  }
+  return { gitFolder, stamp: gitEntryStamp(directory, gitFolder) };
+}
+
+/**
+ * The lstat of the `.git` entry at `directory` and of the Git folder it names, in one string that changes when either
+ * does. Git writes a worktree's `.git` file before the `HEAD` in the Git folder that file names, and `git init` its
+ * `.git` folder before the `HEAD` in it; a lookup between the two finds no checkout, and the `HEAD` that completes it
+ * changes the folder it lands in.
+ */
+function gitEntryStamp(directory: string, gitFolder: string | undefined): string {
+  const entry = lstatStamp(join(directory, ".git"));
+  return gitFolder === undefined ? entry : `${entry} ${lstatStamp(gitFolder)}`;
+}
+
+function lstatStamp(path: string): string {
+  try {
+    const stats = lstatSync(path, { throwIfNoEntry: false });
+    return stats === undefined ? "none" : `${stats.ino}:${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}`;
+  } catch (error) {
+    return error instanceof Error && "code" in error ? String(error.code) : "unreadable";
+  }
+}
+
 function within(root: string, candidate: string): boolean {
   const path = relative(root, candidate);
   return path === "" || (!isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`));
@@ -51,10 +106,12 @@ export class CheckoutOwners {
   readonly #submodules = new Map<string, boolean>();
   /**
    * The folders `#confirm` found holding a `.git` entry that Git did not take for a top level (one naming a Git folder
-   * that is gone, say), told apart from those that held none: `lookAgainAt` leaves them be, so such an entry costs one
-   * Git process, not one per write below it. `#confirm` keeps it in step for every folder `#confirmed` holds.
+   * that is gone, or one Git is still making), told apart from those that held none, each with that entry as it was:
+   * `lookAgainAt` asks Git again only once the entry, or the Git folder it names, changed, so such an entry costs one
+   * Git process, not one per write below it, and a worktree looked up before Git finished making it is found once Git
+   * has. `#confirm` keeps it in step for every folder `#confirmed` holds.
    */
-  readonly #unconfirmedGitEntries = new Set<string>();
+  readonly #unconfirmedGitEntries = new Map<string, GitEntry>();
   /** Recorded checkouts outside Git (identity under `.rerail`), physical. */
   readonly #plainRoots = new Set<string>();
 
@@ -82,12 +139,14 @@ export class CheckoutOwners {
 
   /**
    * Drops the answers kept at and below each folder on the way up from `path` that a lookup found with no `.git` entry
-   * and that holds one now, so the next lookup asks the disk and Git again. `git worktree add`, from any repository, or
-   * `git init` can make a folder a session already looked up a checkout's top level; the answers from before name the
-   * checkout around it, or none, for its files, and would stay until the recorded checkouts change. A lookup of such a
-   * folder itself drops them on its own (`#confirm`), but a file's lookup reads the answers kept for the folders above
-   * it without looking at them. Costs a stat per folder kept as plain on the way up from `path`, and from its real path
-   * when that differs. Returns whether it dropped any.
+   * and that holds one now, or whose `.git` entry Git did not take for a top level and that changed since, so the next
+   * lookup asks the disk and Git again. `git worktree add`, from any repository, or `git init` can make a folder a
+   * session already looked up a checkout's top level, and a lookup can land between Git writing the `.git` entry and the
+   * `HEAD` that makes it one; the answers from before name the checkout around it, or none, for its files, and would
+   * stay until the recorded checkouts change. A lookup of such a folder itself drops them on its own (`#confirm`), but a
+   * file's lookup reads the answers kept for the folders above it without looking at them. Costs a stat per folder kept
+   * as plain on the way up from `path`, and from its real path when that differs, and two per unconfirmed `.git` file.
+   * Returns whether it dropped any.
    */
   lookAgainAt(path: string): boolean {
     this.#revalidate();
@@ -200,25 +259,25 @@ export class CheckoutOwners {
 
   /**
    * Whether `directory` holds a `.git` entry that Git confirms as a checkout's top level: its physical root, or
-   * undefined. A folder kept as plain that holds a `.git` entry now became a checkout after a lookup passed it; the
-   * answers kept at and below it predate that, so they go and Git is asked. A lookup asks this of the folder it starts
-   * at only when that folder holds a `.git` entry, so a walk, which asks for each folder before the files in it, finds
-   * such a checkout at its folder without a stat more.
+   * undefined. A folder kept as plain that holds a `.git` entry now became a checkout after a lookup passed it, and one
+   * whose `.git` entry Git did not take changed since; the answers kept at and below it predate that, so they go and Git
+   * is asked. A lookup asks this of the folder it starts at only when that folder holds a `.git` entry, so a walk, which
+   * asks for each folder before the files in it, finds such a checkout at its folder without a stat more.
    */
   #confirm(directory: string): string | undefined {
     if (this.#confirmed.has(directory)) {
       if (!this.#outgrown(directory)) return this.#confirmed.get(directory);
       this.#forgetWithin(directory);
     }
-    const gitEntry = holdsGitEntry(directory);
-    const root = gitEntry ? topLevelAt(directory) : undefined;
+    const gitEntry = gitEntryAt(directory);
+    const root = gitEntry === undefined ? undefined : topLevelAt(directory);
     this.#confirmed.set(directory, root);
-    if (gitEntry && root === undefined) this.#unconfirmedGitEntries.add(directory);
+    if (gitEntry !== undefined && root === undefined) this.#unconfirmedGitEntries.set(directory, gitEntry);
     else this.#unconfirmedGitEntries.delete(directory);
     return root;
   }
 
-  /** The highest folder from `path` up that a lookup found with no `.git` entry and that holds one now. */
+  /** The highest folder from `path` up that Git may answer for differently than when a lookup asked (`#outgrown`). */
   #outgrownAbove(path: string): string | undefined {
     let outgrown: string | undefined;
     for (let folder = path; ; folder = dirname(folder)) {
@@ -227,8 +286,14 @@ export class CheckoutOwners {
     }
   }
 
-  /** Whether a lookup found `folder` with no `.git` entry and it holds one now. A stat, only for a folder kept as plain. */
+  /**
+   * Whether a lookup found `folder` with no `.git` entry and it holds one now, or found a `.git` entry there that Git
+   * did not take for a top level and it, or the Git folder it names, changed since. A stat for a folder kept as plain,
+   * one or two for an unconfirmed entry, none for the others.
+   */
   #outgrown(folder: string): boolean {
+    const unconfirmed = this.#unconfirmedGitEntries.get(folder);
+    if (unconfirmed !== undefined) return gitEntryStamp(folder, unconfirmed.gitFolder) !== unconfirmed.stamp;
     return this.#keptAsPlain(folder) && holdsGitEntry(folder);
   }
 
