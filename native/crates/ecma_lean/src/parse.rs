@@ -1097,11 +1097,10 @@ impl<'a> P<'a> {
             T::Name => {}
             _ => return self.expression_statement(s),
         }
-        if self.ts {
-            if let Some(r) = self.ts_statement(s, t) {
+        if self.ts
+            && let Some(r) = self.ts_statement(s, t) {
                 return r;
             }
-        }
         match t.word {
             w::VAR => self.variable_declaration(s),
             w::CONST => self.lexical_declaration(s, K::TConst),
@@ -1492,7 +1491,7 @@ impl<'a> P<'a> {
             let d = self.open(K::VariableDeclaration, f::INITIALIZER, C_NONE);
             self.bump()?;
             self.declarators()?;
-            self.leaf(K::TSemi, f::NONE, C_NONE).and_then(|_| Ok(())).or_else(|_| self.refuse())?;
+            self.leaf(K::TSemi, f::NONE, C_NONE).map(|_| ()).or_else(|_| self.refuse())?;
             self.close(d);
         } else if self.is_word(w::CONST) || (self.is_word(w::LET) && self.let_declares()) {
             let d = self.open(K::LexicalDeclaration, f::INITIALIZER, C_NONE);
@@ -2122,11 +2121,7 @@ impl<'a> P<'a> {
     /// `*`, a string or a number follows (else it is the member's name).
     fn member_modifier(&mut self) -> bool {
         let n = self.peek_at(1);
-        match n.kind {
-            T::Name | T::Private | T::Str | T::Number | T::LBracket => true,
-            T::Star => true,
-            _ => false,
-        }
+        matches!(n.kind, T::Name | T::Private | T::Str | T::Number | T::LBracket | T::Star)
     }
 
     /// A property's name: an identifier, `#name`, a string, a number or `[expression]`.
@@ -2434,6 +2429,7 @@ impl<'a> P<'a> {
         Ok(())
     }
 
+    #[allow(clippy::wrong_self_convention, reason = "named for the grammar rule it parses")]
     fn from_clause(&mut self) -> R<()> {
         if !self.is_word(w::FROM) {
             return self.refuse();
@@ -2588,10 +2584,7 @@ impl<'a> P<'a> {
         let op = self.tok();
         let aug = augmented(op.kind);
         if (op.kind == T::Eq || aug.is_some()) && !self.stops() {
-            let lhs_ok = match left.kind {
-                K::Identifier | K::Undefined | K::MemberExpression | K::SubscriptExpression | K::ParenthesizedExpression => true,
-                _ => false,
-            };
+            let lhs_ok = matches!(left.kind, K::Identifier | K::Undefined | K::MemberExpression | K::SubscriptExpression | K::ParenthesizedExpression);
             if !lhs_ok {
                 return self.refuse();
             }
@@ -3707,13 +3700,10 @@ impl<'a> P<'a> {
         pos += 1;
         // Children, to the closing tag.
         loop {
-            match self.lx.jsx_text(pos) {
-                Some(end) => {
-                    self.leaf_span(K::JsxText, f::NONE, pos as u32, end as u32);
-                    pos = end;
-                    continue;
-                }
-                None => {}
+            if let Some(end) = self.lx.jsx_text(pos) {
+                self.leaf_span(K::JsxText, f::NONE, pos as u32, end as u32);
+                pos = end;
+                continue;
             }
             // White space alone, on lines of its own, is passed (as extras' white space).
             let q = self.blank_end(pos);
@@ -4016,9 +4006,8 @@ mod tests {
     /// The hash tables hold `kinds::DROPPED`'s keys, and no other key.
     #[test]
     fn the_drop_tables_are_dropped() {
-        for d in 0..3 {
+        for (d, table) in DROP_TABLES.iter().enumerate().take(3) {
             let keys = crate::kinds::DROPPED[d];
-            let table = &DROP_TABLES[d];
             assert_eq!(table.iter().filter(|&&k| k != NO_DROP).count(), keys.len());
             let find = |key: u32| {
                 let mut slot = drop_slot(key);

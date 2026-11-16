@@ -723,6 +723,7 @@ impl<'a> P<'a> {
         Ok(n)
     }
 
+    #[allow(clippy::wrong_self_convention, reason = "named for the grammar rule it parses")]
     fn from_import(&mut self) -> R<()> {
         if self.is_name(1, b"__future__") {
             let n = self.open(K::FutureImportStatement, f::NONE, C_NONE);
@@ -953,6 +954,7 @@ impl<'a> P<'a> {
     }
 
     /// The expression at `at` made a pattern (an assignment's target), in `field`.
+    #[allow(clippy::wrong_self_convention, reason = "makes the expression at `at` a pattern in the tape, not `self` into one")]
     fn to_pattern(&mut self, at: usize, field: u8) -> R<()> {
         let kind = self.kind_at(at);
         let pat = |k: K| key(k, field, C_PAT, false);

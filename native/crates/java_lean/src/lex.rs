@@ -489,11 +489,10 @@ impl<'s> Lexer<'s> {
                         mant.push(f);
                     }
                 }
-            } else if self.at(s + 2) == b'.' {
-                if let Some(f) = self.digits(s + 3, hexd) {
+            } else if self.at(s + 2) == b'.'
+                && let Some(f) = self.digits(s + 3, hexd) {
                     mant.push(f);
                 }
-            }
             for m in mant {
                 // Without an exponent: a hex float only where it differs from the integer (a `.`).
                 if Some(m) != int {
@@ -505,21 +504,18 @@ impl<'s> Lexer<'s> {
             }
             return Ok((best.0, best.1, 0));
         }
-        if c0 == b'0' && matches!(c1, b'b' | b'B') {
-            if let Some(e) = self.digits(s + 2, |c| c == b'0' || c == b'1') {
+        if c0 == b'0' && matches!(c1, b'b' | b'B')
+            && let Some(e) = self.digits(s + 2, |c| c == b'0' || c == b'1') {
                 take(T::Bin, long_suffix(e));
             }
-        }
-        if c0 == b'0' && matches!(c1, b'o' | b'O') {
-            if let Some(e) = self.digits(s + 2, |c| (b'0'..=b'7').contains(&c)) {
+        if c0 == b'0' && matches!(c1, b'o' | b'O')
+            && let Some(e) = self.digits(s + 2, |c| (b'0'..=b'7').contains(&c)) {
                 take(T::Oct, long_suffix(e));
             }
-        }
-        if c0 == b'0' {
-            if let Some(e) = self.digits(s + 1, |c| (b'0'..=b'7').contains(&c)) {
+        if c0 == b'0'
+            && let Some(e) = self.digits(s + 1, |c| (b'0'..=b'7').contains(&c)) {
                 take(T::Oct, long_suffix(e));
             }
-        }
         if let Some(e) = self.digits_dec(s) {
             take(T::Dec, long_suffix(e));
             // `DIGITS exponent suffix?` and `DIGITS exponent? suffix`.
@@ -532,8 +528,8 @@ impl<'s> Lexer<'s> {
         }
         // `DECIMAL_DIGITS '.' DECIMAL_DIGITS? exponent? suffix?`, and `'.' DECIMAL_DIGITS …`.
         let int = if c0 == b'.' { Some(s) } else { self.digits(s, dec) };
-        if let Some(e) = int {
-            if self.at(e) == b'.' {
+        if let Some(e) = int
+            && self.at(e) == b'.' {
                 let f = self.digits(e + 1, dec);
                 if c0 != b'.' || f.is_some() {
                     let m = f.unwrap_or(e + 1);
@@ -541,7 +537,6 @@ impl<'s> Lexer<'s> {
                     take(T::DecFloat, float_suffix(x));
                 }
             }
-        }
         if best.1 == s {
             return Err(Refusal::Lex(s as u32));
         }

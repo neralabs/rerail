@@ -171,7 +171,7 @@ fn every_total_is_one_flag_on_every_executor() {
     let block = &p.block_programs[0];
     let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
     let cranelift = native_cpu_block::compile(&native).expect("compiles");
-    let mut cases: Vec<Vec<u8>> = inputs().into_iter().map(|v| v.into_iter().map(|b| [b'a', b'b', b'c', b'x', b'x', b'x', b'x', b'x'][usize::from(b) % 8]).collect()).collect();
+    let mut cases: Vec<Vec<u8>> = inputs().into_iter().map(|v| v.into_iter().map(|b| b"abcxxxxx"[usize::from(b) % 8]).collect()).collect();
     cases.extend([b"cxxxxbxx".to_vec(), [vec![b'x'; 61], b"cxxxxb".to_vec()].concat(), b"xbxxa".to_vec(), vec![b'x'; 300]]);
     let want: Vec<Vec<u64>> = cases
         .iter()

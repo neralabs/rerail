@@ -532,11 +532,10 @@ impl<'a> P<'a> {
             let (F::Seq { any: true, .. }, Some(F::Emph { d, .. })) = (v.f[n - 1], n.checked_sub(2).map(|i| v.f[i])) else { continue };
             let (_, ext) = valid(v);
             let mut sc = v.sc;
-            if let Ok(Some((Ext::Close(c), _))) = scan(self.src, &self.b, at, ext & !(x::LTW | x::LTP), &mut sc) {
-                if c == d && tok.t != T::X(Ext::Close(d)) {
+            if let Ok(Some((Ext::Close(c), _))) = scan(self.src, &self.b, at, ext & !(x::LTW | x::LTP), &mut sc)
+                && c == d && tok.t != T::X(Ext::Close(d)) {
                     return Err(Refusal::Parse(at as u32));
                 }
-            }
         }
         Ok(())
     }
@@ -589,11 +588,10 @@ impl<'a> P<'a> {
             b' ' | b'\t' if lex & l::WS != 0 => {
                 // `_whitespace_ge_2` (`\t`, or a space and more blanks), or one space.
                 let e = if c == b'\t' { at + 1 } else { self.b.blank_end(at) };
-                if (c == b'\t' || e - at >= 2) && lex & l::HARD != 0 {
-                    if let Some(n) = newline_end(src, e) {
+                if (c == b'\t' || e - at >= 2) && lex & l::HARD != 0
+                    && let Some(n) = newline_end(src, e) {
                         return tok(T::Hard { bs: false }, n);
                     }
-                }
                 tok(T::Ws, e)
             }
             b'\n' | b'\r' if lex & l::NL != 0 => tok(T::Nl, newline_end(src, at).expect("a line end")),
@@ -746,14 +744,13 @@ impl<'a> P<'a> {
     /// description starts with its first.
     fn elem(&mut self, w: &mut V, s: usize) {
         let n = w.f.len();
-        if let F::Seq { any, .. } = &mut w.f[n - 1] {
-            if !*any {
+        if let F::Seq { any, .. } = &mut w.f[n - 1]
+            && !*any {
                 *any = true;
                 if n >= 2 && matches!(w.f[n - 2], F::LinkText | F::Desc) {
                     self.open(w, s);
                 }
             }
-        }
     }
 
     fn top(w: &mut V) -> &mut F {
@@ -1501,8 +1498,8 @@ fn walk(a: usize, kids: &[(u32, bool)], out: &mut [bool]) {
             if w != 0 && (w >> 8 & 0xf) as usize == to - from {
                 let word = &kinds::WORD[(w >> 12) as usize..(w >> 12) as usize + (to - from)];
                 if word.iter().zip(&kids[from..to]).all(|(&l, k)| l == k.0) {
-                    for i in from..to {
-                        out[i] |= w >> (i - from) & 1 == 1;
+                    for (j, o) in out[from..to].iter_mut().enumerate() {
+                        *o |= w >> j & 1 == 1;
                     }
                 }
             }

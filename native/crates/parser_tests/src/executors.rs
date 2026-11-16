@@ -45,7 +45,7 @@ pub fn runs() -> Vec<Vec<u8>> {
     for len in [700usize, 3000, 20_000] {
         let mut v = Vec::with_capacity(len);
         while v.len() < len {
-            let byte = [b'\\', b'"', b'a', b' ', b',', b'\\'][next(6) as usize];
+            let byte = b"\\\"a ,\\"[next(6) as usize];
             let long = next(4) == 0;
             let run = 1 + next(if long { 200 } else { 5 }) as usize;
             v.extend(std::iter::repeat_n(byte, run));

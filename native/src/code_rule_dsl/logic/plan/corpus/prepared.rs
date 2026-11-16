@@ -508,7 +508,7 @@ fn relocate(store: &ContentStore, facts: &mut Facts, lowered: &mut crate::code_r
     let rows = facts.get_mut("prepared_interned_atom")?;
     let strings: Vec<&str> = rows.iter().map(|r| match r.get(2) { Some(Value::Str(x)) => Some(x.as_str()), _ => None }).collect::<Option<_>>()?;
     let old: Vec<u32> = rows.iter().map(|r| r.get(3).and_then(Value::integer).and_then(|a| u32::try_from(a).ok())).collect::<Option<_>>()?;
-    let new: Vec<u32> = store.intern_atoms(&strings).ok()?.into_iter().map(u32::from).collect();
+    let new: Vec<u32> = store.intern_atoms(&strings).ok()?.into_iter().collect();
     if new == old {
         return Some(false);
     }

@@ -545,7 +545,7 @@ fn implied_set_tests(prog: &mut Program) {
                 _ => None,
             });
             if let Some(values) = domain.filter(|d| !d.is_empty() && d.len() <= IMPLIED_SET_MAX) {
-                extra.push(Literal::Cmp { l: Term::Call(op.clone().into(), [Term::Var(s.clone().into()), Term::Call(SET.to_owned().into(), values.into_iter().map(|v| Term::Str(v.into())).collect())].into()), op: "=", r: Term::Int(1) });
+                extra.push(Literal::Cmp { l: Term::Call(op.clone(), [Term::Var(s.clone()), Term::Call(SET.to_owned().into(), values.into_iter().map(|v| Term::Str(v.into())).collect())].into()), op: "=", r: Term::Int(1) });
             }
         }
         added += extra.len();
@@ -593,7 +593,7 @@ pub fn node_subject_tests(prog: &mut Program) {
             }
             fresh += 1;
             let t = format!("rr_node_text{fresh}");
-            added.push(Literal::Atom(Atom { rel: "text".into(), args: [Term::Var(s.clone().into()), Term::Var(t.clone().into())].into(), neg: false, gated: false }));
+            added.push(Literal::Atom(Atom { rel: "text".into(), args: [Term::Var(s.clone()), Term::Var(t.clone().into())].into(), neg: false, gated: false }));
             *s = t.into();
         }
         rule.body.extend(added);

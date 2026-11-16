@@ -258,9 +258,7 @@ impl<'a> P<'a> {
     /// The end of an `identifier` at `at` (`(--|-?[a-zA-Z_])[a-zA-Z0-9-_]*`), or `None`.
     fn identifier_end(&self, at: usize) -> R<Option<usize>> {
         let c = self.byte(at);
-        let body = if c == b'-' && self.byte(at + 1) == b'-' {
-            at + 2
-        } else if c == b'-' && is_ident_start(self.byte(at + 1)) {
+        let body = if c == b'-' && (self.byte(at + 1) == b'-' || is_ident_start(self.byte(at + 1))) {
             at + 2
         } else if c == b'-' && self.latin1(at + 1) {
             at + 3
@@ -551,11 +549,10 @@ impl<'a> P<'a> {
                 let n = self.open(K::NamespaceStatement, at);
                 self.tok(K::NamespaceStatement, K::TAtNamespace, e - at)?;
                 let s = self.skip()?;
-                if let Some(ie) = self.identifier_end(s)? {
-                    if self.byte(ie) != b'(' {
+                if let Some(ie) = self.identifier_end(s)?
+                    && self.byte(ie) != b'(' {
                         self.leaf(K::NamespaceName, s, ie);
                     }
-                }
                 let s = self.skip()?;
                 if matches!(self.byte(s), b'"' | b'\'') {
                     self.string_value()?;
@@ -1144,9 +1141,11 @@ impl<'a> P<'a> {
                 b'+' | b'-' => {
                     let d = self.byte(s + 1);
                     // `-2`, `+.5` and `-name` are operands, the longer tokens.
-                    if d.is_ascii_digit() || (d == b'.' && self.byte(s + 2).is_ascii_digit()) || (self.byte(s) == b'-' && self.identifier_end(s)?.is_some()) {
-                        None
-                    } else if self.byte(s) == b'-' && self.plain_value_end(s)?.is_some() {
+                    if d.is_ascii_digit()
+                        || (d == b'.' && self.byte(s + 2).is_ascii_digit())
+                        || (self.byte(s) == b'-' && self.identifier_end(s)?.is_some())
+                        || (self.byte(s) == b'-' && self.plain_value_end(s)?.is_some())
+                    {
                         None
                     } else if self.byte(s) == b'+' {
                         Some(K::TPlus)

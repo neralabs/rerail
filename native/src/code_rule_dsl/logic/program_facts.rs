@@ -49,7 +49,7 @@ fn brand_tag(b: crate::code_rule_dsl::logic::front::Branded) -> &'static str {
 }
 
 fn branded(tag: &str, atom: i64) -> Result<crate::code_rule_dsl::logic::front::Branded, String> {
-    let atom = u32::try_from(atom).map_err(|e| bad(e))?;
+    let atom = u32::try_from(atom).map_err(bad)?;
     tag.chars().next().and_then(|c| crate::code_rule_dsl::logic::front::Branded::of_tag(c, atom)).ok_or_else(|| bad(format!("no atom class {tag:?}")))
 }
 
@@ -788,7 +788,7 @@ impl<'a, C: Cell> Reader<'a, C> {
             shapes.push((k, Shape { head: text(&row[1])?, lit: text(&row[2])?, wait, text: text(&row[3])? }));
         }
         prog.shapes = ordered(shapes);
-        prog.policies = ordered(self.get("policy").iter().map(|r| Ok((int(&r[0])?, serde_json::from_str(&text(&r[1])?).map_err(|e| bad(e))?))).collect::<Result<Vec<_>, String>>()?);
+        prog.policies = ordered(self.get("policy").iter().map(|r| Ok((int(&r[0])?, serde_json::from_str(&text(&r[1])?).map_err(bad)?))).collect::<Result<Vec<_>, String>>()?);
         prog.settings = ordered(self.get("setting").iter().map(|r| Ok((int(&r[0])?, (text(&r[1])?, text(&r[2])?)))).collect::<Result<Vec<_>, String>>()?);
         let roots = self.by_id_text("native_roots")?;
         for row in self.get("native_dfs") {
@@ -966,7 +966,7 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
             Ok(u64::from_le_bytes(self.take(8)?.try_into().expect("eight bytes")))
         }
         fn len(&mut self) -> Result<usize, String> {
-            usize::try_from(self.u64()?).map_err(|e| bad(e))
+            usize::try_from(self.u64()?).map_err(bad)
         }
     }
     let mut at = At(bytes, 0);
@@ -974,7 +974,7 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
     let mut table = Vec::with_capacity(count.min(1 << 20));
     for _ in 0..count {
         let n = at.len()?;
-        table.push(std::str::from_utf8(at.take(n)?).map_err(|e| bad(e))?.to_owned());
+        table.push(std::str::from_utf8(at.take(n)?).map_err(bad)?.to_owned());
     }
     let string = |k: u64| table.get(k as usize).cloned().ok_or_else(|| bad("no such string"));
     let mut facts = Facts::new();
@@ -991,7 +991,7 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
                     1 => Value::Str(string(at.u64()?)?.into()),
                     tag @ 2..=4 => Value::Branded(crate::code_rule_dsl::logic::front::Branded {
                         class: [crate::code_rule_dsl::logic::front::Class::Name, crate::code_rule_dsl::logic::front::Class::Kind, crate::code_rule_dsl::logic::front::Class::Field][usize::from(tag - 2)],
-                        atom: u32::try_from(at.u64()?).map_err(|e| bad(e))?,
+                        atom: u32::try_from(at.u64()?).map_err(bad)?,
                     }),
                     tag => return Err(bad(format!("no value tag {tag}"))),
                 });
@@ -1004,6 +1004,22 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
         return Err(bad("bytes after the facts"));
     }
     Ok(facts)
+}
+
+/// A digest of `value`'s `Debug` text, made as it is written: two programs compared by it without either's text in
+/// memory (a 16 k-rule program's is tens of megabytes).
+pub(in crate::code_rule_dsl) fn debug_digest(value: &impl std::fmt::Debug) -> [u8; 32] {
+    use sha2::Digest as _;
+    struct Hashing(sha2::Sha256);
+    impl std::fmt::Write for Hashing {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            self.0.update(s.as_bytes());
+            Ok(())
+        }
+    }
+    let mut out = Hashing(sha2::Sha256::new());
+    let _ = std::fmt::write(&mut out, format_args!("{value:?}"));
+    out.0.finalize().into()
 }
 
 #[cfg(test)]
@@ -1145,20 +1161,4 @@ pub mod tests {
         super::write(&mut facts, "p", &prog);
         assert_eq!(super::program(&facts, "p").unwrap().ast_patterns, prog.ast_patterns);
     }
-}
-
-/// A digest of `value`'s `Debug` text, made as it is written: two programs compared by it without either's text in
-/// memory (a 16 k-rule program's is tens of megabytes).
-pub(in crate::code_rule_dsl) fn debug_digest(value: &impl std::fmt::Debug) -> [u8; 32] {
-    use sha2::Digest as _;
-    struct Hashing(sha2::Sha256);
-    impl std::fmt::Write for Hashing {
-        fn write_str(&mut self, s: &str) -> std::fmt::Result {
-            self.0.update(s.as_bytes());
-            Ok(())
-        }
-    }
-    let mut out = Hashing(sha2::Sha256::new());
-    let _ = std::fmt::write(&mut out, format_args!("{value:?}"));
-    out.0.finalize().into()
 }

@@ -433,7 +433,7 @@ impl Observer {
         if k.loaded.iter().any(|u| path.starts_with(u)) {
             return;
         }
-        let unit = match self.stored_roots.iter().filter(|r| under(&path, r)).min_by_key(|r| r.as_os_str().len()) {
+        let unit = match self.stored_roots.iter().filter(|r| under(path, r)).min_by_key(|r| r.as_os_str().len()) {
             Some(r) => r.clone(),
             None => path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(path).to_path_buf(),
         };
@@ -498,7 +498,7 @@ impl Observer {
     /// recording run took, so the journal names it: neither the racy rule nor a stat check is needed.
     fn trusted(&mut self, path: &Path) -> Option<Entry> {
         self.watch_above(path);
-        if !self.roots.iter().any(|r| r.trusted && r.asked == self.flushes && under(&path, &r.path)) {
+        if !self.roots.iter().any(|r| r.trusted && r.asked == self.flushes && under(path, &r.path)) {
             return None;
         }
         let e = self.known(path)?;
@@ -514,12 +514,12 @@ impl Observer {
             return None;
         }
         // Every root it is under: each settles keeping only what was checked under it (nested roots, a first run's).
-        for root in self.roots.iter_mut().filter(|r| !r.trusted && under(&path, &r.path)) {
+        for root in self.roots.iter_mut().filter(|r| !r.trusted && under(path, &r.path)) {
             root.checked.insert(path.to_owned());
         }
         static SHOW: OnceLock<bool> = OnceLock::new();
         if *SHOW.get_or_init(|| std::env::var_os("RERAIL_OBSERVED_PATHS").is_some()) {
-            let under = self.roots.iter().find(|r| under(&path, &r.path)).map(|r| if r.trusted { "trusted root, no answer" } else { "untrusted root" }).unwrap_or("no root");
+            let under = self.roots.iter().find(|r| under(path, &r.path)).map(|r| if r.trusted { "trusted root, no answer" } else { "untrusted root" }).unwrap_or("no root");
             eprintln!("rerail: stat {} ({under})", path.display());
         }
         self.counts.stats += 1;
@@ -539,7 +539,7 @@ impl Observer {
             return;
         }
         // Every root it is under: each settles keeping only what was checked under it (nested roots, a first run's).
-        for root in self.roots.iter_mut().filter(|r| !r.trusted && under(&path, &r.path)) {
+        for root in self.roots.iter_mut().filter(|r| !r.trusted && under(path, &r.path)) {
             root.checked.insert(path.to_owned());
         }
         // The same answer, already trusted, is kept as it is: recording it again writes the store for nothing (a clean
@@ -577,7 +577,7 @@ impl Observer {
             return false;
         }
         let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else { return false };
-        if !self.roots.iter().any(|r| r.trusted && r.asked == self.flushes && under(&dir, &r.path)) || self.known(path).is_some() {
+        if !self.roots.iter().any(|r| r.trusted && r.asked == self.flushes && under(dir, &r.path)) || self.known(path).is_some() {
             return false;
         }
         let listing = match self.known(dir).filter(|e| e.kind == Kind::Dir).and_then(|e| e.listing) {
@@ -628,7 +628,7 @@ impl Observer {
         if todo.is_empty() {
             return out;
         }
-        let got: Vec<Option<PathBuf>> = todo.par_iter().with_min_len(64).map(|(_, p)| dunce::canonicalize(&p).ok()).collect();
+        let got: Vec<Option<PathBuf>> = todo.par_iter().with_min_len(64).map(|(_, p)| dunce::canonicalize(p).ok()).collect();
         observe(&mut |o| {
             for ((i, path), c) in std::mem::take(&mut todo).into_iter().zip(&got) {
                 out[i] = c.clone().map(|c| o.canonical_resolved(path, c));
@@ -647,7 +647,7 @@ impl Observer {
         self.ensure(&path);
         self.watch_above(&path);
         let asked = self.flushes;
-        let trusted = |p: &Path, roots: &[Root]| roots.iter().any(|r| r.trusted && r.asked == asked && (under(&p, &r.path) || under(&p, &r.real)));
+        let trusted = |p: &Path, roots: &[Root]| roots.iter().any(|r| r.trusted && r.asked == asked && (under(p, &r.path) || under(p, &r.real)));
         if plain(&path) && trusted(&path, &self.roots) {
             // An answer through a symlink is trusted only where its target is watched too.
             if let Some(c) = self.kept_canonical(&path).filter(|c| trusted(c, &self.roots)) {
@@ -728,7 +728,7 @@ impl Observer {
         // A clean Git file whose stat is its index entry's holds its blob: the digest of bytes seen before under
         // that blob, unread; or read once, and the blob remembered.
         // Git's work tree root is canonical: so is the path compared with it (one `realpath`, in Git runs only).
-        let canonical = if self.git.is_empty() { None } else { dunce::canonicalize(&path).ok() };
+        let canonical = if self.git.is_empty() { None } else { dunce::canonicalize(path).ok() };
         let blob = canonical.as_ref().and_then(|c| {
             self.git.iter().find_map(|(_, g)| {
                 let relative = c.strip_prefix(&g.worktree_root).ok()?.to_str()?;
@@ -860,7 +860,7 @@ impl Observer {
     /// asked on its own started a stream of its own, whose cookie could miss its wait (2 s, then lost), or had no
     /// cursor of its own (lost at once), and each lost root was settled and written again every run.
     fn outermost(&mut self, root: &Path) -> PathBuf {
-        let mut above: Vec<PathBuf> = self.stored_roots.iter().filter(|r| under(&root, r) && r.as_path() != root).cloned().collect();
+        let mut above: Vec<PathBuf> = self.stored_roots.iter().filter(|r| under(root, r) && r.as_path() != root).cloned().collect();
         above.sort_by_key(|r| r.as_os_str().len());
         let here = self.volume(root);
         above.into_iter().find(|r| here.is_some() && self.volume(r) == here).unwrap_or_else(|| root.to_path_buf())
@@ -913,7 +913,7 @@ impl Observer {
         for (i, (root, cursor)) in roots.iter().zip(cursors).enumerate() {
             // A root under another of `roots` with the same cursor (one ask gave both, `mark`: a corpus and its
             // `.git`, a `.git` named as the repository's own and its common one) is named in the other's answer.
-            let covered = roots.iter().zip(cursors).enumerate().any(|(j, (r, c))| c == cursor && under(&root, r) && (r != root || j < i));
+            let covered = roots.iter().zip(cursors).enumerate().any(|(j, (r, c))| c == cursor && under(root, r) && (r != root || j < i));
             if covered {
                 continue;
             }
@@ -960,10 +960,10 @@ impl Observer {
     /// store has a cursor for), else its directory, which a later run then trusts. So every path read is under a
     /// root, and asked of the journal once a run.
     fn watch_above(&mut self, path: &Path) {
-        if self.db.is_none() || self.roots.iter().any(|r| r.asked == self.flushes && under(&path, &r.path)) {
+        if self.db.is_none() || self.roots.iter().any(|r| r.asked == self.flushes && under(path, &r.path)) {
             return;
         }
-        let root = match self.stored_roots.iter().filter(|r| under(&path, r)).min_by_key(|r| r.as_os_str().len()) {
+        let root = match self.stored_roots.iter().filter(|r| under(path, r)).min_by_key(|r| r.as_os_str().len()) {
             Some(r) => r.clone(),
             None => match path.parent() {
                 Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
@@ -1489,7 +1489,7 @@ pub fn own(path: &Path) {
 /// `path` absolute, and with its directory's canonical form (the journal names paths by their real names).
 fn spellings(path: &Path) -> Vec<PathBuf> {
     let abs = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().unwrap_or_default().join(path) };
-    let real = abs.parent().zip(abs.file_name()).and_then(|(dir, name)| Some(dunce::canonicalize(&dir).ok()?.join(name)));
+    let real = abs.parent().zip(abs.file_name()).and_then(|(dir, name)| Some(dunce::canonicalize(dir).ok()?.join(name)));
     std::iter::once(abs.clone()).chain(real.filter(|r| *r != abs)).collect()
 }
 
@@ -1565,7 +1565,8 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
     let mut db = Connection::open(path)?;
     db.busy_timeout(std::time::Duration::from_secs(10))?;
     // The roots, by volume: (key, root, its directory's real path, cursor).
-    let mut roots: Vec<(String, String, PathBuf, Option<PathBuf>, Option<u64>)> = {
+    type Root = (String, String, PathBuf, Option<PathBuf>, Option<u64>);
+    let mut roots: Vec<Root> = {
         let mut st = db.prepare("SELECT key, value FROM observer_meta WHERE key LIKE 'journal:%'")?;
         st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, rusqlite::types::Value>(1)?)))?
             .flatten()
@@ -1579,7 +1580,7 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
             .collect()
     };
     // Newest cursor first: of two names of one directory, the first is kept.
-    roots.sort_by(|a, b| b.4.cmp(&a.4));
+    roots.sort_by_key(|r| std::cmp::Reverse(r.4));
     let mut kept: Vec<(String, PathBuf, PathBuf)> = Vec::new();
     let mut dropped: Vec<String> = Vec::new();
     for (key, volume, root, real, _) in &roots {
@@ -1621,7 +1622,7 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
                 // before they did.
                 if key.starts_with(CUTOFF) || PLANNED.iter().any(|p| key.starts_with(p)) {
                     let lists = decode_lists(consulted).unwrap_or_default();
-                    return !lists.iter().flat_map(|l| l.chunks_exact(3)).filter(|c| c[0] == "plan" && c[1].is_empty()).filter_map(|c| unhex(&c[2])).any(|plan| live(&plan));
+                    return !lists.iter().flat_map(|l| l.as_chunks::<3>().0).filter(|c| c[0] == "plan" && c[1].is_empty()).filter_map(|c| unhex(&c[2])).any(|plan| live(&plan));
                 }
                 // A cutoff's record from before they were prefixed: its key alone, a digest.
                 key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit())

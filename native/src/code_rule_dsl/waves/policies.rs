@@ -190,7 +190,7 @@ fn shape(rule: &Rule) -> (Rule, Vec<Value>) {
         for arg in args {
             let value = match arg {
                 Term::Int(i) => Value::Int(*i),
-                Term::Str(s) => Value::Str(s.clone().into()),
+                Term::Str(s) => Value::Str(s.clone()),
                 other => {
                     term(other, rename);
                     continue;

@@ -99,7 +99,7 @@ fn expand_memberships(prog: &Program) -> Result<Option<Program>> {
         for l in &rule.body {
             match membership(l) {
                 Some((x, items, holds)) if matches!(vars.get(x.as_str()), Some(Domain::Kind | Domain::Field)) => {
-                    let cmp = |item: &Term, op| Literal::Cmp { l: Term::Var(x.clone().into()), op, r: item.clone() };
+                    let cmp = |item: &Term, op| Literal::Cmp { l: Term::Var(x.clone()), op, r: item.clone() };
                     if holds {
                         bodies = bodies.iter().flat_map(|b| items.iter().map(move |item| b.iter().cloned().chain([cmp(item, "=")]).collect())).collect();
                     } else {

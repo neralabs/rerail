@@ -171,8 +171,8 @@ fn render(
             } => {
                 let field = fields.next().expect("one binding per field");
                 let value = read(&field.value)?;
-                let width = field.width.as_ref().map(&read).transpose()?;
-                let precision = field.precision.as_ref().map(&read).transpose()?;
+                let width = field.width.as_ref().map(read).transpose()?;
+                let precision = field.precision.as_ref().map(read).transpose()?;
                 let debug = match spec.ty {
                     Trait::Display => false,
                     Trait::Debug => true,

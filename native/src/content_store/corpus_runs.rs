@@ -246,6 +246,9 @@ impl StatIndex {
     }
 }
 
+/// What gives a statistics blob with the store's ids (`queue_stat_blob_mapped`).
+pub type MapBlob = Box<dyn Fn(&ContentStore, &[u8]) -> StoreResult<Vec<u8>> + Send>;
+
 impl ContentStore {
     /// The stat index of `root`: entries whose mtime is over [`RACY_NS`] before their recording and whose source is
     /// still stored.
@@ -305,7 +308,7 @@ impl ContentStore {
 
     /// `queue_stat_blob` of statistics naming symbols: `map` gives the blob with the store's ids, in the writer's
     /// transaction (decision 0170).
-    pub fn queue_stat_blob_mapped(&self, plan: [u8; 32], blob: Vec<u8>, map: Box<dyn Fn(&ContentStore, &[u8]) -> StoreResult<Vec<u8>> + Send>) {
+    pub fn queue_stat_blob_mapped(&self, plan: [u8; 32], blob: Vec<u8>, map: MapBlob) {
         self.write_back_syms(super::write_back::Syms::Mapped, "the kept statistics", blob.len(), vec![(stat_blob_key(&plan), None)], Box::new(move |store| {
             let mapped = map(store, &blob)?;
             store.put_stat_blob(plan, &mapped)

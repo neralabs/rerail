@@ -154,8 +154,8 @@ impl Builder {
     fn entry(&mut self, name: &str, types: &[u8], mut rows: Vec<i64>, kind: u64) {
         let name = self.text(name);
         let k = types.len();
-        if k > 0 {
-            let mut order: Vec<usize> = (0..rows.len() / k).collect();
+        if let Some(count) = rows.len().checked_div(k) {
+            let mut order: Vec<usize> = (0..count).collect();
             order.sort_unstable_by(|&a, &b| rows[a * k..a * k + k].cmp(&rows[b * k..b * k + k]));
             order.dedup_by(|a, b| rows[*a * k..*a * k + k] == rows[*b * k..*b * k + k]);
             let n = order.len();
@@ -338,7 +338,7 @@ impl Builder {
         out[8..12].copy_from_slice(&FORMAT.to_le_bytes());
         out[12..16].copy_from_slice(&(REGIONS as u32).to_le_bytes());
         for (r, bytes) in w.iter().enumerate() {
-            while out.len() % 16 != 0 {
+            while !out.len().is_multiple_of(16) {
                 out.push(0);
             }
             let at = 16 + 24 * r;
@@ -348,7 +348,7 @@ impl Builder {
             out[at + 16..at + 24].copy_from_slice(&offset.to_le_bytes());
             out.extend_from_slice(bytes);
         }
-        while out.len() % 16 != 0 {
+        while !out.len().is_multiple_of(16) {
             out.push(0);
         }
         out
@@ -599,7 +599,7 @@ impl<'a> Rel<'a> {
         h.word(u64::from(t));
         match t {
             col::TEXT => h.word(seen.text(self.image, v as u32)),
-            col::NODE if v < -1 => match self.image.u64s(R::Places).chunks_exact(3).find(|p| p[0] as i64 == v) {
+            col::NODE if v < -1 => match self.image.u64s(R::Places).as_chunks::<3>().0.iter().find(|p| p[0] as i64 == v) {
                 Some(p) => {
                     h.word(seen.text(self.image, p[1] as u32));
                     h.word(p[2]);
@@ -695,7 +695,7 @@ impl Image {
     }
     fn at(buf: &std::sync::Arc<Backing>, at: usize, total: usize) -> Result<Image, String> {
         let all = &buf.bytes()[..total];
-        if all.as_ptr() as usize % 16 != 0 {
+        if !(all.as_ptr() as usize).is_multiple_of(16) {
             return Err(bad("an image not 16-byte aligned"));
         }
         let b = &all[at..];
@@ -739,7 +739,7 @@ impl Image {
         }
         let strings = ends.len() as u64;
         let (cols, types) = (self.i64s(R::Cols).len() as u64, self.u8s(R::Types).len() as u64);
-        for r in self.u64s(R::Rels).chunks_exact(REL_WORDS) {
+        for r in self.u64s(R::Rels).as_chunks::<REL_WORDS>().0 {
             let [name, width, rows, col_at, type_at, k] = [r[0], r[1], r[2], r[3], r[4], r[5]];
             if name >= strings || type_at + width > types || col_at + width * rows > cols {
                 return Err(bad("a relation out of bounds"));
@@ -748,7 +748,7 @@ impl Image {
                 return Err(bad(format!("a relation entry of kind {k}")));
             }
         }
-        for (i, r) in self.u64s(R::Rels).chunks_exact(REL_WORDS).enumerate() {
+        for (i, r) in self.u64s(R::Rels).as_chunks::<REL_WORDS>().0.iter().enumerate() {
             let rel = self.rel_at(i);
             for c in 0..rel.width {
                 match rel.types()[c] {
@@ -758,12 +758,12 @@ impl Image {
                 }
             }
         }
-        for d in self.u64s(R::Docs).chunks_exact(3) {
+        for d in self.u64s(R::Docs).as_chunks::<3>().0 {
             if d[1] != NONE && d[1] >= strings {
                 return Err(bad("a document's path"));
             }
         }
-        if self.u64s(R::Places).chunks_exact(3).any(|p| p[1] >= strings) {
+        if self.u64s(R::Places).as_chunks::<3>().0.iter().any(|p| p[1] >= strings) {
             return Err(bad("a place"));
         }
         Ok(())
@@ -818,7 +818,7 @@ impl Image {
     }
     /// The relations it holds an entry of, by name (a relation of both added and gone rows twice).
     pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.u64s(R::Rels).chunks_exact(REL_WORDS).map(|r| self.string(r[0] as u32))
+        self.u64s(R::Rels).as_chunks::<REL_WORDS>().0.iter().map(|r| self.string(r[0] as u32))
     }
     /// The relations it holds, with their names, in the order they were put.
     pub fn relations(&self) -> impl Iterator<Item = (&str, Rel<'_>)> {
@@ -1243,12 +1243,12 @@ impl Hash {
     }
     /// Bytes eight at a time, then their length.
     fn bytes(&mut self, b: &[u8]) {
-        let mut chunks = b.chunks_exact(8);
-        for c in &mut chunks {
-            self.word(u64::from_le_bytes(c.try_into().expect("eight bytes")));
+        let (chunks, rest) = b.as_chunks::<8>();
+        for c in chunks {
+            self.word(u64::from_le_bytes(*c));
         }
         let mut last = [0u8; 8];
-        last[..chunks.remainder().len()].copy_from_slice(chunks.remainder());
+        last[..rest.len()].copy_from_slice(rest);
         self.word(u64::from_le_bytes(last));
         self.word(b.len() as u64);
     }
@@ -1278,7 +1278,7 @@ pub fn write(dir: &Path, image: &[u8]) -> std::io::Result<()> {
     if overlay && below.is_empty() {
         return Err(std::io::Error::new(std::io::ErrorKind::NotFound, format!("{}: an overlay over no stack", dir.display())));
     }
-    let mut bytes: Vec<&[u8]> = below.first().map(|b| &b.buf.bytes()[..]).into_iter().collect();
+    let mut bytes: Vec<&[u8]> = below.first().map(|b| b.buf.bytes()).into_iter().collect();
     bytes.push(image);
     replace(dir, &bytes)
 }

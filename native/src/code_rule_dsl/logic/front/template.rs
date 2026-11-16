@@ -27,7 +27,7 @@ pub fn canonical(rule: &Rule, label: &dyn Fn(&str) -> Name, names_made: &Canonic
     fn term(t: &Term, name: &mut dyn FnMut(&str) -> Name) -> Term {
         match t {
             Term::Var(v) => Term::Var(name(v)),
-            Term::Call(f, args) => Term::Call(f.clone().into(), args.iter().map(|a| term(a, name)).collect()),
+            Term::Call(f, args) => Term::Call(f.clone(), args.iter().map(|a| term(a, name)).collect()),
             t => t.clone(),
         }
     }

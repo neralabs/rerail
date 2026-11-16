@@ -185,7 +185,7 @@ pub fn steps(db: &mut Database, emitted: &mut plan::emit::Emitted, program: &fro
     }
     let resolved = resolve(db, emitted, program, producers)?;
     let all_reads: Vec<Vec<String>> = resolved.iter().map(|(reads, _)| reads.clone()).collect();
-    let mut stratum = emitted.program.steps.iter().map(|s| s.stratum).max().unwrap_or(0);
+    let stratum = emitted.program.steps.iter().map(|s| s.stratum).max().unwrap_or(0);
     for (p, reads) in producers.iter().zip(&all_reads) {
         let decl = &program.decls[p.rel.as_str()];
         let below = downstream(program, producers, &all_reads, &p.rel);

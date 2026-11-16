@@ -450,7 +450,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             let bounds: Vec<Literal> = cols
                 .iter()
                 .filter_map(|&c| match inner.args.get(c) {
-                    Some(Term::Var(v)) => Some(Literal::Cmp { l: Term::Var(v.clone().into()), op: "<", r: Term::Int(bound_of(Some(c) == doc_col)) }),
+                    Some(Term::Var(v)) => Some(Literal::Cmp { l: Term::Var(v.clone()), op: "<", r: Term::Int(bound_of(Some(c) == doc_col)) }),
                     _ => None,
                 })
                 .collect();

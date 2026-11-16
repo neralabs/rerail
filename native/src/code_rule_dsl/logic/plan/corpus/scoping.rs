@@ -169,9 +169,9 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
             match l {
                 Literal::Atom(a) if !a.neg && !covers.contains(a.rel.as_str()) && !machinery(&a.rel) => {
                     let (docs, nodes, spans) = place(&a.rel);
-                    let dvs: Vec<String> = docs.iter().filter_map(|&c| var(a.args.get(c))).map(String::from).collect();
-                    let nvs: Vec<String> = nodes.iter().filter_map(|&c| var(a.args.get(c))).map(String::from).collect();
-                    let svs: Vec<String> = spans.iter().filter_map(|&c| var(a.args.get(c))).map(String::from).collect();
+                    let dvs: Vec<String> = docs.iter().filter_map(|&c| var(a.args.get(c))).collect();
+                    let nvs: Vec<String> = nodes.iter().filter_map(|&c| var(a.args.get(c))).collect();
+                    let svs: Vec<String> = spans.iter().filter_map(|&c| var(a.args.get(c))).collect();
                     let mut g = Vec::new();
                     if !derived.contains(a.rel.as_str()) {
                         // A base row is one document's: one guard, unless a location of it is covered.

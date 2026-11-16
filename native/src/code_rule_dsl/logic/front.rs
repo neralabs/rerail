@@ -526,7 +526,7 @@ pub fn parse(src: &str) -> Result<Program, Error> {
                 .iter()
                 .map(|a| match a {
                     Term::Int(n) => Ok(Value::Int(*n)),
-                    Term::Str(s) => Ok(Value::Str(s.clone().into())),
+                    Term::Str(s) => Ok(Value::Str(s.clone())),
                     other => Err(Error::Syntax(format!("fact {} has a non-constant {other:?}", head.rel))),
                 })
                 .collect::<Result<_, _>>()?;
@@ -640,7 +640,7 @@ fn order_nodes(prog: &mut Program) {
                         {
                             head_args.push(t.clone());
                             head_cols.push((format!("c{i}"), cols.get(i).map_or_else(|| "int".to_owned(), |(_, ty)| ty.to_string())));
-                            agg_args.push(Term::Var(v.clone().into()));
+                            agg_args.push(Term::Var(v.clone()));
                         }
                     }
                     let k = format!("rr_ord{fresh}");

@@ -66,7 +66,7 @@ fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &se
     added.hash(&mut h);
     h.update(options.to_string().as_bytes());
     h.update([0]);
-    h.update(dunce::canonicalize(&root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
+    h.update(dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
     h.update([0]);
     h.update(modes.as_bytes());
     h.update(format!("\0{typing:?}\0").as_bytes());
@@ -264,7 +264,7 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     // The documents the run read: the workspace's and those its requests loaded, each once. Phase 1 loads a
     // workspace document by its absolute path, which the run lists by its path from the root: counted twice, a warm
     // run of one file reported two.
-    let base = dunce::canonicalize(&root).unwrap_or_else(|_| root.to_path_buf());
+    let base = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let read: std::collections::BTreeSet<std::path::PathBuf> =
         rest.iter().filter(|c| (c.0 == "doc" && !c.2.is_empty()) || c.0 == "load").map(|c| base.join(&c.1)).collect();
     report.files = read.len();

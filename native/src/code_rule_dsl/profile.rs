@@ -37,6 +37,8 @@ fn describe_matcher(matcher: &AstMatcher, language: GrammarDialect) -> Value {
         }
         AstMatcher::Kind(kind) => json!({ "kind": kind.potential_kinds().map(|kinds|
             kinds.iter().map(|id| kind_name(id as u16)).collect::<Vec<_>>()) }),
+        AstMatcher::Supertype(supertype) => json!({ "supertype": kind_name(supertype.class), "kinds":
+            supertype.kinds.iter().map(|&id| kind_name(id)).collect::<Vec<_>>() }),
         AstMatcher::Regex(_) => json!({ "regex": true }),
         AstMatcher::Never => json!({ "never": true }),
         AstMatcher::TestUnknown(_) => json!({ "testUnknown": true }),

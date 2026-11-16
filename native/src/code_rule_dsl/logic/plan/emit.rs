@@ -143,7 +143,7 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
             && derived(rel)
             && prog.decls.contains_key(rel)
         {
-            model.stats.card.insert(rel.to_owned(), (*rows as f64).max(1.0));
+            model.stats.card.insert(rel, (*rows as f64).max(1.0));
         }
     }
     let relations: Vec<(String, usize)> = prog.decls.iter().filter(|(rel, _)| derived(rel)).map(|(rel, cols)| (rel.to_string(), cols.len())).collect();

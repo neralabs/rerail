@@ -2495,7 +2495,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             rows[r].first[usize::from(f) / 64] |= 1 << (f % 64);
         }
     }
-    let meets = row_modes(low, &token_rows, &rows, &states, &arms, &mark_kinds)?;
+    let meets = row_modes(low, token_rows, &rows, &states, &arms, &mark_kinds)?;
     // The totals are one flag (`BlockRun::totals`), tested once: `EMPTY 0`.
     let empties = 1;
     // The counts no value reads whose ups and downs are tokens' starts, each of tokens whose text
@@ -2756,7 +2756,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             };
             Some(crate::records::EndRule::Next(at as u16))
         };
-        for b in 0..256usize {
+        for (b, end) in ends.iter_mut().enumerate() {
             let these: Vec<usize> = (0..rows.len()).filter(|&r| rows[r].first[b / 64] >> (b % 64) & 1 == 1).collect();
             if these.is_empty() {
                 continue;
@@ -2815,7 +2815,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                         rules.len() - 1
                     }
                 };
-                ends[b] = u8::try_from(at).map_err(|_| "more than 256 end rules")?;
+                *end = u8::try_from(at).map_err(|_| "more than 256 end rules")?;
                 continue;
             }
             let ruled: Vec<Option<(bool, Val)>> = these.iter().map(|&r| low.token_rules.get(&token_rows[r].0).copied()).collect();
@@ -2852,7 +2852,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     rules.len() - 1
                 }
             };
-            ends[b] = u8::try_from(at).map_err(|_| "more than 256 end rules")?;
+            *end = u8::try_from(at).map_err(|_| "more than 256 end rules")?;
         }
     }
     // The bytes between tokens, the loop's (stage 2a): with end rules, every token's.

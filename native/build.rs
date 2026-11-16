@@ -55,7 +55,7 @@ fn check_compiler_cache() {
     // builds are outside the farm by design (AGENTS.md, "Relax: the live test loop").
     let relax = std::env::var_os("RELAX_STD").is_some()
         && (wrapper.is_empty() || Path::new(&wrapper).file_name().is_some_and(|n| n == "relax"));
-    if PathBuf::from(&wrapper) == farm || relax {
+    if wrapper == farm || relax {
         return;
     }
     panic!(

@@ -229,7 +229,7 @@ mod tests {
                         x ^= x << 13;
                         x ^= x >> 7;
                         x ^= x << 17;
-                        if x % 3 == 0 { (x >> 16) as u8 } else { alphabet[(x >> 8) as usize % alphabet.len()] }
+                        if x.is_multiple_of(3) { (x >> 16) as u8 } else { alphabet[(x >> 8) as usize % alphabet.len()] }
                     })
                     .collect();
                 let want = scalar(&src);

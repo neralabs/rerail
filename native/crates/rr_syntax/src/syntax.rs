@@ -844,7 +844,7 @@ impl<'s> Parser<'s> {
                 _ => Kind::Setting,
             };
             self.open(kind);
-            match tape::directive(&d).filter(|_| kind != Kind::Setting) {
+            match tape::directive(d).filter(|_| kind != Kind::Setting) {
                 // A directive's `.word` is implied by its kind, but `.input` and `.output`, which share one.
                 // Under a kind whose tail may hold any punctuation (a declaration's, a functor's
                 // modifiers), a `.` is not implied anywhere: its `.` is stored, its word implied.
@@ -1454,7 +1454,7 @@ impl<'s> Parser<'s> {
                 self.close();
                 return Ok(Term::Call { name, functor: true, args });
             }
-            Tok::Id(s) if s == "_" => (Term::Wild, Kind::Wildcard),
+            Tok::Id("_") => (Term::Wild, Kind::Wildcard),
             Tok::Id(s) if s == "count" && self.is_p_at(1, ":") => return self.aggregate(s.to_owned()),
             // `min (a, b)`: a call, unless a `:` follows the parentheses (`min (a + b) : { … }`).
             Tok::Id(s) if matches!(s, "min" | "max" | "sum" | "product" | "mean" | "join") && self.is_p_at(1, "(") => return self.call_or_aggregate(s.to_owned()),

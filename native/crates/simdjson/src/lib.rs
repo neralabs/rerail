@@ -428,6 +428,7 @@ mod tests {
 
     /// The kernel a measurement runs: `RERAIL_SIMDJSON_KERNEL` (its `Kernel` name, as `Haswell`), else the
     /// fastest this CPU runs.
+    #[allow(dead_code, reason = "the kernel choice of the measurements, which run by hand (none is in the suite now)")]
     fn kernel_under_test() -> Kernel {
         match std::env::var("RERAIL_SIMDJSON_KERNEL") {
             Ok(name) => *Kernel::ALL.iter().find(|k| format!("{k:?}") == name).expect("a kernel's name"),

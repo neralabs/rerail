@@ -492,7 +492,7 @@ impl SegmentMap {
         }
         let mut segments = Vec::with_capacity(bytes.len() / SEGMENT_BYTES);
         let mut previous = 0u32;
-        for chunk in bytes.chunks_exact(SEGMENT_BYTES) {
+        for chunk in bytes.as_chunks::<SEGMENT_BYTES>().0 {
             let word = |index: usize| {
                 u32::from_le_bytes(chunk[index * 4..index * 4 + 4].try_into().expect("u32"))
             };

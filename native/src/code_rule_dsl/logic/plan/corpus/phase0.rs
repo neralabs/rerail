@@ -179,7 +179,7 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
 /// runs, most of its time spent waiting on the pool. A file that does not canonicalize, or a run that fails, is left
 /// to its read, which derives its graph again and reports the error.
 pub fn keep_files<'p>(paths: impl IntoIterator<Item = &'p std::path::PathBuf>) {
-    let seeds: Vec<Seed> = paths.into_iter().filter_map(|p| dunce::canonicalize(&p).ok()).map(Seed::File).collect();
+    let seeds: Vec<Seed> = paths.into_iter().filter_map(|p| dunce::canonicalize(p).ok()).map(Seed::File).collect();
     let _ = graphs(&seeds);
 }
 
@@ -219,7 +219,7 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph) -> bool {
 /// (an included module's `#include "python/env.rr"`, read as missing). The canonical path where the file is there,
 /// else the candidate in the platform's separators.
 pub fn module_path(candidate: &str) -> PathBuf {
-    dunce::canonicalize(&candidate).unwrap_or_else(|_| PathBuf::from(in_separators(candidate, std::path::MAIN_SEPARATOR)))
+    dunce::canonicalize(candidate).unwrap_or_else(|_| PathBuf::from(in_separators(candidate, std::path::MAIN_SEPARATOR)))
 }
 
 /// `path` with its `/` separators written as `separator`, as a canonical path on that platform spells them.

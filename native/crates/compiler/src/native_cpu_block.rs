@@ -2907,7 +2907,6 @@ impl Reads<'_> {
 /// first word; a run or a search past it goes on a word at a time, in a cold block. A search
 /// that finds no last gives `s - 1`, which the order check refuses.
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, rd: &Reads<'_>, c: &FileCols, s: Value, raw: Value, entry: Value, limit: Option<Limit>, regs: Option<&BlockRegs>, mode: RuleMode, side: Side, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Vec<(Side, cranelift_codegen::ir::Block)>, Option<cranelift_codegen::ir::Block>) {
     use crate::records::EndRule;
     // The exits: one; or the rare starts' (`Side::Rare`), one a class of how their tokens end
@@ -3843,9 +3842,9 @@ pub fn set_nibbles(set: &[bool; 256]) -> Option<[[u8; 16]; 2]> {
         n[1][h] = 1 << g;
     }
     for (g, &lows) in groups.iter().enumerate() {
-        for l in 0..16 {
+        for (l, nl) in n[0].iter_mut().enumerate().take(16) {
             if lows >> l & 1 == 1 {
-                n[0][l] |= 1 << g;
+                *nl |= 1 << g;
             }
         }
     }
@@ -4152,7 +4151,6 @@ fn always_hits<'t>(tests: impl Iterator<Item = &'t crate::records::TokenCheck>) 
 /// (`records::check_holds`), then on to `done` with the last and the refusal (a sign bit). A
 /// count is the mask's bits over the token's words, a word at a time; a run, the mask's first
 /// `least` bits from `s` compared at once, from one word or two.
-#[allow(clippy::too_many_arguments)]
 ///
 /// `pre`: outputs' bits from `s + 1` on, 16 of them, from the run's own window (`run_tests`):
 /// a count of one of them over a token of 16 bytes at most is its bits below the token's
@@ -6169,7 +6167,6 @@ fn general_signature(module: &JITModule) -> cranelift_codegen::ir::Signature {
 /// the general body (`general`), built into `general_context`. Gives whether the full body
 /// branches on ASCII, the gated regions' branches and the fixed points' loops.
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn forward(context: &mut Context, general_context: &mut Context, outlined: (cranelift_module::FuncId, cranelift_codegen::ir::Signature), module: &mut JITModule, name: &str, native: &BlockNative, slot_of: &[u16], slots: u16, hot: &mut Vec<cranelift_codegen::ir::Block>, records: Option<(&crate::records::Records, &RecordTables, usize)>, made: &BlockNative) -> Result<(bool, usize, usize, Vec<(cranelift_module::FuncId, cranelift_codegen::ir::Function)>, Vec<(usize, usize)>, usize), Error> {
     // The outputs the token loop makes from the bytes (`native_cpu_bytes`), from the program
     // before its CPU form.
@@ -6764,11 +6761,10 @@ pub fn calls_of(func: &cranelift_codegen::ir::Function) -> Vec<u32> {
     }
     for b in func.layout.blocks().filter(|b| reached.contains(b)) {
         for inst in func.layout.block_insts(b) {
-            if let cranelift_codegen::ir::InstructionData::Call { func_ref, .. } = func.dfg.insts[inst] {
-                if let cranelift_codegen::ir::ExternalName::User(r) = func.dfg.ext_funcs[func_ref].name {
+            if let cranelift_codegen::ir::InstructionData::Call { func_ref, .. } = func.dfg.insts[inst]
+                && let cranelift_codegen::ir::ExternalName::User(r) = func.dfg.ext_funcs[func_ref].name {
                     v.push(func.params.user_named_funcs()[r].index);
                 }
-            }
         }
     }
     v

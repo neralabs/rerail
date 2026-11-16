@@ -73,7 +73,7 @@ struct Held {
 
 thread_local! {
     /// The kept splits of the run under way on this thread (`own`); `None` outside a run, where a split keeps nothing.
-    static SPLITS: std::cell::RefCell<Option<Splits>> = std::cell::RefCell::new(None);
+    static SPLITS: std::cell::RefCell<Option<Splits>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Carries the run's kept splits to a job on another thread (`logic::run_state`).

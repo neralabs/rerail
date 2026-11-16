@@ -65,7 +65,7 @@ pub(super) fn covered_words(identity: &[u8; 32]) -> [i64; 2] {
 
 /// The identities `entry` holds (`COVERED`).
 pub(super) fn covered(entry: &Entry) -> HashSet<[i64; 2]> {
-    entry.rows.get(COVERED).map(|(_, v)| v.chunks_exact(2).map(|w| [w[0], w[1]]).collect()).unwrap_or_default()
+    entry.rows.get(COVERED).map(|(_, v)| v.as_chunks::<2>().0.iter().map(|w| [w[0], w[1]]).collect()).unwrap_or_default()
 }
 
 /// Whether `a` and `b` hold the same rows (exported or output) of relation `rel`, in any order.

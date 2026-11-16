@@ -249,7 +249,7 @@ pub(super) fn split(
     cross.natives.retain(|rel, _| kept(rel));
     cross.outputs.retain(|o| o != COMPONENT);
     let all = |_: &str| true;
-    let version = super::made_from(had, version.and_then(|v| v.part(&kept, &cross.inputs, &cross.outputs, PartFields { natives: &kept, lattice: &all, gates: &all }).ok()), "the components split off");
+    let version = super::made_from(had, version.and_then(|v| v.part(kept, &cross.inputs, &cross.outputs, PartFields { natives: &kept, lattice: &all, gates: &all }).ok()), "the components split off");
     // The plan: the engine, the grammars, the file-local part (what the exports are) and the cross-file part.
     let mut hash = Sha256::new();
     hash.update(SCHEMA.as_bytes());

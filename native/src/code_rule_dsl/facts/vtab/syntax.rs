@@ -335,7 +335,7 @@ pub fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::ast::Pr
                 let Literal::Atom(text) = &twin.body[i] else { continue };
                 let v = text.args[0].clone();
                 let t = match &text.args[1] {
-                    Term::Var(t) if t != "_" => Term::Var(t.clone().into()),
+                    Term::Var(t) if t != "_" => Term::Var(t.clone()),
                     _ => {
                         fresh += 1;
                         Term::Var(format!("rr_long_text{fresh}_{bit}").into())
@@ -948,12 +948,9 @@ pub fn node_anchors(program: &crate::code_rule_dsl::logic::front::ast::Program, 
         let mut kinds: Vec<(String, String)> = Vec::new();
         let mut grounded: BTreeSet<String> = BTreeSet::new();
         for l in &r.body {
-            match l {
-                Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } => {
-                    edges.push((a.to_string(), b.to_string()));
-                    edges.push((b.to_string(), a.to_string()));
-                }
-                _ => {}
+            if let Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } = l {
+                edges.push((a.to_string(), b.to_string()));
+                edges.push((b.to_string(), a.to_string()));
             }
             let Some(a) = l.atom().filter(|a| !a.neg) else { continue };
             let rel = a.rel.as_str();

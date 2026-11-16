@@ -128,7 +128,7 @@ pub(in crate::code_rule_dsl) fn lookup_read(store: &ContentStore, key: &[u8; 32]
         read.push(file);
     }
     let Some([Value::Str(digest)]) = facts.get(PROGRAM).and_then(|rows| rows.first()).map(|r| r.as_slice()) else { return Ok(None) };
-    let Some(digest) = unhex(&digest) else { return Ok(None) };
+    let Some(digest) = unhex(digest) else { return Ok(None) };
     Ok(program_text::load(store, &digest, lists)?.map(|(program, _)| (program, read)))
 }
 

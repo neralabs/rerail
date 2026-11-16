@@ -10,7 +10,7 @@ pub fn ed25519_ok(public_key: &str, message: &str, signature: &str) -> bool {
         return false;
     }
     let mut bytes = [0u8; 32];
-    for (to, from) in bytes.iter_mut().zip(public_key.as_bytes().chunks_exact(2)) {
+    for (to, from) in bytes.iter_mut().zip(public_key.as_bytes().as_chunks::<2>().0) {
         let hex = |c: u8| match c {
             b'0'..=b'9' => Some(c - b'0'),
             b'a'..=b'f' => Some(c - b'a' + 10),

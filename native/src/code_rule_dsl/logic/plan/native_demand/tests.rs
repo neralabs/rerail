@@ -1,3 +1,4 @@
+#![allow(clippy::module_inception, reason = "the tests module's own `tests`, mounted where its crate hosts them")]
 use super::*;
 use crate::code_rule_dsl::logic::native::component;
 

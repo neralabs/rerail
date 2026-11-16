@@ -112,6 +112,9 @@ impl Default for Interner {
     }
 }
 
+/// A segment of pending atoms (`segment`): end offsets, bytes, each atom's (hash, id), and the id past its last.
+type Segment = (Vec<u8>, Vec<u8>, Vec<(u64, Sym)>, usize);
+
 impl Interner {
     /// The string of `s`, if this process holds it (pending, or of a segment it has read).
     pub fn str(&self, s: Sym) -> Option<&str> {
@@ -202,7 +205,7 @@ impl Interner {
     /// segment cut from all the atoms held then ran past it (PostHog: to 1,680,880 of a write to 1,676,444), the write
     /// recorded its end as `upto`, and the next took the store's end for another process's: a fork (0170) in a run
     /// that was the store's only writer.
-    fn segment(&self, from: usize, upto: usize, most: usize) -> (Vec<u8>, Vec<u8>, Vec<(u64, Sym)>, usize) {
+    fn segment(&self, from: usize, upto: usize, most: usize) -> Segment {
         let i = from - self.base();
         let start = if i == 0 { 0 } else { self.ends[i - 1] };
         let n = self.ends[i..].partition_point(|&end| (end - start) as usize <= most).max(1).min(self.ends.len() - i).min(upto - from);
@@ -273,8 +276,8 @@ impl Interner {
         // The atoms not held yet, as runs of consecutive ids.
         let mut run: Option<(Sym, Held)> = None;
         let mut runs = Vec::new();
-        for (k, end) in ends.chunks_exact(4).enumerate() {
-            let end = u32::from_le_bytes(end.try_into().expect("4 bytes")) as usize;
+        for (k, end) in ends.as_chunks::<4>().0.iter().enumerate() {
+            let end = u32::from_le_bytes(*end) as usize;
             let s = bytes.get(start..end).ok_or_else(|| corrupt("an end offset is out of order or past its bytes"))?;
             let s = std::str::from_utf8(s).map_err(|_| corrupt("a string is not UTF-8"))?;
             let id = first + k as Sym;
@@ -447,7 +450,10 @@ pub fn reserving(arena: &Arc<Atoms>) -> Reservation {
 
 /// A thread's reservation in progress (`reserving`): `end` gives what it made. It holds the reservation it was
 /// made inside, which goes on when it ends.
-pub struct Reservation(Option<(usize, Vec<(usize, Vec<Sym>)>)>);
+pub struct Reservation(Option<Reserving>);
+
+/// A reservation's arena (by address) and the ids it made, by component.
+type Reserving = (usize, Vec<(usize, Vec<Sym>)>);
 
 impl Reservation {
     pub fn end(mut self) -> Reserved {
@@ -475,6 +481,7 @@ impl Reserved {
         self.0.append(&mut more.0);
     }
 
+    #[allow(clippy::len_without_is_empty)] // emptiness is by arena (`Drop`), not by this count
     pub fn len(&self) -> usize {
         self.0.iter().map(|(_, ids)| ids.len()).sum()
     }
@@ -586,8 +593,8 @@ fn key_segments(connection: &Connection) -> StoreResult<()> {
         while let Some(row) = rows.next()? {
             let (first, ends, bytes): (i64, Vec<u8>, Vec<u8>) = (row.get(0)?, row.get(1)?, row.get(2)?);
             let mut start = 0usize;
-            for (k, end) in ends.chunks_exact(4).enumerate() {
-                let end = u32::from_le_bytes(end.try_into().expect("4 bytes")) as usize;
+            for (k, end) in ends.as_chunks::<4>().0.iter().enumerate() {
+                let end = u32::from_le_bytes(*end) as usize;
                 let s = bytes.get(start..end).and_then(|s| std::str::from_utf8(s).ok()).ok_or_else(|| StoreError::Corrupt(format!("atom segment {first}: a string is not UTF-8 or out of its bytes")))?;
                 keys.push((hash_str(s) as i64, first + k as i64));
                 start = end;
@@ -1089,8 +1096,8 @@ impl Atoms {
                                 let mut out = Vec::new();
                                 for (ends, bytes) in rows {
                                     let mut start = 0usize;
-                                    for e in ends.chunks_exact(4) {
-                                        let end = u32::from_le_bytes(e.try_into().expect("4 bytes")) as usize;
+                                    for e in ends.as_chunks::<4>().0.iter() {
+                                        let end = u32::from_le_bytes(*e) as usize;
                                         out.push(String::from_utf8_lossy(&bytes[start..end]).into_owned());
                                         start = end;
                                     }
@@ -1716,8 +1723,8 @@ pub fn materialize_stored(connection: &Connection) -> StoreResult<()> {
             }
             let (ends, bytes): (Vec<u8>, Vec<u8>) = (row.get(1)?, row.get(2)?);
             let mut start = 0usize;
-            for end in ends.chunks_exact(4) {
-                let end = u32::from_le_bytes(end.try_into().expect("4 bytes")) as usize;
+            for end in ends.as_chunks::<4>().0.iter() {
+                let end = u32::from_le_bytes(*end) as usize;
                 let s = bytes.get(start..end).and_then(|s| std::str::from_utf8(s).ok()).ok_or_else(|| StoreError::Corrupt("atom segment: a string is not UTF-8 or out of its bytes".to_owned()))?;
                 atoms.push(s.to_owned());
                 start = end;

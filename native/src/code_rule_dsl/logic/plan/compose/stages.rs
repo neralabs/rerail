@@ -16,7 +16,7 @@ pub(super) fn bind(p: &Placed, db: &Connection, inputs: &mut Inputs, rel: &str, 
     if inputs.given.is_none() { inputs.given = Some(Stats::read(db,p,inputs,false)?); }
     let stats = inputs.given.as_mut().unwrap();
     stats.measured(rel,vtab::syntax::statistics(source.as_ref()).into_iter().map(|(c,r,n,s,d)|(c,[r,n,s,d])),[]);
-    stats.card.insert(rel.to_owned(),source.len() as f64);
+    stats.card.insert(rel,source.len() as f64);
     if !vtab::replace_bound_source(db,rel,source.clone())? { connection::bind(db,rel,source)?; }
     Ok(())
 }
@@ -101,13 +101,10 @@ fn simplify(p: &mut Placed, db: &Connection, inputs: &mut Inputs, resident: &mut
             if scc.len()!=1 { continue; }
             let rel=scc.iter().next().unwrap();
             if f.is_input(rel) || f.native(rel).is_some() || f.has_facts(rel) { continue; }
-            if let Some(&[k]) = by_head.get(rel.as_str()).map(Vec::as_slice) {
-                if let Some((old,gone)) = survivors(&p.body(k),&scc,&native) {
-                    if empty.contains(&gone) {
-                        if let Some(held)=component::held(db,&old).filter(|h|h.none_stored()) { quiet.push((rel.clone(),held)); }
-                    }
-                }
-            }
+            if let Some(&[k]) = by_head.get(rel.as_str()).map(Vec::as_slice)
+                && let Some((old,gone)) = survivors(&p.body(k),scc,&native)
+                    && empty.contains(&gone)
+                        && let Some(held)=component::held(db,&old).filter(|h|h.none_stored()) { quiet.push((rel.clone(),held)); }
         }
         let rels: Vec<String> = quiet.iter().map(|(r,_)|r.clone()).collect();
         for (rel,held) in quiet {

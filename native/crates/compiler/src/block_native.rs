@@ -261,8 +261,8 @@ impl BlockNative {
                 }
             }
         }
-        for x in 0..insts.len() {
-            if keep[x] && (x < n || zero.is_some_and(|z| usize::from(z) == x)) {
+        for (x, &kept) in keep.iter().enumerate().take(insts.len()) {
+            if kept && (x < n || zero.is_some_and(|z| usize::from(z) == x)) {
                 place(x, &insts, &mut placed, &mut order);
             }
         }

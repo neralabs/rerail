@@ -547,7 +547,7 @@ impl Image {
             return Err(bad("rules"));
         }
         let decls = self.decl_count();
-        if !offsets(R::DeclCols, decls, self.u32s(R::Cols).len() / 2) || self.u32s(R::Cols).len() % 2 != 0 || self.u64s(R::DeclHash).len() != decls {
+        if !offsets(R::DeclCols, decls, self.u32s(R::Cols).len() / 2) || !self.u32s(R::Cols).len().is_multiple_of(2) || self.u64s(R::DeclHash).len() != decls {
             return Err(bad("declarations"));
         }
         let facts = self.fact_count();
@@ -811,7 +811,7 @@ impl Writer {
         out[8..12].copy_from_slice(&FORMAT.to_le_bytes());
         out[12..16].copy_from_slice(&(REGIONS as u32).to_le_bytes());
         for (r, bytes) in self.regions.iter().enumerate() {
-            while out.len() % 16 != 0 {
+            while !out.len().is_multiple_of(16) {
                 out.push(0);
             }
             let at = 16 + 24 * r;

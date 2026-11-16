@@ -719,7 +719,7 @@ impl FileImage {
             }
             let host_errors = stored
                 .host_errors
-                .chunks_exact(8)
+                .as_chunks::<8>().0.iter()
                 .map(|pair| {
                     (
                         u32::from_le_bytes(pair[..4].try_into().expect("u32 width")),

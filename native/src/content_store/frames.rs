@@ -55,7 +55,7 @@ fn encode_keys(keys: &[u64]) -> Vec<u8> {
 }
 
 fn decode_keys(data: &[u8]) -> Vec<u64> {
-    data.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().expect("8 bytes"))).collect()
+    data.as_chunks::<8>().0.iter().map(|c| u64::from_le_bytes(*c)).collect()
 }
 
 /// A relation as its frame names it: its name and its identity.
@@ -506,7 +506,7 @@ impl ContentStore {
     /// each identity reads the file's pages at random (1.5 s against 0.7 s, ep2). With a dev trace
     /// (`RERAIL_FRAMES_TRACE`), the identities of the space's frames left out, so a read of one names a reader the set
     /// missed (`read_frame_parts_from`).
-    fn read_cross_space(&self, cross: &CrossSpace<'_>) -> StoreResult<(HashMap<(Rel, i64), Arc<Admitted>>, Option<HashSet<Rel>>)> {
+    fn read_cross_space(&self, cross: &CrossSpace<'_>) -> StoreResult<(Held, Option<HashSet<Rel>>)> {
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let space = cross.space;
         let atoms = self.atoms_handle();
@@ -794,7 +794,7 @@ impl ContentStore {
     fn queue_encoded_as(&self, space: [u8; 32], frames: Vec<Encoded>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, used: Option<Used>, syms: super::write_back::Syms) {
         // Each delta after its relation's frame as it is now (in memory, queued or stored).
         let mut delta_frames: Vec<Encoded> = Vec::new();
-        let mut heads: Vec<(Rel, u64, Vec<(String, u64)>)> = Vec::new();
+        let mut heads: Vec<Head> = Vec::new();
         // A relation's deltas queued in this call so far (two of one relation follow each other).
         let mut composed: Vec<(Rel, Arc<Admitted>)> = Vec::new();
         for d in deltas {
@@ -967,7 +967,7 @@ impl ContentStore {
     /// Writes encoded `rows` into `space` (each replacing its frame; the last `deltas` of them delta frames), with
     /// `retags`, the deltas' `heads`, and `gone` forgotten, in one transaction; with `used`, as `keep_frames`.
     #[allow(clippy::too_many_arguments)]
-    fn write_frames(&self, space: &[u8; 32], rows: &[Framed], deltas: usize, retags: &[Retag], heads: &[(Rel, u64, Vec<(String, u64)>)], gone: &[(Rel, i64)], used: Option<(&[Rel], u64, [u8; 32])>) -> StoreResult<()> {
+    fn write_frames(&self, space: &[u8; 32], rows: &[Framed], deltas: usize, retags: &[Retag], heads: &[Head], gone: &[(Rel, i64)], used: Option<(&[Rel], u64, [u8; 32])>) -> StoreResult<()> {
         let timed = std::env::var_os("RERAIL_WRITES").is_some();
         self.immediate_transaction_once(|t| {
             let mut at = std::time::Instant::now();
@@ -1144,7 +1144,9 @@ pub(super) fn collect_unreachable_frames(t: &Connection) -> rusqlite::Result<Unr
     }
     out.memo = old + memo_pack::collect_memo_entries(t, &live, &contents)?;
     // The maintained spaces: each one's live programs' relations.
-    let rows: Vec<(Vec<u8>, Vec<u8>, i64, Vec<u8>)> = t
+    // Each row's relation, key, part and frame bytes.
+    type Row = (Vec<u8>, Vec<u8>, i64, Vec<u8>);
+    let rows: Vec<Row> = t
         .prepare("SELECT space, program, run, rels FROM frame_program_used")?
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
         .collect::<Result<_, _>>()?;
@@ -1229,7 +1231,7 @@ fn encode_confirmed(map: &HashMap<u64, u64>) -> Vec<u8> {
 }
 
 fn decode_confirmed(bytes: &[u8]) -> HashMap<u64, u64> {
-    bytes.chunks_exact(16).map(|c| (u64::from_le_bytes(c[..8].try_into().expect("8 bytes")), u64::from_le_bytes(c[8..].try_into().expect("8 bytes")))).collect()
+    bytes.as_chunks::<16>().0.iter().map(|c| (u64::from_le_bytes(c[..8].try_into().expect("8 bytes")), u64::from_le_bytes(c[8..].try_into().expect("8 bytes")))).collect()
 }
 
 /// A frame encoded to be queued (`Put::encoded`, `queue_encoded`): the queue, the snapshot and the writer share it.
@@ -1596,7 +1598,7 @@ mod tests {
             let (release, blocked) = std::sync::mpsc::channel::<()>();
             store.write_back("test gate", 0, vec![], Box::new(move |_| { blocked.recv().unwrap(); Ok(()) }));
             store.queue_frames([1; 32], vec![put()], vec![], None);
-            let queued = store.admit_frames(&[1; 32], &[r.clone()], 3).unwrap();
+            let queued = store.admit_frames(&[1; 32], std::slice::from_ref(&r), 3).unwrap();
             assert_eq!(queued[&r].rows().unwrap().rows, values, "queued: read from its encoded bytes");
             assert_eq!(queued[&r].encoded_bytes(), encoded);
             release.send(()).unwrap();

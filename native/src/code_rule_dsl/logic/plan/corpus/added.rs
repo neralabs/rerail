@@ -56,6 +56,7 @@ impl Added {
     }
 
     /// The rows into a key: each relation, its row count, and each value by its type.
+    #[allow(clippy::should_implement_trait, reason = "hashes into a SHA-256 digest (a key), not `std::hash::Hash`")]
     pub fn hash(&self, h: &mut impl sha2::Digest) {
         h.update(b"added\0");
         for (rel, rows) in &self.0 {

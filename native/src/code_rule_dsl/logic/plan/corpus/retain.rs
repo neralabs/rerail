@@ -383,7 +383,7 @@ impl Cut {
                 }
             }
             let outputs: Vec<String> = v.outputs().map(|a| v.text(a)).filter(|o| dirty(o)).map(str::to_owned).collect();
-            let part = super::made_from(true, v.part(&dirty, &inputs, &outputs, PartFields { natives: &dirty, lattice: &all, gates }).ok(), "the session's cut");
+            let part = super::made_from(true, v.part(dirty, &inputs, &outputs, PartFields { natives: &dirty, lattice: &all, gates }).ok(), "the session's cut");
             if let Some(part) = part {
                 return lower::Lowered { program: lower::Tree::of(part.clone()), version: Some(part), maint: None, domains: cross.domains.clone(), ops: cross.ops, dialect: cross.dialect };
             }
@@ -1442,7 +1442,7 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
         if got.types.len() != 3 || got.rows.len() != got.n * 3 {
             return Ok(Err(format!("{rel}: its documents' frame is not three columns a row")));
         }
-        let docs: DocDigests = got.rows.chunks_exact(3).map(|r| (r[0], (r[1] as u64, r[2] as u64))).collect();
+        let docs: DocDigests = got.rows.as_chunks::<3>().0.iter().map(|r| (r[0], (r[1] as u64, r[2] as u64))).collect();
         let at = &stored[frame];
         if docs.len() != got.n || digest_of_docs(&docs) != at.digest {
             return Ok(Err(format!("{rel}: its documents' frame does not match its digest")));
@@ -1550,7 +1550,7 @@ impl Retained {
         }
         let all: Vec<FrameRel> = names.values().cloned().collect();
         let stored = store.frames(&space, &all, DOCS_PART).map_err(|e| Error::Plan(e.to_string()))?;
-        Self::from_frame_snapshot(store, space, key, prog, &leaves, &sccs, names, stored, bound)
+        Self::from_frame_snapshot(store, space, key, prog, &leaves, sccs, names, stored, bound)
     }
 
     fn empty_frames(key: [u8; 32], mut frames: InFrames) -> Self {
@@ -1579,7 +1579,7 @@ impl Retained {
             let at = &stored[frame];
             let Ok(rows) = admitted[frame].rows() else { return Ok(Self::empty_frames(key, frames)); };
             if rows.types.len() != 3 || rows.rows.len() != rows.n * 3 { return Ok(Self::empty_frames(key, frames)); }
-            let docs: DocDigests = rows.rows.chunks_exact(3).map(|r| (r[0], (r[1] as u64, r[2] as u64))).collect();
+            let docs: DocDigests = rows.rows.as_chunks::<3>().0.iter().map(|r| (r[0], (r[1] as u64, r[2] as u64))).collect();
             // A relation of no columns is its count (`write_frames`): one entry, its digest the input's.
             let counted = f.arity(&frame.name) == Some(0) && rows.n == 1;
             if docs.len() != rows.n || (!counted && digest_of_docs(&docs) != at.digest) { return Ok(Self::empty_frames(key, frames)); }
@@ -1606,7 +1606,7 @@ impl Retained {
             let current: Option<Vec<FrameStored>> = scc.iter().map(|rel| {
                 let n = frames.names.get(rel)?;
                 let at = stored.get(n)?;
-                let now: Vec<(String, u64)> = at.reads.iter().map(|(read, _)| read_digest(read, &known, &derived, prog, &leaves).map(|d| (read.clone(), d))).collect::<Option<_>>()?;
+                let now: Vec<(String, u64)> = at.reads.iter().map(|(read, _)| read_digest(read, &known, &derived, prog, leaves).map(|d| (read.clone(), d))).collect::<Option<_>>()?;
                 if now == at.reads {
                     return Some(at.clone());
                 }
@@ -1619,7 +1619,7 @@ impl Retained {
                 }
             } else {
                 let reads: Vec<String> = all_reads.of_scc(scc).into_iter().filter(|r| !scc.contains(r)).collect();
-                if let Some(rd) = reads.iter().map(|r| read_digest(r, &known, &derived, prog, &leaves).map(|d| (r.clone(), d))).collect::<Option<Vec<_>>>() {
+                if let Some(rd) = reads.iter().map(|r| read_digest(r, &known, &derived, prog, leaves).map(|d| (r.clone(), d))).collect::<Option<Vec<_>>>() {
                     for rel in scc {
                         known.insert(rel.clone(), unkept_digest(rel, &rd));
                     }
@@ -1907,7 +1907,7 @@ impl Retained {
             let name = was.names.get(rel)?;
             let width = source.columns().len();
             let types = types_of(prog, domains, rel);
-            let cells = if types.len() == width { Cells::new(&atoms, &types) } else { Cells::plain(width) };
+            let cells = if types.len() == width { Cells::new(atoms, &types) } else { Cells::plain(width) };
             let digest = digests.get(rel).copied().unwrap_or_else(|| digest(source.as_ref(), &cells));
             if was.inputs.get(rel).is_some_and(|(d, _)| *d == digest) {
                 return Some((digest, puts, written));
@@ -1921,7 +1921,7 @@ impl Retained {
             }
             let g = group_col(prog, locations, rel).min(width - 1);
             let atom_owner = types.len() == width && atom_owners(&types, g);
-            let owners = atom_owner.then_some(&*atoms);
+            let owners = atom_owner.then_some(atoms);
             let granule = |d: i64| granule(d, owners);
             let docs = input_docs.get(rel).cloned().filter(|d| digest_of_docs(d) == digest).unwrap_or_else(|| Arc::new(docs_of(source.as_ref(), g, &cells)));
             let old = was.inputs.get(rel).map(|(_, d)| Arc::clone(d));

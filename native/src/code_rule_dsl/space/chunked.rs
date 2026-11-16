@@ -148,13 +148,13 @@ impl View<'_> {
 /// Members in `words`. Four accumulators, so the counts vectorize.
 fn count(words: &[u64]) -> usize {
     let mut acc = [0u64; 4];
-    let mut chunks = words.chunks_exact(4);
-    for c in &mut chunks {
+    let (chunks, rest) = words.as_chunks::<4>();
+    for c in chunks {
         for i in 0..4 {
             acc[i] += u64::from(c[i].count_ones());
         }
     }
-    (acc.iter().sum::<u64>() + chunks.remainder().iter().map(|w| u64::from(w.count_ones())).sum::<u64>()) as usize
+    (acc.iter().sum::<u64>() + rest.iter().map(|w| u64::from(w.count_ones())).sum::<u64>()) as usize
 }
 
 /// `out &= other` (equal lengths), returning the members left.
@@ -1295,7 +1295,7 @@ impl Builder {
                     }
                     _ => {
                         le_u16s(payload, &mut u16s);
-                        for pair in u16s.chunks_exact(2) {
+                        for pair in u16s.as_chunks::<2>().0 {
                             let (s, l) = (pair[0], pair[1]);
                             let top = from | u32::from(l);
                             if s > l || top >= count {

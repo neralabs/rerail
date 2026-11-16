@@ -139,10 +139,13 @@ impl Map {
     }
 }
 
+/// A segment `fetch` read: its first id, its end offsets and its bytes.
+pub(super) type Fetched = (Sym, Vec<u8>, Vec<u8>);
+
 /// The store's segments holding `ids`, read in one statement: the segments' bounds first (a few hundred rows), then
 /// the ones holding an id, by their first ids. Each is sliced per string: decoding a whole segment (64 MB, 450,000
 /// atoms) for each string looked up held the write lock for seconds while every other process's writer waited.
-pub(super) fn fetch(connection: &Connection, ids: &[Sym]) -> StoreResult<Vec<(Sym, Vec<u8>, Vec<u8>)>> {
+pub(super) fn fetch(connection: &Connection, ids: &[Sym]) -> StoreResult<Vec<Fetched>> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }

@@ -589,8 +589,8 @@ fn merge_completion(
         // are evaluated again when next read.
         Some((w, codec, raw_length, frame)) => match decode(codec, raw_length, &frame).and_then(|b| decode_counts(&b)) {
             Ok(counts) => (
-                w.chunks_exact(8)
-                    .map(|c| u64::from_le_bytes(c.try_into().expect("eight bytes")))
+                w.as_chunks::<8>().0.iter()
+                    .map(|c| u64::from_le_bytes(*c))
                     .collect::<Vec<_>>(),
                 counts,
             ),

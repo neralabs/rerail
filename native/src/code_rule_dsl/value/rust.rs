@@ -53,7 +53,8 @@ pub fn literal<D: Doc>(node: &Node<'_, D>) -> RustValue {
             .and_then(|b| String::from_utf8(b).ok())
             .and_then(|s| {
                 let mut c = s.chars();
-                Some(RustValue::Char(c.next()?)).filter(|_| c.next().is_none())
+                let first = c.next()?;
+                c.next().is_none().then_some(RustValue::Char(first))
             })
             .unwrap_or(RustValue::Unknown),
         "string_literal" if text.starts_with('b') => quoted(&text, '"', true)

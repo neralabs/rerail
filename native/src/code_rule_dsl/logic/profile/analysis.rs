@@ -247,7 +247,8 @@ pub(super) fn analyze(i: &Input) -> Vec<Finding> {
     // made; a seed scan that a test narrows is not waste (a check that finds little scans what it must). Summed
     // over the head's plans and compared with the rows their last steps make. `frag_str` (t34's gun 10): 376
     // fragments crossed with every string, 4.2 M rows, all rejected by `@doc`.
-    let mut heads: std::collections::BTreeMap<String, (u64, u64, f64, Option<(&Join, u64)>)> = Default::default();
+    type Head<'a> = (u64, u64, f64, Option<(&'a Join, u64)>);
+    let mut heads: std::collections::BTreeMap<String, Head> = Default::default();
     for j in &i.joins {
         let n = j.steps.len();
         let peak = if n > 2 { j.steps[1..n - 1].iter().map(|s| s.1).max().unwrap_or(0) } else { 0 };

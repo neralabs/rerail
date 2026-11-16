@@ -40,7 +40,7 @@ pub struct Normalize {
 
 /// The rows of `r`'s stated facts in `v`, a sentinel's with its presence cell.
 fn rows_of(v: &Version, sentinel: &[bool], r: RelId) -> Vec<Vec<Cell>> {
-    let rows = v.facts(v.rel_atom(r)).map(|f| f.rows().map(|row| row.collect::<Vec<Cell>>()).collect()).unwrap_or_else(Vec::new);
+    let rows: Vec<Vec<Cell>> = v.facts(v.rel_atom(r)).map(|f| f.rows().map(|row| row.collect::<Vec<Cell>>()).collect()).unwrap_or_default();
     if sentinel[r.index()] { rows.into_iter().map(|row: Vec<Cell>| std::iter::once(Cell::Int(1)).chain(row).collect()).collect() } else { rows }
 }
 

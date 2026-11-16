@@ -70,7 +70,7 @@ impl Drop for Corpus {
 }
 
 fn rows(out: &Path) -> Vec<Vec<String>> {
-    let mut v: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "info").unwrap_or_default();
+    let mut v: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(out, "info").unwrap_or_default();
     v.sort();
     v
 }

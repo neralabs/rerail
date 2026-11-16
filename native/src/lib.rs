@@ -23,7 +23,7 @@ mod text_readers_guard_tests;
 mod code_rule_dsl;
 /// The engine's tools without Node (`rerail-engine dump` / `asm`).
 pub use code_rule_dsl::tools;
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 pub(crate) use code_rule_dsl::prof::purge_allocator_pages;
 pub use rerail_store::content_store;
 pub use rerail_w::git_ignore;

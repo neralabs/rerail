@@ -1685,19 +1685,19 @@ pub mod tests {
     fn a_strings_end_puts_no_start_back() {
         let c = crate::compiled().expect("compiles");
         let t = c.parser.tier1.records.as_ref().expect("the record pass");
-        for b in [b'"', b'`', b'/'] {
+        for b in *b"\"`/" {
             assert_eq!(t.end_at(b), rerail_compiler::native_cpu_block::TokenEnd::Plain, "{:?} ends plainly", b as char);
         }
-        for b in [b'0', b'7', b'#', b'a', b'('] {
+        for b in *b"07#a(" {
             assert_ne!(t.end_at(b), rerail_compiler::native_cpu_block::TokenEnd::Plain, "{:?} does not", b as char);
         }
         // A number's and `#include`'s last byte is no pair's first (`12.5`'s dot is no run's
         // last): the byte after is put back where it is a run byte alone, as the lean lexer's
         // number arm reads the word after it. A punctuation's can be a pair's first.
-        for b in [b'0', b'7', b'#'] {
+        for b in *b"07#" {
             assert_eq!(t.end_at(b), rerail_compiler::native_cpu_block::TokenEnd::Word, "{:?} ends with no pair's first byte", b as char);
         }
-        for b in [b'"', b'/', b'('] {
+        for b in *b"\"/(" {
             assert_ne!(t.end_at(b), rerail_compiler::native_cpu_block::TokenEnd::Word, "{:?} is not of the class", b as char);
         }
     }
@@ -2094,6 +2094,7 @@ pub mod tests {
     /// alike, with the token across a block's edge and longer than a block.
     #[test]
     fn a_numbers_checks_are_at_its_token() {
+        #[cfg(target_os = "macos")]
         use rerail_compiler::block;
         let c = crate::compiled().expect("compiles");
         let r = c.native.records.as_ref().expect("records");
@@ -2110,6 +2111,7 @@ pub mod tests {
             cases.push((format!("{head}a(1.{}.5).\n", "7".repeat(80)), false));
             cases.push((format!("{head}a(1.2.3).\n"), false));
         }
+        #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
         let refs: Vec<&[u8]> = cases.iter().map(|(s, _)| s.as_bytes()).collect();
         for (src, taken) in &cases {
             let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));

@@ -679,11 +679,10 @@ impl Bytewise<'_> {
             s
         };
         // A union of byte tests at one byte (`exact_at`), that byte the first: by its set whole.
-        if let Some(n) = exact_at(self.native, x).filter(|n| n.lo == n.hi && back - i64::from(n.lo) == at) {
-            if let Some(v) = decide(n.set) {
+        if let Some(n) = exact_at(self.native, x).filter(|n| n.lo == n.hi && back - i64::from(n.lo) == at)
+            && let Some(v) = decide(n.set) {
                 return Some(v);
             }
-        }
         match self.native.insts[x] {
             BlockInst::EqByte(c) if back == at => {
                 let mut s = [0u64; 4];
@@ -995,11 +994,10 @@ pub fn run_last_bytes(native: &BlockNative, o: u16) -> Option<[u64; 4]> {
     }
     let mut sure = [0u64; 4];
     for &t in &terms {
-        if alone(native, t) {
-            if let Some(n) = needs_at(native, t, &mut HashMap::new()).filter(|n| n.lo == -d && n.hi == -d) {
+        if alone(native, t)
+            && let Some(n) = needs_at(native, t, &mut HashMap::new()).filter(|n| n.lo == -d && n.hi == -d) {
                 sure = std::array::from_fn(|k| sure[k] | n.set[k]);
             }
-        }
     }
     let mut set = [0u64; 4];
     for &t in &terms {

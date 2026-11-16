@@ -51,6 +51,7 @@ structure! {
 
 /// Memory a block lives in that it does not map itself: a pooled slab, pinned for the GPU and recycled (the
 /// engine's pool, `rerail_accel::gpu::shared::lease_block`). It may hold an earlier block's bytes.
+#[allow(clippy::len_without_is_empty, reason = "a backing is never empty: at least a page (`Block::over`)")]
 pub trait Backing: Send + Sync {
     fn base(&self) -> *mut u8;
     fn len(&self) -> usize;
@@ -140,7 +141,7 @@ impl Block {
     /// slab's pages are the pool's); its owner gets it back when the block is dropped.
     pub fn over(kind: u32, backing: Box<dyn Backing>) -> Block {
         let (base, reserved) = (backing.base(), backing.len());
-        assert!(reserved >= PAGE && base as usize % 64 == 0, "a backing of at least a page, 64-byte aligned");
+        assert!(reserved >= PAGE && (base as usize).is_multiple_of(64), "a backing of at least a page, 64-byte aligned");
         unsafe { std::ptr::write_bytes(base, 0, size_of::<Header>()) };
         let b = Block::make(base, reserved, 0, None, true, Some(backing));
         b.init(kind);

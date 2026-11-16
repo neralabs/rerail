@@ -137,8 +137,8 @@ unsafe fn stage1<S: Simd8x64>(src: &[u8]) -> (Vec<Masks>, Option<usize>) {
         }
         m[WORD] &= !past;
         m[BLANK] &= !past;
-        for k in EOL..MASKS {
-            m[k] |= past;
+        for v in &mut m[EOL..MASKS] {
+            *v |= past;
         }
         out.push(m);
     }
@@ -258,7 +258,7 @@ mod tests {
                         x ^= x << 13;
                         x ^= x >> 7;
                         x ^= x << 17;
-                        if x % 3 == 0 { (x >> 16) as u8 } else { alphabet[(x >> 8) as usize % alphabet.len()] }
+                        if x.is_multiple_of(3) { (x >> 16) as u8 } else { alphabet[(x >> 8) as usize % alphabet.len()] }
                     })
                     .collect();
                 let want = scalar(&src);

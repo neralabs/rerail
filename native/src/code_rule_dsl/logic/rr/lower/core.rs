@@ -98,7 +98,7 @@ fn definition(rel: &str) -> (&'static [&'static str], Vec<Literal>) {
 fn substitute(t: &Term, map: &BTreeMap<String, Term>) -> Term {
     match t {
         Term::Var(v) => map.get(v.as_str()).cloned().unwrap_or_else(|| t.clone()),
-        Term::Call(f, args) => Term::Call(f.clone().into(), args.iter().map(|a| substitute(a, map)).collect()),
+        Term::Call(f, args) => Term::Call(f.clone(), args.iter().map(|a| substitute(a, map)).collect()),
         t => t.clone(),
     }
 }

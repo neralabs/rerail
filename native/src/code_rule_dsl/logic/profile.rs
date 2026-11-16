@@ -1635,7 +1635,7 @@ pub fn strict_on_every_connection() {
         // SAFETY: SQLite calls this with a connection it has just opened.
         unsafe {
             if strict() {
-                ffi::sqlite3_trace_v2(db, ffi::SQLITE_TRACE_STMT as u32, Some(trace), std::ptr::null_mut());
+                ffi::sqlite3_trace_v2(db, ffi::SQLITE_TRACE_STMT, Some(trace), std::ptr::null_mut());
             }
             // A connection that sets a commit hook of its own (the store's, for its atoms) calls `warm_commit` there.
             if warm() {

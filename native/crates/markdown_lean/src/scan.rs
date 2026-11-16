@@ -394,9 +394,7 @@ impl<'s> Scanner<'s> {
             extra = extra.wrapping_add(self.v.indentation);
             self.v.indentation = 0;
         } else {
-            let temp = self.v.indentation;
-            self.v.indentation = extra;
-            extra = temp;
+            std::mem::swap(&mut self.v.indentation, &mut extra);
         }
         if !self.simulate {
             self.push_block(LIST_ITEM.wrapping_add(extra).wrapping_add(digits));

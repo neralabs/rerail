@@ -9,6 +9,8 @@
 // signatures and tuple types are the sources' own.
 #![allow(clippy::len_without_is_empty, clippy::result_unit_err, clippy::new_without_default)]
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
+// The mounts' `#[path]`s name the directories of the Metal modules they hold, which only macOS builds.
+#![cfg_attr(not(target_os = "macos"), allow(unused_attributes))]
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;

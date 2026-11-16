@@ -1124,8 +1124,8 @@ pub fn assemble(
         use crate::code_rule_dsl::logic::program_image::PartFields;
         let local_rule = |rel: &str| is_local(rel) || constants.contains(rel);
         let not_local = |rel: &str| !is_local(rel);
-        let local = v.part(&local_rule, &l_inputs, &l_outputs, PartFields { natives: &is_local, lattice: &is_local, gates: &is_local }).ok()?;
-        let cross = v.part(&in_cross, &c_inputs, &c_outputs, PartFields { natives: &in_cross, lattice: &not_local, gates: &not_local }).ok()?;
+        let local = v.part(local_rule, &l_inputs, &l_outputs, PartFields { natives: &is_local, lattice: &is_local, gates: &is_local }).ok()?;
+        let cross = v.part(in_cross, &c_inputs, &c_outputs, PartFields { natives: &in_cross, lattice: &not_local, gates: &not_local }).ok()?;
         Some(Parts { local, cross })
     });
     // Each part's tree is its version's where it has one, decoded where a reader asks (`lower::Tree::of`, decision
@@ -1608,8 +1608,7 @@ pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::program_image::Versio
         let source = |a: AtomRef<'_>, tainted: &BTreeSet<String>| !a.neg() && !key.contains_key(name(a)) && (tainted.contains(name(a)) || (is_base(name(a)) && reaches_nodes(name(a))));
         for native in &natives {
             for r in native.reads.iter().map(|r| v.rel_name(*r)) {
-                if key.contains_key(r) && semi.remove(&root(r)) {
-                }
+                if key.contains_key(r) { semi.remove(&root(r)); }
                 if tainted.contains(r) || (is_base(r) && reaches_nodes(r)) || key.contains_key(r) {
                     tainted.insert(v.rel_name(native.rel).to_owned());
                 }
@@ -1650,8 +1649,7 @@ pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::program_image::Versio
                 tainted.insert(name(head).to_owned());
             }
         }
-        if outputs.iter().any(|o| tainted.contains(*o)) && semi.remove("node") {
-        }
+        if outputs.iter().any(|o| tainted.contains(*o)) { semi.remove("node"); }
         if semi.len() == semi_before && tainted.len() == tainted_before {
             break;
         }
@@ -1687,7 +1685,7 @@ fn descends(atoms: &[&crate::code_rule_dsl::logic::front::Atom]) -> bool {
     use crate::code_rule_dsl::logic::front::Term;
     let attribute = |rel: &str| matches!(rel, "docof" | "line" | "end_line" | "col" | "visit_index" | "node_order" | "ast_depth");
     atoms.iter().any(|w| match (w.rel.as_str(), w.args.as_slice()) {
-        ("within", [Term::Var(n), a]) if a != &Term::Var(n.clone().into()) => atoms
+        ("within", [Term::Var(n), a]) if a != &Term::Var(n.clone()) => atoms
             .iter()
             .filter(|b| !std::ptr::eq(**b, *w) && b.args.iter().any(|t| matches!(t, Term::Var(x) if x == n)))
             .all(|b| attribute(&b.rel)),
@@ -1805,7 +1803,7 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                 // twin's, decision 0109) goes with it: only the chunk's batch holds the node's text, so the read is
                 // answered there and its value handed on. Left to the cross part, it read no batch, or the last
                 // chunk's (0254 §2). Such a component is pushed whatever else would leave it (decision 0292 §3).
-                let node_reads: Vec<String> = rule.body.iter().filter_map(|l| node_read(l)).filter(|(_, v)| vars.contains(v)).map(|(x, _)| x).collect();
+                let node_reads: Vec<String> = rule.body.iter().filter_map(node_read).filter(|(_, v)| vars.contains(v)).map(|(x, _)| x).collect();
                 vars.extend(node_reads.iter().cloned());
                 let must = !node_reads.is_empty();
                 // A join of file-local relations alone is pushed too: exported, each would be held whole by the

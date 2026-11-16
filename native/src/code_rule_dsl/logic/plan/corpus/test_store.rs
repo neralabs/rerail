@@ -227,7 +227,7 @@ pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run
     // runs read the named store.
     let mine = super::TEST_TAPE_CACHE
         .with(|p| p.borrow().clone())
-        .or_else(|| handed())
+        .or_else(handed)
         .or_else(|| (named && !super::names_its_store()).then(|| OWN.with(|own| own.get_or_init(copy).path.clone())));
     c.part(&["OWN", "HANDED"], crate::code_rule_dsl::logic::run_state::Shared(mine, hand));
 }

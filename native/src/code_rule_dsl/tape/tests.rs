@@ -3,6 +3,12 @@ use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use ast_grep_core::AstGrep;
 use ast_grep_core::tree_sitter::StrDoc;
 
+/// A parse-cost measurement's step: its name, and what it does to a file (its count, kept from being optimized away).
+type CostStep<'a> = (&'static str, Box<dyn Fn(&str) -> usize + 'a>);
+
+/// A step bound to the measured files.
+type CostPass<'a> = (&'static str, Box<dyn Fn() -> usize + 'a>);
+
 /// The engine's own parsers against tree-sitter over repositories and suites (`lean_parsers_survey`).
 mod survey;
 
@@ -1916,7 +1922,7 @@ fn rr_parse_costs() {
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     #[allow(clippy::type_complexity)]
-    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+    let steps: Vec<CostStep<'_>> = vec![
         ("lean: rows", Box::new(|f| rerail_rr_syntax::tape(f).len())),
         ("lean: the tape (the engine's path)", Box::new(|f| usize::from(std::hint::black_box(TapeImage::encode_rr(&grammar, f, &|| false)).is_ok()))),
         ("bitlex: rows (tiers 1 and 2, JIT)", Box::new(|f| rr_parser::compiled_tape(f).unwrap().len())),
@@ -2333,7 +2339,7 @@ fn json_parse_costs() {
     let nodes: usize = files.iter().map(|f| rerail_simdjson::tape(f.as_bytes(), kinds).unwrap().node_count()).sum();
     let kernel = rerail_simdjson::Kernel::best().expect("a kernel this CPU runs");
     let product = tree_parser(GrammarDialect::Json).expect("JSON's parser");
-    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+    let steps: Vec<CostStep<'_>> = vec![
         ("simdjson: stage 1 alone", Box::new(|f| kernel.stage1(f.as_bytes(), false) as usize)),
         ("simdjson: stage 1, SHA-256 in it", Box::new(|f| kernel.stage1(f.as_bytes(), true) as usize)),
         ("simdjson: parse and index", Box::new(|f| rerail_simdjson::structurals(f.as_bytes(), <[u32]>::len).unwrap())),
@@ -2901,7 +2907,7 @@ fn python_parse_costs() {
     let nodes: usize = files.iter().map(|f| python_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
-    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+    let steps: Vec<CostStep<'_>> = vec![
         ("lean: tokens alone", Box::new(|f| rerail_python_lean::token_count(f.as_bytes()).unwrap_or(0))),
         ("lean: the parser's columns", Box::new(|f| rerail_python_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(python_lean::encode(&grammar, f, &|| false)).is_ok()))),
@@ -3215,7 +3221,7 @@ fn ecma_parse_costs() {
     let nodes: usize = files.iter().map(|f| ecma_lean::encode(dialect, &grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
-    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+    let steps: Vec<CostStep<'_>> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_ecma_lean::tape(f.as_bytes(), dialect).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(ecma_lean::encode(dialect, &grammar, f, &|| false)).is_ok()))),
         ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
@@ -3343,7 +3349,7 @@ fn rust_parse_costs() {
     let nodes: usize = files.iter().map(|f| rust_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
-    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+    let steps: Vec<CostStep<'_>> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_rust_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(rust_lean::encode(&grammar, f, &|| false)).is_ok()))),
         ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
@@ -3469,7 +3475,7 @@ fn java_parse_costs() {
     let nodes: usize = files.iter().map(|f| java_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
-    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+    let steps: Vec<CostStep<'_>> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_java_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(java_lean::encode(&grammar, f, &|| false)).is_ok()))),
         ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
@@ -3820,7 +3826,9 @@ fn php_parse_costs() {
     let nodes: usize = files.iter().map(|f| php_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
-    let steps: Vec<(&str, Box<dyn Fn(usize) -> usize>)> = vec![
+    // Each step by the file's index, not its text.
+    type IndexStep<'a> = (&'static str, Box<dyn Fn(usize) -> usize + 'a>);
+    let steps: Vec<IndexStep<'_>> = vec![
         ("lean: the parser's columns", Box::new(|i| rerail_php_lean::tape(views[i].as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|i| usize::from(std::hint::black_box(php_lean::encode(&grammar, &files[i], &|| false)).is_ok()))),
         ("tree-sitter: parse", Box::new(|i| parser.borrow_mut().parse(&views[i], None).unwrap().root_node().child_count() as usize)),
@@ -3873,7 +3881,7 @@ fn csharp_parse_costs() {
     let nodes: usize = files.iter().map(|f| csharp_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
-    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+    let steps: Vec<CostStep<'_>> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_csharp_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(csharp_lean::encode(&grammar, f, &|| false)).is_ok()))),
         ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
@@ -3993,7 +4001,7 @@ fn html_parse_costs() {
     let nodes: usize = files.iter().map(|f| html_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
-    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+    let steps: Vec<CostStep<'_>> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_html_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(html_lean::encode(&grammar, f, &|| false)).is_ok()))),
         ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
@@ -4121,7 +4129,7 @@ fn css_parse_costs() {
     let nodes: usize = files.iter().map(|f| css_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
-    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+    let steps: Vec<CostStep<'_>> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_css_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(css_lean::encode(&grammar, f, &|| false)).is_ok()))),
         ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
@@ -4288,7 +4296,7 @@ fn sql_parse_costs() {
     let nodes: usize = files.iter().map(|f| sql_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
-    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+    let steps: Vec<CostStep<'_>> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_sql_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(sql_lean::encode(&grammar, f, &|| false)).is_ok()))),
         ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
@@ -4407,7 +4415,7 @@ fn markdown_parse_costs() {
     let nodes: usize = files.iter().map(|f| markdown_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
-    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+    let steps: Vec<CostStep<'_>> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_markdown_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(markdown_lean::encode(&grammar, f, &|| false)).is_ok()))),
         ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
@@ -4572,7 +4580,7 @@ fn vue_parse_costs() {
     }
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
-    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+    let steps: Vec<CostStep<'_>> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_vue_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(vue_lean::encode(&grammar, f, &|| false)).is_ok()))),
         ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
@@ -4600,7 +4608,7 @@ fn vue_parse_costs() {
     };
     // Each step a pass: the files' steps over every file, the programs' over every program.
     let each_file = &files;
-    let mut passes: Vec<(&str, Box<dyn Fn() -> usize + '_>)> = steps
+    let mut passes: Vec<CostPass<'_>> = steps
         .into_iter()
         .map(|(name, step)| (name, Box::new(move || each_file.iter().map(|f| step(f)).sum::<usize>()) as Box<dyn Fn() -> usize>))
         .collect();
@@ -4727,7 +4735,7 @@ fn markdown_inline_parse_costs() {
     let nodes: usize = files.iter().map(|f| markdown_inline_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
-    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+    let steps: Vec<CostStep<'_>> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_markdown_inline_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(markdown_inline_lean::encode(&grammar, f, &|| false)).is_ok()))),
         ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),

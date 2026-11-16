@@ -545,7 +545,7 @@ pub mod tests {
     fn measured(docs: &[Vec<i64>]) -> Vec<(String, i64, i64, i64, i64)> {
         let mut cols = vec![Vec::new(); 3];
         for d in docs {
-            for row in d.chunks_exact(3) {
+            for row in d.as_chunks::<3>().0 {
                 for (c, v) in row.iter().enumerate() {
                     cols[c].push(*v);
                 }
@@ -700,8 +700,8 @@ pub mod tests {
             flat.extend([first, i % 4, other]);
         }
         // One document's rows alone, in order (no sort), and its rows reversed (sorted).
-        let one: Vec<i64> = flat.chunks_exact(3).filter(|r| r[0] == 3 || r[0] >> 32 == 3).flatten().copied().collect();
-        let reversed: Vec<i64> = one.chunks_exact(3).rev().flatten().copied().collect();
+        let one: Vec<i64> = flat.as_chunks::<3>().0.iter().filter(|r| r[0] == 3 || r[0] >> 32 == 3).flatten().copied().collect();
+        let reversed: Vec<i64> = one.as_chunks::<3>().0.iter().rev().flatten().copied().collect();
         // Many values in one column: past the exact map's bound.
         let wide: Vec<i64> = (0..700i64).flat_map(|i| [5 << 32 | i, i % 3, i]).collect();
         let names = || vec!["x".to_owned(), "k".into(), "y".into()];

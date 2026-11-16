@@ -63,7 +63,7 @@ impl<'p> Rels<'p> {
         debug_assert_eq!(id.len(), names.len(), "one address per relation name");
         let inputs: rustc_hash::FxHashSet<&str> = prog.inputs.iter().map(String::as_str).collect();
         let test = |r: &str| r.starts_with(crate::code_rule_dsl::logic::strings::RELATION);
-        let rels = Rels {
+        Rels {
             fact: names.iter().enumerate().map(|(i, r)| i >= n && prog.facts.contains_key(*r) && !inputs.contains(r)).collect(),
             run_constant: names.iter().map(|r| option_input(r) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(r) && inputs.contains(r))).collect(),
             chunk_value: names.iter().enumerate().map(|(i, r)| i >= n && CHUNK_VALUES.contains(r)).collect(),
@@ -77,8 +77,7 @@ impl<'p> Rels<'p> {
             id,
             names,
             derived: n,
-        };
-        rels
+        }
     }
 
     /// The number of a relation a rule names.

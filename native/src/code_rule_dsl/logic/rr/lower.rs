@@ -2018,7 +2018,7 @@ impl Lowerer {
     /// `unparse_of` asks for nothing: every guest and value has its text.
     fn value_demand(&mut self, rel: &str, args: &[STerm]) -> Result<(), Error> {
         match (rel, args) {
-            ("parse_of", [x, g, t]) => self.demand("rr_parse_req", &[(STerm::Var(LOCATED.to_owned().into()), "int"), (g.clone(), "sym"), (x.clone(), "sym")], t, false),
+            ("parse_of", [x, g, t]) => self.demand("rr_parse_req", &[(STerm::Var(LOCATED.to_owned()), "int"), (g.clone(), "sym"), (x.clone(), "sym")], t, false),
             ("splice_of", [_, n, t2, t3]) => self.demand("rr_splice_req", &[(n.clone(), "node"), (t2.clone(), "sym")], t3, false),
             _ => Ok(()),
         }
@@ -2306,7 +2306,7 @@ impl Lowerer {
         // after(a, k): a later sibling of a at index k is in S; first(a, j): the first such.
         let after = format!("{RESERVED}prec_after_{label}");
         let first = format!("{RESERVED}prec_first_{label}");
-        let node_int = vec![("a".to_owned(), "node".to_owned()), ("k".to_owned(), "int".to_owned())];
+        let node_int = [("a".to_owned(), "node".to_owned()), ("k".to_owned(), "int".to_owned())];
         self.prog.decls.insert(after.clone().into(), node_int.iter().map(|(c, t)| (c.into(), t.into())).collect());
         self.prog.decls.insert(first.clone().into(), node_int.iter().map(|(c, t)| (c.into(), t.into())).collect());
         self.prog.decls.insert(name.clone().into(), [("a".into(), "node".into()), ("b".into(), "node".into())].into());
@@ -2414,7 +2414,7 @@ impl Lowerer {
             }
             _ => {
                 let (n, a) = (first.clone(), second.clone());
-                let below = self.within("within", &[STerm::Var(n.clone().into()), STerm::Var(a.clone().into())], false)?;
+                let below = self.within("within", &[STerm::Var(n.clone()), STerm::Var(a.clone())], false)?;
                 let seed = self.climb_seed(&n)?;
                 let up = self.climb(seed, &n, Some(&set));
                 let s = self.fresh("stop");
@@ -2541,7 +2541,7 @@ impl Lowerer {
             return false;
         }
         let gs = groups(re);
-        let want: Vec<STerm> = std::iter::once(STerm::Var(s.clone().into())).chain(gs.iter().map(|g| STerm::Var(g.clone().into()))).chain(coordinates.iter().cloned()).collect();
+        let want: Vec<STerm> = std::iter::once(STerm::Var(s.clone())).chain(gs.iter().map(|g| STerm::Var(g.clone()))).chain(coordinates.iter().cloned()).collect();
         if h.args != want {
             return false;
         }
@@ -3266,7 +3266,7 @@ impl Lowerer {
         self.prog.rules.push(Rule { head: Atom { rel: rel.clone().into(), args: [v("r"), v("hit"), v("first")].into(), neg: false, gated: false }, body: body.into() });
         // The edge relation's column types (a node, a number, a symbol); nodes where it is declared later.
         let ty = |c: usize, or: &str| self.prog.decls.get(edge).and_then(|cols| cols.get(c)).map_or_else(|| or.to_owned(), |(_, t)| t.to_string());
-        let cols = vec![("r".to_owned(), ty(0, "node")), ("hit".to_owned(), ty(1, "node")), ("first".to_owned(), ty(2, "int"))];
+        let cols = [("r".to_owned(), ty(0, "node")), ("hit".to_owned(), ty(1, "node")), ("first".to_owned(), ty(2, "int"))];
         self.prog.decls.insert(rel.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
         self.prog.natives.insert(rel.clone(), Native::DfsFirst { edge: edge.to_owned(), target: target.to_owned(), roots: roots.map(str::to_owned) });
         rel
@@ -3284,7 +3284,7 @@ impl Lowerer {
         let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned().into(), args: args.into(), neg: false, gated: false });
         let body = vec![atom(own, vec![v("d"), v("k")]), atom(edge, vec![v("d"), v("e")]), atom(own, vec![v("e"), Term::Wild])];
         self.prog.rules.push(Rule { head: Atom { rel: rel.clone().into(), args: [v("d"), v("e"), v("k")].into(), neg: false, gated: false }, body: body.into() });
-        let cols = vec![("d".to_owned(), "int".to_owned()), ("c".to_owned(), "int".to_owned()), ("k".to_owned(), "sym".to_owned())];
+        let cols = [("d".to_owned(), "int".to_owned()), ("c".to_owned(), "int".to_owned()), ("k".to_owned(), "sym".to_owned())];
         self.prog.decls.insert(rel.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
         self.prog.natives.insert(rel.clone(), Native::Components { edge: edge.to_owned(), own: own.to_owned() });
         rel
@@ -3805,7 +3805,7 @@ impl Lowerer {
             STerm::Var(v) => v.clone(),
             t => {
                 let v = me.fresh("val");
-                body.push(Lit::Cmp { l: STerm::Var(v.clone().into()), op: "=", r: t.clone() });
+                body.push(Lit::Cmp { l: STerm::Var(v.clone()), op: "=", r: t.clone() });
                 v
             }
         };
@@ -4192,7 +4192,7 @@ impl Lowerer {
                     },
                     _ => continue,
                 };
-                *l = Literal::Atom(Atom { rel: format!("rr_{helper}_{set}").into(), args: args.into(), neg, gated: false });
+                *l = Literal::Atom(Atom { rel: format!("rr_{helper}_{set}").into(), args, neg, gated: false });
                 if helper == "anc" {
                     need.insert((set.clone(), "near"));
                 }

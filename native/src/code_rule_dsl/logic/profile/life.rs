@@ -6,7 +6,9 @@
 //! all of these, and the spans none of them.
 
 use std::sync::OnceLock;
-use std::time::{Duration, SystemTime};
+#[cfg(target_os = "macos")]
+use std::time::Duration;
+use std::time::SystemTime;
 
 static ENTERED: OnceLock<SystemTime> = OnceLock::new();
 

@@ -623,7 +623,7 @@ impl ValueRules for Rust {
     }
 
     fn string(text: &str) -> Value {
-        Value::Str(text.to_owned().into())
+        Value::Str(text.to_owned())
     }
 
     /// An integer of an inferred type, else a float.

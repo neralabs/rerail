@@ -153,7 +153,8 @@ fn others_run_over(file: &std::path::Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::fd::AsRawFd as _;
-        static PROBES: Mutex<Vec<(std::path::PathBuf, Option<std::fs::File>, Instant, bool)>> = Mutex::new(Vec::new());
+        type Probes = Vec<(std::path::PathBuf, Option<std::fs::File>, Instant, bool)>;
+        static PROBES: Mutex<Probes> = Mutex::new(Vec::new());
         let mut probes = PROBES.lock().unwrap_or_else(|p| p.into_inner());
         let at = match probes.iter().position(|(p, ..)| p == file) {
             Some(i) => i,
@@ -876,8 +877,10 @@ mod tests {
     }
 
     /// A job over a file: a run over the file stops it until its deadline.
+    #[cfg(unix)]
     struct OverFile(Counter, std::path::PathBuf);
 
+    #[cfg(unix)]
     impl Job for OverFile {
         fn name(&self) -> String {
             self.0.name()
@@ -946,7 +949,8 @@ mod tests {
     }
 
     /// A job seen from inside: its thread's quality of service, and that the scheduler's own thread ran it.
-    struct Probe(std::sync::Arc<Mutex<Vec<(String, Option<&'static str>)>>>);
+    type Seen = std::sync::Arc<Mutex<Vec<(String, Option<&'static str>)>>>;
+    struct Probe(Seen);
 
     impl Job for Probe {
         fn name(&self) -> String {

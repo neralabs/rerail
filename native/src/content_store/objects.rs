@@ -371,7 +371,7 @@ impl ContentStore {
             ));
         }
         let mut digest = [0_u8; 32];
-        for (chunk, lane) in digest.chunks_exact_mut(8).zip(key.lanes) {
+        for (chunk, lane) in digest.as_chunks_mut::<8>().0.iter_mut().zip(key.lanes) {
             chunk.copy_from_slice(&lane.to_be_bytes());
         }
         Ok(digest)

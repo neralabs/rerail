@@ -154,7 +154,7 @@ pub fn tops(
             .map(|t| match t {
                 front::Term::Int(n) => Some(front::Value::Int(*n)),
                 front::Term::Branded(a) => Some(front::Value::Branded(*a)),
-                front::Term::Str(s) => Some(front::Value::Str(s.clone().into())),
+                front::Term::Str(s) => Some(front::Value::Str(s.clone())),
                 _ => None,
             })
             .collect::<Option<Vec<_>>>();

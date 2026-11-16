@@ -313,7 +313,7 @@ pub(in crate::code_rule_dsl) fn inputs_digest(root: &Path, globs: &[String]) -> 
         hash.update(path.as_bytes());
         hash.update([0]);
         hash.update(blob_id(&bytes).as_bytes());
-        hash.update([b'\n']);
+        hash.update(*b"\n");
     }
     Ok(format!("sha256:{}", hash.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>()))
 }

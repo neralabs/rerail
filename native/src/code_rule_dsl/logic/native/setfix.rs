@@ -130,6 +130,7 @@ impl Interner {
     fn held(&self, s: &str) -> Option<i64> {
         self.atoms.existing(s).map(i64::from).or_else(|| Some(DEFERRED + i64::from(*self.deferred.as_ref()?.at.get(s)?)))
     }
+    #[allow(clippy::unnecessary_unwrap, reason = "`held` borrows `self` between the check and the take")]
     fn id(&mut self, s: &str) -> i64 {
         if self.deferred.is_some() {
             if let Some(v) = self.held(s) {
@@ -974,7 +975,7 @@ impl Fresh {
         let mut order: Vec<u32> = (settled as u32..n as u32).collect();
         runs::presorted::site(runs::presorted::FRESH, n - settled, |i| cmp((settled + i - 1) as u32, (settled + i) as u32).is_gt());
         let sort = |v: &mut [u32]| {
-            runs::sort_keyed(v, tagged, cols.len(), |q, i| data.row(q, k)[cols[i]], &cmp);
+            runs::sort_keyed(v, tagged, cols.len(), |q, i| data.row(q, k)[cols[i]], cmp);
         };
         if self.lost || !runs::known_beyond_runs() {
             sort(&mut order);
@@ -1008,7 +1009,7 @@ impl Fresh {
         let (mut s, mut kept) = (0, 0);
         for (&q, h) in order.iter().zip(held) {
             while s < settled && cmp(s as u32, q).is_lt() {
-                out.extend_from_slice(&data.row(s as u32, k));
+                out.extend_from_slice(data.row(s as u32, k));
                 (s, kept) = (s + 1, kept + 1);
             }
             if !h && !(s < settled && cmp(s as u32, q).is_eq()) {
@@ -1778,19 +1779,19 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     } else if !seeded && comp.cut.is_none() && let Some(cl) = comp.closure.take() {
         let mut guard = comp.store.write().unwrap();
         let store = &mut *guard;
-        let mut syms = &mut cursor;
+        let syms = &mut cursor;
         let mut fresh: Vec<Fresh> = vec![Fresh::default(); nrels];
         for (pi, p) in comp.probes.iter().enumerate() {
             let (Body::Join(j), SEED) = (&p.body, p.delta) else { continue };
             runs += 1;
-            let n = run_seed(j, p.head, store, &mut syms, &mut fresh, None)?;
+            let n = run_seed(j, p.head, store, syms, &mut fresh, None)?;
             visits += n;
             per[pi].1 += n;
         }
         let k = store.rels[0].k;
         store.rels[0].reserve(fresh[0].n);
-        for i in 0..fresh[0].n { store.rels[0].push(&fresh[0].data.row(i as u32, k)); }
-        let prep = closure::prepare(&cl, store, &mut syms);
+        for i in 0..fresh[0].n { store.rels[0].push(fresh[0].data.row(i as u32, k)); }
+        let prep = closure::prepare(&cl, store, syms);
         match prep {
             None => closure_ran = Some(None),
             Some(mut prep) if !prep.launches.is_empty() && crate::code_rule_dsl::logic::lanes::wave::can_wait() => {
@@ -1914,7 +1915,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                 // A function with no value (`rx_group` with no match) gives no row, as the SQL strata's inserts.
                 if vals.iter().any(|v| matches!(v, Value::Null)) { continue; }
                 for (v, &ty) in vals.iter().zip(&types) {
-                    row.push(read_value(ValueRef::from(v), ty, &mut syms).map_err(|e| err(format!("{}: {e}", store.rels[head].table)))?);
+                    row.push(read_value(ValueRef::from(v), ty, syms).map_err(|e| err(format!("{}: {e}", store.rels[head].table)))?);
                 }
                 fresh[head].emitted += 1;
                 fresh[head].offer(&row, &store.rels[head]);
@@ -1942,14 +1943,14 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                 heads.sort_unstable();
                 heads.dedup();
                 // Each rule's rows in `plans`' order, from the fixpoint's seeds-then-deltas order.
-                dev.fixpoint(&seeds, &deltas, &heads, store, &syms, &mut dev_fresh).map(|made| {
+                dev.fixpoint(&seeds, &deltas, &heads, store, syms, &mut dev_fresh).map(|made| {
                     let (mut s, mut d) = (made[..seeds.len()].iter(), made[seeds.len()..].iter());
                     rules.iter().map(|r| *if dev.reads_own(r.0) { d.next() } else { s.next() }.expect("a count per rule")).collect::<Vec<u64>>()
                 })
             } else if let Some(t) = device_ticket.take() {
-                dev.resume(t, &rules, store, &syms, &mut dev_fresh)
+                dev.resume(t, &rules, store, syms, &mut dev_fresh)
             } else {
-                dev.run_joins(&rules, store, &syms, &mut dev_fresh)
+                dev.run_joins(&rules, store, syms, &mut dev_fresh)
             };
             match got {
                 Ok(made) => {
@@ -2031,7 +2032,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                 None => { CUTS[2].fetch_add(1, std::sync::atomic::Ordering::Relaxed); None }
             }) } else { None };
             let mut limited = (budget.is_some() || only.is_some()).then(|| Limited { limit: Some(Limit { budget: budget.unwrap_or(u64::MAX), only }), spent: None });
-            let n = if p.delta == SEED { run_seed(j, p.head, store, &mut syms, &mut fresh, limited.as_mut())? } else { run_join_limited(j, p.head, store, &mut syms, &mut fresh, limited.as_mut())? };
+            let n = if p.delta == SEED { run_seed(j, p.head, store, syms, &mut fresh, limited.as_mut())? } else { run_join_limited(j, p.head, store, syms, &mut fresh, limited.as_mut())? };
             if let Some(b) = budget && let Some(spent) = limited.and_then(|l| l.spent) {
                 p.budget.set(Some(b.saturating_sub(spent.work)));
                 if let Some(left) = spent.left {
@@ -2092,13 +2093,13 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                     fresh[rule.head].emitted += 1;
                     fresh[rule.head].offer(&row, &store.rels[rule.head]);
                 };
-                if !rule.has_edge { emit(&slots, store, &mut syms, &mut fresh); continue; }
+                if !rule.has_edge { emit(&slots, store, syms, &mut fresh); continue; }
                 key.clear();
                 key.extend(rule.key.iter().map(|&s| slots[s]));
                 if let Some(es) = rule.edges.get(&key[..]) {
                     for e in es {
                         for (&s, &v) in rule.ecols.iter().zip(e) { slots[s] = v; }
-                        emit(&slots, store, &mut syms, &mut fresh);
+                        emit(&slots, store, syms, &mut fresh);
                     }
                 }
             }
@@ -3656,7 +3657,7 @@ impl InRel {
             let keys = |order: &[usize], len: usize| -> Vec<Vec<i64>> {
                 sample.iter().map(|&id| { let r = self.row(id as usize); order[..len].iter().map(|&c| r[c]).collect() }).collect()
             };
-            let best_ns = |f: &dyn Fn() -> ()| -> f64 {
+            let best_ns = |f: &dyn Fn()| -> f64 {
                 let mut best = f64::MAX;
                 for _ in 0..3 {
                     let t = Instant::now();
@@ -3987,7 +3988,6 @@ pub fn tables_built() -> (u64, u64, u64) {
 /// The relations of components run with `nowrite`, by table, until they are materialized.
 static DERIVED: LazyLock<ByScope<HashMap<(usize, String), Arc<InRel>>>> = LazyLock::new(Default::default);
 const SEED: usize = usize::MAX;
-/// Columns with at most this many values report each value's postings (`stats`).
 
 /// A native relation's rows, in place (for a caller that keeps an output in the engine): a source of columns
 /// `c0`, `c1`, ….
@@ -4001,6 +4001,7 @@ pub fn derived(conn: impl Scoped, table: &str) -> Option<Arc<dyn crate::code_rul
 /// (a session's, or one a new process read back, t32 4.1) probes it as it probes any held source, not by a scan.
 struct Derived(Arc<InRel>, Option<Vec<String>>, Option<Vec<u32>>, Vec<std::sync::OnceLock<Vec<u32>>>);
 impl Derived {
+    #[allow(clippy::new_ret_no_self, reason = "a derived relation is made as the source the engine reads it through")]
     fn new(rel: Arc<InRel>, names: Option<Vec<String>>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
         let live = (rel.ndead > 0).then(|| (0..rel.len() as u32).filter(|&id| !is_dead(&rel.dead, id)).collect());
         let orders = (0..rel.k).map(|_| std::sync::OnceLock::new()).collect();
@@ -4635,8 +4636,8 @@ fn input_of(conn: impl Scoped, spec: &InputKey, syms: &mut Interner) -> Result<A
     let (table, cols, types) = (&spec.sql, &spec.cols, spec.types.as_bytes());
     let (t0, c0) = (Instant::now(), thread_cpu());
     // A stored table holds symbols as atoms (integers), so any column types read in place there.
-    if base && (types.iter().all(|&t| t == b'i') || !table.starts_with("main.")) {
-        if let Some(view) = view(conn, &table, &cols) {
+    if base && (types.iter().all(|&t| t == b'i') || !table.starts_with("main."))
+        && let Some(view) = view(conn, table, cols) {
             let n = view.ids.as_ref().map_or(0, Vec::len);
             let rel = Arc::new(InRel { k: types.len(), n, rows: Rows::default(), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
             LOADS.lock().unwrap()[0].0 += thread_cpu() - c0;
@@ -4646,8 +4647,7 @@ fn input_of(conn: impl Scoped, spec: &InputKey, syms: &mut Interner) -> Result<A
             keep(&rel);
             return Ok(rel);
         }
-    }
-    let mut st = conn.sql()?.prepare(&format!("SELECT {cols} FROM {}", crate::code_rule_dsl::logic::sql::table(&table)))?;
+    let mut st = conn.sql()?.prepare(&format!("SELECT {cols} FROM {}", crate::code_rule_dsl::logic::sql::table(table)))?;
     let mut q = st.query([])?;
     let (mut rows, mut n) = (Vec::new(), 0);
     while let Some(r) = q.next()? {
@@ -5947,13 +5947,12 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         if i > cx.deep { cx.deep = i; }
         // Keep exact sums until a predicate, lookup, function, or emitted head
         // observes the binding. A later filter can remove a row before that use.
-        if !cx.pending.is_empty() {
-            if let Some((_,value))=cx.pending.iter().find(|(slot,_)|j.steps.get(i).map_or_else(
+        if !cx.pending.is_empty()
+            && let Some((_,value))=cx.pending.iter().find(|(slot,_)|j.steps.get(i).map_or_else(
                 ||j.out.iter().any(|term|matches!(term,Term::Slot(s) if s==slot)||matches!(term,Term::Cat(a,b) if a==slot||b==slot)),
                 |step|step.observes(*slot))) {
                 cx.error=Some(super::aggregation::sum_value(*value).unwrap_err());return;
             }
-        }
         let Some(step) = j.steps.get(i) else {
             cx.row.clear();
             for o in &j.out {
@@ -6986,7 +6985,7 @@ pub mod posted_tests {
         let new = InRel::moved(new);
         let (mut added, mut removed) = new.delta_since(&old).expect("started as old");
         let rows = |flat: &mut Vec<i64>| {
-            let mut r: Vec<Vec<i64>> = flat.chunks_exact(2).map(<[i64]>::to_vec).collect();
+            let mut r: Vec<Vec<i64>> = flat.as_chunks::<2>().0.iter().map(|c| c.to_vec()).collect();
             r.sort();
             r
         };

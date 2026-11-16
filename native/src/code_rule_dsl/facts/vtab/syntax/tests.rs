@@ -210,7 +210,7 @@ fn a_views_filter_scan_holds_the_rows_a_per_row_read_finds() {
     let call = core::kind_atom(tape_tag(python).unwrap(), python.kinds().kind_id("call"));
     let mut tried = 0;
     for (name, source) in sources(&store, documents().into_iter().take(4).collect()).unwrap() {
-        if !["node", "child", "field", "tape"].iter().any(|&v| name == v) {
+        if !["node", "child", "field", "tape"].contains(&name) {
             continue;
         }
         let width = source.columns().len();

@@ -3460,7 +3460,6 @@ mod scope {
     use crate::code_rule_dsl::identifier::{name_in};
 }
 // One compiled regex per pattern for the whole process (#529); its tests read the engine's compile.
-#[path = "regexes"]
 pub mod regexes {
     pub use rerail_lang::code_rule_dsl::regexes::*;
     #[cfg(test)]

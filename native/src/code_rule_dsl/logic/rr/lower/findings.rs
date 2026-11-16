@@ -49,8 +49,7 @@ pub fn message_parts(template: &str) -> Result<(Vec<String>, Vec<String>), Strin
     let (mut texts, mut keys) = (Vec::new(), Vec::new());
     let mut rest = template;
     let mut text = String::new();
-    loop {
-        let Some(start) = rest.find(['{', '}']) else { break };
+    while let Some(start) = rest.find(['{', '}']) {
         text.push_str(&rest[..start]);
         let brace = &rest[start..start + 1];
         if rest[start + 1..].starts_with(brace) {
@@ -225,7 +224,7 @@ impl Lowerer {
         }
         let rel = diagnostic_name(policy, &finding.name, place);
         self.prog.decls.insert(rel.clone().into(), decl.into_iter().map(|(c, t)| (c.into(), t.into())).collect::<Vec<_>>().into());
-        if !self.prog.outputs.iter().any(|name| *name == rel) {
+        if !self.prog.outputs.contains(&rel) {
             self.prog.outputs.push(rel.clone());
         }
         self.prog.rules.push(Rule { head: Atom { rel: rel.into(), args: args.into(), neg: false, gated: false }, body: body.into() });

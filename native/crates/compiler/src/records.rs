@@ -295,6 +295,7 @@ pub enum ReadNone {
 
 /// A reader's token's last byte from its first, `s` (`Reader`), a word of the closer's bits at
 /// a time; `Err` where the file is refused. `n`: the file's length.
+#[allow(clippy::result_unit_err, reason = "a refusal says nothing more: the caller leaves the file to the grammar's parser")]
 pub fn read_last(records: &Records, reader: &Reader, s: usize, bytes: &[u8], outputs: &[Vec<u64>]) -> Result<usize, ()> {
     let n = bytes.len();
     let words = |o: u16| outputs.get(usize::from(o)).map_or(&[][..], |v| v.as_slice());

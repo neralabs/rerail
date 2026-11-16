@@ -45,7 +45,7 @@ fn input(state: &State) -> Input {
         .filter(|(topic, _)| topic == "projection provenance")
         .map(|(_, text)| text.clone())
         .collect();
-    for ((topic, text), _) in &state.decisions {
+    for (topic, text) in state.decisions.keys() {
         if let Some(attr) = topic.strip_suffix(" on request")
             && let Some(why) = text.strip_prefix("no, every node: ")
         {

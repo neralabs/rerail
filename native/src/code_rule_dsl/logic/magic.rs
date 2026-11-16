@@ -146,7 +146,7 @@ pub fn demand_negated_tests(prog: Program) -> (Program, Vec<String>) {
         let Some(Term::Var(key)) = rule.head.args.first() else { return false };
         rule.body.iter().any(|l| match l {
             Literal::Nearest { n, .. } => n == key,
-            Literal::Atom(a) => !a.neg && a.rel.starts_with(super::front::AXIS) && a.args.first() == Some(&Term::Var(key.clone().into())),
+            Literal::Atom(a) => !a.neg && a.rel.starts_with(super::front::AXIS) && a.args.first() == Some(&Term::Var(key.clone())),
             _ => false,
         })
     };

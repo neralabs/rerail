@@ -469,6 +469,12 @@ fn policy_groups(texts: &[String], root: &std::path::Path, options: &serde_json:
     groups.into_iter().map(|(_, g)| g).collect()
 }
 
+/// A pack member's findings and its run's record (`run_pack`).
+type KeyedRow = (Vec<serde_json::Value>, serde_json::Value);
+
+/// A run of programs in one dialect (`None`: as each is written), and the programs.
+type DialectRun = (Option<&'static str>, Vec<String>);
+
 /// One group's policies run as one pack into `out/pack-<first>`, and each one's findings written to its own
 /// `out/<k>` (its `rr_diagnostic`, in `outputs.rro`): per member, its findings and its run's record. `None` when the pack's run fails or a
 /// finding names no member's id: the group's policies then run alone, each with its own error.
@@ -479,7 +485,7 @@ fn run_pack(
     root: &std::path::Path,
     out: &std::path::Path,
     options: &serde_json::Value,
-) -> Result<Option<Vec<(Vec<serde_json::Value>, serde_json::Value)>>, String> {
+) -> Result<Option<Vec<KeyedRow>>, String> {
     use super::{logic::plan::corpus, typing::file_local::Binding};
     let texts: Vec<&str> = group.members.iter().map(|&k| texts[k].as_str()).collect();
     let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
@@ -581,7 +587,7 @@ pub fn flatten(path: &std::path::Path) -> Result<String, String> {
 /// written (the first run); a program of a language of several dialects with files (`run_dialects`) runs in each,
 /// its language set to the dialect by the run (the `dialect` option, `corpus::added`), its text as written. The
 /// corpus is listed once for all of them.
-fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json::Value) -> Result<Vec<(Option<&'static str>, Vec<String>)>, String> {
+fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json::Value) -> Result<Vec<DialectRun>, String> {
     use super::language::CodeRuleLanguage;
     use super::logic::plan::corpus;
     let listing: std::cell::OnceCell<corpus::CorpusFiles> = std::cell::OnceCell::new();
@@ -632,6 +638,7 @@ fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json:
     Ok(runs)
 }
 
+#[allow(clippy::too_many_arguments, reason = "the `logic` command's options, one argument each")]
 pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize, settings: &[String]) -> Result<String, String> {
     use super::typing::file_local::Binding;
     let binding = if metal { Binding::Metal } else { Binding::Cpu };
@@ -733,39 +740,6 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
         text += "  (planner statistics and node ids read from the T facts file)\n";
     }
     Ok(text)
-}
-
-
-#[cfg(test)]
-mod settings_tests {
-    #[test]
-    fn settings_become_env_rows_for_a_program_that_declares_env() {
-        let root = std::env::temp_dir().join(format!("rerail-settings-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("rerail.env"), "# comment\npython.version = 3.12\nquote=a\"b\n").unwrap();
-        let settings = super::settings(&root, &["python.version=3.13".into()]).unwrap();
-        std::fs::remove_dir_all(&root).unwrap();
-        assert_eq!(settings, vec![("quote".into(), "a\"b".into()), ("python.version".into(), "3.13".into())]);
-        // Rows given to a program that declares `env`, and to no other (decision 0249).
-        use crate::code_rule_dsl::logic::front::Value;
-        let added = crate::code_rule_dsl::logic::plan::corpus::added::Added::settings(&settings);
-        let mut declares = crate::code_rule_dsl::logic::rr::parse(".decl env(key: symbol, value: symbol)\n").unwrap();
-        added.add_to(&mut declares);
-        let rows: Vec<Vec<Value>> = declares.facts["env"].iter().map(|r| r.to_vec()).collect();
-        assert_eq!(rows, [vec![Value::Str("quote".into()), Value::Str("a\"b".into())], vec![Value::Str("python.version".into()), Value::Str("3.13".into())]]);
-        let mut not = crate::code_rule_dsl::logic::rr::parse(".decl envy(x: symbol)\n").unwrap();
-        added.add_to(&mut not);
-        assert!(!not.facts.contains_key("env"));
-    }
-
-    #[test]
-    fn the_command_lines_runs_keep_their_outputs_with_or_without_options() {
-        use serde_json::json;
-        // `run-policies` passes no options (`null`): its runs ask for the cutoff too.
-        assert_eq!(super::with_reuse(&serde_json::Value::Null), json!({"reuse": true}));
-        assert_eq!(super::with_reuse(&json!({"x": 1})), json!({"x": 1, "reuse": true}));
-        assert_eq!(super::with_reuse(&json!({"reuse": false})), json!({"reuse": false}));
-    }
 }
 
 // ---------------------------------------------------------------- the command line
@@ -1480,4 +1454,37 @@ fn capture_tapes_command(args: &[String]) -> Result<String, String> {
         refused.into_inner(),
         files.len()
     ))
+}
+
+
+#[cfg(test)]
+mod settings_tests {
+    #[test]
+    fn settings_become_env_rows_for_a_program_that_declares_env() {
+        let root = std::env::temp_dir().join(format!("rerail-settings-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("rerail.env"), "# comment\npython.version = 3.12\nquote=a\"b\n").unwrap();
+        let settings = super::settings(&root, &["python.version=3.13".into()]).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(settings, vec![("quote".into(), "a\"b".into()), ("python.version".into(), "3.13".into())]);
+        // Rows given to a program that declares `env`, and to no other (decision 0249).
+        use crate::code_rule_dsl::logic::front::Value;
+        let added = crate::code_rule_dsl::logic::plan::corpus::added::Added::settings(&settings);
+        let mut declares = crate::code_rule_dsl::logic::rr::parse(".decl env(key: symbol, value: symbol)\n").unwrap();
+        added.add_to(&mut declares);
+        let rows: Vec<Vec<Value>> = declares.facts["env"].iter().map(|r| r.to_vec()).collect();
+        assert_eq!(rows, [vec![Value::Str("quote".into()), Value::Str("a\"b".into())], vec![Value::Str("python.version".into()), Value::Str("3.13".into())]]);
+        let mut not = crate::code_rule_dsl::logic::rr::parse(".decl envy(x: symbol)\n").unwrap();
+        added.add_to(&mut not);
+        assert!(!not.facts.contains_key("env"));
+    }
+
+    #[test]
+    fn the_command_lines_runs_keep_their_outputs_with_or_without_options() {
+        use serde_json::json;
+        // `run-policies` passes no options (`null`): its runs ask for the cutoff too.
+        assert_eq!(super::with_reuse(&serde_json::Value::Null), json!({"reuse": true}));
+        assert_eq!(super::with_reuse(&json!({"x": 1})), json!({"x": 1, "reuse": true}));
+        assert_eq!(super::with_reuse(&json!({"reuse": false})), json!({"reuse": false}));
+    }
 }

@@ -960,7 +960,7 @@ impl CoreRows {
                 let Some(n) = node_of(&m) else { continue };
                 let captures: Option<Vec<(i64, i64)>> = names
                     .iter()
-                    .map(|name| m.get_env().get_match(name).and_then(&node_of).map(|c| (string(name) as i64, c)))
+                    .map(|name| m.get_env().get_match(name).and_then(node_of).map(|c| (string(name) as i64, c)))
                     .collect();
                 let Some(captures) = captures else { continue };
                 self.ast_match.push([pat, n, empty, n]);

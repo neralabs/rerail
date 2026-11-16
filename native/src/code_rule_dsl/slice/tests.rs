@@ -531,6 +531,7 @@ fn the_backends_find_the_same_keys_on_real_files() {
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut stores = vec![dir.clone()];
 
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut backends = vec![("interpreter", ExecutionBackend::CpuInterpreter), ("jit", ExecutionBackend::CpuJit)];
     #[cfg(target_os = "macos")]
     backends.extend([("metal-interpreter", ExecutionBackend::MetalInterpreter), ("metal-jit", ExecutionBackend::MetalJit)]);

@@ -23,14 +23,13 @@ const SMALL: usize = 2048;
 pub fn span(values: &[i64]) -> Option<(i64, i64)> {
     let first = *values.first()?;
     let (mut lo, mut hi) = ([first; 8], [first; 8]);
-    let mut chunks = values.chunks_exact(8);
-    for c in &mut chunks {
+    let (chunks, rest) = values.as_chunks::<8>();
+    for c in chunks {
         for k in 0..8 {
             lo[k] = lo[k].min(c[k]);
             hi[k] = hi[k].max(c[k]);
         }
     }
-    let rest = chunks.remainder();
     let lo = lo.into_iter().chain(rest.iter().copied()).min().unwrap_or(first);
     let hi = hi.into_iter().chain(rest.iter().copied()).max().unwrap_or(first);
     Some((lo, hi))

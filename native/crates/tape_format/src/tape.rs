@@ -411,12 +411,12 @@ pub(crate) mod tests {
             let keep = |i: usize| i % 5 != 2;
             let mut out = Vec::new();
             nearest_all(&t, &set, keep, &mut out);
-            for i in 0..t.len() {
+            for (i, &o) in out.iter().enumerate().take(t.len()) {
                 let mut q = t.parent(i);
                 while let Some(a) = q.filter(|&a| !(set.contains(t.code(a)) && keep(a))) {
                     q = t.parent(a);
                 }
-                assert_eq!(out[i], q.map_or(NONE, |a| a as u32), "node {i}, set {k}");
+                assert_eq!(o, q.map_or(NONE, |a| a as u32), "node {i}, set {k}");
             }
         }
     }

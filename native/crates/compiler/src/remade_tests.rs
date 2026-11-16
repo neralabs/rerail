@@ -53,7 +53,7 @@ fn files() -> Vec<Vec<u8>> {
                     x ^= x << 13;
                     x ^= x >> 7;
                     x ^= x << 17;
-                    [b'1', b'`', b'"', b' ', b'`', b'7'][(x % 6) as usize]
+                    b"1`\" `7"[(x % 6) as usize]
                 })
                 .collect();
             out.push(f);

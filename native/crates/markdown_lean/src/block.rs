@@ -155,7 +155,7 @@ impl<'s> Blocks<'s> {
             if b == first {
                 m &= !0u64 << (from % 64);
             }
-            if b == last && to % 64 != 0 {
+            if b == last && !to.is_multiple_of(64) {
                 m &= !(!0u64 << (to % 64));
             }
             f(b, m);

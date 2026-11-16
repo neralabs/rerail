@@ -1150,7 +1150,7 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
     static PROGRAMS: OnceLock<Mutex<HashMap<PathBuf, (Vec<LibraryFile>, Program)>>> = OnceLock::new();
-    let key = dunce::canonicalize(&path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let key = dunce::canonicalize(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let cache = PROGRAMS.get_or_init(Default::default);
     if let Some((files, program)) = cache.lock().expect("the program cache").get(&key)
         && files.iter().all(|file| LibraryFile::now(&file.path) == *file)
@@ -1170,7 +1170,7 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     // The kept statements alone copied from the process's (`read_shared`): each policy copied its libraries whole,
     // to drop most of them (`unreached_dropped`).
     let (shared, files) = program_shared(path)?;
-    let own = dunce::canonicalize(&path).unwrap_or_else(|_| path.to_owned());
+    let own = dunce::canonicalize(path).unwrap_or_else(|_| path.to_owned());
     let statements = reached_statements(&own, &shared.iter().collect::<Vec<_>>());
     let program = lower_files_dropping(path, statements, false)?;
     // Kept behind the run (the store's writer), with what it read: the next run's check above.
@@ -1271,10 +1271,10 @@ pub fn lower_files(path: &Path, statements: Files) -> Result<Program, Error> {
 
 /// `lower_files`, with the unreached clauses of included files dropped first (`drop`) or lowered too.
 pub fn lower_files_dropping(path: &Path, statements: Files, drop: bool) -> Result<Program, Error> {
-    let key = dunce::canonicalize(&path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let key = dunce::canonicalize(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     check_names(&statements, false)?;
     // The file's own rules grounded (`refuse_ungrounded`), its includes' `fix` relations given.
-    let own_path = dunce::canonicalize(&path).unwrap_or_else(|_| path.to_owned());
+    let own_path = dunce::canonicalize(path).unwrap_or_else(|_| path.to_owned());
     let given: BTreeSet<String> = statements.iter().filter(|(p, _)| *p != own_path).flat_map(|(_, s)| check::fix_relations(s)).collect();
     for (_, own) in statements.iter().filter(|(p, _)| *p == own_path) {
         refuse_ungrounded(own, &given)?;
@@ -1579,7 +1579,7 @@ pub type Files = Vec<(PathBuf, Vec<syntax::Statement>)>;
 /// `path` and what it includes, each once (`seen`), includes first, added to `out`; every library file read or
 /// probed, to `read_files`. An `included` file's `.output`s are left out, as are those of what it includes.
 fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: &mut Vec<PathBuf>, included: bool) -> Result<(), Error> {
-    let path = dunce::canonicalize(&path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let path = dunce::canonicalize(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     if seen.contains(&path) {
         return Ok(());
     }
@@ -1615,7 +1615,7 @@ fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: 
 /// in reading order.
 fn program_order(path: &Path) -> Result<(Vec<PathBuf>, Vec<LibraryFile>), Error> {
     use super::plan::corpus::phase0;
-    let path = dunce::canonicalize(&path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let path = dunce::canonicalize(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let g = phase0::graph(&phase0::Seed::File(path.clone()))?;
     let mut order = Vec::new();
     g.order(&path.to_string_lossy(), &mut order)?;
@@ -1681,7 +1681,7 @@ fn program_shared(path: &Path) -> Result<(Shared, Vec<LibraryFile>), Error> {
 /// The modules and the files read are in `program_shared`'s order: includes first and the file last; `core.rr`, the
 /// file (its JSON bytes' digest, so an edit reads it again), then the rest.
 fn json_program_shared(path: &Path) -> Result<(Shared, Vec<LibraryFile>), Error> {
-    let path = dunce::canonicalize(&path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let path = dunce::canonicalize(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let (bytes, digest) = super::plan::corpus::observe(|o| o.read(&path)).ok_or_else(|| Error::Syntax(format!("{}: cannot read the file", path.display())))?;
     let file = LibraryFile { path: path.clone(), sha256: Some(digest) };
     noted(&file);
@@ -1727,7 +1727,7 @@ fn builtin_program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
     // `core.rr` is every program's prelude (the base relations and built-ins), included or not; except a program in
     // T's shape (decision 0046), which declares its base relations itself (`doc` among them), and whose libraries
     // read only the relations both shapes have.
-    let t_shape = read(&dunce::canonicalize(&path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?)?
+    let t_shape = read(&dunce::canonicalize(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?)?
         .0
         .iter()
         .any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));

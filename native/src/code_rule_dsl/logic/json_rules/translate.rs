@@ -65,7 +65,7 @@ fn option_ast(a: &Obj) -> Option<Obj> {
     Some(out)
 }
 
-fn obj_of<'a>(v: Option<&'a Value>) -> &'a Obj {
+fn obj_of(v: Option<&Value>) -> &Obj {
     v.and_then(Value::as_obj).unwrap_or(empty_obj())
 }
 

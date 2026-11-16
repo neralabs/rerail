@@ -379,7 +379,7 @@ fn decode_chosen(texts: &HashMap<[u8; 32], program_text::Stored>, entry: &[u8], 
     };
     let version = match facts.get(REWRITTEN).and_then(|rows| rows.first()).map(|r| r.as_slice()) {
         Some([Value::Str(digest)]) => {
-            let stored = texts.get(&unhex(&digest)?)?;
+            let stored = texts.get(&unhex(digest)?)?;
             // A program kept as its image is read as it is: the image is the program's version, its rules in order.
             // One kept as its text alone is read, and its image made: a program with no image is not taken.
             let placed = match stored {

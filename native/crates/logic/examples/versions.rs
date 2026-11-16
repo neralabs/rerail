@@ -7,7 +7,7 @@
 //! - `flat`:  one flat image per program (nodes in columns): copy the image, tombstone, append, rebuild its index.
 //! - `pool`:  a run's rule pool, a program a list of rule ids: copy the list, retain, append, rebuild its index.
 //! - `v:*`:   the proposal: views (ranges of a base), overlays (a base, a removed set, added ids), derivations (a new
-//!            base), under a layout of the roots (source, head, oracle), a fold policy, and a removed-set kind.
+//!   base), under a layout of the roots (source, head, oracle), a fold policy, and a removed-set kind.
 //!
 //! Usage: versions <trace dir> [more trace dirs…]
 use rerail_rr::code_rule_dsl::logic::front::{AggOp, Atom, Literal, Lists, Program, Rule, Term, Value};
@@ -998,7 +998,7 @@ fn replay(dir: &Path) {
         e.1 += from;
         e.2 += removed;
         e.3 += d.added.len() as u64;
-        e.4 += (from - removed + d.added.len() as u64) as u64;
+        e.4 += from - removed + d.added.len() as u64;
     }
     println!("\n{:<20} {:>5} {:>10} {:>10} {:>10} {:>10}", "site", "ops", "from items", "removed", "added", "to items");
     for (s, e) in &shape {
