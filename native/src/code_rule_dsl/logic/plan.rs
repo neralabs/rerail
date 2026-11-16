@@ -12572,7 +12572,11 @@ impl<'a, 'v> Walker<'a, 'v> {
             }
             sample = next;
         }
-        work
+        // Decision 0273: the rows the last step makes are work too, as the engine counts a line's work
+        // (`profile::plan_work`: each step's rows in, and the last step's rows out). Without them, a walk exact by its
+        // own count read 0.87 of the engine's work on the heavy lines of both packs, and a common term of every
+        // order's walk was missing from their ratios.
+        work + sample.iter().map(|x| x.0).sum::<f64>()
     }
 }
 

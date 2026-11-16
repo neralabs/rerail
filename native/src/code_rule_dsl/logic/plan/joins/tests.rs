@@ -460,7 +460,8 @@ fn an_orders_work_by_a_walk_is_its_run_through_a_triangle() {
             }
             binds = next;
         }
-        work
+        // Decision 0273: and the rows the last step makes, as the engine counts a line's work.
+        work + binds.len() as f64
     };
     let walker = Walker::new(&rb, 3, 1 << 16, &|n| rels.get(n).cloned(), &|_| None);
     for f in [1i64, 2] {
@@ -469,7 +470,8 @@ fn an_orders_work_by_a_walk_is_its_run_through_a_triangle() {
     }
     let (w1, w2) = (walker.work(&order, &[vec![1003, 2]]), walker.work(&order, &[vec![2003, 2]]));
     // The same size and calls; the difference is the edges the triangle's atom passes: 90 in function 1, 3 in 2.
-    assert_eq!((w1, w2), (215.0, 128.0), "the triangle's edges, measured at the key");
+    // And the rows they make (decision 0273): 75 in function 1, 3 in 2.
+    assert_eq!((w1, w2), (290.0, 131.0), "the triangle's edges, measured at the key");
     // A narrow walk (16 bindings a step, of up to 90) is unbiased: its mean over walks is the work.
     let narrow = Walker::new(&rb, 3, 16, &|n| rels.get(n).cloned(), &|_| None);
     let walks = 400;
@@ -555,7 +557,8 @@ fn a_background_search_ranks_its_orders_by_their_walked_work_over_the_line() {
             let Literal::Atom(a) = &rule.body[at] else { unreachable!() };
             binds = binds.iter().flat_map(|b| table(&a.rel).iter().filter_map(|row| bind(b, a, row)).collect::<Vec<_>>()).collect();
         }
-        work
+        // Decision 0273: and the rows the last step makes.
+        work + binds.len() as f64
     };
     let rel = |rows: &[[i64; 2]]| InRel::from_flat(rows.iter().flatten().copied().collect(), rows.len(), vec![b'i'; 2]);
     let snap = WalkSnap { rels: [("r", rel(&r)), ("k", rel(&k)), ("e", rel(&e))].into_iter().map(|(n, x)| (n.to_owned(), x)).collect(), syms: HashMap::new(), delta: None, heavy: HashMap::new() };
@@ -573,7 +576,8 @@ fn a_background_search_ranks_its_orders_by_their_walked_work_over_the_line() {
     // sampled.
     assert_eq!(best.1, run(&good), "the good order's work over the line, from every row of its lead");
     assert!((ran / run(&poor) - 1.0).abs() < 0.05, "{ran} against {}", run(&poor));
-    assert!(ran > 4.0 * best.1, "{ran} against {}", best.1);
+    // The poor order does 3.5 times the good one's work: the rows they both make (decision 0273) narrow the ratio.
+    assert!(ran > 3.0 * best.1, "{ran} against {}", best.1);
 }
 
 #[test]
@@ -594,8 +598,9 @@ fn a_background_walk_splits_its_lead_rows_by_a_heavy_key() {
     };
     for f in 1..=1000 { add(f, 30, 5) }
     for f in [5001, 5002] { add(f, 2000, 50) }
-    // Work by step after the lead: each call's function, each call's function's nodes, and their kinds.
-    let truth = 5100.0 + 5100.0 + (1000.0 * 5.0 * 30.0 + 2.0 * 50.0 * 2000.0);
+    // Work by step after the lead: each call's function, each call's function's nodes, and their kinds; and the rows
+    // the last step makes, each call's function's nodes of kind 2 (decision 0273).
+    let truth = 5100.0 + 5100.0 + (1000.0 * 5.0 * 30.0 + 2.0 * 50.0 * 2000.0) + (1000.0 * 5.0 * 25.0 + 2.0 * 50.0 * 1950.0);
     let rel = |rows: &[[i64; 2]]| InRel::from_flat(rows.iter().flatten().copied().collect(), rows.len(), vec![b'i'; 2]);
     // The function column's heavy values: both large functions, and some of the rest (their rows tie).
     let heavy: Vec<i64> = [5001, 5002].into_iter().chain(1..=10).collect();
@@ -610,7 +615,8 @@ fn a_background_walk_splits_its_lead_rows_by_a_heavy_key() {
     let walked = found.walked.expect("walked");
     let plain = WalkSnap { heavy: HashMap::new(), ..snap };
     let unsplit = plain.walk(&rb, None, &order, vec![(order.clone(), 1.0)], &|| false).walked.expect("walked");
-    // Split, 1.08 of the work; drawn whole, 0.89 (1.76 before decision 0247 thinned by each step's size).
+    // Split, 1.07 of the work; drawn whole, 0.88 (with the rows made, decision 0273; 1.08 and 0.89 without them, and
+    // 1.76 unsplit before decision 0247 thinned by each step's size).
     assert!((walked / truth - 1.0).abs() < 0.15, "{walked} against {truth}");
     assert!((unsplit / truth - 1.0).abs() < 0.15, "unsplit {unsplit} against {truth}");
 }
@@ -639,8 +645,9 @@ fn a_walk_past_a_rare_check_starts_from_the_checks_rows() {
     // Decision 0248: the draw of 8,192 rows finds about 3 past the check, too few to measure; through the check's 10
     // rows, every lead row past it is found.
     let found = snap.walk(&rb, None, &order, vec![(order.clone(), 1.0)], &|| false);
-    // Each node read by the check; the 10 past it, read by the function's step; their functions' 30 nodes each.
-    assert_eq!(found.walked, Some(30_000.0 + 10.0 + 300.0));
+    // Each node read by the check; the 10 past it, read by the function's step; their functions' 30 nodes each; and
+    // the 19 of kind 2 of each that the last step makes (decision 0273).
+    assert_eq!(found.walked, Some(30_000.0 + 10.0 + 300.0 + 190.0));
 }
 
 #[test]
@@ -664,11 +671,11 @@ fn a_wildcard_in_a_check_is_no_column_of_its_probe() {
     let rel = |rows: &[[i64; 2]]| InRel::from_flat(rows.iter().flatten().copied().collect(), rows.len(), vec![b'i'; 2]);
     let snap = WalkSnap { rels: [("r", rel(&r)), ("k", rel(&k))].into_iter().map(|(n, x)| (n.to_owned(), x)).collect(), syms: HashMap::new(), delta: None, heavy: HashMap::new() };
     let order: Vec<Step> = [0usize, 1, 2].iter().map(|&at| Step { at, mode: None }).collect();
-    // The check reads every node and passes half; the function's step reads those 500. Probed with the wildcard's
-    // column keyed by a value, no node passed it.
+    // The check reads every node and passes half; the function's step reads those 500, and makes their functions'
+    // 10 nodes each (decision 0273). Probed with the wildcard's column keyed by a value, no node passed it.
     let found = snap.walk(&rb, None, &order, vec![(order.clone(), 1.0)], &|| false);
     // Weighted bindings sum in floating point.
-    assert!(found.walked.is_some_and(|w| (w - 1_500.0).abs() < 1e-6), "{:?}", found.walked);
+    assert!(found.walked.is_some_and(|w| (w - 6_500.0).abs() < 1e-6), "{:?}", found.walked);
 }
 
 fn steps_of(o: &[usize]) -> Vec<StoredStep> {
