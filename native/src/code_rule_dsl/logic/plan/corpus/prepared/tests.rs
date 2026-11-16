@@ -63,6 +63,9 @@
         assert_eq!((matches(&back), &back.vocabulary.markers), (matches(&prepared), &prepared.vocabulary.markers), "the match_all regexes and f-string markers");
         assert_eq!((back.sets, back.demanded, back.pushed, back.factorized, back.located, back.merged, back.interned), (prepared.sets.clone(), prepared.demanded.clone(), prepared.pushed.clone(), prepared.factorized.clone(), prepared.located.clone(), prepared.merged, prepared.interned.clone()));
         assert_eq!(back.vocabulary.specs, prepared.vocabulary.specs);
+        // What preparing decided (decision 0269), made though this process does not profile, and read back.
+        assert!(!prepared.decided.is_empty(), "preparing decided nothing");
+        assert_eq!(back.decided, prepared.decided);
         assert_eq!(format!("{:?}", back.split.local), format!("{:?}", prepared.split.local), "the split's local program");
         assert_eq!(format!("{:?}", back.split.cross), format!("{:?}", prepared.split.cross), "the split's cross-file program");
         assert_eq!((&back.split.exports, &back.split.base, &back.split.locations, &back.split.same_doc), (&prepared.split.exports, &prepared.split.base, &prepared.split.locations, &prepared.split.same_doc));
