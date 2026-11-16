@@ -119,8 +119,11 @@ pub struct State {
     /// By (span path, plan text): the CPU seconds its probes ran, as the native engine timed them.
     pub native_cpu: BTreeMap<(String, String), f64>,
     pub notes: BTreeMap<String, String>,
-    /// Run-level decisions by (topic, text): how many times made.
+    /// Run-level decisions by (topic, text): how many times made, or stated by a reused version that made them
+    /// (`reused`, decision 0269).
     pub decisions: BTreeMap<(String, String), u64>,
+    /// Of those, the ones a reused version stated, by where the run took the version from (`memory`, `store`).
+    pub kept: BTreeMap<(String, String), &'static str>,
     /// Strata in the order first run: key, engine, why, loops.
     strata: Vec<Stratum>,
     /// The strata that ran in SQLite (the SQL wave kernel), by key: the kind of literal the native engine declined.
@@ -187,6 +190,10 @@ impl State {
         }
         for (k, n) in o.decisions {
             *self.decisions.entry(k).or_default() += n;
+        }
+        // Where a reused step's decisions came from (decision 0269), by decision.
+        for (k, from) in o.kept {
+            self.kept.insert(k, from);
         }
         for s in o.strata {
             let other = format!("{} (chunk with {})", s.key, s.engine);
@@ -326,6 +333,8 @@ pub struct GpuTotal {
     pub decode: f64,
     pub uploads: u64,
     pub upload_bytes: u64,
+    /// Uploads by what was read (`UPLOAD_KINDS`): bytes and the host's CPU.
+    pub upload_by: [(u64, f64); 4],
     pub resident: u64,
     pub sorts: u64,
     pub sort_hits: u64,
@@ -358,6 +367,10 @@ impl GpuTotal {
         self.decode += o.decode;
         self.uploads += o.uploads;
         self.upload_bytes += o.upload_bytes;
+        for (a, b) in self.upload_by.iter_mut().zip(&o.upload_by) {
+            a.0 += b.0;
+            a.1 += b.1;
+        }
         self.resident += o.resident;
         self.sorts += o.sorts;
         self.sort_hits += o.sort_hits;
@@ -1811,17 +1824,85 @@ pub fn now() -> f64 {
     cpu()
 }
 
-/// A run-level decision or optimization under `topic` (counted when made again, as per chunk).
+/// A run-level decision or optimization under `topic` (counted when made again, as per chunk). Inside a step that
+/// keeps its decisions with what it produces (`Deciding`), it is made with profiling off too: the kept rows are a
+/// function of the step's inputs, not of whether the process that made them profiled.
 pub fn decision(topic: &str, text: impl FnOnce() -> String) {
-    if !on() {
+    let deciding = DECIDING.with(|d| !d.borrow().is_empty());
+    if !on() && !deciding {
         return;
     }
     // The text first: making it may profile too (a split's span), and the state's lock is not reentrant.
     let text = text();
-    *state().decisions.entry((topic.to_owned(), text)).or_default() += 1;
+    if deciding {
+        DECIDING.with(|d| {
+            for step in d.borrow_mut().iter_mut() {
+                *step.entry((topic.to_owned(), text.clone())).or_default() += 1;
+            }
+        });
+    }
+    if on() {
+        *state().decisions.entry((topic.to_owned(), text)).or_default() += 1;
+    }
 }
 
-/// The decisions made so far (none when profiling is off): `decisions_since` takes the ones made after.
+/// A decision (topic, text) and how often it was made.
+pub type Decided = ((String, String), u64);
+
+thread_local! {
+    /// The open steps' decisions on this thread (`Deciding`), outermost first: a decision is each one's.
+    static DECIDING: std::cell::RefCell<Vec<BTreeMap<(String, String), u64>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A step whose decisions are kept with what it produces (decision 0269): open from `open` to `close`, every
+/// decision made on this thread is the step's (and every enclosing step's). A step's passes decide on its thread; a
+/// pool job's decision is the profile's alone. Dropped without `close` (the step failed), it keeps nothing.
+pub struct Deciding {
+    depth: usize,
+}
+
+impl Deciding {
+    pub fn open() -> Self {
+        let depth = DECIDING.with(|d| {
+            let mut d = d.borrow_mut();
+            d.push(BTreeMap::new());
+            d.len()
+        });
+        Deciding { depth }
+    }
+
+    /// The step's decisions, in order.
+    pub fn close(self) -> Vec<Decided> {
+        let made = DECIDING.with(|d| {
+            let mut d = d.borrow_mut();
+            assert_eq!(d.len(), self.depth, "steps keeping their decisions close innermost first");
+            d.pop().expect("an open step")
+        });
+        std::mem::forget(self);
+        made.into_iter().collect()
+    }
+}
+
+impl Drop for Deciding {
+    fn drop(&mut self) {
+        DECIDING.with(|d| d.borrow_mut().truncate(self.depth - 1));
+    }
+}
+
+/// The decisions a version this run reused made when it was made (decision 0269), taken from `from` (`memory`,
+/// `store`): the run states them as its own, as a run that made the version would.
+pub fn reused(from: &'static str, made: &[Decided]) {
+    if !on() || made.is_empty() {
+        return;
+    }
+    let mut state = state();
+    for (k, n) in made {
+        *state.decisions.entry(k.clone()).or_default() += n;
+        state.kept.insert(k.clone(), from);
+    }
+}
+
+/// The decisions made so far (none when profiling is off).
 pub fn decisions() -> BTreeMap<(String, String), u64> {
     if !on() {
         return BTreeMap::new();
@@ -1829,9 +1910,15 @@ pub fn decisions() -> BTreeMap<(String, String), u64> {
     merged().decisions.clone()
 }
 
-/// The decisions made since `before` (`decisions`), with how often: what a step decided.
-pub fn decisions_since(before: &BTreeMap<(String, String), u64>) -> Vec<((String, String), u64)> {
-    decisions().into_iter().filter_map(|(k, n)| n.checked_sub(before.get(&k).copied().unwrap_or(0)).filter(|d| *d > 0).map(|d| (k, d))).collect()
+/// The decisions made so far, taken: the next call returns those made after this one (a measurement's steps).
+pub fn take_decisions() -> BTreeMap<(String, String), u64> {
+    if !on() {
+        return BTreeMap::new();
+    }
+    // Every thread's (`merged`): a step's decisions made on the pool are its too.
+    let mut all = merged();
+    all.kept.clear();
+    std::mem::take(&mut all.decisions)
 }
 
 /// The strata the device ran (decision 0095, step 4): in all, then the costliest; and the strata placed there that it
@@ -1856,6 +1943,8 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
         ms(sum.host()), ms(sum.encode), ms(sum.upload), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
     let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device); texts made {}",
         sum.uploads, sum.upload_bytes as f64 / 1e6, sum.resident, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.made);
+    let by: Vec<String> = UPLOAD_KINDS.iter().zip(&sum.upload_by).map(|(k, (b, c))| format!("{k} {:.1} MB in {:.1} ms", *b as f64 / 1e6, ms(*c))).collect();
+    let _ = writeln!(r, "  uploads by what they read: {}", by.join(", "));
     let mut top = ran.clone();
     top.sort_by(|a, b| b.1.cpu.total_cmp(&a.1.cpu));
     let _ = writeln!(r, "{:>8} {:>8} {:>8} {:>8} {:>5} {:>6} {:>6} {:>10}  stratum (costliest 25 on the GPU)", "cpu ms", "host ms", "gpu ms", "est ms", "runs", "rules", "subm", "rows");
@@ -2208,7 +2297,9 @@ pub fn explain(r: &mut String, state: &State) {
             let _ = writeln!(r, "{t}:");
             topic = t;
         }
-        let _ = writeln!(r, "  - {text}{}", if *n > 1 { format!("  (x{n})") } else { String::new() });
+        let times = if *n > 1 { format!("  (x{n})") } else { String::new() };
+        let kept = state.kept.get(&(t.clone(), text.clone())).map_or(String::new(), |from| format!("  (kept: {from})"));
+        let _ = writeln!(r, "  - {text}{times}{kept}");
     }
     let _ = writeln!(
         r,
@@ -2436,6 +2527,35 @@ pub mod tests {
         assert_eq!(row("none").as_deref(), Some("0.000 0 0"), "{r}");
     }
 
+    /// Decision 0269: a step keeps what it decides, with profiling off too, nested steps each theirs, a failed step
+    /// nothing (its enclosing step keeps what it decided); a run that reuses the step's output states them, kept.
+    #[test]
+    fn a_step_keeps_its_decisions_and_a_reuse_states_them() {
+        let _serial = one_run();
+        set(false);
+        let outer = Deciding::open();
+        decision("t", || "a".into());
+        let inner = Deciding::open();
+        decision("t", || "b".into());
+        let inner = inner.close();
+        {
+            let _failed = Deciding::open();
+            decision("t", || "c".into());
+        }
+        decision("t", || "a".into());
+        let outer = outer.close();
+        let d = |text: &str, n: u64| (("t".to_owned(), text.to_owned()), n);
+        assert_eq!(inner, vec![d("b", 1)]);
+        assert_eq!(outer, vec![d("a", 2), d("b", 1), d("c", 1)]);
+        set(true);
+        reset();
+        reused("store", &inner);
+        let mut r = String::new();
+        explain(&mut r, &state());
+        set(false);
+        assert!(r.contains("  - b  (kept: store)\n"), "{r}");
+    }
+
     /// A thread records into its own shard: another thread holding its records does not hold it up (one lock for
     /// every thread's records made sixteen threads take turns at it), and an ended thread's records are read with
     /// the rest.
@@ -2571,6 +2691,15 @@ pub mod tests {
 
 }
 
+/// What a device's uploads read (`Report::upload_by`): a flat relation's rows (the store's), a view's rows (a
+/// source's, a tape view's read row by row), and the names of symbols (text tests, `str_cmp`).
+pub const UPLOAD_KINDS: [&str; 4] = ["flat relations", "views", "names", "views made on the device"];
+pub const UPLOAD_FLAT: usize = 0;
+pub const UPLOAD_VIEW: usize = 1;
+pub const UPLOAD_NAMES: usize = 2;
+/// A view its batch's chunk block made on the device (decision 0289 §2): its bytes, and the host's CPU encoding it.
+pub const UPLOAD_MADE: usize = 3;
+
 /// What a stratum's device run did, for the profile.
 #[derive(Clone, Debug, Default)]
 pub struct Report {
@@ -2602,6 +2731,8 @@ pub struct Report {
     /// Relations uploaded (and their bytes), found resident; sorts made, found resident.
     pub uploads: u32,
     pub upload_bytes: u64,
+    /// The uploads by what they read (`UPLOAD_KINDS`, in order): bytes and this thread's CPU.
+    pub upload_by: [(u64, f64); 4],
     pub resident_hits: u32,
     pub sorts: u32,
     pub sort_hits: u32,

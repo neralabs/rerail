@@ -200,22 +200,34 @@ impl Block {
 
     /// `size` bytes at `align`, from the front: many threads may allocate at once.
     pub fn alloc(&self, size: usize, align: usize) -> usize {
+        self.try_alloc(size, align).unwrap_or_else(|| panic!("block full: {} more bytes past {} of {}", size, self.used(), self.reserved))
+    }
+
+    /// `size` bytes at `align`, or `None` when the block's reservation cannot hold them.
+    pub fn try_alloc(&self, size: usize, align: usize) -> Option<usize> {
         assert!(self.writable, "alloc in a frozen block");
         let mut cur = self.top.load(Relaxed);
         loop {
             let start = round_up(cur, align);
             let end = start + size;
-            assert!(end <= self.reserved, "block full: {end} of {} bytes", self.reserved);
+            if end > self.reserved {
+                return None;
+            }
             match self.top.compare_exchange_weak(cur, end, AcqRel, Relaxed) {
                 Ok(_) => {
                     if self.dirty {
                         unsafe { std::ptr::write_bytes(self.base.add(start), 0, size) };
                     }
-                    return start;
+                    return Some(start);
                 }
                 Err(c) => cur = c,
             }
         }
+    }
+
+    /// `n` zeroed `T`s, or `None` when the block cannot hold them.
+    pub fn try_alloc_t<T>(&self, n: usize) -> Option<*mut T> {
+        self.try_alloc(n * size_of::<T>(), align_of::<T>().max(8)).map(|at| self.ptr(at))
     }
 
     /// `n` zeroed `T`s. Memory never written is zero, as the mapping gives it.

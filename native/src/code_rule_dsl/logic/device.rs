@@ -9,6 +9,7 @@ use std::sync::{Arc, OnceLock};
 
 use super::native::setfix::{Fresh, InRel, Interner, JoinRule, Store};
 
+pub mod caps;
 pub mod lattice;
 pub mod nearest;
 pub use crate::code_rule_dsl::logic::profile::{Report};

@@ -1259,6 +1259,13 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_COSTS",
         // Keyed through what it adds: the observer's facts (the source files), which the prepared key hashes.
         "RERAIL_SOURCES_PHASE",
+        // Where rule images are read from and kept (decision 0264): the shipped bundle, the images' store, the
+        // export of what a bundle is packed from, and the store turned off. An image is found by the digest of
+        // what it was made from, so each place gives the same program or none.
+        "RERAIL_SHIPPED_IMAGES",
+        "RERAIL_IMAGE_STORE",
+        "RERAIL_EXPORT_IMAGES",
+        "RERAIL_MODULE_IMAGES",
     ];
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
     // Every switch named, however it is read (`var`, `var_os`, a constant, a helper's argument).

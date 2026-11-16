@@ -725,6 +725,8 @@ pub struct Prepared {
     pub merged: (usize, usize),
     pub split: crate::code_rule_dsl::typing::file_local::Programs,
     pub interned: Vec<(Vec<String>, Vec<u32>)>,
+    /// The decisions preparing made (decision 0269), kept with the program: a run that reuses it states them.
+    pub decided: Vec<crate::code_rule_dsl::logic::profile::Decided>,
     /// The cone of requests of `split`'s cross-file part (`cone_of`), made by the first run that loads documents
     /// and shared by the later ones: it is the split's, as the split is the program's.
     pub(in crate::code_rule_dsl) cone: std::sync::OnceLock<std::result::Result<Arc<Cone>, String>>,
@@ -2329,6 +2331,15 @@ fn run_handed(
     let reuse = reuse::wanted(options, typing, t_facts);
     let kept = if reuse { reuse::reused(&texts, root, out, modes, typing, options) } else { Ok(None) };
     let report = match kept {
+        // A profiled run that the cutoff answered writes its profile too: the lifecycle below appends to it.
+        Ok(Some(report)) if crate::code_rule_dsl::logic::profile::on() && !phase0::active() && RUNS_UNDER_WAY.with(std::cell::Cell::get) == 0 => {
+            match crate::code_rule_dsl::logic::profile::directory() {
+                Some(dir) => crate::code_rule_dsl::logic::profile::report::write(&dir, "Profile of a corpus run the whole-run cutoff answered: every read as the last run left it, its outputs written again\n")
+                    .map_err(|e| Error::Plan(format!("profile: {e}")))
+                    .map(|()| report),
+                None => Ok(report),
+            }
+        }
         Ok(Some(report)) => Ok(report),
         Err(e) => Err(e),
         Ok(None) => run_observed(&texts, root, t_facts, out, modes, binding, chunk_nodes, typing, options).and_then(|report| {
@@ -3105,9 +3116,12 @@ fn run_observed(
             if from == "store" {
                 keep_prepared(prepared_key, Arc::clone(&p));
             }
+            crate::code_rule_dsl::logic::profile::reused(if from == "store" { "store" } else { "memory" }, &p.decided);
             p
         }
         None => {
+            // What preparing decides is the prepared program's, kept with it (decision 0269).
+            let deciding = crate::code_rule_dsl::logic::profile::Deciding::open();
             let mut interned: Vec<(Vec<String>, Vec<u32>)> = Vec::new();
             // @py_unparse(n) and @ast_dump(n) read the relations the batches bind them as.
             cpython_functors(&mut prog)?;
@@ -3248,7 +3262,8 @@ fn run_observed(
             }
             // One prepared program, shared by the process's cache, the store's writer and this run (each a copy before:
             // three of a 16 k-rule program's four forms at once, about 0.4 GB of the Python pack's peak).
-            let prepared = Arc::new(Prepared { prog, vocabulary: Arc::new(vocabulary), lowered, sets, matchers, demanded, pushed, factorized, located, merged, split, interned, cone: Default::default(), maintained: Default::default(), parts: Default::default() });
+            let decided = deciding.close();
+            let prepared = Arc::new(Prepared { prog, vocabulary: Arc::new(vocabulary), lowered, sets, matchers, demanded, pushed, factorized, located, merged, split, interned, cone: Default::default(), maintained: Default::default(), parts: Default::default(), decided });
             if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
                 eprintln!("RERAIL_PREPARED_TRACE ({}) {} {label}: prepared, durable {:?}", phases::current().unwrap_or_else(|| "main".into()), prepared_key[..6].iter().map(|b| format!("{b:02x}")).collect::<String>(), durable.map(|d| d.is_some()));
             }
@@ -3288,7 +3303,7 @@ fn run_observed(
         (false, _) if durable.is_some() => "prepared, and stored for later processes (decision 0073)".to_owned(),
         (false, _) => "prepared".to_owned(),
     });
-    let Prepared { prog, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), split: shared_split, interned: _, cone: shared_cone, maintained: shared_maintained, parts: shared_parts } = &*prepared;
+    let Prepared { prog, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), split: shared_split, interned: _, cone: shared_cone, maintained: shared_maintained, parts: shared_parts, decided: _ } = &*prepared;
     let (remerged, reshared) = (*remerged, *reshared);
     // The run takes the split's programs apart (`part` below): its own copy, the kept one shared.
     let mut split = shared_split.clone();
@@ -8837,16 +8852,18 @@ fn run_observed(
         let (by_what, peak, held) = store.written_by_what();
         let dropped = store.dropped();
         crate::code_rule_dsl::logic::profile::decision("write-back by what (decision 0102)", || {
-            let rows: Vec<String> = by_what.iter().map(|(what, jobs, bytes, cpu)| format!("{what}: {jobs} jobs, {:.1} MB, {cpu:.3} s", *bytes as f64 / 1048576.0)).collect();
+            // Held: what a job keeps queued until written (the queue's cap); encoded: the frames it made.
+            let rows: Vec<String> = by_what.iter().map(|(what, jobs, bytes, cpu, encoded)| format!("{what}: {jobs} jobs, {:.1} MB held, {:.1} MB encoded, {cpu:.3} s", *bytes as f64 / 1048576.0, *encoded as f64 / 1048576.0)).collect();
             format!(
                 "queue peak {:.1} MB; back-pressure held producers {} times, {:.3} s; cache writes dropped for a full queue {} ({:.1} MB: the next run parses them again); {}",
                 peak as f64 / 1048576.0, held.0, held.1, dropped.0, dropped.1 as f64 / 1048576.0, rows.join("; ")
             )
         });
-        crate::code_rule_dsl::logic::profile::decision("write-back (decision 0102)", || format!("{} writes queued behind the run in {} transactions, {:.1} MB, {:.3} s of the writer's CPU", w.jobs, w.batches, w.bytes as f64 / 1048576.0, w.cpu));
+        let encoded: usize = by_what.iter().map(|r| r.4).sum();
+        crate::code_rule_dsl::logic::profile::decision("write-back (decision 0102)", || format!("{} writes queued behind the run in {} transactions, {:.1} MB held, {:.1} MB of frames encoded, {:.3} s of the writer's CPU", w.jobs, w.batches, w.bytes as f64 / 1048576.0, encoded as f64 / 1048576.0, w.cpu));
         // By kind, over the process so far.
         let kinds = crate::content_store::write_back::written_by_kind();
-        let text = || kinds.iter().map(|(k, n, b, c)| format!("{k}: {n} jobs, {:.1} MB, {c:.3} s", *b as f64 / 1048576.0)).collect::<Vec<_>>().join("; ");
+        let text = || kinds.iter().map(|(k, n, b, c, e)| format!("{k}: {n} jobs, {:.1} MB held, {:.1} MB encoded, {c:.3} s", *b as f64 / 1048576.0, *e as f64 / 1048576.0)).collect::<Vec<_>>().join("; ");
         crate::code_rule_dsl::logic::profile::decision("write-back by kind, this process so far (decision 0102)", text);
         if std::env::var_os("RERAIL_WRITES").is_some() {
             eprintln!("RERAIL_WRITES queue peak {:.1} MB, producers held {} times ({:.3} s); {}", peak as f64 / 1048576.0, held.0, held.1, text());

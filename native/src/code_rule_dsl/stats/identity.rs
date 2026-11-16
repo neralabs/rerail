@@ -17,7 +17,7 @@ pub trait IdentityDomain {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl) struct ScopeRecipeDomain;
+pub struct ScopeRecipeDomain;
 
 impl IdentityDomain for ScopeRecipeDomain {
     const TAG: u8 = 1;
@@ -25,7 +25,7 @@ impl IdentityDomain for ScopeRecipeDomain {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl) struct ScopeInstanceDomain;
+pub struct ScopeInstanceDomain;
 
 impl IdentityDomain for ScopeInstanceDomain {
     const TAG: u8 = 2;
@@ -42,7 +42,7 @@ impl IdentityDomain for UtilityDefinitionDomain {
 
 #[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl) struct RelationDomain;
+pub struct RelationDomain;
 
 #[cfg(any(test, feature = "test-hooks"))]
 impl IdentityDomain for RelationDomain {
@@ -51,7 +51,7 @@ impl IdentityDomain for RelationDomain {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl) struct ClausePlanDomain;
+pub struct ClausePlanDomain;
 
 impl IdentityDomain for ClausePlanDomain {
     const TAG: u8 = 4;
@@ -59,7 +59,7 @@ impl IdentityDomain for ClausePlanDomain {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl) struct EffectProfileDomain;
+pub struct EffectProfileDomain;
 
 impl IdentityDomain for EffectProfileDomain {
     const TAG: u8 = 5;
@@ -67,7 +67,7 @@ impl IdentityDomain for EffectProfileDomain {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl) struct DocumentMapGenerationDomain;
+pub struct DocumentMapGenerationDomain;
 
 impl IdentityDomain for DocumentMapGenerationDomain {
     const TAG: u8 = 6;
@@ -75,7 +75,7 @@ impl IdentityDomain for DocumentMapGenerationDomain {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl) struct SnapshotDomain;
+pub struct SnapshotDomain;
 
 impl IdentityDomain for SnapshotDomain {
     const TAG: u8 = 8;
@@ -83,7 +83,7 @@ impl IdentityDomain for SnapshotDomain {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl) struct DocumentDomain;
+pub struct DocumentDomain;
 
 impl IdentityDomain for DocumentDomain {
     const TAG: u8 = 9;
@@ -98,19 +98,19 @@ impl IdentityDomain for CompiledPlanDomain {
     const NAME: &'static str = "compiled-plan";
 }
 
-pub(in crate::code_rule_dsl) type ScopeRecipeId = SemanticId<ScopeRecipeDomain>;
-pub(in crate::code_rule_dsl) type ScopeInstanceId = SemanticId<ScopeInstanceDomain>;
+pub type ScopeRecipeId = SemanticId<ScopeRecipeDomain>;
+pub type ScopeInstanceId = SemanticId<ScopeInstanceDomain>;
 #[cfg(any(test, feature = "test-hooks"))]
-pub(in crate::code_rule_dsl) type RelationId = SemanticId<RelationDomain>;
-pub(in crate::code_rule_dsl) type ClausePlanId = SemanticId<ClausePlanDomain>;
-pub(in crate::code_rule_dsl) type EffectProfileId = SemanticId<EffectProfileDomain>;
-pub(in crate::code_rule_dsl) type DocumentMapGenerationId = SemanticId<DocumentMapGenerationDomain>;
-pub(in crate::code_rule_dsl) type SnapshotId = SemanticId<SnapshotDomain>;
-pub(in crate::code_rule_dsl) type DocumentId = SemanticId<DocumentDomain>;
+pub type RelationId = SemanticId<RelationDomain>;
+pub type ClausePlanId = SemanticId<ClausePlanDomain>;
+pub type EffectProfileId = SemanticId<EffectProfileDomain>;
+pub type DocumentMapGenerationId = SemanticId<DocumentMapGenerationDomain>;
+pub type SnapshotId = SemanticId<SnapshotDomain>;
+pub type DocumentId = SemanticId<DocumentDomain>;
 pub type CompiledPlanId = SemanticId<CompiledPlanDomain>;
 pub type UtilityDefinitionId = SemanticId<UtilityDefinitionDomain>;
 
-pub(in crate::code_rule_dsl) fn utility_definition_id(
+pub fn utility_definition_id(
     origin_digest: &[u8; 32],
 ) -> UtilityDefinitionId {
     UtilityDefinitionId::builder().bytes(origin_digest).finish()
@@ -120,14 +120,14 @@ pub(in crate::code_rule_dsl) fn utility_definition_id(
 macro_rules! identity_domain {
     ($domain:ident, $identity:ident, $tag:literal, $name:literal) => {
         #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-        pub(in crate::code_rule_dsl) struct $domain;
+        pub struct $domain;
 
         impl IdentityDomain for $domain {
             const TAG: u8 = $tag;
             const NAME: &'static str = $name;
         }
 
-        pub(in crate::code_rule_dsl) type $identity = SemanticId<$domain>;
+        pub type $identity = SemanticId<$domain>;
     };
 }
 
@@ -223,11 +223,11 @@ impl<D: IdentityDomain> IdentityBuilder<D> {
         self.field(2, value.as_bytes())
     }
 
-    pub(in crate::code_rule_dsl) fn u16(self, value: u16) -> Self {
+    pub fn u16(self, value: u16) -> Self {
         self.field(3, &value.to_be_bytes())
     }
 
-    pub(in crate::code_rule_dsl) fn u32(self, value: u32) -> Self {
+    pub fn u32(self, value: u32) -> Self {
         self.field(4, &value.to_be_bytes())
     }
 
@@ -236,11 +236,11 @@ impl<D: IdentityDomain> IdentityBuilder<D> {
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(in crate::code_rule_dsl) fn boolean(self, value: bool) -> Self {
+    pub fn boolean(self, value: bool) -> Self {
         self.field(6, &[u8::from(value)])
     }
 
-    pub(in crate::code_rule_dsl) fn identity<I: IdentityDomain>(self, value: SemanticId<I>) -> Self {
+    pub fn identity<I: IdentityDomain>(self, value: SemanticId<I>) -> Self {
         self.field(7, value.as_bytes())
     }
 

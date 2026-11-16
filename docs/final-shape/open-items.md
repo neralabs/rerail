@@ -500,6 +500,7 @@ relational lowering stays test-only or replaces `demand::vtab`'s lowering.
 - Supertypes: N's semantics. `kind: <supertype>` compiles to `AstMatcher::Supertype` (`matcher::Supertype`: the class and its transitive concrete kinds, `GrammarDialect::supertype_kinds`). It matches the nodes the parser reported as members, read from the tape (`TapeDoc::transducer_has_supertype`; a tree that is no tape's reads unknown). It lowers to `SUPERTYPE` in the packed runtime (`MatchTree::Supertype`), with the concrete kinds as its domain and anchor, and to N's class-membership terminal in the relational lowering. `slice::tests::a_supertype_rule_finds_the_same_members_on_every_backend` checks the CPU interpreter, JIT and both Metal bindings. The rule reference documents it.
 - Syntax errors: W's 50% unread rule stays. `clause-syntax-error-unknown` is re-blessed in `production_contracts_081_108.json` to W's `source-incomplete` ("error regions cover 91% of it").
 - The relational lowering stays test-only. Whether it replaces `demand::vtab`'s lowering is left to Phase 6.
+- 2026-11-15: the lowering's own copies of N's identities (`plan/identity.rs`), physical relations (`plan/physical.rs`) and SQL AST (`plan/render/{sql_ast, typed_boundary}.rs`) are removed. It reads their placements, `stats::identity` and `logic::sql::{physical, sql_ast, typed_boundary}` (05 Phase 5 rows 3 and 4, additions only). Every test those copies had is in its placement under the same name.
 
 ## O18. P's relational stage, placed test-only
 
@@ -598,6 +599,16 @@ beside the adaptations made from them:
   `matcher::anchors` gains the FilePath arm.
 Closure: per pair, decide which survives. The adaptation carries the plan's shape, so the copy is
 removed (a mutation, after its tests are carried over or retired), or the copy replaces it.
+
+**Closed for S's `query/plan` tree (2026-11-15).** The 590b3a1fc merge brought S's tree back as copied
+(`query::plan`, test-only), beside its placements: `facts::producers::python::{python_structure,
+call_batch, import_screen}`, `findings::{contract, shape::{sql_shape, generated_shape}}`, the test-only
+`findings::async_reference` with `native_oracle`, `tests` and `rr_comparison`, and `facts::vtab::Relation`
+(decision 0008). The placements survive and the copy is removed. Every test the copy had is in its
+placement, under the same name and with the same body apart from paths. The placed `import_screen`
+tests also check core facts against the tape. The copy's only difference was S's own `Relation`.
+Under `p-anchor-corpus`, the copy's `async_reference` already mounted the placed `native_oracle`
+and `rr_comparison`, and its `tests` read index fields that the placed oracle no longer has.
 
 ## O20. P's anchors module and SQL anchor engine, placed test-only
 
@@ -2234,7 +2245,11 @@ the pruned program (`types-failed`), as a run does when it plans. Six rules stil
 - **Types:** `ruff-pyi062` (`lit_key`: `$t is a Name and a Kind`) and `ruff-ruf028` (`stmt_level`: `$k is a
   Kind and a Name`).
 - **A span where text is compared (O120):** `ruff-pgh004` (`noqa_all_tail`: `R = ""` over a capture of a comment)
-  and `ruff-up009` (a fact of `utf8`, `"utf-8"` where a span goes).
+  and `ruff-up009` (a fact of `utf8`, `"utf-8"` where a span goes). **Fixed (2026-11-15)** as O120 was: the rules
+  were wrong. Each capture names a span and reads its text (`(?<Rs>…)`, `text(Rs, R)`; up009's `(?<xs>…)`). On a
+  file of our own, under `RERAIL_SQL_STRICT`: pgh004 finds its three (a bare `# noqa`, `# noqa X100`, `# noqa
+  #…`) where it failed to lower; up009 finds the `# -*- coding: utf-8 -*-` it had silently missed (0 rows: a span
+  never equals a string).
 
 Without those six, the pack (538 programs) combines in 29 s and then stops in the file-local split (O135).
 
@@ -2249,6 +2264,13 @@ did not cause them:
 - `ruff-sim222` and `ruff-sim223`: unplaced literals, `$rr_t135 = @add($k, 1)` in `rr_ctx134`.
 - `slot001`, combined with the programs it shares relations with, fails the same way as sim222 in both modes. It
   is probably the same cause.
+
+**Checked again (2026-11-15, after the hub's merge, 6a0605cf7).** Under `RERAIL_SQL_STRICT`, alone on a file of
+our own: `pyi062`, `ruf028`, `pyi034`, `pyi036`, `sim222` and `sim223` each run (exit 0, no lowering or typing
+error); `sim222` and `sim223` find `a or True` and `a and False` on their lines. pgh004 and up009 are fixed above.
+The whole pack without `b005` and `perf403` (544 rules, `slot001` and the programs it shares relations with among
+them) runs on one file within 1 GB and 120 s, with 7 findings. Left: `b005` and `perf403` (refused at reading,
+O122), and the combined pack's cost over many files (O135), not measured here.
 
 ## O112. The shared tape cache holds memo rows whose length does not match (closed 2026-11-07)
 

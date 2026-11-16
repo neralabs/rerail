@@ -31,8 +31,9 @@ use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// The pointer's schema: bumped when its meaning changes (105: the programs as their text, decision 0155).
-const POINTER: u32 = crate::content_store::live_fact_schema(105);
+/// The pointer's schema: bumped when its meaning changes (105: the programs as their text, decision 0155; 106: the
+/// decisions preparing made, decision 0269).
+const POINTER: u32 = crate::content_store::live_fact_schema(106);
 
 /// The path a lookup names. The entries read no path (`path_dependent: false`); the store keeps them under none.
 const PATH: &str = "rerail/prepared";
@@ -82,6 +83,8 @@ pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
         ("prepared_constant", &["k:int", "rel:sym"]),
         ("prepared_location", &["rel:sym", "i:int", "col:int"]),
         ("prepared_same_doc", &["rel:sym", "i:int", "col:int"]),
+        // The decisions preparing made (decision 0269): a run that reuses the program states them.
+        ("prepared_decided", &["k:int", "topic:sym", "text:sym", "count:int"]),
     ];
     SCHEMA
         .iter()
@@ -190,6 +193,9 @@ fn rest_of(prepared: &Prepared) -> Facts {
     }
     for (k, marker) in prepared.vocabulary.markers.iter().enumerate() {
         row("prepared_marker", vec![n(k), s(marker)]);
+    }
+    for (k, ((topic, text), count)) in prepared.decided.iter().enumerate() {
+        row("prepared_decided", vec![n(k), s(topic), s(text), Value::Int(*count as i64)]);
     }
     facts
 }
@@ -349,6 +355,7 @@ pub fn prepared_of(
         cone: Default::default(),
         maintained: Default::default(),
         parts: Default::default(),
+        decided: indexed(facts, "prepared_decided")?.iter().map(|(_, r)| Ok(((text(&r[0])?, text(&r[1])?), int(&r[2])? as u64))).collect::<Result<_, String>>()?,
     })
 }
 

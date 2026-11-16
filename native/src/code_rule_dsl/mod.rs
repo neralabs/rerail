@@ -3126,10 +3126,6 @@ pub mod sql_admission {
 #[cfg_attr(any(test, feature = "test-hooks"), path = "query")]
 mod query {
     pub use rerail_w::code_rule_dsl::query::*;
-    // The async-call family's reference (`plan::async_reference`) is read by the p-anchor-corpus tests alone.
-    #[cfg(test)]
-    #[cfg_attr(not(feature = "p-anchor-corpus"), allow(dead_code))]
-    pub mod plan;
     #[cfg(test)]
     pub mod tests;
     #[allow(unused_imports)]
