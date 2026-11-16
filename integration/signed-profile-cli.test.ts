@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { spawn } from "node:child_process";
 import { generateKeyPairSync, randomUUID, sign, type KeyObject } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -12,6 +12,9 @@ import type {
   FlattenedJws,
   SignedActivationRequest,
 } from "../src/activation/index.js";
+import { withExperiments } from "../test/support/environment/experiments.js";
+
+withExperiments("ACTIVATION_PROFILES");
 
 interface CommandResult {
   code: number;
@@ -137,6 +140,14 @@ describe("signed profile CLI", () => {
       const escapedChannel = await runRerail(home, ["--profile", profileName, "update", "check", "--channel", "beta"]);
       expect(escapedChannel.code).toBe(1);
       expect(escapedChannel.stderr).toContain("restricts updates to channel latest");
+
+      // Activation profiles off: the stored profile still restricts updates, and can still be seen.
+      vi.stubEnv("RERAIL_EXPERIMENTAL_ACTIVATION_PROFILES", "0");
+      const escapedWhileOff = await runRerail(home, ["update", "check", "--channel", "beta"]);
+      expect(escapedWhileOff.code).toBe(1);
+      expect(escapedWhileOff.stderr).toContain("restricts updates to channel latest");
+      expect((await runRerail(home, ["profile", "status"])).stdout).toContain("Update channel: latest");
+      vi.stubEnv("RERAIL_EXPERIMENTAL_ACTIVATION_PROFILES", "1");
 
       const envelope = signedProfile(profile, privateKey);
       await writeFile(tamperedProfilePath, JSON.stringify({

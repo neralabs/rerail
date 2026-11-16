@@ -1,6 +1,6 @@
 import { readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AdapterDelivery, Conflict } from "../../../src/engine/index.js";
 import { claudeHookOutput } from "../../../src/hosts/claude/index.js";
 import { SqliteSessionReader, SqliteSessionStore } from "../../../src/runtime/index.js";
@@ -9,11 +9,10 @@ import type { MergeAssistRuntime } from "../../../src/runtime/merge-assist/servi
 import { commit, git, writeFiles } from "../../support/merge-assist/git.js";
 import { FakeGithub, mergeAssistWorkspaces, takeNotes, type Workspace } from "../../support/merge-assist/workspace.js";
 import { body, changed, open, sessionRuntime } from "./support/conflict-sessions.js";
+import { withExperiments } from "../../support/environment/experiments.js";
 
 // Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
-beforeEach(() => {
-  vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "1");
-});
+withExperiments("MERGE_ASSIST");
 
 const workspace = mergeAssistWorkspaces();
 
@@ -155,7 +154,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       expect(conflict).toMatchObject({ quiet: false, summary: SUMMARY });
       const [note, ...more] = service.pendingNotes("session", ws.repo, new Set(), "claude-code");
       expect(more).toEqual([]);
-      expect(note!.content).toContain(`Your edit to ${FILE} overlaps open work: jbarnes-1 (Tim Belanger), described on their side as "Grow retry".`);
+      expect(note!.content).toContain(`Your edit to ${FILE} overlaps open work: "jbarnes-1" ("Tim Belanger"), described on their side as "Grow retry".`);
       expect(note!.conflict).toEqual({ id: conflict.id, text: "your edit overlaps jbarnes-1 (Tim Belanger): retry.ts · function retry" });
       // Claude Code, at its next tool call: the person's line beside the note.
       const output = claudeHookOutput("PostToolUse", [deliveryOf(note!, "session")], { links: "plain" });
@@ -183,7 +182,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       const [note] = service.pendingNotes("session", ws.repo, new Set(), "claude-code");
       const lines = note!.content.split("\n");
       expect(lines).toHaveLength(4);
-      expect(lines[1]).toMatch(/^Your edit to src\/retry\.ts overlaps open work: jbarnes-1 \(Tim Belanger\), described on their side as "Grow retry and more and more .*…"\.$/u);
+      expect(lines[1]).toMatch(/^Your edit to src\/retry\.ts overlaps open work: "jbarnes-1" \("Tim Belanger"\), described on their side as "Grow retry and more and more .*…"\.$/u);
       expect(lines[1]!.length).toBeLessThan(400);
     });
 
@@ -323,7 +322,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
         const next = await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId, text: "Go on." });
         expect(overlapNotes(next)).toEqual([]);
         expect(hookNotes(next)).toEqual([expect.stringContaining("The user's conflict hook adds: Ask Jeremy in #storefront before you go on.")]);
-        expect(hookNotes(next)[0]).toContain("About the conflict with jbarnes-1");
+        expect(hookNotes(next)[0]).toContain("About the conflict with \"jbarnes-1\"");
         expect(hookNotes(await runtime.ingest({ kind: "user-prompt", eventId: "after", sessionId, text: "And on." }))).toEqual([]);
       } finally {
         await runtime.dispose();

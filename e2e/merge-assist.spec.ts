@@ -37,22 +37,31 @@ test.describe("Merge Assist", () => {
     expect((await turnOn).postDataJSON()).toEqual({ repository: billing.repositoryKey, checkout: billing.checkoutPath, enabled: true });
     await expect(page.locator("#toast")).toContainText("on in billing");
     await expect(consent).toHaveCount(0);
+    // Turn on is gone: the focus goes to Scan now, which the strip it opened offers.
+    const scan = page.locator('#content [data-act="mascan"]');
+    await expect(scan).toBeFocused();
     // Once on, Rerail reads gh's sign-in: the scenario's gh is signed out.
     await expect(page.locator("#content .mstrip")).toContainText("gh signed out");
     await expect(conflicts(page)).toContainText("No open conflicts");
     await page.reload();
     await expect(page.locator("#content .mstrip")).toBeVisible();
 
+    // Scan now is disabled while it runs and rebuilt with the scan it answers: the focus comes back to it.
+    await scan.click();
+    await expect(page.locator("#toast")).toContainText("Scan");
+    await expect(scan).toBeFocused();
+
     // Leave the shared daemon as the scenario seeded it.
     await page.locator('#content [data-act="maoff"]').click();
     await expect(page.locator("#toast")).toContainText("off in billing");
     await expect(consent).toBeVisible();
+    await expect(page.locator('#content [data-act="maon"]')).toBeFocused();
   });
 
   test("an open conflict shows both sides, why, and who to talk it over with; a quiet one is muted and not counted", async ({ page, rerail }) => {
     await page.goto(await rerail.dashboard("merge-assist", { hash: "merge" }));
-    await expect(cards(page)).toHaveCount(2);
-    await expect(conflicts(page).locator("h2 .n2")).toHaveText("2");
+    await expect(cards(page)).toHaveCount(3);
+    await expect(conflicts(page).locator("h2 .n2")).toHaveText("3");
 
     const open = cards(page).nth(0);
     await expect(open).toHaveClass("mcard");
@@ -72,7 +81,8 @@ test.describe("Merge Assist", () => {
     await expect(quiet.locator("h3")).toHaveText("package-lock.json");
     await expect(quiet.locator(".mquiet")).toBeVisible();
     await expect(quiet.locator(".mcage")).toHaveText(/^Open for 1h$/u);
-    // Two open, one counted: the agent is never told of the quiet one.
+    await expect(cards(page).nth(2)).toHaveClass("mcard quiet");
+    // Three open, one counted: the agent is never told of the quiet ones.
     await expect(sidebarCount(page)).toHaveText("1");
   });
 
@@ -86,6 +96,11 @@ test.describe("Merge Assist", () => {
     const quiet = cards(page).nth(1);
     await expect(quiet.locator(".mtalk .mono")).toHaveText("jbarnes/bump-react");
     await expect(quiet.locator("a")).toHaveCount(0);
+    // The other quiet card's pull request link is a script: its label shows, as text.
+    const scripted = cards(page).nth(2);
+    await expect(scripted.locator(".mside.theirs .k")).toHaveText("Theirs: PR #402 · Ana");
+    await expect(scripted.locator(".mtalk .mono")).toHaveText("PR #402");
+    await expect(scripted.locator("a")).toHaveCount(0);
 
     await dismissedFold(page).locator("summary").click();
     const dismissed = dismissedFold(page).locator("article.mclosed");
@@ -112,6 +127,9 @@ test.describe("Merge Assist", () => {
     page.on("request", request => { if (isWrite("/api/merge-assist/settings", "PUT")(request)) saves.push(request); });
     await expect(settings.locator("summary")).toContainText("no conflict hook");
     await settings.locator("summary").click();
+    // The live region is there, empty, before a refused Save fills it: a hidden one is not announced.
+    await expect(problem).toHaveText("");
+    await expect(problem).not.toHaveAttribute("hidden");
 
     await hook.fill("./scripts/on-conflict.sh --quiet");
     await save.click();
@@ -119,7 +137,7 @@ test.describe("Merge Assist", () => {
     await expect(hook).toHaveAttribute("aria-invalid", "true");
 
     await hook.fill("[\"./scripts/on-conflict.sh\", \"--quiet\"]");
-    await expect(problem).toBeHidden();
+    await expect(problem).toHaveText("");
     // Text that is not a number is refused as it reads, never saved as the default.
     await timeout.fill("3e");
     await save.click();
@@ -135,6 +153,8 @@ test.describe("Merge Assist", () => {
     expect((await saving).postDataJSON()).toEqual({ repository: repositoryKey, checkout: checkoutPath, hook: hookCommand });
     await expect(page.locator("#toast")).toContainText("storefront");
     await expect(settings.locator("summary")).toContainText("./scripts/on-conflict.sh");
+    // The saved settings rebuilt the form: the focus is on its new Save.
+    await expect(save).toBeFocused();
     const status = await rerail.get(`${origin}/api/merge-assist?${new URLSearchParams({ repository: repositoryKey, checkout: checkoutPath })}`);
     expect(await status.json()).toMatchObject({ settings: { hook: hookCommand } });
 
@@ -154,9 +174,11 @@ test.describe("Merge Assist", () => {
     await page.locator(`#content [data-act="madismiss"][data-i="${OPEN_CONFLICT_ID}"]`).click();
     expect((await dismissing).postDataJSON()).toEqual({ repository: manifest.primary.repositoryKey, checkout: manifest.primary.checkoutPath, conflictId: OPEN_CONFLICT_ID });
     await expect(page.locator("#toast")).toContainText("cart.ts · function total");
-    await expect(cards(page)).toHaveCount(1);
+    await expect(cards(page)).toHaveCount(2);
     await expect(cards(page).nth(0)).toHaveClass("mcard quiet");
-    // Only the quiet one is open now, and the sidebar does not count it.
+    // The dismissed card is gone: the focus is on the Dismiss of the card that took its place.
+    await expect(cards(page).nth(0).locator('[data-act="madismiss"]')).toBeFocused();
+    // Only quiet ones are open now, and the sidebar does not count them.
     await expect(sidebarCount(page)).toHaveCount(0);
 
     await page.reload();

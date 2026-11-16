@@ -29,6 +29,9 @@ import { setUpTestRepository, testCodeRuleCatalog } from "../support/repository-
 import { startRerail } from "../../src/cli/index.js";
 import { fakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { SETUP_CANCELLED } from "../../src/harness/index.js";
+import { withExperiments } from "../support/environment/experiments.js";
+
+withExperiments("REPOSITORY_SCAN", "HEADLESS_SCAN");
 
 const NO_PRINT = codeRuleSchema.parse({
   format: "rerail.policy/v1", id: "test:no-print", revision: 1, mode: "block",

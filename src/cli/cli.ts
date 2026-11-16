@@ -3,6 +3,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawn } from "../engine/child-process.js";
+import { requireExperiment } from "../engine/experimental-features.js";
 import { ADAPTER_CAPABILITIES, type RerailHost } from "../engine/adapter-contract.js";
 import { ENTRY_POINTS, PACKAGE_ROOT as packageRoot, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { internalTesting } from "../engine/internal-testing.js";
@@ -274,9 +275,9 @@ function usage(): string {
     "  rerail update --channel <tag>",
     "",
     internalTesting(`Not part of the ${packageManifest(packageRoot).version} release:`),
-    "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
-    "  rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--rules-ref <ref>] [--pack <id>]... [--path <p>]... [--paths-from <file>] [--json] [--fail-on-violations] [--no-send]",
-    "  rerail remote add <url> [--name <name>] [--label <machine label>] (--token-stdin | --token-file <file>) [--no-content]",
+    "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]   experimental: the daemon needs RERAIL_EXPERIMENTAL_REPOSITORY_SCAN=1",
+    "  rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--rules-ref <ref>] [--pack <id>]... [--path <p>]... [--paths-from <file>] [--json] [--fail-on-violations] [--no-send]   experimental: needs RERAIL_EXPERIMENTAL_HEADLESS_SCAN=1",
+    "  rerail remote add <url> [--name <name>] [--label <machine label>] (--token-stdin | --token-file <file>) [--no-content]   experimental: add and push need RERAIL_EXPERIMENTAL_REMOTE_SINK=1",
     "  rerail remote list|status [--json]",
     "  rerail remote remove <name|url>",
     "  rerail remote push [--json]",
@@ -284,8 +285,8 @@ function usage(): string {
     "  rerail settings --session <id> --steer-strategy message|rewind|subagent   experimental: takes effect with RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1",
     "  rerail merge-assist [status|on|off|scan|conflicts|dismiss <conflict-id>] [--repo <dir>] [--json]   experimental: needs RERAIL_EXPERIMENTAL_MERGE_ASSIST=1",
     "  rerail merge-assist settings [--hook-command '<json argv>' | --no-hook] [--hook-timeout <seconds>] [--repo <dir>] [--json]   experimental: needs RERAIL_EXPERIMENTAL_MERGE_ASSIST=1",
-    "  rerail [--profile <name>] events",
-    "  rerail [--profile <name>] activate --file <profile.jws> --trust-root <roots.json>",
+    "  rerail [--profile <name>] events   experimental: needs RERAIL_EXPERIMENTAL_EVENT_STREAM=1",
+    "  rerail [--profile <name>] activate --file <profile.jws> --trust-root <roots.json>   experimental: activate, activation, profile select and --profile need RERAIL_EXPERIMENTAL_ACTIVATION_PROFILES=1",
     "  rerail [--profile <name>] activate --code <code> --activation-url <url> --trust-root <roots.json>",
     "  rerail [--profile <name>] activation request --deployment <id> --output <file>",
     "  rerail [--profile <name>] profile [status|select|remove]",
@@ -882,6 +883,7 @@ async function main(): Promise<number> {
   const commandArgs = profileOption.args;
   const command = commandArgs[0];
   if (command === undefined) throw new Error(`Missing command\n\n${usage()}`);
+  if (needsActivationProfiles(command, commandArgs.slice(1), profileOption.value)) requireExperiment("ACTIVATION_PROFILES");
   const context: CommandContext = {
     home,
     updater,
@@ -904,6 +906,16 @@ interface CommandContext {
   profileStore: CustomerProfileStore;
   packageVersion: string;
   profile: ReturnType<typeof takeOption>["value"];
+}
+
+/**
+ * Internal testing: whether `command` needs activation profiles on. While they are off, `activate`, `activation`,
+ * `profile select` and `--profile` refuse, but `profile status` and `profile remove` work: a profile stored earlier
+ * still restricts `rerail update` and `rerail events`, so it can always be seen and taken away.
+ */
+function needsActivationProfiles(command: string, args: readonly string[], profile: string | undefined): boolean {
+  if (command === "profile") return !["status", "remove"].includes(args[0] ?? "status");
+  return command === "activate" || command === "activation" || profile !== undefined;
 }
 
 /** Internal testing: activation profiles (`activate`, `activation request`, `profile`, `--profile`). */
@@ -957,8 +969,12 @@ async function runProjectCommand(command: string, args: readonly string[], { hom
 
 /** Commands gated by the signed update policy, plus help; anything else is unknown. */
 async function runReleaseCommand(command: string, args: readonly string[], context: CommandContext): Promise<number> {
+  // A profile stored earlier restricts these whether or not activation profiles are on.
   const policy = await signedUpdatePolicy(context.activation, context.profileStore, context.profile);
-  if (command === "events") return await runEvents(policy);
+  if (command === "events") {
+    requireExperiment("EVENT_STREAM");
+    return await runEvents(policy);
+  }
   if (command === "update") return await runUpdateCommand(args, context.updater, context.home, policy);
   if (command === "help" || command === "--help" || command === "-h") {
     process.stdout.write(`${usage()}\n`);

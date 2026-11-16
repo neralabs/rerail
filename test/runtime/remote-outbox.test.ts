@@ -11,6 +11,9 @@ import { backoffMs, MAX_BACKOFF_MS, RemoteOutbox } from "../../src/runtime/remot
 import { SqliteSessionStore } from "../../src/runtime/session-store.js";
 import { startFakeSink, storedRecords, type FakeSink } from "../support/fake-sink.js";
 import { removeFolderSync } from "../support/platform/remove-folder.js";
+import { withExperiments } from "../support/environment/experiments.js";
+
+withExperiments("REMOTE_SINK");
 
 vi.mock("node:fs", { spy: true });
 const real = await vi.importActual<typeof import("node:fs")>("node:fs");

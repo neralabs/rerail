@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MergeAssistStatus } from "../../src/engine/index.js";
-import { captureScope, changeScope, refresh, setNeeds, writeMergeAssist } from "../../ui/poll.js";
+import { captureScope, changeScope, mergeAssistMark, mergeAssistReadAfter, refresh, setNeeds, writeMergeAssist } from "../../ui/poll.js";
 import { data, setScope, ui } from "../../ui/state.js";
 import { currentNeeds } from "../../ui/views/index.js";
 import { sampleStatus } from "../support/merge-assist/status.js";
@@ -14,6 +14,8 @@ let held: Held[] = [];
 let holding = false;
 /** How the daemon answers a Merge Assist read the test does not hold. */
 let mergeRead: () => Response;
+/** The daemon's process id, which a restart changes. */
+let pid = 1;
 
 const json = (body: unknown, code = 200): Response => new Response(JSON.stringify(body), { status: code });
 
@@ -27,7 +29,7 @@ const status = (conflictStatus: "open" | "dismissed"): MergeAssistStatus => samp
 
 /** Every other read a poll makes, each empty. */
 function emptyDaemon(url: URL): Response {
-  if (url.pathname === "/healthz") return json({ version: "1", pid: 1 });
+  if (url.pathname === "/healthz") return json({ version: "1", pid });
   if (url.pathname === "/api/repositories") return json({ repositories: [] });
   if (url.pathname === "/api/repository") return json({ repository: data.repository, checkout: null });
   if (url.pathname === "/api/repository/rules") return json({ rules: [], unavailable: [] });
@@ -44,6 +46,7 @@ beforeEach(() => {
   held = [];
   holding = false;
   mergeRead = () => json(status("open"));
+  pid = 1;
   vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
   vi.stubGlobal("fetch", async (input: URL, init: { method?: string } = {}) => {
     const url = new URL(input);
@@ -141,13 +144,71 @@ describe("Merge Assist reads and writes", () => {
     expect(requested.filter(url => url.pathname === "/api/merge-assist")).toHaveLength(1);
   });
 
+  it("reads Merge Assist again once the daemon restarts, since it may run with the experiment on now", async () => {
+    mergeRead = () => json({ error: "experimental-off", message: "Merge Assist is experimental and off." }, 404);
+    await refresh();
+    expect(data.mergeAssistExperiment).toBe(false);
+
+    pid = 2;
+    mergeRead = () => json(status("open"));
+    // The poll that sees the restart has already passed over Merge Assist; the next one reads it.
+    await refresh();
+    await refresh();
+
+    expect(data.mergeAssistExperiment).toBe(true);
+    expect(data.mergeAssist!.conflicts[0]!.status).toBe("open");
+    expect(requested.filter(url => url.pathname === "/api/merge-assist")).toHaveLength(2);
+  });
+
   it("takes another 404 as a failed read, and shows Merge Assist in the sidebar only once a read succeeds", async () => {
     mergeRead = () => json({ error: "checkout-not-found", message: "no such checkout" }, 404);
 
     await refresh();
 
     expect(data.mergeAssistExperiment).toBeNull();
-    expect(data.mergeAssistError).toMatch(/answered 404$/u);
+    expect(data.mergeAssistError).not.toBeNull();
+  });
+
+  it("keeps the API's own message of a failed read for the page to say why", async () => {
+    mergeRead = () => json({ error: "checkout-not-found", message: "Rerail does not know the checkout /work/a." }, 404);
+
+    await refresh();
+
+    expect(data.mergeAssistError).toBe("Rerail does not know the checkout /work/a.");
+  });
+});
+
+describe("whether the status shown was read after a conflict link was followed", () => {
+  it("is not for a status read before the link, and is once a read sent after it answers", async () => {
+    await refresh();
+    const mark = mergeAssistMark();
+    expect(mergeAssistReadAfter(mark)).toBe(false);
+
+    await refresh();
+    expect(mergeAssistReadAfter(mark)).toBe(true);
+  });
+
+  it("is not for a read already out when the link was followed, though it answers after", async () => {
+    holding = true;
+    const polling = refresh();
+    await vi.waitFor(() => expect(reads()).toHaveLength(1));
+    const mark = mergeAssistMark();
+
+    reads()[0]!.resolve(json(status("open")));
+    await polling;
+    expect(data.mergeAssist).not.toBeNull();
+    expect(mergeAssistReadAfter(mark)).toBe(false);
+  });
+
+  it("is once a write sent after the link answers the status", async () => {
+    await refresh();
+    const mark = mergeAssistMark();
+    const dismissing = dismiss();
+    await vi.waitFor(() => expect(writes()).toHaveLength(1));
+    writes()[0]!.resolve(json(status("dismissed")));
+    await dismissing;
+
+    expect(mergeAssistReadAfter(mark)).toBe(true);
   });
 });
 

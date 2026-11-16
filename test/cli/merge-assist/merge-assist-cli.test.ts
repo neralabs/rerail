@@ -9,11 +9,10 @@ import { runMergeAssistCommand, type MergeAssistCommandIo } from "../../../src/c
 import { mergeAssistStatusSchema, type MergeAssistStatus } from "../../../src/engine/index.js";
 import { MergeAssistError } from "../../../src/runtime/index.js";
 import { RecordingMergeAssistService, sampleConflict, sampleStatus } from "../../support/merge-assist/status.js";
+import { withExperiments } from "../../support/environment/experiments.js";
 
 // Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
-beforeEach(() => {
-  vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "1");
-});
+withExperiments("MERGE_ASSIST");
 
 const usage = (): string => "Usage: rerail merge-assist";
 const PAGE = "http://127.0.0.1:4737/?repository=remote%3Agithub.com%2Facme%2Fapp#merge";
@@ -231,6 +230,18 @@ describe("rerail merge-assist", () => {
     expect(await run(["dismiss", conflict.id, "--repo", checkout], null)).toBe(0);
     expect(stdout).toBe("● \"model.rs · fn compile\": dismissed by Tim Belanger: not a conflict.\n");
     expect(service.calls.slice(-2)).toEqual([{ method: "dismissConflict", checkout, conflictId: conflict.id }, { method: "status", checkout }]);
+  });
+
+  it("prints a hunk's tabs as spaces to the line's own 8-column stops, and no other control character", async () => {
+    const conflict = sampleConflict();
+    const hunk = "@@ -12 +12 @@\n-\tlet x = 1;\n+\tif ok {\tx\r\u001b[2J}";
+    status = path => sampleStatus(path, { conflicts: [{ ...conflict, theirs: { ...conflict.theirs, hunk } }] });
+    expect(await run(["conflicts", "--repo", checkout], null)).toBe(0);
+    expect(stdout).toContain([
+      "          @@ -12 +12 @@",
+      "          -       let x = 1;",
+      "          +       if ok { x [2J}",
+    ].join("\n"));
   });
 
   it("prints a scan or a dismissal with what the person's hook command answered to it", async () => {
