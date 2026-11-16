@@ -101,6 +101,8 @@ rerail-rust-lean = { path = "../rust_lean" }
 rerail-java-lean = { path = "../java_lean" }
 # Go's lean parser: tree-sitter-go's tape, written as the parse goes (`tape::go_lean`).
 rerail-go-lean = { path = "../go_lean" }
+# C's and C++'s lean parser: tree-sitter-c's and tree-sitter-cpp's tapes, written as the parse goes (`tape::c_lean`).
+rerail-c-lean = { path = "../c_lean" }
 # C#'s lean parser: tree-sitter-c-sharp's tape, written as the parse goes (`tape::csharp_lean`).
 rerail-csharp-lean = { path = "../csharp_lean" }
 # PHP's lean parser: tree-sitter-php's tape, written as the parse goes (`tape::php_lean`).

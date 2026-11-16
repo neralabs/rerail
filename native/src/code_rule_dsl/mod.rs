@@ -4851,6 +4851,16 @@ pub(crate) fn install_languages() {
             // tree-sitter-go.
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Go, name: "lean Go parser", rank: 0, runs: true, parser: &tape::go_lean::Lean });
         }
+        if cfg!(feature = "lang-c") {
+            // The lean C parser (`tape::c_lean`, decision 0307); a file it refuses goes to
+            // tree-sitter-c.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::C, name: "lean C parser", rank: 0, runs: true, parser: &tape::c_lean::Lean });
+        }
+        if cfg!(feature = "lang-cpp") {
+            // The lean C++ parser (`tape::c_lean`, decision 0307); a file it refuses goes to
+            // tree-sitter-cpp.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Cpp, name: "lean C++ parser", rank: 0, runs: true, parser: &tape::c_lean::Lean });
+        }
         if cfg!(feature = "lang-csharp") {
             // The lean C# parser (`tape::csharp_lean`, decision 0196); a file it refuses goes to
             // tree-sitter-c-sharp.

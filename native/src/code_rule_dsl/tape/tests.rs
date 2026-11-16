@@ -3614,6 +3614,80 @@ fn go_parse_costs() {
     }
 }
 
+/// C's and C++'s tapes from the lean parser (the product's parser for both, decision 0307) are
+/// tree-sitter-c's and tree-sitter-cpp's, byte for byte, on hand-written cases; a text tree-sitter
+/// reads with an error the lean parser refuses (its file goes to tree-sitter). The corpus
+/// comparison is `rerail-c-lean`'s `oracle`.
+fn c_lean_matches_tree_sitter(dialect: GrammarDialect, sources: &[&str], invalid: &[&str]) {
+    use crate::code_rule_dsl::tape::c_lean;
+    let grammar = Grammar::new(dialect).unwrap();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&dialect.get_ts_language()).unwrap();
+    for &source in sources {
+        let ours = c_lean::encode(&grammar, source, &|| false).unwrap_or_else(|why| panic!("refused {source:?}: {why:?}")).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        assert!(!tree.root_node().has_error(), "tree-sitter's tree of {source:?} has an error");
+        let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary;
+        assert!(
+            ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(),
+            "the tapes of {source:?} differ:\n{}\n{}",
+            python_tape_plain(&ours, &grammar),
+            python_tape_plain(&theirs, &grammar)
+        );
+    }
+    // Any syntax error: refused, for tree-sitter, which recovers as it recovers.
+    for &bad in invalid {
+        assert!(parser.parse(bad, None).unwrap().root_node().has_error(), "{bad:?} reads without an error");
+        assert!(c_lean::encode(&grammar, bad, &|| false).is_err(), "accepted {bad:?}");
+    }
+}
+
+#[test]
+fn c_tapes_from_the_lean_parser_are_tree_sitters() {
+    let sources = [
+        "",
+        "// only a comment\n/* block */\n",
+        "#include <stdio.h>\n#include \"a.h\"\n#define N 10\n#define F(x, y) ((x) + (y))\n#ifdef A\nint a;\n#elif B\nint b;\n#else\nint c;\n#endif\n",
+        "struct S { int a, *b; unsigned c : 3; struct { char d; } e; };\ntypedef struct S S;\nenum E { A = 1, B, };\nunion U { int i; float f; };\n",
+        "static const char *s[] = { \"a\" \"b\", [2] = \"c\" };\nint (*fp)(int, char *);\nlong long x = 0x1Fu + 1e-3f + 'a' + L'\\n';\n",
+        "int f(int a, ...) {\n  for (int i = 0; i < a; i++) {\n    if (a > 1) continue; else break;\n  }\n  while (a--) a += 2;\n  do { a = a ? a : -a; } while (0);\n  switch (a) { case 1: return 1; default: break; }\n  goto end;\nend:\n  return sizeof(int) + sizeof a + (int)a;\n}\n",
+        "void g(void) { struct S s = { .a = 1 }; s.b->c[1] = &s; int *p = (int *)malloc(4); f(p, *p); }\n",
+    ];
+    let invalid = ["int f( {\n", "int x = (1,\n", "void f() {\n", "char *s = \"ab\n", "int x = 1 +;\n"];
+    c_lean_matches_tree_sitter(GrammarDialect::C, &sources, &invalid);
+}
+
+#[test]
+fn cpp_tapes_from_the_lean_parser_are_tree_sitters() {
+    let sources = [
+        "",
+        "#include <vector>\nnamespace a::b {\nusing std::vector;\nusing T = vector<int>;\ninline namespace v1 { int x; }\n}\n",
+        "template <typename T, int N = 3>\nclass A : public B<T>, virtual C {\npublic:\n  A() : x_(0) {}\n  explicit A(int x) noexcept;\n  virtual ~A() = default;\n  T get() const override { return x_; }\n  static constexpr int n = N;\nprivate:\n  T x_;\n};\n",
+        "int A::f(std::unique_ptr<B> p, const std::string& s) const {\n  auto l = [&, this](int y) -> int { return y + x_; };\n  for (auto& [k, v] : m) { std::cout << k << v; }\n  if constexpr (sizeof(T) > 4) { throw std::runtime_error(\"x\"); }\n  try { g(); } catch (const E& e) { } catch (...) { }\n  return static_cast<int>(l(1)) + new int[3]{1, 2, 3}[0];\n}\n",
+        "enum class E : unsigned char { A, B };\nstruct S { int a{}; S& operator=(const S&) = delete; operator bool() const; };\nconstexpr auto s = R\"(raw\\n)\"sv;\n",
+        "template <class T> concept C = requires(T t) { t.f(); };\ntemplate <C T> void h(T&& t) { std::forward<T>(t).f(); }\n",
+    ];
+    let invalid = ["int f( {\n", "class A {\n", "auto x = [&] -> int { return 1; };\n", "int x = (a = b, c);\n", "void f() { p->A::~A(); }\n"];
+    c_lean_matches_tree_sitter(GrammarDialect::Cpp, &sources, &invalid);
+}
+
+/// The product reads C and C++ with the lean parser: a file's image through the engine's parse
+/// (`TapeImage::parse`) is the lean parser's; a file it refuses goes to tree-sitter.
+#[test]
+fn the_product_reads_c_and_cpp_with_the_lean_parser() {
+    use crate::code_rule_dsl::tape::c_lean;
+    for (dialect, source) in [(GrammarDialect::C, "int f(int x) { return x + 1; } // one\n"), (GrammarDialect::Cpp, "namespace a { int f(int x) { return x + 1; } } // one\n")] {
+        let grammar = Grammar::new(dialect).unwrap();
+        assert!(tree_parser(dialect).is_some(), "{dialect:?}'s parser is installed");
+        let product = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+        let lean = c_lean::encode(&grammar, source, &|| false).unwrap().unwrap();
+        assert_eq!(product.primary.to_bytes().unwrap(), lean.to_bytes().unwrap());
+        let invalid = "int f( {\n";
+        assert!(c_lean::encode(&grammar, invalid, &|| false).is_err());
+        assert!(TapeImage::parse(&grammar, invalid, &|| false).unwrap().is_ok());
+    }
+}
+
 /// C#'s tapes from the lean parser (the product's parser for C#, decision 0196) are
 /// tree-sitter-c-sharp's, byte for byte, on hand-written cases; a text tree-sitter reads with an error
 /// the lean parser refuses (its file goes to tree-sitter). The corpus comparison is

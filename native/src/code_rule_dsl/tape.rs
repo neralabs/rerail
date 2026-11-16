@@ -62,6 +62,8 @@ pub mod rust_lean;
 pub mod java_lean;
 /// Go's tape from the lean parser (`rerail_go_lean`).
 pub mod go_lean;
+/// C's and C++'s tapes from the lean parser (`rerail_c_lean`).
+pub mod c_lean;
 /// C#'s tape from the lean parser (`rerail_csharp_lean`).
 pub mod csharp_lean;
 /// PHP's tape from the lean parser (`rerail_php_lean`).
