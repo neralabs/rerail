@@ -48,6 +48,19 @@ pub struct Bytewise<'a> {
     /// `next`. `scalar`'s `first` folds by them what reads the byte before the token, as the
     /// lean lexer never asks whether its `"` is escaped.
     pub before_start: Option<Vec<([u64; 4], [u64; 4])>>,
+    /// A split run's byte term's lanes from a token's second byte (`bit_on_run`), while a test
+    /// of the token is made: a test of byte `s + j` (`1 <= j <= 16`) of exactly the term's set
+    /// is the mask's lane `j - 1`, no byte read, as lean's number arm knows its digits.
+    run_lanes: std::cell::Cell<Option<RunLanes>>,
+}
+
+/// A split run's byte term's mask (`Bytewise::run_split`): its lanes from `s + 1`, `stride`
+/// bits apart, of the bytes in `set`.
+#[derive(Clone, Copy)]
+pub struct RunLanes {
+    pub mask: Value,
+    pub stride: u32,
+    pub set: [u64; 4],
 }
 
 /// `escaped`'s carries through a window (`Bytewise::words_carried`): given in, by run, and
@@ -91,7 +104,7 @@ impl<'a> Bytewise<'a> {
                     _ => false,
                 };
         }
-        Bytewise { native, plan, can, carries: Vec::new(), bail: None, packs: Default::default(), before_start: None }
+        Bytewise { native, plan, can, carries: Vec::new(), bail: None, packs: Default::default(), before_start: None, run_lanes: Default::default() }
     }
 
     /// The runs whose `escaped` the bytes make: each `a`, once.
@@ -671,6 +684,35 @@ impl<'a> Bytewise<'a> {
         }
     }
 
+    /// `bit` at a token's first byte `s`, known in `first`, where the token's bytes from `s + 1`
+    /// are a split run's term's `lanes` (`RunLanes`): a test of those bytes of the term's set is
+    /// a lane of its mask, as lean's number arm asks `b[pos] == b'0'` of its digits' first.
+    pub fn bit_on_run(&self, f: &mut FunctionBuilder<'_>, at: &File, o: u16, s: Value, first: Option<[u64; 4]>, lanes: RunLanes, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+        self.run_lanes.set(Some(lanes));
+        let b = self.bit_first(f, at, o, s, first, heads);
+        self.run_lanes.set(None);
+        b
+    }
+
+    /// Whether output `o` at a token's first byte reads only that byte and bytes a split run's
+    /// lanes of `set` give (`bit_on_run`): no other byte read.
+    pub fn on_run_only(&self, o: u16, set: [u64; 4]) -> bool {
+        fn go(b: &Bytewise<'_>, x: usize, back: i64, d: i64, set: [u64; 4]) -> bool {
+            let j = d - back;
+            match b.native.insts[x] {
+                BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) => j == 0 || ((1..=16).contains(&j) && exact_at(b.native, x).is_some_and(|n| n.set == set)),
+                BlockInst::Within(_) | BlockInst::Const(_) => true,
+                BlockInst::Not(a) => go(b, usize::from(a), back, d, set),
+                BlockInst::Prev(a, k) => go(b, usize::from(a), back + i64::from(k), d, set),
+                BlockInst::And(a, c) | BlockInst::Or(a, c) | BlockInst::Xor(a, c) | BlockInst::AndNot(a, c) => go(b, usize::from(a), back, d, set) && go(b, usize::from(c), back, d, set),
+                _ => false,
+            }
+        }
+        let x = usize::from(self.native.outputs[usize::from(o)]);
+        let d = i64::from(self.native.output_delays[usize::from(o)]);
+        go(self, x, 0, d, set)
+    }
+
     /// A split run's rest (`run_split`, its byte term `a`) at the file's byte `p`, 0 or 1, by
     /// scalar loads: `a` known false there (the run of it ended), so only the other terms,
     /// and the byte at `p - 1` known in `before`. Lean's `b[end] == b'.' &&
@@ -702,22 +744,24 @@ impl<'a> Bytewise<'a> {
     /// rest's next byte is always one of its own (lean's `.` then a digit, so its second run
     /// is never empty), else those or the rest's own byte.
     pub fn split_before_again(&self, o: u16, a: usize, set: [u64; 4]) -> [u64; 4] {
-        let x = usize::from(self.native.outputs[usize::from(o)]);
-        let d = i32::from(self.native.output_delays[usize::from(o)]);
-        let rest: Vec<usize> = or_terms(self.native, x).into_iter().filter(|&y| y != a).collect();
-        let union = |off: i32| -> [u64; 4] {
-            rest.iter().fold([0u64; 4], |acc, &y| {
-                let b = inst_bytes_at(self.native, y, off - d);
-                std::array::from_fn(|k| acc[k] | b[k])
-            })
-        };
-        let next = union(1);
+        let next = self.rest_bytes(o, a, 1);
         if (0..4).all(|k| next[k] & !set[k] == 0) {
             set
         } else {
-            let here = union(0);
+            let here = self.rest_bytes(o, a, 0);
             std::array::from_fn(|k| set[k] | here[k])
         }
+    }
+
+    /// The bytes at offset `off` from where a split run's rest holds (`run_split`, its byte
+    /// term `a`): its other terms' (`bytes_at`), together.
+    pub fn rest_bytes(&self, o: u16, a: usize, off: i32) -> [u64; 4] {
+        let x = usize::from(self.native.outputs[usize::from(o)]);
+        let d = i32::from(self.native.output_delays[usize::from(o)]);
+        or_terms(self.native, x).into_iter().filter(|&y| y != a).fold([0u64; 4], |acc, y| {
+            let b = inst_bytes_at(self.native, y, off - d);
+            std::array::from_fn(|k| acc[k] | b[k])
+        })
     }
 
     /// Instruction `x`'s word for stream positions `start .. start + 64`.
@@ -927,6 +971,18 @@ impl<'a> Bytewise<'a> {
         // Known by the token's first byte (`first`): a constant, no byte read.
         if let Some(k) = first.and_then(|fi| self.fold(x, back, anchor, fi)) {
             let v = f.ins().iconst(types::I64, i64::from(k));
+            memo.insert((x, back), v);
+            return v;
+        }
+        // A byte of a split run's term (`run_lanes`, `bit_on_run`): its mask's lane.
+        if let (Some(rl), Some(a)) = (self.run_lanes.get(), anchor)
+            && matches!(self.native.insts[x], BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_))
+            && (1..=16).contains(&(a - back))
+            && exact_at(self.native, x).is_some_and(|n| n.set == rl.set)
+        {
+            let lane = (a - back - 1) * i64::from(rl.stride);
+            let v = if lane == 0 { rl.mask } else { f.ins().ushr_imm(rl.mask, lane) };
+            let v = f.ins().band_imm(v, 1);
             memo.insert((x, back), v);
             return v;
         }

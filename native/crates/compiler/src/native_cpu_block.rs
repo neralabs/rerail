@@ -3178,7 +3178,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             l_sel = f.ins().select(is_n, l_n, l_r);
             f.ins().jump(fdone, &[l_sel.into(), nohits.into(), untag.into(), nohits.into()]);
         } else {
-            let (to, _) = tested(f, &tests, rd, c, s, entry, fdone, None, &[], 1, heads);
+            let (to, _) = tested(f, &tests, rd, c, s, entry, fdone, None, &[], 1, None, heads);
             l_sel = f.ins().select(is_n, l_n, l_r);
             f.ins().jump(to, &[l_sel.into(), untag.into(), nohits.into()]);
         }
@@ -3305,16 +3305,24 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         // bytes never are (`run_tests`): their bits from one window, the run's, as the lean
         // lexer's number arm finds its `.` among its digits.
         let reg_o = |o: u16| regs.and_then(|g| g.runs.iter().find(|&&(k, _)| k == o));
-        let run_outs: Vec<u16> = match (rule, rd.bytes) {
-            (EndRule::Run(o), Some((b, _))) if b.can(o) && reg_o(o).is_none() => run_tests(r, b, k, &tests),
-            _ => Vec::new(),
-        };
         // A run of a byte set with a rarer way on (`Bytewise::run_split`): the set's run from
         // the window, the rest asked at its end, as the lean lexer's number arm runs its digits
         // and then asks for `.` and a digit.
         let split = match (rule, rd.bytes) {
             (EndRule::Run(o), Some((b, _))) if b.can(o) && reg_o(o).is_none() => b.run_split(o),
             _ => None,
+        };
+        // Its count tests known on each of its ways (`split_counts`), where the tests' tail
+        // (`tested`'s `rest`) takes them: none counted, as lean's number arm knows a float by
+        // the branch it took.
+        let fused_counts = rd.calls.iter().any(|x| x.0 == TESTS_CALL | k as u16) && tests.iter().any(|(t, _)| t.count && !t.always());
+        let by_way = match (rule, rd.bytes, split) {
+            (EndRule::Run(o), Some((b, _)), Some(sp)) if fused_counts => split_counts(r, b, k, &tests, o, sp),
+            _ => None,
+        };
+        let run_outs: Vec<u16> = match (rule, rd.bytes) {
+            (EndRule::Run(o), Some((b, _))) if b.can(o) && reg_o(o).is_none() && by_way.is_none() => run_tests(r, b, k, &tests),
+            _ => Vec::new(),
         };
         // The window's terms: the run's (its split's byte term, else its output), its tests'.
         let run_terms = |b: &crate::native_cpu_bytes::Bytewise<'_>, o: u16| -> Vec<(usize, i64)> {
@@ -3323,7 +3331,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             std::iter::once(first).chain(run_outs.iter().map(|&o| term(o))).collect()
         };
         let window: Option<Vec<Value>> = match (rule, rd.bytes) {
-            (EndRule::Run(o), Some((b, file))) if !run_outs.is_empty() => {
+            (EndRule::Run(o), Some((b, file))) if !run_outs.is_empty() || split.is_some() => {
                 let i = f.ins().iadd_imm(s, 1);
                 let w = b.short_terms(f, &file, &run_terms(b, o), i, heads);
                 // `tested` from a block of its own, empty (its blocks first).
@@ -3340,7 +3348,14 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             (EndRule::Run(o), Some((b, _))) if window.is_some() => b.short_stride_x(&run_terms(b, o).iter().map(|t| t.0).collect::<Vec<_>>()),
             _ => 1,
         };
-        let (ended, rest) = if tests.is_empty() { (ended, None) } else { tested(f, &tests, rd, c, s, entry, done, most, &pre, pre_stride, heads) };
+        // The split's term's lanes, for the tests of the token's bytes (`Bytewise::bit_on_run`).
+        let lanes = match (split, &window) {
+            (Some((_, _, set)), Some(w)) => Some(crate::native_cpu_bytes::RunLanes { mask: w[0], stride: pre_stride, set }),
+            _ => None,
+        };
+        let firsts_k = first_bytes(r, k);
+        let (ended, rest) = if tests.is_empty() { (ended, None) } else { tested(f, &tests, rd, c, s, entry, done, most, &pre, pre_stride, lanes.map(|l| (l, firsts_k)), heads) };
+        debug_assert!(by_way.is_none() || rest.is_some(), "a split's counts by way with no tests' tail");
         match rule {
             // `pair "AB" …`: the next byte, if inside the file, one of the pairs' seconds.
             // `pair P`: the first byte's row (its entry's), then the next byte's bit in the
@@ -3438,16 +3453,31 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                                     let firsts = first_bytes(r, k);
                                     let before: [u64; 4] = std::array::from_fn(|w| set[w] | firsts[w]);
                                     let more = b.rest_after(f, &file, o, a, e, before, heads);
-                                    f.ins().brif(more, on, &[], ended, &[l.into(), untag.into(), nohits.into()]);
+                                    // A way's end: its counts known (`by_way`), on to the tests'
+                                    // tail with them, else the tests from the start.
+                                    let way_end = |f: &mut FunctionBuilder<'_>, way: usize, l: Value| -> (cranelift_codegen::ir::Block, Vec<BlockArg>) {
+                                        match (by_way, rest) {
+                                            (Some(ways), Some(tail)) => {
+                                                let (no, hits) = ways[way];
+                                                let always = always_hits(tests.iter().map(|(t, _)| t));
+                                                let refuse = if no || always.0 != 0 { f.ins().iconst(types::I64, -1) } else { nohits };
+                                                let hits = f.ins().iconst(types::I64, always.1 | hits);
+                                                (tail, vec![l.into(), untag.into(), refuse.into(), hits.into()])
+                                            }
+                                            _ => (ended, vec![l.into(), untag.into(), nohits.into()]),
+                                        }
+                                    };
+                                    let (to, args) = way_end(f, 0, l);
+                                    f.ins().brif(more, on, &[], to, &args);
                                     // On past it: the term's run from the byte after, in the same
                                     // window's mask (lean's second `while digit`), the token in
                                     // the window, else the whole rule's way.
                                     f.switch_to_block(on);
                                     let n1 = f.ins().iadd_imm(ones, 1);
                                     let inside = f.ins().icmp_imm(IntCC::UnsignedLessThan, n1, 16);
-                                    let rest = f.create_block();
-                                    f.ins().brif(inside, rest, &[], long, &[]);
-                                    f.switch_to_block(rest);
+                                    let second = f.create_block();
+                                    f.ins().brif(inside, second, &[], long, &[]);
+                                    f.switch_to_block(second);
                                     let sh = f.ins().imul_imm(n1, i64::from(stride));
                                     let gone = f.ins().bnot(x);
                                     let gone = f.ins().ushr(gone, sh);
@@ -3462,7 +3492,8 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                                     let before2 = b.split_before_again(o, a, set);
                                     let again = b.rest_after(f, &file, o, a, e2, before2, heads);
                                     let l2 = f.ins().iadd(s, total);
-                                    f.ins().brif(again, long, &[], ended, &[l2.into(), untag.into(), nohits.into()]);
+                                    let (to, args) = way_end(f, 1, l2);
+                                    f.ins().brif(again, long, &[], to, &args);
                                 }
                             }
                             f.switch_to_block(long);
@@ -4395,6 +4426,44 @@ fn run_tests(r: &crate::records::Records, b: &crate::native_cpu_bytes::Bytewise<
     v
 }
 
+/// A split run's count tests (`Bytewise::run_split`, its byte term's `set`) on each of its
+/// two inline ways: the term's run alone, and the term's, the rest's one byte, the term's
+/// again. Where each count's bytes (`native_cpu_bytes::exact`, at the token's bytes) are none
+/// of the term's and the token's first's, and the rest's byte is all or none of them, its
+/// count is 0 on the first way and 1 or 0 on the second: `(refused, hits)` each, as lean's
+/// number arm knows a float by its branch. None where a count is not so known.
+fn split_counts(r: &crate::records::Records, b: &crate::native_cpu_bytes::Bytewise<'_>, k: usize, tests: &[(crate::records::TokenCheck, Option<i64>)], o: u16, split: (usize, i64, [u64; 4])) -> Option<[(bool, i64); 2]> {
+    let (a, _, set) = split;
+    let firsts = first_bytes(r, k);
+    let rest = b.rest_bytes(o, a, 0);
+    let meets = |x: &[u64; 4], y: &[u64; 4]| (0..4).any(|w| x[w] & y[w] != 0);
+    let within = |x: &[u64; 4], y: &[u64; 4]| (0..4).all(|w| x[w] & !y[w] == 0);
+    let mut ways = [(false, 0i64); 2];
+    for (t, _) in tests.iter().filter(|(t, _)| t.count && !t.always()) {
+        let n = crate::native_cpu_bytes::exact(b.native, t.o).filter(|n| n.lo == 0 && n.hi == 0)?;
+        if meets(&n.set, &set) || meets(&n.set, &firsts) {
+            return None;
+        }
+        let second = if within(&rest, &n.set) {
+            1
+        } else if !meets(&rest, &n.set) {
+            0
+        } else {
+            return None;
+        };
+        for (way, count) in [(0usize, 0u32), (1, second)] {
+            if count >= t.least {
+                match t.then {
+                    crate::records::CheckThen::Escape => ways[way].0 = true,
+                    crate::records::CheckThen::At(m) => ways[way].1 |= 1i64 << m,
+                    crate::records::CheckThen::After(m) => ways[way].1 |= 1i64 << (crate::records::AFTER_SHIFT + u32::from(m)),
+                }
+            }
+        }
+    }
+    Some(ways)
+}
+
 /// The refusal and the hits of the tests that hold at every token (`TokenCheck::always`).
 fn always_hits<'t>(tests: impl Iterator<Item = &'t crate::records::TokenCheck>) -> (i64, i64) {
     tests.filter(|t| t.always()).fold((0i64, 0i64), |(r, h), t| match t.then {
@@ -4415,7 +4484,7 @@ fn always_hits<'t>(tests: impl Iterator<Item = &'t crate::records::TokenCheck>) 
 /// length, as the lean lexer asks of a number's `.` in its digits' pass. The output is never
 /// set at the token's first byte.
 #[allow(clippy::too_many_arguments)]
-fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Option<i64>)], rd: &Reads<'_>, c: &FileCols, s: Value, entry: Value, done: cranelift_codegen::ir::Block, most: Option<u32>, pre: &[(u16, Value)], pre_stride: u32, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (cranelift_codegen::ir::Block, Option<cranelift_codegen::ir::Block>) {
+fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Option<i64>)], rd: &Reads<'_>, c: &FileCols, s: Value, entry: Value, done: cranelift_codegen::ir::Block, most: Option<u32>, pre: &[(u16, Value)], pre_stride: u32, lanes: Option<(crate::native_cpu_bytes::RunLanes, [u64; 4])>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (cranelift_codegen::ir::Block, Option<cranelift_codegen::ir::Block>) {
     let here = f.current_block().expect("a rule's block");
     let ended = f.create_block();
     f.append_block_param(ended, types::I64);
@@ -4582,6 +4651,23 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
         };
         let escape = t.then == crate::records::CheckThen::Escape;
         let kept = if escape { refuse } else { hits };
+        // A test of the token's first byte and a split run's lanes (`Bytewise::bit_on_run`):
+        // its bit inline, no byte read past the first, as lean's `b[pos] == b'0'` in its arm.
+        if let (Some((rl, firsts)), Some((b, file)), false, 1) = (lanes, rd.bytes, t.count, t.least)
+            && b.can(t.o)
+            && b.on_run_only(t.o, rl.set)
+        {
+            let bit = b.bit_on_run(f, &file, t.o, s, Some(firsts), rl, heads);
+            let hit = into(f, bit, refuse, hits);
+            f.ins().jump(next, &[hit.into()]);
+            f.switch_to_block(next);
+            if escape {
+                refuse = f.block_params(next)[0];
+            } else {
+                hits = f.block_params(next)[0];
+            }
+            continue;
+        }
         // What the compiler proves first, each a branch past the test (`next`, the value kept):
         // the first byte one at which it can hold (`TOKEN_TESTS`, the entry's bit); a count of
         // `n` in a token of `n` bytes at least.

@@ -3113,3 +3113,41 @@ its arm", and the tests have failed since then:
 - **`a_short_tokens_function_calls_only_its_whole`** became
   `a_short_tokens_arm_calls_only_its_whole`. It checks the string's
   and the `/` arms instead.
+
+## A number knows its `.` by its branch
+
+**Intro.** Lean's number arm writes `FLOAT` in the branch that took
+the `.`, and `NUM` in the other. Ours took both ways into one tail.
+There it built a `.` mask over the window and counted it, to set the
+float mark and refuse a second `.`. Its leading-zero test
+(`0` then a digit) was gated on a bit of the dispatch's entry, cold.
+It loaded `b[s]` and `b[s+1]`.
+
+**The changes.**
+
+- **Counts by way** (`split_counts`). On a split run's two inline
+  ways, the token's bytes are known: the term's run, or the term's,
+  the rest's one byte and the term's again. A count whose bytes are
+  none of the term's or the first byte's has count 0 on the first
+  way. On the second way it is 1 or 0, by whether the rest's byte
+  is one of the counted bytes. Each way enters the tests' tail
+  (`tested`'s `rest`) with its refusal and marks as constants. No
+  `.` mask is made (`run_outs` is empty).
+- **Tests of the token's bytes by the run's lanes**
+  (`Bytewise::bit_on_run`). A test of the first byte that also asks
+  bytes `s + j` of exactly the term's set reads the term mask's lane
+  `j - 1`. It reads no byte past the first and needs no gate, as
+  lean's `b[pos] == b'0'` would.
+
+```rust
+// generated, after
+if b[e] == b'.' && b[e + 1] - b'0' <= 9 { …; marks = FLOAT } else { marks = 0 }
+marks |= ((b[s] == b'0') & (digits & 1)) << LEADING_ZERO;
+// before
+let dots = mask(w == b'.') & below(len - 1); if dots & (dots - 1) != 0 { refuse }
+marks = (dots != 0) << FLOAT;
+if entry & LEADING_ZERO_MAY != 0 { cold_path(); if b[s] == b'0' && digit(b[s + 1]) { … } }
+```
+
+Test: `a_numbers_arm_reads_one_window` (no `.` compare, no count,
+one cold path).

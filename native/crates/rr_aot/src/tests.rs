@@ -450,7 +450,8 @@ fn a_slashs_arm_is_leans() {
 /// The number arm reads like lean's: its digits' run from one window of the bytes after the
 /// first, and `.` and a digit asked at the run's end (`Bytewise::run_split`), not a window of
 /// the bytes before and one after for the `prev` and the next of every byte; its end's tests
-/// lean's, no digit asked again where the run ended.
+/// lean's, no digit asked again where the run ended; its `.` known by its way, its leading
+/// zero asked of its first digit's lane, inline.
 #[test]
 fn a_numbers_arm_reads_one_window() {
     let src = include_str!("tier1_aot.rs");
@@ -482,4 +483,8 @@ fn a_numbers_arm_reads_one_window() {
     // A digit asked as lean's `is_ascii_digit`, a subtract and a compare, not a set's word.
     let digits: u64 = (b'0'..=b'9').fold(0, |m, b| m | 1 << b);
     assert!(!arm.contains(&format!("{}i64", digits as i64)), "a digit set's word in the number arm: {arm}");
+    // Its `.` known by the way it took (`split_counts`), not counted over a mask of the window.
+    assert!(!arm.contains("vceqq_u8") && !arm.contains("count_ones"), "a count of the number's `.`: {arm}");
+    // A leading zero asked inline of the digits' first lane: the long way's call alone cold.
+    assert_eq!(arm.matches("cold_path").count(), 1, "a cold test in the number arm: {arm}");
 }
