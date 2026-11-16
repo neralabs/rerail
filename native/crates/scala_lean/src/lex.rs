@@ -468,9 +468,24 @@ impl<'s> Lexer<'s> {
                 if ch.is_alphabetic() && letter_sure(ch) {
                     let e = self.name_end(s)?;
                     (Id, 0, e)
-                } else if matches!(ch as u32, 0x2190..=0x2194 | 0x2200..=0x22ff) && !op_char(self.at(s + n)) && self.at(s + n) < 0x80 {
-                    // A mathematical operator alone (`_op_name`'s first pattern: `⊥`, `∀`).
-                    (Op, op::NONE, s + n)
+                } else if math_op(ch) {
+                    // A run of mathematical operators and ASCII operator characters (`⊥`, `≺:`,
+                    // `_op_name`'s patterns), its precedence its first character's (the highest).
+                    let mut e = s + n;
+                    loop {
+                        let c = self.at(e);
+                        if op_char(c) && !(c == b'/' && matches!(self.at(e + 1), b'/' | b'*')) {
+                            e += 1;
+                        } else if c >= 0x80 {
+                            match decode(self.src, e) {
+                                Some((ch, k)) if math_op(ch) => e += k,
+                                _ => break,
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    (Op, op::NONE, e)
                 } else {
                     return Err(Refusal::Lex(s as u32));
                 }
@@ -496,6 +511,8 @@ impl<'s> Lexer<'s> {
                         e += n;
                         continue;
                     }
+                    // A mathematical operator after a name starts the next token (not after `_`).
+                    Some((ch, _)) if math_op(ch) && self.src[e - 1] != b'_' => {}
                     Some((ch, _)) if !ch.is_alphanumeric() && !ch.is_whitespace() && !matches!(ch as u32, 0x2000..=0x206f) => {
                         // An operator character past ASCII after a name: refused.
                         return Err(Refusal::Lex(e as u32));
@@ -518,11 +535,22 @@ impl<'s> Lexer<'s> {
     /// The end of the operator run from `s`: a `/` before `/` or `*` opens a comment and ends it.
     pub fn op_end(&self, s: usize) -> R<usize> {
         let mut e = s;
-        while op_char(self.at(e)) {
-            if self.at(e) == b'/' && matches!(self.at(e + 1), b'/' | b'*') {
+        loop {
+            let c = self.at(e);
+            if op_char(c) {
+                if c == b'/' && matches!(self.at(e + 1), b'/' | b'*') {
+                    break;
+                }
+                e += 1;
+            } else if c >= 0x80 {
+                // Mathematical operators continue the run (`<≺`).
+                match decode(self.src, e) {
+                    Some((ch, k)) if math_op(ch) => e += k,
+                    _ => break,
+                }
+            } else {
                 break;
             }
-            e += 1;
         }
         if self.at(e) >= 0x80 {
             if let Some((ch, _)) = decode(self.src, e) {
@@ -646,6 +674,14 @@ impl<'s> Lexer<'s> {
             _ => Ok((T::Quote, 0, s + 1)),
         }
     }
+}
+
+/// Whether `c` (past ASCII) is a mathematical operator an operator name is made of: the arrows,
+/// the mathematical operators and their supplements (`\p{Sm}` there). `⇒` and `←`, which the
+/// grammar reads as `=>` and `<-`, are not.
+fn math_op(c: char) -> bool {
+    let u = c as u32;
+    matches!(u, 0x2190..=0x21ff | 0x2200..=0x22ff | 0x27c0..=0x27ef | 0x2900..=0x2aff) && u != 0x21d2 && u != 0x2190
 }
 
 /// The character at `at` (a UTF-8 lead byte at or past 0x80) and its length.

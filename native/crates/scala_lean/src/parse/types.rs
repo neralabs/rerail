@@ -30,10 +30,42 @@ impl P<'_> {
 
     /// `_type`: a function type (`A => B`, `(A, B) => C`), or an infix one.
     fn typ(&mut self, tx: Tx) -> R<u32> {
+        if self.peek() == T::LBrace {
+            // `{ type L[x] = … }` (`structural_type`).
+            return self.refinement_as(K::StructuralType);
+        }
         let m = self.mark();
         if self.peek() == T::LBracket {
-            // A type lambda, a polymorphic function type: refused.
-            return self.refuse();
+            let close = self.matching(0);
+            if self.op_at(close + 1) == op::TYPE_LAMBDA {
+                // `[X] =>> F[X]` (`type_lambda`: its parameters unwrapped, `return_type`).
+                let n = self.open(K::TypeLambda);
+                self.type_parameter_list()?;
+                self.tk(K::TFatArrowGt)?;
+                self.typ_f(f::RETURN_TYPE)?;
+                let n = self.close(n);
+                self.t.unmark(m);
+                return Ok(n);
+            }
+            // `[T] => F[T]` (`function_type`: `type_parameters`, the arrow, `return_type`).
+            let n = self.open(K::FunctionType);
+            self.type_parameters(f::TYPE_PARAMETERS)?;
+            self.arrow_then_type()?;
+            let n = self.close(n);
+            self.t.unmark(m);
+            return Ok(n);
+        }
+        if self.peek() == T::LParen && !tx.no_arrow && self.arrow_after_parens(0) && Self::is_name(self.peek_at(1)) && self.op_at(2) == op::COLON {
+            // `(x: A) => B` (a dependent function type): the parameters a named tuple type in
+            // `parameter_types`.
+            let pt = self.open_field(K::ParameterTypes, f::PARAMETER_TYPES);
+            self.infix_type(Tx { no_arrow: true })?;
+            self.close(pt);
+            let n = self.t.wrap(m, K::FunctionType, f::NONE);
+            self.arrow_then_type()?;
+            let n = self.close(n);
+            self.t.unmark(m);
+            return Ok(n);
         }
         if self.peek() == T::LParen && !tx.no_arrow && self.arrow_after_parens(0) {
             // `(A, B) => C`: the parameters in `parameter_types`.
@@ -399,6 +431,12 @@ impl P<'_> {
     /// `[A, +B <: C]` (`type_parameters`), given `field`.
     pub(super) fn type_parameters(&mut self, field: u8) -> R<u32> {
         let n = self.open_field(K::TypeParameters, field);
+        self.type_parameter_list()?;
+        Ok(self.close(n))
+    }
+
+    /// `[A, +B <: C]`'s brackets and parameters, into the node open.
+    fn type_parameter_list(&mut self) -> R<()> {
         self.tk(K::TLBracket)?;
         loop {
             while self.is_op(op::AT) {
@@ -429,7 +467,7 @@ impl P<'_> {
             }
         }
         self.expect(T::RBracket)?;
-        Ok(self.close(n))
+        Ok(())
     }
 
     /// `_type_parameter`: a name (`_` too), its own type parameters, its bounds.

@@ -21,6 +21,7 @@ mod decl;
 mod expr;
 mod pat;
 mod types;
+mod xml;
 
 const MAX_DEPTH: u32 = 250;
 

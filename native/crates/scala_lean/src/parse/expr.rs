@@ -47,8 +47,12 @@ impl P<'_> {
     /// A name as a leaf of `kind` (`type_identifier`, …).
     pub(super) fn ident_as(&mut self, kind: K, field: u8) -> R<u32> {
         let t = self.tok();
-        if t.kind == T::Id && t.code == w::EXTENSION && (kind != K::Identifier || self.keyword_after_dot(t)) {
-            // A type's (`a.extension.B`): refused.
+        if t.kind == T::Id && t.code == w::EXTENSION && kind == K::Identifier && self.keyword_after_dot(t) {
+            // `a.extension.B` in a path: an identifier holding the keyword's token.
+            return self.extension_identifier(field);
+        }
+        if t.kind == T::Id && t.code == w::EXTENSION && kind != K::Identifier {
+            // A type named `extension`: refused.
             return self.refuse();
         }
         if Self::is_name(t) || t.kind == T::Op && !op::is_reserved(t.code) && t.code != op::ARROW {
@@ -105,7 +109,7 @@ impl P<'_> {
                     let at = self.take();
                     return self.indented_block(field, at);
                 }
-                Some(Ext::Modifier(_)) | None => {}
+                Some(Ext::Modifier(_) | Ext::Xml) | None => {}
                 Some(_) => return self.refuse(),
             }
         }
@@ -179,11 +183,19 @@ impl P<'_> {
                 _ => {}
             }
         }
-        if t.kind == T::Op && t.code == op::NONE && self.text(t) == b"<" {
+        if t.kind == T::Op && t.code == op::NONE && self.text(t) == b"<" && !self.xml_ahead() {
             return self.refuse();
         }
         if self.lambda_ahead() {
             return self.lambda_expression();
+        }
+        if t.kind == T::LBracket {
+            // `[T] => (x: T) => e`: a polymorphic lambda.
+            let close = self.matching(0);
+            if self.op_at(close + 1) == op::ARROW {
+                return self.lambda_expression();
+            }
+            return self.refuse();
         }
         let m = self.mark();
         let mut n = self.infix(0)?;
@@ -239,7 +251,14 @@ impl P<'_> {
                         self.annotation()?;
                     }
                 } else if self.is_word(w::UNDERSCORE) && self.is_op_at(1, op::STAR) {
-                    return self.refuse();
+                    // `a op b: _*` (not a vararg: its expression is no simple one): the type a
+                    // repeated wildcard.
+                    let r = self.open_field(K::RepeatedParameterType, f::TYPE);
+                    let wc = self.open_field(K::Wildcard, f::TYPE);
+                    self.tk(K::TUnderscore)?;
+                    self.close(wc);
+                    self.tk(K::TStar)?;
+                    self.close(r);
                 } else {
                     self.param_type(f::TYPE)?;
                 }
@@ -268,12 +287,9 @@ impl P<'_> {
     fn infix(&mut self, min: u8) -> R<u32> {
         let m = self.mark();
         let mut n = self.prefix()?;
-        let mut first = true;
         loop {
             let t = self.tok();
             let (prec, right) = match t.kind {
-                // An operator past ASCII (`⊕`): its precedence class is not read here.
-                T::Op if self.text(t)[0] >= 0x80 => return self.refuse(),
                 T::Op if !op::is_reserved(t.code) && t.code != op::ARROW && t.code != op::QARROW => op_class(self.text(t)),
                 T::Id if t.code == w::NONE || !w::is_reserved(t.code) && !matches!(t.code, w::IF | w::ELSE | w::THEN | w::CATCH | w::WITH | w::FORSOME | w::END | w::DERIVES | w::USES) => (7, false),
                 T::BackId => (7, false),
@@ -292,9 +308,10 @@ impl P<'_> {
             let nx = self.peek_at(1);
             if matches!(nx.kind, T::RParen | T::RBracket | T::RBrace | T::Comma | T::Semi | T::Eof) || nx.nl {
                 if t.kind == T::Id || t.kind == T::BackId {
-                    // `10 seconds`: a postfix expression (its operand and identifier unfielded),
-                    // where the operand is all the expression so far.
-                    if !(first && min == 0 && !self.right_operand) {
+                    // `10 seconds`, `a op b c`: a postfix expression (its operand and identifier
+                    // unfielded), where the operand is all the expression so far (an
+                    // `_infix_operand`, an infix expression too).
+                    if !(min == 0 && !self.right_operand) {
                         return self.refuse();
                     }
                     self.t.refield(n, f::NONE);
@@ -325,7 +342,6 @@ impl P<'_> {
             self.right_operand = saved;
             self.t.refield(r?, f::RIGHT);
             n = self.close(x);
-            first = false;
             if self.peek() == T::LBracket && !self.right_operand && !self.tok().nl {
                 // `a op b[T]`: the type arguments are the infix's, then its calls and fields.
                 n = self.suffixes(m, n)?;
@@ -504,6 +520,7 @@ impl P<'_> {
                 }
                 w::TRUE | w::FALSE | w::NULL => self.literal(),
                 w::NEW => self.instance_expression(),
+                _ if self.text(t) == b"$" && matches!(self.kind_at(1), T::LBrace | T::LBracket) && self.adjacent(0) => self.splice_expression(),
                 _ if Self::is_name(t) => {
                     if self.kind_at(1) == T::Str && self.adjacent(0) {
                         return self.interpolated_string_expression();
@@ -518,23 +535,70 @@ impl P<'_> {
             T::BackId => self.leaf(K::Identifier, f::NONE),
             T::Int | T::Float | T::Char | T::Str => self.literal(),
             T::Op if t.code == op::MINUS && matches!(self.kind_at(1), T::Int | T::Float) && self.adjacent(0) => self.literal(),
+            T::Op if self.xml_ahead() => self.xml_expression(),
             T::Op if !op::is_reserved(t.code) && t.code != op::ARROW => self.leaf(K::OperatorIdentifier, f::NONE),
             T::LParen => self.paren_expression(),
             T::LBrace => self.block_or_cases(),
-            T::Quote => {
-                // `'a` (`quote_expression`: the identifier; the `'` not stored). `'{…}`, `'[…]`
-                // are refused.
-                let nx = self.peek_at(1);
-                if !(Self::is_name(nx) && nx.start == t.end) {
-                    return self.refuse();
-                }
-                let n = self.open(K::QuoteExpression);
-                self.tk(K::TQuote)?;
-                self.identifier(f::NONE)?;
-                Ok(self.close(n))
-            }
+            T::Quote => self.quote_expression(),
             _ => self.refuse(),
         }
+    }
+
+    /// `'a`, `'{ … }`, `'[T]` (`quote_expression`: a name, statements, or a type; the `'` and
+    /// the brackets tokens).
+    pub(super) fn quote_expression(&mut self) -> R<u32> {
+        let t = self.tok();
+        let nx = self.peek_at(1);
+        if nx.start != t.end {
+            return self.refuse();
+        }
+        let n = self.open(K::QuoteExpression);
+        match nx.kind {
+            T::LBrace => {
+                self.tk(K::TQuote)?;
+                self.tk(K::TLBrace)?;
+                self.statements(Region::Brace, f::NONE)?;
+                self.expect(T::RBrace)?;
+            }
+            T::LBracket => {
+                self.tk(K::TQuote)?;
+                self.tk(K::TLBracket)?;
+                if self.is_word(w::TYPE) {
+                    // Type definitions before the type: refused.
+                    return self.refuse();
+                }
+                self.with_fol(0, |p| p.typ_x(f::NONE, super::types::Tx::default()))?;
+                self.expect(T::RBracket)?;
+            }
+            T::Id if matches!(nx.code, w::NULL | w::TRUE | w::FALSE) => {
+                self.tk(K::TQuote)?;
+                self.literal()?;
+            }
+            _ if Self::is_name(nx) => {
+                self.tk(K::TQuote)?;
+                self.identifier(f::NONE)?;
+            }
+            _ => return self.refuse(),
+        }
+        Ok(self.close(n))
+    }
+
+    /// `${ … }`, `$[T]` (`splice_expression`: statements or a type; `${` and `$[` one token
+    /// each).
+    fn splice_expression(&mut self) -> R<u32> {
+        let n = self.open(K::SpliceExpression);
+        let d = self.bump()?;
+        let b = self.bump()?;
+        if b.kind == T::LBrace {
+            self.t.token(K::TDollarLBrace, f::NONE, d.start, b.end);
+            self.statements(Region::Brace, f::NONE)?;
+            self.expect(T::RBrace)?;
+        } else {
+            self.t.token(K::TX24X5b, f::NONE, d.start, b.end);
+            self.with_fol(0, |p| p.typ_x(f::NONE, super::types::Tx::default()))?;
+            self.expect(T::RBracket)?;
+        }
+        Ok(self.close(n))
     }
 
     /// `()` (`unit`), `(e)` (`parenthesized_expression`), `(a, b)` (`tuple_expression`).
@@ -645,7 +709,9 @@ impl P<'_> {
                     if self.op_at(j - 1) == op::STAR {
                         let before = self.peek_at(j - 2);
                         return if j >= 3 && self.op_at(j - 3) == op::COLON && before.kind == T::Id && before.code == w::UNDERSCORE && last.start == before.end {
-                            Some(0)
+                            // `a op b: _*` is an ascription (`repeated_parameter_type`), not a
+                            // vararg: a vararg's expression is a simple one.
+                            if self.simple_before(j - 3) { Some(0) } else { None }
                         } else {
                             Some(1)
                         };
@@ -661,6 +727,34 @@ impl P<'_> {
                 return None;
             }
         }
+    }
+
+    /// Whether the tokens before `k` are one simple expression (`_simple_expression`): names and
+    /// literals apart by `.` or touching, brackets after them; no operator.
+    fn simple_before(&mut self, k: usize) -> bool {
+        let (mut d, mut prev) = (0i32, false);
+        for j in 0..k {
+            let t = self.peek_at(j);
+            match t.kind {
+                T::LParen | T::LBracket | T::LBrace => d += 1,
+                T::RParen | T::RBracket | T::RBrace => {
+                    d -= 1;
+                    if d == 0 {
+                        prev = true;
+                    }
+                }
+                _ if d > 0 => {}
+                T::Dot => prev = false,
+                T::Op => return false,
+                _ => {
+                    if prev && !(j > 0 && self.adjacent(j - 1)) {
+                        return false;
+                    }
+                    prev = true;
+                }
+            }
+        }
+        true
     }
 
     // ---- Blocks.
@@ -1305,6 +1399,14 @@ impl P<'_> {
     /// `params => body` (`lambda_expression`: `parameters`).
     fn lambda_expression(&mut self) -> R<u32> {
         let n = self.open(K::LambdaExpression);
+        if self.peek() == T::LBracket {
+            // `[T] => (x: T) => e`: the type parameters, `=>`, then the lambda's parameters.
+            self.type_parameters(f::TYPE_PARAMETERS)?;
+            if !self.is_op(op::ARROW) {
+                return self.refuse();
+            }
+            self.tk(K::TFatArrow)?;
+        }
         self.lambda_parameters(f::PARAMETERS)?;
         let code = self.op_at(0);
         self.tk(if code == op::QARROW { K::TQFatArrow } else { K::TFatArrow })?;

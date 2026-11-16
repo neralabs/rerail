@@ -22,7 +22,8 @@ impl P<'_> {
             w::CASE => self.enum_cases || matches!(self.word_at(1), w::CLASS | w::OBJECT),
             w::EXTENSION => matches!(self.kind_at(1), T::LParen | T::LBracket),
             w::INLINE | w::OPAQUE | w::OPEN | w::INFIX | w::TRANSPARENT | w::ERASED | w::INTO | w::TRACKED | w::UPDATE | w::CONSUME => {
-                matches!(self.layout(v::MODS)?, Some(Ext::Modifier(_)))
+                // At a statement's start no separator is valid (the one before it is read).
+                matches!(self.with_fol(0, |p| p.layout(v::MODS))?, Some(Ext::Modifier(_)))
             }
             _ => false,
         })
@@ -169,7 +170,8 @@ impl P<'_> {
                     continue;
                 }
                 w::INLINE | w::OPAQUE | w::OPEN | w::INFIX | w::TRANSPARENT | w::ERASED | w::INTO | w::TRACKED | w::UPDATE | w::CONSUME => {
-                    if !matches!(self.layout(v::MODS)?, Some(Ext::Modifier(_))) {
+                    // Among modifiers no separator is valid.
+                    if !matches!(self.with_fol(0, |p| p.layout(v::MODS))?, Some(Ext::Modifier(_))) {
                         break;
                     }
                     // The scanner's token (`_inline_modifier`, …): the word, a named leaf.
@@ -597,8 +599,23 @@ impl P<'_> {
             self.tk(K::TColon)?;
         } else if let Some(colon) = self.given_constructor_ahead(named) {
             if !colon {
-                // A conditional signature (`[T](x) =>`): refused.
-                return self.refuse();
+                // Conditional signatures (`_given_sig`: `[T: C] =>`, `(x: A) =>`): the type
+                // parameters unfielded, the parameters a `given_conditional`, each before `=>`.
+                if named {
+                    return self.refuse();
+                }
+                while matches!(self.peek(), T::LBracket | T::LParen) {
+                    if self.peek() == T::LBracket {
+                        self.type_parameters(f::NONE)?;
+                    } else {
+                        self.parameters_as(K::GivenConditional, f::NONE)?;
+                    }
+                    if !self.is_op(op::ARROW) {
+                        return self.refuse();
+                    }
+                    self.tk(K::TFatArrow)?;
+                }
+                return self.given_type_and_body();
             }
             // `_given_constructor`: name, type parameters, parameter lists, `:`.
             if named {
@@ -615,6 +632,11 @@ impl P<'_> {
             }
             self.tk(K::TColon)?;
         }
+        self.given_type_and_body()
+    }
+
+    /// `_given_type_and_body`: the return type, then `= e`, `with` and a body, or none.
+    fn given_type_and_body(&mut self) -> R<()> {
         let t = self.annotated_type()?;
         self.t.refield(t, f::RETURN_TYPE);
         if self.is_op(op::EQ) {
@@ -781,8 +803,13 @@ impl P<'_> {
 
     /// `{ type T <: A; def f: B }` (`refinement`): declarations, as a braced body reads them.
     pub(super) fn refinement(&mut self) -> R<()> {
+        self.refinement_as(K::Refinement).map(|_| ())
+    }
+
+    /// `{ type T = … }` as a node of `kind` (`refinement`, `structural_type`): its place.
+    pub(super) fn refinement_as(&mut self, kind: K) -> R<u32> {
         let saved = (std::mem::replace(&mut self.in_bound, false), std::mem::replace(&mut self.enum_cases, false));
-        let n = self.open(K::Refinement);
+        let n = self.open(kind);
         let r = (|| {
             self.tk(K::TLBrace)?;
             let indent = self.braced_indent()?;
@@ -800,8 +827,7 @@ impl P<'_> {
         })();
         (self.in_bound, self.enum_cases) = saved;
         r?;
-        self.close(n);
-        Ok(())
+        Ok(self.close(n))
     }
 
     /// `{ … }` (`template_body`), given `field`: a self type, then statements.
@@ -1024,7 +1050,12 @@ impl P<'_> {
 
     /// `(a: A, b: B = 1)` (`parameters`, field `parameters`).
     fn parameters(&mut self) -> R<()> {
-        let n = self.open_field(K::Parameters, f::PARAMETERS);
+        self.parameters_as(K::Parameters, f::PARAMETERS)
+    }
+
+    /// `(a: A, …)` as a node of `kind` (`given_conditional` too), given `field`.
+    fn parameters_as(&mut self, kind: K, field: u8) -> R<()> {
+        let n = self.open_field(kind, field);
         self.tk(K::TLParen)?;
         if self.is_word(w::USING) {
             self.tk(K::TUsing)?;

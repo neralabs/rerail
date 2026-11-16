@@ -62,13 +62,21 @@ impl P<'_> {
         let mut n = self.simple_pattern()?;
         loop {
             let t = self.tok();
-            let infix = t.kind == T::Op && !op::is_reserved(t.code) && !matches!(t.code, op::ARROW | op::PIPE | op::STAR | op::QARROW) || t.kind == T::BackId;
+            // An alphanumeric operator (`p as x`) on the line, before a pattern.
+            let alpha = t.kind == T::Id
+                && !t.nl
+                && (t.code == w::NONE || !w::is_reserved(t.code) && !matches!(t.code, w::IF | w::ELSE | w::THEN | w::CATCH | w::WITH | w::FORSOME | w::END | w::DERIVES | w::USES | w::MATCH | w::UNDERSCORE))
+                && {
+                let nx = self.peek_at(1);
+                !nx.nl && matches!(nx.kind, T::Id | T::BackId | T::Int | T::Float | T::Str | T::Char | T::LParen)
+            };
+            let infix = t.kind == T::Op && !op::is_reserved(t.code) && !matches!(t.code, op::ARROW | op::PIPE | op::STAR | op::QARROW) || t.kind == T::BackId || alpha;
             if !infix {
                 break;
             }
             self.t.refield(n, f::LEFT);
             let i = self.t.wrap(m, K::InfixPattern, f::NONE);
-            if t.kind == T::BackId {
+            if t.kind == T::BackId || t.kind == T::Id {
                 self.leaf(K::Identifier, f::OPERATOR)?;
             } else {
                 self.leaf(K::OperatorIdentifier, f::OPERATOR)?;
@@ -123,6 +131,8 @@ impl P<'_> {
             }
             T::Int | T::Float | T::Char | T::Str => self.literal(),
             T::Op if t.code == op::MINUS && matches!(self.kind_at(1), T::Int | T::Float) && self.adjacent(0) => self.literal(),
+            T::Op if self.xml_ahead() => self.xml_pattern(),
+            T::Quote => self.quote_expression(),
             T::LParen => {
                 if self.kind_at(1) == T::RParen {
                     let n = self.open(K::Unit);
