@@ -468,6 +468,10 @@ pass.
   reading the kept inputs from the frames (0.30 s). Making each pass cost the size of its change is 0225 §5–§7
   (analyses as rules over the image, maintained by delta), i.e. 0246 stages 4–5. The largest cost of an edit is now
   `wait` (Q19).
+- **Handed over** (2026-11-15, the user's call): the whole-program passes go to decision 0281's pass manager
+  (Typing-support, with 0276), not a separate build here. The pass manager's driver reruns passes on a delta only;
+  this entry's numbers are its input. ep2's edit is the measurement: `merge the programs` and `prepare`, each
+  pass's share as above. This queue keeps Q18 closed here and measures it again when 0281 lands in the hub.
 
 ### Q19. A new process reads every kept frame of the cross part, its own or not
 
@@ -503,6 +507,28 @@ pass.
 
     - 11,161 identities were asked for and 40,146 frames read; 23,941 identities of the space were left out.
     - No left-out frame was read.
+  - **After the hub's merge** (eb37c6a5a): step 1 dropped (0240 §4); step 2 ported onto the hub's preload.
+    - On ep2, the outputs (`outputs.rro`) are byte-identical by identity and whole.
+    - The cross part's peak is about 1.4–1.9 GB by identity, against 4.0–5.8 GB whole. Whole now passes 6 GB and
+      grows with every build.
+    - Totals swing between about 63 G and 145 G whichever way the space is read: see Q20.
+  - **Open:** `frame_rels` names the program's declared relations. `Retained::from_frames` also reads as inputs
+    the relations a run binds from an earlier phase (`bound`: `doc`, `types__wgen`). If one is undeclared, it is
+    left out. No read of a left-out frame was seen on ep2.
+
+### Q20. After the hub's merge, an edit's kept inputs swing between missing and costing 85 G
+
+- **Found** (2026-11-15, ep2, after eb37c6a5a): consecutive B101 edits alternate between about 63–79 G and about
+  141–149 G, in either cross-part mode.
+  - In the cheap runs, `the kept inputs` is not taken ("no frame of its documents (0 of 1208 inputs have one)"),
+    and the hits are decoded whole: `stats` is 2.1 G.
+  - In the expensive runs it is taken (300 hits, 3 of 1208 inputs changed): `stats` is 84–87 G, with 9.7 s of
+    the span's own time, outside `the kept inputs, from the frames` (2.3 s).
+  - Before the merge, all of `stats` was 8.2 G.
+  - So the input frames are written by some runs and not others, and the path that reads them now costs about 40
+    times the fallback.
+- **Done when**: every edit after the first finds its kept inputs, and taking them costs less than decoding the
+  hits whole.
 
 ## Questions for the user
 
