@@ -6,11 +6,6 @@ use crate::code_rule_dsl::logic::profile::{self, report};
 /// Spins until this thread has taken `seconds` of CPU, not of wall time: on a loaded machine a wall-time spin gets a
 /// fraction of its time on a core (0.08 s of 0.15 s at load 64), and the assertions below are of CPU.
 fn burn(seconds: f64) {
-    let thread_cpu = || {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    };
     let start = thread_cpu();
     let mut x = 0u64;
     while thread_cpu() - start < seconds {

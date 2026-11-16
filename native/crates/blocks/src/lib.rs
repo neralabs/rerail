@@ -31,6 +31,8 @@ pub mod relation;
 pub mod rows;
 pub mod scratch;
 pub mod sort;
+#[cfg(windows)]
+mod windows;
 #[cfg(target_os = "macos")]
 pub mod gpu;
 

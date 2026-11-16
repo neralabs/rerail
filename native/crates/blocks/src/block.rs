@@ -8,6 +8,7 @@ use crate::structure;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::ops::Deref;
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::sync::Arc;
@@ -87,10 +88,14 @@ impl Block {
     /// An anonymous block of `reserved` bytes of address space: nothing is resident until written.
     pub fn anon(kind: u32, reserved: usize) -> Block {
         let reserved = round_up(reserved.max(PAGE), PAGE);
+        #[cfg(unix)]
         let p = unsafe {
             libc::mmap(std::ptr::null_mut(), reserved, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0)
         };
+        #[cfg(unix)]
         assert!(p != libc::MAP_FAILED, "mmap of {reserved} bytes failed");
+        #[cfg(windows)]
+        let p = crate::windows::anon(reserved).unwrap_or_else(|e| panic!("VirtualAlloc of {reserved} bytes failed: {e}"));
         let b = Block::make(p.cast(), reserved, 0, None, true, None);
         b.init(kind);
         b
@@ -101,12 +106,16 @@ impl Block {
         let reserved = round_up(reserved.max(PAGE), PAGE);
         let f = OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)?;
         f.set_len(reserved as u64)?;
+        #[cfg(unix)]
         let p = unsafe {
             libc::mmap(std::ptr::null_mut(), reserved, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, f.as_raw_fd(), 0)
         };
+        #[cfg(unix)]
         if p == libc::MAP_FAILED {
             return Err(io::Error::last_os_error());
         }
+        #[cfg(windows)]
+        let p = crate::windows::map_file(&f, reserved, true)?;
         let b = Block::make(p.cast(), reserved, 0, Some(f), true, None);
         b.init(kind);
         Ok(b)
@@ -304,12 +313,29 @@ impl Block {
             std::ptr::write_volatile(&mut h.state, FROZEN);
         }
         if let Some(f) = &self.file {
+            #[cfg(unix)]
             f.set_len(len as u64).expect("truncate a journal block");
+            // Windows cuts no file a view maps: below, once the view is gone.
+            #[cfg(windows)]
+            let _ = f;
         } else if self.backing.is_none() {
+            #[cfg(unix)]
             let r = unsafe { libc::mprotect(self.base.cast(), self.reserved, libc::PROT_READ) };
+            #[cfg(unix)]
             assert_eq!(r, 0, "mprotect");
+            #[cfg(windows)]
+            crate::windows::read_only(self.base, self.reserved).expect("VirtualProtect");
         }
         let mut b = self;
+        // Windows: the writable view goes, the file is cut to the length, and the frozen bytes are mapped again,
+        // read-only, at another address (offsets into the block hold; a pointer taken before the freeze does not).
+        #[cfg(windows)]
+        if let Some(f) = &b.file {
+            crate::windows::unmap_view(b.base);
+            f.set_len(len as u64).expect("truncate a journal block");
+            b.base = crate::windows::map_file(f, len, false).expect("map a frozen journal block");
+            b.reserved = len;
+        }
         b.writable = false;
         Frozen(Arc::new(b))
     }
@@ -322,10 +348,14 @@ impl Block {
         if len < size_of::<Header>() {
             return Err(format!("{}: {len} bytes, shorter than a header", path.display()));
         }
+        #[cfg(unix)]
         let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, f.as_raw_fd(), 0) };
+        #[cfg(unix)]
         if p == libc::MAP_FAILED {
             return Err(io::Error::last_os_error().to_string());
         }
+        #[cfg(windows)]
+        let p = crate::windows::map_file(&f, len, false).map_err(|e| e.to_string())?;
         let b = Block::make(p.cast(), len, len, Some(f), false, None);
         let h = b.header();
         if h.magic != MAGIC || h.kind != kind {
@@ -344,7 +374,14 @@ impl Block {
 impl Drop for Block {
     fn drop(&mut self) {
         if self.backing.is_none() {
+            #[cfg(unix)]
             unsafe { libc::munmap(self.base.cast(), self.reserved) };
+            #[cfg(windows)]
+            if self.file.is_some() {
+                crate::windows::unmap_view(self.base);
+            } else {
+                crate::windows::release(self.base);
+            }
         }
     }
 }

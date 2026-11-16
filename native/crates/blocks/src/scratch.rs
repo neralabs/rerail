@@ -35,10 +35,14 @@ pub struct Scratch {
 impl Scratch {
     /// An anonymous region of `reserved` bytes of address space.
     pub fn anon(reserved: usize) -> Scratch {
+        #[cfg(unix)]
         let p = unsafe {
             libc::mmap(std::ptr::null_mut(), reserved, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0)
         };
+        #[cfg(unix)]
         assert!(p != libc::MAP_FAILED, "mmap of {reserved} bytes of scratch failed");
+        #[cfg(windows)]
+        let p = crate::windows::anon(reserved).unwrap_or_else(|e| panic!("VirtualAlloc of {reserved} bytes of scratch failed: {e}"));
         Scratch { base: p.cast(), len: reserved, top: Cell::new(0), high: Cell::new(0), backing: None }
     }
 
@@ -87,7 +91,10 @@ impl Scratch {
         if self.backing.is_none() && used > keep {
             let from = keep.div_ceil(crate::block::PAGE) * crate::block::PAGE;
             // SAFETY: the region's own pages, none taken now.
+            #[cfg(unix)]
             unsafe { libc::madvise(self.base.add(from).cast(), used - from, libc::MADV_FREE) };
+            #[cfg(windows)]
+            crate::windows::reset(unsafe { self.base.add(from) }, used - from);
         }
     }
 }
@@ -96,7 +103,10 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         if self.backing.is_none() {
             // SAFETY: the mapping this region made.
+            #[cfg(unix)]
             unsafe { libc::munmap(self.base.cast(), self.len) };
+            #[cfg(windows)]
+            crate::windows::release(self.base);
         }
     }
 }

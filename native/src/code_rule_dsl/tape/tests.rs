@@ -2900,11 +2900,7 @@ fn python_parse_costs() {
     let bytes: usize = files.iter().map(String::len).sum();
     let nodes: usize = files.iter().map(|f| python_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
-    let cpu = || {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    };
+    let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
         ("lean: tokens alone", Box::new(|f| rerail_python_lean::token_count(f.as_bytes()).unwrap_or(0))),
         ("lean: the parser's columns", Box::new(|f| rerail_python_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
@@ -3218,11 +3214,7 @@ fn ecma_parse_costs() {
     let bytes: usize = files.iter().map(String::len).sum();
     let nodes: usize = files.iter().map(|f| ecma_lean::encode(dialect, &grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
-    let cpu = || {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    };
+    let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_ecma_lean::tape(f.as_bytes(), dialect).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(ecma_lean::encode(dialect, &grammar, f, &|| false)).is_ok()))),
@@ -3350,11 +3342,7 @@ fn rust_parse_costs() {
     let bytes: usize = files.iter().map(String::len).sum();
     let nodes: usize = files.iter().map(|f| rust_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
-    let cpu = || {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    };
+    let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_rust_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(rust_lean::encode(&grammar, f, &|| false)).is_ok()))),
@@ -3480,11 +3468,7 @@ fn java_parse_costs() {
     let bytes: usize = files.iter().map(String::len).sum();
     let nodes: usize = files.iter().map(|f| java_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
-    let cpu = || {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    };
+    let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_java_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(java_lean::encode(&grammar, f, &|| false)).is_ok()))),
@@ -3835,11 +3819,7 @@ fn php_parse_costs() {
     let bytes: usize = files.iter().map(String::len).sum();
     let nodes: usize = files.iter().map(|f| php_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
-    let cpu = || {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    };
+    let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<(&str, Box<dyn Fn(usize) -> usize>)> = vec![
         ("lean: the parser's columns", Box::new(|i| rerail_php_lean::tape(views[i].as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|i| usize::from(std::hint::black_box(php_lean::encode(&grammar, &files[i], &|| false)).is_ok()))),
@@ -3892,11 +3872,7 @@ fn csharp_parse_costs() {
     let bytes: usize = files.iter().map(String::len).sum();
     let nodes: usize = files.iter().map(|f| csharp_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
-    let cpu = || {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    };
+    let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_csharp_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(csharp_lean::encode(&grammar, f, &|| false)).is_ok()))),
@@ -4016,11 +3992,7 @@ fn html_parse_costs() {
     let bytes: usize = files.iter().map(String::len).sum();
     let nodes: usize = files.iter().map(|f| html_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
-    let cpu = || {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    };
+    let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_html_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(html_lean::encode(&grammar, f, &|| false)).is_ok()))),
@@ -4148,11 +4120,7 @@ fn css_parse_costs() {
     let bytes: usize = files.iter().map(String::len).sum();
     let nodes: usize = files.iter().map(|f| css_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
-    let cpu = || {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    };
+    let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_css_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(css_lean::encode(&grammar, f, &|| false)).is_ok()))),
@@ -4319,11 +4287,7 @@ fn sql_parse_costs() {
     let bytes: usize = files.iter().map(String::len).sum();
     let nodes: usize = files.iter().map(|f| sql_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
-    let cpu = || {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    };
+    let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_sql_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(sql_lean::encode(&grammar, f, &|| false)).is_ok()))),
@@ -4442,11 +4406,7 @@ fn markdown_parse_costs() {
     let bytes: usize = files.iter().map(String::len).sum();
     let nodes: usize = files.iter().map(|f| markdown_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
-    let cpu = || {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    };
+    let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_markdown_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(markdown_lean::encode(&grammar, f, &|| false)).is_ok()))),
@@ -4611,11 +4571,7 @@ fn vue_parse_costs() {
         }
     }
     let retired = rerail_compiler::native_cpu_codegen::retired;
-    let cpu = || {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    };
+    let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_vue_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(vue_lean::encode(&grammar, f, &|| false)).is_ok()))),
@@ -4770,11 +4726,7 @@ fn markdown_inline_parse_costs() {
     let bytes: usize = files.iter().map(String::len).sum();
     let nodes: usize = files.iter().map(|f| markdown_inline_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
-    let cpu = || {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    };
+    let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_markdown_inline_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(markdown_inline_lean::encode(&grammar, f, &|| false)).is_ok()))),
