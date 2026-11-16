@@ -3139,7 +3139,11 @@ impl Csr {
     /// this is its first probe.
     fn runs<'a>(&'a self, rel: &'a InRel) -> Option<&'a Index> {
         match self.ordered {
-            Some(printed) => Some(self.order.get_or_init(|| {
+            // Made outside the lock and published by `set`: its sort is parallel, and a pool thread waiting in it
+            // takes other jobs, among them a probe of this index. Blocking that probe on the lock (`get_or_init`)
+            // left the thread waiting on itself. A probe that finds no order makes its own; the first one set is kept.
+            Some(_) if let Some(order) = self.order.get() => Some(order),
+            Some(printed) => Some({
                 let _index = crate::code_rule_dsl::logic::profile::span(|| "probe: order of a derived input".into());
                 let c0 = thread_cpu();
                 charge(Unit::IndexEntry, rel.len() as u64);
@@ -3150,8 +3154,9 @@ impl Csr {
                 if env_set!("RERAIL_SPIKE_INDEX") {
                     eprintln!("O125 order made took {:.3} ms rows={} cols={:?}", (thread_cpu() - c0) * 1e3, rel.len(), self.cols);
                 }
-                order
-            })),
+                let _ = self.order.set(order);
+                self.order.get().expect("set above, or by another probe")
+            }),
             None => self.chain.map(|i| &rel.chains[i]),
         }
     }
