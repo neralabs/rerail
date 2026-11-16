@@ -520,6 +520,9 @@ impl<'a> P<'a> {
                 // A type's or a qualifier's word where no type can be is a name (keyword
                 // extraction: `va_arg(ap, int64_t)`, `__attribute__((noreturn))`).
                 c if self.reserved(c) && !(is_primitive(c) || super::decl::is_qualifier(c) || super::decl::is_ms_call(c) || super::decl::is_ms_pointer(c)) => self.refuse(),
+                // C++: a primitive type's word is never a name (`f(float, n)` is tree-sitter-cpp's
+                // error).
+                c if self.cpp && is_primitive(c) => self.refuse(),
                 _ => {
                     if self.kind_at(1) == T::Str {
                         return self.strings(s);
@@ -546,6 +549,11 @@ impl<'a> P<'a> {
             let e = self.comma_expr(EXPR)?;
             // C++: an assignment alone in parentheses is `_assignment_expression_lhs` (no
             // supertype; its left any expression).
+            // C++: `(a = b, c)` is tree-sitter-cpp's error (the parentheses' assignment reading
+            // takes the `a = b`, then no `,`): refused.
+            if self.cpp && e.kind == K::CommaExpression && unkey(self.w.key(e.at + 1)).0 == K::AssignmentExpression as u16 {
+                return self.refuse();
+            }
             if self.cpp && e.kind == K::AssignmentExpression && self.peek() == T::RParen {
                 self.rekey(e.at, BARE);
                 self.rekey(e.at + 1, slot(f::LEFT, Ctx::Expr));
@@ -690,6 +698,11 @@ impl<'a> P<'a> {
         };
         let mut k = 0;
         while piece(self, k) {
+            // C++: the second piece is a string (`(name | string) string (name | string)*`):
+            // `"a" N "b"` is tree-sitter-cpp's error, refused.
+            if self.cpp && k == 1 && self.kind_at(k) == T::Name {
+                return self.refuse();
+            }
             k += 1;
         }
         let strings = (0..k).filter(|&j| matches!(self.kind_at(j), T::Str | T::RawStr)).count();

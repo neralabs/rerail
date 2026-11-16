@@ -1497,6 +1497,9 @@ impl<'a> P<'a> {
             let d = self.open(K::AbstractFunctionDeclarator, f::DECLARATOR, C_NONE);
             if self.peek() == T::LParen {
                 self.parameter_list()?;
+            } else if self.peek() == T::Arrow {
+                // `[&] -> T {…}`: tree-sitter-cpp's error (a trailing return needs parameters).
+                return self.refuse();
             }
             self.function_tail(K::AbstractFunctionDeclarator)?;
             self.close(d);
@@ -1551,6 +1554,15 @@ impl<'a> P<'a> {
 
     /// A field expression's field: a name, `template f<T>`, `~X`, `A::b`, `operator()`.
     pub(super) fn field_name(&mut self, s: Slot) -> R<N> {
+        // `a.operator*()`: tree-sitter-cpp's error (an operator's name is a field's only in a
+        // `template_method`, with template arguments: `a.operator()<T>()`).
+        if self.is_word(w::OPERATOR) {
+            let n = self.qname(Role::Field, s)?;
+            if n.kind != K::TemplateMethod {
+                return self.refuse();
+            }
+            return Ok(n);
+        }
         if self.is_word(w::TEMPLATE) {
             let n = self.open_in(K::DependentName, s);
             self.kw(K::DependentName, w::TEMPLATE)?;
@@ -1560,6 +1572,10 @@ impl<'a> P<'a> {
         }
         if self.peek() == T::Tilde {
             return self.simple_name(Role::Expr, s);
+        }
+        // `p->A::~A()`: tree-sitter-cpp's error (a field's qualified name ends in no destructor).
+        if self.peek() == T::Name && self.kind_at(1) == T::ColonColon && self.kind_at(2) == T::Tilde {
+            return self.refuse();
         }
         if self.peek() == T::Name && { let c = self.tok().word; self.reserved(c) } && !self.is_word(w::OPERATOR) {
             return self.leaf_in(K::FieldIdentifier, s);

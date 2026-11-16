@@ -438,6 +438,11 @@ impl<'a> P<'a> {
                 }
                 // `T x(args)` (where the parentheses are no parameters), `T x{…}`.
                 T::LParen if self.cpp => {
+                    // Never after a pointer's or a reference's declarator (tree-sitter-cpp's tapes
+                    // hold none: `T &x(a.b)` is its error).
+                    if matches!(d.kind, K::PointerDeclarator | K::ReferenceDeclarator) {
+                        return self.refuse();
+                    }
                     let i = self.wrap(d, K::InitDeclarator, slot(f::DECLARATOR, Ctx::Bare), slot(f::DECLARATOR, Ctx::Decl));
                     self.arguments(slot(f::VALUE, Ctx::Bare))?;
                     self.close(i);
@@ -657,6 +662,11 @@ impl<'a> P<'a> {
     /// Whether `M(…)` ahead is a macro's type (`macro_type_specifier`): a type in the parentheses,
     /// and a declarator after them.
     fn macro_type_ahead(&mut self, star: bool) -> bool {
+        // tree-sitter-cpp reads no `macro_type_specifier` (its tapes hold none; `M(T) x` is its
+        // error).
+        if self.cpp {
+            return false;
+        }
         let Some(e) = self.paren_end(1) else { return false };
         // A type in the parentheses: a type's words, or one name (`STACK_OF(X) *p`).
         let one = self.is_ident_at(2) && self.kind_at(3) == T::RParen;
