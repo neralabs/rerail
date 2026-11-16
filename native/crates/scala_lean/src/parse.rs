@@ -465,7 +465,7 @@ impl<'a> P<'a> {
         let i = self.t.extras.partition_point(|x| x.1 < s);
         match self.t.extras.get(i) {
             Some(&(_, s2, e2)) if s2 == s && e2 == e => Ok(()),
-            Some(&(_, s2, e2)) if s2 == s && e2 < e && self.src[e2 as usize..e as usize].iter().all(|&b| b == b' ' || b == b'\t') => {
+            Some(&(_, s2, e2)) if s2 == s && e2 < e && self.lx.blocks.blank_end(e2 as usize) >= e as usize => {
                 // The scanner's comment takes the blanks after it.
                 self.t.extras[i].2 = e;
                 Ok(())
