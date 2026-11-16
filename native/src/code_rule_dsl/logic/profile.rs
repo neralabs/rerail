@@ -418,6 +418,13 @@ pub fn retired_instructions() -> u64 {
     0
 }
 
+/// A timeline's mark (dev, `RERAIL_TIMELINE`): a point outside every span, with the process's instructions retired.
+pub fn timeline_mark(what: &str) {
+    if std::env::var_os("RERAIL_TIMELINE").is_some() {
+        eprintln!("RERAIL_TIMELINE {what}: @{:.3} i={:.3}", timeline_clock(), retired_instructions() as f64 / 1e9);
+    }
+}
+
 /// The wall clock a timeline line carries (`RERAIL_TIMELINE`): seconds since the epoch, so the lines of nested
 /// runs and threads read on one axis.
 pub fn timeline_clock() -> f64 {

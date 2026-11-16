@@ -40,6 +40,7 @@ pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> 
         }
     }
     let graphs = phase0::graphs(&seeds).map_err(|e| e.to_string())?;
+    crate::code_rule_dsl::logic::profile::timeline_mark("the program files' graphs");
     let mut graphs = graphs.into_iter();
     let mut out = Vec::with_capacity(texts.len());
     for ((path, text), j) in paths.iter().zip(texts).zip(json) {

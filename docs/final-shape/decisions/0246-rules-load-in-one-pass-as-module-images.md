@@ -404,6 +404,44 @@ each module's digest), and the phase programs its declarations name are the only
 for phase 0 to derive that second dependency with the first, the phase programs a text's declarations name (a
 `bootstrap.rr` output beside `p0_include`), so the record and its check read both off the graph and parse nothing.
 
+### Phase 0 lists the rule files, and its graphs are images (2026-11-16)
+
+Both steps are built.
+
+1. **The phase programs a text names are phase 0's.** `bootstrap.rr` reads a declaration named `<phase>__<x>` (not
+   `typing_` or `rr_`) as a reference to the phase program `<phase>.rr` in `env("rerail.phase_lib")` (the builtin
+   phases' directory), loads it as it loads an include, and outputs `p0_phase(from, phase, path)`. A text's own
+   references come in as `p0_text_phase` facts (`rr::phases_named`, from the statements the text seed is made
+   from anyway). A graph keeps them (`Graph::phases`) and the files reached through them with their digests
+   (`Graph::rules`, outside the graph's digest, checked by `holds`). `reuse::rule_files` is then the graphs' files
+   and the engine's own (`rr::engine_files`), and parses nothing. It lists as before (`listed`) where a run sets
+   `phase_dir` or a text has no graph. `RERAIL_REUSE_CHECK=1` prints both lists. They were equal in every run that
+   checked: the targeted tests (2 files each) and the pack (44 files).
+2. **A graph is an image** (decision 0264's): keyed by the build and the seed (`rerail phase 0 graph image 1`), its
+   paths relative to the library or the phases' directory, so the shipped bundle's graphs hold on any checkout of the
+   same library. `phase0::graphs` reads them before it derives, and takes one where every file it names still has
+   its digest (each file looked at once for the call, however many graphs name it). A newly derived graph is kept
+   in the build's image store and exported into the bundle. A seed's key names the seed, not what its graph
+   reached, so an edited library gives a key another graph: the store keeps the first under the key
+   (`keep_graph_image` looks first), and a run finds it no longer holds and derives the graph again.
+
+The image store is opened once for a call's seeds. Opened once per seed, its 316 opens cost 3.2 G, more than the
+derivation they replaced.
+
+The Python pack, one file, fresh project store, release, one thread, M5 Max (G instructions):
+
+| Stretch | Before | Now |
+|---|---|---|
+| Phase 0, the program files' graphs | 3.06 | 0.35 |
+| Phase 0's observations and the gap after | 1.98 | 0.94 + 0.43 |
+| Phase 0, second run (`components.rr`) | 0.28 | 0.40 (read, not derived) |
+| After the main write (the record) | 5.11 | 1.87 |
+| Whole run, with the bundle | 23.0 | 17.9 |
+
+Without the bundle (a fresh build's first run) the run is 40.0 G, a second project on the build 28.7 G. Every
+output matches the export run's. What is left before the main run (1.4 G) is reading the 317 texts and parsing each
+for its own seed (`keep_text`, 0.94 G): a text's seed could come from its graph instead.
+
 ## Aligned with django-bugs (decisions 0239, 0240)
 
 - **Symbols by content.** A module image holds its names as strings, and a reader takes its own ids of them, as

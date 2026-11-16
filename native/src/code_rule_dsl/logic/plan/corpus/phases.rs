@@ -151,9 +151,15 @@ fn source(name: &str, dir: Option<&Path>) -> Result<Option<String>> {
     crate::code_rule_dsl::logic::settings::program_text(&path).map(Some).map_err(Error::Plan)
 }
 
+/// The engine's own phase programs' directory: where a phase is found when no `phase_dir` is given (`locate`), and
+/// where phase 0 finds the phases a program names (`phase0::phase_lib`).
+pub(super) fn builtin_dir() -> PathBuf {
+    rerail_store::source_tree::native().join("src/code_rule_dsl/typing/programs")
+}
+
 /// The file of phase program `name` (`source`).
 fn locate(name: &str, dir: Option<&Path>) -> Option<PathBuf> {
-    let builtin = rerail_store::source_tree::native().join("src/code_rule_dsl/typing/programs");
+    let builtin = builtin_dir();
     dir.into_iter().chain([builtin.as_path()]).map(|d| d.join(format!("{name}.rr"))).find(|p| p.exists())
 }
 

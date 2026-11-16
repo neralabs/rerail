@@ -1032,12 +1032,7 @@ fn translate_json_command(args: &[String]) -> Result<String, String> {
     Ok(format!("{} translated, {failed} failed", files.len() - failed))
 }
 
-/// A timeline's mark (dev, `RERAIL_TIMELINE`): where the process is, with its instructions retired so far.
-fn timeline_mark(what: &str) {
-    if std::env::var_os("RERAIL_TIMELINE").is_some() {
-        eprintln!("RERAIL_TIMELINE {what}: @{:.3} i={:.3}", crate::code_rule_dsl::logic::profile::timeline_clock(), crate::code_rule_dsl::logic::profile::retired_instructions() as f64 / 1e9);
-    }
-}
+use crate::code_rule_dsl::logic::profile::timeline_mark;
 
 fn logic_command(args: &[String]) -> Result<String, String> {
     timeline_mark("cli start");
@@ -1098,7 +1093,10 @@ fn logic_command(args: &[String]) -> Result<String, String> {
             })
             .collect();
         files.retain(|path| !path.file_name().is_some_and(|n| included.contains(n)));
-        crate::tools::program_texts(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>())?
+        timeline_mark("the program files listed");
+        let texts = crate::tools::program_texts(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>())?;
+        timeline_mark("the program texts read");
+        texts
     } else {
         vec![crate::tools::program_text(Path::new(program.as_str()))?]
     };

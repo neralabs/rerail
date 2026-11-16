@@ -267,6 +267,11 @@ into notes once the queue is done).
   including `sql_executor` (sql_executor.rs 211) and anything else that builds batches outside `run_observed`.
 - **Done when**: every builder of syntax batches and every evaluator of those functions is listed with how it gets
   its texts; a test on the SQL executor path reads a long text; base_tests passes 5/5 on a host.
+- **Found (2026-11-16)**: `phases::tests::a_phase_hands_on_its_exports_and_its_reader_follows_each_edit` fails on
+  the hub at dd93316ff and on this branch after merging it: `@rr_node_text without the run's long-text nodes bound`.
+  The phase `p1`'s cross-file part (`corpus.rs` "plan and evaluate", the driven run) compiles a rule reading `text`'s
+  long-text twin on the run's main connection, and since chunks evaluate on connections of their own (0254) the main
+  connection binds no batch (0268's binding is the chunk's). Before 0254 the main connection held the one batch.
 - **Record**: —
 
 ### Q6. Printing a lowered program round-trips exactly
