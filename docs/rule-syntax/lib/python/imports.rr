@@ -150,9 +150,13 @@ reaches(a, c) :- reaches(a, b), runs(b, c).
 // Recursive: exports -> resolve_export -> exports, so a chain of re-exports is followed to the end.
 .decl exports(m: symbol, x: symbol, q: symbol)
 exports(m, x, q) :- module_of(f, m), def_name(f, x), nearest(f, s, scope), kind(s, "module"), qualname(f, q).
-exports(m, l, q) :- import_alias(i, _, m2, x, l), import_time(i), module_of(i, m), x != "",
-    resolve_export(@dot(m2, x), q).
+exports(m, l, q) :- export_from(t, l, m), resolve_export(t, q).
 exports(m, x, q) :- star_from(m, m2), exports(m2, x, q), public_name(m2, x).
+// export_from(t, l, m): module m's import-time `from m2 import x as l`, by the name it imports, t = "m2.x". Rule 2 of
+// exports reads it by t: each new resolve_export(t, _) finds its imports by t's atom, where `@dot(m2, x)` in the
+// recursion made the engine split every t at each dot and look both parts up as text (decision 0264 §8).
+.decl export_from(t: symbol, l: symbol, m: symbol)
+export_from(@dot(m2, x), l, m) :- import_alias(i, _, m2, x, l), import_time(i), module_of(i, m), x != "".
 // star_from(m, m2): module m has `from m2 import *`.
 .decl star_from(m: symbol, m2: symbol)
 star_from(m, m2) :- kind(i, "import_from_statement"), child(i, w, _), kind(w, "wildcard_import"),

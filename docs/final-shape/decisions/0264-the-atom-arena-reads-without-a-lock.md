@@ -1,7 +1,7 @@
 # 0264: The atom arena is read without a lock (RCU over an append-only arena)
 
-Status: draft, not built (2026-11-15): §0's probe bounds its gain at about 0.4 s of a 40 s run, below the
-cost of the rewrite for now. Refines the arena of decisions 0049 and 0111 (`content_store::atoms`). Keeps the
+Status: §6–§8 built (2026-11-15); the RCU arena of §1–§5 is a draft, not built: §0's probe bounds its gain at
+about 0.4 s of a 40 s run, and §7's sharded lock takes that gain without it. Refines the arena of decisions 0049 and 0111 (`content_store::atoms`). Keeps the
 reservations of 0114 §4, the provisional ids of 0160 and the fork map of 0170. Follows decision 0263, whose
 §4 keeps text-reading joins on one thread because of this lock.
 
@@ -152,15 +152,63 @@ Two overheads on that path are removed (2026-11-15):
 All four runs gave the same 29,747 violations (483a6f116876). What remains is the lookups' memory latency. The
 levers left are threads (§5, after the lock) and fewer lookups (a plan that reads the parts' atoms by id).
 
+### 7. Built: the arena's lock sharded by reader; text joins that make no atoms walk in morsels
+
+The arena's `RwLock<State>` is now `atoms::sharded::Sharded<State>`: one `parking_lot` read lock per shard, each on
+a cache line of its own, as many shards as threads can run (8 to 64). Each thread takes a shard round-robin at its
+first read, so the pool's threads share none (crossbeam's `ShardedLock`, the probe's, hashes threads to 8 shards).
+A writer takes every shard in order.
+
+0263 §4's exclusion narrows to the joins that may make atoms (`makes_atoms`): a joined head (`@cat` in it), a
+joined text, or a `@cat`, text function or split part whose text is interned. In morsels their new atoms' ids
+would follow the threads' timing. A join that only looks texts up, leaves them unread or holds them as scratch
+walks in morsels. `cut_tests::a_join_that_only_reads_texts_walks_in_morsels_and_one_that_makes_atoms_walks_whole`
+checks both, and `sharded::tests::readers_on_every_shard_see_only_whole_writes` the lock.
+
+### 8. Built: `exports` reads its from-imports by the name they import (a key rule)
+
+`exports`' rule 2 asked `resolve_export(@dot(m2, x), q)`. With `resolve_export` the recursion's delta, the plan
+split each delta name at every dot and looked both parts up: §6's 1.09 M parts. The import side now carries the
+name, as decision 0103's key rule (`python/imports.rr`):
+
+```
+export_from(@dot(m2, x), l, m) :- import_alias(i, _, m2, x, l), import_time(i), module_of(i, m), x != "".
+exports(m, l, q) :- export_from(t, l, m), resolve_export(t, q).
+```
+
+The `@dot` is made once per import, in the file-local part, and it is an atom `export_query` makes already. The
+recursive join probes `export_from` by `t`'s id: no split, no text.
+
+### Measured: §7 and §8
+
+M3 Max, all of PostHog, cold store, profiling build, K = 15, alternating in pairs (load average 10–18). Every run
+gave the same 29,747 violations (483a6f116876).
+
+| | `resolve_export` | the exports join's CPU | cross part | wall |
+|---|---|---|---|---|
+| §6 (base) | 0.78 / 0.91 s | 0.68 / 0.68 s | 4.68 / 4.65 s | 49.5 / 43.9 s |
+| §7, the old rule | 0.35 / 0.37 s | 0.09 / 0.08 s (the walk's thread; morsels on the pool) | 4.20 / 4.07 s | 43.3 / 43.3 s |
+| §8, the §6 engine | 0.29 / 0.18 s | 0.015 / 0.014 s | 3.90 / 4.25 s | 40.7 / 40.7 s |
+| §7 and §8 | 0.30 / 0.31 s | 0.014 / 0.015 s | 3.94 s / (not read) | 38.9 / 43.2 s |
+
+- **§8 removes the work**, where §7 spreads it: the join costs 1/45 of its CPU. With §8, §7 gains nothing here: the
+  stratum's remaining ~0.2 s is `resolve_export(@dot(m, x), r) :- exports(m, x, r)`, which interns a name per row
+  and walks whole.
+- **§7 still serves other packs**: any join that looks texts up by rows walks in morsels now. On this run no other
+  stratum is such a join (`sym_of` makes atoms in its head).
+
 ## Open
 
 - **The unit of reclamation.** Per table and per directory are proposed here. Per block is not needed, since
   blocks never move.
 - **The text steps a chunk at a time** (one `lookup_all` per chunk, as row programs read atoms). This is
   independent of the lock, and helps one thread too.
-- **Fewer text lookups in a split.** Probe 2 looks up about 2.4 parts per delta row, and most miss. A plan that
-  starts from the parts' relation, or a key rule that keeps each qualified name's parts by id (decision 0103's
-  cache form), would read ids, not texts.
+- **The plan could make §8's key itself.** A split whose two parts are read only as keys of one positive atom of a
+  lower stratum is that atom probed by `@cat` of its columns. The planner could add the key (an index of the atom
+  by the joined text, built once per stratum) instead of a library rule per case. Not built: §8 is the one case on
+  PostHog.
+- **`resolve_export(@dot(m, x), r) :- exports(m, x, r)`** (about 0.2 s, one thread): it interns each export's
+  name. Carrying the name in `exports` would make it a copy, at the cost of a column in a recursive relation.
 - **What holds the chunk phase at 6–7 busy threads:** not this lock (Measured).
 - **Taking the sharded lock alone** (the probe's patch, cleaned up) would keep most of §0's 0.4 s at a few
   lines' cost, with 0263 §4 lifted. Writers then take every shard. The probe showed no writer cost, but it was
