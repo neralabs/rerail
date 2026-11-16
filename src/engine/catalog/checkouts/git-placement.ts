@@ -9,6 +9,7 @@
  */
 import { lstatSync, readFileSync, type Stats } from "node:fs";
 import { join, resolve } from "node:path";
+import { pathsOwnedByCurrentUser } from "../../native/native.js";
 import { storedPath } from "../checkout-control.js";
 
 /** What Git reads to place a folder holding a `.git` entry, as it was when read. */
@@ -243,16 +244,15 @@ function namesBack(inputs: PlacementInputs): boolean {
  * Whether Git, which refuses a repository whose folders another user owns, takes the worktree's folder, its `.git` file
  * and its Git folder as the current user's, and the common folder holds the `objects` and `refs` Git looks for. On
  * POSIX it compares their owner with the effective user, as Git does (root is left to Git, which reads `SUDO_UID`).
- * Windows gives Node no owner: there they must be on the volume of the common Git folder, whose repository Git placed,
- * and on no network path, which keeps out the volumes that record no owner (FAT, exFAT, shares), where Git refuses all.
+ * Windows gives Node no owner: there the engine reads each one's owner as Git for Windows does
+ * ({@link pathsOwnedByCurrentUser}), and a network path, or no engine that can tell, leaves the worktree to Git.
  */
 function ownedAsGitRequires(inputs: PlacementInputs, common: string): boolean {
   const paths = [inputs.folder, join(inputs.folder, ".git"), inputs.gitFolder];
   const owned = paths.map(look);
-  const objects = look(join(common, "objects"));
-  if (!isFolder(objects) || !isFolder(look(join(common, "refs")))) return false;
+  if (!isFolder(look(join(common, "objects"))) || !isFolder(look(join(common, "refs")))) return false;
   if (!owned.every(isEntry)) return false;
-  return process.platform === "win32" ? owned.every(stats => stats.dev === objects.dev) && paths.every(plainlyResolved) : ownedByUser(owned);
+  return process.platform === "win32" ? paths.every(plainlyResolved) && pathsOwnedByCurrentUser(paths) === true : ownedByUser(owned);
 }
 
 function ownedByUser(owned: readonly Stats[]): boolean {

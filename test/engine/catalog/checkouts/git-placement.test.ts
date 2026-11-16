@@ -14,6 +14,7 @@ import {
 import { CheckoutCodeRuleRouter } from "../../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { CheckoutCatalogs, startingCheckout } from "../../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { gitText, runGit } from "../../../../src/engine/git.js";
+import { pathsOwnedByCurrentUser } from "../../../../src/engine/native/native.js";
 import { setUpTestRepository } from "../../../support/repository-rules.js";
 import { linkFolder } from "../../../support/platform/links.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
@@ -23,8 +24,14 @@ vi.mock("../../../../src/engine/git.js", async importOriginal => {
   return { ...actual, runGit: vi.fn(actual.runGit), gitText: vi.fn(actual.gitText) };
 });
 
+vi.mock("../../../../src/engine/native/native.js", async importOriginal => {
+  const actual = await importOriginal<typeof import("../../../../src/engine/native/native.js")>();
+  return { ...actual, pathsOwnedByCurrentUser: vi.fn(actual.pathsOwnedByCurrentUser) };
+});
+
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
+  vi.mocked(pathsOwnedByCurrentUser).mockReset();
   vi.unstubAllEnvs();
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
@@ -198,6 +205,45 @@ describe("every other folder, and every worktree whose files Git might read othe
     vi.unstubAllEnvs();
     vi.stubEnv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1");
     expect(expectGitsAnswers(join(root, "linked"), main)).toBe(2);
+  });
+});
+
+describe.runIf(process.platform === "win32")("on Windows, where Node reads no owner, the engine reads it as Git does", () => {
+  it("takes the folders of a repository the user made, which Git takes too, and no folder Windows' installer owns or path that is gone", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    const { pathsOwnedByCurrentUser: engineReads } = await vi.importActual<typeof import("../../../../src/engine/native/native.js")>(
+      "../../../../src/engine/native/native.js",
+    );
+    const system = process.env["SystemRoot"] ?? String.raw`C:\Windows`;
+
+    expect(gitsAnswer(main).git).toBe(true);
+    expect({
+      own: engineReads([main, join(main, ".git"), root]),
+      system: engineReads([system]),
+      ownAndSystem: engineReads([main, system]),
+      gone: engineReads([join(root, "gone")]),
+      none: engineReads([]),
+    }).toEqual({ own: true, system: false, ownAndSystem: false, gone: false, none: false });
+  });
+
+  it("asks Git for a linked worktree whose folders the engine does not take for the user's, or when no engine can tell", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "-b", "another-owner", join(root, "another-owner"));
+    git(main, "worktree", "add", "--quiet", "-b", "owner-unread", join(root, "owner-unread"));
+    git(main, "worktree", "add", "--quiet", "-b", "own", join(root, "own"));
+    expect(expectGitsAnswers(main)).toBe(1);
+
+    vi.mocked(pathsOwnedByCurrentUser).mockReturnValue(false);
+    expect(expectGitsAnswers(join(root, "another-owner"))).toBe(1);
+    vi.mocked(pathsOwnedByCurrentUser).mockReturnValue(undefined);
+    expect(expectGitsAnswers(join(root, "owner-unread"))).toBe(1);
+    vi.mocked(pathsOwnedByCurrentUser).mockReset();
+    expect(expectGitsAnswers(join(root, "own"))).toBe(0);
+    // Git reads the owner of the worktree's folder, its .git file and the Git folder that file names.
+    expect(vi.mocked(pathsOwnedByCurrentUser).mock.lastCall?.[0]).toHaveLength(3);
+    expect(vi.mocked(pathsOwnedByCurrentUser).mock.lastCall?.[0].slice(0, 2)).toEqual([join(root, "own"), join(root, "own", ".git")]);
   });
 });
 

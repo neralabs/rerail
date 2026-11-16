@@ -13,6 +13,7 @@ pub mod git_workspace;
 mod main_instance;
 mod model;
 mod panic_boundary;
+mod path_owner;
 pub mod process;
 mod rules;
 pub mod tree_watch;

@@ -380,6 +380,12 @@ export interface NativeBinding {
    * the handle it kept, so a pid Windows has given to another process is no answer. A binary built before it lacks it.
    */
   detachedExitCode?(pid: number): number | null;
+  /**
+   * Windows only: whether every path's owner is one Git for Windows takes as this process's user (the user, or the
+   * Administrators group while the process's token is a member); false when an owner cannot be read, and on every
+   * other platform. A binary built before it lacks it.
+   */
+  pathsOwnedByCurrentUser?(paths: string[]): boolean;
   /** The content-store file name this binary's store schema owns (`content-v1.sqlite` at store floor 1). */
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
@@ -446,4 +452,18 @@ export function isWorkspaceBusy(error: unknown): boolean {
 
 export function nativeHealth(): NativeHealth {
   return loadNativeBinding().health();
+}
+
+/**
+ * On Windows, whether Git, started by this process, takes every one of `paths` as its user's own: the engine reads each
+ * owner as Git for Windows does. Undefined on every other platform, and when no engine here can tell (none loads, or one
+ * built before it), so the caller asks Git.
+ */
+export function pathsOwnedByCurrentUser(paths: readonly string[]): boolean | undefined {
+  if (process.platform !== "win32") return undefined;
+  try {
+    return loadNativeBinding().pathsOwnedByCurrentUser?.([...paths]);
+  } catch {
+    return undefined;
+  }
 }
