@@ -636,6 +636,16 @@ impl Version {
         Ok(p.finish()?.0)
     }
 
+    /// A part of this version whose rules are those whose id `rules` takes (decision 0298), with `part`'s overlay of
+    /// fields.
+    pub fn part_rules<S: AsRef<str>>(self: &Arc<Self>, rules: impl Fn(RuleId) -> bool, inputs: &[S], outputs: &[S], fields: PartFields<'_>) -> Result<Arc<Version>, String> {
+        use super::manager::Pipeline;
+        use super::passes::{PartOf, RetainIds};
+        let mut p = Pipeline::new("part", self.clone());
+        p.program(&mut RetainIds(rules)).program(&mut PartOf { inputs, outputs, fields });
+        Ok(p.finish()?.0)
+    }
+
     /// `to` as an edit of this version: its rules matched by hash, its parts by relation. For a caller that holds
     /// both programs (a test, the trace's replay); a pass states its edit instead.
     pub fn diff<'p>(self: &'p Arc<Self>, to: &Program) -> Result<Builder<'p>, String> {

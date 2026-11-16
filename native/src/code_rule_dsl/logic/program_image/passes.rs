@@ -287,6 +287,20 @@ impl<F: Fn(&str) -> bool> ProgramPass for Retain<F> {
     }
 }
 
+/// The rules whose id the predicate takes, the rest removed (a maintained stratum's selection from its general form,
+/// decision 0298): a view, or the version itself where every rule is taken.
+pub struct RetainIds<F>(pub F);
+
+impl<F: Fn(super::RuleId) -> bool> ProgramPass for RetainIds<F> {
+    const NAME: &'static str = "retain rules";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        if cx.v().rules().all(|r| (self.0)(r.id())) {
+            return Ok(());
+        }
+        w.keep(|r| (self.0)(r.id()))
+    }
+}
+
 /// A part's own fields (decision 0244, `Version::part`): its inputs and outputs, and the natives, lattices and gates
 /// of the relations `fields` takes. An overlay, never folded, so the part costs its range list and its fields.
 pub struct PartOf<'f, S> {

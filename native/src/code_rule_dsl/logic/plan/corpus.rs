@@ -9079,6 +9079,42 @@ struct Driver<'d, 'k> {
     atoms: Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>,
 }
 
+/// Whether a reached stratum runs its selection from its general form (decision 0298), not a form written for it.
+fn general_forms() -> bool {
+    std::env::var_os("RERAIL_GENERAL_FORMS").is_some()
+}
+
+/// Stratum `scc`'s form for the reads `moved` changed, selected from its general form (decision 0298): its rules
+/// those moved reads drive and those every selection keeps, a view of the general form's version with the run's own
+/// fields over it (its inputs: those the run binds, `run_input`, and the old rows). `None` where the general form
+/// does not stand for the form written for `moved`: it is not maintained, a moved read is not among its reads, or one
+/// has no delta (an earlier stratum derived again).
+#[allow(clippy::too_many_arguments)]
+fn general_selection(atoms: &Arc<crate::code_rule_dsl::logic::program_image::Version>, v0: &crate::code_rule_dsl::logic::plan::body::Placed, places: &[usize], scc: &BTreeSet<String>, moved: &BTreeSet<String>, domains: &lower::Domains, kept: &retain::Retained, has_delta: &dyn Fn(&str) -> bool, bound_old: &dyn Fn(&str) -> bool, run_input: &dyn Fn(&str) -> bool) -> Result<Option<maintain::Form>> {
+    use crate::code_rule_dsl::logic::plan::body::Placed;
+    if moved.iter().any(|r| !has_delta(r)) {
+        return Ok(None);
+    }
+    let g = maintain::general(atoms, v0, places, scc, domains, kept, &|_| true)?;
+    if g.form.maintained == 0 || g.form.derived_again > 0 {
+        return Ok(None);
+    }
+    let Some(at) = maintain::selected(&g, moved) else { return Ok(None) };
+    let pv = &g.form.placed;
+    let ids: std::collections::HashSet<crate::code_rule_dsl::logic::program_image::RuleId> = at.iter().map(|&k| pv.id(k)).collect();
+    let read: BTreeSet<&str> = at.iter().flat_map(|&k| pv.rule(k).body().filter_map(|l| l.atom()).map(|a| pv.v.rel_name(a.rel())).collect::<Vec<_>>()).collect();
+    let f = crate::code_rule_dsl::logic::plan::fields::Fields::of(pv).ok_or_else(|| Error::Plan("a general form holds its rules alone".into()))?;
+    let inputs: Vec<&str> = f.inputs().filter(|r| read.contains(r) && (run_input(r) || r.ends_with("__old"))).collect();
+    let outputs: Vec<&str> = f.outputs().collect();
+    let all = |_: &str| true;
+    let part = pv.v.part_rules(|id| ids.contains(&id), &inputs, &outputs, crate::code_rule_dsl::logic::program_image::PartFields { natives: &all, lattice: &all, gates: &all }).map_err(Error::Plan)?;
+    let mut placed = Placed::whole(part);
+    placed.maint = pv.maint.clone();
+    let old_reads = g.form.old_reads.iter().filter(|r| read.contains(format!("{r}__old").as_str()) && !bound_old(r)).cloned().collect();
+    let m = g.form;
+    Ok(Some(maintain::Form { placed, sources: Vec::new(), old_reads, maintained: m.maintained, derived_again: m.derived_again, recursive: m.recursive, again: m.again }))
+}
+
 impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
     fn kept(&mut self, rel: &str) -> Option<Arc<crate::code_rule_dsl::logic::native::component::InRel>> {
         self.kept.kept(rel).map(|(h, _)| h)
@@ -9121,7 +9157,14 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
             Some(a) => Arc::clone(a),
             None => Arc::clone(self.atoms.insert(crate::code_rule_dsl::logic::program_image::Builder::under(&v0.v).finish().map_err(Error::Plan)?.0)),
         };
-        let mut m = maintain::form(&atoms, v0, &places, scc, moved, &self.cross.domains, self.kept, &one, &|r| inputs.contains(r))?;
+        let selection = match general_forms() {
+            true => general_selection(&atoms, v0, &places, scc, moved, &self.cross.domains, self.kept, &|r| has_delta.contains(r), &|r| bound_olds.contains(r), &|r| inputs.contains(r))?,
+            false => None,
+        };
+        let mut m = match selection {
+            Some(m) => m,
+            None => maintain::form(&atoms, v0, &places, scc, moved, &self.cross.domains, self.kept, &one, &|r| inputs.contains(r))?,
+        };
         maintain::bind_old_rows(&mut m.sources, std::mem::take(&mut m.old_reads), self.kept);
         let form = m.placed;
         let f = crate::code_rule_dsl::logic::plan::fields::Fields::of(&form).ok_or_else(|| Error::Plan("a maintained form holds its rules alone".into()))?;
