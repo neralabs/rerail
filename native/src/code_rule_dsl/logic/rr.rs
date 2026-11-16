@@ -718,9 +718,15 @@ impl crate::code_rule_dsl::text::vocabulary::DfaCache for ImageDfas {
     }
 }
 
-/// The lease of image `id`, read by this run, renewed (`keep_image`).
+/// The lease of image `id`, read by this run, renewed (`keep_image`) once more than half of it has run: a run that reads
+/// images an earlier run kept or renewed within that writes nothing (decision 0250), and an image read at least
+/// every half lease is never collected.
 fn renew_image(store: &crate::content_store::ContentStore, id: crate::content_store::SourceId) {
     use crate::content_store::write_back::Syms;
+    let now = image_lease() - IMAGE_LEASE_SECS;
+    if store.source_lease(id, IMAGE_OWNER).ok().flatten().is_some_and(|until| until - now > IMAGE_LEASE_SECS / 2) {
+        return;
+    }
     store.write_back_unless_full(Syms::None, "an image's lease", 0, Vec::new(), Box::new(move |store| store.pin_source(id, IMAGE_OWNER, image_lease())));
 }
 
