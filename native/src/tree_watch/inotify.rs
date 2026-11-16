@@ -5,9 +5,10 @@
 //! read left out (an ignored `node_modules`) costs no watch and reports nothing. A folder created
 //! in a watched folder is reported as `renamed`; the host's next read passes the new folder set.
 //! Watches are a budget every program of the user shares (`fs.inotify.max_user_watches`), so the
-//! engine takes at most a quarter of it, and at most 131,072: a root past that is not watched (the
-//! folders above the roots, a handful each and shared between them, are not counted). Neither is a
-//! root on a file system inotify cannot see others' writes on (NFS, SMB, FUSE, 9p).
+//! engine takes at most a quarter of it, and at most 131,072: a root past that is not watched. The
+//! folders above the roots, a handful each and shared between them, are watched past the budget,
+//! and count toward a later root's. A root on a file system inotify cannot see others' writes on
+//! (NFS, SMB, FUSE, 9p) is not watched either.
 //!
 //! A watch follows its folder, not its path. The root's own delete, move or unmount ends its
 //! watch, and so does that of any folder above it up to `/`: each is watched for its own going
@@ -399,7 +400,8 @@ impl Inotify {
     /// Watches `folder` under `root`, held or not. Another descriptor than the one held means
     /// another folder now sits at that path (the held one was deleted or moved away, and an
     /// overflow may have dropped its own events): the held watch is let go of, as it is when the
-    /// path cannot be watched.
+    /// path cannot be watched. Another root folder is lost: what was written in it before this
+    /// watch went unseen, and the old root's own events, now no one's, end nothing.
     fn add(&self, watches: &mut Watches, root: &str, folder: &str) -> Result<(), Refused> {
         let added = self.add_watch(&Path::new(root).join(folder), MASK);
         let replaced = match added {
@@ -415,6 +417,9 @@ impl Inotify {
                 .and_then(|folders| folders.remove(folder)),
         };
         if let Some(descriptor) = replaced {
+            if folder.is_empty() && added.is_ok() {
+                self.shared.notices.lost(root);
+            }
             let instance = self.shared.instance.as_raw_fd();
             watches.release(instance, descriptor, &Owner::under(root, folder));
         }
@@ -763,6 +768,26 @@ mod tests {
         deliver(&backend);
         let notice = notice_of(&notices, &root);
         assert!(names(&notice, "gen/y.ts") && names(&notice, "gen/deep/y.ts"));
+        backend.close();
+    }
+
+    #[test]
+    fn a_root_replaced_before_its_own_events_are_handled_is_lost() {
+        let notices = Arc::new(Notices::default());
+        let mut backend = paused(&notices);
+        let scratch = Scratch::new("root-replaced");
+        scratch.write("a.ts", "a");
+        let root = scratch.root();
+        notices.start(&root);
+        assert!(backend.watch(&root, &[String::new()]));
+        std::fs::remove_dir_all(&root).expect("delete the root");
+        std::fs::create_dir(&root).expect("create it again");
+        scratch.write("b.ts", "b");
+
+        // The host watches again before the old root's own events are handled.
+        assert!(backend.watch(&root, &[String::new()]));
+        let notice = notice_of(&notices, &root);
+        assert!(notice.lost && !notice.ended, "{notice:?}");
         backend.close();
     }
 
