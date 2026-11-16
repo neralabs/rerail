@@ -517,8 +517,10 @@ impl<'a> P<'a> {
         let r = self.with_fol(fol, |p| {
             loop {
                 // Leading `;`s.
+                let mut after_semi = false;
                 while p.peek() == T::Semi {
                     p.tk(K::TSemi)?;
+                    after_semi = true;
                 }
                 match p.peek() {
                     T::RBrace if region != Region::Top => return Ok(()),
@@ -526,8 +528,10 @@ impl<'a> P<'a> {
                     _ => {}
                 }
                 if region == Region::Indent {
-                    // An outdent before any statement (an empty region's).
-                    match p.layout(fol | v::MODS)? {
+                    // An outdent before any statement (an empty region's). After a `;` no automatic
+                    // one is valid (two separators do not follow each other).
+                    let own = if after_semi { v::MODS | v::OUTDENT | v::COMMA_OUTDENT } else { fol | v::MODS };
+                    match p.with_fol(0, |p| p.layout(own))? {
                         Some(Ext::Outdent | Ext::CommaOutdent) => return Ok(()),
                         Some(Ext::Modifier(_)) | None => {}
                         Some(_) => return p.refuse(),

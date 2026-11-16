@@ -41,6 +41,7 @@ impl P<'_> {
         }
         let (kind, rest): (K, fn(&mut Self) -> R<()>) = match t.code {
             w::IMPORT => (K::ImportDeclaration, Self::import_rest),
+            w::EXPORT => (K::ExportDeclaration, Self::import_rest),
             w::PACKAGE if self.word_at(1) == w::OBJECT => (K::PackageObject, Self::package_object_rest),
             w::PACKAGE => (K::PackageClause, Self::package_rest),
             w::CLASS => (K::ClassDefinition, Self::class_rest),
@@ -202,8 +203,10 @@ impl P<'_> {
     // ---- Imports and packages.
 
     /// `import a.b.{c, d => e}, f._` (`import_declaration`).
+    /// `import` or `export` (`export_declaration`, the same shape), then its paths.
     fn import_rest(&mut self) -> R<()> {
-        self.tk(K::TImport)?;
+        let kind = if self.is_word(w::EXPORT) { K::TExport } else { K::TImport };
+        self.tk(kind)?;
         loop {
             self.namespace_expression()?;
             if self.peek() == T::Comma {
@@ -368,6 +371,28 @@ impl P<'_> {
 
     /// `class C[T](a: A) extends B with D { … }`, a trait alike (`name`, `type_parameters`,
     /// `class_parameters`, `extend`, `body`).
+    /// `class A @Inject() (…)` (`_constructor_annotation`, an `annotation`: `@` kept, the type
+    /// `name`, then `(` and `)`, each an `arguments`: the alias is over the bracket pair). An
+    /// annotation with arguments is refused.
+    fn constructor_annotation(&mut self) -> R<()> {
+        let a = self.open(K::Annotation);
+        // Kept: the annotation's automaton (the plain annotation's) drops it.
+        self.stored(K::TAt, f::NONE, true)?;
+        let t = self.simple_type()?;
+        self.t.refield(t, f::NAME);
+        if self.peek() == T::LParen && self.touching() {
+            if self.kind_at(1) != T::RParen {
+                return self.refuse();
+            }
+            for _ in 0..2 {
+                let p = self.bump()?;
+                self.t.leaf(K::Arguments, f::NONE, p.start, p.end);
+            }
+        }
+        self.close(a);
+        Ok(())
+    }
+
     fn class_rest(&mut self) -> R<()> {
         if self.is_word(w::CASE) {
             self.tk(K::TCase)?;
@@ -380,8 +405,8 @@ impl P<'_> {
         if self.peek() == T::LBracket {
             self.type_parameters(f::TYPE_PARAMETERS)?;
         }
-        if self.is_op(op::AT) {
-            return self.refuse();
+        if self.is_op(op::AT) && !self.tok().nl {
+            self.constructor_annotation()?;
         }
         // A constructor's access modifier (`class A private (…)`), on the header's line.
         if matches!(self.word(), w::PRIVATE | w::PROTECTED) && !self.tok().nl {

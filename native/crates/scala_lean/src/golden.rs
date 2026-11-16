@@ -1771,3 +1771,169 @@ package f {
 "###,
     );
 }
+
+#[test]
+fn constructor_annotations_export_semicolons() {
+    same(
+        r###"package a
+
+/** x */
+@InternalApi
+private[akka] object B
+
+class C @Inject() (cc: Int) extends D
+
+object E:
+  export f.g
+  export h.{i, j}
+
+trait K { self: L with M =>
+  given N: O = P
+}
+
+object Q {
+  def r(): Unit =
+    {
+      s()
+    }
+  def t: U =
+    new U {
+      def v = 1
+    }
+  def w(x: Int) =
+    this(x)
+  val y = 1;
+
+  // c
+  def z(n: Int): Int = n
+}
+"###,
+        r###"compilation_unit [0..362]
+  package_clause [0..9]
+    package_identifier name: [8..9]
+      identifier [8..9]
+  block_comment flags=1 [11..19]
+  object_definition [20..55]
+    annotation [20..32]
+      type_identifier name: [21..32]
+    modifiers [33..46]
+      access_modifier [33..46]
+        private [33..40]
+        access_qualifier [40..46]
+          identifier [41..45]
+    object [47..53]
+    identifier name: [54..55]
+  class_definition [57..94]
+    class [57..62]
+    identifier name: [63..64]
+    annotation [65..74]
+      @ [65..66]
+      type_identifier name: [66..72]
+      arguments [72..73]
+      arguments [73..74]
+    class_parameters class_parameters: [75..84]
+      arguments [75..76]
+      class_parameter [76..83]
+        identifier name: [76..78]
+        type_identifier type: [80..83]
+      ) [83..84]
+    extends_clause extend: [85..94]
+      type_identifier type: [93..94]
+  object_definition [96..138]
+    object [96..102]
+    identifier name: [103..104]
+    template_body body: [104..138]
+      : [104..105]
+      export_declaration [108..118]
+        identifier path: [115..116]
+        . path: [116..117]
+        identifier path: [117..118]
+      export_declaration [121..136]
+        identifier path: [128..129]
+        . [129..130]
+        namespace_selectors [130..136]
+          identifier [131..132]
+          identifier [134..135]
+  trait_definition [138..184]
+    identifier name: [144..145]
+    template_body body: [146..184]
+      { [146..147]
+      self_type [148..165]
+        identifier [148..152]
+        compound_type [154..162]
+          type_identifier base: [154..155]
+          type_identifier extra: [161..162]
+      given_definition [168..182]
+        given [168..173]
+        identifier name: [174..175]
+        : [175..176]
+        type_identifier return_type: [177..178]
+        identifier body: {expression} [181..182]
+  object_definition [186..361]
+    object [186..192]
+    identifier name: [193..194]
+    template_body body: [195..361]
+      { [195..196]
+      function_definition [199..239]
+        identifier name: [203..204]
+        parameters parameters: [204..206]
+          arguments [204..205]
+          ) [205..206]
+        type_identifier return_type: [208..212]
+        = [213..214]
+        indented_block body: [219..239]
+          block {expression} [219..236]
+            call_expression {expression} [227..230]
+              identifier function: [227..228]
+              arguments arguments: [228..230]
+                arguments [228..229]
+                ) [229..230]
+      function_definition [239..286]
+        identifier name: [243..244]
+        type_identifier return_type: [246..247]
+        = [248..249]
+        indented_block body: [254..286]
+          instance_expression {expression} [254..283]
+            type_identifier [258..259]
+            template_body [260..283]
+              { [260..261]
+              function_definition [268..277]
+                identifier name: [272..273]
+                = [274..275]
+                integer_literal body: {expression} [276..277]
+      function_definition [286..316]
+        identifier name: [290..291]
+        parameters parameters: [291..299]
+          arguments [291..292]
+          parameter [292..298]
+            identifier name: [292..293]
+            type_identifier type: [295..298]
+          ) [298..299]
+        = [300..301]
+        indented_block body: [306..316]
+          call_expression {expression} [306..313]
+            identifier function: [306..310]
+            arguments arguments: [310..313]
+              arguments [310..311]
+              identifier {expression} [311..312]
+              ) [312..313]
+      val_definition [316..325]
+        identifier pattern: [320..321]
+        integer_literal value: {expression} [324..325]
+      ; [325..326]
+      comment flags=1 [330..334]
+        // [330..332]
+      function_definition [337..359]
+        identifier name: [341..342]
+        parameters parameters: [342..350]
+          arguments [342..343]
+          parameter [343..349]
+            identifier name: [343..344]
+            type_identifier type: [346..349]
+          ) [349..350]
+        type_identifier return_type: [352..355]
+        = [356..357]
+        identifier body: {expression} [358..359]
+"###,
+    );
+}

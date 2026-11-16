@@ -984,7 +984,7 @@ impl P<'_> {
     }
 
     /// The next token as `kind` given `field`: a leaf where `all` (its parent stores every token).
-    fn stored(&mut self, kind: K, field: u8, all: bool) -> R<()> {
+    pub(super) fn stored(&mut self, kind: K, field: u8, all: bool) -> R<()> {
         if all {
             let t = self.bump()?;
             self.t.leaf(kind, field, t.start, t.end);
