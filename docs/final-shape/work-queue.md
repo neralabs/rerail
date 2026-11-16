@@ -420,6 +420,15 @@ pass.
 - **Done when**: `an_unchanged_constant_directory_listing_is_no_change_of_the_cross_part` (partial_tests.rs,
   ignored) passes, unignored.
 
+### Q17. Two `rr::tests` red on the branch head
+
+- **Found** (2026-11-15, while validating decision 0291; both fail at 86b6c271f without 0291's change):
+  `guests_that_do_not_parse_follow_the_policy` (tests.rs 2286: "the broken guest keeps its partial tree", rows
+  `["1"]`, wanted `["1", "2"]`), and `library_modules_link_to_the_lowering_of_them_together` (tests.rs 3749: the
+  javascript pack's library linked from its modules differs from the one lowered together at line 441,
+  `rr_cover135` against `rr_cover121`, 2,383 lines against 2,385).
+- **Done when**: both pass, each traced to its cause (and a commit that made it red, where one did).
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
