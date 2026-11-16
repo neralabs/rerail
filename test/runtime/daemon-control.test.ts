@@ -49,14 +49,11 @@ import {
 import { LOCKS_DIR } from "../../src/engine/index.js";
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/engine-pipe.js";
 import { engineCapabilityProof } from "../../src/runtime/engine-proof.js";
-import { olderDaemon, until } from "../support/processes/daemon-home.js";
+import { DEAD_PID, olderDaemon, until } from "../support/processes/daemon-home.js";
 import { type ProbeLaunch, type StartedProbe, runConsoleProbe } from "../support/platform/console-probe.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { otherUserPid } from "../support/other-user-pid.js";
 import { removeFolder, runningIn } from "../support/platform/remove-folder.js";
-
-/** A pid no live process can hold on the platforms Rerail supports. */
-const DEAD_PID = 2 ** 22 - 1;
 
 const originalRerailHome = process.env.RERAIL_HOME;
 
@@ -1266,24 +1263,40 @@ describe("autostartDaemon", () => {
   }, 60_000);
 
   it("renews the claim that names this process, its launcher, for the life of a start, and no other launcher's", async () => {
-    const [own, other, hung] = await Promise.all([1, 2, 3].map(async () => await mkdtemp(join(tmpdir(), "rerail-autostart-"))));
+    const [own, other, late, hung] = await Promise.all([1, 2, 3, 4].map(async () => await mkdtemp(join(tmpdir(), "rerail-autostart-"))));
     const long = new Date(Date.now() - 4_000);
-    const claims = { own: join(own!, AUTOSTART_CLAIM_FILE), other: join(other!, AUTOSTART_CLAIM_FILE), hung: join(hung!, AUTOSTART_CLAIM_FILE) };
+    const claims = {
+      own: join(own!, AUTOSTART_CLAIM_FILE),
+      other: join(other!, AUTOSTART_CLAIM_FILE),
+      late: join(late!, AUTOSTART_CLAIM_FILE),
+      hung: join(hung!, AUTOSTART_CLAIM_FILE),
+    };
     await writeFile(claims.own, String(process.pid));
     await writeFile(claims.other, String(DEAD_PID));
+    await writeFile(claims.late, String(process.pid));
     await writeFile(claims.hung, String(process.pid));
     for (const claim of Object.values(claims)) await utimes(claim, long, long);
     const renewed = async (claim: string): Promise<boolean> => (await stat(claim)).mtimeMs > long.getTime() + 1_000;
-    // A launcher that started 31 s ago has outlived any start's waits: it no longer keeps its claim.
-    const stops = [keepAutostartClaim(own!, Date.now()), keepAutostartClaim(other!, Date.now()), keepAutostartClaim(hung!, Date.now() - 31_000)];
+    // A start's waits for the start lock, a holder's record and the daemon run 15 s each: a launcher that started 31 s
+    // ago may be in its last one and keeps its claim; one that started 46 s ago has outlived them all, and does not.
+    const stops = [
+      keepAutostartClaim(own!, Date.now()),
+      keepAutostartClaim(other!, Date.now()),
+      keepAutostartClaim(late!, Date.now() - 31_000),
+      keepAutostartClaim(hung!, Date.now() - 46_000),
+    ];
     try {
       await until(async () => await renewed(claims.own), 5_000);
+      // Renewed again a second later, not only as it began: the lease of 5 s outlasts no start without it.
+      const first = (await stat(claims.own)).mtimeMs;
       await delay(1_500);
+      expect((await stat(claims.own)).mtimeMs).toBeGreaterThan(first);
+      expect(await renewed(claims.late)).toBe(true);
       expect(await renewed(claims.other)).toBe(false);
       expect(await renewed(claims.hung)).toBe(false);
     } finally {
       for (const stop of stops) stop();
-      await Promise.all([own, other, hung].map(async home => await removeFolder(home!)));
+      await Promise.all([own, other, late, hung].map(async home => await removeFolder(home!)));
     }
   }, 30_000);
 
