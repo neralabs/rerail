@@ -1,7 +1,7 @@
 # 0306: A store's atoms are read whole within a share of the memory budget, else mapped
 
-Status: decided (the user, 2026-11-16). Built on a side branch, not merged: on the measured workload it raises the
-peak until Q19 is done (below).
+Status: decided (the user, 2026-11-16). Built on a side branch, not merged: it raises the peak of a run over its
+own corpus, whose atoms are its working set (below). It pays only over a store whose atoms are mostly not the run's.
 
 ## Intro
 
@@ -43,16 +43,22 @@ Two runs each, interleaved, at load 37–52:
 
 Mapped is worse: about 260 MB more at the peak, and 4–12% more CPU.
 
-The profile shows why. Before the first wave, the new process reads every kept frame of the cross part (Q19) and
-holds the atoms they name ("their symbols held": 951 MB allocated, 187 MB kept). That is nearly every atom, plus
-the maps between the process's ids and the store's.
+The profile shows why. The frames read before the first wave are few: 1,821, 53 MB encoded. Holding the atoms
+they name ("their symbols held") allocated 951 MB and kept 187 MB, about the whole atom set, for two reasons:
+
+- a lookup reads its atom's whole segment (2.6 MB on average here, 8 MB at most);
+- a run over the corpus that wrote the store names strings in every segment.
+
+So for such a run the atoms are its working set, and reading them whole (0171) is the cheapest way to hold them:
+mapped mode holds the same atoms, segment by segment, plus the maps between the process's ids and the store's. Q19
+(which frames are read) does not change this.
 
 A cold run gains nothing either: it makes every atom itself and holds them all.
 
 ## Open
 
-- **Q19 first.** Once a new process reads only the frames its run can read, mapped mode holds what the run names.
-  Then measure again, and merge the side branch if the peak drops.
+- Mapped mode pays over a store whose atoms are mostly not the run's: one store shared by several repositories,
+  or many builds' strings. Merge the side branch when such a store is measured and its peak drops.
 - The finding that blocked the first measurement is fixed on the main branch (ba519e73a). `Csr::runs` made its order
   inside a `OnceLock`, with a parallel sort. A pool thread waiting in that sort stole a probe of the same index and
   waited on itself.
