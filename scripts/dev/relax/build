@@ -3,7 +3,8 @@
 # with std.patch (the std items the engine needs that Relax's std lacked) and rerail.patch (an Open
 # run shares sealed crates' code under RELAX_SHARED_OPEN=1; a stubbed build script is a script,
 # not a hard link of Relax; a closure built in a closure no longer fails E0310 behind an impl
-# Trait capturing two lifetimes: see the patch). rerail.patch is the fork's commits, kept on
+# Trait capturing two lifetimes; a build script's rerun key holds the native outputs it reaches,
+# not the receipt's path, so an engine edit reruns no other script: see the patch). rerail.patch is the fork's commits, kept on
 # the `rerail` branch of a Relax checkout (git diff of the std commit to the last). It installs to ~/.local/share/rerail-relax, outside
 # every worktree:
 #

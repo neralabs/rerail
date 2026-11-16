@@ -90,7 +90,7 @@ after the same tests pass under cargo, because Relax's std is its own.
 
 ```
 scripts/dev/relax/build        # once, and after it changes: the pinned, patched Relax, into ~/.local/share/rerail-relax
-cd native && RUSTC_WRAPPER= RELAX_ALLOW_C=1 RELAX_SHARED_OPEN=1 RELAX_STD=~/.local/share/rerail-relax/src/libs/relax/compiler/std \
+cd native && RUSTC_WRAPPER= RELAX_ALLOW_C=1 RELAX_SHARED_OPEN=1 RELAX_SHARE=rerail RELAX_STD=~/.local/share/rerail-relax/src/libs/relax/compiler/std \
   nice -n 19 ~/.local/share/rerail-relax/bin/relax test --live rerail-engine --lib -- FILTER
 scripts/dev/live-test-remote rerail-engine --lib -- FILTER    # the same, on a farm host
 ```
@@ -100,8 +100,12 @@ and the build script applies it. When a Relax run stops on a missing std item, a
 the patch, not to the engine. `scripts/dev/relax/rerail.patch` lets a run share registry crates'
 compiled code with every worktree's runs (`RELAX_SHARED_OPEN=1`, in `~/.relax/code`), and makes
 build-script stubs plain scripts: as hard links of Relax's binary, cargo's replacing them got
-Relax killed by macOS ("Malware rejection"). The workspace's own crates are not shared between
-worktrees (Relax keys them by the worktree's path), so a worktree's first run is cold. The build
+Relax killed by macOS ("Malware rejection"). `RELAX_SHARE=rerail` mounts the worktree at one
+path, `~/.relax/vfs/share/rerail`, so every worktree's runs share the workspace's crates too: a
+worktree's first run of code another has run takes about 15 s, and runs in two worktrees
+whose code differs take turns at 25–40 s. Without it a worktree's first run is cold (5–10 min). The patch
+keys a build script's rerun on the native outputs it reaches, not the whole native receipt, so
+an engine edit no longer reruns every script and drops the stores of every crate above them. The build
 script does not switch versions while a Relax session runs. A live session holds about 6 GB, and `target/relax` grows to
 about 13 GB per worktree, so run `relax clean` when a worktree's work ends.
 

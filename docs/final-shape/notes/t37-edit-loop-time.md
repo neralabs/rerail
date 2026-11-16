@@ -239,6 +239,32 @@ it rebuilds them. macOS's syspolicyd then could not read the file by the name it
 ("Unable (errno: 2) to read file") and killed the running Relax ("Terminating process due to
 Malware rejection").
 
+Sharing the workspace's crates (2026-11-15). Under `RELAX_SHARE=rerail` Relax mounts each worktree at
+one path, so the keys of the workspace's own crates match across worktrees: a second worktree's
+first run of the same code took 15 s wall, 27 s CPU. But two worktrees whose code differed undid
+each other's stores, and each turn cost what a run after an edit did (60–75 s wall, about 200 s
+CPU; 115–183 s at a load of 50–85). The cause was the native receipt. The engine's build script
+compiles C, so the native build's key hashes the engine's files, and its `rustc-env` build ID
+hashes all its sources. Relax gave every build script that reaches a native package (all reach
+libc) the receipt's path in its environment, and the receipt names every native package's outputs
+and the library's folder (the native key's). After any engine edit every script ran again in a new
+OUT_DIR, and every crate whose closure reads one (24 stores, all above `unicode_names2`) went
+stale. rerail.patch keys a script on `RELAX_NATIVE_RECEIPT_ID` instead: the outputs of the native
+packages it reaches, their files when they are path packages, and the library's archives and
+packages as sets (the link lists them in no fixed order; a first version hashed the list and
+still missed). Taking turns, A then C (a one-line edit) at a load of 35–65:
+
+| Run | Wall | CPU | Cache hits / misses |
+|---|---|---|---|
+| A, cold (new Relax build) | 87 s | 354 s | 0 / 61647 |
+| C after A | 30 s | 113 s | 55924 / 1436 |
+| A after C | 40 s | 114 s | 55946 / 1201 |
+| C after A | 26 s | 97 s | 56016 / 1169 |
+
+Before the fix the same turns took 115–183 s wall, 242–270 s CPU, with about 22000 hits. What
+each turn still redoes is the engine's own crate (its build ID, and `RERAIL_FIXTURES_DIR`, an
+absolute checkout path the build script sets) and the native cargo step.
+
 Hub code under Relax (2026-11-15). Relax rejected `ColMap::of_rel` (plan/table.rs) with E0310, which
 rustc accepts. The reduction: an edition 2024 `impl Iterator` returned from `fn f(&self, _r: &str)`
 (so it captures both lifetimes) that holds a closure built inside another closure, which captures
