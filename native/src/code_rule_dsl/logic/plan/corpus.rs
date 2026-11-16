@@ -4334,10 +4334,12 @@ fn run_observed(
         // The cone of requests' connection and store, opened before the first wave (decision 0104).
         let (slot, _) = handed.cone();
         connections::Cone::ready(&slot, &path, durable.is_some().then(|| store.database_path()))?;
-        // And the kept frames (decision 0104): the waves read them from memory. Of the memos', the live plans' newest
-        // per file (`preload_frames_live`): an earlier build's memo, or an edited file's earlier entries, no run reads.
+        // And the kept frames (decision 0104): the waves read them from memory. Of the memos', this run's plan's newest
+        // per file (`preload_frames_live`); not another live plan's (each kept run's), nor the cross part's frames of
+        // every program a kept run ran, which its part reads by key at its start (Q19).
         let preload_at = std::time::Instant::now();
-        let (frames, bytes) = store.preload_frames_live().map_err(|e| Error::Plan(e.to_string()))?;
+        let plans: Vec<[u8; 32]> = if memoised { vec![memo::plan_digest(&memo_program)] } else { Vec::new() };
+        let (frames, bytes) = store.preload_frames_live(&plans).map_err(|e| Error::Plan(e.to_string()))?;
         let preload_secs = preload_at.elapsed().as_secs_f64();
         // The run's memo entries its waves may look up (a load's files): each path's newest of its plan's space, but
         // the files looked up already (decision 0104: read before the first wave).
