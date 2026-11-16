@@ -270,6 +270,13 @@ thread_local! {
     static IDS: std::cell::RefCell<Vec<u16>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// What a parser's writer is finished into, whatever the type of its widths (`Layout`): format 15's image or
+/// columns, or format 16 (`Writer::finish_16`). For a parser generic over its layout; others take a closure.
+pub trait Finish {
+    type Out;
+    fn finish<L: Layout>(&mut self, w: Writer<L>) -> Result<Self::Out, Redo>;
+}
+
 /// The widths a tape needs, where the writer's did not hold its values: parse again at these.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Redo(pub Widths);
@@ -758,6 +765,46 @@ impl<L: Layout> Writer<L> {
         Ok((base, off))
     }
 
+    /// The keys of the codes the nodes use, by code id (numbered by first use): what a caller maps to a language's
+    /// format 16 numbers for `finish_16`.
+    pub fn code_keys(&mut self) -> Vec<u32> {
+        self.commit();
+        self.codes.iter().map(|&(key, _)| key).collect()
+    }
+
+    /// The tape in format 16, or 16z where `z` (decision 0293), in one pass over the nodes as the parser left them
+    /// (`f16::write`): node `i`'s number is `numbers` at its code id (`code_keys`), its span and subtree the writer's.
+    /// Format 15's columns are not made. `Redo` where the writer's widths did not keep every size and end exactly
+    /// (format 15's offsets do not matter here); `Ok(Err)` where a node breaks format 16's bounds, the writer kept
+    /// (format 15's `finish_columns` takes it).
+    pub fn finish_16(&mut self, lang: &f16::Lang, numbers: &[u32], source_len: u64, tag: u8, z: bool) -> Result<Result<f16::Written, String>, Redo> {
+        debug_assert!(self.chains.is_empty(), "a chain not ended");
+        self.commit();
+        let w = self.layout.widths();
+        let has = |what: u8| self.marks.iter().any(|m| m.1 == what);
+        // Sizes past their width, an end before the last descendant's start (tails from it), or a tail past its
+        // width: not kept exactly.
+        let size = w.size.max(width_for(self.n as u32));
+        let from_start = w.from_start || has(EARLY);
+        let tail = if from_start == w.from_start && has(TAIL_WIDE) { 4 } else { w.tail };
+        let want = Widths { size, off: w.off, tail, from_start };
+        if want != w {
+            return Err(Redo(want));
+        }
+        // Every node's code id is below the codes' count (`commit`).
+        if numbers.len() < self.codes.len() {
+            return Ok(Err(format!("{} codes, {} numbers", self.codes.len(), numbers.len())));
+        }
+        let ids = &self.out[HEADER_BYTES..HEADER_BYTES + 2 * self.n];
+        let this = &*self;
+        Ok(f16::write(lang, self.n, source_len, tag, z, |i| f16::Node {
+            number: numbers[usize::from(u16::from_le_bytes([ids[2 * i], ids[2 * i + 1]]))],
+            start: u64::from(this.starts[i]),
+            end: u64::from(this.end(i)),
+            subtree_end: i + this.size(i) as usize,
+        }))
+    }
+
     /// The columns alone, for a parser whose codes the caller makes (a key is the parser's own, not
     /// `kf | flags << 16`): each at its width, and the keys by code id. `Redo` as `finish`. The
     /// size and tail columns are moved out, not copied.
@@ -1134,6 +1181,59 @@ mod tests {
         l.close(r, 9);
         l.commit();
         assert_eq!(decode(&o.finish(&src).unwrap()).unwrap(), decode(&l.finish(&src).unwrap()).unwrap());
+    }
+
+    /// A parser's writer finished in format 16 or 16z (`finish_16`) is the tree it finishes in format 15, after the
+    /// edits a parse makes: a rewind, a node put before its first child, a key changed.
+    #[test]
+    fn a_parsers_writer_finishes_in_format_16_as_in_format_15() {
+        use crate::tape::{F15, Tape, f15_columns};
+        let src = vec![b' '; 100];
+        let make = || {
+            let mut l = Writer::new(1, Widths::guess(src.len()), 8);
+            let r = l.push(key(1, 0, 0), 0);
+            let held = l.checkpoint();
+            let t = l.push(key(9, 0, 0), 0);
+            l.close(t, 1);
+            l.rewind(held);
+            let x = l.push(key(3, 0, 0), 0);
+            l.close(x, 3);
+            // An operator found after its left operand: put before it, closed over both operands.
+            l.insert(x, key(2, 0, 0), 0);
+            let y = l.push(key(3, 0, 0), 6);
+            l.close(y, 9);
+            l.close(x, 9);
+            l.set_key(x, key(5, 0, 0));
+            let c = l.push(key(4, 0, 0), 9);
+            l.close(c, 10);
+            l.close(r, 10);
+            l
+        };
+        let image = make().finish(&src).unwrap();
+        let (columns, table) = f15_columns(&image).unwrap();
+        let f15 = F15::new(columns, &table).unwrap();
+        let lang = f16::Lang::new(table.clone(), [1, 1, 1], 1).unwrap();
+        for z in [false, true] {
+            let mut w = make();
+            let numbers: Vec<u32> = (0..w.code_keys().len() as u32).collect();
+            let written = w.finish_16(&lang, &numbers, src.len() as u64, 1, z).unwrap().unwrap();
+            let check = |t: &dyn Fn(usize) -> (u32, usize, Option<usize>, u64, u64), n: usize| {
+                assert_eq!(n, f15.len());
+                for i in 0..n {
+                    assert_eq!(t(i), (f15.code(i), f15.subtree_end(i), f15.parent(i), f15.start(i), f15.end(i)), "node {i}, 16z {z}");
+                }
+            };
+            match written {
+                f16::Written::F16(t) => {
+                    let r = t.reader(&lang).unwrap();
+                    check(&|i| (r.code(i), r.subtree_end(i), r.parent(i), r.start(i), r.end(i)), r.len());
+                }
+                f16::Written::F16Z(t) => {
+                    let r = t.reader(&lang).unwrap();
+                    check(&|i| (r.code(i), r.subtree_end(i), r.parent(i), r.start(i), r.end(i)), r.len());
+                }
+            }
+        }
     }
 
 }

@@ -59,10 +59,11 @@ This record is steps 2, 3 and 4, and the API they need.
    image (`TapeImage`) holds format 15's columns or format 16's (or 16z's) bytes as stored, and its tape
    (`TapeImage::tape`) is read where it lies in that format. Each stored form starts with its own magic
    (`TMPTAP9N`, `TMPTAP16`, `TMPTAP6Z`) and the language's tag after it, so a load reads whatever the store
-   holds, as held. Format 16 is written from format 15's columns where a file's documents are made
-   (`FileImage::single`, `FileImage::embedding`, after the embedders have read the host): the parsers write
-   format 15 until they call format 16's writer. A language without a table, or an image with a code its table
-   lacks, keeps format 15, and the run says so once a language. The store keys a tape by the run's format
+   holds, as held. The lean parsers write the run's format directly (§7). A tape from another parser
+   (tree-sitter's) is written from format 15's columns where a file's documents are made (`FileImage::single`,
+   `FileImage::embedding`, after the embedders have read the host), in one pass to format 16 or straight to
+   16z's blocks. A language without a table, or an image with a code its table lacks, keeps format 15, and the
+   run says so once a language. The store keys a tape by the run's format
    (`tape_format_version`: 15, 16, or 1016 for 16z; `formats::stored_version`), so a store holds a document once
    per format and a run finds only its own. A restore checks the codes a tape uses (a language's table lists
    every code its grammar allows).
@@ -124,14 +125,71 @@ This record is steps 2, 3 and 4, and the API they need.
    in the three formats (49 bandit rules and 178 ruff rules over 10 files, cold and warm; the bait file's five
    findings).
 
+7. **The lean parsers write format 16 and 16z directly** (built, 2026-11-16, the user: "generalize the lean
+   parsers so that they produce format 16 directly, and ideally format 16 compressed directly, without doing
+   multiple passes or going through format 15"). Each lean parser crate's `tape_into` (the `.rr` parser's
+   `lean::tape_into`, through the `Finish` trait, as it is generic over its widths) hands its writer, once the
+   parse holds, to a finish the engine gives (`tape::formats::lean`, `formats::Rr`):
+
+   - in a run of format 15, the writer's columns, as before (`Writer::finish_columns`, `TapeImage::written`);
+   - in a run of 16 or 16z, each code the parser's keys name is numbered once in the language's table, and
+     `Writer::finish_16` writes the tape from the writer's own working state (keys, starts, subtree sizes and
+     tails) in one pass in preorder (`f16::write`): a node's slot is set when the next node is reached, and a block
+     of 1,024 nodes is laid, or LZ4-compressed for 16z, as the pass leaves it. No format 15 column, image or format
+     16 tape is made on the way to 16z.
+
+   The writer's sizes and tails are exact by then, but where its widths were too narrow (the parser runs again at
+   the wider widths, as for format 15); format 15's offsets are not read. A code the table lacks, or a node past
+   format 16's bounds, keeps format 15 and says so once a language. `f16::write_from` (a tape of any format, read
+   through the API) is the same pass, for tree-sitter's tapes (§4).
+
+   An embedded program a lean parser writes may so be held in format 16 when its placeholders are cut out
+   (`TapeImage::omitting`), which reads it through the API (it read format 15's columns at first, and stopped
+   every Blade and Vue file in a run of 16).
+
+   Checked (2026-11-16): for every lean parser whose language has a table (Python, JavaScript, TypeScript, TSX,
+   Rust, PHP, SQL, Vue and `.rr`), the tape written directly in 16 and in 16z is byte for byte what format 15's
+   image converts to, and answers every node's code, span, subtree and parent alike
+   (`the_lean_parsers_write_each_format_directly`). The CLI under strict SQL (178 ruff rules over 10 files) gives
+   byte-identical outputs in the three formats, cold and warm from each store; the stores hold 835 tapes in 1.20 MB
+   (15), 727 KB (16) and 448 KB (16z).
+
+8. **The matcher reads the tape** (step 5, its CPU half; built). A document (`TapeDoc`) holds no node record: the
+   per-node `Rec` (42 bytes: kind, field, span, size, parent, first child, next and previous sibling, child count,
+   flags), the alias overrides and the supertype list are gone. Its tape's reader is made once beside the image
+   (`DocTape::reader`), and `AnyTape` answers a read at a time, dispatched on the format. A node's kind, field,
+   flags, alias and classes are its code's entry in the table; its span, subtree and children are the tape's.
+
+   - **ast-grep's node** (`TapeNode`, what the matchers walk) carries its parent where the step that reached it
+     knew it: a child's, a walk's (`dfs`: the subtrees open around it), an ancestor's. A climb (`ancestors`) past
+     the parent is one descent from the root (`Tape::path`: a step a sibling it passes, read from the subtree
+     ends), the whole path at the cost of one. A previous sibling is read forward from the parent's first child;
+     `prev_all` reads them once.
+   - **A pass over every node** that wanted each node's parent takes it from the subtrees open around it
+     (`TapeDoc::transducer_parents`): the transducer's packed batch (each node's children set their parent and
+     next siblings), the relational syntax columns, the prefilter's statistics, the label passes' nesting, the
+     set compiler's child and ancestor sets, a guest's extents (`node_extents`) and the anchors' index
+     (`index_image`).
+   - **Format 15's parent** searches back at most 64 nodes, then descends from the root over the siblings' subtree
+     ends: never longer than the path's siblings, where the search back alone read every node of the earlier
+     siblings' subtrees.
+
+   Checked (2026-11-16): the tape, embedding, Vue, Blade, prefilter, anchor, facts, syntax, matcher, transducer,
+   workspace, findings, wave, residency and statistics tests (1,065) pass in 15, 16 and 16z, but for four that need
+   the packs' test data (the two pinned-capture tests and `definition_ids_are_pinned` pass with their fixtures
+   restored from history) and, in 16 and 16z, the format 15 tape tests. The CLI under strict SQL gives
+   byte-identical outputs in the three formats, cold and warm: the 23 Vue rules over 14 Blade, 9 Vue and 7
+   TypeScript files (their programs embedded), and 178 ruff rules over 10 Python files.
+
 ## Interim, until step 5
 
 - **What reads the image's tape through the API** in whichever format it is held: the checks a restore makes
   (`tape::validated`), the embedders' reading of the host (`embed::host`), the axes (§5), and the image's node
   counts and subtree sizes.
-- **What still copies it into nodes:** a document's records (`TapeDoc`'s `Rec`), built from it at restore,
-  through the API, in every format, for the matcher. Step 5 removes them. So nothing is measured before then: a
-  restore's copy would be counted as a read.
+- **What still copies it into nodes:** the transducer's packed batch (`PackedBatch::nodes`, the CPU and Metal
+  interpreters' node records, built from the tape in one pass), and what the residency derives for the device
+  beside a format 15 image (each node's parent, its child lists, the nodes by code). The device's half of step 5
+  replaces them.
 - **The core facts' digest** serializes a format 15 image to hash it (format 16's bytes are hashed as held).
 - **The device's kernels read format 15 only** (`facts::nearest`'s Metal solve, the matcher's Metal runs): a
   Metal run over a store of format 16 stops at the residency with the reason (`resident::header_counts`). The
@@ -141,6 +199,7 @@ This record is steps 2, 3 and 4, and the API they need.
 
 ## Not done
 
-- The writer's calls from every parser (0156 §7).
+- Format 16 tables for C#, CSS, HTML, Java, Markdown and Markdown's inline grammar: their lean parsers write
+  format 15 until the lab's table generator (`tape16 table`) covers them.
 - 16z's blocks over the language's dictionary: each block is compressed alone for now.
 - The text stream (0156 §6), hashes per algorithm (§5), edits (§4).
