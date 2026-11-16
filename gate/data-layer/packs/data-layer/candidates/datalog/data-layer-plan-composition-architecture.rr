@@ -59,7 +59,7 @@
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, line, syntax_error, field, child, text, op, value, str, value_type_of, fstring_piece, fstring_template
+.input doc, node, line, syntax_error, field, child, text, op, str, value_type_of, fstring_piece, fstring_template, value
 .output violation
 observations_entry("all").
 observations_entry("run_behavior_probes").

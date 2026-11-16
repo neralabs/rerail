@@ -13,7 +13,7 @@
 .violation ASYNC222(at: node) code "ASYNC222"
     "Offload the wait with `await asyncio.to_thread(wait_fn, ...)`; preserve arguments and status. Await `proc.wait()` only for an async process."
     suppress ruff "ASYNC222"
-ASYNC222(f) :- async_blocking(_, f, q), split_dot(q, "os", x),
+ASYNC222(f) :- async_blocking_demand(_, f, q), split_dot(q, "os", x),
     (x = "wait" ; x = "wait3" ; x = "wait4" ; x = "waitid" ; x = "waitpid").
 
 async_api_target(q) :- async_wait(q).

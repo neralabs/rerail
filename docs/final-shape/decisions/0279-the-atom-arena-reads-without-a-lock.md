@@ -1,8 +1,10 @@
-# 0264: The atom arena is read without a shared lock word (a lock sharded by reader; RCU dropped)
+# 0279: The atom arena is read without a shared lock word (a lock sharded by reader; RCU dropped)
+
+Numbered 0264 where it was written, 0273 at the django-bugs merge.
 
 Status: §6–§8 built (2026-11-15). The RCU arena of §1–§5 is dropped, superseded by §7: §0's probe bounds the gain
 of lock-free reads at about 0.4 s of a 40 s run, and §7's sharded lock takes it without rewriting the arena. Refines the arena of decisions 0049 and 0111 (`content_store::atoms`). Keeps the
-reservations of 0114 §4, the provisional ids of 0160 and the fork map of 0170. Follows decision 0263, whose
+reservations of 0114 §4, the provisional ids of 0160 and the fork map of 0170. Follows decision 0278, whose
 §4 keeps text-reading joins on one thread because of this lock.
 
 ## Intro
@@ -13,7 +15,7 @@ reads texts row by row takes it about four times a row, and a miss takes it agai
 
 On all of PostHog (an M3 Max, 16 threads), `exports/resolve_export` walked in morsels took 2.7 s against 1.0 s on
 one thread, for the same work. A stack sample of that window found every thread in `lock_shared_slow`, under
-`Atoms::existing` and `Atoms::lookup` (0263 §4).
+`Atoms::existing` and `Atoms::lookup` (0278 §4).
 
 The readers cannot simply skip the lock, because the writers move what the readers read:
 
@@ -90,24 +92,24 @@ These are the rare paths, and they stay as they are:
 - the lease and `catch_up` (0049);
 - the database reader (`find`, `read_atoms`);
 - a fork's map (0170);
-- the reservations (0114 §4: thread-local, nesting as in 0263 §5);
+- the reservations (0114 §4: thread-local, nesting as in 0278 §5);
 - writes, under one writer's mutex.
 
 "A miss is final" (`misses_are_final`) stays atomic loads.
 
 #### 5. Then the text joins walk in morsels
 
-0263 §4's exclusion goes. The text steps then cost each morsel a pin, not a lock a row.
+0278 §4's exclusion goes. The text steps then cost each morsel a pin, not a lock a row.
 
 ## Measured
 
 All of PostHog, cold store, profiling build, an M3 Max, K = 15, unsampled. Each configuration ran twice,
-alternating (load average 10–30 from other work). The committed engine of 0263 is the base. Every run gave the
+alternating (load average 10–30 from other work). The committed engine of 0278 is the base. Every run gave the
 same 29,747 violations (483a6f116876), with no panic.
 
 | | `resolve_export` | `sym_of` | `sym_of__sup0` | cross part | chunk phase | wall |
 |---|---|---|---|---|---|---|
-| base (0263) | 0.92 / 1.01 s | 0.32 / 0.32 s | 0.77 / 0.74 s | 4.83 / 4.78 s | 23.9 / 23.1 s | 42.9 / 41.3 s |
+| base (0278) | 0.92 / 1.01 s | 0.32 / 0.32 s | 0.77 / 0.74 s | 4.83 / 4.78 s | 23.9 / 23.1 s | 42.9 / 41.3 s |
 | sharded lock, text joins in morsels | 0.77 / 0.74 s | 0.25 / 0.27 s | 0.72 / 0.73 s | 4.41 / 4.45 s | 22.7 / 22.7 s | 42.3 / 40.6 s |
 | sharded lock, text joins whole | 1.07 / 1.00 s | 0.30 / 0.33 s | 0.76 / 0.72 s | 4.79 / 4.79 s | 22.4 / 24.0 s | 40.2 / 42.8 s |
 
@@ -153,7 +155,7 @@ Two overheads on that path are removed (2026-11-15):
 
 | M3 Max, all of PostHog, alternating (load average 16–42) | probe 2's CPU | `resolve_export` | cross part |
 |---|---|---|---|
-| base (0263) | 0.78 / 0.80 s | 0.88 / 1.01 s | 4.78 / 4.86 s |
+| base (0278) | 0.78 / 0.80 s | 0.88 / 1.01 s | 4.78 / 4.86 s |
 | §6 | 0.69 / 0.66 s | 0.92 / 0.86 s | 4.66 / 4.54 s |
 
 All four runs gave the same 29,747 violations (483a6f116876). What remains is the lookups' memory latency. The
@@ -166,7 +168,7 @@ a cache line of its own, as many shards as threads can run (8 to 64). Each threa
 first read, so the pool's threads share none (crossbeam's `ShardedLock`, the probe's, hashes threads to 8 shards).
 A writer takes every shard in order.
 
-0263 §4's exclusion narrows to the joins that may make atoms (`makes_atoms`): a joined head (`@cat` in it), a
+0278 §4's exclusion narrows to the joins that may make atoms (`makes_atoms`): a joined head (`@cat` in it), a
 joined text, or a `@cat`, text function or split part whose text is interned. In morsels their new atoms' ids
 would follow the threads' timing. A join that only looks texts up, leaves them unread or holds them as scratch
 walks in morsels. `cut_tests::a_join_that_only_reads_texts_walks_in_morsels_and_one_that_makes_atoms_walks_whole`

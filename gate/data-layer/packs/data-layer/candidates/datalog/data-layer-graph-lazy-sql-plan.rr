@@ -66,7 +66,7 @@ graph_plan_contracts_imports("import_statement"). graph_plan_contracts_imports("
 .decl tparam_shape(p: node, nm: node, k: symbol, b: node)
 .decl type_param(o: node, p: node, nm: node, i: number, kind: symbol, bound: node, dflt: node)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, text, op, line, token, cpython_syntax_error
+.input doc, syntax_error, node, field, child, text, op, line, cpython_syntax_error, token
 .output violation
 .pragma "magic-transform" "reaches, unparen"
 graph_plan_contracts_alias("legacy", "_legacy_delegate_stub").

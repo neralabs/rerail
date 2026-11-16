@@ -206,6 +206,12 @@ const STATE: &[(&str, &str)] = &[
     // Decision 0203's feedback as measured: each line's notes, exact pair statistics, proposals and trials, written
     // back with the kept plans (`joins::to_store`) and read from them; measurements, as the cost model's `FITTED`.
     ("code_rule_dsl/logic/plan/joins.rs", "MEMO"),
+    // Decision 0211: the RERAIL_WARM switch, read once; and a `RERAIL_WARM=list` run's tally of its faults, reported
+    // at its end. A switch and a report, no result kept.
+    ("code_rule_dsl/logic/profile.rs", "WARM"),
+    ("code_rule_dsl/logic/profile.rs", "WARM_FAULTS"),
+    // Decision 0227: the `frames` upkeep job's one registration per store a process opens, a registry of jobs.
+    ("content_store/upkeep.rs", "JOBS"),
     // The gate of the RERAIL_* switches (`corpus::switches`): its readers, writer and waiters, no value kept.
     ("code_rule_dsl/logic/plan/corpus/switches.rs", "STATE"),
     // The SQL executor's plan model, fitted from `sql_plan_observations`, and the observations queued for writing.
@@ -367,6 +373,9 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
     ("content_store/snapshots.rs", "AFTER_GIT_TREE_TRANSACTION"),
     ("content_store/write_back.rs", "WRITERS"),
+    // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it.
+    ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND"),
+    // The caller's counts of quiet strata, carried to the run's jobs and dropped with the caller's guard.
 ];
 /// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
 const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
@@ -380,6 +389,8 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus.rs", "PREPARED", "2"),
     ("code_rule_dsl/logic/plan/choices.rs", "KEPT", "2"),
     ("code_rule_dsl/logic/plan/corpus/guests.rs", "KEPT", "3"),
+    // The session a thread's runs use (decision 0204: the caller's `Handle`, bound for its runs; was `SESSION`, the
+    // process's): what it keeps between runs is still a cache to move.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND", "3"),
     ("code_rule_dsl/logic/plan/corpus/recursive_spike.rs", "CARRY", "4"),
     ("code_rule_dsl/logic/plan.rs", "PLANS", "6"),

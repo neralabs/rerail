@@ -17,7 +17,7 @@
 #include "tsx/eslint-a-common.rr"
 //   deparen(e, x), estree_parent(x, p), static_prop(n, o, x), call_arg(c, a, i)
 
-.decl vmut_ask(s: node)
+.decl vmut_ask(s: node) extensible
 .decl vmut_path(s: node, n: node)
 vmut_path(s, s) :- vmut_ask(s).
 vmut_path(s, m) :- vmut_path(s, n), estree_parent(n, m), vmut_object(m, n).

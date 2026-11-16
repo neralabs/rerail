@@ -1,6 +1,6 @@
-//! The atom arena's lock, sharded by reader (decision 0264 §7). A shared read lock is still a write of one word
+//! The atom arena's lock, sharded by reader (decision 0279 §7). A shared read lock is still a write of one word
 //! that every reader shares: a join that reads texts row by row on 16 threads spent its time on that word
-//! (`lock_shared_slow`, 0263 §4). Here each thread reads under a shard of its own, given round-robin at its first
+//! (`lock_shared_slow`, 0278 §4). Here each thread reads under a shard of its own, given round-robin at its first
 //! read, so the pool's threads write no word another reads. A writer takes every shard, in order: writes are rare
 //! (a batch of interned atoms, a stored segment), reads are per text.
 //!

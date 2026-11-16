@@ -1,13 +1,14 @@
 use super::*;
 
-fn compile_text(text: &str) -> (Program, Compiled) {
+fn compile_text(text: &str) -> (Placed, Compiled) {
     let p = super::super::super::rr::parse(text).unwrap();
     compile_program(p)
 }
 
-fn compile_program(p: Program) -> (Program, Compiled) {
+fn compile_program(p: Program) -> (Placed, Compiled) {
     let (p, _) = sql_kernel::normalize(&p).unwrap();
-    assert!(accepts(&p).unwrap());
+    let placed = Placed::of_program(&p).unwrap();
+    assert!(accepts(&placed).unwrap());
     let db = Connection::open_in_memory().unwrap();
     let inputs = Inputs {
         facts: "main.".into(),
@@ -18,9 +19,9 @@ fn compile_program(p: Program) -> (Program, Compiled) {
         given: Some(Stats::empty(&p)),
         kept: BTreeSet::new(),
     };
-    let mut model = make_plan(&p, &db, inputs).unwrap();
-    let q = compile(&p, &mut model).unwrap();
-    (p, q)
+    let mut model = make_plan(&placed, &db, inputs).unwrap();
+    let q = compile(&placed, &mut model).unwrap();
+    (placed, q)
 }
 
 #[test]
@@ -39,7 +40,7 @@ fn constants_fanout_and_fanin_execute_one_query() {
         let (p, q) = compile_text(&text);
         let db = Connection::open_in_memory().unwrap();
         let statements = super::super::corpus::Statements::on(&db);
-        let out = q.execute(&db, &p, None, &mut Hooks::default()).unwrap();
+        let out = q.execute(&db, p.fields().unwrap(), None, &mut Hooks::default()).unwrap();
         assert_eq!(out.text()["result"], ["1", "2"]);
         assert_eq!(out.text()["b"], ["2"]);
         assert_eq!(
@@ -58,7 +59,7 @@ fn demanded_aggregates_and_negation_preserve_empty_groups_and_set_semantics() {
         ".decl owner(g:number)\nowner(1). owner(2). owner(3).\n.decl item(g:number,x:number)\nitem(1,7). item(1,7). item(1,8). item(2,9).\n.decl totals(g:number,n:number)\ntotals(g,n) :- owner(g), n=count : {item(g,_)}.\n.decl absent(g:number)\nabsent(g) :- owner(g), !item(g,_).\n.output totals,absent\n",
     );
     let db = Connection::open_in_memory().unwrap();
-    let out = q.execute(&db, &p, None, &mut Hooks::default()).unwrap();
+    let out = q.execute(&db, p.fields().unwrap(), None, &mut Hooks::default()).unwrap();
     assert_eq!(out.text()["totals"], ["1\t2", "2\t1", "3\t0"]);
     assert_eq!(out.text()["absent"], ["3"]);
 }
@@ -68,7 +69,7 @@ fn relation_names_are_case_sensitive_through_joins_aggregates_and_negation() {
     let (p,q)=compile_text(".decl leaf(x:number)\nleaf(1). leaf(2).\n.decl LEAF(x:number)\nLEAF(x) :- leaf(x), x=2.\n.decl missing(x:number)\nmissing(x) :- leaf(x), !LEAF(x).\n.decl counts(n:number)\ncounts(n) :- n=count : { LEAF(_) }.\n.output leaf,LEAF,missing,counts\n");
     let db=Connection::open_in_memory().unwrap();
     let stmts=super::super::corpus::Statements::on(&db);
-    let out=q.execute(&db,&p,None,&mut Hooks::default()).unwrap();
+    let out=q.execute(&db,p.fields().unwrap(),None,&mut Hooks::default()).unwrap();
     assert_eq!(out.text()["leaf"],["1","2"]);
     assert_eq!(out.text()["LEAF"],["2"]);
     assert_eq!(out.text()["missing"],["1"]);
@@ -81,7 +82,7 @@ fn nonlinear_recursion_requires_an_explicit_physical_plan() {
     let p =
         super::super::super::rr::parse(".decl r(x:number)\nr(1). r(y) :- r(x), r(y).\n.output r\n")
             .unwrap();
-    assert!(!accepts(&p).unwrap());
+    assert!(!accepts(&Placed::of_program(&p).unwrap()).unwrap());
 }
 
 #[test]
@@ -91,7 +92,7 @@ fn closure_uses_a_recursive_cte_and_terminates_on_cycles() {
     );
     let db = Connection::open_in_memory().unwrap();
     let statements = super::super::corpus::Statements::on(&db);
-    let out = q.execute(&db, &p, None, &mut Hooks::default()).unwrap();
+    let out = q.execute(&db, p.fields().unwrap(), None, &mut Hooks::default()).unwrap();
     assert_eq!(out.text()["reach"], ["1", "2", "3"]);
     assert_eq!(statements.count(), 1);
 }
@@ -155,7 +156,7 @@ groups(n) :- n=count : { converted(_) }.
     );
     let db = Connection::open_in_memory().unwrap();
     super::super::super::strings::register(&db).unwrap();
-    let out = q.execute(&db, &p, None, &mut Hooks::default()).unwrap();
+    let out = q.execute(&db, p.fields().unwrap(), None, &mut Hooks::default()).unwrap();
     assert_eq!(out.text()["converted"], ["12"]);
     assert_eq!(out.text()["discarded"], ["12"]);
     assert_eq!(out.text()["groups"], ["1"]);
@@ -177,7 +178,7 @@ admitted(g) :- owner(g), n=max x : {item(g,x)}.
 "#,
     );
     let db = Connection::open_in_memory().unwrap();
-    let out = q.execute(&db, &p, None, &mut Hooks::default()).unwrap();
+    let out = q.execute(&db, p.fields().unwrap(), None, &mut Hooks::default()).unwrap();
     assert_eq!(out.text()["minima"], ["1\t7"]);
     assert_eq!(out.text()["admitted"], ["1"]);
 }
@@ -209,7 +210,7 @@ result(x) :- names(q), split_dot(q, "{prefix}", x).
         );
         let db = Connection::open_in_memory().unwrap();
         super::super::super::strings::register(&db).unwrap();
-        let rows = q.execute(&db, &p, None, &mut Hooks::default()).unwrap();
+        let rows = q.execute(&db, p.fields().unwrap(), None, &mut Hooks::default()).unwrap();
         // `split_dot` splits at the last dot, its x dot-free (core.rr): "{prefix}.path.waitpid" is
         // ("{prefix}.path", "waitpid"), not of the prefix.
         assert_eq!(rows.text()["result"], ["waitpid"]);
@@ -232,13 +233,14 @@ fn exponentially_shared_ctes_use_bounded_bulk_stages() {
     let mut inputs=Inputs {facts:"main.".into(),stats:"main.".into(),atoms:Some([0;3]),native:BTreeSet::new(),batch:HashMap::new(),given:Some(Stats::empty(&p)),kept:BTreeSet::new()};
     use crate::code_rule_dsl::logic::native::component;
     component::retain(&db,"seed",vec![vec![1],vec![2]],vec![b'i']).unwrap();
-    stages::bind(&p,&db,&mut inputs,"seed",component::derived(&db,"seed").unwrap()).unwrap();
-    let mut model=make_plan(&p,&db,inputs.clone()).unwrap();
-    let unbounded=compile(&p,&mut model).unwrap();
+    let placed=Placed::of_program(&p).unwrap();
+    stages::bind(&placed,&db,&mut inputs,"seed",component::derived(&db,"seed").unwrap()).unwrap();
+    let mut model=make_plan(&placed,&db,inputs.clone()).unwrap();
+    let unbounded=compile(&placed,&mut model).unwrap();
     assert!(unbounded.boundary().is_some(),"the expansion must require a boundary");
     assert!(!unbounded.prepares(&db).unwrap(),"SQLite must reject the unbounded graph before staging repairs it");
     let statements=super::super::corpus::Statements::on(&db);
-    let out=stages::run(&p,&db,inputs,None,&mut Hooks::default()).unwrap();
+    let out=stages::run(&placed,&db,inputs,None,&mut Hooks::default()).unwrap();
     assert_eq!(out.text()[&prev],["1","2"]);
     assert!((2..=6).contains(&statements.count()),"24 dependent joins need a few bulk stages, not 24 executions: {}",statements.count());
 }
@@ -249,6 +251,7 @@ fn quiet_composed_maintenance_keeps_the_same_resident_fact() {
     let p=super::super::super::rr::parse(".decl changed(x:number)\n.input changed\n.decl h__old(x:number)\n.input h__old\n.decl h__del(x:number)\nh__del(x) :- changed(x).\n.decl h__ins(x:number)\nh__ins(x) :- changed(x).\n.decl h(x:number)\nh(x) :- h__old(x), !h__del(x).\nh(x) :- h__ins(x).\n.output h\n").unwrap();
     let db=Connection::open_in_memory().unwrap();
     let mut inputs=Inputs {facts:"main.".into(),stats:"main.".into(),atoms:Some([0;3]),native:BTreeSet::new(),batch:HashMap::new(),given:Some(Stats::empty(&p)),kept:BTreeSet::from(["h".into()])};
+    let p=Placed::of_program(&p).unwrap();
     for (r,rows) in [("changed",vec![]),("h__old",vec![vec![7],vec![9]])] {
         component::retain(&db,r,rows,vec![b'i']).unwrap();
         stages::bind(&p,&db,&mut inputs,r,component::derived(&db,r).unwrap()).unwrap();
@@ -265,13 +268,14 @@ fn restored_case_distinct_inputs_keep_their_own_bindings() {
     use crate::code_rule_dsl::logic::native::component;
     let p=super::super::super::rr::parse(".decl leaf(x:number)\n.input leaf\n.decl LEAF(x:number)\n.input LEAF\n.decl missing(x:number)\nmissing(x) :- leaf(x), !LEAF(x).\n.output missing\n").unwrap();
     let db=Connection::open_in_memory().unwrap();
+    let placed=Placed::of_program(&p).unwrap();
     for value in [2,1] {
         let mut inputs=Inputs {facts:"main.".into(),stats:"main.".into(),atoms:Some([0;3]),native:BTreeSet::new(),batch:HashMap::new(),given:Some(Stats::empty(&p)),kept:BTreeSet::new()};
         for (r,rows) in [("leaf",vec![vec![1],vec![2]]),("LEAF",vec![vec![value]])] {
             component::retain(&db,r,rows,vec![b'i']).unwrap();
-            stages::bind(&p,&db,&mut inputs,r,component::derived(&db,r).unwrap()).unwrap();
+            stages::bind(&placed,&db,&mut inputs,r,component::derived(&db,r).unwrap()).unwrap();
         }
-        let out=stages::run(&p,&db,inputs,None,&mut Hooks::default()).unwrap();
+        let out=stages::run(&placed,&db,inputs,None,&mut Hooks::default()).unwrap();
         assert_eq!(out.text()["missing"],[(3-value).to_string()]);
     }
 }

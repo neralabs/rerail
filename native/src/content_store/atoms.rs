@@ -383,6 +383,12 @@ pub struct Atoms {
 
 /// A store's atoms of at most this many bytes of text are read whole before a run's first wave (`ready_for_run`).
 const READ_WHOLE: usize = 64 << 20;
+/// Up to this many bytes, a store whose segments average `LARGE_SEGMENT` or more is read whole too (decision 0171): a
+/// lookup reads its atom's whole segment, so a run over the files that wrote them reads nearly all of it anyway, one
+/// segment at a time inside its waves.
+const READ_WHOLE_LARGE: usize = 256 << 20;
+/// A segment this large is read whole by any lookup that lands in it.
+const LARGE_SEGMENT: usize = 1 << 20;
 
 /// The identity read of each database file, by its path and (device, inode, creation time): `Atoms::identity`. A file
 /// made again at a path may have the inode the deleted one had; it was not made at the same time.
@@ -1174,7 +1180,18 @@ impl Atoms {
         *lease = Some(file);
         self.leased.store(true, Ordering::Release);
         // No other process gives out ids now: new ones continue from where the database's end.
-        self.read_end()
+        self.read_end()?;
+        // Taken again after it was given back (a run's end, `run_over`): where no other process wrote atoms meanwhile,
+        // this process still holds every stored one, and its lookups read nothing (decision 0104), as `ready_for_run`
+        // found. Without this a run after the first looked every miss up in the store's key, inside its waves.
+        self.complete.store(self.holds_all(), Ordering::Release);
+        Ok(())
+    }
+
+    /// Whether this process holds every atom the database stores (as far as it knows the database's end).
+    fn holds_all(&self) -> bool {
+        let state = self.state.read();
+        state.atoms.base() <= 1 || state.all_held >= state.atoms.base()
     }
 
     /// Without the lease (decision 0160): learns where the database's ids end, outside the waves.
@@ -1422,7 +1439,7 @@ impl Atoms {
     }
 
     /// `advance_holding`, under `state`'s lock held.
-    pub(super) fn advance_holding_in(&self, connection: &Connection, state: &mut State, base: usize, end: usize) -> StoreResult<()> {
+    fn advance_holding_in(&self, connection: &Connection, state: &mut State, base: usize, end: usize) -> StoreResult<()> {
         if state.map.is_some() || state.atoms.pending().0 > 0 || state.atoms.base() != base {
             return Ok(());
         }
@@ -1496,12 +1513,10 @@ impl Atoms {
                 }
             }
         }
-        let held = || {
-            let state = self.state.read();
-            state.atoms.base() <= 1 || state.all_held >= state.atoms.base()
-        };
-        // A store's atoms are read whole when they are few (the full corpus's are about 21 MB, decision 0049): the
-        // run's lookups and ids then read nothing. A larger store's are found by their key as the run needs them
+        let held = || self.holds_all();
+        // A store's atoms are read whole when they are few (the full corpus's are about 21 MB, decision 0049), or when
+        // its segments are large (decision 0171: a lookup would read them whole anyway): the run's lookups and ids then
+        // read nothing. A larger store of small segments (many small flushes) is found by its key as the run needs it
         // (decision 0111), which the strict mode reports.
         // Inside another run's waves (decision 0160's trial) nothing is read: what is held stays as complete as it was.
         if lease_free() && super::hazards::inside_waves() {
@@ -1509,8 +1524,12 @@ impl Atoms {
             return Ok(complete);
         }
         if !held() {
-            let bytes = self.with_reader(|connection| Ok(connection.query_row_cached("SELECT coalesce(sum(length(bytes)), 0) FROM atom_segment", [], |r| r.get::<_, i64>(0))?))?.unwrap_or(0);
-            if bytes as usize <= READ_WHOLE {
+            let (bytes, segments) = self
+                .with_reader(|connection| {
+                    Ok(connection.query_row_cached("SELECT coalesce(sum(length(bytes)), 0), count(*) FROM atom_segment", [], |r| Ok((r.get::<_, i64>(0)? as usize, r.get::<_, i64>(1)? as usize)))?)
+                })?
+                .unwrap_or((0, 0));
+            if bytes <= READ_WHOLE || (bytes <= READ_WHOLE_LARGE && bytes / segments.max(1) >= LARGE_SEGMENT) {
                 self.read_all()?;
             }
         }

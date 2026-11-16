@@ -9,8 +9,7 @@ extern crate cranelift_jit_wasm as cranelift_jit;
 #[cfg(test)]
 mod build_identity;
 /// `build.rs` generates the language tables with this file; the library builds it only for tests,
-/// so `cargo test` checks how the build validates the language registry. What only `build.rs` calls is
-/// dead here.
+/// so `cargo test` checks how the build validates the language registry. The rest is the build script's.
 #[cfg(test)]
 #[allow(dead_code)]
 mod build_languages;
@@ -108,17 +107,22 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 });
 
 /// The engine's SQL functions, for every connection the store opens (its crate, `rerail-store`): the text tests'
-/// and the prefilter's tapes. Set as the library loads, before any store is opened.
-fn install_store_functions() {
-    code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), env!("RERAIL_GRAMMAR_BUILD_ID"));
-    code_rule_dsl::install_devices();
-    code_rule_dsl::install_languages();
-    content_store::set_language_tags(code_rule_dsl::stored_tape_tag, code_rule_dsl::path_tape_tag);
-    content_store::set_connection_functions(|db| {
-        code_rule_dsl::text::install(db)?;
-        code_rule_dsl::prefilter::tapes::install(db)
+/// and the prefilter's tapes; with the build's identities, devices and languages. Once a process, before any store is
+/// opened: as the library loads (the allocator's hook; Windows' module init), and where neither runs (the browser's
+/// build) at the first command (`tools::cli_in`).
+pub(crate) fn install_store_functions() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), env!("RERAIL_GRAMMAR_BUILD_ID"));
+        code_rule_dsl::install_devices();
+        code_rule_dsl::install_languages();
+        content_store::set_language_tags(code_rule_dsl::stored_tape_tag, code_rule_dsl::path_tape_tag);
+        content_store::set_connection_functions(|db| {
+            code_rule_dsl::text::install(db)?;
+            code_rule_dsl::prefilter::tapes::install(db)
+        });
+        code_rule_dsl::sql_hazards::strict_on_every_connection();
     });
-    code_rule_dsl::sql_hazards::strict_on_every_connection();
 }
 
 /// Windows has no jemalloc hook (below): the store's functions alone, as the library loads.
@@ -520,6 +524,21 @@ impl ConversationEngine {
 }
 
 pub(crate) use code_rule_dsl::prof::lower_hex;
+
+#[cfg(test)]
+mod executor_tests {
+    /// The run's executors are installed as the library loads (`install_store_functions`), and the facts' lookup of a
+    /// binding's executor is the run's (2026-11-15). Its fallback, an executor of every lane, was made on every
+    /// lookup (`map_or`'s default is evaluated first): every CPU run compiled the GPU's kernels, prewarmed its sorts
+    /// and built the Neural Engine's lane.
+    #[test]
+    fn the_facts_executor_of_the_cpu_binding_is_the_runs_and_asks_for_no_device_lane() {
+        let before = rerail_accel::lanes::device_lanes_asked();
+        let ex = rerail_facts::code_rule_dsl::facts::core::executor_for(false);
+        assert_eq!(rerail_accel::lanes::device_lanes_asked(), before, "the lookup asked for a device lane");
+        assert!(std::ptr::eq(ex, crate::code_rule_dsl::logic::lanes::executor_for(false)), "not the run's executor");
+    }
+}
 
 #[cfg(all(test, not(windows)))]
 mod tests {

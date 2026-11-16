@@ -24,9 +24,9 @@ its test target compiles the whole crate a second time:
 So a run of the CLI builds `--bin rerail-engine` only, and the test target is built when
 tests are run, not with every build.
 
-`scripts/dev/clean-target` (`--dry-run` first) removes from a worktree's `target/` what its builds
-can no longer use: another rustc's artifacts, builds superseded for 7 days, debug objects no binary
-names, stale incremental state. Never run a full `cargo clean`.
+The farm's wrapper runs `scripts/dev/clean-target` on each target directory hourly: it removes the
+builds no current build was made from, debug objects no binary names, and stale incremental state.
+Never run a full `cargo clean`.
 
 ### Test tiers (cargo-nextest)
 
@@ -55,6 +55,7 @@ the file there are no hosts, and every command below runs here instead.
 
 ```
 scripts/build/farm/status                          # which hosts are usable now, and why not
+scripts/build/farm/diagnose [DIR | --all]          # why a checkout's builds miss the shared cache
 scripts/dev/test-remote -- cargo nextest run --lib --profile gate
 scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'
 scripts/dev/live-test-remote PACKAGE --lib -- FILTER   # Relax's live loop on a host
@@ -88,15 +89,20 @@ cargo for everything else: builds, the quick tier, the gate, wasm, release and C
 after the same tests pass under cargo, because Relax's std is its own.
 
 ```
-scripts/dev/relax/build        # once: the pinned Relax with std.patch, into ~/.local/share/rerail-relax
-cd native && RUSTC_WRAPPER= RELAX_ALLOW_C=1 RELAX_STD=~/.local/share/rerail-relax/src/libs/relax/compiler/std \
+scripts/dev/relax/build        # once, and after it changes: the pinned, patched Relax, into ~/.local/share/rerail-relax
+cd native && RUSTC_WRAPPER= RELAX_ALLOW_C=1 RELAX_SHARED_OPEN=1 RELAX_STD=~/.local/share/rerail-relax/src/libs/relax/compiler/std \
   nice -n 19 ~/.local/share/rerail-relax/bin/relax test --live rerail-engine --lib -- FILTER
 scripts/dev/live-test-remote rerail-engine --lib -- FILTER    # the same, on a farm host
 ```
 
 The engine needs std items that upstream Relax lacked. They are `scripts/dev/relax/std.patch`,
 and the build script applies it. When a Relax run stops on a missing std item, add the item to
-the patch, not to the engine. A live session holds about 6 GB, and `target/relax` grows to
+the patch, not to the engine. `scripts/dev/relax/rerail.patch` lets a run share registry crates'
+compiled code with every worktree's runs (`RELAX_SHARED_OPEN=1`, in `~/.relax/code`), and makes
+build-script stubs plain scripts: as hard links of Relax's binary, cargo's replacing them got
+Relax killed by macOS ("Malware rejection"). The workspace's own crates are not shared between
+worktrees (Relax keys them by the worktree's path), so a worktree's first run is cold. The build
+script does not switch versions while a Relax session runs. A live session holds about 6 GB, and `target/relax` grows to
 about 13 GB per worktree, so run `relax clean` when a worktree's work ends.
 
 ### Special builds

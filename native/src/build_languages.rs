@@ -263,11 +263,14 @@ pub(crate) fn generate(
         .map(|(_, entry)| entry)
         .collect::<Vec<_>>();
     let registry = render_built(&entries, &test_only, omitted);
-    // `with_adapter!` alone, for a crate that does not include the registry (the test kit, `adapter/kit.rs`)
+    // `with_adapter!` in a file of its own, for the crates that dispatch by family (the test kit, `adapter/kit.rs`);
+    // the registry's crate does not, so its registry leaves the macro out.
     let start = registry.find("/// Evaluates `$body` with `$a` the adapter").expect("with_adapter");
-    let end = registry.find("\npub(crate) use with_adapter;").expect("with_adapter's use");
+    let use_line = "\npub(crate) use with_adapter;\n";
+    let end = registry.find(use_line).expect("with_adapter's use");
     std::fs::write(out.join("with_adapter.rs"), &registry[start..end]).expect("generated with_adapter is writable");
-    std::fs::write(out.join("language_registry.rs"), registry).expect("generated language registry is writable");
+    let rest = format!("{}{}", &registry[..start], &registry[end + use_line.len()..]);
+    std::fs::write(out.join("language_registry.rs"), rest).expect("generated language registry is writable");
     read
 }
 
@@ -984,8 +987,8 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
     let _ = writeln!(out, "        {body}\n    }}\n}}\n");
 
     out.push_str("/// Evaluates `$body` with `$a` the adapter of `$family` (`adapter`): one arm per registry family.\n");
-    // A crate that includes the registry but holds no adapters (rerail-lang) expands it nowhere.
-    out.push_str("#[allow(unused_macros)]\n");
+    // Every crate that includes the registry gets the macro; not every one evaluates over adapters (`rerail-lang`).
+    out.push_str("#[allow(unused_macros, reason = \"not every crate including the registry uses it\")]\n");
     out.push_str("macro_rules! with_adapter {\n    ($family:expr, $a:ident => $body:expr) => {\n        match $family {\n");
     for (family, _, ids) in &families {
         // the adapter by its module (`adapter::python::Python`): a crate whose `adapter` re-exports the modules,
@@ -1061,6 +1064,13 @@ mod tests {
                 &[],
                 &self.0.join("out"),
             );
+            // The registry and the dispatch macro written beside it, as one text.
+            let read = |name: &str| std::fs::read_to_string(self.0.join("out").join(name)).expect("generated");
+            read("language_registry.rs") + &read("with_adapter.rs")
+        }
+
+        /// The registry alone, as `generate` wrote it.
+        fn registry(&self) -> String {
             std::fs::read_to_string(self.0.join("out/language_registry.rs")).expect("generated")
         }
     }
@@ -1207,8 +1217,9 @@ mod tests {
         assert!(generated.contains("            GrammarDialect::Sql => false,"));
         assert!(generated.contains("            GrammarDialect::Python => true,"));
         // PHP's family has no language in the build: its adapter is unreachable. Blade's still is.
-        assert!(generated.contains("Family::Php => unreachable!"));
-        assert!(!generated.contains("Family::Blade => unreachable!"));
+        let dispatch = std::fs::read_to_string(out.0.join("out/with_adapter.rs")).expect("generated");
+        assert!(dispatch.contains("Family::Php => unreachable!"));
+        assert!(!dispatch.contains("Family::Blade => unreachable!"));
         // Nothing embeds SQL.
         assert!(!generated.contains("GrammarDialect::Sql)"));
     }
@@ -1373,7 +1384,7 @@ mod tests {
     fn each_family_dispatches_to_its_adapter() {
         let mut three = supported("three", ".three", 3);
         three["family"] = json!("one");
-        let generated = Registry::new(
+        let registry = Registry::new(
             "adapters",
             &[
                 supported("one", ".one", 1),
@@ -1381,8 +1392,8 @@ mod tests {
                 three,
                 planned("four", ".four"),
             ],
-        )
-        .generate();
+        );
+        let generated = registry.generate();
         assert!(generated.contains("macro_rules! with_adapter {\n    ($family:expr, $a:ident => $body:expr) => {\n        match $family {\n"));
         for family in ["One", "Two"] {
             assert_eq!(
@@ -1395,7 +1406,8 @@ mod tests {
         }
         assert!(!generated.contains("adapter::Three"));
         assert!(!generated.contains("adapter::Four"));
-        assert!(generated.contains("pub(crate) use with_adapter;"));
+        // The registry's crate dispatches by no family: the macro is in `with_adapter.rs` alone.
+        assert!(!registry.registry().contains("with_adapter"));
     }
     #[test]
     fn dialect_macro_generates_registry_support_rules() {

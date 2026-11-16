@@ -11,6 +11,10 @@
 //! disk (a crash before the file was flushed) names bytes that do not decode, and is a miss. Collection forgets rows
 //! (`collect_unreachable_frames`, a dead plan's space); compaction (`compact_memo_pack`) copies the rows' bytes to a
 //! new pack and removes the old, once the bytes no row names are most of it.
+//!
+//! An entry a later run found as it was, under more identities (decision 0225 §2), keeps its bytes: only those
+//! identities are appended, as a small image its row names beside the entry's (`over_*`, decision 0280). A reader
+//! takes both; an entry written again whole drops it.
 
 #[allow(unused_imports)]
 use crate::content_store::connection::Cached as _;
@@ -21,7 +25,9 @@ use std::io::{Read as _, Seek as _, Write as _};
 use std::sync::Arc;
 
 /// An entry a run writes: its part (its content's and path's, `memo::part_of`), its path, its content's SHA-256, its
-/// document key, and its bytes (`memo::image`) with their length decoded.
+/// document key, and its bytes (`memo::image`) with their length decoded. `over`: the bytes are not the entry but
+/// what is kept over the entry stored at its part (decision 0280): written only where that entry is the same content
+/// and document, else dropped (the entry was collected: the next run misses it).
 pub struct MemoPut {
     pub part: i64,
     pub path: String,
@@ -29,19 +35,23 @@ pub struct MemoPut {
     pub key: i64,
     pub bytes: Vec<u8>,
     pub raw: usize,
+    pub over: bool,
 }
 
-/// An entry as found: what finds it, and its bytes as stored.
+/// An entry as found: what finds it, its bytes as stored, and what a later run kept over it (`MemoPut::over`), each
+/// with its length decoded.
 #[derive(Debug)]
 pub struct MemoBlob {
     pub path: String,
     pub digest: [u8; 32],
     pub key: i64,
-    pub bytes: Vec<u8>,
+    pub bytes: Arc<[u8]>,
     pub raw: usize,
+    pub over: Option<(Arc<[u8]>, usize)>,
 }
 
 /// Where an entry's bytes are: its pack, offset and length.
+#[derive(Clone, Copy)]
 struct At {
     pack: i64,
     at: u64,
@@ -79,24 +89,48 @@ fn read_at(database: &std::path::Path, wanted: &[At]) -> Vec<Option<Vec<u8>>> {
         .collect()
 }
 
-type Row = (i64, String, Vec<u8>, i64, i64, i64, i64, i64);
-
-fn row_of(r: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
-    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?))
+/// An entry's row (`COLUMNS`): its part, path, content and document key, where its bytes are and their length
+/// decoded, and where what is kept over it is (none: `over_len` 0).
+struct Row {
+    part: i64,
+    path: String,
+    digest: Vec<u8>,
+    key: i64,
+    at: At,
+    raw: i64,
+    over: Option<(At, i64)>,
 }
 
-const COLUMNS: &str = "part, path, digest, doc, pack, at, len, raw";
+fn row_of(r: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
+    let over_len: i64 = r.get(10)?;
+    Ok(Row {
+        part: r.get(0)?,
+        path: r.get(1)?,
+        digest: r.get(2)?,
+        key: r.get(3)?,
+        at: At { pack: r.get(4)?, at: r.get::<_, i64>(5)? as u64, len: r.get::<_, i64>(6)? as usize },
+        raw: r.get(7)?,
+        over: (over_len > 0).then(|| Ok::<_, rusqlite::Error>((At { pack: r.get(8)?, at: r.get::<_, i64>(9)? as u64, len: over_len as usize }, r.get(11)?))).transpose()?,
+    })
+}
+
+const COLUMNS: &str = "part, path, digest, doc, pack, at, len, raw, over_pack, over_at, over_len, over_raw";
 
 impl ContentStore {
     /// The entries of `rows` (`COLUMNS`), their bytes read from the packs, by part.
+    /// What is kept over an entry whose bytes are not there is left: its identities are read again (decision 0280).
     fn blobs_of(&self, rows: Vec<Row>) -> HashMap<i64, Arc<MemoBlob>> {
-        let at: Vec<At> = rows.iter().map(|r| At { pack: r.4, at: r.5 as u64, len: r.6 as usize }).collect();
-        let bytes = read_at(&self.database_path, &at);
+        // One read of the packs for the entries and what is kept over them: the entries' first.
+        let mut at: Vec<At> = rows.iter().map(|r| r.at).collect();
+        at.extend(rows.iter().filter_map(|r| r.over.map(|(o, _)| o)));
+        let mut bytes = read_at(&self.database_path, &at).into_iter();
+        let entries: Vec<Option<Vec<u8>>> = bytes.by_ref().take(rows.len()).collect();
         rows.into_iter()
-            .zip(bytes)
-            .filter_map(|((part, path, digest, key, _, _, _, raw), bytes)| {
-                let digest = <[u8; 32]>::try_from(digest.as_slice()).ok()?;
-                Some((part, Arc::new(MemoBlob { path, digest, key, bytes: bytes?, raw: raw as usize })))
+            .zip(entries)
+            .filter_map(|(row, entry)| {
+                let over = row.over.and_then(|(_, raw)| Some((Arc::from(bytes.next().flatten()?), raw as usize)));
+                let digest = <[u8; 32]>::try_from(row.digest.as_slice()).ok()?;
+                Some((row.part, Arc::new(MemoBlob { path: row.path, digest, key: row.key, bytes: Arc::from(entry?), raw: row.raw as usize, over })))
             })
             .collect()
     }
@@ -148,9 +182,9 @@ impl ContentStore {
         let mut paths: HashSet<String> = HashSet::new();
         let mut newest: Vec<Row> = Vec::new();
         for row in rows {
-            if !paths.contains(&row.1) {
-                paths.insert(row.1.clone());
-                if !looked_up.contains(row.1.as_str()) {
+            if !paths.contains(&row.path) {
+                paths.insert(row.path.clone());
+                if !looked_up.contains(row.path.as_str()) {
                     newest.push(row);
                 }
             }
@@ -170,9 +204,9 @@ impl ContentStore {
         Ok((n, bytes, Some(paths)))
     }
 
-    /// Writes `puts` into `space` (each replacing the entry at its part): their bytes appended to the pack in one
-    /// write, their rows in the same transaction. Of each path written, the newest `keep` contents stay (decision
-    /// 0117: an edited file's earlier entries go).
+    /// Writes `puts` into `space` (each replacing the entry at its part, or kept over it: `MemoPut::over`): their
+    /// bytes appended to the pack in one write, their rows in the same transaction. Of each path written whole, the
+    /// newest `keep` contents stay (decision 0117: an edited file's earlier entries go).
     pub fn put_memo_entries(&self, space: &[u8; 32], puts: Vec<MemoPut>, keep: usize) -> StoreResult<()> {
         if puts.is_empty() {
             return Ok(());
@@ -191,15 +225,28 @@ impl ContentStore {
             file.write_all(&all)?;
             drop(all);
             let mut at = start;
+            // The parts whose entry took what is kept over it.
+            let mut kept_over = HashSet::new();
             for p in &puts {
-                t.execute_cached(
-                    &format!("INSERT OR REPLACE INTO memo_entries(space, {COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"),
-                    params![&space[..], p.part, p.path, &p.digest[..], p.key, pack, at as i64, p.bytes.len() as i64, p.raw as i64],
-                )?;
+                if p.over {
+                    let n = t.execute_cached(
+                        "UPDATE memo_entries SET over_pack = ?1, over_at = ?2, over_len = ?3, over_raw = ?4 WHERE space = ?5 AND part = ?6 AND digest = ?7 AND doc = ?8",
+                        params![pack, at as i64, p.bytes.len() as i64, p.raw as i64, &space[..], p.part, &p.digest[..], p.key],
+                    )?;
+                    if n > 0 {
+                        kept_over.insert(p.part);
+                    }
+                } else {
+                    // Written whole: what was kept over the entry it replaces goes with it (the columns' defaults).
+                    t.execute_cached(
+                        "INSERT OR REPLACE INTO memo_entries(space, part, path, digest, doc, pack, at, len, raw) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                        params![&space[..], p.part, p.path, &p.digest[..], p.key, pack, at as i64, p.bytes.len() as i64, p.raw as i64],
+                    )?;
+                }
                 at += p.bytes.len() as u64;
             }
             let mut gone = Vec::new();
-            let paths: HashSet<&str> = puts.iter().map(|p| p.path.as_str()).collect();
+            let paths: HashSet<&str> = puts.iter().filter(|p| !p.over).map(|p| p.path.as_str()).collect();
             for path in paths {
                 let mut st = t.prepare_cached("SELECT part FROM memo_entries WHERE space = ?1 AND path = ?2 ORDER BY pack DESC, at DESC LIMIT -1 OFFSET ?3")?;
                 let old: Vec<i64> = st.query_map(params![&space[..], path, keep as i64], |r| r.get(0))?.collect::<Result<_, _>>()?;
@@ -208,15 +255,23 @@ impl ContentStore {
                     gone.push(part);
                 }
             }
-            Ok(gone)
+            Ok((gone, kept_over))
         })?;
+        let (gone, kept_over) = gone;
         // The snapshot holds what is written, where its space's entries were admitted.
         if let Some(snapshot) = self.snapshot() {
             let mut snapshot = snapshot.lock().expect("the frames' snapshot");
             if snapshot.admitted.contains(space) {
                 let held = snapshot.memo.entry(*space).or_default();
                 for p in puts {
-                    held.insert(p.part, Arc::new(MemoBlob { path: p.path, digest: p.digest, key: p.key, bytes: p.bytes, raw: p.raw }));
+                    if !p.over {
+                        held.insert(p.part, Arc::new(MemoBlob { path: p.path, digest: p.digest, key: p.key, bytes: Arc::from(p.bytes), raw: p.raw, over: None }));
+                    } else if kept_over.contains(&p.part)
+                        && let Some(entry) = held.get_mut(&p.part)
+                    {
+                        let over = Some((Arc::from(p.bytes), p.raw));
+                        *entry = Arc::new(MemoBlob { path: entry.path.clone(), digest: entry.digest, key: entry.key, bytes: Arc::clone(&entry.bytes), raw: entry.raw, over });
+                    }
                 }
                 for part in gone {
                     held.remove(&part);
@@ -232,7 +287,7 @@ impl ContentStore {
             let connection = self.connection.lock().expect("content store mutex poisoned");
             let mut st = connection.prepare_cached("SELECT pack FROM memo_packs")?;
             let packs = st.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
-            (packs, connection.query_row_cached("SELECT coalesce(sum(len), 0) FROM memo_entries", [], |r| r.get(0))?)
+            (packs, connection.query_row_cached("SELECT coalesce(sum(len + over_len), 0) FROM memo_entries", [], |r| r.get(0))?)
         };
         let held = packs.iter().filter_map(|p| std::fs::metadata(pack_path(&self.database_path, *p)).ok()).map(|m| m.len()).sum();
         Ok((held, named as u64))
@@ -250,20 +305,40 @@ impl ContentStore {
         let old = self.immediate_transaction_once(|t| {
             let packs: Vec<i64> = t.prepare_cached("SELECT pack FROM memo_packs")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
             let pack = current_pack(t)? + 1;
-            let rows: Vec<(Vec<u8>, i64, i64, i64, i64)> = t
-                .prepare_cached("SELECT space, part, pack, at, len FROM memo_entries ORDER BY pack, at")?
-                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
+            // Each entry's bytes and what is kept over it (`over_len` 0: nothing).
+            let rows: Vec<(Vec<u8>, i64, At, At)> = t
+                .prepare_cached("SELECT space, part, pack, at, len, over_pack, over_at, over_len FROM memo_entries ORDER BY pack, at")?
+                .query_map([], |r| {
+                    let at = |p: usize| -> rusqlite::Result<At> { Ok(At { pack: r.get(p)?, at: r.get::<_, i64>(p + 1)? as u64, len: r.get::<_, i64>(p + 2)? as usize }) };
+                    Ok((r.get(0)?, r.get(1)?, at(2)?, at(5)?))
+                })?
                 .collect::<Result<_, _>>()?;
             std::fs::create_dir_all(pack_dir(&database))?;
             let mut out = std::io::BufWriter::new(std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(pack_path(&database, pack))?);
-            let bytes = read_at(&database, &rows.iter().map(|r| At { pack: r.2, at: r.3 as u64, len: r.4 as usize }).collect::<Vec<_>>());
+            let bytes = read_at(&database, &rows.iter().map(|r| r.2).collect::<Vec<_>>());
+            let over = read_at(&database, &rows.iter().map(|r| r.3).filter(|o| o.len > 0).collect::<Vec<_>>());
+            let mut over = over.into_iter();
             let mut at = 0u64;
-            for ((space, part, _, _, len), bytes) in rows.iter().zip(bytes) {
+            for ((space, part, entry, kept), bytes) in rows.iter().zip(bytes) {
+                let kept = if kept.len > 0 { over.next().flatten() } else { None };
                 match bytes {
                     Some(bytes) => {
                         out.write_all(&bytes)?;
-                        t.execute_cached("UPDATE memo_entries SET pack = ?1, at = ?2 WHERE space = ?3 AND part = ?4", params![pack, at as i64, space, part])?;
-                        at += *len as u64;
+                        let entry_at = at;
+                        at += entry.len as u64;
+                        // What is kept over it follows it; where its bytes are not there, it is forgotten.
+                        let (over_at, over_len) = match &kept {
+                            Some(kept) => {
+                                out.write_all(kept)?;
+                                at += kept.len() as u64;
+                                (at - kept.len() as u64, kept.len())
+                            }
+                            None => (0, 0),
+                        };
+                        t.execute_cached(
+                            "UPDATE memo_entries SET pack = ?1, at = ?2, over_pack = ?1, over_at = ?3, over_len = ?4, over_raw = CASE WHEN ?4 = 0 THEN 0 ELSE over_raw END WHERE space = ?5 AND part = ?6",
+                            params![pack, entry_at as i64, over_at as i64, over_len as i64, space, part],
+                        )?;
                     }
                     // Bytes that are not there: the row is a miss, forgotten.
                     None => {

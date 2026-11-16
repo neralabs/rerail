@@ -57,7 +57,7 @@ irel_open(i) :- kind(i, "import_from_statement"), field(i, "module_name", mn), k
 rotgt(s, y) :- irel_open(i), field(i, "name", n), kind(n, "dotted_name"), text(n, y), nearest(i, s, scope).
 rotgt(s, a) :- irel_open(i), field(i, "name", x), kind(x, "aliased_import"), field(x, "alias", al), text(al, a), nearest(i, s, scope).
 // star(s): scope s contains `from m import *`. Declared here; the rule deriving it lives in python/names.
-.decl star(s: node)
+.decl star(s: node) extensible
 
 // ==== interface ===================================================================================================
 // import_stmt(i): i is an `import ...` or a `from ... import ...` statement.
@@ -154,7 +154,7 @@ exports(m, l, q) :- export_from(t, l, m), resolve_export(t, q).
 exports(m, x, q) :- star_from(m, m2), exports(m2, x, q), public_name(m2, x).
 // export_from(t, l, m): module m's import-time `from m2 import x as l`, by the name it imports, t = "m2.x". Rule 2 of
 // exports reads it by t: each new resolve_export(t, _) finds its imports by t's atom, where `@dot(m2, x)` in the
-// recursion made the engine split every t at each dot and look both parts up as text (decision 0264 §8).
+// recursion made the engine split every t at each dot and look both parts up as text (decision 0279 §8).
 .decl export_from(t: symbol, l: symbol, m: symbol)
 export_from(@dot(m2, x), l, m) :- import_alias(i, _, m2, x, l), import_time(i), module_of(i, m), x != "".
 // star_from(m, m2): module m has `from m2 import *`.

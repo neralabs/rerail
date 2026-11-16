@@ -729,10 +729,13 @@ CREATE TABLE IF NOT EXISTS frame_program_used(space BLOB NOT NULL, program BLOB 
     rels BLOB NOT NULL, PRIMARY KEY (space, program, run)) WITHOUT ROWID;
 -- The per-file memo's entries (decision 0240 §4): where each one's bytes are in the packs beside the store
 -- (`<store>.memo/<pack>.pack`), by its plan's space and its part (its content's and path's), with its path, its
--- content's SHA-256 and its document key. A path's contents are ordered by where they were appended.
+-- content's SHA-256 and its document key. A path's contents are ordered by where they were appended. `over_*`: what a
+-- later run kept over the entry, its identities (decision 0280), in the packs too; `over_len` 0 is nothing
+-- (`ADDED_COLUMNS` adds them to an older store; an older binary ignores them and reads the entry as it was made).
 CREATE TABLE IF NOT EXISTS memo_entries(space BLOB NOT NULL, part INTEGER NOT NULL, path TEXT NOT NULL,
     digest BLOB NOT NULL, doc INTEGER NOT NULL, pack INTEGER NOT NULL, at INTEGER NOT NULL, len INTEGER NOT NULL,
-    raw INTEGER NOT NULL, PRIMARY KEY (space, part)) WITHOUT ROWID;
+    raw INTEGER NOT NULL, over_pack INTEGER NOT NULL DEFAULT 0, over_at INTEGER NOT NULL DEFAULT 0,
+    over_len INTEGER NOT NULL DEFAULT 0, over_raw INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (space, part)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS memo_entries_by_path ON memo_entries(space, path, pack, at);
 -- The packs the entries are in: the newest is appended to.
 CREATE TABLE IF NOT EXISTS memo_packs(pack INTEGER PRIMARY KEY);
@@ -830,7 +833,13 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
 /// Columns SCHEMA's tables gained after stores were made with them, as `(table, column, declaration)`: `CREATE
 /// TABLE IF NOT EXISTS` leaves an older store's table as it was, so applying SCHEMA adds these (`ALTER TABLE`).
 /// Each has a default, so an older binary's inserts, which do not name it, still apply.
-const ADDED_COLUMNS: &[(&str, &str, &str)] = &[("corpus_decided", "swept", "INTEGER NOT NULL DEFAULT 0")];
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("corpus_decided", "swept", "INTEGER NOT NULL DEFAULT 0"),
+    ("memo_entries", "over_pack", "INTEGER NOT NULL DEFAULT 0"),
+    ("memo_entries", "over_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("memo_entries", "over_len", "INTEGER NOT NULL DEFAULT 0"),
+    ("memo_entries", "over_raw", "INTEGER NOT NULL DEFAULT 0"),
+];
 
 /// The `ADDED_COLUMNS` a store's tables lack (of the tables it has).
 fn missing_columns(connection: &Connection) -> StoreResult<Vec<&'static (&'static str, &'static str, &'static str)>> {

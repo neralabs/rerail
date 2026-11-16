@@ -1,5 +1,6 @@
-//! A program's versions (decision 0173 §7): a base image, a view of a base's rules (ranges), or an overlay (a parent
-//! and a delta image: the rules it adds, the parent's it removes, the parts it replaces). A shared image is never
+//! A program's versions (decision 0173 §7): a base image, a view of a parent's rules (ranges of its rule ids; the
+//! parent a base or an overlay, decision 0244), or an overlay (a parent and a delta image: the rules it adds, the
+//! parent's it removes, the parts it replaces). A shared image is never
 //! changed; a version is made by an edit (`build::Builder`) and costs the edit. An overlay whose edit reaches half its
 //! parent is folded into a new base, which keeps the stack's atom and relation ids.
 //!
@@ -12,12 +13,19 @@ use crate::code_rule_dsl::logic::front::{Lists, Program};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
-/// Most ranges a view may have; past it a subset is an overlay.
+/// Fewest ranges a view may have; it may have up to a quarter of its parent's rules (`max_ranges`, decision 0244).
+/// Past that a subset is an overlay.
 pub const MAX_RANGES: usize = 32;
+
+/// Most ranges a view of a parent of `rules` rules may have: a quarter of them, never fewer than `MAX_RANGES`.
+pub fn max_ranges(rules: usize) -> usize {
+    (rules / 4).max(MAX_RANGES)
+}
 
 pub enum Version {
     Base { image: Arc<Image>, digest: u64 },
-    View { base: Arc<Image>, ranges: Vec<(u32, u32)>, size: usize, digest: u64 },
+    /// Ranges of `parent`'s rule ids, ascending; `parent` is never a view (a view of a view is of its parent).
+    View { parent: Arc<Version>, ranges: Vec<(u32, u32)>, size: usize, digest: u64 },
     Overlay { parent: Arc<Version>, delta: Arc<Image>, size: usize, depth: usize, digest: u64 },
 }
 
@@ -79,14 +87,18 @@ struct Down<'v>(Option<&'v Version>);
 impl<'v> Iterator for Down<'v> {
     type Item = &'v Image;
     fn next(&mut self) -> Option<&'v Image> {
-        match self.0? {
-            Version::Base { image, .. } | Version::View { base: image, .. } => {
-                self.0 = None;
-                Some(image)
-            }
-            Version::Overlay { parent, delta, .. } => {
-                self.0 = Some(parent);
-                Some(delta)
+        loop {
+            match self.0? {
+                Version::Base { image, .. } => {
+                    self.0 = None;
+                    return Some(image);
+                }
+                // A view has no image of its own: its ids are its parent's.
+                Version::View { parent, .. } => self.0 = Some(parent),
+                Version::Overlay { parent, delta, .. } => {
+                    self.0 = Some(parent);
+                    return Some(delta);
+                }
             }
         }
     }
@@ -155,24 +167,29 @@ impl Version {
         Ok(Arc::new(Version::Overlay { parent: parent.clone(), size, depth: parent.depth() + 1, digest: d, delta: Arc::new(delta) }))
     }
 
-    /// A view of `base`'s rules in `ranges`, of `size` rules and digest `digest` (the builder's).
-    pub(crate) fn view(base: &Arc<Image>, ranges: Vec<(u32, u32)>, digest: u64) -> Arc<Version> {
-        let size = ranges.iter().map(|(s, e)| (e - s) as usize).sum();
-        Arc::new(Version::View { base: base.clone(), ranges, size, digest })
+    /// A view of `parent`'s rules in `ranges` (of its rule ids), of `size` rules and digest `digest` (the builder's).
+    pub(crate) fn view(parent: &Arc<Version>, ranges: Vec<(u32, u32)>, size: usize, digest: u64) -> Arc<Version> {
+        debug_assert!(!matches!(**parent, Version::View { .. }), "a view of a view is of its parent");
+        Arc::new(Version::View { parent: parent.clone(), ranges, size, digest })
+    }
+    /// Whether rule id `k` is in `ranges`.
+    fn in_ranges(ranges: &[(u32, u32)], k: u32) -> bool {
+        let at = ranges.partition_point(|&(s, _)| s <= k);
+        at > 0 && k < ranges[at - 1].1
     }
 
     fn down(&self) -> Down<'_> {
         Down(Some(self))
     }
-    /// The image this version's own ids are numbered in: a base's, a view's base, an overlay's delta.
+    /// The image this version's own ids are numbered in: a base's, a view's parent's, an overlay's delta.
     fn top(&self) -> &Image {
         self.down().next().expect("a version has an image")
     }
     /// The base image this version is over, at the bottom of its stack.
     pub(crate) fn root(&self) -> &Arc<Image> {
         match self {
-            Version::Base { image, .. } | Version::View { base: image, .. } => image,
-            Version::Overlay { parent, .. } => parent.root(),
+            Version::Base { image, .. } => image,
+            Version::View { parent, .. } | Version::Overlay { parent, .. } => parent.root(),
         }
     }
     /// Whether `im` is one of this version's images: its ids are this version's.
@@ -190,7 +207,8 @@ impl Version {
     /// How many deltas are stacked on the base.
     pub fn depth(&self) -> usize {
         match self {
-            Version::Base { .. } | Version::View { .. } => 0,
+            Version::Base { .. } => 0,
+            Version::View { parent, .. } => parent.depth(),
             Version::Overlay { depth, .. } => *depth,
         }
     }
@@ -244,7 +262,10 @@ impl Version {
     pub fn rules(&self) -> Box<dyn Iterator<Item = RuleRef<'_>> + '_> {
         match self {
             Version::Base { image, .. } => Box::new((0..image.rules() as u32).map(move |k| RuleRef::new(image, k, RuleId(k)))),
-            Version::View { base, ranges, .. } => Box::new(ranges.iter().flat_map(move |&(s, e)| (s..e).map(move |k| RuleRef::new(base, k, RuleId(k))))),
+            Version::View { parent, ranges, .. } => match &**parent {
+                Version::Base { image, .. } => Box::new(ranges.iter().flat_map(move |&(s, e)| (s..e).map(move |k| RuleRef::new(image, k, RuleId(k))))),
+                _ => Box::new(parent.rules().filter(move |r| Self::in_ranges(ranges, r.id().0))),
+            },
             Version::Overlay { parent, delta, .. } => {
                 let removed = delta.removed();
                 let base = delta.rule_base();
@@ -260,10 +281,7 @@ impl Version {
     pub fn rule(&self, id: RuleId) -> Option<RuleRef<'_>> {
         match self {
             Version::Base { image, .. } => (id.index() < image.rules()).then(|| RuleRef::new(image, id.0, id)),
-            Version::View { base, ranges, .. } => {
-                let at = ranges.partition_point(|&(s, _)| s <= id.0);
-                (at > 0 && id.0 < ranges[at - 1].1).then(|| RuleRef::new(base, id.0, id))
-            }
+            Version::View { parent, ranges, .. } => Self::in_ranges(ranges, id.0).then(|| parent.rule(id)).flatten(),
             Version::Overlay { parent, delta, .. } => {
                 if id.0 >= delta.rule_base() {
                     (id.0 < delta.rule_end()).then(|| RuleRef::new(delta, id.0 - delta.rule_base(), id))
@@ -279,10 +297,7 @@ impl Version {
     pub fn heads(&self, rel: RelId) -> Box<dyn Iterator<Item = RuleRef<'_>> + '_> {
         match self {
             Version::Base { image, .. } => Box::new(image.heads(rel).iter().map(move |&k| RuleRef::new(image, k, RuleId(k)))),
-            Version::View { base, ranges, .. } => Box::new(base.heads(rel).iter().filter(move |&&k| {
-                let at = ranges.partition_point(|&(s, _)| s <= k);
-                at > 0 && k < ranges[at - 1].1
-            }).map(move |&k| RuleRef::new(base, k, RuleId(k)))),
+            Version::View { parent, ranges, .. } => Box::new(parent.heads(rel).filter(move |r| Self::in_ranges(ranges, r.id().0))),
             Version::Overlay { parent, delta, .. } => {
                 let removed = delta.removed();
                 let base = delta.rule_base();
@@ -294,10 +309,7 @@ impl Version {
     pub fn derived(&self, src: RuleId) -> Box<dyn Iterator<Item = RuleRef<'_>> + '_> {
         match self {
             Version::Base { image, .. } => Box::new(image.derived(src).map(move |k| RuleRef::new(image, k, RuleId(k)))),
-            Version::View { base, ranges, .. } => Box::new(base.derived(src).filter(move |&k| {
-                let at = ranges.partition_point(|&(s, _)| s <= k);
-                at > 0 && k < ranges[at - 1].1
-            }).map(move |k| RuleRef::new(base, k, RuleId(k)))),
+            Version::View { parent, ranges, .. } => Box::new(parent.derived(src).filter(move |r| Self::in_ranges(ranges, r.id().0))),
             Version::Overlay { parent, delta, .. } => {
                 let removed = delta.removed();
                 let base = delta.rule_base();
@@ -309,10 +321,7 @@ impl Version {
     pub fn readers(&self, rel: RelId) -> Box<dyn Iterator<Item = (RuleRef<'_>, AtomRef<'_>)> + '_> {
         match self {
             Version::Base { image, .. } => Box::new(image.reads(rel).map(move |(k, n)| (RuleRef::new(image, k, RuleId(k)), AtomRef::new(image, n)))),
-            Version::View { base, ranges, .. } => Box::new(base.reads(rel).filter(move |&(k, _)| {
-                let at = ranges.partition_point(|&(s, _)| s <= k);
-                at > 0 && k < ranges[at - 1].1
-            }).map(move |(k, n)| (RuleRef::new(base, k, RuleId(k)), AtomRef::new(base, n)))),
+            Version::View { parent, ranges, .. } => Box::new(parent.readers(rel).filter(move |(r, _)| Self::in_ranges(ranges, r.id().0))),
             Version::Overlay { parent, delta, .. } => {
                 let removed = delta.removed();
                 let base = delta.rule_base();
@@ -379,8 +388,13 @@ impl Version {
                     out.entry(a.0).or_insert(FactsRef { im, k });
                 }
             }
+            // An image's `.about` rows hide no fact relation of the same name (a program may hold facts named
+            // `tape_column`, beside its about rows of that name).
             for k in 0..im.fact_count() {
-                hidden.insert(im.fact_key(k).0.0);
+                let (a, about) = im.fact_key(k);
+                if !about {
+                    hidden.insert(a.0);
+                }
             }
             hidden.extend(im.u32s(super::R::FactGone).iter().copied());
         }

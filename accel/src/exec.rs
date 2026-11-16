@@ -909,6 +909,8 @@ impl Executor {
     pub fn new() -> Self {
         configure(false);
         let present = lanes::present();
+        // The device lanes are macOS's: elsewhere the two are all.
+        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
         let mut backends: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default()), Arc::new(crate::sql::SqlBackend)];
         #[cfg(all(feature = "sme", target_os = "macos", target_arch = "aarch64"))]
         if present[Lane::Sme.index()] {

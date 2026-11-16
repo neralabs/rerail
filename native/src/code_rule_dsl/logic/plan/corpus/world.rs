@@ -34,7 +34,13 @@ pub(super) const LOADED: &str = "loaded";
 
 /// Whether the program reads the file system or loads documents.
 pub(super) fn wanted(prog: &front::Program) -> bool {
-    prog.rules.iter().any(|r| r.head.rel == LOAD || WORLD.iter().any(|(_, d)| *d == r.head.rel))
+    std::iter::once(LOAD).chain(WORLD.iter().map(|(_, req)| *req)).any(|req| asks(prog, req))
+}
+
+/// Whether `prog` makes request `req`: by a rule, or as facts (a constant key lowers to one: `dir_entry("sub", …)`
+/// asks with the fact `rr_dir_req("sub")`, `rr::lower`'s `world_demand`).
+fn asks(prog: &front::Program, req: &str) -> bool {
+    prog.rules.iter().any(|r| r.head.rel == req) || prog.facts.get(req).is_some_and(|rows| !rows.is_empty())
 }
 
 /// The requests a program makes, each with what answers it, before a load's per-file rows are added
@@ -44,7 +50,7 @@ pub(super) fn answers(prog: &front::Program) -> BTreeMap<String, Vec<String>> {
         .iter()
         .map(|(rel, req)| (*req, *rel))
         .chain([(LOAD, LOADED)])
-        .filter(|(req, _)| prog.rules.iter().any(|x| x.head.rel == *req))
+        .filter(|(req, _)| asks(prog, req))
         .map(|(req, rel)| (req.to_owned(), vec![rel.to_owned()]))
         .collect()
 }

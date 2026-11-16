@@ -37,6 +37,24 @@ pub(super) fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Opti
 /// differs every run, so with it in the key no profiled run ever found the last run's record.
 const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WARM", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE", "RERAIL_UPKEEP", "RERAIL_UPKEEP_CPU", "RERAIL_UPKEEP_MB", "RERAIL_UPKEEP_IDLE", "RERAIL_UPKEEP_BATTERY", "RERAIL_UPKEEP_JOBS", "RERAIL_UPKEEP_LOG", "RERAIL_JOINS", "RERAIL_JOINS_LOG", "RERAIL_JOIN_SLOW", "RERAIL_JOIN_SLOW_ROWS", "RERAIL_JOIN_CRITICAL", "RERAIL_JOIN_EXPLORE", "RERAIL_JOIN_MARGIN", "RERAIL_JOIN_SEED", "RERAIL_OBSERVE_TRACE"];
 
+/// Every engine switch that can change what a run outputs (`RERAIL_*` less `NOT_OUTPUTS`), in name order, as bytes for
+/// the run's key.
+fn switches() -> Vec<u8> {
+    let mut switches: Vec<(String, String)> = std::env::vars_os()
+        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.to_string_lossy().into_owned())))
+        .filter(|(k, _)| k.starts_with("RERAIL_") && !NOT_OUTPUTS.contains(&k.as_str()))
+        .collect();
+    switches.sort();
+    let mut out = Vec::new();
+    for (k, v) in switches {
+        out.extend_from_slice(k.as_bytes());
+        out.push(0);
+        out.extend_from_slice(v.as_bytes());
+        out.push(0);
+    }
+    out
+}
+
 fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> String {
     let mut h = Sha256::new();
     h.update(b"rerail.run-reuse/v1\0");
@@ -59,17 +77,7 @@ fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &st
     // What can change the outputs from outside the text: every engine switch (a sample of the corpus, decision 0091's
     // guards, the matcher and planner switches). Listing only some reused a run made under others: a run with
     // `RERAIL_AST_PARTS=off` answered with the outputs of one with it on. The cache's own path names the store.
-    let mut switches: Vec<(String, String)> = std::env::vars_os()
-        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.to_string_lossy().into_owned())))
-        .filter(|(k, _)| k.starts_with("RERAIL_") && !NOT_OUTPUTS.contains(&k.as_str()))
-        .collect();
-    switches.sort();
-    for (k, v) in switches {
-        h.update(k.as_bytes());
-        h.update([0]);
-        h.update(v.as_bytes());
-        h.update([0]);
-    }
+    h.update(switches());
     format!("{CUTOFF}{}", h.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>())
 }
 

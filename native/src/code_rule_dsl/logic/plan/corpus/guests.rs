@@ -63,13 +63,33 @@ pub(super) enum Request {
     Splice { node: i64, with: String },
 }
 
+/// The location a slice's output line asks at (`requests`): `embed`'s and `embed_value`'s second column, a demand's
+/// first. Whose request it is: that location's file's (decision 0225 §2).
+pub(super) fn asked_at(rel: &str, line: &str) -> Option<i64> {
+    let col = match rel {
+        "embed" | "embed_value" => 1,
+        DEMAND | PARSE | SPLICE => 0,
+        _ => return None,
+    };
+    line.split('\t').nth(col)?.parse().ok()
+}
+
 /// The requests of a slice run's outputs, in order. A library's embeds are made whatever a program shows: `.guests
 /// off` hides them from its rules (decision 0058 §1), and `guest` still reaches them.
 pub(super) fn requests(outputs: &BTreeMap<String, std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>>) -> Vec<Request> {
+    requests_of_lines(&request_lines(outputs))
+}
+
+/// A slice run's request relations, as their lines (decision 0239: the run hands rows): what `requests` reads, and
+/// what a memo entry keeps of them (decision 0225 §2, `memo::GUESTS`).
+pub(super) fn request_lines(outputs: &BTreeMap<String, std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>>) -> BTreeMap<String, Vec<String>> {
+    outputs.iter().filter(|(r, _)| REQUESTS.contains(&r.as_str())).map(|(r, rows)| (r.clone(), rows.lines())).collect()
+}
+
+/// `requests` of the request relations' lines (`request_lines`): a run's, or a memo entry's kept ones.
+pub(super) fn requests_of_lines(lines: &BTreeMap<String, Vec<String>>) -> Vec<Request> {
     let mut out = Vec::new();
     let int = |s: &str| s.parse::<i64>().ok();
-    // The request relations alone, as their lines (decision 0239: the run hands rows).
-    let lines: BTreeMap<&str, Vec<String>> = outputs.iter().filter(|(r, _)| REQUESTS.contains(&r.as_str())).map(|(r, rows)| (r.as_str(), rows.lines())).collect();
     let rows = |rel: &str, n: usize| lines.get(rel).into_iter().flatten().map(move |line| line.splitn(n, '\t').collect::<Vec<&str>>());
     for c in rows("embed", 4) {
         if let [_, at, g, r] = c.as_slice()
@@ -405,7 +425,7 @@ impl Guests {
         let Ok(grammar) = crate::code_rule_dsl::tape::Grammar::new(dialect) else { return Ok(None) };
         let Some(Ok(image)) = crate::code_rule_dsl::tape::TapeImage::parse(&grammar, source, &|| false) else { return Ok(None) };
         let Some(root) = crate::code_rule_dsl::embed::host::Host::new(&image.primary, &grammar).root() else { return Ok(None) };
-        let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source) else { return Ok(None) };
+        let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source, &|| false) else { return Ok(None) };
         let Some(label) = crate::code_rule_dsl::language::label(program.dialect) else { return Ok(None) };
         let place = Placement::Segments(Arc::new(program.segments));
         let Some(((facts, root, digest), tape)) = taped(&host.path, label, program.text, cache)? else { return Ok(None) };

@@ -1455,6 +1455,35 @@ mod tests {
         assert!(count.load(Ordering::Relaxed) <= 4, "257 relations must use at most three batches plus schema admission, got {}", count.load(Ordering::Relaxed));
     }
 
+    /// A frame is queued encoded, as the store keeps it: the queue counts its encoded bytes (the raw rows were five
+    /// times that), and it reads the same before and after the writer stores it.
+    #[test]
+    fn frames_are_queued_encoded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.sqlite");
+        let r = rel("span_within", 1);
+        let values: Vec<i64> = (0..20_000i64).flat_map(|i| [(7 << 32) | (i + 1), (7 << 32) | (i / 4)]).collect();
+        let put = || Put { rel: r.clone(), part: 3, digest: 9, reads: vec![], rows: Rows { types: vec![b'i', b'i'], rows: values.clone(), n: 20_000 } };
+        let encoded = super::super::cross_rows::encode(2, &values).len();
+        {
+            let store = ContentStore::open(&path).unwrap();
+            let (release, blocked) = std::sync::mpsc::channel::<()>();
+            store.write_back("test gate", 0, vec![], Box::new(move |_| { blocked.recv().unwrap(); Ok(()) }));
+            store.queue_frames([1; 32], vec![put()], vec![], None);
+            let queued = store.admit_frames(&[1; 32], &[r.clone()], 3).unwrap();
+            assert_eq!(queued[&r].rows().unwrap().rows, values, "queued: read from its encoded bytes");
+            assert_eq!(queued[&r].encoded_bytes(), encoded);
+            release.send(()).unwrap();
+            store.written().unwrap();
+            let (by, _, _) = store.written_by_what();
+            let frames = by.iter().find(|w| w.0 == "frames").expect("the frames' job");
+            assert_eq!(frames.2, encoded, "the queue counts the encoded bytes, not {} raw", values.len() * 8);
+            assert!(encoded * 4 < values.len() * 8, "{encoded} encoded of {} raw", values.len() * 8);
+        }
+        let store = ContentStore::open(&path).unwrap();
+        assert_eq!(store.frame_rows(&[1; 32], &r, 3).unwrap().unwrap().rows, values, "stored: the same rows");
+    }
+
     #[test]
     fn queued_frames_are_read_without_waiting_for_the_writer() {
         use std::sync::mpsc;
@@ -1551,7 +1580,7 @@ mod tests {
         let source = store.put_source(text, &[]).unwrap();
         // A run of root /r, which read `source` and names `program` (a part's key) among its plans.
         store.record_corpus_run_naming("/r", &[source], 1, 1, plan, &[program], 1).unwrap();
-        let memo = |path: &str, content: &[u8]| MemoPut { part: path.len() as i64, path: path.into(), digest: Sha256::digest(content).into(), key: 1, bytes: vec![1, 2, 3], raw: 3 };
+        let memo = |path: &str, content: &[u8]| MemoPut { part: path.len() as i64, path: path.into(), digest: Sha256::digest(content).into(), key: 1, bytes: vec![1, 2, 3], raw: 3, over: false };
         let space = local_space(&plan);
         store.put_memo_entries(&space, vec![memo("a.py", text), memo("old.py", b"y = 2\n")], 4).unwrap();
         let maintained = [9u8; 32];
@@ -1571,7 +1600,7 @@ mod tests {
         let found = store.memo_entries(&space, &["a.py".len() as i64, "old.py".len() as i64], true).unwrap();
         assert!(found.contains_key(&("a.py".len() as i64)), "a kept manifest's content");
         assert!(!found.contains_key(&("old.py".len() as i64)), "content no manifest names");
-        assert_eq!(found[&("a.py".len() as i64)].bytes, vec![1, 2, 3], "its bytes, from the pack");
+        assert_eq!(&*found[&("a.py".len() as i64)].bytes, &[1, 2, 3], "its bytes, from the pack");
         let got = store.frames(&maintained, &[kept.clone(), dropped.clone()], 0).unwrap();
         assert!(got.contains_key(&kept) && !got.contains_key(&dropped), "a live program's relation stays, a dead one's goes");
         let again = {
@@ -1618,7 +1647,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
         let space = local_space(&[5u8; 32]);
-        let put = |part: i64, path: &str| MemoPut { part, path: path.into(), digest: [part as u8; 32], key: 1, bytes: vec![part as u8; 100], raw: 100 };
+        let put = |part: i64, path: &str| MemoPut { part, path: path.into(), digest: [part as u8; 32], key: 1, bytes: vec![part as u8; 100], raw: 100, over: false };
         // Six contents of a.py, one batch each, and one of b.py.
         for part in 0..6 {
             store.put_memo_entries(&space, vec![put(part, "a.py")], 4).unwrap();
@@ -1640,6 +1669,31 @@ mod tests {
         }
         let (frames, _) = store.preload_frames_live().unwrap();
         assert_eq!(frames, 0, "no memo entry is a frame");
+    }
+
+    /// Decision 0280: what a later run keeps over an entry (its identities) is read with it, from the store and from
+    /// the snapshot, survives compaction, is dropped where the entry is not the same content, and goes when the
+    /// entry is written again whole.
+    #[test]
+    fn what_is_kept_over_an_entry_is_read_with_it_and_goes_with_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
+        let space = local_space(&[6u8; 32]);
+        let put = |part: i64, bytes: Vec<u8>, over: bool| MemoPut { part, path: "a.py".into(), digest: [1; 32], key: 1, raw: bytes.len(), bytes, over };
+        // Written twice whole: the first copy's bytes are no row's.
+        store.put_memo_entries(&space, vec![put(1, vec![6; 50], false)], 4).unwrap();
+        store.put_memo_entries(&space, vec![put(1, vec![7; 50], false)], 4).unwrap();
+        store.put_memo_entries(&space, vec![put(1, vec![8; 10], true), MemoPut { digest: [2; 32], ..put(2, vec![9; 10], true) }], 4).unwrap();
+        let found = store.memo_entries(&space, &[1, 2], true).unwrap();
+        assert_eq!(found.len(), 1, "an entry kept over nothing is no entry");
+        let (over, raw) = found[&1].over.clone().expect("kept over the entry");
+        assert_eq!((&*found[&1].bytes, &*over, raw), (&[7; 50][..], &[8; 10][..], 10));
+        assert_eq!(store.memo_pack_bytes().unwrap(), (120, 60), "what is kept over it is named; the other is not");
+        assert_eq!(store.compact_memo_pack(0).unwrap(), 60);
+        let after = store.memo_entries(&space, &[1], true).unwrap();
+        assert_eq!((&*after[&1].bytes, after[&1].over.as_ref().map(|(o, _)| &**o)), (&[7; 50][..], Some(&[8; 10][..])), "moved together");
+        store.put_memo_entries(&space, vec![put(1, vec![5; 20], false)], 4).unwrap();
+        assert!(store.memo_entries(&space, &[1], true).unwrap()[&1].over.is_none(), "written again whole");
     }
 }
 

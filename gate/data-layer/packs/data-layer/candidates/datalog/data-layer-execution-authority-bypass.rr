@@ -47,7 +47,7 @@ authority_wrapper_kind("decorated_definition").
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, text, line, value, value_type_of, node_text
+.input doc, syntax_error, node, field, child, text, line, value_type_of, node_text, value
 .output violation
 authority_bare_private("_caller_token").
 authority_bare_private("_explicit_authority_var").

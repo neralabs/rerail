@@ -385,6 +385,9 @@ impl<'a> P<'a> {
             // After a type, a reserved word is not read as a name (tree-sitter's tree has an error).
             if statement || typed {
                 self.name(BARE)?;
+            } else if self.is_word(w::NAMESPACE) {
+                // `const NAMESPACE`: lexed as the `namespace` keyword (an error).
+                return self.refuse();
             } else {
                 self.name_any(BARE)?;
             }

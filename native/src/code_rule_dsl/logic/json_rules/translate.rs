@@ -777,10 +777,13 @@ impl Emit<'_> {
                     }
                     let branches = split_top_text(&t[1..t.len() - 1], ';');
                     let call = re(&format!(r"(?<![!\w.@])[a-z_]\w*\([^()]*(?<![\w$]){x}\b[^()]*\)"));
-                    let binding: Vec<bool> = branches
+                    // A branch sets x (binds it to a node), unsets it (`unset(x)`: the catch-all `regex: "^"`), or
+                    // neither; first-match guards go between branches that differ in whether they set it.
+                    let sets: Vec<bool> = branches
                         .iter()
-                        .map(|b| binders(px, &sub(&px.translate_no_match_group, b, |_| String::new()), false).contains(x) || b.contains(&format!("unset({x})")) || search(&call, b))
+                        .map(|b| binders(px, &sub(&px.translate_no_match_group, b, |_| String::new()), false).contains(x) || search(&call, b))
                         .collect();
+                    let binding: Vec<bool> = branches.iter().zip(&sets).map(|(b, s)| *s || b.contains(&format!("unset({x})"))).collect();
                     if branches.len() > 1 && binding.iter().any(|b| *b) {
                         // ast-grep's `any` takes its first alternative that matches: a branch holds only where
                         // no earlier one that binds x otherwise does (`any: [{pattern: $TI}, {regex: "^"}]` leaves
@@ -795,7 +798,7 @@ impl Emit<'_> {
                                 .enumerate()
                                 .map(|(k, b)| {
                                     let mut out = if binding[k] { b.trim().to_owned() } else { format!("{}, unset({x})", b.trim()) };
-                                    for j in (0..k).filter(|j| binding[*j] != binding[k]) {
+                                    for j in (0..k).filter(|j| sets[*j] != sets[k]) {
                                         if let Some(not) = not_earlier(px, &branches[j], &outer, j) {
                                             out.push_str(&format!(", {not}"));
                                         }
@@ -833,25 +836,33 @@ impl Emit<'_> {
 }
 
 /// `count : { b } = 0` for an earlier `any` branch b, its own variables renamed so they are the aggregate's: the
-/// branch does not hold here. None where b binds a renamed variable inside a pattern (`` `$X` ``), which a rename
-/// cannot reach.
-fn not_earlier(px: &Patterns, b: &str, outer: &Set, j: usize) -> Option<String> {
+/// branch does not hold here.
+pub(super) fn not_earlier(px: &Patterns, b: &str, outer: &Set, j: usize) -> Option<String> {
+    // `unset(X)` always holds (it binds X empty): whether the branch holds is the rest of it.
+    let kept: Vec<String> = split_top_text(b, ',').into_iter().filter(|l| !is_full(r"\s*unset\(\w+\)\s*", l)).collect();
+    if kept.is_empty() {
+        return Some("0 = 1".to_owned());
+    }
+    let b = &kept.join(",");
     let own: Vec<String> = super::demand::vars_of(px, b).into_iter().filter(|v| !outer.contains(v)).collect();
     if own.is_empty() {
         return Some(format!("count : {{ {} }} = 0", b.trim()));
     }
     let var = re(&format!(r"(?<![\w@$])({})\b(?!\s*\()", own.join("|")));
+    // A pattern metavariable is upper case: one the branch binds inside a pattern (`` `$MV` ``) is renamed there and
+    // outside alike, to X_E<j>.
+    let pieces = split1(&px.text_pieces, b);
+    let in_pattern = pieces.iter().any(|p| p.starts_with('`') && own.iter().any(|v| p.contains(&format!("${v}"))));
+    let suffix = if in_pattern { format!("_E{j}") } else { format!("_e{j}") };
+    let pvar = re(&format!(r"\$({})\b", own.join("|")));
     let mut out = String::new();
-    for p in split1(&px.text_pieces, b) {
+    for p in pieces {
         if p.starts_with('`') {
-            if own.iter().any(|v| p.contains(&format!("${v}"))) {
-                return None;
-            }
-            out.push_str(&p);
+            out.push_str(&sub(&pvar, &p, |c| format!("${}{suffix}", g(c, 1))));
         } else if p.starts_with('"') {
             out.push_str(&p);
         } else {
-            out.push_str(&sub(&var, &p, |c| format!("{}_e{j}", g(c, 1))));
+            out.push_str(&sub(&var, &p, |c| format!("{}{suffix}", g(c, 1))));
         }
     }
     Some(format!("count : {{ {} }} = 0", out.trim()))

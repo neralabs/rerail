@@ -1,4 +1,6 @@
-# 0263: A join's scan walks in morsels across the pool
+# 0278: A join's scan walks in morsels across the pool
+
+Numbered 0263 where it was written, 0272 at the django-bugs merge.
 
 Status: building (2026-11-15). Refines the native engine's join walk (`setfix::run_join_in_each`) and the kept
 part's frames (`Retained::write_frames`, t33 K4). Follows decision 0254 (chunks evaluate at once), which left the
@@ -79,7 +81,7 @@ everywhere.
 
 ### 4. A join that reads texts row by row walks whole
 
-Narrowed by decision 0264 §7: since the arena's reads take a shard of their own, only a join that may make atoms
+Narrowed by decision 0279 §7: since the arena's reads take a shard of their own, only a join that may make atoms
 walks whole.
 
 This covers `@cat`, a split, a text function, a text test and a joined text. Each one reads the atom arena

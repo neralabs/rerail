@@ -3,7 +3,7 @@
 //! numbered slots, then the head. A literal with no native step (an aggregate other than `count`, `sum`, `min`, `max`
 //! and `join`, a descent, a document range, top) has no spec: that rule stays SQL.
 use super::body::{Body, VarSet};
-use super::{Mode, Run, Step, prog_types, sym_char};
+use super::{Mode, Run, Step, sym_char};
 use super::super::native::component::spec::{Arg, Extreme, HeadTok, InputKey, JoinItem, JoinSpec, Source as JoinSource, Tok};
 use super::super::program_image::{AggRef, CmpOp, Lit, Slot, TermRef};
 use super::super::strings;
@@ -215,7 +215,7 @@ impl<'a> Run<'a, '_> {
         scc: &BTreeSet<String>,
         native_rels: &BTreeSet<String>,
     ) -> Option<Arc<JoinSpec>> {
-        let prog = self.prog;
+        let pf = self.fields();
         let inputs = |d: &mut super::super::derived::Inputs| {
             if bare {
                 // The tree's head of no terms, as `digest_atom` writes it.
@@ -239,7 +239,7 @@ impl<'a> Run<'a, '_> {
                     d.u64(1);
                 } else {
                     d.u64(2);
-                    d.str(&self.model.relation(prog, rel, false).render());
+                    d.str(&self.model.relation(pf, rel, false).render());
                     d.u64(u64::from(self.inputs.contains(rel)) | u64::from(self.model.derived.contains(rel)) << 1 | u64::from(self.projections.contains_key(rel)) << 2);
                     match self.model.view_src.get(rel) {
                         Some((base, cols)) => {
@@ -252,7 +252,7 @@ impl<'a> Run<'a, '_> {
                         None => d.u64(u64::MAX),
                     }
                 }
-                let decl = prog.decls.get(rel).map_or(&[][..], |c| c.as_slice());
+                let decl = pf.columns(rel).unwrap_or_default();
                 d.u64(decl.len() as u64);
                 for (_, t) in decl {
                     d.str(t);
@@ -269,9 +269,9 @@ impl<'a> Run<'a, '_> {
                 match b.view(s.at) {
                     Lit::Atom(l) | Lit::Agg { atom: l, .. } => read(b.rel(l), d),
                     Lit::Nearest { kindset, .. } => {
-                        let kinds = prog.kindsets.get(b.v.text(kindset)).map_or(&[][..], Vec::as_slice);
+                        let kinds = pf.kindset(b.v.text(kindset)).unwrap_or_default();
                         d.u64(kinds.len() as u64);
-                        kinds.iter().for_each(|k| d.str(k));
+                        kinds.iter().for_each(|&k| d.str(pf.text(k)));
                     }
                     _ => {}
                 }
@@ -291,7 +291,7 @@ impl<'a> Run<'a, '_> {
         scc: &BTreeSet<String>,
         native_rels: &BTreeSet<String>,
     ) -> Option<JoinSpec> {
-        let prog = self.prog;
+        let pf = self.fields();
         let atoms = self.model.inputs.atoms;
         let mut slots = Slots::default();
         // A variable's type: its column's in a positive atom; a count's, a sum's or a number function's value is a
@@ -321,8 +321,14 @@ impl<'a> Run<'a, '_> {
                                 .args(s.at)
                                 .iter()
                                 .position(|x| x.var() == Some(n))
-                                .and_then(|c| Some(prog.decls.get(b.rel(l))?.get(c)?.1.to_string())),
+                                .and_then(|c| pf.column_type(b.rel(l), c).map(str::to_owned)),
                             Lit::Agg { var, op: AggRef::Count | AggRef::Sum | AggRef::Product, .. } if var == n => Some("int".to_owned()),
+                            // An extremum has its column's type (`v = min l : { line_of(f, l) }`).
+                            Lit::Agg { var, op: AggRef::Min | AggRef::Max, over: Some(o), atom: a } if var == n => b
+                                .args(s.at)
+                                .iter()
+                                .position(|x| x.var() == Some(o))
+                                .and_then(|c| pf.column_type(b.rel(a), c).map(str::to_owned)),
                             Lit::Cmp { l: TermRef::Var(v), op: CmpOp::Eq, r: r @ TermRef::Call(..) } if v == n && numeric_call(b, r) => Some("int".to_owned()),
                             // A variable equal to a constant (`0 = $r`, an inlined `fneed(f, 0)`) has the constant's type.
                             Lit::Cmp { l: TermRef::Var(v), op: CmpOp::Eq, r: TermRef::Int(_) } | Lit::Cmp { l: TermRef::Int(_), op: CmpOp::Eq, r: TermRef::Var(v) }
@@ -380,13 +386,13 @@ impl<'a> Run<'a, '_> {
             }
             // A relation this program part does not declare (an input view of the whole) is not joined natively: SQL
             // reads it.
-            let decl = prog.decls.get(rel)?;
+            let decl = pf.columns(rel)?;
             let types: String = keep
                 .iter()
                 .map(|&c| sym_char(&self.model.inputs, &decl.get(c).unwrap_or_else(|| panic!("{rel} is declared with {} columns and read with {}", decl.len(), args.len())).1))
                 .collect();
             let types = if types.is_empty() { "i".to_owned() } else { types };
-            let mut sel = self.model.relation(prog, projected.map_or(rel, |(base, _)| base), false).render();
+            let mut sel = self.model.relation(pf, projected.map_or(rel, |(base, _)| base), false).render();
             if !wheres.is_empty() {
                 sel += &format!(" WHERE {}", wheres.join(" AND "));
             }
@@ -401,7 +407,7 @@ impl<'a> Run<'a, '_> {
         let read_col = |rel: &str, args: &[TermRef<'_>], c: usize| {
             if scc.contains(rel) || native_rels.contains(rel) { c } else { c - args[..c].iter().filter(|&&t| is_const(t)).count() }
         };
-        let kinds = |kset| prog.kindsets[b.v.text(kset)].join(",");
+        let kinds = |kset| pf.kindset(b.v.text(kset)).unwrap_or_else(|| panic!("no kind set {}", b.v.text(kset))).iter().map(|&k| pf.text(k)).collect::<Vec<_>>().join(",");
         let call_of = |t: TermRef<'_>, f: &str| matches!(t, TermRef::Call(g, _) if b.v.text(g) == f);
         let mut lines = Vec::new();
         for (idx, s) in steps.iter().enumerate() {
@@ -536,7 +542,7 @@ impl<'a> Run<'a, '_> {
                         return None;
                     }
                     if let Some(c) = col {
-                        let typ = prog_types(prog, rel).get(c).copied();
+                        let typ = pf.types(rel).get(c).copied();
                         if matches!(op, AggRef::Sum) && typ == Some("sym") {
                             return None;
                         }
@@ -592,7 +598,7 @@ impl<'a> Run<'a, '_> {
                     if args.iter().any(|t| t.var().is_some_and(|v| !slots.has(Key::Var(v)) && !local.contains(&v))) {
                         return None;
                     }
-                    let sym = |c: usize| prog_types(prog, rel).get(c).copied() == Some("sym");
+                    let sym = |c: usize| pf.types(rel).get(c).copied() == Some("sym");
                     let xc = column(o)?;
                     let mut bycols = Vec::new();
                     for v in by.filter(|v| !slots.has(Key::Var(*v))) {
@@ -632,10 +638,8 @@ impl<'a> Run<'a, '_> {
                 }
                 // `sym_at($e, @cat(1539, $x))`: a qualified name of a constant scope (the planner folds a scope's name
                 // to its symbol) and a bound part, or two constants: the name made into a slot of its own first.
-                TermRef::Call(_, args) if call_of(t, "cat") && args.clone().count() == 2 => {
-                    if !args.clone().all(|x| is_const(x) || slots.bound(x)) {
-                        return None;
-                    }
+                // A part that is itself computed (`walk_qualname(f, @cat(p, @nfkc(x)))`) goes to `expr` below.
+                TermRef::Call(_, args) if call_of(t, "cat") && args.clone().count() == 2 && args.clone().all(|x| is_const(x) || slots.bound(x)) => {
                     let mut args = args;
                     let (x, y) = (args.next().expect("two"), args.next().expect("two"));
                     let (a, c) = (t_tok(b, x, &mut slots)?, t_tok(b, y, &mut slots)?);

@@ -107,6 +107,14 @@ fn class(k: K, ctx: Ctx) -> u8 {
     }
 }
 
+/// A union pattern's alternative, as its gaps see it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Alt {
+    Wild,
+    Negative,
+    Named,
+}
+
 /// What a `*` makes in a list of elements.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Splat {
@@ -114,6 +122,9 @@ enum Splat {
     Collection,
     /// An expression list's or a subscript's: the primary `list_splat` (`*name`, then postfixes).
     Alias,
+    /// An expression list's ending its statement: a `list_splat` (of the expression's class) of the
+    /// name and its postfixes.
+    Primary,
 }
 
 const MAX_DEPTH: u32 = 400;
@@ -518,17 +529,23 @@ impl<'a> P<'a> {
 
     /// Whether `type` starts a type alias: an expression follows it, and an `=` this line (as
     /// tree-sitter takes `type(x).y = z`, by the alias's dynamic precedence).
+    /// Whether `type` starts a `type_alias_statement`: tree-sitter's parse of one (its dynamic
+    /// precedence wins) lives where the line is a type, one `=` and a type (`type[1] = 2` too; not
+    /// `type[a] = b = c`, `type[a], b = c` or `type[a] += b`). After `type[`, a `:` before the `=` is
+    /// a constrained type, which the alias's parse then refuses.
     fn is_type_alias(&self) -> bool {
-        if !matches!(self.peek_at(1), T::Name | T::LParen | T::StrStart | T::None | T::Int) {
+        if !matches!(self.peek_at(1), T::Name | T::LParen | T::LBracket | T::StrStart | T::None | T::Int) {
             return false;
         }
-        let (mut depth, mut k) = (0u32, self.i + 1);
+        let (mut depth, mut k, mut eq) = (0u32, self.i + 1, false);
         while let Some(t) = self.toks.get(k) {
             match t.kind {
                 T::LParen | T::LBracket | T::LBrace => depth += 1,
                 T::RParen | T::RBracket | T::RBrace => depth = depth.saturating_sub(1),
-                T::Eq if depth == 0 => return true,
-                T::Newline | T::Semi | T::Eof | T::Colon if depth == 0 => return false,
+                T::Eq if depth == 0 && eq => return false,
+                T::Eq if depth == 0 => eq = true,
+                T::Newline | T::Semi | T::Eof if depth == 0 => return eq,
+                T::Comma | T::Colon if depth == 0 && !eq => return t.kind == T::Colon && self.peek_at(1) == T::LBracket,
                 _ if depth == 0 && augmented(t.kind).is_some() => return false,
                 _ => {}
             }
@@ -562,6 +579,14 @@ impl<'a> P<'a> {
             return self.refuse();
         }
         Ok(self.leaf(K::Identifier, field, C_NONE))
+    }
+
+    /// A function's or a class's name: not `async` or `await` (tree-sitter reads the keyword).
+    fn definition_name(&mut self) -> R<N> {
+        if self.is_soft(0, soft::ASYNC) || self.is_soft(0, soft::AWAIT) {
+            return self.refuse();
+        }
+        self.name(f::NAME)
     }
 
     /// Whether the parentheses from the token after next hold a `*` after a comma, at their depth.
@@ -762,13 +787,13 @@ impl<'a> P<'a> {
             self.close(st);
             return Ok(());
         }
-        let first = self.element(EXPR, Splat::Alias)?;
+        let first = self.list_element(EXPR, false)?;
         let mut count = 1;
         let mut trailing = Option::None;
         while self.peek() == T::Comma {
             let comma = self.bump();
             if can_start_expr(self.peek()) && self.peek() != T::Yield {
-                self.element(EXPR, Splat::Alias)?;
+                self.list_element(EXPR, true)?;
                 count += 1;
             } else {
                 trailing = Some(comma);
@@ -832,7 +857,13 @@ impl<'a> P<'a> {
         if self.peek() == T::Yield {
             return self.yield_expr(field);
         }
+        let from = self.i;
         let e = self.exprs(slot(field, Ctx::Expr))?;
+        if e.kind == K::ExpressionList && self.splat_in_collection(from) {
+            // `a, b = [], [c, *d]`: tree-sitter's parse of the list as a `pattern_list` lives on,
+            // and is taken where a statement follows; refused.
+            return self.refuse();
+        }
         let t = self.peek();
         if t == T::Eq || augmented(t).is_some() {
             let kind = if t == T::Eq { K::Assignment } else { K::AugmentedAssignment };
@@ -850,9 +881,42 @@ impl<'a> P<'a> {
         Ok(e)
     }
 
+    /// Whether a list or a tuple among the tokens from `from` to the next holds a splat and a
+    /// comma (a call's or a subscript's brackets do not count).
+    fn splat_in_collection(&self, from: usize) -> bool {
+        const CALL: u8 = 4;
+        const SPLAT: u8 = 1;
+        const COMMA: u8 = 2;
+        let mut open: Vec<u8> = Vec::new();
+        for k in from..self.i {
+            let after = |kinds: &[T]| k > from && kinds.contains(&self.toks[k - 1].kind);
+            match self.toks[k].kind {
+                T::LParen | T::LBracket if after(&[T::Name, T::RParen, T::RBracket, T::StrEnd]) => open.push(CALL),
+                T::LParen | T::LBracket | T::LBrace => open.push(0),
+                T::RParen | T::RBracket | T::RBrace => {
+                    if open.pop() == Some(SPLAT | COMMA) {
+                        return true;
+                    }
+                }
+                T::Star if after(&[T::LParen, T::LBracket, T::Comma]) => {
+                    if let Some(b) = open.last_mut().filter(|b| **b & CALL == 0) {
+                        *b |= SPLAT;
+                    }
+                }
+                T::Comma => {
+                    if let Some(b) = open.last_mut().filter(|b| **b & CALL == 0) {
+                        *b |= COMMA;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// `_expressions`: an expression, or an `expression_list` of them.
     fn exprs(&mut self, s: Slot) -> R<N> {
-        let first = self.element(s, Splat::Alias)?;
+        let first = self.list_element(s, false)?;
         if self.peek() != T::Comma {
             return Ok(first);
         }
@@ -862,7 +926,7 @@ impl<'a> P<'a> {
         while self.peek() == T::Comma {
             let comma = self.bump();
             if can_start_expr(self.peek()) && self.peek() != T::Yield {
-                self.element(EXPR, Splat::Alias)?;
+                self.list_element(EXPR, false)?;
                 count += 1;
             } else {
                 if count > 1 {
@@ -1114,7 +1178,7 @@ impl<'a> P<'a> {
     /// expression: tree-sitter's choice, by what is inside and what follows.
     fn paren_is_clause(&self) -> bool {
         let (mut depth, mut k) = (0i32, self.i);
-        let (mut has_as, mut commas, mut last) = (false, 0, T::Eof);
+        let (mut commas, mut last) = (0, T::Eof);
         loop {
             let Some(t) = self.toks.get(k) else { return false };
             match t.kind {
@@ -1125,7 +1189,6 @@ impl<'a> P<'a> {
                         break;
                     }
                 }
-                T::As if depth == 1 => has_as = true,
                 T::Comma if depth == 1 => commas += 1,
                 T::Eof | T::Newline => return false,
                 _ => {}
@@ -1138,8 +1201,9 @@ impl<'a> P<'a> {
         if self.toks.get(k + 1).map(|t| t.kind) != Some(T::Colon) {
             return false;
         }
-        // One item in them is an expression (an `as` in it a pattern), one and a comma a tuple.
-        (has_as && commas > 0) || commas > 1 || (commas == 1 && last != T::Comma)
+        // One item in them is an expression (an `as` in it a pattern), one and a comma a tuple
+        // (`(a as b,)` too).
+        commas > 1 || (commas == 1 && last != T::Comma)
     }
 
     fn function_definition(&mut self, field: u8) -> R<()> {
@@ -1148,7 +1212,7 @@ impl<'a> P<'a> {
             self.leaf(K::TAsync, f::NONE, C_NONE);
         }
         self.leaf(K::TDef, f::NONE, C_NONE);
-        self.name(f::NAME)?;
+        self.definition_name()?;
         if self.peek() == T::LBracket {
             self.type_parameter(f::TYPE_PARAMETERS)?;
         }
@@ -1231,6 +1295,8 @@ impl<'a> P<'a> {
                     self.close(d);
                 }
             }
+            // `async` and `await` name no parameter (but a splat's): tree-sitter reads the keyword.
+            T::Name if self.is_soft(0, soft::ASYNC) || self.is_soft(0, soft::AWAIT) => return self.refuse(),
             T::Name => {
                 if def && self.peek_at(1) == T::Colon {
                     let n = self.open_in(K::TypedParameter, param);
@@ -1262,7 +1328,7 @@ impl<'a> P<'a> {
     fn class_definition(&mut self, field: u8) -> R<()> {
         let n = self.open(K::ClassDefinition, field, C_NONE);
         self.bump();
-        self.name(f::NAME)?;
+        self.definition_name()?;
         if self.peek() == T::LBracket {
             self.type_parameter(f::TYPE_PARAMETERS)?;
         }
@@ -1369,13 +1435,18 @@ impl<'a> P<'a> {
     fn case_pattern(&mut self, field: u8) -> R<N> {
         self.deeper()?;
         let cp = self.open(K::CasePattern, field, C_NONE);
-        if self.is_soft(0, soft::WILD) && !matches!(self.peek_at(1), T::Dot | T::LParen) {
+        // `_` alone: a token its kind implies (left out), as a keyword pattern's value.
+        if self.is_soft(0, soft::WILD) && !matches!(self.peek_at(1), T::Dot | T::LParen | T::Pipe) {
             self.bump();
         } else if self.peek() == T::Name && self.peek_at(1) == T::Eq {
             let k = self.open(K::KeywordPattern, f::NONE, C_NONE);
             self.name(f::NONE)?;
             self.leaf(K::TEq, f::NONE, C_NONE);
-            self.simple_pattern(f::NONE)?;
+            if self.is_soft(0, soft::WILD) && !matches!(self.peek_at(1), T::Dot | T::LParen | T::Pipe) {
+                self.bump();
+            } else {
+                self.simple_pattern(f::NONE)?;
+            }
             self.close(k);
         } else {
             self.simple_pattern(f::NONE)?;
@@ -1404,18 +1475,82 @@ impl<'a> P<'a> {
             if field != f::NONE {
                 self.rekey(first.at + 1, slot(f::NONE, Ctx::Bare));
             }
+            let alts = self.union_alternatives(first.kind == K::TUnderscore);
+            let mut j = 0;
             while self.peek() == T::Pipe {
-                self.bump();
+                if self.pipe_stored(&alts, j) {
+                    self.leaf(K::TPipe, f::NONE, C_NONE);
+                } else {
+                    self.bump();
+                }
                 self.pattern_atom(f::NONE)?;
+                j += 1;
             }
             self.close(u);
         }
         Ok(())
     }
 
+    /// A union's alternatives from the first (`wild` where it is `_`) on: each a wildcard, a
+    /// negative number (its `-` a token before the number), or a named node.
+    fn union_alternatives(&self, wild: bool) -> Vec<Alt> {
+        let mut alts = vec![if wild { Alt::Wild } else { Alt::Named }];
+        let (mut k, mut depth) = (self.i, 0u32);
+        while self.toks.get(k).is_some_and(|t| t.kind == T::Pipe) {
+            k += 1;
+            let alt = if self.toks[k].soft == soft::WILD && !matches!(self.toks.get(k + 1).map(|t| t.kind), Some(T::Dot | T::LParen)) {
+                Alt::Wild
+            } else if self.toks[k].kind == T::Minus {
+                Alt::Negative
+            } else {
+                Alt::Named
+            };
+            alts.push(alt);
+            while let Some(t) = self.toks.get(k) {
+                match t.kind {
+                    T::LParen | T::LBracket | T::LBrace => depth += 1,
+                    T::RParen | T::RBracket | T::RBrace if depth > 0 => depth -= 1,
+                    T::Pipe | T::Colon | T::Comma | T::RParen | T::RBracket | T::RBrace | T::As | T::If | T::Newline | T::Eof if depth == 0 => break,
+                    _ => {}
+                }
+                k += 1;
+            }
+        }
+        alts
+    }
+
+    /// Whether the `|` after alternative `j` is stored: its gap (the tokens between the named
+    /// children around it) is implied only where it is the one shortest word there: `|` alone between
+    /// named alternatives, `| _` after the first (a named node, the union's only one), `_ | _` in a
+    /// union of wildcards.
+    fn pipe_stored(&self, alts: &[Alt], j: usize) -> bool {
+        let mut lo = j;
+        while lo > 0 && alts[lo] == Alt::Wild {
+            lo -= 1;
+        }
+        let mut hi = j + 1;
+        while hi < alts.len() && alts[hi] == Alt::Wild {
+            hi += 1;
+        }
+        let named_before = alts[lo] != Alt::Wild;
+        let named_after = hi < alts.len();
+        // The gap's wildcards, from after the named alternative before to the one after.
+        let wilds = (hi - lo - 1) + usize::from(!named_before);
+        let implied = match (named_before, named_after) {
+            (true, true) => wilds == 0 && alts[hi] == Alt::Named,
+            // After the first alternative alone: a union may end after two.
+            (true, false) => wilds == 1 && lo == 0 && alts[0] == Alt::Named,
+            (false, true) => false,
+            (false, false) => wilds == 2,
+        };
+        !implied
+    }
+
     fn pattern_atom(&mut self, field: u8) -> R<N> {
         let bare = slot(field, Ctx::Bare);
         Ok(match self.peek() {
+            // A union's `_`: stored (`_` is no delimiter, and a union does not always imply it).
+            T::Name if self.is_soft(0, soft::WILD) && !matches!(self.peek_at(1), T::Dot | T::LParen) => self.leaf(K::TUnderscore, field, C_NONE),
             T::Name => {
                 let d = self.dotted_name(field)?;
                 if self.peek() == T::LParen {
@@ -1536,7 +1671,7 @@ impl<'a> P<'a> {
         let op = if self.peek() == T::Star { K::TStar } else { K::TPow };
         self.leaf(op, f::NONE, C_NONE);
         if self.is_soft(0, soft::WILD) {
-            self.bump();
+            self.leaf(K::TUnderscore, f::NONE, C_NONE);
         } else {
             self.name(f::NONE)?;
         }
@@ -1628,6 +1763,13 @@ impl<'a> P<'a> {
         if self.peek() != T::Star {
             return self.expr(s);
         }
+        if mode == Splat::Primary {
+            let n = self.open_in(K::ListSplat, s);
+            self.bump();
+            self.expr(slot(f::NONE, Ctx::Bare))?;
+            self.close(n);
+            return Ok(n);
+        }
         if mode == Splat::Alias {
             if self.peek_at(1) != T::Name {
                 return self.refuse();
@@ -1659,7 +1801,7 @@ impl<'a> P<'a> {
         let n = if self.peek() == T::Lambda {
             self.lambda(s, nocond)?
         } else {
-            let left = self.disjunction(s)?;
+            let mut left = self.disjunction(s)?;
             if self.peek() == T::Walrus {
                 if left.kind != K::Identifier {
                     return self.refuse();
@@ -1667,10 +1809,17 @@ impl<'a> P<'a> {
                 let n = self.wrap(left, K::NamedExpression, s);
                 self.w.set_key(left.at + 1, key(K::Identifier, f::NAME, C_NONE, false));
                 self.bump();
-                self.expr(slot(f::VALUE, Ctx::Expr))?;
+                // The value is no conditional: `x := a if b else c` is the named expression's
+                // conditional.
+                if self.peek() == T::Lambda {
+                    self.lambda(slot(f::VALUE, Ctx::Expr), nocond)?;
+                } else {
+                    self.disjunction(slot(f::VALUE, Ctx::Expr))?;
+                }
                 self.close(n);
-                n
-            } else if self.peek() == T::If && !nocond {
+                left = n;
+            }
+            if self.peek() == T::If && !nocond {
                 let n = self.wrap(left, K::ConditionalExpression, s);
                 self.rekey(left.at + 1, EXPR);
                 self.bump();
@@ -1962,11 +2111,11 @@ impl<'a> P<'a> {
                 self.leaf(K::TFor, f::NONE, C_NONE);
                 self.targets(f::LEFT)?;
                 self.expect(T::In)?;
-                self.expr_x(slot(f::RIGHT, Ctx::Expr), true)?;
+                self.for_in_right()?;
                 while self.peek() == T::Comma {
                     let comma = self.bump();
                     if can_start_expr(self.peek()) {
-                        self.expr_x(slot(f::RIGHT, Ctx::Expr), true)?;
+                        self.for_in_right()?;
                     } else {
                         self.leaf_of(comma, K::TComma);
                         break;
@@ -1981,6 +2130,16 @@ impl<'a> P<'a> {
             } else {
                 return Ok(());
             }
+        }
+    }
+
+    /// A `for_in_clause`'s operand after `in`: no conditional, and a lambda no expression's (the
+    /// grammar's `lambda_within_for_in_clause`, aliased).
+    fn for_in_right(&mut self) -> R<N> {
+        if self.peek() == T::Lambda {
+            self.lambda(slot(f::RIGHT, Ctx::Bare), true)
+        } else {
+            self.expr_x(slot(f::RIGHT, Ctx::Expr), true)
         }
     }
 
@@ -2071,7 +2230,12 @@ impl<'a> P<'a> {
             self.depth -= 1;
             return Ok(n);
         }
-        let first = self.element(EXPR, Splat::Collection)?;
+        if self.splat_of_brackets(T::RParen) {
+            return self.refuse();
+        }
+        // A generator's splat of a name is the primary `list_splat`, as a lone one in brackets.
+        let mode = if self.splat_chain().is_some_and(|(k, _)| self.for_at(k)) { Splat::Alias } else { Splat::Collection };
+        let first = self.element(EXPR, mode)?;
         let kind = if self.starts_for() {
             set(self, K::GeneratorExpression);
             self.rekey(first.at, slot(f::BODY, Ctx::Expr));
@@ -2080,8 +2244,15 @@ impl<'a> P<'a> {
             K::GeneratorExpression
         } else if self.peek() == T::As {
             self.as_pattern(first, EXPR)?;
-            self.expect(T::RParen)?;
-            K::ParenthesizedExpression
+            if self.peek() == T::Comma {
+                // `with (a as b,):` a tuple of the pattern.
+                set(self, K::Tuple);
+                self.collection_rest(T::RParen, K::TRParen, Splat::Collection)?;
+                K::Tuple
+            } else {
+                self.expect(T::RParen)?;
+                K::ParenthesizedExpression
+            }
         } else if self.peek() == T::RParen {
             if first.kind == K::ListSplat && self.kind_at(first.at) == K::ListSplat && unkey(self.w.key(first.at)).2 == C_NONE {
                 return self.refuse();
@@ -2122,37 +2293,111 @@ impl<'a> P<'a> {
     /// the splat as the primary `list_splat` (the parse of a `[…]` as a `list_pattern`, and of a set
     /// as its alias, live to the closer). With more elements it is not.
     fn lone_splat(&self, closer: T) -> bool {
-        let at = |k: usize| self.toks.get(k).map_or(T::Eof, |t| t.kind);
-        let mut k = self.i;
-        if at(k) != T::Star || at(k + 1) != T::Name {
+        self.splat_chain().is_some_and(|(k, _)| self.peek_at(k - self.i) == closer || self.for_at(k))
+    }
+
+    /// Whether a comprehension's `for` (or `async for`) stands at token `k`.
+    fn for_at(&self, k: usize) -> bool {
+        match self.toks.get(k).map(|t| t.kind) {
+            Some(T::For) => true,
+            Some(T::Name) => self.toks[k].soft == soft::ASYNC && self.toks.get(k + 1).is_some_and(|t| t.kind == T::For),
+            _ => false,
+        }
+    }
+
+    /// At a collection's first `*`: a lone splat of a bracketed operand and postfixes (`[*{a}.b()]`,
+    /// `[*[a].b]`), whose shape tree-sitter's parse settles by its postfixes; refused.
+    fn splat_of_brackets(&self, closer: T) -> bool {
+        if self.peek() != T::Star || !matches!(self.peek_at(1), T::LParen | T::LBracket | T::LBrace) {
             return false;
         }
-        k += 2;
+        let Some(e) = self.bracket_end(self.i + 1) else { return false };
+        matches!(self.toks.get(e).map(|t| t.kind), Some(T::Dot | T::LParen | T::LBracket))
+            && self.postfixes_end(e, false).is_some_and(|(k, _)| self.toks.get(k).map(|t| t.kind) == Some(closer) || self.for_at(k))
+    }
+
+    /// At `*`: where a splat of a name and its postfixes (`.name`, `[…]`, `(…)`) ends, and whether
+    /// its last postfix is a call; `None` where no name follows the `*`.
+    fn splat_chain(&self) -> Option<(usize, bool)> {
+        if self.peek() != T::Star || self.peek_at(1) != T::Name {
+            return None;
+        }
+        self.postfixes_end(self.i + 2, false)
+    }
+
+    /// From token `k`: where a run of postfixes ends, and whether the last is a call (`call` before
+    /// any); `None` at an unclosed bracket.
+    fn postfixes_end(&self, mut k: usize, mut call: bool) -> Option<(usize, bool)> {
+        let at = |k: usize| self.toks.get(k).map_or(T::Eof, |t| t.kind);
         loop {
             match at(k) {
-                T::Dot if at(k + 1) == T::Name => k += 2,
-                T::LBracket | T::LParen => {
-                    let mut depth = 0u32;
-                    loop {
-                        match at(k) {
-                            T::LParen | T::LBracket | T::LBrace => depth += 1,
-                            T::RParen | T::RBracket | T::RBrace => {
-                                depth -= 1;
-                                if depth == 0 {
-                                    break;
-                                }
-                            }
-                            T::Eof => return false,
-                            _ => {}
-                        }
-                        k += 1;
-                    }
-                    k += 1;
+                T::Dot if at(k + 1) == T::Name => {
+                    k += 2;
+                    call = false;
                 }
-                _ => break,
+                T::LBracket | T::LParen => {
+                    call = at(k) == T::LParen;
+                    k = self.bracket_end(k)?;
+                }
+                _ => return Some((k, call)),
             }
         }
-        at(k) == closer
+    }
+
+    /// The token after the brackets opened at token `k`.
+    fn bracket_end(&self, mut k: usize) -> Option<usize> {
+        let mut depth = 0u32;
+        loop {
+            match self.toks.get(k).map_or(T::Eof, |t| t.kind) {
+                T::LParen | T::LBracket | T::LBrace => depth += 1,
+                T::RParen | T::RBracket | T::RBrace => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(k + 1);
+                    }
+                }
+                T::Eof => return None,
+                _ => {}
+            }
+            k += 1;
+        }
+    }
+
+    /// An expression list's element (a statement's or a right side's): a splat in the form
+    /// tree-sitter's parse keeps. A name's splat and postfixes that end the statement is a
+    /// `list_splat` of them (`a, *b.c`), but for a call's (`*f()`: the call of the splat); a later
+    /// target's is a collection's (`a, *b.c = d`: its pattern a `list_splat_pattern`); else the
+    /// primary `list_splat` and its postfixes (`*b.c, a`).
+    fn list_element(&mut self, s: Slot, later: bool) -> R<N> {
+        if self.peek() != T::Star {
+            return self.expr(s);
+        }
+        let mode = match self.splat_chain() {
+            None => Splat::Alias,
+            Some((k, call)) => match self.peek_at(k - self.i) {
+                T::Newline | T::Eof if !call => Splat::Primary,
+                T::Eq if later => Splat::Collection,
+                T::Comma if later && self.assignment_from(k) => Splat::Collection,
+                _ => Splat::Alias,
+            },
+        };
+        self.element(s, mode)
+    }
+
+    /// Whether an `=` stands outside brackets from token `k` to the statement's end.
+    fn assignment_from(&self, mut k: usize) -> bool {
+        let mut depth = 0u32;
+        while let Some(t) = self.toks.get(k) {
+            match t.kind {
+                T::LParen | T::LBracket | T::LBrace => depth += 1,
+                T::RParen | T::RBracket | T::RBrace => depth = depth.saturating_sub(1),
+                T::Eq if depth == 0 => return true,
+                T::Newline | T::Semi | T::Eof if depth == 0 => return false,
+                _ => {}
+            }
+            k += 1;
+        }
+        false
     }
 
     fn list(&mut self, s: Slot) -> R<N> {
@@ -2163,6 +2408,9 @@ impl<'a> P<'a> {
         if self.peek() == T::RBracket {
             self.bump();
         } else {
+            if self.splat_of_brackets(T::RBracket) {
+                return self.refuse();
+            }
             let mode = if self.lone_splat(T::RBracket) { Splat::Alias } else { Splat::Collection };
             let first = if self.peek() == T::Yield { self.yield_expr(f::NONE)? } else { self.element(EXPR, mode)? };
             if self.starts_for() {
@@ -2194,6 +2442,9 @@ impl<'a> P<'a> {
             self.dict_rest()?;
             kind = K::Dictionary;
         } else {
+            if self.splat_of_brackets(T::RBrace) {
+                return self.refuse();
+            }
             let mode = if self.lone_splat(T::RBrace) { Splat::Alias } else { Splat::Collection };
             let first = self.element(EXPR, mode)?;
             if self.peek() == T::Colon {

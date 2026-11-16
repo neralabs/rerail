@@ -648,6 +648,54 @@ unused(f) :- def(f, _), !used(f).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Decision 0173 (t36 item 7): a maintained run reads its programs as versions. The maintained part is a tree of
+/// its version (`maintain::rewrite`), decoded by no reader, and the run's copy of the prepared split shares the
+/// parts' trees, copying none. The outputs are a run's with an empty store.
+#[test]
+fn a_maintained_run_decodes_and_copies_no_tree() {
+    let marker = format!("# {:?}\n", std::time::SystemTime::now());
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("no-trees");
+    std::fs::create_dir_all(&dir).unwrap();
+    let write = |file: &str, body: &str| std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
+    write("a.py", "def f():\n    pass\ndef k():\n    pass\n");
+    write("b.py", "from a import f\ndef g():\n    pass\n");
+    write("c.py", "from a import k\ndef h():\n    pass\n");
+    let rule = dir.join("uses.rr");
+    std::fs::write(&rule, r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl uses(n: node, f: node)
+uses(n, f) :- imp(n, q), def(f, q).
+.decl used(f: node)
+used(f) :- uses(_, f).
+.decl unused(f: node)
+unused(f) :- def(f, _), !used(f).
+.output unused
+"#).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    let run = |store: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        let report = super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        (report.cross_maintained.0, std::fs::read_to_string(out.join("unused.csv")).unwrap())
+    };
+    run("kept.sqlite");
+    write("c.py", "def h():\n    pass\n");
+    super::lower::forget_tree_reads();
+    let (maintained, rows) = run("kept.sqlite");
+    let (decoded, copied, read) = (super::lower::trees_decoded(), super::lower::trees_copied(), super::lower::version_trees_read());
+    let (_, fresh) = run("fresh.sqlite");
+    assert_eq!(rows, fresh);
+    assert!(maintained > 0, "a changed stratum maintained from the kept rows ({maintained})");
+    assert_eq!(decoded.0, 0, "the maintained run decoded trees from their versions, the last at {:?}", decoded.1);
+    assert_eq!(copied.0, 0, "the maintained run copied shared trees, the last at {:?}", copied.1);
+    // Nor reads one held beside its version (t36 item 7): it reads the versions.
+    assert_eq!(read.0, 0, "the maintained run read {} versions' trees, the last at {:?}", read.0, read.1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0101 §3: a maintained stratum's pieces run as one component per level, ordered by unit gates (each
 /// negation of a piece, `used__minus :- used__del, !used__ins`, reads it once it is whole). Edits that remove, add
 /// and move imports delete, insert and derive again; after each, the outputs are a run's with an empty store. Under
@@ -1049,4 +1097,213 @@ fn a_file_too_deep_for_the_scope_table_leaves_the_run_going() {
     let out = run.join().unwrap().unwrap();
     assert_eq!(std::fs::read_to_string(out.join("annotated.csv")).unwrap_or_default(), "typed.py\n");
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Two programs combined with the library they share stratify (decision 0174, E32): PYI062's `literal_down` negates
+/// `typing_subscript`, which reads `value` through `exports`. The node attributes are answered on request over
+/// the combined program's readers; each part lowered alone made `rr_value_req` read `literal_leaf`, recursive
+/// with `value` through that negation, and the pair was refused as not stratifiable.
+#[test]
+fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let dir = std::env::temp_dir().join(format!("rerail-pyi062-pyi059-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/a.py"), "from typing import Generic, Literal, TypeVar\nT = TypeVar('T')\nx: Literal[1, 1]\nclass C(Generic[T], int): pass\n").unwrap();
+    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let programs: Vec<String> = ["ruff-pyi062-duplicate-literal-member.rr", "ruff-pyi059-generic-not-last-base-class.rr"]
+        .iter()
+        .map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap())
+        .collect();
+    let out = dir.join("out");
+    let ran = super::run_all(&programs.iter().map(String::as_str).collect::<Vec<_>>(), &dir.join("src"), &out, "program", Binding::Cpu, 1 << 18);
+    let findings = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    ran.unwrap();
+    assert!(findings.contains("PYI062") && findings.contains("PYI059"), "both rules' findings: {findings}");
+}
+
+/// A text test over `node_text` answered in the cross-file part (a cross-file relation asks for the text) is made
+/// natively from the run's vocabulary (`front::Native::TextTest`) and maintained as a filter: after each edit only
+/// the new strings are tested, its stratum is not derived again, and the outputs are a run's with an empty store.
+#[test]
+#[ignore = "a node's text read in the cross-file part is empty (decision 0174 §6; work-queue question 2): both runs give no rows, so the test checks nothing until that is answered"]
+fn a_cross_file_text_test_is_maintained_as_a_filter() {
+    let marker = format!("# {:?}\n", std::time::SystemTime::now());
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("text-filter");
+    std::fs::create_dir_all(&dir).unwrap();
+    let write = |file: &str, body: &str| std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
+    write("a.py", "def f():\n    pass\ndef k():\n    return 1\n");
+    write("b.py", "from a import f\ndef g():\n    pass\n");
+    write("c.py", "def h():\n    pass\n");
+    let rule = dir.join("named.rr");
+    std::fs::write(&rule, r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl uses(n: node, f: node)
+uses(n, f) :- imp(n, q), def(f, q).
+.decl passes(f: node)
+passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
+.output passes
+"#).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let run = |store: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        let report = super::run(&text, &dir, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        (report, std::fs::read_to_string(out.join("passes.csv")).unwrap())
+    };
+    run("kept.sqlite");
+    let edits = [
+        ("c.py", "from a import k\ndef h():\n    pass\n"),
+        ("b.py", "from a import f\nfrom a import k\ndef g():\n    pass\n"),
+        ("a.py", "def f():\n    return 2\ndef k():\n    pass\n"),
+        ("b.py", "def g():\n    pass\n"),
+    ];
+    let mut tested = false;
+    for (i, (file, body)) in edits.into_iter().enumerate() {
+        write(file, body);
+        let (report, rows) = run("kept.sqlite");
+        let (_, fresh) = run(&format!("fresh{i}.sqlite"));
+        assert_eq!(rows, fresh, "after edit {i} ({file})");
+        // The program's one native is the text test.
+        assert!(!report.cross_again.contains_key("a relation made natively"), "edit {i}: the text test is maintained, not derived again: {:?}", report.cross_again);
+        tested |= report.text.0 > 0;
+    }
+    assert!(tested, "the program has a text test");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Every switch the lowering and preparation sources read is classified: it changes the prepared program (in its key,
+/// `corpus::PREPARING`) or does not (`NOT_PREPARING`). An unlisted one would let a program prepared under
+/// one value be reused under another, or make a session's next run cold.
+#[test]
+fn every_switch_lowering_reads_is_classified() {
+    /// The switches combining, lowering and preparation read that change no prepared program: checks, dumps, traces
+    /// and profiles, the store's and the cost model's paths, the session's binding.
+    const NOT_PREPARING: &[&str] = &[
+        "RERAIL_BLESS_CENSUS",
+        "RERAIL_IDEMPOTENCY_DUMP",
+        "RERAIL_MAGIC_CHECK",
+        "RERAIL_MERGE_WHY",
+        "RERAIL_SPLIT_CHECK",
+        "RERAIL_SPLIT_DUMP",
+        "RERAIL_DEMAND_DUMP",
+        "RERAIL_PREPARED_TRACE",
+        "RERAIL_SPIKE_PROJECTION",
+        // A diagnostic: a refused component's members, printed (`front::unstratified_trace`).
+        "RERAIL_STRATA_COUNTS",
+        "RERAIL_TAPE_CACHE",
+        "RERAIL_DUMP_PROGRAMS",
+        "RERAIL_TIMELINE",
+        "RERAIL_PROFILE",
+        "RERAIL_SQL_STRICT",
+        "RERAIL_WARM",
+        "RERAIL_MEMO_PROGRAM_DUMP",
+        "RERAIL_STATS_KEEP_TRACE",
+        "RERAIL_SESSION",
+        // The library's directory: its files' paths and digests are in the texts' digest (the module graph).
+        "RERAIL_RR_LIB",
+        // The cost model's file: its estimates steer plan choices, which keep the program's meaning (`plan::run`).
+        "RERAIL_COSTS",
+        // Keyed through what it adds: the observer's facts (the source files), which the prepared key hashes.
+        "RERAIL_SOURCES_PHASE",
+    ];
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
+    // Every switch named, however it is read (`var`, `var_os`, a constant, a helper's argument).
+    let read = regex::Regex::new(r#""(RERAIL_[A-Z0-9_]+)""#).unwrap();
+    let sources = |places: &[&str]| -> Vec<(String, String)> {
+        let mut files = Vec::new();
+        let mut pending: Vec<std::path::PathBuf> = places.iter().map(|p| root.join(p)).collect();
+        let missing: Vec<&std::path::PathBuf> = pending.iter().filter(|p| !p.exists()).collect();
+        assert!(missing.is_empty(), "places that are gone: {missing:?}");
+        while let Some(p) = pending.pop() {
+            if p.is_dir() {
+                pending.extend(std::fs::read_dir(&p).unwrap().map(|e| e.unwrap().path()));
+            } else if p.extension().is_some_and(|e| e == "rs") && !p.file_name().unwrap().to_string_lossy().contains("tests") {
+                files.push((p.strip_prefix(&root).unwrap().display().to_string(), std::fs::read_to_string(&p).unwrap()));
+            }
+        }
+        files
+    };
+    // A switch read through a helper (`syntax::definition_ids()` for `RERAIL_NODE_IDS`) is read where the helper is
+    // called: every short function of the tree (under 20 lines) that names a switch, by a name no other function has.
+    let accessors: std::collections::HashMap<String, Vec<String>> = {
+        let every = sources(&["."]);
+        let fn_start = regex::Regex::new(r"(?m)^[ \t]*(?:pub(?:\([^)]*\))? )?(?:const )?fn ([a-z_][a-z0-9_]*)").unwrap();
+        let mut found: std::collections::HashMap<String, (usize, Vec<String>)> = std::collections::HashMap::new();
+        for (_, text) in &every {
+            let starts: Vec<(usize, String)> = fn_start.captures_iter(text).map(|c| (c.get(0).unwrap().start(), c[1].to_owned())).collect();
+            for (i, (at, name)) in starts.iter().enumerate() {
+                let end = starts.get(i + 1).map_or(text.len(), |n| n.0);
+                let body = &text[*at..end];
+                let switches: Vec<String> = read.captures_iter(body).map(|c| c[1].to_owned()).collect();
+                let e = found.entry(name.clone()).or_insert((0, Vec::new()));
+                e.0 += 1;
+                if body.lines().count() < 20 {
+                    e.1.extend(switches);
+                }
+            }
+        }
+        found.into_iter().filter(|(_, (n, sw))| *n == 1 && !sw.is_empty()).map(|(name, (_, sw))| (name, sw)).collect()
+    };
+    let call = regex::Regex::new(r"\b([a-z_][a-z0-9_]*)\(").unwrap();
+    let reads = |text: &str| -> Vec<String> {
+        let mut all: Vec<String> = read.captures_iter(text).map(|c| c[1].to_owned()).collect();
+        for c in call.captures_iter(text) {
+            let before = &text[..c.get(0).unwrap().start()];
+            if !before.ends_with("fn ") {
+                all.extend(accessors.get(&c[1]).into_iter().flatten().cloned());
+            }
+        }
+        all
+    };
+    // `corpus.rs` itself: its preparation (`run_observed` up to the prepared program) and `combine_read`.
+    let corpus = std::fs::read_to_string(root.join("logic/plan/corpus.rs")).unwrap();
+    let region = |from: &str, to: &str| -> String {
+        let a = corpus.find(from).unwrap_or_else(|| panic!("corpus.rs has no {from:?}"));
+        let b = a + corpus[a..].find(to).unwrap_or_else(|| panic!("corpus.rs has no {to:?} after {from:?}"));
+        corpus[a..b].to_owned()
+    };
+    // Combining: `combine_read`, what it calls that reads a switch (`scoping::guard`), and the `.rr` lowering its
+    // `rr::parse` runs (`logic/rr`, `front`). The combined program is kept under `COMBINING` alone.
+    let mut combining = sources(&["logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs"]);
+    combining.push(("corpus.rs, combine_read".to_owned(), region("\nfn combine_read(", "\n}\n")));
+    // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (`hiding::fold_own`,
+    // memo, session, profile, costs) and the passes. The prepared key holds `PREPARING` and the combined program's
+    // key. Not `plan/keeps.rs` and `plan/choices.rs`: what a relation keeps is chosen in `plan::run` and kept under
+    // `choices::key`, which holds the switches those read (`RERAIL_INLINE`, `RERAIL_INLINE_ONLY`,
+    // `RERAIL_OBSERVED_STEPS`).
+    let mut preparing = sources(&[
+        "logic/simplify.rs", "logic/strings.rs", "logic/reach_form.rs", "logic/magic.rs", "logic/magic", "logic/plan/lower.rs",
+        "logic/plan/corpus/cross_memo.rs", "logic/plan/corpus/hiding.rs", "logic/plan/corpus/memo.rs", "logic/plan/corpus/prepared.rs",
+        "logic/plan/corpus/session.rs", "logic/profile.rs", "logic/costs.rs", "typing/file_local.rs", "typing/file_local",
+    ]);
+    preparing.push(("corpus.rs, run_observed's preparation".to_owned(), region("\nfn run_observed(", "Arc::new(Prepared {")));
+    let mut unlisted = std::collections::BTreeSet::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for (files, allowed) in [(&combining, vec![super::COMBINING]), (&preparing, vec![super::COMBINING, super::PREPARING])] {
+        for (name, text) in files.iter() {
+            for switch in reads(text) {
+                seen.insert(switch.clone());
+                if !allowed.iter().any(|l| l.contains(&switch.as_str())) && !NOT_PREPARING.contains(&switch.as_str()) {
+                    let list = if allowed.len() == 1 { "COMBINING" } else { "PREPARING" };
+                    unlisted.insert(format!("{switch} in {name} (wants {list})"));
+                }
+            }
+        }
+    }
+    assert!(unlisted.is_empty(), "switches read in combining or preparing, in neither its list nor NOT_PREPARING: {unlisted:?}");
+    // And the other way: a listed switch keys what it changes, read in combining or preparing, or after them by what
+    // hangs off the prepared key (the run's extraction: `with_long_text`'s text nodes and anchors, the span
+    // prefilter, both in `facts/vtab/syntax.rs`; the rest of `run_observed`). One read nowhere there keys nothing it
+    // changes: a session's next run cold for nothing.
+    for text in sources(&["facts/vtab/syntax.rs"]).into_iter().map(|(_, t)| t).chain([region("\nfn run_observed(", "\n}\n")]) {
+        seen.extend(reads(&text));
+    }
+    let unread: Vec<&str> = super::COMBINING.iter().chain(super::PREPARING).copied().filter(|s| !seen.contains(*s)).collect();
+    assert!(unread.is_empty(), "switches listed as combining or preparing that nothing there reads: {unread:?}");
 }

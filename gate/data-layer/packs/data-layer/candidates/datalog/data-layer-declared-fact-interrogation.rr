@@ -25,7 +25,7 @@
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, text, line, value, value_type_of, node_text, token
+.input doc, syntax_error, node, field, child, text, line, value_type_of, node_text, value, token
 .output violation
 contract_attribute_name("auxiliary_query").
 contract_attribute_name("column_type_hints").
@@ -69,7 +69,7 @@ out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
 tape_syntax_error(d) :- syntax_error(d).
 contract_attribute_args(n, a) :- node(_, n, "call", _, _), field(n, "function", f), node(_, f, "identifier", _, _), text(f, x), (x = "getattr" ; x = "hasattr"), field(n, "arguments", a).
 contract_attribute_comment(a, e) :- contract_attribute_args(_, a), token(a, _, t, _, e), match("#(?s:.*)", t).
-rr_ctx2(a, b) :- child(a, s, i), node(_, s, "string", b, _).
+rr_ctx2(a, b) :- contract_attribute_args(_, a), child(a, s, i), node(_, s, "string", b, _).
 rr_agg1(a, b, e) :- rr_demand_agg_rr_agg1(a, b), rr_ctx2(a, b), contract_attribute_comment(a, e), e <= b.
 contract_attribute_second(a, s) :- contract_attribute_args(_, a), child(a, s, i), node(_, s, "string", b, _), k = count : { rr_agg1(a, b, _) }, @add(i, k) = 1.
 violation("data-layer-declared-fact-interrogation", "contract-attribute", "CONTRACT_ATTR_PROBE", p, l) :- contract_attribute_args(n, a), contract_attribute_second(a, s), value_type_of(s, "str"), value(s, v), contract_attribute_name(v), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).

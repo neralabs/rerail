@@ -14,7 +14,7 @@ pub struct CompiledView;
 
 impl Embedder for CompiledView {
     /// No host tape compiles to a view: Blade's is built from its Forte tree.
-    fn build(&self, _: HostNode<'_>, _: &str) -> Option<Program> {
+    fn build(&self, _: HostNode<'_>, _: &str, _: &dyn Fn() -> bool) -> Option<Program> {
         None
     }
 }

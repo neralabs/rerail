@@ -134,6 +134,7 @@ impl ModelStore for HostStore {
 /// This lane's backend, when it can run here: with the host's model store (`set_store`, else memory) and a working directory for compiled
 /// models under `RERAIL_ANE_DIR` or the system's temporary directory.
 pub fn backend() -> Option<Arc<dyn Backend>> {
+    crate::lanes::ask_device_lane();
     // Apple silicon, with Core ML's compute plans (macOS 14.4 and later), which placement checking needs.
     if !cfg!(target_arch = "aarch64") || objc::runtime::Class::get("MLComputePlan").is_none() {
         return None;

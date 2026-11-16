@@ -17,7 +17,9 @@
 PERF403(n, L) :- kind(n, "assignment"), n ~ `$_[$K] = $V`,
     count : { field(n, "type", c1), kind(c1, "type") } = 0, field(n, "left", c2),
     kind(c2, "subscript"), field(c2, "value", c3), perf403_plain_name(c3, L),
-    (match(".*,\\s*\\]", c2), node(_, c2, _, _, _), TC = c2 ; !match(".*,\\s*\\]", c2), unset(TC)),
+    ( match(".*,\\s*\\]", c2), node(_, c2, _, _, _), TC = c2
+    ; !match(".*,\\s*\\]", c2), unset(TC), count : { match(".*,\\s*\\]", c2),node(_, c2, _, _, _), TC_E0 = c2 } = 0
+    ),
     child(p4, n, _), kind(p4, "expression_statement"), perf403_only_stmt(p4),
     ( child(p1, p4, _), kind(p1, "block"), child(p2, p1, _), perf403_loop(p2, K, TC, V)
     ; child(p3, p4, _), kind(p3, "block"), child(p5, p3, _), kind(p5, "if_statement"), perf403_only_stmt(p5), count : { field(p5, "alternative", c1_3), (kind(c1_3, "elif_clause") ; kind(c1_3, "else_clause")) } = 0, count : { field(p5, "condition", c2_4), perf403_has_ref(c2_4, L) } = 0, child(p6, p5, _), kind(p6, "block"), child(p7, p6, _), perf403_loop(p7, K, TC, V)

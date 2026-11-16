@@ -74,7 +74,7 @@ literal_raise("raise_statement"). literal_raise("assert_statement").
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, text, line, value, strprefix, value_type_of, fstring_piece, tape_line, end_line, node_text, token
+.input doc, syntax_error, node, field, child, text, line, strprefix, value_type_of, fstring_piece, tape_line, end_line, node_text, value, token
 .output violation
 literal_allowed_name("SqlAliasName").
 literal_allowed_name("SqlColumnName").
@@ -142,7 +142,7 @@ fstring_literal_field(n, f, b, e) :- fstring_literal_parsed(n), node(_, n, "form
 rr_ctx4(b, n) :- fstring_literal_field(n, _, b, _).
 rr_agg3(b, b2, n, rr_any1, rr_any2) :- rr_demand_agg_rr_agg3(b, n), rr_ctx4(b, n), fstring_literal_field(n, rr_any1, b2, rr_any2), b2 < b.
 fstring_literal_ford(n, b, j) :- fstring_literal_field(n, _, b, _), j = count : { rr_agg3(b, _, n, _, _) }.
-rr_ctx7(i, n) :- fstring_piece(n, i, "interpolation", _).
+rr_ctx7(i, n) :- fstring_literal_parsed(n), fstring_piece(n, i, "interpolation", _).
 rr_agg6(i, i2, n, rr_any5) :- rr_demand_agg_rr_agg6(i, n), rr_ctx7(i, n), fstring_piece(n, i2, "interpolation", rr_any5), i2 < i.
 fstring_literal_pord(n, i, j) :- fstring_literal_parsed(n), fstring_piece(n, i, "interpolation", _), j = count : { rr_agg6(i, _, n, _) }.
 fstring_literal_later_piece(n, i) :- fstring_literal_parsed(n), fstring_piece(n, i, _, _), fstring_piece(n, i2, _, _), i2 > i.

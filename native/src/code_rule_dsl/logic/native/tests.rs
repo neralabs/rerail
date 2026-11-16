@@ -589,7 +589,7 @@ fn shortlex_min_orders_symbols_by_length_then_bytes() {
 
 /// A split (`t = @cat(m, x)` with `t` bound) whose parts are only looked up: each text is cut at every "." with a
 /// part before it, and at its start (`"" . t`). A part that is no atom ends that cut, read under the same read of the
-/// arena as the whole (decision 0264 §6). Only the cuts whose two parts are a row of `p` make one.
+/// arena as the whole (decision 0279 §6). Only the cuts whose two parts are a row of `p` make one.
 #[test]
 fn a_split_looks_its_parts_up_and_skips_those_that_are_no_atom() {
     let db = connection();

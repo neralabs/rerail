@@ -1,6 +1,6 @@
 # t40: all of PostHog on the M3 Max: where the run is serial, and where it wastes work
 
-Measured 2026-11-15 at 0af0aaaf9 (after decisions 0263 and 0264 §6–§8). `len-_py.rr` over all of PostHog (29,885
+Measured 2026-11-15 at 0af0aaaf9 (after decisions 0278 and 0279 §6–§8). `len-_py.rr` over all of PostHog (29,885
 files), cold store, profiling build, K = 15, load average 6–11 from other work.
 
 ## Intro
@@ -73,7 +73,7 @@ Over a 3 s sample of the chunk phase, the main thread and the 15 pool threads ar
 ## Inefficiency beyond the chunks
 
 - **`rr_agg7__sup0` is another split joined by text** (`$q = @cat($m, $x), @contains($x, ".") = 0, exported($m, $x)`),
-  the shape decision 0264 §8 removed from `exports`. A planner rule for it (0264 Open) would cover both.
+  the shape decision 0279 §8 removed from `exports`. A planner rule for it (0279 Open) would cover both.
 - **`sym_of` and `sym_of__sup0` are 6.4 M and 4.5 M rows**, one a name node, written whole to the frames
   (39 MB and 33 MB): most of the frames' 0.7 s and much of the cross part.
 

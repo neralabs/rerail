@@ -1,8 +1,7 @@
 //! Workspace registry, overlays, promotion to snapshots, and workspace leases.
 
-#[cfg(any(test, feature = "test-hooks"))]
-#[allow(unused_imports)]
 use crate::content_store::connection::Cached as _;
+#[cfg(any(test, feature = "test-hooks"))]
 use super::StoredFile;
 use super::rows::{intern_path, intern_string, validate_relative_path};
 use super::{

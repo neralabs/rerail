@@ -22,11 +22,11 @@
 #include "python/calls.rr"
 #include "python/names.rr"
 
-.decl len_want(e: node)
-.decl len_val(e: node, v: node)
+.decl len_want(e: node) extensible
+.decl len_val(e: node, v: node) extensible
 len_want(v) :- len_val(_, v).
 len_of(e, k) :- len_val(e, v), len_of(v, k).
-.decl len_of(e: node, k: number)
+.decl len_of(e: node, k: number) extensible
 
 // Parentheses: one level at a time, as asked (python/ast's unparen is made for every node).
 len_want(x) :- len_want(e), kind(e, "parenthesized_expression"), child(e, x, _), !kind(x, "comment").

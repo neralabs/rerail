@@ -167,6 +167,50 @@ fn a_fused_first_step_cut_leaves_the_rows_after_its_row() {
     closure::semi_naive_here(false);
 }
 
+/// Decision 0206 over a fused first step (an atom with the test after it run a chunk of rows at a time, `rowcode`):
+/// a cut inside a chunk leaves the chunk's rows from the one it stopped at. Before, the chunk's loop went on past the
+/// cut, moving the row it stopped at to the chunk's last, so the rows between were reported done and never run (a
+/// fixpoint short of rows: typescript-eslint's no-shadow flagged valid code, its `count : { … } = 0` missing them).
+#[test]
+fn a_cut_inside_a_fused_chunk_leaves_the_rows_it_did_not_run() {
+    let edges: Vec<String> = (0..300).flat_map(|i| [format!("({i}, {})", i + 1), format!("({i}, {})", (i * 7) % 300)]).collect();
+    let setup = |db: &Connection| {
+        db.execute_batch(&format!("CREATE TABLE edge(c0, c1); INSERT INTO edge VALUES {};\nCREATE TABLE path(c0, c1); INSERT INTO path SELECT c0, c1 FROM edge;\nCREATE TABLE node(c0); INSERT INTO node SELECT DISTINCT c1 FROM edge;", edges.join(", "))).unwrap();
+    };
+    let input = format!("t:b:{}:{}:ii", hex("edge"), hex("c0, c1"));
+    closure::semi_naive_here(true);
+    let node = format!("t:b:{}:{}:i", hex("node"), hex("c0"));
+    // The delta's atom, then a test of its own columns: fused.
+    let fused_first = format!("pos d0 v0 v1\nne v0 v1\npos {input} v1 v2\npos {node} v2\nhead v0 v2");
+    let spec = format!("name cutf\nrel path ii\njoin 0 0 {}", hex(&fused_first));
+    let rows = |db: &Connection| -> Vec<(i64, i64)> { pairs(db, "SELECT DISTINCT c0, c1 FROM path ORDER BY c0, c1") };
+    let whole = {
+        let db = connection();
+        setup(&db);
+        open(&db, &spec).unwrap();
+        assert_eq!(run(&db, "cutf", 0).unwrap().split_whitespace().last(), Some("1"));
+        close(&db, "cutf").unwrap();
+        rows(&db)
+    };
+    let db = connection();
+    setup(&db);
+    open(&db, &spec).unwrap();
+    let (mut cuts, mut done, mut last) = (0, false, String::new());
+    for _ in 0..10_000 {
+        set_budgets(&db, "cutf", &[(0, Some(300))]).unwrap();
+        last = run(&db, "cutf", 0).unwrap();
+        match last.split_whitespace().last() {
+            Some("1") => { done = true; break }
+            Some("5") => { cuts += 1; take_cut(&db, "cutf").unwrap(); }
+            _ => {}
+        }
+    }
+    close(&db, "cutf").unwrap();
+    assert!(done && cuts > 10, "to the fixpoint, cut often: {cuts} cuts, last {last}");
+    assert_eq!(rows(&db), whole, "the fixpoint is the unlimited run's");
+    closure::semi_naive_here(false);
+}
+
 /// A first step that scans many rows is walked in morsels on the pool (`run_join_in_each`'s `morsels`): the same
 /// fixpoint and step counts as one walk's. Under a budget, each morsel stops at its share of it: the cut's rows done
 /// and left are all the delta's, and the wave going on from the rows left reaches the same fixpoint.
@@ -222,7 +266,7 @@ fn a_scan_walked_in_morsels_makes_one_walks_rows_and_cuts_within_its_budget() {
     closure::semi_naive_here(false);
 }
 
-/// Decision 0264 §7: a scan whose join only reads texts (here a split whose parts are looked up) walks in morsels, and
+/// Decision 0279 §7: a scan whose join only reads texts (here a split whose parts are looked up) walks in morsels, and
 /// makes one walk's rows; one that makes atoms (the parts in its head, interned) walks whole, so its new atoms' ids
 /// do not follow the threads' timing.
 #[test]

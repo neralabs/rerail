@@ -248,11 +248,18 @@ struct P<'a> {
     far: u32,
     /// In a `case` label, outside brackets: `x ->` ends the label, no lambda.
     no_lambda: bool,
+    /// Where the last parentheses around a name alone (`(a)`) end; `u32::MAX` before any.
+    lone_paren: u32,
+    /// The token after the last binary `+` or `-`; `usize::MAX` before any.
+    additive: usize,
 }
 
 /// `src` parsed.
 pub fn parse(src: &[u8]) -> R<Tape> {
     let lx = Lexer::new(src);
+    if let Some(at) = lx.blocks.first_nul() {
+        return Err(Refusal::Lex(at as u32));
+    }
     let mut widths = Widths::guess(src.len());
     loop {
         let mut p = P {
@@ -260,7 +267,8 @@ pub fn parse(src: &[u8]) -> R<Tape> {
             lx: &lx,
             toks: Vec::with_capacity(src.len() / 4 + 4),
             i: 0,
-            next: 0,
+            // A byte-order mark: tree-sitter's lexer passes it.
+            next: if src.starts_with("\u{feff}".as_bytes()) { 3 } else { 0 },
             extras: Vec::new(),
             e: 0,
             w: Writer::new(0, widths, src.len() / 3 + 16),
@@ -268,6 +276,8 @@ pub fn parse(src: &[u8]) -> R<Tape> {
             depth: 0,
             far: 0,
             no_lambda: false,
+            lone_paren: u32::MAX,
+            additive: usize::MAX,
         };
         if let Err(r) = p.program() {
             return Err(match r {
@@ -783,9 +793,9 @@ impl<'a> P<'a> {
     // ---- The file.
 
     fn program(&mut self) -> R<()> {
-        // The root starts at its first token or comment (past the file's leading white space).
+        // The root starts at its first token or comment (past the file's leading white space; at
+        // the end in a file of white space alone).
         let first = self.tok().start.min(self.extras.first().map_or(u32::MAX, |x| x.start));
-        let first = if self.tok().kind == T::Eof && self.extras.is_empty() { 0 } else { first };
         let root = self.w.push(key(K::Program, f::NONE, C_NONE, false), first);
         while self.peek() != T::Eof {
             self.toplevel()?;

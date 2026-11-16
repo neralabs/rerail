@@ -77,6 +77,7 @@ fn make(path: &Path) {
         .name("store template".into())
         // Test plumbing, not a run's SQL: the strict mode (`RERAIL_SQL_STRICT`) leaves it alone.
         .spawn(move || {
+            // Its runs skip `ready` (they fill the template), and take nothing the thread that waits on them holds.
             FILLING.with(|f| f.set(true));
             crate::code_rule_dsl::logic::profile::behind(|| fill(&filling))
         })
