@@ -3,8 +3,8 @@
 //! character repeats) runs on fancy-regex, a backtracking engine, with a backtrack limit and a cap
 //! on the text it reads; past either the verdict is unknown.
 
+use crate::code_rule_dsl::regexes::Regex;
 use crate::code_rule_dsl::value::MAX_STRING_BYTES;
-use regex::Regex;
 use regex_syntax::ast::ErrorKind;
 
 /// Backtracking steps one match may take.
@@ -12,6 +12,7 @@ pub(crate) const BACKTRACK_LIMIT: usize = 1_000_000;
 
 #[derive(Clone, Debug)]
 pub(crate) enum TextRegex {
+    /// Shared with every other term of the same pattern (`regexes`).
     Plain(Regex),
     /// A pattern with backreferences.
     Backreferences(fancy_regex::Regex),

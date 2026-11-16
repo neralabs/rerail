@@ -23,6 +23,7 @@ mod placement;
 #[cfg(feature = "code-rule-profile")]
 mod profile;
 mod query;
+mod regexes;
 mod scope;
 mod semver;
 mod soundness;
@@ -87,6 +88,8 @@ impl CodeRuleDslRuntime {
         let canonical_value = canonicalize_value(document);
         let canonical = serde_json::to_string(&canonical_value).map_err(json_error)?;
         let digest = format!("sha256:{}", hex_digest(canonical.as_bytes()));
+        // The regexes only validation took, or a rejected document's, go as this ends (`regexes`).
+        let _compiling = regexes::compiling();
         let (id, rule_mode, scope, clauses, required) =
             compile_document(&canonical_value, &capabilities)?;
         Ok(CompiledCodeRuleDsl {

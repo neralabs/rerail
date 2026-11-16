@@ -415,26 +415,39 @@ export async function readDaemonState(stateFile: string, platform: NodeJS.Platfo
   }
 }
 
+/** How {@link probeDaemon} asks the daemon. */
+export interface DaemonProbeOptions {
+  /** Another transport than the daemon's own (`daemonFetch`), as the MCP bridge's tests pass. */
+  readonly fetchImpl?: DaemonFetch | undefined;
+  /** How long it waits for the answer; a caller that can wait out a busy daemon passes more. */
+  readonly timeoutMs?: number;
+}
+
 /**
  * What the daemon `state` records answers on `/healthz`, with the capability it records, over its own transport
- * (`daemonFetch`) unless `fetchImpl` names another, as the MCP bridge's tests do. A `401` is a refusal, kept apart from
- * silence: the daemon is up, and "not answering" would send the person after the wrong cause.
+ * unless `fetchImpl` names another. A `401` is a refusal, kept apart from silence: the daemon is up, and "not
+ * answering" would send the person after the wrong cause.
  */
 export async function probeDaemon(
   state: Pick<DaemonState, "url" | "accessToken" | "tlsFingerprint256">,
-  fetchImpl?: DaemonFetch,
-  timeoutMs: number = PROBE_TIMEOUT_MS,
+  { fetchImpl, timeoutMs = PROBE_TIMEOUT_MS }: DaemonProbeOptions = {},
 ): Promise<DaemonProbe> {
   try {
     const endpoint = daemonEndpoint(state, "/healthz");
     const response = await (fetchImpl ?? endpoint.fetch)(endpoint.url, { headers: endpoint.headers, signal: AbortSignal.timeout(timeoutMs) });
-    if (response.status === 401) return { status: "refused" };
-    if (!response.ok) return { status: "unreachable" };
-    const body = await response.json() as DaemonHealth;
-    return body.status === "ok" ? { status: "ok", health: body } : { status: "unreachable" };
+    // Awaited here, so a body that cannot be read is caught below as no answer.
+    return await probeAnswer(response);
   } catch {
     return { status: "unreachable" };
   }
+}
+
+/** What a daemon's answer on `/healthz` makes of it ({@link probeDaemon}); a body that cannot be read throws. */
+async function probeAnswer(response: Response): Promise<DaemonProbe> {
+  if (response.status === 401) return { status: "refused" };
+  if (!response.ok) return { status: "unreachable" };
+  const body = await response.json() as DaemonHealth;
+  return body.status === "ok" ? { status: "ok", health: body } : { status: "unreachable" };
 }
 
 /** A process Node's spawn started, as daemon-control reads it: its pid, how it ended, and letting this process exit first. */
@@ -558,7 +571,7 @@ export function mainInstanceHolderRuns(directory: string, pid: number, machine: 
  * What a reader of a state file may make of the daemon it records ({@link recordedDaemon}): it may be this user's and
  * be sent the capability (`alive`), it cannot be (`gone`), or its engine said nothing to the proof in time (`silent`).
  */
-type RecordedDaemon = "alive" | "gone" | "silent";
+export type RecordedDaemon = "alive" | "gone" | "silent";
 
 /** What an engine's answer to the proof makes of the daemon a Windows state records ({@link windowsRecordedDaemon}). */
 const PROOF_VERDICT: Readonly<Record<EngineProofAnswer, RecordedDaemon>> = { proved: "alive", refused: "gone", silent: "silent" };
@@ -594,11 +607,19 @@ async function windowsRecordedDaemon(state: DaemonState, signalable: boolean, ma
 }
 
 /**
+ * What may be made now of the daemon `state` records ({@link recordedDaemon}), for a reader that tells a busy daemon
+ * (`silent`, sent nothing) from one that is gone.
+ */
+export async function recordedDaemonStatus(state: DaemonState, machine: DaemonMachine = THIS_MACHINE): Promise<RecordedDaemon> {
+  return await recordedDaemon(state, machine, PROBE_TIMEOUT_MS);
+}
+
+/**
  * Whether the daemon `state` records may be sent the capability now ({@link recordedDaemon}); one whose engine is
  * silent may not.
  */
 export async function recordedDaemonAlive(state: DaemonState, machine: DaemonMachine = THIS_MACHINE): Promise<boolean> {
-  return await recordedDaemon(state, machine, PROBE_TIMEOUT_MS) === "alive";
+  return await recordedDaemonStatus(state, machine) === "alive";
 }
 
 /**
@@ -628,7 +649,7 @@ export async function lookupDaemon(
 
 /** What the health probe of the daemon `state` records, which may be sent the capability, makes of it within `timeoutMs`. */
 async function probedLookup(stateFile: string, state: DaemonState, timeoutMs: number): Promise<DaemonLookup> {
-  const probe = await probeDaemon(state, undefined, timeoutMs);
+  const probe = await probeDaemon(state, { timeoutMs });
   if (probe.status === "refused") return { status: "refused", state };
   if (probe.status === "unreachable") return { status: "unresponsive", state };
   if (probe.health.pid !== state.pid) {

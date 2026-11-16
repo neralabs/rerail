@@ -674,10 +674,13 @@ read it first and replace anything you'd rather not post with `<redacted>`.
 - `--output <file>` writes elsewhere. The file is readable by your user only.
 - It covers the repository's latest session; `--session <id>` names another (the id is in its dashboard address).
 - It works where Rerail won't start or set-up never finished, and says which parts it could not read.
+- A daemon that misses the first 2-second health check gets 10 more seconds to answer before the bundle calls it
+  unresponsive; one that answers is recorded with how long it took. The file is written before that wait, calling the
+  daemon unresponsive, and again after it, so a command stopped while it waits still leaves a bundle.
 
 | In the file | Left out |
 | --- | --- |
-| Rerail, Node and OS versions; daemon and engine health; connected agents | Your prompts and the agent's replies |
+| Rerail, Node and OS versions; whether Rerail runs from its managed install; daemon and engine health; connected agents | Your prompts and the agent's replies |
 | Installed packs and load failures; the repository's state; rule ids and modes | Tool input and output; source code |
 | Session timeline: event kinds, tool names, times, what it dropped or could not check | Rule text; a violation's message, captures and fix |
 | Steers as the agent got them; violations by rule, file and line | Paths named like secrets |
@@ -699,12 +702,17 @@ Report a vulnerability through [SECURITY.md](../SECURITY.md) instead.
 ## Removing Rerail completely
 
 `rerail install --remove` deletes the installation and keeps your settings, data and backups for you to delete.
+`rerail install --remove --delete-data` deletes those too, and `~/.rerail` itself; it cannot be undone.
 
-It names what it kept; delete those too to remove everything:
+What `--remove` keeps, and names:
 
 - **`~/.rerail`**: Rerail's settings, logs and records, such as `consent.json` and `daemon.log`.
 - **`~/.rerail-clean-YYYYMMDD/`**: your rules and history.
 - **`<file>.<timestamp>.bak`** copies beside every agent config file it changed.
+
+`--delete-data` keeps only what it cannot reach, such as those `.bak` copies, which hold your own settings, and
+names each with the command that deletes it. Both lists in full:
+[What each removal leaves behind](how-setup-works.md#what-each-removal-leaves-behind).
 
 <details>
 <summary>Steps it runs, shared folders, and what it prints</summary>

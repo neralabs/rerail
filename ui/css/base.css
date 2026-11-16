@@ -117,6 +117,8 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .mono{font-family:var(--font-mono);font-size:12px}
 .num{font-variant-numeric:tabular-nums}
 .dim,.muted{color:var(--muted-foreground)}
+/* Text read only by a screen reader: the menu toggle's name, and Merge Assist's "into", Ready / Note and side names. */
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 code{font-family:var(--font-mono);font-size:12px;background:var(--subtle);padding:1px 6px;border-radius:var(--radius-md);color:var(--foreground)}
 .ico{flex:none}
 
@@ -142,7 +144,6 @@ body[data-scrolled="1"] .topbar{box-shadow:var(--bar-shadow)}
  * and the toggle hangs in it, so the wordmark sits on the content edge like everything below it. */
 .navtoggle{display:inline-flex;align-items:center;justify-content:center;flex:none;width:32px;height:32px;margin:0 -2px 0 -8px;border-radius:50%;color:var(--muted-foreground)}
 .navtoggle:hover{background:var(--subtle);color:var(--foreground)}
-.navtoggle .lbl{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 @media (min-width:1100px){ .navtoggle{margin-left:calc(8px - var(--gutter));margin-right:calc(var(--gutter) - 58px)} }
 html[data-nav="hidden"] .cwrap{display:block}
 html[data-nav="hidden"] #sidenav{display:none!important}

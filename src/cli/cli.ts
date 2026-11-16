@@ -71,6 +71,7 @@ import { runRuleDraftCommand } from "./rule-draft.js";
 import { runRuleEvidenceCommand } from "./rule-evidence.js";
 import { runRuleApproveCommand } from "./rule-approval-cli.js";
 import { runShowMeCommand } from "./show-me.js";
+import { runMergeAssistCommand } from "./merge-assist-cli.js";
 import { runSupportBundleCommand } from "./support-bundle.js";
 import { runPacksCommand } from "./packs-cli.js";
 import { runFeedbackCommand } from "./feedback-cli.js";
@@ -204,6 +205,8 @@ function usage(): string {
     "  rerail remote push [--json]",
     "  rerail remote exclude|include [--repo <dir>]",
     "  rerail settings --session <id> --steer-strategy message|rewind|subagent   experimental: takes effect with RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1",
+    "  rerail merge-assist [status|on|off|scan|conflicts|dismiss <conflict-id>] [--repo <dir>] [--json]   experimental: needs RERAIL_EXPERIMENTAL_MERGE_ASSIST=1",
+    "  rerail merge-assist settings [--hook-command '<json argv>' | --no-hook] [--hook-timeout <seconds>] [--repo <dir>] [--json]   experimental: needs RERAIL_EXPERIMENTAL_MERGE_ASSIST=1",
     "  rerail [--profile <name>] events",
     "  rerail [--profile <name>] activate --file <profile.jws> --trust-root <roots.json>",
     "  rerail [--profile <name>] activate --code <code> --activation-url <url> --trust-root <roots.json>",
@@ -692,9 +695,9 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   const commandArgs = takeOption(args, "--profile").args;
   const command = commandArgs[0];
   // `setup` installs the package it was invoked from, so it must not forward to an older active version.
-  // `seed`, `rules`, `show-me`, `reset`, `scrub` and `feedback` write the Rerail database with the invoking package's schema (a checkout build, say).
+  // `seed`, `rules`, `show-me`, `reset`, `scrub`, `feedback` and `merge-assist` write the Rerail database with the invoking package's schema (a checkout build, say).
   // `support-bundle` reports the version it was invoked as, and has to run where the active version cannot.
-  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "scrub", "support-bundle", "feedback", "remote"].includes(command ?? "")) return true;
+  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "scrub", "merge-assist", "support-bundle", "feedback", "remote"].includes(command ?? "")) return true;
   // A headless `scan` (no `--session`) runs in this process, so it scans with the package invoked.
   if (command === "scan") return !commandArgs.includes("--session");
   if (command === "daemon") return commandArgs[1] === "stop";
@@ -819,6 +822,8 @@ async function runProjectCommand(command: string, args: readonly string[], { hom
     case "scan":
     case "settings":
       return await runAuditCommand(command, args, { home, version: packageVersion });
+    // Internal testing: Merge Assist.
+    case "merge-assist": return await runMergeAssistCommand(args, usage);
     // Internal testing: the remote sink.
     case "remote": return await runRemoteCommand(args, { home });
     // `daemon`, `status` and `manage`.

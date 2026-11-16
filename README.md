@@ -143,7 +143,7 @@ Every agent gets the same commands; Codex has them as `$rerail-*` skills:
 | `/rerail-bug-report` | Work out what went wrong: fix your own rule, or report a Rerail bug in an issue |
 | `/rerail-manage` | Open the dashboard |
 | `/rerail-update` | Update Rerail to the newest version |
-| `/rerail-uninstall` | Remove Rerail from this computer; rules and history are kept in a backup |
+| `/rerail-uninstall` | Remove Rerail from this computer, keeping your rules and history in a backup or deleting everything |
 
 Everything else is a `rerail` terminal command: `rerail status`, `rerail version`, `rerail update check`, `rerail reset`. Run `rerail --help` for the full list. In Claude Code, OMP and Pi the status line shows `R E R A I L ● <n> rules`, and how many times Rerail steered, while Rerail is on; see [In-session surfaces](docs/in-session-surfaces.md).
 

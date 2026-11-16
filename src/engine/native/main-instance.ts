@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { replaceFileSync } from "../file-replace.js";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { join, resolve } from "node:path";
 import { loadNativeBinding, type NativeExclusiveFileLock } from "./native.js";
-import { mainContentStoreDirectory, type RerailBuild } from "./rerail-build.js";
+import { isInMainContentStoreDirectory, mainContentStoreDirectory, type RerailBuild } from "./rerail-build.js";
 
 /**
  * At most one main Rerail instance runs on a machine: the main daemon, which alone opens the machine-wide
@@ -142,11 +142,8 @@ export function acquireMainInstance(build: MainRerailBuild, directory: string = 
  * main store whatever `RERAIL_CONTENT_STORE_PATH` says; they reach it only through the main daemon.
  */
 export function assertContentStoreOwner(storePath: string): void {
-  const directory = resolve(mainContentStoreDirectory());
-  const path = relative(directory, resolve(storePath));
-  const insideMainDirectory = path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
-  if (!insideMainDirectory) return;
-  if (held !== undefined && resolve(held.directory) === directory) return;
+  if (!isInMainContentStoreDirectory(storePath)) return;
+  if (held !== undefined && resolve(held.directory) === resolve(mainContentStoreDirectory())) return;
   throw new Error(
     `The machine-wide Rerail content store ${storePath} belongs to the main Rerail daemon, and process ${process.pid} is not it. ` +
       "Main harness processes evaluate policies through the daemon; dev builds use their checkout's own store.",
