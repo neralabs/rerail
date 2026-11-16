@@ -76,6 +76,7 @@ describe("the report", () => {
     runs: { main: 6, candidate: 6 },
     rules: { main: 3, candidate: 3 },
     drill,
+    cost: null,
   });
   const verdict = (packs: Verdict["candidates"][number]["packs"]): Verdict => ({
     tolerancePercent: 10,

@@ -5,6 +5,7 @@
 // counted. Pure functions; report.ts renders the Markdown.
 
 import type { Candidate, CellVerdict, Corpus, MeasuredMetric, PackVerdict, RuleTiming, Verdict } from "./shipbar.js";
+import { type CellCost, KNOWN_GAPS, type RuleMultiple, ruleMultiples } from "./metric.js";
 import { median, spread, TOLERANCE_PERCENT } from "./verdict.js";
 
 export const SCHEMA = "ship-no-ship/report/v1";
@@ -38,6 +39,9 @@ export interface RuleItem {
   added_ms: number | null;
   /** added_ms over the cell's total added time, when that total is positive. */
   share: number | null;
+  /** metric.ts: its time alone over the cell's median rule's, each side; informational. */
+  multiple?: RuleMultiple["multiple"];
+  flags?: string[];
 }
 
 export interface DrillItem {
@@ -77,11 +81,13 @@ export interface CellItem {
   load: { baseline: number[]; candidate: number[] };
   sibling_busy_max: number;
   reproduce: string;
+  /** metric.ts: start-up, net times, phases and workload; reported beside the gross metrics, never a status. */
+  cost: CellCost | null;
 }
 
 export interface PackSummary {
   /** Each corpus's wall-cold ratio and status: the pack table's two columns. */
-  wall_cold: Partial<Record<Corpus, { ratio: number | null; status: ItemStatus; completed: boolean }>>;
+  wall_cold: Partial<Record<Corpus, { ratio: number | null; status: ItemStatus; completed: boolean; net_ratio: number | null }>>;
   /** The failing metric with the highest ratio, else the highest ratio of any metric. */
   worst: { id: string; corpus: Corpus; metric: string; ratio: number; status: ItemStatus } | null;
   findings: "same" | "no_worse" | "worse" | "not_compared";
@@ -129,7 +135,7 @@ export interface Report {
   bar: { max_ratio: number; runs_per_side: number; confirm_runs: number; drill_reps: number; caps: { memory: string[]; time_s: number[] }; pinned_cpus: string[]; threads: number[] };
   verdict: { status: "PASS" | "FAIL" | "INCOMPLETE"; gate: Candidate[]; candidates: Partial<Record<Candidate, { status: CandidateItem["status"]; failing_packs: number; failing_items: number }>> };
   candidates: CandidateItem[];
-  scope: { measured: string[]; not_measured: string[] };
+  scope: { measured: string[]; not_measured: string[]; known_gaps: string[] };
 }
 
 // ---------------------------------------------------------------- statuses
@@ -223,7 +229,10 @@ function metricItem(prefix: string, measured: MeasuredMetric): MetricItem {
 function drillItem(cell: CellVerdict): DrillItem | null {
   if (cell.drill === null) return null;
   const { rules, totalAddedMs } = attribute(cell.drill.rules);
-  return { measure: cell.drill.measure, reps: cell.drill.reps, startup: { baseline_ms: cell.drill.startup.main, candidate_ms: cell.drill.startup.candidate }, total_added_ms: totalAddedMs, rules };
+  const startup = { baseline_ms: cell.drill.startup.main, candidate_ms: cell.drill.startup.candidate };
+  const multiples = ruleMultiples(rules, startup);
+  for (const r of rules) Object.assign(r, multiples.get(r.rule));
+  return { measure: cell.drill.measure, reps: cell.drill.reps, startup, total_added_ms: totalAddedMs, rules };
 }
 
 function counts(c: { tp: number; fp: number; fn: number; explainedFp: number; explainedFn: number }): Counts {
@@ -269,6 +278,7 @@ function cellItem(candidate: Candidate, pack: string, cell: CellVerdict, reprodu
     load: { baseline: cell.load.main, candidate: cell.load.candidate },
     sibling_busy_max: cell.siblingBusyMax,
     reproduce: `npm run bench:ship -- run --baseline ${reproduce.baseline} --packs ${pack} --corpus ${cell.corpus} --candidates ${candidate} --runs ${reproduce.runs} --out <dir>`,
+    cost: cell.cost,
   };
 }
 
@@ -277,7 +287,7 @@ export function packSummary(cells: readonly CellItem[]): PackSummary {
   const wallCold: PackSummary["wall_cold"] = {};
   for (const cell of cells) {
     const metric = cell.metrics.find((m) => m.metric === "wall-cold");
-    wallCold[cell.corpus] = { ratio: metric?.ratio ?? null, status: metric?.status ?? cell.status, completed: cell.completion === null || cell.completion.status !== "fail" };
+    wallCold[cell.corpus] = { ratio: metric?.ratio ?? null, status: metric?.status ?? cell.status, completed: cell.completion === null || cell.completion.status !== "fail", net_ratio: cell.cost?.net.find((n) => n.metric === "wall-cold")?.ratio ?? null };
   }
   const all = cells.flatMap((cell) => cell.metrics.filter((m) => m.ratio !== null && Number.isFinite(m.ratio)).map((m) => ({ cell, m })));
   const failing = all.filter(({ m }) => m.status === "fail");
@@ -378,6 +388,7 @@ export function buildReport(verdict: Verdict, meta: RunMeta): Report {
     scope: {
       measured: ["every pack the baseline ships, all of its rules enabled together, on its upstream fixtures and one pinned real-code corpus: wall, CPU and peak RSS, cold and warm; findings; completion; coverage"],
       not_measured: ["user waits through hooks, daemon and CLI (W1–W8)", "a repository's whole enabled rule set across packs, and the rule work budget", "macOS and Windows"],
+      known_gaps: KNOWN_GAPS,
     },
   };
 }
