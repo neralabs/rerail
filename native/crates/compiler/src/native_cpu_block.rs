@@ -3338,12 +3338,13 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             (Some((_, _, set)), Some(_), RunForm::Bytes) if set[0] & 1 == 0 => RunForm::Bytes,
             _ => RunForm::Window,
         };
-        // A token of the window's 16 bytes at most; of the block's 64 by its word; any by its
-        // bytes.
+        // A token of the window's 16 bytes at most; of the block's 64 by its word. By its bytes
+        // a run of any length, but its tests as the window's: a longer token takes the whole
+        // rule's way, cold, as lean's `end - pos < 19 || parse()` (its tests made inline would
+        // read the block's words past the token, a call the arm does not make).
         let most = match term_form {
-            RunForm::Window => most16,
+            RunForm::Window | RunForm::Bytes => most16,
             RunForm::Block => most16.map(|_| 64),
-            RunForm::Bytes => None,
         };
         let window: Option<Vec<Value>> = match (rule, rd.bytes) {
             (EndRule::Run(o), Some((b, file))) if !run_outs.is_empty() || split.is_some() && term_form == RunForm::Window => {
@@ -3542,15 +3543,29 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                                                 f.switch_to_block(out);
                                                 f.block_params(out)[0]
                                             };
+                                            // A token past `most` bytes: the whole rule's way.
+                                            let within = |f: &mut FunctionBuilder<'_>, e: Value| {
+                                                if let Some(m) = most {
+                                                    let n = f.ins().isub(e, s);
+                                                    let fits = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, n, i64::from(m));
+                                                    let go = f.create_block();
+                                                    f.ins().brif(fits, go, &[], long, &[]);
+                                                    f.switch_to_block(go);
+                                                }
+                                            };
                                             let e = run_bytes(f, i, heads);
                                             let l = f.ins().iadd_imm(e, -1);
                                             let more = b.rest_after(f, &file, o, a, e, before, heads);
-                                            let on = f.create_block();
+                                            let (on, end1) = (f.create_block(), f.create_block());
+                                            f.ins().brif(more, on, &[], end1, &[]);
+                                            f.switch_to_block(end1);
+                                            within(f, e);
                                             let (to, args) = way_end(f, 0, l);
-                                            f.ins().brif(more, on, &[], to, &args);
+                                            f.ins().jump(to, &args);
                                             f.switch_to_block(on);
                                             let from = f.ins().iadd_imm(e, 1);
                                             let e2 = run_bytes(f, from, heads);
+                                            within(f, e2);
                                             let again = b.rest_after(f, &file, o, a, e2, before2, heads);
                                             let l2 = f.ins().iadd_imm(e2, -1);
                                             let (to, args) = way_end(f, 1, l2);
@@ -4501,10 +4516,11 @@ fn run_tests(r: &crate::records::Records, b: &crate::native_cpu_bytes::Bytewise<
     v
 }
 
-/// How a split run's byte term runs (`Bytewise::run_split`), an experiment's switch
-/// (`RERAIL_RUN_FORM`): `window`, a 16-byte vector from the token's second byte (the default);
-/// `block`, the term's word made once a block with the loop's (`BlockRegs::terms`); `bytes`,
-/// a byte at a time, as lean's `while digit { end += 1 }` (a `Step::Bytes` loop).
+/// How a split run's byte term runs (`Bytewise::run_split`) on the CPU, by `RERAIL_RUN_FORM`:
+/// `bytes`, a byte at a time, as lean's `while digit { end += 1 }` (a `Step::Bytes` loop, the
+/// default: 0177, "A number's run is lean's loop"); `window`, a 16-byte vector from the
+/// token's second byte; `block`, the term's word made once a block with the loop's
+/// (`BlockRegs::terms`), the form for a target whose lanes must not diverge.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RunForm {
     Window,
@@ -4516,8 +4532,8 @@ pub fn run_form() -> RunForm {
     static FORM: std::sync::OnceLock<RunForm> = std::sync::OnceLock::new();
     *FORM.get_or_init(|| match std::env::var("RERAIL_RUN_FORM").as_deref() {
         Ok("block") => RunForm::Block,
-        Ok("bytes") => RunForm::Bytes,
-        _ => RunForm::Window,
+        Ok("window") => RunForm::Window,
+        _ => RunForm::Bytes,
     })
 }
 

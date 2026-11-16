@@ -1276,7 +1276,6 @@ fn byte_at(f: &mut FunctionBuilder<'_>, at: &File, i: Value) -> Value {
     f.ins().uload8(types::I64, MemFlags::trusted().with_readonly(), addr, 0)
 }
 
-/// Whether byte `b` is in the 256-bit set, 0 or 1.
 /// The byte at `i`, `back` before a scalar test's position, read once among its tests
 /// (`scalar`'s memo, under a key no instruction has), as a lexer reads `b[end]` once.
 fn byte_once(f: &mut FunctionBuilder<'_>, at: &File, i: Value, back: i64, memo: &mut HashMap<(usize, i64), Value>) -> Value {
@@ -1288,6 +1287,7 @@ fn byte_once(f: &mut FunctionBuilder<'_>, at: &File, i: Value, back: i64, memo: 
     v
 }
 
+/// Whether byte `b` is in the 256-bit set, 0 or 1.
 fn in_set(f: &mut FunctionBuilder<'_>, b: Value, set: [u64; 4]) -> Value {
     // One byte: a compare, as a lexer's `b == c`. A run of bytes: a subtract and a compare,
     // as lean's `is_ascii_digit` (0177, "A number's run ends as lean's": the set's word was

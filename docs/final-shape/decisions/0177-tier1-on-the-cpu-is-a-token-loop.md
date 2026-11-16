@@ -3239,3 +3239,52 @@ mask is what a GPU makes anyway. If Metal gets a number arm, the
 `block` form is the one to try there.
 
 The default stays `window` until the user chooses.
+
+## A number's run is lean's loop
+
+**Intro.** The user chose `bytes` as the CPU's form of a split run's
+term: the generated code is lean's `while digit { end += 1 }`, and it
+costs nothing a block. `window` and `block` stay behind the switch
+(`RERAIL_RUN_FORM=window`, `=block`); `block` is the form for a
+target whose lanes must not diverge.
+
+This narrows the rule that the compiler refuses per-byte loops. The
+one byte loop allowed is a run of bytes, and the shape guard checks
+its shape rather than trusting the name (`native_cpu_shape::run_of_bytes`):
+
+- one block, whose one parameter is the position;
+- one byte load, at the position, and no store or call;
+- a branch on that byte, back to the block at the position plus one.
+
+A loop that carries more than its position (a sum over bytes), ends
+by a count instead of its byte, or steps more than one byte is still
+refused (`Refusal::Bytes`). Every other loop must still be over a
+file, a block, a token, a region or bits.
+
+```rust
+// Allowed (lean's lexer, and the generated arm):
+while b[end].is_ascii_digit() { end += 1 }
+// Refused, named Step::Bytes or not:
+for i in 0..n { sum += b[i] }
+```
+
+The run reads any length, but the arm's tests stay those of a token
+of 16 bytes at most, as in `window`: a longer number takes the whole
+rule's call, cold, as lean's `end - pos < 19 || parse()`. Without
+that cap the 19-digit test was made inline from the block's digit
+words (a call of the block-mask function). The short form then called
+something besides its whole function, so it was no arm, and every
+number called the rule's function. That is how the `bytes` form was
+first measured.
+
+Measured, as information (one run, load average high): numbers 112.8
+instructions and 19.2 cycles a token, lean's 107.3 and 22.5. The
+other kinds are as before.
+
+Still not lean's: a number's leading-zero test is a cold check gated by
+the entry again, reading `b[s]` and `b[s + 1]`. In `window` it read the
+mask's first lane; the byte loop has no lanes to read.
+
+Tests: `native_cpu_shape::tests::only_a_run_of_bytes_is_a_bytes_loop`;
+`a_numbers_arm_is_leans_loop` (the generated Rust: two `loop`s, no
+vector load, one call, cold), which replaces `a_numbers_arm_reads_one_window`.

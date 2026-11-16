@@ -452,13 +452,13 @@ fn a_slashs_arm_is_leans() {
     assert!(!arm.contains("as i64).max("), "a `max` in the `/` arm");
 }
 
-/// The number arm reads like lean's: its digits' run from one window of the bytes after the
-/// first, and `.` and a digit asked at the run's end (`Bytewise::run_split`), not a window of
-/// the bytes before and one after for the `prev` and the next of every byte; its end's tests
-/// lean's, no digit asked again where the run ended; its `.` known by its way, its leading
-/// zero asked of its first digit's lane, inline.
+/// The number arm is lean's: `while digit { end += 1 }`, a byte a turn (`RunForm::Bytes`), and
+/// `.` and a digit asked at the run's end (`Bytewise::run_split`), then the second `while`; no
+/// window of the bytes before and after for the `prev` and the next of every byte, no digit set's
+/// word, its `.` known by its way; a token past 16 bytes the whole rule's call, cold, as lean's
+/// `end - pos < 19 || parse()`.
 #[test]
-fn a_numbers_arm_reads_one_window() {
+fn a_numbers_arm_is_leans_loop() {
     let src = include_str!("tier1_aot.rs");
     let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
     let m = f0.find(" { 34 => {").expect("the rules' match");
@@ -484,14 +484,16 @@ fn a_numbers_arm_reads_one_window() {
     }
     let rest = &f0[close..];
     let arm = &rest[..rest.find("core::ptr::write_unaligned").expect("the record's write")];
-    assert_eq!(arm.matches("vld1q_u8").count(), 1, "the number arm's windows: {arm}");
+    assert_eq!(arm.matches("loop {").count(), 2, "the number arm's `while digit` loops: {arm}");
+    assert!(!arm.contains("vld1q_u8"), "a window in the number arm: {arm}");
+    // Its one call, the whole rule's, cold.
+    assert_eq!(arm.matches("unsafe { f").count(), 1, "the number arm's calls: {arm}");
+    assert!(arm.contains("core::hint::cold_path();\nlet t = unsafe { f"), "the whole rule's call not cold: {arm}");
     // A digit asked as lean's `is_ascii_digit`, a subtract and a compare, not a set's word.
     let digits: u64 = (b'0'..=b'9').fold(0, |m, b| m | 1 << b);
     assert!(!arm.contains(&format!("{}i64", digits as i64)), "a digit set's word in the number arm: {arm}");
     // Its `.` known by the way it took (`split_counts`), not counted over a mask of the window.
     assert!(!arm.contains("vceqq_u8") && !arm.contains("count_ones"), "a count of the number's `.`: {arm}");
-    // A leading zero asked inline of the digits' first lane: the long way's call alone cold.
-    assert_eq!(arm.matches("cold_path").count(), 1, "a cold test in the number arm: {arm}");
 }
 
 /// The loop's next start is the block's base and the starts' next bit, as lean's `base + q`:
