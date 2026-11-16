@@ -365,6 +365,7 @@ pub fn prepared_of(
         cone: Default::default(),
         maintained: Default::default(),
         parts: Default::default(),
+        general: Default::default(),
     })
 }
 

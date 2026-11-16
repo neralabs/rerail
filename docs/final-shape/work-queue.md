@@ -530,6 +530,17 @@ pass.
 - **Done when**: every edit after the first finds its kept inputs, and taking them costs less than decoding the
   hits whole.
 
+### Q35. Store the general forms through 0281 step 5's keyed preparation steps
+
+- **Keep**: 0298's general forms (steps 1–3, behind `RERAIL_GENERAL_FORMS`): every reached stratum not recursive
+  selects its rules from them, with the same rows as the forms written per run; 0281's pass manager and its keyed
+  steps (Typing-support), one way of storing every preparation step's output.
+- **Done when**: Typing-support's step 5 has landed and is merged here; the general forms are one keyed step of it
+  (key: the program's digest and `olds_signature`), read by a new process instead of written; the switch is the
+  default and removed; the edit's cross-file part costs about 0.29 s less than today's (0298's table), with the
+  same rows on the five steps.
+- **Record**: the user's call (2026-11-16): watch Typing-support until step 5 is done, then integrate here.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives

@@ -1494,6 +1494,69 @@ fn drivers(p: &Placed, scc: &BTreeSet<String>, reads: &BTreeSet<String>) -> Vec<
     out
 }
 
+/// Every stratum's general form of a maintained cross-file part (decision 0298), written once for the part, over its
+/// version: by stratum (its relations, joined by `,`). A stratum made natively (but a text test) has none.
+pub(in crate::code_rule_dsl) struct GeneralForms {
+    pub(in crate::code_rule_dsl) by_stratum: HashMap<String, General>,
+}
+
+/// The signature of the old rows `olds` takes as kept among `part`'s relations: general forms written for one are
+/// those of every kept part with the same.
+pub(in crate::code_rule_dsl) fn olds_signature(part: &Placed, olds: &dyn Olds) -> Result<u64> {
+    use std::hash::{Hash, Hasher};
+    let f = Fields::of(part).ok_or_else(|| Error::Plan("a maintained part holds its rules alone".into()))?;
+    let v: &Version = &part.v;
+    let mut rels: BTreeSet<&str> = f.inputs().collect();
+    rels.extend((0..part.len()).map(|i| v.rel_name(part.rule(i).head().rel())));
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    rels.into_iter().filter(|r| olds.has_old(r)).for_each(|r| r.hash(&mut h));
+    Ok(h.finish())
+}
+
+/// The key of stratum `scc` in `GeneralForms`.
+pub(in crate::code_rule_dsl) fn stratum_key(scc: &BTreeSet<String>) -> String {
+    scc.iter().map(String::as_str).collect::<Vec<_>>().join(",")
+}
+
+/// What a part's general forms take as kept (decision 0298): the old rows the kept part holds, read or not yet
+/// (`Retained::holds_old`), and no levels, so a recursive stratum's general form is not by levels (a run writes it).
+pub(in crate::code_rule_dsl) struct Holds<'k>(pub(in crate::code_rule_dsl) &'k Retained);
+
+impl Olds for Holds<'_> {
+    fn has_old(&self, rel: &str) -> bool {
+        self.0.holds_old(rel)
+    }
+    fn levels(&self, _: &str) -> Option<(bool, (usize, usize, bool))> {
+        None
+    }
+}
+
+/// The general forms of `part`, a maintained cross-file part (decision 0298): each stratum's, once.
+/// `olds`: the old rows taken as kept (`Holds`).
+pub(in crate::code_rule_dsl) fn general_forms(part: &Placed, domains: &lower::Domains, olds: &dyn Olds) -> Result<GeneralForms> {
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "the general forms (decision 0298)".into());
+    let f = Fields::of(part).ok_or_else(|| Error::Plan("a maintained part holds its rules alone".into()))?;
+    let v: &Version = &part.v;
+    let mut by_head: HashMap<&str, Vec<usize>> = HashMap::new();
+    for i in 0..part.len() {
+        by_head.entry(v.rel_name(part.rule(i).head().rel())).or_default().push(i);
+    }
+    let atoms = Builder::under(v).finish().map_err(Error::Plan)?.0;
+    let mut by_stratum = HashMap::new();
+    for scc in part.components()?.iter() {
+        if scc.iter().any(|r| f.native(r).is_some_and(|n| !matches!(n.spec, NativeSpec::TextTest { .. }))) {
+            continue;
+        }
+        let rules: Vec<usize> = scc.iter().flat_map(|r| by_head.get(r.as_str()).into_iter().flatten().copied()).collect();
+        if rules.is_empty() {
+            continue;
+        }
+        let g = general(&atoms, part, &rules, scc, domains, olds, &|_| true)?;
+        by_stratum.insert(stratum_key(scc), g);
+    }
+    Ok(GeneralForms { by_stratum })
+}
+
 /// The places of `g`'s rules a stratum whose reads `moved` changed runs (decision 0298): those driven by a read in
 /// `moved`, and those every selection keeps. `None` where the general form does not cover `moved`.
 pub(in crate::code_rule_dsl) fn selected(g: &General, moved: &BTreeSet<String>) -> Option<Vec<usize>> {

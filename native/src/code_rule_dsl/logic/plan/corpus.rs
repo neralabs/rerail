@@ -842,6 +842,10 @@ pub struct Prepared {
     /// The run's file-local and cross-file parts, and its constants' program (`run_constants`), made by the first run
     /// for the constants it found (`once`): a later run finding the same ones shares them.
     pub(in crate::code_rule_dsl) parts: std::sync::OnceLock<(BTreeSet<String>, RunParts)>,
+    /// The maintained cross-file part's general forms (decision 0298), made by the first run that maintains it, for
+    /// the part and the old rows its kept part held (by digest, `olds_signature`): a later run of the same selects
+    /// from them.
+    pub(in crate::code_rule_dsl) general: std::sync::OnceLock<((u64, u64), std::result::Result<Arc<maintain::GeneralForms>, String>)>,
 }
 
 impl Prepared {
@@ -3394,7 +3398,7 @@ fn run_observed(
             }
             // One prepared program, shared by the process's cache, the store's writer and this run (each a copy before:
             // three of a 16 k-rule program's four forms at once, about 0.4 GB of the Python pack's peak).
-            let prepared = Arc::new(Prepared { prog, vocabulary: Arc::new(vocabulary), lowered, sets, matchers, demanded, pushed, factorized, located, merged, split, interned, documents: Default::default(), cone: Default::default(), maintained: Default::default(), parts: Default::default() });
+            let prepared = Arc::new(Prepared { prog, vocabulary: Arc::new(vocabulary), lowered, sets, matchers, demanded, pushed, factorized, located, merged, split, interned, documents: Default::default(), cone: Default::default(), maintained: Default::default(), parts: Default::default(), general: Default::default() });
             if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
                 eprintln!("RERAIL_PREPARED_TRACE ({}) {} {label}: prepared, durable {:?}", phases::current().unwrap_or_else(|| "main".into()), prepared_key[..6].iter().map(|b| format!("{b:02x}")).collect::<String>(), durable.map(|d| d.is_some()));
             }
@@ -3435,7 +3439,7 @@ fn run_observed(
         (false, _) if durable.is_some() => "prepared, and stored for later processes (decision 0073)".to_owned(),
         (false, _) => "prepared".to_owned(),
     });
-    let Prepared { prog, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), split: shared_split, interned: _, documents: _, cone: shared_cone, maintained: shared_maintained, parts: shared_parts } = &*prepared;
+    let Prepared { prog, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), split: shared_split, interned: _, documents: _, cone: shared_cone, maintained: shared_maintained, parts: shared_parts, general: shared_general } = &*prepared;
     let (remerged, reshared) = (*remerged, *reshared);
     // The run takes the split's programs apart (`part` below): its own copy, the kept one shared.
     let mut split = shared_split.clone();
@@ -8086,6 +8090,7 @@ fn run_observed(
                                 stats.lazily(rel, rows, Arc::new(crate::code_rule_dsl::logic::plan::Unbound { rel: rel.clone(), width, rows }));
                             }
                             let mut driver = Driver {
+                                general: general_forms_of(shared_general, cross, kept),
                                 cross,
                                 cross_placed: &cross_placed,
                                 kept,
@@ -9048,6 +9053,8 @@ pub(in crate::code_rule_dsl) struct Binder<'k> {
 /// reads bound here with their statistics, as the whole program's rewrite bound every one before the run.
 struct Driver<'d, 'k> {
     cross: &'d lower::Lowered,
+    /// `cross`'s general forms (decision 0298), where a reached stratum selects from them.
+    general: Option<Arc<maintain::GeneralForms>>,
     /// `cross`'s version: what the run reads of it.
     cross_placed: &'d super::body::Placed,
     kept: &'k retain::Retained,
@@ -9084,35 +9091,39 @@ fn general_forms() -> bool {
     std::env::var_os("RERAIL_GENERAL_FORMS").is_some()
 }
 
-/// Stratum `scc`'s form for the reads `moved` changed, selected from its general form (decision 0298): its rules
-/// those moved reads drive and those every selection keeps, a view of the general form's version with the run's own
-/// fields over it (its inputs: those the run binds, `run_input`, and the old rows). `None` where the general form
-/// does not stand for the form written for `moved`: it is not maintained, a moved read is not among its reads, or one
-/// has no delta (an earlier stratum derived again).
-#[allow(clippy::too_many_arguments)]
-fn general_selection(atoms: &Arc<crate::code_rule_dsl::logic::program_image::Version>, v0: &crate::code_rule_dsl::logic::plan::body::Placed, places: &[usize], scc: &BTreeSet<String>, moved: &BTreeSet<String>, domains: &lower::Domains, kept: &retain::Retained, has_delta: &dyn Fn(&str) -> bool, bound_old: &dyn Fn(&str) -> bool, run_input: &dyn Fn(&str) -> bool) -> Result<Option<maintain::Form>> {
+/// A stratum's form for the reads `moved` changed, selected from its general form `g` (decision 0298): its rules those
+/// moved reads drive and those every selection keeps, a view of the general form's version with the run's own fields
+/// over it (its inputs: those the run binds, `run_input`, and the old rows). `None` where `g` does not stand for the
+/// form written for `moved`: a moved read is not among its reads or has no delta (an earlier stratum derived again),
+/// the stratum is recursive (its form by levels is chosen from the kept rows), or an old row it reads is not kept.
+fn general_selection(g: &maintain::General, moved: &BTreeSet<String>, kept: &retain::Retained, has_delta: &dyn Fn(&str) -> bool, bound_old: &dyn Fn(&str) -> bool, run_input: &dyn Fn(&str) -> bool) -> Result<Option<maintain::Form>> {
     use crate::code_rule_dsl::logic::plan::body::Placed;
-    if moved.iter().any(|r| !has_delta(r)) {
+    if g.form.maintained == 0 || g.form.derived_again > 0 || g.form.recursive > 0 || moved.iter().any(|r| !has_delta(r)) {
         return Ok(None);
     }
-    let g = maintain::general(atoms, v0, places, scc, domains, kept, &|_| true)?;
-    if g.form.maintained == 0 || g.form.derived_again > 0 {
-        return Ok(None);
-    }
-    let Some(at) = maintain::selected(&g, moved) else { return Ok(None) };
+    let Some(at) = maintain::selected(g, moved) else { return Ok(None) };
     let pv = &g.form.placed;
-    let ids: std::collections::HashSet<crate::code_rule_dsl::logic::program_image::RuleId> = at.iter().map(|&k| pv.id(k)).collect();
     let read: BTreeSet<&str> = at.iter().flat_map(|&k| pv.rule(k).body().filter_map(|l| l.atom()).map(|a| pv.v.rel_name(a.rel())).collect::<Vec<_>>()).collect();
+    let mut old_reads = Vec::new();
+    for r in g.form.old_reads.iter().filter(|r| read.contains(format!("{r}__old").as_str()) && !bound_old(r)) {
+        if !kept.has_old(r) {
+            return Ok(None);
+        }
+        old_reads.push(r.clone());
+    }
+    let ids: std::collections::HashSet<crate::code_rule_dsl::logic::program_image::RuleId> = at.iter().map(|&k| pv.id(k)).collect();
     let f = crate::code_rule_dsl::logic::plan::fields::Fields::of(pv).ok_or_else(|| Error::Plan("a general form holds its rules alone".into()))?;
-    let inputs: Vec<&str> = f.inputs().filter(|r| read.contains(r) && (run_input(r) || r.ends_with("__old"))).collect();
+    // The inputs the form for `moved` would state: those the run binds and the old rows, less the deltas and old rows
+    // of the reads that did not move (no rule selected reads them).
+    let piece = |r: &str| r.ends_with("__old") || r.ends_with("__minus") || r.ends_with("__plus");
+    let inputs: Vec<&str> = f.inputs().filter(|r| (run_input(r) || r.ends_with("__old")) && (!piece(r) || read.contains(r))).collect();
     let outputs: Vec<&str> = f.outputs().collect();
     let all = |_: &str| true;
     let part = pv.v.part_rules(|id| ids.contains(&id), &inputs, &outputs, crate::code_rule_dsl::logic::program_image::PartFields { natives: &all, lattice: &all, gates: &all }).map_err(Error::Plan)?;
     let mut placed = Placed::whole(part);
     placed.maint = pv.maint.clone();
-    let old_reads = g.form.old_reads.iter().filter(|r| read.contains(format!("{r}__old").as_str()) && !bound_old(r)).cloned().collect();
-    let m = g.form;
-    Ok(Some(maintain::Form { placed, sources: Vec::new(), old_reads, maintained: m.maintained, derived_again: m.derived_again, recursive: m.recursive, again: m.again }))
+    let m = &g.form;
+    Ok(Some(maintain::Form { placed, sources: Vec::new(), old_reads, maintained: m.maintained, derived_again: m.derived_again, recursive: m.recursive, again: m.again.clone() }))
 }
 
 impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
@@ -9157,9 +9168,9 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
             Some(a) => Arc::clone(a),
             None => Arc::clone(self.atoms.insert(crate::code_rule_dsl::logic::program_image::Builder::under(&v0.v).finish().map_err(Error::Plan)?.0)),
         };
-        let selection = match general_forms() {
-            true => general_selection(&atoms, v0, &places, scc, moved, &self.cross.domains, self.kept, &|r| has_delta.contains(r), &|r| bound_olds.contains(r), &|r| inputs.contains(r))?,
-            false => None,
+        let selection = match self.general.as_ref().and_then(|g| g.by_stratum.get(&maintain::stratum_key(scc))) {
+            Some(g) => general_selection(g, moved, self.kept, &|r| has_delta.contains(r), &|r| bound_olds.contains(r), &|r| inputs.contains(r))?,
+            None => None,
         };
         let mut m = match selection {
             Some(m) => m,
@@ -10958,6 +10969,23 @@ fn set_qualifiers(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>, 
 
 /// `maintained_cross(cross)`, made once for a prepared program (`Prepared::maintained`) and shared: made again only
 /// for another part than the one kept (another digest) or other settings, and then not kept.
+/// The general forms of `cross`, the maintained cross-file part (decision 0298), for the old rows `kept` holds, from
+/// `slot` where it holds those; `None` where they are not used (`general_forms`) or cannot be written.
+fn general_forms_of(slot: &std::sync::OnceLock<((u64, u64), std::result::Result<Arc<maintain::GeneralForms>, String>)>, cross: &lower::Lowered, kept: &retain::Retained) -> Option<Arc<maintain::GeneralForms>> {
+    if !general_forms() {
+        return None;
+    }
+    let placed = cross.placed().ok()?;
+    let holds = maintain::Holds(kept);
+    let digest = (cross.digest().ok()?, maintain::olds_signature(&placed, &holds).ok()?);
+    let make = || -> std::result::Result<Arc<maintain::GeneralForms>, String> { maintain::general_forms(&placed, &cross.domains, &holds).map(Arc::new).map_err(|e| e.to_string()) };
+    match slot.get() {
+        Some((d, made)) if *d == digest => made.clone().ok(),
+        Some(_) => make().ok(),
+        None => slot.get_or_init(|| (digest, make())).1.clone().ok(),
+    }
+}
+
 fn maintained_cross_of(slot: &std::sync::OnceLock<(MaintainedOf, (lower::Lowered, Option<(usize, usize)>))>, cross: &lower::Lowered) -> (lower::Lowered, Option<(usize, usize)>) {
     let settings = [std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on"), maintain::levels_wanted(), supports::counting()];
     let Ok(digest) = cross.digest() else { return maintained_cross(cross) };
