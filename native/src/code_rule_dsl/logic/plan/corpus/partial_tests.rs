@@ -174,11 +174,10 @@ fn an_unchanged_directory_listing_is_no_change_of_the_cross_part() {
     listing_is_no_change(r#"s = cat("su", "b"), dir_entry(s, n, 0)"#);
 }
 
-/// A constant directory lowers to a request fact (`rr_dir_req("sub")`). The first run answers it (`world::asks`);
-/// the next fails: "rr_dir_req: kept as clean, but its rows are not kept" (work queue: a constant world request in
-/// the kept cross part).
+/// A constant directory lowers to a request fact (`rr_dir_req("sub")`), which no stratum derives: the stratum of
+/// its answers is not replayed from kept rows (none are kept of a fact) but runs, and the cross part's inputs are as
+/// they were.
 #[test]
-#[ignore = "a constant world request is not kept by the cross part (work queue)"]
 fn an_unchanged_constant_directory_listing_is_no_change_of_the_cross_part() {
     listing_is_no_change(r#"dir_entry("sub", n, 0)"#);
 }

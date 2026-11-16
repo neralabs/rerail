@@ -404,7 +404,9 @@ pass.
 - **Record**: fixed by the farm branch (24955f4e8, merged in the roll-up of 2026-11-15): a stubbed build script is
   a shell script, not a hard link of Relax's binary (`scripts/dev/relax/rerail.patch`), on upstream 5b2d68c2.
 
-### Q15. A constant world request in the kept cross part
+### Q16. A constant world request in the kept cross part
+
+(Numbered Q15 until the roll-up brought another Q15.)
 
 - **Found**: `dir_entry("sub", n, 0)` lowers to the request fact `rr_dir_req("sub")` (`rr::lower`'s `world_demand`).
   `world::wanted` and `world::answers` counted only request rules, so such a run failed ("no columns for
@@ -412,6 +414,10 @@ pass.
   fails: "rr_dir_req: kept as clean, but its rows are not kept".
 - **Done when**: `an_unchanged_constant_directory_listing_is_no_change_of_the_cross_part` (partial_tests.rs,
   ignored) passes, unignored.
+- **Record**: done. The failing stratum is `{dir_entry}`, the answers of a request below it: its clean replay
+  read the request's kept rows, but a request fact is no stratum's, so none are kept. Such a stratum is now not
+  clean and runs (plan.rs, before the replay: a request with no kept rows and no answers given). The test passes,
+  unignored; partial, session, base, reuse, world, answer and request tests pass.
 
 ## Questions for the user
 
