@@ -84,6 +84,26 @@ Measured, cold on hogql (the same 1,629 findings):
   is a kind bitmap. `Inside` and `Has` have several rows per node, so a count pass and a scan come before the
   scatter. A relation on the device is a set: no reader depends on the host's row ids.
 
+Then built for the axes the batch's solve answers (`nearest`, `inside`, `within`). The solve's pairs of node rows are
+copied into the chunk (`put_pairs`, 8 bytes a row, once per axis), and `view_expand` makes each pair's two ids
+(`VIEW_AXIS`). The per-value search of `Batch::id` goes. `has` is made per looked-up node and is uploaded as
+before. The check is the same test, which now also covers the three axes and checks that `has` stays on the host.
+
+Measured cold, with the same placement (7 strata) and the same findings:
+
+| | Uploads' host CPU | Views on the host | Views made on the device |
+|---|---|---|---|
+| Before | 48.2 ms | 30.2 MB in 39.8 ms | 6.7 MB in 2.0 ms |
+| After | 30.1 ms | 6.9 MB in 2.6 ms | 21.7 MB in 22.4 ms |
+
+Of the 22.4 ms, 14.4 ms is the axis solve, on the host and on Metal (`kind-set axis solved for the batch`), and
+5.3 ms is the chunk block's build (0.3 ms a batch). The copy and the kernel are the remaining ~2.7 ms.
+
+Next: the solve on the device, from the chunk. A kernel climbs each node's ancestors through the chunk's arrays
+against the axis's kind bitmap, counts each node's rows, scans the counts, and writes the pairs and the per-node
+starts into the chunk. The host reads them there in place (`lookup`, `value`). The host's gather of every node's
+parent and membership goes, and so does `Solved`'s copy. The chunk block's build goes with §3.
+
 ### 3. The host reads the block
 
 `Viewed`'s rows (`value_at`) read the same arrays in the block, so a view has one definition. The projection's and

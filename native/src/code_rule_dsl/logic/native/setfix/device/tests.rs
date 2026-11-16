@@ -615,7 +615,7 @@
             for cols in [(0..k).collect::<Vec<_>>(), vec![k - 1, 0]] {
                 let out = mj::DevRel::empty(cols.len(), n).unwrap();
                 let mut batch = mj::Batch::new().expect("the device");
-                batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, &cols, &out).unwrap();
+                batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, d.pairs, &cols, &out).unwrap();
                 batch.finish().unwrap();
                 for (j, &c) in cols.iter().enumerate() {
                     let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
@@ -625,5 +625,40 @@
             }
         }
         assert_eq!(seen, 8);
+        // The kind-set axes and containment, read whole: the batch's solve, its pairs made ids on the device.
+        use crate::code_rule_dsl::facts::vtab::syntax::within::{Axis, Mode, Within};
+        use crate::code_rule_dsl::facts::nearest::Binding;
+        use crate::code_rule_dsl::facts::vtab::Source as _;
+        // The engine registers the batch's nearest solve as it loads.
+        crate::code_rule_dsl::facts::nearest::install_nearest(crate::code_rule_dsl::typing::file_local::nearest);
+        let node = &all.iter().find(|(n, _)| *n == "node").unwrap().1;
+        let batch = node.python_batch().expect("the batch");
+        let mut kinds: Vec<i64> = (0..node.len()).map(|r| node.value(r, 2)).collect();
+        kinds.sort_unstable();
+        kinds.dedup();
+        let kinds: Vec<i64> = kinds.into_iter().step_by(3).collect();
+        let axes = [
+            ("nearest", Within::axis(Arc::clone(&batch), Axis::Nearest, &kinds, Binding::Cpu)),
+            ("inside", Within::axis(Arc::clone(&batch), Axis::Inside, &kinds, Binding::Cpu)),
+            ("within", Within::new(Arc::clone(&batch), Mode::Tree)),
+        ];
+        for (name, src) in &axes {
+            let n = src.len();
+            assert!(n > 0, "{name}: rows");
+            let d = src.device_view().unwrap_or_else(|| panic!("{name}: made on the device"));
+            assert_eq!(d.rows, n, "{name}");
+            for cols in [vec![0, 1], vec![1]] {
+                let out = mj::DevRel::empty(cols.len(), n).unwrap();
+                let mut batch = mj::Batch::new().expect("the device");
+                batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, d.pairs, &cols, &out).unwrap();
+                batch.finish().unwrap();
+                for (j, &c) in cols.iter().enumerate() {
+                    let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
+                    assert_eq!(out.column(j), &host[..], "{name}: column {c}");
+                }
+            }
+        }
+        // `has` is made per looked-up node, not by the batch's solve: uploaded as before.
+        assert!(Within::axis(Arc::clone(&batch), Axis::Has, &kinds, Binding::Cpu).device_view().is_none());
         let _ = std::fs::remove_file(&store_path);
     }

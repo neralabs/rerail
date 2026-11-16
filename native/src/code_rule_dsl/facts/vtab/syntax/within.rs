@@ -92,6 +92,10 @@ pub struct Within {
     chosen: std::sync::atomic::AtomicBool,
     /// The `n` side of every node, made once (`solved`).
     solved: OnceLock<Solved>,
+    /// The solve's pairs copied into the batch's chunk block for the device (decision 0289 §2): their offset, or
+    /// `None` when the block cannot hold them.
+    #[cfg(target_os = "macos")]
+    on_device: OnceLock<Option<usize>>,
 }
 
 /// An axis's `n` side for every node of the batch: per node row its run in `pairs` (`start[row]..start[row + 1]`),
@@ -132,6 +136,8 @@ impl Within {
             expected: Mutex::new(0.0),
             chosen: std::sync::atomic::AtomicBool::new(false),
             solved: OnceLock::new(),
+            #[cfg(target_os = "macos")]
+            on_device: OnceLock::new(),
         }
     }
 
@@ -477,6 +483,18 @@ impl Within {
 }
 
 impl Source for Within {
+    /// Read whole by the device: the batch's solve, its pairs made ids on the device from the chunk block.
+    #[cfg(target_os = "macos")]
+    fn device_view(&self) -> Option<crate::code_rule_dsl::facts::vtab::DeviceView<'_>> {
+        use super::device_chunk;
+        if !self.solvable() {
+            return None;
+        }
+        let pairs = &self.solved().pairs;
+        let chunk = self.batch.chunk();
+        let at = (*self.on_device.get_or_init(|| device_chunk::put_pairs(chunk, pairs)))?;
+        Some(crate::code_rule_dsl::facts::vtab::DeviceView { block: &chunk.block, root: chunk.root, view: device_chunk::VIEW_AXIS, rows: pairs.len(), pairs: at })
+    }
     fn columns(&self) -> Vec<String> {
         self.names().iter().map(|&c| c.to_owned()).collect()
     }

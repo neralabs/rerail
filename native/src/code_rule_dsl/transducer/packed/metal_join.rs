@@ -273,7 +273,18 @@ inline long kind_of(device const ChunkDoc& d, uint id) {
     return long(d.tag * 1024u + (c == 0xffffu ? 0u : c));
 }
 
-// p: the root's offset, the view (`device_chunk::VIEW_*`), the rows, the columns, then each column's index.
+// The document holding node row `row` (of `node`): the last whose rows start at or before it.
+inline uint doc_of_node(device const ChunkDoc* docs, uint ndocs, uint row) {
+    uint lo = 0u, hi = ndocs;
+    while (hi - lo > 1u) {
+        uint m = (lo + hi) / 2u;
+        if (docs[m].node_row <= row) lo = m; else hi = m;
+    }
+    return lo;
+}
+
+// p: the root's offset, the view (`device_chunk::VIEW_*`), the rows, the columns, an axis's pairs' offset (else 0),
+// then each column's index.
 kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[buffer(1)]], constant uint* p [[buffer(2)]],
                         uint r [[thread_position_in_grid]]) {
     uint n = p[2];
@@ -281,6 +292,16 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
     device const ChunkRoot* root = (device const ChunkRoot*)(B + p[0]);
     device const ChunkDoc* docs = items<ChunkDoc>(root->docs);
     uint view = p[1];
+    if (view == 4u) {
+        // An axis read whole (`Within`): a pair of node rows, inner << 32 | outer; each column the node's id.
+        ulong pair = ((device const ulong*)(B + p[4]))[r];
+        for (uint c = 0u; c < p[3]; c++) {
+            uint row = p[5 + c] == 0u ? uint(pair >> 32) : uint(pair & 0xffffffffu);
+            device const ChunkDoc& d = docs[doc_of_node(docs, root->ndocs, row)];
+            out[ulong(c) * n + r] = global_of(d, row - d.node_row);
+        }
+        return;
+    }
     // The last document whose rows start at or before `r` holds it (an empty one starts where the next does).
     uint lo = 0u, hi = root->ndocs;
     while (hi - lo > 1u) {
@@ -292,7 +313,7 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
     uint l = view == 1u ? i + 1u : (view == 2u ? items<uint>(d.fielded)[i] : i);
     uint id = items<uint>(d.core)[l];
     for (uint c = 0u; c < p[3]; c++) {
-        uint col = p[4 + c];
+        uint col = p[5 + c];
         long v;
         if ((view == 0u || view == 3u) && col == 0u) {
             v = long(d.key);
@@ -2041,10 +2062,12 @@ impl Batch {
 
     /// The columns `cols` (its source's) of a view made from a chunk block on the device (decision 0289 §2), into
     /// `out`, a relation of `out.rows` rows whose columns are `cols` in order: what `Viewed::row_at` made on the host.
-    pub(in crate::code_rule_dsl) fn expand_view(&mut self, block: &metal::Buffer, root: usize, view: u32, cols: &[usize], out: &DevRel) -> Result<(), Error> {
+    /// `pairs`: an axis's pairs' offset in the block (`device_chunk::VIEW_AXIS`), else 0.
+    pub(in crate::code_rule_dsl) fn expand_view(&mut self, block: &metal::Buffer, root: usize, view: u32, pairs: usize, cols: &[usize], out: &DevRel) -> Result<(), Error> {
         let expand = pipeline("chunk_views", "view_expand", chunk_views_source)?;
         let pass = self.pass(1)?;
-        let mut p = vec![u32::try_from(root).map_err(|_| Error::BackendCapacity)?, view, out.rows as u32, cols.len() as u32];
+        let at = |o: usize| u32::try_from(o).map_err(|_| Error::BackendCapacity);
+        let mut p = vec![at(root)?, view, out.rows as u32, cols.len() as u32, at(pairs)?];
         p.extend(cols.iter().map(|&c| c as u32));
         if out.rows > 0 {
             pass.run(&expand, &[block, &out.buffer.buffer], &p, &[], groups(out.rows));

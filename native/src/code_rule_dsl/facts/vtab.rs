@@ -57,6 +57,8 @@ pub struct DeviceView<'a> {
     pub root: usize,
     pub view: u32,
     pub rows: usize,
+    /// An axis's pairs in the block (`device_chunk::VIEW_AXIS`), else 0.
+    pub pairs: usize,
 }
 
 pub trait Source: Send + Sync {

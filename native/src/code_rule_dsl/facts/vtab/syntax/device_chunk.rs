@@ -63,6 +63,9 @@ pub const VIEW_NODE: u32 = 0;
 pub const VIEW_CHILD: u32 = 1;
 pub const VIEW_FIELD: u32 = 2;
 pub const VIEW_CORE: u32 = 3;
+/// A kind-set axis or containment read whole (`Within`): its batch's solve, as pairs of node rows (inner << 32 |
+/// outer) copied into the chunk, each made the two nodes' ids.
+pub const VIEW_AXIS: u32 = 4;
 
 /// The device's code of `view`, for the views it makes.
 pub fn device_view(view: View) -> Option<u32> {
@@ -73,6 +76,14 @@ pub fn device_view(view: View) -> Option<u32> {
         View::Core => VIEW_CORE,
         _ => return None,
     })
+}
+
+/// `pairs` copied into the chunk: their offset in the block, or `None` when its reservation cannot hold them.
+pub fn put_pairs(chunk: &Chunk, pairs: &[u64]) -> Option<usize> {
+    let p: *mut u64 = chunk.block.try_alloc_t(pairs.len().max(1))?;
+    // SAFETY: `p` holds `pairs.len()` items, just allocated in the block.
+    unsafe { std::ptr::copy_nonoverlapping(pairs.as_ptr(), p, pairs.len()) };
+    Some(chunk.block.offset_of(p))
 }
 
 /// A batch's chunk block, and its root's offset in it.
@@ -94,10 +105,11 @@ fn put<T: Copy>(b: &Block, span: *const Span<T>, src: &[T]) {
 /// The batch's chunk: every document's arrays the views read.
 pub fn build(batch: &Batch) -> Chunk {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "a batch's chunk block".into());
-    // What the arrays take, with room for alignment: the block reserves address space, not memory.
+    // What the arrays take, with room for alignment, and for the axes' pairs read whole (`put_pairs`, up to 1 GB):
+    // the block reserves address space, not memory.
     let bytes: usize = batch.docs.iter().map(|p| 4 * (6 * p.facts.len() + 4 * p.core.len()) + 2 * p.facts.len() + 4096).sum::<usize>()
         + batch.dialects.values().map(|d| 2 * d.canonical.len() + 64).sum::<usize>()
-        + (1 << 20);
+        + (1 << 30);
     let b = Block::anon(kind::CHUNK, bytes.next_power_of_two());
     let root: *mut ChunkRoot = b.alloc_t(1);
     let docs: *mut ChunkDoc = b.alloc_t(batch.docs.len().max(1));
