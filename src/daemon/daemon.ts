@@ -558,8 +558,7 @@ export class RerailDaemon {
         nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256, ...sharedMergeAssist,
       });
       await daemon.#announce(remembered);
-      // Once nothing can fail the start: checkouts whose folder is gone stop costing every read of their repository.
-      if (options.checkoutPruning !== false) daemon.#checkoutPruning = startCheckoutPruning(databasePath, options.checkoutPruning ?? {});
+      daemon.#startCheckoutPruning();
       daemon.#startProvenanceMove();
       return daemon;
     } catch (error) {
@@ -577,6 +576,12 @@ export class RerailDaemon {
     if (options.remoteSink !== false && remoteSinkEnabled()) this.#remoteSink = startRemoteSink({ home: dirname(this.#databasePath), ...(options.remoteSink ?? {}) });
     // A start that asked for any free port (`0`) takes a throwaway one; it does not replace the port links point at.
     if (options.portFile !== undefined && options.port !== 0 && this.port !== remembered) await rememberPort(options.portFile, this.port);
+  }
+
+  /** Once nothing can fail the start: checkouts whose folder is gone stop costing every read of their repository. */
+  #startCheckoutPruning(): void {
+    const pruning = this.#options.checkoutPruning;
+    if (pruning !== false) this.#checkoutPruning = startCheckoutPruning(this.#databasePath, pruning ?? {});
   }
 
   /**

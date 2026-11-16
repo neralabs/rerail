@@ -656,6 +656,17 @@ function listingKey(path: string): string {
  * folder the listing leaves out.
  */
 async function worktreesListedIn(checkout: string, commonDirectory: string): Promise<ReadonlySet<string> | undefined> {
+  const porcelain = await worktreeList(checkout);
+  if (porcelain === undefined) return undefined;
+  const { paths, bare } = worktreeEntries(porcelain);
+  const listed: string[] = [];
+  // One at a time, as the folders are looked at: a share that does not answer holds one pool thread.
+  for (const path of paths) listed.push(await storedPathOrAsGiven(path));
+  return !bare && listed[0] === commonDirectory ? undefined : new Set(listed.map(listingKey));
+}
+
+/** What `git worktree list --porcelain` prints when run in `checkout`; undefined when Git fails or is not there. */
+async function worktreeList(checkout: string): Promise<string | undefined> {
   let result;
   try {
     // Git looks at each worktree it lists; one on a share that does not answer holds Git until its timeout, not Rerail.
@@ -664,15 +675,18 @@ async function worktreesListedIn(checkout: string, commonDirectory: string): Pro
     if (error instanceof GitUnavailableError) return undefined;
     throw error;
   }
-  if (result.status !== 0) return undefined;
-  const lines = result.stdout.split("\n");
-  const listed: string[] = [];
-  // One at a time, as the folders are looked at: a share that does not answer holds one pool thread.
-  for (const line of lines) if (line.startsWith("worktree ")) listed.push(await storedPathOrAsGiven(line.slice("worktree ".length)));
-  // The first entry is the clone's own checkout, or its Git folder with a `bare` line when it has none.
+  return result.status === 0 ? result.stdout : undefined;
+}
+
+/**
+ * The worktree paths a `git worktree list --porcelain` listing names, in its order, and whether its first entry is a
+ * bare clone's: the first entry is the clone's own checkout, or its Git folder with a `bare` line when it has none.
+ */
+function worktreeEntries(porcelain: string): { readonly paths: string[]; readonly bare: boolean } {
+  const lines = porcelain.split("\n");
+  const paths = lines.filter(line => line.startsWith("worktree ")).map(line => line.slice("worktree ".length));
   const end = lines.indexOf("");
-  const bare = (end === -1 ? lines : lines.slice(0, end)).includes("bare");
-  return !bare && listed[0] === commonDirectory ? undefined : new Set(listed.map(listingKey));
+  return { paths, bare: (end === -1 ? lines : lines.slice(0, end)).includes("bare") };
 }
 
 /**
