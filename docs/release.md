@@ -45,7 +45,7 @@ rule pack bumps ([docs/pack-format.md](pack-format.md#release)).
 - The bump changes the root entries of `package.json` and `package-lock.json`. The `CHANGELOG.md` section comes from
   the unreleased lead and pending `.changelog/` entries.
 - The core range is raised in the pack's `package.json` and in `package-lock.json`, by the rule the pack validation
-  judges it by (`scripts/release/packs.mjs`). A pack that needs it and has no changeset is not released, so it is
+  judges it by (`scripts/release/core.mjs`). A pack that needs it and has no changeset is not released, so it is
   named in a warning and left alone: add a changeset for it.
 - The tag is pushed with the `neralabs-ci` app's token.
 - **Anything core ships:** every path except packs, documentation, CI, changesets and pending changelog entries, tests,

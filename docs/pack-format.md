@@ -89,7 +89,7 @@ packs/<id>/
 ```
 
 - **`peerDependencies`**: the core range. A pack has no `dependencies`. A pack that ships a rule in a language core first
-  reads in a later release (`LANGUAGE_SINCE` in `scripts/release/packs.mjs`: Java, 0.1.5) leaves older cores out
+  reads in a later release (`LANGUAGE_SINCE` in `scripts/release/core.mjs`: Java, 0.1.5) leaves older cores out
   from that release on, as for `heldOff` below: they refuse the document and would drop the whole pack. Once core is at
   that release the pack validation fails a range that admits them, and the Release pull request raises the range of
   each such pack it releases ([release](release.md#release-pull-request)).

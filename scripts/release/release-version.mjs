@@ -11,7 +11,7 @@
 //     today: the lead under the unreleased heading and the entries pending in .changelog/ by change type, whose files it
 //     deletes. A version not tagged yet is a release under way (release-pr.yml tags it before this runs), so core is
 //     left alone.
-//   - Core ranges: a pack this run releases that an older core cannot load (packs.mjs: a rule held off, a rule in a
+//   - Core ranges: a pack this run releases that an older core cannot load (core.mjs: a rule held off, a rule in a
 //     language added since) has its core range raised to leave those cores out, in its package.json and in
 //     package-lock.json, once core is at the release that first loads it. The description lists each; a pack that needs
 //     it and is not released here is named in a warning, since nothing publishes its package.json.
@@ -24,10 +24,10 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, posix } from "node:path";
-import { changelogEntryTypeRefusal, changelogLead, changelogSection, PLUGIN_PINS, CORE_NAME, coreTag, coreTagRefusal, nextCoreVersion, readChangelogEntries, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion } from "./core.mjs";
+import { admitsRefusingCore, changelogEntryTypeRefusal, changelogLead, changelogSection, CORE_NAME, coreFloor, coreTag, coreTagRefusal, heldOffRules, nextCoreVersion, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages } from "./core.mjs";
 import { coreChanges } from "./core-paths.mjs";
 import { packRuleChanges, packRuleNotes, packRules, releasedPackChangelog } from "./pack-changelog.mjs";
-import { admitsRefusingCore, changesetNotes, changesetTypeRefusal, coreFloor, heldOffRules, listPacks, raisedCoreRange, readChangesets, ROOT, shippedLanguages } from "./packs.mjs";
+import { changesetNotes, changesetTypeRefusal, listPacks, readChangesets, ROOT } from "./packs.mjs";
 
 /**
  * The most of the description the changelog sections quoted in it may take: a pull request description holds 65,536
@@ -173,7 +173,7 @@ const core = versionCore();
 
 /**
  * Raises the core range of each released pack an older core cannot load, now that core is at the release that first
- * loads it (packs.mjs), in its package.json and package-lock.json. Returns `{ raised, waiting }`, each
+ * loads it (core.mjs), in its package.json and package-lock.json. Returns `{ raised, waiting }`, each
  * `{ name, from, to }`: `waiting` are packs that need it and are not released by this run, left as they are.
  */
 function raiseCoreRanges() {
@@ -185,7 +185,10 @@ function raiseCoreRanges() {
       const range = JSON.parse(readText(`${directory}/package.json`)).peerDependencies?.[CORE_NAME];
       const packJson = existsSync(join(ROOT, directory, "pack.json")) ? JSON.parse(readText(`${directory}/pack.json`)) : {};
       const floor = coreFloor(heldOffRules(packJson), shippedLanguages(join(ROOT, directory)));
-      return range !== undefined && admitsRefusingCore(range, floor, coreVersion) ? [{ id: pack.id, name: pack.name, from: range, to: raisedCoreRange(floor) }] : [];
+      if (range === undefined || !admitsRefusingCore(range, floor, coreVersion)) return [];
+      // Only an open range is raised: one with an upper bound or alternatives would lose them, so a person decides.
+      if (!/^>=\S+$/u.test(range)) throw new Error(`${directory}/package.json: its core range ${range} admits Rerail older than ${floor} and is not a plain >=<version>; raise it by hand to leave those out`);
+      return [{ id: pack.id, name: pack.name, from: range, to: raisedCoreRange(floor) }];
     });
   const released = new Set(packs.map((pack) => pack.id));
   const raised = due.filter(({ id }) => released.has(id));

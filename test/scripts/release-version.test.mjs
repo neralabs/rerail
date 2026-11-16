@@ -188,6 +188,20 @@ describe.runIf(NPM_RUNS)("release-version.mjs, a released pack's core range", ()
     expect(readFileSync(join(repo.root, "body.md"), "utf8")).not.toContain("Core range raised");
   });
 
+  it("refuses to rewrite a range that is not a plain >=<version>, and edits nothing", () => {
+    const repo = repository();
+    writeRangedPack(repo, "capped", ">=0.1.0-0 <0.2.0", { "capped-one": java });
+    commit(repo, "the pack");
+    let stderr = "";
+    try {
+      releaseVersion(repo);
+    } catch (error) {
+      stderr = String(error.stderr);
+    }
+    expect(stderr).toContain("packs/capped/package.json: its core range >=0.1.0-0 <0.2.0 admits Rerail older than 0.1.5 and is not a plain >=<version>; raise it by hand");
+    expect(rangeOf(repo, "capped")).toBe(">=0.1.0-0 <0.2.0");
+  });
+
   it("warns of a pack that needs it and is not released, and does not edit it", () => {
     const repo = repository();
     // The stub bumps only `moving`, as `changeset version` bumps only the packs a changeset names.

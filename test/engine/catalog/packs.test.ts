@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
 import { heldOffRangeFailure, languageRangeFailure, PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
 import { gatedToolPacks, readGatesManifest } from "../../../conformance/languages/manifest.js";
-import { coreFloor, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, shippedLanguages } from "../../../scripts/release/packs.mjs";
+import { coreFloor, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, shippedLanguages } from "../../../scripts/release/core.mjs";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
@@ -892,7 +892,7 @@ describe("languageRangeFailure", () => {
   });
 });
 
-// The Release pull request raises a pack's core range with the same rule check 5 judges it by (scripts/release/packs.mjs): the
+// The Release pull request raises a pack's core range with the same rule check 5 judges it by (scripts/release/core.mjs): the
 // range it writes must pass both checks, for every pack an older core refuses.
 describe("the core range the release writes", () => {
   const floors = packs.flatMap(id => {

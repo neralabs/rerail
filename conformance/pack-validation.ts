@@ -34,7 +34,8 @@ import { PACK_LIST_MODULE_PATH, PACKS_DIRECTORY, renderPackListModule } from "..
 import { CONFORMANCE_FILE, documentPath, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
 import { decidingPattern, inToolSubdirectory, licenceAllowed, licenceAlternatives, packFixtureAbsence, pathGlob, PUBLISH_DIRECTORY, readUpstreamSources } from "../scripts/s3/pack-fixtures.mjs";
-import { admitsRefusingCore, HELD_OFF_SINCE, heldOffRules, isPrivatePack, LANGUAGE_SINCE, raisedCoreRange, shippedLanguages } from "../scripts/release/packs.mjs";
+import { isPrivatePack } from "../scripts/release/packs.mjs";
+import { admitsRefusingCore, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, shippedLanguages } from "../scripts/release/core.mjs";
 import { capabilitiesJson } from "./engine.js";
 import { BIOME_SAME_SOURCES } from "./biome-same-sources.generated.js";
 
@@ -490,7 +491,7 @@ const repositoryUrl = (): string => rootPackage().repository.url;
  * `HELD_OFF_SINCE` (`coreVersion`, the Release pull request's bump), a pack holding rules off (`heldOff`) must leave out
  * every older core, which refuses the field and would drop the whole pack as invalid; before then the range stays, so
  * this checkout's core still loads the pack. The Release pull request raises the range of a pack it releases
- * (scripts/release/packs.mjs holds the releases and the rule, for both).
+ * (scripts/release/core.mjs holds the releases and the rule, for both).
  */
 export function heldOffRangeFailure(range: string, heldOff: readonly string[], coreVersion: string): string | undefined {
   if (heldOff.length === 0 || !admitsRefusingCore(range, HELD_OFF_SINCE, coreVersion)) return undefined;
