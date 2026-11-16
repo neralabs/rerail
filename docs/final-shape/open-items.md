@@ -5429,3 +5429,34 @@ path's gaps (`RERAIL_STRATA_TRACE`'s `loop` lines and submit column).
 The direction: a job's end retires its members and issues their ready readers on the thread that ran it, under
 the board's lock. The loop then keeps only the program-order work: SQL strata, and what profile bookkeeping
 needs. Bound the loop's own jobs first, if that is enough: it helps only with jobs under a quantum.
+
+## O-tier2-large-file-refusal. The CPU's tier 2 refuses two large files the interpreter takes
+
+Found 2026-11-16, while making `json_bad`'s gap tier 2's (decision 0177). Two `.rr` files of the
+corpus, about 500 KB each, are refused by the CPU's tier 2 (`Parser::image`, "the compiled words
+refuse", at the program's fifth word). The interpreter (`stream::run`) takes them. With the old,
+eager `json_bad` the same two are refused, so the change did not cause it.
+
+Cutting the file down by lines keeps the refusal only at about this size: no single rule causes
+it. A refused file goes to the fallback, so the tapes stay right; only the fast path is lost.
+`corpus_tapes_are_the_engines` compares the files the CPU takes, so it does not see this.
+
+**Closure:** find what the fifth word tests that grows with the file (a node or stack bound, a
+record count). Then either the bound grows with the file, or the refusal is the planned
+fallback and is documented as such. A test takes a file of that size on the CPU's tier 2.
+
+## O-padding-width. Each file's zero padding: 256 bytes or 64
+
+Opened 2026-11-16 (decision 0177, "A padded window is not cut"). Every file now has `BACK` (256)
+zero bytes after its last one, in the CPU's batch and in a resident source's slab. A window that
+reads past the end then reads zeros, so an output false on a zero byte needs no cut.
+
+256 is the widest window: 64 bits a lane times Metal's 32 lanes. A CPU window starting at a block
+of the file, with its delay and its `prev`s, reaches about 223 bytes past the end at most. 64
+would be a block, as the slab's margin was. The user asked to look at 256 against 64 later.
+
+**Closure:** decide the width from what each backend reads past the end. Also:
+
+- Whether Metal's kernels can take the padding instead of their length cuts.
+- What a file read in place from an mmap needs: past its end, only the rest of its last page is
+  zeros, so a file ending near a page boundary needs a copy of that page, as simdjson checks.

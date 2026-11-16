@@ -99,6 +99,13 @@ pub fn compile_with(shape: bitlex_compile::Shape) -> Result<Compiled, String> {
 
 /// `compile_with` of a grammar's text (a test's variant of the `.rr` grammar).
 pub fn compile_text(grammar: &str, shape: bitlex_compile::Shape) -> Result<Compiled, String> {
+    compile_padded(grammar, shape, rerail_compiler::native_cpu_block::BACK as u16)
+}
+
+/// `compile_text`, the code counting on `pad` zero bytes after every file (`BlockNative::pad`,
+/// the application's input): with fewer than a window reaches, each window is cut on a rare
+/// branch.
+pub fn compile_padded(grammar: &str, shape: bitlex_compile::Shape, pad: u16) -> Result<Compiled, String> {
     let stmts = ::bitlex::syntax::parse(grammar)?;
     let own: RefCell<HashMap<String, u16>> = RefCell::new(HashMap::new());
     let id = |names: &[&str], name: &str| -> u16 {
@@ -116,6 +123,9 @@ pub fn compile_text(grammar: &str, shape: bitlex_compile::Shape) -> Result<Compi
     let program = rir::assemble(&compiled.text())?;
     let mut native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
     native.tag = rerail_tape_format::RR_TAG;
+    for b in &mut native.block_programs {
+        b.pad = pad;
+    }
     // Tier 2 a function a grammar rule (`by_rules`): a call of the grammar is a native call,
     // its return a native return; the optimizer on. Its entries and arms weighted by the
     // samples' traffic. `RR_CUT=traffic`: the clusters cut by traffic instead, as before.
@@ -483,7 +493,7 @@ pub mod tests {
         // Metal sets the gap marks the CPU's tier 2 tests itself (`lazy_marks`).
         let lazy = lazy_bits(native);
         for (k, (g, w)) in got.run.files.iter().zip(&want).enumerate() {
-            if !same_outputs(&g.outputs, &w.outputs) || g.positions != w.positions || g.totals != w.totals || unlazy(&g.codes, lazy) != w.codes {
+            if !same_outputs(&g.outputs, &w.outputs) || g.positions != w.positions || g.totals != w.totals || unlazy(&g.codes, lazy) != unlazy(&w.codes, lazy) {
                 differ += 1;
                 if differ < 4 {
                     let o = (0..w.outputs.len()).find(|&o| !unmade.contains(&o) && g.outputs.get(o) != w.outputs.get(o));
@@ -641,6 +651,24 @@ pub mod tests {
         eprintln!("{} files: rules take {}, one machine {}", files.len(), taken[0], taken[1]);
         assert_eq!(differ, Vec::new(), "(file, shape) whose tape is not the engine's");
         assert_eq!(taken[0], taken[1], "the shapes take the same files");
+    }
+
+    /// The padding is the compiler's input (`BlockNative::pad`): the grammar compiled to count on
+    /// none writes the default's tapes, and takes the same files (its windows cut on the rare
+    /// branch: `native_cpu_bytes`' `a_padded_windows_word_is_not_cut`).
+    #[test]
+    #[ignore = "the corpus: run by name"]
+    fn an_unpadded_programs_tapes_are_the_padded() {
+        let padded = crate::compiled().expect("compiles");
+        let bare = crate::compile_padded(crate::GRAMMAR, rerail_compiler::bitlex_masks::Shape::Rules, 0).expect("compiles unpadded");
+        assert_eq!((padded.parser.tier1.pad, bare.parser.tier1.pad), (rerail_compiler::native_cpu_block::BACK, 0));
+        let mut differ = Vec::new();
+        for (i, f) in corpus().iter().enumerate() {
+            if padded.parser.image(f.as_bytes()).ok() != bare.parser.image(f.as_bytes()).ok() {
+                differ.push(i);
+            }
+        }
+        assert_eq!(differ, Vec::<usize>::new(), "files whose tapes differ");
     }
 
     /// The engine's bytes over the corpus, against the lean parser's: the interpreter's tape
@@ -1414,6 +1442,52 @@ pub mod tests {
         eprintln!("{} files, {tokens} tokens: the rules' lasts are the masks'", inputs.len());
     }
 
+    /// The token loop reads back no record it wrote (`PassShape::reads_back`), as the lean
+    /// lexer keeps its cursor and its window's `base` in registers: the refill knows the block
+    /// it read last from its state, and the gap marks are tier 2's (`lazy_marks`), `json_bad`'s
+    /// form feed among them, so no token's gap starts from the record before.
+    #[test]
+    fn the_loop_reads_no_record_back() {
+        let c = crate::compiled().expect("compiles");
+        let r = c.native.records.as_ref().expect("records");
+        assert!(rerail_compiler::native_cpu_block::lazy_coded(r) != 0, "a gap mark with token tests (`json_bad`)");
+        let shape = c.parser.tier1.passes.last().expect("a pass");
+        assert_eq!(shape.reads_back, 0, "the token loop reads a record back");
+    }
+
+    /// A run rule with a short form (a number: its 16 bytes from one window, its tests from the
+    /// same bits) is read in the token loop's arm for its first byte, no call, as the lean
+    /// lexer reads a number in its `match` arm (`PassShape::arms`). A longer one calls the
+    /// rule's whole function (`a_numbers_checks_are_at_its_token` reads those).
+    #[test]
+    fn a_short_run_is_the_loops_arm() {
+        let c = crate::compiled().expect("compiles");
+        let shape = c.parser.tier1.passes.last().expect("a pass");
+        assert!(shape.arms >= 1, "no run rule read in its arm");
+    }
+
+    /// A rare start's arms each write their own token, as the lean lexer's `match` arms: a
+    /// tail an arm (a string's, `#`'s, a comment's, a backtick's, a number's), each knowing its
+    /// first bytes' entry where they share one (`PassShape::known_entries`), so its kind and
+    /// whether it is a word are constants of its tail, not tests of a loaded entry.
+    #[test]
+    fn a_rare_arm_knows_its_entry() {
+        let c = crate::compiled().expect("compiles");
+        let shape = c.parser.tier1.passes.last().expect("a pass");
+        assert!(shape.known_entries >= 5, "rare arms with their entry known: {}", shape.known_entries);
+    }
+
+    /// A reader with a short form (a comment's, a string's, a backtick's: its openers and its
+    /// first window, the long read its whole function's call) is read in the loop's arm too,
+    /// as the lean lexer's `b'/'` arm tests the byte after and scans a line comment in place:
+    /// the number's arm and the readers' (`PassShape::arms`), no short function between.
+    #[test]
+    fn a_readers_short_form_is_the_loops_arm() {
+        let c = crate::compiled().expect("compiles");
+        let shape = c.parser.tier1.passes.last().expect("a pass");
+        assert!(shape.arms >= 4, "the run's and the readers' arms: {}", shape.arms);
+    }
+
     /// Decision 0177, stage 2a: the tokens by the loop, each at the first byte after the one
     /// before that `skip` does not hold, are the starts' and lasts' masks, on every file the
     /// masks take (a file they refuse, its totals' flag set, is the engine's either way).
@@ -1676,6 +1750,14 @@ pub mod tests {
         rerail_compiler::native_cpu_block::lazy_marks(r, &|o| bw.can(o)).iter().fold(0, |a, &(k, _)| a | 1 << (rerail_compiler::records::MARK_SHIFT + u32::from(k)))
     }
 
+    /// Of those, the code bits of the marks with token tests too (`native_cpu_block::lazy_coded`):
+    /// the CPU's tier 1 sets their tests' hits, tier 2 tests their gaps.
+    fn lazy_coded_bits(block: &rerail_compiler::block_native::BlockNative) -> u32 {
+        let r = block.records.as_ref().expect("records");
+        let coded = rerail_compiler::native_cpu_block::lazy_coded(r);
+        lazy_bits(block) & coded.checked_shl(rerail_compiler::records::MARK_SHIFT).unwrap_or(0)
+    }
+
     /// The interpreter's codes without those bits.
     fn unlazy(codes: &[u32], lazy: u32) -> Vec<u32> {
         codes.iter().map(|c| c & !lazy).collect()
@@ -1837,8 +1919,10 @@ pub mod tests {
                     panic!("file {k} ({} bytes): {what} {i} the CPU's {:?}, the interpreter's {:?} ({} and {} of them), near {text:?}; the CPU's (start, last) {:?}, the interpreter's {:?}", f.len(), x.get(i), y.get(i), x.len(), y.len(), around(&g.positions[usize::from(r.starts)], &g.positions[usize::from(r.lasts)]), around(&want.positions[usize::from(r.starts)], &want.positions[usize::from(r.lasts)]));
                 }
             }
-            let w = unlazy(&want.codes, lazy);
-            if let Some(i) = (0..g.codes.len().max(w.len())).find(|&i| g.codes.get(i) != w.get(i)) {
+            // The marks with token tests too keep their tests' hits on the CPU
+            // (`lazy_coded`): `the_marks_tests_are_the_masks` compares those.
+            let (w, gc) = (unlazy(&want.codes, lazy), unlazy(&g.codes, lazy));
+            if let Some(i) = (0..gc.len().max(w.len())).find(|&i| gc.get(i) != w.get(i)) {
                 let at = g.positions[usize::from(r.starts)].get(i).copied().unwrap_or(0) as usize;
                 let text = String::from_utf8_lossy(&f[at.saturating_sub(40).min(f.len())..(at + 12).min(f.len())]).into_owned();
                 panic!("file {k} ({} bytes): the codes (the gap marks tier 2 tests itself apart) differ at token {i}, byte {at}, the CPU's {:#x}, the interpreter's {:#x}, near {text:?}", f.len(), g.codes[i], w[i]);
@@ -2012,6 +2096,11 @@ pub mod tests {
             .collect::<String>();
         assert!(!old_text.contains(" after string when"), "the old form has the masks alone");
         let old = crate::compile_text(&old_text, rerail_compiler::bitlex_masks::Shape::Rules).expect("the old form compiles");
+        // `json_bad`'s tests alone, no gap (`ff`): the bits the CPU's tier 1 sets of it, its
+        // gap tier 2's (`lazy_coded`).
+        let checks_text = crate::GRAMMAR.replace("mark json_bad    = ff,\n", "mark json_bad    = empty,\n");
+        assert!(checks_text != crate::GRAMMAR, "json_bad's gap is a form feed");
+        let checks = crate::compile_text(&checks_text, rerail_compiler::bitlex_masks::Shape::Rules).expect("the tests alone compile");
         let r = new.program.block_programs[0].records.as_ref().expect("records");
         assert!(r.checks.iter().any(|c| matches!(c.then, rerail_compiler::records::CheckThen::After(_))), "a mark after its token");
         assert!(r.checks.iter().any(|c| matches!(c.then, rerail_compiler::records::CheckThen::At(_))), "a mark at its token");
@@ -2060,6 +2149,8 @@ pub mod tests {
         let refs: Vec<&[u8]> = inputs.iter().map(|f| f.as_slice()).collect();
         let cpu = new.parser.tier1.run_files(&refs);
         let lazy = lazy_bits(&new.native);
+        let coded = lazy_coded_bits(&new.native);
+        assert!(coded != 0, "json_bad: its gap tier 2's, its tests' hits tier 1's");
         let mut taken = [0usize; 2];
         for (k, f) in refs.iter().enumerate() {
             let (a, b) = (new.program.block_programs[0].run(f), old.program.block_programs[0].run(f));
@@ -2073,7 +2164,19 @@ pub mod tests {
             if k < 5 * cases.len() {
                 taken[usize::from(x.is_ok())] += 1;
             }
-            assert_eq!(cpu[k].codes, unlazy(&a.codes, lazy), "file {k}: the CPU's codes");
+            // The CPU's codes: the interpreter's, but the lazy marks' gaps (tier 2's).
+            let tested = checks.program.block_programs[0].run(f);
+            let want: Vec<u32> = a.codes.iter().zip(&tested.codes).map(|(&c, &t)| c & !lazy | t & coded).collect();
+            assert_eq!(cpu[k].codes, want, "file {k}: the CPU's codes");
+            // The CPU's tier 2 takes the gaps: its tape or refusal is the interpreter's, over the
+            // cases (the corpus: its tape where it takes the file; two files of 500 KB it
+            // refuses as before, the work queue's).
+            let image = new.parser.image(f);
+            let cased = k < 5 * cases.len() + 18;
+            assert!(!cased || image.is_ok() == x.is_ok(), "file {k} {:?}: the CPU's tier 2 takes it as the interpreter: {:?} / {:?}", String::from_utf8_lossy(&f[..f.len().min(80)]), image.as_ref().err(), x.as_ref().err());
+            if let (Ok(i), Ok(x)) = (&image, &x) {
+                assert!(*i == rerail_compiler::stream::image(x, &new.program.readings.extras, rerail_tape_format::RR_TAG, f), "file {k}: the CPU's tape");
+            }
             assert_eq!(cpu[k].totals, a.totals, "file {k}: the CPU's refusals");
         }
         #[cfg(target_os = "macos")]
@@ -2085,7 +2188,7 @@ pub mod tests {
             // interpreter's whole.
             for (k, m) in got.run.files.iter().enumerate() {
                 assert_eq!(m.codes, new.program.block_programs[0].run(refs[k]).codes, "file {k}: Metal's codes");
-                assert_eq!(unlazy(&m.codes, lazy), cpu[k].codes, "file {k}: Metal's codes, the CPU's");
+                assert_eq!(unlazy(&m.codes, lazy), unlazy(&cpu[k].codes, lazy), "file {k}: Metal's codes, the CPU's");
                 assert_eq!(m.totals, cpu[k].totals, "file {k}: Metal's refusals");
             }
         }

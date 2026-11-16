@@ -730,6 +730,18 @@ pass.
   (Q21): `every_stored_table…`'s and the four others' causes were fixed on the hub's side.
 - **Done when**: each passes, traced to its cause; the hub's own fix taken at the next merge where it has one.
 
+### Q29. Two of rr_aot's shape tests check shapes 0177 retired
+
+- **Found** (2026-11-16, at the hub's merge of Parser-generators, with the `generated` feature on the profiling
+  build): `a_returned_call_is_the_return` ("no call returned as it is": tier 1 has no `return unsafe { f…` now) and
+  `a_short_tokens_function_calls_only_its_whole` ("a number's, a comment's and a string's short functions"). 0177's
+  "A short run is read in its arm" and "A reader's short form is read in its arm" make no short functions, and the
+  returned call was a short function's tail call to its whole one. The two tests had not compiled with the feature
+  since d1be3e7d2 moved the generated files to `OUT_DIR` (fixed at this merge), so they had not run against those
+  steps. Ignored, each naming this item.
+- **Done when**: Parser-generators states what each should check now (`a_readers_short_form_is_the_loops_arm` may
+  hold the first's intent), or removes it.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives

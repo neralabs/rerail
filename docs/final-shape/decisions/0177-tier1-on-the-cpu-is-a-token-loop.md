@@ -2344,3 +2344,604 @@ Not changed: the values the main loop reloads after a call. They are
 live across it, more than the callee-saved registers hold.
 
 Counts, reported: unchanged but strings 302.1 and comments 228.2.
+
+## A window's classes share one lookup
+
+The lean lexer classifies a block with one table lookup. Two
+16-byte tables, one indexed by the byte's low nibble and one by its
+high nibble, are `and`ed. Each of the eight result bits is a class,
+and one `vtst` reads a class. Whitespace, a word's bytes and a rare
+token's first bytes all come from that one lookup. simdjson's
+`classify` works the same way.
+
+Our refill made three lookups. The grammar's classes took products
+(a set of high nibbles times a set of low nibbles) in order of first
+use, eight to a table. So whitespace sat in one table, a word's bytes
+in another, and the rare set in a third table of its own. The third
+also loaded the block's bytes again.
+
+**The change.** `class_pack` packs the sets a body tests into as few
+tables as it can, by four means a hand-written lexer's tables use:
+
+- **Shared products.** The digits are one product, used by a word
+  and by a rare start.
+- **Don't-cares.** A byte the body never asks about may be in a set
+  or out of it. The rare set is only read at starts, so a skipped
+  byte's answer is free.
+- **Ranges.** A run of bytes, wrapping past 0xff, is one subtract
+  and compare. The control bytes, DEL and every byte past 0x7f are
+  one test.
+- **Complements.** A set whose complement takes fewer products is
+  tested by it.
+
+A set's products are in one table, so a set is one lookup.
+`body_pack` packs the classes a window's values read. A class whose
+table a `pair` reads keeps that table. The packing is dropped where
+it would make more lookups than the program's own tables.
+`Bytewise::words_with` makes extra sets' words in the same window.
+The refill tests the rare set that way.
+
+```text
+before: lookup A (whitespace), lookup B (word), load again,
+        lookup C (rare)
+after:  lookup 1 (whitespace), lookup 2 (word and rare, 8 bits),
+        one range compare (rare's control and high bytes)
+```
+
+rr's three sets take ten products, so they need two tables. Lean's
+take eight, because its rare set is narrower: our grammar's rare
+starts include `$`, `'`, `?`, `\` and DEL.
+
+A class is the bit test itself where the backend has one
+(`BIT_TEST`). Rust's NEON has `vtstq_u8`, and `clif_rust` prints
+`(x & m) != 0` as one. Cranelift's aarch64 lowering has none, so the
+JIT keeps the compare with zero and the free complement. The
+ahead-of-time build sets the flag (`rr_aot_gen`, and `aot()` when it
+checks the fingerprint).
+
+Tests: `class_pack`'s seven (a lexer's classes in one table, a shared
+product, a wrapping range, don't-cares merging rows, a complement,
+a second table past eight, random sets answered exactly);
+`a_windows_classes_share_one_lookup` (two program tables and an
+extra set: eight swizzles, each word its set's, on random bytes);
+`bits_against_zero_are_one_test`.
+
+Counts, reported: words 99.3, punctuation 54.3, mixed 55.9,
+strings 314.3, numbers 154.5, comments 236.5.
+
+## Chained pairs are read left to right only when they chain
+
+Two two-byte tokens can overlap: `=>=` is `=>` then `=`, not `=` and
+`>=`. The refill keeps each run of pair starts' bits an even way
+from the run's first, about fourteen word operations. It did that on
+every block. The lean lexer does it only where two pair starts are
+next to each other (`if pairs & (pairs << 1) != 0`).
+
+**The change.** The same test, a branch: the correction is in a cold
+block. Its inputs are tested by `the_cpus_records_are_the_interpreters`
+(runs of pairs, `=>=>=` at every pad across a block's edge).
+
+Counts, reported: words 99.0, punctuation 54.4, mixed 55.8,
+strings 313.4, numbers 153.3, comments 234.4.
+
+## A string's window is gated on its rare bytes
+
+Most strings have no `\` and no control byte. The lean lexer finds
+the quote first, then asks one question: is there a `\` or a control
+byte below it? If not, the string ends at the quote, with no escape
+math and no tests. Our reader always did all of it: the escape's
+run math, a movemask for each test, and the counts after.
+
+**The gate** (`Bytewise::zero_gate`). For the outputs a read makes
+(its closer first, then its tests), the compiler picks byte tests
+whose being false at every byte makes each test false and each
+escape none. A test that is a byte test is taken whole, because its
+own set is the narrowest. For an `and` it takes the cheaper side,
+for an `or` both sides, and for an escape its run. It never picks a
+test whose zero would make the closer none, and it gives up where a
+test reads a byte before the window (a `prev`). `known_if_zero` says
+what is then known.
+
+```text
+closer = '|' and not escaped('^')     gate: '^', digit, '~'
+tests  = digit, '@' then '~'          ('@' then '~': '~' alone)
+```
+
+**The paths** (`Bytewise::words_gated`). The gate's bytes are one
+set, packed with the read's classes (`class_pack`), so one test and
+one movemask cover them. The quick path makes the outputs with the
+gate's values assumed false (`Lanes::assuming`), so they become
+constants. The whole path makes them as before. The code after the
+read is built once on each path, with no join.
+
+**Prefix.** An output's bit at a byte depends only on that byte and
+those before it. A reader looks at its words only up to the closer.
+So the gate needs to hold only up to there: the closer is made
+assuming the gate's zeros, and the gate is tested at and below its
+first bit. Testing the whole window took the slow path on almost
+every string, because the bytes after a string usually include a
+newline.
+
+**Folding** (`clif_fold`). The quick path's constants still flowed
+into an `and`, a count and a compare. Neither the JIT (Cranelift
+runs without its optimizer here) nor the printed Rust folded them.
+`clif_fold::fold` runs on every function before either backend:
+
+- operations with constant operands become constants, at their
+  width;
+- an operation one constant operand decides becomes that constant
+  or the other operand (`x & 0`, `x | 0`, a `select`);
+- a branch on a constant becomes a jump;
+- blocks no longer reached and pure operations no longer read are
+  removed.
+
+Also in this step:
+
+- a range test with low byte 0 is one compare;
+- a range is compared once per chunk;
+- a set's parts in one table are one bit test;
+- `clif_rust` no longer prints the `and` that a `vtstq_u8` absorbs.
+
+Tests: `a_gate_is_the_rare_bytes_the_tests_read` (a made-up grammar,
+`|` escaped by `^`, with digit and `@`-then-`~` tests; no gate where
+a test needs the closer's byte); `the_gated_words_are_the_words`
+(JIT, random bytes, both modes: the same words and carries as
+ungated, both paths taken, no escape overflow on the quick path);
+`clif_fold`'s four (a count of none folds through its branch,
+widths, a deciding constant, effects and reached blocks kept);
+`bits_against_zero_are_one_test` (no `and` printed).
+
+Counts, reported: words 99.0, punctuation 54.4, mixed 55.8,
+strings 268.4, numbers 153.3, comments 234.4. With the gate tested
+over the whole window, strings were 344.4.
+
+## What a callee always returns, its caller knows
+
+A rule function returns two words. The first packs the token's last
+and its tag, `(last + 1) | (tag + 1) << 32`, and the caller unpacks
+both. The string's function never retags (its tag is always none, so
+its field is always 0), yet the caller shifted and subtracted it out
+on every string. The comment's hits word was ORed with a constant
+bit, so the "any hit" test was always true, and its merge block,
+marked cold, ran on every comment.
+
+**Known bits** (`clif_fold`). The fold now tracks, for each value,
+the bits known zero and the bits known one, not only whole
+constants:
+
+- the bit logic and constant shifts carry them;
+- a widened 32-bit value has its high half zero;
+- an `and` with ones wherever its operand may have a one is that
+  operand;
+- a compare for equality is decided where a known bit differs;
+- a branch is decided where a bit is known one.
+
+**Joins.** A block parameter that every branch passes the same
+value, or the same constant, becomes that value. A block whose only
+way in is its predecessor's jump is joined to that predecessor, so a
+branch that folds into a block marked cold leaves no cold block on
+the hot path.
+
+**Across calls** (`clif_fold::returns`, `fold_all`). A function's
+summary is what every `return` knows of each result. A call's results
+get the callee's summary. The block compiler defines callees before
+their callers, and it folds each function with the summaries of those
+defined before it. The stream folds its functions together until the
+summaries settle. `pack_rule` states the packing's own contract: the
+last's field is 32 bits (`ireduce`, then `uextend`). The caller then
+knows the tag's field is exactly the tag.
+
+```text
+before: r = f31(..); l = (r & 0xffffffff) - 1; tag = (r >> 32) - 1
+after:  r = f31(..); l = r - 1                  ; tag: -1, a constant
+```
+
+Two details found on the way:
+
+- a cached flow graph made before the fold is dropped before the
+  backend compiles;
+- an operation with one constant operand takes the immediate form
+  only for a 32-bit immediate, as a wide constant may be an address
+  that `clif_rust` places.
+
+Tests:
+- `a_parameter_every_branch_gives_alike_is_that_value`;
+- `known_bits_decide_an_and_and_a_shift`;
+- `a_callees_known_results_are_its_callers` (a callee whose tag is
+  none in both returns: the caller's shift is a constant and its
+  `and` is gone);
+- `a_known_bit_decides_a_test_and_its_cold_block_joins`.
+
+Counts, reported: words 101.4, punctuation 54.9, mixed 56.2,
+strings 266.4, numbers 151.3, comments 233.4.
+
+## A token's gap is tier 2's; the refill keeps its block
+
+The lean lexer has no gap marks. It asks whether a token is on a new
+line only where a statement asks (`on_line`), and it checks a JSON
+document's bytes only where it reads one.
+
+Ours still made one gap mark in tier 1: `json_bad`'s form feed (a
+form feed between tokens marks the next one). Three of the
+differences from lean came from it:
+
+- every refill compared each byte with 12 and made a movemask of
+  the result;
+- the gap's first byte was read back from the record before (one
+  past its first byte);
+- after a comment, a cold function (`f6`) read the comment's bytes
+  again for form feeds.
+
+The mark was eager only because it also has token tests (`after
+string when …`, `at number when …`). An earlier step had made the
+marks without tests lazy, and left this one.
+
+**The change.**
+
+- **A mark's tests stay in tier 1; its gap goes to tier 2.**
+  `lazy_marks` now takes marks with token tests too. `lazy_coded`
+  lists them. Their tests' hits stay in the code bit, set by the token
+  loop as before, the way a lexer flags what it reads. The gap is
+  tier 2's: the outlined test reads the token's code bit first, then
+  scans the bytes from the grammar token before. The JIT
+  (`lazy_mark`) and the printed Rust (`rust_stream`) both do this.
+  A mark with tests and an `unless after` stays the loop's, since the
+  word before also decides its tests' hits.
+- **The choice is the compiler's, by target.** Metal's tier 1 still
+  sets every mark in the codes, because the GPU makes all of a block's
+  marks at once. The CPU's loop leaves the gaps to tier 2.
+- **The refill keeps its block, as lean's `base`.** With no gap mark in
+  the loop, the state's `from` word was free. The refill now stores
+  the block after the one it read there (`spent_q`). The refill skips
+  a spent block when the cursor's block is the one it read. Before,
+  it read the last record's start back to learn the same thing.
+  The skip used to need the gap marks folded; now it also runs when
+  there are none in the loop.
+
+```rust
+// lean.rs, the window loop:
+base = cursor.max(base + 64);
+// generated (tier1_aot.rs), the refill:
+spent = state_from == (cursor >> 6) + 1;   // the block just read
+q = if spent { (cursor >> 6) + 1 } else { cursor >> 6 };
+```
+
+This reverses an earlier choice (journal 35) to read the cursor back
+rather than carry it. That choice was made on counts. Lean keeps the
+value in a register, and so do we now.
+
+Tests:
+- `the_marks_tests_are_the_masks` now checks the CPU's codes against
+  a grammar with `json_bad`'s tests alone (`ff` made `empty`). It
+  also runs the CPU's tier 2 on every case, so a form feed in a gap
+  must refuse there.
+- `the_loop_reads_no_record_back` asserts `PassShape::reads_back` is
+  zero. With the eager mark restored it fails.
+- The other code comparisons leave out the lazy marks' bits on both
+  sides.
+
+Found on the way: two corpus files of 500 KB are refused by the CPU's
+tier 2 and taken by the interpreter, with or without this change
+(open item `O-tier2-large-file-refusal`).
+
+Counts, reported: words 98.1, punctuation 53.3, mixed 55.0,
+strings 264.0, numbers 156.5, comments 229.4.
+
+## A short run is read in its arm
+
+The lean lexer reads a number inside its main loop. The number is an
+arm of the `match` on a rare token's first byte: it reads the digits
+and the `.` there, then writes the token.
+
+Ours called a function for every number. That was the run rule's
+short form (`RuleMode::Short`, f38): a 16-byte window at the token,
+then the run's end and the count tests from the same lanes, and the
+whole function only for a longer run. The loop saved and reloaded its
+live values around each call.
+
+Two shapes were weighed:
+- **Block words.** The refill makes the number's run and its tests'
+  words for every block. Lean makes no such word, so every block
+  would pay for them.
+- **The arm.** The short form's body goes in the arm, as lean's.
+
+The user chose the arm.
+
+**The change** (`rule_last`'s `arm`):
+
+- **Which rules.** In the loop's calls mode (`RuleMode::Calls`), a
+  run rule from the bytes that has a short form (its whole function,
+  `LONG_CALL`) gets that form's body in its arm. The window, the end,
+  and the tests that `run_tests` gives are as they were in f38.
+- **A long run** calls the whole function. The arm unpacks its
+  results like any call's and goes on to `done`.
+- **No short function.** None is made or declared for such a rule:
+  only the whole one is.
+- **Readers keep their call.** Lean's string calls `string_end` too.
+- **Calls mode** now also holds when the only calls are whole
+  functions (`LONG_CALL`).
+
+```rust
+// generated (tier1_aot.rs), the loop's rare `match`:
+48..=57 => { break 'm50; }          // a digit: the number's arm
+// …
+v977 = vld1q_u8(s + 1);             // its 16 bytes
+v983 = vcleq_u8(v977 - b'0', 9);    // digit
+v986 = vceqq_u8(v977, b'.');        // the run's `.`, the tests' too
+// …
+v1078 = (!run).trailing_zeros();    // the run's end
+if v1078 < 16 { /* the token, the `.` counts from v986's bits */ }
+else { /* the rule's whole function */ }
+```
+
+Three short functions are gone (24 functions to 21). `PassShape::arms`
+counts the rules read in their arm.
+
+Tests:
+- `a_short_run_is_the_loops_arm`;
+- `a_numbers_checks_are_at_its_token`, which reads the long path: a
+  number across a block's edge, and one longer than a block;
+- `the_cpus_records_are_the_interpreters`, with a word right after a
+  number (`12abc`) and `1.5x`.
+
+Counts, reported: words 99.2, punctuation 54.3, mixed 56.1,
+strings 264.0, numbers 133.5, comments 233.4.
+
+## A short window's mask is one narrowing shift
+
+simdjson's arm64 code makes a 16-byte compare into a mask with one
+narrowing shift (`shrn #4`): four bits a lane, in a 64-bit register.
+
+Ours made a 16-lane mask the way it makes a 64-lane one. It took an
+`and` with the lane weights, three pairwise adds, a lane move and an
+`and` with `0xffff`. The number's arm builds two such masks a token.
+
+**The change.**
+
+- **The nibble mask** (`short_mask`). On NEON it is a bitcast to
+  16-bit lanes, a shift right by four, an `and` with `0xff` (so the
+  narrowing never saturates) and an unsigned narrowing.
+  - The JIT compiles that sequence as it stands.
+  - `clif_rust` finds the sequence (`narrowing_shift`) and writes it
+    as one `vshrn_n_u16::<4>`. The steps it covers are not printed.
+  - On other targets the mask stays one bit a lane (a movemask):
+    `SHORT_STRIDE` is 4 on aarch64 and 1 elsewhere.
+- **Where it applies** (`short_stride`). A short window's masks are
+  nibble masks only where every output is made of lanes, their
+  lane-wise logic and `prev`s.
+  - A `prev`'s cut shifts by four bits a lane.
+  - A constant's pattern or an escape's run sums read bit positions,
+    so a window with one of those keeps one bit a lane.
+- **The consumers count in lanes.**
+  - The run's end is `lanes_set`: `ctz(!m)`, divided by the stride.
+  - The cut at the file's end and at the token's length is
+    `lanes_below`: `n` lanes, all 64 bits at 16 lanes of four.
+  - A count that asks for more than one keeps one bit a lane first
+    (`& 0x1111…`), then `m & (m - 1)` or the popcount.
+  - The vector count of a token's bytes (`needs_lanes`) is the same.
+
+Found on the way: a complement taken twice (`!!m`, where a negated
+lane value met a `bnot`). `clif_fold` now folds a complement's
+complement to its value.
+
+```rust
+// generated (tier1_aot.rs), the number's arm:
+v1005 = { let d = vshrn_n_u16::<4>(vreinterpretq_u16_u8(v999)); vcombine_u8(d, d) };
+v1007 = vgetq_lane_u64::<0>(vreinterpretq_u64_u8(v1005));   // the run, 4 bits a lane
+v1089 = (!v1007).trailing_zeros() >> 2;                      // its lanes
+```
+
+Tests:
+- `a_short_windows_lanes_are_its_words_bits` (JIT): every lane of
+  each short mask is its word's bit; a lane's four bits are alike; the
+  lanes set and the first five lanes agree. Outputs are a class, a
+  `prev`'s logic, and an escape's (one bit a lane).
+- `a_narrowing_shift_is_one_shrn`: one `vshrn_n_u16`, with no 16-bit
+  `and`, shift or pairwise add beside it.
+- `a_complements_complement_is_its_value`.
+
+Counts, reported: words 99.1, punctuation 54.4, mixed 56.1,
+strings 263.6, numbers 129.6, comments 233.1.
+
+## A token's length is its run's lanes
+
+Lean's number arm keeps one `end` and writes `end - start` where it
+needs a length.
+
+Our arm worked the length out as `(s + n) - s + 1`. Then each test
+branched on `len >= 1`, which is always true. The cut at the token's
+length multiplied by four and kept a select for "all 64 bits", though
+a token of at most 16 lanes never reaches it.
+
+**The change.**
+
+- **`clif_fold`, algebra.** `(c + x) - c` and `(x + c) - c` are `x`.
+  Two adds of constants are one add, or the value itself where they
+  cancel.
+- **`clif_fold`, ranges.** A count of bits (`ctz`, `clz`, `popcnt`)
+  has its bits above 7 known zero. An unsigned compare is decided
+  where its operands' ranges decide it (`urange`, `range_compare`). A
+  range comes from known bits, and from an add of a constant that
+  cannot wrap.
+- **`lanes_below` takes the most lanes it can be asked for.** The
+  select is made only where that many lanes reach 64 bits, and a lane's
+  bits are a shift (`<< 2`), not a multiply. `tested` passes the
+  token's bound less its first byte.
+
+```rust
+// generated (tier1_aot.rs), the number's tests, after:
+v1087 = (!run).trailing_zeros() >> 2;               // its lanes
+v1034 = dots & ((1 << (v1087 << 2)) - 1);           // its `.`s
+v1035 = v1034 & 0x1111_1111_1111_1111;              // one bit a lane
+// before: v1023 = (s + v1087) - s + 1; if v1023 >= 1 { … select(bits >= 64, !0, …) }
+```
+
+Tests: `a_sum_less_its_operand_is_the_other` and
+`a_range_decides_an_unsigned_compare`.
+
+Counts, reported: unchanged (rustc had folded them in its own pass).
+
+## A full window is not cut
+
+**Intro.** A window reads 64 bytes. Near the file's end some of them
+are past it, so its bits there are cut off. Lean's `block` pays for
+this only on the last block: it tests `i + 64 <= len` and pads the
+tail alone. Ours cut every window, with a shift and a select.
+
+**The change.** `cut64` (and `word`, which now uses it) tests
+`p + 64 <= len`. A full window keeps all its bits. The tail's mask is
+made in a cold block, joined after.
+
+```rust
+// generated (tier1_aot.rs), the line comment's first block, after:
+if p + 65 <= len { cut = !0 } else { cold_path(); cut = (1 << max(len - p, 0)) - 1 }
+// before, on every window:
+// rem = max(len - p, 0); cut = if rem >= 64 { !0 } else { (1 << rem) - 1 };
+```
+
+This is the fallback. Where a file's zero padding makes the cut
+nothing, it goes away (the next section).
+
+Test: `a_full_windows_word_is_not_cut`.
+
+Counts, reported: comments 234.0, strings 266.0.
+
+## A padded window is not cut
+
+**Intro.** simdjson asks for padded input: zeros after the text, so a
+read past the end is safe and finds nothing. The user asked for the
+same here. A window that reads past the file's end then reads zeros.
+An output that is false on a zero byte has no bits there, so it needs
+no cut at all: a line comment's `\n`, a string's unescaped quote, a
+digit class.
+
+**The change.**
+
+- **The layout.** `BACK` (256) zero bytes follow every file's last
+  byte. This covers the CPU's `Batch` and a resident source's slab
+  (`SOURCE_MARGIN`, was 64; a slab is mapped zeroed). 256 is Metal's
+  widest window (64 bits a lane, 32 lanes). Whether 64 would do is
+  open (`O-padding-width`).
+- **The compiler.** `Bytewise::padded(o)` says whether output `o` is
+  false on a zero byte at its delay (`zero_kills`). Such an output's
+  word is its mask, with no cut. A window cuts only where one of its
+  outputs, extra sets or gate needs it (`cut_for`, `zero_free`).
+- **`zero_kills`.** It now knows `a & !b` is false where `a` is, as
+  for a closer not escaped.
+
+```rust
+// generated (tier1_aot.rs), the line comment's first block, after:
+v86 = vgetq_lane_u64::<0>(…);          // the `\n`s, a movemask
+v87 = v86.trailing_zeros() as u64;
+if v86 != 0 { /* the comment's end */ } else { return f34(…) /* next block */ }
+// lean (micro::find): let s = block(b, i).eq(x); if s != 0 { return Some(i + s.trailing_zeros()) }
+```
+
+An output true on a zero byte keeps the cold cut (the section
+before).
+
+Tests: `a_padded_windows_word_is_not_cut` (the window never reads the
+file's length), and `a_full_windows_word_is_not_cut` (zeros past the
+end, then text past the padding).
+
+Counts, reported: comments 224.1, strings 261.7.
+
+## The padding is the compiler's input
+
+**Intro.** The padding is the application's promise, not the
+compiler's choice. An application may want less of it (a smaller
+copy, a file read in place) and pay a rare branch at the file's end
+instead. So the compiler takes it as an input.
+
+**The change.**
+
+- **`BlockNative::pad`.** The zero bytes after every file that the code
+  may count on. It is `BACK` (256) by default, and the application may
+  set it before compiling. Tier 1, tier 2 and the AOT build read it
+  from the same program.
+- **`pad_reach`.** The bytes past the end a window may read (start,
+  64 bytes, delays, a 16-byte over-read). `Bytewise::padded` holds only
+  where `pad` covers that reach. Otherwise every window takes the cold
+  cut of "A full window is not cut".
+- **The layout follows the program.** `CompiledBlock::pad` tells
+  `Batch` how many zeros to lay out. Metal's tier 2 asserts the slab's
+  margin covers it.
+- **`rr_parser::compile_padded`.** It compiles the grammar with a
+  given padding.
+
+Tests: `a_padded_windows_word_is_not_cut` (at `BACK`, at the reach,
+one less, and none), `a_full_windows_word_is_not_cut` (text right
+after the end, with no padding), and
+`an_unpadded_programs_tapes_are_the_padded` (the corpus, the same
+tapes).
+
+Counts, reported: unchanged (the default's source is the same).
+
+## A rare arm writes its own token
+
+**Intro.** In the lean lexer each `match` arm writes its own token,
+and its kind is a constant there. Ours sent several arms into a
+shared tail per class of ending. That tail tested a loaded table
+entry at run time: `& 255` for the kind, `& 65536` for "look the
+token up as a word", `& 262144` for a number check. So a number ran
+the word lookup's test, and `#`'s lookup sat behind a flag.
+
+**The change.**
+
+- **One arm, one tail.** A rare class is now one rule's (`RareClass`:
+  its end, its tag, its rule; `NO_RULE` for the bytes with none). Each
+  arm has its own exit and its own tail.
+- **The arm knows its entry.** `rare_bytes` gives the first bytes that
+  reach a rule: the table's, and those a reader with no opener goes on
+  from (`first_bytes`). Where they all share one entry (`rare_entry`),
+  the entry is a constant in the arm (`rule_last`) and in its tail. The
+  tail's tests of it fold.
+- **Not where a byte's pair bit is in its entry** (`by_pair`): there
+  the entry is not the byte's alone.
+
+```rust
+// generated (tier1_aot.rs), the rare match, after: each arm ends in its own
+//   continue 'b11; the hash probe is in `#`'s arm alone, unconditional;
+//   a number's tail has no word lookup.
+// before: 35 => { …; break 'm66 }  48..=57 => { …; break 'm66 }
+//   'm66: … if entry & 65536 != 0 { /* hash probe */ } …
+```
+
+Left, and right to be: the number arm's `& 262144` (`0`'s entry is
+not the other digits'), and the cold arm of bytes with no rule.
+
+Test: `a_rare_arm_knows_its_entry` (`PassShape::known_entries`).
+
+## A reader's short form is read in its arm
+
+**Intro.** The lean lexer's `b'/'` arm tests the byte after. For `//`
+it scans in place (`find` is inlined), and for `/*` it calls
+`find_pair`. Ours called a short function (`f35`) for every `/`. That
+function read one block and tail-called the whole reader. The arm
+then unpacked a (last, tag, hits) word to learn what had been read.
+
+**The change.**
+
+- **The reader's arm.** A reader rule with a short form
+  (`RuleMode::Short`, its whole function `LONG_CALL`) is built in the
+  loop's arm, as a run's has been. Its openers' tests, its first
+  window, and its tests run there. A read past the window calls the
+  whole function (`long_out`), and the results go on to the arm's
+  exit.
+- **No short functions.** The short form is built once only, to see
+  that it calls nothing but its whole function. The branch that made
+  short functions is gone.
+- **An arm's body in a block of its own.** The entry constant (the
+  section before) goes before it, since `tested` expects the rule's
+  block empty.
+
+```rust
+// generated (tier1_aot.rs), the `/` arm, after:
+47 => { if b[s+1] == b'/' { /* 64 bytes: eq '\n', movemask, ctz */
+          if m != 0 { last = s + 1 + ctz - 1 } else { cold_path(); f33(…) /* the whole reader */ } }
+        else if b[s+1] == b'*' { /* first block of `*/` */ … } … }
+// before: 47 => { cold_path(); let t = f35(…); /* unpack last, tag, hits */ … }
+```
+
+Test: `a_readers_short_form_is_the_loops_arm` (`PassShape::arms`).
+Functions 21 to 19.

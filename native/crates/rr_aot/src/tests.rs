@@ -79,7 +79,7 @@ fn aot_tapes_are_the_jits() {
 fn the_word_multiplier_is_a_literal() {
     let c = rerail_rr_parser::compiled().expect("compiles");
     let t = c.parser.tier1.records.as_ref().expect("the record pass");
-    let src = include_str!("tier1_aot.rs");
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     assert!(!src.contains("kept("), "a barrier on a constant");
     assert!(src.contains(&format!("{}i64 as u64", t.table.mult as i64)), "the multiplier a literal");
     assert!(t.second, "rr's words fit in two words each");
@@ -94,7 +94,7 @@ fn the_word_multiplier_is_a_literal() {
 fn the_run_loop_calls_nothing() {
     let c = rerail_rr_parser::compiled().expect("compiles");
     let mult = c.parser.tier1.records.as_ref().expect("the record pass").table.mult as i64;
-    let src = include_str!("tier1_aot.rs");
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
     // The values that are the multiplier, then each hash's multiply by one.
     let vars: Vec<&str> = f0.match_indices(&format!(" = {mult}i64 as u64;")).map(|(at, _)| &f0[f0[..at].rfind(|c: char| !c.is_ascii_alphanumeric()).expect("its name") + 1..at]).collect();
@@ -124,7 +124,7 @@ fn the_run_loop_calls_nothing() {
 /// five instructions, where it made each `vpaddq_u8(a, a)` three.
 #[test]
 fn a_bitmask_is_pairwise_adds() {
-    let src = include_str!("tier1_aot.rs");
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     let same = src.match_indices("vpaddq_u8(").filter(|(i, _)| {
         let rest = &src[i + "vpaddq_u8(".len()..];
         let args = &rest[..rest.find(')').unwrap_or(0)];
@@ -138,8 +138,9 @@ fn a_bitmask_is_pairwise_adds() {
 /// `return f(…)`, so rustc hands its caller's result on, a tail call, where a copy through a
 /// temporary kept a short function's frame.
 #[test]
+#[ignore = "0177's short functions are gone (\"A reader's short form is read in its arm\"): no call is returned as it is in tier 1 now; work queue Q29"]
 fn a_returned_call_is_the_return() {
-    let src = include_str!("tier1_aot.rs");
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     assert!(src.contains("return unsafe { f"), "no call returned as it is");
     assert!(!src.contains("v0, v1, v2, v3, v4, v5) }; return ("), "a call's results copied into a return");
 }
@@ -150,6 +151,7 @@ fn a_returned_call_is_the_return() {
 /// way for a short token calls nothing, as a lexer reads a few digits, a line comment or a
 /// plain string. A number's, a comment's and a string's at least.
 #[test]
+#[ignore = "0177 makes no short functions (\"A short run is read in its arm\", \"A reader's short form is read in its arm\"); work queue Q29"]
 fn a_short_tokens_function_calls_only_its_whole() {
     use rerail_compiler::native_cpu_stream;
     native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -167,7 +169,7 @@ fn a_short_tokens_function_calls_only_its_whole() {
 /// registers, as a lexer's function returns its token, not four words through memory.
 #[test]
 fn a_rules_function_returns_two_words() {
-    let src = include_str!("tier1_aot.rs");
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     let six = "a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64)";
     assert!(src.contains(&format!("{six} -> (u64, u64) {{")), "no rule function of two words");
     assert!(!src.contains(&format!("{six} -> (u64, u64, u64, u64) {{")), "a rule function of four words");
