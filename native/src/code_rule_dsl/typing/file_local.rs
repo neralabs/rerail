@@ -899,6 +899,77 @@ pub fn assemble(
     Programs { local: l, cross: c, exports, base, locations, same_doc, file_local: local, constants, versions }
 }
 
+/// Widens each request for a node's source attribute (`rr_value_req`, `rr_node_text_req`, `rr_token_req`, decision
+/// 0174) that the split finds cross-file to its file-local literals: the positive reads of base and file-local
+/// relations joined to the node, with the comparisons over only their variables. An attribute's answer reads the
+/// node's document (`@rr_node_value`), which only the chunk evaluating it holds (decision 0268), so a cross-file
+/// request's answer had no batch to read (O-cross-file-answers: B010's request was cross-file because C414's asker
+/// reads `builtin_at`). Dropping literals widens a request, which is sound: its readers keep their own literals. A
+/// request whose rules keep no file-local literal binding the node, or that the split still finds cross-file, is
+/// left as it was.
+pub fn localize_requests(prog: &mut crate::code_rule_dsl::logic::front::Program) {
+    use crate::code_rule_dsl::logic::front::{Literal, Term};
+    use std::collections::BTreeSet;
+    let requests: Vec<&'static str> = crate::code_rule_dsl::logic::rr::lower::ON_REQUEST
+        .iter()
+        .flat_map(|round| round.iter())
+        .map(|a| a.req)
+        .filter(|r| prog.rules.iter().any(|rule| rule.head.rel == *r))
+        .collect();
+    if requests.is_empty() {
+        return;
+    }
+    let mut local = split(prog);
+    for req in requests {
+        if local.contains(req) {
+            continue;
+        }
+        let mut next = prog.clone();
+        let mut changed = false;
+        for rule in next.rules.iter_mut().filter(|r| r.head.rel == req) {
+            let Some(Term::Var(n)) = rule.head.args.first() else { continue };
+            let n = n.to_string();
+            let base = |rel: &str| prog.inputs.iter().any(|r| r == rel);
+            let candidate = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg && !prog.lattice.contains_key(a.rel.as_str()) && a.rel != req && (base(&a.rel) || local.contains(a.rel.as_str())));
+            // The candidates joined to the node, by shared variables.
+            let mut bound: BTreeSet<String> = BTreeSet::from([n.clone()]);
+            let mut kept: BTreeSet<usize> = BTreeSet::new();
+            loop {
+                let before = kept.len();
+                for (j, l) in rule.body.iter().enumerate() {
+                    if !kept.contains(&j) && candidate(l) && !l.vars().is_disjoint(&bound) {
+                        kept.insert(j);
+                        bound.extend(l.vars());
+                    }
+                }
+                if kept.len() == before {
+                    break;
+                }
+            }
+            if kept.is_empty() || kept.len() == rule.body.iter().filter(|l| l.atom().is_some()).count() && rule.body.iter().all(|l| !matches!(l, Literal::Atom(a) if a.neg)) {
+                continue;
+            }
+            for (j, l) in rule.body.iter().enumerate() {
+                if matches!(l, Literal::Cmp { .. }) && !l.vars().is_empty() && l.vars().is_subset(&bound) {
+                    kept.insert(j);
+                }
+            }
+            let body: Vec<Literal> = kept.iter().map(|&j| rule.body[j].clone()).collect();
+            rule.body = body.into();
+            changed = true;
+        }
+        if !changed {
+            continue;
+        }
+        let now = split(&next);
+        if now.contains(req) {
+            crate::code_rule_dsl::logic::profile::decision("on request: widened to file-local literals", || req.to_owned());
+            *prog = next;
+            local = now;
+        }
+    }
+}
+
 /// Pushes the file-local part of each cross-file rule into the chunks: the rule's positive reads of base relations
 /// and file-local relations, joined by their variables, with the comparisons over only their variables, become a
 /// file-local relation of the variables the rest of the rule uses (`fl<k>_<head>`), and the rule reads that. So do
@@ -918,6 +989,7 @@ pub fn assemble(
 /// these lookups there too. So is a component that enumerates subtrees (`descends`): `within(n, a)` with `n`
 /// narrowed only by its attributes.
 pub fn push_local_joins(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Vec<String> {
+    localize_requests(prog);
     let original = prog.clone();
     let (made, local) = push_with(prog, false);
     if cross_reads_base(prog, &local) {

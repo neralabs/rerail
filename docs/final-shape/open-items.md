@@ -5256,6 +5256,14 @@ pair (no longer ignored); the pack's outputs are unchanged over c1x and c50. Sti
 cross-file relation binds (B010's answer rule over `rr_value_req`, which C414's asker makes cross-file) has no
 file-local join to go with. Option (a) above, widening such a request to its file-local literals, is what is left.
 
+Option (a) built (2026-11-16, `typing::file_local::localize_requests`, run before the joins are pushed): a request
+relation the split finds cross-file has each rule cut to its positive base and file-local reads joined to the node,
+with the comparisons over only their variables, and is taken where the split then finds it file-local. B010 with
+C414 over ten files of the bench corpus runs without the error, eager and on request (no findings on those ten
+either way, so the findings themselves are not yet compared). The full pack over 300 files gives the same counts as
+before on every step of the three bench shapes (M3 Max). Open: compare B010's findings eager against on request on
+files where it finds some.
+
 ## O-cold-seed-join. One seed join ends a cold 50-file data-layer run (2026-11-15)
 
 Status: open. Found by E32 (t39 step 24): the data-layer candidates over 50 files take 100 s of CPU cold
