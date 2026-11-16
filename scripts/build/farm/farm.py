@@ -16,11 +16,12 @@ import re
 import shlex
 import subprocess
 import sys
+import threading
 import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 7
+VERSION = 12
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -433,6 +434,12 @@ def advise(checkout, rustc):
             lines.append(f"this command runs a whole test tier here while {free[0]['name']} has "
                          f"{spare(free[0]):.0f} cores to spare: `scripts/dev/test-remote -- {tier.split(' ', 1)[-1]}` "
                          "runs it there (RERAIL_FARM_TESTS_HERE=1 says it must run here)")
+    lease = leased(HERE)
+    if lease:
+        lines.append(f"a benchmark lease holds this machine until {time.strftime('%H:%M:%S', time.localtime(lease['until']))} "
+                     f"at the latest ({lease.get('label') or 'unnamed'}): this build's compiles wait for it, and anything heavy "
+                     "you run here now (tests, Relax) is unfair to the benchmark: run it with scripts/dev/test-remote, or after")
+    lines += interference_advice(checkout)
     try:
         f = findings_path(checkout)
         if time.time() - os.stat(f).st_mtime < 2 * TIDY_SECONDS:
@@ -471,6 +478,10 @@ def wrapper(rustc, args):
     if target and crate != "___":
         tidy(target, checkout)
         advise(checkout, rustc)
+    # Every compile of a checkout's waits while this machine is leased for a benchmark: a hot
+    # incremental one too, which runs rustc itself (scripts/dev/quiet-run).
+    if crate != "___":
+        wait_for_lease(HERE, f"{crate} waits to compile")
     args = args + same_in_every_checkout(args, out_dir, crate)
     stripped, inc = without_incremental(args)
     if inc is not None:
@@ -557,7 +568,7 @@ DOWN_SECONDS = (30, 1800)
 OFF_LINK_SECONDS = 60
 # The throughput probe's size, and how often it is sent (it is the slowest part of the probe). The
 # round trip is taken off its time: at 4 MB a session's start alone halved the rate seen.
-PROBE_BYTES = 16 << 20
+PROBE_BYTES = 32 << 20
 PROBE_SECONDS = 600
 
 
@@ -661,20 +672,36 @@ def probe(host, cfg, fell_back=False, recovered=False):
     except (ValueError, IndexError):
         h["load"] = None
     h["mounts"] = [m for m in lines[5:] if m]
-    started = time.time()
-    try:
-        subprocess.run(ssh(name, "true", "health"), capture_output=True, timeout=5)
-        h["rtt_ms"] = round((time.time() - started) * 1000)
-    except subprocess.TimeoutExpired:
-        h["rtt_ms"] = 5000
-    link = link_of(host)
-    if time.time() - h["mbps_at"] > PROBE_SECONDS or (h["mbps"] or 0) < cfg["min_mbps"]:
+    # The round trip is the least of three: each starts an ssh process here, which a loaded Mac
+    # delays by up to a few hundred ms, and that is not the link.
+    rtts = []
+    for _ in range(3):
         started = time.time()
         try:
-            subprocess.run(ssh(name, "cat >/dev/null", "health"), input=os.urandom(PROBE_BYTES), capture_output=True, timeout=10)
-            h["mbps"] = round(PROBE_BYTES / (1 << 20) / max(time.time() - started - h["rtt_ms"] / 1000, 0.01), 1)
+            subprocess.run(ssh(name, "true", "health"), capture_output=True, timeout=5)
+            rtts.append(round((time.time() - started) * 1000))
         except subprocess.TimeoutExpired:
-            h["mbps"] = 0
+            rtts.append(5000)
+            break
+    h["rtt_ms"] = min(rtts)
+    link = link_of(host)
+    if time.time() - h["mbps_at"] > PROBE_SECONDS or (h["mbps"] or 0) < cfg["min_mbps"]:
+        data = os.urandom(PROBE_BYTES)  # made before the clock starts: 70 ms on a loaded Mac
+        # A plain pipe: `run(input=, capture_output=True)` writes stdin 512 bytes at a time while
+        # it reads, and measured itself (57 MB/s where the pipe does 270).
+        proc = subprocess.Popen(ssh(name, "cat >/dev/null", "health"), stdin=subprocess.PIPE,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        timer = threading.Timer(10, proc.kill)
+        timer.start()
+        started = time.time()
+        try:
+            proc.stdin.write(data)
+            proc.stdin.close()
+        except OSError:
+            pass
+        killed = proc.wait() != 0 and not timer.is_alive()
+        timer.cancel()
+        h["mbps"] = 0 if killed else round(PROBE_BYTES / (1 << 20) / max(time.time() - started - h["rtt_ms"] / 1000, 0.01), 1)
         h["mbps_at"] = time.time()
     if link and arrival != link and not recovered and recover(host, arrival):
         return probe(host, cfg, fell_back=fell_back, recovered=True)
@@ -742,6 +769,8 @@ def usable(kind=None):
     for host in hosts():
         if not host.get("enabled", True) or (kind and not host.get(kind, True)):
             continue
+        if leased(host["name"]):
+            continue
         if health(host).get("ok"):
             out.append(host)
     return sorted(out, key=lambda h: -spare(h))
@@ -755,7 +784,16 @@ def capacity(host):
     h = health(host)
     if not h.get("ok"):
         return 0
-    return host["cores"] if h.get("idle_s", 0) > USER_IDLE_SECONDS else host["cores"] // 2
+    return host["cores"] if not attended(host, h) else host["cores"] // 2
+
+
+def attended(host, h=None):
+    """Whether a person uses `host` now: input in the last USER_IDLE_SECONDS. Never for a host the
+    configuration marks `unattended` (a machine nobody sits at, whose input device reports
+    touches on its own)."""
+    if host.get("unattended"):
+        return False
+    return (h or health(host)).get("idle_s", 0) <= USER_IDLE_SECONDS
 
 
 # The ssh connection a compile's calls go over: one master per slot, since sshd serves only so many
@@ -864,12 +902,154 @@ def on_host(script):
     return "exec /usr/bin/python3 -u -c " + shlex.quote(open(here).read())
 
 
+# ---- leases: a quiet machine for a benchmark (scripts/dev/quiet-run, README.md "Quiet runs")
+#
+# A client asks for a machine (a host, or HERE) for a command. Requests queue per machine, fairly:
+# the client that used the machine least in the last hour goes first. While a lease holds a
+# machine the farm sends it nothing new (compile slots, test commands, local compiles here wait),
+# A run has LEASE_SECONDS at most.
+HERE = "here"
+LEASE_SECONDS = 10 * 60
+# The window fairness is judged over.
+FAIR_SECONDS = 3600
+# How long a warning to a checkout that loaded a leased machine is shown at its builds.
+INTERFERED_SECONDS = 3 * 3600
+
+
+def lease_dir(machine):
+    return state("leases", machine, "x")[:-2]
+
+
+def pid_alive(pid):
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (ValueError, TypeError, ProcessLookupError):
+        return False
+    except PermissionError:
+        return True
+
+
+def lease_of(machine):
+    """The lease holding `machine` now, or None (one whose holder died or whose time is past goes)."""
+    path = os.path.join(lease_dir(machine), "lease.json")
+    lease = read_json(path, None)
+    if lease is None:
+        return None
+    if not pid_alive(lease.get("pid")) or time.time() > lease.get("until", 0):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        return None
+    return lease
+
+
+def leased(machine):
+    """The lease that keeps the farm's work off `machine`, or None: not the caller's own (a lease
+    holder's command runs with RERAIL_FARM_LEASE set to its id)."""
+    lease = lease_of(machine)
+    if lease is None or lease.get("id") == os.environ.get("RERAIL_FARM_LEASE"):
+        return None
+    return lease
+
+
+def queue(machine):
+    """The live requests for `machine`, in the order they are served: least use of the machine in
+    the last FAIR_SECONDS first, then the earliest asked."""
+    d = os.path.join(lease_dir(machine), "queue")
+    os.makedirs(d, exist_ok=True)
+    out = []
+    for n in os.listdir(d):
+        r = read_json(os.path.join(d, n), None)
+        if r is None or not pid_alive(r.get("pid")):
+            try:
+                os.unlink(os.path.join(d, n))
+            except OSError:
+                pass
+            continue
+        out.append(r)
+    used = {c: used_seconds(c, machine) for c in {r["client"] for r in out}}
+    return sorted(out, key=lambda r: (used[r["client"]], r["asked"]))
+
+
+def ledger():
+    """Every lease that ended in the last FAIR_SECONDS (state/leases/ledger.jsonl)."""
+    since = time.time() - FAIR_SECONDS
+    out = []
+    try:
+        for line in open(state("leases", "ledger.jsonl")):
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            if e.get("ended", 0) > since:
+                out.append(e)
+    except OSError:
+        pass
+    return out
+
+
+def used_seconds(client, machine=None):
+    """The seconds `client` held leases in the last FAIR_SECONDS (on `machine`, or anywhere)."""
+    since = time.time() - FAIR_SECONDS
+    return sum(e["ended"] - max(e["started"], since) for e in ledger()
+               if e["client"] == client and (machine is None or e["machine"] == machine))
+
+
+def record_lease(lease, ended, how, report):
+    with open(state("leases", "ledger.jsonl"), "a") as f:
+        f.write(json.dumps({"machine": lease["machine"], "client": lease["client"], "label": lease.get("label"),
+                            "started": lease["started"], "ended": ended, "how": how} | report) + "\n")
+
+
+def interfered(checkout, entry):
+    """Records that `checkout`'s processes loaded a leased machine: `advise` tells its builds."""
+    path = state("interfered", key(checkout) + ".json")
+    seen = [e for e in read_json(path, []) if time.time() - e.get("at", 0) < INTERFERED_SECONDS]
+    write_json(path, seen + [entry])
+
+
+def interference_advice(checkout):
+    """The warnings `advise` prints for `checkout`: its processes loaded a leased machine lately."""
+    out = []
+    for e in read_json(state("interfered", key(checkout) + ".json"), []):
+        if time.time() - e.get("at", 0) < INTERFERED_SECONDS:
+            out.append(f"this checkout's {e['what']} used {e['cpu_s']:.0f} CPU-s on this machine during a benchmark lease "
+                       f"({time.strftime('%H:%M', time.localtime(e['at']))}, {e.get('label') or 'unnamed'}): that is unfair to "
+                       "the benchmark; check scripts/build/farm/status for a lease before heavy runs, or run them with "
+                       "scripts/dev/test-remote")
+    return out
+
+
+def wait_for_lease(machine, why):
+    """Waits while a lease holds `machine` (its time is bounded), saying so once: work held back is
+    told why, so it knows it is waiting on a benchmark, not on the farm."""
+    told = False
+    while True:
+        lease = leased(machine)
+        if lease is None:
+            return
+        if not told:
+            print(f"warning: rerail-farm: {why}: this machine is leased for a benchmark "
+                  f"({lease.get('label') or 'unnamed'}) until {time.strftime('%H:%M:%S', time.localtime(lease['until']))} "
+                  "at the latest (scripts/build/farm/status)", file=sys.stderr, flush=True)
+            told = True
+        time.sleep(1)
+
+
 def remote_slot():
     """A free compile slot on a host, and its lock. Slots are taken in turn across the hosts (each
     one's first, then each one's second, ...), so every host works, not only the first listed."""
     if os.environ.get("RERAIL_FARM_LOCAL"):
         return None, None
-    open_hosts = [(h, capacity(h)) for h in hosts() if h.get("enabled", True)]
+    open_hosts = []
+    for h in hosts():
+        if not h.get("enabled", True):
+            continue
+        if leased(h["name"]):
+            continue
+        open_hosts.append((h, capacity(h)))
     for i in range(max((c for _, c in open_hosts), default=0)):
         for host, cap in open_hosts:
             if i >= cap:
@@ -1032,6 +1212,7 @@ def farm_rustc(argv0, args):
 def local(rustc, args):
     """Compiles here, in one of this machine's slots: held by this process, since a lock does not
     survive an exec."""
+    wait_for_lease(HERE, f"{value(args, '--crate-name')} waits to compile")
     lock = local_slot()
     try:
         code = subprocess.run([rustc] + args).returncode

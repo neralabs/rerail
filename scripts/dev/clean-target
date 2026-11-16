@@ -2,7 +2,7 @@
 """Removes what this checkout's cargo builds can no longer use from its target directory, and nothing
 they still use: never a full `cargo clean` (a rebuild of everything takes 15 minutes and more).
 
-    scripts/dev/clean-target [--dry-run] [--wait] [--keep-hours H] [TARGET_DIR]
+    scripts/dev/clean-target [--dry-run] [--wait] [--keep-hours H] [--relax-keep-hours H] [TARGET_DIR]
 
 The farm's wrapper runs it on its own (`--wait`, at most once an hour per target directory, after
 the build that started it ends): scripts/build/farm/README.md, "Old builds"
@@ -26,6 +26,12 @@ What goes, per profile directory:
   previous ones behind. Those no binary or dylib of the directory names go.
 - **Old incremental state.** Incremental directories of crates no longer built here, and those
   untouched for a day. A crate's next edit then compiles it whole once.
+
+- **Idle Relax run dirs.** Relax caps the stores of the run dir a run uses, and only that one. A
+  run dir no run uses any more is removed whole once idle for `--relax-keep-hours` (default 6):
+  this target's own `relax` (its runs share one under `RELAX_SHARE` now) and every
+  `<relax home>/target/<key>` but the most recently used one. Never one a Relax process runs in
+  (it holds a lock in `cache/live`). scripts/dev/relax/README.md, "How the caches stay bounded".
 
 It prints what it removes and the space freed (blocks on disk: APFS shares cloned files' blocks).
 `--dry-run` only prints (and takes no lock). Runs at nice 19.
@@ -271,8 +277,155 @@ def profiles(target):
     return out
 
 
+# --- Relax's run dirs (scripts/dev/relax/README.md, "How the caches stay bounded")
+#
+# Relax caps a run dir's stores itself, but only the run dir a run uses: a run dir no run uses any
+# more (a worktree's own `target/relax` once its runs share one under RELAX_SHARE, another share
+# name's) is never pruned. These go here, whole, once idle for RELAX_KEEP_HOURS.
+RELAX_KEEP_HOURS = 6.0
+# A run dir's key under `<relax home>/target` (the store root of a shared workspace).
+RELAX_KEY = re.compile(r"^[0-9a-f]{8}$")
+
+
+def relax_homes():
+    """Relax's homes: RELAX_HOME when set, and the default ~/.relax."""
+    out = []
+    for h in (os.environ.get("RELAX_HOME"), os.path.expanduser("~/.relax")):
+        if h and os.path.isdir(h) and os.path.realpath(h) not in out:
+            out.append(os.path.realpath(h))
+    return out
+
+
+def relax_roots(target):
+    """(run dir, shared): this target's own `relax` dir, and every `<relax home>/target/<key>`."""
+    out = []
+    own = os.path.join(target, "relax")
+    if os.path.isdir(os.path.join(own, "cache")):
+        out.append((own, False))
+    for home in relax_homes():
+        t = os.path.join(home, "target")
+        for name in sorted(os.listdir(t)) if os.path.isdir(t) else []:
+            d = os.path.join(t, name)
+            if RELAX_KEY.match(name) and os.path.isdir(os.path.join(d, "cache")):
+                out.append((d, True))
+    return out
+
+
+def relax_last_used(root):
+    """When a run last used `root`: a run stamps every store file it opens, and writes its set."""
+    newest = 0.0
+    for d in (os.path.join(root, "cache"), os.path.join(root, "cache", "sets")):
+        try:
+            with os.scandir(d) as it:
+                for e in it:
+                    try:
+                        newest = max(newest, e.stat(follow_symlinks=False).st_mtime)
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+    return newest
+
+
+def relax_take(root):
+    """Every live lock of `root` held exclusively (open files), or None when a Relax process runs
+    there: each running process holds its build's `cache/live/<build>` shared (Relax store.rs
+    hold_build)."""
+    held = []
+    live = os.path.join(root, "cache", "live")
+    for name in sorted(os.listdir(live)) if os.path.isdir(live) else []:
+        try:
+            f = open(os.path.join(live, name), "r+")
+        except OSError:
+            continue
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            f.close()
+            for g in held:
+                g.close()
+            return None
+        held.append(f)
+    return held
+
+
+def relax_plan(target, keep_hours, now=None):
+    """The Relax run dirs to remove: (root, why, last used). Kept: one a Relax process runs in,
+    one used in the last `keep_hours`, and the most recently used shared one (whatever its age: it
+    is the one every worktree's next run starts from)."""
+    now = time.time() if now is None else now
+    roots = [(r, shared, relax_last_used(r)) for r, shared in relax_roots(target)]
+    newest_shared = max((r for r in roots if r[1]), key=lambda r: r[2], default=None)
+    out = []
+    for root, shared, used in roots:
+        if newest_shared is not None and root == newest_shared[0]:
+            continue
+        if now - used < keep_hours * 3600:
+            continue
+        why = "Relax run dir, another share's" if shared else "Relax run dir of this checkout (its runs share one now)"
+        out.append((root, f"{why}, idle {keep_hours:g}+ h", used))
+    return out
+
+
+def clean_relax(target, keep_hours, dry, counts):
+    """Removes the idle Relax run dirs relax_plan names; the bytes freed. A run dir is renamed
+    aside first (a Relax that starts meanwhile makes a fresh one, a cold run, never a broken one),
+    under its live locks, then deleted."""
+    freed = 0
+    for root, why, used in relax_plan(target, keep_hours):
+        held = None if dry else relax_take(root)
+        if not dry and held is None:
+            say(f"{root}: a Relax process runs there: kept")
+            continue
+        try:
+            b = blocks(root)
+            if not dry:
+                aside = f"{root}.removing-{os.getpid()}"
+                try:
+                    os.rename(root, aside)
+                except OSError as e:
+                    say(f"{root}: not removed ({e.strerror})")
+                    continue
+        finally:
+            for f in held or []:
+                f.close()
+        if not dry:
+            shutil.rmtree(aside, ignore_errors=True)
+        counts.setdefault(why, [0, 0])
+        counts[why][0] += 1
+        counts[why][1] += b
+        freed += b
+        say(f"{root}: {b / 1e9:.1f} GB, last used {time.strftime('%Y-%m-%d %H:%M', time.localtime(used))}"
+            f"{' (dry run)' if dry else ''}")
+    # what an interrupted removal left aside
+    for home in relax_homes():
+        for d in glob_aside(os.path.join(home, "target")) + glob_aside(target):
+            if not dry:
+                shutil.rmtree(d, ignore_errors=True)
+    return freed
+
+
+def glob_aside(parent):
+    """Run dirs a removal renamed aside whose remover is gone."""
+    try:
+        return [os.path.join(parent, n) for n in os.listdir(parent) if ".removing-" in n
+                and not pid_alive(n.rsplit("-", 1)[-1])]
+    except OSError:
+        return []
+
+
+def pid_alive(pid):
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (ValueError, ProcessLookupError):
+        return False
+    except PermissionError:
+        return True
+
+
 def main(argv):
-    dry, wait, keep_hours = False, False, 1.0
+    dry, wait, keep_hours, relax_hours = False, False, 1.0, RELAX_KEEP_HOURS
     rest = []
     while argv:
         a = argv.pop(0)
@@ -285,6 +438,8 @@ def main(argv):
             wait = True
         elif a == "--keep-hours" and argv:
             keep_hours = float(argv.pop(0))
+        elif a == "--relax-keep-hours" and argv:
+            relax_hours = float(argv.pop(0))
         elif a.startswith("-"):
             sys.exit(f"clean-target: unknown option {a} (--help)")
         else:
@@ -333,6 +488,7 @@ def main(argv):
         finally:
             if lock:
                 lock.close()
+    freed += clean_relax(target, relax_hours, dry, counts)
     for reason, (n, b) in sorted(counts.items(), key=lambda kv: -kv[1][1]):
         say(f"  {reason}: {n} paths, {b / 1e9:.1f} GB")
     say(f"{'would free' if dry else 'freed'} {freed / 1e9:.1f} GB in {target} "
