@@ -636,13 +636,12 @@ impl Version {
         Ok(p.finish()?.0)
     }
 
-    /// A part of this version whose rules are those whose id `rules` takes (decision 0298), with `part`'s overlay of
-    /// fields.
-    pub fn part_rules<S: AsRef<str>>(self: &Arc<Self>, rules: impl Fn(RuleId) -> bool, inputs: &[S], outputs: &[S], fields: PartFields<'_>) -> Result<Arc<Version>, String> {
+    /// A part of this version whose rules are those whose id `rules` takes, with its own inputs and outputs (a
+    /// selection from a general form, decision 0298): one overlay, its relations' other fields this version's.
+    pub fn part_rules<S: AsRef<str>, T: AsRef<str>>(self: &Arc<Self>, rules: impl Fn(RuleId) -> bool, inputs: &[S], outputs: &[T]) -> Result<Arc<Version>, String> {
         use super::manager::Pipeline;
-        use super::passes::{PartOf, RetainIds};
         let mut p = Pipeline::new("part", self.clone());
-        p.program(&mut RetainIds(rules)).program(&mut PartOf { inputs, outputs, fields });
+        p.program(&mut super::passes::SelectPart { keep: rules, inputs, outputs });
         Ok(p.finish()?.0)
     }
 

@@ -1442,6 +1442,11 @@ pub(in crate::code_rule_dsl) struct General {
     /// Per rule of the form's version, in order: the read whose delta it is driven by, or `None` for a rule every
     /// selection keeps (`selected`).
     pub(in crate::code_rule_dsl) drivers: Vec<Option<String>>,
+    /// The form's inputs and outputs, and per rule the inputs it reads (places in `inputs`): what a selection states
+    /// of its part, read without the form's fields.
+    pub(in crate::code_rule_dsl) inputs: Vec<String>,
+    pub(in crate::code_rule_dsl) outputs: Vec<String>,
+    pub(in crate::code_rule_dsl) rule_inputs: Vec<Vec<u32>>,
 }
 
 /// Stratum `scc`'s general form (decision 0298), its rules `rules` (places among `v0`'s rules): `form` with the
@@ -1457,7 +1462,20 @@ pub(in crate::code_rule_dsl) fn general(atoms: &Arc<Version>, v0: &Placed, rules
     let one = One { has_delta: &all, has_old: &none };
     let form = form(atoms, v0, rules, scc, &reads, domains, olds, &one, run_input)?;
     let drivers = drivers(&form.placed, scc, &reads);
-    Ok(General { form, reads, drivers })
+    let p = &form.placed;
+    let f = Fields::of(p).ok_or_else(|| Error::Plan("a general form holds its rules alone".into()))?;
+    let inputs: Vec<String> = f.inputs().map(str::to_owned).collect();
+    let outputs: Vec<String> = f.outputs().map(str::to_owned).collect();
+    let at: HashMap<&str, u32> = inputs.iter().enumerate().map(|(i, r)| (r.as_str(), i as u32)).collect();
+    let rule_inputs = (0..p.len())
+        .map(|k| {
+            let mut read: Vec<u32> = p.rule(k).body().filter_map(|l| l.atom()).filter_map(|a| at.get(p.v.rel_name(a.rel())).copied()).collect();
+            read.sort_unstable();
+            read.dedup();
+            read
+        })
+        .collect();
+    Ok(General { form, reads, drivers, inputs, outputs, rule_inputs })
 }
 
 /// The read each of `p`'s rules is driven by: one that reads a read's delta (`r__minus`, `r__plus`) as a positive

@@ -561,6 +561,9 @@ pass.
   default and removed; the edit's cross-file part costs about 0.29 s less than today's (0298's table), with the
   same rows on the five steps.
 - **Record**: the user's call (2026-11-16): watch Typing-support until step 5 is done, then integrate here.
+  For Typing-support, when it pulls this branch: `program_image/manager.rs`' `Delta::of` no longer compares the
+  declarations and facts of an overlay of the input whose own layer states none (0298, "A selection's own cost");
+  the program image's 26 tests, which check carried analyses in a debug build, pass.
 
 ## Questions for the user
 

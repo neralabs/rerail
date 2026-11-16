@@ -8952,26 +8952,38 @@ fn general_selection(g: &maintain::General, moved: &BTreeSet<String>, kept: &ret
         return Ok(None);
     }
     let Some(at) = maintain::selected(g, moved) else { return Ok(None) };
-    let pv = &g.form.placed;
-    let read: BTreeSet<&str> = at.iter().flat_map(|&k| pv.rule(k).body().filter_map(|l| l.atom()).map(|a| pv.v.rel_name(a.rel())).collect::<Vec<_>>()).collect();
+    // The inputs the selected rules read.
+    let mut read = vec![false; g.inputs.len()];
+    for &k in &at {
+        for &i in &g.rule_inputs[k] {
+            read[i as usize] = true;
+        }
+    }
+    let reads = |name: &str| g.inputs.iter().position(|r| r == name).is_some_and(|i| read[i]);
     let mut old_reads = Vec::new();
-    for r in g.form.old_reads.iter().filter(|r| read.contains(format!("{r}__old").as_str()) && !bound_old(r)) {
+    for r in g.form.old_reads.iter().filter(|r| !bound_old(r) && reads(&format!("{r}__old"))) {
         if !kept.has_old(r) {
             return Ok(None);
         }
         old_reads.push(r.clone());
     }
-    let ids: std::collections::HashSet<crate::code_rule_dsl::logic::program_image::RuleId> = at.iter().map(|&k| pv.id(k)).collect();
-    let f = crate::code_rule_dsl::logic::plan::fields::Fields::of(pv).ok_or_else(|| Error::Plan("a general form holds its rules alone".into()))?;
+    let pv = &g.form.placed;
+    let mut ids: Vec<crate::code_rule_dsl::logic::program_image::RuleId> = at.iter().map(|&k| pv.id(k)).collect();
+    ids.sort_unstable();
     // The inputs the form for `moved` would state: those the run binds and the old rows, less the deltas and old rows
     // of the reads that did not move (no rule selected reads them).
     let piece = |r: &str| r.ends_with("__old") || r.ends_with("__minus") || r.ends_with("__plus");
-    let inputs: Vec<&str> = f.inputs().filter(|r| (run_input(r) || r.ends_with("__old")) && (!piece(r) || read.contains(r))).collect();
-    let outputs: Vec<&str> = f.outputs().collect();
-    let all = |_: &str| true;
-    let part = pv.v.part_rules(|id| ids.contains(&id), &inputs, &outputs, crate::code_rule_dsl::logic::program_image::PartFields { natives: &all, lattice: &all, gates: &all }).map_err(Error::Plan)?;
+    let inputs: Vec<&str> = g.inputs.iter().zip(&read).filter(|&(r, &read)| (run_input(r) || r.ends_with("__old")) && (read || !piece(r))).map(|(r, _)| r.as_str()).collect();
+    let part = pv.v.part_rules(|id| ids.binary_search(&id).is_ok(), &inputs, &g.outputs).map_err(Error::Plan)?;
     let mut placed = Placed::whole(part);
-    placed.maint = pv.maint.clone();
+    // Its maintenance: the general form's, each group derived again reading the deltas of the moved reads alone, as
+    // the form written for `moved` reads; the others' deltas are not the run's (each would be looked up, and priced
+    // at a default size).
+    placed.maint = pv.maint.as_ref().map(|fm| {
+        let of_moved = |r: &str| r.strip_suffix("__plus").or_else(|| r.strip_suffix("__minus")).is_none_or(|of| moved.contains(of));
+        let again = fm.again.iter().map(|a| crate::code_rule_dsl::logic::plan::body::AgainRef { reads: a.reads.iter().copied().filter(|&r| of_moved(fm.v.rel_name(r))).collect(), ..a.clone() }).collect();
+        Arc::new(crate::code_rule_dsl::logic::plan::body::Maint { v: Arc::clone(&fm.v), again, together: fm.together.clone() })
+    });
     let m = &g.form;
     Ok(Some(maintain::Form { placed, sources: Vec::new(), old_reads, maintained: m.maintained, derived_again: m.derived_again, recursive: m.recursive, by_levels: m.by_levels, again: m.again.clone() }))
 }

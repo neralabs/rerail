@@ -287,17 +287,23 @@ impl<F: Fn(&str) -> bool> ProgramPass for Retain<F> {
     }
 }
 
-/// The rules whose id the predicate takes, the rest removed (a maintained stratum's selection from its general form,
-/// decision 0298): a view, or the version itself where every rule is taken.
-pub struct RetainIds<F>(pub F);
+/// A maintained stratum's selection from its general form (decision 0298): the rules whose id `keep` takes, the rest
+/// removed, with the inputs and outputs the selection states. One overlay, never folded (so the rules keep the ids
+/// the form's maintenance names), whose relations' other fields are the general form's.
+pub struct SelectPart<'f, F, S, T> {
+    pub keep: F,
+    pub inputs: &'f [S],
+    pub outputs: &'f [T],
+}
 
-impl<F: Fn(super::RuleId) -> bool> ProgramPass for RetainIds<F> {
-    const NAME: &'static str = "retain rules";
-    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        if cx.v().rules().all(|r| (self.0)(r.id())) {
-            return Ok(());
-        }
-        w.keep(|r| (self.0)(r.id()))
+impl<F: Fn(super::RuleId) -> bool, S: AsRef<str>, T: AsRef<str>> ProgramPass for SelectPart<'_, F, S, T> {
+    const NAME: &'static str = "a selection from a general form";
+    fn run(&mut self, _: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        let b = w.overlay()?;
+        b.retain(|r| (self.keep)(r.id()));
+        b.set_inputs(self.inputs);
+        b.set_outputs(self.outputs);
+        Ok(())
     }
 }
 

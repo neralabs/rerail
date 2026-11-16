@@ -85,6 +85,34 @@ So each process now pays 1.33 s to write the general forms, which storing them (
 part costs 1.384 s against 1.678 s: about 0.29 s saved per edit, as estimated before building. Until step 4, the
 switch stays off.
 
+### A selection's own cost (2026-11-16)
+
+Outside the forms, a selection first cost about 0.1 s more per edit than a written form. Three causes, each fixed:
+
+- **The part was made by two passes** (retain, then the part's fields), and a pipeline records each step's delta,
+  comparing every declaration and fact of its input and output: the size of the program, per selection. Now one
+  pass (`SelectPart`: one overlay that removes rules and states the inputs and outputs), and the pass manager's
+  `Delta::of` compares no field an overlay of the input does not state (its own layer has no declaration, fact or
+  `.about` row). 0.068 s → 0.015 s over 252 selections.
+- **The selection read the general form's fields and every selected rule's body** to find its inputs. A general
+  form now keeps its inputs, outputs and each rule's inputs (`General::rule_inputs`), written with it.
+- **The choice to derive again (0090 §4) read the general form's maintenance**, whose groups list every read's
+  delta: each delta of a read that did not move was looked up in SQLite (none is bound) and priced at a default
+  size. A selection's maintenance lists the moved reads' deltas alone, as the form written for them does.
+  `again_wanted`: 104 samples → as today's.
+
+Profiled edit, CPU, after these and with the recursive strata selected:
+
+| Span | Today | Selected |
+|---|---|---|
+| the reached strata's forms (252) | 0.517 s | 0.069 s |
+| selecting (the part's pass) | – | 0.015 s |
+| placement (levels and strata) | – | about +0.03 s, varying between runs |
+| the general forms, written in the run | – | 2.07 s (with the recursive strata's second forms) |
+| the cross-file part, less the general forms | 2.194 s | 1.839 s |
+
+So, once the general forms are stored, about 0.36 s saved per edit. The five steps hold the same rows.
+
 A first version wrote the general forms as if every input and derived relation kept its old rows. It read
 `doc__old` where the run's form reads `doc` (whose old rows are not kept; Q20): the run failed, the policy ran
 again, and the policies after it lost their cut-off. Binding a relation's rows as its old rows for such reads was
