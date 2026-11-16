@@ -1,6 +1,6 @@
 # 0258: A maintenance rule starts from its source rule's order
 
-Status: built (2026-11-15); off by default since the same day: a net cost in planning (see "Re-validated" and "The start inside the search"). Takes up decision 0230's first open item: a session's first-sight plans. Option one of
+Status: withdrawn (2026-11-15): built, then removed the same day, a net cost in planning for the same plans (see "Re-validated", "The start inside the search" and "Removed"). Takes up decision 0230's first open item: a session's first-sight plans. Option one of
 0123 §5 ("carry the cold run's plans into the session"). `plan.rs` (`Model::started`, `source_order`,
 `RunPlans::orders`), `plan/body.rs` (`Body::origin`, `Body::source_map`), `maintain.rs` (`write_ir`),
 `program_image/build.rs` (`RuleBuilder::source`).
@@ -179,6 +179,13 @@ only greedy's other candidates.
 So source orders are **off by default** (`RERAIL_SOURCE_ORDERS=on` turns them on): the plans are the same either
 way (join work at parity, "same as full: true" with them on, steps 12 and 13), and off plans for less. With them
 off, no order is kept for them either (`orders_put`).
+
+## Removed
+
+2026-11-15. The mechanism is removed: `start_order`, `source_order`, the kept line orders (`RunPlans::orders`,
+`line_key`) and their carrying between a session's runs, `Body::origin` and `Body::source_map`, the rewrite's
+recording of a maintenance rule's source (`RuleBuilder::source`), `RERAIL_SOURCE_ORDERS`, and the plan cache's two
+"started" counts. What stays is the search's pricing of a kept order as one loop (`price` in `plan_search`).
 
 ## Open
 

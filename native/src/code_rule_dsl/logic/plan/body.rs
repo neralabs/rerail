@@ -122,74 +122,11 @@ pub struct Body<'v> {
     args: OnceCell<Vec<Vec<TermRef<'v>>>>,
     /// The rule's digest (`key`), made at the first ask: a plan call reads it for each of its keys.
     key: OnceCell<u128>,
-    /// The version the rule's source (`RuleRef::source`) is a rule of: the run's version 0, for a rule of a
-    /// maintained form (`Versions::at`); `None` for every other rule.
-    sources: Option<&'v Version>,
 }
 
 impl<'v> Body<'v> {
     pub fn of(v: &'v Version, rule: RuleRef<'v>) -> Body<'v> {
-        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: None }
-    }
-    /// The rule this one was written from (decision 0258): for a maintenance rule of a session's form (`h__del`,
-    /// `h__ins`, `h__redo`, …), its source rule `h :- …` of the run's version. `None` for a rule not written from one.
-    pub fn origin(&self) -> Option<Body<'v>> {
-        let v0 = self.sources?;
-        let src = Body::of(v0, v0.rule(self.rule.source()?)?);
-        // A maintenance rule derives a relation of its source's (`h__del` of `h`): any other is not its source.
-        let (head, of) = (self.rel(self.head()), src.rel(src.head()));
-        (head.len() > of.len() + 2 && head.starts_with(of) && head[of.len()..].starts_with("__")).then_some(src)
-    }
-    /// Each literal's literal of `src`, the rule it was written from (`origin`), where it is one: the same atom over
-    /// the same terms, of the same relation or one of its maintenance relations (`r__old`, `r__minus`, `r__del`, …),
-    /// or the same literal of another kind. The rewrite copies a source literal, or writes one of its maintenance
-    /// relations over its terms (`maintain::write_ir`); what it adds (`h__old(..)`, `h__del(..)`, a group) is no
-    /// source literal's. Each source literal is taken once, one of the same relation before one of its maintenance
-    /// relations.
-    pub fn source_map(&self, src: &Body<'_>) -> Vec<Option<usize>> {
-        let derived = |r: &str, of: &str| r.len() > of.len() + 2 && r.starts_with(of) && r[of.len()..].starts_with("__");
-        let digest = |b: &Body<'_>, i: usize| super::super::derived::digest(|d| b.digest_lit(d, b.lits[i]));
-        let mut used = vec![false; src.len()];
-        let mut map = vec![None; self.len()];
-        for exact in [true, false] {
-            for (i, m) in map.iter_mut().enumerate() {
-                if m.is_some() {
-                    continue;
-                }
-                let found = (0..src.len()).find(|&j| {
-                    !used[j]
-                        && match (self.atom(i), src.atom(j)) {
-                            (Some(a), Some(c)) => {
-                                let (r, of) = (self.rel(a), src.rel(c));
-                                (if exact { r == of } else { derived(r, of) })
-                                    && self.plain_atom(i).is_some() == src.plain_atom(j).is_some()
-                                    && self.args(i).len() == src.args(j).len()
-                                    && self.args(i).iter().zip(src.args(j)).all(|(&t, &u)| self.same_term(t, src, u))
-                            }
-                            (None, None) => exact && digest(self, i) == digest(src, j),
-                            _ => false,
-                        }
-                });
-                if let Some(j) = found {
-                    used[j] = true;
-                    *m = Some(j);
-                }
-            }
-        }
-        map
-    }
-    /// Whether term `t` of this body is term `u` of `o`: the same text, variables by their names.
-    fn same_term(&self, t: TermRef<'_>, o: &Body<'_>, u: TermRef<'_>) -> bool {
-        match (t, u) {
-            (TermRef::Var(a), TermRef::Var(b)) => self.var(a) == o.var(b),
-            (TermRef::Wild, TermRef::Wild) | (TermRef::Top, TermRef::Top) => true,
-            (TermRef::Int(a), TermRef::Int(b)) => a == b,
-            (TermRef::Str(a), TermRef::Str(b)) => self.v.text(a) == o.v.text(b),
-            (TermRef::Call(f, xs), TermRef::Call(g, ys)) => {
-                self.v.text(f) == o.v.text(g) && xs.clone().count() == ys.clone().count() && xs.zip(ys).all(|(x, y)| self.same_term(x, o, y))
-            }
-            _ => false,
-        }
+        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new() }
     }
     /// The arguments of literal `i`'s atom (its own, or its aggregate's; none for another literal).
     pub fn args(&self, i: usize) -> &[TermRef<'v>] {
@@ -877,12 +814,7 @@ impl Versions {
     }
     /// The rule `k` names, as the planner reads it.
     pub fn at(&self, k: RuleKey) -> Body<'_> {
-        let mut b = self.0[k.v as usize].2.body(k.id as usize);
-        // A maintained form's rules name their sources by the run's version's ids (`Body::origin`).
-        if k.v != 0 {
-            b.sources = Some(&self.0[0].2.v);
-        }
-        b
+        self.0[k.v as usize].2.body(k.id as usize)
     }
     /// The rule `k` names by its handles, its literals read in place: for a reader that walks it once, with no
     /// `Body` (which collects the literals).

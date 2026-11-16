@@ -366,10 +366,6 @@ fn write_ir(b: &mut Builder<'_>, src: &Part<'_>, ir: &Ir) -> std::result::Result
             let n = s.map(|k| src.named(k));
             let names: Vec<String> = n.as_ref().map_or_else(Vec::new, |n| n.calls.iter().map(|p| format!("_h{p}")).collect());
             let mut rb = b.rule();
-            // Its source rule, which its plan starts from (decision 0258).
-            if let Some(k) = s {
-                rb = rb.source(src.p.id(src.rules[*k]));
-            }
             fn named_head<'a>(n: &Named<'a>, names: &'a [String]) -> Vec<T<'a>> {
                 n.r.head().args().enumerate().map(|(i, t)| match t {
                     TermRef::Call(..) => T::Var(names[n.calls.iter().position(|&p| p == i).expect("a call")].as_str()),
