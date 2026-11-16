@@ -174,11 +174,38 @@ fn an_unchanged_directory_listing_is_no_change_of_the_cross_part() {
     listing_is_no_change(r#"s = cat("su", "b"), dir_entry(s, n, 0)"#);
 }
 
-/// A constant directory lowers to a request fact (`rr_dir_req("sub")`). The first run answers it (`world::asks`);
-/// the next fails: "rr_dir_req: kept as clean, but its rows are not kept" (work queue: a constant world request in
-/// the kept cross part).
+/// A constant directory lowers to a request fact (`rr_dir_req("sub")`), which no stratum derives: the stratum of
+/// its answers is not replayed from kept rows (none are kept of a fact) but runs, and the cross part's inputs are as
+/// they were.
 #[test]
-#[ignore = "a constant world request is not kept by the cross part (work queue)"]
 fn an_unchanged_constant_directory_listing_is_no_change_of_the_cross_part() {
     listing_is_no_change(r#"dir_entry("sub", n, 0)"#);
+}
+
+/// An edit of a file-local rule (`flagged`'s body) changes no input of the cross-file part, which reads a directory's
+/// entries (an input neither exported by the files nor a base relation of theirs): each input's kept frame is found
+/// again, under the cross part's own program, not the whole program's texts.
+#[test]
+fn a_file_local_edit_finds_the_cross_parts_inputs_kept() {
+    let marker = format!("{:?}", std::time::SystemTime::now());
+    let root = corpus("listing-edit", &marker, &[]);
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    for (path, source) in LISTED {
+        std::fs::write(root.join(path), format!("# {marker}\n{source}")).unwrap();
+    }
+    let program = |kind: &str| {
+        format!(
+            "{}\n.decl flagged(n: node)\nflagged(n) :- kind(n, \"function_definition\"), !kind(n, \"{kind}\").\n.output flagged\n",
+            listing_program(r#"s = cat("su", "b"), dir_entry(s, n, 0)"#)
+        )
+    };
+    let (_, first) = run(&root, &program("try_statement"), &["listed"]);
+    assert_eq!(first[0].len(), 4, "two entries of sub, two functions: {first:?}");
+    for (k, kind) in ["while_statement", "for_statement"].into_iter().enumerate() {
+        let (edited, rows) = run(&root, &program(kind), &["listed"]);
+        assert_eq!(rows, first, "edit {k}: the cross-file rows are as before");
+        assert!(edited.cross_kept.is_some(), "edit {k}: the cross-file part is kept");
+        assert!(edited.cross_changed.is_empty(), "edit {k}: no input of the cross part changed: {:?}", edited.cross_changed);
+    }
+    let _ = std::fs::remove_dir_all(&root);
 }

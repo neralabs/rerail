@@ -226,6 +226,15 @@ struct Lowerer {
     /// The demand relations the text declares itself (O101): a printed program (`rr::print`) carries the demands
     /// it was lowered with, so reading it back makes none again.
     printed_demands: BTreeSet<String>,
+    /// The helper relations made so far (`helper_once`), by their stem, columns and rules: an identical one is that
+    /// relation again.
+    helpers: std::collections::HashMap<HelperKey, String>,
+    /// The variable names a helper's rules are written with in its key (`front::template`), made once.
+    template_names: Option<crate::code_rule_dsl::logic::front::template::CanonicalNames>,
+    /// The helpers `helper_once` declared, in the order made: each name, its stem and its rules' count then (the key's
+    /// rules: a helper's first rules; demand may add more). Linking shares a module's helper that one an earlier
+    /// module made equals, as one lowering of them all would (`append`), so a module's image keeps them.
+    once: Vec<(String, String, usize)>,
     /// The helper names `fresh` made, by stem and number: linking numbers a module's after those of the modules
     /// linked before it (decision 0246 §2), as one lowering of them all would have.
     made: Vec<(String, usize)>,
@@ -233,11 +242,6 @@ struct Lowerer {
     /// lowering added. Linking keeps every module's stated inputs before the added ones, as one lowering of them all
     /// would order them.
     stated: usize,
-    /// The helper relations made so far (`helper_once`), by their stem, columns and rules: an identical one is that
-    /// relation again.
-    helpers: std::collections::HashMap<HelperKey, String>,
-    /// The variable names a helper's rules are written with in its key (`front::template`), made once.
-    template_names: Option<crate::code_rule_dsl::logic::front::template::CanonicalNames>,
 }
 
 /// A helper relation's stem, column types and rules (their templates: variables numbered in order, so the fresh
@@ -533,6 +537,8 @@ pub struct ModuleParts {
     pub next: usize,
     /// How many of `prog.inputs`, first, its `.input` statements state.
     pub stated: usize,
+    /// The helpers `helper_once` made: name, stem, its rules' count then (`Lowerer::once`).
+    pub once: Vec<(String, String, usize)>,
     /// What each derived relation's rules read.
     pub deps: Vec<(String, String)>,
     /// Its relations' column types as written.
@@ -586,6 +592,7 @@ impl Module {
             made: l.made.clone(),
             next: l.next,
             stated: l.stated,
+            once: l.once.clone(),
             deps: l.deps.iter().flat_map(|(r, reads)| reads.iter().map(move |x| (r.clone(), x.clone()))).collect(),
             written: self.written.iter().map(|(r, t)| (r.clone(), t.clone())).collect(),
             docof: self.docof,
@@ -596,7 +603,7 @@ impl Module {
 
     /// The module its image's parts are.
     pub fn of_parts(p: ModuleParts) -> Result<Module, Error> {
-        let mut l = Lowerer { prog: p.prog, three: p.three, sets: p.sets, made: p.made, next: p.next, stated: p.stated, printed_demands: p.printed, docof_of_locs: p.docof.unwrap_or(false), ..Lowerer::default() };
+        let mut l = Lowerer { prog: p.prog, three: p.three, sets: p.sets, made: p.made, next: p.next, stated: p.stated, once: p.once, printed_demands: p.printed, docof_of_locs: p.docof.unwrap_or(false), ..Lowerer::default() };
         for v in p.violations {
             let code = match v.code.0.as_str() {
                 "name" => FindingCode::Name,
@@ -735,6 +742,28 @@ impl Lowerer {
         }
         if !rename.is_empty() {
             rename_relations(&mut m.prog, &rename);
+        }
+        // A helper `helper_once` made that equals one an earlier module made is that one, as in one lowering of them
+        // all (decision 0225 §6 with 0246): in the order made, each renamed before the next's key reads it.
+        for (name, stem, k) in std::mem::take(&mut m.once) {
+            let name = rename.get(&name).cloned().unwrap_or(name);
+            let key = self.once_key(&m.prog, &name, &stem, k);
+            match self.helpers.get(&key) {
+                Some(made) => {
+                    let made = made.clone();
+                    m.prog.decls.remove(name.as_str());
+                    let mut seen = 0;
+                    m.prog.rules.retain(|r| r.head.rel != name.as_str() || {
+                        seen += 1;
+                        seen > k
+                    });
+                    rename_relations(&mut m.prog, &std::collections::HashMap::from([(name, made)]));
+                }
+                None => {
+                    self.helpers.insert(key, name.clone());
+                    self.once.push((name, stem, k));
+                }
+            }
         }
         self.next += m.next;
         let at = self.prog.rules.len();
@@ -892,6 +921,12 @@ fn rename_relations(prog: &mut Program, rename: &std::collections::HashMap<Strin
 pub fn link(modules: Vec<Module>) -> Result<Program, Error> {
     let mut modules = modules.into_iter();
     let Some(Module { mut l, .. }) = modules.next() else { return Ok(Program::default()) };
+    // The first module's helpers by their keys (read from an image, it has none).
+    l.helpers.clear();
+    for (name, stem, k) in l.once.clone() {
+        let key = l.once_key(&l.prog.clone(), &name, &stem, k);
+        l.helpers.entry(key).or_insert(name);
+    }
     for m in modules {
         l.append(m);
     }
@@ -1222,9 +1257,19 @@ impl Lowerer {
             return made.clone();
         }
         self.prog.decls.insert(name.clone().into(), cols.into_iter().map(|(c, t)| (c.into(), t.into())).collect());
+        self.once.push((name.clone(), stem.to_owned(), rules.len()));
         self.prog.rules.extend(rules);
         self.helpers.insert(key, name.clone());
         name
+    }
+
+    /// The key `helper_once` made helper `name` under (stem `stem`, its first `k` rules), from `prog` as it is now:
+    /// its relations' names as linking renamed them.
+    fn once_key(&mut self, prog: &Program, name: &str, stem: &str, k: usize) -> HelperKey {
+        let names = self.template_names.get_or_insert_with(crate::code_rule_dsl::logic::front::template::CanonicalNames::new);
+        let cols = prog.decls.get(name).map(|c| c.iter().map(|(_, t)| t.to_string()).collect()).unwrap_or_default();
+        let rules = prog.rules.iter().filter(|r| r.head.rel == name).take(k).map(|r| crate::code_rule_dsl::logic::front::template::template(r, names)).collect();
+        (stem.to_owned(), cols, rules)
     }
 
     fn decl(&mut self, name: String, cols: Vec<(String, String)>, tail: &[String]) -> Result<(), Error> {
