@@ -75,12 +75,14 @@ struct Io {
     buffer: Vec<u32>,
 }
 
-/// One root's handle and its two operations in flight: the read and the oplock.
+/// One root's handle and its two operations: the read and the oplock. Each flag holds while that
+/// operation's completion is still to come, so its OVERLAPPED stays put until then.
 struct Watch {
     root: String,
     handle: HANDLE,
     io: Box<Io>,
-    pending: u8,
+    reading: bool,
+    oplocked: bool,
 }
 
 impl Watch {
@@ -105,8 +107,14 @@ impl Watch {
             root,
             handle,
             io,
-            pending: 0,
+            reading: false,
+            oplocked: false,
         }
+    }
+
+    /// Whether a completion of either operation is still to come.
+    fn pending(&self) -> bool {
+        self.reading || self.oplocked
     }
 
     fn open_handle(&self) -> bool {
@@ -140,15 +148,17 @@ impl Watch {
                 std::ptr::null_mut(),
                 &mut io.oplock,
             )
-        };
-        self.issued(done != 0)
+        } != 0;
+        self.oplocked = completion_comes(done);
+        // One that finished at once holds no oplock.
+        !done && self.oplocked
     }
 
     /// Starts the next read of the tree's changes.
     fn read(&mut self) -> bool {
         let io = &mut *self.io;
         // SAFETY: the boxed buffer and OVERLAPPED stay put until the completion is dequeued.
-        let queued = unsafe {
+        let done = unsafe {
             ReadDirectoryChangesW(
                 self.handle,
                 io.buffer.as_mut_ptr().cast(),
@@ -159,23 +169,9 @@ impl Watch {
                 &mut io.read,
                 None,
             )
-        };
-        if queued == 0 {
-            return false;
-        }
-        self.pending += 1;
-        true
-    }
-
-    /// Counts an overlapped call's completion as pending; true when the call is in flight. A call
-    /// that finished at once still posts its completion, but for an oplock means none was held.
-    fn issued(&mut self, done: bool) -> bool {
-        // SAFETY: reads the calling thread's last error.
-        let in_flight = !done && unsafe { GetLastError() } == ERROR_IO_PENDING;
-        if done || in_flight {
-            self.pending += 1;
-        }
-        in_flight
+        } != 0;
+        self.reading = completion_comes(done);
+        self.reading
     }
 
     fn close_handle(&mut self) {
@@ -197,7 +193,7 @@ impl Watch {
 impl Drop for Watch {
     fn drop(&mut self) {
         self.close_handle();
-        if self.pending > 0 {
+        if self.pending() {
             // The kernel may still write into it; leak it rather than free it under the kernel.
             std::mem::forget(std::mem::replace(
                 &mut self.io,
@@ -211,6 +207,15 @@ impl Drop for Watch {
             ));
         }
     }
+}
+
+/// Whether an overlapped call that returned `done` posts a completion to the port it is in flight
+/// for: it finished at once, or is pending. One that failed at once finished in the kernel before
+/// it returned; a completion it may still post is not counted, and is told apart by its
+/// OVERLAPPED, whose flag is clear.
+fn completion_comes(done: bool) -> bool {
+    // SAFETY: reads the calling thread's last error.
+    done || unsafe { GetLastError() } == ERROR_IO_PENDING
 }
 
 /// The wide, NUL-terminated form of `text`.
@@ -340,7 +345,7 @@ impl Loop {
             self.keys.insert(watch.root.clone(), key);
         }
         // A watch that did not start is kept until the completions its calls posted come.
-        if watch.pending > 0 {
+        if watch.pending() {
             self.watches.insert(key, watch);
         }
         started
@@ -353,7 +358,7 @@ impl Loop {
         };
         watch.close_handle();
         self.keys.remove(&watch.root);
-        if watch.pending == 0 {
+        if !watch.pending() {
             self.watches.remove(&key);
         }
     }
@@ -372,19 +377,30 @@ impl Loop {
         self.close(key);
     }
 
-    /// One operation of `key` completed.
+    /// One operation of `key` completed. A completion of an operation not in flight (posted by a
+    /// call that failed at once) is dropped: the watch goes only once neither can still come.
     fn completed(&mut self, key: usize, overlapped: *mut OVERLAPPED, bytes: u32, error: u32) {
         let Some(watch) = self.watches.get_mut(&key) else {
             return;
         };
-        watch.pending = watch.pending.saturating_sub(1);
+        let oplock = std::ptr::eq(overlapped, &raw mut watch.io.oplock);
+        let in_flight = if oplock {
+            &mut watch.oplocked
+        } else if std::ptr::eq(overlapped, &raw mut watch.io.read) {
+            &mut watch.reading
+        } else {
+            return;
+        };
+        if !std::mem::replace(in_flight, false) {
+            return;
+        }
         if !watch.open_handle() {
-            if watch.pending == 0 {
+            if !watch.pending() {
                 self.watches.remove(&key);
             }
             return;
         }
-        if std::ptr::eq(overlapped, &raw mut watch.io.oplock) {
+        if oplock {
             // The oplock broke: let go of the handle so whatever broke it goes on.
             self.end(key);
             return;
@@ -616,10 +632,40 @@ impl Drop for DirectoryChanges {
 
 #[cfg(test)]
 mod tests {
-    use super::{ReadOutcome, parse, read_outcome, remote};
+    use super::{Loop, ReadOutcome, WAKE, Watch, parse, read_outcome, remote};
     use crate::tree_watch::TreeWatcher;
+    use crate::tree_watch::notices::Notices;
     use crate::tree_watch::tests::{Scratch, wait_for_watcher};
-    use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_NOTIFY_ENUM_DIR};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use windows_sys::Win32::Foundation::{
+        ERROR_ACCESS_DENIED, ERROR_NOTIFY_ENUM_DIR, ERROR_OPERATION_ABORTED, INVALID_HANDLE_VALUE,
+    };
+
+    #[test]
+    fn a_completion_posted_by_a_call_that_failed_at_once_frees_nothing_still_in_flight() {
+        let mut state = Loop {
+            port: std::ptr::null_mut(),
+            notices: Arc::new(Notices::default()),
+            watches: HashMap::new(),
+            keys: HashMap::new(),
+            next_key: WAKE + 1,
+        };
+        // The oplock was granted, then the read failed at once and the handle was closed.
+        let mut watch = Watch::open(r"C:\r".to_owned(), INVALID_HANDLE_VALUE);
+        watch.oplocked = true;
+        state.watches.insert(1, watch);
+        let watch = state.watches.get_mut(&1).expect("watch");
+        let (read, oplock) = (&raw mut watch.io.read, &raw mut watch.io.oplock);
+        // The failed read's completion comes first: the cancelled oplock's is still to come.
+        state.completed(1, read, 0, ERROR_OPERATION_ABORTED);
+        assert!(
+            state.watches.contains_key(&1),
+            "the oplock's OVERLAPPED stays put"
+        );
+        state.completed(1, oplock, 0, ERROR_OPERATION_ABORTED);
+        assert!(state.watches.is_empty());
+    }
 
     #[test]
     fn an_overflow_loses_the_root_and_an_error_ends_it() {
