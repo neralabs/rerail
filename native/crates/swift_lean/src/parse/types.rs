@@ -247,6 +247,17 @@ impl<'a> P<'a> {
 
     /// `tuple_type`: `(` items `)`.
     fn tuple_type(&mut self) -> R<()> {
+        if self.parenthesized_type_ahead() {
+            // `([K: V])`, `(any P)`: `_parenthesized_type`, an item holding the parentheses.
+            let n = self.open(K::TupleType);
+            let q = self.open(K::TupleTypeItem);
+            self.tk(K::TLParen)?;
+            self.level(false, |p| p.unannotated_f(f::ELEMENT))?;
+            self.expect(T::RParen)?;
+            self.close(q);
+            self.close(n);
+            return Ok(());
+        }
         let n = self.open(K::TupleType);
         self.tk(K::TLParen)?;
         let items = self.level(false, |p| {
@@ -280,15 +291,44 @@ impl<'a> P<'a> {
             }
             Ok(items)
         })?;
-        // `(dictionary)`, `(any P)`: `_parenthesized_type`, its item no field and its type
-        // `element`.
-        if items.0 == 1 && items.1 != 0 && matches!(self.t.kind_at(items.1 + 1), K::DictionaryType | K::ExistentialType) {
-            self.t.refield(items.1, f::NONE);
-            self.t.refield(items.1 + 1, f::ELEMENT);
-        }
+        let _ = items;
         self.expect(T::RParen)?;
         self.close(n);
         Ok(())
+    }
+
+    /// Whether the `(` next holds one dictionary type (`[K: V]`) or `any` type alone.
+    fn parenthesized_type_ahead(&mut self) -> bool {
+        if self.is_word_at(1, w::ANY) {
+            // `(any P)`, `(any P.Type)`: names and dots to the `)`.
+            let mut j = 2;
+            while self.kind_at(j) == T::Name && self.kind_at(j + 1) == T::Dot {
+                j += 2;
+            }
+            return self.kind_at(j) == T::Name && self.kind_at(j + 1) == T::RParen;
+        }
+        if self.kind_at(1) != T::LBracket {
+            return false;
+        }
+        let (mut d, mut colon, mut j) = (0, false, 1);
+        loop {
+            match self.kind_at(j) {
+                T::LBracket | T::LParen | T::Lt => d += 1,
+                T::RBracket | T::RParen | T::Gt => {
+                    d -= 1;
+                    if d == 0 {
+                        return colon && self.kind_at(j) == T::RBracket && self.kind_at(j + 1) == T::RParen;
+                    }
+                }
+                T::Colon if d == 1 => colon = true,
+                T::Eof => return false,
+                _ => {}
+            }
+            j += 1;
+            if j > 64 {
+                return false;
+            }
+        }
     }
 
     /// The `>` closing a type list: a token starting with `>` split there.

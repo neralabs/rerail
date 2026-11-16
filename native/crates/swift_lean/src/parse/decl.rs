@@ -32,6 +32,16 @@ pub(super) enum Level {
     Protocol,
 }
 
+/// Whether `code` is a word a declaration starts with (a modifier, `indirect`, a declaration's
+/// keyword).
+pub(super) fn starts_declaration(code: u8) -> bool {
+    modifier(code).is_some()
+        || matches!(
+            code,
+            w::INDIRECT | w::TYPEALIAS | w::IMPORT | w::FUNC | w::STRUCT | w::ENUM | w::EXTENSION | w::PROTOCOL | w::LET | w::VAR | w::INIT | w::DEINIT | w::SUBSCRIPT | w::ASSOCIATEDTYPE | w::PRECEDENCEGROUP | w::MACRO
+        )
+}
+
 /// A modifier word's node kind and token (`class` is `property_modifier` only before a member).
 fn modifier(code: u8) -> Option<(K, K)> {
     use K::*;

@@ -42,6 +42,12 @@ pub(crate) struct P<'a> {
     sx: SemiCtx,
     /// Whether a `{` after an expression is not a trailing closure (an `if`'s condition, …).
     no_lambda: bool,
+    /// In a ternary's middle operand (`-.x` there is read otherwise than elsewhere).
+    if_true: bool,
+    /// The end of the member after the last `Name<…>.member` read as a type.
+    u_end: u32,
+    /// A `!` right after `try`: its `bang` holds the `!` token.
+    try_bang: bool,
     /// The last semicolon asked: (from, flags, answer, where the scanner was last asked).
     semi_memo: (u32, u8, Semi),
 }
@@ -69,6 +75,9 @@ pub fn parse(src: &[u8]) -> R<crate::Tape> {
             stmt: true,
             sx: SemiCtx::default(),
             no_lambda: false,
+            if_true: false,
+            u_end: 0,
+            try_bang: false,
             semi_memo: (u32::MAX, 0, Semi::No),
         };
         if let Err(r) = p.source_file() {
@@ -565,7 +574,6 @@ impl<'a> P<'a> {
                 matches!(self.word(), w::CASE | w::DEFAULT)
             }
             T::At if entry => self.attributes_then_case(),
-            T::Hash if entry => matches!(self.word_at(1), w::ELSEIF | w::ELSE | w::ENDIF | w::IF) && self.switch_directive_ahead(),
             _ => false,
         }
     }
@@ -619,6 +627,11 @@ impl<'a> P<'a> {
         }
         if let Some(d) = self.declaration_ahead() {
             return self.declaration(d, if top { decl::Level::Top } else { decl::Level::Local });
+        }
+        // A modifier's word starting a statement is the keyword for tree-sitter's lexer (the state
+        // takes it, no word rule extracts it), and no declaration follows: an error there.
+        if t.kind == T::Name && !t.tick && contextual(t.word).is_none() && decl::starts_declaration(t.word) {
+            return self.refuse();
         }
         self.expression_statement()
     }
@@ -910,7 +923,9 @@ impl<'a> P<'a> {
         loop {
             match self.peek() {
                 T::RBrace => break,
-                T::Hash if self.directive_next() => self.directive()?,
+                // A directive between entries: tree-sitter reads it into statements (none open
+                // before the first entry) and fails.
+                T::Hash if self.directive_next() => return self.refuse(),
                 _ => self.switch_entry()?,
             }
         }
@@ -968,12 +983,6 @@ impl<'a> P<'a> {
             }
         }
         matches!(self.word_at(k), w::CASE | w::DEFAULT)
-    }
-
-    /// Whether the directive next is one between a switch's entries: a `case` or `default` comes
-    /// after its line (refused otherwise: the grammar's choice there is not read).
-    fn switch_directive_ahead(&mut self) -> bool {
-        true
     }
 
     // ---- Directives.

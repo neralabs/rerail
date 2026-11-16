@@ -176,12 +176,21 @@ impl<'a> P<'a> {
                     let n = self.t.wrap(m, K::CallExpression, f::NONE);
                     self.call_suffix(true, cx.split)?;
                     self.close(n);
-                    // (An optional chain's `?` after the call: the operand goes on.)
-                    if cx.stop != 0 && !(self.peek() == T::Question && self.touching()) {
+                    if cx.stop != 0 {
+                        if self.peek() == T::Question && self.touching() {
+                            // An optional chain's `?` after the call: tree-sitter's GLR ends the
+                            // operand there or goes on (both seen), by what follows.
+                            return self.refuse();
+                        }
                         return Ok(());
                     }
                 }
                 T::LBrace => {
+                    if self.no_lambda && cx.stop != 0 && cx.shifts(-2) {
+                        // A condition's `{` after `try`/`await`'s operand: tree-sitter takes a
+                        // trailing closure there (its `prec.right` operand), and the parse fails.
+                        return self.refuse();
+                    }
                     if self.no_lambda || !cx.shifts(-2) {
                         return Ok(());
                     }
@@ -202,7 +211,9 @@ impl<'a> P<'a> {
                     self.tk(K::TQuestion)?;
                     let lambda = std::mem::replace(&mut self.no_lambda, false);
                     let stmt = std::mem::replace(&mut self.stmt, false);
+                    let if_true = std::mem::replace(&mut self.if_true, true);
                     let r = self.expr_f(TOP, f::IF_TRUE);
+                    self.if_true = if_true;
                     self.no_lambda = lambda;
                     self.stmt = stmt;
                     r?;
@@ -251,7 +262,7 @@ impl<'a> P<'a> {
                     self.t.field_since(m, f::EXPR);
                     let n = self.t.wrap(m, K::AsExpression, f::NONE);
                     self.as_operator()?;
-                    self.ty_f(f::TYPE)?;
+                    self.cast_type()?;
                     self.close(n);
                 }
                 T::Name if !t.tick && t.word == w::IS => {
@@ -261,7 +272,7 @@ impl<'a> P<'a> {
                     self.t.field_since(m, f::TARGET);
                     let n = self.t.wrap(m, K::CheckExpression, f::NONE);
                     self.tkf(K::TIs, f::OP)?;
-                    self.ty_f(f::TYPE)?;
+                    self.cast_type()?;
                     self.close(n);
                 }
                 _ => {
@@ -313,6 +324,25 @@ impl<'a> P<'a> {
         !matches!(next.kind, T::RParen | T::RBracket | T::RBrace | T::Comma | T::Colon | T::Eof | T::Semi | T::LBrace)
     }
 
+    /// The type after `is` or `as`. Where a dotted name ends at a `)` (`(x is A.B)`), the check
+    /// or cast reduces before the `.` (a navigation of `x is A`), as seen; elsewhere the type
+    /// takes the dots.
+    fn cast_type(&mut self) -> R<()> {
+        if self.peek() == T::Name && self.kind_at(1) == T::Dot && self.adjacent(0) {
+            let mut j = 1;
+            while self.kind_at(j) == T::Dot && self.kind_at(j + 1) == T::Name {
+                j += 2;
+            }
+            if self.kind_at(j) == T::RParen && !matches!(self.word_at(j - 1), w::TYPE_T | w::PROTOCOL_T) {
+                let u = self.open_field(K::UserType, f::NAME);
+                self.ident_as(K::TypeIdentifier, f::NONE)?;
+                self.close(u);
+                return Ok(());
+            }
+        }
+        self.ty_f(f::TYPE)
+    }
+
     /// `as_operator`: `as`, `as?`, `as!` (one token).
     fn as_operator(&mut self) -> R<()> {
         let n = self.open(K::AsOperator);
@@ -342,6 +372,7 @@ impl<'a> P<'a> {
     /// A prefix operator and its operand, or a primary expression.
     fn unary(&mut self, cx: Cx) -> R<()> {
         let t = self.tok();
+        let try_bang = std::mem::take(&mut self.try_bang);
         match t.kind {
             T::Bang | T::Minus | T::Plus | T::Tilde if self.kind_at(1) == T::LParen && self.adjacent(0) => {
                 // `!(…)`, `-(…)`: a call of the operator (`_referenceable_operator`).
@@ -355,9 +386,19 @@ impl<'a> P<'a> {
                 self.close(n);
                 Ok(())
             }
+            T::Minus | T::Plus if self.if_true && self.kind_at(1) == T::Dot && self.adjacent(0) => {
+                // `c ? -.x : y`: seen as a navigation of the operator (`_referenceable_operator`),
+                // elsewhere as prefixes: the GLR's choice, not read.
+                self.refuse()
+            }
             T::Minus | T::Plus | T::Bang | T::Tilde | T::Amp | T::Dot | T::PlusPlus | T::MinusMinus | T::Custom => {
                 let n = self.open(K::PrefixExpression);
                 match t.kind {
+                    T::Bang if try_bang => {
+                        let b = self.open_field(K::Bang, f::OPERATION);
+                        self.tk(K::TBang)?;
+                        self.close(b);
+                    }
                     T::Bang => {
                         self.leaf(K::Bang, f::OPERATION)?;
                     }
@@ -372,7 +413,11 @@ impl<'a> P<'a> {
                 if !self.touching() {
                     return self.refuse();
                 }
-                if t.kind == T::Dot && self.peek() == T::Name && !self.tok().tick && matches!(self.word(), w::DEFAULT | w::CASE | w::ELSE | w::IN | w::WHERE | w::CATCH | w::LET | w::VAR | w::FUNC | w::RETURN | w::IMPORT | w::INIT | w::REPEAT) {
+                if t.kind == T::Dot && self.peek() == T::Name && !self.tok().tick && matches!(self.word(), w::REPEAT | w::EACH) && self.kind_at(1) == T::LParen {
+                    // `.repeat(…)`: the pack expansion's keyword (seen as `prefix(., value_pack_expansion)`).
+                    return self.refuse();
+                }
+                if t.kind == T::Dot && self.peek() == T::Name && !self.tok().tick && matches!(self.word(), w::DEFAULT | w::CASE | w::ELSE | w::IN | w::WHERE | w::CATCH | w::LET | w::VAR | w::FUNC | w::RETURN | w::IMPORT | w::INIT) {
                     // `.default`: after a `.`, any word is a name.
                     let m = self.mark();
                     self.simple_identifier()?;
@@ -437,6 +482,7 @@ impl<'a> P<'a> {
                             let n = self.open(K::TryExpression);
                             self.try_operator()?;
                             // A property's value splits a trailing closure off the call in `try`'s operand too.
+                            self.try_bang = self.peek() == T::Bang;
                             self.expr_f(Cx { split: cx.split, ..TRY }, f::EXPR)?;
                             self.close(n);
                             return Ok(());
@@ -462,6 +508,7 @@ impl<'a> P<'a> {
                     if let Some(close) = self.type_args_end(1) {
                         if self.kind_at(close + 1) == T::Dot && self.adjacent(close) && self.generic_member_is_type(1, close + 2) {
                             // `Name<…>.member`: the type a navigation's target.
+                            self.u_end = self.peek_at(close + 2).end;
                             let u = self.open(K::UserType);
                             self.ident_as(K::TypeIdentifier, f::NONE)?;
                             self.type_arguments()?;
@@ -580,6 +627,12 @@ impl<'a> P<'a> {
         }
         if self.peek_at(j).nl {
             return false;
+        }
+        // The operand of `*`, `/`, `+`, `-` (seen: `A<T>.size / A<U>.size`).
+        // The right operand of `*`, `/`, `+`, `-` whose left one is such a type (seen:
+        // `A<T>.size / A<U>.size`).
+        if self.i > 1 && matches!(self.toks[self.i - 1].kind, T::Star | T::Slash | T::Percent | T::Plus | T::Minus) && self.toks[self.i - 2].end == self.u_end {
+            return true;
         }
         match self.kind_at(j) {
             T::Star | T::Slash | T::Percent | T::Plus | T::Minus | T::Custom => {
