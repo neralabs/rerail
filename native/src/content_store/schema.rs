@@ -23,14 +23,15 @@ use std::sync::LazyLock;
 // run against it. It is safe to delete by hand once no older binary runs; the CHANGELOG entry of
 // each floor raise names the file (with its -wal and -shm). STORE_FILE_FLOOR pins the pairing, so
 // raising SCHEMA_VERSION alone does not compile.
-pub(super) const SCHEMA_VERSION: i64 = 4;
+pub(super) const SCHEMA_VERSION: i64 = 5;
 
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
-pub const STORE_FILE_NAME: &str = "content-v4.sqlite";
-/// The floor `STORE_FILE_NAME` was introduced at. 4: a corpus manifest's lane is a column of it
+pub const STORE_FILE_NAME: &str = "content-v5.sqlite";
+/// The floor `STORE_FILE_NAME` was introduced at. 5: a frame's row points at its bytes in a segment beside the store
+/// (decision 0295 §4: `frames.seg`), which an older binary would read as an empty frame; 4: a corpus manifest's lane is a column of it
 /// (`corpus_manifests.lane`), not a table of its own (decision 0104); 3 was atoms stored as segments
 /// of the arena (decision 0049); 2 the prefilter vocabulary keyed by atom.
-const STORE_FILE_FLOOR: i64 = 4;
+const STORE_FILE_FLOOR: i64 = 5;
 const _: () = assert!(
     SCHEMA_VERSION == STORE_FILE_FLOOR,
     "raising the floor requires a new STORE_FILE_NAME"
@@ -701,7 +702,12 @@ END;
 -- A run's relations as stored frames (decision 0104, `frames`), by space, relation, identity and part.
 CREATE TABLE IF NOT EXISTS frames(space BLOB NOT NULL, rel TEXT NOT NULL, ident BLOB NOT NULL,
     part INTEGER NOT NULL, digest INTEGER NOT NULL, reads BLOB NOT NULL, width INTEGER NOT NULL, rows INTEGER NOT NULL,
-    types BLOB NOT NULL, data BLOB NOT NULL, used INTEGER NOT NULL, PRIMARY KEY (space, rel, ident, part)) WITHOUT ROWID;
+    types BLOB NOT NULL, data BLOB NOT NULL, used INTEGER NOT NULL, seg INTEGER NOT NULL DEFAULT 0,
+    seg_at INTEGER NOT NULL DEFAULT 0, seg_len INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (space, rel, ident, part)) WITHOUT ROWID;
+-- The segments frames are in (decision 0295 §4: `<store>.frames/<seg>.seg`, mapped): a frame's row names its range
+-- (`seg`, `seg_at`, `seg_len`) and holds no bytes; `seg` 0 is a frame whose bytes are its `data` (a forked process's,
+-- whose symbols the writer renumbers, or one written at once by `keep_frames`).
+CREATE TABLE IF NOT EXISTS frame_segments(seg INTEGER PRIMARY KEY);
 -- A memo frame's digest is its document's key, a function of its path (`memo::doc_keys`): a path's contents are found
 -- by it, without reading every frame of the relation (each a page, its rows inline).
 CREATE INDEX IF NOT EXISTS frames_by_digest ON frames(space, rel, digest);

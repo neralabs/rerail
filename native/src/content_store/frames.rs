@@ -27,7 +27,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 mod memo_pack;
-pub use memo_pack::{MemoBlob, MemoBytes, MemoPut, MemoRow, MemoSegments, SegmentWriter};
+pub use memo_pack::{MemoBlob, MemoPut, MemoRow};
 pub(super) use memo_pack::drop_memo_space;
 
 /// The run each space last counted in this process, by its token: a later program of that run puts under the same
@@ -120,11 +120,45 @@ pub struct Admitted {
     data: Data,
 }
 
+/// A frame's encoded rows: in memory (made by the run and not yet placed, or read inline from a row), or where they
+/// are in a segment, mapped (decision 0295 §3–§4: the run's queued frames, and the store's frames written since).
+#[derive(Clone)]
+enum Bytes {
+    Heap(Arc<Vec<u8>>),
+    Mapped(super::segments::SegmentBytes),
+}
+
+impl std::ops::Deref for Bytes {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            Bytes::Heap(b) => b,
+            Bytes::Mapped(b) => b.bytes(),
+        }
+    }
+}
+
+/// The directory of the store's frame segments: beside its file.
+fn frame_dir(database: &std::path::Path) -> std::path::PathBuf {
+    let mut name = database.as_os_str().to_owned();
+    name.push(".frames");
+    std::path::PathBuf::from(name)
+}
+
+/// A frame's bytes as its row names them: inline (`seg` 0: the row's `data`), or a range of a segment, mapped. `None`
+/// when that segment is not there or holds no such range: the frame is absent, derived again.
+fn row_bytes(maps: &mut super::segments::SegmentMaps, data: Vec<u8>, seg: i64, at: i64, len: i64) -> Option<Bytes> {
+    if seg == 0 {
+        return Some(Bytes::Heap(Arc::new(data)));
+    }
+    maps.at(super::segments::Place { seg, at: at as u64, len: len as usize }).map(Bytes::Mapped)
+}
+
 #[derive(Clone)]
 enum Data {
     /// `store`: the bytes are the store's, read from it, their symbols the store's ids (decision 0170): mapped to this
     /// process's as they are decoded. `None`: this process's own (encoded as queued, or its snapshot of what it wrote).
-    Encoded { types: Vec<u8>, n: usize, bytes: Arc<Vec<u8>>, store: Option<Arc<super::atoms::Atoms>> },
+    Encoded { types: Vec<u8>, n: usize, bytes: Bytes, store: Option<Arc<super::atoms::Atoms>> },
     Metadata,
     /// A relation's rows as its base frame (part 0) and the deltas written after it, oldest first (decision 0117
     /// step 4): a run that changed a few rows of a large relation writes those, not the relation. `n`: the rows after
@@ -447,22 +481,23 @@ impl ContentStore {
                 skip.push(c.space);
             }
             let skip: rusqlite::vtab::array::Array = std::rc::Rc::new(skip.iter().map(|s| rusqlite::types::Value::from(s.to_vec())).collect());
-            let mut st = connection.prepare("SELECT space, rel, ident, part, digest, reads, rows, types, data FROM frames WHERE rel NOT IN (?1, ?2) AND space NOT IN rarray(?3)")?;
+            let mut st = connection.prepare("SELECT space, rel, ident, part, digest, reads, rows, types, data, seg, seg_at, seg_len FROM frames WHERE rel NOT IN (?1, ?2) AND space NOT IN rarray(?3)")?;
+            let mut maps = super::segments::SegmentMaps::new(frame_dir(&self.database_path));
             let mut chains: HashMap<[u8; 32], HashMap<Rel, u32>> = HashMap::new();
             let rows = st.query_map(params![MEMO_RELS[0], MEMO_RELS[1], skip], |row| {
                 let (space, ident): (Vec<u8>, Vec<u8>) = (row.get(0)?, row.get(2)?);
                 let space: [u8; 32] = space.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
                 let ident: [u8; 32] = ident.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
-                let data: Vec<u8> = row.get(8)?;
+                let Some(bytes) = row_bytes(&mut maps, row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?) else { return Ok(None) };
                 let (reads, k) = decode_reads_chain(&row.get::<_, Vec<u8>>(5)?);
-                Ok((space, (Rel { name: row.get(1)?, ident }, row.get::<_, i64>(3)?), k, Arc::new(Admitted {
+                Ok(Some((space, (Rel { name: row.get(1)?, ident }, row.get::<_, i64>(3)?), k, Arc::new(Admitted {
                     stored: Stored { digest: row.get::<_, i64>(4)? as u64, reads },
-                    data: Data::Encoded { n: row.get::<_, i64>(6)? as usize, types: row.get(7)?, bytes: Arc::new(data), store: Some(self.atoms_handle()) },
-                })))
+                    data: Data::Encoded { n: row.get::<_, i64>(6)? as usize, types: row.get(7)?, bytes, store: Some(self.atoms_handle()) },
+                }))))
             })?;
             let mut read: Vec<Arc<Admitted>> = Vec::new();
             for row in rows {
-                let (space, key, k, frame) = row?;
+                let Some((space, key, k, frame)) = row? else { continue };
                 frames += 1;
                 bytes += frame.encoded_bytes();
                 read.push(Arc::clone(&frame));
@@ -506,7 +541,8 @@ impl ContentStore {
         let mut got: HashMap<(Rel, i64), Arc<Admitted>> = HashMap::new();
         let mut chains: HashMap<Rel, u32> = HashMap::new();
         {
-            let mut st = connection.prepare("SELECT rel, ident, part, digest, reads, rows, types, data FROM frames WHERE space = ?1")?;
+            let mut st = connection.prepare("SELECT rel, ident, part, digest, reads, rows, types, data, seg, seg_at, seg_len FROM frames WHERE space = ?1")?;
+            let mut maps = super::segments::SegmentMaps::new(frame_dir(&self.database_path));
             let mut rows = st.query([&space[..]])?;
             while let Some(row) = rows.next()? {
                 let ident: [u8; 32] = row.get::<_, Vec<u8>>(1)?.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
@@ -519,9 +555,10 @@ impl ContentStore {
                 if k > 0 && part == 0 {
                     chains.insert(rel.clone(), k);
                 }
+                let Some(bytes) = row_bytes(&mut maps, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?) else { continue };
                 got.insert((rel, part), Arc::new(Admitted {
                     stored: Stored { digest: row.get::<_, i64>(3)? as u64, reads },
-                    data: Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes: Arc::new(row.get(7)?), store: Some(Arc::clone(&atoms)) },
+                    data: Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes, store: Some(Arc::clone(&atoms)) },
                 }));
             }
         }
@@ -620,9 +657,10 @@ impl ContentStore {
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let missing: Vec<_> = missing.into_iter().collect();
         let mut chained: Vec<(Rel, u32)> = Vec::new();
+        let mut maps = super::segments::SegmentMaps::new(frame_dir(&self.database_path));
         for batch in missing.chunks(READ_BATCH) {
             let values = (0..batch.len()).map(|i| format!("(?{}, ?{}, ?{})", 2 + 3*i, 3 + 3*i, 4 + 3*i)).collect::<Vec<_>>().join(",");
-            let columns = if payload { ", f.rows, f.types, f.data" } else { "" };
+            let columns = if payload { ", f.rows, f.types, f.data, f.seg, f.seg_at, f.seg_len" } else { "" };
             // Keep demand rows outside full-key probes; a space-first scan multiplies retained rows by demands.
             let sql = format!("WITH demanded(rel, ident, part) AS (VALUES {values}) \
                 SELECT f.rel, f.ident, f.part, f.digest, f.reads{columns} FROM demanded d \
@@ -634,13 +672,16 @@ impl ContentStore {
                 let ident: Vec<u8> = row.get(1)?;
                 let ident: [u8; 32] = ident.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
                 let (reads, k) = decode_reads_chain(&row.get::<_, Vec<u8>>(4)?);
-                Ok(((Rel { name: row.get(0)?, ident }, row.get(2)?), k, Arc::new(Admitted {
-                    stored: Stored { digest: row.get::<_, i64>(3)? as u64, reads },
-                    data: if payload { Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes: Arc::new(row.get(7)?), store: Some(self.atoms_handle()) } } else { Data::Metadata },
-                })))
+                let data = if payload {
+                    let Some(bytes) = row_bytes(&mut maps, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?) else { return Ok(None) };
+                    Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes, store: Some(self.atoms_handle()) }
+                } else {
+                    Data::Metadata
+                };
+                Ok(Some(((Rel { name: row.get(0)?, ident }, row.get(2)?), k, Arc::new(Admitted { stored: Stored { digest: row.get::<_, i64>(3)? as u64, reads }, data }))))
             })?;
             for frame in frames {
-                let (key, k, frame) = frame?;
+                let Some((key, k, frame)) = frame? else { continue };
                 if k > 0 && key.1 == 0 {
                     chained.push((key.0.clone(), k));
                 }
@@ -654,7 +695,7 @@ impl ContentStore {
             for batch in chained.chunks(READ_BATCH) {
                 let values = (0..batch.len()).map(|i| format!("(?{}, ?{}, ?{})", 2 + 3 * i, 3 + 3 * i, 4 + 3 * i)).collect::<Vec<_>>().join(",");
                 let sql = format!("WITH demanded(rel, ident, k) AS (VALUES {values}) \
-                    SELECT f.rel, f.ident, f.part, f.digest, f.reads, f.rows, f.types, f.data FROM demanded d \
+                    SELECT f.rel, f.ident, f.part, f.digest, f.reads, f.rows, f.types, f.data, f.seg, f.seg_at, f.seg_len FROM demanded d \
                     CROSS JOIN frames f ON f.space = ?1 AND f.rel = d.rel AND f.ident = d.ident AND f.part >= -d.k AND f.part < 0");
                 let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into()];
                 for (rel, k) in batch { args.extend([rel.name.clone().into(), rel.ident.to_vec().into(), (*k as i64).into()]); }
@@ -662,13 +703,14 @@ impl ContentStore {
                 let rows = st.query_map(rusqlite::params_from_iter(args), |row| {
                     let ident: Vec<u8> = row.get(1)?;
                     let ident: [u8; 32] = ident.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
-                    Ok((Rel { name: row.get(0)?, ident }, row.get::<_, i64>(2)?, Arc::new(Admitted {
+                    let Some(bytes) = row_bytes(&mut maps, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?) else { return Ok(None) };
+                    Ok(Some((Rel { name: row.get(0)?, ident }, row.get::<_, i64>(2)?, Arc::new(Admitted {
                         stored: Stored { digest: row.get::<_, i64>(3)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(4)?) },
-                        data: Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes: Arc::new(row.get(7)?), store: Some(self.atoms_handle()) },
-                    })))
+                        data: Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes, store: Some(self.atoms_handle()) },
+                    }))))
                 })?;
                 for row in rows {
-                    let (rel, part, frame) = row?;
+                    let Some((rel, part, frame)) = row? else { continue };
                     if is_delta(part, &frame) {
                         found.entry(rel).or_default().push((part, frame));
                     }
@@ -726,11 +768,12 @@ impl ContentStore {
         }
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let mut st = connection.prepare_cached(
-            "SELECT part, digest, reads, rows, types, data FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 ORDER BY part",
+            "SELECT part, digest, reads, rows, types, data, seg, seg_at, seg_len FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 ORDER BY part",
         )?;
         let atoms = self.atoms_handle();
-        let rows = st.query_map(params![&space[..], rel.name, &rel.ident[..]], |row| admitted_part(row, &atoms))?;
-        let parts: Vec<(i64, Arc<Admitted>)> = rows.collect::<Result<_, _>>()?;
+        let mut maps = super::segments::SegmentMaps::new(frame_dir(&self.database_path));
+        let rows = st.query_map(params![&space[..], rel.name, &rel.ident[..]], |row| admitted_part(row, &atoms, &mut maps))?;
+        let parts: Vec<(i64, Arc<Admitted>)> = rows.filter_map(Result::transpose).collect::<Result<_, _>>()?;
         drop(st);
         drop(connection);
         hold_symbols(&self.atoms, parts.iter().map(|(_, f)| f))?;
@@ -788,8 +831,9 @@ impl ContentStore {
         // Each delta after its relation's frame as it is now (in memory, queued or stored).
         let mut delta_frames: Vec<Encoded> = Vec::new();
         let mut heads: Vec<(Rel, u64, Vec<(String, u64)>)> = Vec::new();
-        // A relation's deltas queued in this call so far (two of one relation follow each other).
-        let mut composed: Vec<(Rel, Arc<Admitted>)> = Vec::new();
+        // Each delta's relation as it is now, its new head and its rows' counts: composed with the delta once it is
+        // placed (below).
+        let mut chained: Vec<(Rel, Arc<Admitted>, Stored, usize, usize)> = Vec::new();
         for d in deltas {
             let w = d.types.len();
             let key = (d.rel.clone(), 0);
@@ -811,13 +855,18 @@ impl ContentStore {
             let mut types = vec![DELTA];
             types.extend_from_slice(&d.types);
             let delta = Put { rel: d.rel.clone(), part: delta_part(k + 1), digest: 0, reads: Vec::new(), rows: Rows { types, rows, n: ng + na } }.encoded();
-            composed.push((d.rel.clone(), Arc::new(now.with_delta(Stored { digest: d.digest, reads: d.reads.clone() }, Arc::clone(&delta.frame), ng, na))));
+            chained.push((d.rel.clone(), now, Stored { digest: d.digest, reads: d.reads.clone() }, ng, na));
             let mut stored_reads = d.reads.clone();
             stored_reads.push((CHAIN.to_owned(), (k + 1) as u64));
             heads.push((d.rel, d.digest, stored_reads));
             delta_frames.push(delta);
         }
         let bytes: usize = frames.iter().chain(&delta_frames).map(|e| e.frame.encoded_bytes()).sum();
+        // The frames' bytes in segments of their own (decision 0295 §1): placed here, by the run, so the snapshot,
+        // the queue's readers and the writer share them mapped, the OS's pages, not the run's memory.
+        let (frames, delta_frames, segments) = self.place_frames(frames, delta_frames, bytes);
+        let composed: Vec<(Rel, Arc<Admitted>)> =
+            chained.into_iter().zip(&delta_frames).map(|((rel, now, head, ng, na), delta)| (rel, Arc::new(now.with_delta(head, Arc::clone(&delta.frame), ng, na)))).collect();
         // What a large write of frames holds, by relation (profiling only): what makes the store's writes large.
         if bytes > 4 << 20 && (std::env::var_os("RERAIL_PROFILE").is_some() || std::env::var_os("RERAIL_WRITES").is_some()) {
             let mut by: HashMap<&str, (usize, usize, usize)> = HashMap::new();
@@ -892,12 +941,118 @@ impl ContentStore {
                 }
             }
         }
-        self.write_back_syms(syms, "frames", bytes, keys, Box::new(move |store| {
+        // The queue's measure: what it holds in memory, the frames not placed (the placed ones are the OS's pages).
+        let held: usize = frames.iter().chain(&delta_frames).filter(|e| e.place.is_none()).map(|e| e.frame.encoded_bytes() + 64).sum::<usize>() + frames.len() * 64;
+        let mut segments = segments;
+        self.write_back_syms(syms, "frames", held, keys, Box::new(move |store| {
             // Attempted once: a busy store leaves these frames unwritten, and the next run derives them again.
             let rows: Vec<Framed> = frames.iter().chain(&delta_frames).filter_map(Encoded::framed).collect();
-            let _ = store.write_frames(&space, &rows, delta_frames.len(), &retags, &heads, &gone, used.as_ref().map(|(rels, run, program)| (rels.as_slice(), *run, *program)));
+            let _ = store.write_frames_placed(&space, &rows, delta_frames.len(), &retags, &heads, &gone, used.as_ref().map(|(rels, run, program)| (rels.as_slice(), *run, *program)), segments.as_mut());
             Ok(())
         }));
+    }
+
+    /// The frame segments' bytes, and the bytes their rows name: what compaction would leave.
+    pub fn frame_segment_bytes(&self) -> StoreResult<(u64, u64)> {
+        let (segs, named): (Vec<i64>, i64) = {
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            let segs = connection.prepare_cached("SELECT seg FROM frame_segments")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
+            (segs, connection.query_row_cached("SELECT coalesce(sum(seg_len), 0) FROM frames WHERE seg != 0", [], |r| r.get(0))?)
+        };
+        let dir = frame_dir(&self.database_path);
+        let held = segs.iter().map(|&s| std::fs::metadata(super::segments::segment_path(&dir, s)).map_or(0, |m| m.len())).sum();
+        Ok((held, named as u64))
+    }
+
+    /// Copies every placed frame's bytes to one new segment and removes the others, where the bytes no row names (frames
+    /// written again, forgotten, collected) are more than half the segments and at least `floor`: one write
+    /// transaction. A frame whose segment is not there is forgotten (derived again). Returns the bytes freed. A reader
+    /// that mapped an old segment reads it on; one that finds a row from before misses.
+    pub fn compact_frame_segments(&self, floor: u64) -> StoreResult<u64> {
+        let (held, named) = self.frame_segment_bytes()?;
+        if held < floor || held.saturating_sub(named) < held / 2 {
+            return Ok(0);
+        }
+        let dir = frame_dir(&self.database_path);
+        let old = self.immediate_transaction_once(|t| {
+            let segs: Vec<i64> = t.prepare_cached("SELECT seg FROM frame_segments")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
+            type Placed = (Vec<u8>, String, Vec<u8>, i64, super::segments::Place);
+            let rows: Vec<Placed> = t
+                .prepare_cached("SELECT space, rel, ident, part, seg, seg_at, seg_len FROM frames WHERE seg != 0 ORDER BY seg, seg_at")?
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, super::segments::Place { seg: r.get(4)?, at: r.get::<_, i64>(5)? as u64, len: r.get::<_, i64>(6)? as usize })))?
+                .collect::<Result<_, _>>()?;
+            let mut maps = super::segments::SegmentMaps::new(dir.clone());
+            let mut kept: Vec<(&Placed, super::segments::SegmentBytes)> = Vec::new();
+            for row in &rows {
+                match maps.at(row.4) {
+                    Some(bytes) => kept.push((row, bytes)),
+                    None => {
+                        t.execute_cached("DELETE FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4", params![row.0, row.1, row.2, row.3])?;
+                        t.execute_cached("DELETE FROM frame_part_used WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4", params![row.0, row.1, row.2, row.3])?;
+                    }
+                }
+            }
+            t.execute_cached("DELETE FROM frame_segments", [])?;
+            if kept.is_empty() {
+                return Ok(segs);
+            }
+            let entries: Vec<(&[u8], i64, &[u8; 32])> = kept.iter().map(|(row, b)| (b.bytes(), row.3, &[0u8; 32])).collect();
+            let mut placed = super::segments::write_segments(&dir, &entries)?;
+            if placed.files().len() != 1 {
+                return Err(super::StoreError::Invalid("the frames' compaction made more than one segment".into()));
+            }
+            let seg = segs.iter().copied().max().unwrap_or(0) + 1;
+            t.execute_cached("INSERT INTO frame_segments(seg) VALUES (?1)", [seg])?;
+            for (i, (row, _)) in kept.iter().enumerate() {
+                t.execute_cached(
+                    "UPDATE frames SET seg = ?5, seg_at = ?6 WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4",
+                    params![row.0, row.1, row.2, row.3, seg, placed.placed(i).1 as i64],
+                )?;
+            }
+            placed.name(&dir, &[seg])?;
+            Ok(segs)
+        })?;
+        for seg in old {
+            let _ = std::fs::remove_file(super::segments::segment_path(&dir, seg));
+        }
+        let (now, _) = self.frame_segment_bytes()?;
+        Ok(held.saturating_sub(now))
+    }
+
+    /// `frames` and `deltas` with their bytes placed in new segments of the store's frame directory, each frame then
+    /// reading them there (`Bytes::Mapped`), and the segments, sealed, for the writer. Frames without bytes, or a
+    /// write whose segments cannot be made (no room on disk: the frames stay in memory, written inline), are left.
+    fn place_frames(&self, frames: Vec<Encoded>, deltas: Vec<Encoded>, bytes: usize) -> (Vec<Encoded>, Vec<Encoded>, Option<super::segments::SealedSegments>) {
+        let encoded = |e: &Encoded| matches!(e.frame.data, Data::Encoded { store: None, .. });
+        let n = frames.iter().chain(&deltas).filter(|e| encoded(e)).count();
+        if n == 0 {
+            return (frames, deltas, None);
+        }
+        let mut w = super::segments::SegmentWriter::new(&frame_dir(&self.database_path), n, rerail_blocks::journal::reserve_for(n, std::iter::once(bytes), super::segments::ALIGN));
+        let mut at = 0;
+        let mut placed = Vec::with_capacity(frames.len() + deltas.len());
+        for e in frames.iter().chain(&deltas) {
+            if let Data::Encoded { bytes, store: None, .. } = &e.frame.data {
+                if w.put(bytes.len(), e.part, &[0; 32], |out| out.copy_from_slice(bytes)).is_err() {
+                    return (frames, deltas, None);
+                }
+                placed.push(Some(at));
+                at += 1;
+            } else {
+                placed.push(None);
+            }
+        }
+        let segments = w.seal();
+        let mut placed = placed.into_iter();
+        let mut place = |e: Encoded| -> Encoded {
+            let Some(i) = placed.next().flatten() else { return e };
+            let Data::Encoded { types, n, .. } = &e.frame.data else { return e };
+            let frame = Admitted { stored: e.frame.stored.clone(), data: Data::Encoded { types: types.clone(), n: *n, bytes: Bytes::Mapped(segments.entry(i)), store: None } };
+            Encoded { rel: e.rel, part: e.part, frame: Arc::new(frame), place: Some(i) }
+        };
+        let frames: Vec<Encoded> = frames.into_iter().map(&mut place).collect();
+        let deltas: Vec<Encoded> = deltas.into_iter().map(&mut place).collect();
+        (frames, deltas, Some(segments))
     }
 
     /// Writes `puts` into `space` (each replacing its frame) and forgets `gone`. With `used`, the program's relations
@@ -922,7 +1077,7 @@ impl ContentStore {
             .iter()
             .zip(&blocks)
             .zip(&stored)
-            .map(|((p, bytes), stored)| Framed { rel: &p.rel, part: p.part, stored, types: &p.rows.types, n: p.rows.n, bytes })
+            .map(|((p, bytes), stored)| Framed { rel: &p.rel, part: p.part, stored, types: &p.rows.types, n: p.rows.n, bytes, place: None })
             .collect();
         let written = self.write_frames(space, &rows, 0, &[], &[], &gone, used);
         drop(rows);
@@ -932,7 +1087,7 @@ impl ContentStore {
             let mut snapshot = snapshot.lock().expect("the frames' snapshot");
             let held = snapshot.entry(*space).or_default();
             for ((p, block), stored) in puts.iter().zip(blocks).zip(stored) {
-                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored, data: Data::Encoded { types: p.rows.types.clone(), n: p.rows.n, bytes: Arc::new(block), store: None } }));
+                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored, data: Data::Encoded { types: p.rows.types.clone(), n: p.rows.n, bytes: Bytes::Heap(Arc::new(block)), store: None } }));
             }
             for key in &gone {
                 held.remove(key);
@@ -961,8 +1116,23 @@ impl ContentStore {
     /// `retags`, the deltas' `heads`, and `gone` forgotten, in one transaction; with `used`, as `keep_frames`.
     #[allow(clippy::too_many_arguments)]
     fn write_frames(&self, space: &[u8; 32], rows: &[Framed], deltas: usize, retags: &[Retag], heads: &[(Rel, u64, Vec<(String, u64)>)], gone: &[(Rel, i64)], used: Option<(&[Rel], u64, [u8; 32])>) -> StoreResult<()> {
+        self.write_frames_placed(space, rows, deltas, retags, heads, gone, used, None)
+    }
+
+    /// `write_frames`, of frames placed in `segments` (`place_frames`): those written back first, numbered in the
+    /// transaction, and each placed frame's row a pointer into them (decision 0295 §4); renamed to their numbers once
+    /// the rows commit. A forked process writes every frame's bytes inline: the writer renumbers their symbols.
+    #[allow(clippy::too_many_arguments)]
+    fn write_frames_placed(&self, space: &[u8; 32], rows: &[Framed], deltas: usize, retags: &[Retag], heads: &[(Rel, u64, Vec<(String, u64)>)], gone: &[(Rel, i64)], used: Option<(&[Rel], u64, [u8; 32])>, mut segments: Option<&mut super::segments::SealedSegments>) -> StoreResult<()> {
         let timed = std::env::var_os("RERAIL_WRITES").is_some();
-        self.immediate_transaction_once(|t| {
+        let files = match segments.as_deref_mut() {
+            Some(s) => {
+                s.write_back()?;
+                s.files()
+            }
+            None => Vec::new(),
+        };
+        let numbers = self.immediate_transaction_once(|t| {
             let mut at = std::time::Instant::now();
             let mut lap = |what: &str| if timed { eprintln!("RERAIL_WRITES frames {what}: {:.3} s", at.elapsed().as_secs_f64()); at = std::time::Instant::now(); };
             // The space's counter stamps what is put (`frame_part_used`): a run's first program counts it, and a write
@@ -983,22 +1153,44 @@ impl ContentStore {
             } else {
                 Vec::new()
             };
-            let data_of = |i: usize, f: &Framed| -> Vec<u8> { mapped.get(i).and_then(Option::as_deref).unwrap_or(f.bytes).to_vec() };
+            // The segments, numbered: each placed frame a pointer into them, its row holding no bytes.
+            let mut numbers: Vec<i64> = Vec::new();
+            if !self.atoms.forked() {
+                for _ in &files {
+                    let seg: i64 = t.query_row_cached("SELECT coalesce(max(seg), 0) + 1 FROM frame_segments", [], |r| r.get(0))?;
+                    t.execute_cached("INSERT INTO frame_segments(seg) VALUES (?1)", [seg])?;
+                    numbers.push(seg);
+                }
+            }
+            let pointer = |f: &Framed| -> Option<(i64, i64, i64)> {
+                let i = f.place?;
+                let (s, at, len) = segments.as_deref().map(|s| s.placed(i))?;
+                Some((*numbers.get(s)?, at as i64, len as i64))
+            };
+            let data_of = |i: usize, f: &Framed| -> (Vec<u8>, (i64, i64, i64)) {
+                match pointer(f) {
+                    Some(p) => (Vec::new(), p),
+                    None => (mapped.get(i).and_then(Option::as_deref).unwrap_or(f.bytes).to_vec(), (0, 0, 0)),
+                }
+            };
             // A frame put whole has no deltas after it: its reads name none (`CHAIN`), so those left are not read.
-            // Nine bound values per frame, plus shared space and run, stay below 999 parameters.
+            // Twelve bound values per frame, plus shared space and run, stay below 999 parameters.
             // Each statement publishes a bounded batch. No frame launches its own SQL execution.
-            for (c, batch) in rows.chunks(96).enumerate() {
+            for (c, batch) in rows.chunks(80).enumerate() {
                 let values = (0..batch.len()).map(|i| {
-                    let p=3+9*i;
-                    format!("(?1,?{p},?{},?{},?{},?{},?{},?{},?{},?{},?2)",p+1,p+2,p+3,p+4,p+5,p+6,p+7,p+8)
+                    let p=3+12*i;
+                    format!("(?1,?{p},?{},?{},?{},?{},?{},?{},?{},?{},?2,?{},?{},?{})",p+1,p+2,p+3,p+4,p+5,p+6,p+7,p+8,p+9,p+10,p+11)
                 }).collect::<Vec<_>>().join(",");
-                let sql=format!("INSERT INTO frames(space,rel,ident,part,digest,reads,width,rows,types,data,used) VALUES {values} \
+                let sql=format!("INSERT INTO frames(space,rel,ident,part,digest,reads,width,rows,types,data,used,seg,seg_at,seg_len) VALUES {values} \
                     ON CONFLICT(space,rel,ident,part) DO UPDATE SET digest=excluded.digest, reads=excluded.reads, \
-                    width=excluded.width, rows=excluded.rows, types=excluded.types, data=excluded.data, used=excluded.used");
+                    width=excluded.width, rows=excluded.rows, types=excluded.types, data=excluded.data, used=excluded.used, \
+                    seg=excluded.seg, seg_at=excluded.seg_at, seg_len=excluded.seg_len");
                 let mut args: Vec<rusqlite::types::Value>=vec![space.to_vec().into(),run.into()];
                 for (k, f) in batch.iter().enumerate() {
+                    let (data, (seg, at, len)) = data_of(c * 80 + k, f);
                     args.extend([f.rel.name.clone().into(),f.rel.ident.to_vec().into(),f.part.into(),(f.stored.digest as i64).into(),
-                        encode_reads(&f.stored.reads).into(),(f.types.len() as i64).into(),(f.n as i64).into(),f.types.to_vec().into(),data_of(c * 96 + k, f).into()]);
+                        encode_reads(&f.stored.reads).into(),(f.types.len() as i64).into(),(f.n as i64).into(),f.types.to_vec().into(),data.into(),
+                        seg.into(),at.into(),len.into()]);
                 }
                 t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
             }
@@ -1078,8 +1270,16 @@ impl ContentStore {
                 }
                 lap(&format!("{} used", used.len()));
             }
-            Ok(())
-        })
+            Ok(numbers)
+        })?;
+        // The segments under their numbers, once the rows naming them are committed (a forked write named none: its
+        // segments go when dropped).
+        if let Some(s) = segments
+            && !numbers.is_empty()
+        {
+            s.name(&frame_dir(&self.database_path), &numbers)?;
+        }
+        Ok(())
     }
 }
 
@@ -1230,13 +1430,15 @@ pub struct Encoded {
     rel: Rel,
     part: i64,
     frame: Arc<Admitted>,
+    /// Where its bytes were placed (`place_frames`): an entry of the call's segments.
+    place: Option<usize>,
 }
 
 impl Encoded {
     /// The frame as the writer writes it (none for a frame without rows).
     fn framed(&self) -> Option<Framed<'_>> {
         match &self.frame.data {
-            Data::Encoded { types, n, bytes, .. } => Some(Framed { rel: &self.rel, part: self.part, stored: &self.frame.stored, types, n: *n, bytes }),
+            Data::Encoded { types, n, bytes, .. } => Some(Framed { rel: &self.rel, part: self.part, stored: &self.frame.stored, types, n: *n, bytes, place: self.place }),
             Data::Metadata | Data::Chain { .. } => None,
         }
     }
@@ -1258,7 +1460,7 @@ impl Put {
     }
     /// A frame of rows already encoded (`encode_rows`).
     pub fn encoded_as(rel: Rel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, n: usize, bytes: Vec<u8>) -> Encoded {
-        Encoded { rel, part, frame: Arc::new(Admitted { stored: Stored { digest, reads }, data: Data::Encoded { types, n, bytes: Arc::new(bytes), store: None } }) }
+        Encoded { rel, part, frame: Arc::new(Admitted { stored: Stored { digest, reads }, data: Data::Encoded { types, n, bytes: Bytes::Heap(Arc::new(bytes)), store: None } }), place: None }
     }
 }
 
@@ -1270,6 +1472,8 @@ struct Framed<'a> {
     types: &'a [u8],
     n: usize,
     bytes: &'a [u8],
+    /// Its entry of the write's segments (`place_frames`): written as a pointer, not its bytes.
+    place: Option<usize>,
 }
 
 impl Framed<'_> {
@@ -1343,12 +1547,14 @@ fn count_run(t: &rusqlite::Connection, space: &[u8; 32], token: u64) -> rusqlite
     Ok(run)
 }
 
-/// A frame read by part: `(part, digest, reads, rows, types, data)`.
-fn admitted_part(row: &rusqlite::Row<'_>, atoms: &Arc<super::atoms::Atoms>) -> rusqlite::Result<(i64, Arc<Admitted>)> {
-    Ok((row.get(0)?, Arc::new(Admitted {
+/// A frame read by part: `(part, digest, reads, rows, types, data, seg, seg_at, seg_len)`; `None` where its segment is
+/// not there.
+fn admitted_part(row: &rusqlite::Row<'_>, atoms: &Arc<super::atoms::Atoms>, maps: &mut super::segments::SegmentMaps) -> rusqlite::Result<Option<(i64, Arc<Admitted>)>> {
+    let Some(bytes) = row_bytes(maps, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?) else { return Ok(None) };
+    Ok(Some((row.get(0)?, Arc::new(Admitted {
         stored: Stored { digest: row.get::<_, i64>(1)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(2)?) },
-        data: Data::Encoded { n: row.get::<_, i64>(3)? as usize, types: row.get(4)?, bytes: Arc::new(row.get(5)?), store: Some(Arc::clone(atoms)) },
-    })))
+        data: Data::Encoded { n: row.get::<_, i64>(3)? as usize, types: row.get(4)?, bytes, store: Some(Arc::clone(atoms)) },
+    }))))
 }
 
 /// The entry a base frame's stored reads end with when deltas follow it (decision 0117 step 4): how many. A frame
@@ -1569,8 +1775,9 @@ mod tests {
         assert!(count.load(Ordering::Relaxed) <= 4, "257 relations must use at most three batches plus schema admission, got {}", count.load(Ordering::Relaxed));
     }
 
-    /// A frame is queued encoded, as the store keeps it: the queue counts its encoded bytes (the raw rows were five
-    /// times that), and it reads the same before and after the writer stores it.
+    /// A frame is queued encoded, as the store keeps it, its bytes placed in a segment (decision 0295 §4): the queue
+    /// counts what it holds in memory, not those bytes (the OS's pages; before, its encoded bytes, and the raw rows
+    /// were five times those), and it reads the same before and after the writer stores it.
     #[test]
     fn frames_are_queued_encoded() {
         let dir = tempfile::tempdir().unwrap();
@@ -1591,7 +1798,7 @@ mod tests {
             store.written().unwrap();
             let (by, _, _) = store.written_by_what();
             let frames = by.iter().find(|w| w.0 == "frames").expect("the frames' job");
-            assert_eq!(frames.2, encoded, "the queue counts the encoded bytes, not {} raw", values.len() * 8);
+            assert!(frames.2 < encoded / 100, "the queue counts its record, not the {encoded} bytes placed: {}", frames.2);
             assert!(encoded * 4 < values.len() * 8, "{encoded} encoded of {} raw", values.len() * 8);
         }
         let store = ContentStore::open(&path).unwrap();
@@ -1726,6 +1933,34 @@ mod tests {
 
     fn rel(name: &str, i: u8) -> Rel {
         Rel { name: name.into(), ident: [i; 32] }
+    }
+
+    /// Decision 0295 §4: a queued frame's bytes are placed in a segment by the run and read there; its written row
+    /// points at them (no bytes of its own), and a read from the store maps them. Written again, its old bytes are
+    /// no row's, and compaction leaves one segment of the named ones.
+    #[test]
+    fn a_queued_frame_is_placed_in_a_segment_and_read_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
+        let (space, r) = ([4u8; 32], rel("r", 1));
+        let put = |rows: Vec<i64>| Put { rel: r.clone(), part: 0, digest: 9, reads: vec![("input".into(), 4)], rows: Rows { types: vec![0, 1], n: rows.len() / 2, rows } };
+        let from_file = |store: &ContentStore| store.read_frame_parts_from(&space, &[(r.clone(), 0)], true, false).unwrap().remove(&(r.clone(), 0)).expect("read from the store").rows().unwrap();
+        store.queue_frames(space, vec![put(vec![5, -3, 1 << 40, 7])], Vec::new(), None);
+        store.written().unwrap();
+        let (seg, data): (i64, i64) = store.connection.lock().unwrap().query_row("SELECT seg, length(data) FROM frames", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert!(seg > 0 && data == 0, "a pointer, no bytes: {seg} {data}");
+        assert_eq!(from_file(&store).rows, [5, -3, 1 << 40, 7]);
+        let (held, named) = store.frame_segment_bytes().unwrap();
+        assert!(held > named && named > 0, "{held} {named}");
+        // Written again: the first bytes are no row's.
+        let big: Vec<i64> = (0..20_000).collect();
+        store.queue_frames(space, vec![put(vec![1; 40_000])], Vec::new(), None);
+        store.queue_frames(space, vec![put(big.clone())], Vec::new(), None);
+        store.written().unwrap();
+        assert!(store.compact_frame_segments(0).unwrap() > 0);
+        assert_eq!(std::fs::read_dir(frame_dir(&store.database_path)).unwrap().count(), 1, "one segment left");
+        assert_eq!(from_file(&store).rows, big, "read from the new segment");
+        assert_eq!(store.frame_rows(&space, &r, 0).unwrap().unwrap().rows, big, "and from the snapshot");
     }
 
     #[test]
