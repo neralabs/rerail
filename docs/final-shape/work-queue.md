@@ -943,6 +943,20 @@ pass.
   `atoms::tests::every_stored_column_is_classified` refused six columns the hub's 0295 steps 4-5 and 0301 added
   (pointers, a flag, a digest): classified as not atoms.
 
+### Q45. A warm run on the m3 records observer answers, where the same check on the m1max records none
+
+- **Found** (2026-11-16, at 28d25b6a8 plus a change since reverted): the 317 rules over fixtures/python, a strict cold
+  run and then a strict warm run with `RERAIL_WARM=list`, on the m3: the warm run exits 3 with "the observer recorded
+  answers in a warm run" and "a SQLite write committed to a file in a warm run" (thread `rerail-observer-writer`),
+  twice each. The same check at 28d25b6a8 passes on the m1max in four runs, so it is the host or the timing (the warm
+  run starts seconds after the cold one: the stat index's racy window is a candidate), not the commit.
+- **Done when**: the faults' detail lines from a failing run name what the observer recorded, and the cause is fixed.
+  The m3 was short of disk (38 GB free, the farm's floor 40) when this was written, so it is not reproduced yet.
+- **Seen beside it, not a fault**: a run with a tape store leaves an empty `store.sqlite` in its outputs: the run's SQL
+  scratch, whose connection is opened before the first wave (0104) and creates the file even when no statement runs.
+  Not creating it eagerly (`atoms::key` resolving a missing file by its directory) did not remove it: the connection
+  makes it. The next run removes it with the scratch files.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
