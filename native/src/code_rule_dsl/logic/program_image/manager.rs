@@ -676,8 +676,10 @@ impl<'p> ProgramW<'p> {
                 })
             }
         };
-        // A derivation that changed nothing is its input: its analyses carry, and no new base is kept.
-        if mode == Mode::Derive && v.digest() == self.input.digest() && v.size() == self.input.size() {
+        // A derivation that changed nothing is its input: its analyses carry, and no new base is kept. The digest is
+        // a sum over the rules, blind to their order, so the rules are compared in order too (a derivation that
+        // reorders them, `RuleOrder`, changes the program).
+        if mode == Mode::Derive && v.digest() == self.input.digest() && v.size() == self.input.size() && v.rules().map(|r| r.hash()).eq(self.input.rules().map(|r| r.hash())) {
             return Ok((self.input.clone(), Form::Unchanged, self.visited));
         }
         Ok((v, form, self.visited))

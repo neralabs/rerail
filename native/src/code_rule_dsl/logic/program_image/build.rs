@@ -767,6 +767,11 @@ pub trait Rewrite {
     fn atom_as(&mut self, _a: AtomRef<'_>) -> Option<(String, bool, bool)> {
         None
     }
+    /// The relation (by name) to write the head `a` with; `None` keeps its own (a relation merged into another,
+    /// `preparation::merge`).
+    fn head_as(&mut self, _a: AtomRef<'_>) -> Option<String> {
+        None
+    }
     /// Whether to keep body literal `l`.
     fn keep(&mut self, _l: LitRef<'_>) -> bool {
         true
@@ -813,7 +818,7 @@ impl Walk<'_, '_> {
         }
     }
     fn atom(&mut self, a: AtomRef<'_>, site: Site<'_>, rw: &mut impl Rewrite) {
-        let renamed = if matches!(site, Site::Head(_)) { None } else { rw.atom_as(a) };
+        let renamed = if matches!(site, Site::Head(_)) { rw.head_as(a).map(|rel| (rel, a.neg(), a.gated())) } else { rw.atom_as(a) };
         let at = match renamed {
             Some((rel, neg, gated)) => {
                 let r = self.enc.rel(&rel);

@@ -310,6 +310,152 @@ pub fn domains(prog: &Program) -> Result<Domains> {
     Ok(names.into_iter().zip(cols).map(|(rel, ds)| (rel.to_owned(), ds.into_iter().map(|d| d.unwrap_or(Domain::Name)).collect())).collect())
 }
 
+/// `domains`, read from the program's version (decision 0281's path, step 5): the same fixpoint, its relations
+/// numbered by their declarations in name order and its rules in the program's, as the tree's, so it finds the same
+/// domains; a rule's variables are its slots.
+pub fn domains_of(v: &crate::code_rule_dsl::logic::program_image::Version) -> Result<Domains> {
+    use crate::code_rule_dsl::logic::program_image::{AggRef, Lit as L, RuleRef, TermRef};
+    let mut decls: Vec<(&str, _)> = v.decls().into_iter().map(|d| (v.text(d.name()), d)).collect();
+    decls.sort_unstable_by(|a, b| a.0.cmp(b.0));
+    let inputs: std::collections::HashSet<&str> = v.inputs().map(|a| v.text(a)).collect();
+    // Each relation's declaration, by `RelId`: `None` for a relation not declared.
+    let mut decl_of: Vec<Option<u32>> = vec![None; v.rel_end() as usize];
+    let mut cols: Vec<Vec<Option<Domain>>> = Vec::with_capacity(decls.len());
+    for (i, (rel, d)) in decls.iter().enumerate() {
+        if let Some(r) = v.rel(rel) {
+            decl_of[r.0 as usize] = Some(i as u32);
+        }
+        let input = inputs.contains(rel);
+        let ds = d
+            .cols()
+            .enumerate()
+            .map(|(c, (_, t))| match v.text(t) {
+                "int" | "flat" | "min" | "max" => Ok(Some(Domain::Int)),
+                "node" => Ok(Some(Domain::Node)),
+                "sym" if input => Ok(Some(base_domain(rel, c).unwrap_or(Domain::Name))),
+                "sym" => Ok(None),
+                t => Err(Error::Plan(format!("{rel}: no domain for {t}"))),
+            })
+            .collect::<Result<_>>()?;
+        cols.push(ds);
+    }
+    let rules: Vec<RuleRef<'_>> = v.rules().collect();
+    fn atoms(r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>) -> Vec<crate::code_rule_dsl::logic::program_image::AtomRef<'_>> {
+        std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).collect()
+    }
+    let rels: Vec<Vec<Option<u32>>> = rules.iter().map(|&r| atoms(r).iter().map(|a| decl_of[a.rel().0 as usize]).collect()).collect();
+    let mut readers: Vec<Vec<usize>> = vec![Vec::new(); decls.len()];
+    for (i, atoms) in rels.iter().enumerate() {
+        for &d in atoms.iter().flatten() {
+            let list = &mut readers[d as usize];
+            if list.last() != Some(&i) {
+                list.push(i);
+            }
+        }
+    }
+    // A rule's variables' domains, by slot (`rule_vars`).
+    let rule_vars = |r: RuleRef<'_>, cols: &[Vec<Option<Domain>>], rels: &[Option<u32>]| -> Result<Vec<Option<Domain>>> {
+        let mut vars: Vec<Option<Domain>> = vec![None; r.var_count()];
+        let head = v.show_atom(r, r.head());
+        let set = |vars: &mut Vec<Option<Domain>>, s: crate::code_rule_dsl::logic::program_image::Slot, d: Domain| -> Result<bool> {
+            match vars[s.0 as usize] {
+                Some(e) if e.symbolic() && d.symbolic() && e != d => Err(Error::Plan(format!("rule for {head}: ${} is a {e:?} and a {d:?}", v.text(r.var(s))))),
+                Some(_) => Ok(false),
+                None => {
+                    vars[s.0 as usize] = Some(d);
+                    Ok(true)
+                }
+            }
+        };
+        fn call(v: &crate::code_rule_dsl::logic::program_image::Version, t: TermRef<'_>, vars: &mut Vec<Option<Domain>>, set: &dyn Fn(&mut Vec<Option<Domain>>, crate::code_rule_dsl::logic::program_image::Slot, Domain) -> Result<bool>) -> Result<bool> {
+            let mut changed = false;
+            if let TermRef::Call(f, args) = t {
+                let args: Vec<TermRef<'_>> = args.collect();
+                let (domains, _) = functor_domains(v.text(f), args.len());
+                for (&a, d) in args.iter().zip(domains) {
+                    if let (TermRef::Var(s), Some(d)) = (a, d) {
+                        changed |= set(vars, s, d)?;
+                    }
+                    changed |= call(v, a, vars, set)?;
+                }
+            }
+            Ok(changed)
+        }
+        let atoms: Vec<(Vec<TermRef<'_>>, Option<&[Option<Domain>]>)> = atoms(r).iter().zip(rels).map(|(a, d)| (a.args().collect(), d.map(|d| cols[d as usize].as_slice()))).collect();
+        let body: Vec<L<'_>> = r.body().map(|l| l.view()).collect();
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for (args, ds) in &atoms {
+                for (c, &t) in args.iter().enumerate() {
+                    if let (TermRef::Var(s), Some(Some(d))) = (t, ds.and_then(|ds| ds.get(c))) {
+                        changed |= set(&mut vars, s, *d)?;
+                    }
+                    changed |= call(v, t, &mut vars, &set)?;
+                }
+            }
+            for l in &body {
+                match *l {
+                    L::Cmp { l, r: rt, .. } => {
+                        changed |= call(v, l, &mut vars, &set)?;
+                        changed |= call(v, rt, &mut vars, &set)?;
+                        if let (TermRef::Var(x), TermRef::Var(y)) = (l, rt) {
+                            if let Some(d) = vars[x.0 as usize] {
+                                changed |= set(&mut vars, y, d)?;
+                            }
+                            if let Some(d) = vars[y.0 as usize] {
+                                changed |= set(&mut vars, x, d)?;
+                            }
+                        }
+                        if let (TermRef::Var(x), TermRef::Call(f, args)) = (l, rt)
+                            && let (_, Some(d)) = functor_domains(v.text(f), args.count())
+                        {
+                            changed |= set(&mut vars, x, d)?;
+                        }
+                    }
+                    L::Nearest { n, a, .. } => {
+                        changed |= set(&mut vars, n, Domain::Node)?;
+                        changed |= set(&mut vars, a, Domain::Node)?;
+                    }
+                    L::Agg { var, op: AggRef::Join { .. }, .. } => changed |= set(&mut vars, var, Domain::Name)?,
+                    L::Agg { var, op: AggRef::Count | AggRef::Sum, .. } => changed |= set(&mut vars, var, Domain::Int)?,
+                    _ => {}
+                }
+            }
+        }
+        Ok(vars)
+    };
+    let mut queued = vec![true; rules.len()];
+    let mut work: std::collections::VecDeque<usize> = (0..rules.len()).collect();
+    while let Some(i) = work.pop_front() {
+        queued[i] = false;
+        let r = rules[i];
+        let vars = rule_vars(r, &cols, &rels[i])?;
+        let mut gained: Vec<u32> = Vec::new();
+        for (a, d) in atoms(r).iter().zip(&rels[i]) {
+            let Some(d) = *d else { continue };
+            let ds = &mut cols[d as usize];
+            for (c, t) in a.args().enumerate() {
+                if let (TermRef::Var(s), Some(slot @ None)) = (t, ds.get_mut(c))
+                    && let Some(dom) = vars[s.0 as usize]
+                {
+                    *slot = Some(dom);
+                    gained.push(d);
+                }
+            }
+        }
+        for d in gained {
+            for &j in &readers[d as usize] {
+                if !queued[j] {
+                    queued[j] = true;
+                    work.push_back(j);
+                }
+            }
+        }
+    }
+    Ok(decls.into_iter().zip(cols).map(|((rel, _), ds)| (rel.to_owned(), ds.into_iter().map(|d| d.unwrap_or(Domain::Name)).collect())).collect())
+}
+
 /// Each relation's columns as `rule_vars` reads them, from the domains: by name, one lookup per atom.
 pub(in crate::code_rule_dsl) fn columns_of(domains: &Domains) -> HashMap<&str, Vec<Option<Domain>>> {
     domains.iter().map(|(r, ds)| (r.as_str(), ds.iter().copied().map(Some).collect())).collect()

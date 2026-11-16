@@ -395,6 +395,27 @@ step 3 replaces what is under the writer.
      a split maintained from an earlier one can word one differently from a whole split ("reads cross-file r"
      against "reads r with no location"): which relations have a cause is compared, not the words. Test:
      `the_split_of_a_version_is_maintained_across_an_edit`.
+   - Done (b), first slice: the image is made after the merges, and the passes after them run on the manager
+     (`corpus::preparation`): the inputs the rules read (`InputsRead`) and the measurement aid's rule order
+     (`RuleOrder`), the pipeline's output folded into a base for the store. The domains are read from the version
+     (`lower::domains_of`, `domains`' fixpoint on handles, in the tree's order), and the split from it
+     (`programs_of`); a debug build checks both against the tree's, its inputs pruned the same way. The manager's
+     "a derivation that changed nothing is its input" compared digests, a sum blind to the rules' order, so a
+     reordering derivation was taken for its input: it now compares the rules in order too. Tests:
+     `the_domains_of_a_version_are_the_trees`, `the_passes_after_the_image_prune_the_inputs_and_reorder_the_rules`.
+   - Done (b), second slice: the merges (`corpus::merge_and_drop_repeats`) are manager passes,
+     `preparation::DropRepeated` and `MergeIdentical`, and the image is made before them. `congruence` is read from
+     the version: a rule's template is a token list mirroring `template::canonical`'s text (variables by first
+     appearance, relations read a placeholder, `gated` and a count's `over` unwritten as the text leaves them), its
+     partition refinement and the classes' naming and writing `merge`'s one for one; a head is renamed through a new
+     `Rewrite::head_as`. A debug build checks the merged version's size and digest and the counts against the
+     tree's merges. Test: `the_merges_on_a_version_are_the_trees`.
+   - Done (b), third slice: `locate` is a manager pass (`file_local::Locate`, `typing/file_local/passes.rs`), the
+     image made before it. It reads the split from the analysis (`FileLocal`, `crossing` on the version) and writes a
+     derivation in the tree's rule order: a target's rules made as `<r>_at(d, …)` term by term (the document a
+     column a rule binds, one it leaves unnamed, or one through `docof` or `node`) and the cross-file read
+     `r(…) :- r_at(_, …)` appended. A debug build checks the result against the tree's `locate`. Test:
+     `rows_are_located_on_a_version_as_on_the_tree`.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.
 7. **The per-clause half of `rr::lower`** as `RulePass`es over the tape's clauses (0276 step 5), with `Domains`; the

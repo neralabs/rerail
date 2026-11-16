@@ -138,3 +138,31 @@ fn kind_and_field_columns_are_not_stored_as_atoms() {
     assert_eq!(atom_columns(&p, &d, "kind"), [false, false], "a derived kind column");
     assert_eq!(atom_columns(&p, &d, "named"), [false, false, true], "a derived field column, and a name");
 }
+
+/// The domains read from a program's version (`domains_of`) are the tree's (`domains`): kinds through derived
+/// columns and facts, functors, comparisons, aggregates and a refused conflict.
+#[test]
+fn the_domains_of_a_version_are_the_trees() {
+    let texts = [
+        format!(
+            "{BASE}.decl kind(n: node, k: symbol)\n.decl lit(k: symbol, t: symbol)\n.decl typed(n: node, t: symbol)\n.output typed\n\
+             kind(n, k) :- node(_, n, k, _, _).\nlit(\"integer\", \"int\").\n\
+             typed(n, t) :- kind(n, k), lit(k, t), field(p, \"left\", n), text(p, \"x\").\n"
+        ),
+        format!(
+            "{BASE}.decl named(n: node, s: symbol, l: number)\n.decl eq(a: symbol, b: symbol)\n.decl many(k: symbol, c: number)\n.output named, many\n\
+             named(n, s, l) :- text(n, t), s = cat(t, \"!\"), l = strlen(s).\neq(a, b) :- node(_, _, a, _, _), b = a.\n\
+             many(k, c) :- eq(k, _), c = count : {{ node(_, _, k, _, _) }}.\n"
+        ),
+        format!("{BASE}.decl bad(n: node)\n.output bad\nbad(n) :- node(_, n, k, _, _), text(n, k).\n"),
+    ];
+    for text in texts {
+        let p = parse(&text).unwrap();
+        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+        match (domains(&p), domains_of(&v)) {
+            (Ok(t), Ok(o)) => assert_eq!(o, t, "{text}"),
+            (Err(t), Err(o)) => assert_eq!(o.to_string(), t.to_string(), "{text}"),
+            (t, o) => panic!("the tree's {t:?}, the version's {o:?}: {text}"),
+        }
+    }
+}
