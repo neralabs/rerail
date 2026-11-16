@@ -906,27 +906,15 @@ fn read_shared(path: &Path) -> Result<(std::sync::Arc<Vec<syntax::Statement>>, L
     Ok((statements, file))
 }
 
-/// A rule file's statements, read off its tape (decision 0062). The tape is the content store's, as any corpus
-/// file's is (`facts::core::build_cached`, keyed by the source's content and the grammar's version): a file read by an
-/// earlier run is not parsed again. Without a store (the browser build, `RERAIL_TAPE_CACHE=off`) the tape is made
-/// here.
-/// `src` (a document named `name`) as a program, read off the tape the store keeps for it, as a rule file's is
-/// (`stored_statements`): a prepared program's document (decision 0074).
+/// A rule file's statements, read off the lean parser's tape (decision 0275). Its tape was the content store's, as a
+/// corpus file's is (decision 0062): a lookup and a decode of facts cost more than the lean parse.
+/// `src` (a document named `name`) as a program, read off its tape as a rule file's is (`stored_statements`): a
+/// prepared program's document (decision 0074).
 pub(in crate::code_rule_dsl) fn parse_stored(name: &str, src: String) -> Result<Program, Error> {
     lower::lower(stored_statements(Path::new(name), src)?)
 }
 
 fn stored_statements(_path: &Path, src: String) -> Result<Vec<syntax::Statement>, Error> {
-    let store = if cfg!(feature = "tape-cache") { super::plan::corpus::phases::reading_store() } else { None };
-    if let Some(store) = store {
-        let src = std::sync::Arc::new(src);
-        let file = crate::code_rule_dsl::facts::core::Source { language: "rr".to_owned(), source: std::sync::Arc::clone(&src) };
-        if let Ok(crate::code_rule_dsl::facts::core::Built::Facts(facts)) = crate::code_rule_dsl::facts::core::build_cached(&file, &store) {
-            crate::code_rule_dsl::prof::count("rr.statements_from_stored_tape", 1);
-            return from_tape::statements(&src, &from_tape::nodes_of_facts(&facts));
-        }
-        return from_tape::statements(&src, &nodes(&src));
-    }
     from_tape::statements(&src, &nodes(&src))
 }
 
@@ -1028,8 +1016,6 @@ fn program_shared(path: &Path) -> Result<(Shared, Vec<LibraryFile>), Error> {
         return json_program_shared(path);
     }
     let (order, files) = program_order(path)?;
-    // One handle on the tape cache for the files read (`phases::Reading`), not one each.
-    let _reading = super::plan::corpus::phases::Reading::enter();
     let modules = order.into_iter().map(|p| Ok((p.clone(), read_shared(&p)?.0))).collect::<Result<Vec<_>, Error>>()?;
     Ok((Shared(modules), files))
 }
@@ -1046,7 +1032,6 @@ fn json_program_shared(path: &Path) -> Result<(Shared, Vec<LibraryFile>), Error>
     let json = String::from_utf8(bytes).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let id = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let src = super::json_rules::Translator::new().translate_text(&json, &id).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
-    let _reading = super::plan::corpus::phases::Reading::enter();
     let statements = stored_statements(&path, src).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let (modules, own) = resolve_shared(statements)?;
     let core = library().join("core.rr").canonicalize().ok();

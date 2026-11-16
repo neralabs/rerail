@@ -259,8 +259,8 @@ impl Drop for Batch {
     }
 }
 
-/// While one is held, the reads made outside a run (a rule file's tape, `rr::stored_statements`; a combined program,
-/// `combine_stored`) share one handle on the tape cache (`reading_store`): each had opened the store and closed it,
+/// While one is held, the reads made outside a run (a combined program, `combine_stored`; a rule file's tape was one
+/// too until the lean parser read it, decision 0275) share one handle on the tape cache (`reading_store`): each had opened the store and closed it,
 /// and the close of the store's last handle closes every thread's connection to it (`ContentStore`'s drop). A warm
 /// batch spent 514 of 7,850 samples so, a file at a time. A batch holds one; so does a program's reading.
 pub struct Reading(());
