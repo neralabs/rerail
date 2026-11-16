@@ -36,6 +36,7 @@ metal-tests = ["rerail-facts/metal-tests", "rerail-lang/metal-tests", "rerail-rr
 test-hooks = ["rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-rr/test-hooks", "dep:tempfile", "rerail-compiler/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-rr-parser/test-hooks"]
 
 [dependencies]
+arc-swap = "=1.9.3"
 base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
 ast-grep-core = "=0.51.0"
