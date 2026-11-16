@@ -34,6 +34,11 @@ pub struct BlockNative {
     /// The groups that are regions (`block::BlockProgram::walks`): Metal runs their rounds; the
     /// CPU walks them (`cpu_form`).
     pub walks: Vec<crate::block::Walk>,
+    /// An input of the compiler, the application's: the zero bytes after every file's last one
+    /// that the code may count on, as simdjson's padded input (`native_cpu_block::BACK` by
+    /// default). Where a window reaches past it (`native_cpu_bytes::pad_reach`), the window is
+    /// cut to the file's end on a rare branch instead: a smaller padding for that branch.
+    pub pad: u16,
 }
 
 /// An instruction of a block body.
@@ -156,6 +161,7 @@ impl BlockNative {
             groups: crate::block::groups(&program.ops, &program.rounds).expect("a verified program"),
             records: program.records.clone(),
             walks: program.walks.clone(),
+            pad: crate::native_cpu_block::BACK as u16,
         }
     }
 
@@ -304,6 +310,7 @@ impl BlockNative {
                 })
                 .collect(),
             walks: kept_walks.iter().map(|&w| Self::walk_renamed(&self.walks[w], m)).collect(),
+            pad: self.pad,
         }
     }
 
@@ -442,6 +449,7 @@ impl BlockNative {
             output_delays: self.output_delays.clone(),
             records: self.records.clone(),
             walks: self.walks.iter().map(|w| Self::walk_renamed(w, |v| at[usize::from(v)])).collect(),
+            pad: self.pad,
             groups: self
                 .groups
                 .iter()
@@ -686,6 +694,7 @@ impl BlockNative {
             let walks: Vec<crate::block::Walk> = self.walks.iter().map(|w| if w.made().iter().all(|&v| in_pass(usize::from(v), p)) { Self::walk_renamed(w, |v| place(usize::from(v)) as u16) } else { crate::block::Walk { group: w.group, hidden: 0, kinds: Vec::new() } }).collect();
             let body = |outputs: Vec<u16>, last: bool| BlockNative {
                 walks: walks.clone(),
+                pad: self.pad,
                 tables: self.tables.clone(),
                 insts: insts.clone(),
                 output_delays: if last { self.output_delays.clone() } else { vec![0; outputs.len()] },

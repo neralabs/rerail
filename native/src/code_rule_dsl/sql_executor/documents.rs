@@ -83,7 +83,7 @@ fn native_sources(store: &ContentStore, docs: Vec<syntax::Document>) -> Result<S
 }
 fn document(store: &ContentStore, file: File) -> Result<Document> {
     let facts = match core::build_cached(&file, store).map_err(error)? {
-        Built::Facts(facts) if !facts.syntax_errors => facts,
+        Built::Facts(facts) if !facts.syntax_errors() => facts,
         _ => return Err(error(format!("{}: core facts are incomplete", file.path))),
     };
     let key = store.intern_atoms(&[&file.path]).map_err(error)?[0];

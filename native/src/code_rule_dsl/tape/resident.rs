@@ -13,6 +13,9 @@ pub const HEADER_LEN: usize = HEADER;
 
 /// The node and code counts an image's header declares, after its magic and version.
 pub fn header_counts(header: &[u8]) -> Result<(usize, usize), String> {
+    if header.len() >= 8 && (&header[..8] == rerail_tape_format::f16::MAGIC16 || &header[..8] == rerail_tape_format::f16::MAGIC16Z) {
+        return Err("a format 16 tape: the device's kernels read format 15 until they read the tape API (decision 0293, step 5)".into());
+    }
     if header.len() < HEADER || &header[..8] != TAPE_MAGIC {
         return Err("wrong tape image magic".into());
     }

@@ -285,7 +285,7 @@ fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
         let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).map_err(|e| format!("unlowered: {e}"))?;
         let was = placement::set_binding(binding);
-        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), modes);
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).map_err(|e| format!("stats: {e}"))?, BTreeSet::new(), modes);
         placement::set_binding(was);
         let got = got.map_err(|e| format!("error: {e}"))?;
         let ran = placement::recorded(rel);

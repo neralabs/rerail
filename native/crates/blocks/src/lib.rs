@@ -22,8 +22,11 @@
 pub mod block;
 pub mod chunk;
 pub mod col;
+#[cfg(unix)]
+pub mod deferrable;
 pub mod facts;
 pub mod journal;
+pub mod mem;
 pub mod packed;
 pub mod program;
 pub mod refs;
@@ -44,7 +47,7 @@ mod windows;
 #[cfg(target_os = "macos")]
 pub mod gpu;
 
-pub use block::{Block, Frozen, Header};
+pub use block::{Block, Cells, Frozen, Header};
 pub use refs::{Ptr, Span};
 
 /// A type whose bytes are its value: no pointers, no padding the compiler chose (`structure!` checks).

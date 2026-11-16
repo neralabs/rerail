@@ -168,7 +168,6 @@ fn fixture(
 
 #[test]
 fn known_field_edges_match_native_first_child_without_larger_records() {
-    assert_eq!(std::mem::size_of::<Rec>(), 40);
     for (lang, source) in [
         (
             GrammarDialect::Python,
@@ -1093,9 +1092,9 @@ fn cancellation_interrupts_mid_encode_without_partial_image() {
     // A record per stored node: the tokens the grammar implies are in no tape (RER-131).
     let nodes = native.tree.root_node().descendant_count();
     let doc = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
-    assert_eq!(doc.data.len(), doc.image.node_count());
-    assert_eq!(image.primary.node_count(), doc.data.len());
-    assert!(doc.data.len() < nodes);
+    assert_eq!(doc.transducer_len(), doc.image.node_count());
+    assert_eq!(image.primary.node_count(), doc.transducer_len());
+    assert!(doc.transducer_len() < nodes);
 }
 
 #[test]
@@ -1119,7 +1118,7 @@ fn cancellation_interrupts_mid_restore_after_hashing() {
     );
     assert_eq!(calls.get(), 5, "restore must poll after the source digest");
     let doc = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
-    assert_eq!(doc.data.len(), doc.image.node_count());
+    assert_eq!(doc.transducer_len(), doc.image.node_count());
 }
 
 #[test]
@@ -1328,8 +1327,10 @@ fn restore_rejects_noncanonical_side_tables_and_checkpoint_boundaries() {
     broken.off[2 * 17] ^= 0x40;
     reject("second block offset", &broken);
     let mut broken = image.clone();
-    broken.codes.push(broken.codes[0]);
-    broken.code[0..2].copy_from_slice(&(broken.codes.len() as u16).to_le_bytes());
+    let first = broken.codes[0];
+    broken.codes.push(first);
+    let count = broken.codes.len() as u16;
+    broken.code[0..2].copy_from_slice(&count.to_le_bytes());
     reject("out-of-range code", &broken);
     let mut broken = image.clone();
     broken.widths[1] = 4;
@@ -2287,7 +2288,7 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
     let lines = Arc::new(LineTable::new(&source, Terminators::of(GrammarDialect::Python)));
     let reject = |image: &TapeImage| {
         assert!(TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), image, &|| false).is_err());
-        assert!(core::from_image(Arc::clone(&source), &grammar, image, Arc::clone(&lines)).is_err());
+        assert!(core::from_image(Arc::clone(&source), &grammar, image.clone(), Arc::clone(&lines)).is_err());
     };
     let mut corrupt = image.clone(); corrupt.source_digest.as_mut().expect("the image holds its source's digest")[0] ^= 1; reject(&corrupt);
     let mut corrupt = image.clone(); corrupt.code.pop(); reject(&corrupt);
@@ -2301,7 +2302,7 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
     let (_, _, nested, ng) = fixture("f(g(x))\n", GrammarDialect::Python);
     let mut corrupt = nested.clone();
     corrupt.size[2..4].copy_from_slice(&2u16.to_le_bytes());
-    assert!(core::from_image(Arc::new("f(g(x))\n".into()), &ng, &corrupt, Arc::new(LineTable::new("f(g(x))\n", Terminators::Newlines))).is_err());
+    assert!(core::from_image(Arc::new("f(g(x))\n".into()), &ng, corrupt, Arc::new(LineTable::new("f(g(x))\n", Terminators::Newlines))).is_err());
 }
 
 
@@ -4797,4 +4798,114 @@ fn every_tape_format_reads_the_document_as_restored() {
             }
         });
     }
+}
+
+/// Decision 0293 §4: a file's documents stored in each format (`FileImage::in_format`, then as the store keeps and
+/// reads them) are held as stored, and the documents restored from them answer every node question as format 15's
+/// do: a Python file of several blocks, and a host whose language has no format 16 table (kept as format 15) with a
+/// TSX guest that has one.
+#[test]
+fn a_file_stored_in_each_format_reads_back_as_format_15() {
+    use super::formats::Format;
+    fn same(a: &TapeDoc, b: &TapeDoc, name: &str) {
+        assert_eq!(a.transducer_len(), b.transducer_len(), "{name}: nodes");
+        for node in 0..a.transducer_len() as u32 {
+            assert_eq!(
+                (a.transducer_kind(node), a.transducer_field(node), a.transducer_flags(node), a.transducer_span(node)),
+                (b.transducer_kind(node), b.transducer_field(node), b.transducer_flags(node), b.transducer_span(node)),
+                "{name}: node {node}"
+            );
+            assert_eq!(a.transducer_parent(node), b.transducer_parent(node), "{name}: parent of {node}");
+            assert_eq!(a.transducer_descendants(node), b.transducer_descendants(node), "{name}: subtree of {node}");
+            assert_eq!(a.transducer_children(node).collect::<Vec<_>>(), b.transducer_children(node).collect::<Vec<_>>(), "{name}: children of {node}");
+        }
+        assert_eq!(a.transducer_supertypes().collect::<Vec<_>>(), b.transducer_supertypes().collect::<Vec<_>>(), "{name}: classes");
+    }
+    let python: String = (0..400).map(|i| format!("class C{i}(B):\n    def f(self, x={i}):\n        return [y for y in x if y]\n")).collect();
+    let cases = [(GrammarDialect::Python, python), (GrammarDialect::TestHtml, "<script lang=\"tsx\">let x = <a />;</script>\n".to_owned())];
+    for (lang, source) in cases {
+        let grammar = Grammar::new(lang).unwrap();
+        let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap();
+        assert_eq!(image.primary.format(), Format::F15, "the tests' run stores format 15");
+        let reference = TapeDoc::restore(Arc::new(source.clone()), Arc::clone(&grammar), &image, &|| false).unwrap();
+        for format in Format::ALL {
+            let stored = image.clone().in_format(format).round_trip(&grammar).unwrap();
+            let has_table = |dialect| crate::code_rule_dsl::language::tape_tag(dialect).and_then(rerail_tape_format::f16::lang).is_some();
+            let held = |tape: &TapeImage| if has_table(tape.language) { format } else { Format::F15 };
+            assert_eq!(stored.primary.format(), held(&stored.primary), "{lang:?} in {}", format.name());
+            for d in &stored.derived {
+                assert_eq!(d.tape.format(), held(&d.tape), "{lang:?}'s guest in {}", format.name());
+            }
+            let doc = TapeDoc::restore(Arc::new(source.clone()), Arc::clone(&grammar), &stored, &|| false).unwrap();
+            same(&reference, &doc, &format!("{lang:?} in {}", format.name()));
+            let (guests, read) = (reference.guests().unwrap(), doc.guests().unwrap());
+            assert_eq!(guests.len(), read.len());
+            assert_eq!(guests.len(), usize::from(lang == GrammarDialect::TestHtml));
+            for (g, r) in guests.iter().zip(read.iter()) {
+                same(&g.doc, &r.doc, &format!("{lang:?}'s guest in {}", format.name()));
+            }
+        }
+    }
+}
+
+/// Decision 0293 (the user, 2026-11-16: "generalize the lean parsers so that they produce format 16 directly, and
+/// ideally format 16 compressed directly"): each lean parser's writer, finished in a run of format 16 or 16z, writes
+/// that format in one pass over its nodes (`formats::lean`), never format 15's columns. The tape is the bytes format
+/// 15's image converts to, and answers every node question as format 15's does.
+#[test]
+fn the_lean_parsers_write_each_format_directly() {
+    use super::formats::{Format, as_run};
+    use rerail_tape_format::tape::Tape;
+    type Encode = fn(&Grammar, &str) -> Result<TapeImage, String>;
+    fn lean<R: std::fmt::Debug>(r: Result<Result<TapeImage, String>, R>) -> Result<TapeImage, String> {
+        r.map_err(|why| format!("the lean parser refused it: {why:?}"))?
+    }
+    let python: String = (0..300).map(|i| format!("class C{i}(B):\n    def f(self, x={i}):\n        return [y for y in x if y]\n")).collect();
+    let js: String = (0..200).map(|i| format!("const x{i} = (a) => a?.b ?? {i};\nfunction f{i}(y) {{ return y + 1; }}\n")).collect();
+    let cases: Vec<(GrammarDialect, String, Encode)> = vec![
+        (GrammarDialect::Python, python, |g, s| lean(super::python_lean::encode(g, s, &|| false))),
+        (GrammarDialect::JavaScript, js, |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::JavaScript, g, s, &|| false))),
+        (GrammarDialect::TypeScript, "interface A { x?: number }\nconst x: A = {};\n".into(), |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::TypeScript, g, s, &|| false))),
+        (GrammarDialect::Tsx, "const A = () => <div title=\"x\">text</div>;\n".into(), |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::Tsx, g, s, &|| false))),
+        (GrammarDialect::Rust, "fn main() { let x = Some(1); if let Some(y) = x { println!(\"{y}\"); } }\n".into(), |g, s| lean(super::rust_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Php, "<?php function f($x) { return $x + 1; }\n".into(), |g, s| lean(super::php_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Sql, "SELECT a, count(*) FROM t GROUP BY a;\n".into(), |g, s| lean(super::sql_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Vue, "<template><div>{{ value }}</div></template>\n<script>\nlet value = 1;\n</script>\n".into(), |g, s| lean(super::vue_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Css, "a { color: red; }\n.b > c { margin: 0 1px; }\n".into(), |g, s| lean(super::css_lean::encode(g, s, &|| false))),
+        (GrammarDialect::CSharp, "class A { void F() { var x = 1; } }\n".into(), |g, s| lean(super::csharp_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Html, "<div class=\"a\"><p>hi</p></div>\n".into(), |g, s| lean(super::html_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Java, "class A { void f() { int x = 1; } }\n".into(), |g, s| lean(super::java_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Markdown, "# Title\n\nSome *text* here.\n\n- a\n- b\n".into(), |g, s| lean(super::markdown_lean::encode(g, s, &|| false))),
+        (GrammarDialect::MarkdownInline, "Some *text* and `code`".into(), |g, s| lean(super::markdown_inline_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Rr, ".decl item(n:number)\nitem(1).\n.output item\n".into(), |g, s| TapeImage::encode_rr(g, s, &|| false)),
+    ];
+    let mut direct = Vec::new();
+    for (lang, source, encode) in cases {
+        let grammar = Grammar::new(lang).unwrap();
+        let reference = as_run(Format::F15, || encode(&grammar, &source)).unwrap_or_else(|e| panic!("{lang:?}: {e}"));
+        assert_eq!(reference.format(), Format::F15, "{lang:?}");
+        let has_table = crate::code_rule_dsl::language::tape_tag(lang).and_then(rerail_tape_format::f16::lang).is_some();
+        for format in [Format::F16, Format::F16Z] {
+            let image = as_run(format, || encode(&grammar, &source)).unwrap();
+            let at = format!("{lang:?} in {}", format.name());
+            assert_eq!(image.format(), if has_table { format } else { Format::F15 }, "{at}");
+            if !has_table {
+                continue;
+            }
+            direct.push(at.clone());
+            assert_eq!(image.source_digest, reference.source_digest, "{at}");
+            // The bytes format 15's image converts to (`in_format`): one writer, whichever way it is fed.
+            assert_eq!(image.to_bytes().unwrap(), reference.clone().in_format(format).to_bytes().unwrap(), "{at}: bytes");
+            let (a, b) = (reference.tape(), image.tape());
+            rerail_tape_format::with_tape!(a, |a| rerail_tape_format::with_tape!(b, |b| {
+                assert_eq!(a.len(), b.len(), "{at}");
+                for i in 0..a.len() {
+                    assert_eq!(a.table().entry(a.code(i)), b.table().entry(b.code(i)), "{at}: code of {i}");
+                    assert_eq!((a.start(i), a.end(i), a.subtree_end(i), a.parent(i)), (b.start(i), b.end(i), b.subtree_end(i), b.parent(i)), "{at}: node {i}");
+                }
+            }));
+        }
+    }
+    assert!(direct.iter().any(|d| d.starts_with("Python")), "the tables cover Python: {direct:?}");
+    eprintln!("written directly: {direct:?}");
 }

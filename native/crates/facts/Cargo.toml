@@ -8,7 +8,7 @@ publish = false
 description = "The engine's facts: the virtual tables, text, strings, producers, SQL profiles."
 
 [features]
-default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache"]
+default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache", "rerail-lang/default"]
 all-languages = ["lang-blade", "lang-csharp", "lang-css", "lang-html", "lang-java", "lang-javascript", "lang-json", "lang-markdown", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue", "rerail-lang/all-languages"]
 lang-blade = ["rerail-lang/lang-blade"]
 lang-csharp = ["ast-grep-language/tree-sitter-c-sharp", "rerail-lang/lang-csharp"]
@@ -34,7 +34,7 @@ system-allocator = ["rerail-lang/system-allocator"]
 code-rule-profile = ["rerail-lang/code-rule-profile"]
 p-anchor-corpus = ["rerail-lang/p-anchor-corpus"]
 metal-tests = ["rerail-lang/metal-tests"]
-test-hooks = ["rerail-lang/test-hooks", "dep:tempfile"]
+test-hooks = ["rerail-lang/test-hooks", "dep:tempfile", "rerail-compiler/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-rr-parser/test-hooks"]
 
 [dependencies]
 # `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).

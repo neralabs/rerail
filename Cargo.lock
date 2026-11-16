@@ -3174,6 +3174,7 @@ dependencies = [
 name = "rerail-blocks"
 version = "0.1.0"
 dependencies = [
+ "block",
  "libc",
  "metal",
  "rayon",
@@ -4011,6 +4012,7 @@ name = "rerail-logic"
 version = "0.1.0"
 dependencies = [
  "aho-corasick",
+ "arc-swap",
  "ast-grep-core",
  "ast-grep-language",
  "base64 0.22.1",
@@ -4119,6 +4121,7 @@ dependencies = [
  "bitlex",
  "rerail-compiler",
  "rerail-metal",
+ "rerail-parser-tests",
  "rerail-rr-syntax",
  "tree-sitter",
  "tree-sitter-json",
@@ -4278,6 +4281,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "rerail-compiler",
+ "rerail-rr-aot",
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-tape-format",
@@ -4292,6 +4296,7 @@ dependencies = [
  "rerail-compiler",
  "rerail-metal",
  "rerail-prof",
+ "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-tape-format",
  "sha2 0.10.9",
@@ -4483,6 +4488,7 @@ dependencies = [
  "regex",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-prof",
  "rerail-store",
  "rusqlite",

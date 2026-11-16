@@ -16,7 +16,10 @@
 //! A text column holds strings' indexes, a node column `doc << 32 | local`, an int column the integer. A string is
 //! held as its text, once per image, so an image means the same in every process (decision 0212).
 //!
-//! **A stack.** A run's outputs are a file of images, one after another: a base, then overlays. An overlay holds
+//! **A stack.** A run's outputs are a file of images, one after another: a base, then overlays. In the file each image
+//! is the root of a frozen block of kind `OUTPUTS` (decision 0266, `rerail_blocks::block::frame`): the blocks' shared
+//! header, which says the block was written whole, then the image, read where it is. In memory (an image a run just
+//! made, a memo entry's) an image is its bytes alone. An overlay holds
 //! what a later run changed: a relation whole (`kind::WHOLE`), or its rows added (`kind::ADDED`) and the hashes of its
 //! rows gone (`kind::GONE`, [`Rel::hash`]). A relation is read as a [`View`]: from the last image that holds it
 //! whole, through each later image's rows gone and added. Each image's strings, documents and places are its own. A
@@ -303,6 +306,14 @@ impl Builder {
     }
     /// The image's bytes.
     pub fn finish(self) -> Vec<u8> {
+        let done = self.finish_parts();
+        let mut out = vec![0u8; done.len()];
+        done.write(&mut out);
+        out
+    }
+    /// The image's regions, made: its length known before it is written (`Finished::write`), so it can be written
+    /// where it is kept (a memo entry, into its segment's mapped pages) with no copy of it whole first.
+    pub fn finish_parts(self) -> Finished {
         let mut w: Vec<Vec<u8>> = vec![Vec::new(); REGIONS];
         let put = |w: &mut Vec<Vec<u8>>, r: R, v: u64| w[r as usize].extend_from_slice(&v.to_le_bytes());
         put(&mut w, R::Meta, if self.overlay { meta::OVERLAY } else { meta::BASE });
@@ -333,25 +344,7 @@ impl Builder {
             put(&mut w, R::Places, *path);
             put(&mut w, R::Places, *line as u64);
         }
-        let mut out = vec![0u8; HEADER];
-        out[..8].copy_from_slice(&MAGIC);
-        out[8..12].copy_from_slice(&FORMAT.to_le_bytes());
-        out[12..16].copy_from_slice(&(REGIONS as u32).to_le_bytes());
-        for (r, bytes) in w.iter().enumerate() {
-            while !out.len().is_multiple_of(16) {
-                out.push(0);
-            }
-            let at = 16 + 24 * r;
-            let offset = out.len() as u64;
-            out[at..at + 4].copy_from_slice(&WIDTH[r].to_le_bytes());
-            out[at + 8..at + 16].copy_from_slice(&((bytes.len() / WIDTH[r] as usize) as u64).to_le_bytes());
-            out[at + 16..at + 24].copy_from_slice(&offset.to_le_bytes());
-            out.extend_from_slice(bytes);
-        }
-        while !out.len().is_multiple_of(16) {
-            out.push(0);
-        }
-        out
+        Finished { regions: w }
     }
 }
 
@@ -510,6 +503,41 @@ impl Rows {
     }
 }
 
+/// An image's regions, made (`Builder::finish_parts`): its length, and the image written into memory of that length.
+pub struct Finished {
+    regions: Vec<Vec<u8>>,
+}
+
+impl Finished {
+    /// The image's length in bytes: its header, and each region at 16 bytes.
+    pub fn len(&self) -> usize {
+        self.regions.iter().fold(HEADER, |at, r| at.next_multiple_of(16) + r.len()).next_multiple_of(16)
+    }
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+    /// Writes the image into `out`, `len()` bytes, every byte (padding zeroed).
+    pub fn write(&self, out: &mut [u8]) {
+        assert_eq!(out.len(), self.len(), "an image's memory of its length");
+        out[..HEADER].fill(0);
+        out[..8].copy_from_slice(&MAGIC);
+        out[8..12].copy_from_slice(&FORMAT.to_le_bytes());
+        out[12..16].copy_from_slice(&(REGIONS as u32).to_le_bytes());
+        let mut end = HEADER;
+        for (r, bytes) in self.regions.iter().enumerate() {
+            let offset = end.next_multiple_of(16);
+            out[end..offset].fill(0);
+            let at = 16 + 24 * r;
+            out[at..at + 4].copy_from_slice(&WIDTH[r].to_le_bytes());
+            out[at + 8..at + 16].copy_from_slice(&((bytes.len() / WIDTH[r] as usize) as u64).to_le_bytes());
+            out[at + 16..at + 24].copy_from_slice(&(offset as u64).to_le_bytes());
+            out[offset..offset + bytes.len()].copy_from_slice(bytes);
+            end = offset + bytes.len();
+        }
+        out[end..].fill(0);
+    }
+}
+
 /// Rows are equal where their columns' types are and their rows are, value for value, in order.
 impl PartialEq for Rows {
     fn eq(&self, other: &Rows) -> bool {
@@ -630,10 +658,12 @@ impl<'a> Rel<'a> {
 }
 
 /// The bytes an image is read from: its file, mapped, or a copy in memory (an image a run just made; a file where
-/// mapping is not had, as on WASI). Either starts 16-byte aligned (a map at a page).
+/// mapping is not had, as on WASI), or a frozen block (a memo segment's, decision 0295 §4). Each starts 16-byte
+/// aligned (a map or a block at a page).
 enum Backing {
     Mapped(memmap2::Mmap),
     Owned(Vec<u128>, usize),
+    Block(rerail_blocks::block::Frozen),
 }
 
 impl Backing {
@@ -646,6 +676,7 @@ impl Backing {
     fn bytes(&self) -> &[u8] {
         match self {
             Backing::Mapped(m) => m,
+            Backing::Block(b) => b.bytes(0, b.used()),
             // SAFETY: the words hold `len` bytes.
             Backing::Owned(words, len) => unsafe { std::slice::from_raw_parts(words.as_ptr().cast::<u8>(), *len) },
         }
@@ -655,7 +686,7 @@ impl Backing {
 impl Image {
     /// The images of `bytes`, a stack: each checked, the last first in its reading.
     pub fn stack(bytes: &[u8]) -> Result<Vec<Image>, String> {
-        Image::stack_of(std::sync::Arc::new(Backing::copied(bytes)))
+        Image::stack_of(std::sync::Arc::new(Backing::copied(bytes)), false)
     }
     /// The stack in `file`, mapped: read where its bytes are. The file is never written in place (`write` puts a
     /// whole new file in its place), so a map stays as it was while the stack is read.
@@ -666,18 +697,26 @@ impl Image {
             Ok(m) => Backing::Mapped(m),
             Err(_) => Backing::copied(&std::fs::read(file)?),
         };
-        Image::stack_of(std::sync::Arc::new(backing)).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{}: {e}", file.display())))
+        Image::stack_of(std::sync::Arc::new(backing), true).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{}: {e}", file.display())))
     }
-    fn stack_of(buf: std::sync::Arc<Backing>) -> Result<Vec<Image>, String> {
+    /// The images of `buf`: its bytes alone (`framed`: false), or each the root of a frozen block (a file's).
+    fn stack_of(buf: std::sync::Arc<Backing>, framed: bool) -> Result<Vec<Image>, String> {
         let total = buf.bytes().len();
         let mut out = Vec::new();
         let mut at = 0;
         while at < total {
-            let image = Image::at(&buf, at, total)?;
+            let (image, next) = if framed {
+                let block = rerail_blocks::block::frozen_at(&buf.bytes()[at..], rerail_blocks::block::kind::OUTPUTS).map_err(bad)?;
+                (Image::at(&buf, at + block.root, at + block.length)?, at + block.length)
+            } else {
+                let image = Image::at(&buf, at, total)?;
+                let next = at + image.len;
+                (image, next)
+            };
             if out.is_empty() == image.is_overlay() {
                 return Err(bad(if out.is_empty() { "a stack starts with an overlay" } else { "a base inside a stack" }));
             }
-            at += image.len;
+            at = next;
             out.push(image);
         }
         Ok(out)
@@ -688,6 +727,11 @@ impl Image {
             return Err(bad("an image longer than its buffer"));
         }
         Image::at(&std::sync::Arc::new(Backing::Owned(words, len)), 0, len)
+    }
+    /// The image of `len` bytes at `at` in a frozen block (a memo entry in its segment), checked and read in place.
+    pub fn in_block(block: &rerail_blocks::block::Frozen, at: usize, len: usize) -> Result<Image, String> {
+        let end = at.checked_add(len).filter(|&e| e <= block.used()).ok_or_else(|| bad("an image past its block"))?;
+        Image::at(&std::sync::Arc::new(Backing::Block(block.clone())), at, end)
     }
     /// One image, base or overlay, read alone (the image a run just made).
     pub fn one(bytes: &[u8]) -> Result<Image, String> {
@@ -1278,13 +1322,23 @@ pub fn write(dir: &Path, image: &[u8]) -> std::io::Result<()> {
     if overlay && below.is_empty() {
         return Err(std::io::Error::new(std::io::ErrorKind::NotFound, format!("{}: an overlay over no stack", dir.display())));
     }
-    let mut bytes: Vec<&[u8]> = below.first().map(|b| b.buf.bytes()).into_iter().collect();
-    bytes.push(image);
-    replace(dir, &bytes)
+    // The blocks below as they are in the file, then the image's.
+    let (head, tail) = rerail_blocks::block::frame(rerail_blocks::block::kind::OUTPUTS, image.len());
+    let mut bytes: Vec<&[u8]> = below.first().map(|b| &b.buf.bytes()[..]).into_iter().collect();
+    bytes.extend([&head[..], image, &tail[..]]);
+    put(dir, &bytes)
 }
 
-/// `dir`'s output file made of `parts`, whole or not at all (a file beside it renamed over it).
+/// `dir`'s output file made of the images `parts` (a base, then overlays), each framed as a block, whole or not at
+/// all (a file beside it renamed over it).
 pub fn replace(dir: &Path, parts: &[&[u8]]) -> std::io::Result<()> {
+    let frames: Vec<(Vec<u8>, Vec<u8>)> = parts.iter().map(|p| rerail_blocks::block::frame(rerail_blocks::block::kind::OUTPUTS, p.len())).collect();
+    let bytes: Vec<&[u8]> = parts.iter().zip(&frames).flat_map(|(p, (head, tail))| [&head[..], p, &tail[..]]).collect();
+    put(dir, &bytes)
+}
+
+/// `dir`'s output file made of `bytes`, as they are.
+fn put(dir: &Path, parts: &[&[u8]]) -> std::io::Result<()> {
     use std::io::Write;
     static WRITES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

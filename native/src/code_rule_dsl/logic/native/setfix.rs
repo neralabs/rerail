@@ -3086,6 +3086,9 @@ impl View {
     }
     /// The source's rows whose view column `c` is `v` and which pass the filters, through the source's own index.
     fn find(&self, c: usize, v: i64) -> Vec<u32> {
+        if !self.eqs.is_empty() && let Some(rows) = self.src.lookup_eq(self.cols[c], v, &self.eqs) {
+            return rows.into_iter().map(|r| r as u32).collect();
+        }
         let rows = self.src.lookup(self.cols[c], &[v]).unwrap_or_default();
         rows.into_iter().filter(|&r| self.eqs.iter().all(|&(c, v)| self.src.value(r, c) == v)).map(|r| r as u32).collect()
     }
@@ -4703,7 +4706,9 @@ fn view(conn: impl Scoped, table: &str, cols: &str) -> Option<View> {
         stored_table(conn.sql().ok()?, schema, name, &need)?
     };
     let src=src.frozen().unwrap_or(src);
-    let names = src.columns();
+    // Its columns as its table names them (`vtab::named`): a relation handed on as `c0`, `c1` under a base one's name
+    // (`value`) is read by the base names, as its statements write them.
+    let names = if schema == "main" { crate::code_rule_dsl::facts::vtab::named(name, src.as_ref()) } else { src.columns() };
     let column = |c: &str| names.iter().position(|n| n == c.trim());
     // `SELECT 1`: whether rows are there (a gate's `done_N(0)`), no columns read.
     let cols: Vec<usize> = if cols.trim() == "1" { Vec::new() } else { cols.split(',').map(column).collect::<Option<_>>()? };

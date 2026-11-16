@@ -409,33 +409,35 @@ impl Reader<'_> {
             Set::Child { named, of } => {
                 let of = self.eval(of);
                 let mut bits = vec![0_u64; words];
-                for node in ones(&of) {
-                    if *named && self.flags()[node as usize] & NAMED == 0 {
+                // One pass in preorder, each node's parent the subtree open around it: no parent is searched for.
+                for (node, parent) in (0..self.tape.transducer_len() as u32).zip(self.tape.transducer_parents()) {
+                    let Some(parent) = parent else { continue };
+                    if !get(&of, node) || (*named && self.flags()[node as usize] & NAMED == 0) {
                         continue;
                     }
-                    if let Some(parent) = self.tape.transducer_parent(node) {
-                        bits[parent as usize / 64] |= 1 << (parent % 64);
-                    }
+                    put(&mut bits, parent);
                 }
                 bits
             }
             Set::Descendant { named, of } => {
                 let of = self.eval(of);
                 let mut bits = vec![0_u64; words];
-                for node in ones(&of) {
-                    if *named && self.flags()[node as usize] & NAMED == 0 {
-                        continue;
+                // One pass in preorder: a member marks the subtrees open around it (its ancestors), up to the first
+                // already marked, whose own ancestors are.
+                let mut open: Vec<(u32, u32)> = Vec::new();
+                for node in 0..self.tape.transducer_len() as u32 {
+                    while open.last().is_some_and(|&(_, end)| end <= node) {
+                        open.pop();
                     }
-                    // Up to the first ancestor already marked: its own ancestors are.
-                    let mut at = self.tape.transducer_parent(node);
-                    while let Some(parent) = at {
-                        let (word, bit) = (parent as usize / 64, 1 << (parent % 64));
-                        if bits[word] & bit != 0 {
-                            break;
+                    if get(&of, node) && !(*named && self.flags()[node as usize] & NAMED == 0) {
+                        for &(ancestor, _) in open.iter().rev() {
+                            if get(&bits, ancestor) {
+                                break;
+                            }
+                            put(&mut bits, ancestor);
                         }
-                        bits[word] |= bit;
-                        at = self.tape.transducer_parent(parent);
                     }
+                    open.push((node, self.tape.transducer_descendants(node).end));
                 }
                 bits
             }

@@ -80,7 +80,7 @@ impl Emitted {
 /// `counts` are a previous run's `rows.<relation>`; `batch` maps the inputs a wave reads from its
 /// chunk's batch to their source and row estimate (`Inputs::batch`).
 pub fn emit(
-    lowered: &lower::Lowered,
+    lowered: &lower::Given,
     db: &Connection,
     stats: &str,
     name: &str,
@@ -96,6 +96,7 @@ pub fn emit(
         given: None,
         kept: BTreeSet::new(),
     };
+    // The SQL emitter reads a tree: a program as `lower::lower_tree` gives it, never a version's.
     let mut emitted = emit_inputs(&lowered.program,db,name,counts,inputs)?;
     // Lowering distinguishes grammar IDs from interned names even when both
     // columns were declared symbolic. Retain that domain after integer lowering.
@@ -276,7 +277,7 @@ pub fn emit_program(
     batch: &HashMap<String, (Source, f64)>,
     intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>,
 ) -> Result<Emitted> {
-    let lowered = lower::lower(prog, crate::code_rule_dsl::language::GrammarDialect::Python, intern)?;
+    let lowered = lower::lower_tree(prog, crate::code_rule_dsl::language::GrammarDialect::Python, intern)?;
     emit(&lowered, &Connection::open_in_memory()?, "main", name, None, batch)
 }
 
@@ -380,8 +381,10 @@ pub fn outputs(
     lowered: &lower::Lowered,
     db: &Connection,
 ) -> Result<(BTreeMap<String, Vec<Vec<String>>>, BTreeMap<String, Vec<usize>>)> {
-    let prog = &lowered.program;
-    let outputs: Vec<&str> = prog.outputs.iter().map(String::as_str).collect();
-    let (outputs, nodes) = decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.iter().map(|(_, t)| t.to_string()).collect()), db, Some(lowered.lowering()), "main.", true, &BTreeSet::new(), &BTreeSet::new())?;
+    // Read from the program's version (its fields), as the run reads it.
+    let placed = lowered.placed()?;
+    let f = placed.fields()?;
+    let outputs: Vec<&str> = f.outputs().collect();
+    let (outputs, nodes) = decoded_outputs(&outputs, &|r| f.is_input(r), &|r| f.columns(r).map(|c| c.iter().map(|(_, t)| t.to_string()).collect()), db, Some(lowered.lowering()), "main.", true, &BTreeSet::new(), &BTreeSet::new())?;
     Ok((outputs.into_iter().map(|(rel, rows)| (rel, rows.shown())).collect(), nodes))
 }

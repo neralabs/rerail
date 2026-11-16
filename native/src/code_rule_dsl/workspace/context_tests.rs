@@ -239,7 +239,7 @@ fn stored_workspace(
             root_tree,
             1,
             HashKey::sha256(b"rerail-grammars-v1"),
-            i64::from(tape::TAPE_FORMAT_VERSION),
+            i64::from(tape::formats::stored_version()),
         )
         .unwrap();
     let owner = format!("context-test:{root}:{}", std::process::id());
@@ -3805,7 +3805,7 @@ fn stateless_regex_clauses_report_snapshot_matches() {
 }
 
 /// Tapes the maintenance indexer can never decode (a previous tape format left behind by a
-/// `TAPE_FORMAT_VERSION` bump with unchanged grammars, or a current-format image this build
+/// format version change (`formats::stored_version`) with unchanged grammars, or a current-format image this build
 /// rejects) fill whole 64-tape backlog batches ahead of a valid tape. They must neither pin the
 /// keyset cursor nor stay in the backlog: the valid tape stored after them is indexed, and an
 /// undecodable tape is never narrowed.
@@ -3821,8 +3821,8 @@ fn undecodable_tapes_leave_the_search_index_backlog_without_pinning_its_cursor()
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let mut undecodable = Vec::new();
     for (format, prefix) in [
-        (tape::TAPE_FORMAT_VERSION - 1, "previous"),
-        (tape::TAPE_FORMAT_VERSION, "corrupt"),
+        (tape::formats::stored_version() - 1, "previous"),
+        (tape::formats::stored_version(), "corrupt"),
     ] {
         for index in 0..64 {
             let source = store
@@ -3862,7 +3862,7 @@ fn undecodable_tapes_leave_the_search_index_backlog_without_pinning_its_cursor()
         store
             .tapes_without_search_index_after(
                 grammar_version(),
-                i64::from(tape::TAPE_FORMAT_VERSION),
+                i64::from(tape::formats::stored_version()),
                 None,
                 10_000,
             )

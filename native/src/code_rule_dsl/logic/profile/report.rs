@@ -54,6 +54,8 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
     t.forms = shape.forms.iter().map(|f| f.name()).collect();
     t.missing = p.missing.iter().map(|f| f.name()).collect();
     t.planned_work += shape.work;
+    t.planned_scanned += shape.scanned.min(shape.work).max(0.0);
+    t.steps += shape.steps as u64;
     t.work += work;
     t.cpu_estimate += p.cpu_s;
     t.gpu_estimate += p.gpu_s;
@@ -269,12 +271,12 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
         let _ = writeln!(native_tsv, "{p}\t{}\t{}\t{plan}\t{cpu:.4}", work(steps), s.join(","));
     }
     std::fs::write(dir.join("native.tsv"), native_tsv)?;
-    let mut placement_tsv = String::from("stratum\truns\ton_gpu\tgpu_cheaper\tplanned_work\twork\tcpu_s\tcpu_estimate_s\tgpu_estimate_s\tforms\tmissing\n");
+    let mut placement_tsv = String::from("stratum\truns\ton_gpu\tgpu_cheaper\tplanned_work\twork\tcpu_s\tcpu_estimate_s\tgpu_estimate_s\tforms\tmissing\tplanned_scanned\tsteps\n");
     for (key, t) in &state.placements {
         let _ = writeln!(
             placement_tsv,
-            "{key}\t{}\t{}\t{}\t{:.0}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}",
-            t.runs, t.on_gpu, t.gpu_cheaper, t.planned_work, t.work, t.cpu, t.cpu_estimate, t.gpu_estimate, t.forms.join(","), t.missing.join(",")
+            "{key}\t{}\t{}\t{}\t{:.0}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{:.0}\t{}",
+            t.runs, t.on_gpu, t.gpu_cheaper, t.planned_work, t.work, t.cpu, t.cpu_estimate, t.gpu_estimate, t.forms.join(","), t.missing.join(","), t.planned_scanned, t.steps
         );
     }
     std::fs::write(dir.join("placement.tsv"), placement_tsv)?;
