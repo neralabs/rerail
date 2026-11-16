@@ -827,6 +827,7 @@ fn fixed(prog: &Program, rel: &str) -> bool {
         || prog.gates.iter().any(|(g, _)| g == rel)
         // The program's own choice of what it keeps (`.decl r(…) inline`, decision 0099) stays with its name.
         || prog.qualifiers.contains_key(rel)
+        || request(rel)
 }
 
 fn kept(prog: &Program, rel: &str) -> bool {
@@ -838,6 +839,14 @@ fn kept(prog: &Program, rel: &str) -> bool {
         || prog.facts.get(rel).is_some_and(|f| !f.is_empty())
         || prog.demand.iter().any(|d| d == rel)
         || prog.gates.iter().any(|(g, _)| g == rel)
+        || request(rel)
+}
+
+/// An attribute's request (decision 0174): read by name, so neither inlined nor merged into another relation. The
+/// fact layer answers `value` only where `rr_value_req` is derived (`syntax::VALUE_REQ`); inlined into its one
+/// reader, a request over one node (`rr_value_req($n) :- node(_, $n, "number", _, _)`) left `value` empty.
+fn request(rel: &str) -> bool {
+    super::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| a.req == rel)
 }
 
 /// The variables of decision 0091's scope guards (`corpus::scoping`): a node's document, `rr_sd0 = @doc($n)`.
@@ -1667,7 +1676,7 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
         .chain(prog.demand.iter().map(String::as_str))
         .chain(prog.gates.iter().map(|(g, _)| g.as_str()))
         .collect();
-    let fixed = |r: &str| fixed_set.contains(r) || prog.natives.contains_key(r) || prog.lattice.contains_key(r) || prog.qualifiers.contains_key(r);
+    let fixed = |r: &str| fixed_set.contains(r) || prog.natives.contains_key(r) || prog.lattice.contains_key(r) || prog.qualifiers.contains_key(r) || request(r);
     debug_assert!(prog.rules.iter().map(|r| r.head.rel.as_str()).all(|r| fixed(r) == self::fixed(prog, r)));
     // A relation nothing reads (`unread`) is read by name if at all (`env`'s settings, `unconverged`, a guest
     // policy, a library's `function_kind` passed to `nearest`): it joins only a class with a widened copy of itself
@@ -2716,6 +2725,29 @@ pub mod tests {
         assert!(simplify(&mut prog).inlined.contains(&"trim".to_owned()));
         let rules: Vec<String> = prog.rules.iter().map(|r| r.to_string()).collect();
         assert_eq!(rules, vec![r#"line($d, $l, $raw) :- picked($d), split_line($d, $l, $x), $raw = @replace_all($x, "^ +", "")"#], "{rules:?}");
+    }
+
+    /// An attribute's request is read by name (`syntax::VALUE_REQ`): a request over one node is a test of one node,
+    /// but stays, or `value` answers nothing.
+    #[test]
+    fn an_attributes_request_is_not_inlined() {
+        let mut prog = super::super::front::parse(
+            r#"
+            .decl node(d: int, n: node, kind: sym, start: int, end: int)
+            .input node
+            .decl rr_value_req(n: node)
+            .decl value(n: node, v: sym)
+            .decl out(v: sym)
+            .output out
+            rr_value_req($n) :- node(_, $n, "number", _, _).
+            value($n, $v) :- rr_value_req($n), $v = @rr_node_value($n).
+            out($v) :- node(_, $n, "number", _, _), value($n, $v).
+            "#,
+        )
+        .unwrap();
+        let report = simplify(&mut prog);
+        assert!(!report.inlined.iter().any(|r| r == "rr_value_req"), "{report:?}");
+        assert!(prog.rules.iter().any(|r| r.head.rel == "rr_value_req"));
     }
 
     #[test]

@@ -1549,6 +1549,17 @@ pub fn plans_to_store() -> Option<StoredPlans> {
     out
 }
 
+/// `RERAIL_JOIN_LINES=FILE` (a measurement aid): each line that ran a search's work or more, appended as it ends,
+/// tab-separated: its stratum, its delta, its order (literal positions), its rows of work, its price for the rows it
+/// read, its wall seconds, its plan key and its rule.
+fn line_log() -> Option<&'static parking_lot::Mutex<std::fs::File>> {
+    static LOG: std::sync::LazyLock<Option<parking_lot::Mutex<std::fs::File>>> = std::sync::LazyLock::new(|| {
+        let p = std::env::var_os("RERAIL_JOIN_LINES")?;
+        std::fs::OpenOptions::new().create(true).append(true).open(p).ok().map(parking_lot::Mutex::new)
+    });
+    LOG.as_ref()
+}
+
 /// Adds a stratum's lines as they ran to the run's (decision 0203 §4).
 fn lines_push(runs: Vec<joins::LineRun>) {
     PLANS.with(|p| {
@@ -8437,7 +8448,7 @@ impl<'a> Run<'a, '_> {
                         continue;
                     }
                     let rule = order_rules.get(line).copied().unwrap_or(0);
-                    let est = if w >= joins::slow_rows().min(1e4) {
+                    let est = if w >= joins::slow_rows().min(1e4) || line_log().is_some() {
                         let b = vs.at(r);
                         let delta = c.first().map_or(0, |s| s.1) as f64;
                         self.model.price_for_delta(pf, &b, first, order, delta).unwrap_or(0.0)
@@ -8448,6 +8459,14 @@ impl<'a> Run<'a, '_> {
                         self.request_search(r, first, rule, key, w, Some((&name, line, order)))?;
                     }
                     runs.push(joins::LineRun { stratum: stratum.clone(), key, rule, order: joins::steps(order), work: w, est, wall: walled.get(line).copied().unwrap_or(0.0) });
+                    if let Some(log) = line_log() {
+                        let b = vs.at(r);
+                        let text = format!("{} :- {}", b.show_head(), (0..b.len()).map(|i| b.show(i)).collect::<Vec<_>>().join(", "));
+                        let shown = order.iter().map(|s| s.at.to_string()).collect::<Vec<_>>().join(".");
+                        let wall = walled.get(line).copied().unwrap_or(0.0);
+                        use std::io::Write as _;
+                        let _ = writeln!(log.lock(), "{stratum}\t{first:?}\t{shown}\t{w:.0}\t{est:.0}\t{wall:.6}\t{:x}\t{text}", key as u64);
+                    }
                 }
                 lines_push(runs);
             }
