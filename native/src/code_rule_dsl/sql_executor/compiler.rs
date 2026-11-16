@@ -101,14 +101,14 @@ impl CodeRuleSqlExecutor {
         program::tops(&mut program, &tops)?;
         let dialect = crate::code_rule_dsl::language::dialect_by_label(dialect)
             .ok_or_else(|| error(format!("unknown dialect: {dialect}")))?;
-        let lowered = plan::lower::lower(&program, dialect, &mut |names| {
+        let lowered = plan::lower::lower_tree(&program, dialect, &mut |names| {
             self.store
                 .intern_atoms(names)
                 .map_err(|e| plan::Error::Plan(e.to_string()))
         })
         .map_err(error)?;
-        // The SQL emitter's program is the lowered tree `lower::lower` gives (`emit::emit`), never a version's.
-        let tree = lowered.program.given_tree().ok_or_else(|| error("a lowered program has no given tree".to_owned()))?;
+        // The SQL emitter's program is the lowered tree `lower::lower_tree` gives (`emit::emit`), never a version's.
+        let tree = &lowered.program;
         let mut batch = HashMap::new();
         let has_wave_stats: bool = if tree.inputs.iter().all(|name| {
             self.inputs.contains_key(name)

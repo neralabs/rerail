@@ -81,7 +81,7 @@ impl Emitted {
 /// `counts` are a previous run's `rows.<relation>`; `batch` maps the inputs a wave reads from its
 /// chunk's batch to their source and row estimate (`Inputs::batch`).
 pub fn emit(
-    lowered: &lower::Lowered,
+    lowered: &lower::Given,
     db: &Connection,
     stats: &str,
     name: &str,
@@ -97,9 +97,8 @@ pub fn emit(
         given: None,
         kept: BTreeSet::new(),
     };
-    // The SQL emitter reads a tree: a program as `lower::lower` gives it (its tree given), never a version's.
-    let prog = lowered.program.given_tree().ok_or_else(|| Error::Plan("the SQL emitter reads a lowered program's given tree".into()))?;
-    let mut emitted = emit_inputs(prog,db,name,counts,inputs)?;
+    // The SQL emitter reads a tree: a program as `lower::lower_tree` gives it, never a version's.
+    let mut emitted = emit_inputs(&lowered.program,db,name,counts,inputs)?;
     // Lowering distinguishes grammar IDs from interned names even when both
     // columns were declared symbolic. Retain that domain after integer lowering.
     emitted.value_types = std::sync::Arc::new(lowered.domains.iter().map(|(r,ds)| {
@@ -278,7 +277,7 @@ pub fn emit_program(
     batch: &HashMap<String, (Source, f64)>,
     intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>,
 ) -> Result<Emitted> {
-    let lowered = lower::lower(prog, crate::code_rule_dsl::language::GrammarDialect::Python, intern)?;
+    let lowered = lower::lower_tree(prog, crate::code_rule_dsl::language::GrammarDialect::Python, intern)?;
     emit(&lowered, &Connection::open_in_memory()?, "main", name, None, batch)
 }
 

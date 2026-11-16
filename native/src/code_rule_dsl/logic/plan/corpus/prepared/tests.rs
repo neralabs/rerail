@@ -54,9 +54,8 @@
         let dialect = prepared.lowered.dialect;
         let text = crate::code_rule_dsl::logic::program_text::print;
         let read = |p: &crate::code_rule_dsl::logic::front::Program| crate::code_rule_dsl::logic::program_text::read(&text(p).unwrap()).unwrap();
-        // The lowered program's tree, held beside its version until the split is made from versions alone (0281's
-        // path, step 4): read for the check only.
-        let lowered_tree = |p: &super::Prepared| read(p.lowered.program.for_check());
+        // The lowered program's tree, decoded from its version (the check's alone): the split is made of a tree still.
+        let lowered_tree = |p: &super::Prepared| p.lowered.version.program(&Default::default()).unwrap();
         let digest = |l: &crate::code_rule_dsl::logic::plan::lower::Lowered| l.placed().unwrap().digest();
         let back = super::prepared_of(&facts, read(&prepared.prog), lowered_tree(&prepared), None, dialect).unwrap();
         // Program has no PartialEq: its Debug form is the comparison, field by field; versions compare by digest.

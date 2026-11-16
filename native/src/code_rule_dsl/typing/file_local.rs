@@ -754,9 +754,6 @@ fn split_in(
 /// columns whose values in one row lie in one document (a join through them crosses no file: the cross memo's guards).
 #[derive(Clone)]
 pub struct Programs {
-    /// The parts' trees: shared by each run's copy of the split (`lower::Tree`), copied only where a run edits one.
-    pub local: crate::code_rule_dsl::logic::plan::lower::Tree,
-    pub cross: crate::code_rule_dsl::logic::plan::lower::Tree,
     pub exports: Vec<String>,
     pub base: Vec<String>,
     /// Each derived relation's location columns (`split_located`).
@@ -768,8 +765,8 @@ pub struct Programs {
     /// rules, a part of them, so the parts are made from the program again when it is read.
     pub file_local: std::collections::BTreeSet<String>,
     pub constants: std::collections::BTreeSet<String>,
-    /// The parts' versions (decision 0244): each a view of the program's version, its fields overlaid. The trees above
-    /// are the same programs, for the readers that still read a tree (decision 0281's path, step 4).
+    /// The parts' versions (decision 0244): each a view of the program's version, its fields overlaid. No part has a
+    /// tree (decision 0281's path, step 4).
     pub versions: Parts,
     /// Why each derived relation is cross-file (`cross_causes`), as the split found it; empty for a split read from
     /// the store (`assemble` of what a prepared program kept), which keeps no causes.
@@ -881,23 +878,12 @@ pub fn assemble(
     let Crossing { exports, base_read, base, projected } = crossing(prog, &local);
     let is_local = |rel: &str| local.contains(rel);
     let in_cross = |rel: &str| !is_local(rel) || projected.contains(rel);
-    let mut l = prog.clone();
-    l.rules.retain(|r| is_local(&r.head.rel) || constants.contains(r.head.rel.as_str()));
-    l.natives.retain(|rel, _| is_local(rel));
-    l.lattice.retain(|rel, _| is_local(rel));
-    l.gates.retain(|(rel, _)| is_local(rel));
-    l.outputs = prog.outputs.iter().filter(|o| is_local(o)).cloned().chain(exports.iter().cloned()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+    // Each part's inputs and outputs; its rules and other fields are a view of the program's version (below).
+    let local_outputs: Vec<String> = prog.outputs.iter().filter(|o| is_local(o)).cloned().chain(exports.iter().cloned()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
     // The reference graph is bound for the cross-file part only (no rule reading it is file-local): no chunk has it.
-    l.inputs.retain(|i| !matches!(i.as_str(), "reference_edge" | "reference_open"));
-    let mut c = prog.clone();
-    c.rules.retain(|r| in_cross(&r.head.rel));
-    c.natives.retain(|rel, _| in_cross(rel));
-    c.lattice.retain(|rel, _| !is_local(rel));
-    c.gates.retain(|(rel, _)| !is_local(rel));
-    c.outputs.retain(|o| !is_local(o));
-    c.inputs = base_read.into_iter().chain(exports.iter().cloned()).collect();
-    crate::code_rule_dsl::logic::version_trace::note("split.local", prog, &l);
-    crate::code_rule_dsl::logic::version_trace::note("split.cross", prog, &c);
+    let local_inputs: Vec<String> = prog.inputs.iter().filter(|i| !matches!(i.as_str(), "reference_edge" | "reference_open")).cloned().collect();
+    let cross_outputs: Vec<String> = prog.outputs.iter().filter(|o| !is_local(o)).cloned().collect();
+    let cross_inputs: Vec<String> = base_read.into_iter().chain(exports.iter().cloned()).collect();
     // The parts as versions of the program's (decision 0244): the rules each keeps, a view, and the fields above, an
     // overlay over it. A split of a maintained program (its `again`, `together`) has no image: refused.
     if !prog.again.is_empty() || !prog.together.is_empty() {
@@ -907,15 +893,29 @@ pub fn assemble(
         use crate::code_rule_dsl::logic::program_image::PartFields;
         let local_rule = |rel: &str| is_local(rel) || constants.contains(rel);
         let not_local = |rel: &str| !is_local(rel);
-        let local = version.part(&local_rule, &l.inputs, &l.outputs, PartFields { natives: &is_local, lattice: &is_local, gates: &is_local })?;
-        let cross = version.part(&in_cross, &c.inputs, &c.outputs, PartFields { natives: &in_cross, lattice: &not_local, gates: &not_local })?;
+        let local = version.part(&local_rule, &local_inputs, &local_outputs, PartFields { natives: &is_local, lattice: &is_local, gates: &is_local })?;
+        let cross = version.part(&in_cross, &cross_inputs, &cross_outputs, PartFields { natives: &in_cross, lattice: &not_local, gates: &not_local })?;
         Parts { local, cross }
     };
-    // Each part's tree is held beside its version (`lower::Tree::beside`): a reader on the run's path is named as one
-    // of a version's tree.
-    use crate::code_rule_dsl::logic::plan::lower::Tree;
-    let (l, c) = (Tree::beside(versions.local.clone(), l), Tree::beside(versions.cross.clone(), c));
-    Ok(Programs { local: l, cross: c, exports, base, locations, same_doc, file_local: local, constants, versions, causes: Default::default() })
+    crate::code_rule_dsl::logic::version_trace::note_versions("split.local", &version, &versions.local);
+    crate::code_rule_dsl::logic::version_trace::note_versions("split.cross", &version, &versions.cross);
+    // The split's constants are the file-local part's own (`constant_relations` of its tree, made of `prog` here only
+    // in a debug build's check, no version decoded): `corpus` reads `constants` for the part.
+    #[cfg(debug_assertions)]
+    {
+        let mut tree = prog.clone();
+        tree.rules.retain(|r| is_local(&r.head.rel) || constants.contains(r.head.rel.as_str()));
+        tree.natives.retain(|rel, _| is_local(rel));
+        tree.lattice.retain(|rel, _| is_local(rel));
+        tree.gates.retain(|(rel, _)| is_local(rel));
+        tree.outputs = local_outputs.clone();
+        tree.inputs = local_inputs.clone();
+        let of_tree = constant_relations(&tree);
+        for r in exports.iter().chain(local_outputs.iter()) {
+            assert_eq!(of_tree.contains(r.as_str()), constants.contains(r.as_str()), "the split's constants and the file-local part's disagree on {r}");
+        }
+    }
+    Ok(Programs { exports, base, locations, same_doc, file_local: local, constants, versions, causes: Default::default() })
 }
 
 /// Pushes the file-local part of each cross-file rule into the chunks: the rule's positive reads of base relations

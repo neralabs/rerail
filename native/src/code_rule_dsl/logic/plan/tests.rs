@@ -558,13 +558,14 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
     let mut failures = Vec::new();
     for name in ["workload", "workload_demand", "calls"] {
         let p = program(name);
-        let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let given = lower::lower_tree(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let lowered = given.image().unwrap();
         let expected = run_atoms(&lowered, &db, "s").unwrap_or_else(|e| panic!("{name}: {e}"));
         // Planned from the estimates, then from the counts the first run's boundary recorded.
         let mut counts = None;
         let mut first: Option<Vec<String>> = None;
         for pass in ["estimates", "counts"] {
-            let emitted = emit::emit(&lowered, &db, "s", name, counts.as_ref(), &HashMap::new()).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let emitted = emit::emit(&given, &db, "s", name, counts.as_ref(), &HashMap::new()).unwrap_or_else(|e| panic!("{name}: {e}"));
             let backing = Backing::default();
             let scope = backing.enter(&store);
             let lease = scope.pool().take().unwrap();
@@ -632,8 +633,9 @@ fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
         atomized_statistics(&t, &db, &store, &first);
         for name in ["workload", "workload_demand", "calls"] {
             let p = program(name);
-            let mut lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
-            let sets = lowered.transduce_nearest();
+            let mut given = lower::lower_tree(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+            let sets = given.transduce_nearest();
+            let lowered = given.image().unwrap();
             assert!(!sets.is_empty(), "{name} reads nearest");
             let placed = lowered.placed().unwrap();
             assert!(!placed.v.rules().flat_map(|r| r.body()).any(|l| matches!(l.view(), crate::code_rule_dsl::logic::program_image::Lit::Nearest { .. })));
@@ -681,8 +683,9 @@ fn t_programs_run_natively_over_atoms_like_t() {
     let mut ran = BTreeSet::new();
     for name in ["workload", "workload_demand", "calls"] {
         let p = program(name);
-        let mut lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
-        let sets = lowered.transduce_nearest();
+        let mut given = lower::lower_tree(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let sets = given.transduce_nearest();
+        let lowered = given.image().unwrap();
         for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), Binding::Cpu, &Default::default()).unwrap() {
             if rel.starts_with(crate::code_rule_dsl::logic::front::NEAREST) {
                 db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();

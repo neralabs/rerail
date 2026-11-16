@@ -322,7 +322,6 @@ pub fn prepared_of(
         }
         None => crate::code_rule_dsl::logic::program_image::Builder::of_program(&program)?.finish()?.0,
     };
-    let version_kept = version.clone();
     let split = match facts.get("prepared_split").is_some_and(|r| !r.is_empty()) {
         true => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the split's parts, of the lowered program and what the split found".into());
@@ -340,18 +339,18 @@ pub fn prepared_of(
                 }).collect())
             };
             let set = |rel: &str| -> Result<std::collections::BTreeSet<String>, String> { Ok(list(rel)?.into_iter().collect()) };
-            crate::code_rule_dsl::typing::file_local::assemble(&program, version, set("prepared_file_local")?, set("prepared_constant")?, columns("prepared_location")?, columns("prepared_same_doc")?)?
+            crate::code_rule_dsl::typing::file_local::assemble(&program, version.clone(), set("prepared_file_local")?, set("prepared_constant")?, columns("prepared_location")?, columns("prepared_same_doc")?)?
         }
         false => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "split the lowered program".into());
-            crate::code_rule_dsl::typing::file_local::programs_over(&program, version)?
+            crate::code_rule_dsl::typing::file_local::programs_over(&program, version.clone())?
         }
     };
     Ok(Prepared {
         prog,
         vocabulary: Arc::new(vocabulary),
-        // Held beside its stored image, which its readers read (`Lowered::placed`).
-        lowered: lower::Lowered { program: lower::Tree::beside(version_kept, program), version: None, maint: None, domains, ops, dialect },
+        // Its stored image alone: the tree read is the split's, made above, and dropped.
+        lowered: lower::Lowered { version, maint: None, domains, ops, dialect },
         sets,
         matchers,
         demanded: list("prepared_demanded")?,
@@ -445,8 +444,7 @@ pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], p
         let stored = match prog {
             Some(p) => program_text::store(store, p)?,
             None => {
-                let Some(v) = prepared.lowered.program.version() else { return Ok(None) };
-                program_text::store_version(store, v)?
+                program_text::store_version(store, &prepared.lowered.version)?
             }
         };
         let Some((digest, sources)) = stored else { return Ok(None) };

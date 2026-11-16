@@ -434,7 +434,7 @@ pub(super) fn split(
 /// whose `rr_cross_doc` is empty, so every guard passes. Each guard was two steps over every row its rule's delta
 /// gave (calls_cx, cold: before the selective join of most rules of its largest stratum). Returns the guards dropped.
 pub(super) fn drop_guards(cross: &mut super::lower::Lowered) -> Result<usize> {
-    let v = cross.version.clone().ok_or_else(|| Error::Plan("the cross-file part has no version".into()))?;
+    let v = cross.version.clone();
     let is_docs = |a: AtomRef<'_>| v.rel_name(a.rel()) == DOCS && a.neg();
     // Each rule's guards: the variables its `!rr_cross_doc(d)` atoms read.
     let guards_of = |r: RuleRef<'_>| -> BTreeSet<Slot> {
@@ -478,8 +478,7 @@ pub(super) fn drop_guards(cross: &mut super::lower::Lowered) -> Result<usize> {
         dropped += rw.dropped / 2;
     }
     let (made, _) = b.finish().map_err(Error::Plan)?;
-    cross.program = lower::Tree::of(Arc::clone(&made));
-    cross.version = Some(made);
+    cross.version = made;
     Ok(dropped)
 }
 
@@ -488,7 +487,7 @@ pub(super) fn drop_guards(cross: &mut super::lower::Lowered) -> Result<usize> {
 /// What only those rules read is dropped too (`rr_cx_reach`); `kept` names what the run reads besides its outputs.
 /// Its version is a view of the part's, its natives an overlay (decision 0244's form).
 pub(super) fn keep_copies(cross: &mut super::lower::Lowered, plan: &Plan, kept: &BTreeSet<String>) -> Result<()> {
-    let v = cross.version.clone().ok_or_else(|| Error::Plan("the cross-file part has no version".into()))?;
+    let v = cross.version.clone();
     let placed = super::super::body::Placed::whole(Arc::clone(&v));
     let f = placed.fields()?;
     let rules: Vec<RuleRef<'_>> = v.rules().collect();
@@ -524,8 +523,7 @@ pub(super) fn keep_copies(cross: &mut super::lower::Lowered, plan: &Plan, kept: 
         b.keep_relation_fields(&|r| !natives_gone.contains(r), &|_| true, &|_| true);
         made = b.finish_overlay().map_err(Error::Plan)?;
     }
-    cross.program = lower::Tree::of(Arc::clone(&made));
-    cross.version = Some(made);
+    cross.version = made;
     Ok(())
 }
 

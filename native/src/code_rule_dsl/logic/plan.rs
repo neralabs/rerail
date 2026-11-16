@@ -4607,8 +4607,8 @@ mod complete_answer_tests {
             let mut program = super::super::front::parse(".decl seed(x:int)\n.decl req(x:int)\n.decl got(x:int)\n.decl shown(x:int)\nreq($x) :- seed($x).\nshown($x) :- got($x).\n.output shown\n").unwrap();
             program.facts.insert("seed".into(), (0..1000).map(|n| super::super::front::List::from(vec![Value::Int(n)])).collect());
             program.answers.insert("req".into(), vec!["got".into()]);
-            let lowered = lower::Lowered { domains: lower::domains(&program).unwrap(), program: lower::Tree::given(program), version: None, maint: None,
-                ops: [0; 3], dialect: crate::code_rule_dsl::language::GrammarDialect::Python };
+            let lowered = lower::Given { domains: lower::domains(&program).unwrap(), program,
+                ops: [0; 3], dialect: crate::code_rule_dsl::language::GrammarDialect::Python }.image().unwrap();
             let path = crate::code_rule_dsl::fixtures::temp();
             let _store = crate::content_store::ContentStore::open(&path).unwrap();
             let db = Connection::open(&path).unwrap();

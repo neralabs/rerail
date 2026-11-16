@@ -1,6 +1,7 @@
 # 0281: Program passes run under a pass manager: rule rewriters and program edits over cached, maintained analyses
 
-Status: accepted (2026-11-15); steps 1–3 built, step 4 (the run reads versions) under way (see Path and Alignment).
+Status: accepted (2026-11-15); steps 1–4 built (step 4, the run reads versions, done 2026-11-16); step 5 next (see
+Path and Alignment).
 Builds on 0173 §9 (a pass is an edit or a derivation, and a derived rule records its sources), 0225 §5 and 0246 §3
 (the whole-program questions are rules over the image), 0266 (blocks: a writer, a merged view, base + delta), 0269
 (a step's decisions are rows of what it made), 0275 (a step is rederived until its key hits) and 0276 (one form from
@@ -354,10 +355,21 @@ step 3 replaces what is under the writer.
      slice (a part of the version, `Version::part`), `decode_kept`; `remember` stores the version's image bytes
      (`program_text::store_version`) where it encoded the tree again. The guard
      `a_maintained_run_decodes_and_copies_no_tree` now counts the prepared program's tree too, and passes.
-   - Left: the readers of the split's part trees (`split.local`, `split.cross`), `maintain`, `cross_memo`, the cut,
-     the emitter, the split's own analysis (`found`, `crossing`, `constant_relations`, `cross_causes`: their rule
-     forms built from tree literals), and `Lowered`'s tree itself. Counted by making `Tree` not dereference and
-     reading the compiler's errors: 159 sites before slice 1.
+   - Done (slices 2–7, counted by making `Tree` not dereference and reading the compiler's errors: 159 sites before
+     slice 1, none after slice 7): the split's parts always have versions; the cross memo, the run's parts, the dump
+     and the trace, the session's cut, deltas, qualifiers and maintenance, and the diagnostics read versions; the
+     tests read versions or digests.
+   - Done (slice 8): `Lowered`'s tree is gone. `lower::Lowered` is a version, its maintained parts (`maint`) and what
+     the run reads beside them; `lower::Given` is the tree `lower::lower_tree` gives, which the preparation passes
+     edit (`transduce_nearest`, then `corpus`'s) and the SQL emitter reads (`emit::emit`), and `Given::image` makes
+     the `Lowered` (`lower::lower` is both). `lower::Tree` (given, beside, of, maintained) and its read counters are
+     deleted; the split's `Programs` holds no part trees (`assemble` no longer copies the program twice), and a
+     prepared program holds no lowered tree. A tree is made only by decoding a version (`Version::program`, counted
+     per thread: `program_image::trees_decoded`, which the guard reads). A program the image has no form for is
+     refused at `image` (its rules alone had no fields, so did not run either).
+   - Still trees, as preparation (step 5): the split's own analysis (`found`, `crossing`, `constant_relations`,
+     `cross_causes`), run once on the tree before its image; and the loader, which decodes a stored image to that
+     tree for `prepared_of` (step 7).
 5. **The preparation passes on the manager:** `locate`, the merges, `demand_exports`, `factorize_exports` and
    `push_local_joins` as passes over the prepared program's version, before its one encode moves earlier. Written to
    run on a delta: helper relations named from their content, not numbered across rules (`fl<k>_`), and the split's

@@ -368,13 +368,12 @@ impl Cut {
     /// `cross` without the clean strata's rules: the relations dirty rules read become inputs, and clean outputs are
     /// left to `outputs`.
     ///
-    /// The cut is a part of `cross`'s version (decision 0244), read and made by its handles: its tree is the part's
-    /// (`lower::Tree::of`), decoded by no reader on the run's path.
+    /// The cut is a part of `cross`'s version (decision 0244), read and made by its handles.
     pub(in crate::code_rule_dsl) fn program(&self, cross: &lower::Lowered) -> super::Result<lower::Lowered> {
         use crate::code_rule_dsl::logic::program_image::PartFields;
         let (dirty, all, none) = (|rel: &str| !self.clean.contains(rel), |_: &str| true, |_: &str| false);
         let gates: &dyn Fn(&str) -> bool = if self.strata.0 == 0 { &none } else { &all };
-        let v = cross.version.as_ref().ok_or_else(|| super::Error::Plan("the session's cross-file part has no version".into()))?;
+        let v = &cross.version;
         {
             let read: BTreeSet<&str> = v.rules().filter(|r| dirty(v.rel_name(r.head().rel()))).flat_map(|r| r.reads().map(|a| v.rel_name(a.rel()))).collect();
             let mut inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
@@ -386,7 +385,7 @@ impl Cut {
             let outputs: Vec<String> = v.outputs().map(|a| v.text(a)).filter(|o| dirty(o)).map(str::to_owned).collect();
             let part = v.part(&dirty, &inputs, &outputs, PartFields { natives: &dirty, lattice: &all, gates }).map_err(super::Error::Plan)?;
             crate::code_rule_dsl::logic::version_trace::note_versions("session.cut", v, &part);
-            Ok(lower::Lowered { program: lower::Tree::of(part.clone()), version: Some(part), maint: None, domains: cross.domains.clone(), ops: cross.ops, dialect: cross.dialect })
+            Ok(cross.with_version(part))
         }
     }
 
@@ -1186,7 +1185,7 @@ pub mod tests {
         let result=cut(Some(&kept),key,&pl(&p),&st(&p),&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
         let v=crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0;
-        let lowered=lower::Lowered {program:lower::Tree::beside(v.clone(),p.clone()),version:Some(v),maint:None,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
+        let lowered=lower::Lowered {version:v,maint:None,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
         let reused=result.program(&lowered).unwrap();
         let placed=reused.placed().unwrap();
         assert!(placed.v.size()==0 && placed.fields().unwrap().gates().is_empty());

@@ -166,9 +166,8 @@ pub(in crate::code_rule_dsl) struct One<'m> {
 /// `rewrite`'s `sccs`: `cross`'s strata, computed once by the caller (as `retain::cut` was given them).
 pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cross: &lower::Lowered, sccs: &[BTreeSet<String>], given: &mut dyn FnMut(&str) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>) -> Result<Maintained> {
     let part = cut.program(cross)?;
-    // The cut program's version (a part of the cross part's, decision 0244): read from it, its tree is decoded by no
-    // reader here (`lower::Tree`).
-    let cut_v = part.version.as_ref().expect("a cut is a part of a version");
+    // The cut program's version (a part of the cross part's, decision 0244).
+    let cut_v = &part.version;
     let p = Placed::new(cut_v.clone(), cut_v.rules().map(|r| r.id()).collect(), true);
     let f = Fields::of(&p).ok_or_else(|| Error::Plan("the cut program has no image".into()))?;
     let cross_placed = cross.placed()?;
@@ -193,12 +192,11 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     let mut over = rewrite_over(&src, Builder::derive(&p.v), cut, kept, sccs, given, None)?;
     over.b.set_inputs(&over.inputs);
     let (v, _) = over.b.finish().map_err(Error::Plan)?;
-    // The run reads `v` and its `Maint`; a reader of the tree decodes it (`lower::Tree`), none on the run path.
+    // The run reads `v` and its `Maint`.
     let maint = match over.groups.is_empty() && over.together.is_empty() {
         true => None,
         false => Some(Arc::new(Maint::written(&v, &p.v, &over.groups, &over.together)?)),
     };
-    let program = lower::Tree::maintained(v.clone(), maint.clone());
     if let Ok(show) = std::env::var("O125_RULES") {
         for r in v.rules().filter(|r| v.rel_name(r.head().rel()).starts_with(show.as_str())) {
             eprintln!("O125_RULES {}", v.show_rule(r));
@@ -215,7 +213,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         None => input_views(&cross_placed)?.into_keys().collect(),
         Some(k) => input_views(&cross_placed)?.into_iter().filter(|(_, input)| k.has_old(input)).map(|(rel, _)| rel).collect(),
     };
-    Ok(Maintained { program: lower::Lowered { program, version: Some(v), maint, domains: over.domains, ops: part.ops, dialect: part.dialect }, sources: over.sources, maintained: over.maintained, derived_again: over.derived_again, recursive: over.recursive, again: over.again, views })
+    Ok(Maintained { program: lower::Lowered { version: v, maint, domains: over.domains, ops: part.ops, dialect: part.dialect }, sources: over.sources, maintained: over.maintained, derived_again: over.derived_again, recursive: over.recursive, again: over.again, views })
 }
 
 // -- The rewrite over a version (decision 0241) --
