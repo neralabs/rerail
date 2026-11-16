@@ -798,7 +798,7 @@ function fixtureKeys(baseline: string, candidate: string, corpora: string, pack:
       [...side].filter((key) => {
         const [rule, path] = key.split("\u0000");
         const meta = rules.get(rule!);
-        return meta !== undefined && covered(meta, path!);
+        return meta !== undefined && ruleIds.has(rule!) && covered(meta, path!);
       }),
     );
   const divergenceFile = join(baseline, "packs", pack, "divergences.json");
@@ -830,13 +830,18 @@ function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpor
   const completion = { ...compareCompletion(outcome(main), outcome(mine), 2 * settings.runs), stoppedOn: mine.find((row) => !row.completed)?.stoppedOn ?? null };
   const ruleFailures = candidate === "rr" ? [] : newRuleFailures(ruleFailuresOf(cell, "main"), ruleFailuresOf(cell, candidate));
   const metrics = METRICS.map((metric) => compareMetric(metric, metricValues(main, metric), metricValues(mine, metric)));
-  const mainKeys = sideFindings(cell, "main", undefined);
-  const candidateKeys = sideFindings(cell, candidate, rr);
+  // Findings are compared over the rules the candidate ran (main's shipped rules it has, and any it adds): a rule it
+  // cannot run fails coverage once, not again as every key of that rule.
+  const mainRules = shippedRules(settings.baseline.dir, pack);
+  const ran = candidate === "rr" && rr !== undefined ? rrIds(rr, cell) : shippedRules(settings.candidate.dir, pack);
+  const ruleIds = new Set(ran.filter((rule) => candidate === "ships" || mainRules.includes(rule)));
+  const only = (keys: Set<string> | undefined): Set<string> | undefined => (keys === undefined ? undefined : new Set([...keys].filter((key) => ruleIds.has(key.slice(0, key.indexOf("\u0000"))))));
+  const mainKeys = only(sideFindings(cell, "main", undefined));
+  const candidateKeys = only(sideFindings(cell, candidate, rr));
   let findings: CellVerdict["findings"] = null;
   let agree: CellVerdict["agreement"] = null;
   if (mainKeys !== undefined && candidateKeys !== undefined) {
     if (corpus === "fixtures") {
-      const ruleIds = new Set([...shippedRules(settings.baseline.dir, pack), ...(candidate === "ships" ? shippedRules(settings.candidate.dir, pack) : [])]);
       const { expected, restrict, divergences } = fixtureKeys(settings.baseline.dir, settings.candidate.dir, settings.corpora, pack, ruleIds);
       const m = scoreFindings(expected, restrict(mainKeys), divergences);
       const c = scoreFindings(expected, restrict(candidateKeys), divergences);
