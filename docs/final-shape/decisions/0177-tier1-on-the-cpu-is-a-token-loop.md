@@ -3113,3 +3113,190 @@ its arm", and the tests have failed since then:
 - **`a_short_tokens_function_calls_only_its_whole`** became
   `a_short_tokens_arm_calls_only_its_whole`. It checks the string's
   and the `/` arms instead.
+
+## A number knows its `.` by its branch
+
+**Intro.** Lean's number arm writes `FLOAT` in the branch that took
+the `.`, and `NUM` in the other. Ours took both ways into one tail.
+There it built a `.` mask over the window and counted it, to set the
+float mark and refuse a second `.`. Its leading-zero test
+(`0` then a digit) was gated on a bit of the dispatch's entry, cold.
+It loaded `b[s]` and `b[s+1]`.
+
+**The changes.**
+
+- **Counts by way** (`split_counts`). On a split run's two inline
+  ways, the token's bytes are known: the term's run, or the term's,
+  the rest's one byte and the term's again. A count whose bytes are
+  none of the term's or the first byte's has count 0 on the first
+  way. On the second way it is 1 or 0, by whether the rest's byte
+  is one of the counted bytes. Each way enters the tests' tail
+  (`tested`'s `rest`) with its refusal and marks as constants. No
+  `.` mask is made (`run_outs` is empty).
+- **Tests of the token's bytes by the run's lanes**
+  (`Bytewise::bit_on_run`). A test of the first byte that also asks
+  bytes `s + j` of exactly the term's set reads the term mask's lane
+  `j - 1`. It reads no byte past the first and needs no gate, as
+  lean's `b[pos] == b'0'` would.
+
+```rust
+// generated, after
+if b[e] == b'.' && b[e + 1] - b'0' <= 9 { …; marks = FLOAT } else { marks = 0 }
+marks |= ((b[s] == b'0') & (digits & 1)) << LEADING_ZERO;
+// before
+let dots = mask(w == b'.') & below(len - 1); if dots & (dots - 1) != 0 { refuse }
+marks = (dots != 0) << FLOAT;
+if entry & LEADING_ZERO_MAY != 0 { cold_path(); if b[s] == b'0' && digit(b[s + 1]) { … } }
+```
+
+Test: `a_numbers_arm_reads_one_window` (no `.` compare, no count,
+one cold path).
+
+## The next start is the block's, not the token's
+
+**Intro.** On short tokens, tier 1 ran lean's instruction count at a
+lower IPC. Words, punctuation and mixed code ran at IPC 2.4–3.2,
+against lean's 4.0–5.0. Long tokens did not: strings and comments
+matched lean. That pointed at a chain from token to token.
+
+The loop's next start was `(end + 1) & !63` plus the next start bit.
+So each start waited on the token before it: the byte load, the
+table entry's load, the run's `ctz`, the select of the end. Lean's
+is `base + q`, where `base` is the window's. Its tokens in one window
+are independent, and the core overlaps them.
+
+**The change.** The block's base is a block register
+(`BlockRegs::base`, the refill's `q64`). The inner loop's next start
+is `base + ctz(left)`. Starts are left only while the cursor is in
+the token's block (`left` is cut to none otherwise), so the two are
+equal wherever the loop goes on.
+
+```rust
+// generated, the run loop's tail, after
+let next = base + left.trailing_zeros();
+// before
+let next = ((end + 1) & !63) + left.trailing_zeros();
+```
+
+Measured, as information (cycles a token, AOT ÷ lean, the same
+heavily loaded machine): punctuation 1.31–1.59 → 1.11, mixed code
+1.56–1.68 → 1.11–1.18, words 1.27–1.36 → 1.18–1.23. Numbers did not
+move. Their end comes from a 16-byte load at `s + 1`, a compare, a
+narrowing shift, a lane move and a `ctz`, about 15 cycles of data
+dependency. Lean's `while digit { end += 1 }` is one add a digit,
+its branch predicted. A block-level digits mask would take the load
+off the chain. This file's "one run word a block" decision keeps
+the number's run off the block, for its rarity. That tradeoff is
+open.
+
+Test: `the_next_start_is_the_blocks` (the generated Rust).
+
+## A number's run: three forms tried
+
+**Intro.** After the next start stopped waiting on the token before
+it, numbers were still about 1.5× lean's cycles at the same
+instruction count. A number's end came from a 16-byte load at
+`s + 1`, a compare, a narrowing shift, a lane move and a `ctz`. That
+is about 15 cycles of data dependency, and the next start waits on
+it. Lean's `while digit { end += 1 }` is one add a digit: its branch
+is predicted, so the core runs ahead.
+
+The user asked for both ways to be tried: lean's byte loop, and the
+digits word made once a block. One switch chooses
+(`RERAIL_RUN_FORM`, `native_cpu_block::run_form`).
+
+- **`window`** (the default): the 16-byte vector, as before.
+- **`block`**: the split's term set is one more byte set in the
+  refill's window (`words_with`'s extras, beside `rare`), kept as a
+  block register (`BlockRegs::terms`). The run is
+  `ctz(!(word >> (sh + 1)))`, up to the block's end; a run past that
+  takes the long way. Tokens of up to 64 bytes are inline.
+- **`bytes`**: lean's two `while` loops, a byte at a time. Their
+  heads are `Step::Bytes`, the one loop the shape guard accepts that
+  steps bytes, and only in this form. The zero bytes past the file
+  end the loop, since zero is not in the set.
+
+Each form passes the CPU vs interpreter, corpus tapes, Metal vs
+Cranelift, number checks and AOT vs JIT tests.
+
+Measured, as information (cycles a token, AOT ÷ lean, two runs each,
+load average 40–65):
+
+| | window | block | bytes |
+|---|---|---|---|
+| numbers | 1.45, 1.66 | 1.00, 1.18 | 1.00, 0.97 |
+| numbers, instructions a token | 101.7 | 108.6 | 138.8 |
+| words, instructions a token | 94.2 | 96.7 | 97.9 |
+| strings, instructions a token | 232.7 | 241.1 | 228.8 |
+
+`block` adds the term's word to every block's refill, used or not:
+about 8 instructions more a string and 2.5 a word. `bytes` adds
+nothing a block, and its loop is lean's source.
+
+Metal's tier 1 has no such arm, so none of these forms changes it. A
+byte loop in a GPU lane would diverge from its neighbours; a block
+mask is what a GPU makes anyway. If Metal gets a number arm, the
+`block` form is the one to try there.
+
+The default stays `window` until the user chooses.
+
+## A number's run is lean's loop
+
+**Intro.** The user chose `bytes` as the CPU's form of a split run's
+term: the generated code is lean's `while digit { end += 1 }`, and it
+costs nothing a block. `window` and `block` stay behind the switch
+(`RERAIL_RUN_FORM=window`, `=block`); `block` is the form for a
+target whose lanes must not diverge.
+
+This narrows the rule that the compiler refuses per-byte loops. The
+one byte loop allowed is a run of bytes, and the shape guard checks
+its shape rather than trusting the name (`native_cpu_shape::run_of_bytes`):
+
+- one block, whose one parameter is the position;
+- one byte load, at the position, and no store or call;
+- a branch on that byte, back to the block at the position plus one.
+
+A loop that carries more than its position (a sum over bytes), ends
+by a count instead of its byte, or steps more than one byte is still
+refused (`Refusal::Bytes`). Every other loop must still be over a
+file, a block, a token, a region or bits.
+
+```rust
+// Allowed (lean's lexer, and the generated arm):
+while b[end].is_ascii_digit() { end += 1 }
+// Refused, named Step::Bytes or not:
+for i in 0..n { sum += b[i] }
+```
+
+The run reads any length, but the arm's tests stay those of a token
+of 16 bytes at most, as in `window`: a longer number takes the whole
+rule's call, cold, as lean's `end - pos < 19 || parse()`. Without
+that cap the 19-digit test was made inline from the block's digit
+words (a call of the block-mask function). The short form then called
+something besides its whole function, so it was no arm, and every
+number called the rule's function. That is how the `bytes` form was
+first measured.
+
+Measured, as information (one run, load average high): numbers 112.8
+instructions and 19.2 cycles a token, lean's 107.3 and 22.5. The
+other kinds are as before.
+
+The leading-zero test (`0` then a digit) was briefly a cold check
+again, gated by the entry and reading `b[s]` and `b[s + 1]`: the byte
+loop has no mask whose lane it could read. Now each way's end gives the
+tests' tail one more value, whether the first `while` ran a turn (the
+byte after the first a digit), and `bit_on_run` reads it as a mask of
+one known lane (`RunLanes::known`: the window's 16, the loop's 1). The
+test is `b[s] == b'0' & ran`, inline:
+
+```rust
+let ran = (end != pos + 1) as u64;          // the first `while` took a turn
+let lead_zero = (b[pos] == b'0') as u64 & ran;
+```
+
+Numbers then 113.3 instructions, 17.1 cycles a token (lean 107.3,
+22.7), as information.
+
+Tests: `native_cpu_shape::tests::only_a_run_of_bytes_is_a_bytes_loop`;
+`a_numbers_arm_is_leans_loop` (the generated Rust: two `loop`s, no
+vector load, one call, cold), which replaces `a_numbers_arm_reads_one_window`.

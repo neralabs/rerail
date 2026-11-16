@@ -392,16 +392,21 @@ fn tier1_by_kind() {
         }
         let mut b = rerail_compiler::native_cpu_block::Batch::new(&aot.parser.tier1, &[text.as_bytes()]);
         b.call(&aot.parser.tier1);
-        let (mut ours, mut lean) = (u64::MAX, u64::MAX);
+        let (mut ours, mut lean) = ((u64::MAX, u64::MAX), (u64::MAX, u64::MAX));
+        let least = |m: (u64, u64), a: (u64, u64), b: (u64, u64)| (m.0.min(b.0 - a.0), m.1.min(b.1 - a.1));
         for _ in 0..rounds {
-            let at = retired().0;
+            let at = retired();
             b.call(&aot.parser.tier1);
-            ours = ours.min(retired().0 - at);
-            let at = retired().0;
+            ours = least(ours, at, retired());
+            let at = retired();
             std::hint::black_box(rr::lean::token_count(std::hint::black_box(&text)));
-            lean = lean.min(retired().0 - at);
+            lean = least(lean, at, retired());
         }
-        eprintln!("  {name:>12}: {tokens:6} tokens; tier 1 AOT {:6.1} instructions a token, lean lexer {:6.1}", ours as f64 / tokens as f64, lean as f64 / tokens as f64);
+        let t = tokens as f64;
+        eprintln!(
+            "  {name:>12}: {tokens:6} tokens; tier 1 AOT {:6.1} instructions {:5.1} cycles a token (IPC {:.2}), lean lexer {:6.1} {:5.1} (IPC {:.2})",
+            ours.0 as f64 / t, ours.1 as f64 / t, ours.0 as f64 / ours.1 as f64, lean.0 as f64 / t, lean.1 as f64 / t, lean.0 as f64 / lean.1 as f64
+        );
     }
 }
 
@@ -447,12 +452,13 @@ fn a_slashs_arm_is_leans() {
     assert!(!arm.contains("as i64).max("), "a `max` in the `/` arm");
 }
 
-/// The number arm reads like lean's: its digits' run from one window of the bytes after the
-/// first, and `.` and a digit asked at the run's end (`Bytewise::run_split`), not a window of
-/// the bytes before and one after for the `prev` and the next of every byte; its end's tests
-/// lean's, no digit asked again where the run ended.
+/// The number arm is lean's: `while digit { end += 1 }`, a byte a turn (`RunForm::Bytes`), and
+/// `.` and a digit asked at the run's end (`Bytewise::run_split`), then the second `while`; no
+/// window of the bytes before and after for the `prev` and the next of every byte, no digit set's
+/// word, its `.` known by its way; a token past 16 bytes the whole rule's call, cold, as lean's
+/// `end - pos < 19 || parse()`; its leading zero asked of whether the first `while` ran a turn.
 #[test]
-fn a_numbers_arm_reads_one_window() {
+fn a_numbers_arm_is_leans_loop() {
     let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
     let m = f0.find(" { 34 => {").expect("the rules' match");
@@ -478,8 +484,28 @@ fn a_numbers_arm_reads_one_window() {
     }
     let rest = &f0[close..];
     let arm = &rest[..rest.find("core::ptr::write_unaligned").expect("the record's write")];
-    assert_eq!(arm.matches("vld1q_u8").count(), 1, "the number arm's windows: {arm}");
+    assert_eq!(arm.matches("loop {").count(), 2, "the number arm's `while digit` loops: {arm}");
+    assert!(!arm.contains("vld1q_u8"), "a window in the number arm: {arm}");
+    // Its one call, the whole rule's, cold.
+    assert_eq!(arm.matches("unsafe { f").count(), 1, "the number arm's calls: {arm}");
+    assert!(arm.contains("core::hint::cold_path();\nlet t = unsafe { f"), "the whole rule's call not cold: {arm}");
+    // A leading zero known from the first `while`'s turn (`way_lane`), inline: the long way's
+    // call alone cold.
+    assert_eq!(arm.matches("cold_path").count(), 1, "a cold test in the number arm: {arm}");
     // A digit asked as lean's `is_ascii_digit`, a subtract and a compare, not a set's word.
     let digits: u64 = (b'0'..=b'9').fold(0, |m, b| m | 1 << b);
     assert!(!arm.contains(&format!("{}i64", digits as i64)), "a digit set's word in the number arm: {arm}");
+    // Its `.` known by the way it took (`split_counts`), not counted over a mask of the window.
+    assert!(!arm.contains("vceqq_u8") && !arm.contains("count_ones"), "a count of the number's `.`: {arm}");
+}
+
+/// The loop's next start is the block's base and the starts' next bit, as lean's `base + q`:
+/// not the token's end's block (`end & !63`), which chained each start to the token before it
+/// (its byte, its table entry, its run), so short tokens ran one after another.
+#[test]
+fn the_next_start_is_the_blocks() {
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
+    let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
+    let f0 = &f0[..f0[10..].find("\nunsafe fn ").map_or(f0.len(), |e| e + 10)];
+    assert!(!f0.contains("(-64i64 as u64)"), "a start from a token's end's block");
 }
