@@ -447,14 +447,19 @@ function checkedCatalog(home: string, fetched: readonly FetchedPack[], standIns:
  * The catalog set-up offers packs from: the fetched packs `fromNpm`, and every other installed package standing in, a
  * third party's included (the catalog decides which of two holding one pack id loads, Rerail's own first). A fetched
  * version the catalog leaves out, made for a newer Rerail say, does not take the place of the version installed: that
- * one stands in for it, so the pack is still offered as it runs, and `leftOut` names the newer version with why.
+ * one stands in for it, so the pack is still offered as it runs, and `leftOut` names the newer version with why. When
+ * the version installed is the fetched one, it would be left out for the same reason, so the fetched one stays.
  */
 function discoveryCatalog(home: string, fromNpm: readonly FetchedPack[]): { catalog: RuleCatalog; leftOut: readonly SkippedRulePack[] } {
   const installed = new Map(installedPackDirectories(home).map(directory => [installedPackageName(directory), directory]));
   const fetchedPackages = new Set(fromNpm.map(pack => rulePackPackageName(pack.id)));
   const standIns = [...installed].filter(([packageName]) => !fetchedPackages.has(packageName)).map(([, directory]) => directory);
   const catalog = checkedCatalog(home, fromNpm, standIns);
-  const leftOut = catalog.skipped.filter(skipped => fromNpm.some(pack => pack.directory === skipped.path && installed.has(rulePackPackageName(pack.id))));
+  const replaceable = (pack: FetchedPack): boolean => {
+    const packageName = rulePackPackageName(pack.id);
+    return installed.has(packageName) && installedPackVersion(packageName, home) !== readPackageVersion(pack.directory);
+  };
+  const leftOut = catalog.skipped.filter(skipped => fromNpm.some(pack => pack.directory === skipped.path && replaceable(pack)));
   if (leftOut.length === 0) return { catalog, leftOut };
   const kept = fromNpm.filter(pack => !leftOut.some(skipped => skipped.path === pack.directory));
   const keptPackages = new Set(kept.map(pack => rulePackPackageName(pack.id)));

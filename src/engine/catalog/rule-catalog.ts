@@ -343,10 +343,10 @@ function engineProblem(loaded: LoadedRulePack, options: RuleCatalogOptions, engi
  * The catalog of the packs in `packDirectories`, read from disk on every call. Each pack is read and checked on its
  * own (`readRulePack`, its package name against the one npm installed it under, then the core range and the engine
  * with `options`). A pack that cannot be read and whose core range leaves this core out is skipped for its core range:
- * it was made for a newer Rerail, which is why this one cannot read it. Two packs may not share a pack id or a rule id: Rerail's own pack loads and the other is skipped,
- * and between two others the first by package name loads (`comparePackPrecedence`), wherever each was found. While
- * Rerail's own pack for an id is there but left out, no other pack takes that id. A skipped pack is listed with its
- * reason, in the order given, and the others load.
+ * it was made for a newer Rerail, which is why this one cannot read it. Two packs may not share a pack id or a rule
+ * id: Rerail's own pack loads and the other is skipped, and between two others the first by package name loads
+ * (`comparePackPrecedence`), wherever each was found. While Rerail's own pack for an id is there but left out, no
+ * other pack takes that id. A skipped pack is listed with its reason, in the order given, and the others load.
  */
 export function readRuleCatalog(packDirectories: readonly string[], options: RuleCatalogOptions = {}): RuleCatalog {
   const read: { at: number; directory: string; loaded: LoadedRulePack }[] = [];

@@ -319,7 +319,6 @@ function packRuleOf(rule: RulePackFile["rules"][number], document: RuleDocument)
   };
 }
 
-/** One listed rule read and checked: its document is named for its id, exists and carries that id, and its examples fit its kind. */
 /**
  * The rule document `source`, read from `documentPath`. One the schema refuses is reported like a refused `pack.json`:
  * the pack, the document and its first issue, in a sentence, where the schema's own error is every issue as JSON.
@@ -334,6 +333,7 @@ function parsePackDocument(id: string, document: string, source: unknown, docume
   }
 }
 
+/** One listed rule read and checked: its document is named for its id, exists and carries that id, and its examples fit its kind. */
 function readPackRule(directory: string, id: string, rule: RulePackFile["rules"][number]): { rule: RulePackRule; document: RuleDocument; source: unknown } {
   const documentPath = join(directory, rule.document);
   if (basename(rule.document, ".json") !== rule.id) throw new Error(`Rule pack ${id} lists ${rule.id}, whose document must be rules/${rule.id}.json, not ${rule.document}`);
