@@ -261,12 +261,11 @@ fn split_constants(rels: &shape::Rels<'_>, bodies: &[std::sync::Arc<split_memo::
         .collect();
     // A greatest fixpoint: a relation stays while every rule of it reads only constants. Each relation is checked
     // again only when one it reads leaves (a pack's program has tens of thousands of rules). In rounds, each round's
-    // relations checked on the pool's threads against the constants as the round began: relations only leave, so any
+    // relations checked against the constants as the round began: relations only leave, so any
     // order reaches the same fixpoint.
-    use rayon::prelude::*;
     let mut round: Vec<u32> = (0..rels.derived as u32).filter(|&r| scope[r as usize] && constant[r as usize]).collect();
     while !round.is_empty() {
-        let leaving: Vec<u32> = round.par_iter().copied().filter(|&r| !rels.rules[r as usize].iter().all(|&i| bodies[i].form().reads_constants(rels, &constant))).collect();
+        let leaving: Vec<u32> = round.iter().copied().filter(|&r| !rels.rules[r as usize].iter().all(|&i| bodies[i].form().reads_constants(rels, &constant))).collect();
         for &r in &leaving {
             constant[r as usize] = false;
         }
@@ -545,7 +544,6 @@ fn split_in(
     prev: Option<&Split>,
 ) -> Split {
     use crate::code_rule_dsl::logic::front::{Literal, Term};
-    use rayon::prelude::*;
     use std::collections::{BTreeMap, BTreeSet};
     // The split's relations by number, and what it asks of each by name, asked once (`shape::Rels`).
     let rels = shape::Rels::of(prog, index, derived);
@@ -555,9 +553,9 @@ fn split_in(
         in_scope[rels.get(r).expect("a derived relation in scope") as usize] = true;
     }
     let was = |r: usize| prev.filter(|_| !in_scope[r]);
-    // The bodies in scope numbered (`shape::Form`), on the pool's threads: the run keeps each body's, so only the
+    // The bodies in scope numbered (`shape::Form`): the run keeps each body's, so only the
     // bodies a round rewrote are numbered here.
-    (0..prog.rules.len()).into_par_iter().filter(|&i| in_scope[rels.head[i] as usize]).for_each(|i| {
+    (0..prog.rules.len()).filter(|&i| in_scope[rels.head[i] as usize]).for_each(|i| {
         bodies[i].form();
     });
     let form = |i: usize| bodies[i].form();
@@ -575,11 +573,11 @@ fn split_in(
         .collect();
     // A greatest fixpoint (columns only leave), so any order reaches the same one: a relation is checked again only
     // when the locations of one its rules read changed (a pack's program has tens of thousands of rules). In rounds,
-    // each round's relations checked on the pool's threads against the locations as the round began.
+    // each round's relations checked against the locations as the round began.
     let mut round: Vec<u32> = (0..n as u32).filter(|&r| in_scope[r as usize]).collect();
     while !round.is_empty() {
         let changed: Vec<(u32, Vec<usize>)> = round
-            .par_iter()
+            .iter()
             .filter_map(|&r| {
                 let rules = rels.rules[r as usize];
                 let placed: Vec<shape::Bits> = rules.iter().map(|&i| form(i).placed_classes(&rels, &locs)).collect();
@@ -602,7 +600,7 @@ fn split_in(
     let mut filtering: Vec<bool> = (0..n).map(|r| was(r).is_none_or(|p| p.filters.contains(rels.names[r]))).collect();
     let mut round: Vec<u32> = (0..n as u32).filter(|&r| in_scope[r as usize] && filtering[r as usize]).collect();
     while !round.is_empty() {
-        let leaving: Vec<u32> = round.par_iter().copied().filter(|&r| !rels.rules[r as usize].iter().all(|&i| form(i).filters(&prog.rules[i].head, &rels, &filtering))).collect();
+        let leaving: Vec<u32> = round.iter().copied().filter(|&r| !rels.rules[r as usize].iter().all(|&i| form(i).filters(&prog.rules[i].head, &rels, &filtering))).collect();
         for &r in &leaving {
             filtering[r as usize] = false;
         }
@@ -714,7 +712,7 @@ fn split_in(
         };
         // In rounds, as before, so the causes are the same: a rule can newly fail only by reading a relation that left
         // in the round before; the first round checks every rule in scope.
-        // Each round's rules checked on the pool's threads, their failures kept in program order.
+        // Each round's rules checked, their failures kept in program order.
         let check = |i: usize| -> Option<(u32, String)> {
             let r = &prog.rules[i];
             let head = rels.head[i];
@@ -727,8 +725,8 @@ fn split_in(
             Some((head, why.unwrap_or_else(|| "places more than one document".to_owned())))
         };
         let failing: Vec<(u32, String)> = match &dirty {
-            None => (0..prog.rules.len()).into_par_iter().filter(|&i| in_scope[rels.head[i] as usize] && local_now[rels.head[i] as usize]).filter_map(check).collect(),
-            Some(rules) => rules.par_iter().copied().filter(|&i| local_now[rels.head[i] as usize]).filter_map(check).collect(),
+            None => (0..prog.rules.len()).filter(|&i| in_scope[rels.head[i] as usize] && local_now[rels.head[i] as usize]).filter_map(check).collect(),
+            Some(rules) => rules.iter().copied().filter(|&i| local_now[rels.head[i] as usize]).filter_map(check).collect(),
         };
         let mut next: Vec<usize> = Vec::new();
         let mut left = false;

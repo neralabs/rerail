@@ -736,6 +736,16 @@ impl ContentStore {
     }
 
     pub fn open(path: &Path) -> StoreResult<Self> {
+        Self::open_with(path, true)
+    }
+
+    /// A store opened beside the run's own (the rule images', decision 0264): as `open`, but the Neural Engine's
+    /// models stay the run's store's.
+    pub fn open_images(path: &Path) -> StoreResult<Self> {
+        Self::open_with(path, false)
+    }
+
+    fn open_with(path: &Path, models: bool) -> StoreResult<Self> {
         // Created `0600` before SQLite opens it, in a `0700` folder, so the WAL SQLite creates beside it is private too.
         private_files::prepare(path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
@@ -749,7 +759,11 @@ impl ContentStore {
         drop(connection);
         // Compiled Neural Engine models are facts of this store (decision 0098 §3).
         #[cfg(target_os = "macos")]
-        rerail_accel::ane::set_store(std::sync::Arc::new(accel_models::StoreModels::new(path)));
+        if models {
+            rerail_accel::ane::set_store(std::sync::Arc::new(accel_models::StoreModels::new(path)));
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = models;
         Ok(Self {
             database_path: path.to_path_buf(),
             connection: ThreadConnection::new(path.to_path_buf(), identity),
