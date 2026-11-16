@@ -10,8 +10,9 @@
  * sized to hold the lock about 100 ms (`moveInBatches`), with a pause before it, so other writers keep recording while
  * it runs; a process stopped partway loses at most one batch, and the next run goes on from what is left. Until an audit
  * moves, the audit store reads its provenance inline. The move never waits inside SQLite for another connection: it
- * awaits a pause and tries again, for as long as another connection holds the write lock, so a stop reaches it between
- * two tries, and a long hold, such as `rerail scrub`'s on a large file, pauses the move without ending it.
+ * awaits a pause and tries again, for as long as another connection holds the write lock or SQLite answers its check
+ * before a batch busy, as while another process recovers the WAL, so a stop reaches it between two tries, and a long
+ * hold, such as `rerail scrub`'s on a large file, pauses the move without ending it.
  *
  * The pages a batch frees stay in the file, zeroed as every delete's are (`secure_delete`, `database.ts`), and new
  * history reuses them before the file grows again. No `VACUUM` runs here: one holds the write lock until it ends, and
@@ -174,7 +175,10 @@ const unreferencedSleep: MoveTimer = (ms, signal) => sleep(ms, undefined, { sign
 
 type Client = RerailDatabase["$client"];
 
-/** What `whenFree` gives back for a step a stop ended while another connection was in its way. */
+/**
+ * What `whenFree` gives back for a step a stop ended while another connection was in its way, and `checkedBatch` for a
+ * batch a stop or an older Rerail's audit ended before it began.
+ */
 const STOPPED = Symbol("stopped");
 
 /**
@@ -234,49 +238,75 @@ function batchingOf(options: RuleProvenanceMoveOptions, postponed: () => boolean
 
 /**
  * Moves the audits `bound` names, a batch per write transaction with a pause before each, until none is left, or
- * `signal` or an older Rerail's audit (`postponed`) stops it: how many it moved, and whether none is left. A batch
- * another connection's lock is in the way of is tried again after the next pause, with no bound, and `signal` and
- * `postponed` are read before each try. The first batch takes `FIRST_BATCH` audits, and each later one as many as the
- * batch before moved in `BATCH_MS` (`nextBatchSize`), so a batch holds the write lock about that long however loaded
- * the machine and however large each audit's provenance.
+ * `signal` or an older Rerail's audit (`postponed`) stops it: how many it moved, and whether none is left. A batch, or
+ * the check before it, that another connection is in the way of is tried again after the next pause, with no bound,
+ * and `signal` is read before each try (`checkedBatch`). The first batch takes `FIRST_BATCH` audits, and each later one
+ * as many as the batch before moved in `BATCH_MS` (`nextBatchSize`), so a batch holds the write lock about that long
+ * however loaded the machine and however large each audit's provenance.
  */
 async function moveInBatches(
   database: RerailDatabase,
   bound: StepBound,
-  { most, pause, now, signal, postponed }: Batching,
+  batching: Batching,
 ): Promise<{ moved: number; ended: boolean }> {
   let moved = 0;
   let after = Number.MIN_SAFE_INTEGER;
-  let size = Math.min(FIRST_BATCH, most);
+  let size = Math.min(FIRST_BATCH, batching.most);
   for (;;) {
-    await pause();
-    if (signal?.aborted === true || postponed()) return { moved, ended: false };
-    const batch = timedBatch(() => moveBatch(database, { ...bound, after, limit: size }), now);
+    await batching.pause();
+    const batch = checkedBatch(database, { ...bound, after, limit: size }, batching);
+    if (batch === STOPPED) return { moved, ended: false };
     if (batch === BUSY) continue;
     if (batch.done === undefined) return { moved, ended: true };
     sayLeftAsItIs(database.$client.name, batch.done.left);
     moved += batch.done.moved;
     after = batch.done.last;
-    size = nextBatchSize(size, batch.took, most);
+    size = nextBatchSize(size, batch.took, batching.most);
   }
 }
 
-/** What `timedBatch` gives back for a batch another connection's lock was in the way of. */
+/** What `tried` gives back for a step another connection was in the way of. */
 const BUSY = Symbol("busy");
 
+/** What one batch did (`moveBatch`). */
+type BatchDone = ReturnType<typeof moveBatch>;
+
 /**
- * What `batch` did and how long it held the write lock by `now`, or `BUSY` when another connection held what it needed
- * (`isBusy`), which a later try may find free.
+ * The next batch, after the check before it: `STOPPED` once `signal` has aborted or an older Rerail's audit
+ * (`postponed`) stops the move; `BUSY` when another connection held what the check or the batch needed, which the next
+ * pause tries again, as for a read SQLite answers busy while another process recovers the WAL; else what the batch did
+ * and how long it held the write lock (`timedBatch`).
  */
-function timedBatch<T>(batch: () => T, now: () => number): { done: T; took: number } | typeof BUSY {
-  const began = now();
+function checkedBatch(
+  database: RerailDatabase,
+  range: BatchRange,
+  { now, signal, postponed }: Batching,
+): { done: BatchDone; took: number } | typeof BUSY | typeof STOPPED {
+  if (signal?.aborted === true) return STOPPED;
+  const stops = tried(postponed);
+  if (stops === BUSY) return BUSY;
+  if (stops) return STOPPED;
+  return timedBatch(() => moveBatch(database, range), now);
+}
+
+/**
+ * What `step` returns, or `BUSY` when another connection held what it needed (`isBusy`), which a later try may find
+ * free.
+ */
+function tried<T>(step: () => T): T | typeof BUSY {
   try {
-    const done = batch();
-    return { done, took: now() - began };
+    return step();
   } catch (error) {
     if (isBusy(error)) return BUSY;
     throw error;
   }
+}
+
+/** What `batch` did and how long it held the write lock by `now`, or `BUSY` (`tried`). */
+function timedBatch<T>(batch: () => T, now: () => number): { done: T; took: number } | typeof BUSY {
+  const began = now();
+  const done = tried(batch);
+  return done === BUSY ? BUSY : { done, took: now() - began };
 }
 
 /**

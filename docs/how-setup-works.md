@@ -574,11 +574,12 @@ and records the last audit the database holds; the daemon moves the provenance o
 starts, on a thread of its own, so it keeps answering hooks during the move. Each transaction moves as many audits as
 fit in about 100 ms, at most 100, with a pause between two, so the open that upgrades the file returns at once and
 other processes keep writing during the move. While another process holds the database, as `rerail scrub` does for
-seconds on a large file, the move waits and tries again every 150 ms, then goes on; stopping the daemon ends that wait
-at once. A daemon stopped partway goes on at its next start. Each check the daemon makes on the thread that answers
-hooks, whether audits are left to move and whether an older Rerail recorded one in the last 7 days, reads at most one
-audit through an index, however long the history, and one more for each audit whose damaged rule provenance the move
-left as it is (below): a later start finds nothing left to move that way and takes no write lock.
+seconds on a large file, or keeps it from being read, as while it recovers the database after a crash, the move waits
+and tries again every 150 ms, then goes on; stopping the daemon ends that wait at once. A daemon stopped partway goes
+on at its next start. Each check the daemon makes on the thread that answers hooks, whether audits are left to move
+and whether an older Rerail recorded one in the last 7 days, reads at most one audit through an index, however long
+the history, and one more for each audit whose damaged rule provenance the move left as it is (below): a later start
+finds nothing left to move that way and takes no write lock.
 
 The pages that held each audit's own copy are zeroed, as every delete's are, and stay in the file: new history fills
 them before the file grows again. The daemon runs no `VACUUM`, since one holds the write lock until it commits, seconds

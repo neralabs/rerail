@@ -3,6 +3,7 @@ import { readFileSync, statSync } from "node:fs";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
@@ -270,6 +271,33 @@ function timeAuditReads(): { totalMs: () => number; restore: () => void } {
     return statement;
   });
   return { totalMs: () => total, restore: () => spy.mockRestore() };
+}
+
+/**
+ * Makes the reads of the move's check before a batch, on its writer (the statements on `audits_rule_provenance` that
+ * read from no rowid on: `takes` and `lastOlderWrite`), throw the error SQLite gives a read while another process
+ * recovers the WAL, while `busy` is on; how many times they threw it, and how to put `prepare` back.
+ */
+function busyChecks(): { setBusy: (busy: boolean) => void; answered: () => number; restore: () => void } {
+  let busy = false;
+  let answered = 0;
+  const prepare = Database.prototype.prepare;
+  const spy = vi.spyOn(Database.prototype, "prepare").mockImplementation(function (this: Database.Database, source: string) {
+    const statement = prepare.call(this, source);
+    if (this.readonly || !source.includes("INDEXED BY audits_rule_provenance") || /rowid >/u.test(source)) return statement;
+    for (const kind of ["get", "iterate"] as const) {
+      const original = statement[kind].bind(statement) as (...values: unknown[]) => unknown;
+      Object.assign(statement, {
+        [kind]: (...values: unknown[]) => {
+          if (!busy) return original(...values);
+          answered += 1;
+          throw new Database.SqliteError("database is locked", "SQLITE_BUSY_RECOVERY");
+        },
+      });
+    }
+    return statement;
+  });
+  return { setBusy: value => { busy = value; }, answered: () => answered, restore: () => spy.mockRestore() };
 }
 
 /** The start of the line a move writes while it waits for an older Rerail sharing the file. */
@@ -1208,6 +1236,83 @@ describe("audit rule provenance", () => {
     } finally {
       store.close();
     }
+  });
+
+  it("pauses as for a busy batch while SQLite answers the check before a batch busy, then moves the rest, failing nothing", async () => {
+    const path = await fileOfTheBuildBefore();
+    const written = writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 20)));
+    openRerailDatabase(path).$client.close();
+    const checks = busyChecks();
+    let pauses = 0;
+    let moved: number;
+    try {
+      // After the first batch, SQLite answers the check before each batch busy for 10 of the move's pauses, as it
+      // answers a read while another process recovers the WAL.
+      moved = await move(path, {
+        perBatch: 10,
+        pause: () => {
+          pauses += 1;
+          if (pauses === 2) checks.setBusy(true);
+          if (pauses === 12) checks.setBusy(false);
+          return Promise.resolve();
+        },
+      });
+    } finally {
+      checks.restore();
+    }
+
+    // The move went on after those pauses. Read outside the batch's handling of a busy answer, the first one ended the
+    // move, and the daemon logged that as a failure.
+    expect(moved).toBe(30);
+    expect(checks.answered()).toBe(10);
+    expect(inlineAudits(path)).toBe(0);
+    const store = new SqliteAuditStore(path);
+    try {
+      for (const { auditId, text } of written) expect(JSON.stringify(store.get(auditId)?.ruleProvenance), auditId).toBe(text);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("ends at once with what it moved when a stop comes while SQLite answers the check before a batch busy, and a later run moves the rest", async () => {
+    const path = await fileOfTheBuildBefore();
+    writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 20)));
+    openRerailDatabase(path).$client.close();
+    const checks = busyChecks();
+    const stop = new AbortController();
+    let pauses = 0;
+    let stoppedAt = 0;
+    let moved: number;
+    let endedAt: number;
+    try {
+      // The move's own pause, 150 ms, which a stop ends. After the first batch the check before each batch is answered
+      // busy; the stop comes 50 ms into the third pause that follows.
+      moved = await move(path, {
+        perBatch: 10,
+        signal: stop.signal,
+        pause: async () => {
+          pauses += 1;
+          if (pauses === 2) checks.setBusy(true);
+          if (pauses === 4) {
+            setTimeout(() => {
+              stoppedAt = performance.now();
+              stop.abort();
+            }, 50);
+          }
+          await sleep(150, undefined, { signal: stop.signal }).catch(() => undefined);
+        },
+      });
+      endedAt = performance.now();
+    } finally {
+      checks.restore();
+    }
+
+    expect(moved).toBe(10);
+    expect(pauses).toBe(4);
+    expect(checks.answered()).toBe(2);
+    expect(endedAt - stoppedAt).toBeLessThan(100);
+    expect(inlineAudits(path)).toBe(20);
+    expect(await move(path)).toBe(20);
   });
 
   it("empties the WAL between tries while another connection reads, never waiting inside SQLite, so its thread keeps running", async () => {
