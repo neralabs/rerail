@@ -2,7 +2,7 @@
 
 Status: decided (2026-11-16), by the user ("can we use a really simple encoding for small records like JSON and just
 jam them in a single string at the end of the data flow?"; "go ahead. We may want to change JSON for something
-else"). Building: steps 1 to 3 done. Builds 0259's guard (no queued write is a closure) for the small writes; replaces the typed-rows
+else"). Built: steps 1 to 4 done (2026-11-16). Builds 0259's guard (no queued write is a closure) for the small writes; replaces the typed-rows
 proposal for them (P1–P6, below). Keeps 0295's segments for the bulk writes, and 0104 (no SQL inside the waves).
 
 ## Intro
@@ -101,4 +101,11 @@ a one-file edit (`scratchpad/wal/run.sh`, not kept):
    functions with data bodies: the statistics' symbol columns are asked on the run's side.
 4. The run-start holds: a running run holds the shared collection lease, which collectors skip, so the holds may be
    redundant. A test that collection never takes a run's plan or source while the run lives, without them, decides
-   whether they go.
+   whether they go. **Done (2026-11-16): they go.** `a_runs_lease_keeps_its_sources_and_plan_from_collection_without_holds`:
+   with the run's shared lease held, a collector on another handle (another process's) takes nothing, neither held
+   nor named; once the manifest names them and the lease goes, it keeps what is named and takes the rest (without
+   the lease the test fails). Since step 2 the holds, pins and their release were applied in the record beside the
+   manifest, rows written and deleted in one transaction. Gone: the run's hold on its plans and its release
+   (`HeldPlan`), the pins of the sources the run read, a stored source's pin. Kept: the combined program's pins
+   under its own owner (a combine outside any run's lease) and the rule images' (their only liveness). The
+   unnamed guests a run stores are now taken by its own collection pass, not a later one (Q30).

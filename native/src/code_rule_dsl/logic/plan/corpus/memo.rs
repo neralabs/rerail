@@ -396,15 +396,11 @@ pub(super) fn source(store: &ContentStore, text: &str) -> StoreResult<SourceId> 
     }
 }
 
-/// The source of `text` when the store holds it: one read, and its pin (O95) queued on the store's writer (decision
-/// 0104). `None`: not stored yet; `source`, run on the writer, stores it.
+/// The source of `text` when the store holds it: one read, nothing written (the run's collection lease keeps it until
+/// the manifest names it, decision 0306 step 4). `None`: not stored yet; `source`, run on the writer, stores it.
 pub(super) fn stored_source(store: &ContentStore, text: &str) -> StoreResult<Option<SourceId>> {
     off();
-    let found = store.sources_by_hashes(&[HashKey::sha256(text.as_bytes())])?.pop().flatten();
-    if let Some(id) = found {
-        store.record_pins("a source's pin", vec![id]);
-    }
-    Ok(found)
+    Ok(store.sources_by_hashes(&[HashKey::sha256(text.as_bytes())])?.pop().flatten())
 }
 
 /// The source of `text` for the run's manifest (`late`, which the manifest reads as the writer runs it), all of it
@@ -731,16 +727,11 @@ pub(super) fn sources(store: &ContentStore, texts: &[&str]) -> StoreResult<Vec<S
 }
 
 /// The stored sources of many contents, by their SHA-256 digests, in their order: one read and nothing written (a
-/// lookup writes nothing, decision 0104). The sources found are pinned under the store's holder by its writer.
+/// lookup writes nothing, decision 0104; the run's collection lease keeps them, decision 0306 step 4).
 pub(super) fn found_sources(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<Vec<Option<SourceId>>> {
     off();
     let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
-    let found = store.sources_by_hashes(&hashes)?;
-    let pins: Vec<SourceId> = found.iter().flatten().copied().collect();
-    if !pins.is_empty() {
-        store.record_pins("the pins of the sources the run read", pins);
-    }
-    Ok(found)
+    store.sources_by_hashes(&hashes)
 }
 
 /// Memoises many documents' entries at once, each `(content, path, key, entry)` under `program`: their bytes in one

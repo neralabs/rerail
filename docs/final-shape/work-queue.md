@@ -676,6 +676,17 @@ pass.
 - **Keep**: decision 0104 (no SQL inside the waves).
 - **Done when**: the five rules run under strict on 50 corpus0 files, `value` served from the run's memory.
 
+### Q30. A cold run writes its guests' sources and tapes, and its own collection deletes them
+
+- **Found** (2026-11-16, decision 0306 step 4): a cold run over 10 corpus0 files stores 685 guest documents (about
+  45 bytes each, with their tapes, in the run's segments) with `named: false` (`guests.rs`), so no manifest names
+  them. The run's holder pins kept them through its own collection pass until step 4 removed the run's holds; now
+  that pass takes them, as their being unnamed says. Either way nothing reads them: the warm run writes and parses
+  nothing without them.
+- **Keep**: decision 0306 step 4 (the run's lease is its one hold on collection); 0104.
+- **Done when**: guests' tapes are either named by the manifest (if a later run reads them: measured) or not
+  written at all, and a cold run's store holds no source its own collection deletes.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives

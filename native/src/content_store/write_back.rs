@@ -1042,8 +1042,11 @@ impl ContentStore {
 /// writes.
 fn accounted(what: &'static str, bytes: usize, mut job: Job) -> Job {
     Box::new(move |store| {
-        // In the writer's transaction (`warm_scope`): whether its commit is one a warm run may make.
-        super::hazards::warm_job(what);
+        // In the writer's transaction (`warm_scope`): whether its commit is one a warm run may make. A run's record is
+        // judged by its items' kinds, as it applies them (`record::apply`).
+        if what != super::record::WHAT {
+            super::hazards::warm_job(what);
+        }
         let (t0, e0) = (thread_cpu(), super::compression::encoded_here());
         let out = retried(store, what, &mut job);
         let mut by = BY_KIND.lock().expect("the writer's account");

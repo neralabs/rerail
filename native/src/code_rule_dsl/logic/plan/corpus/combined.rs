@@ -238,10 +238,9 @@ impl Drop for Pins<'_> {
 /// manifest's), so collection keeps it while it keeps the run: queued on the store's writer, after the entry's own
 /// write when this process queued one.
 pub(super) fn name_program(cache: &ContentStore, key: &[u8; 32], late: &std::sync::Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>) {
-    // Stored already (decision 0228): named now, its pin queued (a lock). The writer finds what a write queued
-    // before it stores; a warm run's entry is stored, and its lookup there was a write.
+    // Stored already (decision 0228): named now, kept meanwhile by the run's collection lease (decision 0306 step 4).
+    // The writer finds what a write queued before it stores.
     if let Some(found) = program_source(cache, key, false).ok().flatten() {
-        cache.record_pins("a source's pin", vec![found]);
         late.lock().expect("the late sources").push(found);
         late.lock().expect("the late sources").extend(image_sources(cache, key).ok().unwrap_or_default());
         return;

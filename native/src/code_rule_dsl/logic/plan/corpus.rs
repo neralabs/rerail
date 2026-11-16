@@ -1909,39 +1909,6 @@ fn request_unit(prog: &front::Program, cone: &BTreeSet<String>, core: &BTreeSet<
     (unit, hash.finalize().into())
 }
 
-/// A run's hold on its memo plan (`ContentStore::hold_corpus_plan`) and on each source it stores or finds
-/// (`ContentStore::hold_sources`), released when the run ends; a run that dies leaves them to lapse with their lease.
-struct HeldPlan<'a> {
-    store: &'a ContentStore,
-    owner: String,
-}
-
-impl<'a> HeldPlan<'a> {
-    /// The lease: longer than a run, short enough that a dead run's hold does not keep a plan for long.
-    const LEASE_SECS: i64 = 6 * 3600;
-
-    fn new(store: &'a ContentStore, plans: &[[u8; 32]]) -> std::result::Result<Self, crate::content_store::StoreError> {
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let owner = format!("corpus-run:{}:{}:{}", std::process::id(), now.as_nanos(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
-        let lease = now.as_secs() as i64 + Self::LEASE_SECS;
-        // Held by the store's writer, behind the run (decision 0104), in the run's record (decision 0306). Until the
-        // record is applied the run's collection lease keeps collection off its plans (`hold_collection`).
-        store.record_plan_holds("the run's hold on its plans", plans.to_vec(), owner.clone(), lease);
-        store.hold_sources(&owner, lease)?;
-        Ok(HeldPlan { store, owner })
-    }
-}
-
-impl Drop for HeldPlan<'_> {
-    fn drop(&mut self) {
-        // The manifest names the plan now, or the run failed: either way the hold is done, released by the writer
-        // after the manifest (queued before). A failed release lapses.
-        self.store.release_holder(&self.owner);
-        self.store.record_release("the run's hold released", self.owner.clone());
-    }
-}
-
 /// Sources a queued write stores (decision 0102), for the manifest queued after it.
 pub type Late = Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>;
 
@@ -4174,12 +4141,8 @@ fn run_observed(
     // Its entries' symbol columns, for a store this process forks from (decision 0170): carried with its key.
     // (`lowered.domains`: of the program as prepared, after its rewrites.)
     let memo_plan = memo::Program::new(memo_program, &lowered.domains);
-    // The run holds its memo plan and the sources it reads until its manifest names them (O95): a collector running
-    // meanwhile would otherwise take the rows this run writes, or the sources they and its tapes are of.
-    let _held = match memo {
-        Some(memo::Memo::Stored(_)) if memoised => Some(HeldPlan::new(store, &[&[memo::plan_digest(&memo_program)][..], &program_plans].concat()).map_err(|e| Error::Plan(e.to_string()))?),
-        _ => None,
-    };
+    // No hold on the run's plans or the sources it reads (decision 0306 step 4): its collection lease (`reading`) keeps
+    // every collector off the store until its record, with the manifest naming them, is applied.
     // A run that reads the reference graph is not memoised: the graph needs every file's facts
     // (`references::Files::add`), which a memo hit does not build.
     let memoised = memoised && references.is_none();

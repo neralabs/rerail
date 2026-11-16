@@ -265,6 +265,45 @@ fn a_held_source_survives_collection_until_released() {
     assert_eq!(store.source_by_hash(crate::content_store::HashKey::sha256(&found)).unwrap(), None, "released, it is collected");
 }
 
+/// Decision 0306 step 4: a running run's collection lease alone keeps what it reads and writes from every collector
+/// (another handle's, as another process's): no hold, no pin. Once its manifest names its sources and plan and the
+/// lease goes, collection keeps what the manifest names and takes the rest.
+#[test]
+fn a_runs_lease_keeps_its_sources_and_plan_from_collection_without_holds() {
+    let (path, store) = store("corpus-run-lease");
+    let collector = ContentStore::open(&path).unwrap();
+    let policy = CorpusPolicy { protected_runs: 1, high_water: 0, low_water: 0, backstop_secs: 86_400, decide_every_secs: 1, ..CorpusPolicy::default() };
+    let passes = |now: i64| {
+        for _ in 0..3 {
+            collector.collect(now, MAX_COLLECTION_BATCH).unwrap();
+            collector.collect_corpus_pass(&policy, now).unwrap();
+        }
+    };
+    let plan = [41u8; 32];
+    let rows = || -> i64 { store.connection.lock().unwrap().query_row("SELECT count(*) FROM facts_results WHERE plan_digest=?1", [&plan[..]], |r| r.get(0)).unwrap() };
+    // An earlier run's manifest, under another plan: what a collector decides from.
+    let earlier = store.put_source(&noise(20, 256), &[]).unwrap();
+    assert!(store.record_corpus_run_naming("/repo", &[earlier], 7, 9, [40u8; 32], &[], 1_000).unwrap());
+    let lease = store.hold_collection().unwrap();
+    let (named, unnamed) = (noise(21, 256), noise(22, 256));
+    let named_id = store.put_source(&named, &[]).unwrap();
+    store.put_source(&unnamed, &[]).unwrap();
+    let set = crate::content_store::FactsPlanSet::new(vec![plan]);
+    let result = crate::content_store::FactsResult { plan, path_dependent: true, entry: vec![1, 2, 3] };
+    store.put_facts_memo(crate::content_store::FactsMemoKey { source: named_id, fact_schema: live_fact_schema(150), path: "a.py" }, &set, &[result], &[]).unwrap();
+    passes(2_000);
+    let found = |bytes: &[u8]| store.source_by_hash(crate::content_store::HashKey::sha256(bytes)).unwrap();
+    assert!(found(&named).is_some() && found(&unnamed).is_some(), "the run's sources, neither held nor named, are kept while it runs");
+    assert_eq!(rows(), 1, "and its plan's rows");
+    // The run's record: its manifest names the one source and the plan; then the lease goes.
+    assert!(store.record_corpus_run_naming("/repo", &[named_id], 7, 9, plan, &[], 3_000).unwrap());
+    drop(lease);
+    passes(4_000);
+    assert_eq!(found(&named), Some(named_id), "named by the manifest, kept");
+    assert_eq!(rows(), 1, "the plan's rows, named, kept");
+    assert_eq!(found(&unnamed), None, "named by nothing, collected once the run is done");
+}
+
 /// Old memo rows of every writer go, while their source lives on: a prepared program's plans a later build replaced
 /// (named by the manifests, `record_corpus_run_naming`), a held plan whose hold lapsed (the slice's memo), and rows
 /// of the corpus memo's retired schemas. A plan still named, a hold still running and other schemas' rows stay.
