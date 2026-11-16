@@ -72,5 +72,14 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   maintainer's upload outside that workflow; `pack-data-publish.mjs`: that workflow's locks and comment; the canonical
   tar and lock format in `test-data-archive.mjs`; docs/upstream.md, "Publishing pack data"), with the messages its
   consumers give in Python (`pack_fixtures.py`).
+- `ship/`: the shippability bar (`shipbar.ts`, `npm run bench:ship -- prepare|run|verdict …`): whether a candidate
+  engine is no worse than main's on every rule pack main ships, as two verdicts, the candidate's packs as they ship
+  through the product's path (`product-run.ts`) and the hand-written `.rr` rewrites through `rerail-engine
+  run-policies`. Per pack, on its fixtures and on the real-code corpus `corpora.json` pins, each side runs N times
+  interleaved on pinned cores under the same memory and time caps, and the verdict (`verdict.ts`) fails a metric (wall,
+  CPU and peak RSS, cold and warm) above 1.10 times main's median, a lost true positive or a new false positive against
+  the upstream recording, a run main completes that the candidate does not, and a rule main ships that the candidate
+  cannot run. `prepare` exports the baseline and the corpora anywhere; `run` measures on Linux only; `run` and
+  `verdict` write `verdict.json` and `report.md`.
 - `upstream/`: the upstream release check (`releases.ts`, `npm run upstream:releases`) and the pin bump (`bump.ts`,
   `npm run upstream:bump`) the upstream workflows run (docs/upstream.md).

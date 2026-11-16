@@ -119,6 +119,7 @@
     "test:native": "cargo test --manifest-path Cargo.toml --workspace",
     "test:code-rule-dsl-runtime": "vitest run test/engine/native/native-code-rule-dsl-runtime.test.ts",
     "bench:code-rule-dsl": "node --import tsx scripts/dsl/code-rule-dsl-bench.ts",
+    "bench:ship": "node --import tsx scripts/ship/shipbar.ts",
     "profile:code-rule-dsl": "python3 scripts/profiling/run.py",
     "profile:sql:summary": "node benchmark/sql-profile/summarize.mjs",
     "test:producer-shape": "node scripts/profiling/producer-shape.mjs",
