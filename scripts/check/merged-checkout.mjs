@@ -51,8 +51,11 @@ function workingTreeCommit(root, scratch, env) {
 /** `work` merged into `base` as a commit, or the files they conflict in. */
 function mergeWithBase(root, work, base, env) {
   const merge = spawnSync("git", ["merge-tree", "--write-tree", "--name-only", work, base], { cwd: root, env, encoding: "utf8" });
+  // 1 is a conflict; anything else is Git failing (an older Git has no `--write-tree`), or stopped (Ctrl-C).
+  if (merge.status === null) throw new Error("git merge-tree was stopped");
+  if (merge.status !== 0 && merge.status !== 1) throw new Error(`git merge-tree failed (it needs Git 2.38 or later): ${merge.stderr.trim()}`);
   const [tree = "", ...rest] = merge.stdout.split("\n");
-  if (merge.status !== 0) return { conflicts: rest.slice(0, rest.indexOf("") === -1 ? rest.length : rest.indexOf("")) };
+  if (merge.status === 1) return { conflicts: rest.slice(0, rest.indexOf("") === -1 ? rest.length : rest.indexOf("")) };
   return { commit: git(root, ["commit-tree", tree, "-p", work, "-p", base, "-m", `pre-commit: merged with ${base}`], { ...env, ...IDENTITY }) };
 }
 
@@ -67,6 +70,7 @@ export function prepareMergedCheckout(root, { base = BASE, env = process.env } =
   }
   if (succeeds(root, ["merge-base", "--is-ancestor", base, "HEAD"], plain)) return { checkout: root, throwaway: false };
   const scratch = mkdtempSync(join(tmpdir(), SCRATCH_PREFIX));
+  const checkout = join(scratch, "checkout");
   try {
     const merged = mergeWithBase(root, workingTreeCommit(root, scratch, env), base, plain);
     if (merged.commit === undefined) {
@@ -76,7 +80,6 @@ export function prepareMergedCheckout(root, { base = BASE, env = process.env } =
         note: `your work conflicts with ${base} in ${merged.conflicts.join(", ")}, and CI runs on neither until you merge it; your branch is checked alone`,
       };
     }
-    const checkout = join(scratch, "checkout");
     const noHooks = join(scratch, "no-hooks");
     mkdirSync(noHooks);
     // No hook of the repository's (Git LFS's post-checkout) and no LFS download: CI's checkout holds pointers too.
@@ -84,7 +87,7 @@ export function prepareMergedCheckout(root, { base = BASE, env = process.env } =
     if (existsSync(join(root, "node_modules"))) symlinkSync(join(root, "node_modules"), join(checkout, "node_modules"), "junction");
     return { checkout, throwaway: true, note: `checking your work merged with ${base}, as CI does` };
   } catch (error) {
-    rmSync(scratch, { recursive: true, force: true });
+    removeMergedCheckout(root, checkout, { env });
     throw error;
   }
 }
@@ -112,6 +115,8 @@ function isLink(path) {
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const root = git(process.cwd(), ["rev-parse", "--show-toplevel"], withoutHookIndex(process.env));
   const [command, folder] = process.argv.slice(2);
+  // A Ctrl-C stops the Git command running, not this script, so it still removes what it made; pre-commit.sh then exits.
+  for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => {});
   if (command === "prepare") {
     const { checkout, note } = prepareMergedCheckout(root);
     if (note !== undefined) process.stderr.write(`pre-commit: ${note}\n`);

@@ -9,12 +9,17 @@ set -eu
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
-checkout="$(node scripts/check/merged-checkout.mjs prepare)"
+checkout=""
 cleanup() {
-  cd "$root" && node scripts/check/merged-checkout.mjs remove "$checkout"
+  [ -z "$checkout" ] || { cd "$root" && node scripts/check/merged-checkout.mjs remove "$checkout"; }
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
+checkout="$(node scripts/check/merged-checkout.mjs prepare)"
+# The index and repository Git hands the hook belong to this checkout, not the throwaway one.
+if [ "$checkout" != "$root" ]; then
+  unset GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE GIT_PREFIX
+fi
 cd "$checkout"
 
 if command -v just >/dev/null 2>&1; then

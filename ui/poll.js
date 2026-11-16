@@ -193,9 +193,11 @@ async function loadPacks() {
   return true;
 }
 
+/** The daemon's health. A daemon that restarted may run Merge Assist now, so one that said it did not is asked again. */
 async function loadHealth() {
   const { body } = await get("/healthz");
   const changed = data.health?.version !== body.version || data.health?.pid !== body.pid;
+  if (changed && data.health !== null && data.mergeAssistExperiment === false) data.mergeAssistExperiment = null;
   data.health = body;
   return changed;
 }
@@ -302,7 +304,7 @@ function takeMergeAssistFailure(error) {
   return changed;
 }
 
-/** The daemon runs without Merge Assist (`404 experimental-off`): nothing of it is shown or read again. */
+/** The daemon runs without Merge Assist (`404 experimental-off`): nothing of it is shown or read again until it restarts. */
 function experimentOff(error) {
   if (error.status !== 404 || error.code !== "experimental-off") return false;
   Object.assign(data, { mergeAssist: null, mergeAssistError: null, mergeAssistExperiment: false });
@@ -331,7 +333,7 @@ async function readMergeAssist(current) {
  * Merge Assist for the scoped checkout (`data.mergeAssist`), at most once at a time; `maxAge` skips the read while the
  * last answer is younger. A failure is kept in `data.mergeAssistError` for the page and the sidebar, never failing
  * the poll: the rest of the dashboard does not depend on Merge Assist. A `404 experimental-off` is no failure: the
- * daemon runs without Merge Assist (`data.mergeAssistExperiment` false), and nothing reads it again.
+ * daemon runs without Merge Assist (`data.mergeAssistExperiment` false), and nothing reads it again until it restarts.
  */
 function loadMergeAssist(maxAge = 0) {
   if (mergeAssistRead.loading !== null && mergeAssistRead.generation === generation) return mergeAssistRead.loading;

@@ -14,9 +14,9 @@ import { basename } from "node:path";
 import type { CheckoutContext } from "../../engine/catalog/repository-model.js";
 import { mergeAssistEnabled } from "../../engine/catalog/repository-registry.js";
 import {
-  baseBranch,
+  baseBranchAsync,
   branchBeingRebased,
-  currentBranch,
+  currentBranchAsync,
   gitReadAsync,
   isAncestorAsync,
   mergeBaseAsync,
@@ -63,6 +63,8 @@ export interface DetectContext {
 /** This checkout's side: where its work starts, its head and branch, the person, and its changed hunks per file. */
 interface MineView {
   readonly head: string;
+  /** The branch checked out; null while HEAD is detached. */
+  readonly checkedOut: string | null;
   /** The branch checked out, or the one being rebased while HEAD is detached. */
   readonly branch: string | null;
   readonly base: { readonly ref: string; readonly name: string };
@@ -114,24 +116,28 @@ function pullKey(pull: PullRequestSummary): string {
   return pull.crossRepository ? `${pull.headOwner ?? ""}:${pull.headRefName}` : pull.headRefName;
 }
 
-/** The checkout's branch (the one being rebased while HEAD is detached) and the keys of its own work. */
-async function ownBranches(root: string): Promise<{ branch: string | null; own: Set<string> }> {
-  const branch = currentBranch(root) ?? await branchBeingRebased(root);
-  if (branch === null) return { branch, own: new Set() };
+/**
+ * The branch checked out, the checkout's branch (the one being rebased while HEAD is detached) and the keys of its
+ * own work.
+ */
+async function ownBranches(root: string): Promise<{ checkedOut: string | null; branch: string | null; own: Set<string> }> {
+  const checkedOut = await currentBranchAsync(root);
+  const branch = checkedOut ?? await branchBeingRebased(root);
+  if (branch === null) return { checkedOut, branch, own: new Set() };
   const upstream = await upstreamOf(root, branch);
-  return { branch, own: new Set(upstream === null ? [branch] : [branch, branchKey(upstream)]) };
+  return { checkedOut, branch, own: new Set(upstream === null ? [branch] : [branch, branchKey(upstream)]) };
 }
 
 /** This checkout's side, or why it has none: no commit or base branch, or a base that shares no history with it. */
 async function mineView(root: string): Promise<MineView | string> {
-  const base = baseBranch(root);
+  const base = await baseBranchAsync(root);
   if (base === null) return NO_BASE_PROBLEM;
   const [head, baseTip] = await Promise.all([resolveCommit(root, "HEAD"), resolveCommit(root, base.ref)]);
   if (head === null || baseTip === null) return NO_BASE_PROBLEM;
   const start = await mergeBaseAsync(root, baseTip, head);
   if (start === null) return noSharedHistoryProblem(base.name);
-  const { branch, own } = await ownBranches(root);
-  return { head, branch, base, baseTip, start, person: personName(root), ranges: await workspaceRanges(root, start), own };
+  const [{ checkedOut, branch, own }, person, ranges] = await Promise.all([ownBranches(root), personName(root), workspaceRanges(root, start)]);
+  return { head, checkedOut, branch, base, baseTip, start, person, ranges, own };
 }
 
 /** Whether a commit is work of its own: this repository holds it, and neither this branch nor the base branch does. */
@@ -162,17 +168,31 @@ function branchRef([name = "", sha = "", symref = "", committed = "", worktree =
   return [{ ref: label, key: branchKey(name), label, sha, author: null, url: null, title: null, committedAt }];
 }
 
+/** Why the branches were not compared, when Git could not list them. */
+export const UNLISTED_BRANCHES_PROBLEM = "Could not list this repository's branches, so they were not compared.";
+
 /**
  * The branches compared beside open pull requests, with work of their own (neither this branch nor the base branch
  * holds their tip): local branches checked out in a worktree (this checkout's own is left out later), and, with
- * `remotes`, remote-tracking branches. One `for-each-ref`, which also gives each tip's commit time.
+ * `remotes`, remote-tracking branches; null when Git could not list them. One `for-each-ref` of those the base branch
+ * does not hold, which also gives each tip's commit time, less those HEAD holds (a second listing: Git before 2.29
+ * takes one `--no-merged`).
  */
-async function branchRefs(root: string, view: MineView, remotes: boolean): Promise<LiveRef[]> {
-  const listed = await gitReadAsync(root, [
-    "for-each-ref", "--format=%(refname)%00%(objectname)%00%(symref)%00%(committerdate:unix)%00%(worktreepath)",
-    `--no-merged=${view.baseTip}`, `--no-merged=${view.head}`, "refs/heads", ...(remotes ? ["refs/remotes"] : []),
-  ], LIST_OPTIONS);
-  return (listed ?? "").split("\n").flatMap(line => branchRef(line.split("\0")));
+async function branchRefs(root: string, view: MineView, remotes: boolean): Promise<LiveRef[] | null> {
+  const patterns = ["refs/heads", ...(remotes ? ["refs/remotes"] : [])];
+  const [listed, merged] = await Promise.all([
+    gitReadAsync(root, [
+      "for-each-ref", "--format=%(refname)%00%(objectname)%00%(symref)%00%(committerdate:unix)%00%(worktreepath)",
+      `--no-merged=${view.baseTip}`, ...patterns,
+    ], LIST_OPTIONS),
+    gitReadAsync(root, ["for-each-ref", "--format=%(refname)", `--merged=${view.head}`, ...patterns], LIST_OPTIONS),
+  ]);
+  if (listed === undefined || merged === undefined) return null;
+  const held = new Set(merged.split("\n"));
+  return listed.split("\n").flatMap(line => {
+    const fields = line.split("\0");
+    return held.has(fields[0] ?? "") ? [] : branchRef(fields);
+  });
 }
 
 /** Whether a branch was last committed over {@link STALE_BRANCH_DAYS} days before `now`; one with an open pull request never is. */
@@ -183,22 +203,25 @@ function stale(ref: LiveRef, open: ReadonlySet<string>, now: number): boolean {
 /**
  * The live refs this checkout's work is compared with, open pull requests first, then branches checked out in another
  * worktree, then (open pull requests unread) remote-tracking branches: none of this branch's own, none {@link stale},
- * and each branch and each commit once, the first way it arrived.
+ * and each branch and each commit once, the first way it arrived. `branchesListed` is false when Git could not list
+ * the branches, and none is compared.
  */
-async function liveRefs(root: string, view: MineView, context: DetectContext): Promise<{ pulls: LiveRef[]; branches: LiveRef[] }> {
+async function liveRefs(root: string, view: MineView, context: DetectContext): Promise<{ pulls: LiveRef[]; branches: LiveRef[]; branchesListed: boolean }> {
   const pulls = context.pulls ?? [];
   const open = new Set(pulls.map(pullKey));
   const now = context.now();
-  const [opened, branches] = await Promise.all([pullRefs(root, view, pulls), branchRefs(root, view, context.pulls === null)]);
+  const [opened, listed] = await Promise.all([pullRefs(root, view, pulls), branchRefs(root, view, context.pulls === null)]);
   const keys = new Set(view.own);
   const shas = new Set<string>();
-  const kept = [...opened, ...branches.filter(ref => !stale(ref, open, now))].filter(ref => {
+  const kept = [...opened, ...(listed ?? []).filter(ref => !stale(ref, open, now))].filter(ref => {
     if (keys.has(ref.key) || shas.has(ref.sha)) return false;
     keys.add(ref.key);
     shas.add(ref.sha);
     return true;
   });
-  return { pulls: kept.filter(ref => ref.ref.startsWith("refs/pull/")), branches: kept.filter(ref => !ref.ref.startsWith("refs/pull/")) };
+  return {
+    pulls: kept.filter(ref => ref.ref.startsWith("refs/pull/")), branches: kept.filter(ref => !ref.ref.startsWith("refs/pull/")), branchesListed: listed !== null,
+  };
 }
 
 /**
@@ -381,13 +404,29 @@ async function refConflicts(pass: Pass, ref: LiveRef): Promise<StoredConflict[]>
   return conflicts;
 }
 
-/** The overlaps of this branch's changes with each live ref, a few refs at a time. */
-async function overlapConflicts(context: DetectContext, view: MineView, refs: readonly LiveRef[]): Promise<StoredConflict[]> {
-  if (view.ranges.size === 0) return [];
+/** What a pass found with the live refs, and the refs it could not compare (with why). */
+interface Overlaps {
+  readonly conflicts: StoredConflict[];
+  readonly failed: ReadonlyArray<{ readonly ref: LiveRef; readonly reason: string }>;
+}
+
+/**
+ * The overlaps of this branch's changes with each live ref, a few refs at a time. A ref Git cannot compare (a diff too
+ * large or too slow) is set aside, so the others still are.
+ */
+async function overlapConflicts(context: DetectContext, view: MineView, refs: readonly LiveRef[]): Promise<Overlaps> {
+  if (view.ranges.size === 0) return { conflicts: [], failed: [] };
   const root = context.checkout.checkoutPath;
   const reader = new OverlapReader(root, { start: view.start, baseTip: view.baseTip }, new Set(view.ranges.keys()));
   const pass: Pass = { context, root, view, reader, mine: new Map() };
-  return (await mapLimited(refs, ref => refConflicts(pass, ref))).flat();
+  const results = await mapLimited(refs, ref => refConflicts(pass, ref).then(
+    conflicts => ({ ref, conflicts, reason: undefined }),
+    (error: unknown) => ({ ref, conflicts: [], reason: error instanceof Error ? error.message : String(error) }),
+  ));
+  return {
+    conflicts: results.flatMap(result => result.conflicts),
+    failed: results.flatMap(({ ref, reason }) => (reason === undefined ? [] : [{ ref, reason }])),
+  };
 }
 
 /**
@@ -399,6 +438,8 @@ export interface DetectedConflicts {
   readonly after: StoredConflict[];
   readonly peers: { readonly branches: number; readonly pullRequests: number };
   readonly problems: string[];
+  /** The branch checked out and the base branch's short name, as the pass read them; null where there is none. */
+  readonly checkout: { readonly branch: string | null; readonly base: string | null };
 }
 
 /**
@@ -407,21 +448,32 @@ export interface DetectedConflicts {
  */
 export async function detectConflicts(context: DetectContext): Promise<DetectedConflicts | null> {
   const root = context.checkout.checkoutPath;
-  const view = await mineView(root);
-  if (typeof view === "string") return { before: [], after: [], peers: { branches: 0, pullRequests: 0 }, problems: [view] };
-  const refs = await liveRefs(root, view, context);
-  const detected = await overlapConflicts(context, view, [...refs.pulls, ...refs.branches]);
+  // What the store held when this pass began: an open conflict another pass stores while this one runs was never
+  // examined here, so it stays as it is (below).
   const known = readConflicts(context.database, root);
+  const view = await mineView(root);
+  if (typeof view === "string") {
+    return { before: [], after: [], peers: { branches: 0, pullRequests: 0 }, problems: [view], checkout: { branch: null, base: null } };
+  }
+  const refs = await liveRefs(root, view, context);
+  const { conflicts: detected, failed } = await overlapConflicts(context, view, [...refs.pulls, ...refs.branches]);
+  // A ref this pass could not read, or every branch when they could not be listed, keeps the open conflicts it had.
+  const unread = new Set(failed.map(({ ref }) => ref.ref));
+  const kept = (entry: StoredConflict): boolean => unread.has(entry.conflict.theirs.ref) || (!refs.branchesListed && !entry.conflict.theirs.ref.startsWith("refs/pull/"));
+  const problems = [...(refs.branchesListed ? [] : [UNLISTED_BRANCHES_PROBLEM]), ...failed.map(({ ref, reason }) => `Could not compare ${ref.label}: ${reason}`)];
   const now = context.now();
-  const examined = new Set([...known, ...detected].map(entry => entry.conflict.id));
+  const examined = new Set([...known.filter(entry => !kept(entry)), ...detected].map(entry => entry.conflict.id));
   return context.database.transaction(tx => {
     if (!mergeAssistEnabled(tx, context.checkout.repositoryKey)) return null;
-    // A dismissal given while this ran stands, and an open conflict another pass stored meanwhile, which this one
-    // never examined, stays as it is: it was not found gone.
+    // A dismissal given while this ran stands, and an open conflict this pass did not examine (another pass stored it
+    // meanwhile, or its ref could not be read) stays as it is: it was not found gone.
     const before = readConflicts(tx, root);
     const unexamined = before.filter(entry => entry.conflict.status === "open" && !examined.has(entry.conflict.id));
     const after = [...mergeDetected(before, detected), ...unexamined];
     writeConflicts(tx, root, after, now);
-    return { before, after, peers: { branches: refs.branches.length, pullRequests: refs.pulls.length }, problems: [] };
+    return {
+      before, after, peers: { branches: refs.branches.length, pullRequests: refs.pulls.length }, problems,
+      checkout: { branch: view.checkedOut, base: view.base.name },
+    };
   }, { behavior: "immediate" });
 }

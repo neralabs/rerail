@@ -82,6 +82,8 @@ export class ConflictHook {
   readonly #running = new Set<Promise<void>>();
   /** Each (checkout, conflict, handler)'s last queued run, which its next event waits for; dropped once it settles. */
   readonly #chains = new Map<string, Promise<void>>();
+  /** Set by {@link stop}: a run not started yet never starts. */
+  #stopped = false;
 
   constructor(handlers: readonly ConflictHandler[], noteWaitMs = NOTE_WAIT_MS) {
     this.#handlers = handlers;
@@ -141,6 +143,8 @@ export class ConflictHook {
     apply: (conflictId: string, result: HandlerResult) => void,
   ): Promise<void> {
     try {
+      // Queued behind a run that was still going when the hook stopped: it must not start a command now.
+      if (this.#stopped) return;
       const result = await handler.on(event, conflict, context);
       if (result !== undefined) {
         apply(conflict.conflict.id, result);
@@ -168,6 +172,14 @@ export class ConflictHook {
   /** The conflicts in the checkout whose agent note waits for a handler now. */
   awaiting(checkoutPath: string): ReadonlySet<string> {
     return new Set(this.#awaiting.get(checkoutPath)?.keys() ?? []);
+  }
+
+  /**
+   * Start no handler from now on: a run queued behind one still going (a conflict's `closed` behind its `detected`)
+   * ends at once when its turn comes, its wait released. The handlers already running are left to their owner to end.
+   */
+  stop(): void {
+    this.#stopped = true;
   }
 
   /** Resolves once every handler running now has finished, and those they started. */

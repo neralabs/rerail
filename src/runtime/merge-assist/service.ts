@@ -8,7 +8,7 @@ import { ADAPTER_CAPABILITIES, type ConflictNotice, type RerailHost } from "../.
 import type { CheckoutContext } from "../../engine/catalog/repository-model.js";
 import { repositoryIdentityLocation } from "../../engine/catalog/repository-identity.js";
 import { lookupCheckout, mergeAssistEnabled, recordCheckout } from "../../engine/catalog/repository-registry.js";
-import { baseBranch, currentBranch, githubRepositoryOf } from "../../engine/merge-assist/branch-git.js";
+import { baseBranchAsync, currentBranchAsync, githubRepositoryOf } from "../../engine/merge-assist/branch-git.js";
 import { orderConflicts } from "../../engine/merge-assist/conflicts.js";
 import {
   githubReadinessSchema,
@@ -244,12 +244,21 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     }
   }
 
-  /** Hand conflict events in the checkout to the conflict hook's handlers, which run in the background. */
-  #fire(checkout: FiredCheckout, fires: readonly ConflictFire[], session: { id: string; host: RerailHost | null } | null): void {
+  /**
+   * Hand conflict events in the checkout to the conflict hook's handlers, which run in the background. `branches` is the
+   * checkout's branch and base branch, read by the caller before it changed the store, so the notes' holds are
+   * registered as the change lands.
+   */
+  #fire(
+    checkout: FiredCheckout,
+    fires: readonly ConflictFire[],
+    session: { id: string; host: RerailHost | null } | null,
+    branches: { readonly branch: string | null; readonly base: string | null },
+  ): void {
     if (fires.length === 0 || this.#stopped) return;
     const root = checkout.checkoutPath;
     const context: ConflictHandlerContext = {
-      checkout: { path: root, repositoryKey: checkout.repositoryKey, branch: currentBranch(root), base: baseBranch(root)?.name ?? null },
+      checkout: { path: root, repositoryKey: checkout.repositoryKey, ...branches },
       session,
       settings: readSettings(this.#db, checkout.repositoryKey),
       env: this.#options.env ?? process.env,
@@ -388,7 +397,13 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
         if (mergeAssistEnabled(tx, checkout.repositoryKey)) writeState(tx, STATE_KEYS.scan(checkout.checkoutPath), last, this.#now());
       }, { behavior: "immediate" });
     }
-    this.#fire(checkout, conflictEvents(detected.before, detected.after), session);
+    this.#fire(checkout, conflictEvents(detected.before, detected.after), session, detected.checkout);
+  }
+
+  /** The checkout's branch (null while detached) and its base branch's short name, as the conflict hook hears them. */
+  async #branches(root: string): Promise<{ branch: string | null; base: string | null }> {
+    const [branch, base] = await Promise.all([currentBranchAsync(root), baseBranchAsync(root)]);
+    return { branch, base: base?.name ?? null };
   }
 
   /** `gh`'s readiness as the status shows it: `unchecked` while Merge Assist is off, when Rerail runs no `gh`. */
@@ -403,11 +418,12 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     const db = this.#db;
     const root = checkout.checkoutPath;
     const enabled = mergeAssistEnabled(db, checkout.repositoryKey);
+    const { branch, base } = await this.#branches(root);
     return {
       repositoryKey: checkout.repositoryKey,
       checkout: root,
-      branch: currentBranch(root),
-      baseBranch: baseBranch(root)?.name ?? null,
+      branch,
+      baseBranch: base,
       enabled,
       settings: readSettings(db, checkout.repositoryKey),
       readiness: {
@@ -444,7 +460,8 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     this.#pulls.delete(repositoryKey);
     // Every conflict open when Merge Assist went off is closed: the hook hears it once, as for one no longer found.
     for (const { path, open } of cleared) {
-      this.#fire({ checkoutPath: path, repositoryKey }, open.map(conflict => ({ event: "closed", conflict })), null);
+      if (open.length === 0) continue;
+      this.#fire({ checkoutPath: path, repositoryKey }, open.map(conflict => ({ event: "closed", conflict })), null, await this.#branches(path));
     }
     return await this.status(checkout.checkoutPath);
   }
@@ -458,7 +475,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   async dismissConflict(checkoutPath: string, conflictId: string): Promise<MergeAssistStatus> {
     const checkout = this.#enabledCheckout(checkoutPath);
     const root = checkout.checkoutPath;
-    const name = personName(root);
+    const [name, branches] = await Promise.all([personName(root), this.#branches(root)]);
     // Found, checked and replaced in one transaction: of two dismissals at once, one changes the conflict and fires
     // `closed`; the other finds it dismissed.
     const dismissed = this.#db.transaction(tx => {
@@ -469,7 +486,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
       replaceConflict(tx, root, entry, this.#now());
       return entry;
     }, { behavior: "immediate" });
-    this.#fire(checkout, [{ event: "closed", conflict: dismissed }], null);
+    this.#fire(checkout, [{ event: "closed", conflict: dismissed }], null, branches);
     return await this.status(root);
   }
 
@@ -541,6 +558,8 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   async stop(waitMs = 2_000): Promise<void> {
     this.#stopped = true;
     this.#listeners.clear();
+    // No queued handler starts from now on, so none starts a command after the running ones are ended.
+    this.#hook.stop();
     const started = Date.now();
     await this.#commands.stop(Math.min(STOP_KILL_GRACE_MS, waitMs / 2));
     const timer = Promise.withResolvers<void>();

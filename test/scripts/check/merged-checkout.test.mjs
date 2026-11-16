@@ -1,10 +1,11 @@
 // scripts/check/merged-checkout.mjs: the pre-commit checks run on the working tree merged into the local origin/main,
 // as CI runs them on the pull request merged into main.
 
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { prepareMergedCheckout, removeMergedCheckout } from "../../../scripts/check/merged-checkout.mjs";
 import { removeFolderSync } from "../../support/platform/remove-folder.ts";
@@ -90,14 +91,17 @@ describe("the checkout the pre-commit checks run in", () => {
   it("takes what is being committed from the index a hook is handed", () => {
     const root = repository();
     mainGains(root, "main.txt", "from main\n");
-    writeFileSync(join(root, "staged.txt"), "staged\n");
-    git(root, "add", "staged.txt");
-    const index = join(root, ".git", "index");
+    writeFileSync(join(root, ".gitignore"), "*.log\n");
+    writeFileSync(join(root, "kept.log"), "kept\n");
+    // Another index, as `git commit -a` hands one, staging an ignored file the working tree alone would leave out.
+    const hookEnv = { ...ENV, GIT_INDEX_FILE: ".git/hook-index" };
+    copyFileSync(join(root, ".git", "index"), join(root, ".git", "hook-index"));
+    execFileSync("git", ["add", "--force", "kept.log"], { cwd: root, env: hookEnv });
 
-    const { checkout } = prepareMergedCheckout(root, { env: { ...ENV, GIT_INDEX_FILE: index } });
+    const { checkout } = prepareMergedCheckout(root, { env: hookEnv });
 
-    expect(readFileSync(join(checkout, "staged.txt"), "utf8")).toBe("staged\n");
-    expect(git(root, "diff", "--cached", "--name-only")).toBe("staged.txt");
+    expect(readFileSync(join(checkout, "kept.log"), "utf8")).toBe("kept\n");
+    expect(git(root, "diff", "--cached", "--name-only")).toBe("");
     removeMergedCheckout(root, checkout, options);
   });
 
@@ -111,9 +115,82 @@ describe("the checkout the pre-commit checks run in", () => {
     });
   });
 
+  it("says why when git merge-tree fails other than on a conflict", () => {
+    const root = repository();
+    git(root, "update-ref", "refs/remotes/origin/main", git(root, "commit-tree", "HEAD^{tree}", "-m", "unrelated"));
+
+    expect(() => prepareMergedCheckout(root, options)).toThrow(/needs Git 2\.38.*unrelated histories/su);
+    expect(git(root, "worktree", "list").split("\n")).toHaveLength(1);
+  });
+
+  it("removes the worktree it made when a later step fails", () => {
+    const root = repository();
+    mainGains(root, "main.txt", "from main\n");
+    // A node_modules folder in the work leaves no room for the link to this checkout's.
+    mkdirSync(join(root, "node_modules"));
+    writeFileSync(join(root, "node_modules", "x.txt"), "x\n");
+
+    expect(() => prepareMergedCheckout(root, options)).toThrow(/EEXIST/u);
+    expect(git(root, "worktree", "list").split("\n")).toHaveLength(1);
+  });
+
   it("removes nothing it did not make", () => {
     const root = repository();
     removeMergedCheckout(root, root, options);
     expect(existsSync(join(root, "a.txt"))).toBe(true);
+  });
+});
+
+/** A stub on PATH: `npm run --silent check` lists what Git sees, and every other check passes. */
+const STUBS = { npm: '#!/bin/sh\n[ "$3" != check ] || exec git ls-files\n', just: "#!/bin/sh\nexit 0\n" };
+
+/** `root` with the real pre-commit scripts committed on `feature`, and `main.txt` on `origin/main` only. */
+function hookRepository() {
+  const root = repository();
+  mkdirSync(join(root, "scripts", "check"), { recursive: true });
+  mkdirSync(join(root, "scripts", "release"));
+  for (const script of ["pre-commit.sh", "merged-checkout.mjs"]) {
+    copyFileSync(fileURLToPath(new URL(`../../../scripts/check/${script}`, import.meta.url)), join(root, "scripts", "check", script));
+  }
+  writeFileSync(join(root, "scripts", "release", "core-changelog-check.mjs"), "");
+  writeFileSync(join(root, "branch.txt"), "branch\n");
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "hook");
+  mainGains(root, "main.txt", "from main\n");
+  const bin = join(root, ".git", "stub-bin");
+  mkdirSync(bin);
+  for (const [name, text] of Object.entries(STUBS)) writeFileSync(join(bin, name), text, { mode: 0o755 });
+  return { root, path: `${bin}:${process.env.PATH}` };
+}
+
+/** Runs scripts/check/pre-commit.sh in `cwd` with `env` as Git hands it to a hook, returning what the checks listed. */
+function runHook(cwd, env) {
+  const run = spawnSync("sh", ["scripts/check/pre-commit.sh"], { cwd, env, encoding: "utf8" });
+  expect(run.status, run.stderr).toBe(0);
+  return run.stdout.split("\n").filter(Boolean);
+}
+
+describe.skipIf(process.platform === "win32")("the pre-commit hook", () => {
+  it("checks the merged tree from a clone's own checkout, given the hook's relative index", { timeout: 30_000 }, () => {
+    const { root, path } = hookRepository();
+
+    const listed = runHook(root, { ...ENV, PATH: path, GIT_INDEX_FILE: ".git/index" });
+
+    expect(listed).toEqual(expect.arrayContaining(["a.txt", "branch.txt", "main.txt"]));
+    expect(git(root, "worktree", "list").split("\n")).toHaveLength(1);
+  });
+
+  it("checks the merged tree from a linked worktree, given the hook's GIT_DIR", { timeout: 30_000 }, () => {
+    const { root, path } = hookRepository();
+    const parent = realpathSync(mkdtempSync(join(tmpdir(), "rerail-merged-checkout-linked-")));
+    roots.push(parent);
+    const linked = join(parent, "linked");
+    git(root, "worktree", "add", "-q", "-b", "linked", linked, "feature");
+    const admin = join(root, ".git", "worktrees", "linked");
+
+    const listed = runHook(linked, { ...ENV, PATH: path, GIT_DIR: admin, GIT_INDEX_FILE: join(admin, "index") });
+
+    expect(listed).toEqual(expect.arrayContaining(["a.txt", "branch.txt", "main.txt"]));
+    expect(git(root, "worktree", "list").split("\n")).toHaveLength(2);
   });
 });

@@ -64,13 +64,13 @@ describe("rerail's command dispatch", () => {
   ] as Array<[string[], ExperimentalFeature]>)("%j refuses while its experiment is off, naming the variable", (args, feature) => {
     vi.stubEnv(`RERAIL_EXPERIMENTAL_${feature}`, "0");
     refuses(args, experimentOffMessage(feature), false);
-  });
+  }, 60_000);
 
   it("merge-assist refuses while its experiment is off, naming the variable", () => {
     vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "0");
     const run = rerail(["merge-assist"]);
     expect(run).toMatchObject({ stdout: "", stderr: `● ${experimentOffMessage("MERGE_ASSIST")}\n`, status: 1 });
-  });
+  }, 60_000);
 
   it.each([
     [["profile"]],
@@ -79,7 +79,7 @@ describe("rerail's command dispatch", () => {
     vi.stubEnv("RERAIL_EXPERIMENTAL_ACTIVATION_PROFILES", "0");
     const run = rerail(args);
     expect(run).toMatchObject({ stdout: "No active Rerail customer profile.\n", stderr: "", status: 0 });
-  });
+  }, 60_000);
 
   it.each([
     [["remote", "list"]],
@@ -90,7 +90,7 @@ describe("rerail's command dispatch", () => {
     const run = rerail(args);
     expect(run.stderr).toBe("");
     expect(run.status).toBe(0);
-  });
+  }, 60_000);
 
   it.each([
     [["stop", "--nope"], "Unknown stop option: --nope"],

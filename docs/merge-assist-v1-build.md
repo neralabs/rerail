@@ -56,7 +56,9 @@ so the daemon keeps answering sessions while it runs. It never runs while Merge 
   on the same code, which is worth a word between the people involved before either merges.
 
 A scan records when it ran, how many branches and pull requests it compared, and what it could not read, including a
-`gh` whose sign-in or pull requests could not be read (remote-tracking branches then stood in).
+`gh` whose sign-in or pull requests could not be read (remote-tracking branches then stood in), branches Git could not
+list, and a branch or pull request it could not compare (a diff too large or too slow). Whatever a pass could not read
+keeps the open conflicts an earlier pass found with it: none of them closes for that.
 
 **The id** is `conflict:<question>:<8 hex of their branch>`. Their branch is its head branch name with any remote
 prefix dropped, `<owner>:<branch>` for a pull request from a fork, so the id holds when the same branch is found
@@ -148,10 +150,11 @@ array run without a shell, from the checkout's root, with a timeout of 10 second
 Dismiss ("Not a conflict") is the only thing a person does to a conflict: on the dashboard, with
 `rerail merge-assist dismiss <conflict-id>`, or `merge_assist_conflict_dismiss`. The conflict records
 `dismissal: { name, at }` (Git's `user.name`, else the account name) and stays dismissed for its id while Merge Assist
-stays on; `closed` fires at once, once. A dismissed conflict keeps its title, their side's label and author, and who
-dismissed it, not its hunks. A coding agent is refused (`403 agent-not-permitted`) on the MCP tools. `rerail merge-assist
-scan` and `dismiss` wait for the hook command's answer and print the status with it. Otherwise the conflict closes
-when the overlap is gone.
+stays on; `closed` fires at once, once. A dismissed conflict keeps everything but its hunks and evidence: its title,
+summary, question, files and anchor, each side's label, ref, sha, author, url, summary and location, who dismissed it,
+and the hook command's last answer (`note`, `status`, `error`). A coding agent is refused (`403 agent-not-permitted`)
+on the MCP tools. `rerail merge-assist scan` and `dismiss` wait for the hook command's answer and print the status with
+it. Otherwise the conflict closes when the overlap is gone.
 
 ## Storage
 
@@ -162,8 +165,10 @@ when the overlap is gone.
   left by a process that died does not block scans), `github:<repository>` (`gh` readiness, reused for five minutes;
   one that could not be read is never kept), `delivered:<session>` (the notes a session was handed) and
   `settings:<repository>` (the hook command). A value that does not match what the build expects reads as absent, one
-  conflict at a time. A checkout Rerail forgets takes its `conflicts:`, `scan:` and `scanning:` rows with it, and
-  `rerail reset` drops the `delivered:` rows of the sessions it removes.
+  conflict at a time. A checkout Rerail forgets takes its `conflicts:`, `scan:` and `scanning:` rows with it; a
+  repository that takes a new key (a clone that gains a remote) takes its `settings:` row along and drops its
+  `github:` one, and a repository Rerail removes takes both with it; `rerail reset` drops the `delivered:` rows of the
+  sessions it removes.
 
 Nothing is written into the checkout. Earlier builds of this branch had `merge_assist_items` and
 `merge_assist_judgments` tables; they never shipped, so they were dropped without a migration.

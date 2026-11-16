@@ -14,6 +14,8 @@ let held: Held[] = [];
 let holding = false;
 /** How the daemon answers a Merge Assist read the test does not hold. */
 let mergeRead: () => Response;
+/** The daemon's process id, which a restart changes. */
+let pid = 1;
 
 const json = (body: unknown, code = 200): Response => new Response(JSON.stringify(body), { status: code });
 
@@ -27,7 +29,7 @@ const status = (conflictStatus: "open" | "dismissed"): MergeAssistStatus => samp
 
 /** Every other read a poll makes, each empty. */
 function emptyDaemon(url: URL): Response {
-  if (url.pathname === "/healthz") return json({ version: "1", pid: 1 });
+  if (url.pathname === "/healthz") return json({ version: "1", pid });
   if (url.pathname === "/api/repositories") return json({ repositories: [] });
   if (url.pathname === "/api/repository") return json({ repository: data.repository, checkout: null });
   if (url.pathname === "/api/repository/rules") return json({ rules: [], unavailable: [] });
@@ -44,6 +46,7 @@ beforeEach(() => {
   held = [];
   holding = false;
   mergeRead = () => json(status("open"));
+  pid = 1;
   vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
   vi.stubGlobal("fetch", async (input: URL, init: { method?: string } = {}) => {
     const url = new URL(input);
@@ -139,6 +142,22 @@ describe("Merge Assist reads and writes", () => {
     await refresh();
 
     expect(requested.filter(url => url.pathname === "/api/merge-assist")).toHaveLength(1);
+  });
+
+  it("reads Merge Assist again once the daemon restarts, since it may run with the experiment on now", async () => {
+    mergeRead = () => json({ error: "experimental-off", message: "Merge Assist is experimental and off." }, 404);
+    await refresh();
+    expect(data.mergeAssistExperiment).toBe(false);
+
+    pid = 2;
+    mergeRead = () => json(status("open"));
+    // The poll that sees the restart has already passed over Merge Assist; the next one reads it.
+    await refresh();
+    await refresh();
+
+    expect(data.mergeAssistExperiment).toBe(true);
+    expect(data.mergeAssist!.conflicts[0]!.status).toBe("open");
+    expect(requested.filter(url => url.pathname === "/api/merge-assist")).toHaveLength(2);
   });
 
   it("takes another 404 as a failed read, and shows Merge Assist in the sidebar only once a read succeeds", async () => {

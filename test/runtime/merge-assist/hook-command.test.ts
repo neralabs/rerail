@@ -1,4 +1,5 @@
 import { tmpdir } from "node:os";
+import { basename, dirname } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAX_HOOK_STATUS, runHookCommand, stopCommand, type HookAnswer, type HookPayload } from "../../../src/runtime/merge-assist/hook-command.js";
 import { sampleConflict } from "../../support/merge-assist/status.js";
@@ -25,6 +26,23 @@ describe("the conflict hook command's answer", () => {
     const answer = await answering({ status });
     expect([...answer.status!]).toHaveLength(MAX_HOOK_STATUS);
     expect(answer.status).toBe(`${"a".repeat(MAX_HOOK_STATUS - 2)}🔥…`);
+  });
+});
+
+describe("starting the conflict hook command", () => {
+  const run = (program: string) => runHookCommand({ command: [program], timeoutSeconds: 10 }, payload, { cwd: tmpdir(), env: process.env });
+
+  it("records a program PATH does not find, or one Node refuses to start, as the command's failure", async () => {
+    expect(await run("rerail-no-such-hook-program")).toEqual({
+      ok: false, error: "could not start rerail-no-such-hook-program: no such program on PATH", note: null, status: null,
+    });
+    // A path Node refuses before starting anything throws rather than emitting `error`.
+    expect(await run("./bad\u0000name")).toMatchObject({ ok: false, error: expect.stringMatching(/^could not start \.\/bad\u0000name: /u) });
+  });
+
+  it("starts a program by a path from the checkout's root", async () => {
+    const answer = await runHookCommand({ command: [`./${basename(process.execPath)}`, "-e", "process.stdout.write('{}')"], timeoutSeconds: 10 }, payload, { cwd: dirname(process.execPath), env: process.env });
+    expect(answer).toEqual({ ok: true, error: null, note: null, status: null });
   });
 });
 

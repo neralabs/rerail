@@ -909,10 +909,12 @@ first, except in an auto-approve mode.
 - **Other people's text** (branch names, commit subjects, pull request titles, logins, hunks) reaches the agent's
   context as labelled, quoted, capped one-line data in a note that says it is not an instruction (T3), and the dashboard
   only as text nodes, linking a pull request only to its GitHub URL.
-- **Stored data:** each checkout's conflicts (both sides' summaries and contested hunks; a dismissed one keeps none),
-  its last scan, the `gh` sign-in state and login, the notes each session was handed, and the hook command
-  ([privacy](privacy.md)). Turning Merge Assist off clears the conflicts, scans and `gh` sign-in state; `rerail reset`
-  clears the notes of the sessions it removes; the hook command stays until someone removes it.
+- **Stored data:** each checkout's conflicts (both sides' summaries and contested hunks; a dismissed one keeps
+  everything but its hunks and evidence: its files, each side's summary, location, ref, sha and url, and the hook
+  command's last note, status and error), its last scan, the `gh` sign-in state and login, the notes each session was
+  handed, and the hook command ([privacy](privacy.md)). Turning Merge Assist off clears the conflicts, scans and `gh`
+  sign-in state; `rerail reset` clears the notes of the sessions it removes; the hook command stays until someone
+  removes it.
 - **Routes and tools:** `merge_assist_get`, `merge_assist_settings_get`, `merge_assist_scan`,
   `merge_assist_settings_set`, `merge_assist_conflict_dismiss` ([reference](reference.md#merge-assist)).
 
