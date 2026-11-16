@@ -6,7 +6,7 @@
 //! constants then become integers by the domain they meet: name atoms (interned), or kind and field atoms in the
 //! program's dialect (`-1`, which matches nothing, for a name the grammar lacks). Planning and SQL see only integers.
 
-use super::super::front::{AggOp, Atom, Literal, Program, Term, Value};
+use super::super::front::{AggOp, Atom, Branded, Class, Literal, Program, Term, Value};
 use super::{Error, Result};
 use crate::code_rule_dsl::facts::core::kind_atom;
 use crate::code_rule_dsl::facts::vtab::syntax::field_atom;
@@ -315,26 +315,18 @@ pub(in crate::code_rule_dsl) fn columns_of(domains: &Domains) -> HashMap<&str, V
     domains.iter().map(|(r, ds)| (r.as_str(), ds.iter().copied().map(Some).collect())).collect()
 }
 
-/// The domains of a new relation's columns past `known` (those it shares with a relation `domains` covers), from
-/// `rule`, its one rule: each column's declared type (`types`), else its head variable's domain in the rule's body
-/// (`cols`, `columns_of`), else a name, as `domains` finds them. A support relation (`supports`, `h__supN`) holds its
-/// head's columns, then the variables its body binds: a kind there (`kind(p, k)`) is a kind id, no atom (decision
-/// 0170), and given the head's domains alone it was taken for one.
-pub(in crate::code_rule_dsl) fn rule_head_domains(rule: &super::super::front::Rule, types: &[&str], known: &[Domain], cols: &HashMap<&str, Vec<Option<Domain>>>) -> Result<Vec<Domain>> {
-    let vars = rule_vars(rule, &mut |a: &Atom| cols.get(a.rel.as_str()).map(Vec::as_slice))?;
-    Ok(types
-        .iter()
-        .enumerate()
-        .map(|(c, t)| match *t {
-            _ if c < known.len() => known[c],
-            "int" | "flat" | "min" | "max" => Domain::Int,
-            "node" => Domain::Node,
-            _ => match rule.head.args.get(c) {
-                Some(Term::Var(v)) => vars.get(v.as_str()).copied().unwrap_or(Domain::Name),
-                _ => Domain::Name,
-            },
-        })
-        .collect())
+/// The domain of column `c` (declared `t`) of a new relation that shares its first `known` columns with a relation
+/// `domains` covers: past those, its declared type's, else its variable's domain in the relation's one rule (`var`),
+/// else a name, as `domains` finds them. A support relation (`supports`, `h__supN`) holds its head's columns, then the
+/// variables its body binds: a kind there (`kind(p, k)`) is a kind id, no atom (decision 0170), and given the head's
+/// domains alone it was taken for one.
+pub(in crate::code_rule_dsl) fn column_domain(c: usize, t: &str, known: &[Domain], var: Option<Domain>) -> Domain {
+    match t {
+        _ if c < known.len() => known[c],
+        "int" | "flat" | "min" | "max" => Domain::Int,
+        "node" => Domain::Node,
+        _ => var.unwrap_or(Domain::Name),
+    }
 }
 
 /// A lowered program's tree, where a reader still reads one (decision 0173: on the run path, none should): given, or
@@ -355,7 +347,7 @@ type Reads = std::cell::Cell<(usize, Option<&'static std::panic::Location<'stati
 
 thread_local! {
     /// The trees this thread decoded from their versions, the shared trees it copied to edit them, and its reads of
-    /// a version's tree, decoded or held beside it (`Tree`): a count and the last place each, beside the profile's
+    /// a version's tree (`Tree`): a count and the last place each, beside the profile's
     /// decision naming every place.
     static TREE_READS: [Reads; 3] = const { [std::cell::Cell::new((0, None)), std::cell::Cell::new((0, None)), std::cell::Cell::new((0, None))] };
 }
@@ -371,7 +363,7 @@ pub fn trees_copied() -> (usize, Option<String>) {
     tree_reads(1)
 }
 
-/// How many times this thread read a version's tree (decoded, or held beside the version) so far, and where the
+/// How many times this thread read a version's tree so far, and where the
 /// last was (`trees_decoded`): a run that reads its versions alone reads none.
 pub fn version_trees_read() -> (usize, Option<String>) {
     tree_reads(2)
@@ -403,13 +395,6 @@ impl Tree {
     pub fn of(v: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Self {
         Tree { tree: Default::default(), of: Some((v, None)) }
     }
-    /// The tree of version `v`, held as `program` where the caller made it beside the version (a split's part, made of
-    /// the tree it splits): decoded by no reader, and each reader named as one of a version's tree.
-    pub fn beside(v: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, program: Program) -> Self {
-        let tree = std::sync::OnceLock::new();
-        let _ = tree.set(program);
-        Tree { tree: std::sync::Arc::new(tree), of: Some((v, None)) }
-    }
     /// The tree of version `v` with maintained parts `m` (`again`, `together`), decoded only where a reader asks.
     pub(in crate::code_rule_dsl) fn maintained(v: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, m: Option<std::sync::Arc<super::body::Maint>>) -> Self {
         Tree { tree: Default::default(), of: Some((v, m)) }
@@ -419,8 +404,8 @@ impl Tree {
     pub fn placed(&self) -> super::Result<super::body::Placed> {
         match &self.of {
             Some((v, m)) => {
-                // A tree held beside its version is of the version's rules and fields; maintained parts are in `m`.
-                debug_assert!(self.tree.get().is_none_or(|p| m.is_some() || (p.again.is_empty() && p.together.is_empty())), "a tree beside its version has maintained parts the version does not state");
+                // A tree decoded from its version is of the version's rules and fields; maintained parts are in `m`.
+                debug_assert!(self.tree.get().is_none_or(|p| m.is_some() || (p.again.is_empty() && p.together.is_empty())), "a version's tree has maintained parts the version does not state");
                 Ok(match m {
                     Some(_) => super::body::Placed::derived(v.clone(), m.clone()),
                     None => super::body::Placed::whole(v.clone()),
@@ -600,32 +585,34 @@ struct Constants<'a> {
 }
 
 impl Constants<'_> {
-    fn of(&self, s: &str, d: Domain) -> Result<i64> {
+    /// The atom `s` is in domain `d`, branded with what it names (decision 0270); `None` for a kind or field the
+    /// grammar does not have, which matches nothing (the run's -1).
+    fn sym(&self, s: &str, d: Domain) -> Result<Option<Branded>> {
+        let kind = |code: u16, tag: u8| (code != 0).then(|| Branded { class: Class::Kind, atom: kind_atom(tag, code) });
+        let field = |code: Option<u16>, tag: u8| code.map(|code| Branded { class: Class::Field, atom: field_atom(tag, code) });
         Ok(match d {
-            Domain::Name => self.names[s],
+            Domain::Name => Some(Branded::name(u32::try_from(self.names[s]).expect("a name atom is a u32"))),
             // `"sql:select"`: a kind of another grammar, as a guest's are (decision 0058 §2).
             Domain::Kind | Domain::Field if let Some((label, name)) = super::corpus::qualified(s) => {
                 let dialect = crate::code_rule_dsl::language::dialect_by_label(label).expect("a registry label");
-                let (Some(tag), kinds) = (tape_tag(dialect), dialect.kinds()) else { return Ok(-1) };
+                let (Some(tag), kinds) = (tape_tag(dialect), dialect.kinds()) else { return Ok(None) };
                 match d {
-                    Domain::Kind => match kinds.kind_id(name) {
-                        0 => -1,
-                        code => i64::from(kind_atom(tag, code)),
-                    },
-                    _ => kinds.field_id(name).map_or(-1, |code| i64::from(field_atom(tag, code))),
+                    Domain::Kind => kind(kinds.kind_id(name), tag),
+                    _ => field(kinds.field_id(name), tag),
                 }
             }
-            Domain::Kind => match self.kinds.kind_id(s) {
-                0 => -1,
-                code => i64::from(kind_atom(self.tag, code)),
-            },
-            Domain::Field => self.kinds.field_id(s).map_or(-1, |code| i64::from(field_atom(self.tag, code))),
+            Domain::Kind => kind(self.kinds.kind_id(s), self.tag),
+            Domain::Field => field(self.kinds.field_id(s), self.tag),
             Domain::Int | Domain::Node => return Err(Error::Plan(format!("the string \"{s}\" stands where an integer goes"))),
         })
     }
+    /// `sym`'s value as the run holds it.
+    fn of(&self, s: &str, d: Domain) -> Result<i64> {
+        Ok(self.sym(s, d)?.map_or(-1, Branded::value))
+    }
     fn term(&self, t: &mut Term, d: Option<Domain>) -> Result<()> {
         match t {
-            Term::Str(s) => *t = Term::Int(self.of(s, d.unwrap_or(Domain::Name))?),
+            Term::Str(s) => *t = self.sym(s, d.unwrap_or(Domain::Name))?.map_or(Term::Int(-1), Term::Branded),
             Term::Call(f, args) => {
                 let (domains, _) = functor_domains(f, args.len());
                 for (a, d) in args.iter_mut().zip(domains) {
@@ -644,6 +631,44 @@ fn strings(t: &Term, out: &mut Vec<String>) {
         Term::Call(_, args) => args.iter().for_each(|a| strings(a, out)),
         _ => {}
     }
+}
+
+/// `prog`, lowered for another store, with its name atoms moved to this store's (decision 0270): `to` gives each name
+/// atom's atom here. Only a branded name moves; a kind or a field is the grammar's, and an integer is an integer.
+/// `false` when a name has none in `to` (the caller prepares again), with `prog` part moved.
+pub fn relocate(prog: &mut Program, to: &HashMap<u32, u32>) -> bool {
+    fn term(t: &mut Term, to: &HashMap<u32, u32>) -> bool {
+        match t {
+            Term::Branded(b) if b.class == Class::Name => match to.get(&b.atom) {
+                Some(&a) => {
+                    b.atom = a;
+                    true
+                }
+                None => false,
+            },
+            Term::Call(_, args) => args.iter_mut().all(|a| term(a, to)),
+            _ => true,
+        }
+    }
+    let atom = |a: &mut Atom| a.args.iter_mut().all(|t| term(t, to));
+    let rule = |r: &mut super::super::front::Rule| {
+        atom(&mut r.head)
+            && r.body.iter_mut().all(|l| match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => atom(a),
+                Literal::Cmp { l, r, .. } => term(l, to) && term(r, to),
+                Literal::Nearest { .. } | Literal::Ast { .. } => true,
+            })
+    };
+    let again = prog.again.iter_mut().flat_map(|a| a.rules.iter_mut().chain(a.deltas.iter_mut()));
+    if !prog.rules.iter_mut().chain(again).all(rule) {
+        return false;
+    }
+    prog.facts.values_mut().flatten().all(|row| {
+        row.iter_mut().all(|v| match v {
+            Value::Branded(b) if b.class == Class::Name => to.get(&b.atom).map(|&a| b.atom = a).is_some(),
+            _ => true,
+        })
+    })
 }
 
 /// Lowers `prog` for `dialect`; `intern` gives the name atoms of strings, interning new ones.
@@ -749,10 +774,10 @@ pub fn lower(
             for (c, v) in row.iter_mut().enumerate() {
                 if let Value::Str(s) = v {
                     let d = domains.get(rel.as_str()).and_then(|ds| ds.get(c)).copied().unwrap_or(Domain::Name);
-                    *v = Value::Int(k.of(s, d).map_err(|e| match e {
+                    *v = k.sym(s, d).map_err(|e| match e {
                         Error::Plan(m) => Error::Plan(format!("fact of {rel}, column {c}: {m}")),
                         e => e,
-                    })?);
+                    })?.map_or(Value::Int(-1), Value::Branded);
                 }
             }
         }

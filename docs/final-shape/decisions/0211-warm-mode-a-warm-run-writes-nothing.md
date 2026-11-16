@@ -60,6 +60,7 @@ both before every commit (the commit hook runs it beside the cache and thread-st
   | the combined program's pins released | The release of the combined program's leases |
   | the run's manifest | Timestamps, only for a manifest identical to one stored: its last run and time move, by which collection keeps a root's last two. A new manifest is a fault (`a new manifest recorded`) |
   | the journal's aged cursor | A timestamp: a root's journal cursor, or a cutoff record's (`git-files:`, `cone-rounds:`), stored again once it is `observe::CURSOR_AGE` (2^20) events behind with nothing named since. Added with the user's approval (2026-11-14) |
+  | the cost statistics | The cost statistics' own file (`costs.sqlite`): the samples, SQL plan reports and kernel forms a run measured, and the model trained on them. What a run cost is a measurement, never a result recomputed. Its writes (`costs::write`, `save`) open a scope of this job. Added with the user's approval (2026-11-15); test `a_warm_run_writes_its_cost_statistics` |
 
   Neither the queued job nor its commit is a fault, and only when every job in the writer's transaction is
   listed. The writer opens a scope around each transaction (`profile::warm_scope`), each job marks it
@@ -71,6 +72,9 @@ both before every commit (the commit hook runs it beside the cache and thread-st
 
 One name collided. The Metal segment benchmark (`parser_tests::metal_tests`) read `RERAIL_WARM` as its count of
 warm-up blocks, so turning the check on changed that benchmark. It is now `RERAIL_SEG_WARM`.
+
+A test that sets `RERAIL_WARM` for a child process it runs (`.env("RERAIL_WARM", …)`) reads nothing in its own
+process, and the check passes it (2026-11-15). It had failed on the test of decision 0250 since that was added.
 
 ## First findings: the `dl1` batch
 

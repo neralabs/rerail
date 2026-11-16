@@ -39,7 +39,7 @@ fn equality(model: &mut keys::Projection, a: &Term, b: &Term) {
     if let Some(a) = variable(a) {
         match b {
             Term::Var(b) => model.equalities.push((a, b.to_string())),
-            Term::Int(_) | Term::Str(_) | Term::Top => {
+            Term::Int(_) | Term::Branded(_) | Term::Str(_) | Term::Top => {
                 model.fixed.insert(a);
             }
             _ => {}
@@ -60,7 +60,7 @@ fn projection(head: &Atom, body: &[Literal], known: &keys::Keys) -> keys::Projec
                 for (c, term) in atom.args.iter().enumerate() {
                     match term {
                         Term::Var(v) => model.equalities.push((columns[c].clone(), v.to_string())),
-                        Term::Int(_) | Term::Str(_) | Term::Top => {
+                        Term::Int(_) | Term::Branded(_) | Term::Str(_) | Term::Top => {
                             model.fixed.insert(columns[c].clone());
                         }
                         Term::Call(_, _) => model.opaque = true,
@@ -183,6 +183,9 @@ fn scalar_inputs(body: &[Literal]) -> Vec<scalars::Scalar> {
                 }
                 Term::Int(n) => {
                     predicates.push(E::Apply("=".into(), vec![E::Column(i), E::Integer(*n)]))
+                }
+                Term::Branded(a) => {
+                    predicates.push(E::Apply("=".into(), vec![E::Column(i), E::Integer(a.value())]))
                 }
                 Term::Str(s) => {
                     predicates.push(E::Apply("=".into(), vec![E::Column(i), E::Text(s.to_string())]))

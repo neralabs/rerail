@@ -1681,6 +1681,31 @@ pub mod tests {
         codes.iter().map(|c| c & !lazy).collect()
     }
 
+    /// A string's, a comment's and a backtick's tokens end plainly (`plain_end`): no start is
+    /// put back after them, as the lean lexer's arms for them put none back. A number's can end
+    /// before a word's byte (`12abc`), and `#include`'s inside a run: theirs are put back, the
+    /// run's byte alone (`word_end`).
+    #[test]
+    fn a_strings_end_puts_no_start_back() {
+        let c = crate::compiled().expect("compiles");
+        let t = c.parser.tier1.records.as_ref().expect("the record pass");
+        for b in [b'"', b'`', b'/'] {
+            assert_eq!(t.end_at(b), rerail_compiler::native_cpu_block::TokenEnd::Plain, "{:?} ends plainly", b as char);
+        }
+        for b in [b'0', b'7', b'#', b'a', b'('] {
+            assert_ne!(t.end_at(b), rerail_compiler::native_cpu_block::TokenEnd::Plain, "{:?} does not", b as char);
+        }
+        // A number's and `#include`'s last byte is no pair's first (`12.5`'s dot is no run's
+        // last): the byte after is put back where it is a run byte alone, as the lean lexer's
+        // number arm reads the word after it. A punctuation's can be a pair's first.
+        for b in [b'0', b'7', b'#'] {
+            assert_eq!(t.end_at(b), rerail_compiler::native_cpu_block::TokenEnd::Word, "{:?} ends with no pair's first byte", b as char);
+        }
+        for b in [b'"', b'/', b'('] {
+            assert_ne!(t.end_at(b), rerail_compiler::native_cpu_block::TokenEnd::Word, "{:?} is not of the class", b as char);
+        }
+    }
+
     /// The CPU's tier 1 (the JIT) makes the interpreter's records: each file's starts, lasts,
     /// codes and totals, over the samples, a corpus sample and files cut at the blocks' edges.
     #[test]
@@ -1696,6 +1721,14 @@ pub mod tests {
         for n in [1usize, 63, 64, 65, 127, 128, 129, 200] {
             inputs.push(format!("r(x) :- a(x), {}.\n", "b".repeat(n)).into_bytes());
             inputs.push(format!("{}\"open", " ".repeat(n)).into_bytes());
+        }
+        // A word on past its block by its next block's first 16 bytes (`short_word`) or more,
+        // and one to the file's end.
+        for pad in [48usize, 50, 62, 63] {
+            for n in [1usize, 2, 15, 16, 17, 18, 31, 80] {
+                inputs.push(format!("{}{} x\n", " ".repeat(pad), "w".repeat(n)).into_bytes());
+                inputs.push(format!("{}{}", " ".repeat(pad), "w".repeat(n)).into_bytes());
+            }
         }
         // Two-byte spellings (`pairs`): runs of them, and one at the file's end. The CPU reads
         // the next byte (`EndRule::Next`); the interpreter's rule is the same, its mask Metal's.
@@ -1743,6 +1776,20 @@ pub mod tests {
                 inputs.push(format!("a(\"{}{odd}x\", 1).\n", "s".repeat(at)).into_bytes());
                 inputs.push(format!("a(\"{}{odd}\", 1).\n", "s".repeat(at)).into_bytes());
                 inputs.push(format!("a(\"{}{odd}{}\", 1).\n", "s".repeat(at), "x".repeat(80)).into_bytes());
+            }
+        }
+        // A byte the counts need right after the closer, in its window (`read_fn` makes the
+        // tests' masks with the closer's: the window's bits past the closer are not the
+        // token's), and the next string's `\u` in the same window.
+        for at in [0usize, 1, 30, 60, 61, 62, 63, 64, 65, 127] {
+            inputs.push(format!("a(\"{}\"\t, 1).\n", "s".repeat(at)).into_bytes());
+            inputs.push(format!("a(\"{}\", \"\\u12\").\n", "s".repeat(at)).into_bytes());
+        }
+        // A `/` alone, the comment reader's other rule: its code is its kind, no word looked up
+        // (no word starts with `/`), and a comment's tail is its own (`known_tail`).
+        for pad in [0usize, 1, 62, 63] {
+            for t in ["a(x) :- x = 4 / 2.", "x/y", "/", "a / // c\nb", "/ /* c */ /"] {
+                inputs.push(format!("{}{t}", " ".repeat(pad)).into_bytes());
             }
         }
         // A token alone in its block, then spaces to and past the block's end (a spent block:
@@ -1999,8 +2046,9 @@ pub mod tests {
             }
         }
         // A form feed in a gap across blocks: the refill folds a passed block's bits, and the
-        // bits before the cursor's block (a backtick literal's, a comment's) by the bytes.
-        for pad in [0usize, 30, 60] {
+        // bits before the cursor's block (a backtick literal's, a comment's) by the bytes; the
+        // last start's block's bits from its carried words, the start at its block's end too.
+        for pad in [0usize, 30, 60, 61, 62, 63] {
             let p = " ".repeat(pad);
             inputs.push(format!("{p}r(x) :- x = {{\"a\":\x0c{}1}}.\n", " ".repeat(70)).into_bytes());
             inputs.push(format!("{p}r(x) :- x = `\x0c{}`, y = 1.\n", "a".repeat(80)).into_bytes());

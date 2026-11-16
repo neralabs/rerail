@@ -65,6 +65,11 @@ opt-level = 3
 [profile.dev.package.rerail-markdown-inline-lean]
 opt-level = 3
 
+# The lean `.rr` parser (`rerail-rr-syntax`), the same: a step per token of every rule file a run reads (its libraries'
+# too) and of every program text read back (decision 0275). Its crate is small (the parser, its tape, the statements).
+[profile.dev.package.rerail-rr-syntax]
+opt-level = 3
+
 # The lean Vue parser (`rerail-vue-lean`), the same: a step per tag of every Vue file.
 [profile.dev.package.rerail-vue-lean]
 opt-level = 3

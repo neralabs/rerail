@@ -26,6 +26,7 @@ pub mod lanes;
 pub mod price;
 pub mod rows;
 pub mod score;
+pub mod sharded;
 pub mod stream;
 pub mod sql;
 

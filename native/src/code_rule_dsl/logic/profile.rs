@@ -36,6 +36,7 @@ use std::sync::{LazyLock, Mutex};
 pub mod analysis;
 pub mod analysis_report;
 pub mod kinds;
+pub mod life;
 pub mod memory;
 pub mod roofline;
 // cratify: `watch` is rerail-logic's (it mounts it)
@@ -417,6 +418,20 @@ impl Activity {
 /// Runs `blocking` (a receive, a send on a full channel, a join), recorded as a wait of this thread's span on
 /// `awaited`, and on what it was doing when it began (`doing`, an `Activity` of the awaited thread or a fixed name). The wall
 /// time is the wait; the CPU spent meanwhile is reported with it. Not profiling, it only runs `blocking`.
+/// The process's instructions retired so far (macOS; 0 elsewhere), as `settings::process_counters` reads them: what a
+/// timeline line carries beside its clock.
+pub fn retired_instructions() -> u64 {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: a zeroed `rusage_info_v4` is a valid out-value, and the flavour matches it.
+        let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v4>() };
+        if unsafe { libc::proc_pid_rusage(std::process::id() as i32, libc::RUSAGE_INFO_V4, (&raw mut info).cast()) } == 0 {
+            return info.ri_instructions;
+        }
+    }
+    0
+}
+
 /// The wall clock a timeline line carries (`RERAIL_TIMELINE`): seconds since the epoch, so the lines of nested
 /// runs and threads read on one axis.
 pub fn timeline_clock() -> f64 {
@@ -624,6 +639,296 @@ pub struct Thread {
     between: Option<(String, f64)>,
     /// Its CPU outside every span, by the outermost spans around it: (closed before, opened after) (`gaps`).
     gaps: HashMap<(String, String), f64>,
+    /// The run's thread only (`track_run_thread`, decision 0288): its time, charged to its innermost open span.
+    track: Option<Track>,
+}
+
+/// The run thread's time since its last span opened or closed, and what it was charged to (decision 0288). Each open
+/// and close charges the time since the last one to the span innermost then, so a span's own time is split exactly
+/// at its children's bounds, and a phase's is split where the phase ends (`run_thread_phase`).
+struct Track {
+    wall: std::time::Instant,
+    cpu: f64,
+    /// By the innermost span's path (`OUTSIDE` outside every span): wall, and the thread's CPU. A pool job the thread
+    /// runs while it waits opens spans of its own, so its CPU is charged to them.
+    by: HashMap<String, [f64; 2]>,
+}
+
+/// Where the run's thread was outside every span (`Track`).
+const OUTSIDE: &str = "(outside every span)";
+
+/// Charges the time since `track`'s last charge to the innermost of `opens`, with the thread's CPU now (`cpu`).
+fn charge(track: &mut Option<Track>, opens: &[Open], cpu: f64) {
+    let Some(t) = track.as_mut() else { return };
+    let now = std::time::Instant::now();
+    let at = opens.last().map_or(OUTSIDE, |o| o.path.as_str());
+    let d = [(now - t.wall).as_secs_f64(), cpu - t.cpu];
+    match t.by.get_mut(at) {
+        Some(e) => e.iter_mut().zip(d).for_each(|(a, b)| *a += b),
+        None => {
+            t.by.insert(at.to_owned(), d);
+        }
+    }
+    (t.wall, t.cpu) = (now, cpu);
+}
+
+/// Each phase of the run's thread (`run_thread_phase`): its name, and by span path the wall and CPU.
+type RunPhases = Vec<(&'static str, HashMap<String, [f64; 2]>)>;
+static RUN_PHASES: LazyLock<Mutex<RunPhases>> = LazyLock::new(Default::default);
+
+/// Starts charging this thread's time to its spans, phase by phase (decision 0288): the run's thread, once the run
+/// holds the profile. The phases kept so far are forgotten.
+pub fn track_run_thread() {
+    if !on() {
+        return;
+    }
+    RUN_PHASES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
+    STACK.with(|s| s.lock().track = Some(Track { wall: std::time::Instant::now(), cpu: cpu(), by: HashMap::new() }));
+}
+
+/// Ends phase `name` on the run's thread: its time since the phase before is kept under `name` (added to a phase of
+/// that name already kept, as `local` is per chunk). Nothing on a thread not tracked.
+pub fn run_thread_phase(name: &'static str) {
+    STACK.with(|s| {
+        let mut g = s.lock();
+        let s = &mut *g;
+        charge(&mut s.track, &s.opens, cpu());
+        let Some(t) = s.track.as_mut() else { return };
+        let by = std::mem::take(&mut t.by);
+        let mut all = RUN_PHASES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        match all.iter_mut().find(|p| p.0 == name) {
+            Some((_, kept)) => {
+                for (path, d) in by {
+                    let e = kept.entry(path).or_default();
+                    e.iter_mut().zip(d).for_each(|(a, b)| *a += b);
+                }
+            }
+            None => all.push((name, by)),
+        }
+    });
+}
+
+/// Stops charging this thread's time (the run's end).
+pub fn untrack_run_thread() {
+    STACK.with(|s| s.lock().track = None);
+}
+
+/// One phase of the run's thread, measured at its bounds (decision 0288), unprofiled as well: the phase's wall; the
+/// thread's own CPU in it, and the CPU of the pool's jobs it ran while it waited; the whole process's CPU in it; its
+/// threads' runnable time (macOS's `ri_runnable_time`: running, or ready with no core); and the process's involuntary
+/// context switches.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct PhaseClock {
+    pub wall: f64,
+    pub own: f64,
+    pub helped: f64,
+    pub process_cpu: f64,
+    pub runnable: f64,
+    pub involuntary: i64,
+}
+
+/// The clocks a `PhaseClock` is the difference of, read on the run's thread (`snapshot`).
+#[derive(Clone, Copy, Debug)]
+pub struct Snapshot {
+    at: std::time::Instant,
+    /// The thread's CPU, less the pool's jobs it ran while it waited (`rerail_accel::exec::helped`), and those.
+    own: f64,
+    helped: f64,
+    /// `process_clock`'s.
+    process: (f64, f64, i64),
+}
+
+/// This thread's clocks now, and the process's.
+pub fn snapshot() -> Snapshot {
+    let helped = rerail_accel::exec::helped();
+    Snapshot { at: std::time::Instant::now(), own: cpu() - helped, helped, process: process_clock() }
+}
+
+/// The command's start (`command_begins`) and its run's end (`run_ends`), for the time before and after its run.
+static COMMAND: Mutex<(Option<Snapshot>, Option<Snapshot>, f64)> = Mutex::new((None, None, 0.0));
+
+/// The command line's command begins (decision 0288): its clocks now, and the process's age (its start's time).
+/// Profiling, this thread's time is charged to its spans from here (`track_run_thread`): its run files what came
+/// before it as its phase `before`.
+pub fn command_begins() {
+    *COMMAND.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = (Some(snapshot()), None, process_age());
+    track_run_thread();
+}
+
+/// Whether this thread's time is charged to its spans (`track_run_thread`).
+pub fn tracked() -> bool {
+    STACK.with(|s| s.lock().track.is_some())
+}
+
+/// The command's start, taken by its first run that holds the profile or runs alone (`before`).
+pub fn take_command_start() -> Option<Snapshot> {
+    COMMAND.lock().unwrap_or_else(std::sync::PoisonError::into_inner).0.take()
+}
+
+/// The command's run ended with these clocks.
+pub fn run_ends(at: Snapshot) {
+    COMMAND.lock().unwrap_or_else(std::sync::PoisonError::into_inner).1 = Some(at);
+}
+
+/// The process's age when the command began, and the time since its run ended (`run_ends`), if it ran one.
+pub fn command_ends() -> (f64, Option<PhaseClock>) {
+    let mut c = COMMAND.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let age = c.2;
+    (age, c.1.take().map(|end| PhaseClock::between(&end, &snapshot())))
+}
+
+impl PhaseClock {
+    /// The clocks from `a` to `b`, both read on one thread.
+    pub fn between(a: &Snapshot, b: &Snapshot) -> PhaseClock {
+        PhaseClock {
+            wall: (b.at - a.at).as_secs_f64(),
+            own: b.own - a.own,
+            helped: b.helped - a.helped,
+            process_cpu: b.process.0 - a.process.0,
+            runnable: b.process.1 - a.process.1,
+            involuntary: b.process.2 - a.process.2,
+        }
+    }
+    /// The thread's wall off a core: blocked, or ready with no core.
+    pub fn off_core(&self) -> f64 {
+        (self.wall - self.own - self.helped).max(0.0)
+    }
+    /// The other threads' CPU meanwhile.
+    pub fn others(&self) -> f64 {
+        (self.process_cpu - self.own - self.helped).max(0.0)
+    }
+    /// The process's threads' time ready to run with no core: their runnable time less their CPU (the machine's load).
+    pub fn no_core(&self) -> f64 {
+        (self.runnable - self.process_cpu).max(0.0)
+    }
+    pub fn add(&mut self, o: &PhaseClock) {
+        self.wall += o.wall;
+        self.own += o.own;
+        self.helped += o.helped;
+        self.process_cpu += o.process_cpu;
+        self.runnable += o.runnable;
+        self.involuntary += o.involuntary;
+    }
+}
+
+/// The process's clocks now: its CPU (user + system), its threads' runnable seconds (macOS's `ri_runnable_time`, which
+/// counts a thread from when it is ready until it blocks, running or not; 0 elsewhere), and its involuntary context
+/// switches.
+pub fn process_clock() -> (f64, f64, i64) {
+    #[cfg(unix)]
+    let (cpu, involuntary) = {
+        let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
+        // SAFETY: fills a `rusage` for this process.
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+        let t = |v: libc::timeval| v.tv_sec as f64 + v.tv_usec as f64 / 1e6;
+        (t(usage.ru_utime) + t(usage.ru_stime), usage.ru_nivcsw as i64)
+    };
+    #[cfg(not(unix))]
+    let (cpu, involuntary) = (0.0, 0);
+    #[cfg(target_os = "macos")]
+    let runnable = {
+        // SAFETY: a zeroed `rusage_info_v4` is a valid out-value, and the flavour matches it.
+        let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v4>() };
+        if unsafe { libc::proc_pid_rusage(std::process::id() as i32, libc::RUSAGE_INFO_V4, (&raw mut info).cast()) } == 0 { info.ri_runnable_time as f64 * mach_tick() } else { 0.0 }
+    };
+    #[cfg(not(target_os = "macos"))]
+    let runnable = 0.0;
+    (cpu, runnable, involuntary)
+}
+
+/// Seconds since this process started (macOS, Linux; 0 elsewhere): the command's wall so far.
+pub fn process_age() -> f64 {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: a zeroed `proc_bsdinfo` is a valid out-value of the size passed.
+        let mut info = unsafe { std::mem::zeroed::<libc::proc_bsdinfo>() };
+        let size = std::mem::size_of::<libc::proc_bsdinfo>() as i32;
+        if unsafe { libc::proc_pidinfo(std::process::id() as i32, libc::PROC_PIDTBSDINFO, 0, (&raw mut info).cast(), size) } == size {
+            let start = info.pbi_start_tvsec as f64 + info.pbi_start_tvusec as f64 / 1e6;
+            return (timeline_clock() - start).max(0.0);
+        }
+        0.0
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        0.0
+    }
+}
+
+/// Seconds per Mach absolute-time tick, the unit of `rusage_info`'s times.
+#[cfg(target_os = "macos")]
+fn mach_tick() -> f64 {
+    #[repr(C)]
+    struct Timebase {
+        numer: u32,
+        denom: u32,
+    }
+    unsafe extern "C" {
+        fn mach_timebase_info(info: *mut Timebase) -> i32;
+    }
+    static TICK: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *TICK.get_or_init(|| {
+        let mut info = Timebase { numer: 0, denom: 0 };
+        // SAFETY: fills the struct.
+        unsafe { mach_timebase_info(&mut info) };
+        f64::from(info.numer) / f64::from(info.denom.max(1)) / 1e9
+    })
+}
+
+/// The run thread's phases (`PhaseClock`, measured by the run at each phase's end), with what the thread did in
+/// each when profiling (decision 0288): the spans its wall went to, innermost, most first.
+pub fn run_thread_report(clocks: &[(&'static str, PhaseClock)]) -> String {
+    let mut r = String::new();
+    let total = clocks.iter().fold(PhaseClock::default(), |mut a, (_, c)| {
+        a.add(c);
+        a
+    });
+    let _ = writeln!(r, "\n== The run's thread, phase by phase (decision 0288): its wall, its own CPU, its CPU in the pool's jobs it ran while it");
+    let _ = writeln!(r, "waited, and its wall off a core (blocked, or ready with no core); the other threads' CPU, the process's CPU over the wall");
+    let _ = writeln!(r, "(parallel), the process's threads' time ready with no core (the machine's load), and its involuntary switches");
+    let _ = writeln!(r, "{:<10} {:>7} {:>7} {:>7} {:>7} {:>7} {:>8} {:>8} {:>9}", "phase", "wall s", "own s", "help s", "off s", "others", "parallel", "no core", "switches");
+    for (name, c) in clocks.iter().chain(std::iter::once(&("all", total))) {
+        let _ = writeln!(r, "{name:<10} {:>7.3} {:>7.3} {:>7.3} {:>7.3} {:>7.3} {:>8.2} {:>8.3} {:>9}", c.wall, c.own, c.helped, c.off_core(), c.others(), c.process_cpu / c.wall.max(1e-9), c.no_core(), c.involuntary);
+    }
+    let phases = RUN_PHASES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if phases.is_empty() {
+        return r;
+    }
+    let _ = writeln!(r, "\nWhat the run's thread did in each phase: its wall by the span innermost when it passed, most first, with the thread's");
+    let _ = writeln!(r, "CPU (a pool job it ran while it waited is under the job's own spans) and its wall off a core. The profile's own work is");
+    let _ = writeln!(r, "in these; the table above, from a run without the profile, is the run's.");
+    for (name, by) in phases.iter() {
+        let mut rows: Vec<(&String, &[f64; 2])> = by.iter().collect();
+        rows.sort_by(|a, b| b.1[0].total_cmp(&a.1[0]));
+        let wall: f64 = rows.iter().map(|r| r.1[0]).sum();
+        let _ = writeln!(r, "-- {name}: {wall:.3} s over {} spans", rows.len());
+        let _ = writeln!(r, "{:>8} {:>8} {:>8}  span (innermost)", "wall s", "cpu s", "off s");
+        let shown = rows.iter().take_while(|r| r.1[0] >= 0.005).take(15).count().max(rows.len().min(3));
+        for (path, d) in &rows[..shown] {
+            let _ = writeln!(r, "{:>8.3} {:>8.3} {:>8.3}  {}", d[0], d[1], (d[0] - d[1]).max(0.0), tail(path, 110));
+        }
+        if rows.len() > shown {
+            let rest = rows[shown..].iter().fold([0.0; 2], |mut a, r| {
+                a.iter_mut().zip(r.1).for_each(|(x, y)| *x += y);
+                a
+            });
+            let _ = writeln!(r, "{:>8.3} {:>8.3} {:>8.3}  ({} other spans)", rest[0], rest[1], (rest[0] - rest[1]).max(0.0), rows.len() - shown);
+        }
+    }
+    r
+}
+
+/// The last `n` characters of `path`, cut at a `/`: a span's innermost parts.
+fn tail(path: &str, n: usize) -> String {
+    if path.chars().count() <= n {
+        return path.to_owned();
+    }
+    let skip = path.chars().count() - n;
+    let cut: String = path.chars().skip(skip).collect();
+    match cut.find('/') {
+        Some(k) => format!("…{}", &cut[k..]),
+        None => format!("…{cut}"),
+    }
 }
 
 /// Where a thread was outside every span before its first span opened, and after its last closed.
@@ -812,6 +1117,7 @@ fn register() -> std::sync::Arc<parking_lot::Mutex<Thread>> {
         covered: 0.0,
         between: None,
         gaps: HashMap::new(),
+        track: None,
     }));
     let mut all = THREADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     all.retain(|t| t.strong_count() > 0);
@@ -871,8 +1177,15 @@ pub fn span(name: impl FnOnce() -> String) -> Span {
         static ALL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         let on = *TIMELINE.get_or_init(|| std::env::var_os("RERAIL_TIMELINE").is_some());
         let all = *ALL.get_or_init(|| std::env::var("RERAIL_TIMELINE").is_ok_and(|v| v == "all"));
-        if on && (all || std::thread::current().name() == Some("main")) {
-            eprintln!("RERAIL_TIMELINE span {} @{:.3} [{}]", name(), timeline_clock(), std::thread::current().name().unwrap_or("-"));
+        // `RERAIL_TIMELINE=sections`: the runs' sections alone (`corpus::run_observed`), no span: a line per span
+        // costs as much as a small span's work, so a timeline of every span is not the run's instructions.
+        static SECTIONS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let sections = *SECTIONS.get_or_init(|| std::env::var("RERAIL_TIMELINE").is_ok_and(|v| v == "sections"));
+        if on && !sections && (all || std::thread::current().name() == Some("main")) {
+            // With the process's instructions retired so far (macOS): a gap between two spans is then its work, not
+            // only its wall time.
+            let retired = retired_instructions();
+            eprintln!("RERAIL_TIMELINE span {} @{:.3} [{}] i={:.3}", name(), timeline_clock(), std::thread::current().name().unwrap_or("-"), retired as f64 / 1e9);
         }
         return Span(false);
     }
@@ -891,9 +1204,11 @@ fn open(path: String) -> Span {
     }
     memory::sample();
     STACK.with(|s| {
-        let mut s = s.lock();
+        let mut g = s.lock();
+        let s = &mut *g;
         let alloc = s.counters.read();
         let start = cpu();
+        charge(&mut s.track, &s.opens, start);
         if s.opens.is_empty() {
             let (after, at) = s.between.take().unwrap_or_else(|| (THREAD_START.to_owned(), 0.0));
             if start > at {
@@ -916,7 +1231,9 @@ impl Drop for Span {
         let now = cpu();
         let peak = memory::peak_sampled();
         STACK.with(|s| {
-            let mut s = s.lock();
+            let mut g = s.lock();
+            let s = &mut *g;
+            charge(&mut s.track, &s.opens, now);
             let (allocated, freed) = s.counters.read();
             let Some(open) = s.opens.pop() else { return };
             rerail_prof::heap::set_span(s.opens.last().map_or(0, |o| o.heap));
@@ -1108,8 +1425,8 @@ pub fn warm() -> bool {
 }
 
 /// The writes a warm run may still make, by what the store's writer calls the job (`ContentStore::write_back`'s
-/// `what`), and why each is allowed: locks against another process's collection, and the timestamps by which
-/// collection judges recency. Nothing else is exempt from the warm check.
+/// `what`), and why each is allowed: locks against another process's collection, the timestamps by which
+/// collection judges recency, and the cost statistics. Nothing else is exempt from the warm check.
 ///
 /// Changing this list needs the user's approval (decision 0211). `scripts/check/check-warm-mode.py` holds a copy
 /// and refuses a commit that changes one without the other.
@@ -1120,6 +1437,7 @@ pub const WARM_WRITES_ALLOWED: &[(&str, &str)] = &[
     ("the combined program's pins released", "a lock: the release of the combined program's leases"),
     ("the run's manifest", "a timestamp, only for a manifest identical to one stored: its last run and time move, by which collection keeps a root's last two. A new manifest is a fault (`warm_fault`, in the job)"),
     ("the journal's aged cursor", "a timestamp: a root's journal cursor, or a run record's (the cutoff's checks), stored again once it is a million events behind with nothing named since (`observe::CURSOR_AGE`), as a replay from far back is slow"),
+    ("the cost statistics", "the cost statistics' own file (`costs`): the samples, SQL plan reports and kernel forms a run measured, and the model trained on them; what a run costs is never a result it recomputes (approved 2026-11-15)"),
 ];
 
 /// Whether the store's writer may run a job called `what` in a warm run (`WARM_WRITES_ALLOWED`).
@@ -1703,20 +2021,47 @@ pub fn declined() -> BTreeMap<String, String> {
     state().fallbacks.clone()
 }
 
+/// The strata a span path names as its last part: what follows each `stratum ` at the path's start or after a `/`
+/// (`local/stratum a/b` names `a/b`; `stratum p/engine run` names `p/engine run`, which no stratum is).
+fn stratum_tails(path: &str) -> impl Iterator<Item = &str> {
+    path.match_indices("stratum ").filter(|&(i, _)| i == 0 || path.as_bytes()[i - 1] == b'/').map(|(i, m)| &path[i + m.len()..])
+}
+
 /// The strata that fell back to SQLite, costliest first, and the same by the kind of literal declined: each one's
 /// CPU (its `stratum …` spans, wherever they ran) and SQLite's VM steps. What the native engine lacks, by its cost.
 pub fn fallbacks(r: &mut String, state: &State) {
     let roots: f64 = state.spans.iter().filter(|(p, _)| !p.contains('/')).map(|(_, t)| t.total).sum();
+    // One pass over the spans and one over the statements, not one each per stratum.
+    let mut spans: HashMap<&str, (f64, u64)> = HashMap::new();
+    for (path, t) in &state.spans {
+        for key in stratum_tails(path) {
+            let e = spans.entry(key).or_default();
+            e.0 += t.total;
+            e.1 += t.calls;
+        }
+    }
+    // A statement charges the stratum it ran in (a path's last part) and every stratum it ran under
+    // (`stratum <key>/…`): a tail and each of its prefixes ending before a `/`, each key once.
+    let mut vms: HashMap<&str, u64> = HashMap::new();
+    let mut keys: Vec<&str> = Vec::new();
+    for ((path, _), s) in &state.sql {
+        keys.clear();
+        for tail in stratum_tails(path) {
+            keys.push(tail);
+            keys.extend(tail.match_indices('/').map(|(j, _)| &tail[..j]));
+        }
+        keys.sort_unstable();
+        keys.dedup();
+        for key in &keys {
+            *vms.entry(key).or_default() += s.vm;
+        }
+    }
     let mut rows: Vec<(f64, u64, u64, &String, &String)> = state
         .fallbacks
         .iter()
         .map(|(key, class)| {
-            let name = format!("stratum {key}");
-            let at = |p: &String| p == &name || p.ends_with(&format!("/{name}"));
-            let cpu: f64 = state.spans.iter().filter(|(p, _)| at(p)).map(|(_, t)| t.total).sum();
-            let calls: u64 = state.spans.iter().filter(|(p, _)| at(p)).map(|(_, t)| t.calls).sum();
-            let vm: u64 = state.sql.iter().filter(|((p, _), _)| at(p) || p.contains(&format!("{name}/"))).map(|(_, s)| s.vm).sum();
-            (cpu, vm, calls, key, class)
+            let (cpu, calls) = spans.get(key.as_str()).copied().unwrap_or((0.0, 0));
+            (cpu, vms.get(key.as_str()).copied().unwrap_or(0), calls, key, class)
         })
         .collect();
     rows.sort_by(|a, b| b.0.total_cmp(&a.0));
@@ -1763,11 +2108,14 @@ pub fn executor(key: &str, ran: &'static str, native: Option<String>, device: Ve
 /// Every stratum's executors and hazards: by hazard, costliest first (a stratum counts under each of its hazards),
 /// then the strata. What to build next, on the device and in the native engine, by what it costs.
 pub fn executors(r: &mut String, state: &State) {
-    let cpu_of = |key: &str| -> f64 {
-        let name = format!("stratum {key}");
-        state.spans.iter().filter(|(p, _)| **p == name || p.ends_with(&format!("/{name}"))).map(|(_, t)| t.total).sum()
-    };
-    let rows: Vec<(f64, &String, &Blocked)> = state.blocked.iter().map(|(k, b)| (cpu_of(k), k, b)).collect();
+    // One pass over the spans, not one per stratum (thousands of strata over tens of thousands of spans).
+    let mut by_key: HashMap<&str, f64> = HashMap::new();
+    for (path, t) in &state.spans {
+        for key in stratum_tails(path) {
+            *by_key.entry(key).or_default() += t.total;
+        }
+    }
+    let rows: Vec<(f64, &String, &Blocked)> = state.blocked.iter().map(|(k, b)| (by_key.get(k.as_str()).copied().unwrap_or(0.0), k, b)).collect();
     let mut ran: BTreeMap<&str, u64> = BTreeMap::new();
     for (_, _, b) in &rows {
         for (e, n) in &b.ran {
@@ -1995,7 +2343,9 @@ pub fn explain(r: &mut String, state: &State) {
     }
     r.push('\n');
     for s in &state.strata {
-        let plans: Vec<(&(String, String, String), &PlanTotal)> = state.plans.iter().filter(|((k, _, _), _)| *k == s.key).collect();
+        // The stratum's plans, a range of the map (keyed by stratum first), not a scan of every plan per stratum.
+        let plans: Vec<(&(String, String, String), &PlanTotal)> =
+            state.plans.range((s.key.clone(), String::new(), String::new())..).take_while(|((k, _, _), _)| *k == s.key).collect();
         let planning: f64 = plans.iter().map(|(_, t)| t.planning).sum();
         let _ = writeln!(r, "Stratum {}  [engine: {}]  (loops={}, planning {planning:.3} s CPU)", short(&s.key, 120), s.engine, s.loops);
         if !s.why.is_empty() {
@@ -2144,6 +2494,61 @@ pub fn projection_plan(prog: &crate::code_rule_dsl::logic::front::Program, reads
 #[cfg(test)]
 pub mod tests {
     use super::*;
+
+    /// Each stratum's CPU in the executors' report is its spans' (`stratum <key>`, alone or the last part of a path),
+    /// a key of several relations (`a/b`) among them, and no other span's.
+    #[test]
+    fn executors_charge_each_stratum_its_own_spans() {
+        let mut state = State::default();
+        let t = |total: f64| SpanTotal { calls: 1, total, ..Default::default() };
+        for (path, cpu) in [
+            ("stratum p", 1.0),
+            ("local/run/stratum p", 2.0),
+            ("cross/stratum a/b", 4.0),
+            ("stratum a/b", 8.0),
+            ("local/stratum pq", 16.0),
+            ("stratum p/engine run", 32.0),
+            ("other", 64.0),
+        ] {
+            state.spans.insert(path.into(), t(cpu));
+        }
+        for key in ["p", "a/b", "pq", "none"] {
+            state.blocked.entry(key.into()).or_default().ran.insert("native CPU", 1);
+        }
+        let mut r = String::new();
+        executors(&mut r, &state);
+        let cpu = |key: &str| r.lines().find(|l| l.trim_start().split_once("  ").is_some_and(|(_, rest)| rest.starts_with(&format!("{key}: ")))).map(|l| l.split_whitespace().next().unwrap().to_owned());
+        assert_eq!(cpu("p").as_deref(), Some("3.000"), "{r}");
+        assert_eq!(cpu("a/b").as_deref(), Some("12.000"), "{r}");
+        assert_eq!(cpu("pq").as_deref(), Some("16.000"), "{r}");
+        assert_eq!(cpu("none").as_deref(), Some("0.000"), "{r}");
+    }
+
+    /// A declined stratum's row in the SQLite fallbacks: its spans' CPU and runs (`stratum <key>`, alone or the last
+    /// part of a path), and the VM steps of SQL run there or under it (`stratum <key>/…`); a key of several relations
+    /// (`a/b`) beside one that is its prefix (`a`).
+    #[test]
+    fn fallbacks_charge_each_stratum_its_own_spans_and_sql() {
+        let mut state = State::default();
+        for (path, cpu) in [("stratum p", 1.0), ("local/stratum p", 2.0), ("stratum p/x", 4.0), ("stratum a/b", 8.0), ("other", 16.0)] {
+            state.spans.insert(path.into(), SpanTotal { calls: 1, total: cpu, ..Default::default() });
+        }
+        for (path, vm) in [("stratum p", 10), ("x/stratum p/q", 100), ("stratum p/x", 1000), ("stratum a/b/c", 10000), ("stratum a/b", 5), ("other", 7)] {
+            state.sql.insert((path.into(), "select 1".into()), SqlTotal { vm, ..Default::default() });
+        }
+        for key in ["p", "a/b", "a", "none"] {
+            state.fallbacks.insert(key.into(), "negation".into());
+        }
+        let mut r = String::new();
+        fallbacks(&mut r, &state);
+        let row = |key: &str| {
+            r.lines().find(|l| l.split_whitespace().nth(3) == Some(&format!("{key}:"))).map(|l| l.split_whitespace().take(3).collect::<Vec<_>>().join(" "))
+        };
+        assert_eq!(row("p").as_deref(), Some("3.000 2 1110"), "{r}");
+        assert_eq!(row("a/b").as_deref(), Some("8.000 1 10005"), "{r}");
+        assert_eq!(row("a").as_deref(), Some("0.000 0 10005"), "{r}");
+        assert_eq!(row("none").as_deref(), Some("0.000 0 0"), "{r}");
+    }
 
     /// Decision 0269: a step keeps what it decides, with profiling off too, nested steps each theirs, a failed step
     /// nothing (its enclosing step keeps what it decided); a run that reuses the step's output states them, kept.

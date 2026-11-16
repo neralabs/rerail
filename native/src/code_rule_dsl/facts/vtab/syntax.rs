@@ -166,6 +166,18 @@ impl Projection {
     fn wants(&self, rel: &str) -> bool {
         self.reads.as_ref().is_none_or(|r| r.contains(rel))
     }
+    /// A digest of what the projection makes a base relation's rows of, beside the document: its shape, patterns,
+    /// text bounds, narrowed nodes and guest policy. Not which relations it makes (`reads`, `derived`): a relation
+    /// made has the same rows whichever others are. A memo entry's rows are a relation's under its identity only
+    /// with this in it (decision 0225 §2): two programs with the same rules over different projections, a broken
+    /// guest kept (`.on guest_error partial`) or withheld, read different rows of `parsed`.
+    pub fn rows_digest(&self) -> [u8; 32] {
+        use sha2::{Digest as _, Sha256};
+        let mut h = Sha256::new();
+        h.update(b"rerail.projection-rows/v1\0");
+        h.update(format!("{:?}\0{:?}\0{:?}\0{:?}\0{}\0{:?}\0{:?}\0{}\0{:?}\0{:?}\0{}", self.shape, self.rx_spans, self.ast_patterns, self.text_spans, self.token_text, self.node_anchors, self.long_text, self.long_text_any, self.text_nodes, self.partial, self.verdict).as_bytes());
+        h.finalize().into()
+    }
     /// Whether a guest of `grammar` that does not parse keeps its partial tree.
     fn keeps_partial(&self, grammar: &str) -> bool {
         self.partial.contains("*") || self.partial.contains(grammar)

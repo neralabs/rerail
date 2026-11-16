@@ -31,6 +31,7 @@ pub(crate) fn decl_hash<'a>(rel: &str, cols: impl Iterator<Item = (&'a str, &'a 
 pub(crate) enum CellText<'a> {
     Int(i64),
     Str(&'a str),
+    Branded(crate::code_rule_dsl::logic::front::Branded),
 }
 
 /// A fact relation's hash: its name, whether it is of the `.about` rows, and its rows.
@@ -50,6 +51,11 @@ pub(crate) fn facts_hash<'a, Row: Iterator<Item = CellText<'a>>>(rel: &str, abou
                 CellText::Str(s) => {
                     h.write_u8(5);
                     put_text(&mut h, s);
+                }
+                CellText::Branded(b) => {
+                    h.write_u8(6);
+                    h.write_u8(super::brand_code(b.class));
+                    h.write_u32(b.atom);
                 }
             }
         }
@@ -342,6 +348,7 @@ impl<'p> Encoder<'p> {
             Term::Wild => self.leaf(kind::WILD, 0),
             Term::Top => self.leaf(kind::TOP, 0),
             Term::Int(i) => self.int(*i),
+            Term::Branded(b) => self.leaf(kind::BRANDED | super::brand_code(b.class) << 5, b.atom),
             Term::Str(s) => {
                 let a = self.atom(s);
                 self.leaf(kind::STR, a)
@@ -557,6 +564,10 @@ impl<'p> Encoder<'p> {
                         Cell::Str(a) => {
                             w.u8(R::CellKind, 1);
                             w.u64(R::CellVal, a.0 as u64);
+                        }
+                        Cell::Branded(b) => {
+                            w.u8(R::CellKind, 2 + super::brand_code(b.class));
+                            w.u64(R::CellVal, u64::from(b.atom));
                         }
                     }
                     cells += 1;

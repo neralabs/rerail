@@ -726,15 +726,33 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             format!("if {} != 0 {} else {}", args[0], goto(f, &blocks[0], 0, name, jump)?, goto(f, &blocks[1], 1, name, jump)?)
         }
         // A jump table: a `match`, its arms the table's (successors 1 on), the rest the default
-        // (successor 0), as `successors` lists them; rustc makes it a table again.
+        // (successor 0), as `successors` lists them; rustc makes it a table, or compares, again.
+        // Entries that go to the same place one arm, its patterns their ranges, as a lexer's
+        // `b'0'..=b'9' =>`; those that are the default's, the default's.
         Opcode::BrTable => {
             let InstructionData::BranchTable { table, .. } = data else { return Err("a jump table of nothing".into()) };
             let jt = &f.dfg.jump_tables[*table];
-            let mut s = format!("match {} {{ ", args[0]);
+            let default = goto(f, &jt.default_block(), 0, name, jump)?;
+            let mut arms: Vec<(String, Vec<(usize, usize)>)> = Vec::new();
             for (i, call) in jt.as_slice().iter().enumerate() {
-                write!(s, "{i} => {} ", goto(f, call, i + 1, name, jump)?).unwrap();
+                let to = goto(f, call, i + 1, name, jump)?;
+                if to == default {
+                    continue;
+                }
+                match arms.iter_mut().find(|a| a.0 == to) {
+                    Some(a) => match a.1.last_mut() {
+                        Some(r) if r.1 + 1 == i => r.1 = i,
+                        _ => a.1.push((i, i)),
+                    },
+                    None => arms.push((to, vec![(i, i)])),
+                }
             }
-            write!(s, "_ => {} }}", goto(f, &jt.default_block(), 0, name, jump)?).unwrap();
+            let mut s = format!("match {} {{ ", args[0]);
+            for (to, ranges) in &arms {
+                let pats: Vec<String> = ranges.iter().map(|&(a, b)| if a == b { format!("{a}") } else { format!("{a}..={b}") }).collect();
+                write!(s, "{} => {to} ", pats.join(" | ")).unwrap();
+            }
+            write!(s, "_ => {default} }}").unwrap();
             s
         }
         op => return Err(format!("the opcode {op}")),

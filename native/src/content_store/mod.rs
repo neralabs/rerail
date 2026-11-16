@@ -68,7 +68,7 @@ pub mod hazards;
 
 pub use compression::compress;
 pub use frames::forget_snapshot as forget_frames_snapshot;
-pub use frames::{Unreachable as UnreachableFrames, Admitted as AdmittedFrame, Encoded as EncodedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, MemoBlob, MemoPut, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
+pub use frames::{CrossSpace as FramesCrossSpace, Unreachable as UnreachableFrames, Admitted as AdmittedFrame, Encoded as EncodedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, MemoBlob, MemoPut, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
 pub use connection::BusyRetries;
 pub use connection::OperationDeadline;
 pub use atoms::{ProcessIds, StoreIds, Sym};
@@ -677,12 +677,12 @@ impl Drop for ContentStore {
     fn drop(&mut self) {
         // With a writer, the atoms are its to write: every handle shares them, and its batch's commit appends them (a
         // handle dropped inside a wave writes nothing). The queued writes first: they may name atoms this handle holds.
-        if self.atoms.pending() && self.write_back.is_some() {
+        if self.atoms.flush_wanted() && self.write_back.is_some() {
             self.write_back_syms(crate::content_store::write_back::Syms::None, "the atoms at a handle's close", 0, Vec::new(), Box::new(|store| store.flush_atoms()));
             self.end_writer();
         } else {
             self.end_writer();
-            if self.atoms.pending()
+            if self.atoms.flush_wanted()
                 && let Err(error) = self.immediate_transaction(|_| Ok(()))
             {
                 eprintln!("rerail: atoms: writing the pending atoms at close failed: {error}");

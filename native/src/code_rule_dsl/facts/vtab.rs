@@ -311,7 +311,9 @@ impl Modules {
         }
         // A kept connection's table of this shape from its last run (`reuse`): its module is registered still.
         let at = connection_scope(db);
-        let shape = (source.columns(), (0..source.columns().len()).map(|c| source.text_column(c)).collect::<Vec<_>>(), source.writable());
+        // A derived relation named like a base one is read by the base names (`core::input_column_name`).
+        let columns: Vec<String> = source.columns().into_iter().map(|c| crate::code_rule_dsl::facts::core::input_column_name(name, &c).map_or(c, str::to_owned)).collect();
+        let shape = (columns.clone(), (0..source.columns().len()).map(|c| source.text_column(c)).collect::<Vec<_>>(), source.writable());
         let kept = REGISTERED.lock().remove(&(at, name.to_owned()));
         // (A writable table's `temp` virtual table is there still: the run's clean-up drops none it binds, and one it
         // drops is no longer kept, `dropped_temp`.)
@@ -322,7 +324,7 @@ impl Modules {
             return Ok(());
         }
         let binding = Binding {
-            schema: Arc::new(Metadata { text:(0..source.columns().len()).map(|c|source.text_column(c)).collect(), columns: source.columns(), writable:source.writable() }),
+            schema: Arc::new(Metadata { text:(0..source.columns().len()).map(|c|source.text_column(c)).collect(), columns, writable:source.writable() }),
             current: Arc::new(parking_lot::RwLock::new(source)),
             stats: Arc::new(Counters::default()),
         };
