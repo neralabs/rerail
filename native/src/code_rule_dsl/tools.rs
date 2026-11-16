@@ -798,16 +798,14 @@ pub fn cli(args: &[String]) -> Result<String, String> {
     crate::code_rule_dsl::logic::profile::command_begins();
     let out = cli_in(args, &mut Default::default());
     let (age, after) = crate::code_rule_dsl::logic::profile::command_ends();
-    match (out, after) {
-        (Ok(mut text), Some(c)) => {
-            text += &format!(
-                "  after the run {:.2} s wall: the command's thread {:.2} s own, {:.2} s off a core; the other threads {:.2} s; ready with no core {:.2} s\n  before the command: {age:.2} s since the process started\n",
-                c.wall, c.own + c.helped, c.off_core(), c.others(), c.no_core()
-            );
-            Ok(text)
-        }
-        (out, _) => out,
+    // On stderr: a command's output is its own (`run-rr`'s, `sql`'s: JSON), and a line after it made that unreadable.
+    if let (Ok(_), Some(c)) = (&out, after) {
+        eprint!(
+            "  after the run {:.2} s wall: the command's thread {:.2} s own, {:.2} s off a core; the other threads {:.2} s; ready with no core {:.2} s\n  before the command: {age:.2} s since the process started\n",
+            c.wall, c.own + c.helped, c.off_core(), c.others(), c.no_core()
+        );
     }
+    out
 }
 
 /// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`): the caller owns it.
