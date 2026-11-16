@@ -102,6 +102,33 @@ The sessions came out 0.3% to 2% over the searches, though join work read lower,
 
 Both are fixed above: a seed keeps the source's lead, and the next join is a connected one.
 
+## Re-validated after the hub merge
+
+2026-11-15, at 646d533b9 (the hub, 3f4c6ebf4, merged in), `--profile profiling`, `RERAIL_JOIN_SEED=1`.
+
+- **Sessions 12 to 16 are the full run's** ("same as full: true" at every step, two runs).
+- **Fewer lines start.** One session after a cold run at the step before, as above:
+
+  | session | first-sight lines | started from the source rule | then |
+  |---|---|---|---|
+  | 12 | 2,311 | 707 (31%) | 770 (34%) |
+  | 13 | 3,923 | 1,409 (36%) | 1,560 (40%) |
+  | 14 | 2,745 | 1,271 (46%) | 1,342 (46%) |
+
+  Step 12 gives 707 in three runs, and in the debug build. Decision 0265 does not change it (708 without it). Of
+  step 12's searched lines, only one reason moved: the source's order priced over a search's cost, 498 against 414.
+  The other reasons are as before (1,051 glue lines, 50 with no order kept, 2 not led by the delta). So the gate
+  works as written, and the merged pricing prices more of these orders over a search.
+- **The saving does not reproduce.** The cross parts of sessions 12 to 16, G instructions, two rounds:
+
+  | | off | on |
+  |---|---|---|
+  | the five | 34.32, 34.35 | 34.07, 34.61 |
+
+  Both modes average 34.34 G: parity, within the rounds' spread, where it was −0.9%. Every session is cheaper than
+  when this was measured (37.87 G off then). Starting from the source's order still costs nothing in work, and saves
+  what a search would have cost (decision 0265 measures the plan call's fixed part).
+
 ## Open
 
 - **A plan call's fixed cost is the larger part.** A `plan #` span's own time, outside its search, is about 18 µs a

@@ -70,6 +70,15 @@ site that reads a rule (`Versions::at`), under 1 µs a line.
 
 Session 13's outputs are the full run's ("same as full: true").
 
+**Re-validated after the hub merge** (646d533b9, the same run, two runs each, the change reverted for "before"):
+
+| outside the search, ms | before | after |
+|---|---|---|
+| all | 59, 71 | 28, 38 |
+
+The fixed part is still about halved. The lines that start from their source rule's order are the same with and
+without the change (step 12: 707 and 708). Sessions 12 to 16 are the full run's.
+
 ## Open
 
 - **The rule's digest belongs to its version.** A rule's digest is the same in every body made of it. Kept in the
