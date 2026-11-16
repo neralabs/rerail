@@ -469,11 +469,13 @@ type LogNames = Map<string, string | null>;
 
 /**
  * The files of the log in `home`, in the order a hook moves a log through them: the live log, the logs hooks took, `.1`.
- * A name that is a link (a junction, on Windows) is left out, never followed: Rerail makes none, as the second name a
- * give-back gives a file is a hard link, which is no link. Following one to a network share that does not answer waits
- * about 21 s on Windows, and a link whose target is gone, taken for a name gone before it was looked at, would make every
- * status read wait out all its pauses for as long as the link stays. A status read opens the live log before it lists,
- * so a link at the live name is still read through.
+ * Only a regular file is listed; any other name is left out, never followed or opened. Rerail makes no other kind: the
+ * second name a give-back gives a file is a hard link, which is a regular file. A link (a junction, on Windows) to a
+ * network share that does not answer, followed, waits about 21 s on Windows, and a link whose target is gone, taken for
+ * a name gone before it was looked at, would make every status read wait out all its pauses for as long as the link
+ * stays. A named pipe, opened to read, waits for a program to write to it, and a folder at `.1`, read as a part that
+ * holds nothing, would make the line count from the live part's start though no part was dropped. A status read opens
+ * the live log before it lists, so a link at the live name is still read through.
  */
 function listLog(home: string): LogNames {
   let listed: string[];
@@ -493,8 +495,8 @@ function listLog(home: string): LogNames {
 
 /**
  * The {@link fileId} of the file a listing found at `path`, read from the name itself: null when the name was gone before
- * it was looked at, and undefined when the name is a link, which is not followed. For a file that is no link `lstat`
- * gives what `stat` gives, in the one call.
+ * it was looked at, and undefined when it is not a regular file (a link, a folder, a named pipe or a device), which is
+ * neither followed nor opened. For a regular file `lstat` gives what `stat` gives, in the one call.
  */
 function listedId(path: string): string | null | undefined {
   let stats: BigIntStats;
@@ -503,7 +505,7 @@ function listedId(path: string): string | null | undefined {
   } catch {
     return null;
   }
-  return stats.isSymbolicLink() ? undefined : fileId(stats, path);
+  return stats.isFile() ? fileId(stats, path) : undefined;
 }
 
 /** Reads each file `names` holds that `parts` has not met, and says whether one of them is still unmet or a name was gone. */

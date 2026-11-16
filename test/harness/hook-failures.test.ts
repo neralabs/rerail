@@ -1,7 +1,7 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { appendFileSync, closeSync, existsSync, openSync, readdirSync, readFileSync, renameSync, utimesSync, writeFileSync, writeSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -737,6 +737,34 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
       return stat(path, ...rest);
     }` });
     expect({ count: countOf(said), listings, followed }).toEqual({ count: 2, listings: 1, followed: 0 });
+  });
+
+  // A name of the log a person or another program made a named pipe that no program writes to, or a folder, at `.1` or
+  // under the name of a hook that still runs (this test's own process stands for it). Neither holds a part of the log.
+  // A pipe opened to read waits for a writer, and a folder at `.1` read as a part that holds nothing would make the line
+  // count from the live part's start. Windows makes no named pipe in a folder.
+  const NOT_FILES = [
+    {
+      kind: "a named pipe",
+      make: (context: TestContext, path: string): void => {
+        if (process.platform === "win32") context.skip("Windows makes no named pipe in a folder");
+        execFileSync("mkfifo", [path]);
+      },
+    },
+    { kind: "a folder", make: (_context: TestContext, path: string): void => { mkdirSync(path); } },
+  ];
+  it.for(NOT_FILES.flatMap(kind => [
+    { ...kind, where: ".1", name: (rerailHome: string) => join(rerailHome, `${HOOK_FAILURES_FILE}.1`) },
+    { ...kind, where: "a running hook's own name", name: (rerailHome: string) => takenName(rerailHome, process.pid) },
+  ]))("reads the log at once, opening nothing else, when $where is $kind", async ({ make, name }, context) => {
+    const rerailHome = await home();
+    writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), partText(9_000, 9_000, 9_500));
+    make(context, name(rerailHome));
+    const { said, listings } = await statusWith(rerailHome, {});
+    expect({ said, listings }).toEqual({
+      said: expect.stringMatching(/^Hooks: 2 hook events could not be recorded in the last 24 hours; /u),
+      listings: 1,
+    });
   });
 
   // A hook that took a log and finds it small gives it back: it makes the live name a second name of the file, a hard
