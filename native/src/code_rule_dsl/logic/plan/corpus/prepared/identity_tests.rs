@@ -75,7 +75,7 @@ fn prepared_identity_child() {
     });
     let phases: Vec<_> = report.phase_runs.iter().map(|p| serde_json::json!({"name":p.name,
         "prepared":p.report.prepared,"kept":p.report.cross_kept,"maintained":p.report.cross_maintained,"memo":p.report.memo,"chunks":p.report.chunks,"strata":p.report.cross_strata})).collect();
-    let result = serde_json::json!({"programs":programs,"outputs":std::fs::read_to_string(out.join("hit.csv")).unwrap(),
+    let result = serde_json::json!({"programs":programs,"outputs":crate::code_rule_dsl::logic::plan::output::shown(&out, "hit").unwrap(),
         "prepared":report.prepared,"phases":phases});
     std::fs::write(root.join(format!("{phase}.json")), serde_json::to_vec_pretty(&result).unwrap()).unwrap();
 }

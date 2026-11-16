@@ -579,15 +579,16 @@ impl Compiled {
                 if self.kept.contains(&rel) { continue; }
             }
             let domains = lowered.and_then(|l| l.domains.get(&rel));
-            let mut decoded = Vec::new();
+            // The rows held as their values (decision 0239): a name, kind or field as its text.
+            let mut decoded = super::output::Rows::default();
             for row in rows {
-                decoded.push(
+                let shown: Vec<super::Shown> =
                     row.into_iter()
                         .enumerate()
                         .map(|(c, v)| match v {
                             SqlValue::Integer(n) => match domains.and_then(|d| d.get(c)) {
                                 Some(lower::Domain::Name) => {
-                                    super::super::native::symbol_text(db, n)
+                                    super::super::native::symbol_text(db, n).map(super::Shown::Text)
                                 }
                                 Some(lower::Domain::Kind) => {
                                     let (tag, code) = (
@@ -600,8 +601,7 @@ impl Compiled {
                                     Ok(dialect
                                         .kinds()
                                         .kind_name(code)
-                                        .map(str::to_owned)
-                                        .unwrap_or_else(|| n.to_string()))
+                                        .map_or(super::Shown::Int(n), |k| super::Shown::Text(k.to_owned())))
                                 }
                                 Some(lower::Domain::Field) => {
                                     let dialect = crate::code_rule_dsl::language::from_tape_tag(
@@ -611,22 +611,18 @@ impl Compiled {
                                     Ok(dialect
                                         .kinds()
                                         .field_name((n & 0xffff) as u16)
-                                        .map(str::to_owned)
-                                        .unwrap_or_else(|| n.to_string()))
+                                        .map_or(super::Shown::Int(n), |f| super::Shown::Text(f.to_owned())))
                                 }
-                                _ => Ok(n.to_string()),
+                                _ => Ok(super::Shown::Int(n)),
                             },
-                            SqlValue::Text(s) => Ok(s),
-                            SqlValue::Null => Ok("None".into()),
-                            SqlValue::Real(f) => Ok(format!("{f:?}")),
-                            SqlValue::Blob(b) => Ok(format!("{b:?}")),
+                            SqlValue::Text(s) => Ok(super::Shown::Text(s)),
+                            SqlValue::Null => Ok(super::Shown::Text("None".into())),
+                            SqlValue::Real(f) => Ok(super::Shown::Text(format!("{f:?}"))),
+                            SqlValue::Blob(b) => Ok(super::Shown::Text(format!("{b:?}"))),
                         })
-                        .collect::<rusqlite::Result<Vec<_>>>()?
-                        .join("\t"),
-                );
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                decoded.push(&shown.iter().map(super::Shown::cell).collect::<Vec<_>>());
             }
-            decoded.sort();
-            decoded.dedup();
             out.nodes.insert(
                 rel.clone(),
                 domains
@@ -636,7 +632,7 @@ impl Compiled {
                     .filter_map(|(i, d)| (*d == lower::Domain::Node).then_some(i))
                     .collect(),
             );
-            out.outputs.insert(rel, decoded);
+            out.outputs.insert(rel, std::sync::Arc::new(decoded));
         }
         Ok(out)
     }

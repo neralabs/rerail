@@ -174,6 +174,8 @@ export function explore(engine, { id, rr, parts, sources, lib: libFiles, full = 
     const flat = engine.command(["flatten", `/w/rule/${id}.rr`]);
     engine.flat = { key, program: flat.code === 0 ? flat.stdout.join("\n") : "", error: flat.stderr.join("\n") };
   }
+  // The run's outputs are one image (`out/outputs.rro`, decision 0239): written out as `.csv` files to show.
+  if (run.code === 0) engine.command(["csv", "/w/out"]);
   const w = engine.read("/w");
   const text = (bytes) => (bytes instanceof Uint8Array ? new TextDecoder().decode(bytes) : "");
   const out = {};

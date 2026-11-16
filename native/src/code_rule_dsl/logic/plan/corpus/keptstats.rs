@@ -602,6 +602,6 @@ fn by_document(flat: &[i64], width: usize, doc: impl Fn(&[i64]) -> i64, from: Op
 /// `before` and `now` without the relations whose rows are the same in both: what an edit changed, by relation.
 fn changed_only(before: &memo::Entry, now: &memo::Entry) -> (memo::Entry, memo::Entry) {
     let same = |rel: &String| before.rows.get(rel) == now.rows.get(rel);
-    let keep = |e: &memo::Entry| memo::Entry { rows: e.rows.iter().filter(|(r, _)| !same(r)).map(|(r, v)| (r.clone(), v.clone())).collect(), key: e.key, nodes: e.nodes, lines: Default::default() };
+    let keep = |e: &memo::Entry| memo::Entry { rows: e.rows.iter().filter(|(r, _)| !same(r)).map(|(r, v)| (r.clone(), v.clone())).collect(), key: e.key, nodes: e.nodes, outputs: Default::default() };
     (keep(before), keep(now))
 }

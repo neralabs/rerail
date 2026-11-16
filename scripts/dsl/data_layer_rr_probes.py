@@ -59,6 +59,8 @@ for i, e in enumerate(events):
     env = dict(os.environ, RERAIL_COSTS="off", RERAIL_TAPE_CACHE=str(work / "cache.sqlite"))
     r = subprocess.run(["nice", "-n", "19", engine, "logic", str(prog), str(repo), str(out)], env=env, capture_output=True, text=True, timeout=115)
     err = [l for l in r.stderr.splitlines() if l.startswith("rerail-engine:")]
+    # A run's outputs are one image (`outputs.rro`, decision 0239): written out as `.csv` files to read.
+    subprocess.run([engine, "csv", str(out)], capture_output=True)
     got = set()
     for vl in sorted(out.glob("*vline.csv")):
         for line in vl.read_text().splitlines():

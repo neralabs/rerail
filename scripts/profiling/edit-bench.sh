@@ -45,7 +45,9 @@ edit_cmd() {
 runs="cold warm append body comment import"
 [ -n "${RULE_EDIT:-}" ] && runs="$runs rule"
 
-findings() { [ -f "$out/out-$1/violation.csv" ] && wc -l < "$out/out-$1/violation.csv" | tr -d ' ' || echo "?"; }
+# A run's outputs are one image (`outputs.rro`, decision 0239): `rerail-engine csv` writes its `.csv` files.
+csvs() { "$engine" csv "$1" > /dev/null 2>&1 || true; }
+findings() { csvs "$out/out-$1"; [ -f "$out/out-$1/violation.csv" ] && wc -l < "$out/out-$1/violation.csv" | tr -d ' ' || echo "?"; }
 memo_mb() { [ -f "$out/store.sqlite" ] && sqlite3 "$out/store.sqlite" "select printf('%.0f', coalesce(sum(raw_length),0)/1048576.0) from facts_results" 2>/dev/null || echo "-"; }
 top_spans() {
   [ -f "$out/prof-$1/spans.tsv" ] || return
@@ -86,6 +88,7 @@ if [ -n "${VERIFY:-}" ]; then
   last=$(echo $runs | awk '{print $NF}')
   RERAIL_TAPE_CACHE="$out/verify.sqlite" nice -n 19 "$engine" logic "$out/rules" "$out/corpus" "$out/out-verify" > "$out/verify.log" 2>&1
   rm -f "$out/verify.sqlite"*
+  csvs "$out/out-$last"; csvs "$out/out-verify"
   if diff <(sort "$out/out-$last/violation.csv") <(sort "$out/out-verify/violation.csv") > "$out/verify.diff"; then
     echo "verify: the $last run's findings equal a cold run's"
   else

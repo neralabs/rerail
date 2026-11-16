@@ -181,7 +181,7 @@ impl Drop for Pins<'_> {
 /// manifest's), so collection keeps it while it keeps the run: queued on the store's writer, after the entry's own
 /// write when this process queued one.
 pub(super) fn name_program(cache: &ContentStore, key: &[u8; 32], late: &std::sync::Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>) {
-    // Stored already (decision 0223): named now, its pin queued (a lock). The writer finds what a write queued
+    // Stored already (decision 0228): named now, its pin queued (a lock). The writer finds what a write queued
     // before it stores; a warm run's entry is stored, and its lookup there was a write.
     if let Some(found) = program_source(cache, key, false).ok().flatten() {
         cache.write_back_syms(crate::content_store::write_back::Syms::None, "a source's pin", 0, Vec::new(), Box::new(move |s| s.pin_held_sources(&[found])));

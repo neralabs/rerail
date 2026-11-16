@@ -5,6 +5,10 @@ Status: built (2026-11-15). Takes up decision 0230's first open item: a session'
 `RunPlans::orders`), `plan/body.rs` (`Body::origin`, `Body::source_map`), `maintain.rs` (`write_ir`),
 `program_image/build.rs` (`RuleBuilder::source`).
 
+Kept (the user, 2026-11-15): source orders stay. They are an escape hatch from inefficient rules. cost-classifier's
+withdrawal of this decision (49297f11e, "plan: remove source orders") is not taken when that branch is merged.
+django-bugs' form (efcbd0717: tried inside the search, `RERAIL_SOURCE_ORDERS` opt-in) is the form the hub takes.
+
 ## Intro
 
 A session maintains a changed stratum with rules written from its rules (decision 0077 §3). For a rule

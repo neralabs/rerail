@@ -25,6 +25,7 @@ for id in $ids; do
   d=$(mktemp -d "$root/tmp/pack-run.XXXXXX")
   mkdir "$d/r"; cp "$pack/$id.rr" "$d/r/"
   sum=$(RERAIL_TAPE_CACHE="$d/store.sqlite" "$here/capped.sh" "$SECS" "$MB" "$d/log" "$ENGINE" logic "$d/r" "$CORPUS" "$d/o")
+  "$ENGINE" csv "$d/o" > /dev/null 2>&1  # the outputs' image (decision 0239) as .csv files
   n=$( [ -f "$d/o/violation.csv" ] && wc -l < "$d/o/violation.csv" | tr -d ' ' || echo -)
   case "$sum" in *KILLED*) st=killed;; rc=0*) st=ok;; *) st=failed;; esac
   err=""

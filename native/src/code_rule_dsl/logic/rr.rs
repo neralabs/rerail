@@ -123,6 +123,7 @@ use super::front::Program;
 pub use lower::drop_unread_core;
 pub use aggregate_demand::retype_helpers;
 pub use lower::is_core;
+pub use lower::findings::{is_diagnostic, HEAD as DIAGNOSTIC_HEAD};
 pub use lower::WORLD;
 pub use print::print;
 pub use syntax::quote;
@@ -878,6 +879,19 @@ impl TextRead {
         // The engine's own library programs, which the runner adds to a run (decision 0076's components).
         included.extend(ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()));
         Ok(TextNames { included, names, phase })
+    }
+}
+
+impl TextNames {
+    /// A program already read: the relations it declares and the phase it names, and the engine's library programs
+    /// (it includes nothing of its own: its libraries are in it), as a print of it reads (decision 0249).
+    pub fn of_program(prog: &Program) -> TextNames {
+        let mut names: Vec<String> = prog.decls.keys().map(|n| n.to_string()).collect();
+        names.sort();
+        names.dedup();
+        let phase = prog.settings.iter().find(|(k, _)| k == "phase").map(|(_, v)| v.trim().to_owned());
+        let included = ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()).collect();
+        TextNames { included, names, phase }
     }
 }
 
