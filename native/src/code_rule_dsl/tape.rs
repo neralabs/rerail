@@ -49,6 +49,8 @@ mod token_automata;
 // cratify: `token_readers` is rerail-w's (it mounts it)
 pub mod resident;
 pub mod validated;
+/// A document's tape through one API, in the run's format (decision 0293).
+pub mod formats;
 pub mod token_census;
 /// Python's tape from the lean parser (`rerail_python_lean`).
 pub mod python_lean;
@@ -1938,6 +1940,8 @@ pub struct TapeDoc {
     digest: Arc<std::sync::OnceLock<[u8; 32]>>,
     /// The document's path, as a run's matchers read it (`with_path`: what a `filePath` test inside a matcher tests).
     path: Option<Arc<str>>,
+    /// The image's tape through the one API, in each format a run reads (`tape()`, decision 0293): the same image.
+    held: Arc<formats::DocTape>,
 }
 
 #[derive(Clone)]
@@ -2215,6 +2219,7 @@ impl TapeDoc {
             nodes[parent].children += 1;
         }
         checked(budget)?;
+        let image = Arc::new(image.clone());
         Ok(Self {
             source_digest: digest,
             points: Arc::new(Points {
@@ -2232,7 +2237,8 @@ impl TapeDoc {
             texts: Arc::default(),
             guests: Guests::Owned(Arc::new(Vec::new())),
             host: None,
-            image: Arc::new(image.clone()),
+            held: Arc::new(formats::DocTape::new(Arc::clone(&image))),
+            image,
             digest: Arc::default(),
             path: None,
         })

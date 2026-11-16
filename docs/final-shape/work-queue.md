@@ -585,6 +585,12 @@ pass.
   (packs.tsv), `executors_are_shared` (blocks/src/gpu.rs:199 makes a command queue), `the_gate_catches_a_widened_walk`,
   `spilled_walks_find_the_cpus_roots`, `the_backends_find_the_same_keys_on_real_files`, and the replay sample
   (63 of 268 events).
+- **A run stops under strict SQL too** (2026-11-16, 93b9e0f31 and after): the bench's 317 rules (`rules/B-now`)
+  with this checkout's `docs/rule-syntax/lib` over 10 of corpus0's files abort with "SQL inside the waves: `SELECT
+  n, v FROM main.value`", from `setfix::input_of` under `plan::Run::native_stratum` (a native step's input read as a
+  stored table inside the waves). The same family as the `@rr_node_text` failures above. The shared `rs-now/lib` is
+  older than decision 0263 (`load` not `extensible`), and this checkout's whole python pack stops at "not lowered
+  yet: flat: match_all over $e".
 - **Done when**: each passes on the hub, fixed at its cause.
 
 ### Q17. Two `rr::tests` red on the branch head
@@ -630,6 +636,14 @@ pass.
   "a `/` alone" step (its code is its kind, no word looked up); the test's expected set is the fused pair rule's
   bytes. Red with that branch's own binary at its head (23:01), green at 19:32. Theirs to settle, their area.
 - **Done when**: the test states the set the token loop reads codes for, and passes.
+
+### Q26. The tape lab's clippy warnings
+
+- **Found** (2026-11-16, building 0293's tables; Q18 on its branch, renumbered at the hub's merge): `cargo clippy --features grammar --lib` in `native/lab/tape16`
+  gives 51 warnings in the lab's library, from before this work (`is_multiple_of` 9, index loops 20, complex types
+  5, `chunks_exact` 4, precedence 3, and others). The binary's seven are fixed. `clippy --fix` applies none of its
+  20 suggestions here. The lab is its own workspace, so CI does not see them.
+- **Done when**: the lab's library is clean under clippy, with its timing loops keeping what they time.
 
 ## Questions for the user
 

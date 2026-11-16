@@ -238,8 +238,8 @@ pub fn allowed(grammar: &Value, types: &Value) -> Allowed {
 
 /// `kinds.tsv` by id: (tag, id) to (name, named), (tag, field id) to name.
 pub struct Ids {
-    kinds: HashMap<(u8, u16), Kind>,
-    fields: HashMap<(u8, u8), String>,
+    pub kinds: HashMap<(u8, u16), Kind>,
+    pub fields: HashMap<(u8, u8), String>,
 }
 
 impl Ids {
@@ -282,7 +282,7 @@ pub struct Report {
 
 /// A language Rerail parses itself (`.rr`, Blade) declares no node types: the bound is every kind under every
 /// field (or none), plain, extra or missing, and ERROR under every field, with no supertypes.
-fn own_bound(tag: u8, ids: &Ids) -> Allowed {
+pub fn own_bound(tag: u8, ids: &Ids) -> Allowed {
     let kinds: BTreeSet<Kind> = ids.kinds.iter().filter(|((t, id), _)| *t == tag && *id != 0).map(|(_, k)| k.clone()).collect();
     let fields: Vec<String> = std::iter::once(String::new()).chain(ids.fields.iter().filter(|((t, _), _)| *t == tag).map(|(_, f)| f.clone())).collect();
     let mut tuples = BTreeMap::new();

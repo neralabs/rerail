@@ -143,6 +143,13 @@ The check is the device test, over a `core.rr`-shaped batch: every column of the
 Measured cold, at the repriced placement (10 strata with a run on the GPU), the same findings: views made on the
 host went from 22.7 MB in 23.0 ms to 9.7 MB in 5.7 ms.
 
+**An ERROR node is a member when its atom is asked** (2026-11-16, at the hub's merge of 0293). The host's bits
+left out slot 0, after `Within::member`, which read a node's code by `kind_code`: ERROR's is `u16::MAX`, past the
+1024-slot table, so an ERROR node was in no set. ERROR's atom is slot 0 (`kind_atom`), as the kernel reads it
+(`atom % 1024`), as the tape's set reads it (0293) and as the `node` view reports it. Both now read the slot. Found
+by `views_made_on_the_device_are_the_hosts_rows`: on the CPU binding the tape's solve (0293 step 3) gave an ERROR
+parent as the nearest member, which the device skipped.
+
 ### Placement repriced
 
 Placement priced a value the device reads at 7 ns (`DEVICE_UPLOAD_PER_VALUE`), measured when every view's rows were
