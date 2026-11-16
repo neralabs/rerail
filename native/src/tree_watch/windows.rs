@@ -120,6 +120,13 @@ impl Io {
     }
 }
 
+/// One of a watch's operations, told by its OVERLAPPED in [`Io`].
+enum Operation {
+    Read,
+    Oplock,
+    Release,
+}
+
 /// A folder as the file system knows it: a rename keeps it, a new folder at the path is another.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 struct Identity {
@@ -168,6 +175,21 @@ impl Watch {
         self.handle != INVALID_HANDLE_VALUE
     }
 
+    /// Which of this watch's operations `overlapped` belongs to, now no longer in flight; none for
+    /// another OVERLAPPED or an operation that was not in flight.
+    fn finished(&mut self, overlapped: *mut OVERLAPPED) -> Option<Operation> {
+        let (operation, in_flight) = if std::ptr::eq(overlapped, &raw mut self.io.oplock) {
+            (Operation::Oplock, &mut self.oplocked)
+        } else if std::ptr::eq(overlapped, &raw mut self.io.read) {
+            (Operation::Read, &mut self.reading)
+        } else if std::ptr::eq(overlapped, &raw mut self.io.release) {
+            (Operation::Release, &mut self.releasing)
+        } else {
+            return None;
+        };
+        std::mem::replace(in_flight, false).then_some(operation)
+    }
+
     /// Binds the handle to `port` under `key`, takes the oplock and starts the first read; true
     /// when all three hold. Otherwise the handle is closed.
     fn start(&mut self, port: HANDLE, key: usize) -> bool {
@@ -200,6 +222,12 @@ impl Watch {
         self.oplocked = completion_comes(done);
         // One that finished at once holds no oplock.
         !done && self.oplocked
+    }
+
+    /// Acknowledges a break to none if it waits, then takes the oplock again; true when it is held.
+    fn renew(&mut self, acknowledge: bool) -> bool {
+        (!acknowledge || self.release())
+            && self.oplock(REQUEST_OPLOCK_INPUT_FLAG_REQUEST, READ_HANDLE)
     }
 
     /// Acknowledges a break to none, which holds no oplock; true when it was taken.
@@ -548,47 +576,43 @@ impl Loop {
     /// call that failed at once) is dropped: the watch goes only once none can still come, and not
     /// while its handle is to be opened again. An acknowledgment's completion asks nothing more.
     fn completed(&mut self, key: usize, overlapped: *mut OVERLAPPED, bytes: u32, error: u32) {
+        match self.finished(key, overlapped) {
+            Some(Operation::Oplock) => self.oplock_completed(key, error),
+            Some(Operation::Read) => self.read_completed(key, bytes, error),
+            Some(Operation::Release) | None => {}
+        }
+    }
+
+    /// Which operation of `key` `overlapped` belongs to, now no longer in flight, while its handle
+    /// is open; none for an operation not in flight, or one of a closed handle, whose watch goes
+    /// here once no completion can still come and its handle is not to be opened again.
+    fn finished(&mut self, key: usize, overlapped: *mut OVERLAPPED) -> Option<Operation> {
+        let watch = self.watches.get_mut(&key)?;
+        let operation = watch.finished(overlapped)?;
+        if watch.open_handle() {
+            return Some(operation);
+        }
+        if !watch.pending() && watch.reopen_at.is_none() {
+            self.watches.remove(&key);
+        }
+        None
+    }
+
+    /// `key`'s oplock broke, or failed, with `error`: the handle keeps it as the break asks, or
+    /// is let go.
+    fn oplock_completed(&mut self, key: usize, error: u32) {
         let Some(watch) = self.watches.get_mut(&key) else {
             return;
         };
-        let oplock = std::ptr::eq(overlapped, &raw mut watch.io.oplock);
-        let read = std::ptr::eq(overlapped, &raw mut watch.io.read);
-        let in_flight = if oplock {
-            &mut watch.oplocked
-        } else if read {
-            &mut watch.reading
-        } else if std::ptr::eq(overlapped, &raw mut watch.io.release) {
-            &mut watch.releasing
-        } else {
-            return;
+        let kept = match oplock_break(error, &watch.io.oplock_out) {
+            Break::Acknowledge(level) => watch.oplock(REQUEST_OPLOCK_INPUT_FLAG_ACK, level),
+            Break::Renew { acknowledge } => watch.renew(acknowledge),
+            Break::LetGo => false,
         };
-        if !std::mem::replace(in_flight, false) {
-            return;
-        }
-        if !watch.open_handle() {
-            if !watch.pending() && watch.reopen_at.is_none() {
-                self.watches.remove(&key);
-            }
-            return;
-        }
-        if oplock {
-            let kept = match oplock_break(error, &watch.io.oplock_out) {
-                Break::Acknowledge(level) => watch.oplock(REQUEST_OPLOCK_INPUT_FLAG_ACK, level),
-                Break::Renew { acknowledge } => {
-                    (!acknowledge || watch.release())
-                        && watch.oplock(REQUEST_OPLOCK_INPUT_FLAG_REQUEST, READ_HANDLE)
-                }
-                Break::LetGo => false,
-            };
-            if !kept {
-                // Let go of the handle so whatever broke the oplock goes on; open it again later.
-                watch.close_handle();
-                watch.reopen_at = Some(Instant::now() + REOPEN_DELAY);
-            }
-            return;
-        }
-        if read {
-            self.read_completed(key, bytes, error);
+        if !kept {
+            // Let go of the handle so whatever broke the oplock goes on; open it again later.
+            watch.close_handle();
+            watch.reopen_at = Some(Instant::now() + REOPEN_DELAY);
         }
     }
 
