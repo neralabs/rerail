@@ -11,11 +11,61 @@ const HEADER: usize = HEADER_BYTES;
 /// `HEADER`, for a reader that decodes the header alone first.
 pub const HEADER_LEN: usize = HEADER;
 
+/// What admission reads of format 16 (for a reader that does not link the format's crate).
+pub use rerail_tape_format::f16::{Tape16Z, placement};
+
+/// A stored image's format, from its magic: the device reads format 15's columns and format 16's arrays in place;
+/// a 16z image is laid out as the format 16 tape it is the blocks of (`Tape16Z::unblock_into`) where it is placed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stored {
+    F15,
+    F16,
+    F16Z,
+}
+
+/// The format of the image whose first bytes are `head`.
+pub fn stored(head: &[u8]) -> Result<Stored, String> {
+    match head.get(..8) {
+        Some(m) if m == TAPE_MAGIC => Ok(Stored::F15),
+        Some(m) if m == rerail_tape_format::f16::MAGIC16 => Ok(Stored::F16),
+        Some(m) if m == rerail_tape_format::f16::MAGIC16Z => Ok(Stored::F16Z),
+        _ => Err("wrong tape image magic".into()),
+    }
+}
+
+/// The language of a format 16 or 16z image whose first bytes are `head`: its table and choices.
+pub fn lang_of(head: &[u8]) -> Result<&'static rerail_tape_format::f16::Lang, String> {
+    let tag = *head.get(8).ok_or("truncated tape image")?;
+    rerail_tape_format::f16::lang(tag).ok_or_else(|| format!("a format 16 tape of tag {tag}, which has no table"))
+}
+
+/// The device's codes for a code table (format 16's: its language's), named as `TapeDoc` names its nodes.
+pub fn device_codes_of(table: &rerail_tape_format::tape::CodeTable, grammar: &Grammar) -> Result<Vec<DeviceCode>, String> {
+    let mut codes = Vec::with_capacity(table.len());
+    for n in 0..table.len() as u32 {
+        let e = table.entry(n);
+        if e.classes.len() > MAX_NODE_SUPERTYPES {
+            return Err("a code with more classes than the device reads".into());
+        }
+        let error = e.flags & CODE_ERROR != 0;
+        let kind = if error { ERROR_SYMBOL } else { e.kind };
+        let named = e.alias.as_ref().map_or_else(|| grammar.kind_is_named(kind), |alias| alias.1);
+        let mut classes = [0_u16; MAX_NODE_SUPERTYPES];
+        classes[..e.classes.len()].copy_from_slice(&e.classes);
+        codes.push(DeviceCode {
+            kind,
+            field: e.field,
+            flags: u8::from(named) | (u8::from(e.flags & CODE_EXTRA != 0) << 1) | (u8::from(e.flags & CODE_MISSING != 0) << 2) | (u8::from(error) << 3),
+            class_count: e.classes.len() as u8,
+            reserved: 0,
+            classes,
+        });
+    }
+    Ok(codes)
+}
+
 /// The node and code counts an image's header declares, after its magic and version.
 pub fn header_counts(header: &[u8]) -> Result<(usize, usize), String> {
-    if header.len() >= 8 && (&header[..8] == rerail_tape_format::f16::MAGIC16 || &header[..8] == rerail_tape_format::f16::MAGIC16Z) {
-        return Err("a format 16 tape: the device's kernels read format 15 until they read the tape API (decision 0293, step 5)".into());
-    }
     if header.len() < HEADER || &header[..8] != TAPE_MAGIC {
         return Err("wrong tape image magic".into());
     }

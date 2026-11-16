@@ -62,6 +62,11 @@ impl Lang {
     pub fn number(&self, entry: &Entry) -> Option<u32> {
         self.index.get(entry).copied()
     }
+    /// What a reader elsewhere (the device's, `metal_tape.metal`) needs of the language to read its tapes in
+    /// place: the cutoff, the numbers a prefix byte covers, and the slot, gap and length widths.
+    pub fn device(&self) -> (u32, u32, [usize; 3]) {
+        (self.cut, self.per, self.widths)
+    }
     pub fn revision(&self) -> u8 {
         self.revision
     }
@@ -230,29 +235,9 @@ impl Tape16 {
 
     /// The stored tape, held as it is: its header and part starts are checked against its length.
     pub fn from_bytes(buf: Vec<u8>) -> Result<Self, String> {
-        if buf.len() < HEAD16 || &buf[..8] != MAGIC16 {
-            return Err("not a format 16 tape".into());
-        }
-        let n = usize::try_from(u64_at(&buf, head::NODES)?).map_err(|_| "a tape length overflows")?;
-        let parts = n.div_ceil(PART) + 1;
-        let mut at = [0usize; REGIONS + 1];
-        let starts = HEAD16 + 4 * 4 * parts;
-        at[0] = starts.next_multiple_of(8);
-        for r in 0..REGIONS {
-            let len = usize::try_from(u64_at(&buf, head::LENGTHS + 8 * r)?).map_err(|_| "a tape length overflows")?;
-            at[r + 1] = at[r].checked_add(len + 8).ok_or("a tape length overflows")?;
-        }
-        if buf.len() != at[REGIONS] {
-            return Err(format!("a format 16 tape of {} bytes, its header says {}", buf.len(), at[REGIONS]));
-        }
-        let base: [Vec<u32>; 4] = [u32s(&buf, HEAD16, parts)?, u32s(&buf, HEAD16 + 4 * parts, parts)?, u32s(&buf, HEAD16 + 8 * parts, parts)?, u32s(&buf, HEAD16 + 12 * parts, parts)?];
-        for (k, b) in base.iter().enumerate() {
-            if b.windows(2).any(|w| w[0] > w[1]) || b.last().is_some_and(|&e| e as usize + 8 != at[6 + k] - at[5 + k]) {
-                return Err(format!("side list {k}'s part starts do not fit it"));
-            }
-        }
-        let vw = std::array::from_fn(|k| usize::from(buf[head::VW + k]));
-        Ok(Tape16 { mark: buf[head::MARK], n, cw: usize::from(buf[head::CW]), source_len: u64_at(&buf, head::SOURCE_LEN)?, buf, at, base, vw })
+        let p = placement(&buf)?;
+        let base: [Vec<u32>; 4] = std::array::from_fn(|k| u32s(&buf, p.parts[k], p.n.div_ceil(PART) + 1).expect("checked"));
+        Ok(Tape16 { mark: buf[head::MARK], n: p.n, cw: p.cw, source_len: u64_at(&buf, head::SOURCE_LEN)?, buf, at: p.at, base, vw: p.vw })
     }
 
     /// The tape from its regions (each with its 8 bytes of room) and side lists, laid as stored.
@@ -307,6 +292,52 @@ impl Tape16 {
         };
         Ok(F16 { v, lang })
     }
+}
+
+/// Where a stored format 16 tape's parts lie in its bytes, for a reader that reads them there without this crate
+/// (the device's, `metal_tape.metal`): each region's start (codes, slots, gaps, lengths, checkpoints, the four
+/// side lists; one more at the end), each side list's part starts (u32s, a part's start and one more at the end),
+/// the node count, the checkpoints' width and the side lists' value widths.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Placement {
+    pub n: usize,
+    pub cw: usize,
+    pub at: [usize; REGIONS + 1],
+    pub parts: [usize; 4],
+    pub vw: [usize; 4],
+}
+
+/// The placement of the stored format 16 tape `buf`, its header and part starts checked against its length as
+/// `Tape16::from_bytes` checks them, without copying a byte.
+pub fn placement(buf: &[u8]) -> Result<Placement, String> {
+    if buf.len() < HEAD16 || &buf[..8] != MAGIC16 {
+        return Err("not a format 16 tape".into());
+    }
+    let n = usize::try_from(u64_at(buf, head::NODES)?).map_err(|_| "a tape length overflows")?;
+    let parts = n.div_ceil(PART) + 1;
+    let mut at = [0usize; REGIONS + 1];
+    let starts = HEAD16.checked_add(4 * 4 * parts).ok_or("a tape length overflows")?;
+    at[0] = starts.next_multiple_of(8);
+    for r in 0..REGIONS {
+        let len = usize::try_from(u64_at(buf, head::LENGTHS + 8 * r)?).map_err(|_| "a tape length overflows")?;
+        at[r + 1] = at[r].checked_add(len).and_then(|a| a.checked_add(8)).ok_or("a tape length overflows")?;
+    }
+    if buf.len() != at[REGIONS] {
+        return Err(format!("a format 16 tape of {} bytes, its header says {}", buf.len(), at[REGIONS]));
+    }
+    let part = |k: usize| HEAD16 + 4 * k * parts;
+    for k in 0..4 {
+        let b = buf[part(k)..part(k) + 4 * parts].as_chunks::<4>().0;
+        let b = |j: usize| u32::from_le_bytes(b[j]);
+        if (1..parts).any(|j| b(j - 1) > b(j)) || b(parts - 1) as usize + 8 != at[6 + k] - at[5 + k] {
+            return Err(format!("side list {k}'s part starts do not fit it"));
+        }
+    }
+    let vw = std::array::from_fn(|k| usize::from(buf[head::VW + k]));
+    if vw.iter().any(|&w| w > 8) || usize::from(buf[head::CW]) > 8 {
+        return Err("a format 16 tape's widths are out of range".into());
+    }
+    Ok(Placement { n, cw: usize::from(buf[head::CW]), at, parts: std::array::from_fn(part), vw })
 }
 
 /// The width in bytes a value up to `max` takes (at least 1).
@@ -910,6 +941,72 @@ impl Tape16Z {
         Ok(Tape16Z { id: next_id(), mark: buf[head::MARK], n, cw: usize::from(buf[head::CW]), source_len: u64_at(&buf, head::SOURCE_LEN)?, widths, vw, buf, comp, at, sides })
     }
 
+    /// The length of this tape laid out as format 16 (`unblock_into`).
+    pub fn unblocked_len(&self) -> usize {
+        let (n, w, cw) = (self.n, self.widths, self.cw);
+        let side = |k: usize| self.sides.iter().map(|s| s[k] as usize).sum::<usize>();
+        let lens = [n, n * w[0], n * w[1], n * w[2], n.div_ceil(K) * cw, side(0), side(1), side(2), side(3)];
+        (HEAD16 + 16 * (n.div_ceil(PART) + 1)).next_multiple_of(8) + lens.iter().map(|l| l + 8).sum::<usize>()
+    }
+
+    /// This tape as the format 16 tape it is the blocks of (`Tape16::blocks`), written into `out`
+    /// (`unblocked_len` bytes): each block decoded and its regions laid end to end, as format 16's regions are its
+    /// blocks' (a block is one side-list part). No node is read; the bytes are `Tape16::as_bytes`'.
+    pub fn unblock_into(&self, out: &mut [u8]) -> Result<(), String> {
+        if out.len() != self.unblocked_len() {
+            return Err(format!("{} bytes for a format 16 tape of {}", out.len(), self.unblocked_len()));
+        }
+        let (n, w, cw) = (self.n, self.widths, self.cw);
+        let parts = n.div_ceil(PART) + 1;
+        out.fill(0);
+        out[..8].copy_from_slice(MAGIC16);
+        out[head::LANGUAGE] = self.tag();
+        out[head::MARK] = self.mark;
+        out[head::CW] = cw as u8;
+        out[head::SOURCE_LEN..head::SOURCE_LEN + 8].copy_from_slice(&self.source_len.to_le_bytes());
+        out[head::NODES..head::NODES + 8].copy_from_slice(&(n as u64).to_le_bytes());
+        for k in 0..4 {
+            out[head::VW + k] = self.vw[k] as u8;
+        }
+        let side = |k: usize| self.sides.iter().map(|s| s[k] as usize).sum::<usize>();
+        let lens = [n, n * w[0], n * w[1], n * w[2], n.div_ceil(K) * cw, side(0), side(1), side(2), side(3)];
+        let mut at = [0usize; REGIONS + 1];
+        at[0] = (HEAD16 + 16 * parts).next_multiple_of(8);
+        for r in 0..REGIONS {
+            out[head::LENGTHS + 8 * r..head::LENGTHS + 8 * r + 8].copy_from_slice(&(lens[r] as u64).to_le_bytes());
+            at[r + 1] = at[r] + lens[r] + 8;
+        }
+        // Each side list's part starts: its parts' lengths summed.
+        for k in 0..4 {
+            let mut sum = 0u32;
+            for b in 0..parts {
+                let at = HEAD16 + 4 * (k * parts + b);
+                out[at..at + 4].copy_from_slice(&sum.to_le_bytes());
+                sum += self.sides.get(b).map_or(0, |s| s[k]);
+            }
+        }
+        // Each block's regions where the tape's are: its nodes' bytes at their node's place, its side parts after
+        // the parts before them.
+        let mut raw = Vec::new();
+        let mut fill = [0usize; REGIONS];
+        for b in 0..n.div_ceil(Z) {
+            let nb = Z.min(n - b * Z);
+            let block = layout(nb, w, cw, self.sides[b]);
+            raw.resize(block[REGIONS], 0);
+            let (from, to) = (self.comp + self.at[b] as usize, self.comp + self.at[b + 1] as usize);
+            lz4::decompress(self.buf.get(from..to).ok_or("a 16z block past the tape")?, &mut raw);
+            for r in 0..REGIONS {
+                let len = block[r + 1] - block[r] - 8;
+                out[at[r] + fill[r]..at[r] + fill[r] + len].copy_from_slice(&raw[block[r]..block[r] + len]);
+                fill[r] += len;
+            }
+        }
+        if (0..REGIONS).any(|r| fill[r] != lens[r]) {
+            return Err("a 16z tape's blocks do not fill its regions".into());
+        }
+        Ok(())
+    }
+
     /// Read with `lang`'s choices (its revision and widths).
     pub fn reader<'a>(&'a self, lang: &'a Lang) -> Result<F16Z<'a>, String> {
         if self.mark != lang.revision || self.widths != lang.widths {
@@ -1101,6 +1198,11 @@ mod tests {
         let Ok(Written::F16(plain)) = write_from(lang, t, number, source_len, 0, false) else { panic!("format 16") };
         let Ok(Written::F16Z(z)) = write_from(lang, t, number, source_len, 0, true) else { panic!("16z") };
         assert_eq!(z.as_bytes(), plain.blocks(lang).as_bytes(), "16z written directly is format 16's blocks");
+        let mut unblocked = vec![0u8; z.unblocked_len()];
+        z.unblock_into(&mut unblocked).unwrap();
+        assert_eq!(unblocked, plain.as_bytes(), "16z laid out is format 16's bytes");
+        let p = placement(plain.as_bytes()).unwrap();
+        assert_eq!((p.n, p.cw, p.at, p.vw), (plain.n, plain.cw, plain.at, plain.vw), "the placement is the reader's");
         plain
     }
 

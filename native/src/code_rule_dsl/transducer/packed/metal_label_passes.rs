@@ -64,12 +64,13 @@ pub(in crate::code_rule_dsl) enum Pass<'a> {
     Empty { target: u32 },
 }
 
-/// A pass's roots, as a rule over each document's codes (decision 0033): no node list is built.
-/// Every root test a pass's domain makes (its kinds, its program's leading kind and supertype
-/// tests, `matcher::Entry`) is a property of a node's code, so a pass's roots in a document are
-/// the nodes of the codes its rule admits, which the residency indexes (`DocView::by_code`). The
-/// run hands the device each pass's (document, code) runs (`RootSeg`); the device reads its root
-/// in place. Listed roots (a clause's prefilter candidates, few and scattered) are a list.
+/// A pass's roots, as a rule over each document's codes (decision 0033): every root test a pass's
+/// domain makes (its kinds, its program's leading kind and supertype tests, `matcher::Entry`) is a
+/// property of a node's code, so a pass's roots in a document are the nodes of the codes its rule
+/// admits, found from the tape's code bytes 64 at a time (`TapeDoc::transducer_nodes_where`, decision
+/// 0293: no index of nodes by code is kept beside the tape). The run hands the device each pass's
+/// (document, roots) runs (`RootSeg`), listed. Listed roots (a clause's prefilter candidates, few and
+/// scattered) are a list.
 #[derive(Debug)]
 pub(in crate::code_rule_dsl) enum Roots {
     /// The nodes whose kind is one of `kinds` (any where `None`) and whose code passes `entry`
@@ -80,10 +81,9 @@ pub(in crate::code_rule_dsl) enum Roots {
 }
 
 impl Roots {
-    fn admits(kinds: &Option<Vec<u16>>, entry: &[(u8, u16)], code: &crate::code_rule_dsl::tape::resident::DeviceCode) -> bool {
-        let class = |class: u16| code.classes[..usize::from(code.class_count)].contains(&class);
-        kinds.as_ref().is_none_or(|kinds| kinds.binary_search(&code.kind).is_ok())
-            && entry.iter().all(|&(op, arg)| if op == super::super::KIND { code.kind == arg } else { class(arg) })
+    fn admits(kinds: &Option<Vec<u16>>, entry: &[(u8, u16)], kind: u16, classes: &[u16]) -> bool {
+        kinds.as_ref().is_none_or(|kinds| kinds.binary_search(&kind).is_ok())
+            && entry.iter().all(|&(op, arg)| if op == super::super::KIND { kind == arg } else { classes.contains(&arg) })
     }
 
     /// This rule as the sweep tests it at a node's code (`sweep_admits`): {kind count or NONE,
@@ -107,42 +107,38 @@ impl Roots {
                 if !active.get(file).copied().unwrap_or(false) {
                     return Box::new(std::iter::empty());
                 }
-                Box::new((0..tape.transducer_len() as u32).filter(move |&node| {
-                    kinds.as_ref().is_none_or(|kinds| kinds.binary_search(&tape.transducer_kind(node)).is_ok())
-                        && entry.iter().all(|&(op, arg)| if op == super::super::KIND { tape.transducer_kind(node) == arg } else { tape.transducer_has_supertype(node, arg) })
-                }))
+                let mut nodes = Vec::new();
+                tape.transducer_nodes_where(|kind, classes| Self::admits(kinds, entry, kind, classes), &mut nodes);
+                Box::new(nodes.into_iter())
             }
         }
     }
 
-    /// This rule's segments over a batch's documents, appended to `segs` (in u32s, as `RootSeg`s
-    /// at 16-byte records): the header's index (in records) and the roots' count. Listed nodes go
-    /// after every segment, in `listed`, which the caller appends and offsets (`Segments`).
-    fn segments(&self, documents: &[std::sync::Arc<crate::code_rule_dsl::residency::slabs::Resident>], segs: &mut Segments) -> (u32, u32) {
+    /// This rule's segments over a batch's files, appended to `segs` (in u32s, as `RootSeg`s at
+    /// 16-byte records): the header's index (in records) and the roots' count. Every segment's nodes
+    /// are listed, in `listed`, which the caller appends and offsets (`Segments`).
+    fn segments(&self, files: &[TapeDoc], segs: &mut Segments) -> (u32, u32) {
         let header = segs.records.len();
         segs.records.push([0; 4]);
         let mut total = 0_u32;
-        for (doc, resident) in documents.iter().enumerate() {
+        for (doc, tape) in files.iter().enumerate() {
+            let from = segs.listed.len();
             match self {
                 Self::Listed(lists) => {
                     let Some(list) = lists.get(doc).filter(|list| !list.is_empty()) else { continue };
-                    segs.records.push([doc as u32, ROOT_LISTED | segs.listed.len() as u32, list.len() as u32, total]);
                     segs.listed.extend_from_slice(list);
-                    total += list.len() as u32;
                 }
                 Self::Codes { kinds, entry, active } => {
                     if !active.get(doc).copied().unwrap_or(false) {
                         continue;
                     }
-                    let starts = resident.code_starts();
-                    for (code, device) in resident.codes().iter().enumerate() {
-                        let count = starts[code + 1] - starts[code];
-                        if count > 0 && Self::admits(kinds, entry, device) {
-                            segs.records.push([doc as u32, starts[code], count, total]);
-                            total += count;
-                        }
-                    }
+                    tape.transducer_nodes_where(|kind, classes| Self::admits(kinds, entry, kind, classes), &mut segs.listed);
                 }
+            }
+            let count = (segs.listed.len() - from) as u32;
+            if count > 0 {
+                segs.records.push([doc as u32, ROOT_LISTED | from as u32, count, total]);
+                total += count;
             }
         }
         segs.records[header] = [(segs.records.len() - header - 1) as u32, total, 0, 0];
@@ -163,11 +159,11 @@ struct Segments {
 }
 
 impl Segments {
-    fn of(&mut self, roots: &std::sync::Arc<Roots>, documents: &[std::sync::Arc<crate::code_rule_dsl::residency::slabs::Resident>]) -> (u32, u32) {
+    fn of(&mut self, roots: &std::sync::Arc<Roots>, files: &[TapeDoc]) -> (u32, u32) {
         if let Some(found) = self.by_rule.get(&(std::sync::Arc::as_ptr(roots) as usize)) {
             return *found;
         }
-        let found = roots.segments(documents, self);
+        let found = roots.segments(files, self);
         self.by_rule.insert(std::sync::Arc::as_ptr(roots) as usize, found);
         found
     }
@@ -1692,10 +1688,9 @@ impl Runner<'_> {
     fn size(&mut self, plan: &Plan<'_>) -> Result<(), Error> {
         let mut widest_seen: Option<(WorkspaceTotals, u32, u32, usize)> = None;
         // Every pass's roots as segments, in one buffer for the run, before anything binds it.
-        let documents = self.tapes.table.documents.clone();
         for pass in plan.steps.iter().flat_map(|(_, levels)| levels).flatten() {
             if let Pass::Program { roots, .. } | Pass::Count { roots, .. } | Pass::Pattern { roots, .. } = pass {
-                self.segments.of(roots, &documents);
+                self.segments.of(roots, self.files);
             }
         }
         let segs = self.segments.words();
@@ -1732,7 +1727,6 @@ impl Runner<'_> {
                 let files = self.files;
                 // Each distinct (value, kind)'s slot row, computed once for the run's levels.
                 let mut rows = HashMap::<String, Option<u32>>::new();
-                let documents = self.tapes.table.documents.clone();
                 let segments = &mut self.segments;
                 // Threads: a pass's from its own start, over its (shared) item range.
                 let mut threads = [0_u32; 3];
@@ -1767,7 +1761,7 @@ impl Runner<'_> {
                 let mut place = |program: &Program, roots: &std::sync::Arc<Roots>, mode: u32, target: u32, table: Option<Vec<u32>>| -> bool {
                     let Some(walk) = Micro::of(program) else { return true };
                     // The rule's segments, shared by passes of its domain.
-                    let (start, count) = segments.of(roots, &documents);
+                    let (start, count) = segments.of(roots, files);
                     if crate::code_rule_dsl::prof::on() {
                         let depth = walk.depth().map_or("loop".to_owned(), |depth| format!("{:02}", depth.min(64)));
                         if walk.depth().is_none() && std::env::var_os("RERAIL_DUMP_LOOP").is_some() {

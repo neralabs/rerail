@@ -89,6 +89,10 @@ inline uint tree_next(thread const Tree& t,uint node,bool named){uint local=tree
 inline uint tree_first(thread const Tree& t,uint node){return tree_global(t,tape_first_child(t.s,t.d,tree_local(t,node)));}
 inline uint tree_end(thread const Tree& t,uint node){return node+tape_size(t.s,t.d,tree_local(t,node));}
 inline uint tree_parent(thread const Tree& t,uint node){return tree_global(t,tape_parent(t.s,t.d,tree_local(t,node)));}
+// The node after `node`'s subtree (named: the next named one) while it is before `end`, a parent's end.
+inline uint tree_next_in(thread const Tree& t,uint node,uint end,bool named){uint local=tree_local(t,node),last=end-t.d.nodeBase;return tree_global(t,named?tape_next_named_in(t.s,t.d,local,last):tape_next_in(t.s,t.d,local,last));}
+// The end of `node`'s parent's subtree (NONE at the root).
+inline uint tree_parent_end(thread const Tree& t,uint node){uint parent=tree_parent(t,node);return parent==TAPE_NONE?TAPE_NONE:tree_end(t,parent);}
 // A pass: its words, its scratch label, whether it marks captures, and its roots: their segments
 // at `itemStart` in `items` (`RootSeg`, decision 0033) and how many.
 struct MicroPass { uint wordStart,wordCount,target,targets,itemStart,itemCount,textStart,threadStart; };
@@ -121,9 +125,9 @@ static bool micro_class(thread const Tree& t,device const uint* head,uint node,u
 // A move frame's next candidate (`MicroFrame`, `RootFrame`).
 template<typename Frame>
 static uint walk_next(thread const Tree& t,thread Frame& frame){
-  if(frame.resume==1u){while(frame.next!=MICRO_NONE){uint child=frame.next;frame.next=tree_next(t,child,false);if(frame.named==0u||(tree_flags(t,child)&1u))return child;}return MICRO_NONE;}
+  if(frame.resume==1u){uint end=tree_end(t,frame.end);while(frame.next!=MICRO_NONE){uint child=frame.next;frame.next=tree_next_in(t,child,end,false);if(frame.named==0u||(tree_flags(t,child)&1u))return child;}return MICRO_NONE;}
   if(frame.resume==2u){while(frame.next<frame.end){uint node=frame.next;frame.next++;if(frame.named==0u||(tree_flags(t,node)&1u))return node;}return MICRO_NONE;}
-  if(frame.resume==3u){uint node=frame.next;if(node==MICRO_NONE)return MICRO_NONE;frame.next=tree_next(t,node,frame.named!=0u);return node;}
+  if(frame.resume==3u){uint node=frame.next;if(node==MICRO_NONE)return MICRO_NONE;frame.next=tree_next_in(t,node,frame.end,frame.named!=0u);return node;}
   return MICRO_NONE;
 }
 
@@ -232,7 +236,7 @@ static void micro_from(thread const Tree& t,device const uint* head,MicroPass pa
           MicroFrame frame=path;frame.pc=path.pc+1u;frame.named=named?1u:0u;
           if(op==16u){frame.resume=1u;frame.next=tree_first(t,path.node);frame.end=path.node;}
           else if(op==19u){frame.resume=2u;frame.next=path.node+1u;frame.end=tree_end(t,path.node);}
-          else{frame.resume=3u;frame.next=tree_next(t,path.node,named);}
+          else{frame.resume=3u;frame.end=tree_parent_end(t,path.node);frame.next=frame.end==TAPE_NONE?MICRO_NONE:tree_next_in(t,path.node,frame.end,named);}
           uint candidate=walk_next(t,frame);
           if(candidate==MICRO_NONE){alive=false;break;}
           if(depth==FRAMES)MICRO_FAIL
@@ -407,7 +411,7 @@ static bool root_walk(thread const Tree& t,device const uint* head,RootPass pass
           RootFrame frame=path;frame.pc=path.pc+1u;frame.named=named?1u:0u;
           if(op==16u){frame.resume=1u;frame.next=tree_first(t,path.node);frame.end=path.node;}
           else if(op==19u){frame.resume=2u;frame.next=path.node+1u;frame.end=tree_end(t,path.node);}
-          else{frame.resume=3u;frame.next=tree_next(t,path.node,named);}
+          else{frame.resume=3u;frame.end=tree_parent_end(t,path.node);frame.next=frame.end==TAPE_NONE?MICRO_NONE:tree_next_in(t,path.node,frame.end,named);}
           uint candidate=walk_next(t,frame);
           if(candidate==MICRO_NONE){alive=false;break;}
           if(depth==FRAMES)return false;

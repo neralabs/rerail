@@ -50,7 +50,8 @@ pub fn aligned(length: usize) -> usize {
 
 /// A document as the device reads it: byte offsets into its slab, as `DocView` in
 /// `metal_tape.metal`. `node_base` is the document's first node in a batch's numbering, set by
-/// the batch's document table (`DocTable`).
+/// the batch's document table (`DocTable`). The tape is read where it lies, format 15's columns or
+/// format 16's arrays (decision 0293): nothing per node is derived beside it.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct DocView {
@@ -58,43 +59,39 @@ pub struct DocView {
     pub slab: u32,
     pub nodes: u32,
     pub node_base: u32,
-    /// `size`'s, `off`'s and `tail`'s widths in bytes, at bits 0, 4 and 8; bit 12: tails measured
-    /// from the node's own start.
+    /// The tape's format: 15 or 16 (a 16z tape is laid out as format 16 where it is placed).
+    pub format: u32,
+    /// Format 15: `size`'s, `off`'s and `tail`'s widths in bytes, at bits 0, 4 and 8; bit 12: tails
+    /// measured from the node's own start. Format 16: the slot, gap and length widths at bits 0, 4
+    /// and 8, the checkpoints' at 12, and the four side lists' value widths at 16, 20, 24 and 28.
     pub widths: u32,
-    pub code: u32,
-    pub size: u32,
-    pub base: u32,
-    pub off: u32,
-    pub tail: u32,
-    /// Each node's parent (u32, `u32::MAX` at the root).
-    pub parent: u32,
-    /// The fixed-width codes (`DeviceCode`).
+    /// Format 15's columns (code, size, base, off, tail), or format 16's arrays (codes, slots, gaps,
+    /// lengths, checkpoints).
+    pub columns: [u32; 5],
+    /// Format 16: the four side lists (codes' low parts, escaped slots, gaps, lengths), and each
+    /// one's part starts (u32s, a part a 1,024 nodes).
+    pub side: [u32; 4],
+    pub parts: [u32; 4],
+    /// Format 16: its language's cutoff and the numbers a prefix byte covers.
+    pub cut: u32,
+    pub per: u32,
+    /// The code table (`DeviceCode`, format 16's: the language's).
     pub codes: u32,
     pub source: u32,
     pub source_len: u32,
-    /// Line starts (u32, document-local bytes), the first 0.
+    /// Line starts (u32, document-local bytes), the first 0, and how many.
     pub lines: u32,
     pub line_count: u32,
     /// The code table's length.
     pub code_count: u32,
-    /// Each node's first entry in `kids` (u32, `nodes + 1` of them), and the children of every
-    /// node in node order (u32, document-local; `kid_count` of them, a tree's `nodes - 1`): the
-    /// child lists a reader builds at admission, for the interpreter's child by index.
-    pub kid_start: u32,
-    pub kids: u32,
-    pub kid_count: u32,
-    /// The document's place in a batch's numbering of children, source bytes and lines, as a
-    /// packed batch concatenates them (set by `DocTable`).
-    pub child_base: u32,
+    /// The document's place in a batch's numbering of source bytes and lines, as a packed batch
+    /// concatenates them (set by `DocTable`).
     pub source_base: u32,
     pub line_base: u32,
-    /// Each code's first entry in `by_code` (u32, `code_count + 1` of them), and the nodes of
-    /// every code in node order (u32, document-local, `nodes` of them): a pass's roots in this
-    /// document are the nodes of the codes its rule admits (`label_passes::Roots`), read in place.
-    pub code_start: u32,
-    pub by_code: u32,
+    /// Where the tape starts (its header).
+    pub tape: u32,
 }
-const _: () = assert!(std::mem::size_of::<DocView>() == 96);
+const _: () = assert!(std::mem::size_of::<DocView>() == 116);
 
 /// A slab: its buffer and identity. Its bump position is the residency's (`State`).
 pub struct Slab {
@@ -110,7 +107,7 @@ pub struct Resident {
     pub view: DocView,
     /// Bytes per pool: `tape.resident`, `source.resident`, `tape.derived`.
     pub bytes: [usize; 3],
-    /// The tape image's length, as stored.
+    /// The tape's length where it is placed (a 16z tape's laid out as format 16).
     pub tape_length: usize,
 }
 
@@ -124,13 +121,6 @@ impl Resident {
         unsafe { std::slice::from_raw_parts(slab.host().add(offset as usize), length) }
     }
 
-    /// Each code's first entry in the nodes by code, `code_count + 1` of them.
-    pub fn code_starts(&self) -> &[u32] {
-        let length = self.view.code_count as usize + 1;
-        let bytes = self.bytes_at(self.view.code_start, 4 * length);
-        // SAFETY: as `codes`, u32s at a 16-byte offset.
-        unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<u32>(), length) }
-    }
 
 
 }
@@ -193,7 +183,7 @@ impl DocTable {
         let mut slabs: Vec<Arc<Slab>> = Vec::new();
         let mut views = Vec::with_capacity(documents.len());
         let mut nodes = 0usize;
-        let (mut children, mut source, mut lines) = (0usize, 0usize, 0usize);
+        let (mut source, mut lines) = (0usize, 0usize);
         for document in &documents {
             let slab = match slabs.iter().position(|slab| slab.id == document.slab.id) {
                 Some(at) => at,
@@ -206,13 +196,11 @@ impl DocTable {
             views.push(DocView {
                 slab: slab as u32,
                 node_base: u32::try_from(nodes).ok()?,
-                child_base: u32::try_from(children).ok()?,
                 source_base: u32::try_from(source).ok()?,
                 line_base: u32::try_from(lines).ok()?,
                 ..document.view
             });
             nodes += document.view.nodes as usize;
-            children += document.view.kid_count as usize;
             source += document.view.source_len as usize;
             lines += document.view.line_count as usize;
         }
