@@ -887,13 +887,14 @@ function checkOwnRule({ directory, fail }: Validation, shipped: ReadonlyMap<stri
 
 /** Check 2: proof. Every rule has examples or a port entry, and every own rule is shipped and sets no violation.suppress. */
 function checkProof(validation: Validation, pack: RulePackFile | undefined, loaded: LoadedPack | undefined): void {
+  const { fail } = validation;
   if (pack === undefined) {
-    validation.fail("proof", "pack.json does not parse; see check 1");
+    fail("proof", "pack.json does not parse; see check 1");
     return;
   }
   const ported = new Set((loaded?.pack.rules ?? []).map(port => port.policy.replace(/^\.\//u, "")));
   for (const rule of pack.rules) {
-    if (rule.examples === undefined && !ported.has(rule.document)) validation.fail("proof", `${rule.id}: no examples and no port entry in ${CONFORMANCE_FILE}`, rule.id);
+    if (rule.examples === undefined && !ported.has(rule.document)) fail("proof", `${rule.id}: no examples and no port entry in ${CONFORMANCE_FILE}`, rule.id);
   }
   const shipped = new Map(pack.rules.map(rule => [rule.id, rule]));
   for (const id of loaded?.pack.own ?? []) checkOwnRule(validation, shipped, id);
@@ -923,9 +924,10 @@ function checkPortExamples({ directory, fail }: Validation, port: Port): void {
  * example none: pack.json's, and the pairs candidates carry in conformance.json until they ship.
  */
 function checkExamples(validation: Validation, { pack, compiled }: ReadPack, loaded: LoadedPack | undefined): void {
+  const { fail } = validation;
   let registry: ConversationRuleRegistry | undefined;
   const conversationRegistry = (): ConversationRuleRegistry => (registry ??= new ConversationRuleRegistry({ modelPath: resolveModelPath(process.cwd()) }));
-  if (pack === undefined) validation.fail("examples", "pack.json does not parse; see check 1");
+  if (pack === undefined) fail("examples", "pack.json does not parse; see check 1");
   for (const rule of pack?.rules ?? []) checkRuleExamples(validation, rule, compiled.get(rule.id), conversationRegistry);
   for (const port of loaded?.pack.rules ?? []) checkPortExamples(validation, port);
 }
@@ -937,7 +939,7 @@ interface PortRules {
 }
 
 /** Why a port is not supported yet (its document compiles to `language-not-supported`), or undefined. */
-function notSupportedReason(directory: string, port: Port, result: Compiled | undefined): string | undefined {
+function notSupportedReason({ directory }: Validation, port: Port, result: Compiled | undefined): string | undefined {
   if (result?.kind === "not-supported-yet") return result.reason;
   if (result !== undefined || !existsSync(join(directory, port.policy))) return undefined;
   const candidate = compileCodeRule(readFileSync(join(directory, port.policy), "utf8"));
@@ -945,12 +947,12 @@ function notSupportedReason(directory: string, port: Port, result: Compiled | un
 }
 
 /** Each port's pack.json rule and, if it is not supported yet, why; a candidate's document is compiled to tell. */
-function portRules(directory: string, loaded: LoadedPack, { pack, compiled }: ReadPack): PortRules {
+function portRules(validation: Validation, loaded: LoadedPack, { pack, compiled }: ReadPack): PortRules {
   const ports: PortRules = { ruleOfPort: new Map(), notSupported: new Map() };
   for (const port of loaded.pack.rules) {
     const listed = pack?.rules.find(rule => rule.document === port.policy.replace(/^\.\//u, ""));
     if (listed !== undefined) ports.ruleOfPort.set(port.id, listed.id);
-    const reason = notSupportedReason(directory, port, listed === undefined ? undefined : compiled.get(listed.id));
+    const reason = notSupportedReason(validation, port, listed === undefined ? undefined : compiled.get(listed.id));
     if (reason !== undefined) ports.notSupported.set(port.id, reason);
   }
   return ports;
@@ -986,7 +988,7 @@ interface PortSuppression {
  * Check 4 on a port's upstream rule in its suppression: a port not exempt names it on every violation, and an
  * exemption the port does not need is stale.
  */
-function checkSuppressionExemption(fail: Fail, { port, document, suppression, gaps, owner }: PortSuppression, exempt: boolean): void {
+function checkSuppressionExemption({ fail }: Validation, { port, document, suppression, gaps, owner }: PortSuppression, exempt: boolean): void {
   const { tool, rule } = port.upstream;
   if (exempt) {
     if (suppression === undefined) fail("ports", `${port.id}: stale suppression exemption: ${tool} has no suppression comment a port must honour`, owner);
@@ -1001,7 +1003,7 @@ function checkSuppressionExemption(fail: Fail, { port, document, suppression, ga
 }
 
 /** Check 4 on the suppressions beside ESLint's in a port: Oxlint's on the same violations, Biome's naming the same rules. */
-function checkLinterSuppressions(fail: Fail, { port, document, gaps, owner }: PortSuppression): void {
+function checkLinterSuppressions({ fail }: Validation, { port, document, gaps, owner }: PortSuppression): void {
   if (gaps.oxlintApart.length > 0)
     fail("ports", `${port.id}: ${document} carries suppress.eslint and suppress.oxlint on different violations (clause ${gaps.oxlintApart.join(", ")}); Oxlint reads eslint-disable comments too, so both go on the same violations`, owner);
   if (gaps.biomeMissing.clauses.length > 0)
@@ -1015,7 +1017,8 @@ function checkLinterSuppressions(fail: Fail, { port, document, gaps, owner }: Po
 }
 
 /** Check 4 on one port's suppression comments, when its document exists and reads as a rule document. */
-function checkPortSuppression({ directory, fail }: Validation, port: Port, exempt: boolean, owner: string | undefined): void {
+function checkPortSuppression(validation: Validation, port: Port, exempt: boolean, owner: string | undefined): void {
+  const { directory } = validation;
   const path = join(directory, port.policy);
   if (!existsSync(path)) return;
   const { tool, rule } = port.upstream;
@@ -1026,8 +1029,8 @@ function checkPortSuppression({ directory, fail }: Validation, port: Port, exemp
       : suppressionGaps(readFileSync(path, "utf8"), suppression, tool, rule);
   if (gaps === undefined) return;
   const found: PortSuppression = { port, document: documentPath(port.policy), suppression, gaps, owner };
-  checkSuppressionExemption(fail, found, exempt);
-  checkLinterSuppressions(fail, found);
+  checkSuppressionExemption(validation, found, exempt);
+  checkLinterSuppressions(validation, found);
 }
 
 /**
@@ -1036,7 +1039,7 @@ function checkPortSuppression({ directory, fail }: Validation, port: Port, exemp
  */
 async function checkPorts(validation: Validation, read: ReadPack, loaded: LoadedPack | undefined): Promise<void> {
   if (loaded === undefined) return;
-  const ports = portRules(validation.directory, loaded, read);
+  const ports = portRules(validation, loaded, read);
   await scorePorts(validation, loaded, ports);
   // A port of a tool that honours its own suppression comments names the upstream rule in that suppression on every
   // violation, unless conformance.json exempts it with a reason; an exemption the port does not need is stale. A
@@ -1047,7 +1050,7 @@ async function checkPorts(validation: Validation, read: ReadPack, loaded: Loaded
 }
 
 /** package.json as JSON, or undefined (check 5's failure) when it does not read or parse. */
-function parsePackageJson(path: string, fail: Fail): unknown {
+function parsePackageJson({ fail }: Validation, path: string): unknown {
   try {
     return parseJsonWithoutDuplicateKeys(readFileSync(path, "utf8"), "package.json");
   } catch (error) {
@@ -1057,13 +1060,14 @@ function parsePackageJson(path: string, fail: Fail): unknown {
 }
 
 /** package.json, checked against the schema; check 5 fails one that is missing, has dependencies or does not pass. */
-function readPackageManifest({ directory, fail }: Validation): PackPackage | undefined {
+function readPackageManifest(validation: Validation): PackPackage | undefined {
+  const { directory, fail } = validation;
   const packagePath = join(directory, "package.json");
   if (!existsSync(packagePath)) {
     fail("package", "package.json is missing");
     return undefined;
   }
-  const raw = parsePackageJson(packagePath, fail);
+  const raw = parsePackageJson(validation, packagePath);
   const dependencies = z.looseObject({ dependencies: z.record(z.string(), z.unknown()).optional() }).safeParse(raw);
   const named = dependencies.success ? Object.keys(dependencies.data.dependencies ?? {}) : [];
   if (named.length > 0) fail("package", `package.json: has dependencies (${named.join(", ")}); a pack has none`);
@@ -1128,12 +1132,13 @@ function checkRuleDetails({ directory, fail }: Validation, pack: RulePackFile): 
  * README whose rule details describe only the rules pack.json lists.
  */
 function checkPackage(validation: Validation, pack: RulePackFile | undefined, sources: Sources): void {
+  const { fail } = validation;
   const manifest = readPackageManifest(validation);
   if (manifest !== undefined) {
     checkPublishing(validation, manifest);
     checkPublishedFiles(validation, manifest);
     const failure = packageLicenceFailure(manifest.license, sources.recorded);
-    if (failure !== undefined) validation.fail("package", failure);
+    if (failure !== undefined) fail("package", failure);
     checkCoreRange(validation, manifest, pack);
   }
   if (pack !== undefined) checkRuleDetails(validation, pack);
