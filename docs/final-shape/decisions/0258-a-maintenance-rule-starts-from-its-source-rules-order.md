@@ -112,6 +112,8 @@ Both are fixed above: a seed keeps the source's lead, and the next join is a con
   line on the optimized build (step 13: 57.7 ms over 3,128 lines, against 27.8 ms of searches). That is the kept
   plan's lookup, `live_sizes` (each column's distinct values and fan, and each constant's count), the planning
   budget and the bookkeeping. It is paid by every line, kept or new. Starting from the source's order does not reach it.
+  Taken up by decision 0265: with the profile off it was about 7 µs a line (the rest was the profile's own
+  formatting), and it is 4 to 5 µs now.
 - **The glue rules** (1,049 lines at step 12) have no source rule. They are a few literals over one relation's
   maintenance relations, the same shape for every relation. Their search is mostly its fixed part.
 - **Orders priced over a search's cost** are priced and then searched (414 at step 12). That is a start's cost

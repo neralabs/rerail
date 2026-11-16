@@ -79,10 +79,23 @@ pub(super) fn trials_on() -> bool {
     on() && *ON
 }
 
-/// Whether line `key`'s orders are trialled at this check: the first time in this process, and once after it was
-/// flagged slow.
+/// Decision 0274: whether line `key` was observed on a run's critical path: its note's share of the measured path
+/// (0208), a moving average over runs, is at least `critical_share`. A line that leaves the path halves its share
+/// each run, and drops below in a few: the next path's lines are found as each is made faster.
+pub(super) fn on_critical_path(key: &PlanKey) -> bool {
+    NOTED.load(Relaxed) && MEMO.read().notes.get(key).is_some_and(|n| n.critical >= critical_share())
+}
+
+/// Decision 0274: whether line `key`'s orders would be trialled at this check (`take_trial`), without taking it.
+pub(super) fn trial_due(key: &PlanKey) -> bool {
+    trials_on() && on_critical_path(key) && !MEMO.read().trialled.contains(key)
+}
+
+/// Whether line `key`'s orders are trialled at this check: decision 0274, only a line observed on a run's critical
+/// path, and as 0207, once in this process and once more after it was flagged slow. A slow line off the path is
+/// planned again instead, under the handoff's limit (decision 0271).
 pub(super) fn take_trial(key: PlanKey) -> bool {
-    MEMO.write().trialled.insert(key)
+    on_critical_path(&key) && MEMO.write().trialled.insert(key)
 }
 
 /// A trial measured `ratio` (work over price) for `order` of line `key`: kept as a run's is (`critical`).
@@ -104,9 +117,27 @@ const RUN_WEIGHT: f64 = 0.5;
 /// A cut trial measured part of its order's work, so its work over its price is only a floor: the order is at least
 /// its price. Kept as the ratio, it made the order look as cheap as its cut: `attr_of`'s cross product on PostHog,
 /// cut at 3,581 rows of a price of 9.4 M (0.0004), was then chosen over orders measured at 3.5 times their price.
+///
+/// So a cut trial's ratio is a floor (decision 0267): one under 1 says nothing and is not kept, so the order keeps its
+/// price or what it measured, and one over 1 raises the order's kept ratio to it, never lowers it. A measure merged
+/// with the trial's weight would move a kept ratio toward the floor from either side. `pre_570`'s order on the
+/// data-layer candidates, priced 12.7 M and cut at 7,601 (0.0006), ran 22 s against 6 ms.
 pub(super) fn put_trial(key: PlanKey, rule: u64, order: &[Step], work: f64, est: f64, cut: bool) {
-    let ratio = work / est.max(1.0);
-    put_tried(key, rule, order, if cut { ratio.max(1.0) } else { ratio });
+    let ratio = (work / est.max(1.0)).clamp(1e-6, 1e9);
+    if !cut {
+        return put_tried(key, rule, order, ratio);
+    }
+    if ratio <= 1.0 {
+        return;
+    }
+    COUNTS[TRIALS].fetch_add(1, Relaxed);
+    let mut m = MEMO.write();
+    let n = noted_mut(&mut m, key, rule);
+    let order = steps(order);
+    match n.tried.iter_mut().find(|t| t.order == order) {
+        Some(t) => t.ratio = t.ratio.max(ratio),
+        None => merge_tried(n, order, ratio, TRIAL_WEIGHT),
+    }
 }
 
 fn merge_tried(n: &mut Note, order: Vec<StoredStep>, ratio: f64, weight: f64) {
@@ -386,6 +417,21 @@ pub(super) fn next_due(key: PlanKey) -> Option<f64> {
 /// Decision 0206: a slow order replaced at its cut. `old`, its order; `per_row`, its work per delta row finished;
 /// `limit`, the work its replacement may do over the rows left before the two are compared.
 pub(in crate::code_rule_dsl::logic) struct Handoff { pub old: Vec<Step>, pub per_row: f64, pub limit: f64 }
+
+/// Decision 0271: whether a slow seed's or whole plan's orders are measured after its check, by a trial (`sampled`: its
+/// sample has `TRIAL_LEAST` rows, and decision 0274's trial is due) or by the handoff it is in. Where not, it is
+/// planned again at the check.
+pub(super) fn measured_below(sampled: bool, in_handoff: bool) -> bool {
+    trials_on() && (sampled || in_handoff)
+}
+
+/// Decision 0271: the limit of the order that goes on at a replacement's cut, before the two are compared again: past
+/// the work `base` it has done (none, for the old order placed back), `slow_factor` times its work per row `rate`
+/// over the `left` rows left. An order that has done no row (`rate` infinite) may double the work, at least the cut's
+/// `work`, before the next comparison. Always finite: no order goes on unlimited.
+pub(super) fn limit_again(rate: f64, base: f64, left: f64, work: f64) -> f64 {
+    base + if rate.is_finite() { slow_factor() * rate * left.max(1.0) } else { base.max(work).max(1.0) }
+}
 
 /// A handoff made, or ended with the old order going on (`back`).
 pub(super) fn count_handoff(back: bool) {
@@ -837,8 +883,9 @@ pub fn search_one(over: &dyn Fn() -> bool) -> bool {
     true
 }
 
-/// Decision 0243: whether a run's end serves the waiting searches (`drain_at_end`): a one-shot process (the CLI's
-/// `run-policies`) ends before the machine is idle, and its requests, with the relations they hold, end with it.
+/// Decision 0243: whether a run's end serves the waiting searches (`drain_at_end`): a one-shot process ends before the
+/// machine is idle, and its requests, with the relations they hold, end with it. Decision 0272: every command of the
+/// CLI (`tools::cli`) sets it; a long-lived caller (the reactor) leaves the searches to the idle job.
 static DRAIN: AtomicBool = AtomicBool::new(false);
 /// The share of the process's CPU a run's end may spend on them.
 const DRAIN_SHARE: f64 = 0.05;

@@ -233,12 +233,33 @@ fn a_requested_search_proposes_its_orders() {
     clear();
 }
 
+/// Decision 0272 (O167): a one-shot process serves its waiting searches at its run's end, so their proposals are
+/// written with the memo; without `drain_at_end` (a long-lived process) they wait for the idle job.
+#[test]
+fn a_one_shot_run_serves_its_waiting_searches_at_its_end() {
+    let _serial = SERIAL.lock();
+    clear();
+    drain_at_end(false);
+    noted_mut(&mut MEMO.write(), 410, 1).wants_search = true;
+    request(410, 1.0, false, Box::new(|_| Searched { orders: vec![(vec![(1, None), (0, None)], 5.0)], walked: None }));
+    drain();
+    assert_eq!(requests(), 1, "a long-lived process leaves the search to the idle job");
+    drain_at_end(true);
+    drain();
+    drain_at_end(false);
+    assert_eq!(requests(), 0, "a one-shot run serves it at its end");
+    assert_eq!(note(&410).unwrap().proposals.iter().map(|p| p.1).collect::<Vec<_>>(), vec![5.0]);
+    clear();
+}
+
 /// Decision 0207: a line's orders are trialled once in a process, and once more after a flag; each trial's ratio is
 /// kept as an order tried, as a run's is.
 #[test]
 fn trials_are_taken_once_and_their_ratios_kept() {
     let _serial = SERIAL.lock();
     clear();
+    assert!(!take_trial(500), "decision 0274: a line not seen on a critical path is not trialled");
+    noted_mut(&mut MEMO.write(), 500, 1).critical = 0.5;
     assert!(take_trial(500) && !take_trial(500), "once");
     flag_slow(500, 1, 10.0, 1e6);
     assert!(take_trial(500), "again after a flag");
@@ -250,6 +271,34 @@ fn trials_are_taken_once_and_their_ratios_kept() {
     // Decision 0247: a trial moves the ratio a quarter of the way (in logs), as a run would half of it.
     let quarter = 4f64.powf(0.75) * 16f64.powf(0.25);
     assert!((t.ratio - quarter).abs() < 1e-9 && t.runs == 2, "a trial weighs a quarter: {t:?}");
+    clear();
+}
+
+/// Decision 0274: trials follow the critical path as runs observe it. A line with a share of the measured path is
+/// trialled (once a process); a line off it is not, and one that leaves it stops being trialled within a few runs,
+/// as its moving share halves each run.
+#[test]
+fn trials_are_for_lines_observed_on_the_critical_path() {
+    let _serial = SERIAL.lock();
+    clear();
+    let order = vec![Step { at: 0, mode: None }, Step { at: 1, mode: None }];
+    let run = |key: PlanKey, work: f64| LineRun { stratum: "s".into(), key, rule: 1, order: steps(&order), work, est: 0.0, wall: 0.0 };
+    let strata = ["s".to_owned()];
+    // A first run: no line has been seen on a path, so none is trialled.
+    assert!(!trial_due(&600) && !take_trial(600));
+    // The run's path is its one stratum: line 600 holds nearly all of it, 601 under `critical_share`.
+    critical(&strata, &[vec![]], &[run(600, 1e6), run(601, 1e3)]);
+    assert!(on_critical_path(&600) && !on_critical_path(&601));
+    assert!(trial_due(&600) && take_trial(600) && !trial_due(&600), "trialled once in a process");
+    assert!(!take_trial(601));
+    // 600 is made faster and 602 is now the path: 600's share halves each run, and it leaves within five.
+    let mut runs = 0;
+    while on_critical_path(&600) {
+        critical(&strata, &[vec![]], &[run(600, 1e2), run(602, 1e6)]);
+        runs += 1;
+        assert!(runs <= 5, "a line off the path stops being trialled");
+    }
+    assert!(on_critical_path(&602) && trial_due(&602), "the new path's line is trialled");
     clear();
 }
 
@@ -278,6 +327,59 @@ fn a_trial_cut_at_its_budget_never_makes_its_order_look_cheaper_than_priced() {
     put_trial(301, 1, &cross, 5e6, 1e6, true);
     assert_eq!(note(&301).unwrap().tried[0].ratio, 5.0);
     clear();
+}
+
+/// A trial cut at its budget measured a floor of its work (decision 0267): under its price it says nothing, so an
+/// order keeps what it measured; over it, it raises the order's ratio, never lowers it.
+#[test]
+fn a_cut_trial_is_a_floor_of_its_ratio() {
+    let _serial = SERIAL.lock();
+    clear();
+    let cheap = vec![Step { at: 0, mode: None }, Step { at: 1, mode: None }];
+    let dear = vec![Step { at: 1, mode: None }, Step { at: 0, mode: None }];
+    // The trials over a sample (pre_570's at 35 files): the running order 3,736 rows of work against its price of
+    // 1,718; the dear one cut at 7,601 against 12.7 M.
+    put_trial(501, 1, &cheap, 3_736.0, 1_718.0, false);
+    put_trial(501, 1, &dear, 7_601.0, 12_723_043.0, true);
+    let n = note(&501).unwrap();
+    assert!(n.tried.iter().all(|t| t.order != steps(&dear)), "a floor under the price is not a measure: {:?}", n.tried);
+    // The line's choice over its rows left, priced a hundred times apart.
+    let mut round = vec![Choice { key: 501, candidates: vec![Candidate { order: cheap.clone(), est: 10_000.0 }, Candidate { order: dear.clone(), est: 1_000_000.0 }], chosen: 0, why: "" }];
+    choose(&mut round);
+    assert_eq!(round[0].chosen, 0, "the dear order is not made the least by its cut trial");
+    // An order measured under its price is not pulled up by a cut trial under its price.
+    put_trial(502, 1, &cheap, 50.0, 100.0, false);
+    put_trial(502, 1, &cheap, 80.0, 100.0, true);
+    assert_eq!(note(&502).unwrap().tried[0].ratio, 0.5);
+    // Floors over the price raise the kept ratio, and a lower floor after a higher one leaves it.
+    put_trial(501, 1, &cheap, 3.0, 1.0, true);
+    put_trial(501, 1, &cheap, 2.0, 1.0, true);
+    let n = note(&501).unwrap();
+    let t = n.tried.iter().find(|t| t.order == steps(&cheap)).unwrap();
+    assert!((t.ratio - 3.0).abs() < 1e-9 && t.runs == 1, "a floor raises the ratio, never lowers it: {t:?}");
+    clear();
+}
+
+/// Decision 0271: a slow line is bounded on every path. One a trial cannot sample (pre_570: 0 of 423 lead rows done
+/// in 201,431 rows of work) is planned again at its check; a line in a handoff is judged by it. At a replacement's
+/// second cut, the order that goes on keeps a finite limit, from its own measured rate, or twice its work where it
+/// has done no row.
+#[test]
+fn a_slow_line_is_bounded_on_every_path() {
+    assert!(trials_on(), "the tests run with trials on");
+    assert!(!measured_below(false, false), "a slow line no trial samples is planned again now");
+    assert!(measured_below(true, false) && measured_below(false, true));
+    let f = slow_factor();
+    // The replacement goes on at 2 rows of work a row, having done 100, with 50 rows left.
+    assert_eq!(limit_again(2.0, 100.0, 50.0, 300.0), 100.0 + f * 2.0 * 50.0);
+    // The old order placed back starts again from no work.
+    assert_eq!(limit_again(1.5, 0.0, 50.0, 300.0), f * 1.5 * 50.0);
+    // Neither order has done a row: the one that goes on may double its work before the next comparison.
+    assert_eq!(limit_again(f64::INFINITY, 201_431.0, 423.0, 201_431.0), 2.0 * 201_431.0);
+    assert_eq!(limit_again(f64::INFINITY, 0.0, 423.0, 0.0), 1.0);
+    for (rate, base, left, work) in [(0.0, 0.0, 0.0, 0.0), (f64::INFINITY, 0.0, 0.0, 7.0), (1e9, 1e9, 1e9, 1e9)] {
+        assert!(limit_again(rate, base, left, work).is_finite(), "no order goes on unlimited: {rate} {base} {left} {work}");
+    }
 }
 
 /// Decision 0208: the path as the strata ran. s1 does the most work but ran as a job beside s2, which took longer:
@@ -388,7 +490,8 @@ fn an_orders_work_by_a_walk_is_its_run_through_a_triangle() {
             }
             binds = next;
         }
-        work
+        // Decision 0273: and the rows the last step makes, as the engine counts a line's work.
+        work + binds.len() as f64
     };
     let walker = Walker::new(&rb, 3, 1 << 16, &|n| rels.get(n).cloned(), &|_| None);
     for f in [1i64, 2] {
@@ -397,7 +500,8 @@ fn an_orders_work_by_a_walk_is_its_run_through_a_triangle() {
     }
     let (w1, w2) = (walker.work(&order, &[vec![1003, 2]]), walker.work(&order, &[vec![2003, 2]]));
     // The same size and calls; the difference is the edges the triangle's atom passes: 90 in function 1, 3 in 2.
-    assert_eq!((w1, w2), (215.0, 128.0), "the triangle's edges, measured at the key");
+    // And the rows they make (decision 0273): 75 in function 1, 3 in 2.
+    assert_eq!((w1, w2), (290.0, 131.0), "the triangle's edges, measured at the key");
     // A narrow walk (16 bindings a step, of up to 90) is unbiased: its mean over walks is the work.
     let narrow = Walker::new(&rb, 3, 16, &|n| rels.get(n).cloned(), &|_| None);
     let walks = 400;
@@ -483,7 +587,8 @@ fn a_background_search_ranks_its_orders_by_their_walked_work_over_the_line() {
             let Literal::Atom(a) = &rule.body[at] else { unreachable!() };
             binds = binds.iter().flat_map(|b| table(&a.rel).iter().filter_map(|row| bind(b, a, row)).collect::<Vec<_>>()).collect();
         }
-        work
+        // Decision 0273: and the rows the last step makes.
+        work + binds.len() as f64
     };
     let rel = |rows: &[[i64; 2]]| InRel::from_flat(rows.iter().flatten().copied().collect(), rows.len(), vec![b'i'; 2]);
     let snap = WalkSnap { rels: [("r", rel(&r)), ("k", rel(&k)), ("e", rel(&e))].into_iter().map(|(n, x)| (n.to_owned(), x)).collect(), syms: HashMap::new(), delta: None, heavy: HashMap::new() };
@@ -501,7 +606,8 @@ fn a_background_search_ranks_its_orders_by_their_walked_work_over_the_line() {
     // sampled.
     assert_eq!(best.1, run(&good), "the good order's work over the line, from every row of its lead");
     assert!((ran / run(&poor) - 1.0).abs() < 0.05, "{ran} against {}", run(&poor));
-    assert!(ran > 4.0 * best.1, "{ran} against {}", best.1);
+    // The poor order does 3.5 times the good one's work: the rows they both make (decision 0273) narrow the ratio.
+    assert!(ran > 3.0 * best.1, "{ran} against {}", best.1);
 }
 
 #[test]
@@ -522,8 +628,9 @@ fn a_background_walk_splits_its_lead_rows_by_a_heavy_key() {
     };
     for f in 1..=1000 { add(f, 30, 5) }
     for f in [5001, 5002] { add(f, 2000, 50) }
-    // Work by step after the lead: each call's function, each call's function's nodes, and their kinds.
-    let truth = 5100.0 + 5100.0 + (1000.0 * 5.0 * 30.0 + 2.0 * 50.0 * 2000.0);
+    // Work by step after the lead: each call's function, each call's function's nodes, and their kinds; and the rows
+    // the last step makes, each call's function's nodes of kind 2 (decision 0273).
+    let truth = 5100.0 + 5100.0 + (1000.0 * 5.0 * 30.0 + 2.0 * 50.0 * 2000.0) + (1000.0 * 5.0 * 25.0 + 2.0 * 50.0 * 1950.0);
     let rel = |rows: &[[i64; 2]]| InRel::from_flat(rows.iter().flatten().copied().collect(), rows.len(), vec![b'i'; 2]);
     // The function column's heavy values: both large functions, and some of the rest (their rows tie).
     let heavy: Vec<i64> = [5001, 5002].into_iter().chain(1..=10).collect();
@@ -538,7 +645,8 @@ fn a_background_walk_splits_its_lead_rows_by_a_heavy_key() {
     let walked = found.walked.expect("walked");
     let plain = WalkSnap { heavy: HashMap::new(), ..snap };
     let unsplit = plain.walk(&rb, None, &order, vec![(order.clone(), 1.0)], &|| false).walked.expect("walked");
-    // Split, 1.08 of the work; drawn whole, 0.89 (1.76 before decision 0247 thinned by each step's size).
+    // Split, 1.07 of the work; drawn whole, 0.88 (with the rows made, decision 0273; 1.08 and 0.89 without them, and
+    // 1.76 unsplit before decision 0247 thinned by each step's size).
     assert!((walked / truth - 1.0).abs() < 0.15, "{walked} against {truth}");
     assert!((unsplit / truth - 1.0).abs() < 0.15, "unsplit {unsplit} against {truth}");
 }
@@ -567,8 +675,9 @@ fn a_walk_past_a_rare_check_starts_from_the_checks_rows() {
     // Decision 0248: the draw of 8,192 rows finds about 3 past the check, too few to measure; through the check's 10
     // rows, every lead row past it is found.
     let found = snap.walk(&rb, None, &order, vec![(order.clone(), 1.0)], &|| false);
-    // Each node read by the check; the 10 past it, read by the function's step; their functions' 30 nodes each.
-    assert_eq!(found.walked, Some(30_000.0 + 10.0 + 300.0));
+    // Each node read by the check; the 10 past it, read by the function's step; their functions' 30 nodes each; and
+    // the 19 of kind 2 of each that the last step makes (decision 0273).
+    assert_eq!(found.walked, Some(30_000.0 + 10.0 + 300.0 + 190.0));
 }
 
 #[test]
@@ -592,11 +701,11 @@ fn a_wildcard_in_a_check_is_no_column_of_its_probe() {
     let rel = |rows: &[[i64; 2]]| InRel::from_flat(rows.iter().flatten().copied().collect(), rows.len(), vec![b'i'; 2]);
     let snap = WalkSnap { rels: [("r", rel(&r)), ("k", rel(&k))].into_iter().map(|(n, x)| (n.to_owned(), x)).collect(), syms: HashMap::new(), delta: None, heavy: HashMap::new() };
     let order: Vec<Step> = [0usize, 1, 2].iter().map(|&at| Step { at, mode: None }).collect();
-    // The check reads every node and passes half; the function's step reads those 500. Probed with the wildcard's
-    // column keyed by a value, no node passed it.
+    // The check reads every node and passes half; the function's step reads those 500, and makes their functions'
+    // 10 nodes each (decision 0273). Probed with the wildcard's column keyed by a value, no node passed it.
     let found = snap.walk(&rb, None, &order, vec![(order.clone(), 1.0)], &|| false);
     // Weighted bindings sum in floating point.
-    assert!(found.walked.is_some_and(|w| (w - 1_500.0).abs() < 1e-6), "{:?}", found.walked);
+    assert!(found.walked.is_some_and(|w| (w - 6_500.0).abs() < 1e-6), "{:?}", found.walked);
 }
 
 fn steps_of(o: &[usize]) -> Vec<StoredStep> {

@@ -120,6 +120,8 @@ pub struct Body<'v> {
     lits: Vec<LitRef<'v>>,
     vars: OnceCell<Vec<VarSet>>,
     args: OnceCell<Vec<Vec<TermRef<'v>>>>,
+    /// The rule's digest (`key`), made at the first ask: a plan call reads it for each of its keys.
+    key: OnceCell<u128>,
     /// The version the rule's source (`RuleRef::source`) is a rule of: the run's version 0, for a rule of a
     /// maintained form (`Versions::at`); `None` for every other rule.
     sources: Option<&'v Version>,
@@ -127,7 +129,7 @@ pub struct Body<'v> {
 
 impl<'v> Body<'v> {
     pub fn of(v: &'v Version, rule: RuleRef<'v>) -> Body<'v> {
-        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new(), args: OnceCell::new(), sources: None }
+        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: None }
     }
     /// The rule this one was written from (decision 0258): for a maintenance rule of a session's form (`h__del`,
     /// `h__ins`, `h__redo`, …), its source rule `h :- …` of the run's version. `None` for a rule not written from one.
@@ -358,9 +360,14 @@ impl<'v> Body<'v> {
             self.digest_lit(d, l);
         }
     }
+    /// The rule's digest (`digest`), made once: what every key of the rule writes (`plan_key`, `line_key`,
+    /// `observed_key`) in place of the rule's text.
+    pub fn key(&self) -> u128 {
+        *self.key.get_or_init(|| super::super::derived::digest(|d| self.digest(d)))
+    }
     /// The key observations of this rule's steps are kept under (`plan::obs_rule`).
     pub fn observed_key(&self) -> u64 {
-        let d = super::super::derived::digest(|d| self.digest(d));
+        let d = self.key();
         (d as u64) ^ ((d >> 64) as u64)
     }
     fn digest_term(&self, d: &mut super::super::derived::Inputs, t: TermRef<'_>) {

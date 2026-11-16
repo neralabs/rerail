@@ -608,11 +608,13 @@ impl Stats {
     /// A relation's statistics measured in memory: its rows and per column (rows, ndv, sq, sqd), replacing what was
     /// read; with `vals`, a value column's exact postings per value (`stat_val`'s `n`).
     pub fn measured(&mut self, rel: &str, cols: impl IntoIterator<Item = (String, [i64; 4])>, vals: impl IntoIterator<Item = (String, i64, i64)>) {
+        // Positional names of a relation named like a base one are its base names (`input_column_name`).
+        let named = |col: String| crate::code_rule_dsl::facts::core::input_column_name(rel, &col).map_or(col, str::to_owned);
         for (col, m) in cols {
-            self.col.insert((rel.to_owned(), col), m);
+            self.col.insert((rel.to_owned(), named(col)), m);
         }
         for (col, v, n) in vals {
-            self.memo.entry(rel.to_owned()).or_default().insert((col, Constant::Int(v)), n);
+            self.memo.entry(rel.to_owned()).or_default().insert((named(col), Constant::Int(v)), n);
         }
     }
 
@@ -1304,7 +1306,8 @@ pub struct RunPlans {
 fn line_key(b: &Body<'_>, first: Option<usize>) -> u128 {
     super::derived::digest(|d| {
         d.str("line");
-        b.digest(d);
+        d.u64(b.key() as u64);
+        d.u64((b.key() >> 64) as u64);
         d.u64(first.map_or(u64::MAX, |f| f as u64));
     })
 }
@@ -1845,7 +1848,7 @@ impl Model {
     /// as the delta that probes it, from the same change, so its keys follow the delta's, and what is measured of
     /// it before the fixpoint is a snapshot. Neither an absence proof nor a containment share holds against it.
     fn changes_with_the_delta(&self, rel: &str) -> bool {
-        self.stats.solving.contains(rel) && ["__ins", "__redo", "__del"].iter().any(|s| rel.ends_with(s))
+        ["__ins", "__redo", "__del"].iter().any(|s| rel.ends_with(s)) && self.stats.solving.contains(rel)
     }
 
     /// Positive joins whose keys cannot occur in the forced first atom's values. Not a maintenance delta of the
@@ -1857,14 +1860,20 @@ impl Model {
         let Some(delta) = b.atom(first) else { return Vec::new() };
         let drel = b.rel(delta);
         let dargs = b.args(first);
-        let values: Vec<_> = (0..dargs.len()).map(|c| self.small_values(drel, c)).collect();
+        // A delta column's values, made only where another atom shares its variable.
+        let values: Vec<std::cell::OnceCell<Option<Vec<&Constant>>>> = (0..dargs.len()).map(|_| std::cell::OnceCell::new()).collect();
         (0..b.len()).filter_map(|i| {
             let a = b.plain_atom(i)?;
-            if i == first || a.neg() || self.changes_with_the_delta(b.rel(a)) { return None; }
+            if i == first || a.neg() { return None; }
             let args = b.args(i);
+            // Only an atom sharing a variable with the delta can miss its keys: tested by the terms first, the
+            // relation's name after.
+            let shares = |v| args.iter().any(|t| matches!(t, TermRef::Var(x) if *x == v));
+            if !dargs.iter().any(|t| matches!(*t, TermRef::Var(v) if shares(v))) || self.changes_with_the_delta(b.rel(a)) { return None; }
             dargs.iter().enumerate().any(|(c, t)| {
                 let TermRef::Var(v) = *t else { return false };
-                let Some(from) = &values[c] else { return false };
+                if !shares(v) { return false; }
+                let Some(from) = values[c].get_or_init(|| self.small_values(drel, c)) else { return false };
                 if from.is_empty() { return false; }
                 args.iter().enumerate().any(|(at, t)| matches!(t, TermRef::Var(x) if *x == v)
                     && self.small_values(b.rel(a), at).is_some_and(|to| !to.is_empty() && from.iter().all(|v| !to.contains(v))))
@@ -1956,9 +1965,10 @@ impl Model {
         if plan_fresh() || !plan_budget() {
             return Some("no budget");
         }
-        let key = self.plan_key("", b, first);
+        let misses = self.delta_misses(b, first);
+        let key = self.plan_key_at("", b, first, &misses);
         let Some(kept) = plans_get(&key) else { return Some("no kept plan") };
-        if self.budget_takes(&kept, b, first, &self.live_sizes(b, first)).is_some() {
+        if self.budget_takes(&kept, b, first, &self.live_sizes_at(b, first, &misses)).is_some() {
             return None;
         }
         Some(match (&kept.4, kept.5) {
@@ -2075,7 +2085,8 @@ impl Model {
         if plan_fresh() {
             return self.plan_inner(pf, b, first, None, true);
         }
-        let key = self.plan_key("", b, first);
+        let misses = self.delta_misses(b, first);
+        let key = self.plan_key_at("", b, first, &misses);
         let nodes = self.stats.nodes.max(1.0);
         let Some(kept) = plans_find(&key, b.len(), nodes) else {
             plan_cache(0);
@@ -2085,7 +2096,7 @@ impl Model {
         // A line with work queued for its next plan (decision 0203: a wider search, a proposal not tried) is searched.
         let pending = joins::pending(&key);
         let kept = if pending { None } else { kept };
-        let sizes = self.live_sizes(b, first);
+        let sizes = self.live_sizes_at(b, first, &misses);
         if super::profile::on() {
             note_planned(key);
         }
@@ -2288,15 +2299,22 @@ impl Model {
 
     /// A kept plan's key: the rule as text, the delta (`first`) and the component solved, after `kind`.
     fn plan_key(&self, kind: &str, b: &Body<'_>, first: Option<usize>) -> PlanKey {
+        self.plan_key_at(kind, b, first, &self.delta_misses(b, first))
+    }
+
+    /// `plan_key` with the line's `delta_misses`, which a plan call finds once for its keys and its sizes
+    /// (`live_sizes_at`). The rule is written by its digest (`Body::key`), made once per body.
+    fn plan_key_at(&self, kind: &str, b: &Body<'_>, first: Option<usize>, misses: &[usize]) -> PlanKey {
         let _span = super::profile::span(|| "key".into());
         super::derived::digest(|d| {
             d.str(kind);
-            b.digest(d);
+            d.u64(b.key() as u64);
+            d.u64((b.key() >> 64) as u64);
             d.u64(first.map_or(u64::MAX, |f| f as u64));
             d.u64(self.stats.solving_digest as u64);
             d.u64((self.stats.solving_digest >> 64) as u64);
             // A changed key domain can make another order cheaper while row and distinct counts stay fixed.
-            for i in self.delta_misses(b, first) { d.u64(i as u64); }
+            for &i in misses { d.u64(i as u64); }
             // A join shape directive narrows the search: an order kept without it is not this rule's.
             for shape in self.shapes_for(b.rel(b.head())) { d.str(&shape.text); }
             // Exact statistics measured for the rule (decision 0203 §3) price it anew: its kept prices are not taken.
@@ -2330,29 +2348,36 @@ impl Model {
 
     /// Live cardinalities followed by the distributions the price reads. A delta's size affects whether a
     /// search pays for itself; its distinct values and fanouts can change the cheapest order even at fixed size.
-    pub fn live_sizes(&self, b: &Body<'_>, _first: Option<usize>) -> Vec<f64> {
-        let mut sizes = self.read_sizes(b);
-        if let Some(a) = _first.and_then(|f| b.atom(f)) {
+    pub fn live_sizes(&self, b: &Body<'_>, first: Option<usize>) -> Vec<f64> {
+        self.live_sizes_at(b, first, &self.delta_misses(b, first))
+    }
+
+    /// `live_sizes` with the line's `delta_misses` (`plan_key_at`'s). Each atom's relation is found once, and its
+    /// columns read by its number (decision 0209 §3), not by name a column at a time.
+    fn live_sizes_at(&self, b: &Body<'_>, first: Option<usize>, misses: &[usize]) -> Vec<f64> {
+        let mut sizes = Vec::with_capacity(2 + 4 * b.len());
+        sizes.extend(self.read_sizes(b));
+        if let Some(a) = first.and_then(|f| b.atom(f)) {
             sizes.push(self.stats.delta_rows.get(b.rel(a)).copied().unwrap_or(-1.0));
         }
         for i in (0..b.len()).filter(|&i| b.atom(i).is_some()) {
             let rel = b.rel(b.atom(i).expect("an atom"));
+            let id = table::find(rel);
             for (c,t) in b.args(i).iter().enumerate() {
                 if matches!(t, TermRef::Wild) { continue; }
-                sizes.push(self.ndv.at(&rel, c).copied().unwrap_or(1.0));
-                sizes.push(self.stats.fan.at(&rel, c).copied().unwrap_or(1.0));
+                sizes.push(id.and_then(|r| self.ndv.at_rel(r, c)).copied().unwrap_or(1.0));
+                sizes.push(id.and_then(|r| self.stats.fan.at_rel(r, c)).copied().unwrap_or(1.0));
                 if let Some(k) = b.constant(*t) {
                     let n = if rel == "kind" && c == 1 {
                         self.kind_frequency(&k)
                     } else {
-                        self.stats.dfreq.at(&rel, c).map(|f|f.get(&k).copied().unwrap_or(0))
+                        id.and_then(|r| self.stats.dfreq.at_rel(r, c)).map(|f|f.get(&k).copied().unwrap_or(0))
                             .or_else(||self.stats.const_freq(rel,&self.col(rel,c),&k))
                     };
                     sizes.push(n.map_or(-1.0, |n| if n == 0 { -2.0 } else { n as f64 }));
                 }
             }
         }
-        let misses = self.delta_misses(b, _first);
         // One bit per literal; 1 -> 4 crosses PRICE_DRIFT and also changes the driver's exact signature.
         sizes.extend((0..b.len()).map(|i| if misses.contains(&i) { 4.0 } else { 1.0 }));
         sizes
@@ -2414,11 +2439,12 @@ impl Model {
         if PLANS.with(|p| p.borrow().is_none()) {
             return self.plan_inner(pf, b, first, None, true);
         }
-        let key = self.plan_key("live ", b, first);
+        let misses = self.delta_misses(b, first);
+        let key = self.plan_key_at("live ", b, first, &misses);
         // The state kept before the last (O-live-replan item 4): sizes that alternate between waves (a distinct
         // count of 1, then 3, then 1) find their earlier price here instead of searching again.
         let earlier = key ^ (1u128 << 127);
-        let sizes = self.live_sizes(b, first);
+        let sizes = self.live_sizes_at(b, first, &misses);
         let cardinalities = 1 + usize::from(first.is_some()) + b.read_count();
         // The last price, and the work of the order when it was searched.
         let kept = plans_find(&key, b.len(), self.stats.nodes.max(1.0)).flatten().and_then(|k| Some((k.4.clone()?, k.1)));
@@ -2443,7 +2469,7 @@ impl Model {
             });
         };
         // A line with work queued for its next plan (decision 0203) is searched.
-        let line = (joins::any_noted() || joins::pricing()).then(|| self.plan_key("", b, first));
+        let line = (joins::any_noted() || joins::pricing()).then(|| self.plan_key_at("", b, first, &misses));
         let kept = if line.is_some_and(|l| joins::pending(&l)) { None } else { kept };
         if let Some((priced, searched)) = &kept {
             if near(&priced.sizes, &sizes) && self.valid_live_driver(&priced.got.0.0, b, first) {
@@ -7909,6 +7935,17 @@ impl<'a> Run<'a, '_> {
                 }
                 // The line's work: its counts, and a whole plan's work as its cut reported it.
                 let work = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) as f64 + if whole { c.work as f64 } else { 0.0 };
+                // Decision 0207, trials: at a line's first check in the process (and once more after a flag), its
+                // orders run over a sample of the rows left (decision 0274: only a line observed on a run's critical
+                // path, `joins::take_trial`), each cut at `trial_cutoff` times the least work measured
+                // so far and at `trial_share` of the line's work. What each measured over its price is kept as an
+                // order tried; the least measured goes on where it beats the running order by `trial_margin`.
+                // The sample is what the share pays for at the running order's work per row, at most `trial_rows`;
+                // under `TRIAL_LEAST` rows, the trials wait for a later check.
+                let cap = (joins::trial_share() * work).max(1_000.0) as u64;
+                let sample = if c.led && c.done > 0 { ((cap as f64 * c.done as f64 / c.work.max(1) as f64) as usize).min(joins::trial_rows() as usize) } else { 0 };
+                const TRIAL_LEAST: usize = 8;
+                let joined = positive_atoms(&b) >= 2;
                 // A seed or whole plan is checked here, at its cut (a probe was, above).
                 if led && let Some(key) = keys.get(line).copied().flatten() {
                     let running = order_now(&orders, &probes, &wholes);
@@ -7918,27 +7955,24 @@ impl<'a> Run<'a, '_> {
                         joins::flag_slow(key, rule, est, work);
                         super::profile::decision("slow joins (decision 0203)", || format!("{} {}: {work:.0} rows of work, priced {est:.0} for its {} rows read", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done));
                         let exact = self.exact_statistics(&name, line, &b, &running);
-                        joins::log(|| format!("slow {} {}: {work:.0} rows of work, priced {est:.0} for its {} rows read; {} exact pair statistics", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done, exact.len()));
+                        joins::log(|| format!("slow {} {}: {work:.0} rows of work, priced {est:.0} for its {} rows read; {} exact pair statistics; its share of a critical path {:.3}{}", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done, exact.len(), joins::note(&key).map_or(0.0, |n| n.critical), if joins::trial_due(&key) { ", trialled" } else { "" }));
                         joins::put_exact(key, rule, exact);
                         self.heavy_for([r], true, Some(key));
                         joins::take_forced(&key);
                         self.request_search(r, None, rule, key, work, Some((&name, line, &running)))?;
-                        // With trials (decision 0207) the orders are measured below instead.
-                        if !joins::trials_on() && let Some(new) = self.model.plan_for_rows(pf, &b, cut_lead, c.left.max(1) as f64) && !same_order(&new, &running) {
+                        // With trials (decision 0207) the orders are measured below instead, where they can be. Decision
+                        // 0271: a line no trial measures is planned again now, with the exact statistics just taken,
+                        // and its replacement runs under the handoff's limit. That is a line whose sample is under
+                        // `TRIAL_LEAST` (its few lead rows each cost more than its check's budget: `pre_570` did 0 of
+                        // 423 in 201,431 rows of work, then ran 22 s unbounded). A line in a handoff is judged by it.
+                        if !joins::measured_below(sample >= TRIAL_LEAST && joined && joins::trial_due(&key), handoff[line].is_some()) && let Some(new) = self.model.plan_for_rows(pf, &b, cut_lead, c.left.max(1) as f64) && !same_order(&new, &running) {
+                            if joins::trials_on() {
+                                joins::log(|| format!("slow {}: {} of its lead rows done, under a trial's {TRIAL_LEAST}: planned again now", b.head_text(), c.done));
+                            }
                             place!(new);
                         }
                     }
                 }
-                // Decision 0207, trials: at a line's first check in the process (and once more after a flag), its
-                // orders run over a sample of the rows left, each cut at `trial_cutoff` times the least work measured
-                // so far and at `trial_share` of the line's work. What each measured over its price is kept as an
-                // order tried; the least measured goes on where it beats the running order by `trial_margin`.
-                // The sample is what the share pays for at the running order's work per row, at most `trial_rows`;
-                // under `TRIAL_LEAST` rows, the trials wait for a later check.
-                let cap = (joins::trial_share() * work).max(1_000.0) as u64;
-                let sample = if c.led && c.done > 0 { ((cap as f64 * c.done as f64 / c.work.max(1) as f64) as usize).min(joins::trial_rows() as usize) } else { 0 };
-                const TRIAL_LEAST: usize = 8;
-                let joined = positive_atoms(&b) >= 2;
                 if let Some(key) = keys.get(line).copied().flatten() && joins::trials_on() && joined && sample >= TRIAL_LEAST && handoff[line].is_none() && joins::take_trial(key) {
                     // Decision 0209: the candidates are priced with the line's skewed join columns' heavy values.
                     self.heavy_for([r], true, Some(key));
@@ -8242,11 +8276,16 @@ impl<'a> Run<'a, '_> {
                     Some(h) => {
                         let ran = per_row(c.work, c.done);
                         let back = ran > h.per_row;
-                        joins::log(|| format!("handoff {}: the replacement was cut too, {ran:.1} rows of work per row against the old order's {:.1}: {} goes on", b.head_text(), h.per_row, if back { "the old order" } else { "the replacement" }));
                         joins::count_handoff(back);
+                        let (other, other_rate) = if back { (now.clone(), ran) } else { (h.old.clone(), h.per_row) };
                         if back && !place!(h.old) {
                             return Err(Error::Plan(format!("a join of {} has no native step", b.head_text())));
                         }
+                        // Decision 0271: the order that goes on keeps a limit, and the two are compared again at it.
+                        let base = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) as f64;
+                        let limit = joins::limit_again(if back { h.per_row } else { ran }, base, c.left as f64, c.work as f64);
+                        joins::log(|| format!("handoff {}: the replacement was cut too, {ran:.1} rows of work per row against the old order's {:.1}: {} goes on, limit {limit:.0}", b.head_text(), h.per_row, if back { "the old order" } else { "the replacement" }));
+                        handoff[line] = Some(joins::Handoff { old: other, per_row: other_rate, limit });
                     }
                 }
             }
@@ -11666,8 +11705,14 @@ pub fn decode_kept(
     for (rel, held) in rels.into_iter().filter(|(r, _)| names.contains(r)) {
         super::native::component::hold_as(db, &rel, held);
     }
-    let prog = &lowered.program;
     let outputs: Vec<&str> = names.iter().map(String::as_str).collect();
+    // The inputs and the outputs' column types from the program's version where it has one (t36 item 7: a maintained
+    // run decodes no tree, `a_maintained_run_decodes_and_copies_no_tree`); else from its tree, which is then held.
+    let placed = lowered.version.as_ref().map(|_| lowered.placed()).transpose()?;
+    if let Some(f) = placed.as_ref().and_then(Fields::of) {
+        return decoded_outputs(&outputs, &|r| f.is_input(r), &|r| f.columns(r).map(|c| c.into_iter().map(|(_, t)| t.to_owned()).collect()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &names);
+    }
+    let prog = &lowered.program;
     decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.iter().map(|(_, t)| t.to_string()).collect()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &names)
 }
 
@@ -12772,7 +12817,11 @@ impl<'a, 'v> Walker<'a, 'v> {
             }
             sample = next;
         }
-        work
+        // Decision 0273: the rows the last step makes are work too, as the engine counts a line's work
+        // (`profile::plan_work`: each step's rows in, and the last step's rows out). Without them, a walk exact by its
+        // own count read 0.87 of the engine's work on the heavy lines of both packs, and a common term of every
+        // order's walk was missing from their ratios.
+        work + sample.iter().map(|x| x.0).sum::<f64>()
     }
 }
 

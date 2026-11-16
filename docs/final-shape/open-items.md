@@ -4880,6 +4880,11 @@ search's.
 
 ## O167. Wider searches asked for by a one-shot process are lost at its exit
 
+Status: closed (2026-11-15) by decision 0272. Every CLI command serves its waiting searches at its run's end,
+within 5% of its CPU, before the memo is written. Over 50 files, the python pack served all 64 in 21 ms, and none
+were left. The searches the budget leaves keep `wants_search`, and are asked again by the next run. The text below
+is as opened.
+
 Decision 0203 §5: the `join-search` job runs at idle; a command exits first, and only `wants_search` survives (the
 next run searches inline where the line's work pays). **Closure:** the queued requests kept in the store as the
 line and rule, and run by `rerail-engine upkeep` or a daemon, which rebuild the model from the stored statistics.
@@ -5227,7 +5232,11 @@ string-keyed BTree lookups like these across many passes (tarjan, components, `f
 
 ## O-cross-file-answers. Node attributes asked across files find no text (2026-11-15, decision 0174 §6)
 
-Status: open. Found by E32 (t39 step 24): bugbear B010 with C414 over ten files of corpus0 gives 2 findings
+Status: closed (2026-11-15) by decision 0286: a request the split finds cross-file is narrowed to the asked node's
+own document, so it is answered in the chunk that holds the text. B010 with C414 gives its 2 findings on request,
+and the python and data-layer packs on request give the eager oracle's findings.
+
+Found: Found by E32 (t39 step 24): bugbear B010 with C414 over ten files of corpus0 gives 2 findings
 with the eager oracle (`RERAIL_NODE_SOURCES=eager`) and none on request, the default. In a combined run the
 answer rule for `value` runs in the cross-file part: its request `rr_value_req` has 592 rows and
 `$x1 = @rr_node_value($x0)` gives none, because `node_value_any` and `held_text` read the batch's texts, and a
@@ -5251,7 +5260,14 @@ The test is ignored with this item's name until the item is answered.
 
 ## O-cold-seed-join. One seed join ends a cold 50-file data-layer run (2026-11-15)
 
-Status: open. Found by E32 (t39 step 24): the data-layer candidates over 50 files take 100 s of CPU cold
+Status: closed by 0267 (2026-11-15). There were two causes. First, every climb (`inside`, `has`, a nearest
+over a derived set) was cross-file, because the tape's parent column had no location. So `PSE_AUDIT_010`'s
+clause was one join over every file, on one worker. Second, a trial cut at its budget was kept as a measure:
+an order priced at 12.7 M rows of work and cut at 7,601 got a ratio of 0.0006, and as the corrected least it
+ran `pre_570` for 22 s. Over 50 files cold the pack now takes 21.9 s of CPU (it took 100), with the same 75
+rows as `RERAIL_JOINS=off`.
+
+Was open. Found by E32 (t39 step 24): the data-layer candidates over 50 files take 100 s of CPU cold
 against 8.6 s over 10 (15.6× the lines), and the run's last part is a single `run_seed` →
 `run_join_in_each` on one stream worker while the others wait. Warm, the same evaluation's joins are 5.8 s
 in all. Next: one cold run with `RERAIL_STRATA_TRACE` to name the stratum, then its plan cold against warm
@@ -5276,3 +5292,92 @@ file edit 2,335 MB, a message edit 1,602 MB, a rule-body edit 2,128 MB, all over
 (2ff9ffe8e). The sections' peak RSS says where: `parse (worker)` and `batch (worker)` 2.7–2.9 GB, `cross` 2.7 GB,
 `local` 2.1 GB. Not yet traced: which relation or buffer holds it, and whether a chunk's rows are held past the
 chunk.
+
+## O-pse-alone-strict. A pack of PSE's rule file alone aborts strict SQL (2026-11-15)
+
+Status: closed (2026-11-15). The cause was the relation's name, not the single program. Alone, PSE's `plan` keeps
+its name (in the pack it is `p47_plan`), and PLAN is a SQLite keyword, so every statement writes it quoted
+(`sql::ident`, O106): `main."plan"`. setfix's `view`, which reads a bound input in place, looked up a bound source
+named `"plan"`, quotes and all. It found none and read the input through SQL, which strict mode refuses inside
+the waves. `view` now reads the name back unquoted (`sql::unquote`). Test:
+`setfix::view_tests::a_bound_input_named_like_a_sql_keyword_is_read_in_place`. PSE alone over 25 data-layer files
+runs strict in 1.2 s of CPU. Over a fixture with one finding of each code, it gives the same 9 rows as the pack.
+
+The guess below was wrong: the inputs were bound, and `base` held.
+
+Was open. Found while bisecting O-cold-seed-join. With the data-layer candidates' `plan-scope-side-effects.rr`
+as the only rule file, a cold strict run over 25 data-layer files stops with
+`RERAIL_SQL_STRICT: SQL inside the waves` at `SELECT c0 FROM main."plan"`, from `Fx::open` in the cross-file part.
+It still does so after 0267. The whole pack runs strict. The likely cause is that with one program, the cross part
+reads the file-local export `plan` through SQL (`setfix::input_of`): one fixpoint binds the exports as empty,
+lazily filled sources, and `view()` applies only to base inputs. Next: bind such an export as a view of its
+rows, and check that a program alone and in a pack read its exports the same way.
+
+## O-adaptive-worst-case. A slow line with few lead rows done runs unbounded (2026-11-15)
+
+Status: closed (2026-11-15) by decision 0271. A slow line that no trial can sample is planned again at its check,
+and its replacement runs under the handoff's limit. The order that goes on at a second cut keeps a limit, and the
+two are compared again. On the data-layer candidates over 50 files, `q4_la_vis` takes both paths, and gives the
+same 75 rows. The text below is as opened. The adaptive planner (0203, 0206, 0207) exists to bound the worst case: a join that runs far over its
+price is cut and replaced. Two paths leave a line with no bound.
+
+- **No trial, and no replan.** At a seed's or whole plan's check, a line flagged slow is replanned inline only with
+  trials off (`!joins::trials_on()`): with them on, "the orders are measured below instead". But a trial needs a
+  sample of `TRIAL_LEAST` (8) rows, sized `cap × done / work` with `cap` 10% of the work, so a line must have done
+  about 80 of its lead rows. A line whose few lead rows each cost more than its check's budget gets neither. Seen on
+  the data-layer candidates over 35 files (before 0267): `pre_570` was cut at 201,431 rows of work with 0 of its 423
+  lead rows done, flagged slow, and then ran 22 s on one worker. The planner's order ran it in 6 ms.
+- **A handoff's replacement cut too** goes on "unlimited" (0206 §3, the shape chosen on 2026-11-14): whichever of
+  the two orders has less work per row goes on, with no further check (`p68_rr_agg20` in O-cold-seed-join's log).
+
+Next: where a slow line cannot be trialled, replan it inline under the handoff's limit, as with trials off. Or
+trial it over at least `TRIAL_LEAST` of its rows left whatever their work so far, each trial still cut at `cap`.
+And decide whether a replacement cut twice keeps a limit.
+
+## O-post-merge-cpu. Where the hub merge's extra CPU came from (2026-11-15)
+
+Status: measured; the trials' part decided by 0274, the stored keys' part open. The merge of the hub (713beb9f7) and of the cost-classifier work (46740959f)
+added 7–9% to the python pack's cold run over 50 files of corpus0, with the same 63 rows. Instructions retired, in
+billions; two or three runs each, strict, node attributes eager, under load (load average 35–55):
+
+| build | G instructions | peak MB |
+|---|---|---|
+| before (efe2a50dd) | 159.9–160.1 | 806–814 |
+| after (d005f301e) | 170.9–173.8 | 844–937 |
+| after, trials off (`RERAIL_JOIN_TRIALS=off`) | 169.5–169.9 | 909–922 |
+| after, semijoin keys inlined again (2ff9ffe8e undone) | 164.0–165.1 | 822–890 |
+| after, both | 155.4–159.9 | 833–849 |
+
+The profiles' spans say the same (the profiled runs: own CPU 14.9 → 15.7 s):
+
+- **Semijoin keys are now stored (≈7 G).** rr-align's 2ff9ffe8e marks a factorized part's key (`fzk…`, 0099) and
+  an export-demand key (`xk_…`) `no_inline`. It guards against a key inlined into its reader that enumerates
+  its document's nodes again for every row (7.9 M rows, and a run that never finished). Here the keys' strata
+  went from 210 runs and 1.95 M rows of work to 332 runs and 8.09 M rows (0.10 → 0.49 s in the joins). More
+  relations are stored too: the store writer's frames and memo entries went from 0.53 to 0.69 s. The guard is a
+  worst-case one. Its cost is each part's body evaluated twice, once for its key and once for the reduced part.
+  **Next:** make a key the projection of its unreduced part (each body once), or store it only where its
+  reader's join would enumerate (the guard's case). This belongs to the factorizing code's owners.
+- **Trials at every line's first check (≈3–5 G).** Decision 0207 trials a line at its first check whether or
+  not it is slow, and the hub's trials walk each candidate (0233, 0236, 0245). On the python pack over 50
+  files, 119 lines were trialled or walked. 11 of them were slow, and one trial won: `rr_agg287`, 11,096 rows of
+  work against 15,461. The trials' cost shows as the strata's own CPU (0.47 → 1.03 s; 0.29 s with trials off).
+  `ruff_safe_operand` alone went from 0.12 to 0.26 s, with the same plan. **Decided (0274):** trials follow the
+  observed critical path; the python pack's first run takes 166.7 G. As first written: trialling only
+  lines flagged slow would fit the planner's aim (bounding the worst case), and would save most of this. But 0207 was
+  asked for so that proposed orders are "actually tested ... in order to properly price them" (2026-11-14), and
+  that would then hold for slow lines only.
+- The rest (≈1 G) is spread out: the `pre_` strata (+1 M rows of work), and the store writer.
+
+## O-loop-thread-issues. Only the loop's thread issues, and under load it runs jobs (2026-11-15)
+
+Status: open. Found by 0282. The issue board's loop thread is the only one that collects finished components
+and issues the strata they make ready. Under load the stream starts few workers (the cores over the load), so
+the loop runs much of the work itself. Over the python pack's 3,286 strata on 50 files at load 46–55, it ran
+components at their retire for 0.46–0.91 s and helped with other jobs for 0.13–0.58 s, out of a 1.2–1.9 s
+span. Meanwhile a stratum on the critical path that became ready waited to be issued: 0.45–0.82 s over the
+path's gaps (`RERAIL_STRATA_TRACE`'s `loop` lines and submit column).
+
+The direction: a job's end retires its members and issues their ready readers on the thread that ran it, under
+the board's lock. The loop then keeps only the program-order work: SQL strata, and what profile bookkeeping
+needs. Bound the loop's own jobs first, if that is enough: it helps only with jobs under a quantum.

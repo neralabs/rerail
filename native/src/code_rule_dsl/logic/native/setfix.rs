@@ -73,6 +73,8 @@ mod survivor_tests;
 #[cfg(test)]
 mod cut_tests;
 #[cfg(test)]
+mod view_tests;
+#[cfg(test)]
 mod base_probe;
 mod inputs_tests;
 #[cfg(all(test, target_os = "macos"))]
@@ -2946,7 +2948,7 @@ fn cat_read(syms: &mut Interner, a: i64, b: i64) -> i64 {
 
 /// This thread's CPU seconds (wasm32: `prof::single_thread_cpu`).
 #[cfg(target_family = "wasm")]
-fn thread_cpu() -> f64 {
+pub fn thread_cpu() -> f64 {
     crate::code_rule_dsl::prof::single_thread_cpu().as_secs_f64()
 }
 
@@ -2960,7 +2962,7 @@ pub fn thread_cpu() -> f64 {
 
 /// This thread's CPU seconds (user + kernel).
 #[cfg(windows)]
-fn thread_cpu() -> f64 {
+pub fn thread_cpu() -> f64 {
     let (user, kernel) = crate::code_rule_dsl::prof::windows_cpu(true);
     (user + kernel).as_secs_f64()
 }
@@ -4631,6 +4633,9 @@ fn view(conn: impl Scoped, table: &str, cols: &str) -> Option<View> {
     let conn = conn.db();
     let (schema, rest) = table.split_once('.')?;
     let (name, filters) = match rest.split_once(" WHERE ") { Some((n, f)) => (n, Some(f)), None => (rest, None) };
+    // The name as the statement writes it: a relation named like a SQLite keyword is quoted (`main."plan"`,
+    // `sql::ident`), and is bound by its own name (O-pse-alone-strict).
+    let name = &*crate::code_rule_dsl::logic::sql::unquote(name);
     let src = if schema == "main" {
         crate::code_rule_dsl::facts::vtab::bound_source(conn, name)?
     } else {

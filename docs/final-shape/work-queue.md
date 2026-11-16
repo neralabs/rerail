@@ -561,6 +561,32 @@ pass.
   - Reading an input's granules where reached (a source that decodes a granule on first read, with its count from
     the documents' table) is the shape 0266's blocks give: "base + delta read as one".
 
+### Q17. The hub's gate failures at 692cc9772
+
+- **Found** (2026-11-15, `cargo test --lib --no-fail-fast` on 0288's branch at 51422de6a): 43 failures.
+  - 8 have no pack test data on the host (ruff, sqlfluff, vue fixtures).
+  - 3 are interference: the two profile tests (fixed at their cause: the explain test's thread is a run's,
+    `run_begins`; the gaps test reads `gaps.tsv`, since profile.txt lists only the 12 largest gaps), and
+    `rule_files_pass_their_own_tests` ("a corpus memo entry does not decompress", passes alone; not traced).
+  - The other 32 fail on the hub's own commit too: 11 of them checked one by one on 692cc9772. 21 have the same
+    message as the 23 below.
+- **23 tests: `@rr_node_text without the run's long-text nodes bound`** (typing oracle and phase tests,
+  `base_relations_read_are_inputs`, phases' `a_phase_hands_on_its_exports…`, convert's helpers, rr's tape policy).
+  - 0268 (a20ea5b48) reads a long text only through the run's binding of `rr_long_text_node`, which has the batch
+    (`syntax::LongTexts`). The native step looks that binding up on its connection (`setfix::join_rule_with`).
+  - In `base_relations_read_are_inputs` the failing step compiles on a connection with no binding of it at all,
+    reached by `run_handed → run_native_inputs → plan::run`. Its inputs there are not `main.` bindings (`view` reads
+    other schemas as stored tables), and a stored table carries no batch.
+  - So the batch does not reach every connection that compiles a node read since 0249 and 0254 met 0268 in
+    692cc9772. Which part runs that rule (a chunk's, the cross part's) is not traced.
+- **Each fails alone, on the hub as here**: `a_stored_program_is_read_from_its_image` (1 against 2),
+  `library_modules_link_to_the_lowering_of_them_together` (javascript, line 441),
+  `rule_files_use_the_core_prelude…` ("SQL output already exists"), `every_operation_runs_on_every_executor`
+  (packs.tsv), `executors_are_shared` (blocks/src/gpu.rs:199 makes a command queue), `the_gate_catches_a_widened_walk`,
+  `spilled_walks_find_the_cpus_roots`, `the_backends_find_the_same_keys_on_real_files`, and the replay sample
+  (63 of 268 events).
+- **Done when**: each passes on the hub, fixed at its cause.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
@@ -580,3 +606,7 @@ pass.
    unchanged document, in sessions too); (c) keep every batch held to the end of the run (memory grows with the
    corpus; does not cover sessions). Recommended: (a), the magic-sets widening 0174 already does, and no new
    mechanism.
+   **Answered (2026-11-15): (a).** Built on sync-integration-hub-tape as decision 0286 (numbered 0264 when written)
+   (`corpus::requests_file_local`, `file_local::requests_file_local`), with the test
+   `a_cross_file_reader_finds_the_text_of_another_files_node`; `a_cross_file_text_test_is_maintained_as_a_filter`
+   runs again.

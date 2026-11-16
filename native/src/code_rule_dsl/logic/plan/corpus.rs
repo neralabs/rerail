@@ -263,6 +263,9 @@ pub struct Report {
     /// Per phase, the whole process's retired instructions while it ran (its workers' too; macOS): steadier than CPU
     /// time on a loaded machine, so a change is attributed to a phase by them.
     pub phase_instructions: Vec<(&'static str, u64)>,
+    /// Per phase of the run's thread, its clocks at the phase's bounds (decision 0288): wall, the thread's own CPU and
+    /// helping, the process's CPU, its threads' time ready with no core, and its involuntary switches.
+    pub phase_clock: Vec<(&'static str, crate::code_rule_dsl::logic::profile::PhaseClock)>,
     pub files: usize,
     pub nodes: usize,
     pub native: usize,
@@ -1213,6 +1216,7 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
     let _merging = crate::code_rule_dsl::logic::profile::span(|| "merge the programs".into());
     if parsed.len() == 1 {
         let mut one = parsed.pop().expect("one program");
+        requests_file_local(&mut one);
         same_relations(&mut one);
         return Ok(one);
     }
@@ -1374,6 +1378,8 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
     for round in crate::code_rule_dsl::logic::rr::lower::ON_REQUEST {
         crate::code_rule_dsl::logic::rr::lower::sources_on_request(&mut all, round);
     }
+    // A request the cross-file part would derive asks within the node's document instead (O-cross-file-answers).
+    requests_file_local(&mut all);
     // The combined program bounded once to the documents it shows (decision 0058 §1, 0089 §4): a library's rules are
     // the same for every program, so one analysis gives what each program's would.
     if shared && makes_guests {
@@ -1398,6 +1404,23 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
     });
     same_relations(&mut all);
     Ok(all)
+}
+
+/// The requests `sources_on_request` made, narrowed where the split finds them cross-file to the asked node's own
+/// document (`file_local::requests_file_local`): a node's attribute is its document's, answered in its chunk while
+/// the chunk's batch holds the text (O-cross-file-answers). Run on the program that runs, once its requests are made.
+fn requests_file_local(prog: &mut crate::code_rule_dsl::logic::front::ast::Program) {
+    if std::env::var("RERAIL_NODE_SOURCES").is_ok_and(|v| v == "eager") {
+        return;
+    }
+    let requests: Vec<&str> = crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).map(|a| a.req).filter(|r| prog.decls.contains_key(*r)).collect();
+    if requests.is_empty() {
+        return;
+    }
+    let _span = crate::code_rule_dsl::logic::profile::span(|| "on request: the requests narrowed to the node's document".to_owned());
+    for (req, how) in crate::code_rule_dsl::typing::file_local::requests_file_local(prog, &requests) {
+        crate::code_rule_dsl::logic::profile::decision("on request: narrowed to the node's document", || format!("{req}: {how}"));
+    }
 }
 
 /// The relations that are one relation under two names made one, after the transforms that run after `simplify`
@@ -2232,7 +2255,9 @@ fn run_handed(
     let store_file = tape_cache_path();
     let costs_file = crate::code_rule_dsl::logic::costs::file();
     let files: Vec<&Path> = store_file.iter().chain(&costs_file).map(std::path::PathBuf::as_path).collect();
+    let stopping = crate::code_rule_dsl::logic::profile::span(|| "upkeep stops for the run (the store's collection)".into());
     let mut under_way = Some(rerail_accel::upkeep::run_begins(&files));
+    drop(stopping);
     let lifecycle_start = usage();
     // Library and test callers do not pass through the CLI/Node pool setup.
     // Initialize before phase 0 or a parallel read can create rayon's default pool.
@@ -2255,11 +2280,13 @@ fn run_handed(
     // temporary directory every run (2 s when the event came late). A read under it is watched as it comes
     // (`watch_above`).
     let watched: Vec<std::path::PathBuf> = if phase0::active() { vec![library] } else { vec![root.to_path_buf(), library] };
+    let watching = crate::code_rule_dsl::logic::profile::span(|| "watch the corpus and the library".into());
     let before = observe(|o| {
         o.begin();
         o.watch(&watched);
         o.counts
     });
+    drop(watching);
     let lifecycle_observed = usage();
     // Phase 0 first: each text's include graph, from `bootstrap.rr`'s run, before anything reads a text (the later
     // reads keep it while its files hold).
@@ -2526,8 +2553,26 @@ fn run_observed(
     let mut last_instructions = crate::code_rule_dsl::logic::settings::process_counters().map_or(0, |c| c.0);
     let mut counted = 0;
     let timeline = std::env::var_os("RERAIL_TIMELINE").is_some();
+    // Decision 0288: each phase's clocks at its bounds; and, for the run that holds the profile, its thread's time by span.
+    let mut phase_clock: Vec<(&'static str, crate::code_rule_dsl::logic::profile::PhaseClock)> = Vec::new();
+    let mut clock_last = crate::code_rule_dsl::logic::profile::snapshot();
+    // The command's time before its run (reading its rules and settings), taken by the command's first run.
+    if RUNS_UNDER_WAY.with(std::cell::Cell::get) == 0 && !phase0::active() && let Some(start) = crate::code_rule_dsl::logic::profile::take_command_start() {
+        phase_clock.push(("before", crate::code_rule_dsl::logic::profile::PhaseClock::between(&start, &clock_last)));
+    }
+    let tracking = std::cell::Cell::new(false);
     let mut phase = |name: &'static str, statements: usize| {
         let process_now = process_cpu();
+        let clock_now = crate::code_rule_dsl::logic::profile::snapshot();
+        let c = crate::code_rule_dsl::logic::profile::PhaseClock::between(&clock_last, &clock_now);
+        clock_last = clock_now;
+        match phase_clock.iter_mut().find(|p| p.0 == name) {
+            Some(p) => p.1.add(&c),
+            None => phase_clock.push((name, c)),
+        }
+        if tracking.get() {
+            crate::code_rule_dsl::logic::profile::run_thread_phase(name);
+        }
         // A timeline (dev, `RERAIL_TIMELINE`): each section's end, as it ends, with the process's CPU it took.
         if timeline {
             eprintln!("RERAIL_TIMELINE {} {name}: {:.3} s CPU @{:.3}", phases::current().unwrap_or_else(|| "main".into()), process_now - process_last, crate::code_rule_dsl::logic::profile::timeline_clock());
@@ -2576,6 +2621,16 @@ fn run_observed(
     let profiling = _profile.is_some() && crate::code_rule_dsl::logic::profile::on();
     if profiling {
         crate::code_rule_dsl::logic::profile::reset();
+    }
+    // The run's thread charged to its spans (decision 0288): the run that holds the profile, not one nested in it.
+    if profiling && !nested && !phase0::active() {
+        // Tracked from the command's start (`command_begins`): what came before the run is its phase `before`.
+        if crate::code_rule_dsl::logic::profile::tracked() {
+            crate::code_rule_dsl::logic::profile::run_thread_phase("before");
+        } else {
+            crate::code_rule_dsl::logic::profile::track_run_thread();
+        }
+        tracking.set(true);
     }
     let combining = crate::code_rule_dsl::logic::profile::span(|| "parse the program".into());
     let (mut prog, mut texts) = combine_keyed(programs, masked, &given.graphs, &added, read, &lists)?;
@@ -8792,6 +8847,7 @@ fn run_observed(
         for (name, user, sys, rss, n) in &phases {
             header.push_str(&format!("{:>9.2} s  {name:<16} rss {rss:.0} MB  {n} statements\n", user + sys));
         }
+        header.push_str(&crate::code_rule_dsl::logic::profile::run_thread_report(&phase_clock));
         let lines: usize = programs.iter().map(|p| p.lines().filter(|l| !l.trim().is_empty()).count()).sum();
         header.push_str(&format!("\nProgram: {} lines in {} programs; rules are numbered as in the `rule #k` notes at the end.\n", lines, programs.len()));
         crate::code_rule_dsl::logic::profile::report::write(&dir, &header).map_err(|e| Error::Plan(format!("profile: {e}")))?;
@@ -8801,7 +8857,13 @@ fn run_observed(
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the Git index consulted".into());
         consulted.extend(crate::code_rule_dsl::logic::strings::git::consulted(root));
     }
-    let report = Report { phases, phase_instructions, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
+    if tracking.get() {
+        crate::code_rule_dsl::logic::profile::untrack_run_thread();
+    }
+    if !nested && !phase0::active() {
+        crate::code_rule_dsl::logic::profile::run_ends(crate::code_rule_dsl::logic::profile::snapshot());
+    }
+    let report = Report { phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
     handed.succeeded();
     Ok(report)
 }
