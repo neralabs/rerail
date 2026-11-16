@@ -1,4 +1,4 @@
-# 0276: Programs are written through a writer and read as versions; `lower::Tree` goes
+# 0276: Programs are written through a writer and read as versions, from the tape on; `lower::Tree` and `front::Program` go
 
 Status: draft (2026-11-15), a design. Drafted as 0274; renumbered (0274 and 0275 are taken in other worktrees). Builds on 0173 (the program image), 0241 (a maintained form is a
 derivation), 0244 (a split part is a view with its fields overlaid) and t36 item 7 (the run reads versions). Aimed
@@ -19,9 +19,15 @@ Everything else still does:
   fallback, `Cut::program`'s, the input deltas', the cross memo's), for the programs that have no version.
 
 So every program the run holds has two forms that must agree, a debug check that they do (`same_as_tree`), and a
-decode wherever a reader was not ported. This decision gives the program one form after lowering, a version, made
-only through a writer and read only through views. `lower::Tree`, `Tree::{given, of, beside, maintained}`,
-`TREE_READS`, `same_as_tree`, `made_from`'s `had` and every tree fallback are deleted.
+decode wherever a reader was not ported. And before `lower` there is a third form. A rule file's tape becomes
+statements (`rr/from_tape.rs`), then a `front::Program` tree (`rr::lower`), and the front passes rewrite that tree
+until `plan::lower` makes the first version.
+
+This decision gives a program one form from its tape on: a version, made only through a writer and read only through
+views. `lower::Tree` goes, and so does `front::Program`, as 0246 §1 and §4 already decided for loading: the loader
+walks the tape once and writes into the image builder, and the preparation passes are derivations of the linked
+base. With them go `Tree::{given, of, beside, maintained}`, `TREE_READS`, `same_as_tree`, `made_from`'s `had`, every
+tree fallback, the statements, and the `front::Program` → version encoding.
 
 ## What was found
 
@@ -54,15 +60,20 @@ Two more facts shape the design:
 
 ## Decision
 
-### 1. One form after lowering
+### 1. One form from the tape on
 
-The boundary is `lower`. Before it, the front end works on `front::Program`, as 0246 leaves it: parsing,
-`.include` resolution, demand, matchers, the text tests. `lower` takes a `front::Program` and makes a version. After
-it, nothing holds a lowered program's tree:
+The boundary is the tape (0061, 0162). The lean parser makes it, and the loader reads it in place. Nothing after
+that holds a program as a tree:
 
-- what a pass reads is a view, `Placed` and its `Fields`;
-- what a pass makes, it writes through `ProgramW`, which freezes to a `Placed`;
-- a measurement aid that prints a program decodes it explicitly (§6).
+- **Lowering** walks a module's tape once and writes its clauses' core rules through `ProgramW::lowering()` (0246
+  §1, per clause). The whole-program half (the findings' rules, `declare_core`, kind sets, `front::finish`, aggregate
+  demand) runs at link time over the linked base (0246 §2).
+- **What a pass reads** is a view, `Placed` and its `Fields`, plus the analyses as relations (0246 §3).
+- **What a pass makes** it writes through `ProgramW`, which freezes to a `Placed`.
+- **A program is printed** from its version (`Version::show_rule`, §6), never by decoding it to a tree.
+
+`plan::lower` stops being a boundary. It becomes one derivation among the preparation passes: it interns the atoms,
+fixes each column's domain and writes the ops.
 
 ### 2. The data structures
 
@@ -82,10 +93,11 @@ pub struct Lowering {
     pub dialect: GrammarDialect,
 }
 
-/// The prepared program (`Prepared`): the front program for the store's key and text, and the rest as versions.
+/// The prepared program (`Prepared`): versions only. Its key is the linked base's digest (its modules' image keys)
+/// with the run's settings, not a hash of texts and of `{:?}` prints of the facts, inputs and outputs.
 pub struct Prepared {
-    pub prog: front::Program,                 // before lowering: what `prepared_key` and 0246's scope read
-    pub lowered: Part,                        // the whole lowered program
+    pub key: [u8; 32],
+    pub lowered: Part,                        // the whole prepared program
     pub split: Split,
     /* vocabulary, sets, matchers, reports: unchanged */
     pub cone: OnceLock<..>, pub maintained: OnceLock<..>, pub parts: OnceLock<..>,
@@ -180,11 +192,30 @@ form they hold.
 
 ### 5. Every call site
 
-**Lowering and preparation** (`corpus.rs` 2700–2810, `file_local.rs`, `simplify.rs`, `lower.rs`):
+**Loading and the front passes** (`rr.rs`, `rr/lower.rs`, `front.rs`, `simplify.rs`, `magic.rs`, `reach_form.rs`,
+`strings.rs`, `corpus.rs` 2560–2745). This is about 10,000 lines of tree code, most of the port:
 
 | Site | Port |
 |---|---|
-| `lower::lower` | writes `ProgramW::lowering()`: each lowered rule by `RuleBuilder`, declarations and fields by `fields()`; returns `Part`. Its tree goes. `domains` is computed on the front tree it was given, which is still the input |
+| `rr/from_tape.rs` (statements off the tape) | goes: the loader reads the tape in place (0162's `View`), as `program_text/from_tape.rs` already does |
+| `rr::lower::lower`, per-clause half (3,790 lines with the other half) | writes core rules through `ProgramW::lowering()` in the tape walk, form by form (0246 §1). Until a form moves, its tree output is the check, compared by digest |
+| `rr::lower`, whole-program half; `front::finish`; `aggregate_demand::optimize` | passes over the linked base (`derive`), at link (0246 §2) |
+| `tape_type::check`, `check_names`, `front::declared` | readers of the module image, once per module (0246) |
+| `world::wanted`, `cross_memo::declared`, `cross_memo::add` | readers on `Fields`; `add` is an `edit` |
+| `prepared_key` | the linked base's digest and the settings (§2) |
+| `cpython_functors`, `base_inputs` | `edit`: rewrites of the rules that call the functors; `f.inputs().push` |
+| `front::prune` (3–4 times) | `edit` + `keep` over one reachability relation (0246 §3) |
+| `simplify::simplify` (2,797 lines) | a `derive`; congruence is one maintained relation (0246 §3), and the rewrite reads it |
+| `reach_form::find`, `undo_in_cycles` | `derive`; the closures' rules rewritten to the bitmap relations |
+| `magic::demand_negated_tests`, `demand_bound_columns` | `derive`; magic rules written term by term, adorned copies by `rewrite` |
+| `matchers::absorb`, `matchers::lower` | `derive`; the absorbed parts' literals removed through a `Rewrite`, the matcher relations declared |
+| `strings::node_subject_tests`, `long_text_twins`, `strings::as_relations` | `derive`; twins by `copy` + `rewrite` |
+| `plan::lower` (`lower::lower`) | a `derive` that interns atoms and writes the domains and ops; returns `Part` |
+
+**Preparation after lowering** (`corpus.rs` 2745–2810, `file_local.rs`, `lower.rs`):
+
+| Site | Port |
+|---|---|
 | `bound` | a reader: on `Fields` |
 | `push_local_joins` / `push_with` (231 lines) | a pass: `derive`; each pushed rule rewritten (the component replaced by its helper's atom), helpers written term by term; the fallback (`original`) is the input view, unchanged |
 | `factorize_exports` (204 lines) | a pass: `derive`, the export's rules replaced by its parts' |
@@ -206,7 +237,7 @@ form they hold.
 | `prepared_of` | reads the image back to a `Placed` (`Version::open`), and the split by `assemble` on it |
 
 **The split's parts** (15 sites): `split.local` and `split.cross` are `Placed`. `Placed::of_program(&split.cross)`
-(2877, 2881, 3076) goes, since the version is always there. `dump_split` decodes them as an aid. The cross memo's
+(2877, 2881, 3076) goes, since the version is always there. `dump_split` prints them (§6). The cross memo's
 `split(&mut split.cross, ..)` takes and returns a `Placed`.
 
 **The run's parts:**
@@ -224,28 +255,31 @@ form they hold.
 | `qualify` (9618–9630), `maintained_cross` (9670) | their version paths only; `requalified` goes |
 | maintained part's diagnostics (6990–7125) | on `Fields`: `f.width`, `f.decls()`, `p.components()`, `p.rules_by_stratum()`, `f.heads()` |
 | `cross_memo::drop_guards`, `keep_copies` | their version edits only (`edit`: `keep` and a rewrite of each guarded rule); the tree edits go |
-| `recursive_spike::run(&cross.program)` | an aid behind `recursive_spike::on()`: decodes (§6), or is retired (question 2) |
+| `recursive_spike::run(&cross.program)` | an aid behind `recursive_spike::on()`: ported to `Placed`, or retired (question 2) |
 | `cross_rounds::bound`, `cone_split`, `pre_split`, `run_rounds`, `round.program` (7396–7513, 8195–8310) | question 1 |
 | `maintain::rewrite`'s fallback part, gates test, `input_views` | its version path; `f.gates().is_empty()`; `input_views` on handles (also ends `retain.rs` 315's decode) |
 | `emit::emit_inputs` (140 lines), `emit::outputs`, `plan::decode_kept` | the SQL emitter reads `Placed` through `Body`, as `plan::run`'s kernel does; `decoded_outputs` reads `f.is_input`, `f.width` |
-| `Model::analysis_of` (`plan.rs` 1726) | out of scope: the planner's analysis is its own port. It keeps decoding, as one named reader (§6), until then |
-| `sql_executor/compiler.rs`, `coverage.rs` | `lower` returns a `Part` |
+| `Model::analysis_of` (`plan.rs` 1726), `plan::program_digest` | on `Placed`: the planner's analysis reads the strata, heads and reads from the views, and the digest is the version's |
+| `sql_executor/compiler.rs`, `coverage.rs`, `emit.rs` 279 | take the loader's `Part`, not a `front::Program` |
 
-**Tests:** `lower::Lowered { program: Tree::given(p), .. }` becomes `Part::of(&p, dialect)`, a test helper that lowers
-with its own interner. The 16 test sites of `lower::lower` take the `Part`, and assertions that read rules decode it.
+**Tests:** a test that writes a program as `.rr` text loads it through the loader (`Part::load(src, dialect)`, a
+helper with its own interner and store). Assertions on rules compare `show_rule` lines, which print what `front`'s
+`Display` prints today, so expected strings stay. Tests that build a `front::Program` by hand write it through
+`ProgramW` instead. The `rr/tests.rs` lowering tests (3,492 lines) compare the loader's printed rules.
 
-### 6. Decoding: named, and only for aids
+### 6. Printing, not decoding
 
-`Placed::program(&lists)` stays: it is how a version is printed. It is called only from:
+A version prints itself: `Version::show_rule`, `show_atom` and `show_lit` (`program_image/show.rs`) write the text
+`front`'s `Display` writes. `Placed::show()` prints a whole program by them, declarations and fields included.
+Nothing turns a version back into a tree, so `Placed::program(&lists)` goes with `front::Program`.
 
-- the measurement aids, each behind its environment variable: `version_trace`, `RERAIL_SPLIT_DUMP`,
-  `RERAIL_DEMAND_DUMP`, `RERAIL_DUMP_MATCHERS`, `O125_RULES`, `RERAIL_MEMO_PROGRAM_DUMP`;
-- `Model::analysis_of`, until its port;
-- tests.
+The measurement aids print this way: `version_trace`, `RERAIL_SPLIT_DUMP`, `RERAIL_DEMAND_DUMP`,
+`RERAIL_DUMP_MATCHERS`, `O125_RULES`, `RERAIL_MEMO_PROGRAM_DUMP`. The run's counter `version_trees_read` and
+`run_state`'s entry for it go with `lower::Tree`. A guard test refuses `front::Program` and `lower::Tree` in the
+engine's sources, so neither can come back.
 
-A guard test greps the engine's sources for `.program(&` on a `Placed` or `Version` and allows only the callers
-listed. The list may only shrink. The run's counter `version_trees_read` and `run_state`'s entry for it go with
-`lower::Tree`.
+What stays in `front`: the term and name types the image's handles and the rr parser share (`Name`, `Value`,
+`AggOp`, `Lists`), and `front/cycles.rs` and `front/name.rs` where they read versions.
 
 ### 7. Base and delta, in 0266's terms
 
@@ -255,6 +289,7 @@ listed. The list may only shrink. The run's counter `version_trees_read` and `ru
 | view (removals, few ranges) | a delta with removals | `edit` + `keep` |
 | overlay (additions, fields) over any version | a delta over a full block, never a delta | `edit`; the writer folds an overlay of an overlay into one cumulative delta over the full block, copying the old delta's additions whole (0266 §6's carry) |
 | fold at half the parent | roll-up by the cost rule | unchanged in this port; the cost rule is §8 |
+| a module image, linked (0246 §2) | a module nested in the `Program` block | linking appends module images; a pass over the linked base is a `derive` |
 
 Callers see none of this. They open, write, freeze and read `Placed`. So 0266 step 3 can put a version into a block
 without changing a caller.
@@ -264,28 +299,40 @@ without changing a caller.
 - **Domains in the declarations.** A declaration's columns gain their domain, and `Lowering` keeps only `ops` and
   `dialect`. This is 0266's `Program` root, where declarations are nested whole.
 - **Roll-up by the cost rule** in place of the fold at half, measured against today's fold on dl1's session runs.
-- **The planner's analysis on versions** (`analysis_of`, `plan::program_digest`).
+- **The whole-program questions as maintained rules** (0246 §3, 0225 §5). This port reads them from the views as
+  passes compute them today. Moving congruence, reachability and the strata to rules changes what a pass reads, not
+  how it writes.
 
 ## Path
 
 Each step leaves the engine working, runs its targeted tests, and is measured on dl1 (findings digest and retired
-instructions) against the step before.
+instructions) against the step before. Until a pass has moved, its tree form is its check: the moved pass's printed
+rules must equal the old pass's, compared by digest, as 0246 §1 does for lowering's forms.
 
-0. **Merge the hub's 0246 stages 2, 3 and 7.** `lower` in a library's scope and the stored image are what steps 1 and
-   3 build on.
+0. **Merge the hub's 0246 stages 2, 3 and 7:** module images, programs lowered in their libraries' scope, and the
+   stored image.
 1. **`ProgramW` and `Part`.** The writer over `Builder`, with `copy`/`copy_all` as range copies, `rewrite_all` and
    `fields()`. `Part` and the shared `Lowering`. Port the existing version passes to them: supports, gate, split,
    the round program, the cut, `qualify`, the input deltas, the constants, the cross memo, the maintenance rewrite.
    Delete each pass's tree fallback and `made_from`. List what the image cannot hold, and extend it. Check: the
    session, cone, cross memo and maintenance tests.
 2. **The run holds versions only.** `Split`'s parts are `Placed`. `Cone` drops its trees. Port every run reader in
-   §5: the diagnostics, the emitter, `decode_kept`, `input_views`. Answer questions 1 and 2. Check: corpus tests, the
-   SQL extension's tests, the guard asserting that a non-maintained run reads no tree too.
-3. **Preparation on the writer.** `lower` writes a version. The readers come first (split, constants, causes,
-   statistics), then the rewriting passes, one commit each: `locate`, the merges, `demand_exports`,
-   `factorize_exports`, `push_local_joins`. `remember` and `prepared_of` store and read the image. Check: the
-   `file_local` tests (`rerail-device-metal`), the prepared tests, the phase tests.
-4. **Delete `lower::Tree`.** `Lowered`, `TREE_READS`, `same_as_tree` and `version_trees_read` go. Add §6's guard.
+   §5: the diagnostics, the emitter, `decode_kept`, `input_views`, `analysis_of`. Printing by `Placed::show`. Answer
+   questions 1 and 2. Check: corpus tests, the SQL extension's tests, the guard that a non-maintained run reads no
+   tree too.
+3. **Preparation after lowering on the writer.** `plan::lower` becomes a derivation from the front's version (encoded
+   once from its tree, until step 4). The readers come first (split, constants, causes, statistics), then the
+   rewriting passes, one commit each: `locate`, the merges, `demand_exports`, `factorize_exports`,
+   `push_local_joins`. `remember` and `prepared_of` store and read the image. Check: the `file_local` tests
+   (`rerail-device-metal`), the prepared tests, the phase tests. Then delete `lower::Tree`, `Lowered`,
+   `TREE_READS`, `same_as_tree`.
+4. **The front passes on the writer,** last first, so the encoding point moves earlier one pass at a time:
+   `strings::as_relations` and the twins, the matchers, demand (`magic`), `reach_form`, `simplify`, `prune`,
+   `cpython_functors` and `base_inputs`. `prepared_key` becomes the linked base's digest.
+5. **Lowering from the tape** (0246 §1): the per-clause half of `rr::lower` writes through `ProgramW` in the tape
+   walk, form by form; the whole-program half runs over the linked base. `rr/from_tape.rs`'s statements go. Check:
+   `rr/tests.rs`, the tape tests, dl1.
+6. **Delete `front::Program`,** its statements and its encoding. Add §6's guard.
 
 ## Questions for the user
 
@@ -293,15 +340,21 @@ instructions) against the step before.
    today, so the path is dormant, and its passes (`bound`, `cone_split`, `pre_split`) are tree rewrites. Port them
    to `ProgramW` in step 2, or retire the path?
 2. **`recursive_spike::run`,** behind `recursive_spike::on()`, reads the cross part's tree. Keep it as an aid that
-   decodes, or retire the spike?
+   prints, or retire the spike?
+3. **Steps 4 and 5 against the hub.** 0246's later stages move lowering form by form on the hub. Should steps 4 and 5
+   be done here, on the writer, and merged into the hub, or done on the hub after it takes steps 0–3?
 
 ## Agreement with prior work
 
 This agrees with:
 
+- **0061, 0162:** a rule file has a tape, read in place;
 - **0173 and 0241:** one image form, and passes as derivations;
 - **0244:** split parts as views;
-- **0246:** modules as images, and the stored program as its image;
+- **0246:** modules as images read in one tape walk, no statements and no `front::Program`, preparation as
+  derivations of the linked base, the stored program as its image;
 - **0266:** a writer, views and base + delta, with `Program` as a block.
 
-It departs from nothing. It removes t36 item 7's transitional form: a tree held or decoded beside each version.
+It departs from nothing. Its first draft kept `front::Program` before `plan::lower`, which 0246 §1 had already
+decided against. It removes t36 item 7's transitional form, a tree held or decoded beside each version, and the tree
+forms before it.
