@@ -8,7 +8,7 @@ publish = false
 description = "The Datalog engine: plans, the native executor, SQL, typing, the waves core, the solver device interface."
 
 [features]
-default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache"]
+default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache", "rerail-facts/default", "rerail-lang/default", "rerail-rr/default"]
 all-languages = ["lang-blade", "lang-csharp", "lang-css", "lang-html", "lang-java", "lang-javascript", "lang-json", "lang-markdown", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue", "rerail-facts/all-languages", "rerail-lang/all-languages", "rerail-rr/all-languages"]
 lang-blade = ["rerail-facts/lang-blade", "rerail-lang/lang-blade", "rerail-rr/lang-blade"]
 lang-csharp = ["ast-grep-language/tree-sitter-c-sharp", "rerail-facts/lang-csharp", "rerail-lang/lang-csharp", "rerail-rr/lang-csharp"]
@@ -33,9 +33,10 @@ system-allocator = ["rerail-facts/system-allocator", "rerail-lang/system-allocat
 code-rule-profile = ["rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile", "rerail-rr/code-rule-profile"]
 p-anchor-corpus = ["rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus", "rerail-rr/p-anchor-corpus"]
 metal-tests = ["rerail-facts/metal-tests", "rerail-lang/metal-tests", "rerail-rr/metal-tests"]
-test-hooks = ["rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-rr/test-hooks", "dep:tempfile"]
+test-hooks = ["rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-rr/test-hooks", "dep:tempfile", "rerail-compiler/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-rr-parser/test-hooks"]
 
 [dependencies]
+arc-swap = "=1.9.3"
 base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
 ast-grep-core = "=0.51.0"
@@ -91,6 +92,9 @@ rerail-rr = { path = "../rr", default-features = false }
 rerail-rr-syntax = { path = "../rr_syntax" }
 rerail-store = { path = "../store" }
 rerail-accel = { path = "../../../accel" }
+# Blocks (decision 0266): the outputs file's images are frozen blocks (0295 step 3); setfix's relations are measured
+# against blocks' (`setfix::blocks_compare_tests`).
+rerail-blocks = { path = "../blocks" }
 rerail-compiler = { path = "../compiler" }
 rerail-rr-parser = { path = "../rr_parser" }
 
@@ -116,10 +120,6 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1.6"
 metal = "0.33.0"
-
-[target.'cfg(target_os = "macos")'.dev-dependencies]
-# The blocks spike, measured against setfix's relations (`setfix::blocks_compare_tests`).
-rerail-blocks = { path = "../blocks" }
 
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).

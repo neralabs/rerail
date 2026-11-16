@@ -313,38 +313,40 @@ pub fn read_stored(stored: &Stored, lists: &crate::code_rule_dsl::logic::front::
     }
 }
 
-/// The program `stored` holds, as `read_stored` reads it, and its version where it is kept as an image (decision
-/// 0244: the parts of a prepared program are made from it).
-pub fn read_stored_version(stored: &Stored, lists: &crate::code_rule_dsl::logic::front::Lists) -> Result<(Program, Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>), String> {
-    match stored {
-        Stored::Image(bytes) => {
-            let v = crate::code_rule_dsl::logic::program_image::Version::open(bytes)?;
-            Ok((v.program(lists)?, Some(v)))
-        }
-        Stored::Text(text) => Ok((read_in(text, lists)?, None)),
-    }
-}
-
 /// Keeps `prog` in `store` as its image (decision 0173), a source by its bytes' sha256 and by `image_key`, held so the
 /// run keeps it (O95): the digest, and the sources written, which the caller names so collection keeps them. With
 /// `RERAIL_PROGRAM_IMAGE=off`, as its text, checked to read back as `prog` (`None` when it does not: nothing is kept),
 /// alone.
+/// `store` of a program held as a base image already (a prepared program's version, `Version::base_bytes`): its
+/// bytes kept as they are, with no encode of a tree; `None` where images are off, and the caller stores the tree.
+pub fn store_version(store: &ContentStore, v: &crate::code_rule_dsl::logic::program_image::Version) -> StoreResult<Option<([u8; 32], Vec<SourceId>)>> {
+    match v.base_bytes() {
+        Some(bytes) if images() != "off" => store_image(store, bytes).map(Some),
+        _ => Ok(None),
+    }
+}
+
+/// Image `bytes`, kept under the digest of its bytes (decision 0246 §6).
+fn store_image(store: &ContentStore, bytes: &[u8]) -> StoreResult<([u8; 32], Vec<SourceId>)> {
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
+    let digest: [u8; 32] = Sha256::digest(bytes).into();
+    let key = image_key(&digest);
+    // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`, decision 0264) ships it.
+    crate::code_rule_dsl::logic::rr::images::export(key, bytes);
+    let id = match store.source_by_alias(key)? {
+        Some(id) => id,
+        None => store.put_source(bytes, &[key])?,
+    };
+    store.pin_held_sources(&[id])?;
+    Ok((digest, vec![id]))
+}
+
 pub fn store(store: &ContentStore, prog: &Program) -> StoreResult<Option<([u8; 32], Vec<SourceId>)>> {
     // The stored form is the image (decision 0246 §6): encoded once, kept under the digest of its bytes, which is the
     // source's own hash. Not printed, read back, encoded and decoded again, and digested by `{:?}` to check each.
     if images() != "off" {
         let Ok(bytes) = crate::code_rule_dsl::logic::program_image::encode(prog) else { return Ok(None) };
-        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
-        let digest: [u8; 32] = Sha256::digest(&bytes).into();
-        let key = image_key(&digest);
-        // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`, decision 0264) ships it.
-        crate::code_rule_dsl::logic::rr::images::export(key, &bytes);
-        let id = match store.source_by_alias(key)? {
-            Some(id) => id,
-            None => store.put_source(&bytes, &[key])?,
-        };
-        store.pin_held_sources(&[id])?;
-        return Ok(Some((digest, vec![id])));
+        return store_image(store, &bytes).map(Some);
     }
     let Ok(text) = print(prog) else { return Ok(None) };
     let want = program_facts::debug_digest(prog);
@@ -440,9 +442,15 @@ pub fn load(store: &ContentStore, digest: &[u8; 32], lists: &crate::code_rule_ds
     Ok(read_stored(&stored, lists).ok().map(|p| (p, sources)))
 }
 
-/// `load`, with the program's version where it is kept as an image (`read_stored_version`).
-pub fn load_version(store: &ContentStore, digest: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Program, Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>, Vec<SourceId>)>> {
+/// The version of the program `store` keeps of sha256 `digest`, opened from its image with no tree decoded (a
+/// program kept as text, with images off, imaged from it), and the sources it is kept as; `None` as `load` gives.
+pub fn load_image(store: &ContentStore, digest: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Vec<SourceId>)>> {
     let mut found = texts(store, &[*digest])?;
     let Some((stored, sources)) = found.remove(digest) else { return Ok(None) };
-    Ok(read_stored_version(&stored, lists).ok().map(|(p, v)| (p, v, sources)))
+    let version = match &stored {
+        Stored::Image(bytes) => crate::code_rule_dsl::logic::program_image::Version::open(bytes),
+        Stored::Text(text) => read_in(text, lists).and_then(|p| crate::code_rule_dsl::logic::program_image::Builder::of_program(&p)?.finish().map(|(v, _)| v)),
+    };
+    Ok(version.ok().map(|v| (v, sources)))
 }
+

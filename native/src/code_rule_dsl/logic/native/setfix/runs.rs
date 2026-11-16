@@ -759,9 +759,13 @@ fn gallop<T>(v: &[T], start: usize, less: impl Fn(&T) -> bool) -> usize {
 /// `v`, sorted pieces one after another (`bounds`: each piece's start, then the end), merged into one sorted
 /// sequence: adjacent pieces two at a time, a pass at a time, through one buffer of `v`'s length, `le(a, b)` saying
 /// `a` may come before `b` (ties keep the left piece's first). Each item moves about log(pieces) times; one piece
-/// moves nothing (decision 0187: rows known sorted are merged, not sorted again).
-pub(super) fn merge_pieces(v: &mut Vec<u32>, mut bounds: Vec<usize>, le: impl Fn(u32, u32) -> bool) {
-    let mut buf: Vec<u32> = Vec::new();
+/// moves nothing (decision 0187: rows known sorted are merged, not sorted again). From `PAR_ROWS` items, on the pool
+/// (`merge_pieces_par`).
+pub(super) fn merge_pieces<T: Copy + Send + Sync>(v: &mut Vec<T>, mut bounds: Vec<usize>, le: impl Fn(T, T) -> bool + Sync) {
+    if v.len() >= PAR_ROWS && crate::threads::max() > 1 {
+        return merge_pieces_par(v, bounds, le);
+    }
+    let mut buf: Vec<T> = Vec::new();
     while bounds.len() > 2 {
         buf.clear();
         buf.reserve(v.len());
@@ -784,9 +788,91 @@ pub(super) fn merge_pieces(v: &mut Vec<u32>, mut bounds: Vec<usize>, le: impl Fn
     }
 }
 
+/// From this many items a sort or a merge of pieces runs on the pool (decision 0294); below it, a job costs more
+/// than it saves.
+pub(super) const PAR_ROWS: usize = 1 << 16;
+
+/// The parts a level of a merge, or a sort, is cut into for each of the pool's threads.
+const PARTS_PER_THREAD: usize = 4;
+
+/// The fewest items a merge's part puts out: smaller pieces merge whole, a job each.
+const PART_LEAST: usize = 1 << 13;
+
+/// How many of `x`'s items are among the first `t` a merge of `x` and `y` puts out, where a tie takes `x`'s first
+/// (merge path): the least `i` whose `x[i]` does not go before `y[t - i - 1]`.
+fn co_rank<T: Copy>(x: &[T], y: &[T], t: usize, le: &impl Fn(T, T) -> bool) -> usize {
+    let (mut lo, mut hi) = (t.saturating_sub(y.len()), t.min(x.len()));
+    while lo < hi {
+        let i = (lo + hi) / 2;
+        let j = t - i;
+        if j > 0 && le(x[i], y[j - 1]) { lo = i + 1 } else { hi = i }
+    }
+    lo
+}
+
+/// `merge_pieces` on the pool (decision 0294): each level's merges cut into parts by their outputs' places, each
+/// part's inputs found by where its first and last outputs come from (`co_rank`), so a level spreads over the
+/// threads whatever its pieces' sizes, its last one merge as well. The same order as one thread's.
+fn merge_pieces_par<T: Copy + Send + Sync>(v: &mut Vec<T>, mut bounds: Vec<usize>, le: impl Fn(T, T) -> bool + Sync) {
+    let n = v.len();
+    let all = crate::threads::max() * PARTS_PER_THREAD;
+    let mut buf: Vec<T> = v.clone();
+    while bounds.len() > 2 {
+        // (a, b, c, t0, t1): pieces `a..b` and `b..c` merged, its outputs `t0..t1` (from `a`), in output order.
+        let mut parts: Vec<(usize, usize, usize, usize, usize)> = Vec::new();
+        let mut next = vec![0];
+        let mut p = 0;
+        while p + 1 < bounds.len() {
+            let (a, b) = (bounds[p], bounds[p + 1]);
+            let c = if p + 2 < bounds.len() { bounds[p + 2] } else { b };
+            let k = ((c - a) * all).div_ceil(n.max(1)).min((c - a) / PART_LEAST).max(1);
+            parts.extend((0..k).map(|q| (a, b, c, (c - a) * q / k, (c - a) * (q + 1) / k)));
+            next.push(c);
+            p += 2;
+        }
+        let (src, le) = (&v[..], &le);
+        let mut rest: &mut [T] = &mut buf[..];
+        crate::threads::scope(|jobs| {
+            for &(a, b, c, t0, t1) in &parts {
+                let (out, tail) = std::mem::take(&mut rest).split_at_mut(t1 - t0);
+                rest = tail;
+                jobs.spawn("a merge's part", move |_| {
+                    let (x, y) = (&src[a..b], &src[b..c]);
+                    let (mut i, i1) = (co_rank(x, y, t0, le), co_rank(x, y, t1, le));
+                    let (mut j, j1) = (t0 - i, t1 - i1);
+                    for o in out.iter_mut() {
+                        if i < i1 && (j >= j1 || le(x[i], y[j])) { *o = x[i]; i += 1 } else { *o = y[j]; j += 1 }
+                    }
+                });
+            }
+        });
+        std::mem::swap(v, &mut buf);
+        bounds = next;
+    }
+}
+
+/// `v.sort_unstable()`, on the pool from `PAR_ROWS` items (decision 0294): parts sorted at once, then merged
+/// (`merge_pieces`). Distinct keys (the packed sorts' hold their id) come out as one thread sorts them.
+fn sort_unstable_par<T: Ord + Copy + Send + Sync>(v: &mut Vec<T>) {
+    let n = v.len();
+    let threads = crate::threads::max();
+    if n < PAR_ROWS || threads < 2 {
+        v.sort_unstable();
+        return;
+    }
+    let size = n.div_ceil(threads * PARTS_PER_THREAD).max(PAR_ROWS / PARTS_PER_THREAD);
+    crate::threads::scope(|jobs| {
+        for part in v.chunks_mut(size) {
+            jobs.spawn("a sort's part", move |_| part.sort_unstable());
+        }
+    });
+    let bounds: Vec<usize> = (0..n).step_by(size).chain(std::iter::once(n)).collect();
+    merge_pieces(v, bounds, |a, b| a <= b);
+}
+
 /// `v` sorted, where the pieces `known` (position ranges, in order) are sorted already: the stretches between them
 /// sorted by `sort` (each alone), then every piece merged (`merge_pieces`). The positions taken as known.
-pub(super) fn sort_pieces(v: &mut Vec<u32>, known: &[(usize, usize)], mut sort: impl FnMut(&mut [u32]), le: impl Fn(u32, u32) -> bool) -> usize {
+pub(super) fn sort_pieces(v: &mut Vec<u32>, known: &[(usize, usize)], mut sort: impl FnMut(&mut [u32]), le: impl Fn(u32, u32) -> bool + Sync) -> usize {
     let n = v.len();
     let mut bounds = vec![0];
     let (mut at, mut taken) = (0, 0);
@@ -873,7 +959,7 @@ fn sort_packed(ids: &mut [u32], tagged: bool, ncols: usize, val: &impl Fn(u32, u
         for (k, &id) in f.iter_mut().zip(ids.iter()) {
             *k = (*k - lo) << wid | u64::from(id);
         }
-        f.sort_unstable();
+        sort_unstable_par(&mut f);
         let mask = (1u64 << wid) - 1;
         for (slot, k) in ids.iter_mut().zip(&f) {
             *slot = (k & mask) as u32;
@@ -917,7 +1003,7 @@ fn sort_packed(ids: &mut [u32], tagged: bool, ncols: usize, val: &impl Fn(u32, u
     let keys: Vec<u128> = if total <= 64 {
         let mut narrow: Vec<u64> = f.chunks_exact(nf).zip(ids.iter()).map(|(row, &id)| pack(row, id) as u64).collect();
         drop(f);
-        narrow.sort_unstable();
+        sort_unstable_par(&mut narrow);
         for (slot, &k) in ids.iter_mut().zip(&narrow) {
             *slot = (u128::from(k) & mask) as u32;
         }
@@ -928,7 +1014,7 @@ fn sort_packed(ids: &mut [u32], tagged: bool, ncols: usize, val: &impl Fn(u32, u
     } else {
         let mut keys: Vec<u128> = f.chunks_exact(nf).zip(ids.iter()).map(|(row, &id)| pack(row, id)).collect();
         drop(f);
-        keys.sort_unstable();
+        sort_unstable_par(&mut keys);
         for (slot, k) in ids.iter_mut().zip(&keys) {
             *slot = (k & mask) as u32;
         }
@@ -960,7 +1046,7 @@ fn sort_tupled(ids: &mut [u32], tagged: bool, ncols: usize, val: impl Fn(u32, us
             (if tagged { tag(v0) } else { 0 }, v0, if ncols > 1 { val(id, 1) } else { 0 }, id)
         })
         .collect();
-    keys.sort_unstable();
+    sort_unstable_par(&mut keys);
     for (slot, key) in ids.iter_mut().zip(&keys) {
         *slot = key.3;
     }
@@ -1345,6 +1431,52 @@ pub mod presorted {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+
+    /// Decision 0294: a merge of pieces on the pool puts out what one thread's does, ties included (the left piece's
+    /// first: items equal by `le` and told apart by their ids), whatever the pieces' sizes; and a sort on the pool is
+    /// one thread's.
+    #[test]
+    fn merges_and_sorts_on_the_pool_are_one_threads() {
+        let mut x = 0x9E37_79B9u64;
+        let mut next = move || { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x };
+        // Ids whose key (`id / 3 % 1000`) ties often; pieces of very different sizes, each sorted by key.
+        for sizes in [vec![200_000, 3, 70_000, 1], vec![1 << 17; 5], vec![90_000]] {
+            let mut v: Vec<u32> = Vec::new();
+            let mut bounds = vec![0];
+            for &n in &sizes {
+                let mut piece: Vec<u32> = (0..n).map(|_| (next() % 4_000_000) as u32).collect();
+                piece.sort_by_key(|&id| id / 3 % 1000);
+                v.extend(piece);
+                bounds.push(v.len());
+            }
+            let le = |a: u32, b: u32| a / 3 % 1000 <= b / 3 % 1000;
+            let mut serial = v.clone();
+            let mut b = bounds.clone();
+            // One thread's merge: the loop `merge_pieces` runs below `PAR_ROWS`.
+            while b.len() > 2 {
+                let mut buf = Vec::new();
+                let mut nb = vec![0];
+                for p in (0..b.len() - 1).step_by(2) {
+                    let (lo, mid) = (b[p], b[p + 1]);
+                    let hi = if p + 2 < b.len() { b[p + 2] } else { mid };
+                    let (mut i, mut j) = (lo, mid);
+                    while i < mid && j < hi { if le(serial[i], serial[j]) { buf.push(serial[i]); i += 1 } else { buf.push(serial[j]); j += 1 } }
+                    buf.extend_from_slice(&serial[i..mid]);
+                    buf.extend_from_slice(&serial[j..hi]);
+                    nb.push(hi);
+                }
+                serial = buf;
+                b = nb;
+            }
+            merge_pieces_par(&mut v, bounds, le);
+            assert_eq!(v, serial, "pieces {sizes:?}");
+        }
+        let mut keys: Vec<u64> = (0..300_000).map(|_| next()).collect();
+        let mut one = keys.clone();
+        one.sort_unstable();
+        sort_unstable_par(&mut keys);
+        assert_eq!(keys, one);
+    }
 
     #[test]
     fn orders_find_prefixes_merge_and_delta() {

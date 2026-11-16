@@ -105,7 +105,7 @@
             native::register(&db).unwrap();
             native::register_symbols(&db).unwrap();
             let mut kept = Kept::new(&store, [42; 32], [0; 32], &[], HashMap::new());
-            let outcome = plan::run_atoms_native_hooked(&lowered, &db, "main", plan::Stats::empty(&lowered.program),
+            let outcome = plan::run_atoms_native_hooked(&lowered, &db, "main", plan::Stats::empty_of_lowered(&lowered).unwrap(),
                 Default::default(), "program", plan::Hooks { strata: Some(&mut kept), ..Default::default() }).unwrap();
             let counts = kept.strata.unwrap();
             let admitted: Vec<_> = kept.admitted.keys().cloned().collect();

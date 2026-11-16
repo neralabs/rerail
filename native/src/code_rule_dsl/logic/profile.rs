@@ -254,6 +254,8 @@ impl State {
             s.forms = t.forms;
             s.missing = t.missing;
             s.planned_work += t.planned_work;
+            s.planned_scanned += t.planned_scanned;
+            s.steps += t.steps;
             s.work += t.work;
             s.cpu_estimate += t.cpu_estimate;
             s.gpu_estimate += t.gpu_estimate;
@@ -303,6 +305,9 @@ pub struct PlacedTotal {
     pub forms: Vec<&'static str>,
     pub missing: Vec<&'static str>,
     pub planned_work: f64,
+    /// Of the planned work, the rows its scans read (`Shape::scanned`), and its rules' steps, over its runs.
+    pub planned_scanned: f64,
+    pub steps: u64,
     pub work: u64,
     pub cpu_estimate: f64,
     pub gpu_estimate: f64,
@@ -430,6 +435,13 @@ pub fn retired_instructions() -> u64 {
         }
     }
     0
+}
+
+/// A timeline's mark (dev, `RERAIL_TIMELINE`): a point outside every span, with the process's instructions retired.
+pub fn timeline_mark(what: &str) {
+    if std::env::var_os("RERAIL_TIMELINE").is_some() {
+        eprintln!("RERAIL_TIMELINE {what}: @{:.3} i={:.3}", timeline_clock(), retired_instructions() as f64 / 1e9);
+    }
 }
 
 /// The wall clock a timeline line carries (`RERAIL_TIMELINE`): seconds since the epoch, so the lines of nested
@@ -1215,8 +1227,16 @@ fn open(path: String) -> Span {
                 *s.gaps.entry((after, path.clone())).or_default() += start - at;
             }
         }
-        // The heap sampler charges this thread's allocations to the span now (`rerail_prof::heap`).
-        let heap = if rerail_prof::heap::on() { rerail_prof::heap::intern(&path) } else { 0 };
+        // The heap sampler charges this thread's allocations to the span now (`rerail_prof::heap`), and names the
+        // thread for what it allocates with none open.
+        let heap = if rerail_prof::heap::on() {
+            if s.opens.is_empty() {
+                rerail_prof::heap::name_thread(std::thread::current().name().unwrap_or("an unnamed thread"));
+            }
+            rerail_prof::heap::intern(&path)
+        } else {
+            0
+        };
         rerail_prof::heap::set_span(heap);
         s.opens.push(Open { path, start, children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0, heap });
     });
@@ -1236,7 +1256,14 @@ impl Drop for Span {
             charge(&mut s.track, &s.opens, now);
             let (allocated, freed) = s.counters.read();
             let Some(open) = s.opens.pop() else { return };
-            rerail_prof::heap::set_span(s.opens.last().map_or(0, |o| o.heap));
+            // Its thread's outermost span closed: what it allocates until the next is charged to "between spans,
+            // after" it (as the CPU gaps are), not to no span at all.
+            let after = match s.opens.last() {
+                Some(o) => o.heap,
+                None if rerail_prof::heap::on() => rerail_prof::heap::intern(&format!("(between spans) after {}", open.path)),
+                None => 0,
+            };
+            rerail_prof::heap::set_span(after);
             let total = now - open.start;
             if s.opens.is_empty() {
                 s.covered += total;

@@ -339,7 +339,7 @@ pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog
     // Gates decide on the whole program. Reuse it only when every input and derived relation survived unchanged.
     // A view of one input (`input_views`, only with `RERAIL_SESSION_VIEWS=on`) is never kept: its rule stays.
     let views = match super::maintain::views_on() {
-        true => super::maintain::input_views(&prog.v.program(&front::Lists::default()).map_err(Error::Plan)?),
+        true => super::maintain::input_views(prog)?,
         false => BTreeMap::new(),
     };
     let complete = kept.is_some_and(|k| sccs.iter().flatten().all(|r| k.holds(r, prog) || views.contains_key(r)));
@@ -368,13 +368,13 @@ impl Cut {
     /// `cross` without the clean strata's rules: the relations dirty rules read become inputs, and clean outputs are
     /// left to `outputs`.
     ///
-    /// Where `cross` has a version, the cut is a part of it (decision 0244), read and made by its handles: its tree is
-    /// the part's (`lower::Tree::of`), decoded by no reader on the run's path.
-    pub(in crate::code_rule_dsl) fn program(&self, cross: &lower::Lowered) -> lower::Lowered {
+    /// The cut is a part of `cross`'s version (decision 0244), read and made by its handles.
+    pub(in crate::code_rule_dsl) fn program(&self, cross: &lower::Lowered) -> super::Result<lower::Lowered> {
         use crate::code_rule_dsl::logic::program_image::PartFields;
         let (dirty, all, none) = (|rel: &str| !self.clean.contains(rel), |_: &str| true, |_: &str| false);
         let gates: &dyn Fn(&str) -> bool = if self.strata.0 == 0 { &none } else { &all };
-        if let Some(v) = &cross.version {
+        let v = &cross.version;
+        {
             let read: BTreeSet<&str> = v.rules().filter(|r| dirty(v.rel_name(r.head().rel()))).flat_map(|r| r.reads().map(|a| v.rel_name(a.rel()))).collect();
             let mut inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
             for rel in self.clean.iter().filter(|r| read.contains(r.as_str())) {
@@ -383,27 +383,10 @@ impl Cut {
                 }
             }
             let outputs: Vec<String> = v.outputs().map(|a| v.text(a)).filter(|o| dirty(o)).map(str::to_owned).collect();
-            let part = super::made_from(true, v.part(&dirty, &inputs, &outputs, PartFields { natives: &dirty, lattice: &all, gates }).ok(), "the session's cut");
-            if let Some(part) = part {
-                return lower::Lowered { program: lower::Tree::of(part.clone()), version: Some(part), maint: None, domains: cross.domains.clone(), ops: cross.ops, dialect: cross.dialect };
-            }
+            let part = v.part(&dirty, &inputs, &outputs, PartFields { natives: &dirty, lattice: &all, gates }).map_err(super::Error::Plan)?;
+            crate::code_rule_dsl::logic::version_trace::note_versions("session.cut", v, &part);
+            Ok(cross.with_version(part))
         }
-        let mut program = (*cross.program).clone();
-        program.rules.retain(|r| !self.clean.contains(r.head.rel.as_str()));
-        program.natives.retain(|rel, _| !self.clean.contains(rel));
-        if self.strata.0 == 0 {
-            program.gates.clear();
-        }
-        let read: BTreeSet<String> = program.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom().map(|a| a.rel.to_string())).collect();
-        for rel in self.clean.iter().filter(|r| read.contains(*r)) {
-            if !program.inputs.contains(rel) {
-                program.inputs.push(rel.clone());
-            }
-        }
-        program.outputs.retain(|o| !self.clean.contains(o));
-        crate::code_rule_dsl::logic::version_trace::note("session.cut", &cross.program, &program);
-        // A program the image has no form for: its tree alone.
-        lower::Lowered { program: lower::Tree::given(program), version: None, maint: None, domains: cross.domains.clone(), ops: cross.ops, dialect: cross.dialect }
     }
 
     /// The clean relations a program reads (its inputs, `is_input`), as kept: each as a source (bound by the caller, as the other inputs) and
@@ -732,6 +715,12 @@ impl Retained {
     }
 
     /// Whether the last run's rows of a relation or an input are kept.
+    /// Whether `rel`'s old rows are kept, read or not yet: a derived relation the part holds or the frames hold, or an
+    /// input whose source the last run kept (decision 0298: what a general form takes as kept).
+    pub(in crate::code_rule_dsl) fn holds_old(&self, rel: &str) -> bool {
+        self.keeps(rel) || self.input_srcs.contains_key(rel)
+    }
+
     pub(in crate::code_rule_dsl) fn has_old(&self, rel: &str) -> bool {
         self.rels.contains_key(rel) || self.late.borrow().contains_key(rel) || self.input_srcs.contains_key(rel)
     }
@@ -1201,9 +1190,11 @@ pub mod tests {
         let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default(),input_docs:Default::default(),docs:Default::default(),patched:Default::default(),frames:None,admitted:Default::default(),late:Default::default(),late_stats:Default::default(),past:Default::default()};
         let result=cut(Some(&kept),key,&pl(&p),&st(&p),&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
-        let lowered=lower::Lowered {program:lower::Tree::given(p.clone()),version:None,maint:None,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
-        let reused=result.program(&lowered);
-        assert!(reused.program.rules.is_empty() && reused.program.gates.is_empty());
+        let v=crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0;
+        let lowered=lower::Lowered {version:v,maint:None,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
+        let reused=result.program(&lowered).unwrap();
+        let placed=reused.placed().unwrap();
+        assert!(placed.v.size()==0 && placed.fields().unwrap().gates().is_empty());
         let mut changed=inputs.clone();
         *changed.values_mut().next().unwrap()=8;
         for (candidate,rows) in [(key,changed),([2;32],inputs.clone())] {
@@ -2274,29 +2265,37 @@ impl Retained {
         let mut written = 0;
         // Digests of content and granules by content (decision 0212): what every process reads back alike.
         let atoms = store.atoms_handle();
-        // Inputs first: their digests are what the relations derived from them record.
-        for (rel, source) in inputs {
-            let Some(name) = was.names.get(rel) else { continue };
+        // Inputs first: their digests are what the relations derived from them record. Each input is a job of its
+        // own (its rows' digests by document, its changed granules' rows, each encoded); their frames are taken in
+        // the inputs' order.
+        let phase = super::phases::current();
+        let input_docs = &self.input_docs;
+        let atoms_ref = &atoms;
+        let one_input = |rel: &String, source: &Arc<dyn Source>| -> Option<(u64, Vec<EncodedFrame>, usize)> {
+            let _span = crate::code_rule_dsl::logic::profile::span(|| "an input's frames (job)".into());
+            let atoms: &crate::content_store::atoms::Atoms = atoms_ref;
+            let mut puts: Vec<EncodedFrame> = Vec::new();
+            let mut written = 0;
+            let name = was.names.get(rel)?;
             let width = source.columns().len();
             let types = types_of(prog, domains, rel);
             let cells = if types.len() == width { Cells::new(&atoms, &types) } else { Cells::plain(width) };
             let digest = digests.get(rel).copied().unwrap_or_else(|| digest(source.as_ref(), &cells));
-            now.insert(rel.clone(), digest);
             if was.inputs.get(rel).is_some_and(|(d, _)| *d == digest) {
-                continue;
+                return Some((digest, puts, written));
             }
             // A relation of no columns is its count: one document's entry, its digest the input's (`digest`).
             if width == 0 {
                 let n = source.len() as u64;
                 let rows = vec![0, (digest ^ n.wrapping_mul(0xff51_afd7_ed55_8ccd)) as i64, n as i64];
                 puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: Vec::new(), rows: FrameRows { types: vec![b'i'; 3], n: 1, rows } }.encoded());
-                continue;
+                return Some((digest, puts, written));
             }
             let g = group_col(prog, locations, rel).min(width - 1);
             let atom_owner = types.len() == width && atom_owners(&types, g);
             let owners = atom_owner.then_some(&*atoms);
             let granule = |d: i64| granule(d, owners);
-            let docs = self.input_docs.get(rel).cloned().filter(|d| digest_of_docs(d) == digest).unwrap_or_else(|| Arc::new(docs_of(source.as_ref(), g, &cells)));
+            let docs = input_docs.get(rel).cloned().filter(|d| digest_of_docs(d) == digest).unwrap_or_else(|| Arc::new(docs_of(source.as_ref(), g, &cells)));
             let old = was.inputs.get(rel).map(|(_, d)| Arc::clone(d));
             // The granules whose documents differ, or that hold a document come or gone.
             let differ = |doc: &i64| old.as_ref().is_none_or(|o| o.get(doc) != docs.get(doc));
@@ -2306,14 +2305,14 @@ impl Retained {
             }
             if std::env::var_os("RERAIL_INPUT_TRACE").is_some() && changed.len() <= 8 && source.len() > 20_000 {
                 let differ_n: Vec<(i64, Option<(u64, u64)>, Option<(u64, u64)>)> = docs.iter().filter(|(d, _)| differ(d)).take(4).map(|(d, v)| (*d, Some(*v), old.as_ref().and_then(|o| o.get(d)).copied())).collect();
-                eprintln!("rerail: input {rel} {:?} (group col {g} of {width}, {} rows, {} owners): granules {changed:?}; owners differ {differ_n:?}", f.columns(rel), source.len(), docs.len());
+                eprintln!("rerail: input {rel} {:?} (group col {g} of {width}, {} rows, {} owners): granules {changed:?}; owners differ {differ_n:?}", prog.fields().ok().and_then(|f| f.columns(rel)), source.len(), docs.len());
             }
             if changed.len() > 8 && std::env::var_os("RERAIL_INPUT_TRACE").is_some() {
                 let differ_n = docs.keys().filter(|d| differ(d)).count();
                 let gone_n = old.as_ref().map_or(0, |o| o.keys().filter(|d| !docs.contains_key(*d)).count());
                 let ex: Vec<String> = docs.iter().filter(|(d, _)| differ(d)).take(3).map(|(d, v)| format!("{d}: {v:?} was {:?}", old.as_ref().and_then(|o| o.get(d)))).collect();
-                let hit = self.input_docs.get(rel).is_some_and(|d| digest_of_docs(d) == digest);
-                eprintln!("rerail: input {rel} (group col {g} of {width}, {} rows, docs {}, phase {:?}, layered {}): {} granules, {} owners of {} differ, {gone_n} gone; {}", source.len(), if hit { "the run's" } else { "recomputed" }, super::phases::current(), source.as_any().and_then(|a| a.downcast_ref::<Layered>()).is_some(), changed.len(), differ_n, docs.len(), ex.join("; "));
+                let hit = input_docs.get(rel).is_some_and(|d| digest_of_docs(d) == digest);
+                eprintln!("rerail: input {rel} (group col {g} of {width}, {} rows, docs {}, phase {:?}, layered {}): {} granules, {} owners of {} differ, {gone_n} gone; {}", source.len(), if hit { "the run's" } else { "recomputed" }, phase, source.as_any().and_then(|a| a.downcast_ref::<Layered>()).is_some(), changed.len(), differ_n, docs.len(), ex.join("; "));
             }
             // Each changed granule's rows, grouped by owner, owners ascending (`kept_inputs` reads each owner's
             // rows as one range). A maintained input (`Layered`) gives each owner's rows from its ranges; another
@@ -2348,6 +2347,17 @@ impl Retained {
             table.sort_unstable();
             let rows: Vec<i64> = table.iter().flat_map(|(d, (s, n))| [*d, *s as i64, *n as i64]).collect();
             puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: Vec::new(), rows: FrameRows { types: docs_types(atom_owner), n: table.len(), rows } }.encoded());
+            Some((digest, puts, written))
+        };
+        let framed_inputs: Vec<Option<(u64, Vec<EncodedFrame>, usize)>> = {
+            use rayon::prelude::*;
+            inputs.par_iter().map(|(rel, source)| one_input(rel, source)).collect()
+        };
+        for ((rel, _), done) in inputs.iter().zip(framed_inputs) {
+            let Some((digest, frames, n)) = done else { continue };
+            now.insert(rel.clone(), digest);
+            puts.extend(frames);
+            written += n;
         }
         // Every input the run bound, framed or not (an option's `env`, an earlier phase's export): its digest is
         // what a relation derived from it records.
@@ -2370,17 +2380,22 @@ impl Retained {
             .filter(|rel| !self.by_delta(store, was, rel, deltas))
             .filter_map(|rel| self.framed(rel).map(|k| (rel, k)))
             .collect();
+        // The copy of a relation's rows lives only in its job: kept for every relation until the loop below, the
+        // copies were the run's peak (460 MB of 3.3 GB at 300 files, beside the relations and their bytes). A
+        // relation whose rows are the stored ones and whose reads changed copies its rows again there.
         let made: HashMap<&String, Whole> = {
             use rayon::prelude::*;
             let atoms = &atoms;
+            // Under the span open here, on whichever thread runs it: rayon's loops open none of their own.
+            let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
             whole.into_par_iter().filter_map(|(rel, k)| {
+                let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || "a relation's frame, digested and encoded".into());
                 let rows = k.rel.live_rows()?;
                 let n = k.rel.rows();
                 let types = frame_types(prog, domains, rel, k.rel.types());
                 let d = crate::code_rule_dsl::logic::plan::rows_digest(&Cells::new(atoms, &types), &rows, n);
-                let rows = FrameRows { types, rows, n };
-                let bytes = was.derived.get(rel).is_none_or(|s| s.digest != d).then(|| FramePut::encode_rows(&rows));
-                Some((rel, Whole { d, rows, bytes }))
+                let bytes = was.derived.get(rel).is_none_or(|s| s.digest != d).then(|| FramePut::encode_rows(&FrameRows { types, rows, n }));
+                Some((rel, Whole { d, bytes }))
             }).collect()
         };
         let mut made = made;
@@ -2433,11 +2448,11 @@ impl Retained {
                 // A relation with no rows to keep (a view) is named by its reads' digests:
                 // derived again from the same reads, it has the same rows, so its readers' frames stay current.
                 let done = made.remove(rel);
-                let Some((k, rows, d, bytes)) = (match done {
-                    Some(Whole { d, rows, bytes }) => self.framed(rel).map(|k| (k, rows.rows, d, bytes)),
+                let Some((k, mut rows, d, bytes)) = (match done {
+                    Some(Whole { d, bytes }) => self.framed(rel).map(|k| (k, None, d, bytes)),
                     None => self.framed(rel).and_then(|k| k.rel.live_rows().map(|rows| {
                         let d = crate::code_rule_dsl::logic::plan::rows_digest(&Cells::new(&atoms, &frame_types(prog, domains, rel, k.rel.types())), &rows, k.rel.rows());
-                        (k, rows, d, None)
+                        (k, Some(rows), d, None)
                     })),
                 }) else {
                     if let Some(rd) = &read_digests {
@@ -2451,7 +2466,11 @@ impl Retained {
                 if was.derived.get(rel).is_some_and(|s| s.digest == d && s.reads == read_digests) {
                     continue;
                 }
-                if trace {
+                // The rows, where the frame is written from them or traced: copied again if the job dropped its copy.
+                if rows.is_none() && (bytes.is_none() || trace) {
+                    rows = k.rel.live_rows();
+                }
+                if trace && let Some(rows) = &rows {
                     let i = usize::from(was.derived.get(rel).is_some_and(|s| s.digest == d));
                     tally[i].0 += 1;
                     tally[i].1 += n;
@@ -2470,9 +2489,10 @@ impl Retained {
                     puts.push(FramePut { rel: name.clone(), part: LEVELS_PART, digest: d, reads: Vec::new(), rows: FrameRows { types: vec![b'i'], rows: level.into_iter().map(i64::from).collect(), n } }.encoded());
                 }
                 let types = frame_types(prog, domains, rel, k.rel.types());
-                puts.push(match bytes {
-                    Some(bytes) => FramePut::encoded_as(name.clone(), DOCS_PART, d, read_digests, types, n, bytes),
-                    None => FramePut { rel: name.clone(), part: DOCS_PART, digest: d, reads: read_digests, rows: FrameRows { types, rows, n } }.encoded(),
+                puts.push(match (bytes, rows) {
+                    (Some(bytes), _) => FramePut::encoded_as(name.clone(), DOCS_PART, d, read_digests, types, n, bytes),
+                    (None, Some(rows)) => FramePut { rel: name.clone(), part: DOCS_PART, digest: d, reads: read_digests, rows: FrameRows { types, rows, n } }.encoded(),
+                    (None, None) => return Err(Error::Plan(format!("{rel}: its rows are not held, and its frame is to be written"))),
                 });
             }
         }
@@ -2500,11 +2520,9 @@ impl Retained {
     }
 }
 
-/// A relation written whole (`write_frames`): its digest, its rows, and their bytes when its rows are not the
-/// stored ones.
+/// A relation written whole (`write_frames`): its digest, and its rows' bytes when its rows are not the stored ones.
 struct Whole {
     d: u64,
-    rows: FrameRows,
     bytes: Option<Vec<u8>>,
 }
 

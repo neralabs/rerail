@@ -90,7 +90,7 @@ impl CPython {
                 let f = &*p.facts;
                 let mut by_span: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
                 for (local, &id) in p.core.iter().enumerate() {
-                    by_span.entry((f.start[id as usize], f.end[id as usize])).or_default().push(local as u32);
+                    by_span.entry((f.start(id), f.end(id))).or_default().push(local as u32);
                 }
                 for l in &literals {
                     let Some(nodes) = by_span.get(&(l.start, l.end)) else { continue };
@@ -117,7 +117,7 @@ impl CPython {
         }
         let f = &*p.facts;
         for (local, &id) in p.core.iter().enumerate() {
-            let (start, end) = (f.start[id as usize], f.end[id as usize]);
+            let (start, end) = (f.start(id), f.end(id));
             let exact = by_span.get(&(start, end));
             if exact.is_none() && !starting.contains_key(&start) {
                 continue;

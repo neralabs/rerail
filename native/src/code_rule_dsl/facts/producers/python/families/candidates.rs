@@ -109,13 +109,13 @@ fn collect_shaped(
                 if *role != Role::Function {
                     continue;
                 }
-                for &function in f.of_kind(kind_atom(g.tag, code as u16)) {
+                for function in f.of_kind(kind_atom(g.tag, code as u16)) {
                     if f.children(function)
                         .iter()
                         .any(|&c| g.role(f, c) == Role::Async)
                     {
                         if let Some(body) = field(f, function, g.body) {
-                            ranges.push((body, f.subtree_end[body as usize]));
+                            ranges.push((body, f.subtree_end(body)));
                         }
                     }
                 }
@@ -132,6 +132,7 @@ fn collect_shaped(
             ranges = merged;
             work.context_ranges = ranges.len();
         }
+        let contexts = Contexts::of(g, f);
         let mut selected = Vec::new();
         for &kind in &g.calls {
             let calls = f.of_kind(kind);
@@ -142,7 +143,7 @@ fn collect_shaped(
                     selected.extend_from_slice(&calls[begin..end]);
                 }
             } else {
-                selected.extend_from_slice(calls);
+                selected.extend_from_slice(&calls);
             }
         }
         for call in selected {
@@ -161,7 +162,7 @@ fn collect_shaped(
                 None
             };
             work.contexts += 1;
-            let (owner, kind) = context(g, f, call);
+            let (owner, kind) = contexts.at(call);
             if kind != context_kind {
                 continue;
             }
@@ -190,20 +191,9 @@ pub fn eligibility(
     use crate::code_rule_dsl::facts::producers::python::python_facts::{
         Fact, QualificationChain, Reason,
     };
-    let bad = |n: u32| f.flags[n as usize] & 12 != 0;
-    let damaged = |n: u32| {
-        if (n..f.subtree_end[n as usize]).any(&bad) {
-            return true;
-        }
-        let mut at = Some(n);
-        while let Some(n) = at {
-            if bad(n) {
-                return true;
-            }
-            at = f.parent(n);
-        }
-        false
-    };
+    let bad = |n: u32| f.flags(n) & 12 != 0;
+    // An ERROR or MISSING node in `n`'s subtree or above it.
+    let damaged = |n: u32| f.touches_error(n);
     let unwrap = |mut n: u32| -> Result<u32, Reason> {
         loop {
             if bad(n) {
@@ -214,8 +204,7 @@ pub fn eligibility(
             }
             let mut parts = f
                 .children(n)
-                .iter()
-                .copied()
+                .into_iter()
                 .filter(|&c| f.named(c) && g.role(f, c) != Role::Comment);
             match (parts.next(), parts.next()) {
                 (Some(inner), None) => n = inner,
@@ -250,12 +239,8 @@ pub fn eligibility(
                 Reason::UnsupportedExpression
             });
         }
-        let mut at = Some(head);
-        while let Some(n) = at {
-            if bad(n) {
-                return Err(Reason::SyntaxError);
-            }
-            at = f.parent(n);
+        if f.under_error(head) {
+            return Err(Reason::SyntaxError);
         }
         attributes.reverse();
         Ok(QualificationChain {

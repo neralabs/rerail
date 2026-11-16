@@ -18,8 +18,12 @@ use crate::Pod;
 use crate::block::Backing;
 use std::cell::{Cell, RefCell};
 
-/// Address space an anonymous scratch region reserves (nothing resident until written).
+/// Address space an anonymous scratch region reserves (nothing resident until written). Without a mapping
+/// (`crate::mem`) the reservation is allocated whole, so it is a working size there.
+#[cfg(unix)]
 const ANON: usize = 1 << 36;
+#[cfg(not(unix))]
+const ANON: usize = 256 << 20;
 /// Bytes of a thread's scratch kept resident between uses; past them, a use's pages are given back.
 const KEEP: usize = 64 << 20;
 
@@ -35,11 +39,8 @@ pub struct Scratch {
 impl Scratch {
     /// An anonymous region of `reserved` bytes of address space.
     pub fn anon(reserved: usize) -> Scratch {
-        let p = unsafe {
-            libc::mmap(std::ptr::null_mut(), reserved, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0)
-        };
-        assert!(p != libc::MAP_FAILED, "mmap of {reserved} bytes of scratch failed");
-        Scratch { base: p.cast(), len: reserved, top: Cell::new(0), high: Cell::new(0), backing: None }
+        let p = crate::mem::reserve(reserved);
+        Scratch { base: p, len: reserved, top: Cell::new(0), high: Cell::new(0), backing: None }
     }
 
     /// The region `backing` holds (a pooled slab): it may hold an earlier use's bytes.
@@ -87,7 +88,7 @@ impl Scratch {
         if self.backing.is_none() && used > keep {
             let from = keep.div_ceil(crate::block::PAGE) * crate::block::PAGE;
             // SAFETY: the region's own pages, none taken now.
-            unsafe { libc::madvise(self.base.add(from).cast(), used - from, libc::MADV_FREE) };
+            unsafe { crate::mem::free_pages(self.base.add(from), used - from) };
         }
     }
 }
@@ -96,7 +97,7 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         if self.backing.is_none() {
             // SAFETY: the mapping this region made.
-            unsafe { libc::munmap(self.base.cast(), self.len) };
+            unsafe { crate::mem::release(self.base, self.len) };
         }
     }
 }

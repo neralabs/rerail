@@ -6,7 +6,7 @@
 //! all of these, and the spans none of them.
 
 use std::sync::OnceLock;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 static ENTERED: OnceLock<SystemTime> = OnceLock::new();
 
@@ -29,7 +29,7 @@ pub fn started() -> Option<SystemTime> {
             }
             info
         };
-        Some(SystemTime::UNIX_EPOCH + Duration::from_secs(info.pbi_start_tvsec) + Duration::from_micros(info.pbi_start_tvusec))
+        Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(info.pbi_start_tvsec) + std::time::Duration::from_micros(info.pbi_start_tvusec))
     }
     #[cfg(not(target_os = "macos"))]
     {

@@ -35,7 +35,9 @@ the run's end after it.
 
    The command line's `logic` prints one line per phase. The command also gets two phases outside the run:
    `before`, from the command's start (`profile::command_begins` in `tools::cli`) to the run's first phase, and
-   `after the run`. It prints how long the process ran before the command began, too.
+   `after the run`. It prints how long the process ran before the command began, too. Both on stderr: a command's
+   stdout is its output (`run-rr`'s and `sql`'s JSON), which a line after it made unreadable (2026-11-16, 0296's
+   merge of the hub).
 2. **In the profile, the run thread's time by span** (`profile::track_run_thread`, `run_thread_phase`). Each time
    the thread opens or closes a span, the time since its last open or close is charged to the span that was
    innermost: wall and the thread's CPU. So a span's own time is split exactly at its children's bounds, and a

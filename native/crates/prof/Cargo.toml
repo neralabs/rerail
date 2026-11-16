@@ -31,7 +31,7 @@ system-allocator = []
 code-rule-profile = []
 p-anchor-corpus = []
 metal-tests = []
-test-hooks = []
+test-hooks = ["rerail-rr-syntax/test-hooks"]
 
 [target.'cfg(unix)'.dependencies]
 mimalloc = { version = "=0.1.52", default-features = false }
