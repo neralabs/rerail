@@ -75,6 +75,8 @@ mod cut_tests;
 #[cfg(test)]
 mod base_probe;
 mod inputs_tests;
+#[cfg(all(test, target_os = "macos"))]
+mod blocks_compare_tests;
 use spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
 pub mod closure;
 pub mod table;
@@ -5262,14 +5264,14 @@ pub struct JoinRule { pub steps: Vec<Step>, pub out: Vec<Term>, pub nslots: usiz
 /// Not under `walks_whole`.
 fn morsels_on() -> bool {
     static ON: LazyLock<bool> = LazyLock::new(|| std::env::var("RERAIL_MORSELS").map_or(true, |v| v != "off"));
-    *ON && !WHOLE.with(std::cell::Cell::get)
+    *ON && !WALKS_WHOLE.with(std::cell::Cell::get)
 }
 
 thread_local! {
     /// The walks this thread ran in morsels (`morsels_walked`).
     static IN_MORSELS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// Under `walks_whole`: this run's joins each walk on one thread.
-    static WHOLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static WALKS_WHOLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Runs `f` with each join walked whole on its thread, not in morsels: for work that already keeps the pool busy
@@ -5278,14 +5280,14 @@ thread_local! {
 pub fn walks_whole<R>(f: impl FnOnce() -> R) -> R {
     struct Reset(bool);
     impl Drop for Reset {
-        fn drop(&mut self) { WHOLE.with(|w| w.set(self.0)); }
+        fn drop(&mut self) { WALKS_WHOLE.with(|w| w.set(self.0)); }
     }
-    let _reset = Reset(WHOLE.with(|w| w.replace(true)));
+    let _reset = Reset(WALKS_WHOLE.with(|w| w.replace(true)));
     f()
 }
 
 pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
-    c.copy(&["WHOLE"], &WHOLE);
+    c.copy(&["WALKS_WHOLE"], &WALKS_WHOLE);
 }
 
 /// Tests: the walks this thread has run in morsels.
@@ -6184,13 +6186,13 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 let value = if let Some(nodes) = texts {
                     node_read(name, Some(&**nodes), val(slots, args[0])).map_or(rusqlite::types::Value::Null, rusqlite::types::Value::Text)
                 } else {
-                    let mut texts = Vec::new();
+                    let mut strs = Vec::new();
                     let mut numbers = Vec::new();
                     for (k, a) in kinds.iter().zip(args) {
-                        match k { Kind::Text => texts.push(text(cx, val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
+                        match k { Kind::Text => strs.push(text(cx, val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
                     }
-                    let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
-                    eval(name, &texts, &numbers)
+                    let strs: Vec<&str> = strs.iter().map(String::as_str).collect();
+                    eval(name, &strs, &numbers)
                 };
                 let mark = cx.texts.len();
                 let v = match value {

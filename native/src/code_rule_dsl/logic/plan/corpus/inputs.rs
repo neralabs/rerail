@@ -712,10 +712,10 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
             break;
         }
     }
-    // The relations findings come from: the outputs, and what `rr_diagnostic` (lowering's findings) reads. Each
+    // The relations findings come from: the outputs, and what the finding relations (lowering's findings) read. Each
     // incomplete one is named with how many of its rules read an incomplete relation (the granularity is the rule).
     let mut reported: Vec<String> = program.outputs.clone();
-    for rule in program.rules.iter().filter(|r| r.head.rel == "rr_diagnostic") {
+    for rule in program.rules.iter().filter(|r| crate::code_rule_dsl::logic::rr::is_diagnostic(&r.head.rel)) {
         reported.extend(rule.body.iter().filter_map(Literal::atom).filter(|a| !a.neg).map(|a| a.rel.to_string()));
     }
     let mut seen = std::collections::BTreeSet::new();
@@ -984,7 +984,7 @@ quiet() :- ceiling(_), !over(_).
     fn combined_policies_keep_distinct_named_file_inputs_private() {
         let first = ".decl base_sig(s: symbol)\n.input base_sig(IO=json, filename=\"noqa.json\", path=\"/signature\")\n.decl result(s: symbol)\nresult(s) :- base_sig(s).\n.output result\n";
         let second = first.replace("noqa.json", "budget.json");
-        let mut program = super::super::combine(&[first, &second], "").unwrap();
+        let mut program = super::super::combine(&[first, &second]).unwrap();
         populate_with(&mut program, Path::new("."), &mut |name| Ok(format!("{{\"signature\":\"{name}\"}}")), &mut none, &mut no_base, &mut Vec::new()).unwrap();
         assert_eq!(program.facts.get("p0_base_sig"), Some(&vec![[Value::Str("noqa.json".into())].into()]));
         assert_eq!(program.facts.get("p1_base_sig"), Some(&vec![[Value::Str("budget.json".into())].into()]));

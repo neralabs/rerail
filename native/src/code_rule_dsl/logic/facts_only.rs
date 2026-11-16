@@ -375,7 +375,6 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/write_back.rs", "WRITERS"),
     // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND"),
-    // The caller's counts of quiet strata, carried to the run's jobs and dropped with the caller's guard.
 ];
 /// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
 const NOT_YET_MAPS: &[(&str, &str, &str)] = &[

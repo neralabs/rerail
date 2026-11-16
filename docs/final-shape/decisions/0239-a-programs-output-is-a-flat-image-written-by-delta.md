@@ -1,6 +1,6 @@
 # 0239: A program's output is a flat image, written by delta
 
-Status: draft (2026-11-14); stages 1 and 2 built (`plan::output`). Builds on decisions 0173 (a program is a flat image),
+Status: draft (2026-11-14); stages 1–6 built (2026-11-15) (`plan::output`). Builds on decisions 0173 (a program is a flat image),
 0140 (the tape is the engine's bytes, read in place), 0209 (statistics are one flat table) and 0212 (kept frames
 are of content). Follows 0230, whose "still open" list it replaces at its top.
 
@@ -47,8 +47,10 @@ printed until a reader asks for text.
 | `int` | the integer | the integer |
 
 A symbol, a kind and a field are held as their text: content, whatever a process or a grammar numbers them (0212).
-A value its column's type does not hold as it was written (`007` in an int column, `None` in a node column) makes
-that column text, so every row shows as it was.
+A column's type is its relation's declared type (`node`; `number`, `int`, `unsigned`; anything else text), taken
+from the domains when the program is lowered. SQL's NULL in an int or node column is held as `i64::MIN`
+(`output::NULL`), read as `Value::Null` and shown `None`; in a text column it is the text `None`. A text in an int
+column is a fault of the run, not a reason to make the column text (stage 6).
 
 The memo's entries will hold a file's output rows flat, as they hold its exported rows, and the cross part hands
 its rows as held (stage 2). The rows are gathered, deduplicated and sorted as numbers.
@@ -86,19 +88,47 @@ each whole. An output whose stratum was clean is read from the image below it, n
 strings, documents and places are its own. A relation is read from the last image that holds it. Past eight
 images, the run writes one base again, copying the outputs it did not make from the stack (`Builder::take`).
 
-**Stage 4: overlays of rows.** A session's run knows each output's delta: the rows gone and added (`__minus`,
-`__plus`, the run's `Outcome::deltas`). It appends an overlay that holds, per relation, the positions of the rows
-gone and the rows added, with the strings and documents they add. Ids then continue the stack's, as an overlay of
-a program image numbers its atoms after its parent's (0173). An output with no delta writes nothing. A reader views
-the base's rows less those gone, merged with those added, in order. The stack is folded into one base when its
-overlays hold more than an eighth of the base's rows, or after eight overlays.
+**Stage 4: overlays of rows.** Each relation entry has a kind: whole, rows added, or rows gone. A row is named by a
+128-bit hash of what it shows (`Rel::hash`): a text by its bytes, an int by its value, a node by its document's path
+and first node and its local part, a `@place` by its shown text, each cell with its type. So a row hashes the same
+in every image and every process, whatever indexes its strings and documents have there. The session keeps, per
+output directory, each relation's sorted row hashes as the stack reads it, with the stack's depth and the rows its
+overlays changed (`session::Stack`). A run makes its outputs' image in memory and hashes each output's rows. An
+output whose hashes are the same writes nothing. One that changed writes its gone rows' hashes (two int columns)
+and its added rows, with the strings, documents and places they need. Where the change is at least half its rows,
+it is written whole. A run that changed nothing writes nothing, so its file is as it was. A reader composes a
+`View`: the last whole entry, less each later overlay's gone rows (by hash), plus its added rows. The stack is folded
+into one base at eight images, or when its overlays changed more than an eighth of its rows.
 
-### 4. Text is a reader
+The run's own deltas (`__minus`, `__plus`) were the first plan. They are not the outputs' change: an output is
+gathered from the memo's file-local rows and the cross-file part's, filtered for loaded documents. Hashing the made
+rows needs no second account of where each row came from. Its cost is one pass over the rows the run made, which
+the run builds anyway.
 
-`Rel::lines` renders a relation's rows as the text lines the `.csv` files hold today, byte for byte. It serves the
-readers that need text: the typing bridge's `path:local` join, `test-rr`'s `.expect` values, and the CLI's
-diagnostics (each `rr_diagnostic` row a JSON string, a text column). The readers that need rows (phases, phase 0,
-typing rounds, `typing::outputs`) read the columns.
+### 4. Readers read typed rows; no text is parsed
+
+The file is mapped (`memmap2`), never read into a buffer, and written atomically: the new stack is written whole
+to `outputs.rro.<pid>.<n>` beside it and renamed over it. A reader sees the old file or the new one, never a part.
+A map of the old one keeps reading it after the rename. The file saves state and the work can always be done again,
+so nothing recovers a half-written file. There is none.
+
+Every reader goes through one abstraction, `output::Outputs` (the stack of a directory, or of bytes):
+
+| item | what it gives |
+|---|---|
+| `Outputs::open(dir)`, `of(bytes)` | the stack, mapped; `names()`, `get(rel)`, `rows(rel)`, `images()` |
+| `Relation` | `types()`, `width()`, `len()`, `rows()`, `view()` (the overlays read through), `shown()` |
+| `Row` | `get(i) -> Value`, `values()`, `hash()` |
+| `Value` | `Text(&str)`, `Int(i64)`, `Node(Node)`, `Null`; `int()`, `text()`, `node()`, `path()`; `Display` |
+| `Node` | `Of` (a document the image names), `Guest`, `Place`, `Other`; `number()`, `at() -> (path, local)` |
+
+`shown()` renders each value as the `.csv` files showed it (a node by `path:local`, a place by `@place`). It is
+for comparison and display: tests, `rerail-engine csv`, the explorer. It is never parsed back. The text readers
+(`output::lines`, `text`, `rows`, `put_lines`, `Rel::lines`, `View::lines`) are deleted. A source guard
+(`text_readers_guard_tests`) fails on any product line that splits on a tab, outside an allowlist of the files that
+read text that is not a rule's or a fact's: `.input` files, the coverage ledger, the typing spike's fact dumps,
+the y-graph's fixtures, the lean parsers' edit oracles and the git read keys. Each entry has its reason and its
+count.
 
 ## Stages
 
@@ -112,10 +142,43 @@ typing rounds, `typing::outputs`) read the columns.
    (memo entries, guests' requests, `typing::outputs`, tests through `Outcome::text`). Still text: a memo entry's
    file-local output (`memo::Entry::lines`), read as one part per output (`Rows::from_lines`), and the `.csv`
    files.
-3. **The readers on the image:** phases, phase 0, the bridge, constants, reuse, `test-rr`, typing rounds and the
-   tests (about 350 reads in 21 files) read it, through rows or `lines`. The `.csv` files are no longer written.
-   The records that kept the text (constants, reuse) take a new format.
-4. **Overlays of rows** (§3).
+3. **The readers on the image** (built): `output::lines`, `text` (the bytes the `.csv` file held) and `rows` (each
+   value as shown, a tab or a newline in it too) read a relation of the stack in a directory. Phases, phase 0, the
+   typing bridge, constants, `test-rr`, the CLI's findings, a pack's members and the other dialects' findings read
+   and write through them; the tests (about 180 reads in 22 files) read `output::text`. The `.csv` files are no
+   longer written. The whole-run cutoff's record holds one base of the run's outputs (`output::base_of`; its key's
+   version is 2). A session knows its stack by a stat of its file (length, modification time, depth: `session::Stack`),
+   so an unchanged output is kept without reading the stack, and the stack is read only to fold it.
+   `rerail-engine csv <out> [<to>]` writes the `.csv` files for the scripts that read them (the bench and pack
+   scripts, the explorer, `sql-executor.py`, the data-layer probes), which call it after each run. Typing rounds'
+   golden files and `rrlab` (Soufflé's own outputs) are not the engine's outputs, and stay.
+4. **Overlays of rows** (§3, built): format 2 (an entry's kind), `Rel::hash`, `View`, `Builder::added`/`gone`,
+   the corpus writer's overlay, the session's hashes.
+5. **Mapped, atomic, one abstraction** (§4, built): format 3 (a places region, sorted and searched by value),
+   `Image::mapped`, the atomic `write`/`replace`, `Outputs`/`Relation`/`Row`/`Value`/`Node`. Every reader moved
+   onto it: the CLI's findings and a pack's members (`tools.rs`; a member's base made by `Builder::rows_of`, the
+   other dialects' findings joined by `Builder::union`), liveness's counts, `test-rr`'s samples, phases, phase 0,
+   constants and the typing bridge. The tests (about 25 files) compare `shown()` rows, as nested arrays, not tab
+   lines; T's golden fixtures are T's `.csv` files and are read as such. The text readers are deleted, and the
+   source guard (`text_readers_guard_tests::no_rule_or_fact_is_read_from_text`) fails on any new split on a tab in
+   product code; the sites left (a `.input` file, the coverage ledger, the typing spike's dumps, the y-graph
+   fixtures, the lean parsers' edit oracles, a consulted read's two-part key) are listed with their reasons.
+6. **Typed upstream** (built): nothing upstream of the image is text either.
+   - A memo entry holds each output as `Rows` (`memo::Entry::outputs`: its types, values and texts), framed as
+     `OUT_TYPE`/`OUT_ROW`/`OUT_TEXT` (`memo::numbering`) and decoded by `Rows::of_parts`, which refuses a text
+     index out of range. The plan digest is `rerail.corpus-local/v4`.
+   - A guest's requests and `typing::outputs`' `type_of` read typed cells.
+   - The kept records (the run-reuse record, the cone rounds' record, the git files' record, constants) hold
+     length-prefixed lists of bytes (`reuse::encode_lists`/`decode_lists`), not lines; a cut record reads as none.
+     The store keeps them as blobs (`observe::run_record`). Keys: `rerail.run-reuse/v3`, `rerail.constants/v3`.
+   - `decoded_outputs` types each column first (§1), then reads its cells. `Rows` has no ragged form, `to_text`,
+     `line`, `lines` or `from_lines`. `push` asserts the width and refuses a text in an int column.
+   - A NULL in an int or node column is `output::NULL` (`i64::MIN`), read as `Value::Null` and shown `None`; in a
+     text column it is the text `None`. A text in an integer column is a plan error, not a row.
+   - `Outcome::text` became `Outcome::shown`.
+
+Still text, for step 5 of this plan: each `rr_diagnostic` row is one JSON text the rules make, parsed by serde in the
+CLI. Its fields become columns.
 
 ## Measured
 
@@ -132,20 +195,54 @@ whole replay (cold run included), the output code is now 260 of 4,912 samples: `
 rendering the `.csv` lines from the image (`Rel::lines`) 149, putting the rows in the image 23. The `.csv` lines are
 what is left: stage 3 moves the readers onto the image, and stage 4 writes only what changed.
 
+Stage 3 (3cbb4cbb3) against the same baseline, two rounds each, on a loaded machine (load 40–90; instructions):
+
+| step | 12 | 13 | 14 | 15 | 16 | process |
+|---|---|---|---|---|---|---|
+| before, cross G | 11.65 | 6.18 | 3.31 | 3.96 | 4.38 | 135.8 |
+| stage 3, cross G | 11.15 | 5.80 | 2.96 | 3.66 | 4.04 | 128.3 |
+
+Stage 4 against stage 3 is the same in instructions: cross within 0.1 G each step (11.43 / 6.05 / 3.18 / 3.82 / 4.22
+against 11.44 / 5.97 / 3.17 / 3.83 / 4.23), process 135.3 against 134.5 G. Hashing each string and document once
+per image (`Seen`), not each cell, brought the hashing from 0.75% of the replay's samples to 0.14%. What it changes
+is what is written. Each step writes 33–482 KB, where its outputs whole are 2.3 MB:
+
+| step | outputs unchanged | written by rows | rows written | bytes written | outputs whole |
+|---|---|---|---|---|---|
+| 12 | 7 of 18 | 10 (and 1 whole) | 24,434 | 481,968 | 2,321,264 |
+| 13 | (folded: step 12 changed more than an eighth of the rows) | | | | |
+| 14 | 8 | 10 | 1,592 | 32,960 | 2,324,832 |
+| 15 | 9 | 9 | 5,348 | 107,088 | 2,324,960 |
+| 16 | 7 | 11 | 5,518 | 101,104 | 2,325,696 |
+
+Every run's outputs are a full run's ("same as full").
+
 ## Tests
 
 - `an_image_holds_each_relations_rows_and_types_as_written`: every column type, no rows, no columns, 10,000 rows
-  (sorted, each once).
-- `an_images_lines_are_the_csv_writers`: against the writer's own rendering (copied as the oracle), for every
-  combination of the two show flags: nodes by path and by definition, T's first nodes, guests, places, `unset`,
-  JSON text, `007` in an int column, a node column holding `None`, rows of differing widths, rows of no columns.
+  (sorted, each once), read typed.
+- `an_images_nodes_read_by_their_documents`: for every combination of the two show flags, nodes by path and by
+  definition, T's first nodes, guests, places, `unset`; typed, each its `Node`.
+- `an_images_places_are_searched_by_value`: 500 places, a value of none.
 - `an_overlay_replaces_the_relations_it_holds_and_the_rest_read_through`; a base written again starts the stack
-  over.
+  over; an overlay over no stack is refused and leaves no file.
+- `a_write_replaces_the_file_whole_and_a_map_keeps_the_old`: the atomic rename, no file left beside it, a mapped
+  stack 16-byte aligned.
 - `a_folded_stack_shows_what_the_stack_showed`: its strings, documents and places copied.
-- `rows_are_the_runs_lines_and_put_shows_what_the_writer_showed`: rows as `decoded_outputs` hands them (a text in
-  an int column, a value holding a tab), their lines, lines read back, and the image `put` makes from two parts,
-  against the writer's own rendering for every combination of the show flags.
-- `rows_of_every_shape`: a node column holding `None`, a row of another width, no columns, untyped rows, `retain`
-  and `without_first`.
+- `rows_put_in_an_image_read_as_the_run_made_them`: two parts of differing column types, a value holding a tab,
+  each row once, for both flags.
+- `a_null_reads_as_none`, `a_text_in_an_int_column_is_a_fault`, `a_row_of_another_width_is_a_fault`.
+- `rows_of_their_parts`: a memo entry's round trip; a text index out of range, a count that does not fit, refused.
+- `rows_of_every_shape`: no columns, untyped rows, `retain` and `without_first`.
 - `a_damaged_image_is_refused`: magic, a region out of bounds, a text value naming no string, a stack that starts
   with an overlay.
+- `a_directorys_outputs_are_read_from_its_stack`: `shown`, `Outputs` typed (a tab in a value), `names`, `base_of`,
+  `to_csv`.
+- `an_overlay_of_rows_gone_and_added_reads_as_the_relation_they_make`: hashes the same across images, a second
+  overlay taking away a row the first added and one of the base's, the fold, an entry of rows gone refused in a
+  base.
+- `a_nodes_hash_is_its_documents_not_its_key`: one document under two keys hashes the same.
+- `a_sessions_outputs_are_overlays_of_the_rows_an_edit_changed` (session): a run that changed nothing writes
+  nothing; ten edits, each read equal to a fresh run's outputs, overlays holding rows gone, folded at the depth.
+- `no_rule_or_fact_is_read_from_text` (the source guard, §4).
+- The memo's and the records' round trips (`memo` tests, `reuse` tests: a cut record reads as none).

@@ -81,7 +81,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/lanes.rs", "SUSPENDABLE", Thread, "this thread's device queue: what it issued, it flushes and waits for"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "GROWN", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "MIXED", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
-    ("src/code_rule_dsl/logic/native/setfix.rs", "WHOLE", Carried, ""),
+    ("src/code_rule_dsl/logic/native/setfix.rs", "WALKS_WHOLE", Carried, ""),
     ("src/code_rule_dsl/logic/native/setfix.rs", "IN_MORSELS", Thread, "the walks this thread ran in morsels, read by tests"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "VARIANTS", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("src/code_rule_dsl/logic/native/setfix/closure.rs", "SEMI_NAIVE_HERE", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
@@ -113,18 +113,14 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/plan/corpus.rs", "PREPARED", Thread, "prepared programs by key: any thread's gives the same program"),
     ("src/code_rule_dsl/logic/plan/corpus.rs", "RUNS_UNDER_WAY", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus.rs", "RUN_TOKEN", Carried, ""),
-    ("src/code_rule_dsl/logic/plan/corpus/maintain.rs", "BY_LEVELS", Thread, "counts of this thread's runs, read by a test on the thread that ran them"),
-    ("src/code_rule_dsl/logic/plan/corpus/maintain.rs", "TOGETHER", Thread, "counts of this thread's runs, read by a test on the thread that ran them"),
+    ("src/code_rule_dsl/logic/plan/corpus/maintain.rs", "BY_LEVELS", Thread, "counts of this thread's own runs, which a test reads beside others (decision 0204)"),
+    ("src/code_rule_dsl/logic/plan/corpus/maintain.rs", "TOGETHER", Thread, "counts of this thread's own runs, which a test reads beside others (decision 0204)"),
     ("src/code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/phases.rs", "PHASE_ONE", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/phases.rs", "RUNNING", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/session.rs", "BOUND", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/session.rs", "FULL", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/switches.rs", "DEPTH", Carried, ""),
-    ("src/code_rule_dsl/logic/plan/corpus/session.rs", "BOUND", Carried, ""),
-    ("src/code_rule_dsl/logic/plan/corpus/session.rs", "FULL", Carried, ""),
-    ("src/code_rule_dsl/logic/plan/corpus/maintain.rs", "BY_LEVELS", Thread, "counts of this thread's own runs, which a test reads beside others (decision 0204)"),
-    ("src/code_rule_dsl/logic/plan/corpus/maintain.rs", "TOGETHER", Thread, "counts of this thread's own runs, which a test reads beside others (decision 0204)"),
     ("src/code_rule_dsl/logic/plan/corpus/test_store.rs", "FILLING", Thread, "this thread fills the test store's template: its own runs take the switches without making it first"),
     ("src/reactor.rs", "KEPT", Outermost, "the reactor's session between its commands, taken by each command (decision 0204)"),
     ("src/code_rule_dsl/logic/plan/corpus/test_store.rs", "HANDED", Carried, ""),
@@ -207,7 +203,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/content_store/connection.rs", "OPERATION_WAITED", Thread, "this thread's SQLite connections and their waits"),
     ("src/content_store/connection.rs", "THREAD_CONNECTIONS", Thread, "this thread's SQLite connections and their waits"),
     ("src/content_store/connection.rs", "WAIT_SPENT", Thread, "this thread's SQLite connections and their waits"),
-    ("src/reactor.rs", "KEPT", Thread, "the reactor instance's session, kept from command to command on its thread"),
+    ("src/content_store/write_back.rs", "WAVES", Carried, ""),
 ];
 
 /// How many thread-locals are run context not carried yet ([`NotYet`]): lowered as each is carried, never raised.
@@ -302,6 +298,7 @@ const CARRIERS: &[fn(&mut Capture)] = &[
 /// The carried thread-locals of the crates below this one, which cannot name [`Capture`].
 fn carried_elsewhere(c: &mut Capture) {
     c.copy(&["IN_PHASE_0"], &crate::code_rule_dsl::phase_clock::IN_PHASE_0);
+    c.copy(&["WAVES"], &crate::content_store::write_back::WAVES);
     c.copy(&["STAGE"], &super::profile::STAGE);
     c.part(&["CURRENT"], Shared(crate::code_rule_dsl::sql_admission::current(), crate::code_rule_dsl::sql_admission::enter_current));
 }

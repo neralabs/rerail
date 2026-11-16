@@ -2,14 +2,15 @@
 //!
 //! The entry's relations are the image's, each as made (`Builder::rows_as_is`: in its order, every row): a relation
 //! `r:<key>` of the rows under `key` (`Entry::rows`), its symbol columns (the plan's, `Syms`) text, the others
-//! integers; for each output, `c:<name>` its node columns and `l:<name>` its lines, a text each; `#nodes` the
-//! document's nodes. A symbol is held as its string, so an entry reads the same in every process: a process that
+//! integers; for each output, `c:<name>` its node columns, `o:<name>` its rows typed as the run handed them (decision
+//! 0239: a text column's value one of the image's strings), and `n:<name>` their number where they have no columns;
+//! `#nodes` the document's nodes. A symbol is held as its string, so an entry reads the same in every process: a process that
 //! numbered the store's atoms otherwise (a fork, decision 0170) reads it as any other. Before, the entry held the
 //! store's ids, and each read and write mapped them (`numbering`: `to_store`, `to_process`, and every entry's ids
 //! held before the waves).
 
 use super::{Entry, Syms};
-use crate::code_rule_dsl::logic::plan::output::{Builder, Image, col};
+use crate::code_rule_dsl::logic::plan::output::{Builder, Image, Rows, col};
 use crate::content_store::atoms::{Atoms, Sym};
 use crate::content_store::{StoreError, StoreResult};
 use std::collections::HashMap;
@@ -58,10 +59,19 @@ pub(super) fn encode(entry: &Entry, syms: &Syms, atoms: &Atoms) -> StoreResult<(
         }
         b.rows_as_is(&name, &types, rows);
     }
-    for (name, (nodes, lines)) in &entry.lines {
+    for (name, (nodes, rows)) in &entry.outputs {
         b.rows_as_is(&format!("c:{name}"), &[col::INT], nodes.iter().map(|&c| c as i64).collect());
-        let lines: Vec<i64> = lines.iter().map(|l| i64::from(b.text(l))).collect();
-        b.rows_as_is(&format!("l:{name}"), &[col::TEXT], lines);
+        if rows.width() == 0 {
+            b.rows_as_is(&format!("n:{name}"), &[col::INT], vec![rows.len() as i64]);
+        }
+        let types = rows.types();
+        let mut values = Vec::with_capacity(rows.len() * types.len());
+        for i in 0..rows.len() {
+            for (c, &v) in rows.row(i).iter().enumerate() {
+                values.push(if types[c] == col::TEXT { i64::from(b.text(rows.text(v))) } else { v });
+            }
+        }
+        b.rows_as_is(&format!("o:{name}"), types, values);
     }
     let image = b.finish();
     let raw = image.len();
@@ -111,6 +121,7 @@ pub(super) fn decode(bytes: &[u8], raw: usize, keep: &dyn Fn(&str) -> bool, atom
     let ids = atoms_of(&image, keep, atoms)?;
     let mut entry = Entry::default();
     let mut columns: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut counts: HashMap<&str, usize> = HashMap::new();
     for (name, rel) in image.relations() {
         if name == NODES {
             entry.nodes = rel.col(0).first().copied().unwrap_or(0) as u64;
@@ -129,9 +140,29 @@ pub(super) fn decode(bytes: &[u8], raw: usize, keep: &dyn Fn(&str) -> bool, atom
             entry.rows.insert(key.to_owned(), (rel.width, values));
         } else if let Some(out) = name.strip_prefix("c:") {
             columns.insert(out, rel.col(0).iter().map(|&c| c as usize).collect());
-        } else if let Some(out) = name.strip_prefix("l:") {
-            let lines = rel.col(0).iter().map(|&v| image.string(v as u32).to_owned()).collect();
-            entry.lines.insert(out.to_owned(), (columns.remove(out).ok_or_else(|| bad(format!("has lines of {out} before its columns")))?, lines));
+        } else if let Some(out) = name.strip_prefix("n:") {
+            counts.insert(out, rel.col(0).first().copied().unwrap_or(0) as usize);
+        } else if let Some(out) = name.strip_prefix("o:") {
+            // The output's texts, each once, in the order its rows name them.
+            let types = rel.types().to_vec();
+            let (mut texts, mut at): (Vec<String>, HashMap<u32, i64>) = (Vec::new(), HashMap::new());
+            let mut vals = Vec::with_capacity(rel.rows * rel.width);
+            for i in 0..rel.rows {
+                for (c, &t) in types.iter().enumerate() {
+                    let v = rel.col(c)[i];
+                    vals.push(if t == col::TEXT {
+                        *at.entry(v as u32).or_insert_with(|| {
+                            texts.push(image.string(v as u32).to_owned());
+                            texts.len() as i64 - 1
+                        })
+                    } else {
+                        v
+                    });
+                }
+            }
+            let count = counts.remove(out).unwrap_or(rel.rows);
+            let rows = Rows::of_parts(types, vals, texts, count).map_err(|e| bad(format!("has rows of {out} that do not hold: {e}")))?;
+            entry.outputs.insert(out.to_owned(), (columns.remove(out).ok_or_else(|| bad(format!("has rows of {out} before its columns")))?, rows));
         } else {
             return Err(bad(format!("has a relation of no kind ({name})")));
         }
@@ -142,9 +173,11 @@ pub(super) fn decode(bytes: &[u8], raw: usize, keep: &dyn Fn(&str) -> bool, atom
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::tests::rows_of;
+    use crate::code_rule_dsl::logic::plan::output::Cell;
 
-    /// An entry reads back as it was made: its rows in their order and number, its symbols the same atoms, its lines
-    /// and their node columns, its nodes; a relation not taken is not read; bytes cut short are refused.
+    /// An entry reads back as it was made: its rows in their order and number, its symbols the same atoms, its
+    /// outputs' typed rows (a bare output's number too) and their node columns, its nodes; a relation not taken is not read; bytes cut short are refused.
     #[test]
     fn an_entry_reads_back_as_made_its_symbols_by_content() {
         use super::super::super::super::lower::Domain;
@@ -158,13 +191,14 @@ mod tests {
         entry.rows.insert("wide".into(), (11, (0..22).collect()));
         entry.rows.insert("empty".into(), (2, Vec::new()));
         entry.rows.insert("bare".into(), (0, Vec::new()));
-        entry.lines.insert("violation".into(), (vec![1], vec!["r\t21474836480\tx".into(), "a".into()]));
-        entry.lines.insert("none".into(), (vec![], vec![String::new(), "ünïcode".into()]));
+        entry.outputs.insert("violation".into(), (vec![1], rows_of(&[col::TEXT, col::NODE, col::TEXT], &[&[Cell::Text("r"), Cell::Int(21474836480), Cell::Text("x")], &[Cell::Text("a"), Cell::Int(3), Cell::Text("r")]])));
+        entry.outputs.insert("a name longer than one row of text holds, which is fifty-six bytes".into(), (vec![], rows_of(&[col::TEXT, col::INT], &[&[Cell::Text(""), Cell::Int(-3)], &[Cell::Text("ünïcode"), Cell::Int(i64::MAX)]])));
+        entry.outputs.insert("bare".into(), (vec![], rows_of(&[], &[&[], &[]])));
         let (bytes, raw) = encode(&entry, &syms, &atoms).unwrap();
         assert_eq!(decode(&bytes, raw, &|_| true, &atoms).map(|e| Entry { key: 5, ..e }).unwrap(), entry);
         let some = decode(&bytes, raw, &|k| k == "named", &atoms).unwrap();
         assert_eq!(some.rows.keys().collect::<Vec<_>>(), ["named"]);
-        assert_eq!(some.lines, entry.lines, "outputs are read whatever relations are taken");
+        assert_eq!(some.outputs, entry.outputs, "outputs are read whatever relations are taken");
         assert!(decode(&bytes[..bytes.len() - 1], raw, &|_| true, &atoms).is_err(), "cut short");
         let other = Atoms::for_connection(&db2);
         other.intern("w").unwrap();

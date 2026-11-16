@@ -1,5 +1,5 @@
 //! Write-back (decision 0102): a store handle's writes that no wave waits for, applied in the
-//! background by one writer thread, in the order they were queued.
+//! background by one writer thread, in the order they were queued, a wave at a time (decision 0259).
 //!
 //! The run hands a write over as a job and goes on to its next wave with what it already holds in
 //! memory. SQLite is the durable copy and lags behind; it is never ahead of memory
@@ -7,13 +7,19 @@
 //!
 //! - **Order.** One writer, one queue: a job sees every write queued before it, so a run's
 //!   manifest, queued last, names only what is already written (decision 0053).
+//! - **A wave at a time.** A run's jobs join its wave still being written (`run_waves`), held
+//!   until a boundary of the run seals it (`end_wave`, `seals`); the writer takes each sealed wave
+//!   in one transaction, so the store holds a run's waves whole, each or none. No commit is made by
+//!   size or idleness. A job queued outside a run is a wave of its own.
 //! - **Read your writes.** A job names the keys it writes. A read of a key still queued is served
 //!   from the value the job left in memory (`pending`), or waits for that job alone (`settle`);
 //!   any other read goes to SQLite without waiting.
 //! - **Bounded lag.** Jobs carry their size; past `cap_bytes()` queued, the next job waits for the
-//!   writer to catch up (back-pressure, 0024 §5), so memory holds at most that much unwritten.
-//! - **Durable at the end.** `written` waits for the queue and gives the first error a job met; a
-//!   handle's drop waits too, so no queued write is lost when the process ends.
+//!   writer to take the waves sealed (back-pressure, 0024 §5). The wave still being written is not
+//!   waited for: only its boundary seals it.
+//! - **Durable at the end.** `written` seals the run's wave, waits for every wave sealed and gives
+//!   the first error a job met; a handle's drop seals and waits too, so no queued write is lost
+//!   when the process ends.
 //!
 //! A job that finds the store busy (another process's writer held it past the job's own write
 //! deadlines, `connection::retry_busy`) is run again whole, after a backoff that starts at
@@ -112,22 +118,94 @@ fn retried(store: &ContentStore, what: &str, job: &mut Job) -> StoreResult<()> {
 
 type Held = Arc<dyn Any + Send + Sync>;
 
+/// Where a run's wave of writes ends (decision 0259 §5). A wave is what the run queued between two boundaries that
+/// seal, and the store takes it in one transaction.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Boundary {
+    /// Before the waves: the combined program, the prepared sources, the plan holds.
+    Before,
+    /// A chunk's file-local part done (`process`): its tapes, tree counts, memo entries.
+    Chunk,
+    /// A round of the cone (decision 0145).
+    ConeRound,
+    /// The cross part done: its kept strata's frames, retained rows, rounds, statistics.
+    Cross,
+    /// The run's end: the cross memo, the manifest, the atoms, the kept plans.
+    End,
+}
+
+/// Whether `boundary` seals the run's wave: the one place that says where waves end. A boundary that does not seal
+/// leaves its writes in the wave still being written.
+pub fn seals(boundary: Boundary) -> bool {
+    !matches!(boundary, Boundary::ConeRound)
+}
+
+thread_local! {
+    /// The run whose waves this thread's writes join (`run_waves`); 0 outside a run, where each write is a wave of
+    /// its own. Carried to the run's jobs on other threads (`run_state`).
+    pub static WAVES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// While it lives, this thread's writes (and its run's jobs') join a run's waves of their own (`WAVES`); dropped, the
+/// run's wave still being written is sealed, in every store's writer, and the thread's run before is back. Its end
+/// does not wait for the writer: `written` does.
+pub struct Waves {
+    run: u64,
+    before: u64,
+}
+
+/// A run's waves of its own, from here (`Waves`).
+pub fn run_waves() -> Waves {
+    static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let run = RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Waves { run, before: WAVES.with(|w| w.replace(run)) }
+}
+
+impl Drop for Waves {
+    fn drop(&mut self) {
+        seal_everywhere(self.run);
+        WAVES.with(|w| w.set(self.before));
+    }
+}
+
+/// Ends this thread's run's wave at `boundary`, in the writer of every store it wrote to, where `seals` says the
+/// boundary seals one (decision 0259).
+pub fn end_wave(boundary: Boundary) {
+    let run = WAVES.with(std::cell::Cell::get);
+    if run != 0 && seals(boundary) {
+        seal_everywhere(run);
+    }
+}
+
+/// Seals `run`'s wave still being written in every store's writer.
+fn seal_everywhere(run: u64) {
+    let all: Vec<Arc<Writer>> = writers().lock().expect("the writers").values().cloned().collect();
+    for w in all {
+        w.seal(run);
+    }
+}
+
 #[derive(Default)]
 struct State {
     /// Bytes queued and not yet written.
     bytes: usize,
+    /// Of them, in waves sealed: what the writer is taking now, and what back-pressure may wait for.
+    sealed_bytes: usize,
     /// Jobs queued and not yet done.
     jobs: usize,
-    /// Each key's queued jobs, and the value the last one left for readers.
-    keys: HashMap<Key, (usize, Option<Held>)>,
+    /// Each key's queued jobs, the value the last one left for readers, and the run whose wave holds the last.
+    keys: HashMap<Key, (usize, Option<Held>, u64)>,
+    /// Each run's wave still being written: its jobs, held here until a boundary seals it.
+    open: HashMap<u64, Vec<Queued>>,
+    /// Waves sealed, and waves the writer has finished: a wait for the writer waits for the waves sealed before it.
+    sealed: u64,
+    applied: u64,
     /// The first error a job met since the last `written`.
     error: Option<String>,
     /// Jobs run, bytes written and the writer's CPU, since the writer started.
     done: (usize, usize, f64),
-    /// Transactions the writer committed its batches in.
+    /// Transactions the writer committed its waves in.
     batches: usize,
-    /// Whether the writer holds a batch's transaction open now.
-    open: bool,
     /// By what a job writes: jobs queued, the bytes they hold until written, the writer's CPU running them, and the
     /// bytes of the frames they encoded (`compression::encoded_here`; rows not framed are not in it).
     by_what: HashMap<&'static str, (usize, usize, f64, usize)>,
@@ -150,23 +228,16 @@ type Queued = (Job, usize, Vec<Key>, Option<(String, i64)>, Run, &'static str);
 /// How the writer runs a job.
 #[derive(Clone, Copy, PartialEq)]
 enum Run {
-    /// In the open batch.
-    Batched,
-    /// After the batch commits, in transactions of its own (`write_back_alone`).
+    /// In its wave's transaction.
+    InWave,
+    /// A wave of its own, after the run's wave before it, in transactions of its own (`write_back_alone`).
     Alone,
-    /// Nothing: it commits the batch, for a wait for the writer (`commit_now`). Not counted as a write.
-    Commit,
 }
 
-/// How long the writer's batch stays open with no job queued: jobs come all through a run, so a run's writes commit
-/// in about one transaction.
-const BATCH_IDLE: Duration = Duration::from_millis(500);
-
-/// The bytes a batch holds before it commits: half the queue's cap, so the back-pressure is never waiting on it. Of
-/// the cap in force: with `RERAIL_WRITE_QUEUE_MB` under the default, a batch of half the default never committed
-/// before the queue was full, and every large job waited for `BATCH_IDLE`.
-fn batch_bytes() -> usize {
-    cap_bytes() / 2
+/// A sealed wave, sent to the writer: its jobs, in their order, and whether it is one job run alone.
+struct Wave {
+    jobs: Vec<Queued>,
+    alone: bool,
 }
 
 /// The bytes under which a job is queued past the cap (back-pressure holds only a job of this size or more).
@@ -175,7 +246,7 @@ fn small_job() -> usize {
 }
 
 struct Lane {
-    tx: mpsc::Sender<Queued>,
+    tx: mpsc::Sender<Wave>,
     thread: std::thread::JoinHandle<()>,
 }
 
@@ -190,6 +261,49 @@ pub(crate) struct Writer {
     /// The store's identity (`store_identity`), set by its first handle: a store created again at the path has
     /// another, and a writer of its own (as it has atoms of its own).
     identity: std::sync::OnceLock<i64>,
+}
+
+impl Writer {
+    /// Seals `run`'s wave still being written: sent to the writer, behind every wave sealed before it. Under the
+    /// lane's lock, so two seals of a run send its waves in the order they were taken.
+    fn seal(&self, run: u64) {
+        let mut lane = self.lane.lock().expect("the writer");
+        let jobs = {
+            let mut s = self.shared.state.lock().expect("the writer's state");
+            let Some(jobs) = s.open.remove(&run).filter(|j| !j.is_empty()) else { return };
+            s.sealed_bytes += jobs.iter().map(|q| q.1).sum::<usize>();
+            s.sealed += 1;
+            jobs
+        };
+        // A writer with a wave open has its lane: the wave's first job started it (`queue`).
+        let wave = Wave { jobs, alone: false };
+        match lane.as_mut() {
+            Some(lane) => {
+                if let Err(mpsc::SendError(wave)) = lane.tx.send(wave) {
+                    self.failed(wave);
+                }
+            }
+            None => self.failed(wave),
+        }
+    }
+
+    /// Seals every run's wave still being written (the store's last handle gone).
+    fn seal_all(&self) {
+        let runs: Vec<u64> = self.shared.state.lock().expect("the writer's state").open.keys().copied().collect();
+        for run in runs {
+            self.seal(run);
+        }
+    }
+
+    /// A wave the writer cannot take (its thread is gone, though it catches each job's panic): failed, each job, as
+    /// a write that never happened (the store lacks it, and the next run makes it again).
+    fn failed(&self, wave: Wave) {
+        for (_, bytes, keys, _, _, _) in wave.jobs {
+            finish(&self.shared, bytes, &keys, Err(StoreError::Invalid("the store's writer is gone".into())), 0.0, true);
+        }
+        self.shared.state.lock().expect("the writer's state").applied += 1;
+        self.shared.changed.notify_all();
+    }
 }
 
 /// The process's writers, by store path.
@@ -231,6 +345,8 @@ fn unregister(path: &Path, w: &Arc<Writer>) {
     if all.get(path).is_some_and(|x| Arc::ptr_eq(x, w)) {
         all.remove(path);
     }
+    // Every run's wave still open is sealed: the store's last handle takes no more writes.
+    w.seal_all();
     let lane = w.lane.lock().expect("the writer").take();
     if let Some(Lane { tx, thread }) = lane {
         let (jobs, bytes) = w.shared.state.lock().map(|s| (s.jobs, s.bytes)).unwrap_or_default();
@@ -281,7 +397,7 @@ pub struct Written {
     pub jobs: usize,
     pub bytes: usize,
     pub cpu: f64,
-    /// The transactions they were committed in.
+    /// The transactions they were committed in: one a wave.
     pub batches: usize,
 }
 
@@ -295,15 +411,15 @@ impl ContentStore {
     /// read of it gets meanwhile (`None`: a read waits for the job). The writer's own handle (in a
     /// job) writes at once.
     ///
-    /// The writer drains what is queued into one transaction (`ContentStore::in_one_transaction`), each job a
-    /// savepoint in it, and a read of a key waits for its batch's commit.
+    /// The job joins the wave the run is writing (`WAVES`), and the store takes the wave whole, in one transaction
+    /// (`ContentStore::in_one_transaction`), each job a savepoint in it, once a boundary seals it (`end_wave`).
     pub fn write_back(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) {
-        self.queue(what, bytes, keys, guarded(Syms::Unmapped, job), Run::Batched, false);
+        self.queue(what, bytes, keys, guarded(Syms::Unmapped, job), Run::InWave, false);
     }
 
     /// [`Self::write_back`] of a job whose rows hold `syms` (decision 0170).
     pub fn write_back_syms(&self, syms: Syms, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) {
-        self.queue(what, bytes, keys, guarded(syms, job), Run::Batched, false);
+        self.queue(what, bytes, keys, guarded(syms, job), Run::InWave, false);
     }
 
     /// [`Self::write_back_alone`] of a job whose rows hold `syms` (decision 0170).
@@ -312,7 +428,8 @@ impl ContentStore {
     }
 
     /// [`Self::write_back`] for a job that must commit before it goes on (it starts work on another connection that
-    /// reads what it wrote): the batch before it commits first, and it runs in transactions of its own.
+    /// reads what it wrote): the run's wave before it is sealed, and it is a wave of its own, run in transactions of
+    /// its own.
     pub fn write_back_alone(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) {
         self.queue(what, bytes, keys, guarded(Syms::Unmapped, job), Run::Alone, false);
     }
@@ -322,7 +439,7 @@ impl ContentStore {
     /// no wave waits for the writer (decision 0104). Whether it was queued.
     /// Its rows hold `syms` (decision 0170).
     pub fn write_back_unless_full(&self, syms: Syms, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) -> bool {
-        self.queue(what, bytes, keys, guarded(syms, job), Run::Batched, true)
+        self.queue(what, bytes, keys, guarded(syms, job), Run::InWave, true)
     }
 
     /// The cache writes dropped for a full queue since the writer started: how many, and their bytes.
@@ -332,8 +449,8 @@ impl ContentStore {
 
     fn queue(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job, run: Run, droppable: bool) -> bool {
         // A truly warm run computes nothing it would keep (`RERAIL_WARM`): its caller's stack is here, not on the writer.
-        // Not a fault: the writes listed as allowed (locks, timestamps), and a wait for the writer, which writes nothing.
-        if run != Run::Commit && !super::hazards::warm_write_allowed(what) {
+        // Not a fault: the writes listed as allowed (locks, timestamps).
+        if !super::hazards::warm_write_allowed(what) {
             super::hazards::warm_fault("a write queued for the store", || format!("{what}, {bytes} bytes, {} keys", keys.len()));
         }
         let mut job = job;
@@ -358,11 +475,13 @@ impl ContentStore {
             e.3 += super::compression::encoded_here() - e0;
             out
         });
+        let wave = WAVES.with(std::cell::Cell::get);
         {
             let mut s = w.shared.state.lock().expect("the writer's state");
-            // Back-pressure: past the cap, wait for the writer (never for an empty queue). A small job never waits:
-            // its wait frees next to nothing, and holds the wave behind a large job the writer is writing.
-            let full = |s: &State| bytes >= small_job() && s.jobs > 0 && s.bytes + bytes > cap_bytes();
+            // Back-pressure: past the cap, wait for the writer while it has sealed waves to take (never for waves
+            // still being written, which only a boundary seals). A small job never waits: its wait frees next to
+            // nothing, and holds the wave behind a large job the writer is writing.
+            let full = |s: &State| bytes >= small_job() && s.sealed_bytes > 0 && s.bytes + bytes > cap_bytes();
             // A cache's write gives way at half the cap: the other half is for the writes that may not go missing
             // (frames, memo entries), so they find room rather than wait behind tapes.
             if droppable && s.jobs > 0 && s.bytes + bytes > cap_bytes() / 2 {
@@ -393,9 +512,10 @@ impl ContentStore {
             entry.0 += 1;
             entry.1 += bytes;
             for (key, held) in &keys {
-                let slot = s.keys.entry(*key).or_insert((0, None));
+                let slot = s.keys.entry(*key).or_insert((0, None, wave));
                 slot.0 += 1;
                 slot.1 = held.clone();
+                slot.2 = wave;
             }
         }
         let keys: Vec<Key> = keys.into_iter().map(|(k, _)| k).collect();
@@ -403,30 +523,60 @@ impl ContentStore {
         // No threads in the browser build: written now, in order.
         if cfg!(target_family = "wasm") {
             let _scope = super::hazards::warm_scope();
+            w.shared.state.lock().expect("the writer's state").sealed_bytes += bytes;
             let outcome = job(self);
-            finish(&w.shared, bytes, &keys, outcome, 0.0, run != Run::Commit);
+            finish(&w.shared, bytes, &keys, outcome, 0.0, true);
             return true;
         }
+        let queued: Queued = (job, bytes, keys, holder, run, what);
         let mut lane = w.lane.lock().expect("the writer");
         let lane = lane.get_or_insert_with(|| self.start_writer(w));
-        if let Err(mpsc::SendError((mut job, bytes, keys, _, _, _))) = lane.tx.send((job, bytes, keys, holder, run, what)) {
-            // The writer is gone (it panicked): written here, in order, as the writer would have.
-            let _scope = super::hazards::warm_scope();
-            let outcome = job(self);
-            finish(&w.shared, bytes, &keys, outcome, 0.0, run != Run::Commit);
+        // In a run, a job joins the run's wave still being written; a job run alone follows it, a wave of its own.
+        // Outside a run, a job is a wave of its own.
+        let wave = match (wave, run) {
+            (0, _) | (_, Run::Alone) => {
+                let mut s = w.shared.state.lock().expect("the writer's state");
+                let before = (wave != 0).then(|| s.open.remove(&wave)).flatten().filter(|j| !j.is_empty());
+                let mut waves = Vec::new();
+                if let Some(jobs) = before {
+                    s.sealed_bytes += jobs.iter().map(|q| q.1).sum::<usize>();
+                    s.sealed += 1;
+                    waves.push(Wave { jobs, alone: false });
+                }
+                s.sealed_bytes += bytes;
+                s.sealed += 1;
+                waves.push(Wave { jobs: vec![queued], alone: run == Run::Alone });
+                waves
+            }
+            (wave, Run::InWave) => {
+                w.shared.state.lock().expect("the writer's state").open.entry(wave).or_default().push(queued);
+                return true;
+            }
+        };
+        for wave in wave {
+            if let Err(mpsc::SendError(wave)) = lane.tx.send(wave) {
+                // The writer is gone (it panicked): written here, in order, as the writer would have.
+                let _scope = super::hazards::warm_scope();
+                for (mut job, bytes, keys, _, _, _) in wave.jobs {
+                    let outcome = job(self);
+                    finish(&w.shared, bytes, &keys, outcome, 0.0, true);
+                }
+                w.shared.state.lock().expect("the writer's state").applied += 1;
+                w.shared.changed.notify_all();
+            }
         }
         true
     }
 
     fn start_writer(&self, w: &Arc<Writer>) -> Lane {
-        let (tx, rx) = mpsc::channel::<Queued>();
+        let (tx, rx) = mpsc::channel::<Wave>();
         let w = Arc::clone(w);
         let store = self.sibling();
         // The WAL is checkpointed beside the writer, not in its commits: SQLite's automatic checkpoint copies the
         // WAL into the database and syncs it inside the commit that crosses its threshold, so the writer took no
         // job meanwhile (3.0 s of a cold run's 7.7 s on the writer). A checkpoint is `PASSIVE` on a connection of
-        // its own: in WAL mode it neither blocks the writer nor waits for it. Told after each commit; signals that
-        // come while it checkpoints are one.
+        // its own: in WAL mode it neither blocks the writer nor waits for it, and it copies only what is committed:
+        // whole waves. Told after each wave; signals that come while it checkpoints are one.
         let (mut told, tells) = mpsc::channel::<()>();
         let checkpointer = self.sibling();
         let checkpoints = rerail_accel::exec::service("rerail-store-checkpoint", None, move || {
@@ -450,89 +600,62 @@ impl ContentStore {
                 if let Ok(connection) = store.connection.lock() {
                     let _ = connection.pragma_update(None, "wal_autocheckpoint", 0);
                 }
-                let mut next: Option<Queued> = None;
-                loop {
-                    let Some(first) = next.take().or_else(|| rx.recv().ok()) else {
-                        // The queue is closed (the last handle's drop): the checkpointer ends with the writer.
-                        drop(std::mem::replace(&mut told, mpsc::channel().0));
-                        if let Some(c) = checkpoints.take() {
-                            let _ = c.join();
+                while let Ok(Wave { jobs: mut batch, alone }) = rx.recv() {
+                    let before = thread_cpu();
+                    if alone {
+                        for (job, bytes, keys, holder, _, what) in batch {
+                            // Each job's own CPU and frames: a wave of several jobs alone counts each once.
+                            let (before, encoded) = (thread_cpu(), super::compression::encoded_here());
+                            let mut job = job;
+                            *store.holder.lock() = holder;
+                            let _span = super::hazards::span(what);
+                            let _scope = super::hazards::warm_scope();
+                            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
+                                .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into())));
+                            let mut s = w.shared.state.lock().expect("the writer's state");
+                            let e = s.by_what.entry(what).or_default();
+                            e.2 += thread_cpu() - before;
+                            e.3 += super::compression::encoded_here() - encoded;
+                            drop(s);
+                            let _ = told.send(());
+                            finish(&w.shared, bytes, &keys, outcome, thread_cpu() - before, true);
                         }
-                        break;
-                    };
-                    let (before, encoded) = (thread_cpu(), super::compression::encoded_here());
-                    if first.4 != Run::Batched {
-                        let (mut job, bytes, keys, holder, run, what) = first;
-                        *store.holder.lock() = holder;
-                        let _span = super::hazards::span(what);
-                        let _scope = super::hazards::warm_scope();
-                        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
-                            .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into())));
-                        let mut s = w.shared.state.lock().expect("the writer's state");
-                        let e = s.by_what.entry(what).or_default();
-                        e.2 += thread_cpu() - before;
-                        e.3 += super::compression::encoded_here() - encoded;
-                        drop(s);
-                        let _ = told.send(());
-                        finish(&w.shared, bytes, &keys, outcome, thread_cpu() - before, run != Run::Commit);
+                        w.shared.state.lock().expect("the writer's state").applied += 1;
+                        w.shared.changed.notify_all();
                         continue;
                     }
-                    // One transaction while jobs keep coming: it commits once the queue is idle for `BATCH_IDLE`, holds
-                    // `batch_bytes()`, or a job comes that runs alone (a wait for the writer sends one: `written`).
-                    let mut batch = vec![first];
-                    let run = |batch: &mut Vec<Queued>, next: &mut Option<Queued>| -> Vec<StoreResult<()>> {
-                        let mut outcomes = Vec::new();
-                        let mut bytes = 0;
-                        loop {
-                            for (job, b, _, holder, _, what) in &mut batch[outcomes.len()..] {
-                                *store.holder.lock() = holder.clone();
-                                bytes += *b;
-                                let (c0, e0) = (thread_cpu(), super::compression::encoded_here());
-                                let _span = super::hazards::span(*what);
-                                outcomes.push(
-                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
-                                        .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into()))),
-                                );
-                                let mut s = w.shared.state.lock().expect("the writer's state");
-                                let e = s.by_what.entry(*what).or_default();
-                                e.2 += thread_cpu() - c0;
-                                e.3 += super::compression::encoded_here() - e0;
-                                drop(s);
-                            }
-                            // A batch run again (rolled back below) whose first run took the job after it ends there
-                            // too: taking another would drop that one, and its count with it (`written` then waits for
-                            // ever).
-                            if bytes >= batch_bytes() || next.is_some() {
-                                return outcomes;
-                            }
-                            match rx.recv_timeout(BATCH_IDLE) {
-                                Ok(q) if q.4 != Run::Batched => {
-                                    *next = Some(q);
-                                    return outcomes;
-                                }
-                                Ok(q) => batch.push(q),
-                                Err(_) => return outcomes,
-                            }
+                    // The wave's jobs, in their order, in one transaction: the store holds all of the wave or none.
+                    let run = |batch: &mut Vec<Queued>| -> Vec<StoreResult<()>> {
+                        let mut outcomes = Vec::with_capacity(batch.len());
+                        for (job, _, _, holder, _, what) in batch.iter_mut() {
+                            *store.holder.lock() = holder.clone();
+                            let (c0, e0) = (thread_cpu(), super::compression::encoded_here());
+                            let _span = super::hazards::span(*what);
+                            outcomes.push(
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
+                                    .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into()))),
+                            );
+                            let mut s = w.shared.state.lock().expect("the writer's state");
+                            let e = s.by_what.entry(*what).or_default();
+                            e.2 += thread_cpu() - c0;
+                            e.3 += super::compression::encoded_here() - e0;
+                            drop(s);
                         }
+                        outcomes
                     };
-                    // The batch's span holds its jobs' and its commit.
-                    let batch_span = super::hazards::span("a batch, in one transaction");
-                    // Every job of the batch, each run of it, in one warm scope (decision 0211): its commit is a listed
+                    // The wave's span holds its jobs' and its commit.
+                    let batch_span = super::hazards::span("a wave, in one transaction");
+                    // Every job of the wave, each run of it, in one warm scope (decision 0211): its commit is a listed
                     // write's only if every job is listed (`profile::WARM_WRITES_ALLOWED`).
                     let warm_scope = super::hazards::warm_scope();
-                    // A batch that finds the store busy (another process's writer held SQLite's write lock past this
+                    // A wave that finds the store busy (another process's writer held SQLite's write lock past this
                     // one's wait, at its start or its commit) rolled back whole: run again, as a busy job is
-                    // (`run_job`), its jobs being a cache's writes. Failing them dropped every write of the batch.
+                    // (`run_job`), its jobs being a cache's writes. Failing them dropped every write of the wave.
                     let started = Instant::now();
                     let mut backoff = JOB_BACKOFF_FIRST;
                     let mut forked_in = false;
                     let outcomes = loop {
-                        match store.in_one_transaction(|| {
-                            w.shared.state.lock().expect("the writer's state").open = true;
-                            let outcomes = run(&mut batch, &mut next);
-                            w.shared.state.lock().expect("the writer's state").open = false;
-                            outcomes
-                        }) {
+                        match store.in_one_transaction(|| run(&mut batch)) {
                             Ok(outcomes) => break outcomes,
                             Err(StoreError::Busy) if started.elapsed() < JOB_DEADLINE => {
                                 std::thread::sleep(super::connection::jittered(backoff));
@@ -541,17 +664,24 @@ impl ContentStore {
                             // Forked by one of its jobs (decision 0170), so rolled back: run again, forked from its
                             // start, its jobs' rows mapped or the jobs dropped (`guarded`).
                             Err(StoreError::Invalid(e)) if !forked_in && e.contains(super::atoms::DIVERGED_TEXT) => forked_in = true,
-                            Err(e) => break batch.iter().map(|_| Err(StoreError::Invalid(format!("the batch's commit: {e}")))).collect(),
+                            Err(e) => break batch.iter().map(|_| Err(StoreError::Invalid(format!("the wave's commit: {e}")))).collect(),
                         }
                     };
                     drop(warm_scope);
                     drop(batch_span);
                     let _ = told.send(());
-                    let cpu = (thread_cpu() - before) / batch.len() as f64;
+                    let cpu = (thread_cpu() - before) / batch.len().max(1) as f64;
                     w.shared.state.lock().expect("the writer's state").batches += 1;
                     for ((_, bytes, keys, _, _, _), outcome) in batch.into_iter().zip(outcomes) {
                         finish(&w.shared, bytes, &keys, outcome, cpu, true);
                     }
+                    w.shared.state.lock().expect("the writer's state").applied += 1;
+                    w.shared.changed.notify_all();
+                }
+                // The queue is closed (the last handle's drop): the checkpointer ends with the writer.
+                drop(std::mem::replace(&mut told, mpsc::channel().0));
+                if let Some(c) = checkpoints.take() {
+                    let _ = c.join();
                 }
             })
             .expect("the store's writer thread");
@@ -561,7 +691,7 @@ impl ContentStore {
     /// The value a queued job left for `key`, while the job is queued.
     pub fn pending<T: Any + Send + Sync>(&self, key: &Key) -> Option<Arc<T>> {
         let s = self.writer()?.shared.state.lock().expect("the writer's state");
-        s.keys.get(key).and_then(|(_, held)| held.clone()).and_then(|h| h.downcast::<T>().ok())
+        s.keys.get(key).and_then(|(_, held, _)| held.clone()).and_then(|h| h.downcast::<T>().ok())
     }
 
     /// Whether a job that writes `key` is queued (not written yet).
@@ -569,11 +699,13 @@ impl ContentStore {
         self.writer().is_some_and(|w| w.shared.state.lock().expect("the writer's state").keys.contains_key(key))
     }
 
-    /// Waits for the jobs that write `key`, if any is queued; a read of anything else never waits.
+    /// Waits for the jobs that write `key`, if any is queued; a read of anything else never waits. A key in a wave
+    /// still being written seals that wave: the read is of a value the run left no copy of in memory.
     pub fn settle(&self, key: &Key) {
         let Some(w) = self.writer() else { return };
-        if w.shared.state.lock().expect("the writer's state").keys.contains_key(key) {
-            self.commit_now();
+        let open = w.shared.state.lock().expect("the writer's state").keys.get(key).map(|k| k.2).filter(|&run| run != 0);
+        if let Some(run) = open {
+            w.seal(run);
         }
         let mut s = w.shared.state.lock().expect("the writer's state");
         let t = s.keys.contains_key(key).then(std::time::Instant::now);
@@ -585,16 +717,18 @@ impl ContentStore {
         }
     }
 
-    /// Waits for every queued job: the store then holds every write queued so far. The first error
-    /// a job met since the last call.
+    /// Seals this thread's run's wave and waits for every wave sealed so far: the store then holds every write this
+    /// run queued, and every wave sealed before. The first error a job met since the last call.
     pub fn written(&self) -> StoreResult<()> {
         let Some(w) = self.writer() else { return Ok(()) };
-        if w.shared.state.lock().expect("the writer's state").jobs > 0 {
-            self.commit_now();
+        let run = WAVES.with(std::cell::Cell::get);
+        if run != 0 {
+            w.seal(run);
         }
         let mut s = w.shared.state.lock().expect("the writer's state");
-        let t = (s.jobs > 0).then(std::time::Instant::now);
-        while s.jobs > 0 {
+        let target = s.sealed;
+        let t = (s.applied < target).then(std::time::Instant::now);
+        while s.applied < target {
             s = w.shared.changed.wait(s).expect("the writer's state");
         }
         if let Some(t) = t {
@@ -604,19 +738,6 @@ impl ContentStore {
             Some(e) => Err(StoreError::Invalid(format!("a write queued behind the run failed: {e}"))),
             None => Ok(()),
         }
-    }
-
-    /// Before a write of this handle's own (not queued): the writer's open batch commits, so the write waits for the
-    /// jobs it holds, not for the batch to go idle. Every such write is one to move behind the writer.
-    pub(super) fn yield_writer(&self) {
-        if self.writer().is_some_and(|w| w.shared.state.lock().expect("the writer's state").open) {
-            self.commit_now();
-        }
-    }
-
-    /// Ends the writer's open batch: an empty job that runs alone, queued behind it.
-    fn commit_now(&self) {
-        self.queue("a wait for the writer", 0, Vec::new(), Box::new(|_| Ok(())), Run::Commit, false);
     }
 
     /// What the writer has done since it started.
@@ -658,6 +779,7 @@ fn guarded(syms: Syms, mut job: Job) -> Job {
 fn finish(shared: &Shared, bytes: usize, keys: &[Key], outcome: StoreResult<()>, cpu: f64, counted: bool) {
     let mut s = shared.state.lock().expect("the writer's state");
     s.bytes -= bytes;
+    s.sealed_bytes -= bytes;
     s.jobs -= 1;
     s.done = (s.done.0 + usize::from(counted), s.done.1 + bytes, s.done.2 + cpu);
     for key in keys {
@@ -820,9 +942,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    /// A batch rolled back for a fork (decision 0170) runs again; the waits for the writer (`commit_now`) queued while
-    /// it first ran are each kept. One was lost when the second run took the next and overwrote the first's: the
-    /// queue's count then never reached zero, and `written` waited for ever (the hung warm runs).
+    /// A wave rolled back for a fork (decision 0170) runs again; the waves queued while it first ran are each kept.
+    /// (A batch that took the next job while it ran lost one when run again: the queue's count then never reached
+    /// zero, and `written` waited for ever, the hung warm runs. A wave takes nothing while it runs.)
     #[test]
     fn a_batch_run_again_after_a_fork_keeps_every_wait_queued_meanwhile() {
         let (dir, store) = store("fork-waits");
@@ -844,8 +966,11 @@ mod tests {
             }
             s.flush_atoms()
         }));
-        store.commit_now();
-        store.commit_now();
+        let later = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        for _ in 0..2 {
+            let l = Arc::clone(&later);
+            store.write_back_syms(Syms::None, "later", 0, vec![], Box::new(move |_| { l.fetch_add(1, std::sync::atomic::Ordering::SeqCst); Ok(()) }));
+        }
         go_tx.send(()).unwrap();
         let (done_tx, done_rx) = mpsc::channel();
         let other = ContentStore::open(&store.database_path).unwrap();
@@ -853,8 +978,50 @@ mod tests {
         assert_eq!(done_rx.recv_timeout(Duration::from_secs(10)), Ok(true), "every queued job written");
         assert!(store.atoms_handle().forked(), "the job forked the batch");
         assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 2, "rolled back and run again");
+        assert_eq!(later.load(std::sync::atomic::Ordering::SeqCst), 2, "each wave queued meanwhile written once");
         drop(store);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A run's writes wait for its boundary, then go in one transaction (decision 0259): before it the store holds
+    /// none of the wave, after it all. A boundary that does not seal (a cone round) leaves the wave open; another
+    /// run's boundary seals only its own wave; the run's end seals its last.
+    #[test]
+    fn a_runs_wave_is_written_whole_at_its_boundary() {
+        let (dir, store) = store("waves");
+        let other = ContentStore::open(&store.database_path).unwrap();
+        let kept = |s: &ContentStore, i: u8| s.stat_blob([i; 32]).unwrap().is_some();
+        let put = |s: &ContentStore, i: u8| s.write_back("blob", 0, vec![], Box::new(move |s| s.put_stat_blob([i; 32], b"kept")));
+        let waves = run_waves();
+        for i in 0..3 {
+            put(&store, i);
+        }
+        // Another run on another thread seals its own wave, not this one's.
+        std::thread::scope(|t| {
+            t.spawn(|| {
+                let _theirs = run_waves();
+                put(&other, 9);
+                end_wave(Boundary::Chunk);
+                other.written().unwrap();
+            });
+        });
+        assert!(kept(&other, 9), "the other run's wave is written");
+        assert!(!(0..3).any(|i| kept(&other, i)), "this run's wave is not, before its boundary");
+        let before = store.written_so_far().batches;
+        end_wave(Boundary::Chunk);
+        store.written().unwrap();
+        assert!((0..3).all(|i| kept(&other, i)), "the wave whole");
+        assert_eq!(store.written_so_far().batches, before + 1, "in one transaction");
+        // A cone round does not seal: the write waits for the run's end.
+        put(&store, 5);
+        end_wave(Boundary::ConeRound);
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(!kept(&other, 5));
+        drop(waves);
+        store.written().unwrap();
+        assert!(kept(&other, 5), "the run's end seals its last wave");
+        drop((store, other));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// The last handle's drop writes the queue; a `Hold` keeps the writer past a handle's drop.

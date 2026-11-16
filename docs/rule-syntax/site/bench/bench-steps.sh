@@ -41,7 +41,7 @@ for r in cold warm append body comment import rule; do
     edit $r $R/corpus-dl; edit $r $R/corpus-main
   fi
   env "${EXTRA[@]}" RERAIL_TAPE_CACHE=$R/store.sqlite RERAIL_RR_LIB=$SP/rs-now/lib nice -n 19 /usr/bin/time -l "$ENGINE" logic $R/rules $R/corpus-dl $R/dl-$r --chunk 1000000 > $R/dl-$r.log 2>&1
-  rc=$?; f=$( [ -f $R/dl-$r/violation.csv ] && wc -l < $R/dl-$r/violation.csv | tr -d ' ' || echo '?')
+  rc=$?; "$ENGINE" csv $R/dl-$r > /dev/null 2>&1; f=$( [ -f $R/dl-$r/violation.csv ] && wc -l < $R/dl-$r/violation.csv | tr -d ' ' || echo '?')
   set -- $(measure $R/dl-$r.log); printf "%-8s %-8s %8s %8s %8s %8s %9s  %s\n" $r datalog $1 $2 $3 $4 $f "rc=$rc $(grep -o '[0-9]* components native' $R/dl-$r.log | head -1)"
   RERAIL_HOME=$R/home-B RERAIL_AUTOSTART=0 nice -n 19 /usr/bin/time -l node $CLI scan --repo $R/corpus-main --scope repository --pack python --json --no-send > $R/main-$r.json 2> $R/main-$r.log
   rc=$?; f=$(python3 -I -c 'import json,sys; j=json.load(open(sys.argv[1])); print(len(j["violations"]))' $R/main-$r.json 2>/dev/null || echo '?')
