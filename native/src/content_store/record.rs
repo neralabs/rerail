@@ -183,6 +183,37 @@ impl ContentStore {
     }
 }
 
+/// The store's own kinds: pins, their release, a run's hold on its plans. Each is queued under the name a warm run
+/// judges it by (`profile::WARM_WRITES_ALLOWED`).
+impl ContentStore {
+    /// Pins `sources` (held: until a manifest names them, O95), in the run's record as `what`.
+    pub fn record_pins(&self, what: &'static str, sources: Vec<SourceId>) {
+        fn apply(cx: &Apply<'_>, body: codec::Body) -> StoreResult<()> {
+            let ids: Vec<SourceId> = codec::from_body("a pin", body)?;
+            cx.store.pin_held_sources(&ids)
+        }
+        self.record(what, Vec::new(), &sources, None, apply);
+    }
+
+    /// Releases `owner`'s pins and holds, in the run's record as `what`.
+    pub fn record_release(&self, what: &'static str, owner: String) {
+        fn apply(cx: &Apply<'_>, body: codec::Body) -> StoreResult<()> {
+            let owner: String = codec::from_body("a release", body)?;
+            cx.store.release_pins(&owner).map(drop)
+        }
+        self.record(what, Vec::new(), &owner, None, apply);
+    }
+
+    /// Holds `plans` for `owner` until `until`, in the run's record as `what`.
+    pub fn record_plan_holds(&self, what: &'static str, plans: Vec<[u8; 32]>, owner: String, until: i64) {
+        fn apply(cx: &Apply<'_>, body: codec::Body) -> StoreResult<()> {
+            let (plans, owner, until): (Vec<[u8; 32]>, String, i64) = codec::from_body("a hold", body)?;
+            plans.iter().try_for_each(|plan| cx.store.hold_corpus_plan(*plan, &owner, until))
+        }
+        self.record(what, Vec::new(), &(plans, owner, until), None, apply);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

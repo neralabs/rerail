@@ -402,7 +402,7 @@ pub(super) fn stored_source(store: &ContentStore, text: &str) -> StoreResult<Opt
     off();
     let found = store.sources_by_hashes(&[HashKey::sha256(text.as_bytes())])?.pop().flatten();
     if let Some(id) = found {
-        store.write_back_syms(crate::content_store::write_back::Syms::None, "a source's pin", 0, Vec::new(), Box::new(move |s| s.pin_held_sources(&[id])));
+        store.record_pins("a source's pin", vec![id]);
     }
     Ok(found)
 }
@@ -422,22 +422,19 @@ pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, stor
     if !store && stored_by.is_some_and(|key| !cache.queued(key)) {
         return;
     }
-    cache.write_back_syms(
-        crate::content_store::write_back::Syms::None,
-        "a source the manifest names",
-        text.len(),
-        Vec::new(),
-        Box::new(move |s| {
-            let hash = HashKey::sha256(text.as_bytes());
-            let found = match s.held_source_by_hash(hash)? {
-                Some(id) => Some(id),
-                None if store => Some(s.put_source_hashed(text.as_bytes(), hash, &[])?),
-                None => None,
-            };
-            s.name_sources(found);
-            Ok(())
-        }),
-    );
+    // In the run's record (decision 0306): found, or stored, as the writer applies it.
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
+        let (text, store): (String, bool) = crate::content_store::record::codec::from_body("a source the manifest names", body)?;
+        let hash = HashKey::sha256(text.as_bytes());
+        let found = match cx.store.held_source_by_hash(hash)? {
+            Some(id) => Some(id),
+            None if store => Some(cx.store.put_source_hashed(text.as_bytes(), hash, &[])?),
+            None => None,
+        };
+        cx.name(found);
+        Ok(())
+    }
+    cache.record("a source the manifest names", Vec::new(), &(text, store), None, apply);
 }
 
 /// How many contents of one path the memo keeps (decision 0117): the newest, by their last use. Worktrees or
@@ -741,7 +738,7 @@ pub(super) fn found_sources(store: &ContentStore, digests: &[[u8; 32]]) -> Store
     let found = store.sources_by_hashes(&hashes)?;
     let pins: Vec<SourceId> = found.iter().flatten().copied().collect();
     if !pins.is_empty() {
-        store.write_back_syms(crate::content_store::write_back::Syms::None, "the pins of the sources the run read", pins.len() * 8, Vec::new(), Box::new(move |store| store.pin_held_sources(&pins)));
+        store.record_pins("the pins of the sources the run read", pins);
     }
     Ok(found)
 }
@@ -910,7 +907,7 @@ pub(super) type Held = std::sync::Mutex<std::collections::HashMap<([u8; 32], Str
 
 /// A file's content as the memo knows it: its stored source; a content the store does not hold yet, by its digest
 /// (its source is written by the store's writer, behind the run, with its tape: decision 0104); or (held) its digest.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(in crate::code_rule_dsl) enum Content {
     Stored(SourceId),
     Unstored([u8; 32]),

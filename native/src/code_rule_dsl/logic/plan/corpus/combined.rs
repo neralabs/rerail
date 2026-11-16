@@ -222,8 +222,7 @@ impl<'a> Pins<'a> {
 
 impl Drop for Pins<'_> {
     fn drop(&mut self) {
-        let owner = owner(&self.key);
-        self.cache.write_back("the combined program's pins released", 0, Vec::new(), Box::new(move |store| store.release_pins(&owner).map(drop)));
+        self.cache.record_release("the combined program's pins released", owner(&self.key));
     }
 }
 
@@ -234,7 +233,7 @@ pub(super) fn name_program(cache: &ContentStore, key: &[u8; 32], late: &std::syn
     // Stored already (decision 0228): named now, its pin queued (a lock). The writer finds what a write queued
     // before it stores; a warm run's entry is stored, and its lookup there was a write.
     if let Some(found) = program_source(cache, key, false).ok().flatten() {
-        cache.write_back_syms(crate::content_store::write_back::Syms::None, "a source's pin", 0, Vec::new(), Box::new(move |s| s.pin_held_sources(&[found])));
+        cache.record_pins("a source's pin", vec![found]);
         late.lock().expect("the late sources").push(found);
         late.lock().expect("the late sources").extend(image_sources(cache, key).ok().unwrap_or_default());
         return;
@@ -243,18 +242,14 @@ pub(super) fn name_program(cache: &ContentStore, key: &[u8; 32], late: &std::syn
     if !cache.queued(&queued(key)) {
         return;
     }
-    let key = *key;
-    cache.write_back_syms(
-        crate::content_store::write_back::Syms::None, "the combined program's text, named",
-        0,
-        Vec::new(),
-        Box::new(move |store| {
-            let found = program_source(store, &key, true)?;
-            store.name_sources(found);
-            store.name_sources(image_sources(store, &key)?);
-            Ok(())
-        }),
-    );
+    // In the run's record (decision 0306), after the entry's write.
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
+        let key: [u8; 32] = crate::content_store::record::codec::from_body("the combined program's text, named", body)?;
+        cx.name(program_source(cx.store, &key, true)?);
+        cx.name(image_sources(cx.store, &key)?);
+        Ok(())
+    }
+    cache.record("the combined program's text, named", Vec::new(), key, None, apply);
 }
 
 /// The source of the program text of texts `key`'s entry, when the store keeps the entry and the text; `held`: the

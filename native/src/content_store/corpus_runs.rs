@@ -195,7 +195,7 @@ impl<'m> Protection<'m> {
 }
 
 /// A file's stat when its source was read: what the stat index keeps of it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FileStat {
     pub size: i64,
     pub mtime_ns: i64,

@@ -1926,14 +1926,9 @@ impl<'a> HeldPlan<'a> {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let owner = format!("corpus-run:{}:{}:{}", std::process::id(), now.as_nanos(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
         let lease = now.as_secs() as i64 + Self::LEASE_SECS;
-        // Held by the store's writer, behind the run (decision 0104), before any memo row the run queues after it.
-        let (held, by) = (plans.to_vec(), owner.clone());
-        store.write_back_syms(
-            crate::content_store::write_back::Syms::None, "the run's hold on its plans",
-            0,
-            Vec::new(),
-            Box::new(move |s| held.iter().try_for_each(|plan| s.hold_corpus_plan(*plan, &by, lease))),
-        );
+        // Held by the store's writer, behind the run (decision 0104), in the run's record (decision 0306). Until the
+        // record is applied the run's collection lease keeps collection off its plans (`hold_collection`).
+        store.record_plan_holds("the run's hold on its plans", plans.to_vec(), owner.clone(), lease);
         store.hold_sources(&owner, lease)?;
         Ok(HeldPlan { store, owner })
     }
@@ -1944,8 +1939,7 @@ impl Drop for HeldPlan<'_> {
         // The manifest names the plan now, or the run failed: either way the hold is done, released by the writer
         // after the manifest (queued before). A failed release lapses.
         self.store.release_holder(&self.owner);
-        let owner = self.owner.clone();
-        self.store.write_back_syms(crate::content_store::write_back::Syms::None, "the run's hold released", 0, Vec::new(), Box::new(move |s| s.release_pins(&owner).map(|_| ())));
+        self.store.record_release("the run's hold released", self.owner.clone());
     }
 }
 
@@ -7165,22 +7159,18 @@ fn run_observed(
     if recording && !worker_cpu.3.is_empty() {
         let _stats = crate::code_rule_dsl::logic::profile::span(|| "record stats".into());
         // Behind the run (decision 0104): a new content's source is written by then, by the tape's write queued before.
-        let (root, read) = (canonical_root.clone(), worker_cpu.3.clone());
-        store.write_back_syms(
-            crate::content_store::write_back::Syms::None, "the files' stats",
-            read.len() * 64,
-            vec![(stats_key(&root), None)],
-            Box::new(move |store| {
-                let mut ids = Vec::with_capacity(read.len());
-                // A busy-store retry must leave the captured inputs available.
-                for (path, stat, content) in &read {
-                    if let Some(id) = content.resolve(store)? {
-                        ids.push((path.clone(), *stat, id));
-                    }
+        // In the run's record (decision 0306): a content is its source as the store holds it then.
+        fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+            let (root, read, started_ns): (String, Vec<(String, crate::content_store::FileStat, memo::Content)>, i64) = crate::content_store::record::codec::from_body("the files' stats", body)?;
+            let mut ids = Vec::with_capacity(read.len());
+            for (path, stat, content) in read {
+                if let Some(id) = content.resolve(cx.store)? {
+                    ids.push((path, stat, id));
                 }
-                store.record_corpus_stats(&root, &ids, started_ns)
-            }),
-        );
+            }
+            cx.store.record_corpus_stats(&root, &ids, started_ns)
+        }
+        store.record("the files' stats", vec![stats_key(&canonical_root)], &(&canonical_root, &worker_cpu.3, started_ns), None, apply);
     }
     // Publish all source references before releasing the lease and starting collection (decision 0053).
     // The memo's relations, named and typed, so a SQL session can read the run's frames (docs/sql-access).
