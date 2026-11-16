@@ -3170,23 +3170,16 @@ fn run_observed(
             let _step = crate::code_rule_dsl::logic::profile::span(|| "locate the chunks' rows".into());
             let located = crate::code_rule_dsl::typing::file_local::locate(&mut program);
             drop(_step);
-            // The joins pushed are made per rule, so two programs' copies of one library rule made two: merged again, and so
-            // are the relations over them, before the program splits.
-            let _step = crate::code_rule_dsl::logic::profile::span(|| "merge identical relations again".into());
-            let merged = if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
-                crate::code_rule_dsl::logic::simplify::merge_identical(&mut program)
-            } else {
-                let (m, s, _) = merge_and_drop_repeats(&mut program);
-                (m, s)
-            };
-            drop(_step);
             // The prepared program's one image (decision 0281's path, step 4): made here, after the last pass that edits
-            // the tree; the passes after it run on the manager over the version (step 5: the inputs the rules read,
-            // the rule order), and the run's readers read the version (`Lowered::placed`), the split's parts views of
-            // it. A program the image cannot hold is an error, not a run read from the tree.
+            // the tree; the passes after it run on the manager over the version (step 5: the merges, the inputs the
+            // rules read, the rule order), and the run's readers read the version (`Lowered::placed`), the split's
+            // parts views of it. A program the image cannot hold is an error, not a run read from the tree.
             let _step = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's image and the passes on it".into());
             let (version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).and_then(|b| b.finish()).map_err(Error::Plan)?;
-            let version = preparation::run(version).map_err(Error::Plan)?;
+            let (version, found) = preparation::run(version).map_err(Error::Plan)?;
+            // The joins pushed are made per rule, so two programs' copies of one library rule made two: merged again
+            // (`preparation::MergeIdentical`), and so are the relations over them, before the program splits.
+            let merged = (found.merged, found.shared);
             drop(_step);
             // The domains of the program as it now is: those `lower` found are of the program before the rewrites above
             // (pushed joins, factorized and demanded exports, merged rules), which rename and combine relations
@@ -3199,9 +3192,18 @@ fn run_observed(
             // the tree's (the tree's inputs pruned as `preparation::InputsRead` prunes the version's).
             #[cfg(debug_assertions)]
             if std::env::var_os("RERAIL_RULE_ORDER").is_none() {
+                let tree_merged = if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
+                    crate::code_rule_dsl::logic::simplify::merge_identical(&mut program)
+                } else {
+                    let (m, s, _) = merge_and_drop_repeats(&mut program);
+                    (m, s)
+                };
+                assert_eq!(tree_merged, merged, "the version's merges are the tree's");
                 let read: BTreeSet<String> = program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string())).collect();
                 let outputs = program.outputs.clone();
                 program.inputs.retain(|rel| read.contains(rel) || outputs.contains(rel));
+                let (tree_version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).and_then(|b| b.finish()).map_err(Error::Plan)?;
+                assert_eq!((tree_version.size(), tree_version.digest()), (version.size(), version.digest()), "the version's program is the tree's after the merges");
                 assert_eq!(lower::domains(&program)?, lowered.domains, "the version's domains are the tree's");
                 crate::code_rule_dsl::typing::file_local::programs_over(&program, version.clone()).map_err(Error::Plan)?;
             }

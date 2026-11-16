@@ -403,6 +403,13 @@ step 3 replaces what is under the writer.
      "a derivation that changed nothing is its input" compared digests, a sum blind to the rules' order, so a
      reordering derivation was taken for its input: it now compares the rules in order too. Tests:
      `the_domains_of_a_version_are_the_trees`, `the_passes_after_the_image_prune_the_inputs_and_reorder_the_rules`.
+   - Done (b), second slice: the merges (`corpus::merge_and_drop_repeats`) are manager passes,
+     `preparation::DropRepeated` and `MergeIdentical`, and the image is made before them. `congruence` is read from
+     the version: a rule's template is a token list mirroring `template::canonical`'s text (variables by first
+     appearance, relations read a placeholder, `gated` and a count's `over` unwritten as the text leaves them), its
+     partition refinement and the classes' naming and writing `merge`'s one for one; a head is renamed through a new
+     `Rewrite::head_as`. A debug build checks the merged version's size and digest and the counts against the
+     tree's merges. Test: `the_merges_on_a_version_are_the_trees`.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.
 7. **The per-clause half of `rr::lower`** as `RulePass`es over the tape's clauses (0276 step 5), with `Domains`; the

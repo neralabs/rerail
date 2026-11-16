@@ -7,6 +7,9 @@ use crate::code_rule_dsl::logic::program_image::Version;
 use std::collections::HashSet;
 use std::sync::Arc;
 
+mod merge;
+pub use merge::{DropRepeated, MergeIdentical};
+
 /// An input no rule reads is never bound or measured: it is not an input of what runs (an output stays one).
 pub struct InputsRead;
 
@@ -57,10 +60,30 @@ impl ProgramPass for RuleOrder {
     }
 }
 
+/// What the passes found: the relations merged, the classes that went to the shared namespace, and the repeated
+/// rules dropped.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Found {
+    pub merged: usize,
+    pub shared: usize,
+    pub repeated: usize,
+}
+
 /// The passes that follow the program's image, over `version`: the program that runs, a base (what the store keeps),
-/// and the pipeline's stages, traced.
-pub fn run(version: Arc<Version>) -> Result<Arc<Version>, String> {
+/// with what they found; the pipeline's stages traced. The merges (`merge`) run as `corpus::merge_and_drop_repeats`
+/// runs them, or the merge alone with `RERAIL_SAME=off`.
+pub fn run(version: Arc<Version>) -> Result<(Arc<Version>, Found), String> {
     let mut p = Pipeline::new("preparation", version);
+    let mut merge = MergeIdentical::default();
+    let mut repeats = DropRepeated::default();
+    if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
+        p.program(&mut merge);
+    } else {
+        p.program(&mut repeats);
+        p.program(&mut merge);
+        p.program(&mut repeats);
+    }
+    let found = Found { merged: merge.merged, shared: merge.shared, repeated: repeats.0 };
     p.program(&mut InputsRead);
     if let Ok(order) = std::env::var("RERAIL_RULE_ORDER") {
         p.program(&mut RuleOrder(order));
@@ -70,10 +93,11 @@ pub fn run(version: Arc<Version>) -> Result<Arc<Version>, String> {
         crate::code_rule_dsl::logic::profile::decision("preparation pass (decision 0281)", || format!("{}: {:?}, {:?}", s.pass, s.ran, s.form));
     }
     // The store keeps a base's bytes (`program_text::store_version`): an edit's version is folded into one.
-    match out.base_bytes() {
-        Some(_) => Ok(out),
-        None => out.fold(),
-    }
+    let out = match out.base_bytes() {
+        Some(_) => out,
+        None => out.fold()?,
+    };
+    Ok((out, found))
 }
 
 #[cfg(test)]
@@ -90,7 +114,7 @@ mod tests {
         )
         .unwrap();
         let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
-        let out = run(v.clone()).unwrap();
+        let (out, _) = run(v.clone()).unwrap();
         assert!(out.base_bytes().is_some(), "a base");
         let inputs: Vec<&str> = out.inputs().map(|a| out.text(a)).collect();
         assert_eq!(inputs, ["a", "c"], "b is read by no rule; c is an output");
