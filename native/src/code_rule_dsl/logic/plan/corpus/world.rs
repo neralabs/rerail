@@ -45,12 +45,13 @@ fn asks(prog: &front::Program, req: &str) -> bool {
 
 /// The requests a program makes, each with what answers it, before a load's per-file rows are added
 /// (`corpus::loading`): a directory's entries, a file's lines and a load's `loaded` row.
-pub(super) fn answers(prog: &front::Program) -> BTreeMap<String, Vec<String>> {
+pub(super) fn answers(f: &crate::code_rule_dsl::logic::plan::fields::Fields<'_>) -> BTreeMap<String, Vec<String>> {
     WORLD
         .iter()
         .map(|(rel, req)| (*req, *rel))
         .chain([(LOAD, LOADED)])
-        .filter(|(req, _)| asks(prog, req))
+        // By a rule, or as facts, as `asks` counts them (a constant key lowers to a request fact).
+        .filter(|(req, _)| f.derives(req) || f.has_facts(req))
         .map(|(req, rel)| (req.to_owned(), vec![rel.to_owned()]))
         .collect()
 }

@@ -221,7 +221,7 @@ finding(n, s) :- node(_, n, "call", _, _), field(n, "function", f), text(f, s), 
     // What is left of the rule: the join and the cross-file negation.
     let reads: Vec<&str> = finding[0].body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str()).collect();
     assert_eq!(reads, [made[0].as_str(), "defined"]);
-    let split = programs(&prog);
+    let split = programs(&prog).unwrap();
     assert!(split.exports.contains(&made[0]));
     assert!(!split.base.iter().any(|b| b == "field" || b == "text" || b == "op"), "{:?}", split.base);
     // The join takes the comparison and the negated base read along.
@@ -289,7 +289,7 @@ named(n) :- node(_, n, "identifier", _, _), text(n, x), side(x).
     assert_eq!(locations["root"], [0, 1], "{locations:?}");
     assert!(local.contains("under") && local.contains("named"), "{local:?}");
     assert!(constant_relations(&program).contains("side"));
-    let parts = programs(&program);
+    let parts = programs(&program).unwrap();
     assert!(parts.local.rules.iter().any(|r| r.head.rel == "side"), "the chunks derive side for named");
     assert!(cross_causes(&program).get("under").is_none(), "{:?}", cross_causes(&program));
 }
@@ -318,31 +318,31 @@ hit(n, l) :- pick(n), line(n, l).
     let split = |text: &str| {
         let mut program = parse(text).unwrap();
         push_local_joins(&mut program);
-        programs(&program)
+        programs(&program).unwrap()
     };
     let parts = split(&source(""));
     assert!(parts.base.iter().any(|b| b == "line"), "{:?}", parts.base);
-    let held = semijoin_bases(&parts.versions.as_ref().expect("the parts' versions").cross, &parts.base).expect("every lookup is of a node an export holds");
+    let held = semijoin_bases(&parts.versions.cross, &parts.base).expect("every lookup is of a node an export holds");
     assert!(held.contains("line"), "{held:?}");
     // `child(p, c, _)` reaches nodes no export holds: their lines would be missing. So would a cross-file rule's
     // own enumeration of nodes (`node(_, n, "identifier", _, _), text(n, x), names(x)`).
     let parts = split(&source(".decl kid(c: node, l: number)\nkid(c, l) :- pick(p), child(p, c, _), line(c, l).\n.output kid"));
     assert!(parts.base.iter().any(|b| b == "child"), "{:?}", parts.base);
-    assert!(!semijoin_bases(&parts.versions.as_ref().expect("the parts' versions").cross, &parts.base).unwrap().contains("line"));
-    let parts = programs(&parse(&source(".decl own(n: node)\nown(n) :- node(_, n, \"identifier\", _, _), text(n, x), names(x).\n.decl seen(n: node, l: number)\nseen(n, l) :- own(n), line(n, l).\n.output seen")).unwrap());
-    let held = semijoin_bases(&parts.versions.as_ref().expect("the parts' versions").cross, &parts.base).unwrap();
+    assert!(!semijoin_bases(&parts.versions.cross, &parts.base).unwrap().contains("line"));
+    let parts = programs(&parse(&source(".decl own(n: node)\nown(n) :- node(_, n, \"identifier\", _, _), text(n, x), names(x).\n.decl seen(n: node, l: number)\nseen(n, l) :- own(n), line(n, l).\n.output seen")).unwrap()).unwrap();
+    let held = semijoin_bases(&parts.versions.cross, &parts.base).unwrap();
     assert!(!held.contains("line") && !held.contains("node") && !held.contains("text"), "{held:?}");
     // Per relation: a walk of `child` that looks up no attribute leaves `line` a semi-join for the other rules.
     let parts = split(&source(".decl kid(c: node, i: number)\nkid(c, i) :- pick(p), child(p, c, i).\n.decl kidline(p: node, l: number)\nkidline(p, l) :- kid(c, _), pick(p), child(p, c, _), line(p, l).\n.output kid, kidline"));
     assert!(parts.base.iter().any(|b| b == "child"), "{:?}", parts.base);
-    let held = semijoin_bases(&parts.versions.as_ref().expect("the parts' versions").cross, &parts.base).unwrap();
+    let held = semijoin_bases(&parts.versions.cross, &parts.base).unwrap();
     assert!(held.contains("line"), "{held:?}");
     // A tainted output's findings are decoded through `node`: kept whole.
     assert!(!held.contains("node"), "{held:?}");
     // `tape(n, par, ..)`'s parent is a node though a number: a walk up it reaches nodes no export holds.
     let parts = split(&source(".decl tape(n: node, par: number, size: number, depth: number)\n.input tape\n.decl up(n: node, p: number)\nup(n, p) :- hit(n, _), names(_), tape(n, p, _, _).\nup(n, q) :- up(n, p), names(_), tape(p, q, _, _).\n.output up"));
     if parts.base.iter().any(|b| b == "tape") {
-        assert!(!semijoin_bases(&parts.versions.as_ref().expect("the parts' versions").cross, &parts.base).unwrap().contains("tape"));
+        assert!(!semijoin_bases(&parts.versions.cross, &parts.base).unwrap().contains("tape"));
     }
 }
 
@@ -427,7 +427,7 @@ named(f, s) :- uses(f, _), child(p, f, _), text(p, s).
         let rule = prog.rules.iter().find(|r| r.head.rel == *part).unwrap();
         assert!(rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel.starts_with("fzk"))), "{rule}");
     }
-    let split = programs(&prog);
+    let split = programs(&prog).unwrap();
     for part in &parts {
         assert!(split.exports.iter().any(|e| e == part), "{part} is exported: {:?}", split.exports);
     }

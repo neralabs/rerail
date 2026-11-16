@@ -315,26 +315,18 @@ pub(in crate::code_rule_dsl) fn columns_of(domains: &Domains) -> HashMap<&str, V
     domains.iter().map(|(r, ds)| (r.as_str(), ds.iter().copied().map(Some).collect())).collect()
 }
 
-/// The domains of a new relation's columns past `known` (those it shares with a relation `domains` covers), from
-/// `rule`, its one rule: each column's declared type (`types`), else its head variable's domain in the rule's body
-/// (`cols`, `columns_of`), else a name, as `domains` finds them. A support relation (`supports`, `h__supN`) holds its
-/// head's columns, then the variables its body binds: a kind there (`kind(p, k)`) is a kind id, no atom (decision
-/// 0170), and given the head's domains alone it was taken for one.
-pub(in crate::code_rule_dsl) fn rule_head_domains(rule: &super::super::front::Rule, types: &[&str], known: &[Domain], cols: &HashMap<&str, Vec<Option<Domain>>>) -> Result<Vec<Domain>> {
-    let vars = rule_vars(rule, &mut |a: &Atom| cols.get(a.rel.as_str()).map(Vec::as_slice))?;
-    Ok(types
-        .iter()
-        .enumerate()
-        .map(|(c, t)| match *t {
-            _ if c < known.len() => known[c],
-            "int" | "flat" | "min" | "max" => Domain::Int,
-            "node" => Domain::Node,
-            _ => match rule.head.args.get(c) {
-                Some(Term::Var(v)) => vars.get(v.as_str()).copied().unwrap_or(Domain::Name),
-                _ => Domain::Name,
-            },
-        })
-        .collect())
+/// The domain of column `c` (declared `t`) of a new relation that shares its first `known` columns with a relation
+/// `domains` covers: past those, its declared type's, else its variable's domain in the relation's one rule (`var`),
+/// else a name, as `domains` finds them. A support relation (`supports`, `h__supN`) holds its head's columns, then the
+/// variables its body binds: a kind there (`kind(p, k)`) is a kind id, no atom (decision 0170), and given the head's
+/// domains alone it was taken for one.
+pub(in crate::code_rule_dsl) fn column_domain(c: usize, t: &str, known: &[Domain], var: Option<Domain>) -> Domain {
+    match t {
+        _ if c < known.len() => known[c],
+        "int" | "flat" | "min" | "max" => Domain::Int,
+        "node" => Domain::Node,
+        _ => var.unwrap_or(Domain::Name),
+    }
 }
 
 /// A lowered program's tree, where a reader still reads one (decision 0173: on the run path, none should): given, or
@@ -427,6 +419,14 @@ impl Tree {
                 })
             }
             None => super::body::Placed::of_program(self.get()),
+        }
+    }
+    /// The version it is held beside or decoded from, where it has no maintained parts: what a reader reads in place
+    /// of the tree.
+    pub fn version(&self) -> Option<&std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+        match &self.of {
+            Some((v, None)) => Some(v),
+            _ => None,
         }
     }
     /// The tree, where it was given rather than decoded from a version: what a check against the version reads.
@@ -528,7 +528,8 @@ impl Lowered {
         let placed = match &self.version {
             Some(v) if self.maint.is_some() => super::body::Placed::derived(v.clone(), self.maint.clone()),
             Some(v) if !self.tree_maintained() => super::body::Placed::whole(v.clone()),
-            _ => return super::body::Placed::of_program(&self.program),
+            // The tree's version where it is held beside one (the prepared program's), else an image made of it.
+            _ => return self.program.placed(),
         };
         // A version made from another's is stated beside the tree until the run reads no tree (t36 item 7): in a debug
         // build (every test's), it is checked to be the tree's program, so the two statements cannot drift apart unseen.
@@ -574,7 +575,7 @@ impl Lowered {
         Ok(match &self.version {
             Some(v) if self.maint.is_some() => super::body::Placed::derived(v.clone(), self.maint.clone()).digest(),
             Some(v) if !self.tree_maintained() => super::body::Placed::whole(v.clone()).digest(),
-            _ => super::body::Placed::of_program(&self.program)?.digest(),
+            _ => self.program.placed()?.digest(),
         })
     }
 

@@ -504,6 +504,13 @@ impl Stats {
     /// No statistics but the program's kindsets: the caller measures every input (`measured`, `tree`), as the
     /// typing programs' own ingestion does (`corpus::run` without T's facts, list step 29).
     pub fn empty(prog: &Program) -> Self {
+        Stats::with_kindsets(prog.kindsets.clone())
+    }
+    /// `empty`, of a program read through its fields (`Fields::kindsets`).
+    pub fn empty_of(f: &fields::Fields<'_>) -> Self {
+        Stats::with_kindsets(f.kindsets().iter().map(|(k, ks)| (f.text(*k).to_owned(), ks.iter().map(|&a| f.text(a).to_owned()).collect())).collect())
+    }
+    fn with_kindsets(kindsets: BTreeMap<String, Vec<String>>) -> Self {
         Stats {
             col: ColStats::default(),
             kfreq: Default::default(),
@@ -524,7 +531,7 @@ impl Stats {
             docs: None,
             memo: HashMap::new(),
             steps_cache: StepsCache::default(),
-            kindsets: Arc::new(prog.kindsets.clone()),
+            kindsets: Arc::new(kindsets),
             lazy: LazyMap::default(),
             prior_later: BTreeSet::new(),
         }
@@ -9851,7 +9858,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
             let prog = p0.program(&lists)?;
             let _ = writeln!(f, "== run of {} rules", prog.rules.len());
-            for scc in &sccs {
+            for scc in sccs.iter() {
                 let _ = writeln!(f, "-- stratum {scc:?}");
                 for r in prog.rules.iter().filter(|r| scc.contains(r.head.rel.as_str())) {
                     let _ = writeln!(f, "{r}");
@@ -9864,7 +9871,8 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     // level's strata are adjacent: a level is a device wave. The sort is stable, so within a level the strata keep
     // the dependency order's. Only strata run natively make waves (SQL launches nothing), so a run all in SQL keeps
     // the dependency order, and T's plans in it.
-    let (sccs, level_of) = by_level(sccs, &deps, model.inputs.native.contains("program"));
+    // `by_level` reorders them: its own copy, the version's kept as it is.
+    let (sccs, level_of) = by_level(sccs.to_vec(), &deps, model.inputs.native.contains("program"));
     // Each relation's rules, as keys of the program's version (its rule `k` is the program's rule `k`), in the
     // program's order.
     let mut rules_by: IndexMap<&str, Vec<RuleKey>> = IndexMap::new();
@@ -10482,7 +10490,8 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                         by_head.entry(form_v.v.rel_name(form_v.rule(i).head().rel())).or_default().push(RuleKey::new(k, i));
                     }
                     let mut pieces: Vec<(BTreeSet<String>, Vec<RuleKey>)> = form_sccs
-                        .into_iter()
+                        .iter()
+                        .cloned()
                         .map(|piece| {
                             let rules: Vec<RuleKey> = piece.iter().flat_map(|r| by_head.get(r.as_str()).into_iter().flatten().copied()).collect();
                             (piece, rules)
@@ -10854,6 +10863,11 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             }
             // The stratum's own requests, answered again from its kept rows: a native step's answers are a function of
             // its requests, so they are as they were exactly when the step's leaves (the files it read) are.
+            // A request below the stratum that no stratum derives is the program's own facts (a constant world
+            // request, `rr_dir_req("sub")`): not kept, so its answers cannot be replayed, and the stratum runs.
+            if clean && answering && above.iter().any(|(p, q)| !ks.has_rows(q) && !run.answered.contains_key(p.as_str())) {
+                clean = false;
+            }
             let mut replayed: BTreeMap<String, BTreeSet<Vec<i64>>> = BTreeMap::new();
             if clean && answering {
                 let _span = super::profile::span(|| "the stratum's requests answered again".into());
@@ -11661,9 +11675,11 @@ pub fn decode_kept(
     for (rel, held) in rels.into_iter().filter(|(r, _)| names.contains(r)) {
         super::native::component::hold_as(db, &rel, held);
     }
-    let prog = &lowered.program;
+    // The program's inputs and declarations, read from its version.
+    let placed = lowered.placed()?;
+    let f = placed.fields()?;
     let outputs: Vec<&str> = names.iter().map(String::as_str).collect();
-    decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.iter().map(|(_, t)| t.to_string()).collect()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &names)
+    decoded_outputs(&outputs, &|r| f.is_input(r), &|r| f.columns(r).map(|c| c.into_iter().map(|(_, t)| t.to_owned()).collect()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &names)
 }
 
 /// The program's outputs as rows (decision 0239: symbols, kinds and fields as their text, every other value as it

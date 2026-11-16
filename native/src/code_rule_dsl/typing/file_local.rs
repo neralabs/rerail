@@ -771,10 +771,9 @@ pub struct Programs {
     /// rules, a part of them, so the parts are made from the program again when it is read.
     pub file_local: std::collections::BTreeSet<String>,
     pub constants: std::collections::BTreeSet<String>,
-    /// The parts' versions (decision 0244): each a view of the program's version, its fields overlaid; `None` for a
-    /// program the image has no form for. The trees above are the same programs, for the readers that still read a
-    /// tree (the program digests until decision 0173 step 6, the split's analyses).
-    pub versions: Option<Parts>,
+    /// The parts' versions (decision 0244): each a view of the program's version, its fields overlaid. The trees above
+    /// are the same programs, for the readers that still read a tree (decision 0281's path, step 4).
+    pub versions: Parts,
 }
 
 /// The versions of a split's parts (`Programs::versions`): the file-local and the cross-file part.
@@ -784,7 +783,22 @@ pub struct Parts {
     pub cross: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
 }
 
-pub fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Programs {
+pub fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Result<Programs, String> {
+    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(prog)?.finish()?;
+    programs_over(prog, v)
+}
+
+/// `programs`, with `prog`'s version where the caller made it (the prepared program's, made once: decision 0281's
+/// path, step 4): the parts are views of it, and no other image of the program is made.
+pub fn programs_over(prog: &crate::code_rule_dsl::logic::front::Program, version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Programs, String> {
+    let (local, constants, locations, same_doc) = found(prog);
+    assemble(prog, version, local, constants, locations, same_doc)
+}
+
+/// What `programs` splits `prog` by: its file-local relations, its relations of constants (derived in both parts),
+/// and the location and same-document columns (`split_located`).
+#[allow(clippy::type_complexity)]
+fn found(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::collections::BTreeSet<String>, std::collections::BTreeSet<String>, std::collections::BTreeMap<String, Vec<usize>>, std::collections::BTreeMap<String, Vec<usize>>) {
     let (mut local, locations, same_doc) = split_located(prog);
     // A program that reads no document (a later phase over an earlier one's exports, `corpus::phases`) has no
     // file-local part: its relations made from those exports alone would be constants, derived again whole in the
@@ -797,20 +811,20 @@ pub fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Programs 
     // A relation of constants is derived in both parts (`constant_relations`), but where no document is read: the
     // file-local part then has nothing to give them to.
     let constants = if no_document { Default::default() } else { constant_relations(prog) };
-    assemble(prog, None, local, constants, locations, same_doc)
+    (local, constants, locations, same_doc)
 }
 
-/// `prog` split at its file-local relations `local` (`programs`), deriving the relations of `constants` in both parts:
-/// the parts and what passes between them. What is costly to find is the arguments; this only selects (`programs`
-/// finds them, a prepared program keeps them).
-pub fn assemble(
-    prog: &crate::code_rule_dsl::logic::front::Program,
-    version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
-    local: std::collections::BTreeSet<String>,
-    constants: std::collections::BTreeSet<String>,
-    locations: std::collections::BTreeMap<String, Vec<usize>>,
-    same_doc: std::collections::BTreeMap<String, Vec<usize>>,
-) -> Programs {
+/// What passes between a split's parts (`assemble`), `local` the file-local relations: the exports, the base
+/// relations the cross-file part reads (and those it decodes), and the file-local relations it derives itself from a
+/// stored input (`projected`). Names alone: no part is made.
+struct Crossing {
+    exports: Vec<String>,
+    base_read: Vec<String>,
+    base: Vec<String>,
+    projected: std::collections::BTreeSet<String>,
+}
+
+fn crossing(prog: &crate::code_rule_dsl::logic::front::Program, local: &std::collections::BTreeSet<String>) -> Crossing {
     use crate::code_rule_dsl::logic::front::Literal;
     use std::collections::BTreeSet;
     let is_local = |rel: &str| local.contains(rel);
@@ -848,12 +862,29 @@ pub fn assemble(
             base.push(decode.to_owned());
         }
     }
+    Crossing { exports, base_read, base, projected }
+}
+
+/// `prog` split at its file-local relations `local` (`programs`), deriving the relations of `constants` in both parts:
+/// the parts and what passes between them. What is costly to find is the arguments; this only selects (`programs`
+/// finds them, a prepared program keeps them).
+pub fn assemble(
+    prog: &crate::code_rule_dsl::logic::front::Program,
+    version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
+    local: std::collections::BTreeSet<String>,
+    constants: std::collections::BTreeSet<String>,
+    locations: std::collections::BTreeMap<String, Vec<usize>>,
+    same_doc: std::collections::BTreeMap<String, Vec<usize>>,
+) -> Result<Programs, String> {
+    let Crossing { exports, base_read, base, projected } = crossing(prog, &local);
+    let is_local = |rel: &str| local.contains(rel);
+    let in_cross = |rel: &str| !is_local(rel) || projected.contains(rel);
     let mut l = prog.clone();
     l.rules.retain(|r| is_local(&r.head.rel) || constants.contains(r.head.rel.as_str()));
     l.natives.retain(|rel, _| is_local(rel));
     l.lattice.retain(|rel, _| is_local(rel));
     l.gates.retain(|(rel, _)| is_local(rel));
-    l.outputs = prog.outputs.iter().filter(|o| is_local(o)).cloned().chain(exports.iter().cloned()).collect::<BTreeSet<_>>().into_iter().collect();
+    l.outputs = prog.outputs.iter().filter(|o| is_local(o)).cloned().chain(exports.iter().cloned()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
     // The reference graph is bound for the cross-file part only (no rule reading it is file-local): no chunk has it.
     l.inputs.retain(|i| !matches!(i.as_str(), "reference_edge" | "reference_open"));
     let mut c = prog.clone();
@@ -865,27 +896,24 @@ pub fn assemble(
     c.inputs = base_read.into_iter().chain(exports.iter().cloned()).collect();
     crate::code_rule_dsl::logic::version_trace::note("split.local", prog, &l);
     crate::code_rule_dsl::logic::version_trace::note("split.cross", prog, &c);
-    // The parts as versions of the program's (the stored image's, else made here): the rules each keeps, a view, and
-    // the fields above, an overlay over it. A program the image has no form for has none.
-    let version = version.or_else(|| {
-        crate::code_rule_dsl::logic::program_image::Builder::of_program_less_maintenance(prog).and_then(|b| b.finish()).ok().map(|(v, _)| v)
-    });
-    let versions = version.filter(|_| prog.again.is_empty() && prog.together.is_empty()).and_then(|v| {
+    // The parts as versions of the program's (decision 0244): the rules each keeps, a view, and the fields above, an
+    // overlay over it. A split of a maintained program (its `again`, `together`) has no image: refused.
+    if !prog.again.is_empty() || !prog.together.is_empty() {
+        return Err("a maintained program is not split".into());
+    }
+    let versions = {
         use crate::code_rule_dsl::logic::program_image::PartFields;
         let local_rule = |rel: &str| is_local(rel) || constants.contains(rel);
         let not_local = |rel: &str| !is_local(rel);
-        let local = v.part(&local_rule, &l.inputs, &l.outputs, PartFields { natives: &is_local, lattice: &is_local, gates: &is_local }).ok()?;
-        let cross = v.part(&in_cross, &c.inputs, &c.outputs, PartFields { natives: &in_cross, lattice: &not_local, gates: &not_local }).ok()?;
-        Some(Parts { local, cross })
-    });
-    // Each part's tree is its version's where it has one, made here beside it (`lower::Tree::beside`): a reader on
-    // the run's path is named as one of a version's tree; else the tree alone.
-    use crate::code_rule_dsl::logic::plan::lower::Tree;
-    let (l, c) = match &versions {
-        Some(p) => (Tree::beside(p.local.clone(), l), Tree::beside(p.cross.clone(), c)),
-        None => (Tree::given(l), Tree::given(c)),
+        let local = version.part(&local_rule, &l.inputs, &l.outputs, PartFields { natives: &is_local, lattice: &is_local, gates: &is_local })?;
+        let cross = version.part(&in_cross, &c.inputs, &c.outputs, PartFields { natives: &in_cross, lattice: &not_local, gates: &not_local })?;
+        Parts { local, cross }
     };
-    Programs { local: l, cross: c, exports, base, locations, same_doc, file_local: local, constants, versions }
+    // Each part's tree is held beside its version (`lower::Tree::beside`): a reader on the run's path is named as one
+    // of a version's tree.
+    use crate::code_rule_dsl::logic::plan::lower::Tree;
+    let (l, c) = (Tree::beside(versions.local.clone(), l), Tree::beside(versions.cross.clone(), c));
+    Ok(Programs { local: l, cross: c, exports, base, locations, same_doc, file_local: local, constants, versions })
 }
 
 /// Pushes the file-local part of each cross-file rule into the chunks: the rule's positive reads of base relations
@@ -1727,13 +1755,17 @@ pub fn moved(prog: &crate::code_rule_dsl::logic::front::Program) -> Vec<&str> {
 fn locate_once(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Result<Vec<String>, (Vec<String>, Vec<String>)> {
     use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
     use std::collections::BTreeSet;
-    let split = programs(prog);
-    let local: BTreeSet<&str> = split.local.rules.iter().map(|r| r.head.rel.as_str()).collect();
-    let targets: BTreeSet<String> = split
-        .exports
+    // The split's names alone (`found`, `crossing`), not its parts: the file-local part's heads, and what it hands on
+    // (the exports and its own outputs).
+    let (file_local, constants, locations, _) = found(prog);
+    let Crossing { exports, .. } = crossing(prog, &file_local);
+    let local: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).filter(|h| file_local.contains(h) || constants.contains(h)).collect();
+    let local: BTreeSet<&str> = local.iter().map(String::as_str).collect();
+    let local_outputs = prog.outputs.iter().filter(|o| file_local.contains(*o));
+    let targets: BTreeSet<String> = exports
         .iter()
-        .chain(split.local.outputs.iter())
-        .filter(|r| local.contains(r.as_str()) && split.locations.get(*r).is_none_or(Vec::is_empty))
+        .chain(local_outputs)
+        .filter(|r| local.contains(r.as_str()) && locations.get(*r).is_none_or(Vec::is_empty))
         .cloned()
         .collect();
     // Spans are located through docof, as are ordinary nodes.

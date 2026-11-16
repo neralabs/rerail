@@ -97,7 +97,7 @@ fn simplify(p: &mut Placed, db: &Connection, inputs: &mut Inputs, resident: &mut
             by_head.entry(head(p, k)).or_default().push(k);
         }
         let mut quiet = Vec::new();
-        for scc in p.components()? {
+        for scc in p.components()?.iter() {
             if scc.len()!=1 { continue; }
             let rel=scc.iter().next().unwrap();
             if f.is_input(rel) || f.native(rel).is_some() || f.has_facts(rel) { continue; }

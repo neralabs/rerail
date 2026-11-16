@@ -731,9 +731,15 @@ impl Placed {
     }
     /// Its components, dependencies first, in the tree's order (`front::components_of`), its maintained program's
     /// sets run together.
-    pub fn components(&self) -> Result<Vec<std::collections::BTreeSet<String>>> {
+    pub fn components(&self) -> Result<Arc<super::super::program_image::analyses::Components>> {
+        use super::super::program_image::analyses::Components;
         let f = super::fields::Fields::of(self).ok_or_else(|| Error::Plan("the components of a version of rules alone".into()))?;
-        Ok(super::super::program_image::analyses::components_by_name(f.v, f.about, &self.together())?)
+        let together = self.together();
+        if together.is_empty() {
+            // Held by the version (decision 0281 §2): computed once however many readers and `Placed`s ask.
+            return super::super::program_image::manager::analysis::<Components>(&self.v).map_err(Error::Plan);
+        }
+        Ok(Arc::new(Components(super::super::program_image::analyses::components_by_name(f.v, f.about, &together)?)))
     }
     /// The sets its maintained program runs as one component (`Program::together`, `Maint`), by name.
     pub fn together(&self) -> Vec<std::collections::BTreeSet<String>> {
@@ -777,6 +783,14 @@ impl Placed {
         match &self.ids {
             Some(ids) => ids.to_vec(),
             None => self.v.rules().map(|r| r.id()).collect(),
+        }
+    }
+    /// The program's rules, in its order: its version's (whose ids are ranges where it is a view, not `0..len`), or
+    /// those `ids` names.
+    pub fn rules(&self) -> Box<dyn Iterator<Item = RuleRef<'_>> + '_> {
+        match &self.ids {
+            None => self.v.rules(),
+            Some(ids) => Box::new(ids.iter().map(|&id| self.v.rule(id).expect("a rule of its version"))),
         }
     }
     /// The program's rule `k`.

@@ -129,8 +129,11 @@ Built (2026-11-15) as above, with one change: the sections keep their relations'
 identities it was made under in one more section (`memo::COVERED`, two words each). A relation with no rows for
 a file has no section, so whether an entry holds it is read there, not from its rows. The space names the phase
 and the file-local part's relations as well: nested runs with no memoised relations otherwise shared one space
-and overwrote each other's frames. The kept statistics, the tree counts and a session's inputs stay keyed by the
-whole program: they are of every file together.
+and overwrote each other's frames. The kept statistics and the tree counts stay keyed by the whole program: they
+are of every file together. The cross-file part is not (2026-11-15): its inputs' frames and a session's kept part
+are named by the cross program alone (`retain::keys`), since an edit of a file-local rule leaves that program as it
+was. Under the whole program's key every edit gave each input a frame of a new name, none found again, and an input
+no memo entry holds read as changed (ep2: 574 of 2,375 cross strata ran again; a session ran all 2,715).
 
 Measured on the edit profile (ep2, load 30–45), findings identical to the warm run's at each step:
 
@@ -150,6 +153,18 @@ the files around them (profile shares of the edit):
 
 Each is the shape this section asks for, not yet met: an entry's sections written when their rows change, and a
 partial hit built only for what its cone reads. Next.
+
+Measured again (2026-11-15, after the cross part's keying above and the hub's roll-up; ep2, B101's body edited,
+finding sets identical to the unchanged run's):
+
+| Step | Instructions | CPU | Wall | Cross strata run |
+|---|---|---|---|---|
+| unchanged (the whole-run cutoff) | 6.9 G | 0.8 s | 1.9 s | — |
+| one rule's body, a new process | 80.2 G | 10.8 s | 13.6 s | 1 of 2,715, no input changed |
+| the same in a session (dl30, 30 files) | 53.6 G | 8.1 s | — | 1 of 2,715 |
+
+Combining the 317 programs (34 G) and preparing (12 G) are now most of an edit, in a session as in a new process:
+the next lever (work queue).
 
 ### 3. A message is not the program
 

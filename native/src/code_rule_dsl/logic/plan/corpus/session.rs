@@ -27,7 +27,8 @@ pub(in crate::code_rule_dsl) struct Session {
     pub(super) store: ContentStore,
     pub(super) memo: memo::Held,
     /// The cross-file part as the last run left it (decision 0077): an edit runs the strata whose inputs changed. One
-    /// per cross program (`retain::key`): a run's passes are different programs, and one would take the other's place.
+    /// per cross program (`retain::keys`' second, of the cross program alone, which a file-local rule's edit leaves):
+    /// a run's passes are different programs, and one would take the other's place.
     pub(super) cross: Mutex<std::collections::HashMap<[u8; 32], super::retain::Retained>>,
     /// Each output a run of the session wrote (`out/<rel>`): the program's cross-file key and its rows. A later run of
     /// that program whose output stratum is clean leaves it in the stack as it is.

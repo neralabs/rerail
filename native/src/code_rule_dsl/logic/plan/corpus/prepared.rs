@@ -309,6 +309,20 @@ pub fn prepared_of(
         vocabulary.markers = list("prepared_marker")?;
         vocabulary
     };
+    // The stored image, which the lowered program's readers read: checked, in a debug build, to be its text's program.
+    // A program stored as text has it made here.
+    let version = match version {
+        Some(v) => {
+            #[cfg(debug_assertions)]
+            {
+                let of = crate::code_rule_dsl::logic::plan::body::Placed::of_program(&program).map_err(|e| e.to_string())?;
+                assert_eq!(of.digest(), crate::code_rule_dsl::logic::plan::body::Placed::whole(v.clone()).digest(), "a stored program's image is not its text's program");
+            }
+            v
+        }
+        None => crate::code_rule_dsl::logic::program_image::Builder::of_program(&program)?.finish()?.0,
+    };
+    let version_kept = version.clone();
     let split = match facts.get("prepared_split").is_some_and(|r| !r.is_empty()) {
         true => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the split's parts, of the lowered program and what the split found".into());
@@ -326,17 +340,18 @@ pub fn prepared_of(
                 }).collect())
             };
             let set = |rel: &str| -> Result<std::collections::BTreeSet<String>, String> { Ok(list(rel)?.into_iter().collect()) };
-            crate::code_rule_dsl::typing::file_local::assemble(&program, version, set("prepared_file_local")?, set("prepared_constant")?, columns("prepared_location")?, columns("prepared_same_doc")?)
+            crate::code_rule_dsl::typing::file_local::assemble(&program, version, set("prepared_file_local")?, set("prepared_constant")?, columns("prepared_location")?, columns("prepared_same_doc")?)?
         }
         false => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "split the lowered program".into());
-            crate::code_rule_dsl::typing::file_local::programs(&program)
+            crate::code_rule_dsl::typing::file_local::programs_over(&program, version)?
         }
     };
     Ok(Prepared {
         prog,
         vocabulary: Arc::new(vocabulary),
-        lowered: lower::Lowered { program: lower::Tree::given(program), version: None, maint: None, domains, ops, dialect },
+        // Held beside its stored image, which its readers read (`Lowered::placed`).
+        lowered: lower::Lowered { program: lower::Tree::beside(version_kept, program), version: None, maint: None, domains, ops, dialect },
         sets,
         matchers,
         demanded: list("prepared_demanded")?,
@@ -444,8 +459,18 @@ pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], p
     super::memo::off();
     let mut facts = rest_of(prepared);
     let mut documents = Vec::new();
-    for (name, prog) in [("front", &prepared.prog), ("lowered", &prepared.lowered.program)] {
-        let Some((digest, sources)) = program_text::store(store, prog)? else { return Ok(None) };
+    for (name, prog) in [("front", Some(&prepared.prog)), ("lowered", None)] {
+        // The lowered program's image is its version's, stored as it is (no encode of its tree); its tree where it
+        // has none.
+        let stored = match (prog, prepared.lowered.program.version()) {
+            (Some(p), _) => program_text::store(store, p)?,
+            (None, Some(v)) => match program_text::store_version(store, v)? {
+                Some(s) => Some(s),
+                None => program_text::store(store, &prepared.lowered.program)?,
+            },
+            (None, None) => program_text::store(store, &prepared.lowered.program)?,
+        };
+        let Some((digest, sources)) = stored else { return Ok(None) };
         facts.entry(PROGRAM.to_owned()).or_default().push([Value::Str(name.to_owned().into()), Value::Str(hex(&digest).into())].into());
         documents.extend(sources);
     }
