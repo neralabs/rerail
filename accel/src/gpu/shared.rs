@@ -9,9 +9,14 @@
 //!   (1, 1¼, 1½, 1¾ of a power of two), so a large lease wastes at most a quarter. A buffer a command has used is
 //!   resident already, so a pooled one costs neither its creation nor its first mapping: about 6 µs against 0.1 µs
 //!   for a small one (0095), and about 20 ms a GiB for a large one (0266 §12), which is why large buffers are kept.
-//! - **Idle allowances.** Buffers under `SLAB_MIN` share `IDLE_LIMIT`; slabs (`SLAB_MIN` and up) share their own,
-//!   a quarter of the Metal budget unless set (`set_slab_idle_limit`). Past an allowance, the least recently
-//!   returned idle buffers are released first.
+//! - **One budget for all GPU memory** (0266 §16). The Metal budget (`crate::budget::metal`) holds what
+//!   `rerail-metal`'s ledger reserves (`set_other_reserved`), every live lease (relational work's, the device
+//!   blocks of `rerail_metal::pool`, the tape residency's slabs) and every idle buffer. Idle buffers fill what the
+//!   rest leaves, no more: past it, the least recently returned are released first. `set_slab_idle_limit` caps idle
+//!   slabs further, when set.
+//! - **One eviction order.** Room for a buffer (`make_room`) is made by releasing idle buffers, least recently
+//!   returned first, then by retiring what the evictor holds (`set_evictor`: the residency's least recently used
+//!   slab), whose memory comes back as idle buffers once its last reader lets go.
 //! - **Returning.** A lease goes back when it is dropped. Its holder drops it once every command buffer that reads
 //!   it has completed (the host's next write into it is not ordered after a GPU read), or hands it to a command
 //!   buffer (`Pooled::after`), which returns it when the command buffer completes.
@@ -30,11 +35,9 @@ use std::sync::{Mutex, OnceLock};
 
 /// The smallest size class.
 const SMALLEST: usize = 16 << 10;
-/// The most bytes of buffers under `SLAB_MIN` the pool keeps idle (decision 0039).
-const IDLE_LIMIT: usize = 32 << 20;
 /// The smallest buffer counted as a slab: kept idle under the slab allowance.
 pub const SLAB_MIN: usize = 16 << 20;
-/// The slab allowance when set (`set_slab_idle_limit`); 0: a quarter of the Metal budget.
+/// The cap on idle slabs when set (`set_slab_idle_limit`); 0: none beside the budget.
 static SLAB_IDLE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Sets how many bytes of idle slabs the pool keeps.
@@ -44,9 +47,20 @@ pub fn set_slab_idle_limit(bytes: usize) {
 
 fn slab_idle_limit() -> usize {
     match SLAB_IDLE.load(std::sync::atomic::Ordering::Relaxed) {
-        0 => crate::budget::metal() / 4,
+        0 => usize::MAX,
         b => b,
     }
+}
+
+/// What the ledger of `rerail-metal` reserves now.
+fn other() -> usize {
+    OTHER_RESERVED.get().map_or(0, |f| f())
+}
+
+/// The bytes idle buffers may hold, with `need` more about to be leased: what the budget leaves past the ledger and
+/// the live leases.
+fn idle_room(need: usize) -> usize {
+    crate::budget::metal().saturating_sub(other() + LIVE.load(std::sync::atomic::Ordering::Relaxed) + need)
 }
 /// The bytes leased now (and not yet dropped): what relational work holds on the device, for the profile.
 static LIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -154,15 +168,17 @@ fn class(bytes: usize) -> usize {
 }
 
 impl Pool {
-    /// Releases the least recently returned idle buffers until both allowances hold.
-    fn trim(&mut self) {
+    /// Releases the least recently returned idle buffers until they fit what the budget leaves with `need` more
+    /// leased (and the slab cap, when set).
+    fn trim(&mut self, need: usize) {
         let slab_limit = slab_idle_limit();
-        while self.held - self.held_slabs > IDLE_LIMIT || self.held_slabs > slab_limit {
-            let slabs = self.held_slabs > slab_limit;
+        let room = idle_room(need);
+        while self.held > room || self.held_slabs > slab_limit {
+            let slabs_only = self.held <= room;
             let oldest = self
                 .idle
                 .iter()
-                .filter(|(c, v)| !v.is_empty() && (**c >= SLAB_MIN) == slabs)
+                .filter(|(c, v)| !v.is_empty() && (!slabs_only || **c >= SLAB_MIN))
                 .min_by_key(|(_, v)| v[0].0)
                 .map(|(c, _)| *c);
             let Some(c) = oldest else { break };
@@ -189,6 +205,8 @@ pub struct Pooled {
     buffer: Option<Buffer>,
     /// Whether it goes back to the pool (a buffer past the largest class is made to size and released).
     keep: bool,
+    /// Made for this lease (zero, never written), else recycled (another lease's bytes).
+    fresh: bool,
 }
 
 impl Pooled {
@@ -200,6 +218,11 @@ impl Pooled {
     /// it completes, and no later lease can be handed it meanwhile.
     pub fn release(mut self) {
         self.keep = false;
+    }
+
+    /// Whether the buffer was made for this lease, so it reads zero; else it holds an earlier lease's bytes.
+    pub fn fresh(&self) -> bool {
+        self.fresh
     }
 
     /// The buffer's host address.
@@ -287,7 +310,7 @@ impl Drop for Pooled {
             p.held_slabs += class;
         }
         p.idle.entry(class).or_default().push((at, b));
-        p.trim();
+        p.trim(0);
     }
 }
 
@@ -301,19 +324,21 @@ pub fn lease(bytes: usize) -> Result<Pooled, String> {
         }
         let b = objc::rc::autoreleasepool(|| shared.device.new_buffer(bytes as u64, MTLResourceOptions::StorageModeShared));
         leased(&b);
-        return Ok(Pooled { buffer: Some(b), keep: false });
+        return Ok(Pooled { buffer: Some(b), keep: false, fresh: true });
     }
     let mut p = pool().lock().expect("the pool");
     if let Some(b) = p.take(class) {
         p.reused += 1;
         leased(&b);
-        return Ok(Pooled { buffer: Some(b), keep: true });
+        return Ok(Pooled { buffer: Some(b), keep: true, fresh: false });
     }
     p.made += 1;
+    // A new buffer: idle ones give way to it first, so the budget holds both.
+    p.trim(class);
     drop(p);
     let b = crate::score::phase("new buffer", || objc::rc::autoreleasepool(|| shared.device.new_buffer(class as u64, MTLResourceOptions::StorageModeShared)));
     leased(&b);
-    Ok(Pooled { buffer: Some(b), keep: true })
+    Ok(Pooled { buffer: Some(b), keep: true, fresh: true })
 }
 
 /// What else holds the device's budget beside relational work (the buffer pool's reservations, `rerail-metal`'s
@@ -325,28 +350,52 @@ pub fn set_other_reserved(reader: fn() -> usize) {
     let _ = OTHER_RESERVED.set(reader);
 }
 
-/// A lease that keeps within the Metal budget (`crate::budget::metal`, decision 0126): refused, as a capacity
-/// refusal its caller runs on the CPU, when relational work's leases and the pool's reservations would pass it. The
-/// device joins' buffers are leased so: without it, their waves and the strata run apart from them held up to 600 MB
-/// of a 512 MB budget. Idle buffers are given back first.
-pub fn lease_within(bytes: usize) -> Result<Pooled, String> {
-    let need = class(bytes);
-    let other = OTHER_RESERVED.get().map_or(0, |f| f());
-    let fits = || {
-        let (live, _) = held_bytes();
-        other + live + need <= crate::budget::metal()
-    };
-    if !fits() {
-        drop_free();
-        if !fits() {
-            let (live, idle) = held_bytes();
-            return Err(format!(
-                "device budget: a lease of {} MB past the Metal budget of {} MB ({} MB leased, {} MB idle, {} MB reserved by the buffer pool)",
-                need >> 20, crate::budget::metal() >> 20, live >> 20, idle >> 20, other >> 20
-            ));
+/// What gives way when the budget is short, after the idle buffers (`set_evictor`): it retires one thing it holds
+/// (the residency's least recently used slab) and says whether it did. It must not wait for a lock (it is called
+/// from inside allocations): a holder it cannot reach now is skipped.
+static EVICTOR: OnceLock<fn() -> bool> = OnceLock::new();
+
+/// Sets the evictor (once per process; a second call is ignored).
+pub fn set_evictor(f: fn() -> bool) {
+    let _ = EVICTOR.set(f);
+}
+
+/// Makes room in the Metal budget for `need` more bytes: idle buffers released, least recently returned first, then
+/// the evictor's holdings retired one at a time while it has any. Whether the ledger's reservations, the live leases
+/// and `need` fit the budget now. A retired holding reached by a batch still running comes back later.
+pub fn make_room(need: usize) -> bool {
+    let fits = || other() + LIVE.load(std::sync::atomic::Ordering::Relaxed) + need <= crate::budget::metal();
+    loop {
+        pool().lock().expect("the pool").trim(need);
+        if fits() {
+            return true;
+        }
+        if !EVICTOR.get().is_some_and(|f| f()) {
+            return false;
         }
     }
+}
+
+/// A lease that keeps within the Metal budget (`crate::budget::metal`, decision 0126): refused, as a capacity
+/// refusal its caller runs on the CPU (or splits its batch), when the leases and the ledger's reservations would
+/// pass it after room is made (`make_room`). The device joins' buffers are leased so: without it, their waves and
+/// the strata run apart from them held up to 600 MB of a 512 MB budget.
+pub fn lease_within(bytes: usize) -> Result<Pooled, String> {
+    let need = class(bytes);
+    if !make_room(need) {
+        let (live, idle) = held_bytes();
+        return Err(format!(
+            "device budget: a lease of {} MB past the Metal budget of {} MB ({} MB leased, {} MB idle, {} MB reserved by the buffer pool)",
+            need >> 20, crate::budget::metal() >> 20, live >> 20, idle >> 20, other() >> 20
+        ));
+    }
     lease(bytes)
+}
+
+/// Releases idle buffers until they fit what the budget leaves: for a reservation made outside the pool (the
+/// ledger's), after it is made.
+pub fn trim_idle() {
+    pool().lock().expect("the pool").trim(0);
 }
 
 thread_local! {

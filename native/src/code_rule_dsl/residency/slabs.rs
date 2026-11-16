@@ -158,7 +158,7 @@ fn place(
     plan: &Plan,
     grammar: &Grammar,
 ) -> Result<Resident, Error> {
-    let base = slab.buffer.host();
+    let base = slab.host();
     // SAFETY: `room` gave this range to this document alone, inside the slab's mapping.
     let region = |at: usize, length: usize| unsafe { std::slice::from_raw_parts_mut(base.add(at), length) };
     let tape_at = offset;

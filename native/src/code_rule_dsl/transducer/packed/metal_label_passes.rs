@@ -1533,7 +1533,7 @@ impl Runner<'_> {
     fn bind_slabs(&self, encoder: &metal::ComputeCommandEncoderRef) {
         let slabs = &self.tapes.table.slabs;
         for slot in 0..crate::code_rule_dsl::residency::slabs::MAX_SLABS {
-            let buffer = slabs.get(slot).or(slabs.last()).map_or(&self.flags.buffer, |slab| &slab.buffer.buffer);
+            let buffer = slabs.get(slot).or(slabs.last()).map_or(&self.flags.buffer, |slab| slab.buffer());
             encoder.set_buffer(SLAB_SLOT + slot as u64, Some(buffer), 0);
         }
     }
@@ -2189,7 +2189,7 @@ impl Runner<'_> {
         let lease = &self.workspace.as_ref().expect("a workspace").lease;
         let tapes = &self.tapes;
         let slabs = &tapes.table.slabs;
-        let slab = |slot: usize| slabs.get(slot).or(slabs.last()).map_or(&self.flags.buffer, |slab| &slab.buffer.buffer);
+        let slab = |slot: usize| slabs.get(slot).or(slabs.last()).map_or(&self.flags.buffer, |slab| slab.buffer());
         let program_buffers = &prepared.program;
         let (files, nodes, children, source, lines) = (&tapes.docs.buffer, slab(0), slab(1), slab(2), slab(3));
         [

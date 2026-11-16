@@ -115,7 +115,7 @@ fn sources_are_admitted_once_and_read_in_place() {
     for (source, file) in first.iter().zip(&files) {
         assert_eq!(source.offset % 16, 0);
         assert_eq!(source.bytes(), &file[..]);
-        assert!(source.offset + source.len.max(16) <= source.slab.buffer.byte_length());
+        assert!(source.offset + source.len.max(16) <= source.slab.byte_length());
     }
     // The same bytes are one source.
     assert!(Arc::ptr_eq(&first[0], &first[3]));

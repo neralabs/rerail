@@ -616,9 +616,9 @@ base is in. So:
 `accel::gpu::shared`'s pool now holds blocks:
 
 - **Size classes** are powers of two to 1 MiB, then four a doubling: at most a quarter wasted where it was half.
-- **Two idle allowances:** 32 MB for buffers under 16 MiB, and slabs (16 MiB and up) to a quarter of the Metal
-  budget. Past an allowance, the least recently returned buffer goes first. Before, a returned buffer past 32 MB
-  was released, so a large slab was never kept.
+- **Idle buffers** were first kept under two allowances: 32 MB for buffers under 16 MiB, and slabs (16 MiB and
+  up) to a quarter of the Metal budget. Before that, a returned buffer past 32 MB was released, so a large slab
+  was never kept. §16 replaces both with the one budget.
 - **`Pooled::after(cmd)`** returns a lease when its command buffer completes. **`Pooled::grow`** moves a lease's
   contents into a larger one.
 - **`lease_block(kind, bytes)`** makes a block in a pooled slab (`Block::over`). It binds by the slab's own
@@ -632,10 +632,46 @@ long, only when the block outgrows it, so no block is wrapped afresh per dispatc
 recycled with its buffer and read fresh; a lease returned at its command's completion; and a block grown into a
 larger slab that reads the same.
 
-`rerail_metal::slabs`, the tapes' residency, is the third keeper of GPU memory: anonymous slabs, each with one
-kept no-copy buffer, retired least-recently-used under a share of the Metal budget. Its slabs are append-only and
-keyed by content, where the pool's are recycled whole. Moving it onto this pool would make one budget and one
-eviction order for all GPU memory. That is its own step.
+### 16. One budget and one eviction order for all GPU memory
+
+There were four keepers of GPU memory:
+
+- this pool;
+- `rerail_metal::pool`, the device solves' blocks. Its idle blocks were mapped buffers under its own share, the
+  whole Metal budget;
+- `rerail_metal::slabs`, the tapes' residency: anonymous 64 MiB mappings, retired least recently used under half
+  the budget;
+- `rerail-metal`'s reservation ledger, which every mapped buffer reserved in. Only the device blocks' idle buffers
+  gave way to it.
+
+Each refused the others' requests without asking them for room. Now:
+
+- **The residency's slabs are pool leases.** A slab is still append-only and keyed by content, and it is still
+  retired whole, least recently used, under the residency's half of the budget. A retired slab's buffer goes back
+  to the pool when its last batch lets go, and the next lease of its class takes it, whoever leases. A recycled
+  slab holds its last lease's bytes, so each room in it is zeroed as it is handed out (`Pooled::fresh` tells a
+  new buffer, which reads zero, from a recycled one).
+- **The device blocks are pool leases.** `rerail_metal::pool` keeps its API (`lease`, `upload`, `zeroed`,
+  `made`) and a block made for its lease is still written once. Its own idle lists, its share and `give_way` are
+  gone.
+- **One budget.** The Metal budget holds the ledger's reservations, every live lease and every idle buffer. A
+  bounded lease (`lease_within`) fits the ledger, the live leases and itself. A ledger reservation fits itself,
+  the ledger and the live leases. Idle buffers fill what both leave, and no more: each new buffer and each
+  reservation trims them first. The two idle allowances are gone; `set_slab_idle_limit` caps idle slabs further
+  when set.
+- **One eviction order** (`make_room`): idle buffers, least recently returned first, then the evictor's holdings
+  one at a time. The evictor is the residency (`set_evictor(slabs::evict)`): it retires its least recently used
+  slab, which comes back as an idle buffer once its readers end. It takes the residency's lock only when the lock
+  is free (`try_lock`), so a request made while the residency places a document is not deadlocked. The
+  residency's own loop retires in that case.
+
+A test build leaves the live leases out of the ledger's check: there, the ledger is each test thread's own
+(`test_pool`), and the pool is the process's.
+
+Checked by the metal crate's tests, which include a new one: an evicted slab's buffer serves the next lease of its
+class, and a room in it reads zero past the bytes written. Also by the accel pool's tests, the engine's resident
+sources test, and `tapes_are_tape`, in which tier 1 on Metal reads its sources from the slabs and its tapes equal
+the CPU's.
 
 ## Path
 

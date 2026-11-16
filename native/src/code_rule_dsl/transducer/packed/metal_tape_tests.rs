@@ -79,7 +79,7 @@ fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
     encoder.set_buffer(2, Some(&out.buffer), 0);
     for slot in 0..4 {
         let slab = &table.slabs[slot.min(table.slabs.len() - 1)];
-        encoder.set_buffer(3 + slot as u64, Some(&slab.buffer.buffer), 0);
+        encoder.set_buffer(3 + slot as u64, Some(slab.buffer()), 0);
     }
     let count = table.nodes as u32;
     encoder.set_bytes(7, 4, std::ptr::from_ref(&count).cast());
