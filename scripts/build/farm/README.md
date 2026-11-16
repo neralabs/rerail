@@ -150,7 +150,9 @@ directory's runs are logged in `~/Library/Caches/rerail-farm/tidy/<key>.log`.
 
 What an agent does wrong is printed in its own build output, not left for someone to find. At the
 first compile of each cargo command the wrapper prints, as `warning: rerail-farm:` lines: a nice
-value under 19, a rustc other than the checkout pins, and the checkout's latest `diagnose --brief`
+value under 19, a rustc other than the checkout pins, a development build of the engine's CLI without
+`--features test-hooks` (it compiles every dependency crate apart from the tests' build of it:
+native/Cargo.toml), and the checkout's latest `diagnose --brief`
 findings (another toolchain or cargo configuration than the active worktrees, profile settings that
 differ, scripts that set the variables builds share), each with what to do. A cargo command that
 runs a whole test tier here (`cargo test` or `cargo nextest run` with no filter, or the gate

@@ -66,6 +66,28 @@ compiled. `--lib --tests` and `cargo test --workspace` (CI) also build the plain
 where feature unification turned the variant `AstMatcher::TestUnknown` on and its match arms off.
 The variant is now always there (e26cc1d5b).
 
+### One feature set (2026-11-16)
+
+The disk filled: the worktrees' target directories held 908 GB, 575 GB of it incremental state,
+406 GB of that unused for 2 hours. One worktree held 44 incremental directories for
+`rerail_logic` alone, 1–3 GB each. Each is a variant of the crate: a feature set, profile and
+dependency graph some command built it with. The cleaner kept each for a day (now 2 hours).
+
+The variants came mostly from feature unification. The engine's dev-dependencies turn on
+`test-hooks` in 16 workspace crates, 16 more grammars in `ast-grep-language`, and rusqlite's
+`array`. cargo applies dev-dependency features only to builds of test targets, so
+`cargo build --bin rerail-engine` built every dependency crate without them and
+`cargo nextest run --lib` built every one again with them: each edit compiled each crate above
+it twice, and kept two sets of incremental state. `cargo test -p <crate>` (the crate's
+`default`) and `--features metal-tests` add more.
+
+The engine's `test-hooks` feature now turns on everything the dev-dependencies add, and a
+development build of the CLI uses it (`AGENTS.md`). `cargo tree` then gives both builds the same
+features for every crate but the engine itself and the test-only `rerail-parser-tests`.
+`scripts/check/check-dev-features.py` (in the pre-commit hook) checks that the feature keeps
+up with the dev-dependencies, target-specific ones included, and the farm's wrapper tells a CLI
+build without it. Product and `profiling` builds are unchanged.
+
 ## 2. The test suite is the slow part
 
 One run of the engine's library tests took 762 s wall and 2,682 s CPU (45 CPU-minutes):

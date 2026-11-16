@@ -22,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 14
+VERSION = 15
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -355,6 +355,48 @@ VALUED = {"-p", "--package", "--profile", "--features", "-F", "-j", "--jobs", "-
           "--message-format", "--partition", "--test-threads", "--retries", "--archive-file", "--cargo-profile"}
 
 
+def cli_without_hooks(pid, checkout):
+    """True when cargo process `pid` builds the engine's CLI for development without `test-hooks`:
+    `cargo build` or `cargo run` of `rerail-engine` (by `--bin` or `-p`, or with no package named, from
+    `native/`) on the dev or debugging profile, for this machine. Such a build compiles every
+    dependency crate apart from the tests' build, and keeps a second set of incremental state
+    (native/Cargo.toml, `test-hooks`)."""
+    try:
+        words = subprocess.run(["ps", "-o", "args=", "-p", str(pid)], capture_output=True, text=True,
+                               timeout=5).stdout.split()
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    for i, w in enumerate(words):
+        if w in ("build", "run", "b", "r"):
+            rest = words[i + 1:]
+            break
+    else:
+        return False
+    if "--" in rest:
+        rest = rest[:rest.index("--")]
+    if any("test-hooks" in r or r == "--all-features" or r == "--no-default-features" for r in rest):
+        return False
+    if any(r in ("--release", "-r") or r.startswith("--target") for r in rest):
+        return False
+    for j, r in enumerate(rest):
+        prof = r.split("=", 1)[1] if r.startswith("--profile=") else (rest[j + 1] if r == "--profile" and j + 1 < len(rest) else None)
+        if prof is not None and prof not in ("dev", "debugging"):
+            return False
+    named = [r.split("=", 1)[1] if "=" in r else (rest[j + 1] if j + 1 < len(rest) else "")
+             for j, r in enumerate(rest) if r.split("=", 1)[0] in ("--bin", "-p", "--package")]
+    if named:
+        return "rerail-engine" in named
+    if any(r in ("--lib", "--bins", "--examples", "--workspace", "--all-targets") for r in rest):
+        return False
+    try:
+        out = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], capture_output=True, text=True,
+                             timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    cwd = next((l[1:] for l in out.splitlines() if l.startswith("n")), "")
+    return bool(checkout) and os.path.realpath(cwd) == os.path.realpath(os.path.join(checkout, "native"))
+
+
 def whole_tier(pid):
     """The command line of cargo process `pid` when it runs a whole test tier here (`cargo test` or
     `cargo nextest run` with no filter, or nextest's gate profile), else None."""
@@ -439,6 +481,10 @@ def advise(checkout, rustc):
             lines.append(f"this command runs a whole test tier here while {free[0]['name']} has "
                          f"{spare(free[0]):.0f} cores to spare: `scripts/dev/test-remote -- {tier.split(' ', 1)[-1]}` "
                          "runs it there (RERAIL_FARM_TESTS_HERE=1 says it must run here)")
+    if cli_without_hooks(cargo, checkout):
+        lines.append("this builds the engine's CLI without `--features test-hooks`, so every dependency crate is compiled "
+                     "apart from the tests' build of it, and keeps a second set of incremental state: "
+                     "`nice -n 19 cargo build --bin rerail-engine --features test-hooks` (AGENTS.md)")
     lease = leased(HERE)
     if lease:
         lines.append(f"a benchmark lease holds this machine until {time.strftime('%H:%M:%S', time.localtime(lease['until']))} "

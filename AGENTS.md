@@ -24,6 +24,19 @@ its test target compiles the whole crate a second time:
 So a run of the CLI builds `--bin rerail-engine` only, and the test target is built when
 tests are run, not with every build.
 
+Build the CLI for development with the tests' features:
+
+```
+nice -n 19 cargo build --bin rerail-engine --features test-hooks
+```
+
+The tests turn on `test-hooks` in every dependency crate (and a few registry features). A CLI
+build without it compiles each of those crates a second time, apart from the tests' build, and
+keeps a second set of incremental state: twice the CPU per edit, and about 2 GB of disk per crate
+variant. With it, an edit compiles each dependency crate once for both. The farm's wrapper says
+so at a build that leaves it out. Product builds (release, wasm, the Node addon) and measurement
+builds (`--profile profiling`) stay without it.
+
 The farm's wrapper runs `scripts/dev/clean-target` on each target directory every 15 minutes: it removes the
 builds no current build was made from, debug objects no binary names, and stale incremental state.
 Never run a full `cargo clean`.
