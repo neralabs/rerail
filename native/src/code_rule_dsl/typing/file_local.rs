@@ -190,7 +190,7 @@ pub use on_version::FileLocal;
 mod passes;
 pub use passes::Locate;
 pub mod export_demand;
-pub use export_demand::demand_exports;
+pub use export_demand::{DemandExports, demand_exports};
 pub use split_memo::forget as forget_splits;
 // cratify: `tests` is rerail-device-metal's (it mounts it)
 

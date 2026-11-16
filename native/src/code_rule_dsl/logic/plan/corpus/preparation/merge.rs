@@ -370,7 +370,9 @@ fn congruence(v: &Version, f: Fields<'_>) -> Vec<Vec<String>> {
         for &r in &cands {
             let distinct = rules(r).iter().map(|x| x.hash()).collect::<HashSet<u64>>().len();
             let n = ids.len();
-            class.push(*ids.entry((f.types(r), distinct, facts_of(r))).or_insert(n));
+            // An undeclared relation (a helper a pass made without one) has no types, as the tree's merge reads it.
+            let types = f.columns(r).map_or_else(Vec::new, |c| c.into_iter().map(|(_, t)| t).collect());
+            class.push(*ids.entry((types, distinct, facts_of(r))).or_insert(n));
         }
     }
     let mut templates: HashMap<Vec<Tok<'_>>, usize> = HashMap::new();

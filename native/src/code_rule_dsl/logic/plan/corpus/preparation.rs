@@ -64,6 +64,8 @@ impl ProgramPass for RuleOrder {
 /// rules dropped.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Found {
+    /// What the export demand cut (`file_local::DemandExports`): a line per export, or why it cut none.
+    pub demand: Vec<String>,
     /// The relations located (`file_local::Locate`), or those left.
     pub located: Result<Vec<String>, Vec<String>>,
     pub merged: usize,
@@ -78,6 +80,12 @@ pub struct Found {
 /// runs them, or the merge alone with `RERAIL_SAME=off`.
 pub fn run(version: Arc<Version>) -> Result<(Arc<Version>, Found), String> {
     let mut p = Pipeline::new("preparation", version);
+    // Each export cut to what its cross-file readers can use: their demand, made file-local.
+    let mut demand = crate::code_rule_dsl::typing::file_local::DemandExports::default();
+    p.program(&mut demand);
+    for line in &demand.lines {
+        crate::code_rule_dsl::logic::profile::decision("export demand", || line.clone());
+    }
     // Every relation the chunks hand on names its document per row, so a file's rows can be memoised (decision 0052).
     let mut locate = crate::code_rule_dsl::typing::file_local::Locate::default();
     p.program(&mut locate);
@@ -90,7 +98,7 @@ pub fn run(version: Arc<Version>) -> Result<(Arc<Version>, Found), String> {
         p.program(&mut merge);
         p.program(&mut repeats);
     }
-    let found = Found { located: locate.result(), merged: merge.merged, shared: merge.shared, repeated: repeats.0 };
+    let found = Found { demand: demand.lines, located: locate.result(), merged: merge.merged, shared: merge.shared, repeated: repeats.0 };
     p.program(&mut InputsRead);
     if let Ok(order) = std::env::var("RERAIL_RULE_ORDER") {
         p.program(&mut RuleOrder(order));

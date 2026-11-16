@@ -416,6 +416,20 @@ step 3 replaces what is under the writer.
      column a rule binds, one it leaves unnamed, or one through `docof` or `node`) and the cross-file read
      `r(…) :- r_at(_, …)` appended. A debug build checks the result against the tree's `locate`. Test:
      `rows_are_located_on_a_version_as_on_the_tree`.
+   - Done (b), fourth slice (2026-11-16): `demand_exports` is a manager pass (`file_local::DemandExports`,
+     `export_demand/on_version.rs`), the image made before it. Ported exactly first, helpers renamed from their
+     content after (the user's choice, 2026-11-16): an exact port can be checked by digest, a renaming cannot. Its
+     supersets, keys and cuts are the tree's one for one. Variables are read by name, as the tree reads them, so
+     each set and search runs in the tree's order. Each round's cut is built as a version of its own and split
+     through the `FileLocal` analysis, where the tree split its edited program again; the round that stays
+     file-local is written as the pass's derivation. That costs one extra split per prepared program, until the
+     analysis is carried from the candidate to the output. A debug build checks the lines and, through the passes
+     after it, the program's digest against the tree's `demand_exports`. On the 317 B-now rules it cuts 483 exports
+     through 166 supersets, as the tree does. Found by that run and fixed: the merge port asked an undeclared
+     helper's types (`Fields::types` panics where the tree's merge reads none), and a CLI built with
+     `--features test-hooks` panicked loading the test-only dialects' ast-grep grammars, which only the
+     dev-dependencies enabled (`crates/lang`'s `test-hooks` now enables them). Test:
+     `exports_are_cut_on_a_version_as_on_the_tree`.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.
 7. **The per-clause half of `rr::lower`** as `RulePass`es over the tape's clauses (0276 step 5), with `Domains`; the

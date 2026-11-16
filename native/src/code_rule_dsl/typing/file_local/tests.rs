@@ -509,3 +509,32 @@ fn rows_are_located_on_a_version_as_on_the_tree() {
     let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
     assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
 }
+
+/// An export read by a cross-file rule with a demand is cut on a version as the tree cuts it: the same lines, the
+/// same program (`xd_fl_later` through `dm_demand_0` and the key `xk_text_0`).
+#[test]
+fn exports_are_cut_on_a_version_as_on_the_tree() {
+    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+    let text = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl text(n: node, s: symbol)\n\
+                .decl within(c: node, n: node)\n.input node, text, within\n\
+                .decl fl_later(n: node, c: node)\nfl_later(n, c) :- within(c, n), node(_, c, \"call\", _, _).\n\
+                .decl named(n: node, s: symbol)\nnamed(n, s) :- text(n, s).\n\
+                .decl demand(n: node, m: node)\ndemand(n, m) :- named(n, s), named(m, s), node(_, n, \"function\", _, _), n != m.\n\
+                .decl later(n: node, c: node)\nlater(n, c) :- demand(n, _), fl_later(n, c), text(c, _).\n\
+                later(n, c) :- demand(n, _), fl_later(n, c), node(_, c, \"call\", 1, _).\n.output later\n";
+    let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    let mut pass = DemandExports::default();
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut pass);
+    let (out, _) = p.finish().unwrap();
+    let want = demand_exports(&mut tree);
+    assert!(want[0].starts_with("1 exports cut"), "{want:?}");
+    assert_eq!(pass.lines, want);
+    let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    let shown = out.show();
+    for made in ["xd_fl_later(", "dm_demand_0(", "xk_text_0("] {
+        assert!(shown.contains(made), "{made} in\n{shown}");
+    }
+    assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
+}
