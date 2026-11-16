@@ -16,16 +16,16 @@ vi.mock("node:child_process", async importOriginal => {
 });
 
 import Database from "better-sqlite3";
-import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
-import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
-import { setRuleSetting } from "../../../src/engine/catalog/rule-configuration.js";
-import { CheckoutCodeRuleRouter } from "../../../src/engine/code-rule/checkout-code-rule-router.js";
-import { CheckoutCatalogs, startingCheckout } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
-import { codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
-import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
-import { setCheckoutStarted } from "../../../src/runtime/index.js";
-import { setUpTestRepository } from "../../support/repository-rules.js";
-import { removeFolder } from "../../support/platform/remove-folder.js";
+import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js";
+import { recordCheckout } from "../../../../src/engine/catalog/repository-registry.js";
+import { setRuleSetting } from "../../../../src/engine/catalog/rule-configuration.js";
+import { CheckoutCodeRuleRouter } from "../../../../src/engine/code-rule/checkout-code-rule-router.js";
+import { CheckoutCatalogs, startingCheckout } from "../../../../src/engine/code-rule/code-rule-dsl-catalog.js";
+import { codeRuleSchema } from "../../../../src/engine/code-rule/code-rule-schema.js";
+import { openRerailDatabase, type RerailDatabase } from "../../../../src/engine/storage/database.js";
+import { setCheckoutStarted } from "../../../../src/runtime/index.js";
+import { setUpTestRepository } from "../../../support/repository-rules.js";
+import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
