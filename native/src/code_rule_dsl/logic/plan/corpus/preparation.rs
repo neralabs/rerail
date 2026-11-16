@@ -62,18 +62,25 @@ impl ProgramPass for RuleOrder {
 
 /// What the passes found: the relations merged, the classes that went to the shared namespace, and the repeated
 /// rules dropped.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Found {
+    /// The relations located (`file_local::Locate`), or those left.
+    pub located: Result<Vec<String>, Vec<String>>,
     pub merged: usize,
     pub shared: usize,
     pub repeated: usize,
 }
 
 /// The passes that follow the program's image, over `version`: the program that runs, a base (what the store keeps),
-/// with what they found; the pipeline's stages traced. The merges (`merge`) run as `corpus::merge_and_drop_repeats`
+/// with what they found; the pipeline's stages traced. The joins pushed are made per rule, so two programs' copies
+/// of one library rule made two: after the rows are located, they are merged again, and so are the relations over
+/// them, before the program splits. The merges (`merge`) run as `corpus::merge_and_drop_repeats`
 /// runs them, or the merge alone with `RERAIL_SAME=off`.
 pub fn run(version: Arc<Version>) -> Result<(Arc<Version>, Found), String> {
     let mut p = Pipeline::new("preparation", version);
+    // Every relation the chunks hand on names its document per row, so a file's rows can be memoised (decision 0052).
+    let mut locate = crate::code_rule_dsl::typing::file_local::Locate::default();
+    p.program(&mut locate);
     let mut merge = MergeIdentical::default();
     let mut repeats = DropRepeated::default();
     if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
@@ -83,7 +90,7 @@ pub fn run(version: Arc<Version>) -> Result<(Arc<Version>, Found), String> {
         p.program(&mut merge);
         p.program(&mut repeats);
     }
-    let found = Found { merged: merge.merged, shared: merge.shared, repeated: repeats.0 };
+    let found = Found { located: locate.result(), merged: merge.merged, shared: merge.shared, repeated: repeats.0 };
     p.program(&mut InputsRead);
     if let Ok(order) = std::env::var("RERAIL_RULE_ORDER") {
         p.program(&mut RuleOrder(order));

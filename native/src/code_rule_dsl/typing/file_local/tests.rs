@@ -484,3 +484,28 @@ fn the_split_of_a_version_is_maintained_across_an_edit() {
     let whole = crate::code_rule_dsl::logic::program_image::manager::analysis::<FileLocal>(&crate::code_rule_dsl::logic::program_image::Builder::of_program(&out.program(&Default::default()).unwrap()).unwrap().finish().unwrap().0).unwrap();
     assert_eq!(*after, *whole, "the maintained split is a whole split's");
 }
+
+/// Rows located on the version (`Locate`) as the tree's `locate` locates them: each export with no location column
+/// derived as `<r>_at(d, …)`, its document a column a rule binds (`named2`), one it leaves unnamed (`named`), or one
+/// through a node it binds (`named3`, by `node`; not a lone input atom, which the cross-file part derives itself), and
+/// read back by the cross-file part. The same program.
+#[test]
+fn rows_are_located_on_a_version_as_on_the_tree() {
+    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+    let text = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl text(n: node, s: symbol)\n.input node, text\n\
+                .decl named(s: symbol)\nnamed(s) :- node(_, n, \"function\", _, _), text(n, s).\n\
+                .decl named2(s: symbol)\nnamed2(s) :- node(d, n, \"class\", _, _), text(n, s), d > 0.\n\
+                .decl named3(s: symbol)\nnamed3(s) :- text(n, s), s != \"x\".\n\
+                .decl all(s: symbol)\nall(s) :- named(s), named2(s), named3(s).\n.output all\n";
+    let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    let mut pass = Locate::default();
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut pass);
+    let (out, _) = p.finish().unwrap();
+    let want = locate(&mut tree);
+    assert_eq!(want, Ok(vec!["named".to_owned(), "named2".to_owned(), "named3".to_owned()]));
+    assert_eq!(pass.result(), want);
+    let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
+}

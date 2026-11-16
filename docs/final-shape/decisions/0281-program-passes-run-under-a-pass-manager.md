@@ -410,6 +410,12 @@ step 3 replaces what is under the writer.
      partition refinement and the classes' naming and writing `merge`'s one for one; a head is renamed through a new
      `Rewrite::head_as`. A debug build checks the merged version's size and digest and the counts against the
      tree's merges. Test: `the_merges_on_a_version_are_the_trees`.
+   - Done (b), third slice: `locate` is a manager pass (`file_local::Locate`, `typing/file_local/passes.rs`), the
+     image made before it. It reads the split from the analysis (`FileLocal`, `crossing` on the version) and writes a
+     derivation in the tree's rule order: a target's rules made as `<r>_at(d, …)` term by term (the document a
+     column a rule binds, one it leaves unnamed, or one through `docof` or `node`) and the cross-file read
+     `r(…) :- r_at(_, …)` appended. A debug build checks the result against the tree's `locate`. Test:
+     `rows_are_located_on_a_version_as_on_the_tree`.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.
 7. **The per-clause half of `rr::lower`** as `RulePass`es over the tape's clauses (0276 step 5), with `Domains`; the

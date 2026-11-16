@@ -3166,20 +3166,15 @@ fn run_observed(
                 crate::code_rule_dsl::logic::profile::decision("export demand", || line.clone());
             }
             drop(_step);
-            // Every relation the chunks hand on names its document per row, so a file's rows can be memoised (decision 0052).
-            let _step = crate::code_rule_dsl::logic::profile::span(|| "locate the chunks' rows".into());
-            let located = crate::code_rule_dsl::typing::file_local::locate(&mut program);
-            drop(_step);
             // The prepared program's one image (decision 0281's path, step 4): made here, after the last pass that edits
-            // the tree; the passes after it run on the manager over the version (step 5: the merges, the inputs the
-            // rules read, the rule order), and the run's readers read the version (`Lowered::placed`), the split's
+            // the tree; the passes after it run on the manager over the version (step 5: the rows located, the
+            // merges, the inputs the rules read, the rule order), and the run's readers read the version (`Lowered::placed`), the split's
             // parts views of it. A program the image cannot hold is an error, not a run read from the tree.
             let _step = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's image and the passes on it".into());
             let (version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).and_then(|b| b.finish()).map_err(Error::Plan)?;
             let (version, found) = preparation::run(version).map_err(Error::Plan)?;
-            // The joins pushed are made per rule, so two programs' copies of one library rule made two: merged again
-            // (`preparation::MergeIdentical`), and so are the relations over them, before the program splits.
             let merged = (found.merged, found.shared);
+            let located = found.located.clone();
             drop(_step);
             // The domains of the program as it now is: those `lower` found are of the program before the rewrites above
             // (pushed joins, factorized and demanded exports, merged rules), which rename and combine relations
@@ -3192,6 +3187,7 @@ fn run_observed(
             // the tree's (the tree's inputs pruned as `preparation::InputsRead` prunes the version's).
             #[cfg(debug_assertions)]
             if std::env::var_os("RERAIL_RULE_ORDER").is_none() {
+                assert_eq!(crate::code_rule_dsl::typing::file_local::locate(&mut program), located, "the version's rows are located as the tree's");
                 let tree_merged = if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
                     crate::code_rule_dsl::logic::simplify::merge_identical(&mut program)
                 } else {
