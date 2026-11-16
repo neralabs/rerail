@@ -1768,6 +1768,13 @@ impl Projected {
             let count = ranges.iter().flat_map(|&(a, b)| a..b).filter(|&id| f.named(id) && dialect.is_some_and(|d| shape != Shape::T || d.class(f, id) != Class::Comment)).count();
             p.core.reserve_exact(count);
         }
+        // Walked by anchors, the root's own range is the root alone: its tokens between the anchored subtrees (a `;`
+        // between two statements) are in no range, yet are tokens of an included node, as `Projected::span` reads
+        // them. Counted here, so the tokens' ids are the spans'.
+        if ranges.len() > 1 && !withheld && shape == Shape::Core && dialect.is_some() && f.named(first) {
+            let outside = |c: u32| !ranges.iter().any(|&(a, b)| a <= c && c < b);
+            tokens += f.children(first).iter().filter(|&&c| !f.named(c) && f.end[c as usize] > f.start[c as usize] && outside(c)).count() as u32;
+        }
         for id in ranges.iter().flat_map(|&(a, b)| a..b) {
             if !f.named(id) {
                 // A token (`Facts::tokens`) of an included node: its span is made on first read (`Projected::span`).

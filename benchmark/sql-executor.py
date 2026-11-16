@@ -455,6 +455,8 @@ def main():
                     flags = ["--sql"] if mode=="sql" else ["--modes","program"]
                     result = run([args.engine,"logic",str(program),str(corpus_root),str(directory/"out"),*flags],args.timeout,env)
                     (directory/"stdout.txt").write_text(result.pop("stdout")); (directory/"stderr.txt").write_text(result.pop("stderr"))
+                    # A run's outputs are one image (`out/outputs.rro`, decision 0239): written out as `.csv` files to hash.
+                    subprocess.run([args.engine,"csv",str(directory/"out")],capture_output=True)
                     outputs = {p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in (directory/"out").glob("*.csv")}
                     records.append({"case":f"corpus-{workload}","mode":mode,"trial":trial,"profiled":trial==0,"outputs":outputs,**result})
                     print(workload,mode,trial,result,flush=True)

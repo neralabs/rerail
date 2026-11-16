@@ -6,6 +6,7 @@
 //!   rerail-engine gc <store.sqlite> [--history-mb <n>]
 //!   rerail-engine sql <store.sqlite> <request.json>
 //!   rerail-engine flatten <program.rr>
+//!   rerail-engine csv <out dir> [<to dir>]   (a run's outputs, `outputs.rro`, as `.csv` files)
 //!   rerail-engine run-rr | run-policies | check-rr | convert-rr ... (`tools::cli`)
 //!
 //! Every command takes `--memory-mb <n>` (the overall memory budget, 1 GB by default) and `--metal-mb <n>` (the Metal

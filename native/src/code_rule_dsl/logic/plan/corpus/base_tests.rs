@@ -8,8 +8,14 @@ use crate::code_rule_dsl::model::{RegexLines, RegexOptions};
 use crate::code_rule_dsl::typing::file_local::Binding;
 use crate::code_rule_dsl::test_support::{CAPABILITIES, clause_document, compile_document_with, evaluate_file, violation};
 use serde_json::{Value, json};
+use crate::code_rule_dsl::logic::plan::output::Outputs;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+
+/// A row of values, each as the outputs show it (`Display`).
+macro_rules! r {
+    ($($v:expr),* $(,)?) => { vec![$($v.to_string()),*] };
+}
 
 /// `files` (path, source) written under a fresh directory named for `name`.
 fn corpus(name: &str, files: &[(&str, &str)]) -> PathBuf {
@@ -23,17 +29,26 @@ fn corpus(name: &str, files: &[(&str, &str)]) -> PathBuf {
     dir
 }
 
-/// `program`'s outputs over the corpus in `dir`, by relation: each `<rel>.csv` as the runner writes it.
-fn run(dir: &std::path::Path, program: &str, outputs: &[&str]) -> Vec<String> {
+/// `program`'s run over the corpus in `dir`: its outputs, read where they are.
+fn run_outputs(dir: &std::path::Path, program: &str) -> Outputs {
     let out = dir.join(".out");
     super::run(program, dir, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    outputs.iter().map(|rel| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default()).collect()
+    Outputs::open(&out).unwrap()
 }
 
-/// Rows as the runner writes a relation: sorted, deduplicated, each ended by `\n`.
-fn csv(rows: impl IntoIterator<Item = String>) -> String {
-    let rows: BTreeSet<String> = rows.into_iter().collect();
-    rows.into_iter().map(|r| r + "\n").collect()
+/// `outputs`' relations `rels`: each one's rows, each value as shown (`Relation::shown`), none where it is absent.
+fn shown_of(outputs: &Outputs, rels: &[&str]) -> Vec<Vec<Vec<String>>> {
+    rels.iter().map(|rel| outputs.get(rel).map(|r| r.shown()).unwrap_or_default()).collect()
+}
+
+/// `program`'s outputs over the corpus in `dir`, by relation: each `<rel>`'s rows, each value as shown.
+fn run(dir: &std::path::Path, program: &str, outputs: &[&str]) -> Vec<Vec<Vec<String>>> {
+    shown_of(&run_outputs(dir, program), outputs)
+}
+
+/// Rows as the outputs show a relation: sorted, each once.
+fn sorted(rows: impl IntoIterator<Item = Vec<String>>) -> Vec<Vec<String>> {
+    rows.into_iter().collect::<BTreeSet<_>>().into_iter().collect()
 }
 
 /// W's findings of one Python `clause` (its `forbid`, at `violation()`) in `source`.
@@ -56,7 +71,7 @@ fn w_reporting(forbid: Value, violation: Value, language: &str, path: &str, sour
 
 /// W's spans of a content regex's findings in `source` (`lines`: a `lines` regex's), each as `path`, start line and
 /// end line (1-based), start column and, with `text`, the text matched.
-fn w_regex(pattern: &str, lines: bool, language: &str, path: &str, source: &str, text: bool) -> Vec<String> {
+fn w_regex(pattern: &str, lines: bool, language: &str, path: &str, source: &str, text: bool) -> Vec<Vec<String>> {
     let mut regex = json!({ "source": "file.content", "pattern": pattern });
     if lines {
         regex["lines"] = json!({});
@@ -65,12 +80,12 @@ fn w_regex(pattern: &str, lines: bool, language: &str, path: &str, source: &str,
         .into_iter()
         .map(|v| {
             let at = |k: &str| v["span"][k].as_u64().unwrap() as usize;
-            let row = format!("{path}\t{}\t{}\t{}", at("startLine") + 1, at("endLine") + 1, at("startColumn"));
-            if !text {
-                return row;
+            let mut row = r![path, at("startLine") + 1, at("endLine") + 1, at("startColumn")];
+            if text {
+                // The span's bytes are the file's, in a line too (its line and column are the line's).
+                row.push(source[at("startByte")..at("endByte")].to_owned());
             }
-            // The span's bytes are the file's, in a line too (its line and column are the line's).
-            format!("{row}\t{}", &source[at("startByte")..at("endByte")])
+            row
         })
         .collect()
 }
@@ -79,14 +94,14 @@ fn w_regex(pattern: &str, lines: bool, language: &str, path: &str, source: &str,
 const LINES: &str = "a = 1\r\nb = 2\rc = 3\x0bd = 4\x0ce = 5\x1cf\x1dg\x1eh\u{85}i\u{2028}j\u{2029}k = 6\n\n  last = 0";
 
 /// W's lines of a `lines` regex (`query::regex_query_matches`), 1-based, with their text.
-fn w_lines(source: &str, lf_only: bool) -> Vec<String> {
+fn w_lines(source: &str, lf_only: bool) -> Vec<Vec<String>> {
     let options = RegexOptions {
         lines: Some(RegexLines { include: vec![], exclude: vec![], first: true, lf_only, state: None, indentation: None }),
         ..Default::default()
     };
     let (matches, complete) = crate::code_rule_dsl::query::regex_query_matches(&regex::Regex::new("(?s).*").unwrap(), &crate::code_rule_dsl::model::RegexSource::Content, source, &options, usize::MAX);
     assert!(complete);
-    matches.into_iter().map(|m| format!("{}\t{}", m.line.unwrap() + 1, &source[m.context])).collect()
+    matches.into_iter().map(|m| r![m.line.unwrap() + 1, &source[m.context]]).collect()
 }
 
 /// `src_line` is W's lines of a `lines` regex (Python's `str.splitlines()`), `src_line_lf` its `terminators: "lf"`
@@ -115,9 +130,9 @@ count(k) :- line_count(_, k).
     let got = run(&dir, program, &["lines", "lf_lines", "count"]);
     let (python, lf) = (w_lines(LINES, false), w_lines(LINES, true));
     assert_eq!(python.len(), 13, "{python:?}");
-    assert_eq!(got[2], format!("{}\n", python.len()));
-    assert_eq!(got[0], csv(python));
-    assert_eq!(got[1], csv(lf));
+    assert_eq!(got[2], [[python.len().to_string()]]);
+    assert_eq!(got[0], sorted(python));
+    assert_eq!(got[1], sorted(lf));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -138,10 +153,10 @@ hit(p, l) :- doc(d, p, _), src_line(d, l, sp), text(sp, s), match(".*needle.*", 
     let got = run(&dir, program, &["hit"]);
     let forbid = json!({ "regex": { "source": "file.content", "pattern": "needle", "lines": { "exclude": ["^\\s*#"] } } });
     let want = files.iter().flat_map(|(path, source)| {
-        w(forbid.clone(), path, source).into_iter().map(move |v| format!("{path}\t{}", v["span"]["startLine"].as_u64().unwrap() + 1))
+        w(forbid.clone(), path, source).into_iter().map(move |v| r![path, v["span"]["startLine"].as_u64().unwrap() + 1])
     });
-    let want = csv(want);
-    assert_eq!(want, "a.py\t1\na.py\t3\na.py\t5\n");
+    let want = sorted(want);
+    assert_eq!(want, [["a.py", "1"], ["a.py", "3"], ["a.py", "5"]]);
     assert_eq!(got[0], want);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -167,14 +182,14 @@ lines(p, l, e) :- doc(d, p, _), source(d, sp), line(sp, l), end_line(sp, e).
 "#;
     let got = run(&dir, program, &["hit", "lines"]);
     let forbid = json!({ "regex": { "source": "file.content", "pattern": "import os\\n\\s+x = 1\\r\\n\\z" } });
-    let want = csv(files.iter().filter(|(path, source)| !w(forbid.clone(), path, source).is_empty()).map(|(path, _)| (*path).to_owned()));
-    assert_eq!(want, "a.py\n");
+    let want = sorted(files.iter().filter(|(path, source)| !w(forbid.clone(), path, source).is_empty()).map(|(path, _)| r![path]));
+    assert_eq!(want, [["a.py"]]);
     assert_eq!(got[0], want);
     // W's span of the whole file (`\A(?s:.*)\z`): its end line is the line holding the end.
     let whole = json!({ "regex": { "source": "file.content", "pattern": "\\A(?s:.*)\\z" } });
-    let want = csv(files.iter().map(|(path, source)| {
+    let want = sorted(files.iter().map(|(path, source)| {
         let [v] = w(whole.clone(), path, source).try_into().unwrap();
-        format!("{path}\t{}\t{}", v["span"]["startLine"].as_u64().unwrap() + 1, v["span"]["endLine"].as_u64().unwrap() + 1)
+        r![path, v["span"]["startLine"].as_u64().unwrap() + 1, v["span"]["endLine"].as_u64().unwrap() + 1]
     }));
     assert_eq!(got[1], want);
     let _ = std::fs::remove_dir_all(&dir);
@@ -196,9 +211,9 @@ lines(l, s) :- tape_line(_, l, sp), text(sp, s).
 "#;
     let got = run(&dir, program, &["lines"]);
     let table = LineTable::new(source, Terminators::of(GrammarDialect::Python));
-    let want = csv((0..table.starts().len()).map(|i| format!("{}\t{}", i + 1, &source[table.start(i)..table.end(i)])));
+    let want = sorted((0..table.starts().len()).map(|i| r![i + 1, &source[table.start(i)..table.end(i)]]));
     assert_eq!(got[0], want);
-    assert!(want.starts_with("1\ta = 1\n") && want.contains("4\t\n"), "{want:?}");
+    assert!(want[0] == ["1", "a = 1"] && want.contains(&r!["4", ""]), "{want:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -236,18 +251,12 @@ spans(p, k, l, e, c, s) :- doc(d, p, _), node(d, n, k, _, _), kinds(k), line(n, 
             for v in w(json!({ "ast": { "language": "python", "rule": { "kind": kind } } }), path, source) {
                 let span = &v["span"];
                 let at = |k: &str| span[k].as_u64().unwrap();
-                want.push(format!(
-                    "{path}\t{kind}\t{}\t{}\t{}\t{}",
-                    at("startLine") + 1,
-                    at("endLine") + 1,
-                    at("startColumn"),
-                    &source[at("startByte") as usize..at("endByte") as usize]
-                ));
+                want.push(r![path, kind, at("startLine") + 1, at("endLine") + 1, at("startColumn"), &source[at("startByte") as usize..at("endByte") as usize]]);
             }
         }
     }
-    assert!(want.iter().any(|r| r.starts_with("a.py\tmodule\t3\t")), "the module starts at its first token: {want:?}");
-    assert_eq!(got[0], csv(want));
+    assert!(want.iter().any(|r| r[..3] == ["a.py", "module", "3"]), "the module starts at its first token: {want:?}");
+    assert_eq!(got[0], sorted(want));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -263,7 +272,7 @@ fn without_spans_text_and_line_are_ts() {
 t(s, l) :- text(n, s), line(n, l).
 .output t
 "#;
-    assert_eq!(run(&dir, program, &["t"])[0], "x\t1\ny\t2\n");
+    assert_eq!(run(&dir, program, &["t"])[0], [["x", "1"], ["y", "2"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -286,13 +295,13 @@ invalid(p) :- doc(d, p, _), syntax_error(d).
 .output errors, invalid
 "#;
     let got = run(&dir, program, &["errors", "invalid"]);
-    let want = csv(w(json!({ "ast": { "language": "python", "syntax": "invalid", "rule": { "kind": "ERROR" } } }), path, source).into_iter().map(|v| {
+    let want = sorted(w(json!({ "ast": { "language": "python", "syntax": "invalid", "rule": { "kind": "ERROR" } } }), path, source).into_iter().map(|v| {
         let span = &v["span"];
-        format!("{path}\t{}\t{}\t{}", span["startLine"].as_u64().unwrap() + 1, span["startByte"], span["endByte"])
+        r![path, span["startLine"].as_u64().unwrap() + 1, span["startByte"], span["endByte"]]
     }));
-    assert!(want.starts_with(&format!("{path}\t1\t0\t")), "W finds the ERROR root: {want:?}");
+    assert!(want[0][..3] == [path, "1", "0"], "W finds the ERROR root: {want:?}");
     assert_eq!(got[0], want);
-    assert_eq!(got[1], format!("{path}\n"));
+    assert_eq!(got[1], [[path]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -318,9 +327,9 @@ same(p, q) :- doc(d, p, _), source(d, sp), text(sp, s), doc(e, q, _), source(e, 
 .output hit, plain, same
 "#;
     let got = run(&dir, program, &["hit", "plain", "same"]);
-    assert_eq!(got[0], "l9750_graphql/bad.py\n");
-    assert_eq!(got[1], "l9750_graphql/ok.py\n");
-    assert_eq!(got[2], csv(files.iter().map(|(p, _)| format!("{p}\t{p}"))));
+    assert_eq!(got[0], [["l9750_graphql/bad.py"]]);
+    assert_eq!(got[1], [["l9750_graphql/ok.py"]]);
+    assert_eq!(got[2], sorted(files.iter().map(|(p, _)| r![p, p])));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -345,7 +354,7 @@ lines(p, s) :- doc(d, p, _), src_line(d, _, sp), text(sp, s).
     std::fs::create_dir_all(&empty).unwrap();
     let skipped = corpus("no-docs-skipped", &[(".venv/lib/a.py", "f()\n"), (".git/hooks/b.py", "g()\n")]);
     for dir in [&empty, &skipped] {
-        assert_eq!(run(dir, program, &["calls", "lines"]), ["", ""], "{}", dir.display());
+        assert_eq!(run(dir, program, &["calls", "lines"]), [Vec::<Vec<String>>::new(), Vec::new()], "{}", dir.display());
         let _ = std::fs::remove_dir_all(dir);
     }
 }
@@ -382,18 +391,18 @@ none(p) :- doc(d, p, _), source(d, sp), !match_all("needle", sp, _).
 .output whole, across, lines, pairs, none
 "#;
     let got = run(&dir, program, &["whole", "across", "lines", "pairs", "none"]);
-    let all = |pattern: &str, lines: bool, text: bool| csv(files.iter().flat_map(|(path, source)| w_regex(pattern, lines, "python", path, source, text)));
+    let all = |pattern: &str, lines: bool, text: bool| sorted(files.iter().flat_map(|(path, source)| w_regex(pattern, lines, "python", path, source, text)));
     let whole = all("needle\\w*", false, true);
-    assert_eq!(whole.lines().count(), 5, "{whole}");
+    assert_eq!(whole.len(), 5, "{whole:?}");
     assert_eq!(got[0], whole);
     let across = all("(?s)needle.end", false, false);
-    assert_eq!(across, "a.py\t4\t5\t7\n");
+    assert_eq!(across, [["a.py", "4", "5", "7"]]);
     assert_eq!(got[1], across);
     assert_eq!(got[2], all("needle\\w*", true, true));
     let pairs = all("aa", false, true);
-    assert_eq!(pairs, "b.py\t1\t1\t0\taa\nb.py\t1\t1\t10\taa\nb.py\t1\t1\t2\taa\nb.py\t1\t1\t8\taa\n");
+    assert_eq!(pairs, [["b.py", "1", "1", "0", "aa"], ["b.py", "1", "1", "10", "aa"], ["b.py", "1", "1", "2", "aa"], ["b.py", "1", "1", "8", "aa"]]);
     assert_eq!(got[3], pairs);
-    assert_eq!(got[4], "b.py\n");
+    assert_eq!(got[4], [["b.py"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -437,23 +446,23 @@ hits(p, l, e, c, s) :- doc(d, p, _), source(d, sp), match_all("needle", sp, m), 
 "#;
     let got = run(&dir, program, &["docs", "treed", "advertised", "lines", "tape", "counts", "hits"]);
     let texts = [("docs/design/a.md", md), ("docs/l9700_graph_query.rst", rst), ("notes.txt", "")];
-    assert_eq!(got[0], csv(["docs/design/a.md", "docs/l9700_graph_query.rst", "notes.txt", "pkg/m.py"].map(str::to_owned)));
-    assert_eq!(got[1], "pkg/m.py\n");
-    assert_eq!(got[2], "docs/l9700_graph_query.rst\n");
-    let lines = |path: &str, source: &str| w_lines(source, false).into_iter().map(|l| format!("{path}\t{l}")).collect::<Vec<_>>();
-    assert_eq!(got[3], csv(texts.iter().flat_map(|(p, s)| lines(p, s)).chain(lines("pkg/m.py", "f(needle)\n"))));
+    assert_eq!(got[0], sorted(["docs/design/a.md", "docs/l9700_graph_query.rst", "notes.txt", "pkg/m.py"].map(|p| r![p])));
+    assert_eq!(got[1], [["pkg/m.py"]]);
+    assert_eq!(got[2], [["docs/l9700_graph_query.rst"]]);
+    let lines = |path: &str, source: &str| w_lines(source, false).into_iter().map(|l| [vec![path.to_owned()], l].concat()).collect::<Vec<_>>();
+    assert_eq!(got[3], sorted(texts.iter().flat_map(|(p, s)| lines(p, s)).chain(lines("pkg/m.py", "f(needle)\n"))));
     let table = |path: &str, source: &str| {
         let t = LineTable::new(source, Terminators::Eslint);
-        (0..t.starts().len()).map(|i| format!("{path}\t{}\t{}", i + 1, &source[t.start(i)..t.end(i)])).collect::<Vec<_>>()
+        (0..t.starts().len()).map(|i| r![path, i + 1, &source[t.start(i)..t.end(i)]]).collect::<Vec<_>>()
     };
     let python = LineTable::new("f(needle)\n", Terminators::of(GrammarDialect::Python));
-    let python = (0..python.starts().len()).map(|i| format!("pkg/m.py\t{}\t{}", i + 1, &"f(needle)\n"[python.start(i)..python.end(i)]));
-    assert_eq!(got[4], csv(texts.iter().flat_map(|(p, s)| table(p, s)).chain(python)));
-    assert!(got[4].contains("docs/l9700_graph_query.rst\t5\tneedle here\n"), "U+2028 ends a line: {}", got[4]);
-    assert_eq!(got[5], csv(texts.iter().map(|(p, s)| format!("{p}\t{}", w_lines(s, false).len())).chain(["pkg/m.py\t1".to_owned()])));
+    let python = (0..python.starts().len()).map(|i| r!["pkg/m.py", i + 1, &"f(needle)\n"[python.start(i)..python.end(i)]]);
+    assert_eq!(got[4], sorted(texts.iter().flat_map(|(p, s)| table(p, s)).chain(python)));
+    assert!(got[4].contains(&r!["docs/l9700_graph_query.rst", "5", "needle here"]), "U+2028 ends a line: {:?}", got[4]);
+    assert_eq!(got[5], sorted(texts.iter().map(|(p, s)| r![p, w_lines(s, false).len()]).chain([r!["pkg/m.py", 1]])));
     let hits = texts.iter().flat_map(|(p, s)| w_regex("needle", false, "text", p, s, true)).chain(w_regex("needle", false, "python", "pkg/m.py", "f(needle)\n", true));
-    let hits = csv(hits);
-    assert_eq!(hits.lines().count(), 4, "{hits}");
+    let hits = sorted(hits);
+    assert_eq!(hits.len(), 4, "{hits:?}");
     assert_eq!(got[6], hits);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -474,9 +483,9 @@ lone(s) :- name(_, s), x = cat(s, "_[a-z]+"), !match(x, "load_async").
 "#;
     let names = ["load", "load_async", "loader", "load_lazy", "x", "y", "re_load_x"];
     let whole = |p: &str, s: &str| regex::Regex::new(&format!("^(?:{p})$")).unwrap().is_match(s);
-    let twin = csv(names.iter().flat_map(|s| names.iter().filter(move |t| whole(&format!("{s}_[a-z]+"), t)).map(move |t| format!("{s}\t{t}"))));
-    assert_eq!(twin, "load\tload_async\nload\tload_lazy\n");
-    let lone = csv(names.iter().filter(|s| !whole(&format!("{s}_[a-z]+"), "load_async")).map(|s| (*s).to_owned()));
+    let twin = sorted(names.iter().flat_map(|s| names.iter().filter(move |t| whole(&format!("{s}_[a-z]+"), t)).map(move |t| r![s, t])));
+    assert_eq!(twin, [["load", "load_async"], ["load", "load_lazy"]]);
+    let lone = sorted(names.iter().filter(|s| !whole(&format!("{s}_[a-z]+"), "load_async")).map(|s| r![s]));
     let printed = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(program).unwrap()).unwrap();
     for program in [program, printed.as_str()] {
         assert_eq!(run(&dir, program, &["twin", "lone"]), [twin.clone(), lone.clone()], "{program}");
@@ -523,24 +532,24 @@ bare(p, s) :- doc(d, p, _), source(d, sp), match_group("RE", sp, m, "module", ms
         if lines {
             regex["lines"] = json!({});
         }
-        csv(files.iter().flat_map(|(path, source)| {
+        sorted(files.iter().flat_map(|(path, source)| {
             let regex = regex.clone();
             ["module", "attr"].into_iter().flat_map(move |g| {
                 let v = json!({ "anchor": format!("capture.{g}"), "code": "X", "message": "x" });
                 w_reporting(json!({ "regex": regex.clone() }), v, "python", path, source).into_iter().filter_map(move |v| {
                     let at = |k: &str| v["span"][k].as_u64().unwrap() as usize;
                     let s = &source[at("startByte")..at("endByte")];
-                    (!s.contains('(')).then(|| format!("{path}\t{g}\t{}\t{}\t{}\t{s}", at("startLine") + 1, at("endLine") + 1, at("startColumn")))
+                    (!s.contains('(')).then(|| r![path, g, at("startLine") + 1, at("endLine") + 1, at("startColumn"), s])
                 })
             })
         }))
     };
     let want = w_groups(false);
-    assert_eq!(want.lines().count(), 7, "{want}");
+    assert_eq!(want.len(), 7, "{want:?}");
     assert_eq!(got[0], want);
     assert_eq!(got[1], w_groups(true));
-    assert_eq!(got[2], "a.py\t2\tpkg.mod\trun\na.py\t4\ta.b\tc\na.py\t4\tz\tw\n");
-    assert_eq!(got[3], "a.py\tother\n");
+    assert_eq!(got[2], [["a.py", "2", "pkg.mod", "run"], ["a.py", "4", "a.b", "c"], ["a.py", "4", "z", "w"]]);
+    assert_eq!(got[3], [["a.py", "other"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -609,16 +618,10 @@ fn w_scalars(path: &str, source: &str, follow: bool) -> BTreeSet<(u64, u64, Stri
     out
 }
 
-/// `program`'s `vals(s, e, v)` rows read back as `(start, end, v)`.
-fn spans_and_values(csv: &str) -> Vec<(u64, u64, String)> {
-    csv.lines()
-        .map(|row| {
-            let mut cells = row.splitn(3, '\t');
-            let mut number = || cells.next().unwrap().parse::<u64>().unwrap();
-            let (start, end) = (number(), number());
-            (start, end, cells.next().unwrap().to_owned())
-        })
-        .collect()
+/// `outputs`' rows of `rel(s, e, v)` (two numbers and a symbol) as `(start, end, v)`.
+fn spans_and_values(outputs: &Outputs, rel: &str) -> Vec<(u64, u64, String)> {
+    let number = |v: crate::code_rule_dsl::logic::plan::output::Value<'_>| u64::try_from(v.int().expect("a number")).unwrap();
+    outputs.rows(rel).iter().map(|r| (number(r.get(0)), number(r.get(1)), r.get(2).text().expect("a symbol").to_owned())).collect()
 }
 
 /// `value(n, v)` is W's value of each expression node, as Python's `str(v)`: a row exactly where W's value is a known
@@ -636,7 +639,7 @@ fn value_is_ws_value() {
 vals(s, e, v) :- value(n, v), node(_, n, _, s, e).
 .output vals
 "#;
-    let got = spans_and_values(&run(&dir, program, &["vals"])[0]);
+    let got = spans_and_values(&run_outputs(&dir, program), "vals");
     let text = |s: u64, e: u64| &VALUES[s as usize..e as usize];
     let scalars = w_scalars("a.py", VALUES, false);
     assert_eq!(got.iter().map(|(s, e, _)| (*s, *e)).collect::<BTreeSet<_>>(), scalars.iter().map(|(s, e, _)| (*s, *e)).collect(), "{got:?}");
@@ -680,8 +683,8 @@ vals(s, e, v) :- static_value(n, v), node(_, n, _, s, e).
 plain(s, e, v) :- value(n, v), node(_, n, _, s, e).
 .output vals, plain
 "#;
-    let out = run(&dir, program, &["vals", "plain"]);
-    let (got, plain) = (spans_and_values(&out[0]), spans_and_values(&out[1]));
+    let out = run_outputs(&dir, program);
+    let (got, plain) = (spans_and_values(&out, "vals"), spans_and_values(&out, "plain"));
     let text = |s: u64, e: u64| &VALUES[s as usize..e as usize];
     let scalars = w_scalars("a.py", VALUES, true);
     assert_eq!(got.iter().map(|(s, e, _)| (*s, *e)).collect::<BTreeSet<_>>(), scalars.iter().map(|(s, e, _)| (*s, *e)).collect(), "{got:?}");
@@ -728,31 +731,28 @@ hits(s, e) :- value(n, v), value_type_of(n, "str"), match("(?s:.*)(?:b)(?s:.*)",
 vals(s, e, v) :- value(n, v), node(_, n, _, s, e).
 .output types, pairs, hits, vals
 "#;
-    let out = run(&dir, program, &["types", "pairs", "hits", "vals"]);
+    let outputs = run_outputs(&dir, program);
+    let out = shown_of(&outputs, &["types", "pairs", "hits"]);
     let spans = |f: &Value| (f["span"]["startByte"].as_u64().unwrap(), f["span"]["endByte"].as_u64().unwrap());
     let mut want = Vec::new();
     for ty in TYPES {
         for f in w(json!({ "ast": { "language": "python", "rule": { "value": { "type": ty } } } }), "a.py", VALUES) {
             let (s, e) = spans(&f);
-            want.push(format!("{s}\t{e}\t{ty}"));
+            want.push((s, e, ty));
         }
     }
-    assert!(want.iter().any(|r| r.ends_with("\tlist")) && want.iter().any(|r| r.ends_with("\tbytes")), "{want:?}");
-    assert_eq!(out[0], csv(want.clone()));
+    assert!(want.iter().any(|r| r.2 == "list") && want.iter().any(|r| r.2 == "bytes"), "{want:?}");
+    assert_eq!(out[0], sorted(want.iter().map(|(s, e, ty)| r![s, e, ty])));
     // value_type: each typed node's value text with its type.
-    let values = spans_and_values(&out[3]);
-    let pairs = want.iter().flat_map(|row| {
-        let [s, e, ty]: [&str; 3] = row.split('\t').collect::<Vec<_>>().try_into().unwrap();
-        let (s, e) = (s.parse::<u64>().unwrap(), e.parse::<u64>().unwrap());
-        values.iter().filter(move |(vs, ve, _)| (*vs, *ve) == (s, e)).map(move |(_, _, v)| format!("{v}\t{ty}"))
-    });
-    let pairs = csv(pairs);
-    assert!(pairs.contains("12\tstr\n") && pairs.contains("12\tint\n"), "{pairs}");
+    let values = spans_and_values(&outputs, "vals");
+    let pairs = want.iter().flat_map(|&(s, e, ty)| values.iter().filter(move |(vs, ve, _)| (*vs, *ve) == (s, e)).map(move |(_, _, v)| r![v, ty]));
+    let pairs = sorted(pairs);
+    assert!(pairs.contains(&r!["12", "str"]) && pairs.contains(&r!["12", "int"]), "{pairs:?}");
     assert_eq!(out[1], pairs);
     let regex = w(json!({ "ast": { "language": "python", "rule": { "value": { "regex": "b" } } } }), "a.py", VALUES);
-    let regex = csv(regex.iter().map(|f| {
+    let regex = sorted(regex.iter().map(|f| {
         let (s, e) = spans(f);
-        format!("{s}\t{e}")
+        r![s, e]
     }));
     assert!(!regex.is_empty());
     assert_eq!(out[2], regex);
@@ -769,7 +769,7 @@ fn w_in(language: &str, forbid: Value, path: &str, source: &str) -> Vec<Value> {
 
 /// W's comment nodes of `kinds` in a `language` file, as `comments` rows (start line, end line, start column, text
 /// and the text without its marker), and the texts without their markers.
-fn w_comments(language: &str, kinds: &[&str], path: &str, source: &str) -> (String, BTreeSet<String>) {
+fn w_comments(language: &str, kinds: &[&str], path: &str, source: &str) -> (Vec<Vec<String>>, BTreeSet<String>) {
     let (mut rows, mut bodies) = (Vec::new(), BTreeSet::new());
     for kind in kinds {
         for v in w_in(language, json!({ "ast": { "language": language, "rule": { "kind": kind } } }), path, source) {
@@ -777,11 +777,11 @@ fn w_comments(language: &str, kinds: &[&str], path: &str, source: &str) -> (Stri
             let at = |k: &str| span[k].as_u64().unwrap();
             let text = &source[at("startByte") as usize..at("endByte") as usize];
             let body = crate::code_rule_dsl::facts::vtab::syntax::comment_body(text);
-            rows.push(format!("{}\t{}\t{}\t{text}\t{body}", at("startLine") + 1, at("endLine") + 1, at("startColumn")));
+            rows.push(r![at("startLine") + 1, at("endLine") + 1, at("startColumn"), text, body]);
             bodies.insert(body.to_owned());
         }
     }
-    (csv(rows), bodies)
+    (sorted(rows), bodies)
 }
 
 /// `comment(c, s)`: each of W's comment nodes once, `s` its text without the marker; a Python comment, which T's
@@ -805,7 +805,7 @@ comments(l, e, c, t, s) :- comment(n, s), line(n, l), end_line(n, e), col(n, c),
 "#;
     let got = run(&dir, program, &["comments"]);
     let (want, bodies) = w_comments("python", &["comment"], "a.py", python);
-    assert_eq!(bodies, BTreeSet::from(["!/usr/bin/env python", "noqa: E501", "type: ignore", "", "trailing", "é"].map(str::to_owned)), "{want}");
+    assert_eq!(bodies, BTreeSet::from(["!/usr/bin/env python", "noqa: E501", "type: ignore", "", "trailing", "é"].map(str::to_owned)), "{want:?}");
     assert_eq!(got[0], want);
     let _ = std::fs::remove_dir_all(&dir);
     let rust = "//! crate doc\n/// item doc\nfn f() { /* block */ let x = 1; // tail\n}\n/** outer block doc */\nfn g() {}\n";
@@ -824,17 +824,17 @@ comments(l, e, c, t, s) :- comment(n, s), node(_, n, _, _, _), line(n, l), end_l
 "#;
     let got = run(&dir, program, &["comments"]);
     let (want, bodies) = w_comments("rust", &["line_comment", "block_comment"], "src/lib.rs", rust);
-    assert_eq!(bodies, BTreeSet::from(["crate doc", "item doc", "block", "tail", "outer block doc"].map(str::to_owned)), "{want}");
+    assert_eq!(bodies, BTreeSet::from(["crate doc", "item doc", "block", "tail", "outer block doc"].map(str::to_owned)), "{want:?}");
     assert_eq!(got[0], want);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// W's findings of a Python `ast` rule over `files`, each `path\tline\tcol` (1-based line, byte column).
-fn w_at(rule: Value, files: &[(&str, &str)]) -> Vec<String> {
+fn w_at(rule: Value, files: &[(&str, &str)]) -> Vec<Vec<String>> {
     let mut out = Vec::new();
     for (path, source) in files {
         for v in w(json!({ "ast": { "language": "python", "rule": rule.clone() } }), path, source) {
-            out.push(format!("{path}\t{}\t{}", v["span"]["startLine"].as_u64().unwrap() + 1, v["span"]["startColumn"].as_u64().unwrap()));
+            out.push(r![path, v["span"]["startLine"].as_u64().unwrap() + 1, v["span"]["startColumn"].as_u64().unwrap()]);
         }
     }
     out
@@ -890,7 +890,7 @@ before_return(p, l, c) :- kind(a, "expression_statement"), precedes(a, b), kind(
     ];
     for (got, want) in got.iter().zip(want) {
         assert!(!want.is_empty());
-        assert_eq!(*got, csv(want));
+        assert_eq!(*got, sorted(want));
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -917,9 +917,9 @@ calls(p, l, c) :- kind(n, "call"), docof(n, d), doc(d, p, _), line(n, l), col(n,
 .output empty, nodes_unset, wrong, undocumented, calls
 "#;
     let got = run(&dir, program, &["empty", "nodes_unset", "wrong", "undocumented", "calls"]);
-    assert_eq!(got[0], "-1\n");
-    assert_eq!(got[1..4], ["", "", ""]);
-    assert_eq!(got[4], csv(w_at(json!({ "kind": "call" }), &files)));
+    assert_eq!(got[0], [["-1"]]);
+    assert!(got[1..4].iter().all(Vec::is_empty), "{:?}", &got[1..4]);
+    assert_eq!(got[4], sorted(w_at(json!({ "kind": "call" }), &files)));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -938,20 +938,21 @@ ops(k, l, i, s) :- op_at(n, i, s), kind(n, k), line(n, l).
 "#;
     let got = run(&dir, program, &["ops"]);
     // `not x` (a `not_operator`, CPython's `UnaryOp(Not)`) has its token in no field: no row.
+    // (kind, line, index, operator)
     let want = [
-        "binary_operator\t5\t0\t*",
-        "binary_operator\t5\t0\t+",
-        "boolean_operator\t6\t0\tor",
-        "comparison_operator\t1\t0\t<",
-        "comparison_operator\t1\t1\t<=",
-        "comparison_operator\t3\t0\tnot in",
-        "comparison_operator\t4\t0\tis not",
+        ("binary_operator", 5, 0, "*"),
+        ("binary_operator", 5, 0, "+"),
+        ("boolean_operator", 6, 0, "or"),
+        ("comparison_operator", 1, 0, "<"),
+        ("comparison_operator", 1, 1, "<="),
+        ("comparison_operator", 3, 0, "not in"),
+        ("comparison_operator", 4, 0, "is not"),
     ];
-    assert_eq!(got[0], csv(want.map(str::to_owned)));
+    assert_eq!(got[0], sorted(want.map(|(k, l, i, op)| r![k, l, i, op])));
     for op in ["<", "<=", "not in", "is not"] {
         let escaped = regex::escape(op);
         let at = w_at(json!({ "kind": "comparison_operator", "has": { "field": "operators", "regex": format!("^{escaped}$") } }), &files);
-        let first: Vec<String> = want.iter().filter_map(|r| r.strip_prefix("comparison_operator\t")?.strip_suffix(&format!("\t0\t{op}"))).map(|l| format!("o.py\t{l}\t{}", if l == "1" { 3 } else { 4 })).collect();
+        let first: Vec<Vec<String>> = want.iter().filter(|w| w.0 == "comparison_operator" && w.2 == 0 && w.3 == op).map(|w| r!["o.py", w.1, if w.1 == 1 { 3 } else { 4 }]).collect();
         assert_eq!(at, first, "{op}");
     }
     let _ = std::fs::remove_dir_all(&dir);
@@ -973,15 +974,14 @@ at(k, i, t) :- node(_, p, k, _, _), token(p, i, t, _, _).
 .output after, at
 "#;
     let got = run(&dir, program, &["after", "at"]);
-    let rows = |at: usize| got[at].lines().map(str::to_owned).collect::<Vec<_>>();
-    let (after, at) = (rows(0), rows(1));
+    let (after, at) = (&got[0], &got[1]);
     // The stored neighbours: the keyword argument follows `b`, the comment the call's statement.
-    assert!(after.iter().any(|r| r == "keyword_argument\tb"), "{after:?}");
-    assert!(at.iter().any(|r| r == "argument_list\t2\tc=1"), "{at:?}");
-    assert!(at.iter().any(|r| r == "import_from_statement\t1\timport"), "{at:?}");
+    assert!(after.iter().any(|r| *r == ["keyword_argument", "b"]), "{after:?}");
+    assert!(at.iter().any(|r| *r == ["argument_list", "2", "c=1"]), "{at:?}");
+    assert!(at.iter().any(|r| *r == ["import_from_statement", "1", "import"]), "{at:?}");
     // No implied token, in either relation.
     for implied in ["(", ")", ",", "from"] {
-        assert!(!after.iter().chain(&at).any(|r| r.ends_with(&format!("\t{implied}"))), "{implied}: {after:?} {at:?}");
+        assert!(!after.iter().chain(at).any(|r| r.last().is_some_and(|v| v == implied)), "{implied}: {after:?} {at:?}");
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1012,14 +1012,14 @@ names(p, s) :- doc(d, p, _), file_name(d, s).
     for (path, source) in files {
         for c in candidates {
             if in_scope(&format!("**/{c}/**"), path, source) || in_scope(&format!("**/{c}"), path, source) {
-                parts.push(format!("{path}\t{c}"));
+                parts.push(r![path, c]);
             }
             if in_scope(&format!("**/{c}"), path, source) {
-                names.push(format!("{path}\t{c}"));
+                names.push(r![path, c]);
             }
         }
     }
-    assert_eq!(got, [csv(parts), csv(names)]);
+    assert_eq!(got, [sorted(parts), sorted(names)]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1051,11 +1051,11 @@ visits(s, e, i) :- visit_index(n, i), node(_, n, _, s, e).
 later(r, c) :- kind(ret, "return_statement"), kind(call, "call"), earlier(ret, call), node(_, ret, _, r, _), node(_, call, _, c, _).
 .output visits, later
 "#;
-    let got = run(&dir, program, &["visits", "later"]);
+    let outputs = run_outputs(&dir, program);
     let mut first: std::collections::BTreeMap<(i64, i64), i64> = std::collections::BTreeMap::new();
     let mut indexes = BTreeSet::new();
-    for row in got[0].lines() {
-        let f: Vec<i64> = row.split('\t').map(|x| x.parse().unwrap()).collect();
+    for row in outputs.rows("visits") {
+        let f: Vec<i64> = row.values().map(|v| v.int().expect("a number")).collect();
         assert!(indexes.insert(f[2]), "index {} twice", f[2]);
         let at = first.entry((f[0], f[1])).or_insert(f[2]);
         *at = (*at).min(f[2]);
@@ -1066,7 +1066,8 @@ later(r, c) :- kind(ret, "return_statement"), kind(call, "call"), earlier(ret, c
     ours.sort_by_key(|span| first[span]);
     assert_eq!(ours, cpython);
     // The return statement (byte 173) comes before both decorators' calls (`dec(a, k=1)` at byte 1).
-    assert!(got[1].lines().any(|l| l == "173\t1"), "{}", got[1]);
+    let later = shown_of(&outputs, &["later"]).remove(0);
+    assert!(later.iter().any(|l| *l == ["173", "1"]), "{later:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1087,9 +1088,9 @@ neither(p, l, c) :- node(d, n, "identifier", _, _), child(q, n, _), node(_, q, k
     let got = run(&dir, program, &["either", "neither"]);
     let mut want = w_at(json!({ "kind": "call" }), &files);
     want.extend(w_at(json!({ "kind": "attribute" }), &files));
-    assert_eq!(got[0], csv(want));
+    assert_eq!(got[0], sorted(want));
     let others = json!({ "kind": "identifier", "inside": { "not": { "any": [{ "kind": "call" }, { "kind": "attribute" }] } } });
-    assert_eq!(got[1], csv(w_at(others, &files)));
+    assert_eq!(got[1], sorted(w_at(others, &files)));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1117,8 +1118,8 @@ calls(n) :- later(n, _).
 .output mismatch, calls
 "#;
     let got = run(&dir, program, &["mismatch", "calls"]);
-    assert_eq!(got[0], "");
-    assert_eq!(got[1].lines().count(), 5, "{}", got[1]);
+    assert!(got[0].is_empty(), "{:?}", got[0]);
+    assert_eq!(got[1].len(), 5, "{:?}", got[1]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1132,7 +1133,7 @@ fn a_stratum_whose_rules_join_nothing_keeps_its_facts() {
                    .decl e(x: number, y: number)\ne(x, y) :- s(x), s(y).\n\
                    .decl d(x: number)\nd(7).\nd(y) :- d(x), e(x, y).\n\
                    .decl out(x: number)\nout(x) :- d(x).\n.output out\n";
-    assert_eq!(run(&dir, program, &["out"]), [csv(["7".to_owned()])]);
+    assert_eq!(run(&dir, program, &["out"]), [[["7"]]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1181,7 +1182,7 @@ fn as_is_a_variable() {
 args(p, l, c) :- kind(call, "call"), field(call, "arguments", as), kind(as, "argument_list"), docof(as, d), doc(d, p, _), line(as, l), col(as, c).
 .output args
 "#;
-    assert_eq!(run(&dir, program, &["args"])[0], csv(w_at(json!({ "kind": "argument_list", "inside": { "kind": "call" } }), &files)));
+    assert_eq!(run(&dir, program, &["args"])[0], sorted(w_at(json!({ "kind": "argument_list", "inside": { "kind": "call" } }), &files)));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1203,25 +1204,6 @@ j = f'{x:{"nested"}}'
 k = f"é{x}\N{BULLET}"
 l = 'plain' f'{x}'
 "#;
-
-/// Rows of `width` cells whose last is a symbol that may hold line terminators: each row starts with `numbers`
-/// numbers, a line that does not continues the row before it.
-fn rows_with_text(csv: &str, numbers: usize, width: usize) -> Vec<Vec<String>> {
-    let mut out: Vec<Vec<String>> = Vec::new();
-    for line in csv.lines() {
-        let cells: Vec<&str> = line.splitn(width, '\t').collect();
-        let starts = cells.len() == width && cells[..numbers].iter().all(|c| !c.is_empty() && c.bytes().all(|b| b.is_ascii_digit()));
-        match out.last_mut() {
-            Some(row) if !starts => {
-                let last = row.last_mut().unwrap();
-                last.push('\n');
-                last.push_str(line);
-            }
-            _ => out.push(cells.iter().map(|c| (*c).to_owned()).collect()),
-        }
-    }
-    out
-}
 
 /// W's `parse: {grammar: pythonFString, …}` at its hosts, `inner` the parse's rule: the spans it finds, each anchored
 /// at `anchor` (the host, or `capture.NAME`).
@@ -1256,18 +1238,22 @@ braces(s, e, v) :- fstring_template(n, "{}", v), node(_, n, _, s, e).
 from_t(s, e) :- fstring_template(n, "{...}", v), match("(?s:.*)(?:SELECT [{][.][.][.][}] FROM t)(?s:.*)", v), node(_, n, _, s, e).
 .output pieces, dots, braces, from_t
 "#;
-    let got = run(&dir, program, &["pieces", "dots", "braces", "from_t"]);
-    let span = |row: &[String]| (row[0].parse::<usize>().unwrap(), row[1].parse::<usize>().unwrap());
+    let outputs = run_outputs(&dir, program);
+    let number = |v: crate::code_rule_dsl::logic::plan::output::Value<'_>| usize::try_from(v.int().expect("a number")).unwrap();
+    // A relation's rows of a span (two numbers) and a symbol.
+    let spanned = |rel: &str| -> Vec<((usize, usize), String)> {
+        outputs.rows(rel).iter().map(|r| ((number(r.get(0)), number(r.get(1))), r.get(2).text().expect("a symbol").to_owned())).collect()
+    };
     let hosts = w_fstring(json!({ "kind": "template" }), "host");
-    for (csv, marker) in [(&got[1], "{...}"), (&got[2], "{}")] {
-        let rows = rows_with_text(csv, 2, 3);
-        assert_eq!(rows.iter().map(|r| span(r)).collect::<BTreeSet<_>>(), hosts, "{marker}: {csv}");
-        for row in &rows {
-            let at = w_fstring(json!({ "interpolation": marker, "value": { "eq": row[2] } }), "host");
-            assert!(at.contains(&span(row)), "{marker}: {:?} is not W's root value at {:?}", row[2], &FSTRINGS[span(row).0..span(row).1]);
+    for (rel, marker) in [("dots", "{...}"), ("braces", "{}")] {
+        let rows = spanned(rel);
+        assert_eq!(rows.iter().map(|r| r.0).collect::<BTreeSet<_>>(), hosts, "{marker}: {rows:?}");
+        for (span, v) in &rows {
+            let at = w_fstring(json!({ "interpolation": marker, "value": { "eq": v } }), "host");
+            assert!(at.contains(span), "{marker}: {v:?} is not W's root value at {:?}", &FSTRINGS[span.0..span.1]);
         }
     }
-    let dots: Vec<(String, String)> = rows_with_text(&got[1], 2, 3).into_iter().map(|r| (FSTRINGS[span(&r).0..span(&r).1].to_owned(), r[2].clone())).collect();
+    let dots: Vec<(String, String)> = spanned("dots").into_iter().map(|(span, v)| (FSTRINGS[span.0..span.1].to_owned(), v)).collect();
     let template = |source: &str| dots.iter().filter(|(s, _)| s == source).map(|(_, v)| v.as_str()).collect::<Vec<_>>();
     assert_eq!(template(r"f'\x53ELECT {x} FROM t'"), ["SELECT {...} FROM t"]);
     assert_eq!(template("rf'SELECT {{name}} {x} FROM t'"), ["SELECT {name} {...} FROM t"]);
@@ -1283,18 +1269,22 @@ from_t(s, e) :- fstring_template(n, "{...}", v), match("(?s:.*)(?:SELECT [{][.][
         assert_eq!(template(none), Vec::<&str>::new(), "{none}");
     }
     // The text test over the template reads the batch's strings.
-    let from_t: BTreeSet<&str> = got[3].lines().map(|l| l.split('\t').collect::<Vec<_>>()).map(|c| &FSTRINGS[c[0].parse::<usize>().unwrap()..c[1].parse::<usize>().unwrap()]).collect();
+    let from_t: BTreeSet<&str> = outputs.rows("from_t").iter().map(|r| &FSTRINGS[number(r.get(0))..number(r.get(1))]).collect();
     assert_eq!(from_t, BTreeSet::from([r"f'\x53ELECT {x} FROM t'", "f'SELECT {x}' ' FROM t'"]));
 
     // Pieces: at each host W has a tree at, W's root child with i siblings before it (W has no `nthChild` in a parse)
     // is the row's kind (a literal with the row's value, an interpolation standing for the field the row's expression
     // opens), and no child has more siblings before it than the last row's i.
-    let pieces = rows_with_text(&got[0], 3, 5);
+    // Each piece: its host's span, its index, its kind and its value.
+    let pieces: Vec<((usize, usize), usize, String, String)> = outputs
+        .rows("pieces")
+        .iter()
+        .map(|r| ((number(r.get(0)), number(r.get(1))), number(r.get(2)), r.get(3).text().expect("a kind").to_owned(), r.get(4).text().expect("a value").to_owned()))
+        .collect();
     let mut last: std::collections::BTreeMap<(usize, usize), usize> = Default::default();
-    for row in &pieces {
-        let (s, e) = span(row);
-        let i: usize = row[2].parse().unwrap();
-        let (kind, v) = (row[3].as_str(), row[4].as_str());
+    for (span, i, kind, v) in &pieces {
+        let ((s, e), i) = (*span, *i);
+        let (kind, v) = (kind.as_str(), v.as_str());
         let host = &FSTRINGS[s..e];
         let at_most = last.entry((s, e)).or_default();
         *at_most = (*at_most).max(i);
@@ -1310,12 +1300,12 @@ from_t(s, e) :- fstring_template(n, "{...}", v), match("(?s:.*)(?:SELECT [{][.][
                 assert!(field.is_some(), "{host}: child {i} is no W interpolation over a field of {v:?} ({fields:?})");
             }
             "debug" => {
-                let before = pieces.iter().find(|r| span(r) == (s, e) && r[2] == (i - 1).to_string() && r[3] == "literal").unwrap();
-                assert!(before[4].ends_with(v), "{host}: W's literal before child {i} holds the debug text {v:?}");
+                let before = pieces.iter().find(|r| r.0 == (s, e) && r.1 == i - 1 && r.2 == "literal").unwrap();
+                assert!(before.3.ends_with(v), "{host}: W's literal before child {i} holds the debug text {v:?}");
             }
             "format_spec" => {
-                let interpolation = pieces.iter().find(|r| span(r) == (s, e) && r[2] == i.to_string() && r[3] == "interpolation").unwrap();
-                assert!(host.contains(&format!("{{{}", interpolation[4])) && host.contains(&format!(":{v}}}")), "{host}: spec {v:?}");
+                let interpolation = pieces.iter().find(|r| r.0 == (s, e) && r.1 == i && r.2 == "interpolation").unwrap();
+                assert!(host.contains(&format!("{{{}", interpolation.3)) && host.contains(&format!(":{v}}}")), "{host}: spec {v:?}");
             }
             other => panic!("kind {other}"),
         }
@@ -1326,7 +1316,12 @@ from_t(s, e) :- fstring_template(n, "{...}", v), match("(?s:.*)(?:SELECT [{][.][
         let past = w_fstring(json!({ "has": later }), "host");
         assert!(!past.contains(&(s, e)), "{}: W's root has a child past {i}", &FSTRINGS[s..e]);
     }
-    let of = |source: &str| pieces.iter().filter(|r| &FSTRINGS[span(r).0..span(r).1] == source).map(|r| format!("{} {} {}", r[2], r[3], r[4])).collect::<Vec<_>>();
+    // A host's pieces, each as "index kind value", in order.
+    let of = |source: &str| {
+        let mut of = pieces.iter().filter(|r| &FSTRINGS[r.0.0..r.0.1] == source).map(|r| (r.1, r.2.as_str(), r.3.as_str())).collect::<Vec<_>>();
+        of.sort();
+        of.into_iter().map(|(i, k, v)| format!("{i} {k} {v}")).collect::<Vec<_>>()
+    };
     assert_eq!(of("f'a{x!r:>10}b{y=}'"), ["0 literal a", "1 format_spec >10", "1 interpolation x", "2 literal by=", "3 debug y=", "3 interpolation y"]);
     assert_eq!(of("f'{SELECT = } FROM t'"), ["0 literal SELECT = ", "1 debug SELECT = ", "1 interpolation SELECT", "2 literal  FROM t"]);
     assert_eq!(of(":>{w}"), ["0 literal >", "1 interpolation w"]);
@@ -1364,11 +1359,11 @@ deco(l, x) :- deco_at(_, d, l, c), tape_line(d, l, sp), match_all("@\\s*(?P<n>[^
     let at = json!({ "anchor": "capture.n", "code": "X", "message": "x" });
     let whole = w_as(regex.clone(), "python", "a.py", source);
     let groups = w_reporting(regex, at, "python", "a.py", source);
-    let want = csv(whole.iter().zip(&groups).filter(|(m, _)| decorators.contains(&(m["span"]["startLine"].as_u64().unwrap(), m["span"]["startColumn"].as_u64().unwrap()))).map(|(_, g)| {
+    let want = sorted(whole.iter().zip(&groups).filter(|(m, _)| decorators.contains(&(m["span"]["startLine"].as_u64().unwrap(), m["span"]["startColumn"].as_u64().unwrap()))).map(|(_, g)| {
         let at = |k: &str| g["span"][k].as_u64().unwrap() as usize;
-        format!("{}\t{}", at("startLine") + 1, &source[at("startByte")..at("endByte")])
+        r![at("startLine") + 1, &source[at("startByte")..at("endByte")]]
     }));
-    assert_eq!(want, "1\tapp.route\n5\tstaticmethod\n");
+    assert_eq!(want, [["1", "app.route"], ["5", "staticmethod"]]);
     assert_eq!(got[0], want);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1389,7 +1384,7 @@ last_end(e) :- node(d, _, "module", _, _), e = max t : { node(d, _, "function_de
 .output first_def, last_end
 "#;
     let got = run(&dir, program, &["first_def", "last_end"]);
-    assert_eq!(got, [format!("{}\n", source.find("def f").unwrap()), format!("{}\n", source.find("2\n").unwrap() + 1)]);
+    assert_eq!(got, [[[source.find("def f").unwrap().to_string()]], [[(source.find("2\n").unwrap() + 1).to_string()]]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1415,7 +1410,7 @@ missing("x") :- !other("x"), !ident("x").
 .output missing
 "#;
     let got = run(&dir, program, &["missing"]);
-    assert_eq!(got, ["g\nx\n"]);
+    assert_eq!(got, [[["g"], ["x"]]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1445,12 +1440,12 @@ late(fq) :- source(_, sp), match_all("RE", sp, m), match_group("RE", sp, m, "mod
     let group = |g: &str| w_reporting(regex.clone(), json!({ "anchor": format!("capture.{g}"), "code": "X", "message": "x" }), "python", "a.py", source);
     let text = |v: &Value| &source[v["span"]["startByte"].as_u64().unwrap() as usize..v["span"]["endByte"].as_u64().unwrap() as usize];
     let (modules, attrs) = (group("module"), group("attr"));
-    let want = csv(whole.iter().zip(modules.iter().zip(&attrs)).map(|(m, (gm, ga))| {
-        format!("{}.{}\t{}\t{}", text(gm), text(ga), m["span"]["startLine"].as_u64().unwrap() + 1, m["span"]["startColumn"])
+    let want = sorted(whole.iter().zip(modules.iter().zip(&attrs)).map(|(m, (gm, ga))| {
+        r![format!("{}.{}", text(gm), text(ga)), m["span"]["startLine"].as_u64().unwrap() + 1, m["span"]["startColumn"]]
     }));
-    assert_eq!(want, "a.b.c\t3\t6\npkg.mod.run\t2\t4\n");
+    assert_eq!(want, [["a.b.c", "3", "6"], ["pkg.mod.run", "2", "4"]]);
     assert_eq!(got[0], want);
-    assert_eq!(got[1], "a.b\npkg.mod\n");
+    assert_eq!(got[1], [["a.b"], ["pkg.mod"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1479,9 +1474,9 @@ invalid(p) :- doc(d, p, _), syntax_error(d, _, m), prefix("invalid", m).
     let got = run(&dir, core, &["rejected", "invalid"]);
     assert_eq!(
         got[0],
-        "bad.py\t1\tinvalid syntax\nempty.py\t3\texpected an indented block after 'if' statement on line 2\ntarget.py\t1\tcannot assign to function call here. Maybe you meant '==' instead of '='?\n"
+        [["bad.py", "1", "invalid syntax"], ["empty.py", "3", "expected an indented block after 'if' statement on line 2"], ["target.py", "1", "cannot assign to function call here. Maybe you meant '==' instead of '='?"]]
     );
-    assert_eq!(got[1], "bad.py\n");
+    assert_eq!(got[1], [["bad.py"]]);
     let both = r#"
 .decl doc(d: number, path: symbol, module: symbol)
 .decl syntax_error(d: number)
@@ -1494,8 +1489,8 @@ only_tree(p) :- doc(d, p, _), syntax_error(d), !cpython_syntax_error(d, _, _).
 "#;
     let got = run(&dir, both, &["only_cpython", "only_tree"]);
     // tree-sitter has an error node at `f() = 1` too.
-    assert_eq!(got[0], "empty.py\n");
-    assert_eq!(got[1], "");
+    assert_eq!(got[0], [["empty.py"]]);
+    assert!(got[1].is_empty(), "{:?}", got[1]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1523,41 +1518,41 @@ files(p) :- doc(_, p, _).
 .output annotated, names, roots, files
 "#;
     let got = run(&dir, program, &["annotated", "names", "roots", "files"]);
-    let set = |csv: &str| csv.lines().map(str::to_owned).collect::<BTreeSet<String>>();
-    let want = |rows: &[&str]| rows.iter().map(|r| (*r).to_owned()).collect::<BTreeSet<String>>();
+    let set = |rows: &[Vec<String>]| rows.iter().cloned().collect::<BTreeSet<Vec<String>>>();
+    let want = |rows: &[&[&str]]| rows.iter().map(|r| r.iter().map(|v| (*v).to_owned()).collect()).collect::<BTreeSet<Vec<String>>>();
     assert_eq!(
         set(&got[0]),
-        want(&["\"List[int]\"", "\"Optional[Foo]\"", "'typing.Dict[str, \"Bar\"]'", "\"Bar\"", "\"Baz\"", "\"not valid ((\""])
+        want(&[&["\"List[int]\""], &["\"Optional[Foo]\""], &["'typing.Dict[str, \"Bar\"]'"], &["\"Bar\""], &["\"Baz\""], &["\"not valid ((\""]])
     );
     assert_eq!(
         set(&got[1]),
         want(&[
-            "\"List[int]\"\tList",
-            "\"List[int]\"\tint",
-            "\"Optional[Foo]\"\tOptional",
-            "\"Optional[Foo]\"\tFoo",
-            "'typing.Dict[str, \"Bar\"]'\ttyping",
-            "'typing.Dict[str, \"Bar\"]'\tDict",
-            "'typing.Dict[str, \"Bar\"]'\tstr",
-            "\"Bar\"\tBar",
-            "\"Baz\"\tBaz",
-            "\"not valid ((\"\tvalid",
+            &["\"List[int]\"", "List"],
+            &["\"List[int]\"", "int"],
+            &["\"Optional[Foo]\"", "Optional"],
+            &["\"Optional[Foo]\"", "Foo"],
+            &["'typing.Dict[str, \"Bar\"]'", "typing"],
+            &["'typing.Dict[str, \"Bar\"]'", "Dict"],
+            &["'typing.Dict[str, \"Bar\"]'", "str"],
+            &["\"Bar\"", "Bar"],
+            &["\"Baz\"", "Baz"],
+            &["\"not valid ((\"", "valid"],
         ])
     );
     // Each root is its guest's module, over the string's value in `( … )`.
     assert_eq!(
         set(&got[2]),
         want(&[
-            "\"List[int]\"\tmodule\t0\t11",
-            "\"Optional[Foo]\"\tmodule\t0\t15",
-            "'typing.Dict[str, \"Bar\"]'\tmodule\t0\t25",
-            "\"Bar\"\tmodule\t0\t5",
-            "\"Baz\"\tmodule\t0\t5",
-            "\"not valid ((\"\tmodule\t0\t14",
+            &["\"List[int]\"", "module", "0", "11"],
+            &["\"Optional[Foo]\"", "module", "0", "15"],
+            &["'typing.Dict[str, \"Bar\"]'", "module", "0", "25"],
+            &["\"Bar\"", "module", "0", "5"],
+            &["\"Baz\"", "module", "0", "5"],
+            &["\"not valid ((\"", "module", "0", "14"],
         ])
     );
     // The trees are no files.
-    assert_eq!(got[3], "a.py\n");
+    assert_eq!(got[3], [["a.py"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1578,25 +1573,25 @@ vals(k, t, v) :- literal_json(n, v), node(_, n, k, _, _), node_text(n, t).
     let got = run(&dir, program, &["vals"]);
     assert_eq!(
         got[0],
-        csv([
-            "dictionary\t{'b': 1, 'a': (1, 2.5)}\t{\"a\":[1,2.5],\"b\":1}",
-            "float\t1e16\t1e+16",
-            "float\t2.5\t2.5",
-            "integer\t1\t1",
-            "integer\t1\t1",
-            "integer\t1\t1",
-            "integer\t2\t2",
-            "none\tNone\tnull",
-            "concatenated_string\t'é' 'x'\t\"\\u00e9x\"",
-            "string\t'a'\t\"a\"",
-            "string\t'b'\t\"b\"",
-            "string\t'k'\t\"k\"",
-            "tuple\t(1, 2.5)\t[1,2.5]",
-            "type\t[None]\t[null]",
-            "list\t[None]\t[null]",
-            "unary_operator\t-1\t-1",
+        sorted([
+            ["dictionary", "{'b': 1, 'a': (1, 2.5)}", "{\"a\":[1,2.5],\"b\":1}"],
+            ["float", "1e16", "1e+16"],
+            ["float", "2.5", "2.5"],
+            ["integer", "1", "1"],
+            ["integer", "1", "1"],
+            ["integer", "1", "1"],
+            ["integer", "2", "2"],
+            ["none", "None", "null"],
+            ["concatenated_string", "'é' 'x'", "\"\\u00e9x\""],
+            ["string", "'a'", "\"a\""],
+            ["string", "'b'", "\"b\""],
+            ["string", "'k'", "\"k\""],
+            ["tuple", "(1, 2.5)", "[1,2.5]"],
+            ["type", "[None]", "[null]"],
+            ["list", "[None]", "[null]"],
+            ["unary_operator", "-1", "-1"],
         ]
-        .map(str::to_owned))
+        .map(|r| r.map(str::to_owned).to_vec()))
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1615,23 +1610,23 @@ printed(k, t, @py_unparse(n), @py_repr(@py_unparse(n))) :- node(_, n, k, _, _), 
 .output printed
 "#;
     let got = run(&dir, program, &["printed"]);
-    let has = |row: &str| got[0].lines().any(|l| l == row);
+    let has = |row: &[&str]| got[0].iter().any(|l| l[..] == *row);
     for row in [
-        "type\t\"x\"\t'x'\t\"'x'\"",
-        "type\tint\tint\t'int'",
-        "type\tstr\tstr\t'str'",
-        "type\tdict[str, int]\tdict[str, int]\t'dict[str, int]'",
-        "boolean_operator\t(a or b) and not c\t(a or b) and (not c)\t'(a or b) and (not c)'",
-        "boolean_operator\ta or b\ta or b\t'a or b'",
-        "not_operator\tnot c\tnot c\t'not c'",
-        "string\tf\"{x!r:>{w}} {y=}\"\tf'{x!r:>{w}} y={y!r}'\t\"f'{x!r:>{w}} y={y!r}'\"",
-        "integer\t1\t1\t'1'",
-        "typed_parameter\ta: \"x\"\ta: 'x'\t\"a: 'x'\"",
+        ["type", "\"x\"", "'x'", "\"'x'\""],
+        ["type", "int", "int", "'int'"],
+        ["type", "str", "str", "'str'"],
+        ["type", "dict[str, int]", "dict[str, int]", "'dict[str, int]'"],
+        ["boolean_operator", "(a or b) and not c", "(a or b) and (not c)", "'(a or b) and (not c)'"],
+        ["boolean_operator", "a or b", "a or b", "'a or b'"],
+        ["not_operator", "not c", "not c", "'not c'"],
+        ["string", "f\"{x!r:>{w}} {y=}\"", "f'{x!r:>{w}} y={y!r}'", "\"f'{x!r:>{w}} y={y!r}'\""],
+        ["integer", "1", "1", "'1'"],
+        ["typed_parameter", "a: \"x\"", "a: 'x'", "\"a: 'x'\""],
     ] {
-        assert!(has(row), "{row:?} in {}", got[0]);
+        assert!(has(&row), "{row:?} in {:?}", got[0]);
     }
     // CPython's `arg` of `*b: int` starts at `b`: tree-sitter's parameter node, with its `*`, is no `arg`'s span.
-    assert!(!got[0].lines().any(|l| l.starts_with("typed_parameter\t*b")), "{}", got[0]);
+    assert!(!got[0].iter().any(|l| l[0] == "typed_parameter" && l[1].starts_with("*b")), "{:?}", got[0]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1652,9 +1647,9 @@ calls(@ast_dump(n)) :- node(_, n, "call", _, _).
     let got = run(&dir, program, &["defs", "calls"]);
     assert_eq!(
         got[0],
-        csv(["747bc3749caaa6d222424d1542da2ee0a312fe508fb3081c65d873c88311bae1\tf162c45775dc52a80bbf80593192690791f38ed2ee5db47bdd0582cf37943108\t86250c1f242392eacdb303a6c1df981f77a09a769fdd196f207f0e2ec43ae458".to_owned()])
+        [["747bc3749caaa6d222424d1542da2ee0a312fe508fb3081c65d873c88311bae1", "f162c45775dc52a80bbf80593192690791f38ed2ee5db47bdd0582cf37943108", "86250c1f242392eacdb303a6c1df981f77a09a769fdd196f207f0e2ec43ae458"]]
     );
-    assert_eq!(got[1], csv(["Call(func=Name(id='f', ctx=Load()), args=[Constant(value=1)])".to_owned()]));
+    assert_eq!(got[1], [["Call(func=Name(id='f', ctx=Load()), args=[Constant(value=1)])"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1674,6 +1669,6 @@ pre(p) :- node(d, m, "module", _, _), doc(d, p, _), node_text(m, s), prefix("cla
 .output gate, pre
 "#;
     let got = run(&dir, program, &["gate", "pre"]);
-    assert_eq!(got, ["a.py\n", "a.py\n"]);
+    assert_eq!(got, [[["a.py"]], [["a.py"]]]);
     let _ = std::fs::remove_dir_all(&dir);
 }

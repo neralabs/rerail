@@ -46,7 +46,7 @@ fn the_python_pack_runs_as_its_logic_program() {
     let forbids = lowered.program.rules.iter().filter(|rule| rule.body.iter().any(|l| matches!(l, Literal::Ast { .. }))).count();
     assert!(forbids >= lowered.clauses.len(), "{forbids} forbid rules, {} lowered", lowered.clauses.len());
     // Rules of one shape are one rule over its table: each lowered atom is a row, or a rule kept as written.
-    let wave = crate::code_rule_dsl::logic::rr::parse(&lowered.logic.rules).unwrap();
+    let wave = &lowered.logic.rules;
     let rows: usize = wave.facts.iter().filter(|(rel, _)| rel.starts_with("violation_shape_")).map(|(_, rows)| rows.len()).sum();
     let kept = wave.rules.iter().filter(|rule| !rule.body.iter().any(|l| l.atom().is_some_and(|a| a.rel.starts_with("violation_shape_")))).count();
     assert!(rows > 0, "the pack's forbid rules share a shape");
@@ -79,7 +79,7 @@ fn magic_sets_demand_each_clause_where_its_rules_read_it() {
     let mut wave = Program::default();
     declare_violation(&mut wave);
     let demand = demand_program(prog, &wave, 3).unwrap().unwrap();
-    let logic = Logic { rules: String::new(), demand: Some(demand), bound: Vec::new() };
+    let logic = Logic { rules: Program::default(), demand: Some(demand), bound: Vec::new() };
     let sql = logic.demand_statement(&store()).unwrap().expect("one statement");
     let db = rusqlite::Connection::open_in_memory().unwrap();
     db.execute_batch("CREATE TEMP TABLE wave_document(position INTEGER, d INTEGER); INSERT INTO temp.wave_document VALUES (0, 5), (1, 7)").unwrap();
@@ -103,7 +103,7 @@ fn py_families_narrow_demand_before_the_batch() {
     declare_py(&mut wave);
     assert_eq!(wave.decls["py_call"].iter().map(|(c, _)| c.as_str()).collect::<Vec<_>>(), ["d", "call", "callee"]);
     let demand = demand_program(prog, &wave, 1).unwrap().unwrap();
-    let logic = Logic { rules: String::new(), demand: Some(demand), bound: Vec::new() };
+    let logic = Logic { rules: Program::default(), demand: Some(demand), bound: Vec::new() };
     let sql = logic.demand_statement(&store()).unwrap().expect("one statement");
     assert!(sql.contains("py_call"), "{sql}");
     let db = rusqlite::Connection::open_in_memory().unwrap();
@@ -136,8 +136,8 @@ fn rules_of_one_shape_are_one_rule_over_their_constants() {
         vec![Value::Str("q".into()), Value::Str("b".into()), Value::Int(1)],
     ]);
     assert_eq!(prog.decls["violation_shape_0"].iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>(), ["sym", "sym", "int"]);
-    // The wave's text parses back to the same program.
-    let back = crate::code_rule_dsl::logic::rr::parse(&wave_text(&prog).unwrap()).unwrap();
-    assert_eq!(back.rules, prog.rules);
-    assert_eq!(back.facts, prog.facts);
+    // The wave's program holds them as they are, its node columns the wave's integers.
+    let wave = wave_program(&prog);
+    assert_eq!(wave.rules, prog.rules);
+    assert_eq!(wave.facts, prog.facts);
 }

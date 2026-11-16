@@ -1614,20 +1614,47 @@ pub fn declined() -> BTreeMap<String, String> {
     state().fallbacks.clone()
 }
 
+/// The strata a span path names as its last part: what follows each `stratum ` at the path's start or after a `/`
+/// (`local/stratum a/b` names `a/b`; `stratum p/engine run` names `p/engine run`, which no stratum is).
+fn stratum_tails(path: &str) -> impl Iterator<Item = &str> {
+    path.match_indices("stratum ").filter(|&(i, _)| i == 0 || path.as_bytes()[i - 1] == b'/').map(|(i, m)| &path[i + m.len()..])
+}
+
 /// The strata that fell back to SQLite, costliest first, and the same by the kind of literal declined: each one's
 /// CPU (its `stratum …` spans, wherever they ran) and SQLite's VM steps. What the native engine lacks, by its cost.
 pub fn fallbacks(r: &mut String, state: &State) {
     let roots: f64 = state.spans.iter().filter(|(p, _)| !p.contains('/')).map(|(_, t)| t.total).sum();
+    // One pass over the spans and one over the statements, not one each per stratum.
+    let mut spans: HashMap<&str, (f64, u64)> = HashMap::new();
+    for (path, t) in &state.spans {
+        for key in stratum_tails(path) {
+            let e = spans.entry(key).or_default();
+            e.0 += t.total;
+            e.1 += t.calls;
+        }
+    }
+    // A statement charges the stratum it ran in (a path's last part) and every stratum it ran under
+    // (`stratum <key>/…`): a tail and each of its prefixes ending before a `/`, each key once.
+    let mut vms: HashMap<&str, u64> = HashMap::new();
+    let mut keys: Vec<&str> = Vec::new();
+    for ((path, _), s) in &state.sql {
+        keys.clear();
+        for tail in stratum_tails(path) {
+            keys.push(tail);
+            keys.extend(tail.match_indices('/').map(|(j, _)| &tail[..j]));
+        }
+        keys.sort_unstable();
+        keys.dedup();
+        for key in &keys {
+            *vms.entry(key).or_default() += s.vm;
+        }
+    }
     let mut rows: Vec<(f64, u64, u64, &String, &String)> = state
         .fallbacks
         .iter()
         .map(|(key, class)| {
-            let name = format!("stratum {key}");
-            let at = |p: &String| p == &name || p.ends_with(&format!("/{name}"));
-            let cpu: f64 = state.spans.iter().filter(|(p, _)| at(p)).map(|(_, t)| t.total).sum();
-            let calls: u64 = state.spans.iter().filter(|(p, _)| at(p)).map(|(_, t)| t.calls).sum();
-            let vm: u64 = state.sql.iter().filter(|((p, _), _)| at(p) || p.contains(&format!("{name}/"))).map(|(_, s)| s.vm).sum();
-            (cpu, vm, calls, key, class)
+            let (cpu, calls) = spans.get(key.as_str()).copied().unwrap_or((0.0, 0));
+            (cpu, vms.get(key.as_str()).copied().unwrap_or(0), calls, key, class)
         })
         .collect();
     rows.sort_by(|a, b| b.0.total_cmp(&a.0));
@@ -1674,11 +1701,14 @@ pub fn executor(key: &str, ran: &'static str, native: Option<String>, device: Ve
 /// Every stratum's executors and hazards: by hazard, costliest first (a stratum counts under each of its hazards),
 /// then the strata. What to build next, on the device and in the native engine, by what it costs.
 pub fn executors(r: &mut String, state: &State) {
-    let cpu_of = |key: &str| -> f64 {
-        let name = format!("stratum {key}");
-        state.spans.iter().filter(|(p, _)| **p == name || p.ends_with(&format!("/{name}"))).map(|(_, t)| t.total).sum()
-    };
-    let rows: Vec<(f64, &String, &Blocked)> = state.blocked.iter().map(|(k, b)| (cpu_of(k), k, b)).collect();
+    // One pass over the spans, not one per stratum (thousands of strata over tens of thousands of spans).
+    let mut by_key: HashMap<&str, f64> = HashMap::new();
+    for (path, t) in &state.spans {
+        for key in stratum_tails(path) {
+            *by_key.entry(key).or_default() += t.total;
+        }
+    }
+    let rows: Vec<(f64, &String, &Blocked)> = state.blocked.iter().map(|(k, b)| (by_key.get(k.as_str()).copied().unwrap_or(0.0), k, b)).collect();
     let mut ran: BTreeMap<&str, u64> = BTreeMap::new();
     for (_, _, b) in &rows {
         for (e, n) in &b.ran {
@@ -1904,7 +1934,9 @@ pub fn explain(r: &mut String, state: &State) {
     }
     r.push('\n');
     for s in &state.strata {
-        let plans: Vec<(&(String, String, String), &PlanTotal)> = state.plans.iter().filter(|((k, _, _), _)| *k == s.key).collect();
+        // The stratum's plans, a range of the map (keyed by stratum first), not a scan of every plan per stratum.
+        let plans: Vec<(&(String, String, String), &PlanTotal)> =
+            state.plans.range((s.key.clone(), String::new(), String::new())..).take_while(|((k, _, _), _)| *k == s.key).collect();
         let planning: f64 = plans.iter().map(|(_, t)| t.planning).sum();
         let _ = writeln!(r, "Stratum {}  [engine: {}]  (loops={}, planning {planning:.3} s CPU)", short(&s.key, 120), s.engine, s.loops);
         if !s.why.is_empty() {
@@ -2053,6 +2085,61 @@ pub fn projection_plan(prog: &crate::code_rule_dsl::logic::front::Program, reads
 #[cfg(test)]
 pub mod tests {
     use super::*;
+
+    /// Each stratum's CPU in the executors' report is its spans' (`stratum <key>`, alone or the last part of a path),
+    /// a key of several relations (`a/b`) among them, and no other span's.
+    #[test]
+    fn executors_charge_each_stratum_its_own_spans() {
+        let mut state = State::default();
+        let t = |total: f64| SpanTotal { calls: 1, total, ..Default::default() };
+        for (path, cpu) in [
+            ("stratum p", 1.0),
+            ("local/run/stratum p", 2.0),
+            ("cross/stratum a/b", 4.0),
+            ("stratum a/b", 8.0),
+            ("local/stratum pq", 16.0),
+            ("stratum p/engine run", 32.0),
+            ("other", 64.0),
+        ] {
+            state.spans.insert(path.into(), t(cpu));
+        }
+        for key in ["p", "a/b", "pq", "none"] {
+            state.blocked.entry(key.into()).or_default().ran.insert("native CPU", 1);
+        }
+        let mut r = String::new();
+        executors(&mut r, &state);
+        let cpu = |key: &str| r.lines().find(|l| l.trim_start().split_once("  ").is_some_and(|(_, rest)| rest.starts_with(&format!("{key}: ")))).map(|l| l.split_whitespace().next().unwrap().to_owned());
+        assert_eq!(cpu("p").as_deref(), Some("3.000"), "{r}");
+        assert_eq!(cpu("a/b").as_deref(), Some("12.000"), "{r}");
+        assert_eq!(cpu("pq").as_deref(), Some("16.000"), "{r}");
+        assert_eq!(cpu("none").as_deref(), Some("0.000"), "{r}");
+    }
+
+    /// A declined stratum's row in the SQLite fallbacks: its spans' CPU and runs (`stratum <key>`, alone or the last
+    /// part of a path), and the VM steps of SQL run there or under it (`stratum <key>/…`); a key of several relations
+    /// (`a/b`) beside one that is its prefix (`a`).
+    #[test]
+    fn fallbacks_charge_each_stratum_its_own_spans_and_sql() {
+        let mut state = State::default();
+        for (path, cpu) in [("stratum p", 1.0), ("local/stratum p", 2.0), ("stratum p/x", 4.0), ("stratum a/b", 8.0), ("other", 16.0)] {
+            state.spans.insert(path.into(), SpanTotal { calls: 1, total: cpu, ..Default::default() });
+        }
+        for (path, vm) in [("stratum p", 10), ("x/stratum p/q", 100), ("stratum p/x", 1000), ("stratum a/b/c", 10000), ("stratum a/b", 5), ("other", 7)] {
+            state.sql.insert((path.into(), "select 1".into()), SqlTotal { vm, ..Default::default() });
+        }
+        for key in ["p", "a/b", "a", "none"] {
+            state.fallbacks.insert(key.into(), "negation".into());
+        }
+        let mut r = String::new();
+        fallbacks(&mut r, &state);
+        let row = |key: &str| {
+            r.lines().find(|l| l.split_whitespace().nth(3) == Some(&format!("{key}:"))).map(|l| l.split_whitespace().take(3).collect::<Vec<_>>().join(" "))
+        };
+        assert_eq!(row("p").as_deref(), Some("3.000 2 1110"), "{r}");
+        assert_eq!(row("a/b").as_deref(), Some("8.000 1 10005"), "{r}");
+        assert_eq!(row("a").as_deref(), Some("0.000 0 10005"), "{r}");
+        assert_eq!(row("none").as_deref(), Some("0.000 0 0"), "{r}");
+    }
 
     /// A thread records into its own shard: another thread holding its records does not hold it up (one lock for
     /// every thread's records made sixteen threads take turns at it), and an ended thread's records are read with

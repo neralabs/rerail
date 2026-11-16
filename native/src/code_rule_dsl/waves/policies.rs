@@ -58,9 +58,9 @@ fn invalid(error: impl std::fmt::Display) -> StoreError {
 /// The policies' rules as the wave runs them.
 #[derive(Clone, Debug, Default)]
 pub(in crate::code_rule_dsl) struct Logic {
-    /// Datalog appended to the wave's source: the relations' declarations, `.output`, and the rules over
-    /// `match`.
-    pub(in crate::code_rule_dsl) rules: String,
+    /// The program added to the wave's source (`matches::SOURCE`): the relations' declarations, outputs, rules
+    /// over `match` and their facts, as a program (`wave_program`), never printed (decision 0249).
+    pub(in crate::code_rule_dsl) rules: Program,
     /// The demand program: the magic rules seeded by `wave(d)`, deriving `demanded(i, d)`. `None`: every
     /// clause is demanded on every document.
     pub(in crate::code_rule_dsl) demand: Option<Program>,
@@ -81,7 +81,7 @@ impl Logic {
             prog.rules.push(Rule { head, body: [matched(i, "D", "N")].into() });
         }
         declare_violation(&mut prog);
-        Self { rules: wave_text(&merged(prog)).expect("a clause's forbid rule prints as .rr"), demand: None, bound: Vec::new() }
+        Self { rules: wave_program(&merged(prog)), demand: None, bound: Vec::new() }
     }
 
     /// The demand statement on `store` (its atoms interned there): a SELECT of `(i, d)` rows over
@@ -160,11 +160,10 @@ fn declare_violation(prog: &mut Program) {
     }
 }
 
-/// The rules' text for the wave, in `.rr`: declarations (nodes are the wave's integers), outputs, rules, facts.
-fn wave_text(prog: &Program) -> Result<String, crate::code_rule_dsl::logic::front::Error> {
+/// The rules for the wave: declarations (nodes are the wave's integers), outputs, rules, facts.
+fn wave_program(prog: &Program) -> Program {
     let decls = prog.decls.iter().map(|(rel, cols)| (rel.clone(), cols.iter().map(|(c, t)| (c.clone(), if t == "node" { "int".into() } else { t.clone() })).collect())).collect();
-    let printed = Program { decls, outputs: prog.outputs.clone(), rules: prog.rules.clone(), facts: prog.facts.clone(), ..Program::default() };
-    crate::code_rule_dsl::logic::rr::print(&printed)
+    Program { decls, outputs: prog.outputs.clone(), rules: prog.rules.clone(), facts: prog.facts.clone(), ..Program::default() }
 }
 
 /// A rule with its variables renamed `V0, V1, …` in order of appearance, and its constants in the head and in
@@ -765,7 +764,7 @@ pub(in crate::code_rule_dsl) fn lower_with(policies: &[(String, CompiledCodeRule
         .filter(|rel| is_bound(rel))
         .filter_map(|rel| crate::code_rule_dsl::logic::sql::select::input_columns(rel).map(|columns| (rel.to_owned(), columns)))
         .collect();
-    Ok(Lowered { clauses, shapes, logic: Logic { rules: wave_text(&merged(wave)).map_err(invalid)?, demand, bound }, program })
+    Ok(Lowered { clauses, shapes, logic: Logic { rules: wave_program(&merged(wave)), demand, bound }, program })
 }
 
 /// The demand program of `rules` (each reading `ast_i` atoms after `wave` seeds): `.demand` on every atom,

@@ -267,7 +267,7 @@ fn fresh() -> (PathBuf, ContentStore, Connection) {
     (path, store, db)
 }
 
-fn sorted(mut v: Vec<String>) -> Vec<String> {
+fn sorted<T: Ord>(mut v: Vec<T>) -> Vec<T> {
     v.sort();
     v
 }
@@ -276,7 +276,7 @@ fn sorted(mut v: Vec<String>) -> Vec<String> {
 /// probe did not run at all.
 fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
     let p = parse(src).map_err(|e| format!("unparsed: {e}"))?;
-    let lower_run = |modes: &str, binding: placement::Binding| -> std::result::Result<(Vec<String>, bool, Vec<(String, placement::Ran)>), String> {
+    let lower_run = |modes: &str, binding: placement::Binding| -> std::result::Result<(Vec<Vec<String>>, bool, Vec<(String, placement::Ran)>), String> {
         let (_path, store, db) = fresh();
         // `shortlex_min<>` orders the run's symbols by their text: the store's atoms, as a run declares it.
         crate::code_rule_dsl::logic::native::declare("shortlex_min", std::sync::Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));
@@ -287,7 +287,7 @@ fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
         placement::set_binding(was);
         let got = got.map_err(|e| format!("error: {e}"))?;
         let ran = placement::recorded(rel);
-        Ok((sorted(got.outputs.get(rel).map(|r| r.lines()).unwrap_or_default()), got.native.iter().any(|k| k.split('/').any(|r| r == rel)), ran))
+        Ok((sorted(got.outputs.get(rel).map(|r| r.shown()).unwrap_or_default()), got.native.iter().any(|k| k.split('/').any(|r| r == rel)), ran))
     };
     let (want, _, _) = lower_run("", placement::Binding::Cpu).map_err(|e| format!("sqlite: {e}"))?;
     let native = match lower_run("program", placement::Binding::Cpu) {

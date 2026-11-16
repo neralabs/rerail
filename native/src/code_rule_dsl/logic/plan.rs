@@ -4337,9 +4337,10 @@ pub struct Outcome {
 }
 
 impl Outcome {
-    /// Each output's rows as text lines (`Rows::lines`): sorted, each once, a node as its number.
-    pub fn text(&self) -> BTreeMap<String, Vec<String>> {
-        self.outputs.iter().map(|(rel, rows)| (rel.clone(), rows.lines())).collect()
+    /// Each output's rows, each value as shown (`Rows::shown`): sorted, each once, a node as its number. For
+    /// comparing outcomes, never read back.
+    pub fn shown(&self) -> BTreeMap<String, Vec<Vec<String>>> {
+        self.outputs.iter().map(|(rel, rows)| (rel.clone(), rows.shown())).collect()
     }
 }
 
@@ -4610,7 +4611,7 @@ mod complete_answer_tests {
             };
             let result = run_atoms_native_answering(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), "program", &mut answer, None, None, None).unwrap();
             assert_eq!(result.outputs["shown"].len(), 1000, "later consumers must see all deferred positives");
-            assert_eq!(result.outputs["shown"].lines().iter().map(|s| s.parse::<i64>().unwrap()).collect::<BTreeSet<_>>(), (0..1000).collect(), "every returned value stays exact");
+            assert_eq!(result.outputs["shown"].shown().iter().map(|r| r[0].parse::<i64>().unwrap()).collect::<BTreeSet<_>>(), (0..1000).collect(), "every returned value stays exact");
             assert_eq!(batches.len(), 2, "held keys resume as one batch, never one callback per key");
             assert_eq!(batches[0].len(), 1000);
             assert_eq!(batches[1].len(), 1000-immediate);
@@ -5908,20 +5909,24 @@ fn reads_of(vs: &body::Versions, k: RuleKey) -> impl Iterator<Item = &str> + '_ 
 /// The relations of `scc` that reach themselves through `rules` (any read: positive, negated or aggregated), each
 /// read by its handles.
 fn cyclic_relations(vs: &body::Versions, scc: &BTreeSet<String>, rules: &[RuleKey]) -> BTreeSet<String> {
+    cyclic_in(scc, rules.iter().flat_map(|&r| {
+        let head = vs.head_at(r);
+        reads_of(vs, r).map(move |a| (head, a))
+    }))
+}
+
+/// The relations of `scc` that reach themselves through `edges`, each `(head, a relation its rule reads)`.
+fn cyclic_in<'a>(scc: &BTreeSet<String>, edges: impl Iterator<Item = (&'a str, &'a str)>) -> BTreeSet<String> {
     // A relation reaches itself where it is in a strongly connected part of more than one relation, or reads itself:
     // one pass over the edges (Tarjan's), not a walk from each relation (a 220-relation stratum walked 48,000 times).
     let names: Vec<&str> = scc.iter().map(String::as_str).collect();
     let at = |r: &str| names.binary_search(&r).ok();
     let mut next: Vec<Vec<usize>> = vec![Vec::new(); names.len()];
     let mut own = vec![false; names.len()];
-    for &r in rules {
-        let Some(h) = at(vs.head_at(r)) else { continue };
-        for a in reads_of(vs, r) {
-            if let Some(b) = at(a) {
-                next[b].push(h);
-                own[b] |= b == h;
-            }
-        }
+    for (head, read) in edges {
+        let (Some(h), Some(b)) = (at(head), at(read)) else { continue };
+        next[b].push(h);
+        own[b] |= b == h;
     }
     let n = names.len();
     let (mut index, mut low, mut on) = (vec![usize::MAX; n], vec![0; n], vec![false; n]);
@@ -10847,6 +10852,11 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             }
             // The stratum's own requests, answered again from its kept rows: a native step's answers are a function of
             // its requests, so they are as they were exactly when the step's leaves (the files it read) are.
+            // A request below the stratum that no stratum derives is the program's own facts (a constant world
+            // request, `rr_dir_req("sub")`): not kept, so its answers cannot be replayed, and the stratum runs.
+            if clean && answering && above.iter().any(|(p, q)| !ks.has_rows(q) && !run.answered.contains_key(p.as_str())) {
+                clean = false;
+            }
             let mut replayed: BTreeMap<String, BTreeSet<Vec<i64>>> = BTreeMap::new();
             if clean && answering {
                 let _span = super::profile::span(|| "the stratum's requests answered again".into());
@@ -11433,7 +11443,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     let to_sql: Vec<String> = written.iter().filter(|r| !native_out.contains(*r)).cloned().collect();
     run.materialize(&to_sql)?;
     let outputs_of: Vec<&str> = f0.outputs().collect();
-    let (outputs, nodes) = decoded_outputs(&outputs_of, &|r| f0.is_input(r), &|r| f0.arity(r), db, lowered, &facts, atoms, &kept, &native_out)?;
+    let (outputs, nodes) = decoded_outputs(&outputs_of, &|r| f0.is_input(r), &|r| f0.columns(r).map(|c| c.into_iter().map(|(_, t)| t.to_owned()).collect()), db, lowered, &facts, atoms, &kept, &native_out)?;
     let mut outputs=outputs;let mut nodes=nodes;
     for rel in &sentinels {
         if let Some(rows)=outputs.get_mut(rel){*rows=std::sync::Arc::new(rows.without_first());}
@@ -11656,7 +11666,7 @@ pub fn decode_kept(
     }
     let prog = &lowered.program;
     let outputs: Vec<&str> = names.iter().map(String::as_str).collect();
-    decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.len()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &names)
+    decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.iter().map(|(_, t)| t.to_string()).collect()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &names)
 }
 
 /// The program's outputs as rows (decision 0239: symbols, kinds and fields as their text, every other value as it
@@ -11667,7 +11677,7 @@ pub fn decode_kept(
 fn decoded_outputs(
     outputs_of: &[&str],
     is_input: &dyn Fn(&str) -> bool,
-    arity: &dyn Fn(&str) -> Option<usize>,
+    types: &dyn Fn(&str) -> Option<Vec<String>>,
     db: &Connection,
     lowered: Option<lower::Lowering<'_>>,
     facts: &str,
@@ -11680,7 +11690,8 @@ fn decoded_outputs(
     for &rel in outputs_of.iter().filter(|r| !kept.contains(**r)) {
         // The findings form `finding(key, n)` is written as `finding_at` (key, path, start); a `finding` of another
         // shape (a data-layer program's `finding(clause, code, n)`) is an output like any other.
-        let findings_form = rel == "finding" && arity(rel).is_none_or(|n| n == 2);
+        let declared = types(rel);
+        let findings_form = rel == "finding" && declared.as_ref().is_none_or(|t| t.len() == 2);
         // Each column's decoding: symbols as text (names in SQL, kinds and fields from the dialect's grammar).
         let domains: Vec<lower::Domain> = match lowered {
             Some(l) if !findings_form => l.domains.get(rel).cloned().ok_or_else(|| Error::Plan(format!("the output {rel} has no columns' domains")))?,
@@ -11718,15 +11729,39 @@ fn decoded_outputs(
                 _ => None,
             }
         };
-        // A value as the row holds it: an integer as it is; a kind or a field by its name; any other as its text.
-        let cell = |i: usize, v: SqlValue| -> Shown {
-            match v {
+        // A value as the row holds it: an integer as it is; a kind or a field by its name; NULL as none
+        // (`output::NULL`, shown `None`); a text as it is, in a text column. No integer column holds a text, a real
+        // or a blob: the engine has no such value there.
+        // Each column typed by its domain (a node; a text: a name, a kind, a field; else an integer), or where the run
+        // was not lowered, by its declared type. A table's rows are a set; a row seeded from SQL may also be one the
+        // engine derived: each row is once where it is read (the image).
+        let types: Vec<u8> = if findings_form {
+            vec![output::col::TEXT, output::col::TEXT, output::col::INT]
+        } else if lowered.is_some() {
+            domains
+                .iter()
+                .map(|d| match d {
+                    lower::Domain::Node => output::col::NODE,
+                    lower::Domain::Name | lower::Domain::Kind | lower::Domain::Field => output::col::TEXT,
+                    _ => output::col::INT,
+                })
+                .collect()
+        } else {
+            declared
+                .as_ref()
+                .map(|cols| cols.iter().map(|t| match t.as_str() { "node" => output::col::NODE, "number" | "int" | "unsigned" => output::col::INT, _ => output::col::TEXT }).collect())
+                .unwrap_or_default()
+        };
+        let text_domain = |i: usize| types.get(i).is_none_or(|&t| t == output::col::TEXT);
+        let cell = |i: usize, v: SqlValue| -> Result<Shown> {
+            Ok(match v {
                 SqlValue::Integer(v) => decode(i, v).map_or(Shown::Int(v), Shown::Text),
-                SqlValue::Real(f) => Shown::Text(format!("{f:?}")),
-                SqlValue::Text(s) => Shown::Text(s),
-                SqlValue::Null => Shown::Text("None".to_owned()),
-                SqlValue::Blob(b) => Shown::Text(format!("{b:?}")),
-            }
+                SqlValue::Null if text_domain(i) => Shown::Text("None".to_owned()),
+                SqlValue::Null => Shown::Int(output::NULL),
+                SqlValue::Text(s) if text_domain(i) => Shown::Text(s),
+                SqlValue::Real(f) if text_domain(i) => Shown::Text(format!("{f:?}")),
+                other => return Err(Error::Plan(format!("{rel}: {other:?} in integer column {i}"))),
+            })
         };
         let text_cols: Vec<bool> = domains.iter().map(|d| *d == lower::Domain::Name).collect();
         let held = if native.contains(rel) && rel == "finding" {
@@ -11739,29 +11774,16 @@ fn decoded_outputs(
         } else {
             None
         };
-        // Each column typed by its domain: a node, a text (a name, a kind, a field), else an integer until a text
-        // arrives in it. A table's rows are a set; a row seeded from SQL may also be one the engine derived: each row
-        // is once where it is read (`Rows::lines`, the image).
-        let types: Vec<u8> = if findings_form {
-            vec![output::col::TEXT, output::col::TEXT, output::col::INT]
-        } else {
-            domains
-                .iter()
-                .map(|d| match d {
-                    lower::Domain::Node => output::col::NODE,
-                    lower::Domain::Name | lower::Domain::Kind | lower::Domain::Field => output::col::TEXT,
-                    _ => output::col::INT,
-                })
-                .collect()
-        };
-        let mut rows = output::Rows::new(types);
+        let mut rows = output::Rows::new(types.clone());
         let mut row: Vec<Shown> = Vec::new();
         let push = |rows: &mut output::Rows, row: &[Shown]| rows.push(&row.iter().map(Shown::cell).collect::<Vec<_>>());
         match held {
             Some(held) => {
                 for r in held {
                     row.clear();
-                    row.extend(r.into_iter().enumerate().map(|(i, v)| cell(i, v)));
+                    for (i, v) in r.into_iter().enumerate() {
+                        row.push(cell(i, v)?);
+                    }
                     push(&mut rows, &row);
                 }
             }
@@ -11772,7 +11794,7 @@ fn decoded_outputs(
                 while let Some(r) = q.next()? {
                     row.clear();
                     for i in 0..width {
-                        row.push(cell(i, r.get::<_, SqlValue>(i)?));
+                        row.push(cell(i, r.get::<_, SqlValue>(i)?)?);
                     }
                     push(&mut rows, &row);
                 }
