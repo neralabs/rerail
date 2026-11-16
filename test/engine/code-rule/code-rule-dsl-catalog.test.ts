@@ -1,12 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
-import { openRerailDatabase } from "../../../src/engine/storage/database.js";
+import { worktreeRuleCatalog } from "../../../src/engine/catalog/worktree-pack.js";
+import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import { loadNativeBinding } from "../../../src/engine/native/native.js";
 import { bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-rule-compile.js";
 import {
@@ -25,7 +26,7 @@ import {
 } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { applyCodeRuleConfig } from "../../../src/engine/code-rule/code-rule-options.js";
 import { setRepositoryStarted } from "../../../src/runtime/index.js";
-import { addAttachment, setRuleSetting } from "../../../src/engine/catalog/rule-configuration.js";
+import { addAttachment, loadCheckoutRuleSet, ruleConfigurationSignature, setRuleSetting } from "../../../src/engine/catalog/rule-configuration.js";
 import { upsertLibraryRule } from "../../../src/engine/catalog/rule-library.js";
 import { approve, ruleSubject } from "../../../src/engine/catalog/rule-approval.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
@@ -240,7 +241,223 @@ describe("checkout code-rule catalog", () => {
       catalogs.close();
     }
   });
+
+  it("reads a checkout at one cost however many checkouts its repository has recorded", () => {
+    const rowsRead = (recorded: number): number => {
+      const base = temporaryRoot();
+      const main = join(base, "main");
+      execFileSync("git", ["init", "--quiet", "-b", "main", main]);
+      execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "base"], { cwd: main });
+      const read = join(main, ".worktrees", "read");
+      execFileSync("git", ["worktree", "add", "--quiet", "-b", "read", read], { cwd: main });
+      const databasePath = join(base, "rerail.sqlite");
+      const key = setUpTestRepository(main, {}, databasePath);
+      // Worktrees beside the main checkout and inside it, as a repository many agents work in has.
+      const worktrees = Array.from({ length: recorded }, (_, index) => join(index % 2 === 0 ? base : join(main, ".worktrees"), `worktree-${index}`));
+      recordCheckoutRows(databasePath, key, [read, ...worktrees]);
+      const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: loadRuleCatalog() });
+      try {
+        const catalog = catalogs.catalog(read);
+        return countRowsRead(catalogs.database, () => {
+          expect(catalogs.refresh(read)).toBe("ok");
+          expect(catalog.refresh()).toBe(false);
+          expect(catalogs.ownerCheckoutPaths(read)).toEqual([read, main]);
+        });
+      } finally {
+        catalogs.close();
+      }
+    };
+    expect(rowsRead(300)).toBe(rowsRead(10));
+  });
+
+  it("reads a checkout's rule configuration in one statement, prepared once, at every refresh", () => {
+    const { root, databasePath } = checkout();
+    const key = setUpTestRepository(root, {}, databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: loadRuleCatalog() });
+    try {
+      const catalog = catalogs.catalog(root);
+      const loaded = catalog.status.sourceSignature;
+      const counted = countStatements(catalogs.database, () => {
+        for (let refresh = 0; refresh < 3; refresh += 1) expect(catalog.refresh()).toBe(false);
+      });
+      // Each refresh reads whether the recorded checkouts changed, the checkout's start state, set-up and parents, then
+      // its rule configuration.
+      expect(counted).toEqual({ prepared: 0, run: 9 });
+      expect(catalog.status.sourceSignature).toBe(loaded);
+
+      // A setting another process makes is read at the next refresh.
+      const other = openRerailDatabase(databasePath);
+      try {
+        setRuleSetting(other, { owner: { kind: "repository", repositoryKey: key }, folder: "docs", targetKind: "rule", targetId: "test:any", on: false, mode: null });
+      } finally {
+        other.$client.close();
+      }
+      catalog.refresh();
+      expect(catalog.status.sourceSignature).not.toBe(loaded);
+    } finally {
+      catalogs.close();
+    }
+  });
+
+  it("gives a checkout's rule configuration the signature its rule set has, through every kind of change", () => {
+    const base = temporaryRoot();
+    const main = join(base, "main");
+    execFileSync("git", ["init", "--quiet", "-b", "main", main]);
+    const nested = join(main, "packages", "service");
+    execFileSync("git", ["init", "--quiet", "-b", "main", nested]);
+    const databasePath = join(base, "rerail.sqlite");
+    const key = setUpTestRepository(main, { library: [{ kind: "code", rule: rule("test:everywhere") }] }, databasePath);
+    // The nested clone joins the repository, so the main checkout is its parent and its settings apply there.
+    recordCheckoutRows(databasePath, key, [nested]);
+    const database = openRerailDatabase(databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: loadRuleCatalog() });
+    try {
+      const signatures = (): [string, string] => {
+        const ruleCatalog = worktreeRuleCatalog(loadRuleCatalog(), nested);
+        catalogs.refresh(nested);
+        const checkoutOf = catalogs.checkout(nested)!;
+        const owners = catalogs.ownerCheckoutPaths(nested);
+        const ruleSet = loadCheckoutRuleSet(database, ruleCatalog, checkoutOf, { started: true, setUp: true, startedBy: "repository" }, owners.slice(1));
+        return [ruleConfigurationSignature(database, ruleCatalog, key, owners), ruleSet.signature.replace(/:started:set-up$/u, "")];
+      };
+      const changes: Array<[string, () => void]> = [
+        ["nothing", () => undefined],
+        ["a repository setting", () => setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "docs", targetKind: "rule", targetId: "test:everywhere", on: false, mode: null })],
+        ["its mode", () => setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "docs", targetKind: "rule", targetId: "test:everywhere", on: null, mode: "log" })],
+        ["suppressions", () => setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "web", targetKind: "rule", targetId: "test:everywhere", on: null, mode: null, suppressions: "ignore" })],
+        ["a config", () => setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "", targetKind: "rule", targetId: "test:everywhere", on: null, mode: null, config: { b: [1, { c: "x" }], a: 2 } })],
+        ["the checkout's own setting", () => setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: nested }, folder: "", targetKind: "rule", targetId: "test:everywhere", on: false, mode: null })],
+        ["its parent's setting", () => setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: main }, folder: "api", targetKind: "rule", targetId: "test:everywhere", on: null, mode: "steer" })],
+        ["another checkout's setting", () => setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: join(base, "elsewhere") }, folder: "", targetKind: "rule", targetId: "test:everywhere", on: false, mode: null })],
+        ["a rule in the library that nothing attaches", () => upsertLibraryRule(database, loadRuleCatalog(), rule("test:api-only"), "code")],
+        ["its attachment", () => addAttachment(database, { repositoryKey: key, folder: "api", sourceKind: "library_rule", sourceId: "test:api-only" })],
+        ["its next revision", () => upsertLibraryRule(database, loadRuleCatalog(), rule("test:api-only", 2), "code")],
+        ["an approval", () => approve(database, ruleSubject("test:api-only", upsertLibraryRule(database, loadRuleCatalog(), rule("test:api-only", 2), "code").payloadHash))],
+        ["a rule of the checkout's own", () => {
+          mkdirSync(join(nested, ".rerail", "rules"), { recursive: true });
+          writeFileSync(join(nested, ".rerail", "rules", "own.json"), JSON.stringify(rule("test:own")));
+        }],
+      ];
+      const seen = new Set<string>();
+      for (const [change, make] of changes) {
+        make();
+        const [signature, ofRuleSet] = signatures();
+        expect(signature, change).toBe(ofRuleSet);
+        seen.add(signature);
+      }
+      // Every change but another checkout's setting and a library rule nothing attaches changes it.
+      expect(seen.size).toBe(changes.length - 2);
+    } finally {
+      catalogs.close();
+      database.$client.close();
+    }
+  });
+
+  it("changes the recorded checkouts' version when a checkout is recorded in place of the newest row, with the clock set back", () => {
+    const { root, databasePath } = checkout();
+    const key = setUpTestRepository(root, {}, databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: loadRuleCatalog() });
+    const database = openRerailDatabase(databasePath);
+    try {
+      const insert = database.$client.prepare("INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at) VALUES (?, ?, 'clone', NULL, ?, 1)");
+      // A checkout recorded while the clock ran ahead, then one recorded after the clock was set back.
+      insert.run(join(root, "ahead"), key, Date.now() + 86_400_000);
+      insert.run(join(root, "b"), key, 5);
+      const before = catalogs.recordedCheckoutsVersion();
+      // Once the newest row is gone SQLite gives the next one its rowid; the clock still reads before the earlier record.
+      database.$client.prepare("DELETE FROM checkouts WHERE checkout_path = ?").run(join(root, "b"));
+      insert.run(join(root, "other"), key, 6);
+      expect(catalogs.recordedCheckoutsVersion()).not.toBe(before);
+    } finally {
+      database.$client.close();
+      catalogs.close();
+    }
+  });
+
+  it.runIf(process.platform === "win32")("finds the checkouts inside a folder named with a letter outside ASCII in another case, as Windows names one folder", () => {
+    const base = temporaryRoot();
+    const stored = join(base, "café");
+    const service = join(stored, "packages", "service");
+    execFileSync("git", ["init", "--quiet", service]);
+    const databasePath = join(base, "rerail.sqlite");
+    // Git names the nested checkout as the folder is stored; a session typed with caps lock on names the folder around it.
+    const typed = join(base, "CAFÉ");
+    setUpTestRepository(typed, {}, databasePath);
+    setUpTestRepository(service, {}, databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: loadRuleCatalog() });
+    try {
+      // The folder itself, recorded in the spelling Windows stores, is inside it as `withinCheckout` reads it.
+      expect(catalogs.recordedCheckoutsWithin(typed)).toContain(service);
+      expect(catalogs.recordedCheckoutsWithin(stored)).toContain(service);
+    } finally {
+      catalogs.close();
+    }
+  });
 });
+
+/** The statements `work` prepares and runs on `database`'s connection. */
+function countStatements(database: RerailDatabase, work: () => void): { prepared: number; run: number } {
+  const client = database.$client;
+  // Every statement of the connection, prepared before `work` or during it, shares this prototype.
+  const prototype = Object.getPrototypeOf(client.prepare("SELECT 1")) as Record<string, (...parameters: unknown[]) => unknown>;
+  const counted = { prepared: 0, run: 0 };
+  const originals = ["run", "get", "all", "iterate"].map(method => [method, prototype[method]!] as const);
+  for (const [method, original] of originals) {
+    prototype[method] = function (this: { database: unknown }, ...parameters: unknown[]) {
+      if (this.database === client) counted.run += 1;
+      return original.apply(this, parameters);
+    };
+  }
+  const prepare = vi.spyOn(client, "prepare");
+  try {
+    work();
+  } finally {
+    for (const [method, original] of originals) prototype[method] = original;
+    counted.prepared = prepare.mock.calls.length;
+    prepare.mockRestore();
+  }
+  return counted;
+}
+
+/** Records a checkout of `repositoryKey` at each path, as recording each worktree would. */
+function recordCheckoutRows(databasePath: string, repositoryKey: string, paths: readonly string[]): void {
+  const database = openRerailDatabase(databasePath);
+  try {
+    const insert = database.$client.prepare(
+      "INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at) VALUES (?, ?, 'clone', NULL, 1, 1)",
+    );
+    for (const path of paths) insert.run(path, repositoryKey);
+  } finally {
+    database.$client.close();
+  }
+}
+
+/** The rows the statements of `database`'s connection hand back while `work` runs, prepared before it or during it. */
+function countRowsRead(database: RerailDatabase, work: () => void): number {
+  const client = database.$client;
+  // Every statement of the connection shares this prototype.
+  const prototype = Object.getPrototypeOf(client.prepare("SELECT 1")) as Record<string, (...parameters: unknown[]) => unknown>;
+  let rows = 0;
+  const all = prototype.all!;
+  const get = prototype.get!;
+  prototype.all = function (this: { database: unknown }, ...parameters: unknown[]) {
+    const read = all.apply(this, parameters);
+    if (this.database === client && Array.isArray(read)) rows += read.length;
+    return read;
+  };
+  prototype.get = function (this: { database: unknown }, ...parameters: unknown[]) {
+    const read = get.apply(this, parameters);
+    if (this.database === client && read !== undefined) rows += 1;
+    return read;
+  };
+  try {
+    work();
+  } finally {
+    prototype.all = all;
+    prototype.get = get;
+  }
+  return rows;
+}
 
 describe("code rule schema and engine agree on unsupported fields", () => {
   const bundledCapabilities = readFileSync(join(bundledCodeRuleDslDirectory(), "capabilities.json"), "utf8");
