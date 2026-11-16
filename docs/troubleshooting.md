@@ -130,6 +130,19 @@ The installed `rerail` command is `rerail.cmd`, which the policy does not block.
 
 The first `npx @neralabs/rerail setup` downloads and installs about 300 MB; npx prints nothing for 20 to 60 seconds.
 Set-up then prints `Downloading @neralabs/rerail@<version> from npm…`, and npm installs it again under `~/.rerail`.
+From there each step prints a line as it starts, and a step still running prints `still running after 30 s`, then
+again every 30 seconds.
+
+### Set-up or `rerail update` says npm may be stuck
+
+```text
+Downloading @neralabs/rerail@<version> from npm has taken 3 min. npm may be stuck: check your network or proxy, and the registry npm uses (`npm config get registry`). Rerail stops it at 20 min.
+```
+
+npm prints nothing while it downloads, so Rerail times each step. On a slow line the download can take this long; wait
+or press Ctrl-C. A download still running at 20 minutes, or an npm request at 3, is stopped: the update fails, its
+staged files are removed and the version that was active stays active. Check the settings in
+[npm cannot reach the registry](#npm-cannot-reach-the-registry), then run it again.
 
 ### npx exits with code 1 and prints nothing
 
@@ -702,12 +715,17 @@ Report a vulnerability through [SECURITY.md](../SECURITY.md) instead.
 ## Removing Rerail completely
 
 `rerail install --remove` deletes the installation and keeps your settings, data and backups for you to delete.
+`rerail install --remove --delete-data` deletes those too, and `~/.rerail` itself; it cannot be undone.
 
-It names what it kept; delete those too to remove everything:
+What `--remove` keeps, and names:
 
 - **`~/.rerail`**: Rerail's settings, logs and records, such as `consent.json` and `daemon.log`.
 - **`~/.rerail-clean-YYYYMMDD/`**: your rules and history.
 - **`<file>.<timestamp>.bak`** copies beside every agent config file it changed.
+
+`--delete-data` keeps only what it cannot reach, such as those `.bak` copies, which hold your own settings, and
+names each with the command that deletes it. Both lists in full:
+[What each removal leaves behind](how-setup-works.md#what-each-removal-leaves-behind).
 
 <details>
 <summary>Steps it runs, shared folders, and what it prints</summary>

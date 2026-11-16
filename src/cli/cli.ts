@@ -33,10 +33,12 @@ import {
   DAEMON_TRANSPORT_FLAGS,
   DAEMON_TRANSPORT_OPTIONS,
   DEFAULT_DAEMON_HOST,
+  loopbackOnlyNotice,
   parseArguments,
   parseDaemonTransport,
   parsePort,
   parsePublicHosts,
+  type ParsedArguments,
 } from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import {
@@ -52,7 +54,9 @@ import {
   stopDaemon,
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
+  type DaemonLaunchOptions,
   type DaemonLookup,
+  type DaemonState,
   type PageOpening,
   type RunningDaemon,
 } from "../runtime/daemon-control.js";
@@ -62,7 +66,8 @@ import { runResetCommand, runRulesCommand, updateWithSnapshot } from "./project-
 import { runScrubCommand } from "./scrub-cli.js";
 import { lookupCheckout, parentCheckouts, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-configuration.js";
-import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
+import { installedPackDirectories, loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
+import { RERAIL_PUBLISHER, rulePackPublisher, rulePackShortName } from "../engine/catalog/rule-packs.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
 import { runAuditCommand } from "./audit-cli.js";
 import { describeRemoteStatus, runRemoteCommand } from "./remote-cli.js";
@@ -71,6 +76,7 @@ import { runRuleDraftCommand } from "./rule-draft.js";
 import { runRuleEvidenceCommand } from "./rule-evidence.js";
 import { runRuleApproveCommand } from "./rule-approval-cli.js";
 import { runShowMeCommand } from "./show-me.js";
+import { runMergeAssistCommand } from "./merge-assist-cli.js";
 import { runSupportBundleCommand } from "./support-bundle.js";
 import { runPacksCommand } from "./packs-cli.js";
 import { runFeedbackCommand } from "./feedback-cli.js";
@@ -88,10 +94,12 @@ import { SETUP_FLAGS } from "../harness/setup-screens.js";
 import { CURRENT_LINK, defaultRerailHome } from "../engine/storage/rerail-home.js";
 import {
   ManagedUpdater,
+  type UpdateCheck,
   type UpdateResult,
   type UpdateStatus,
 } from "../setup/updater.js";
-import { packsLeftOutByCore } from "../setup/rule-pack-store.js";
+import { newerPackVersions, packsLeftOutByCore, type PackUpdate, type PackUpdateCheck } from "../setup/rule-pack-store.js";
+import { formatDuration, streamProgress, type Progress } from "../runtime/progress.js";
 
 const MANAGED_CHILD_ARGUMENT = "--rerail-managed-child";
 
@@ -131,21 +139,91 @@ function printStatus(status: UpdateStatus): void {
 }
 
 /**
- * What an update did, and, when it changed the active core, the installed rule packs that version leaves
- * out by their core range: every repository that adds one runs none of its rules until a version that fits is in.
+ * What an update did and how long it took, and, when it changed the active core, the installed rule packs that
+ * version leaves out by their core range: every repository that adds one runs none of its rules until a version that
+ * fits is in.
  */
-function printUpdateResult(result: UpdateResult, home: string): void {
+function printUpdateResult(result: UpdateResult, home: string, tookMs: number): void {
+  const from = result.previous === undefined ? "" : `${result.previous.version} → `;
   process.stdout.write(result.changed
-    ? `Activated Rerail ${result.current.version}; new harness sessions will use it.\n`
+    ? `Updated Rerail ${from}${result.current.version} in ${formatDuration(tookMs)}; new harness sessions will use it.\n`
     : `Rerail ${result.current.version} is current for channel ${result.channel}.\n`);
   if (!result.changed) return;
   const leftOut = packsLeftOutByCore(home, result.current.version, result.previous?.version);
-  if (leftOut.length === 0) return;
-  process.stdout.write([
-    `Rerail ${result.current.version} leaves out ${leftOut.length === 1 ? "this rule pack" : `these ${leftOut.length} rule packs`}, so repositories that add ${leftOut.length === 1 ? "it run none of its" : "them run none of their"} rules:`,
+  if (leftOut.length > 0) process.stdout.write(`${leftOutPackLines(result.current.version, leftOut).join("\n")}\n`);
+}
+
+/** The installed rule packs core `coreVersion` leaves out, each with why, and how to install a version that fits. */
+function leftOutPackLines(coreVersion: string, leftOut: readonly string[]): string[] {
+  const one = leftOut.length === 1;
+  return [
+    `Rerail ${coreVersion} leaves out ${one ? "this rule pack" : `these ${leftOut.length} rule packs`}, so repositories that add ${one ? "it run none of its" : "them run none of their"} rules:`,
     ...leftOut.map(line => `  ${line}`),
-    "Install a version that fits with `rerail packs add <package>`.",
-  ].join("\n") + "\n");
+    // A pack is pinned to the version installed, so a bare package name keeps it, and a tag can name a version the pack
+    // does not have (one installed from `next`): the version is what moves it.
+    "Install a version that fits with `rerail packs add <package>@<version>`; the newer versions that fit are listed once the update is done.",
+  ];
+}
+
+/**
+ * The installed rule packs with a newer version that fits the core the update left active, each with the version to
+ * move to, and the one command that installs them all; nothing when there is none.
+ */
+function packUpdateLines({ updates }: PackUpdateCheck, channel: string): string[] {
+  if (updates.length === 0) return [];
+  const name = (packageName: string) => rulePackShortName(packageName);
+  return [
+    packUpdateHeader(updates, channel),
+    ...updates.map(pack => `  ${name(pack.packageName)} ${pack.installed} → ${pack.available}${packUpdateNotes(pack, channel)}`),
+    `A pack's new version changes the rules of every repository that adds it. To update ${updates.length === 1 ? "it" : "them"}:`,
+    `  rerail packs add ${updates.map(pack => `${name(pack.packageName)}@${pack.available}`).join(" ")}`,
+  ];
+}
+
+/** The line over the newer pack versions: it names the update's channel only when every version is on it. */
+function packUpdateHeader(updates: readonly PackUpdate[], channel: string): string {
+  const packs = updates.length === 1 ? "a rule pack" : `${updates.length} rule packs`;
+  return updates.every(pack => pack.tag === channel)
+    ? `Newer versions of ${packs} you installed are on ${channel}:`
+    : `Newer versions of ${packs} you installed:`;
+}
+
+/**
+ * What a newer pack version's line adds, in parentheses: the tag npm has it under when that is not the update's
+ * channel (`next`, for a pack the channel has no version of), and, for a third party's pack, that its new version waits
+ * for a person's approval again.
+ */
+function packUpdateNotes(pack: PackUpdate, channel: string): string {
+  const notes = [
+    ...pack.tag === channel ? [] : [`on ${pack.tag}`],
+    ...rulePackPublisher(pack.packageName) === RERAIL_PUBLISHER
+      ? []
+      : [`Rerail has not reviewed it: its rules run in Log until you approve this version, rerail rules approve ${pack.packageName}`],
+  ];
+  return notes.length === 0 ? "" : ` (${notes.join("; ")})`;
+}
+
+/**
+ * After an update, whether or not it changed core, since packs are released without it: suggests the newer versions
+ * of the installed rule packs, installing none. The update is done by then, so a check that fails only says so.
+ */
+async function suggestPackUpdates(home: string, result: UpdateResult, progress: Progress): Promise<void> {
+  if (installedPackDirectories(home).length === 0) return;
+  let check: PackUpdateCheck;
+  try {
+    check = await progress.step(
+      "Checking your rule packs for newer versions",
+      async () => await newerPackVersions(home, result.channel, result.current.version),
+      { afterMs: 30_000, hint: "npm may be slow or stuck; each npm request about a pack stops at 1 min, and the update itself is done." },
+    );
+  } catch (error) {
+    check = { updates: [], problems: [error instanceof Error ? error.message : String(error)] };
+  }
+  if (check.problems.length > 0) {
+    process.stderr.write(`warning: could not check every rule pack for a newer version: ${check.problems.join("; ")}\n`);
+  }
+  const lines = packUpdateLines(check, result.channel);
+  if (lines.length > 0) process.stdout.write(`${lines.join("\n")}\n`);
 }
 
 function selectedChannel(args: readonly string[]): string | undefined {
@@ -204,6 +282,8 @@ function usage(): string {
     "  rerail remote push [--json]",
     "  rerail remote exclude|include [--repo <dir>]",
     "  rerail settings --session <id> --steer-strategy message|rewind|subagent   experimental: takes effect with RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1",
+    "  rerail merge-assist [status|on|off|scan|conflicts|dismiss <conflict-id>] [--repo <dir>] [--json]   experimental: needs RERAIL_EXPERIMENTAL_MERGE_ASSIST=1",
+    "  rerail merge-assist settings [--hook-command '<json argv>' | --no-hook] [--hook-timeout <seconds>] [--repo <dir>] [--json]   experimental: needs RERAIL_EXPERIMENTAL_MERGE_ASSIST=1",
     "  rerail [--profile <name>] events",
     "  rerail [--profile <name>] activate --file <profile.jws> --trust-root <roots.json>",
     "  rerail [--profile <name>] activate --code <code> --activation-url <url> --trust-root <roots.json>",
@@ -221,47 +301,83 @@ function printDaemon(daemon: RunningDaemon): void {
     ? `Engine: ok (version ${health.native.kernelVersion})\n`
     : `Engine: unavailable: ${health.native.error}\n`);
   process.stdout.write(`${modelStatusLine(health.model)}\n`);
+  // Started with a TLS key others can read, it serves this computer alone, over plain http, until the key is fixed.
+  if (state.remoteRefused !== undefined) process.stdout.write(`${loopbackOnlyNotice(state.remoteRefused)}\n`);
 }
 
 async function runDaemonStartCommand(args: readonly string[], home: string): Promise<number> {
-  const { flags, options } = parseArguments(
+  const parsed = parseArguments(
     args,
     { flags: ["--dev", "--open", "--allow-remote", ...DAEMON_TRANSPORT_FLAGS], options: ["--port", "--host", "--public-host", "--workspace-root", ...DAEMON_TRANSPORT_OPTIONS] },
     argument => `Unknown daemon start option: ${argument}\n\n${usage()}`,
   );
-  const port = options.get("--port");
-  const host = options.get("--host");
-  // The folder the daemon serves and looks for Git from, when the launcher runs elsewhere (autostart runs it in the home).
-  const workspaceRoot = options.get("--workspace-root");
-  if (host !== undefined) assertHostBindable(host, flags.has("--allow-remote"));
-  const publicHosts = parsePublicHosts(options.get("--public-host"));
-  const transport = parseDaemonTransport({ flags, options }, host ?? DEFAULT_DAEMON_HOST, publicHosts);
-  const result = await startDaemon({ home, packageRoot }, {
-    dev: flags.has("--dev"),
-    ...(host === undefined ? {} : { host }),
-    ...(flags.has("--allow-remote") ? { allowRemote: true } : {}),
-    ...(publicHosts.length === 0 ? {} : { publicHosts }),
-    ...(port === undefined ? {} : { port: parsePort(port) }),
-    ...(workspaceRoot === undefined ? {} : { cwd: resolve(workspaceRoot) }),
-    ...transport,
-  });
+  const launch = daemonStartLaunch(parsed);
+  const result = await startDaemon({ home, packageRoot }, launch);
   if (!result.started) process.stdout.write("The Rerail daemon is already running.\n");
   printDaemon(result.daemon);
   process.stdout.write(`Logs: ${join(home, DAEMON_LOG_FILE)}\n`);
-  // The capability is shown to the person at a terminal, starting or finding the daemon; `rerail status` never
-  // prints it, and neither does a start whose output is piped, as a coding agent's shell would be: the link would
-  // land in its transcript and its provider's logs.
   const link = dashboardLink(result.daemon.state);
-  if (result.daemon.state.accessToken !== undefined) {
-    const lifetime = accessTokenKept(home, result.daemon.state)
-      ? `it is kept until you delete ${join(home, DAEMON_ACCESS_TOKEN_FILE)}`
-      : "it changes on every start";
-    process.stdout.write(process.stdout.isTTY
-      ? `Dashboard link (anyone holding it can read and change your rules; ${lifetime}): ${link}\n`
-      : "The dashboard needs its access link in a browser; rerail manage opens it, or run rerail daemon start in a terminal to see it.\n");
-  }
-  if (flags.has("--open") && !openInBrowser(link)) process.stdout.write(`${BROWSER_OFF_NOTE}\n`);
-  return 0;
+  printDashboardLink(home, result.daemon.state, link);
+  if (parsed.flags.has("--open") && !openInBrowser(link)) process.stdout.write(`${BROWSER_OFF_NOTE}\n`);
+  return remoteAccessExit(launch, result.daemon.state);
+}
+
+/**
+ * The exit code of a `rerail daemon start` whose daemon, started or found, runs: 1 when the start asked for other
+ * machines (`--allow-remote`, `--public-host`) and the daemon serves this computer alone (`remoteRefused`), as for a
+ * start that fails, so a script or a remote client never takes it for started as asked, with the refusal on stderr;
+ * the loopback daemon keeps running. 0 for every other start.
+ */
+function remoteAccessExit(launch: DaemonLaunchOptions, state: DaemonState): number {
+  const askedRemote = launch.allowRemote === true || launch.publicHosts !== undefined;
+  if (!askedRemote || state.remoteRefused === undefined) return 0;
+  process.stderr.write(`rerail: other machines cannot reach this daemon, though this start asked for them, until its TLS key is fixed: ${state.remoteRefused}. Then run rerail daemon stop and this start again.\n`);
+  return 1;
+}
+
+/** What `rerail daemon start`'s flags and options launch: where the daemon binds and answers, its port and its folder. */
+function daemonStartLaunch(parsed: ParsedArguments): DaemonLaunchOptions {
+  const port = parsed.options.get("--port");
+  // The folder the daemon serves and looks for Git from, when the launcher runs elsewhere (autostart runs it in the home).
+  const workspaceRoot = parsed.options.get("--workspace-root");
+  return {
+    dev: parsed.flags.has("--dev"),
+    ...daemonStartReach(parsed),
+    ...(port === undefined ? {} : { port: parsePort(port) }),
+    ...(workspaceRoot === undefined ? {} : { cwd: resolve(workspaceRoot) }),
+  };
+}
+
+/**
+ * Where `rerail daemon start` asks the daemon to bind and answer, and how it serves, checked as the daemon checks them:
+ * `--host` (off loopback only with `--allow-remote`), `--public-host`, and https or plain http.
+ */
+function daemonStartReach({ flags, options }: ParsedArguments): Pick<DaemonLaunchOptions, "host" | "allowRemote" | "publicHosts" | "tls" | "insecureHttp"> {
+  const host = options.get("--host");
+  if (host !== undefined) assertHostBindable(host, flags.has("--allow-remote"));
+  const publicHosts = parsePublicHosts(options.get("--public-host"));
+  const transport = parseDaemonTransport({ flags, options }, host ?? DEFAULT_DAEMON_HOST, publicHosts);
+  return {
+    ...(host === undefined ? {} : { host }),
+    ...(flags.has("--allow-remote") ? { allowRemote: true } : {}),
+    ...(publicHosts.length === 0 ? {} : { publicHosts }),
+    ...transport,
+  };
+}
+
+/**
+ * The dashboard link, with how long it lasts, for the person at a terminal, starting or finding the daemon. `rerail
+ * status` never prints it, and neither does a start whose output is piped, as a coding agent's shell would be: the link
+ * would land in its transcript and its provider's logs.
+ */
+function printDashboardLink(home: string, state: DaemonState, link: string): void {
+  if (state.accessToken === undefined) return;
+  const lifetime = accessTokenKept(home, state)
+    ? `it is kept until you delete ${join(home, DAEMON_ACCESS_TOKEN_FILE)}`
+    : "it changes on every start";
+  process.stdout.write(process.stdout.isTTY
+    ? `Dashboard link (anyone holding it can read and change your rules; ${lifetime}): ${link}\n`
+    : "The dashboard needs its access link in a browser; rerail manage opens it, or run rerail daemon start in a terminal to see it.\n");
 }
 
 /** Whether a Git Rerail can run is installed, and where it looked when none is. */
@@ -438,6 +554,13 @@ async function runEvents(policy?: SignedUpdatePolicy): Promise<number> {
   return await runChild(process.execPath, [join(packageRoot, ENTRY_POINTS.eventStream)]);
 }
 
+/** `rerail update check`: the status, and the version the channel offers. */
+function printUpdateCheck(result: UpdateCheck): void {
+  printStatus(result);
+  process.stdout.write(`Available: ${result.availableVersion}\n`);
+  process.stdout.write(`Update available: ${result.updateAvailable ? "yes" : "no"}\n`);
+}
+
 async function runUpdateCommand(
   args: readonly string[],
   updater: ManagedUpdater,
@@ -452,25 +575,29 @@ async function runUpdateCommand(
   const requestedChannel = selectedChannel(args);
   const channel = authorizedUpdateChannel(policy, requestedChannel);
   if (action === "check") {
-    const result = await updater.check(channel);
-    printStatus(result);
-    process.stdout.write(`Available: ${result.availableVersion}\n`);
-    process.stdout.write(`Update available: ${result.updateAvailable ? "yes" : "no"}\n`);
+    printUpdateCheck(await updater.check(channel));
     return 0;
   }
   if (action !== undefined && action !== "--channel") throw new Error(`Unknown update action: ${action}`);
-  printUpdateResult(await updateWithSnapshot(updater, join(home, RERAIL_DATABASE_FILE), channel), home);
+  // Each step on stderr as it starts, with how long it has run: npm is silent while it downloads.
+  const progress = streamProgress(process.stderr);
+  const started = Date.now();
+  const result = await updateWithSnapshot(updater, join(home, RERAIL_DATABASE_FILE), channel, progress);
+  printUpdateResult(result, home, Date.now() - started);
   // Newer version or not, the version `current` names registers itself again, as its own CLI, with every coding agent
   // already connected (`install --refresh`): its commands, skills and hooks arrive and the ones it retired go. A failure
   // leaves that version active and exits non-zero, naming the command to run once the configuration is fixed. Reading
   // the Claude Code status-line record loads `node:sqlite`, whose experimental warning is not the update's to report.
-  return await runChild(process.execPath, [
+  const refreshed = await runChild(process.execPath, [
     "--disable-warning=ExperimentalWarning",
     join(updater.currentLink, ENTRY_POINTS.cli),
     MANAGED_CHILD_ARGUMENT,
     "install",
     "--refresh",
   ]);
+  // The refresh's failure stays the last thing said.
+  if (refreshed === 0) await suggestPackUpdates(home, result, progress);
+  return refreshed;
 }
 
 /**
@@ -692,9 +819,9 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   const commandArgs = takeOption(args, "--profile").args;
   const command = commandArgs[0];
   // `setup` installs the package it was invoked from, so it must not forward to an older active version.
-  // `seed`, `rules`, `show-me`, `reset`, `scrub` and `feedback` write the Rerail database with the invoking package's schema (a checkout build, say).
+  // `seed`, `rules`, `show-me`, `reset`, `scrub`, `feedback` and `merge-assist` write the Rerail database with the invoking package's schema (a checkout build, say).
   // `support-bundle` reports the version it was invoked as, and has to run where the active version cannot.
-  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "scrub", "support-bundle", "feedback", "remote"].includes(command ?? "")) return true;
+  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "scrub", "merge-assist", "support-bundle", "feedback", "remote"].includes(command ?? "")) return true;
   // A headless `scan` (no `--session`) runs in this process, so it scans with the package invoked.
   if (command === "scan") return !commandArgs.includes("--session");
   if (command === "daemon") return commandArgs[1] === "stop";
@@ -819,6 +946,8 @@ async function runProjectCommand(command: string, args: readonly string[], { hom
     case "scan":
     case "settings":
       return await runAuditCommand(command, args, { home, version: packageVersion });
+    // Internal testing: Merge Assist.
+    case "merge-assist": return await runMergeAssistCommand(args, usage);
     // Internal testing: the remote sink.
     case "remote": return await runRemoteCommand(args, { home });
     // `daemon`, `status` and `manage`.

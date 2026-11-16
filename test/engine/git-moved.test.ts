@@ -98,11 +98,11 @@ describe("the Git a process keeps, gone under it", () => {
 
   it("runs a read once more with the Git found again, once for reads that failed together, and keeps that Git", async () => {
     let [kept, now] = await moveKeptGit();
-    started(execFile);
+    started(spawn);
     await expect(Promise.all([gitHead(repository), gitHead(repository)])).resolves.toEqual([head, head]);
-    expect(started(execFile)).toEqual([kept, kept, now, now]);
+    expect(started(spawn)).toEqual([kept, kept, now, now]);
     await expect(gitHead(repository)).resolves.toBe(head);
-    expect(started(execFile)).toEqual([now]);
+    expect(started(spawn)).toEqual([now]);
 
     [kept, now] = await moveKeptGit();
     started(spawn);
@@ -113,16 +113,16 @@ describe("the Git a process keeps, gone under it", () => {
 
   it("starts no other Git for a read stopped while its Git failed to start, and the next read finds it", async () => {
     const [kept, now] = await moveKeptGit();
-    started(execFile);
+    started(spawn);
     const stop = new AbortController();
-    vi.mocked(execFile).mockImplementationOnce((file, args, options, callback) => {
+    vi.mocked(spawn).mockImplementationOnce((file, args, options) => {
       stop.abort();
-      return actual.execFile(program(file), args, options, callback);
+      return actual.spawn(program(file), args, options);
     });
     await expect(gitHead(repository, { signal: stop.signal })).resolves.toBeUndefined();
-    expect(started(execFile)).toEqual([kept]);
+    expect(started(spawn)).toEqual([kept]);
     expect(gitExecutable()).toBe(kept);
     await expect(gitHead(repository)).resolves.toBe(head);
-    expect(started(execFile)).toEqual([kept, now]);
+    expect(started(spawn)).toEqual([kept, now]);
   });
 });

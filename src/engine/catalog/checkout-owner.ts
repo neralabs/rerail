@@ -63,6 +63,22 @@ export class CheckoutOwners {
   }
 
   /**
+   * Forgets every folder looked up so far but the checkout top levels Git confirmed: each of those took a Git process to
+   * learn, and stays as long as it would have otherwise. A walk of a repository's other worktrees looks up every folder of
+   * every worktree, so a runtime calls this once its last session has closed rather than keep them for as long as it
+   * serves its folder.
+   */
+  forgetFolders(): void {
+    this.#roots.clear();
+    for (const [directory, root] of this.#confirmed) if (root === undefined) this.#confirmed.delete(directory);
+  }
+
+  /** How many folders it holds an answer for. */
+  cachedFolders(): number {
+    return new Set([...this.#roots.keys(), ...this.#confirmed.keys()]).size;
+  }
+
+  /**
    * The checkout holding `absolute`, found from its lexical path and again from its real path: undefined when the two
    * differ (a symlink into another checkout) or when the real path leaves the owner (a symlink escaping it).
    */

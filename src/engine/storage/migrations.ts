@@ -145,6 +145,14 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
       addColumn(database, "audits", "rule_provenance_id", "integer");
     },
   },
+  {
+    // A repository's `merge_assist`, off by default: only a person turns Merge Assist on. No floor: an older build
+    // never reads the column, and its inserts take the default. Its tables need no step; the DDL creates them.
+    id: "repositories-merge-assist",
+    up(database) {
+      addColumn(database, "repositories", "merge_assist", "integer DEFAULT false NOT NULL");
+    },
+  },
 ];
 
 /** `audit_rule_provenances` and its digest index as `audit-rule-provenance-once` introduced them. */
