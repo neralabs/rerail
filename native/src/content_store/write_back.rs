@@ -60,6 +60,12 @@ pub const JOB_DEADLINE: Duration = Duration::from_secs(120);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Key(pub [u8; 32]);
 
+/// The WAL's size past which the writer's checkpointer copies it into the database (decision 0308).
+const CHECKPOINT_WAL_BYTES: u64 = 64 << 20;
+
+/// The writer's page cache, KiB (decision 0308): a wave's changed pages, where the readers' connections keep 1 MB.
+const WRITER_CACHE_KIB: i64 = 32 << 10;
+
 impl Key {
     /// The key of `parts` (a table's name, then its key's bytes).
     pub fn of(parts: &[&[u8]]) -> Key {
@@ -583,17 +589,34 @@ impl ContentStore {
         // job meanwhile (3.0 s of a cold run's 7.7 s on the writer). A checkpoint is `PASSIVE` on a connection of
         // its own: in WAL mode it neither blocks the writer nor waits for it, and it copies only what is committed:
         // whole waves. Told after each wave; signals that come while it checkpoints are one.
+        //
+        // Decision 0308: only once the WAL holds `CHECKPOINT_WAL_BYTES`, and once more as the writer ends. A
+        // checkpoint after every wave copied and synced again each page that consecutive waves change (the indexes'),
+        // 10.8 thread-s of a cold PostHog run's 24 s in the store's I/O.
         let (mut told, tells) = mpsc::channel::<()>();
         let checkpointer = self.sibling();
+        let wal = { let mut p = self.database_path.clone().into_os_string(); p.push("-wal"); PathBuf::from(p) };
         let checkpoints = rerail_accel::exec::service("rerail-store-checkpoint", None, move || {
             super::hazards::behind_the_run();
-            while tells.recv().is_ok() {
-                while tells.try_recv().is_ok() {}
-                let Ok(connection) = checkpointer.connection.lock() else { break };
+            let checkpoint = || {
+                let Ok(connection) = checkpointer.connection.lock() else { return false };
                 if let Err(e) = connection.query_row_cached("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(())) {
                     eprintln!("rerail: the store's checkpoint failed: {e}");
                 }
+                true
+            };
+            while tells.recv().is_ok() {
+                while tells.try_recv().is_ok() {}
+                if std::fs::metadata(&wal).is_ok_and(|m| m.len() < CHECKPOINT_WAL_BYTES) {
+                    continue;
+                }
+                if !checkpoint() {
+                    return;
+                }
             }
+            // The writer has ended: what it committed since the last checkpoint, so a later run reads it through the
+            // map of the database file, not from the WAL.
+            checkpoint();
         })
         .expect("the store's checkpoint thread");
         // Joined by the writer as it ends (below): a checkpoint after the store's last handle is gone touched its
@@ -602,9 +625,12 @@ impl ContentStore {
         let thread = rerail_accel::exec::service("rerail-store-writer", None, move || {
                 // What this thread sends to SQLite no wave waits for.
                 super::hazards::behind_the_run();
-                // Its commits leave the WAL to the checkpointer (above).
+                // Its commits leave the WAL to the checkpointer (above). Its page cache holds a wave's changed pages
+                // (decision 0308): at the readers' 1 MB, a wave spilled them into the WAL before its commit
+                // (`pagerStress`) and read them back from it as it changed them again.
                 if let Ok(connection) = store.connection.lock() {
                     let _ = connection.pragma_update(None, "wal_autocheckpoint", 0);
+                    let _ = connection.pragma_update(None, "cache_size", -WRITER_CACHE_KIB);
                 }
                 while let Ok(Wave { jobs: mut batch, alone }) = rx.recv() {
                     let before = thread_cpu();
