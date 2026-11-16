@@ -287,7 +287,7 @@ fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
         placement::set_binding(was);
         let got = got.map_err(|e| format!("error: {e}"))?;
         let ran = placement::recorded(rel);
-        Ok((sorted(got.outputs.get(rel).cloned().unwrap_or_default()), got.native.iter().any(|k| k.split('/').any(|r| r == rel)), ran))
+        Ok((sorted(got.outputs.get(rel).map(|r| r.lines()).unwrap_or_default()), got.native.iter().any(|k| k.split('/').any(|r| r == rel)), ran))
     };
     let (want, _, _) = lower_run("", placement::Binding::Cpu).map_err(|e| format!("sqlite: {e}"))?;
     let native = match lower_run("program", placement::Binding::Cpu) {

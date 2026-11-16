@@ -96,7 +96,7 @@ fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters()
         super::super::native::register_symbols(&db).unwrap();
         let got=run_atoms_native_over(&lowered,&db,"main",Stats::empty(&lowered.program),BTreeSet::new(),modes).unwrap();
         if !modes.is_empty() {assert!(got.native.contains("result"),"scalar result must execute natively");}
-        outputs.push(got.outputs.clone());
+        outputs.push(got.text().clone());
     }
     assert_eq!(outputs[0],outputs[1]);
     assert_eq!(outputs[1]["repeated"],vec!["1\t0","2\t0","3\t0","4\t0"]);
@@ -118,8 +118,8 @@ fn rules_of_one_body_and_two_heads_both_run_their_whole_plan() {
         super::super::native::register(&db).unwrap();
         super::super::native::register_symbols(&db).unwrap();
         let got=run_atoms_native_over(&lowered,&db,"main",Stats::empty(&lowered.program),BTreeSet::new(),modes).unwrap();
-        assert_eq!(got.outputs["a"],vec!["1","2","3","4"],"modes {modes:?}");
-        assert_eq!(got.outputs["b"],vec!["2","3","4"],"modes {modes:?}");
+        assert_eq!(got.text()["a"],vec!["1","2","3","4"],"modes {modes:?}");
+        assert_eq!(got.text()["b"],vec!["2","3","4"],"modes {modes:?}");
     }
 }
 
@@ -153,7 +153,7 @@ fn a_head_that_qualifies_by_a_constant_scope_runs_natively() {
         if !modes.is_empty() {
             assert!(got.native.contains("q"), "q runs natively: {:?}", got.native);
         }
-        let mut o = got.outputs["q"].clone();
+        let mut o = got.text()["q"].clone();
         o.sort();
         outputs.push(o);
     }
@@ -193,7 +193,7 @@ fn closures_of_one_level_launch_in_one_wave() {
             }
             assert_eq!((after.0 - before.0, after.1 - before.1), (1, 3), "the level's three closures in one wave of three launches");
         }
-        let mut o = got.outputs["o"].clone();
+        let mut o = got.text()["o"].clone();
         o.sort();
         outputs.push(o);
     }
@@ -240,7 +240,7 @@ fn closures_of_a_level_wider_than_a_component_launch_in_one_wave() {
             }
             assert_eq!((after.0 - before.0, after.1 - before.1), (1, N as u64), "the level's closures in one wave of {N} launches");
         }
-        let mut o = got.outputs["o"].clone();
+        let mut o = got.text()["o"].clone();
         o.sort();
         outputs.push(o);
     }
@@ -281,7 +281,7 @@ fn a_probe_is_planned_when_its_delta_first_has_rows() {
             assert!(left >= 4 && planned >= 3, "left {left}, planned {planned}; native {:?}, inlined {:?}", got.native, got.inlined);
             assert!(left - planned >= 1, "r's probe by s is never planned: left {left}, planned {planned}");
         }
-        let mut o = got.outputs["o"].clone();
+        let mut o = got.text()["o"].clone();
         o.sort();
         outputs.push(o);
     }
@@ -339,9 +339,9 @@ fn t_programs_plan_and_run_like_t() {
             .filter_map(|e| e.unwrap().file_name().to_str()?.strip_suffix(".csv").map(str::to_owned))
             .collect();
         files.sort();
-        assert_eq!(got.outputs.keys().cloned().collect::<Vec<_>>(), files, "{name}");
-        assert!(!lines.is_empty() && got.outputs.values().any(|r| !r.is_empty()), "{name}");
-        for (rel, rows) in &got.outputs {
+        assert_eq!(got.text().keys().cloned().collect::<Vec<_>>(), files, "{name}");
+        assert!(!lines.is_empty() && got.text().values().any(|r| !r.is_empty()), "{name}");
+        for (rel, rows) in &got.text() {
             let expected = std::fs::read_to_string(golden.join(format!("{rel}.csv"))).unwrap();
             let expected: Vec<&str> = expected.lines().collect();
             if rows.iter().map(String::as_str).collect::<Vec<_>>() != expected {
@@ -373,7 +373,7 @@ fn t_programs_run_natively_like_t() {
         };
         let got = run_sql_native(&program(name), &facts(), modes, load).unwrap_or_else(|e| panic!("{case}: {e}"));
         let golden = root().join(format!("plan/golden/{name}"));
-        for (rel, rows) in &got.outputs {
+        for (rel, rows) in &got.text() {
             let expected = std::fs::read_to_string(golden.join(format!("{rel}.csv"))).unwrap();
             let expected: Vec<&str> = expected.lines().collect();
             assert_eq!(rows.iter().map(String::as_str).collect::<Vec<_>>(), expected, "{case} {rel}");
@@ -430,8 +430,8 @@ fn atomized_statistics(t: &Connection, db: &Connection, store: &ContentStore, fi
 /// `got`'s outputs, node ids as T's (`first`: each document's first node in T's facts), against T's goldens.
 fn outputs_match(name: &str, got: &Outcome, first: &HashMap<i64, i64>, failures: &mut Vec<String>) {
     let golden = root().join(format!("plan/golden/{name}"));
-    assert!(!got.outputs.is_empty() && got.outputs.values().any(|r| !r.is_empty()), "{name}");
-    for (rel, rows) in &got.outputs {
+    assert!(!got.text().is_empty() && got.text().values().any(|r| !r.is_empty()), "{name}");
+    for (rel, rows) in &got.text() {
         let nodes = &got.nodes[rel];
         let mut rows: Vec<String> = rows
             .iter()
@@ -581,7 +581,7 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
                 outcome.waves,
                 got.len()
             );
-            for (rel, rows) in &expected.outputs {
+            for (rel, rows) in &expected.text() {
                 if got.get(rel) != Some(rows) {
                     failures.push(format!("{name} {pass} {rel}: {} rows, run_atoms {}", got.get(rel).map_or(0, Vec::len), rows.len()));
                 }
@@ -741,7 +741,7 @@ fn product_programs_derive_t_outputs() {
         let golden = root().join(format!("plan/golden/{name}"));
         let got = run_sql(&p, &facts).unwrap_or_else(|e| panic!("{name}: {e}"));
         // The product's own outputs (calls.rr's type relations, decision 0047) are not T's: they have no golden.
-        for (rel, rows) in got.outputs.iter().filter(|(rel, _)| golden.join(format!("{rel}.csv")).exists()) {
+        for (rel, rows) in got.text().iter().filter(|(rel, _)| golden.join(format!("{rel}.csv")).exists()) {
             let expected = std::fs::read_to_string(golden.join(format!("{rel}.csv"))).unwrap();
             let expected: Vec<&str> = expected.lines().collect();
             if rows.iter().map(String::as_str).collect::<Vec<_>>() != expected {
@@ -1147,7 +1147,12 @@ fn run_both(name: &str, program: &str, rels: &[&str]) -> (BTreeMap<String, Strin
     let _scratch = super::corpus::switches::set(&[("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off")]);
     for modes in ["", "program"] {
         let out = dir.join(format!("out-{}", if modes.is_empty() { "sql" } else { modes }));
+        // Each run a store of its own: in one, the second run found the first's strata kept (decision 0117 step 3,
+        // "quiet: no read changed") and the native set engine solved nothing.
+        let store = super::corpus::test_store::copy();
+        super::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.path().to_owned()));
         let r = super::corpus::run(program, &dir, None, &out, modes, crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{modes:?}: {e}"));
+        super::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
         native = r.native;
         got.push(rels.iter().map(|rel| (rel.to_string(), std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap())).collect::<BTreeMap<_, _>>());
     }
@@ -1745,7 +1750,7 @@ fn w_value(rows: &[&str], sql: &str, params: &[&str]) -> String {
 /// `sym_text`/`sym_atom`), as the runner writes them (tab-separated rows).
 fn on_both_paths(name: &str, src: &str, rels: &[&str]) -> [Vec<String>; 2] {
     let text = run_sql(&parse(src).unwrap_or_else(|e| panic!("{e}")), &facts()).unwrap_or_else(|e| panic!("{e}"));
-    let text = rels.iter().map(|r| text.outputs.get(*r).map(|rows| rows.iter().map(|row| row.clone() + "\n").collect()).unwrap_or_default()).collect();
+    let text = rels.iter().map(|r| text.text().get(*r).map(|rows| rows.iter().map(|row| row.clone() + "\n").collect()).unwrap_or_default()).collect();
     [text, corpus_outputs(name, &[("a.py", "x = 1\n")], src, rels)]
 }
 
@@ -1956,7 +1961,7 @@ captured(v) :- capture_input(s), match_all("k=(?<v>[0-9]+)", s).
     let result = run(&body::Placed::of_program(&p).unwrap(), &db, inputs, None, Hooks::default());
     unsafe { rusqlite::ffi::sqlite3_trace_v2(db.handle(), 0, None, std::ptr::null_mut()); }
     let result = result.unwrap();
-    assert_eq!(result.outputs["captured"].len(), 1000);
+    assert_eq!(result.text()["captured"].len(), 1000);
     assert!(count.load(Ordering::Relaxed) < 100, "1000 matches submitted {} SQLite executions", count.load(Ordering::Relaxed));
 }
 
@@ -2162,10 +2167,10 @@ fn an_equality_binds_its_right_side_before_the_next_join() {
     inputs.facts.clear();
     inputs.given = Some(Stats::empty(&p));
     let out = run(&body::Placed::of_program(&p).unwrap(), &db, inputs, None, Hooks::default()).unwrap();
-    let mut o: Vec<String> = out.outputs["o"].iter().map(|r| format!("{r:?}")).collect();
+    let mut o: Vec<String> = out.text()["o"].iter().map(|r| format!("{r:?}")).collect();
     o.sort();
     assert_eq!(o.len(), 2, "{o:?}");
-    assert_eq!(out.outputs["o2"].len(), 1);
+    assert_eq!(out.text()["o2"].len(), 1);
 }
 
 /// A concatenation given its inverse and a function made a join key (`simplify::concat_inverses`, `function_keys`)
@@ -2206,7 +2211,8 @@ fn join_keys_from_functions_derive_the_rules_rows() {
         if modes.is_some() {
             assert!(got.native.contains("hit") && got.native.contains("rest"), "native: {:?}", got.native);
         }
-        let mut out: Vec<Vec<String>> = ["hit", "rest"].iter().flat_map(|o| got.outputs[*o].iter().map(move |r| vec![o.to_string(), format!("{r:?}")])).collect();
+        let text = got.text();
+        let mut out: Vec<Vec<String>> = ["hit", "rest"].iter().flat_map(|o| text[*o].iter().map(move |r| vec![o.to_string(), format!("{r:?}")])).collect();
         out.sort();
         out
     };
@@ -2502,7 +2508,7 @@ fn o148_plans_and_their_work() {
         for c in &got.chosen {
             lines.push(format!("PLAN\t{name}\t{}", chosen_line(c)));
         }
-        for (rel, rows) in &got.outputs {
+        for (rel, rows) in &got.text() {
             let expected = std::fs::read_to_string(root().join(format!("plan/golden/{name}/{rel}.csv"))).unwrap();
             let same = rows.iter().map(String::as_str).collect::<Vec<_>>() == expected.lines().collect::<Vec<_>>();
             lines.push(format!("OUT\t{name}\t{rel}\t{}\t{same}", rows.len()));
@@ -2594,6 +2600,9 @@ fn a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms() {
                 crate::code_rule_dsl::logic::profile::set(false);
             }
         }
+        // The profile is the process's: held for this test (`one_run`), so a run in another test cannot reset the
+        // decisions it reads (`no longer needed` went missing when one ran beside it). Dropped after `Off`.
+        let _one = crate::code_rule_dsl::logic::profile::one_run();
         let _off = Off;
         crate::code_rule_dsl::logic::profile::set(true);
         crate::code_rule_dsl::logic::profile::reset();
@@ -2656,5 +2665,5 @@ fn a_computed_value_waits_for_the_atoms_that_narrow_its_arguments() {
     inputs.facts.clear();
     inputs.given = Some(Stats::empty(&p));
     let out = run(&body::Placed::of_program(&p).unwrap(), &db, inputs, None, Hooks::default()).unwrap();
-    assert_eq!(out.outputs["o"].len(), 1, "{:?}", out.outputs["o"]);
+    assert_eq!(out.text()["o"].len(), 1, "{:?}", out.text()["o"]);
 }

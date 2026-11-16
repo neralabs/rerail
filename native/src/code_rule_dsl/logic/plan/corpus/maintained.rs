@@ -149,7 +149,7 @@ pub(in crate::code_rule_dsl) fn run(
             Ok((rel.clone(), width, held))
         })
         .collect::<Result<Vec<_>>>()?;
-    let outputs: BTreeMap<String, (Vec<String>, Vec<usize>)> = got.outputs.iter().map(|(rel, lines)| (rel.clone(), (lines.clone(), got.nodes[rel].clone()))).collect();
+    let outputs: BTreeMap<String, (std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>, Vec<usize>)> = got.outputs.iter().map(|(rel, rows)| (rel.clone(), (std::sync::Arc::clone(rows), got.nodes[rel].clone()))).collect();
     drop(s);
     let _s = span("retain");
     let mut next = retain::after(kept, key, digests, &cut, rows, &outputs, &sources, HashMap::new(), HashMap::new(), input_docs, Default::default(), HashMap::new(), retain::budget());

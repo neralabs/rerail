@@ -153,9 +153,10 @@ impl Within {
         Within { members, binding, ..Within::new(batch, Mode::Axis(axis)) }
     }
 
-    /// Whether the batch's solve answers the `n` side: an axis of ancestors in the set (`has` reads every ancestor).
+    /// Whether the batch's solve answers the `n` side: an axis of ancestors in the set (`has` reads every ancestor),
+    /// or containment in the tree, the ancestors of every kind (`inside` of the set of all kinds; decision 0271).
     fn solvable(&self) -> bool {
-        matches!(self.mode, Mode::Axis(Axis::Nearest | Axis::Inside))
+        matches!(self.mode, Mode::Axis(Axis::Nearest | Axis::Inside) | Mode::Tree)
     }
 
     /// The first id of the rows made per looked-up `n`.
@@ -188,7 +189,7 @@ impl Within {
                 .expect("the CPU's nearest pass")
                 .pop()
                 .unwrap_or_default();
-            let inside = self.mode == Mode::Axis(Axis::Inside);
+            let inside = matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree);
             let (mut start, mut pairs) = (Vec::with_capacity(n + 1), Vec::with_capacity(n));
             for v in 0..found.len() {
                 start.push(pairs.len() as u32);
@@ -205,7 +206,8 @@ impl Within {
 
     /// The planner expects `keys` more lookups of `n`: the batch's solve is chosen once they cost more than it.
     pub(super) fn expect(&self, keys: f64) {
-        if !self.solvable() || self.chosen.load(Ordering::Relaxed) {
+        // Containment's solve is every ancestor of every node: only a reader of the whole relation chooses it.
+        if !self.solvable() || self.mode == Mode::Tree || self.chosen.load(Ordering::Relaxed) {
             return;
         }
         let mut expected = self.expected.lock();
@@ -226,6 +228,9 @@ impl Within {
 
     /// Whether node `local` of document `doc` is of a kind in the axis's set.
     fn member(&self, doc: usize, local: u32) -> bool {
+        if self.mode == Mode::Tree {
+            return true;
+        }
         let p = &self.batch.docs[doc];
         let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind[p.core[local as usize] as usize]);
         self.members.get(&p.tag).is_some_and(|t| t.get(usize::from(code)).is_some_and(|&m| m))
@@ -499,6 +504,18 @@ impl Source for Within {
         column < 2
     }
     fn made_on_lookup(&self) -> bool {
+        true
+    }
+    /// A kind-set axis or containment read whole (the device's keyed read, decision 0271): the batch's solve
+    /// (decision 0143), one pass over the nodes, chosen from here on, so its `n` lookups read the same rows. Spans
+    /// have no such solve.
+    fn complete_rows(&self) -> bool {
+        if !self.solvable() {
+            return false;
+        }
+        if !self.chosen.swap(true, Ordering::Relaxed) {
+            crate::code_rule_dsl::logic::profile::decision("kind-set axes (decision 0143)", || "solved for the batch: a stratum on the device reads the axis whole (decision 0271)".into());
+        }
         true
     }
     fn expect_lookups(&self, column: usize, keys: f64) {

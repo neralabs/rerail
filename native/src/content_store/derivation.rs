@@ -12,6 +12,8 @@
 //!   read it is enqueued (early cutoff, `facts::propagate`).
 //! - The readers of a name are found through `derivation_inputs_by_name`: the next wave's frontier.
 
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use super::{ContentStore, StoreError, StoreResult, Sym, bounded_insert};
 use rusqlite::{Connection, OptionalExtension, params, types::Value};
 use std::collections::{BTreeSet, HashMap};
@@ -162,7 +164,7 @@ impl ContentStore {
     /// Marks a push begun, committed before the push writes anything (open-items O1).
     pub fn begin_push(&self) -> StoreResult<()> {
         self.immediate_transaction(|transaction| {
-            transaction.execute("INSERT OR IGNORE INTO push_pending(pending) VALUES (1)", [])?;
+            transaction.execute_cached("INSERT OR IGNORE INTO push_pending(pending) VALUES (1)", [])?;
             Ok(())
         })
     }
@@ -170,7 +172,7 @@ impl ContentStore {
     /// Marks the push ended: called only once every write of the push is in SQLite.
     pub fn end_push(&self) -> StoreResult<()> {
         self.immediate_transaction(|transaction| {
-            transaction.execute("DELETE FROM push_pending", [])?;
+            transaction.execute_cached("DELETE FROM push_pending", [])?;
             Ok(())
         })
     }

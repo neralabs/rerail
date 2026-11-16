@@ -1,5 +1,7 @@
 //! The content store's SQLite schema: one current, idempotent DDL.
 
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use super::connection::configure_connection;
 use super::{ContentStore, StoreError, StoreResult};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
@@ -725,6 +727,18 @@ CREATE TABLE IF NOT EXISTS frame_used(space BLOB NOT NULL, run INTEGER NOT NULL,
 -- (`frames::collect_unreachable_frames`); rows of a run (`run` > 0) are an older binary's, and go at the next collection.
 CREATE TABLE IF NOT EXISTS frame_program_used(space BLOB NOT NULL, program BLOB NOT NULL, run INTEGER NOT NULL,
     rels BLOB NOT NULL, PRIMARY KEY (space, program, run)) WITHOUT ROWID;
+-- The per-file memo's entries (decision 0240 §4): where each one's bytes are in the packs beside the store
+-- (`<store>.memo/<pack>.pack`), by its plan's space and its part (its content's and path's), with its path, its
+-- content's SHA-256 and its document key. A path's contents are ordered by where they were appended. `over_*`: what a
+-- later run kept over the entry, its identities (decision 0274), in the packs too; `over_len` 0 is nothing
+-- (`ADDED_COLUMNS` adds them to an older store; an older binary ignores them and reads the entry as it was made).
+CREATE TABLE IF NOT EXISTS memo_entries(space BLOB NOT NULL, part INTEGER NOT NULL, path TEXT NOT NULL,
+    digest BLOB NOT NULL, doc INTEGER NOT NULL, pack INTEGER NOT NULL, at INTEGER NOT NULL, len INTEGER NOT NULL,
+    raw INTEGER NOT NULL, over_pack INTEGER NOT NULL DEFAULT 0, over_at INTEGER NOT NULL DEFAULT 0,
+    over_len INTEGER NOT NULL DEFAULT 0, over_raw INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (space, part)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS memo_entries_by_path ON memo_entries(space, path, pack, at);
+-- The packs the entries are in: the newest is appended to.
+CREATE TABLE IF NOT EXISTS memo_packs(pack INTEGER PRIMARY KEY);
 "#;
 
 impl ContentStore {
@@ -762,7 +776,7 @@ impl ContentStore {
                 super::frames::forget_snapshot(path);
             }
         }
-        let id: Option<i64> = connection.query_row("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0)).optional()?;
+        let id: Option<i64> = connection.query_row_cached("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0)).optional()?;
         if let Some(id) = id {
             return Ok(id);
         }
@@ -773,7 +787,7 @@ impl ContentStore {
                 .spawn(|| -> StoreResult<()> {
                     super::hazards::behind_the_run();
                     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-                    transaction.execute("INSERT OR IGNORE INTO store_identity(singleton, id) VALUES (1, random())", [])?;
+                    transaction.execute_cached("INSERT OR IGNORE INTO store_identity(singleton, id) VALUES (1, random())", [])?;
                     transaction.commit()?;
                     Ok(())
                 })
@@ -783,7 +797,7 @@ impl ContentStore {
         if let Some(path) = connection.path() {
             super::atoms::forget_identity(path);
         }
-        Ok(connection.query_row("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0))?)
+        Ok(connection.query_row_cached("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0))?)
     }
 }
 
@@ -819,7 +833,13 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
 /// Columns SCHEMA's tables gained after stores were made with them, as `(table, column, declaration)`: `CREATE
 /// TABLE IF NOT EXISTS` leaves an older store's table as it was, so applying SCHEMA adds these (`ALTER TABLE`).
 /// Each has a default, so an older binary's inserts, which do not name it, still apply.
-const ADDED_COLUMNS: &[(&str, &str, &str)] = &[("corpus_decided", "swept", "INTEGER NOT NULL DEFAULT 0")];
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("corpus_decided", "swept", "INTEGER NOT NULL DEFAULT 0"),
+    ("memo_entries", "over_pack", "INTEGER NOT NULL DEFAULT 0"),
+    ("memo_entries", "over_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("memo_entries", "over_len", "INTEGER NOT NULL DEFAULT 0"),
+    ("memo_entries", "over_raw", "INTEGER NOT NULL DEFAULT 0"),
+];
 
 /// The `ADDED_COLUMNS` a store's tables lack (of the tables it has).
 fn missing_columns(connection: &Connection) -> StoreResult<Vec<&'static (&'static str, &'static str, &'static str)>> {
