@@ -1,0 +1,1 @@
+With hundreds of worktrees, a tool call no longer costs Rerail more per worktree: it read every worktree's start state, parent checkouts and rules at each event, so the daemon stayed busy and hooks timed out. One read now covers them all, and a tool call reads only the rules it uses.

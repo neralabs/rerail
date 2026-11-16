@@ -10,16 +10,18 @@ import { CodeRuleBridge } from "../../../src/engine/code-rule/code-rule-bridge.j
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { CheckoutCatalogs, startingCheckout } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { SqliteAuditReader } from "../../../src/engine/audit/audit-store.js";
+import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control.js";
 import type { AuditRecorder, AuditInput, AuditResult } from "../../../src/engine/audit/audit.js";
 import { type CodeRule, codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
-import { setCheckoutStarted, setRepositoryStarted, RerailRuntime } from "../../../src/runtime/index.js";
+import { setCheckoutStarted, setRepositoryStarted, RerailRuntime, SqliteSessionReader } from "../../../src/runtime/index.js";
 import { setRuleSetting } from "../../../src/engine/catalog/rule-configuration.js";
 import { readRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
 import type { RuleCatalog } from "../../../src/engine/catalog/repository-model.js";
 import { PACKAGE_ROOT } from "../../../src/engine/package-root.js";
 import type { RuleMode } from "../../../src/engine/catalog/rule-mode.js";
 import { checkouts, repositoryAudits } from "../../../src/engine/storage/schema.js";
+import { testEmbedder } from "../../support/hook-events.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { symlinkOrSkip } from "../../support/platform/links.js";
@@ -904,6 +906,110 @@ describe("repository audit through the runtime", () => {
       reader.close();
     }
   }, 60_000);
+});
+
+describe("rules as they are at a scan and at a session's start", () => {
+  it("scans with the rules as they are when a scan starts, though no event came after a rule was turned off elsewhere", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const main = await repository(join(root, "main"));
+    await writeFile(join(main, "api", "a.py"), "NEEDLE\n");
+    const repositoryKey = setUpTestRepository(main, { library: [file(needle("test:main", "MAIN"))] }, databasePath);
+    const runtime = new RerailRuntime({ storageRoot: join(root, "sessions"), databasePath, workspaceRoot: main, embedder: testEmbedder, autostart: false });
+    cleanups.push(() => runtime.dispose());
+    const controls = new SqliteAuditControlStore(databasePath);
+    cleanups.push(async () => { controls.close(); });
+    const reader = new SqliteAuditReader(databasePath);
+    cleanups.push(async () => { reader.close(); });
+    await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "omp", sessionId: "scan", cwd: main } });
+    await runtime.codeRulesOpened("scan");
+    // A scan the runtime's timer picks up, as `rerail scan` asks for one: the violations it records.
+    const scan = async () => {
+      const { id } = controls.requestAudit("scan", { scope: "repository" });
+      const request = () => controls.listAuditRequests("scan").find(item => item.id === id)!;
+      await expect.poll(() => request().status, { timeout: 30_000 }).toBe("completed");
+      return request().auditIds.flatMap(auditId => reader.get(auditId)!.violations.map(violation => `${violation.path} ${violation.code}`));
+    };
+    expect(await scan()).toEqual(["api/a.py MAIN"]);
+    const database = openRerailDatabase(databasePath);
+    try {
+      setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "", targetKind: "rule", targetId: "test:main", on: false, mode: null });
+    } finally {
+      database.$client.close();
+    }
+    expect(await scan()).toEqual([]);
+  }, 60_000);
+
+  it("reports a worktree's rules as they are when a session starts there, though another session's lane read them before a change", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const main = await repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "--detach", join(root, "w"), "HEAD");
+    const worktree = await realpath(join(root, "w"));
+    setUpTestRepository(main, { library: [file(needle("test:main", "MAIN"))] }, databasePath);
+    const runtime = new RerailRuntime({ storageRoot: join(root, "sessions"), databasePath, workspaceRoot: main, embedder: testEmbedder, autostart: false });
+    cleanups.push(() => runtime.dispose());
+    const reader = new SqliteSessionReader(databasePath);
+    cleanups.push(async () => { reader.close(); });
+
+    await runtime.ingest({ kind: "session-start", eventId: "first-start", session: { host: "claude-code", sessionId: "first", cwd: main } });
+    await runtime.codeRulesOpened("first");
+    // Its edit in the worktree opens a lane there.
+    const edited = { sessionId: "first", toolCallId: "write", toolName: "Write" };
+    await runtime.ingest({ kind: "call", eventId: "write", ...edited, input: { file_path: join(worktree, "api", "x.py"), content: "x = 1\n" } });
+    await runtime.ingest({ kind: "result", eventId: "written", ...edited, output: "ok" });
+    const database = openRerailDatabase(databasePath);
+    try {
+      setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: worktree }, folder: "", targetKind: "rule", targetId: "test:main", on: false, mode: null });
+    } finally {
+      database.$client.close();
+    }
+    await runtime.ingest({ kind: "user-prompt", eventId: "prompt", sessionId: "first", text: "next" });
+    await runtime.ingest({ kind: "session-start", eventId: "second-start", session: { host: "claude-code", sessionId: "second", cwd: worktree } });
+
+    expect(reader.hud("second").activeRuleCount).toBe(0);
+  }, 60_000);
+
+  it.runIf(process.platform === "win32")("leaves a nested checkout's files out of the folder around it, recorded under another spelling of that folder", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const stored = join(root, "workspace");
+    await mkdir(join(stored, "packages"), { recursive: true });
+    await writeFile(join(stored, "top.py"), "NEEDLE\n");
+    await writeFile(join(stored, "packages", "outer.py"), "NEEDLE\n");
+    const service = await repository(join(stored, "packages", "service"));
+    await writeFile(join(service, "api", "inner.py"), "NEEDLE\n");
+    // A session in VS Code names the drive in lower case, and a folder outside Git is recorded as named; Git names the
+    // nested checkout as the folder is stored.
+    const drive = stored[0]!;
+    const typed = `${drive === drive.toUpperCase() ? drive.toLowerCase() : drive.toUpperCase()}${stored.slice(1)}`;
+    setUpTestRepository(typed, { library: [file(needle("test:outer", "OUTER"))] }, databasePath);
+    setUpTestRepository(service, { library: [file(needle("test:service", "SERVICE"))] }, databasePath);
+    // As the runtime starts a session in a folder outside Git.
+    const owners = new CheckoutOwners();
+    owners.addPlainRoot(typed);
+    const catalogs = new CheckoutCatalogs(databasePath);
+    const { recorder, audits } = recordingAudits();
+    const auditor = new CheckoutCodeRuleRouter({
+      sessionRoot: typed, startingCheckout: startingCheckout(owners, typed).checkoutRoot, owners, catalogs,
+      steerDelivery: { requestSteer: async () => undefined }, audits: recorder,
+    });
+    cleanups.push(async () => {
+      await auditor.close();
+      catalogs.close();
+    });
+    expect(catalogs.recordedCheckoutsWithin(typed)).toContain(service);
+
+    await auditor.openWorkspace("spelling");
+    await auditor.audit("spelling", { scope: "touched-files", mode: "log", paths: ["packages"] });
+    await auditor.audit("spelling", { scope: "repository", mode: "log" });
+    await auditor.settle();
+
+    // The folder audit, then the repository audit, in the folder around the nested checkout, whichever spelling the
+    // audits name it by: none holds the nested checkout's file.
+    expect(violations(audits).filter(violation => violation.checkout !== service).map(violation => violation.path))
+      .toEqual(["packages/outer.py", "packages/outer.py", "top.py"]);
+  });
 });
 
 describe("CheckoutCodeRuleRouter lanes after review", () => {
