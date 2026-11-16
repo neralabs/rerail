@@ -1484,6 +1484,11 @@ impl DevRel {
         8 * self.cols * self.rows
     }
 
+    /// The buffer: `cols` columns of `rows` 64-bit values, column-major.
+    pub(in crate::code_rule_dsl) fn held(&self) -> &Held {
+        &self.buffer
+    }
+
     /// A relation of `cols` columns and `rows` rows that the device fills (`Batch::copy_rows`).
     pub(in crate::code_rule_dsl) fn empty(cols: usize, rows: usize) -> Result<DevRel, Error> {
         Ok(DevRel { buffer: Held::new((8 * cols * rows).max(8))?, rows, cols })

@@ -19,6 +19,9 @@ From the repository root, build the qualification executable:
 export CARGO_PROFILE_RELEASE_LTO=false
 export RUSTC_WRAPPER="$PWD/benchmark/shared-structural-execution/rustc-wrapper.py"
 export RUST_MIN_STACK=67108864
+# On a machine with the build farm (scripts/build/farm), a build with another wrapper is refused
+# unless it says it must differ:
+export RERAIL_FARM_ANY_ENV=1
 cargo test -p rerail-engine --lib --release --no-run
 ```
 

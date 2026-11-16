@@ -77,3 +77,25 @@ fn a_kind_membership_compares_kind_atoms() {
     assert_eq!(bodies("r"), [vec![cmp("=", "call")], vec![cmp("=", "attribute")]]);
     assert_eq!(bodies("s"), [vec![cmp("!=", "call"), cmp("!=", "attribute")]]);
 }
+
+/// Outside the run (a memo entry, a session's frames) a column of kind or field atoms is no store atom: they are
+/// grammar codes (`field.f` is `tag << 16 | code`), and mapped as atoms between processes a field atom past the
+/// store's end was read as another process's atom, inside the waves.
+#[test]
+fn kind_and_field_columns_are_not_stored_as_atoms() {
+    let p = parse(&format!(
+        "{BASE}.decl kind(n: node, k: symbol)\n.decl named(n: node, f: symbol, s: symbol)\n.output named\n\
+         kind(n, k) :- node(_, n, k, _, _).\nnamed(c, f, s) :- field(p, f, c), kind(p, \"call\"), text(c, s).\n"
+    ))
+    .unwrap();
+    let d = domains(&p).unwrap();
+    let atom_columns = |p: &Program, d: &Domains, rel: &str| {
+        let types: Vec<&str> = p.decls.get(rel).map(|cs| cs.iter().map(|(_, t)| t.as_str()).collect()).unwrap_or_default();
+        super::atom_columns(&types, d, rel)
+    };
+    assert_eq!(atom_columns(&p, &d, "field"), [false, false, false]);
+    assert_eq!(atom_columns(&p, &d, "node"), [false; 5]);
+    assert_eq!(atom_columns(&p, &d, "text"), [false, true]);
+    assert_eq!(atom_columns(&p, &d, "kind"), [false, false], "a derived kind column");
+    assert_eq!(atom_columns(&p, &d, "named"), [false, false, true], "a derived field column, and a name");
+}

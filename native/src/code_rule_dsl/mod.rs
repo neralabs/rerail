@@ -1164,7 +1164,9 @@ mod findings {
     #[path = "tests"]
     pub mod async_reference {
         pub use rerail_lang_python::code_rule_dsl::findings::async_reference::*;
+        // Its timings are read by the p-anchor-corpus tests alone.
         #[cfg(test)]
+        #[cfg_attr(not(feature = "p-anchor-corpus"), allow(dead_code))]
         pub mod native_oracle;
         #[cfg(test)]
         pub mod s_native_oracle;
@@ -1222,10 +1224,10 @@ pub mod identifier {
 }
 pub use rerail_lang_ecma::code_rule_dsl::import_target;
 pub use rerail_lang::code_rule_dsl::json;
-#[path = "language"]
+#[cfg_attr(test, path = "language")]
 mod language {
     pub use rerail_lang::code_rule_dsl::language::*;
-    #[path = "adapter"]
+    #[cfg_attr(test, path = "adapter")]
     pub mod adapter {
         pub use rerail_w::code_rule_dsl::language::adapter::*;
         pub mod arguments {
@@ -1745,6 +1747,9 @@ pub(crate) mod logic {
             // The base tests compile and evaluate rule documents through the engine (`test_support`).
             #[cfg(test)]
             pub mod base_tests;
+            // Decision 0225 §2: partial memo hits hand on what a full evaluation does.
+            #[cfg(test)]
+            pub mod partial_tests;
             #[cfg(test)]
             pub mod cache_tests;
             // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
@@ -2081,15 +2086,15 @@ mod sql_executor {
     use napi_derive::napi;
     #[allow(unused_imports)]
     use rusqlite::OptionalExtension;
-    #[allow(unused_imports)]
+    #[allow(unused_imports, hidden_glob_reexports)]
     use rusqlite::types::{Value as SqlValue, ValueRef};
-    #[allow(unused_imports)]
+    #[allow(unused_imports, hidden_glob_reexports)]
     use serde_json::{Value, json};
-    #[allow(unused_imports)]
+    #[allow(unused_imports, hidden_glob_reexports)]
     use std::collections::{BTreeMap, BTreeSet, HashMap};
     #[allow(unused_imports)]
     use std::path::Path;
-    #[allow(unused_imports)]
+    #[allow(unused_imports, hidden_glob_reexports)]
     use std::sync::Arc;
     #[allow(unused_imports)]
     use crate::code_rule_dsl::logic::sql::lattices;

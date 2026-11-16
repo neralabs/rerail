@@ -650,6 +650,16 @@ impl<'a> Found<'a> {
     pub(super) fn parts(&self) -> impl Iterator<Item = Part<'a>> + '_ {
         self.first[..self.n.min(self.first.len())].iter().copied().chain(self.rest.iter().copied())
     }
+    /// Its `i`th id, over every run in order (`i` under `len`): a walk samples candidates by position (decision 0236).
+    pub(super) fn nth(&self, mut i: usize) -> u32 {
+        for p in self.parts() {
+            if i < p.len() {
+                return match p { Part::Ids(v) => v[i], Part::Rows(lo, _) => lo + i as u32 };
+            }
+            i -= p.len();
+        }
+        panic!("a position past the found ids")
+    }
     /// Its ids, over every run.
     pub(super) fn ids(&self) -> impl Iterator<Item = u32> + '_ {
         self.parts().flat_map(Part::iter)
@@ -1492,7 +1502,7 @@ pub mod tests {
                 let k = 2;
                 let val = |id: u32, i: usize| rows[id as usize * k + cols[i]];
                 let cmp = |a: u32, b: u32| cmp_rows(&rows[..], k, &cols, a, b);
-                let mut cost = |packed: bool| {
+                let cost = |packed: bool| {
                     let (mut ins, mut cyc) = (u64::MAX, u64::MAX);
                     for _ in 0..5 {
                         let mut ids: Vec<u32> = (0..n).collect();

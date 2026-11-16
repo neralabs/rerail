@@ -120,7 +120,6 @@ fn walk(matcher: &AstMatcher, negated: bool, seen: &mut BTreeSet<usize>, out: &m
         | AstMatcher::Semantic(Semantic::FilePath(_))
         | AstMatcher::Semantic(Semantic::Gap(_))
         | AstMatcher::Never => {}
-        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
     }
 }

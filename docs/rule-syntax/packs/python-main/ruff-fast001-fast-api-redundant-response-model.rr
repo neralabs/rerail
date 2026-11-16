@@ -19,7 +19,9 @@
 // Not grounded: no positive atom binds t3_6.
 FAST001_raw(n, RM) :- kind(n, "keyword_argument"), fast001_tok_has_7(n), field(n, "value", c11),
     node(_, c11, _, _, _), RM = c11, fast001_type_shape(c11),
-    (fast001_plain_shape(c11), node(_, c11, _, _, _), RMS = c11 ; !fast001_plain_shape(c11), unset(RMS)),
+    ( fast001_plain_shape(c11), node(_, c11, _, _, _), RMS = c11
+    ; !fast001_plain_shape(c11), unset(RMS), count : { fast001_plain_shape(c11),node(_, c11, _, _, _), RMS_E0 = c11 } = 0
+    ),
     count : { precedes(s12, n), kind(s12, "keyword_argument"), fast001_tok_has_8(s12) } = 0,
     child(p21, n, _), kind(p21, "argument_list"), child(p22, p21, _),
     kind(p22, "call"), fast001_route_call(p22), child(p23, p22, _),
@@ -92,7 +94,10 @@ fast001_decorator_host(n, RET, RETS) :- fast001_route_decorator(n), child(p1, n,
     kind(p1, "decorated_definition"), child(p1, c2, _),
     kind(c2, "function_definition"), node(_, c2, _, _, _), FN = c2, field(c2, "return_type", c3),
     kind(c3, "type"), child(c3, c4, _), node(_, c4, _, _, _), RET = c4, fast001_type_shape(c4),
-    (fast001_plain_shape(c4), node(_, c4, _, _, _), RETS = c4 ; !fast001_plain_shape(c4), unset(RETS)),
+    ( fast001_plain_shape(c4), node(_, c4, _, _, _), RETS = c4
+    ; !fast001_plain_shape(c4), unset(RETS), count : { fast001_plain_shape(c4),node(_, c4, _, _, _), RETS_E0 = c4 } = 0
+    ),
+
     count : { field(c2, "return_type", c5), has(c5, c6, "identifier"), ref_site(c6, b7), main_form(b7, "typeParameter"), st8 = b7, inside(st8, p9, "function_definition"), node(_, p9, _, _, _), SF = p9, node(_, SF, _, _, _), node(_, FN, _, _, _), SF = FN } = 0.
 fast001_decorator_host(n, RET, RETS) :- kind(n, "parenthesized_expression"), child(p12, n, _),
     fast001_decorator_host(p12, RET, RETS).

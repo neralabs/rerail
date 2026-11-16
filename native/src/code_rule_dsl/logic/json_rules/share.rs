@@ -790,9 +790,31 @@ fn expansion(px: &Patterns, prog: &Program, by: &IndexMap<String, Vec<usize>>, h
             .iter()
             .filter(|p| is_meta(p) && !every.contains(*p) && outputs.contains(*p) && !mapping.iter().find(|(k, _)| k == *p).is_some_and(|(_, v)| known.contains(v)))
             .collect();
-        let text = body + &missing.iter().map(|p| format!(", unset({p})")).collect::<String>();
-        alts.push(rename_vars(px, &text, &mapping));
+        let text = body.clone() + &missing.iter().map(|p| format!(", unset({p})")).collect::<String>();
+        alts.push((rename_vars(px, &body, &mapping), rename_vars(px, &text, &mapping), missing.into_iter().cloned().collect::<Set>()));
     }
-    alts
+    // ast-grep's `any` takes its first alternative that matches: one that leaves a metavariable unset another binds
+    // holds only where no earlier one differing so does. The union of the alternatives, and its negation, is unchanged.
+    // Outside the guard: what the caller binds, and every argument but a metavariable the util outputs.
+    let mut outer = known.clone();
+    outer.insert("n".to_owned());
+    if let Some(&e) = by[h].first() {
+        for (p, a) in head_vars(&prog.arena[e].head).iter().zip(args) {
+            if !(is_meta(p) && outputs.contains(p)) {
+                outer.extend(super::demand::vars_of(px, a));
+            }
+        }
+    }
+    (0..alts.len())
+        .map(|k| {
+            let mut out = alts[k].1.clone();
+            for j in (0..k).filter(|j| alts[*j].2 != alts[k].2) {
+                if let Some(not) = super::translate::not_earlier(px, &alts[j].0, &outer, j) {
+                    out.push_str(&format!(", {not}"));
+                }
+            }
+            out
+        })
+        .collect()
 }
 

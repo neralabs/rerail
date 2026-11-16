@@ -598,6 +598,7 @@ impl ContentStore {
             .expect("content store connection unavailable");
         if let Some(stop) = stop {
             let stop = std::sync::Arc::clone(stop);
+            // Not stoppable, the transaction would hold the writers for its length: an error, not a quiet wait.
             connection.progress_handler(1000, Some(move || stop()))?;
         }
         // One attempt: its caller retries, or runs it again later (`begin` leaves the retry to it).
@@ -609,10 +610,11 @@ impl ContentStore {
             self.commit(transaction)?;
             Ok(value)
         });
-        if stop.is_some() {
-            connection.progress_handler(0, None::<fn() -> bool>)?;
-        }
-        value
+        // Left installed, the handler would stop the connection's next statements: its error is the result's.
+        let cleared = if stop.is_some() { connection.progress_handler(0, None::<fn() -> bool>) } else { Ok(()) };
+        let value = value?;
+        cleared?;
+        Ok(value)
     }
 
     /// Runs `operation` in one immediate transaction without waiting: `Busy` if another writer

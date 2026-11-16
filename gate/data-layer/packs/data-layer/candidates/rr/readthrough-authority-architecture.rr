@@ -51,7 +51,7 @@ RTA003(f) :- rta_def(f, "_authority_transition_models"), walk_name(f, x),
 
 .violation RTA004(at: node) "Durable overlay evidence must include principal_user_id"
 RTA004(c) :- kind(c, "class_definition"), def_name(c, "ReadThroughLocalOverlayRecord"),
-    !class_field(c, "principal_user_id").
+    !class_field_name(c, "principal_user_id").
 
 // `after_refs=frozenset({proposed_lease_ref})`: a keyword argument anywhere in the def.
 .violation RTA005(at: node) "Read overlay evidence after the same-plan proposed lease"

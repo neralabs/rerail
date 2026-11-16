@@ -11,10 +11,13 @@ use super::{AtomId, Cell, RelId};
 /// such cell's atom a relation id.
 pub(crate) const RELATION_COLUMNS: &[(&str, &[usize])] = &[
     ("answer", &[1, 3]),
+    ("asked", &[1, 3]),
     ("native_dfs", &[1, 2, 3]),
     ("native_roots", &[1, 2]),
     ("native_match", &[1, 2]),
     ("native_group", &[1]),
+    ("native_text_test", &[1, 2]),
+    ("native_text_pattern", &[1]),
     ("native_python_candidates", &[1, 2, 3]),
     ("native_python", &[1, 3, 4]),
     ("native_components", &[1, 2, 3]),
@@ -42,6 +45,7 @@ pub(crate) fn relation_columns(rel: &str) -> &'static [usize] {
 pub enum NativeKind {
     DfsFirst,
     MatchAll,
+    TextTest,
     PythonCandidates,
     Python,
     Components,
@@ -65,6 +69,8 @@ pub enum NativeSpec {
     DfsFirst { edge: RelId, target: RelId, roots: Option<RelId> },
     /// Its groups in order.
     MatchAll { input: RelId, pattern: AtomId, groups: Vec<AtomId>, positions: bool },
+    /// Its patterns in order.
+    TextTest { input: RelId, column: usize, op: AtomId, patterns: Vec<AtomId> },
     PythonCandidates { input: RelId, targets: RelId, context: AtomId, member: AtomId },
     Python { kind: AtomId, input: RelId, targets: Option<RelId> },
     Components { edge: RelId, own: RelId },
@@ -161,6 +167,7 @@ impl About {
         let mut widens: Vec<(RelId, u32)> = Vec::new();
         let mut roots: Vec<(RelId, RelId)> = Vec::new();
         let mut groups: Vec<(RelId, i64, AtomId)> = Vec::new();
+        let mut patterns: Vec<(RelId, i64, AtomId)> = Vec::new();
         let mut demand: Vec<(i64, AtomId)> = Vec::new();
         let mut answers: Vec<(RelId, i64, RelId)> = Vec::new();
         let int = |c: Option<Cell>| match c {
@@ -200,6 +207,16 @@ impl About {
                         &[2],
                         r(2).zip(a(3)).map(|(input, pattern)| NativeSpec::MatchAll { input, pattern, groups: Vec::new(), positions: int(row.get(4).copied()).is_some_and(|p| p != 0) }),
                     )),
+                    "native_text_test" => about.natives.extend(native(
+                        NativeKind::TextTest,
+                        &[2],
+                        r(2).zip(int(row.get(3).copied())).zip(a(4)).map(|((input, column), op)| NativeSpec::TextTest { input, column: column as usize, op, patterns: Vec::new() }),
+                    )),
+                    "native_text_pattern" => {
+                        if let (Some(rel), Some(i), Some(p)) = (r(1), int(row.get(2).copied()), a(3)) {
+                            patterns.push((rel, i, p));
+                        }
+                    }
                     "native_group" => {
                         if let (Some(rel), Some(i), Some(g)) = (r(1), int(row.get(2).copied()), a(3)) {
                             groups.push((rel, i, g));
@@ -277,6 +294,12 @@ impl About {
                 if let NativeSpec::DfsFirst { roots, .. } = &mut n.spec {
                     *roots = Some(root);
                 }
+            }
+        }
+        patterns.sort_unstable_by_key(|&(rel, i, _)| (rel, i));
+        for (rel, _, p) in patterns {
+            if let Some(NativeRef { spec: NativeSpec::TextTest { patterns, .. }, .. }) = about.natives.iter_mut().find(|n| n.rel == rel) {
+                patterns.push(p);
             }
         }
         groups.sort_unstable_by_key(|&(rel, i, _)| (rel, i));
@@ -379,6 +402,155 @@ impl Builder<'_> {
         }
         self.set_about_rows("lattice", rows);
     }
+    /// Removes relation `rel`'s native operator (`Program::natives`' entry): its rows of each native about relation,
+    /// every one of which names its relation in column 1.
+    pub fn drop_native(&mut self, rel: &str) {
+        let a = Cell::Str(self.atom(rel));
+        for &(name, _) in RELATION_COLUMNS.iter().filter(|(n, _)| n.starts_with("native_")) {
+            let rows = self.about_rows(name);
+            let n = rows.len();
+            let kept: Vec<Vec<Cell>> = rows.into_iter().filter(|r| r.get(1) != Some(&a)).collect();
+            if kept.len() != n {
+                self.set_about_rows(name, kept);
+            }
+        }
+    }
+    /// States about relation `name`'s rows as `from`'s (a version whose ids are this builder's), those `keep` takes.
+    pub fn copy_about(&mut self, from: &Version, name: &str, mut keep: impl FnMut(&[Cell]) -> bool) {
+        let Some(a) = from.find(name) else { return };
+        let Some(f) = from.about_facts().into_iter().find(|f| f.name() == a) else { return };
+        let rows: Vec<Vec<Cell>> = f.rows().map(|r| r.collect::<Vec<Cell>>()).filter(|r| keep(r)).collect();
+        if !rows.is_empty() {
+            self.set_about_rows(name, rows);
+        }
+    }
+    /// Keeps the natives, lattices and gates of the relations `keep` takes, by kind (decision 0244: a split part's
+    /// fields, as the tree's `natives`, `lattice` and `gates` retained by relation). The gates kept are numbered again
+    /// in their order, as the tree's list writes them; a gate is kept by its key (`Program::gates`' first). A kind
+    /// none of whose rows go is left as the parent's.
+    pub fn keep_relation_fields(&mut self, natives: &dyn Fn(&str) -> bool, lattice: &dyn Fn(&str) -> bool, gates: &dyn Fn(&str) -> bool) {
+        let named = |b: &Self, row: &[Cell], col: usize, keep: &dyn Fn(&str) -> bool| match row.get(col) {
+            Some(&Cell::Str(a)) => keep(b.text(a)),
+            _ => true,
+        };
+        let filter = |b: &mut Self, name: &str, keep: &dyn Fn(&Self, &[Cell]) -> bool| {
+            let rows = b.about_rows(name);
+            let n = rows.len();
+            let kept: Vec<Vec<Cell>> = rows.into_iter().filter(|r| keep(b, r)).collect();
+            if kept.len() != n {
+                b.set_about_rows(name, kept);
+            }
+        };
+        for &(name, _) in RELATION_COLUMNS.iter().filter(|(n, _)| n.starts_with("native_")) {
+            filter(self, name, &|b, r| named(b, r, 1, natives));
+        }
+        for name in ["lattice", "lattice_merge", "lattice_widen"] {
+            filter(self, name, &|b, r| named(b, r, 1, lattice));
+        }
+        let main = self.about_rows("gate");
+        let number = |r: &[Cell]| match r.get(1) {
+            Some(&Cell::Int(k)) => Some(k),
+            _ => None,
+        };
+        let mut kept: Vec<i64> = main.iter().filter(|r| named(self, r, 2, gates)).filter_map(|r| number(r)).collect();
+        if kept.len() == main.len() {
+            return;
+        }
+        kept.sort_unstable();
+        let again = |k: i64| kept.binary_search(&k).ok().map(|i| i as i64);
+        for name in ["gate", "gate_quiet", "gate_dep", "gate_src"] {
+            let rows: Vec<Vec<Cell>> = self
+                .about_rows(name)
+                .into_iter()
+                .filter_map(|mut r| {
+                    let k = again(number(&r)?)?;
+                    r[1] = Cell::Int(k);
+                    Some(r)
+                })
+                .collect();
+            self.set_about_rows(name, rows);
+        }
+    }
+    /// Adds qualifiers `words` (relation, word) to the program's, kept in order of relation then word, each once, as
+    /// the tree's map of sets.
+    pub fn add_qualifiers<S: AsRef<str>>(&mut self, words: &[(S, S)]) {
+        if words.is_empty() {
+            return;
+        }
+        let p = program_cell(self);
+        let rows = self.about_rows("qualifier");
+        let mut pairs: Vec<(String, String)> = rows.iter().filter_map(|r| match (r.get(1), r.get(2)) {
+            (Some(&Cell::Str(a)), Some(&Cell::Str(w))) => Some((self.text(a).to_owned(), self.text(w).to_owned())),
+            _ => None,
+        }).collect();
+        pairs.extend(words.iter().map(|(r, w)| (r.as_ref().to_owned(), w.as_ref().to_owned())));
+        pairs.sort_unstable();
+        pairs.dedup();
+        let rows = pairs.iter().map(|(r, w)| vec![p, Cell::Str(self.atom(r)), Cell::Str(self.atom(w))]).collect();
+        self.set_about_rows("qualifier", rows);
+    }
+    /// States the qualifiers (`Program::qualifiers`): each (relation, word), in order of relation then word, each once,
+    /// as the tree's map of sets. Replaces the program's.
+    pub fn set_qualifiers<S: AsRef<str>>(&mut self, words: &[(S, S)]) {
+        let p = program_cell(self);
+        let mut pairs: Vec<(&str, &str)> = words.iter().map(|(r, w)| (r.as_ref(), w.as_ref())).collect();
+        pairs.sort_unstable();
+        pairs.dedup();
+        let rows = pairs.iter().map(|(r, w)| vec![p, Cell::Str(self.atom(r)), Cell::Str(self.atom(w))]).collect();
+        self.set_about_rows("qualifier", rows);
+    }
+    /// Adds the tree's gates `gates` (`Program::gates`' entries, after the program's), each with its source where it
+    /// has one (`gate_src`), as `program_facts` writes them.
+    pub fn add_tree_gates(&mut self, gates: &[(String, crate::code_rule_dsl::logic::front::ast::Gate)]) {
+        if gates.is_empty() {
+            return;
+        }
+        let p = program_cell(self);
+        let base = self.about_rows("gate").len() as i64;
+        let made: Vec<_> = gates.iter().map(|(key, g)| (key.clone(), g.rel.clone(), g.level, g.quiet.clone(), g.deps.clone())).collect();
+        self.add_gates(&made);
+        let mut srcs = self.about_rows("gate_src");
+        for (k, (_, g)) in gates.iter().enumerate() {
+            if let Some(src) = &g.src {
+                srcs.push(vec![p, Cell::Int(base + k as i64), Cell::Str(self.atom(src))]);
+            }
+        }
+        self.set_about_rows("gate_src", srcs);
+    }
+    /// States the answers (`Program::answers`): each request and the relations that answer it, in order. Replaces
+    /// the program's.
+    pub fn set_answers(&mut self, answers: &std::collections::BTreeMap<String, Vec<String>>) {
+        let p = program_cell(self);
+        let rows = answers
+            .iter()
+            .flat_map(|(req, by)| by.iter().enumerate().map(move |(i, b)| (req, i, b)))
+            .map(|(req, i, b)| vec![p, Cell::Str(self.atom(req)), Cell::Int(i as i64), Cell::Str(self.atom(b))])
+            .collect();
+        self.set_about_rows("answer", rows);
+    }
+    /// Adds gates (`Program::gates`' entries, after the program's): each its key, relation, level, the relations
+    /// that must be quiet and the gates it waits on, as `program_facts` writes them.
+    pub fn add_gates(&mut self, gates: &[(String, String, usize, Vec<String>, Vec<String>)]) {
+        if gates.is_empty() {
+            return;
+        }
+        let p = program_cell(self);
+        let (mut main, mut quiet, mut deps) = (self.about_rows("gate"), self.about_rows("gate_quiet"), self.about_rows("gate_dep"));
+        let base = main.len() as i64;
+        for (k, (key, rel, level, q, d)) in gates.iter().enumerate() {
+            let k = base + k as i64;
+            main.push(vec![p, Cell::Int(k), Cell::Str(self.atom(key)), Cell::Str(self.atom(rel)), Cell::Int(*level as i64)]);
+            for (i, r) in q.iter().enumerate() {
+                quiet.push(vec![p, Cell::Int(k), Cell::Int(i as i64), Cell::Str(self.atom(r))]);
+            }
+            for (i, r) in d.iter().enumerate() {
+                deps.push(vec![p, Cell::Int(k), Cell::Int(i as i64), Cell::Str(self.atom(r))]);
+            }
+        }
+        self.set_about_rows("gate", main);
+        self.set_about_rows("gate_quiet", quiet);
+        self.set_about_rows("gate_dep", deps);
+    }
     /// Adds relations `rels` to the relations of no columns (kept in name order, each once, as the tree's set).
     pub fn add_nullary<S: AsRef<str>>(&mut self, rels: &[S]) {
         if rels.is_empty() {
@@ -395,5 +567,12 @@ impl Builder<'_> {
         names.dedup();
         rows = names.iter().map(|n| vec![p, Cell::Str(self.atom(n))]).collect();
         self.set_about_rows("nullary", rows);
+    }
+    /// States the columns declared `tape` (`Program::tapes`): each relation and column, in the program's order
+    /// (relations by name, each's columns in order). Replaces the program's.
+    pub fn set_tapes<S: AsRef<str>>(&mut self, tapes: &[(S, usize)]) {
+        let p = program_cell(self);
+        let rows = tapes.iter().map(|(r, c)| vec![p, Cell::Str(self.atom(r.as_ref())), Cell::Int(*c as i64)]).collect();
+        self.set_about_rows("tape_column", rows);
     }
 }

@@ -12,14 +12,15 @@
 //! ```
 //!
 //! What it makes:
-//! - **a view** when the edit only removes rules of a base or a view, and what is left is few ranges;
+//! - **a view** when the edit only removes rules, and what is left is few ranges (`max_ranges`: a quarter of the
+//!   parent's rules, decision 0244); a view of a view is of that view's parent;
 //! - **an overlay** otherwise: a delta holding only what it adds, numbered after the parent's ids;
 //! - **a fold** when the edit reaches half its parent: a new base of the result, keeping its atom and relation ids.
 //!
 //! A version's digest is made with it, from the parent's and the edit's hashes.
 use super::encoder::{self, CellText, Decl, Encoder, FactRel, Parts};
 use super::handles::{AtomRef, CmpOp, LitRef, RuleRef, TermRef};
-use super::version::{MAX_RANGES, Made, Version};
+use super::version::{Made, Version, max_ranges};
 use super::{ABOUT_BIT, AtomId, Cell, RelId, RuleId, Slot, kind};
 use crate::code_rule_dsl::logic::front::{List, Program, Rule, Value};
 use crate::code_rule_dsl::logic::program_facts::Facts;
@@ -124,6 +125,12 @@ impl<'p> Builder<'p> {
         b.parts.outputs = Some((input.outputs().map(|a| a.0).collect(), input.outputs_hash()));
         b.parts.owns_about = true;
         b
+    }
+    /// A derivation of `input` that states each of its parts (decision 0241): a new base under `input`'s atom and
+    /// relation ids, holding none of `input`'s rules or parts. What is not stated is empty. Finished with nothing
+    /// stated, it is `input`'s names alone, which a maintained form overlays.
+    pub fn under(input: &'p Version) -> Builder<'p> {
+        Builder { parent: None, ids: Some(input), enc: Encoder::with_ids_of(input), removed: Vec::new(), parts: Parts::default(), parts_changed: false, rows: 0 }
     }
     /// A base of all of `v`, under `v`'s atom and relation ids: each rule copied as it is, its source kept.
     pub(crate) fn folding(v: &'p Version) -> Builder<'p> {
@@ -393,6 +400,14 @@ impl<'p> Builder<'p> {
         Ok(self.enc.finish(&self.parts, &self.removed))
     }
 
+    /// The edit as an overlay of its parent, never folded: for a version whose ids must stay as written (a
+    /// maintained form over its run's names, decision 0241, and its `Maint`), so that its cost is its own size.
+    pub fn finish_overlay(mut self) -> Result<Arc<Version>, String> {
+        let parent = self.parent.ok_or("an overlay of no parent")?;
+        self.removed.sort_unstable();
+        self.removed.dedup();
+        Version::over(parent, &self.finish_bytes()?)
+    }
     /// The version the edit makes: a view, an overlay, or folded (`Builder`'s doc).
     pub fn finish(mut self) -> Result<(Arc<Version>, Made), String> {
         let Some(parent) = self.parent else {
@@ -414,16 +429,18 @@ impl<'p> Builder<'p> {
     }
 }
 
-/// The view of `parent` (a base or a view) less rules `removed`, if it is few enough ranges.
+/// The view of `parent` less rules `removed` (its rules), if it is few enough ranges (`max_ranges`). A view of a view
+/// is of that view's parent, its ranges that view's less `removed`.
 fn view(parent: &Arc<Version>, removed: &[u32]) -> Option<Arc<Version>> {
-    let (base, ranges): (_, Vec<(u32, u32)>) = match &**parent {
-        Version::Base { image, .. } => (image, vec![(0, image.rules() as u32)]),
-        Version::View { base, ranges, .. } => (base, ranges.clone()),
-        Version::Overlay { .. } => return None,
+    let (over, ranges): (&Arc<Version>, Vec<(u32, u32)>) = match &**parent {
+        Version::View { parent: over, ranges, .. } => (over, ranges.clone()),
+        _ => (parent, vec![(0, parent.rule_end())]),
     };
+    let limit = max_ranges(over.size());
     let mut out = Vec::new();
     let mut gone = removed.iter().peekable();
     let mut digest = parent.digest();
+    let mut size = parent.size();
     for (s, e) in ranges {
         let mut start = s;
         while let Some(&&g) = gone.peek() {
@@ -434,7 +451,10 @@ fn view(parent: &Arc<Version>, removed: &[u32]) -> Option<Arc<Version>> {
             if g < start {
                 continue;
             }
-            digest = digest.wrapping_sub(base.rule_hash(g));
+            // A rule `parent` does not have removes nothing (an overlay's parent's removed ids are in its ranges).
+            let Some(rule) = parent.rule(RuleId(g)) else { continue };
+            digest = digest.wrapping_sub(rule.hash());
+            size -= 1;
             if g > start {
                 out.push((start, g));
             }
@@ -443,11 +463,11 @@ fn view(parent: &Arc<Version>, removed: &[u32]) -> Option<Arc<Version>> {
         if start < e {
             out.push((start, e));
         }
-        if out.len() > MAX_RANGES {
+        if out.len() > limit {
             return None;
         }
     }
-    Some(Version::view(base, out, digest))
+    Some(Version::view(over, out, size, digest))
 }
 
 /// A rule written term by term: its head, then its body's literals, in order. A rule refused (`finish`'s error) or
@@ -500,6 +520,12 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
         self.atom_node(rel.into(), args, 0);
         self
     }
+    /// An atom with flags: negated, gated.
+    pub fn atom_with(mut self, rel: impl Into<Rel<'b>>, args: &[T<'_>], neg: bool, gated: bool) -> Self {
+        self.body();
+        self.atom_node(rel.into(), args, if neg { kind::NEG } else { 0 } | if gated { kind::GATED } else { 0 });
+        self
+    }
     /// A negated atom.
     pub fn not(mut self, rel: impl Into<Rel<'b>>, args: &[T<'_>]) -> Self {
         self.body();
@@ -547,6 +573,12 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
         self.head = true;
         self
     }
+    /// Records rule `id` of the derivation's input as this rule's source (§9), as `Builder::rewrite` does: for a rule
+    /// written term by term from one of the input's (a maintenance rule of a source rule, decision 0258).
+    pub fn source(mut self, id: RuleId) -> Self {
+        self.from = Some(id);
+        self
+    }
     /// The slot this rule gives the variable named `name` (new variables are numbered as they first appear).
     pub fn slot(&mut self, name: &str) -> Slot {
         let a = self.b.enc.atom(name);
@@ -570,6 +602,20 @@ impl Version {
     /// An edit of this version (`Builder::on`).
     pub fn builder(self: &Arc<Self>) -> Builder<'_> {
         Builder::on(self)
+    }
+
+    /// A part of this version (decision 0244): a view of the rules whose head `rules` takes, and over it an overlay of
+    /// the part's own fields, never folded: `inputs` and `outputs`, and the natives, lattices and gates of the relations
+    /// `fields` takes (`keep_relation_fields`). It costs its range list and its fields, never a copy of the program.
+    pub fn part<S: AsRef<str>>(self: &Arc<Self>, rules: impl Fn(&str) -> bool, inputs: &[S], outputs: &[S], fields: PartFields<'_>) -> Result<Arc<Version>, String> {
+        let mut b = Builder::on(self);
+        b.retain(|r| rules(self.rel_name(r.head().rel())));
+        let (rules, _) = b.finish()?;
+        let mut b = Builder::on(&rules);
+        b.set_inputs(inputs);
+        b.set_outputs(outputs);
+        b.keep_relation_fields(fields.natives, fields.lattice, fields.gates);
+        b.finish_overlay()
     }
 
     /// `to` as an edit of this version: its rules matched by hash, its parts by relation. For a caller that holds
@@ -631,6 +677,13 @@ impl Version {
     }
 }
 
+/// Which relations' fields a part keeps (`Version::part`): its natives', its lattices' and its gates' (by key).
+pub struct PartFields<'f> {
+    pub natives: &'f dyn Fn(&str) -> bool,
+    pub lattice: &'f dyn Fn(&str) -> bool,
+    pub gates: &'f dyn Fn(&str) -> bool,
+}
+
 /// Writes term `t`.
 fn write_t(e: &mut Encoder<'_>, t: &T<'_>) {
     match t {
@@ -674,6 +727,11 @@ pub trait Rewrite {
     fn prefix(&mut self, _a: AtomRef<'_>, _out: &mut Vec<T<'static>>) {}
     /// A term to write in place of `t` at `site`; `None` keeps it (and asks again of each of a call's arguments).
     fn term(&mut self, _site: Site<'_>, _t: TermRef<'_>) -> Option<T<'static>> {
+        None
+    }
+    /// The relation (by name) and flags (`neg`, `gated`) to write atom `a` (a body atom, or an aggregate's) with;
+    /// `None` keeps its own.
+    fn atom_as(&mut self, _a: AtomRef<'_>) -> Option<(String, bool, bool)> {
         None
     }
     /// Whether to keep body literal `l`.
@@ -722,7 +780,14 @@ impl Walk<'_, '_> {
         }
     }
     fn atom(&mut self, a: AtomRef<'_>, site: Site<'_>, rw: &mut impl Rewrite) {
-        let at = self.open_mapped(a.node());
+        let renamed = if matches!(site, Site::Head(_)) { None } else { rw.atom_as(a) };
+        let at = match renamed {
+            Some((rel, neg, gated)) => {
+                let r = self.enc.rel(&rel);
+                self.enc.open(kind::ATOM | if neg { kind::NEG } else { 0 } | if gated { kind::GATED } else { 0 }, r)
+            }
+            None => self.open_mapped(a.node()),
+        };
         self.prefix.clear();
         rw.prefix(a, &mut self.prefix);
         for t in std::mem::take(&mut self.prefix) {

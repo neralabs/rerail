@@ -699,6 +699,9 @@ impl QueryConnection {
                     );
                 }
             }
+            self.registry
+                .query_execution_report(token)
+                .expect("the registered batch remains available until publication");
             Ok(QueryOutcome {
                 rows,
                 violations,

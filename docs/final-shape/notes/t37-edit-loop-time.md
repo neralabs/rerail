@@ -40,6 +40,32 @@ Two avoidable costs show up in every test rebuild:
 
 The test binary is 613 MB.
 
+### With the farm (2026-11-15)
+
+The same body edit in `logic` (`session.rs`, `start`), rebuilt with the global sccache every
+worktree uses and with the farm (§4), each on a warm target:
+
+| Rebuild after the edit | default: wall, CPU | farm: wall, CPU |
+|---|---|---|
+| the CLI, load 5–17 | 6.4–7.2 s, 17–18 s | 6.6–6.8 s, 19 s |
+| the library's tests, interleaved, load 65–115 | 18.8, 22.2, 61.7 s; 41–48 s | 23.9, 24.6, 40.2 s; 43–46 s |
+| the CLI, the first edit of a crate that was a cache hit | — | 32.7 s, 78 s |
+
+In steady state the farm costs what the default does: a workspace crate being edited compiles
+here, incrementally, either way. The farm's gain is the first build of a worktree (§4, 28 s from
+a filled cache). Its one cost is the first edit of each crate that came from the cache: no
+incremental state came with it, so that edit compiles the crate and those above it whole, once.
+Before 33033b578 that first edit went to another Mac as a whole compile (20.5 s for `logic`), and
+the next one compiled whole again here.
+
+The farm's keys hold the target directory's path within the checkout: a worktree building into
+`target/` shares with every other one; a `CARGO_TARGET_DIR` elsewhere shares only with the same.
+
+Found on the way: since 197f2de81 (the self dev-dependency's removal), only `--lib` test builds
+compiled. `--lib --tests` and `cargo test --workspace` (CI) also build the plain engine library,
+where feature unification turned the variant `AstMatcher::TestUnknown` on and its match arms off.
+The variant is now always there (e26cc1d5b).
+
 ## 2. The test suite is the slow part
 
 One run of the engine's library tests took 762 s wall and 2,682 s CPU (45 CPU-minutes):
@@ -92,8 +118,77 @@ Failures seen in this worktree:
 
 - the stack overflow above, which is real;
 - `language::adapter::kit::shared_walks_read_the_kinds_they_named` and
-  `slice::tests::the_backends_find_the_same_keys_on_real_files`, not yet classified;
+  `slice::tests::the_backends_find_the_same_keys_on_real_files`, classified below;
 - the rest need the pack test data, which a fresh worktree lacks (`npm run fixtures:pull`).
+
+### Two tiers, and the gate on another Mac (2026-11-15)
+
+cargo-nextest runs each test in a process of its own, and reports each test's time. The stack
+overflow then fails one test, not the run, and a process-wide session no longer queues the
+session tests. `.config/nextest.toml` sets two tiers:
+
+```
+cargo nextest run --lib                   # the quick tier: all but the slow tests
+cargo nextest run --lib --profile gate    # everything (a phase gate)
+```
+
+The slow tier is the tests that took 20 s or more each in a full run: 45 tests, named by family
+in the config. A filter on the command line narrows a tier; `--ignore-default-filter` runs a slow
+test by name.
+
+`scripts/dev/test-remote` sends this checkout to a farm host through the mirror and runs a command
+there (`scripts/dev/test-remote -- cargo nextest run --lib --profile gate`). The host builds in
+a warm target directory of its own (one per checkout, under the farm's root there; §4, "What
+broke"), so the suite spends the host's CPU, not this machine's. On an M3 Max at
+`-j 16`:
+
+| Run | Tests | Wall |
+|---|---|---|
+| The gate | 2,639 | 234 s |
+| The quick tier | 2,594 | 87 s |
+
+In the gate's run the tests took 3,460 test-seconds in all:
+
+| Per-test time | Tests | Their total time |
+|---|---|---|
+| under 1 s | 2,319 | 252 s |
+| 1–5 s | 216 | 469 s |
+| 5–20 s | 61 | 587 s |
+| 20–60 s | 30 | 960 s |
+| 60 s or more | 13 | 1,191 s |
+
+The longest test, `convert::tests::a_sample_of_the_replay_gives_the_recorded_findings` at 227 s,
+bounds the gate's wall time. The next is `rr::tests::dropping_unreached_clauses_…_script_packs`
+at 136 s.
+
+The gate's 14 failures:
+
+- **11 need the pack test data**, which neither machine has: the ruff, sqlfluff and eslint-plugin-vue
+  locks were rewritten after the data moved to S3 (#177, #191), so git history cannot restore it,
+  and a pull needs S3 access. These are the `python_shortcuts_change_no_pack_result_*` tests,
+  `reproduces_sqlfluff_rf01_and_al05`, `vue::view::tests::corpus`, the three that read
+  `pyflakes/F601.py`, and three more that read the pack's upstream files and found few or none:
+  `the_backends_find_the_same_keys_on_real_files` ("1 files"), `the_gate_catches_a_widened_walk`
+  and `spilled_walks_find_the_cpus_roots`.
+- **1 needed `node`**, which the host's ssh PATH lacked (`sql_sessions_use_shared_explain_profiles…`);
+  `test-remote` now puts Homebrew's bin on it, and the test passes there.
+- **2 were real, and are fixed:**
+  - `executors_are_shared`: the MSL compile thread (`metal/src/runtime.rs`) and the cost model's
+    reader (`logic/costs.rs`) made their threads themselves; both are `exec::service` threads now.
+    The build script's grammar threads (`build_grammars.rs`) are an exception: they run in cargo,
+    not in the engine.
+  - `shared_walks_read_the_kinds_they_named`: the brace-format tree names a kind `attribute` (a
+    field's `.name`), and the format family's scope is refused. The walk kinds are now checked only
+    for families with scopes.
+
+On a host, two more things differ from this checkout. The store's git tests made repositories
+under the host's own git config, and a host that signs its commits failed 10 of them; their git
+now runs without the global and system config. And
+`git_workspace::tests::discovers_current_repository_without_a_git_process` reads this checkout's
+`.git`, which the mirror does not send, so it fails on a host only. A command over ssh also starts
+with 256 open files (a terminal has far more), and 17 of the engine's session, plan and executor
+tests ran out of them in parallel; `test-remote` and `live-test-remote` now raise the limit to
+`kern.maxfilesperproc` first.
 
 ## 3. Relax
 
@@ -115,10 +210,37 @@ changes, about 30 lines in all:
 | `relax run` of the CLI: E0425 `vdup_lane_u32` (sha1dc), E0277 `AsRef<[T]>` for `vec::IntoIter` and `slice::Iter` (roaring), `core::array::IntoIter::new` (dary_heap) | Relax's std lacks them | added to Relax's std (below) | 23 lines |
 | `--unattended` | none: it is an option of `run`, so it goes before the package | — | — |
 
-The std additions are in Relax's source tree, not in this repository (`tmp/relax-src`, uncommitted):
-an `AsRef<[T]>` impl on each of the two iterators, the deprecated `IntoIter::new` of an array, and
-`vdup_lane_u32` as `uint32x2_t([a.0[N as usize]; 2])`. Relax reads its std from source, so they
-need no rebuild of Relax.
+The std additions are `scripts/dev/relax/std.patch`: an `AsRef<[T]>` impl on each of the two
+iterators, the deprecated `IntoIter::new` of an array, and `vdup_lane_u32` as
+`uint32x2_t([a.0[N as usize]; 2])`. `scripts/dev/relax/build` builds the pinned Relax with its patches into
+`~/.local/share/rerail-relax/v/<commit>-<patches' hash>`, a tree never changed once built, and
+installs its binary as `bin/relax`. The binary reads its std from the tree it was built from, so
+a change to a patch makes a new version. The script does not switch versions while a Relax
+session runs.
+
+Sharing between worktrees (2026-11-15). Relax keys a run's stores by its worktree's absolute
+paths, so another worktree's first run of the same code was cold: 288 s against 5–8 s warm. Upstream
+(5b2d68c2, Target B steps 3–6) shares sealed crates' code (registry crates whose dependencies
+have no OUT_DIR) in `~/.relax/code`, but only in its sandboxed `makepad` runs.
+`scripts/dev/relax/rerail.patch` lets bare `relax` share too under `RELAX_SHARED_OPEN=1`; the
+cache configuration hash keeps its entries apart from sandboxed ones. Measured on the session
+test, at a load of 75–90:
+
+| Run | Wall | CPU | Peak |
+|---|---|---|---|
+| worktree A, cold | 572 s | 785 s | 6.0 GB |
+| worktree C (same code), cold, A's shared code | 385 s | 702 s | 6.0 GB |
+| worktree A, warm | 27 s | 30 s | 3.7 GB |
+
+The shared code is 50 MB. The rest of the store (front_run, collected_graph and the workspace's
+own crates, 2.3 GB) is per worktree, so sharing saves about a tenth of a cold run. More waits on
+Target B's path-free payloads upstream.
+
+The patch also makes a stubbed build script (`--allow-c`'s cargo run) a two-line shell script.
+It was a hard link of Relax's own binary, and cargo removes and links build scripts' names as
+it rebuilds them. macOS's syspolicyd then could not read the file by the name it was scanning
+("Unable (errno: 2) to read file") and killed the running Relax ("Terminating process due to
+Malware rejection").
 
 The hang was a bug of ours that cargo's fast code hid: under cargo the window is milliseconds wide.
 It may be the cause of 0204's phase 0 race too.
@@ -163,9 +285,19 @@ checkout, with the edit made here and its file pushed through the mirror (`scrip
 
 This machine spends nothing but the push: the JIT, the 6–7 GB live process and the 7.2 GB
 `target/relax` store are the M3's. It is also faster than the same session here (2–9 s at a load
-of 60–90), because the M3 is idle. What it needs to be the everyday loop: a watcher here that
-pushes each saved file to the host (the push is the mirror's `put`; this run pushed by hand), and
-`relax test --live` started on the host by a script, with its verdicts read back over ssh.
+of 60–90), because the M3 is idle.
+
+`scripts/dev/live-test-remote` makes it one command:
+
+```
+scripts/dev/live-test-remote rerail-engine --lib -- <filter>    # the Relax of scripts/dev/relax/build
+```
+
+It sends the checkout and Relax to the first `"mirror"` host, starts the live session there, and
+watches this checkout (FSEvents), sending each saved file; the host's verdicts print here, each
+with the time since the save. Ctrl-C, a kill or a closed terminal stops the session on the host.
+Measured with it: a restart with the host's store warm, 4–11 s to the first verdict; a panic
+added to `start`, failed 1.6 s after the save; undone, passed 0.9 s after.
 
 ### What it costs
 
@@ -264,8 +396,8 @@ which runs every other compile.
   connection serves only sshd's MaxSessions (10) and stalls the rest, so each slot has its own.
   A host's load average counts the farm's own compiles. rustc bundles `-l static` libraries into
   the rlib, so `-L native=` directories must be copied.
-- Not yet done: the farm is set up for this worktree only. Turning it on for every worktree is one
-  line in a `.cargo/config.toml` above them (README).
+- The farm is on for every worktree: `setup` writes the machine's `~/.cargo/config.toml` (README,
+  "One configuration").
 
 #### Getting a compile's inputs to the host
 
@@ -285,11 +417,93 @@ remote in each.
   dependency directory listed before cargo wrote the new `.rmeta` (E0463). The farm now checks
   every file a compile read against this machine's and compiles here when one differs. The server
   tuning (16 nfsd threads at a higher priority, 1 s directory caching) is not yet measured.
+- **Measured again (2026-11-15), with the server tuning on.** The compile's reads were replayed on
+  each host, against its mirrored copy and over NFS: the dependency directory listed, then the
+  engine's 219 dep-info inputs (7.6 MB) stat'ed and read, three rounds, at a load of 30–45 here.
+
+  | Step | Mirrored copy | NFS |
+  |---|---|---|
+  | list the dependency directory (45,833 entries) | 33–140 ms | 1.8–9.8 s, with any mount options |
+  | the same for 3,000 entries (a clean target's size) | | 35 ms; 1 ms within the 1 s cache |
+  | stat the 219 inputs | under 1.5 ms | 50–450 ms (one call: 0.23–0.78 ms, the link's round trip at this load) |
+  | read them | 5–15 ms | 0.3–3.1 s cold; 22 ms with attributes cached 1 s |
+
+  The 7.3 s a compile took over NFS was mostly the listing: rustc lists each `-L dependency=`
+  directory in every process, and this one had grown to 45,833 entries of stale artifacts (4,588
+  crate names). Larger directory reads (`dsize`) and `rdirplus` did not change it. With a lean
+  target directory and attributes cached for 1 s (the read check then catches what is stale), a
+  compile would pay about 0.1–0.5 s, near the mirror's; with attributes uncached, the cold reads
+  alone cost more than the mirror's whole sync. Not yet measured: a build end to end on a clean
+  target directory, and writing the outputs over NFS.
 - The mirror wins on moving files: no ssh session or tar per compile, and one scan of the checkout
   (11,298 files, 0.36 s) serves every compile that starts while it runs. The first compile on a
   fresh host sends the whole checkout (346 MB, 13 s). Its daemon used 5 s of CPU.
 - In both copy modes the CPU here is about the same: cargo's own work (build scripts, proc macros,
   the binaries) and sccache dominate it, not the transfers.
+
+- **End to end (2026-11-15).** The same `-p rerail-lang` build, every compile forced to miss, a
+  fresh target directory each run, at a load of 30–70 here:
+
+  | Mode | Wall | A remote compile | Fell back here |
+  |---|---|---|---|
+  | live mirror (over TCP) | 91 s | 0.55–0.73 s | 0 |
+  | NFS, file attributes uncached, directories 1 s | 105–140 s | 1–3 s | 1–17 (E0463, E0460, E0432) |
+  | NFS, nothing cached | 185 s | 4.3 s, mostly in rustc | 9 |
+
+  A file created over the mount took 21 ms against 0.07 ms on the host's disk, a `.rmeta` written
+  as rustc writes it 178 ms against 0.7 ms: the server commits each operation before it answers.
+  So the shared volume was removed, with copy mode, and the mirror is the only way (README, "No
+  shared volume, no copy mode"). The server's `async` setting, which answers first, was not tried.
+
+#### What broke, and what fixed it (2026-11-15)
+
+- **The hosts' own directories.** The mirror kept each file at this machine's path, and the
+  shared volume's client moved a host's own `~/orca` aside to mount there: every session and
+  workspace on both hosts lost its directory for a day. The mirror also wrote registry crates into
+  the host's own `~/.cargo/registry/src`. Now everything the farm writes on a host is under one
+  root of its own (`~/Library/Caches/rerail-farm/root.noindex`); the agent maps the paths in each
+  compile and remaps them out of its outputs, and an output that still names the root (an
+  `env!` path) compiles here (README, "The farm's root on a host").
+- **Remote bytes are not local bytes under another path.** With the root, every remote output
+  differed from the same compile here in about 226 bytes of hashes: rustc hashes each source
+  file's real path into its output even when a remap hides it (shlex 1.3.0 compiled from two
+  directories, both remapped to the same path: other bytes; another output directory: the same).
+  A remote compile's output is cached and keyed on by every crate above it, so a crate compiled
+  remotely in one worktree and here in another would split the cache. Now only crates of cargo's
+  registry go remote, read in place from the host's own registry after a file-for-file check:
+  the toy build's four remote crates (two hosts) were the same bytes as here.
+- **Two writers in one target directory.** `test-remote`'s cargo built in the checkout's `target/`
+  on the host, where the mirror also writes the `.rmeta` files of the compiles it runs. Two
+  writers in one dependency directory gave E0463 and "failed to move dependency graph" in
+  incremental builds. A fix in another worktree moved the target to a directory keyed by the
+  checkout's name; its note said the crash was the mirror's copy being stale, which it was not, and
+  two checkouts with one name would have shared a directory. Now each checkout gets a
+  directory keyed by a hash of its path, outside the mirrored files.
+- **Rebuilds skipped on the host.** The mirror gave each file this machine's mtime. A file that
+  arrived after the host had built (an earlier send failed, or the host was cleaned) could be
+  older than the host's build, and cargo there skipped it: a merge's 56 files had to be touched by
+  hand. Now a written file's mtime there is the time of the write; this machine's mtime and size
+  travel in an extended attribute, which is what the mirror compares.
+- **A stale record of what a host holds.** After a host's directory was swapped under a running
+  daemon (the restore above), the daemon still believed the old files were there, and
+  `accel/src/lanes.rs` stayed at a two-day-old copy. Nothing but the farm writes under the
+  root now, so nothing else can make the record wrong, and a failed write drops the agent and
+  the record with it.
+- **Two farm versions.** Scripts in an older checkout (`test-remote`) imported that checkout's
+  farm while the daemon ran the installed one. Now every entry point runs the installed farm, a
+  version number ties them together, and the daemon restarts when another version is installed
+  (README, "One version").
+- **Rebuilds when an environment differed.** A build script that exported `CC`, `CXX` and
+  `JEMALLOC_OVERRIDE` made every other build of that worktree rerun the build scripts and rebuild
+  the engine's tree (612 s). The machine's cargo configuration now forces the shared values, the
+  wrapper refuses a build whose values differ, and the engine's build script refuses another
+  `RUSTC_WRAPPER` (README, "One configuration"). Before, the farm's wrapper was opt-in, and
+  every build without it used plain sccache, whose keys hold the checkout's path: no worktree
+  reused another's compiles.
+- **`test-remote --help` sent the checkout** (11,564 files) and ran `nice --help` on a host. Its
+  options are now checked before anything is sent. It also sets the host's open-file limit to
+  this machine's, which cargo nextest needs (EMFILE at the limit an ssh command gets by default), not a fixed
+  value.
 
 What else the idle machines can do:
 

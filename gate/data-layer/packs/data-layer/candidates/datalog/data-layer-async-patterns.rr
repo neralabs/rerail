@@ -66,7 +66,7 @@ async_patterns_fnk("function_definition"). async_patterns_fnk("lambda").
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, op, line, syntax_error, value, value_type_of, tape_line
+.input doc, node, child, field, text, op, line, syntax_error, value_type_of, tape_line, value
 .output violation
 async_patterns_method("to-thread", "to_thread").
 async_patterns_method("executor", "run_in_executor").

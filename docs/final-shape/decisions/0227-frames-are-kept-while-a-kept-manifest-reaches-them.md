@@ -26,7 +26,7 @@ kept manifest ─ names ─▶ live plan / program ─ owns ─▶ its space's f
 ```
 
 Collection deletes the following. It runs as the `frames <store>` upkeep job (`frames::collect_unreachable_frames`,
-by `ContentStore::sweep_frames`): a utility job (decision 0190 §7), due once a keep decision is past the last sweep,
+by `ContentStore::sweep_frames`): a utility job (decision 0190 §7), due once a keep decision is past the last sweep (`corpus_decided.swept`, a column added on open: no table of its own, decision 0104),
 run soon after it behind the run, and finished before the run's process exits.
 
 | What | Unreachable when |

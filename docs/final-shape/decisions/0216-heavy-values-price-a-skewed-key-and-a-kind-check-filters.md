@@ -120,6 +120,8 @@ light rows, so it measures the light rows' work per row (O171).
 
 ## Open
 
+Both closed by decision 0221 (2026-11-14).
+
 - **O171.** A trial's sample is drawn at a stride. On a skewed key, most of its rows are light ones.
 - **O172.** Heavy values are made by a full pass when a column is raised. Two parts of 0209 are not built: the
   merge of a delta's Misra–Gries summary into the kept one (0209 §4), and keeping a line's raised columns with its

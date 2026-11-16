@@ -35,8 +35,8 @@
 
 #include "tsx/node.rr"   // builtin_spec; values.rr
 
-.decl trace_module(m: symbol)
-.decl trace_member(m: symbol, x: symbol)
+.decl trace_module(m: symbol) extensible
+.decl trace_member(m: symbol, x: symbol) extensible
 .decl trace_global(g: symbol)
 // The tables values.rr follows. (Other rules' tables may add rows; the uses below only ask for what is traced.)
 node_module(m, m) :- trace_module(m).
@@ -68,7 +68,7 @@ global_use(r, g) :- api_use(r, g, "read"), trace_global(g).
 
 
 // prefer_global_use(at, msg): n/prefer-global/*'s check, for the rule's module_global rows.
-.decl module_global(g: symbol, m: symbol, x: symbol)
+.decl module_global(g: symbol, m: symbol, x: symbol) extensible
 trace_module(m) :- module_global(_, m, _).
 trace_member(m, x) :- module_global(_, m, x), x != "".
 trace_global(g) :- module_global(g, _, _).

@@ -14,6 +14,6 @@
 .violation ASYNC230(at: node) code "ASYNC230"
     "Open this file with an async file API, such as `anyio.open_file()`, `trio.open_file()` or `aiofiles.open()`."
     suppress ruff "ASYNC230"
-ASYNC230(f) :- async_blocking(_, f, q), (q = "builtins.open" ; q = "io.open" ; q = "io.open_code").
+ASYNC230(f) :- async_blocking_demand(_, f, q), (q = "builtins.open" ; q = "io.open" ; q = "io.open_code").
 ASYNC230(f) :- async_open_receiver(f,o), async_path_value(o).
 async_api_target(q) :- async_open_target(q).

@@ -26,16 +26,18 @@ static CPU: LazyLock<Executor> = LazyLock::new(|| {
     MADE[0].store(true, std::sync::atomic::Ordering::Relaxed);
     super::costs::start();
     super::costs::ready();
-    let all = Executor::new();
+    Executor::with(cpu_lanes())
+});
+
+/// The CPU binding's lanes: the cores, SQL and, where the CPU has one, its matrix unit (`sme::backend` asks the CPU
+/// itself). No device lane is asked for: asking compiles the GPU's kernels and builds the Neural Engine's lane.
+fn cpu_lanes() -> Vec<Arc<dyn Backend>> {
     #[cfg_attr(not(all(target_os = "macos", target_arch = "aarch64")), allow(unused_mut))]
     let mut lanes: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default()), Arc::new(SqlBackend)];
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    if all.lanes().contains(&rerail_accel::Lane::Sme) {
-        lanes.extend(rerail_accel::sme::backend());
-    }
-    drop(all);
-    Executor::with(lanes)
-});
+    lanes.extend(rerail_accel::sme::backend());
+    lanes
+}
 static ALL: LazyLock<Executor> = LazyLock::new(|| {
     MADE[1].store(true, std::sync::atomic::Ordering::Relaxed);
     super::costs::start();
@@ -271,6 +273,23 @@ pub mod wave {
     pub fn credit(waves: (u64, u64)) {
         let (w, l) = FLUSHED.get();
         FLUSHED.set((w + waves.0, l + waves.1));
+    }
+}
+
+#[cfg(test)]
+mod cpu_lane_tests {
+    /// A run under the CPU binding asks for no device lane (2026-11-15): its lanes were picked from an executor of
+    /// every lane, made and dropped, which compiled the GPU's kernels and prewarmed its sorts (about a hundred
+    /// pipelines) and built the Neural Engine's lane in every CPU run.
+    #[test]
+    fn the_cpu_bindings_lanes_ask_for_no_device_lane() {
+        let before = rerail_accel::lanes::device_lanes_asked();
+        let lanes: Vec<_> = super::cpu_lanes().iter().map(|b| b.lane()).collect();
+        assert_eq!(rerail_accel::lanes::device_lanes_asked(), before, "the CPU binding asked for a device lane");
+        assert!(lanes.iter().all(|l| matches!(l, rerail_accel::Lane::Cpu | rerail_accel::Lane::Sql | rerail_accel::Lane::Sme)), "{lanes:?}");
+        assert!(lanes.contains(&rerail_accel::Lane::Cpu) && lanes.contains(&rerail_accel::Lane::Sql), "{lanes:?}");
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        assert_eq!(lanes.contains(&rerail_accel::Lane::Sme), rerail_accel::sme::backend().is_some(), "{lanes:?}");
     }
 }
 

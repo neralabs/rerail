@@ -169,7 +169,7 @@ ef_type("type").
 .decl text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, text, line, value, node_text
+.input doc, syntax_error, node, field, child, text, line, node_text, value
 .output violation
 ef_chr("\t", 9).
 ef_chr("\n", 10).

@@ -26,7 +26,7 @@
 //! 0155) named by its digest. The run's manifest names that source and the entry's plan (`named`), so collection keeps
 //! the entry while it keeps the run.
 
-use super::super::front::{Program, Value};
+use super::super::front::Value;
 use super::super::program_facts::{self, Facts};
 use super::super::program_text;
 use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, StoreResult};
@@ -41,13 +41,12 @@ const SCHEMA: u32 = crate::content_store::live_fact_schema(106);
 /// A run takes choices made at a scale at least its own over this.
 pub(super) const GROWTH: f64 = 2.0;
 
-/// The choices for one program: the program as the rewrites left it (`None`: as it was), what each named, and the
-/// scale they were made at.
+/// The choices for one program: the program's version as the rewrites left it (`None`: as it was), what each named,
+/// and the scale they were made at.
 #[derive(Clone)]
 pub(super) struct Chosen {
-    pub(super) program: Option<Arc<Program>>,
-    /// The rewritten program's version (t36 item 6, step 4), which the run reads its rules from: the passes' overlay
-    /// of the program's, or the stored image. `None` where the program was not rewritten, or is kept as text alone.
+    /// The rewritten program's version (t36 items 6 and 7), which the run reads: the passes' overlay of the program's,
+    /// or the stored image (or the image of the stored text). `None` where the program was not rewritten.
     pub(super) version: Option<super::body::Placed>,
     /// The relations inlined (`keeps::choose`) and demanded (`demand::split_negations`), for the profile.
     pub(super) inlined: Vec<String>,
@@ -55,54 +54,41 @@ pub(super) struct Chosen {
     pub(super) nodes: f64,
 }
 
-/// A digest of everything the rewrites read of a program, and of what else changes their choices.
-pub(super) fn key(prog: &Program) -> [u8; 32] {
-    struct Hashing(Sha256);
-    impl std::fmt::Write for Hashing {
-        fn write_str(&mut self, s: &str) -> std::fmt::Result {
-            self.0.update(s.as_bytes());
-            Ok(())
-        }
-    }
-    let mut hash = Hashing(Sha256::new());
-    hash.0.update(b"rerail.plan-choices/v1\0");
-    hash.0.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
+/// A digest of everything the rewrites read of a program, and of what else changes their choices: the program's
+/// version's digest (decision 0173 §7: its rules, declarations, facts, inputs, outputs and every other field, as its
+/// image holds them, with its maintained parts'), kept as the version was made, so the key reads no rule. Both
+/// rewrites keep the program's meaning whatever its rules' order, so the digest, a sum, need not see it: a program of
+/// the same rules in another order takes the same choices, which derive the same rows.
+pub(super) fn key(p: &super::body::Placed) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.plan-choices/v2\0");
+    hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     for switch in ["RERAIL_INLINE", "RERAIL_INLINE_ONLY", "RERAIL_OBSERVED_STEPS"] {
-        hash.0.update(b"\0");
-        hash.0.update(std::env::var(switch).unwrap_or_default().as_bytes());
+        hash.update(b"\0");
+        hash.update(std::env::var(switch).unwrap_or_default().as_bytes());
     }
-    // The rules (and each derived-again group's), most of a program, digested by their structure: formatting the whole
-    // program as text was 0.32 s of a 20-file edit's run (decision 0116, step 4). Every other field as its text. The
-    // fields are named, not `..`: a field added to `Program` is a compile error here until it is digested.
-    let Program {
-        decls, nullary, lattice, facts, rules, inputs, outputs, kindsets, demand, demand_dropped, magic_extras, magic_report, gates, policies,
-        settings, natives, rx_spans, ast_patterns, doc_scopes, answers, text_globs, qualifiers, tapes, again, together, shapes,
-    } = prog;
-    let rules_digest = super::super::derived::digest(|d| {
-        let mut rules_of = |rules: &[super::super::front::Rule]| {
-            d.u64(rules.len() as u64);
-            for r in rules {
-                super::digest_atom(d, &r.head);
-                d.u64(r.body.len() as u64);
-                r.body.iter().for_each(|l| super::digest_literal(d, l));
-            }
-        };
-        rules_of(rules);
-        for g in again {
-            rules_of(&g.rules);
-            rules_of(&g.deltas);
+    // A finding's message template is beside the program, not of it (decision 0225 §3): its edit plans nothing again.
+    // The settings are one `.about` relation of the version's digest (a sum of its fact relations' hashes): its hash
+    // is taken out and the settings other than `.message` put in, so the key reads no rule and a few settings.
+    use crate::code_rule_dsl::logic::program_image::Cell;
+    let v = &p.v;
+    let settings = v.about_facts().into_iter().find(|f| v.text(f.name()) == "setting");
+    hash.update(b"\0program\0");
+    hash.update(p.digest().wrapping_sub(settings.map_or(0, |f| f.hash())).to_le_bytes());
+    for row in settings.into_iter().flat_map(|f| f.rows()) {
+        let cells: Vec<Cell> = row.collect();
+        let text = |c: &Cell| match *c { Cell::Int(i) => i.to_string(), Cell::Str(a) => v.text(a).to_owned() };
+        if cells.get(2).is_some_and(|k| text(k) == crate::code_rule_dsl::logic::rr::lower::findings::MESSAGE) {
+            continue;
         }
-    });
-    hash.0.update(b"\0rules\0");
-    hash.0.update(rules_digest.to_le_bytes());
-    let again_names: Vec<(&BTreeSet<String>, &BTreeSet<String>, &Vec<String>, &Vec<String>)> = again.iter().map(|g| (&g.scc, &g.owned, &g.reads, &g.olds)).collect();
-    let _ = std::fmt::Write::write_fmt(
-        &mut hash,
-        format_args!(
-            "\0{decls:?}\0{nullary:?}\0{lattice:?}\0{facts:?}\0{inputs:?}\0{outputs:?}\0{kindsets:?}\0{demand:?}\0{demand_dropped:?}\0{magic_extras:?}\0{magic_report:?}\0{gates:?}\0{policies:?}\0{settings:?}\0{natives:?}\0{rx_spans:?}\0{ast_patterns:?}\0{doc_scopes:?}\0{answers:?}\0{text_globs:?}\0{qualifiers:?}\0{tapes:?}\0{again_names:?}\0{together:?}\0{shapes:?}"
-        ),
-    );
-    hash.0.finalize().into()
+        hash.update(b"\0setting");
+        for c in &cells {
+            hash.update(b"\0");
+            hash.update(text(c).as_bytes());
+        }
+    }
+    hash.update([u8::from(p.whole)]);
+    hash.finalize().into()
 }
 
 /// Whether choices made at `kept` nodes are taken at `now`.
@@ -170,17 +156,20 @@ impl Drop for Durable {
     /// The run's plans, where it changed any, queued for the store (decision 0116 step 2): the run's plans are
     /// still held here (`KeepPlans` is let before this).
     fn drop(&mut self) {
-        if let Some(held) = DURABLE.with(|d| d.borrow_mut().take())
-            && let (store, prepared) = (&held.0, held.1)
-        {
+        if let Some(held) = DURABLE.with(|d| d.borrow_mut().take()) {
+            let (store, prepared) = (&held.0, held.1);
+            // Decision 0243: a one-shot run serves its waiting join searches here, within a share of its CPU, so their
+            // proposals are written with the memo.
+            super::joins::drain();
             // The join memo (decision 0203 §6) is written with the plans: where only it changed, the plans as read.
             let notes = super::joins::to_store().map(note_rows);
             let Some(plans) = super::plans_to_store().or_else(|| notes.as_ref().and_then(|_| super::stored_plans())) else { return };
             let notes = notes.unwrap_or_default();
             let _span = super::super::profile::span(|| "kept plans, queued for the store".into());
             let rows: Vec<Vec<Value>> = plans.iter().map(|(k, p)| super::StoredPlan::row(*k, p).into_iter().map(Value::Int).collect()).collect();
-            let bytes = rows.iter().chain(&notes.0).chain(&notes.1).map(|r| 9 * r.len() + 8).sum();
+            let bytes = rows.iter().chain(&notes.0).chain(&notes.1).chain(&notes.2).map(|r| 9 * r.len() + 8).sum();
             super::super::profile::decision("kept plans (decision 0116)", || format!("{} plans and {} join notes queued for the store", rows.len(), notes.0.len()));
+            // Plans and notes hold keys and numbers, no atom ids (decision 0170).
             store.write_back_syms(crate::content_store::write_back::Syms::None, "the kept plans", bytes, vec![(crate::content_store::write_back::Key::of(&[b"facts_memo/plans", &prepared]), None)], Box::new(move |store| write_plans(store, &prepared, &rows, &notes).map(drop)));
         }
     }
@@ -278,6 +267,8 @@ const PLANS_REL: &str = "rr_kept_plan";
 /// The join memo's notes and exact statistics (decision 0203 §6), in the same entry.
 const NOTES_REL: &str = "rr_join_note";
 const EXACT_REL: &str = "rr_join_exact";
+/// The columns the notes raised to keep heavy values (decision 0209 §4, O172).
+const RAISED_REL: &str = "rr_join_raised";
 
 /// The join memo's notes and exact statistics read from `facts`, given to this process's memo.
 fn take_notes(facts: &Facts) {
@@ -296,13 +287,22 @@ fn take_notes(facts: &Facts) {
             _ => None,
         })
         .collect();
-    super::joins::from_store(notes, exact);
+    let raised = facts
+        .get(RAISED_REL)
+        .into_iter()
+        .flatten()
+        .filter_map(|row| match row.as_slice() {
+            [Value::Int(hi), Value::Int(lo), Value::Str(rel), Value::Int(c)] => Some(((*hi as u64 as u128) << 64 | *lo as u64 as u128, rel.to_string(), usize::try_from(*c).ok()?)),
+            _ => None,
+        })
+        .collect();
+    super::joins::from_store((notes, exact, raised));
 }
 
 /// The memo's rows for the entry.
-pub(super) type NoteRows = (Vec<Vec<Value>>, Vec<Vec<Value>>);
+pub(super) type NoteRows = (Vec<Vec<Value>>, Vec<Vec<Value>>, Vec<Vec<Value>>);
 
-fn note_rows((notes, exact): (Vec<(super::PlanKey, super::joins::Note)>, Vec<(super::PlanKey, u64, super::Sig, [i64; 2])>)) -> NoteRows {
+fn note_rows((notes, exact, raised): super::joins::Stored) -> NoteRows {
     let notes = notes.iter().map(|(k, n)| super::joins::note_row(*k, n).into_iter().map(Value::Int).collect()).collect();
     let exact = exact
         .iter()
@@ -311,7 +311,8 @@ fn note_rows((notes, exact): (Vec<(super::PlanKey, super::joins::Note)>, Vec<(su
             ints.into_iter().map(Value::Int).chain([Value::Str(rel.into()), Value::Str(cols.into()), Value::Int(c[0]), Value::Int(c[1])]).collect()
         })
         .collect();
-    (notes, exact)
+    let raised = raised.iter().map(|(k, rel, c)| vec![Value::Int((k >> 64) as i64), Value::Int(*k as i64), Value::Str(rel.as_str().into()), Value::Int(*c as i64)]).collect();
+    (notes, exact, raised)
 }
 
 /// The plans kept under `prepared`: one read of the store.
@@ -334,6 +335,7 @@ fn write_plans(store: &ContentStore, prepared: &[u8; 32], rows: &[Vec<Value>], n
     if !notes.0.is_empty() {
         facts.insert(NOTES_REL.to_owned(), notes.0.iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
         facts.insert(EXACT_REL.to_owned(), notes.1.iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
+        facts.insert(RAISED_REL.to_owned(), notes.2.iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
     }
     let text = source_text(prepared);
     let hash = HashKey::sha256(text.as_bytes());
@@ -375,20 +377,21 @@ fn decode_chosen(texts: &HashMap<[u8; 32], program_text::Stored>, entry: &[u8], 
         rows.sort();
         rows.into_iter().map(|(_, s)| s).collect()
     };
-    let (program, version) = match facts.get(REWRITTEN).and_then(|rows| rows.first()).map(|r| r.as_slice()) {
+    let version = match facts.get(REWRITTEN).and_then(|rows| rows.first()).map(|r| r.as_slice()) {
         Some([Value::Str(digest)]) => {
             let stored = texts.get(&unhex(&digest)?)?;
             // A program kept as its image is read as it is: the image is the program's version, its rules in order.
-            let version = match stored {
-                program_text::Stored::Image(bytes) => crate::code_rule_dsl::logic::program_image::Version::open(bytes).ok().map(super::body::Placed::whole),
-                program_text::Stored::Text(_) => None,
+            // One kept as its text alone is read, and its image made: a program with no image is not taken.
+            let placed = match stored {
+                program_text::Stored::Image(bytes) => super::body::Placed::whole(crate::code_rule_dsl::logic::program_image::Version::open(bytes).ok()?),
+                program_text::Stored::Text(_) => super::body::Placed::of_program(&program_text::read_stored(stored, lists).ok()?).ok().filter(|p| p.whole)?,
             };
-            (Some(Arc::new(program_text::read_stored(stored, lists).ok()?)), version)
+            Some(placed)
         }
         Some(_) => return None,
-        None => (None, None),
+        None => None,
     };
-    Some(Chosen { program, version, inlined: names(INLINED), demanded: names(DEMANDED), nodes })
+    Some(Chosen { version, inlined: names(INLINED), demanded: names(DEMANDED), nodes })
 }
 
 fn unhex(text: &str) -> Option<[u8; 32]> {
@@ -404,10 +407,11 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
 
 fn write(store: &ContentStore, prepared: &[u8; 32], key: &[u8; 32], chosen: &Chosen, late: &Mutex<Vec<crate::content_store::SourceId>>) -> StoreResult<bool> {
     let mut facts = Facts::new();
-    if let Some(program) = &chosen.program {
-        // Kept as its text (decision 0155). A program that does not read back the same is not kept: the next run
-        // chooses again.
-        let Some((digest, sources)) = program_text::store(store, program)? else { return Ok(false) };
+    if let Some(version) = &chosen.version {
+        // Kept as its text (decision 0155), decoded from the version here, on the store's writer. A program that does
+        // not read back the same is not kept: the next run chooses again.
+        let Ok(program) = version.program(&Default::default()) else { return Ok(false) };
+        let Some((digest, sources)) = program_text::store(store, &program)? else { return Ok(false) };
         late.lock().expect("the late sources").extend(sources);
         facts.insert(REWRITTEN.to_owned(), vec![[Value::Str(hex(&digest).into())].into()]);
     }

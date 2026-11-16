@@ -78,7 +78,10 @@ pub(in crate::code_rule_dsl) struct Kept<'s> {
     inputs: HashMap<String, Arc<dyn Source>>,
     pub(in crate::code_rule_dsl) loaded: Rc<RefCell<HashMap<String, Arc<dyn Source>>>>,
     digests: HashMap<String, u64>,
-    /// Each input's column types (`retain::types_of`): its digest is of its content (`Cells`, decision 0212).
+    /// Each input's column types (`retain::types_of`): its digest is of its content (`Cells`, decision 0212). And each
+    /// relation's as its frame keeps them (`typed`, by the columns' domains), as `load` reads them back: without, the
+    /// engine's declared types, a kind's or a field's `sym` column typed `s`, which `load` refuses as kept under other
+    /// types, and a forked process's writer maps as atoms.
     types: HashMap<String, Vec<u8>>,
     puts: Vec<FramePut>,
     values: usize,
@@ -107,6 +110,16 @@ impl<'s> Kept<'s> {
             written_rows: 0,
             strata: None,
         }
+    }
+
+    /// Kept under `prog`'s frame types (`retain::types_of`), as `load` reads them: a kind or field column is no atom.
+    /// An input's types given to `new` stand.
+    pub(in crate::code_rule_dsl) fn typed(mut self, prog: &crate::code_rule_dsl::logic::plan::body::Placed, domains: &super::lower::Domains) -> Self {
+        let Ok(fields) = prog.fields() else { return self };
+        for (rel, _) in fields.decls_by_name() {
+            self.types.entry(rel.to_owned()).or_insert_with(|| super::retain::types_of(prog, domains, rel));
+        }
+        self
     }
 
     fn flush(&mut self, used: Option<Vec<FrameRel>>) {
@@ -196,6 +209,7 @@ impl KeptStrata for Kept<'_> {
                 if self.was.get(rel).is_some_and(|w| w.digest == digest && w.reads == reads) {
                     return;
                 }
+                let types = self.types.get(rel).filter(|t| t.len() == types.len()).cloned().unwrap_or(types);
                 self.values += rows.len();
                 self.written_rows += n;
                 self.puts.push(FramePut { rel: frame, part: 0, digest, reads, rows: FrameRows { types, rows, n } });
@@ -244,16 +258,13 @@ pub(in crate::code_rule_dsl) fn part_wanted() -> bool {
 }
 
 /// Each derived relation of `prog` and the inputs (of `inputs`) it is derived from, through the strata it reads.
-fn cones(prog: &crate::code_rule_dsl::logic::front::Program, sccs: &[std::collections::BTreeSet<String>], inputs: &std::collections::HashSet<&str>) -> HashMap<String, std::collections::BTreeSet<String>> {
+fn cones(prog: &crate::code_rule_dsl::logic::plan::body::Placed, sccs: &[std::collections::BTreeSet<String>], inputs: &std::collections::HashSet<&str>) -> super::Result<HashMap<String, std::collections::BTreeSet<String>>> {
     let mut out: HashMap<String, std::collections::BTreeSet<String>> = HashMap::new();
-    let by_stratum = crate::code_rule_dsl::logic::front::rules_by_stratum(prog, sccs);
-    for (scc, rules) in sccs.iter().zip(&by_stratum) {
+    // What each stratum reads: its rules' body atoms, its natives' reads, and the tree a `nearest` climbs.
+    let reads = super::retain::Reads::of(prog)?;
+    for scc in sccs {
         let mut cone = std::collections::BTreeSet::new();
-        let reads = rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom().map(|a| a.rel.to_string()));
-        let natives = scc.iter().filter_map(|r| prog.natives.get(r)).flat_map(|n| n.reads().into_iter().map(str::to_owned).collect::<Vec<_>>());
-        let tree = rules.iter().any(|r| r.body.iter().any(|l| matches!(l, crate::code_rule_dsl::logic::front::Literal::Nearest { .. })));
-        let tree = tree.then(|| super::retain::TREE.iter().map(|r| (*r).to_owned()).collect::<Vec<_>>()).unwrap_or_default();
-        for r in reads.chain(natives).chain(tree) {
+        for r in reads.of_scc(scc) {
             if scc.contains(&r) {
                 continue;
             }
@@ -267,7 +278,7 @@ fn cones(prog: &crate::code_rule_dsl::logic::front::Program, sccs: &[std::collec
             out.insert(rel.clone(), cone.clone());
         }
     }
-    out
+    Ok(out)
 }
 
 /// What the store keeps of program `prog` (of `key`, `retain::key`) at `root`, as a `Retained`; `inputs` the run's,
@@ -277,7 +288,7 @@ pub(in crate::code_rule_dsl) fn load(
     store: &ContentStore,
     root: &Path,
     key: [u8; 32],
-    prog: &crate::code_rule_dsl::logic::front::Program,
+    prog: &crate::code_rule_dsl::logic::plan::body::Placed,
     domains: &super::lower::Domains,
     sccs: &[std::collections::BTreeSet<String>],
     inputs: &[(String, Arc<dyn Source>)],
@@ -286,10 +297,11 @@ pub(in crate::code_rule_dsl) fn load(
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the cross-file part kept, from the store".into());
     // The fact space of the corpus at `root` that a maintained cross-file part is kept in.
     let space = part_space(root, "cross-maintained");
-    let by_stratum: Vec<Vec<&crate::code_rule_dsl::logic::front::Rule>> = crate::code_rule_dsl::logic::front::rules_by_stratum(prog, &sccs);
     let input_names: std::collections::HashSet<&str> = inputs.iter().map(|(r, _)| r.as_str()).collect();
-    let cones = cones(prog, &sccs, &input_names);
-    let mut frames: HashMap<String, (FrameRel, Option<FrameStored>)> = crate::code_rule_dsl::logic::plan::identities(prog, &sccs, &by_stratum)
+    let cones = cones(prog, sccs, &input_names)?;
+    // The program's version, for its identities and its inputs' leaves.
+    let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed(prog.clone());
+    let mut frames: HashMap<String, (FrameRel, Option<FrameStored>)> = leaves.identities_by_heads(sccs)?
         .into_iter()
         .filter(|(name, _)| name != "finding" && !input_names.contains(name.as_str()))
         .map(|(name, ident)| (name.clone(), (FrameRel { name, ident }, None)))
@@ -297,10 +309,11 @@ pub(in crate::code_rule_dsl) fn load(
     // An input's rows are its program's: programs over the same root bind inputs of the same name to other rows
     // (P3's cross part and its loading cone, a phase), so its frame is under the program's key too.
     for (rel, _) in inputs {
+        let leaf = leaves.identity(rel).ok_or_else(|| super::Error::Plan("the program has no image: its leaves are read from its version".into()))?;
         let mut h = Sha256::new();
         h.update(b"rerail.kept-input/v1\0");
         h.update(key);
-        h.update(crate::code_rule_dsl::logic::plan::leaf_identity(prog, rel));
+        h.update(leaf);
         frames.insert(rel.clone(), (FrameRel { name: rel.clone(), ident: h.finalize().into() }, None));
     }
     let asked: Vec<FrameRel> = frames.values().map(|(f, _)| f.clone()).collect();

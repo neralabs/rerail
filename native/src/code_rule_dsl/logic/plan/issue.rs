@@ -21,7 +21,7 @@ use rerail_accel::stream::{Handle, Stream};
 use std::time::Instant;
 
 /// What a component's job gives back: its strand, how many members ran natively, and what stopped the next.
-pub(super) type Out<'a> = (Strand<'a>, usize, Option<Result<(Option<String>, Option<String>)>>, Vec<(Instant, Instant)>, crate::content_store::atoms::Reserved, Parked<'a>);
+pub(super) type Out<'a> = (Strand<'a>, usize, Option<Result<(Option<String>, Option<String>)>>, Vec<(Instant, Instant)>, crate::content_store::atoms::Reserved, Parked);
 
 /// Whether the components issued together share one device wave (decision 0123 §6). `RERAIL_LEVEL_WAVE=off` flushes
 /// one a component, as before (a measurement aid).
@@ -31,19 +31,19 @@ fn level_wave() -> bool {
 }
 
 /// A component's members.
-type Members<'a> = Vec<(BTreeSet<String>, Vec<&'a Rule>)>;
+type Members = Vec<(BTreeSet<String>, Vec<RuleKey>)>;
 
 /// What a component's job leaves waiting on the run's wave (decision 0123 §6): its members still waiting on their
 /// device wave, the launches they queued on the job's thread, and its members' rules (to resume them).
-pub(super) struct Parked<'a> {
+pub(super) struct Parked {
     waiting: Vec<(usize, Box<Driving>)>,
     queued: super::super::lanes::wave::Queued,
-    data: Members<'a>,
+    data: Members,
 }
 
 // SAFETY: as its strand (`Strand`): the drivers are the strand's state, made on the job's thread and resumed on one
 // thread at a time, only after the job that made them ended; the kernels hold shared, immutable buffers.
-unsafe impl Send for Parked<'_> {}
+unsafe impl Send for Parked {}
 
 /// A component whose members wait on the run's wave: its job ended, it is not absorbed yet.
 struct Waiting<'a> {
@@ -56,7 +56,7 @@ struct Waiting<'a> {
     reserved: crate::content_store::atoms::Reserved,
     inline: bool,
     waiting: Vec<(usize, Box<Driving>)>,
-    data: Members<'a>,
+    data: Members,
 }
 
 // SAFETY: as `Parked`'s: a waiting component is resumed by one job at a time, after the one that parked it ended.
@@ -64,7 +64,7 @@ unsafe impl Send for Waiting<'_> {}
 
 enum State<'a> {
     Job(Handle<Out<'a>>),
-    Inline(Strand<'a>, Members<'a>),
+    Inline(Strand<'a>, Members),
     /// Waiting on the run's wave (`flush_group`).
     Parked(Box<Waiting<'a>>),
     Done(usize, Option<Result<(Option<String>, Option<String>)>>),
@@ -262,8 +262,12 @@ impl<'a> Board<'a> {
     }
 
     /// A stratum's estimate: the fixed cost and its rules' reads' rows.
-    fn estimate(&self, run: &Run<'a, '_>, rules: &[&Rule]) -> f64 {
-        let rows: f64 = rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| run.model.stats.card.get(a.rel.as_str()).copied().unwrap_or(1.0)).sum();
+    fn estimate(&self, run: &Run<'a, '_>, rules: &[RuleKey]) -> f64 {
+        // Summed in the order the reads come, one sum over every rule's (as the tree's reading summed them).
+        let rows: f64 = rules.iter().flat_map(|&r| {
+            let (v, rule) = run.versions.rule_at(r);
+            rule.body().filter_map(|l| l.atom()).map(move |a| run.model.stats.card.get(v.rel_name(a.rel())).copied().unwrap_or(1.0))
+        }).sum();
         self.fixed + rows * 20e-9
     }
 
@@ -275,7 +279,7 @@ impl<'a> Board<'a> {
         at: usize,
         run: &mut Run<'a, '_>,
         sccs: &[BTreeSet<String>],
-        rules_of: &dyn Fn(usize) -> Vec<&'a Rule>,
+        rules_of: &dyn Fn(usize) -> Vec<RuleKey>,
         wants_of: &[BTreeSet<(String, Vec<usize>)>],
         waved: &mut [bool],
         load: &mut dyn FnMut(usize) -> Result<()>,
@@ -327,8 +331,8 @@ impl<'a> Board<'a> {
                 grow(next, &mut local, &mut chain, self);
             }
             members.sort_unstable();
-            let rules: Vec<Vec<&'a Rule>> = members.iter().map(|&m| rules_of(m)).collect();
-            let digests: Vec<u64> = rules.iter().flatten().map(|r| obs_rule(&r.head, &r.body)).collect();
+            let rules: Vec<Vec<RuleKey>> = members.iter().map(|&m| rules_of(m)).collect();
+            let digests: Vec<u64> = rules.iter().flatten().map(|&r| run.versions.at(r).observed_key()).collect();
             // Its statistics are not made here: the components issued together request theirs, made in one batch
             // below (decision 0123). A component whose strand cannot be made runs on the loop's thread, as it would.
             let Ok(strand) = run.strand(&reads, &digests, &[]) else {
@@ -345,7 +349,7 @@ impl<'a> Board<'a> {
             self.counts.components += 1;
             self.counts.members += members.len();
             self.counts.largest = self.counts.largest.max(members.len());
-            let data: Vec<(BTreeSet<String>, Vec<&'a Rule>)> = members.iter().map(|&m| sccs[m].clone()).zip(rules).collect();
+            let data: Members = members.iter().map(|&m| sccs[m].clone()).zip(rules).collect();
             issued.push(c);
             self.comps.push(Component { members, own: held, digests, estimate: est, state: State::Inline(strand, data), group: self.groups });
         }
@@ -359,10 +363,10 @@ impl<'a> Board<'a> {
         if run.model.has_deferred() {
             let mut wanted = BTreeSet::new();
             let strata: Vec<usize> = issued.iter().flat_map(|&c| self.comps[c].members.clone()).collect();
-            let strata: Vec<(&BTreeSet<String>, Vec<&Rule>)> = strata.iter().map(|&m| (&sccs[m], run.runnable(&sccs[m], &rules_of(m)))).collect();
+            let strata: Vec<(&BTreeSet<String>, Vec<RuleKey>)> = strata.iter().map(|&m| (&sccs[m], run.runnable(&sccs[m], &rules_of(m)))).collect();
             let vs = Arc::clone(&run.versions);
             run.model.wants_strata(&vs, strata, &mut wanted)?;
-            run.model.make_statistics(run.prog, &wanted)?;
+            run.model.make_statistics(vs.whole(run.version), &wanted)?;
         }
         // The issued components' count tables and seed joins, as one device batch (§3, step 6).
         let mut wants: BTreeSet<(String, Vec<usize>)> = BTreeSet::new();
@@ -418,7 +422,7 @@ impl<'a> Board<'a> {
     /// Whether `j` may be issued with the relations `held` (its component's earlier members') taken as held: the
     /// relations its strand holds (`Run::strand_reads`).
     #[allow(clippy::too_many_arguments)]
-    fn eligible(&self, j: usize, run: &Run<'a, '_>, sccs: &[BTreeSet<String>], rules_of: &dyn Fn(usize) -> Vec<&'a Rule>, load: &mut dyn FnMut(usize) -> Result<()>, held: &BTreeSet<String>) -> Result<Option<BTreeSet<String>>> {
+    fn eligible(&self, j: usize, run: &Run<'a, '_>, sccs: &[BTreeSet<String>], rules_of: &dyn Fn(usize) -> Vec<RuleKey>, load: &mut dyn FnMut(usize) -> Result<()>, held: &BTreeSet<String>) -> Result<Option<BTreeSet<String>>> {
         if sccs[j].iter().all(|r| run.views.contains(r)) {
             if let Some(t) = &self.trace {
                 t.why.borrow_mut()[j] = "views only";

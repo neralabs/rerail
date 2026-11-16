@@ -122,7 +122,7 @@ arrow_op(f, m) :- kind(f, "arrow_function"), field(f, "body", b), structural_bef
 // token_text(n, s): `a  /* x */ + b` and `a+b` both give "a + b": comments and spacing drop out, as when ESLint
 // compares two nodes token by token. `[`${0} `]` and `[`${0}`]` differ. Asked only of the nodes in token_text_ask,
 // which the including library or rule fills: tokens are a walk per node, so only compared nodes take it.
-.decl token_text_ask(n: node)
+.decl token_text_ask(n: node) extensible
 .decl token_text(n: node, s: symbol)
 // The tape keeps no token its grammar implies, so the pieces are the stored leaves and the source between stored
 // children (spacing taken out), in source order: what the tape leaves out is in that source.
@@ -183,7 +183,7 @@ escope_body(b) :- field(s, "body", b), kind(s, k), (function_kind(k) ; k = "clas
 // ---- text ----------------------------------------------------------------------------------------------------------
 // upper_first(s, t): ESLint's upperCaseFirst, for ASCII words: "async method" gives "Async method". Core has
 // @lower and no @upper (proposed in NOTES), so the first letter goes through a table.
-.decl upper_first_ask(s: symbol)
+.decl upper_first_ask(s: symbol) extensible
 .decl upper_first(s: symbol, t: symbol)
 upper_first(s, cat(u, substr(s, 1, strlen(s) - 1))) :- upper_first_ask(s), upper_letter(substr(s, 0, 1), u).
 upper_first(s, s) :- upper_first_ask(s), !upper_letter(substr(s, 0, 1), _).
@@ -206,4 +206,4 @@ capital(x) :- kind(n, "identifier"), text(n, x), c = @slice(x, 0, 1), c != @lowe
 limit(o, d, k) :- limit_rule(o, d), option(o, v), k = to_number(v).
 limit(o, d, k) :- limit_rule(o, d), !option(o, _), option("option", v), k = to_number(v).
 limit(o, d, d) :- limit_rule(o, d), !option(o, _), !option("option", _).
-.decl limit_rule(o: symbol, d: number)  // the including rule's numeric option and default, as facts
+.decl limit_rule(o: symbol, d: number) extensible  // the including rule's numeric option and default, as facts

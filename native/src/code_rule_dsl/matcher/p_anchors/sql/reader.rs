@@ -66,7 +66,7 @@ struct SpanBlock {
 
 #[cfg(feature = "code-rule-profile")]
 #[derive(Clone, Copy, Default, serde::Serialize)]
-pub(super) struct Counters {
+pub struct Counters {
     pub blob_opens: u64,
     pub handle_clears: u64,
     pub reads: [u64; 7],

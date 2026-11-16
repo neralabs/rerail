@@ -417,3 +417,84 @@
             assert_eq!(got[1].1, got[0].1, "{case}: the device's counts per step are the CPU's");
         }
     }
+
+    /// Decision 0261: the device's column statistics read a relation it holds in place (its resident upload), and
+    /// are the same as over the values gathered on the host; a relation it does not hold is gathered.
+    #[test]
+    fn column_statistics_read_a_resident_relation_in_place() {
+        use crate::code_rule_dsl::logic::device::StatColumn;
+        use crate::code_rule_dsl::logic::native::setfix::InRel;
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let mut x = 0x0223_u64;
+        let mut next = |m: u64| { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x % m };
+        let n = 6_000;
+        let mut rows = Vec::with_capacity(2 * n);
+        for _ in 0..n {
+            let r = next(1000);
+            rows.push(3_288_784_809_065_000_000 + (if r < 600 { next(20) } else { next(2_000) }) as i64);
+            rows.push(if next(2) == 0 { -(1i64 << 40) } else { 1i64 << 40 } + next(9) as i64);
+        }
+        let rel = InRel::from_flat(rows.clone(), n, vec![b'i'; 2]);
+        let cols = [StatColumn::Rel(&rel, 0), StatColumn::Rel(&rel, 1)];
+        let (gathered, in_place) = super::column_stats(&cols, 16).expect("the device");
+        assert_eq!(in_place, 0);
+        let mut batch = crate::code_rule_dsl::transducer::packed::metal_join::Batch::new().expect("the device");
+        let mut rep = super::Report::default();
+        super::resident(&rel, &[], &mut batch, &mut rep).expect("resident");
+        let (read, in_place) = super::column_stats(&cols, 16).expect("the device");
+        assert_eq!(in_place, 2);
+        assert_eq!(read, gathered);
+        let values: Vec<i64> = rows.iter().step_by(2).copied().collect();
+        let (of_values, _) = super::column_stats(&[StatColumn::Values(&values)], 16).expect("the device");
+        assert_eq!(of_values[0], read[0]);
+        assert_eq!(read[1].ndv, 18);
+    }
+
+    /// Decision 0221 §4, through the device interface: the device's batch makes the CPU's heavy values.
+    #[test]
+    fn the_gpu_batch_makes_the_cpu_batch_heavy_values() {
+        use crate::code_rule_dsl::logic::plan::table;
+        // A skewed key of node-like ids, and a narrow one.
+        let mut x = 0x0209_u64;
+        let mut next = || { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x };
+        let wide: Vec<i64> = (0..20_000).map(|_| { let r = next() % 1000; 3_288_784_809_065_000_000 + (if r < 500 { next() % 30 } else { next() % 3_000 }) as i64 }).collect();
+        let narrow: Vec<i64> = (0..3_000).map(|_| (next() % 5) as i64).collect();
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let gpu = table::heavy_of_values_gpu(&[&wide, &narrow]).expect("the registered device");
+        for (col, g) in [&wide, &narrow].into_iter().zip(gpu) {
+            let mut counts: rustc_hash::FxHashMap<i64, u64> = rustc_hash::FxHashMap::default();
+            for &v in col { *counts.entry(v).or_default() += 1; }
+            let cpu = table::HeavyCol::of_counts(counts);
+            assert_eq!((g.rows, g.ndv, g.sq, g.cube, g.tail_rows, g.tail_ndv), (cpu.rows, cpu.ndv, cpu.sq, cpu.cube, cpu.tail_rows, cpu.tail_ndv));
+            // The same top counts (ties may take other values of the same count).
+            let counts_of = |h: &table::HeavyCol| { let mut c: Vec<u64> = h.top.iter().map(|t| t.1 as u64).collect(); c.sort_unstable(); c };
+            assert_eq!(counts_of(&g), counts_of(&cpu));
+            assert!((table::heavy_fan(&g, &[&g, &g]).unwrap() / table::heavy_fan(&cpu, &[&cpu, &cpu]).unwrap() - 1.0).abs() < 1e-6);
+        }
+    }
+    /// The CPU's and the GPU's batch on columns of 1 M and 8 M rows, warm (a measure: `--ignored`).
+    #[test]
+    #[ignore]
+    fn heavy_batches_timed() {
+        use crate::code_rule_dsl::logic::plan::table;
+        let mut x = 0x0209_u64;
+        let mut next = || { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x };
+        for n in [1usize << 20, 8 << 20] {
+            let col: Vec<i64> = (0..n).map(|_| { let r = next() % 1000; 3_288_784_809_065_000_000 + (if r < 500 { next() % 600 } else { next() % 200_000 }) as i64 }).collect();
+            let _ = table::heavy_of_values_gpu(&[&col]);
+            let t = std::time::Instant::now();
+            let gpu = table::heavy_of_values_gpu(&[&col]).expect("a device");
+            let g = t.elapsed().as_secs_f64();
+            let t = std::time::Instant::now();
+            let mut counts: rustc_hash::FxHashMap<i64, u64> = rustc_hash::FxHashMap::default();
+            for &v in &col { *counts.entry(v).or_default() += 1; }
+            let cpu = table::HeavyCol::of_counts(counts);
+            let c = t.elapsed().as_secs_f64();
+            assert_eq!((gpu[0].ndv, gpu[0].sq), (cpu.ndv, cpu.sq));
+            eprintln!("heavy batch, {n} rows: GPU {:.1} ms, CPU {:.1} ms", g * 1e3, c * 1e3);
+        }
+    }

@@ -1521,6 +1521,108 @@ pub mod tests {
         assert_eq!(found, vec![6]);
     }
 
+    /// A `within(d)` the CPU's windows leave out (`native_cpu_lanes::unguarded`): where another
+    /// conjunct is false on the byte it guards when that byte is zero, as the bytes off a file
+    /// of the batch are (`zero_kills`). A `.` a byte back needs none; a byte not `a`, or a zero
+    /// byte, does.
+    #[test]
+    fn a_within_goes_where_a_zero_byte_refuses() {
+        use rerail_compiler::block_native::BlockInst::{And, EqByte, Not, Prev, Within};
+        use rerail_compiler::native_cpu_lanes::{unguarded, zero_kills};
+        let c = crate::compiled().expect("compiles");
+        let mut n = c.native.clone();
+        n.insts = vec![EqByte(b'.'), Prev(0, 1), Within(1), And(1, 2), Not(0), And(4, 2), EqByte(0), And(6, 2), And(3, 0)];
+        assert!(zero_kills(&n, 1, 1));
+        assert!(!zero_kills(&n, 1, 0));
+        assert!(!zero_kills(&n, 4, 0));
+        assert!(!zero_kills(&n, 6, 0));
+        assert_eq!(unguarded(&n, 3), Some(vec![1]));
+        assert_eq!(unguarded(&n, 5), None);
+        assert_eq!(unguarded(&n, 7), None);
+        // Through the `and`s: the `.` of the outer one's inner one.
+        assert_eq!(unguarded(&n, 8), Some(vec![1, 0]));
+    }
+
+    /// A `prev`'s bound the CPU's scalar tests leave out (`native_cpu_bytes::zeros_bound`):
+    /// where its operand is false on a zero byte, read within `FRONT` bytes before the file,
+    /// the zeros there. A `.` needs none; a byte not `.`, or one read further back, does.
+    #[test]
+    fn a_prevs_bound_goes_where_the_zeros_say_it() {
+        use rerail_compiler::block_native::BlockInst::{EqByte, Not};
+        use rerail_compiler::native_cpu_bytes::zeros_bound;
+        let c = crate::compiled().expect("compiles");
+        let mut n = c.native.clone();
+        n.insts = vec![EqByte(b'.'), Not(0), EqByte(0)];
+        let front = rerail_compiler::native_cpu_block::FRONT as i64;
+        assert!(zeros_bound(&n, 0, 1));
+        assert!(zeros_bound(&n, 0, front));
+        assert!(!zeros_bound(&n, 0, front + 1));
+        assert!(!zeros_bound(&n, 1, 1));
+        assert!(!zeros_bound(&n, 2, 1));
+    }
+
+    /// A class of one run of bytes is a subtract and a compare on the CPU's vectors
+    /// (`native_cpu_lanes::set_range`): a digit's `b - '0' <= 9`. Whitespace is no run; a
+    /// byte alone is one, a compare.
+    #[test]
+    fn a_digit_is_a_range() {
+        use rerail_compiler::native_cpu_lanes::set_range;
+        let set = |bytes: &[u8]| {
+            let mut s = [0u64; 4];
+            for &b in bytes {
+                s[usize::from(b) / 64] |= 1 << (b % 64);
+            }
+            s
+        };
+        assert_eq!(set_range(set(b"0123456789")), Some((b'0', b'9')));
+        assert_eq!(set_range(set(b"/")), Some((b'/', b'/')));
+        assert_eq!(set_range(set(b" \t\n\r")), None);
+        assert_eq!(set_range(set(b"0123456789_")), None);
+        assert_eq!(set_range(set(b"")), None);
+        assert_eq!(set_range(set(&[0xfe, 0xff])), Some((0xfe, 0xff)));
+    }
+
+    /// A float's `.` counts (`count(dot) at least 1`, `at least 2`): the mask is its bytes
+    /// exactly (`native_cpu_bytes::exact`), so a short number's counts are one vector's, as a
+    /// lexer counts the `.` it reads; a mask that looks at other bytes is not.
+    #[test]
+    fn a_floats_dots_are_its_bytes() {
+        let c = crate::compiled().expect("compiles");
+        let cpu = &c.native;
+        let r = c.program.block_programs[0].records.as_ref().expect("records");
+        let counts: Vec<_> = r.checks.iter().filter(|t| t.count && !t.always()).collect();
+        let exact: Vec<_> = counts.iter().filter_map(|t| rerail_compiler::native_cpu_bytes::exact(cpu, t.o).map(|n| (t, n))).collect();
+        assert!(exact.len() >= 2, "{counts:?}");
+        for (t, n) in &exact {
+            assert_eq!((n.lo, n.hi, n.ranges()), (0, 0, vec![(b'.', b'.')]), "{t:?}");
+        }
+        assert!(exact.len() < counts.len(), "a string's counts look past their bytes");
+    }
+
+    /// A comment's JSON mark (`json_bad … after comment when count(line_open | block_open) at
+    /// least 1`): every comment the reader reads starts with an opener, so the lowering proves
+    /// the count holds (`Lowering::implies`) and makes none (`TokenCheck::always`), as a lexer
+    /// knows a comment has its opener. It holds where the reader reads a comment, not at a `/`
+    /// its other rule takes (`records::test_holds`).
+    #[test]
+    fn a_comments_opener_is_its_count() {
+        let c = crate::compiled().expect("compiles");
+        let block = &c.program.block_programs[0];
+        let r = block.records.as_ref().expect("records");
+        let always: Vec<_> = r.checks.iter().filter(|t| t.always()).collect();
+        assert_eq!(always.len(), 1, "{:?}", r.checks);
+        let t = always[0];
+        assert!(matches!(r.rules[usize::from(t.rule)], rerail_compiler::records::EndRule::Read(_)), "{t:?}");
+        // No other count folds: a string's bad bytes are not its opener.
+        assert!(r.checks.iter().filter(|x| x.count && !x.always()).count() >= 1);
+        let f = b"a(x / 2) // c\n/* d */ b(y / z).";
+        let run = block.run(f);
+        let holds = |s: usize| rerail_compiler::records::test_holds(r, t, s, s, &run.outputs);
+        for (s, want) in [(4, false), (9, true), (14, true), (26, false)] {
+            assert_eq!(holds(s), want, "at byte {s} ({:?})", f[s] as char);
+        }
+    }
+
     /// The records' layout the compiler chose (`records::RecordLayout`): rr's token loop writes
     /// each token's start, last and code, its only extracts, so on the CPU they are rows, the
     /// lean lexer's `Tok`; tier 2 reads them a row a token and its tapes are the columns'.
@@ -1529,6 +1631,21 @@ pub mod tests {
         let c = crate::compiled().expect("compiles");
         let t = c.parser.tier1.records.as_ref().expect("the record pass");
         assert_eq!(t.layout, rerail_compiler::records::RecordLayout::Rows);
+        // Every first byte of the fused pair rule (punctuation, most of rr's tokens) takes its
+        // code from the table, as the lean lexer's `TOKEN`: no word looked up. But `<`, whose
+        // two pairs (`<=`, `<:`) are two words: its two-byte tokens look theirs up.
+        let r = c.native.records.as_ref().expect("records");
+        let (kn, _) = t.fused.expect("the fused rules");
+        let pair_bytes: Vec<u8> = (0..=255u8).filter(|&b| r.ends.get(usize::from(b)).is_some_and(|&e| usize::from(e) == kn) && b != b'<').collect();
+        assert_eq!(c.parser.tier1.punct_bytes(), pair_bytes);
+        // Their codes fit their entries: no load beside the entry's.
+        assert!(c.parser.tier1.punct_in_entry());
+        // Its starts are the lean lexer's (`lean_starts`): a word's or a pair's token clears its
+        // own start alone. Its pairs chain (`=>=`), read left to right. `#` (`#include`), whose
+        // run starts after it, takes the general tail.
+        let (kn, kr) = t.fused.expect("the fused rules");
+        assert_eq!(rerail_compiler::native_cpu_block::lean_starts(r, &c.native, r.skip.expect("starts by the loop"), kn, kr), Some(true));
+        assert_eq!(t.lean, Some(true));
         let src = ".decl a(x: number)\na(1). // c\na(\"s\").\n";
         let lean = crate::rr::lean::tape(src);
         assert_eq!(c.parser.image(src.as_bytes()).ok().as_deref(), Some(&lean[..]), "rows: the lean tape");
@@ -1586,6 +1703,67 @@ pub mod tests {
             inputs.push(t.as_bytes().to_vec());
             inputs.push(format!("{}{t}", " ".repeat(62)).into_bytes());
         }
+        // The lean lexer's starts (`lean_starts`): no start in a run after its first byte, nor
+        // at a pair's second. Another rule's token ending where they left one out (a word right
+        // after a number or a string, pairs right after a string, in a run of them), and runs of
+        // pairs across the blocks' edges.
+        for t in ["#include \"x\"\na(1).", "#includex#y", "a(12abc).", "a(\"x\"b).", "a(\"=\"=>=b).", "a(\"x\":-=>=).", "a(1.5x, 2y).", "a(\"<\"<:<=:b)."] {
+            for pad in [0usize, 57, 58, 59, 60, 61, 62, 63] {
+                inputs.push(format!("{}{t}", " ".repeat(pad)).into_bytes());
+            }
+        }
+        for pad in [59usize, 60, 61, 62, 63] {
+            inputs.push(format!("{}=>=>=>=>", " ".repeat(pad)).into_bytes());
+        }
+        // A word past eight bytes (`violation`) beside words that differ from it past its eighth
+        // byte, or are it with a byte more or less (`RecordTables::second`): at a block's start,
+        // across its edge, and as the file's last bytes.
+        for t in ["violation", "violatiox", "violationx", "violatio", "violations", "violation_x", "aviolation"] {
+            for pad in [0usize, 55, 56, 58, 63] {
+                inputs.push(format!("{}{t} .decl violation(x)", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("{}x. {t}", " ".repeat(pad)).into_bytes());
+            }
+        }
+        // A comment's closer about 64 bytes after its opener, where a short reader's window
+        // (`RuleMode::Short`) ends, at each offset in its block; one the file ends in.
+        for n in [0usize, 59, 60, 61, 62, 63, 64, 65] {
+            for pad in [0usize, 1, 31, 62, 63] {
+                let body = "c".repeat(n);
+                inputs.push(format!("{}a(x). //{body}\nb(y).\n", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("{}a(x). /*{body}*/ b(y).\n", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("{}a(x). //{body}", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("{}a(x). /*{body}", " ".repeat(pad)).into_bytes());
+            }
+        }
+        // A byte the string's counts need (a tab, a `\u`) at each edge of the gate's vectors
+        // (`needs_spans`): 16, 32 and 48 bytes on; and in a string past 64 bytes, at each
+        // edge of its 64-byte chunks (`needs_chunks`), in a whole chunk and in the rest.
+        for at in [14usize, 15, 16, 17, 30, 31, 32, 33, 46, 47, 48, 62, 63, 64, 65, 79, 126, 127, 128, 129, 150] {
+            for odd in ["\t", "\\u12"] {
+                inputs.push(format!("a(\"{}{odd}x\", 1).\n", "s".repeat(at)).into_bytes());
+                inputs.push(format!("a(\"{}{odd}\", 1).\n", "s".repeat(at)).into_bytes());
+                inputs.push(format!("a(\"{}{odd}{}\", 1).\n", "s".repeat(at), "x".repeat(80)).into_bytes());
+            }
+        }
+        // A token alone in its block, then spaces to and past the block's end (a spent block:
+        // the refill reads the next one), after a word, a string, a comment and pairs.
+        for gap in [1usize, 30, 61, 62, 63, 64, 65, 126, 127, 128] {
+            for t in ["x", "\"s\"", "/* c */", "=>", "\"s\"=>=>", "1.5"] {
+                inputs.push(format!("{t}{}y=>=.\n", " ".repeat(gap)).into_bytes());
+                inputs.push(format!("{}{t}{}y.\n", " ".repeat(gap), " ".repeat(gap)).into_bytes());
+            }
+        }
+        // A long string with none: no test's function.
+        for n in [64usize, 65, 127, 128, 129, 200] {
+            inputs.push(format!("a(\"{}\", 1).\n", "s".repeat(n)).into_bytes());
+        }
+        // A `\` run right before a string's quote: the opener's escape carry, which a short
+        // reader leaves to its whole function (`Bytewise::bail`).
+        for run in ["\\", "\\\\", "\\\\\\"] {
+            for pad in [0usize, 1, 62, 63] {
+                inputs.push(format!("{}a({run}\"s\", 1).\n", " ".repeat(pad)).into_bytes());
+            }
+        }
         // Strings and comments read from the bytes (`native_cpu_bytes`): runs of backslashes
         // across the windows' edges, the run before a window found back to its start; a
         // string or comment over many blocks; the escape at the opener's byte.
@@ -1612,7 +1790,12 @@ pub mod tests {
                     panic!("file {k} ({} bytes): {what} {i} the CPU's {:?}, the interpreter's {:?} ({} and {} of them), near {text:?}; the CPU's (start, last) {:?}, the interpreter's {:?}", f.len(), x.get(i), y.get(i), x.len(), y.len(), around(&g.positions[usize::from(r.starts)], &g.positions[usize::from(r.lasts)]), around(&want.positions[usize::from(r.starts)], &want.positions[usize::from(r.lasts)]));
                 }
             }
-            assert_eq!(g.codes, unlazy(&want.codes, lazy), "file {k}: the codes (the gap marks tier 2 tests itself apart)");
+            let w = unlazy(&want.codes, lazy);
+            if let Some(i) = (0..g.codes.len().max(w.len())).find(|&i| g.codes.get(i) != w.get(i)) {
+                let at = g.positions[usize::from(r.starts)].get(i).copied().unwrap_or(0) as usize;
+                let text = String::from_utf8_lossy(&f[at.saturating_sub(40).min(f.len())..(at + 12).min(f.len())]).into_owned();
+                panic!("file {k} ({} bytes): the codes (the gap marks tier 2 tests itself apart) differ at token {i}, byte {at}, the CPU's {:#x}, the interpreter's {:#x}, near {text:?}", f.len(), g.codes[i], w[i]);
+            }
             assert_eq!(g.totals, want.totals, "file {k}: the totals");
         }
     }

@@ -54,7 +54,7 @@
         let dialect = prepared.lowered.dialect;
         let text = crate::code_rule_dsl::logic::program_text::print;
         let read = |p: &crate::code_rule_dsl::logic::front::Program| crate::code_rule_dsl::logic::program_text::read(&text(p).unwrap()).unwrap();
-        let back = super::prepared_of(&facts, read(&prepared.prog), read(&prepared.lowered.program), dialect).unwrap();
+        let back = super::prepared_of(&facts, read(&prepared.prog), read(&prepared.lowered.program), None, dialect).unwrap();
         // Program has no PartialEq: its Debug form is the comparison, field by field.
         assert_eq!(format!("{:?}", back.prog), format!("{:?}", prepared.prog), "the front program");
         assert_eq!(format!("{:?}", back.lowered.program), format!("{:?}", prepared.lowered.program), "the lowered program");
@@ -73,14 +73,14 @@
         // tests that run beside this one.
         let all: Vec<std::sync::Arc<super::Prepared>> = super::super::with_prepared(|kept| kept.values().flatten().cloned().collect());
         for p in &all {
-            let b = super::prepared_of(&super::facts_of(p), read(&p.prog), read(&p.lowered.program), p.lowered.dialect).unwrap();
+            let b = super::prepared_of(&super::facts_of(p), read(&p.prog), read(&p.lowered.program), None, p.lowered.dialect).unwrap();
             assert_eq!((&b.split.exports, &b.split.base, &b.split.locations, &b.split.same_doc), (&p.split.exports, &p.split.base, &p.split.locations, &p.split.same_doc));
             assert_eq!(format!("{:?}", b.split.cross), format!("{:?}", p.split.cross));
         }
         // And one stored without its split (an earlier entry's facts) makes it again, the same.
         let mut unsplit = facts.clone();
         unsplit.remove("prepared_split");
-        let again = super::prepared_of(&unsplit, read(&prepared.prog), read(&prepared.lowered.program), dialect).unwrap();
+        let again = super::prepared_of(&unsplit, read(&prepared.prog), read(&prepared.lowered.program), None, dialect).unwrap();
         assert_eq!(format!("{:?}", again.split.cross), format!("{:?}", prepared.split.cross), "the split, made again");
         // No program is in the facts: no row per node (decision 0155).
         assert!(["program", "rule", "atom", "term"].iter().all(|r| !facts.contains_key(*r)), "{:?}", facts.keys().collect::<Vec<_>>());
