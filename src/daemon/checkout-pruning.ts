@@ -12,8 +12,8 @@ const CHECKOUT_PRUNING_INTERVAL_MS = 60 * 60 * 1000;
 
 export interface CheckoutPruning {
   /**
-   * Stops the passes. A pass under way forgets nothing and ends after the folder it is looking at; its connection is
-   * closed once this settles.
+   * Stops the passes. A pass under way forgets nothing and ends at once, even while a share has not answered it; its
+   * connection is closed once this settles.
    */
   stop(): Promise<void>;
 }
