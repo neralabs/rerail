@@ -67,8 +67,9 @@ fn ret_names(terms: &Terms, callable: u32, text: &dyn Fn(u32) -> String) -> Opti
     members.into_iter().map(|m| (terms.get(m).ctor == Ctor::Named).then(|| text(terms.get(m).name))).collect()
 }
 
-/// The declarations, merged (user first, then the demanded summaries), as program facts; and the report so far.
-pub(crate) fn facts(typing: &Typing, root: &Path, files: &[String], report: &mut TypingReport) -> Result<(String, BTreeMap<String, BTreeSet<String>>)> {
+/// The declarations, merged (user first, then the demanded summaries), as `declared_ret(q, t)` rows (decision 0249:
+/// rows the run adds, never text); and the report so far.
+pub(crate) fn facts(typing: &Typing, root: &Path, files: &[String], report: &mut TypingReport) -> Result<(Vec<(String, String)>, BTreeMap<String, BTreeSet<String>>)> {
     let mut names: Vec<String> = Vec::new();
     let mut intern = |s: &str| match names.iter().position(|x| x == s) {
         Some(i) => i as u32,
@@ -106,11 +107,11 @@ pub(crate) fn facts(typing: &Typing, root: &Path, files: &[String], report: &mut
     }
     let text = |s: u32| names[s as usize].clone();
     let mut declared = BTreeMap::new();
-    let mut out = String::new();
+    let mut out = Vec::new();
     for (q, callable) in merged {
         let Some(rets) = ret_names(&terms, callable, &text) else { continue };
         for t in &rets {
-            out.push_str(&format!("declared_ret({}, {}).\n", crate::code_rule_dsl::logic::rr::quote(&q), crate::code_rule_dsl::logic::rr::quote(t)));
+            out.push((q.clone(), t.clone()));
             report.declared += 1;
         }
         declared.insert(q, rets);
@@ -125,7 +126,7 @@ pub(crate) fn outputs(
     db: &Connection,
     store: &ContentStore,
     root: &Path,
-    type_of: Option<&Vec<String>>,
+    type_of: Option<&[std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>]>,
     returns: &[Vec<i64>],
     declared: &BTreeMap<String, BTreeSet<String>>,
     fn_q: Option<&dyn crate::code_rule_dsl::facts::vtab::Source>,
@@ -133,13 +134,14 @@ pub(crate) fn outputs(
 ) -> Result<()> {
     let text = |a: i64| -> Result<String> { store.atom_value(a as u32).map_err(|e| Error::Plan(e.to_string()))?.ok_or_else(|| Error::Plan(format!("no atom {a}"))) };
     // Each node's names, one union term.
-    if let Some(rows) = type_of {
+    if let Some(parts) = type_of {
+        use crate::code_rule_dsl::logic::plan::output::Cell;
         let mut per: BTreeMap<i64, BTreeSet<String>> = BTreeMap::new();
-        for row in rows {
-            if let Some((n, t)) = row.split_once('\t')
-                && let Ok(n) = n.parse::<i64>()
-            {
-                per.entry(n).or_default().insert(t.to_owned());
+        for rows in parts.iter().filter(|r| r.width() == 2) {
+            for i in 0..rows.len() {
+                if let (Cell::Int(n), Cell::Text(t)) = (rows.cell(i, 0), rows.cell(i, 1)) {
+                    per.entry(n).or_default().insert(t.to_owned());
+                }
             }
         }
         let mut terms = Terms::default();

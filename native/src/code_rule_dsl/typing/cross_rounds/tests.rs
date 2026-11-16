@@ -1,6 +1,14 @@
 use super::*;
 use crate::code_rule_dsl::logic::front;
 
+/// `super::bound`, with its hops checked against the version's (`hops`, what a run reads).
+fn bound(prog: &Program, same_doc: &BTreeMap<String, Vec<usize>>) -> Result<Bounded, front::Error> {
+    let b = super::bound(prog, same_doc)?;
+    let placed = crate::code_rule_dsl::logic::plan::body::Placed::of_program(prog).unwrap();
+    assert_eq!(hops(&placed, same_doc).unwrap(), b.hops, "the version's hops are the tree's");
+    Ok(b)
+}
+
 const PROGRAM: &str = r#"
 .decl base(c: node, b: node)
 .decl bound_in(c: node, a: symbol)

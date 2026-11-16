@@ -68,7 +68,7 @@ pub mod hazards;
 
 pub use compression::compress;
 pub use frames::forget_snapshot as forget_frames_snapshot;
-pub use frames::{Unreachable as UnreachableFrames, Admitted as AdmittedFrame, Encoded as EncodedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, SymbolReader as FrameSymbolReader, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
+pub use frames::{Unreachable as UnreachableFrames, Admitted as AdmittedFrame, Encoded as EncodedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, MemoBlob, MemoPut, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
 pub use connection::BusyRetries;
 pub use connection::OperationDeadline;
 pub use atoms::{ProcessIds, StoreIds, Sym};
@@ -736,6 +736,16 @@ impl ContentStore {
     }
 
     pub fn open(path: &Path) -> StoreResult<Self> {
+        Self::open_with(path, true)
+    }
+
+    /// A store opened beside the run's own (the rule images', decision 0264): as `open`, but the Neural Engine's
+    /// models stay the run's store's.
+    pub fn open_images(path: &Path) -> StoreResult<Self> {
+        Self::open_with(path, false)
+    }
+
+    fn open_with(path: &Path, models: bool) -> StoreResult<Self> {
         // Created `0600` before SQLite opens it, in a `0700` folder, so the WAL SQLite creates beside it is private too.
         private_files::prepare(path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
@@ -749,7 +759,11 @@ impl ContentStore {
         drop(connection);
         // Compiled Neural Engine models are facts of this store (decision 0098 §3).
         #[cfg(target_os = "macos")]
-        rerail_accel::ane::set_store(std::sync::Arc::new(accel_models::StoreModels::new(path)));
+        if models {
+            rerail_accel::ane::set_store(std::sync::Arc::new(accel_models::StoreModels::new(path)));
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = models;
         Ok(Self {
             database_path: path.to_path_buf(),
             connection: ThreadConnection::new(path.to_path_buf(), identity),

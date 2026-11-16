@@ -1,12 +1,14 @@
 //! Row primitives shared by every table: hash lanes, interned hashes/strings/paths, validated
 //! relative paths, and the store generation.
 
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use super::{HashKey, STRING_PATH, StoreError, StoreResult};
 use rusqlite::{Connection, OptionalExtension, params};
 
 pub(super) fn generation(transaction: &Connection) -> StoreResult<i64> {
     transaction
-        .query_row(
+        .query_row_cached(
             "SELECT generation FROM store_state WHERE singleton=1",
             [],
             |row| row.get(0),

@@ -75,8 +75,10 @@ fn with_outputs(p: &Placed, outs: &[String]) -> Result<Placed> {
 }
 
 /// Prove empty positive joins before planning. Negation and aggregates are never treated as
-/// empty merely because their input is empty. A quiet maintenance relation shares its old fact.
-fn simplify(p: &mut Placed, db: &Connection, inputs: &mut Inputs, resident: &mut BTreeSet<String>) -> Result<()> {
+/// empty merely because their input is empty. A quiet maintenance relation shares its old fact. Returns the quiet
+/// relations so shared (the run's `Outcome::quiet`).
+fn simplify(p: &mut Placed, db: &Connection, inputs: &mut Inputs, resident: &mut BTreeSet<String>) -> Result<usize> {
+    let mut shared = 0;
     let mut empty: BTreeSet<String> = p.fields()?.inputs().filter(|r|vtab::bound_source(db,r).is_some_and(|s|s.len()==0)).map(str::to_owned).collect();
     loop {
         let before = (empty.len(),p.len(),p.fields()?.inputs().len());
@@ -112,14 +114,13 @@ fn simplify(p: &mut Placed, db: &Connection, inputs: &mut Inputs, resident: &mut
             component::hold_as(db,&rel,held);
             bind(p,db,inputs,&rel,component::derived(db,&rel).unwrap())?;
             resident.insert(rel.clone());
-            QUIET_STRATA.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
-            count_quiet(|c| { c.strata.fetch_add(1,std::sync::atomic::Ordering::Relaxed); });
+            shared += 1;
             super::super::super::profile::decision("composed quiet relation",||format!("{rel}: shares its retained rows; no deletions or insertions"));
         }
         if !rels.is_empty() { *p = inputs_made(p,&rels)?; }
         if before==(empty.len(),p.len(),p.fields()?.inputs().len()) { break; }
     }
-    Ok(())
+    Ok(shared)
 }
 
 impl Compiled {
@@ -199,7 +200,7 @@ fn changes(p: &Placed, inputs: &Inputs) -> Result<BTreeSet<String>> {
 
 pub(super) fn run_with(p: &Placed, db: &Connection, mut inputs: Inputs, lowered: Option<lower::Lowering<'_>>, hooks: &mut Hooks<'_>, mut resident: BTreeSet<String>) -> Result<Outcome> {
     let mut remaining=p.clone();
-    simplify(&mut remaining,db,&mut inputs,&mut resident)?;
+    let mut quiet=simplify(&mut remaining,db,&mut inputs,&mut resident)?;
     let changes=changes(&remaining,&inputs)?;
     let mut executions=0;
     if !changes.is_empty() {
@@ -207,7 +208,7 @@ pub(super) fn run_with(p: &Placed, db: &Connection, mut inputs: Inputs, lowered:
         let part=with_outputs(&remaining,&rels)?;
         let kept=std::mem::replace(&mut inputs.kept,changes.clone());
         super::super::super::profile::decision("composed change admission",||format!("{} retained change relations requested together",changes.len()));
-        let got=run_stages(&part,db,&mut inputs,None,&mut Hooks::default(),resident.clone(),&mut executions);
+        let got=run_stages(&part,db,&mut inputs,None,&mut Hooks::default(),resident.clone(),&mut executions,&mut quiet);
         inputs.kept=kept;
         got?;
         for rel in changes {
@@ -216,14 +217,18 @@ pub(super) fn run_with(p: &Placed, db: &Connection, mut inputs: Inputs, lowered:
         }
         remaining=inputs_made(&remaining,&rels)?;
     }
-    run_stages(&remaining,db,&mut inputs,lowered,hooks,resident,&mut executions)
+    let mut out=run_stages(&remaining,db,&mut inputs,lowered,hooks,resident,&mut executions,&mut quiet)?;
+    out.quiet.0+=quiet;
+    Ok(out)
 }
 
-fn run_stages(p: &Placed, db: &Connection, inputs: &mut Inputs, lowered: Option<lower::Lowering<'_>>, hooks: &mut Hooks<'_>, mut resident: BTreeSet<String>, executions: &mut usize) -> Result<Outcome> {
+/// `quiet` counts the quiet relations shared (`simplify`); the caller adds them to the run's outcome.
+#[allow(clippy::too_many_arguments)]
+fn run_stages(p: &Placed, db: &Connection, inputs: &mut Inputs, lowered: Option<lower::Lowering<'_>>, hooks: &mut Hooks<'_>, mut resident: BTreeSet<String>, executions: &mut usize, quiet: &mut usize) -> Result<Outcome> {
     let mut remaining=p.clone();
     while *executions<STAGES {
-        simplify(&mut remaining,db,inputs,&mut resident)?;
-        let mut plan=planned(&remaining,&tree_text(&remaining)?,db,inputs)?;
+        *quiet+=simplify(&mut remaining,db,inputs,&mut resident)?;
+        let mut plan=planned(&remaining,db,inputs)?;
         plan.resident=resident.clone();
         let Some(boundary)=plan.boundary() else {
             *executions+=1;
@@ -237,7 +242,7 @@ fn run_stages(p: &Placed, db: &Connection, inputs: &mut Inputs, lowered: Option<
         let rels: Vec<String>=boundary.iter().cloned().collect();
         let part=with_outputs(&remaining,&rels)?;
         let kept=std::mem::replace(&mut inputs.kept,boundary.clone());
-        let query=tree_text(&part).and_then(|text|planned(&part,&text,db,inputs));
+        let query=planned(&part,db,inputs);
         inputs.kept=kept;
         let query=query?;
         if query.boundary().is_some() { return Err(Error::Plan("composed materialization does not fit the reference budget".into())); }

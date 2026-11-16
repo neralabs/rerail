@@ -63,6 +63,7 @@ pub fn canonical(rule: &Rule, label: &dyn Fn(&str) -> Name, names_made: &Canonic
 
 /// The names `canonical` writes, made once by its caller: the variables `v0`, `v1`, …, the head's `@`, and the
 /// placeholder of the relations a template reads.
+#[derive(Clone)]
 pub struct CanonicalNames {
     vars: Vec<Name>,
     head: Name,

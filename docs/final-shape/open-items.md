@@ -5177,6 +5177,45 @@ larger heavy share under a larger cap; neither is tuned.
 Closed (2026-11-14, decision 0262): each order is estimated by its work at a row's key, from pair counts with
 the filters on the key's atoms: 0.97 of the line's work on `call_ret`.
 
+## O174. A memo-replay test loses a long text row when run beside others (2026-11-15)
+
+`findings::async_reference::rr_comparison::long_text_fallback_keeps_short_and_long_results_across_memo_replay`
+fails about one group run in five: after the memo replay, the long text row is missing. It passes alone and with
+`--test-threads=1`, and fails 3 of 20 group runs on the build before decision 0239's stage 5, so it predates it.
+Paired with each test of its module alone (`--exact`, six runs each), only
+`annotation_demand_keeps_string_membership_before_parsing` makes it fail (2 of 6); the module whole fails 4 of 10. Both
+run over the default store, each its own root with an `a.py`: the annotation run's embedded parses
+(`parsed(s, "annotation", e)`) and the long-text fallback (`rr_long_text_node`) meet there or in a process-wide
+cache. Open.
+
+Still failing after the merge of django-bugs (cffa6bb2e): 2 of 3 module runs, 3 of 3 alone pass. That merge's
+message names `bf44cf353` as this item's fix: it is not; it is about a long-text twin's anchors (and its token count,
+fixed after it: the root's tokens between anchored subtrees were not counted). Anchors are made per program, not kept
+across a process, so they are not the shared state either.
+
+**Closed (2026-11-15).** The test failed in its group's *first* run, not the memo replay, beside any concurrent run
+with an `a.py` of its own. The long texts `@rr_node_text` reads (`syntax::long_node_text`) were held in a
+process-wide map (`TEXTS`) keyed by document key, and a document's key is its path atom: two concurrent runs each
+with an `a.py` wrote one entry, and one read the other's text. The map is gone: `long_node_text` reads the batch bound
+on the connection the run's query runs on (`vtab::bound_source(db, "node")`, as `text`'s own producer does), SQLite's
+`rr_node_text` is registered per connection, and the native fixpoint's store keeps its connection's scope
+(`Store::at`). Test: `rr_comparison::concurrent_runs_read_their_own_long_texts` (four concurrent runs, each its own
+`a.py`); the module passes 4 of 4 runs, the long-text pair 6 of 6.
+
+## O175. The typing oracle tests lock up beside a nested phase run, about one group run in ten (2026-11-15)
+
+`typing::oracle_tests` (30 tests) stalled in 2 of 20 group runs (killed at the 120 s cap; the others pass in 21 to
+57 s), at a machine load of 40 to 50, every test stopped at once. A stack sample of a stalled run: 15 test threads
+wait for the session's lock (`session::current`, `SESSION.lock()`); a pool thread (`rerail-cpu 0`) is in an outer
+run's `phases::sources` job, whose phase run (`run_read` → `run_observed` → `session::generation`) waits for the
+same lock, helping the pool meanwhile (`help_until_as`, decision 0100 §12); one test thread, in its run, waits for
+a job it started beside it (`Beside::join`); two test threads and five pool threads wait at rayon latches in
+`hiding::carry` (two in `in_worker_cold`); twelve pool threads are idle. The store's writers are idle, waiting
+for waves, and no thread waits on the writer. So the cycle runs through the session's lock and the pool's waits,
+not the store. Seen while building decision 0259 stage 1; whether it predates that build is not measured (the
+earlier binary is gone). Open: find the lock's holder, and whether a run's beside job can need the lock its own run
+holds.
+
 ## O-split-in-strings. The file-local split's analysis works on strings (2026-11-14, decision 0210)
 
 Status: superseded by decision 0225 (draft): the split's questions become rules over the image, after 0173 stage 2. the fixpoints are numbered (0210 §6: dl1 23.08 → 22.47 G). The strata run on numbers (0210 §7: 22.60 → 22.25 G); `lower::domains`, `text_kind_demand` and the keep factors are numbered (0210 §8: 22.64 → 21.96 G). The column statistics a strand forks are shared per relation (0210 §9, about −1%). Still on names: `keeps::choose`'s refusals, bounds and estimates, and `Model`'s cards, memo and delta rows (0173 stage 2 plans them by `RelId`, after t36 item 7). A body's numbering is kept with its digest for the run, and every fixpoint, `split_constants`'s included, runs on
@@ -5193,7 +5232,7 @@ string-keyed BTree lookups like these across many passes (tarjan, components, `f
 
 ## O-cross-file-answers. Node attributes asked across files find no text (2026-11-15, decision 0174 §6)
 
-Status: closed (2026-11-15) by decision 0264: a request the split finds cross-file is narrowed to the asked node's
+Status: closed (2026-11-15) by decision 0286: a request the split finds cross-file is narrowed to the asked node's
 own document, so it is answered in the chunk that holds the text. B010 with C414 gives its 2 findings on request,
 and the python and data-layer packs on request give the eager oracle's findings.
 
@@ -5210,6 +5249,14 @@ Checked after the hub merge (d3489cf07, 2026-11-15): still so, with the merged l
 three options; its recommended (a), widening a request the cross-file part would derive to its file-local literals,
 covers this case: `rr_value_req` is cross-file only because C414's asker reads `builtin_at`, while a node's value
 depends on its own document alone.
+
+Since decision 0268 (a node read goes through the run's binding of its batch) the same case is an error, not an
+empty answer: the cross-file part's connection binds no `rr_long_text_node`, so compiling the answer rule fails
+with "@rr_node_value without the run's long-text nodes bound". Found at the merge of
+final-rerail-shape-phased-facts (2026-11-15), by `corpus::tests::a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies`
+(PYI062 with PYI059): its stack is `run_observed`'s cross-file run (`run_atoms_native_hooked` on the main
+connection). Neither side of that merge binds the relation there, and the merge left lowering's placement as it was.
+The test is ignored with this item's name until the item is answered.
 
 ## O-cold-seed-join. One seed join ends a cold 50-file data-layer run (2026-11-15)
 

@@ -1,4 +1,6 @@
-# 0264. A request for a node's attribute asks within the node's document
+# 0286. A request for a node's attribute asks within the node's document
+
+Numbered 0264 where it was written: the hub's 0264 (rule images ship with the engine) kept the number.
 
 Status: decided (2026-11-15). Answers the hub's work-queue question 2 (Q2/Q5) with its option (a), and closes
 O-cross-file-answers. Builds on 0174 (node attributes answered on request), 0145 (requests), and the file-local

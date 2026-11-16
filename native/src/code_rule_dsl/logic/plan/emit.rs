@@ -373,14 +373,15 @@ pub fn single(emitted: Emitted, output: &str) -> Result<Emitted> {
     Ok(Emitted { value_types, analysis, program, setup: kept, queries: vec![Some(query)], views: Vec::new(), inputs, constant_rows })
 }
 
-/// The emitted program's outputs on `db` after it ran, decoded as `run_atoms` decodes its own.
+/// The emitted program's outputs on `db` after it ran, decoded as `run_atoms` decodes its own: each value as shown.
 #[cfg(any(test, feature = "test-hooks"))]
 #[allow(clippy::type_complexity)]
 pub fn outputs(
     lowered: &lower::Lowered,
     db: &Connection,
-) -> Result<(BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<usize>>)> {
+) -> Result<(BTreeMap<String, Vec<Vec<String>>>, BTreeMap<String, Vec<usize>>)> {
     let prog = &lowered.program;
     let outputs: Vec<&str> = prog.outputs.iter().map(String::as_str).collect();
-    decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.len()), db, Some(lowered.lowering()), "main.", true, &BTreeSet::new(), &BTreeSet::new())
+    let (outputs, nodes) = decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.iter().map(|(_, t)| t.to_string()).collect()), db, Some(lowered.lowering()), "main.", true, &BTreeSet::new(), &BTreeSet::new())?;
+    Ok((outputs.into_iter().map(|(rel, rows)| (rel, rows.shown())).collect(), nodes))
 }

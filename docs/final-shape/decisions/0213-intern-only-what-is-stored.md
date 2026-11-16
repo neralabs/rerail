@@ -37,5 +37,5 @@ row can hold a string that is no atom. A text that nothing reads gets no atom an
 
 - The one-file store holds 1,984 atoms with 57 KB of strings (was 3,617 and 127 KB), with the same findings.
 - The findings JSON is built two pieces at a time (`rr/lower/findings.rs`), and each partial string was an atom.
-  Closed by decision 0223: a text read only as text is held in the branch's scratch, as the device holds one in its
+  Closed by decision 0228: a text read only as text is held in the branch's scratch, as the device holds one in its
   arena, so no n-ary form was needed.

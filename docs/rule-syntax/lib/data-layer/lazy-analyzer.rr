@@ -324,7 +324,7 @@ la_func(c, g) :- kind(c, "call"), field(c, "function", g0), unparen(g0, g).
 la_gcstr(d, e, s) :- la_ask_gcstr(e), kind(e, "identifier"), text(e, x), docof(e, d), la_gleaf(d, x, s).
 la_gcstr(d, e, a) :- la_ask_gcstr(e), attr_of(e, _, a), docof(e, d).
 la_gcstr(d, e, s) :- la_ask_gcstr(e), kind(e, "call"), field(e, "function", g), la_gcstr(d, g, s).
-.decl la_ask_gcstr(e: node)
+.decl la_ask_gcstr(e: node) extensible
 la_ask_gcstr(g) :- la_ask_gcstr(e), kind(e, "call"), field(e, "function", g).
 la_gneed(d, x) :- la_ask_gcstr(e), kind(e, "identifier"), text(e, x), docof(e, d).
 
@@ -333,7 +333,7 @@ la_gneed(d, x) :- la_ask_gcstr(e), kind(e, "identifier"), text(e, x), docof(e, d
 //     `from` import, else the module-level resolution, as "module.name" unless that is an imported name;
 //   `self.m` / `cls.m` in a class: "module.Class.m", through a class-body alias `m = other`;
 //   `mod.f` for a module-level `import … as mod`: "mod.f".
-.decl la_ask_local(f: node, e: node)
+.decl la_ask_local(f: node, e: node) extensible
 la_ask_local(f, g) :- la_call(f, c), la_func(c, g).
 .decl la_local(f: node, e: node, s: symbol)
 la_local(f, e, q) :- la_ask_local(f, e), kind(e, "identifier"), text(e, x), la_simp_last(f, x, q).
@@ -367,7 +367,7 @@ la_simp_last(f, x, q) :- la_simp(f, x, i, q), count : { la_simp(f, x, i2, _), i2
 // Each is the script's predicate on expression e with the alias state at site n, asked for by la_ask_*.
 // la_pl: _looks_like_plan_expr. A name that is a plan alias, or whose leaf or own name ends in "plan"; an attribute
 // whose name ends in "plan"; a call whose callee string is "plan", ends in "_plan" or starts with "_build_".
-.decl la_ask_pl(n: node, e: node)
+.decl la_ask_pl(n: node, e: node) extensible
 la_ask_pl(s, v) :- la_ask_pl(n, e), kind(e, "identifier"), text(e, x), la_vis(n, x, s, v, _).
 la_need(n, x) :- la_ask_pl(n, e), kind(e, "identifier"), text(e, x).
 la_ask_cstr(n, g) :- la_ask_pl(n, e), kind(e, "call"), field(e, "function", g).
@@ -381,7 +381,7 @@ la_pl(n, e) :- la_ask_pl(n, e), kind(e, "call"), field(e, "function", g), la_cst
 // la_lz: _looks_like_lazy_expr. A name that is a lazy alias; else, if it has a value, that value; else its leaf
 // has "lazy" (any case) or ends in "result" or "Intent". An attribute or a callee string with "lazy" (lower case)
 // or ending in "result".
-.decl la_ask_lz(n: node, e: node)
+.decl la_ask_lz(n: node, e: node) extensible
 la_ask_lz(s, v) :- la_ask_lz(n, e), kind(e, "identifier"), text(e, x), la_vis(n, x, s, v, _).
 la_ask_lz(n, v) :- la_ask_lz(n, e), kind(e, "identifier"), text(e, x), la_rhs(n, x, v).
 la_need(n, x) :- la_ask_lz(n, e), kind(e, "identifier"), text(e, x).
@@ -397,7 +397,7 @@ la_lz(n, e) :- la_ask_lz(n, e), kind(e, "call"), field(e, "function", g), la_cst
 // la_cb: _expr_contains_callable_behavior. A lambda; a name whose latest value is callable (callable_aliases,
 // which every plain assignment resets) or holds one; a call's arguments; a tuple, list, set or dict's items; an
 // attribute's object.
-.decl la_ask_cb(n: node, e: node)
+.decl la_ask_cb(n: node, e: node) extensible
 la_ask_cb(n, v) :- la_ask_cb(n, e), kind(e, "identifier"), text(e, x), la_rhs(n, x, v).
 la_ask_cb(s, v) :- la_ask_cb(n, e), kind(e, "identifier"), text(e, x), la_rhs(n, x, v), la_vis(n, x, s, v, "rhs").
 la_ask_cb(s, v) :- la_ask_cb(n, e), kind(e, "identifier"), text(e, x), la_vis(n, x, s, v, "elt").
@@ -422,7 +422,7 @@ la_cb(n, e) :- la_ask_cb(n, e), kind(e, "identifier"), text(e, x), la_vis(n, x, 
     count : { la_vis(n, x, s2, _, "rhs"), s2 > s } = 0.
 // la_dyn: _expr_is_dynamic_behavior_lookup. A name through its value; getattr(o, k) / __getattribute__ with k not
 // a literal or a literal naming a behaviour key part; `t.get(k)` the same, unless t is an UPPER_CASE table.
-.decl la_ask_dyn(n: node, e: node)
+.decl la_ask_dyn(n: node, e: node) extensible
 la_ask_dyn(n, v) :- la_ask_dyn(n, e), kind(e, "identifier"), text(e, x), la_rhs(n, x, v).
 la_ask_cstr(n, g) :- la_ask_dyn(n, e), kind(e, "call"), field(e, "function", g).
 .decl la_dyn(n: node, e: node)
@@ -444,7 +444,7 @@ la_getattr("object.__getattribute__").
 // la_ri: _expr_reads_lazy_internal_state. A name through its value; getattr/__getattribute__ of a LazyResult
 // internal; _resolved_lazy_revision_value / _literalize_resolved_lazy_result; any argument that does; an
 // attribute that is an internal or whose object does; a container's items.
-.decl la_ask_ri(n: node, e: node)
+.decl la_ask_ri(n: node, e: node) extensible
 la_ask_ri(n, v) :- la_ask_ri(n, e), kind(e, "identifier"), text(e, x), la_rhs(n, x, v).
 la_ask_ri(n, a) :- la_ask_ri(n, e), la_cb_part(e, a).
 la_ask_cstr(n, g) :- la_ask_ri(n, e), kind(e, "call"), field(e, "function", g).
@@ -503,6 +503,6 @@ la_conn(e) :- (attr_of(e, o, _) ; kind(e, "call"), field(e, "function", o) ;
 // ---- tables ---------------------------------------------------------------------------------------------------------------
 // la_set(NAME, v): the script's module-level constants, one row per member (a string constant is one row). The
 // check provides them, generated from the script (data-layer/lazy-architecture.tables.rr).
-.decl la_set(name: symbol, v: symbol)
+.decl la_set(name: symbol, v: symbol) extensible
 .decl la_side_queue(x: symbol)
 la_side_queue(x) :- la_set("BOOTSTRAP_LAZY_FORBIDDEN_SIDE_QUEUE_ATTRS", x).

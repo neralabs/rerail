@@ -142,17 +142,17 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
         .unwrap();
     let result = plan::run_sql(&p, &file).unwrap();
     assert_eq!(
-        result.outputs["counts"],
-        ["1\t1\t1\t2", "2\t1\t1\t1", "3\t1\t1\t0"]
+        result.shown()["counts"],
+        [["1", "1", "1", "2"], ["2", "1", "1", "1"], ["3", "1", "1", "0"]]
     );
     assert_eq!(
-        result.outputs["sums"],
-        ["1\t1\t1\t16", "2\t1\t1\t20", "3\t1\t1\t0"]
+        result.shown()["sums"],
+        [["1", "1", "1", "16"], ["2", "1", "1", "20"], ["3", "1", "1", "0"]]
     );
-    assert_eq!(result.outputs["absent"], ["3\t1\t1"]);
+    assert_eq!(result.shown()["absent"], [["3", "1", "1"]]);
     for h in &helpers {
         assert_eq!(
-            result.outputs[h.as_str()].len(),
+            result.shown()[h.as_str()].len(),
             3,
             "unrequested groups published in {h}"
         );
@@ -174,7 +174,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
         Ok(())
     })
     .unwrap();
-    assert_eq!(native.outputs, result.outputs);
+    assert_eq!(native.shown(), result.shown());
     // Measure the production atom-backed engine, not the frozen legacy extension above.
     crate::code_rule_dsl::logic::profile::reset();
     let path = crate::code_rule_dsl::fixtures::temp();
@@ -185,7 +185,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
         &mut |s| store.intern_atoms(s).map_err(|e| plan::Error::Plan(e.to_string()))).unwrap();
     let native = plan::run_atoms_native_over(&lowered, &db, "main", plan::Stats::empty(&lowered.program),
         BTreeSet::new(), "program").unwrap();
-    assert_eq!(native.outputs, result.outputs);
+    assert_eq!(native.shown(), result.shown());
     assert!(native.native.contains("sums"), "production sum must use the native reduction");
     let dir = file.with_extension("profile");
     crate::code_rule_dsl::logic::profile::report::write(&dir, "Demanded aggregate growth gate").unwrap();
@@ -344,7 +344,7 @@ hit(f) :- fn(f), count : { ident(x), count : { ref(n,f,x) } = 0 } > 0.
             &mut |s| store.intern_atoms(s).map_err(|e| plan::Error::Plan(e.to_string()))).unwrap();
         let result = plan::run_atoms_native_over(&lowered, &db, "main", plan::Stats::empty(&lowered.program),
             BTreeSet::new(), modes).unwrap();
-        assert_eq!(result.outputs["hit"], ["2", "3"], "outer groups lost in {modes:?}");
+        assert_eq!(result.shown()["hit"], [["2"], ["3"]], "outer groups lost in {modes:?}");
     }
 }
 

@@ -89,6 +89,10 @@ fn kind_and_field_columns_are_not_stored_as_atoms() {
     ))
     .unwrap();
     let d = domains(&p).unwrap();
+    let atom_columns = |p: &Program, d: &Domains, rel: &str| {
+        let types: Vec<&str> = p.decls.get(rel).map(|cs| cs.iter().map(|(_, t)| t.as_str()).collect()).unwrap_or_default();
+        super::atom_columns(&types, d, rel)
+    };
     assert_eq!(atom_columns(&p, &d, "field"), [false, false, false]);
     assert_eq!(atom_columns(&p, &d, "node"), [false; 5]);
     assert_eq!(atom_columns(&p, &d, "text"), [false, true]);

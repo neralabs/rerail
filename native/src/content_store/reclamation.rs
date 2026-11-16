@@ -1,5 +1,7 @@
 //! Capacity limits, object pins, and collection of unreachable rows.
 
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use super::connection::{BusyRetries, retry_busy};
 use super::rows::{generation, intern_string};
 use super::snapshots::GIT_TREE_BATCH_ENTRIES;
@@ -47,7 +49,7 @@ impl ContentStore {
             .expect("content store mutex poisoned");
         let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let owner_id = intern_string(&transaction, STRING_OWNER, owner)?;
-        transaction.execute(
+        transaction.execute_cached(
             "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until) VALUES (?1,?2,?3,?4)\
              ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
             params![object_kind, object_id, owner_id, lease_until],
@@ -245,7 +247,7 @@ impl ContentStore {
         // were already collected.
         match retry_busy(&mut BusyRetries::default(), || {
             let connection = self.connection.lock().expect("content store mutex poisoned");
-            connection.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()))?;
+            connection.query_row_cached("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()))?;
             incremental_vacuum(&connection, 4096)
         }) {
             Ok(()) | Err(StoreError::Busy) => {}
