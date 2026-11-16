@@ -2405,6 +2405,26 @@ fn a_cross_product_after_a_relation_empty_when_planned_is_not_free() {
     assert_eq!(lead.as_deref(), Some("ann_str"), "`doc_role`, empty when planned, does not lead a cross product: {work} {:?}", order.iter().map(|s| r.body[s.at].to_string()).collect::<Vec<_>>());
 }
 
+/// Decision 0297: an order's price is the executor's count of its work (`profile::plan_work`): each step costs the
+/// rows it passes on, a join and a filter alike, and a filter passes on its kind's measured share. A scan of 1,000
+/// rows, a test against a constant (`!=`: 0.97) and a bound of an id's range (0.98) cost 1,000 + 970 + 950.6.
+#[test]
+fn a_filter_is_priced_at_the_rows_it_passes_on() {
+    let p = parse(".decl a(x: number)\n.decl r(x: number)\nr(x) :- a(x), x != 3, x < 6917529027641081856.\n.output r\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    model.stats.card.insert("a", 1_000.0);
+    model.ndv.insert(("a", 0), 1_000.0);
+    model.stats.fan.insert(("a", 0), 1.0);
+    let r = &p.rules[0];
+    let (order, work, rows) = model.plan_rule(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+    let shown: Vec<String> = order.iter().map(|s| r.body[s.at].to_string()).collect();
+    let want = 1_000.0 + 1_000.0 * 0.97 + 1_000.0 * 0.97 * 0.98;
+    assert!((work - want).abs() < 1e-6 * want, "work {work}, wanted {want}: {shown:?}");
+    assert!((rows - 1_000.0 * 0.97 * 0.98).abs() < 1e-6 * rows, "rows out {rows}");
+}
+
 #[test]
 fn live_statistics_invalidate_only_changed_distribution_slots() {
     let p=parse(".decl a(x:number,y:number)\n").unwrap();

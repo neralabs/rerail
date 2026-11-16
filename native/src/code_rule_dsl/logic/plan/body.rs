@@ -211,10 +211,32 @@ impl<'v> Body<'v> {
     pub fn demand_first(&self) -> Option<usize> {
         (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| !a.neg() && self.rel(a).contains("rr_demand_agg_")))
     }
-    /// Whether literal `i` assigns rather than filters: an equality or an aggregate (the search halves rows by every
-    /// other filter).
-    pub fn assigns(&self, i: usize) -> bool {
-        matches!(self.view(i), Lit::Cmp { op: CmpOp::Eq, .. } | Lit::Agg { .. })
+    /// The share of rows filter `i` passes on (decision 0297): measured by kind of filter, rows weighted, over the
+    /// 300-file bench's 317 rules (`profile`'s `native.tsv`, each step's rows in and out). An equality that binds a
+    /// variable no join of the body binds passes every row; one that tests passes as a test of its kind does.
+    pub fn filter_pass(&self, i: usize) -> f64 {
+        match self.view(i) {
+            Lit::Atom(a) if a.neg() => 0.95,
+            Lit::Cmp { l, op, r } => {
+                let joined = |t: TermRef<'_>| t.var().is_some_and(|v| (0..self.len()).any(|j| self.is_join(j) && self.vars(j).contains(v)));
+                let free = |t: TermRef<'_>| t.var().is_some() && !joined(t);
+                let call = matches!(l, TermRef::Call(..)) || matches!(r, TermRef::Call(..));
+                let constant = |t: TermRef<'_>| matches!(t, TermRef::Int(_) | TermRef::Str(_));
+                match op {
+                    CmpOp::Eq if free(l) || free(r) => 1.0,
+                    CmpOp::Eq if call => 0.4,
+                    CmpOp::Eq if constant(l) || constant(r) => 0.6,
+                    CmpOp::Eq => 0.9,
+                    CmpOp::Ne => 0.97,
+                    // A bound of an id's range (`$n < 6917529027641081856`, `$d < 1610612736`), as lowering writes
+                    // it: every row of the right kind of id passes.
+                    _ if [l, r].iter().any(|t| matches!(t, TermRef::Int(c) if c.unsigned_abs() >= 1 << 30)) => 0.98,
+                    _ if constant(l) || constant(r) => 0.7,
+                    _ => 1.0 / 3.0,
+                }
+            }
+            _ => 1.0,
+        }
     }
     /// Whether literals `i` and `j` read equal atoms (`front::Atom`'s equality: relation, flags and arguments).
     pub fn same_atom(&self, i: usize, j: usize) -> bool {

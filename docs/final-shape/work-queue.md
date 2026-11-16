@@ -431,14 +431,32 @@ pass.
   `rr_cover135` against `rr_cover121`, 2,383 lines against 2,385).
 - **Done when**: both pass, each traced to its cause (and a commit that made it red, where one did).
 
-### Q18. Two tests red as the hub merges in (dd93316ff)
+### Q18. Tests red as the hub merges in (dd93316ff)
 
 - **Found** (2026-11-16, at the hub merge 709a47b26): `cache_architecture::every_stored_table_is_a_relations_the_
   stores_own_or_a_cache_not_yet_moved` refuses `memo_entries` and `memo_packs` (0240's tables; schema.rs and the
   test are the hub's unchanged); `rr::tape_tests::a_policy_refused_its_kept_inputs_runs_again_over_its_store`
   fails with "@rr_node_text without the run's long-text nodes bound" (0268) on `public-api-triples.rr`, with the
   hub's `rr/lower.rs` and `simplify.rs` too (so not 0291).
-- **Done when**: both pass, each traced to its cause; the hub's own fix taken at the next merge where it has one.
+- **Found** (2026-11-16, while validating 0297; all five fail at 880f2a0de without 0297's change):
+  `plan::corpus::base_tests::base_relations_read_are_inputs` and `plan::corpus::phases::tests::a_phase_hands_on_
+  its_exports_and_its_reader_follows_each_edit` (the same "@rr_node_text without the run's long-text nodes bound");
+  `plan::corpus::tests::a_maintained_run_decodes_and_copies_no_tree` (a maintained run decodes one tree from its
+  version; the test names the decode's call site in `plan.rs`); `plan::corpus::tests::every_switch_lowering_reads_is_classified`
+  (`RERAIL_EXPORT_IMAGES`, `RERAIL_IMAGE_STORE`, `RERAIL_MODULE_IMAGES`, `RERAIL_SHIPPED_IMAGES`, the hub's 0246 and
+  0264 switches, in neither list); `plan::coverage::every_operation_runs_on_every_executor` (the executors' gaps by
+  pack differ from `gate/executor-coverage/packs.tsv`).
+- **Done when**: each passes, traced to its cause; the hub's own fix taken at the next merge where it has one.
+
+### Q27. `within` read from its container is priced far under its work
+
+- **Found** (2026-11-16, while measuring decision 0297): `pth_deferred($n, $s) :- demand_pth_deferred($n, $s),
+  look($n, _, $s), rr_nearest_ks4($n, $f), within($f, $s)` took `within($f, $s)` (with `$s` bound, `$f` not) before
+  the `nearest` step in one run of the 300-file bench: priced at 0.24 M rows, it ran 30 M (the other order, `nearest`
+  first, priced and ran 0.26 M in two other runs). A node's descendants are its subtree's size, which the price does
+  not read for `within`.
+- **Done when**: `within` read from its container is priced by the container's subtree size (the kinds' `size`
+  statistics, as `nearest`'s descend is), and `pth_deferred` keeps the cheap order run after run.
 
 ## Questions for the user
 
