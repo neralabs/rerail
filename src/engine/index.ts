@@ -32,6 +32,7 @@ export { approve, currentSubject, isApproved, packSubject, ruleSubject } from ".
 export { RULE_PACK_LIST } from "./catalog/pack-list.generated.js";
 export { ConversationRuleRegistry } from "./catalog/registry.js";
 export { repositoryIdentityLocation, resolveCloneId } from "./catalog/repository-identity.js";
+export { parseXml, xmlChildren, type XmlElement } from "./catalog/lint-config/formats/xml-format.js";
 export {
   type RuleCatalog,
   CALLER_CWD_HEADER,
@@ -41,6 +42,7 @@ export {
   type RepositoryKey,
   type RepositoryStartState,
   type RepositoryStatus,
+  type RuleSetting,
 } from "./catalog/repository-model.js";
 export { adoptRemote, checkoutStatus, listRepositories, lookupCheckout, recordCheckout } from "./catalog/repository-registry.js";
 export { exportRulesDump, importRulesDump, RULES_DUMP_FILE, type RulesDump } from "./catalog/rule-bootstrap.js";
@@ -56,6 +58,7 @@ export {
 export { getLibraryRule, listLibraryRules, upsertLibraryRule, writeLibraryRule } from "./catalog/rule-library.js";
 export { BLOCK_STEERS_NOTE, RULE_MODES, type RuleMode } from "./catalog/rule-mode.js";
 export {
+  HELD_OFF_SINCE,
   loadRulePacks,
   RULE_PACK_RULE_ID,
   type RulePack,
@@ -75,7 +78,8 @@ export {
   CheckoutCodeRuleCatalog,
   loadCodeRuleCapabilities,
 } from "./code-rule/code-rule-dsl-catalog.js";
-export { IGNORED_DIRECTORIES, languageFor, NativeCodeRuleEnforcer } from "./code-rule/code-rule-enforcer.js";
+export { languageFor, NativeCodeRuleEnforcer } from "./code-rule/code-rule-enforcer.js";
+export { IGNORED_DIRECTORIES } from "./code-rule/ignored-directories.js";
 export { languageNotSupportedOf } from "./code-rule/code-rule-language-support.js";
 export {
   CODE_RULE_AST_LANGUAGES,
@@ -169,3 +173,13 @@ export {
   type MergeAssistStatus,
 } from "./merge-assist/model.js";
 export { conflictNote } from "./merge-assist/conflict-note.js";
+export {
+  EXPERIMENTAL_ALL,
+  EXPERIMENTAL_FEATURES,
+  enabledExperiments,
+  experimentEnabled,
+  experimentOffMessage,
+  experimentVariable,
+  ExperimentOffError,
+  type ExperimentalFeature,
+} from "./experimental-features.js";

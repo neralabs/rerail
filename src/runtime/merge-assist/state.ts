@@ -2,7 +2,7 @@
  * Merge Assist's bookkeeping in `merge_assist_state`, one JSON value per key. A value that does not match what this
  * build expects (another version wrote it, or it was edited) reads as absent.
  */
-import { eq } from "drizzle-orm";
+import { eq, like } from "drizzle-orm";
 import type { z } from "zod";
 import type { RerailDatabase } from "../../engine/storage/database.js";
 import { mergeAssistState } from "../../engine/storage/schema.js";
@@ -43,6 +43,12 @@ export function writeState(db: StateQueries, key: string, value: unknown, now: n
   db.insert(mergeAssistState).values({ key, valueJson, updatedAt: now })
     .onConflictDoUpdate({ target: mergeAssistState.key, set: { valueJson, updatedAt: now } })
     .run();
+}
+
+/** Every key that starts with `prefix`. */
+export function stateKeys(db: StateQueries, prefix: string): string[] {
+  return db.select({ key: mergeAssistState.key }).from(mergeAssistState).where(like(mergeAssistState.key, `${prefix}%`)).all()
+    .map(row => row.key).filter(key => key.startsWith(prefix));
 }
 
 export function deleteState(db: StateQueries, key: string): void {

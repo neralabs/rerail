@@ -13,6 +13,9 @@ import { cursorRelayed, steerLine, steerText } from "./support/steer-text.js";
 import { startTestRepository } from "../test/support/started-repository.js";
 import { setUpTestRepository } from "../test/support/repository-rules.js";
 import { testEngineEndpoint } from "../test/support/platform/engine-endpoint.js";
+import { withExperiments } from "../test/support/environment/experiments.js";
+
+withExperiments("CONVERSATION_RULES");
 const originalRerailHome = process.env.RERAIL_HOME;
 let isolatedRerailHome: string;
 

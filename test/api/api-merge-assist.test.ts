@@ -13,11 +13,10 @@ import { CALLER_CWD_HEADER, mergeAssistStatusSchema, recordCheckout } from "../.
 import { MERGE_ASSIST_ERROR_CODES, MergeAssistError } from "../../src/runtime/index.js";
 import { git } from "../support/merge-assist/git.js";
 import { RecordingMergeAssistService } from "../support/merge-assist/status.js";
+import { withExperiments } from "../support/environment/experiments.js";
 
 // Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
-beforeEach(() => {
-  vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "1");
-});
+withExperiments("MERGE_ASSIST");
 
 const CONFLICT = "conflict:overlap:0123456789abcdef01234567:89abcdef";
 
@@ -93,6 +92,20 @@ describe("the Merge Assist operations", () => {
     return body.result.isError === true ? body.result.content[0]!.text : body.result.structuredContent!;
   }
 
+  /** The names of the MCP tools offered to a coding agent whose bridge started in `cwd`. */
+  async function tools(cwd: string): Promise<string[]> {
+    const response = await mcp(new Request("http://localhost:4737/mcp", {
+      method: "POST",
+      headers: {
+        host: "localhost:4737", "content-type": "application/json", accept: "application/json, text/event-stream",
+        [CALLER_CWD_HEADER]: encodeURIComponent(cwd),
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    }));
+    const body = await response.json() as { result: { tools: Array<{ name: string }> } };
+    return body.result.tools.map(tool => tool.name);
+  }
+
   it("hands a person's request to the service for the checkout its target names", async () => {
     for (const [method, path, body] of [
       ["GET", `/api/merge-assist?${new URLSearchParams({ repository: repositoryKey })}`],
@@ -119,7 +132,9 @@ describe("the Merge Assist operations", () => {
     ]);
   });
 
-  it("answers every operation 404 experimental-off while the experiment is off, over HTTP and MCP, before the service runs", async () => {
+  it("answers every operation 404 experimental-off over HTTP while the experiment is off, offers none as an MCP tool, and runs no service", async () => {
+    const mergeAssistTools = async (): Promise<string[]> => (await tools(checkout)).filter(name => name.startsWith("merge_assist_")).sort();
+    expect(await mergeAssistTools()).toEqual(["merge_assist_conflict_dismiss", "merge_assist_get", "merge_assist_scan", "merge_assist_settings_get", "merge_assist_settings_set"]);
     vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "");
     for (const [method, path, body] of [
       ["GET", `/api/merge-assist?${new URLSearchParams({ checkout })}`],
@@ -130,7 +145,8 @@ describe("the Merge Assist operations", () => {
     ] as const) {
       expect(await request(method, path, body), `${method} ${path}`).toMatchObject({ status: 404, body: { error: "experimental-off" } });
     }
-    expect(await call("merge_assist_get", {}, checkout)).toMatch(/^experimental-off: /u);
+    expect(await mergeAssistTools()).toEqual([]);
+    expect(await call("merge_assist_get", {}, checkout)).toMatch(/Tool merge_assist_get not found/u);
     expect(service.calls).toEqual([]);
   });
 
@@ -193,6 +209,14 @@ describe("the Merge Assist operations", () => {
       { method: "settings", checkout },
       { method: "status", checkout: worktree },
     ]);
+  });
+
+  it("tells a coding agent that scans another checkout, in its repository or another, that it scans only its own", async () => {
+    const refused = "agent-not-permitted: a coding agent scans only its own checkout and the checkouts inside it; a person scans any other on the dashboard's Merge Assist page or with rerail merge-assist scan";
+    expect(await call("merge_assist_scan", { checkout: worktree }, checkout)).toBe(refused);
+    expect(await call("merge_assist_scan", { checkout: other }, checkout)).toBe(refused);
+    expect(await call("merge_assist_scan", { repository: "remote:github.com/acme/lib" }, checkout)).toBe(refused);
+    expect(service.calls).toEqual([]);
   });
 
   it("lists every operation as an internal-testing MCP tool, the settings read and change on one OpenAPI path", async () => {

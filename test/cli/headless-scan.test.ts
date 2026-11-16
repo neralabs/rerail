@@ -14,6 +14,9 @@ import { runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 import { removeFolderSync } from "../support/platform/remove-folder.js";
+import { withExperiments } from "../support/environment/experiments.js";
+
+withExperiments("HEADLESS_SCAN", "REMOTE_SINK");
 
 const roots: string[] = [];
 afterEach(() => {

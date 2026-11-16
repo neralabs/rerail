@@ -21,6 +21,7 @@ import { registerHostCommands } from "../../harness/host-commands.js";
 import { SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, type SessionNoteRules } from "../../engine/code-rule/rerail-steer.js";
 import { dashboardOrigin } from "../../presentation/session-presentation.js";
 import { registerPiConversationRulesTool, type PiConversationRulesToolRuntime } from "./pi-tool.js";
+import { conversationRulesEnabled, semanticToolsEnabled } from "../../engine/experimental-features.js";
 
 interface PiMessage {
   role: string;
@@ -118,8 +119,9 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
     }
   };
 
-  if (runtime.registerTool !== false) {
-    registerPiConversationRulesTool(pi, runtime.conversationRulesTool);
+  // Internal testing: each family of tools and `/cosine-rules` only while its experiment is on in Pi's process.
+  if (runtime.registerTool !== false && conversationRulesEnabled()) registerPiConversationRulesTool(pi, runtime.conversationRulesTool);
+  if (runtime.registerTool !== false && semanticToolsEnabled()) {
     registerPiSemanticTools(pi, {
       mark: change => runtime.semantic().mark(change),
       select: spec => runtime.semantic().select(spec),
@@ -127,7 +129,7 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
       relate: (leftProjectionId, rightProjectionId, spec) => runtime.semantic().relate(leftProjectionId, rightProjectionId, spec),
     });
   }
-  if (runtime.registerCommand !== false) {
+  if (runtime.registerCommand !== false && conversationRulesEnabled()) {
     registerPiConversationRulesCommand(pi, {
       ...runtime.conversationRulesCommand,
       reload: async () => {
@@ -136,6 +138,8 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
         await initialize(context, true);
       },
     });
+  }
+  if (runtime.registerCommand !== false) {
     registerHostCommands(pi, {
       packageRoot: runtime.packageRoot,
       host: "pi",

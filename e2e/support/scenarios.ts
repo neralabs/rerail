@@ -407,8 +407,9 @@ function storedConflict(conflict: Omit<Conflict, "kind" | "status" | "dismissal"
 /**
  * The storefront checkout's conflicts: an overlap with PR #398 in the cart total (their summary and hunk carry
  * {@link HOSTILE_TEXT}), a quiet one in `package-lock.json` with a local branch that names another repository's pull
- * request, and one the person dismissed, whose title, other side and its author are {@link HOSTILE_TEXT} and whose URL
- * is a script.
+ * request, a quiet one in `CHANGELOG.md` with PR #402 whose URL is a script, and one the person dismissed, whose
+ * title, other side and its author are {@link HOSTILE_TEXT} and whose URL is a script too. The page draws a link only
+ * on an open card, so the open ones carry the links it must refuse.
  */
 function storefrontConflicts(now: number): StoredConflict[] {
   const mine = side({ label: "This branch", ref: "main", author: "tbelanger", summary: "Round the order total to cents." });
@@ -442,6 +443,19 @@ function storefrontConflicts(now: number): StoredConflict[] {
       detectedAt: isoAt(now - HOUR),
       summary: "jbarnes/bump-react (jbarnes) is changing package-lock.json",
     }, "package-lock.json"),
+    storedConflict({
+      id: "conflict:CHANGELOG.md#3-5:pr402", shortId: "7b19d4", quiet: true, question: "CHANGELOG.md#3-5",
+      title: "CHANGELOG.md",
+      mine: { ...mine, summary: "edits CHANGELOG.md", location: "CHANGELOG.md:4" },
+      theirs: side({
+        label: "PR #402", ref: "refs/pull/402/head", author: "Ana", summary: "Note the rounding fix", url: SCRIPT_URL,
+        tip: { at: isoAt(now - 3 * HOUR), pushed: true }, location: "CHANGELOG.md:4",
+        hunk: "@@ -3,0 +3 @@\n+- Order totals round to cents.\n",
+      }),
+      evidence: ["Both change CHANGELOG.md lines 3–5."],
+      detectedAt: isoAt(now - 2 * HOUR),
+      summary: "PR #402 (Ana) is changing CHANGELOG.md",
+    }, "CHANGELOG.md"),
     storedConflict({
       id: "conflict:src/checkout/payment.ts#1-3:pr391", shortId: "9e31f0", quiet: false, question: "src/checkout/payment.ts#1-3",
       title: HOSTILE_TEXT,
