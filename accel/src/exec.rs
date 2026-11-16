@@ -300,6 +300,42 @@ pub fn help_until_as<T>(site: &'static str, mut poll: impl FnMut() -> Option<T>)
     }
 }
 
+/// A sequencer's bell: the thread that begins and files work in order (a run's main thread over its chunks) waits on
+/// it without running the pool's jobs, and whatever may let it go on rings it (a job's result put in its slot, a new
+/// piece of work handed on). A sequencer that ran a job while it waited could not begin or file anything until that
+/// job ended: on PostHog a waiting main thread ran whole chunks (up to 250 ms each), and 305 of its waits ended up to
+/// 12.8 s late in all while the pool ran dry (notes/t40). The pool's threads take the work it begins themselves.
+#[derive(Default)]
+pub struct Bell {
+    rung: std::sync::Mutex<u64>,
+    cv: std::sync::Condvar,
+}
+
+impl Bell {
+    pub fn ring(&self) {
+        *self.rung.lock().unwrap_or_else(|p| p.into_inner()) += 1;
+        self.cv.notify_all();
+    }
+
+    /// Waits until `poll` gives a value, recorded under `site` ([`waits`]), running no job: it polls each time the
+    /// bell rings, and at least every millisecond (a ring is never needed for the wait to end).
+    pub fn wait_as<T>(&self, site: &'static str, mut poll: impl FnMut() -> Option<T>) -> T {
+        let mut wait = Waiting::new(site);
+        loop {
+            let seen = *self.rung.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(t) = poll() {
+                wait.end(None);
+                return t;
+            }
+            wait.polled();
+            let rung = self.rung.lock().unwrap_or_else(|p| p.into_inner());
+            if *rung == seen {
+                drop(self.cv.wait_timeout(rung, std::time::Duration::from_millis(1)));
+            }
+        }
+    }
+}
+
 /// The cores' slowdown under the machine's load: the 1-minute load average over the cores, at least 1, read at most
 /// every 100 ms. On a shared machine the cores' threads get less than a core each, so their wall time stretches; a
 /// device's does not.

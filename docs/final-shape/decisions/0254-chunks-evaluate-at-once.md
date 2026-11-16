@@ -67,6 +67,25 @@ interleaving. It fails with path keys (a reads b's row) and passes with scope ke
 A chunk's growth in memory is measured as before, but it is divided by the nodes of every chunk evaluating at once.
 The next chunk's size is chosen from that.
 
+### 5. The main thread waits on a bell, running no job
+
+§1 had the main thread run the pool's jobs while it waited for the front chunk or the builder's next one. Those
+jobs were mostly whole chunks' evaluations, up to 250 ms each (1.4 s once). While it ran one it could neither file
+the chunk at the front, though it was ready, nor begin another, so the pool ran out of chunks. On all of PostHog
+(the M3 Max, K = 15) its waits ran 10.9 s and 6.1 s of jobs, and 289–305 of them ended late, by up to 12–14 s in
+all (notes/t40).
+
+The main thread is now the sequencer alone. It begins and files the chunks in order. It waits on a bell
+(`rerail_accel::exec::Bell`), which a chunk's job rings when its result is in its slot, and the builder rings after
+each advance. It polls at least every millisecond, so a missed ring only delays it. The pool's threads take the
+chunks it begins from the pool's queues themselves. With one thread, the main thread still runs the jobs: no other
+thread would (`Builder::main_wait`).
+
+Measured with 0279 §7's lock on the relation names, alternated: wall 40.7 and 39.5 s against 36.9 and 35.3 s; user
+207 and 208 s against 200 and 200 s; the same 29,747 violations. The main thread still waits 10.5–11.5 s for the
+front chunk and 4.3–4.9 s for the builder, running nothing. So the sequencer is not what bounds the phase now, and
+Begin and Finish need not move to the pool's threads (the filing state is the run's frame: its cells and locals).
+
 ## Measured
 
 `posthog/` (5,413 files, `len-_py.rr`, cold store, profiling build, an M5 Max loaded by other work, load average 27–39: the walls are rough, the CPU and instructions less so):

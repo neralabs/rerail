@@ -4690,6 +4690,9 @@ fn run_observed(
         target: &'a std::sync::atomic::AtomicUsize,
         keep_docs: bool,
         doing: &'a crate::code_rule_dsl::logic::profile::Activity,
+        /// Rung when the builder may have handed on a chunk, and when a chunk's evaluation ends: the main thread, which
+        /// begins and files the chunks in order, waits on it running no job (`Bell`).
+        bell: rerail_accel::exec::Bell,
     }
     impl<'a, B, P, R> Builder<'a, B, P, R>
     where
@@ -4714,16 +4717,29 @@ fn run_observed(
                     c.parse.0 += now.0 - from.0;
                     c.parse.1 += now.1 - from.1;
                 }
+                drop(c);
+                self.bell.ring();
+            }
+        }
+
+        /// The main thread's wait for `poll`, under `site`: on the bell, running no job, while the pool has other
+        /// threads to take the jobs; with one thread, running them itself (none else would).
+        fn main_wait<T>(&self, site: &'static str, poll: impl FnMut() -> Option<T>) -> T {
+            if crate::threads::max() >= 2 {
+                self.bell.wait_as(site, poll)
+            } else {
+                rerail_accel::exec::help_until_as(site, poll)
             }
         }
 
         /// The main thread's next message: a chunk, a batch's end (`None`) or an error; `Err` once the builder has
-        /// ended. Meanwhile the main thread runs the pool's jobs: the documents' and chunks' among them.
+        /// ended. Meanwhile the main thread waits on the bell ([`Builder::main_wait`]): the documents' and chunks' jobs
+        /// are the pool's other threads'.
         fn next<'s>(&'s self, jobs: &crate::threads::Jobs<'s, '_>) -> std::result::Result<Result<Option<Chunk>>, ()>
         where
             'a: 's,
         {
-            rerail_accel::exec::help_until_as("the main thread: its next chunk", || {
+            self.main_wait("the main thread: its next chunk", || {
                 self.advance(jobs);
                 let mut c = self.cut.lock();
                 if let Some(r) = c.handed.pop_front() {
@@ -5020,6 +5036,7 @@ fn run_observed(
         target: &worker_target,
         keep_docs: slice.is_some(),
         doing: &worker_doing,
+        bell: Default::default(),
     };
     let builder = &builder;
     // A chunk's evaluation, from what the main thread hands it (`Task`) to what it hands back (`Evaluated`): its
@@ -5966,7 +5983,7 @@ fn run_observed(
         let file_front = |flight: &mut std::collections::VecDeque<(Ctx, Slot)>, process: &mut dyn FnMut(Step) -> Result<Option<(Task, Ctx)>>| -> Result<()> {
             let (ctx, slot) = flight.pop_front().expect("a chunk in flight");
             main_doing.set("wait for a chunk evaluated");
-            let ev = rerail_accel::exec::help_until_as("the main thread: a chunk evaluated", || slot.lock().take())?;
+            let ev = builder.main_wait("the main thread: a chunk evaluated", || slot.lock().take())?;
             process(Step::Finish(ctx, ev)).map(drop)
         };
         let got = (|| loop {
@@ -5998,7 +6015,7 @@ fn run_observed(
             }
             let slot: Slot = Arc::default();
             let into = Arc::clone(&slot);
-            let (evaluate, open_worker, worker_conns) = (&evaluate, &open_worker, &worker_conns);
+            let (evaluate, open_worker, worker_conns, bell) = (&evaluate, &open_worker, &worker_conns, &builder.bell);
             jobs.spawn("a chunk evaluated", move |_| {
                 let taken = worker_conns.lock().pop();
                 // A panic is the chunk's error: the main thread waits for its slot.
@@ -6012,6 +6029,7 @@ fn run_observed(
                 }))
                 .unwrap_or_else(|_| Err(Error::Plan("a chunk's evaluation panicked".to_owned())));
                 *into.lock() = Some(got);
+                bell.ring();
             });
             flight.push_back((ctx, slot));
             while flight.len() >= k {
