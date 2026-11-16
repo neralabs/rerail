@@ -779,6 +779,14 @@ impl Placed {
             None => self.v.rules().map(|r| r.id()).collect(),
         }
     }
+    /// The program's rules, in its order: its version's (whose ids are ranges where it is a view, not `0..len`), or
+    /// those `ids` names.
+    pub fn rules(&self) -> Box<dyn Iterator<Item = RuleRef<'_>> + '_> {
+        match &self.ids {
+            None => self.v.rules(),
+            Some(ids) => Box::new(ids.iter().map(|&id| self.v.rule(id).expect("a rule of its version"))),
+        }
+    }
     /// The program's rule `k`.
     pub fn rule(&self, k: usize) -> RuleRef<'_> {
         self.v.rule(self.id(k)).expect("a rule of its version")
