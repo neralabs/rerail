@@ -621,6 +621,54 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     Ok((program, files))
 }
 
+/// `read_text(src)?.header()`, rederived until a key hits (decision 0275): the header kept under the text's bytes,
+/// taken while every library file its includes read still reads as recorded (by `stat`, then sha). A batch reads
+/// each policy's header before its run (`tools::policy_groups`): 44 policies parsed, checked and lowered again each
+/// run, over the same libraries.
+pub fn text_header(src: &str) -> Result<Program, Error> {
+    use super::plan::corpus::combined;
+    let (key, store, found) = kept_header(src);
+    if let Some((program, files)) = found {
+        crate::code_rule_dsl::prof::count("rr.header_stored", 1);
+        files.iter().for_each(noted);
+        combined::read_before_the_run(key);
+        return Ok(program);
+    }
+    let text = read_text(src)?;
+    let read: Vec<LibraryFile> = match &text.0 {
+        Read::Plain(_) => Vec::new(),
+        Read::Modular { files, .. } => files.iter().map(|(path, digest, _)| LibraryFile { path: path.clone(), sha256: Some(*digest) }).collect(),
+    };
+    let program = text.header()?;
+    if let Some(store) = store {
+        let kept = program.clone();
+        store.write_back_syms(crate::content_store::write_back::Syms::None, "a text's header", 0, vec![(combined::queued(&key), None)], Box::new(move |store| combined::remember(store, &key, &read, &kept).map(drop)));
+        combined::read_before_the_run(key);
+    }
+    Ok(program)
+}
+
+/// The entry of text `src`'s header: its key, the store it is kept in, and the header with its read record when the
+/// store keeps one that still holds.
+#[allow(clippy::type_complexity)]
+fn kept_header(src: &str) -> ([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(Program, Vec<LibraryFile>)>) {
+    use super::plan::corpus::{combined, phases};
+    let key = combined::text_header_key(src);
+    let store = (cfg!(feature = "tape-cache") && !super::plan::corpus::phase0::active()).then(phases::reading_store).flatten();
+    let found = store.as_ref().and_then(|store| {
+        let _held = store.hold_collection().ok()?;
+        store.settle(&combined::queued(&key));
+        combined::lookup_read(store, &key, &Default::default()).ok().flatten()
+    });
+    (key, store, found)
+}
+
+/// The header the store keeps for text `src`, when it still holds (`kept_header`): for the tests of decision 0275.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn kept_header_found(src: &str) -> Option<Program> {
+    kept_header(src).2.map(|(program, _)| program)
+}
+
 /// The program and read record the store keeps for the rule file at `path` (canonical), when they still hold
 /// (`kept_program`): for the tests of decision 0275.
 #[cfg(any(test, feature = "test-hooks"))]

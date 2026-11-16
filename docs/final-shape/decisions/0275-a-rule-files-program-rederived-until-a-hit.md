@@ -72,6 +72,11 @@ to read a few of its parts (57 ms). Both are functions of what was just checked,
 A warm run of the 44 data-layer policies on `dl1` (`run-policies`, one pack): 4.1 G instructions and 0.31 to 0.35 s
 user became 2.7 G and 0.14 to 0.15 s. Its 48 diagnostics are those of the cold run. `RERAIL_WARM=list` passes.
 
+A batch reads each policy's header before its run (`tools::policy_groups`): its text parsed, its clauses checked,
+its includes resolved and its libraries' declarations lowered, 44 times over the same libraries (183 ms of the warm
+run's main thread). The header is kept the same way (`rr::text_header`): under the text's bytes, with the library
+files its includes read as the entry's read record. The warm pack run went from 2.7 G to 1.9 G instructions.
+
 The cutoff's report counted a workspace document twice: once by its path from the root (the run's `doc`) and once
 by its absolute path (phase 1's `load`). It counts each document once now, as the run that made the record did.
 
@@ -89,3 +94,5 @@ against 4.1 G on the same pack, and it reads the cost statistics (73 ms) because
   a miss, kept under its texts' digest, and read back as hidden.
 - `a_phase_program_appearing_where_it_was_looked_for_first_differs` (engine): a phase program found among the
   engine's own is recorded where it was looked for first, with no digest; a file written there is read instead.
+- `a_texts_header_is_found_under_its_bytes` (engine): a text's header is kept by its first read, found again as
+  read, and another text's is its own.

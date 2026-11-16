@@ -3593,6 +3593,20 @@ fn has_over_a_guest_holds_with_two_programs() {
     assert!(rows.contains("has_ref") && rows.contains("calls"), "both programs' findings: {rows}");
 }
 
+/// Decision 0275: a text's header is kept under its bytes with the library files its includes read, and found again:
+/// the header found is the header read, and another text's is its own.
+#[test]
+fn a_texts_header_is_found_under_its_bytes() {
+    let text = "#include \"core.rr\"\n.policy \"test:header-0275\" revision 1\n.language python\n.decl out(x: symbol)\n.output out\n";
+    let header = text_header(text).unwrap();
+    let kept = kept_header_found(text).expect("kept by the first read");
+    assert_eq!(format!("{kept:?}"), format!("{header:?}"), "the header kept is the header read");
+    assert!(kept.settings.iter().any(|(k, v)| k == "policy" && v.contains("test:header-0275")), "{:?}", kept.settings);
+    assert_eq!(format!("{:?}", text_header(text).unwrap()), format!("{header:?}"), "read again from the entry");
+    let other = text.replace("header-0275", "header-0275-b");
+    assert!(kept_header_found(&other).is_none(), "another text: its own entry");
+}
+
 /// Decision 0275: a rule file's program is kept under its path and sha with the files it read, and found again while
 /// each still reads as recorded: by its `stat`, and by its sha where the stat moved. An edit to an included file reads
 /// the program again; its bytes put back, the stat moved but the sha holds, and the entry is found again.

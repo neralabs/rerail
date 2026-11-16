@@ -76,6 +76,15 @@ pub(in crate::code_rule_dsl) fn rule_file_key(path: &std::path::Path, sha256: &[
     hash.finalize().into()
 }
 
+/// The key of a program text's header (`rr::text_header`, decision 0275): the text's bytes. What its includes read
+/// is the entry's read record, checked as a rule file's is.
+pub(in crate::code_rule_dsl) fn text_header_key(src: &str) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"rerail/text-header\0");
+    hash.update(src.as_bytes());
+    hash.finalize().into()
+}
+
 /// `lookup`, with the read record: every library file the program read or probed, in reading order. Each is checked
 /// as `LibraryFile::unchanged` checks it, by its `stat` while that holds and by its bytes' sha256 when it moved: the
 /// first key that settles it.
