@@ -189,7 +189,7 @@ describe("rerail packs recommend", () => {
     const text = await packsOutput(["recommend", "--repo", root], directoryPackStore(repositoryPath("packs"), ["python"], temporaryHome()));
 
     expect(text).toMatch(new RegExp([
-      `No rule pack fits ${root.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}\\.`,
+      `No rule pack matches what ${root.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")} is built with\\.`,
       "  Found           \\.py 3 · \\.md 1",
       "                  from Git’s list of files, which leaves out what Git ignores",
       "  Closest         Python excludes the 3 files it looks for: tests/ \\(2\\),",
