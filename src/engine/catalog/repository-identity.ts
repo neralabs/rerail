@@ -15,7 +15,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { physicalPath } from "./checkout-control.js";
+import { physicalPath, storedPath } from "./checkout-control.js";
+import { linkedWorktreeFromFiles, placementInputs, type PlacementInputs } from "./checkouts/git-placement.js";
 import { openNoFollowSync } from "../no-follow.js";
 import { GitUnavailableError, gitText, runGit } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
@@ -34,14 +35,64 @@ function nonGitLocation(requested: string): RepositoryIdentityLocation {
   return { git: false, workspaceRoot: requested, identityPath: join(requested, ".rerail", "repository-id"), main: true };
 }
 
+const IDENTITY_FILE = "rerail-repository-id";
+
+/**
+ * Git's answers for the folders it took for their own checkout's top level, each kept while what Git read to give it
+ * is unchanged ({@link PlacementInputs.stamp}): a daemon asks after every registered worktree each time a repository
+ * starts, in every session's runtime, and once a checkout is recorded every runtime asks again.
+ */
+const heldTopLevels = new Map<string, { readonly stamp: string; readonly location: RepositoryIdentityLocation }>();
+
+/** The common Git folders of the checkouts Git placed in this process, as real paths: Git read each one's format and took its folders. */
+const gitPlacedCommons = new Set<string>();
+
 /**
  * Where `workspace`'s clone id lives: `rerail-repository-id` in Git's common metadata directory, shared by every
- * linked worktree, or `.rerail/repository-id` outside Git (or when Git is not installed).
+ * linked worktree, or `.rerail/repository-id` outside Git (or when Git is not installed). A folder that holds a `.git`
+ * entry is answered as Git last answered while what Git reads there is unchanged, and a linked worktree of a repository
+ * Git placed a checkout of is answered from its files ({@link linkedWorktreeFromFiles}); every other folder, and every
+ * case those files do not decide, is asked of Git.
  */
 export function repositoryIdentityLocation(workspace: string): RepositoryIdentityLocation {
   const requested = resolve(workspace);
+  const inputs = placementInputs(requested);
+  if (inputs === undefined) {
+    heldTopLevels.delete(requested);
+    return locatedByGit(requested).location;
+  }
+  const held = heldTopLevels.get(requested);
+  if (held?.stamp === inputs.stamp) return held.location;
+  const fromFiles = linkedLocation(inputs);
+  const located = fromFiles === undefined ? locatedByGit(requested) : { location: fromFiles, byGit: false };
+  holdTopLevel(requested, inputs.stamp, located);
+  return located.location;
+}
+
+function locatedByGit(requested: string): { location: RepositoryIdentityLocation; byGit: boolean } {
   const result = locateInGit(requested);
-  return result === undefined || result.status !== 0 ? nonGitLocation(requested) : gitLocation(requested, result.stdout);
+  const location = result === undefined || result.status !== 0 ? nonGitLocation(requested) : gitLocation(requested, result.stdout);
+  return { location, byGit: true };
+}
+
+function linkedLocation(inputs: PlacementInputs): RepositoryIdentityLocation | undefined {
+  const placed = linkedWorktreeFromFiles(inputs, common => gitPlacedCommons.has(common));
+  if (placed === undefined) return undefined;
+  return { git: true, workspaceRoot: placed.top, identityPath: join(placed.commonDirectory, IDENTITY_FILE), main: false };
+}
+
+/**
+ * Keeps `located` for `folder` when it names the folder as its own top level: what makes that so is read at the folder
+ * and the Git folders it names, all in its stamp. Any other answer depends on the folders above too, and is not kept.
+ */
+function holdTopLevel(folder: string, stamp: string, located: { location: RepositoryIdentityLocation; byGit: boolean }): void {
+  const { location } = located;
+  if (!location.git || physicalPath(location.workspaceRoot) !== physicalPath(folder)) {
+    heldTopLevels.delete(folder);
+    return;
+  }
+  heldTopLevels.set(folder, { stamp, location });
+  if (located.byGit) gitPlacedCommons.add(storedPath(dirname(location.identityPath)));
 }
 
 /** Git's top level, common directory and Git directory for `requested`; undefined when Git is not installed. */
@@ -59,11 +110,17 @@ function gitLocation(requested: string, stdout: string): RepositoryIdentityLocat
   if (top === undefined || commonDirectory === undefined || gitDirectory === undefined) {
     throw new Error(`could not resolve Git common directory for ${requested}`);
   }
-  return { git: true, workspaceRoot: top, identityPath: join(commonDirectory, "rerail-repository-id"), main: commonDirectory === gitDirectory };
+  return { git: true, workspaceRoot: top, identityPath: join(commonDirectory, IDENTITY_FILE), main: commonDirectory === gitDirectory };
 }
 
-/** A recorded checkout's Git registry, as `git worktree list` last gave it, and what the registry then held. */
+/**
+ * Each common directory's Git registry, as `git worktree list` last gave it, and what the registry then held. Every
+ * checkout of a repository reads the same registry, so a start that lists it from each session's checkout lists it once.
+ */
 const worktreeRegistries = new Map<string, WorktreeRegistry & { readonly contents: string }>();
+
+/** The common directory each recorded checkout reads, physical, as Git first gave it. */
+const registryFolders = new Map<string, string>();
 
 export interface WorktreeRegistry {
   /** The common directory Git reads for the checkout that was asked, physical. */
@@ -103,24 +160,35 @@ function registryContents(commonDirectory: string): string {
  */
 export function worktreeRegistry(checkout: string): WorktreeRegistry | undefined {
   const commonDirectory = registryCommonDirectory(checkout);
+  if (commonDirectory === undefined) return undefined;
   // Read before Git runs: a worktree added meanwhile changes it, and Git is asked again next time.
-  const contents = commonDirectory === undefined ? undefined : registryContents(commonDirectory);
-  const known = worktreeRegistries.get(checkout);
+  const contents = registryContents(commonDirectory);
+  const known = worktreeRegistries.get(commonDirectory);
   if (known !== undefined && known.contents === contents) return known;
-  const registry = contents === undefined ? undefined : listWorktrees(checkout, commonDirectory!, contents);
-  // A checkout that is gone, or where Git cannot answer, keeps nothing: what is kept is bounded by what answers.
-  if (registry === undefined) worktreeRegistries.delete(checkout);
-  else worktreeRegistries.set(checkout, registry);
+  const registry = listWorktrees(checkout, commonDirectory, contents);
+  // A checkout where Git cannot answer keeps nothing: what is kept is bounded by what answers.
+  if (registry === undefined) {
+    worktreeRegistries.delete(commonDirectory);
+    registryFolders.delete(checkout);
+  } else {
+    worktreeRegistries.set(commonDirectory, registry);
+  }
   return registry;
 }
 
 /** The physical common directory `checkout` reads, as Git first gave it; undefined when the folder is gone or not in Git. */
 function registryCommonDirectory(checkout: string): string | undefined {
-  if (!existsSync(checkout)) return undefined;
-  const known = worktreeRegistries.get(checkout);
-  if (known !== undefined) return known.commonDirectory;
+  if (!existsSync(checkout)) {
+    registryFolders.delete(checkout);
+    return undefined;
+  }
+  const known = registryFolders.get(checkout);
+  if (known !== undefined) return known;
   const location = repositoryIdentityLocation(checkout);
-  return location.git ? physicalPath(dirname(location.identityPath)) : undefined;
+  if (!location.git) return undefined;
+  const commonDirectory = physicalPath(dirname(location.identityPath));
+  registryFolders.set(checkout, commonDirectory);
+  return commonDirectory;
 }
 
 function listWorktrees(checkout: string, commonDirectory: string, contents: string): WorktreeRegistry & { readonly contents: string } | undefined {
@@ -212,6 +280,18 @@ function readOrCreateIdentity(identityPath: string, candidate: string): string {
 }
 
 /**
+ * The clone id of a checkout in Git: the identity file's, else a legacy `rerail.repository-id` config value when it is
+ * well formed, else a new one. Git's config is read only while no identity file is there, since the file wins once it
+ * is: so a repository's worktrees, which share one, start no Git process to be recorded.
+ */
+function gitCloneId(location: RepositoryIdentityLocation): string {
+  const existing = readIdentityFile(location.identityPath);
+  if (existing !== undefined) return existing;
+  const legacyId = gitText(location.workspaceRoot, ["config", "--local", "--get", "rerail.repository-id"]) ?? "";
+  return readOrCreateIdentity(location.identityPath, CLONE_ID.test(legacyId) ? legacyId : `git:${randomUUID()}`);
+}
+
+/**
  * `workspace`'s clone id, created on first use and stored atomically in Git's common metadata directory. Linked
  * worktrees share it; clones and forks receive a new one; a legacy `rerail.repository-id` Git config value is adopted
  * when it is a well-formed id. Folders outside Git use the same file contract under `.rerail`, which must not be a
@@ -219,10 +299,7 @@ function readOrCreateIdentity(identityPath: string, candidate: string): string {
  */
 export function resolveCloneId(workspace: string): { cloneId: string; location: RepositoryIdentityLocation } {
   const location = repositoryIdentityLocation(workspace);
-  if (location.git) {
-    const legacyId = gitText(location.workspaceRoot, ["config", "--local", "--get", "rerail.repository-id"]) ?? "";
-    return { cloneId: readOrCreateIdentity(location.identityPath, CLONE_ID.test(legacyId) ? legacyId : `git:${randomUUID()}`), location };
-  }
+  if (location.git) return { cloneId: gitCloneId(location), location };
   const directory = dirname(location.identityPath);
   // Created first, so two processes recording the same folder at once both succeed; whichever made it, it must be a
   // real directory, never a symlink (lstat).
