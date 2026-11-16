@@ -237,12 +237,20 @@ function asDraft(value: unknown): unknown {
 
 /**
  * Internal testing: `rules test` and `rules add` take a conversation rule, or a rule on Block, only while its experiment
- * is on in this process. Tools that check a pack's own rules parse drafts without this.
+ * is on in this process. A rule of yours already on Block keeps it, so a draft that edits one may stay on Block. Tools
+ * that check a pack's own rules parse drafts without this.
  */
 function refuseExperimentsOff(draft: RuleDraft): RuleDraft {
   if (draft.kind === "conversation" && !conversationRulesEnabled()) throw new RuleDraftError(experimentOffMessage("CONVERSATION_RULES"));
-  if (draft.rule.mode === "block" && !blockModeEnabled()) throw new RuleDraftError(`${experimentOffMessage("BLOCK_MODE")} ${BLOCK_STEERS_NOTE} Save it on steer.`);
+  if (draft.rule.mode === "block" && !blockModeEnabled() && storedLibraryMode(draft.rule.id) !== "block") {
+    throw new RuleDraftError(`${experimentOffMessage("BLOCK_MODE")} ${BLOCK_STEERS_NOTE} Save it on steer.`);
+  }
   return draft;
+}
+
+/** The mode of the library rule stored as `id`, read without recording anything; undefined where none is. */
+function storedLibraryMode(id: string): RuleMode | undefined {
+  return readRecorded(database => getLibraryRule(database, id)?.document.rule.mode, () => undefined);
 }
 
 /** The draft in `file`; with `bareRule`, a rule document on its own is read as a draft with no cases (`asDraft`). */

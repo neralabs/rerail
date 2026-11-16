@@ -113,7 +113,7 @@ Every rule, conversation or code, needs a `mode`:
 
 - **`log`** records a match for review; no guidance.
 - **`steer`** sends the rule's guidance to the agent.
-- **`block`** ([internal testing](../README.md#internal-testing)) steers until block enforcement lands. Setting it is experimental: a write that sets it is refused unless `RERAIL_EXPERIMENTAL_BLOCK_MODE=1`; a rule already on Block keeps it.
+- **`block`** ([internal testing](../README.md#internal-testing)) steers until block enforcement lands. Setting it is experimental: a write that sets it is refused unless `RERAIL_EXPERIMENTAL_BLOCK_MODE=1`; a rule already on Block keeps it, and an edit may write it back on Block.
 
 <details>
 <summary>How Block reports that it steers</summary>
@@ -324,7 +324,7 @@ OMP and Pi run Rerail inside their extension host; Claude Code, Codex and Cursor
 
 - **OMP**: `dist/hosts/omp/default-extension.js`, in the package's `omp` manifest.
 - **Pi**: `dist/hosts/pi/pi-extension.js`, in the `pi` manifest; loadable with `pi -e`.
-- **Persistent event stream**: `dist/harness/event-stream.js` or `rerail events` ([internal testing](../README.md#internal-testing); experimental: refused unless `RERAIL_EXPERIMENTAL_EVENT_STREAM=1`).
+- **Persistent event stream**: `dist/harness/event-stream.js` or `rerail events` ([internal testing](../README.md#internal-testing); experimental: `rerail events` refuses unless `RERAIL_EXPERIMENTAL_EVENT_STREAM=1`, while `dist/harness/event-stream.js` is not gated).
 - **Claude Code and Codex**: `createClaudeEventHandler(...)` and `createCodexEventHandler(...)` for harness-owned hook registration.
 - **Cursor**: `.cursor-plugin/plugin.json`, backed by `dist/hosts/cursor/cursor-hook.js`.
 

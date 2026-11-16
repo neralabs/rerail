@@ -204,7 +204,7 @@ function usage(): string {
     internalTesting(`Not part of the ${packageManifest(packageRoot).version} release:`),
     "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]   experimental: the daemon needs RERAIL_EXPERIMENTAL_REPOSITORY_SCAN=1",
     "  rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--rules-ref <ref>] [--pack <id>]... [--path <p>]... [--paths-from <file>] [--json] [--fail-on-violations] [--no-send]   experimental: needs RERAIL_EXPERIMENTAL_HEADLESS_SCAN=1",
-    "  rerail remote add <url> [--name <name>] [--label <machine label>] (--token-stdin | --token-file <file>) [--no-content]   experimental: add, push, exclude and include need RERAIL_EXPERIMENTAL_REMOTE_SINK=1",
+    "  rerail remote add <url> [--name <name>] [--label <machine label>] (--token-stdin | --token-file <file>) [--no-content]   experimental: add and push need RERAIL_EXPERIMENTAL_REMOTE_SINK=1",
     "  rerail remote list|status [--json]",
     "  rerail remote remove <name|url>",
     "  rerail remote push [--json]",

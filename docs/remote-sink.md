@@ -3,7 +3,9 @@
 > [!WARNING]
 > In [internal testing](internal-testing.md): in the code but not ready for public use, and may change or go without
 > notice. Experimental: unless `RERAIL_EXPERIMENTAL_REMOTE_SINK=1` (or `RERAIL_EXPERIMENTAL=1`) is set, the daemon
-> sends nothing, a headless scan queues no report, and `rerail remote` refuses but for `list`, `status` and `remove`.
+> sends nothing, a headless scan queues no report, and `rerail remote add` and `push` refuse. The other `rerail remote`
+> commands still work, so a remote added earlier can be seen and removed, and a repository
+> [excluded](#excluding-a-repository). Once the sink is on again, the daemon sends what was recorded while it was off.
 
 A remote is an HTTPS endpoint that receives this machine's sessions, events, audits, violations, the rules they ran,
 and [headless scans](headless-scan.md). It lets a team see Rerail across machines.

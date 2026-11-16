@@ -807,6 +807,24 @@ describe("rerail rules add", () => {
     expect(getLibraryRuleMode("acme:no-console-block-while-off")).toBeUndefined();
   });
 
+  it("takes an edit of a rule of yours already on Block while Block mode is off, keeping it on Block", async () => {
+    const repo = await repository();
+    setUpEmpty(repo);
+    const rule = { ...noConsolePolicy(), id: "acme:no-console-kept-on-block", mode: "block" };
+    expect((await run("add", [writeDraft(repo, { kind: "code", rule }), "--repo", repo])).exit).toBe(0);
+    vi.stubEnv("RERAIL_EXPERIMENTAL_BLOCK_MODE", "0");
+    const edited = writeDraft(repo, { kind: "code", rule: { ...rule, description: "No console calls, edited." } });
+
+    const tested = await run("test", [edited, "--repo", repo]);
+    expect(`${tested.stdout}${tested.stderr}`).not.toContain("RERAIL_EXPERIMENTAL_BLOCK_MODE");
+    expect(tested.exit).toBe(0);
+    const { exit, stdout } = await run("add", [edited, "--repo", repo]);
+
+    expect(exit).toBe(0);
+    expect(stdout).toContain(BLOCK_STEERS_NOTE);
+    expect(getLibraryRuleMode("acme:no-console-kept-on-block")).toBe("block");
+  });
+
   it("sets a repository that is not set up up with only the new rule", async () => {
     const repo = await repository();
     const file = writeDraft(repo, { kind: "code", rule: noConsolePolicy() });

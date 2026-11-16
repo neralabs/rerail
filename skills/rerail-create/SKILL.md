@@ -157,7 +157,8 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
    - **Architecture rules.** Put the history result above the card in one line: `Checked against history: caught the first
      draft of #123; quiet on its merge and on 15 recent merged PRs.`
    - **Conversation rules** (command or similarity). Put one line above the card: `Experimental: this kind of rule is not
-     part of Rerail's latest release, and runs only while RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1 is set for the daemon.`
+     part of Rerail's latest release, and runs only while RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1 is set for the daemon, or
+     for Pi itself when Pi runs Rerail in process.`
    - **"Change something".** Offer Steer and Log, each with what it means; All of the repo or this worktree only (its rule
      runs nowhere else, not in the main checkout nor other worktrees); and any other row the person names.
    - **"Show me the rule".** Print the rule JSON, then ask again.

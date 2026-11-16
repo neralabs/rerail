@@ -119,23 +119,33 @@ describe("rule settings: suppressions and config", () => {
     expect(upserted).toMatchObject({ status: 200, body: { rule: { rule: { mode: "block" } }, note: BLOCK_STEERS_NOTE } });
   });
 
-  it("refuses every write that puts a rule on Block while Block mode is off, and keeps a rule already on Block", async () => {
+  it("refuses every write that puts a rule on Block while Block mode is off, and keeps a rule already on Block through edits", async () => {
+    const rule = (id: string, message: string) => ({
+      format: "rerail.policy/v1", id, revision: 1, mode: "block", description: "No eval.",
+      scope: { include: ["**/*.ts"], exclude: [] },
+      clauses: [{ id: "no-eval", forbid: { regex: { pattern: String.raw`\beval\(`, source: "file.content" } }, violation: { anchor: "witness.span", code: "NO_EVAL", message } }],
+    });
     expect((await setting({ mode: "block" })).status).toBe(200);
+    expect((await put("/api/library-rules/acme:on-block", { kind: "code", rule: rule("acme:on-block", "No eval.") })).status).toBe(200);
     vi.stubEnv("RERAIL_EXPERIMENTAL_BLOCK_MODE", "0");
     const refused = { status: 400, body: { error: "experimental-off", message: expect.stringContaining("RERAIL_EXPERIMENTAL_BLOCK_MODE=1") } };
 
-    expect(await setting({ mode: "block" })).toMatchObject(refused);
+    expect(await setting({ mode: "block" }, { kind: "pack", id: "typescript" })).toMatchObject(refused);
     expect(await put("/api/repository/attachments", {
       repository: repositoryKey, settings: [{ targetKind: "pack", targetId: "typescript", mode: "block" }],
     })).toMatchObject(refused);
-    const rule = {
-      format: "rerail.policy/v1", id: "acme:no-eval", revision: 1, mode: "block", description: "No eval.",
-      scope: { include: ["**/*.ts"], exclude: [] },
-      clauses: [{ id: "no-eval", forbid: { regex: { pattern: String.raw`\beval\(`, source: "file.content" } }, violation: { anchor: "witness.span", code: "NO_EVAL", message: "No eval." } }],
-    };
-    expect(await put("/api/library-rules/acme:no-eval", { kind: "code", rule })).toMatchObject(refused);
+    expect(await put("/api/library-rules/acme:no-eval", { kind: "code", rule: rule("acme:no-eval", "No eval.") })).toMatchObject(refused);
+
+    // Writing back what is stored on Block, as an edit of that setting or rule does, keeps it there.
+    expect(await setting({ mode: "block", suppressions: "ignore" })).toMatchObject({ status: 200, body: { settings: [{ mode: "block", suppressions: "ignore" }] } });
+    expect(await put("/api/repository/attachments", {
+      repository: repositoryKey, settings: [{ targetKind: "rule", targetId: RULE, mode: "block" }],
+    })).toMatchObject({ status: 200, body: { note: BLOCK_STEERS_NOTE } });
+    expect(await put("/api/library-rules/acme:on-block", { kind: "code", rule: rule("acme:on-block", "Never eval.") }))
+      .toMatchObject({ status: 200, body: { rule: { rule: { mode: "block" } }, note: BLOCK_STEERS_NOTE } });
     expect(await ruleView()).toMatchObject({ mode: "block" });
     expect((await setting({ mode: "steer" })).status).toBe(200);
+    expect(await setting({ mode: "block" })).toMatchObject(refused);
   });
 
   it("refuses a config the rule's document does not declare, or a value its option does not allow", async () => {

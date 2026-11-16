@@ -19,6 +19,8 @@ describe("rerail's command dispatch", () => {
   // not depend on the package being run from a checkout.
   const checkout = realpathSync(mkdtempSync(join(tmpdir(), "rerail-dispatch-checkout-")));
   const folder = realpathSync(mkdtempSync(join(tmpdir(), "rerail-dispatch-folder-")));
+  // A checkout with a Git remote, which names its repository for `remote exclude` and `include`.
+  const named = realpathSync(mkdtempSync(join(tmpdir(), "rerail-dispatch-named-")));
   let usage: string;
 
   const rerail = (args: readonly string[], input = ""): SpawnSyncReturns<string> =>
@@ -31,6 +33,8 @@ describe("rerail's command dispatch", () => {
 
   beforeAll(() => {
     expect(spawnSync("git", ["init", "--quiet", checkout]).status).toBe(0);
+    expect(spawnSync("git", ["init", "--quiet", named]).status).toBe(0);
+    expect(spawnSync("git", ["-C", named, "remote", "add", "origin", "https://github.com/acme/app.git"]).status).toBe(0);
     const help = rerail(["help"]);
     expect(help.status).toBe(0);
     usage = help.stdout;
@@ -38,7 +42,7 @@ describe("rerail's command dispatch", () => {
   }, 60_000);
 
   afterAll(() => {
-    for (const directory of [home, checkout, folder]) removeFolderSync(directory);
+    for (const directory of [home, checkout, folder, named]) removeFolderSync(directory);
   });
 
   /** Refused with `message` and nothing else, or with the whole usage after it. */
@@ -62,9 +66,13 @@ describe("rerail's command dispatch", () => {
     refuses(args, experimentOffMessage(feature), false);
   });
 
-  it("lists remotes while the remote sink is off, so one added earlier can be seen and removed", () => {
+  it.each([
+    [["remote", "list"]],
+    [["remote", "exclude", "--repo", named]],
+    [["remote", "include", "--repo", named]],
+  ])("%j works while the remote sink is off, so a remote added earlier can be seen and removed, and a repository opted out", args => {
     vi.stubEnv("RERAIL_EXPERIMENTAL_REMOTE_SINK", "0");
-    const run = rerail(["remote", "list"]);
+    const run = rerail(args);
     expect(run.stderr).toBe("");
     expect(run.status).toBe(0);
   });

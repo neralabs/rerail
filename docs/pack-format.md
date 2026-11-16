@@ -201,7 +201,8 @@ as its document, with no `format`. It steers on the coding agent's session rathe
 `description`, so check 8 leaves it out; say what it does in the pack's README.
 
 Internal testing: conversation rules in a pack, as every conversation rule; Rerail 0.1.0 releases code rules only. The
-daemon checks none unless `RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1` is set for it. See
+daemon checks none unless `RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1` is set for it, nor does Pi for a Pi session running
+Rerail in process unless it is set for Pi. See
 [Internal testing](internal-testing.md).
 
 </details>
