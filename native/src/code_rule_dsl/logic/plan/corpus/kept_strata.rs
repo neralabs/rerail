@@ -52,6 +52,11 @@ pub(in crate::code_rule_dsl) fn part_space(root: &Path, part: &str) -> [u8; 32] 
     h.finalize().into()
 }
 
+/// `root`'s cross part's space (`part_space(root, "cross")`).
+pub(in crate::code_rule_dsl) fn cross_space(root: &Path) -> [u8; 32] {
+    part_space(root, "cross")
+}
+
 /// Metadata and payload may be admitted separately. Accept only the exact metadata snapshot used by the cut.
 pub(super) fn admission_matches<'a, K: Eq + std::hash::Hash>(
     keys: &[K],

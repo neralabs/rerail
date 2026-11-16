@@ -4339,7 +4339,23 @@ fn run_observed(
         // every program a kept run ran, which its part reads by key at its start (Q19).
         let preload_at = std::time::Instant::now();
         let plans: Vec<[u8; 32]> = if memoised { vec![memo::plan_digest(&memo_program)] } else { Vec::new() };
-        let (frames, bytes) = store.preload_frames_live(&plans).map_err(|e| Error::Plan(e.to_string()))?;
+        // Of the cross part's space, the frames of the identities its programs can read (the cross program and the
+        // maintained one the kept route made): not every kept run's, each build's and each edit's (Q19).
+        // `RERAIL_CROSS_BY_IDENTITY=off`: the space read whole, to compare.
+        let by_identity = std::env::var("RERAIL_CROSS_BY_IDENTITY").map_or(true, |v| v != "off");
+        let cross_rels = match early_maintained.as_ref().filter(|_| by_identity) {
+            Some(maintained) => {
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "the cross part's frames, by identity".into());
+                let (_, binds) = retain::keys(&prepared_key, maintained.0.digest()?);
+                Some(retain::frame_rels(&[&cross.placed()?, &maintained.0.placed()?], &binds)?)
+            }
+            None => None,
+        };
+        // The root's cross space is read by the run whose own it is (a run of no phase), not with whichever run of the
+        // process came first (phase 0's, on a rule edit): the store's first read leaves every recorded root's out.
+        let main_cross = kept_strata::part_space(root, "cross");
+        let cross_space = crate::content_store::FramesCrossSpace { space: main_cross, own: kept_strata::space(root) == main_cross, rels: cross_rels.as_ref(), cross_of: kept_strata::cross_space };
+        let (frames, bytes) = store.preload_frames_live(&plans, Some(cross_space)).map_err(|e| Error::Plan(e.to_string()))?;
         let preload_secs = preload_at.elapsed().as_secs_f64();
         // The run's memo entries its waves may look up (a load's files): each path's newest of its plan's space, but
         // the files looked up already (decision 0104: read before the first wave).

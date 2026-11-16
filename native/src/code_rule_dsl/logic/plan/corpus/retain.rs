@@ -1314,6 +1314,24 @@ fn input_ident(rel: &str, prog: &Placed, key: &[u8; 32]) -> [u8; 32] {
     h.finalize().into()
 }
 
+/// The frames a run's cross part can read in its space (Q19, `ContentStore::preload_frames_live`): each derived
+/// relation's identity in each of `progs` (`plan::identities`, by their components, as `Retained::from_frames`,
+/// `kept_strata::load` and the planner's `Kept` name them), and each declared relation's as the part's input under
+/// `binds` (`input_ident`, as `kept_inputs` and `from_frames` name them). Not an earlier build's or an earlier edit's
+/// identities, which a kept run's frames are under.
+pub(in crate::code_rule_dsl) fn frame_rels(progs: &[&Placed], binds: &[u8; 32]) -> Result<std::collections::HashSet<FrameRel>> {
+    let mut out = std::collections::HashSet::new();
+    for p in progs {
+        let sccs = p.components()?;
+        let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed((*p).clone());
+        out.extend(leaves.identities_by_heads(&sccs)?.into_iter().map(|(name, ident)| FrameRel { name, ident }));
+        for (rel, _) in p.fields()?.decls_by_name() {
+            out.insert(FrameRel { name: rel.to_owned(), ident: input_ident(rel, p, binds) });
+        }
+    }
+    Ok(out)
+}
+
 /// A relation's column types, as frames store them.
 pub(super) fn types_of(prog: &Placed, domains: &lower::Domains, rel: &str) -> Vec<u8> {
     let types = prog.fields().ok().and_then(|f| f.columns(rel)).map(|cs| cs.into_iter().map(|(_, t)| t).collect::<Vec<_>>()).unwrap_or_default();

@@ -481,6 +481,28 @@ pass.
   before the input frames' keying, abb1bd17d), and a run reads those of its own program only.
 - **Done when**: a new process reads, before its first wave, the frames its run can read (its program's
   identities), not every kept run's; an edit's `wait` on ep2 does not grow with the runs the store keeps.
+- **Built** (2026-11-15):
+  - **Step 1, 22d0ef5d7.** A run preloads only its own plan's memo outputs. A later run in the process loads its
+    plan's outputs once, when it starts. The hub's 0240 §4 supersedes this: memo frames are no longer written or
+    read, so step 1 goes at the next hub merge.
+  - **Step 2.** The cross part's space is read by identity. Before the first wave, a run of no phase asks for the
+    identities its programs can read (`retain::frame_rels`: the cross program's and the maintained one's heads, and
+    every declared input's `input_ident`), in one scan of the space filtered by that set.
+    - The store's first read leaves out every recorded root's cross space (`corpus_roots`, through
+      `CrossSpace::cross_of`), whichever run comes first. On a rule edit that is phase 0, which runs from the CLI
+      before the corpus run starts. A run-scoped registry came too late for it.
+    - `RERAIL_CROSS_BY_IDENTITY=off` reads the space whole, for comparison. Under `RERAIL_FRAMES_TRACE`, any read
+      of a left-out frame is named.
+    - Test: `a_run_preloads_its_own_plans_memo_once_a_process` (a phase's run first, then the run of no phase).
+  - **ep2, one B101 body edit after a warm run** (same build and sequence):
+
+    | Read of the cross part | Instructions | Peak | `wait` | Findings |
+    |---|---|---|---|---|
+    | Whole (`off`) | 86.3 G | 3797 MB | 34.7 G | 1255 |
+    | By identity | 55.3 G | 1381 MB | 17.0 G | 1255 |
+
+    - 11,161 identities were asked for and 40,146 frames read; 23,941 identities of the space were left out.
+    - No left-out frame was read.
 
 ## Questions for the user
 
