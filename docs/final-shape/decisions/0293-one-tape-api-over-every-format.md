@@ -202,8 +202,11 @@ This record is steps 2, 3 and 4, and the API they need.
    Checked (2026-11-16): the device reads every node of a batch (one document of several side-list parts, with
    gaps and lengths past a byte) as its document does, in 15, 16 and 16z, admitted from a store
    (`the_device_reads_every_format_as_the_document_does`: code, parent, siblings, children, subtree, span); the
-   matcher's device gates (micro walks, spills, sweeps, the combined graph) and the rest of §8's set pass in the
-   three formats, but for the same pack-data and format 15 tests; with `metal-tests`, the device's roots equal the
+   combined graph and the rest of §8's set pass in the three formats, but for the same pack-data and format 15
+   tests; of the slow tier (which the default filter leaves out, and an earlier note here wrongly counted as run),
+   the micro walks equal the interpreter's labels, and with every walk spilling the device's roots equal the CPU's
+   on all 491 clauses (41 waves over 24 of the pack's files, from 236fc98d2~1), in the three formats (the spill
+   test's floor of 1,000 roots needs the packs' full test data: those files give 621); with `metal-tests`, the device's roots equal the
    CPU's on every clause the resident interpreter takes alone, in the three formats, but for one clause past its
    work limit, as at 6afcddb0a before this (work queue Q19); the CLI's device run (`logic --metal`, the Vue rules
    over the mixed files) gives the same findings in the three formats, cold and warm.
