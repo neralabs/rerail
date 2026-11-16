@@ -675,18 +675,21 @@ jobs:
         run: npm test -- --shard=${{ matrix.shard }}/2
 
   # The unit suite on Windows, the one job that runs it there: paths, shells, process starts and file locks behave
-  # differently on Windows, and every other test job runs on Linux or macOS. Two shards, as on Linux, so CI result waits
-  # about 9 minutes for Windows rather than 14. Gated as the unit job is, and reads the same test data: the
-  # pack-test-data action saves and restores its cache entry cross-OS, so each shard restores the entry the test-data
-  # job saved on Linux, verified against the locks as on Linux. The build job's engine is Linux's, so the shards use a
-  # Windows one: restored from the cache keyed by the build job's inputs on this OS, and on a miss built by each shard
-  # (about 9 minutes, side by side) and saved straight away, so a failing test run still keeps it; the shard that saves
-  # second finds the key taken and saves nothing. No cargo cache: release-cache.yml's for this target is keyed by files
-  # checked out with CRLF line ends, which this checkout's are not. The package is built here too, which takes seconds.
-  # On the same miss the second shard also runs the engine's Windows-only Rust tests, which the Linux rust job compiles
-  # out, so they run whenever the engine's inputs change.
+  # differently on Windows, and every other test job runs on Linux or macOS. Five shards where Linux has two: the suite
+  # runs more than twice as slowly here, and vitest splits the files by a hash of their path, not by how long they
+  # take, so with two shards one held nearly two thirds of the test time and CI result waited about 10 minutes for it.
+  # With five, the slowest shard's tests take about 4 minutes, so Windows ends with the Linux unit job. The count is
+  # the matrix's alone: the name and `--shard` read it as `strategy.job-total`. Gated as the unit job is, and reads the
+  # same test data: the pack-test-data action saves and restores its cache entry cross-OS, so each shard restores the
+  # entry the test-data job saved on Linux, verified against the locks as on Linux. The build job's engine is Linux's,
+  # so the shards use a Windows one: restored from the cache keyed by the build job's inputs on this OS, and on a miss
+  # built by each shard (12 to 15 minutes, side by side) and saved straight away, so a failing test run still keeps
+  # it; a shard that saves after another finds the key taken and saves nothing. No cargo cache: release-cache.yml's
+  # for this target is keyed by files checked out with CRLF line ends, which this checkout's are not. The package is
+  # built here too, which takes seconds. On the same miss shard 2 also runs the engine's Windows-only Rust tests, which
+  # the Linux rust job compiles out, so they run whenever the engine's inputs change.
   unit-windows:
-    name: Unit tests (Windows, ${{ matrix.shard }}/2)
+    name: Unit tests (Windows, ${{ matrix.shard }}/${{ strategy.job-total }})
     needs: test-data
     if: >-
       ${{
@@ -694,15 +697,16 @@ jobs:
         (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
       }}
     runs-on: windows-2025
-    # A shard takes about 9 minutes when the cache holds the engine and 18 when it builds it; its tests take 5 to 6. On
-    # a miss the second shard also makes a debug build of the engine for its Rust tests, which the limit leaves room for.
+    # With the engine in the cache the slowest shard takes about 7 minutes, its tests about 4. On a miss each shard
+    # builds the engine first, and shard 2 then makes a debug build for its Rust tests (about 4 minutes more), which
+    # the limit leaves room for.
     timeout-minutes: 45
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4, 5]
     defaults:
       run:
         shell: bash
@@ -787,7 +791,7 @@ jobs:
           RERAIL_PACK_FIXTURES_IN_CONFORMANCE: "1"
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
-        run: npm test -- --shard=${{ matrix.shard }}/2
+        run: npm test -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
 
       # The integration job runs on Linux only. This file replays a Claude Code session through the built hook as
       # Claude Code runs it on Windows (dist/harness/hook-launcher.js), against a daemon of this build, including a
