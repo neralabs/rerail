@@ -4496,6 +4496,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-swift-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-tape-format"
 version = "0.1.0"
 dependencies = [

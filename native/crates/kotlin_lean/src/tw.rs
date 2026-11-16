@@ -476,6 +476,18 @@ impl Tw {
         }
     }
 
+    /// The nodes read since mark `m` (the comments passed) given `field`, where they have none: a
+    /// hidden rule's children all take the field given it (`a?` as a navigation's target).
+    pub fn field_since(&mut self, m: Mark, field: u8) {
+        let mut i = self.frames[m.0 as usize].at as usize;
+        while i < self.w.len() {
+            if self.w.key(i) >> 16 & 1 == 0 {
+                self.set_field(i as u32, field);
+            }
+            i += self.w.size(i) as usize;
+        }
+    }
+
     /// Node `id`'s kind.
     #[inline]
     pub fn kind_at(&self, id: u32) -> K {
