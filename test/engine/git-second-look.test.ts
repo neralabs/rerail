@@ -88,14 +88,19 @@ describe("the second look for Git", () => {
     expect(await lookAgain(git)).toBe(gitIn(outside[1]!));
   });
 
-  it("still skips a relative entry and a node_modules entry in the repository once its .git is gone", async () => {
-    // These two skips read no repository, so they hold at any look; this keeps them holding at the second.
-    await withGit(join(repository, "node_modules", ".bin"));
-    vi.stubEnv("PATH", ["tools", join(repository, "node_modules", ".bin"), ...outside].join(delimiter));
-    process.chdir(repository);
+  it("skips a relative entry and a node_modules entry at a later look, outside the repository too", async () => {
+    // Both entries lie outside the repository the first look found, so only their own skips keep them out, and they
+    // hold a Git only from the second look on.
+    const plain = join(root, "plain");
+    const nodeModules = join(root, "elsewhere", "node_modules", ".bin");
+    await mkdir(plain);
+    vi.stubEnv("PATH", ["tools", nodeModules, ...outside].join(delimiter));
+    process.chdir(plain);
     const git = await freshGit();
+    git.searchGitFrom(repository);
     expect(git.gitExecutable()).toBe(gitIn(outside[0]!));
-    await rename(join(repository, ".git"), join(root, "moved-aside"));
+    await withGit(join(plain, "tools"));
+    await withGit(nodeModules);
     expect(await lookAgain(git)).toBe(gitIn(outside[1]!));
   });
 
