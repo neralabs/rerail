@@ -625,6 +625,17 @@ pass.
   bytes. Red with that branch's own binary at its head (23:01), green at 19:32. Theirs to settle, their area.
 - **Done when**: the test states the set the token loop reads codes for, and passes.
 
+### Q26. The program image moves onto blocks (Typing-support)
+
+- **Handed off** (2026-11-16, decision 0295 §6.1): Typing-support ports the program image (0173, 0241, 0244, 0276)
+  onto 0266's block layer, keeping 0173's `Version` interface above it. A stored image becomes a packed block in a
+  deferrable slab (0295 §1–2), read in place; the copy into a `Vec<u128>` goes. Their dl1 trace validation judges
+  whether one base plus one delta expresses 0244's views at their measured cost; if not, views stay a second
+  versioned form. Kills by range and the one fold rule are decided with this port (0295 §6.3–4).
+- **Waits for**: the deferrable tier (0295 path step 2), built on final-rerail-shape-phased-facts.
+- **Done when**: Typing-support's version tests pass on blocks, and dl1's trace validation costs no more
+  instructions than 0173's.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
