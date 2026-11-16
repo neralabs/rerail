@@ -395,6 +395,14 @@ step 3 replaces what is under the writer.
      a split maintained from an earlier one can word one differently from a whole split ("reads cross-file r"
      against "reads r with no location"): which relations have a cause is compared, not the words. Test:
      `the_split_of_a_version_is_maintained_across_an_edit`.
+   - Done (b), first slice: the image is made after the merges, and the passes after them run on the manager
+     (`corpus::preparation`): the inputs the rules read (`InputsRead`) and the measurement aid's rule order
+     (`RuleOrder`), the pipeline's output folded into a base for the store. The domains are read from the version
+     (`lower::domains_of`, `domains`' fixpoint on handles, in the tree's order), and the split from it
+     (`programs_of`); a debug build checks both against the tree's, its inputs pruned the same way. The manager's
+     "a derivation that changed nothing is its input" compared digests, a sum blind to the rules' order, so a
+     reordering derivation was taken for its input: it now compares the rules in order too. Tests:
+     `the_domains_of_a_version_are_the_trees`, `the_passes_after_the_image_prune_the_inputs_and_reorder_the_rules`.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.
 7. **The per-clause half of `rr::lower`** as `RulePass`es over the tape's clauses (0276 step 5), with `Domains`; the
