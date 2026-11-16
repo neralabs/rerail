@@ -1885,6 +1885,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         }
       } finally {
         this.#sessions.delete(sessionId);
+        // The runtime outlives its sessions, and their walks of the other worktrees looked up every folder of each.
+        if (this.#sessions.size === 0) this.#owners.forgetFolders();
         this.#sessionStore.closeSession(sessionId, endedAt);
       }
     }

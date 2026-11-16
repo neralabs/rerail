@@ -1,0 +1,1 @@
+An audit that walks folders itself now reads each folder's files in path order, as Git sorts them: a repository audit outside a Git checkout or where its repository storage did not attach, and a touched-files audit. Before, it took each folder's files last-listed first, so when more than 20 files failed, which 20 it listed could differ between machines.
