@@ -298,9 +298,13 @@ impl ContentStore {
         })
     }
 
-    /// `put_stat_blob`, queued behind the run (decision 0102).
+    /// `put_stat_blob`, behind the run (decision 0102), in its record (decision 0306): the blob in its byte area.
     pub fn queue_stat_blob(&self, plan: [u8; 32], blob: Vec<u8>) {
-        self.write_back("the kept statistics", blob.len(), vec![(stat_blob_key(&plan), None)], Box::new(move |store| store.put_stat_blob(plan, &blob)));
+        fn apply(cx: &super::record::Apply<'_>, body: super::record::codec::Body) -> StoreResult<()> {
+            let plan: [u8; 32] = super::record::codec::from_body("the kept statistics", body)?;
+            cx.store.put_stat_blob(plan, cx.bytes)
+        }
+        self.record("the kept statistics", vec![stat_blob_key(&plan)], &plan, Some(blob), apply);
     }
 
     /// `queue_stat_blob` of statistics naming symbols: `map` gives the blob with the store's ids, in the writer's

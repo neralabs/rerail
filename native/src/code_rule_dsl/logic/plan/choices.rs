@@ -165,10 +165,9 @@ impl Drop for Durable {
             let notes = notes.unwrap_or_default();
             let _span = super::super::profile::span(|| "kept plans, queued for the store".into());
             let rows: Vec<Vec<Value>> = plans.iter().map(|(k, p)| super::StoredPlan::row(*k, p).into_iter().map(Value::Int).collect()).collect();
-            let bytes = rows.iter().chain(&notes.0).chain(&notes.1).chain(&notes.2).map(|r| 9 * r.len() + 8).sum();
             super::super::profile::decision("kept plans (decision 0116)", || format!("{} plans and {} join notes queued for the store", rows.len(), notes.0.len()));
             // Plans and notes hold keys and numbers, no atom ids (decision 0170).
-            store.write_back_syms(crate::content_store::write_back::Syms::None, "the kept plans", bytes, vec![(crate::content_store::write_back::Key::of(&[b"facts_memo/plans", &prepared]), None)], Box::new(move |store| write_plans(store, &prepared, &rows, &notes).map(drop)));
+            store.record("the kept plans", vec![crate::content_store::write_back::Key::of(&[b"facts_memo/plans", &prepared])], &prepared, Some(plans_entry(&rows, &notes)), apply_plans);
         }
     }
 }
@@ -326,7 +325,8 @@ fn read_plans(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<super::S
         .collect())
 }
 
-fn write_plans(store: &ContentStore, prepared: &[u8; 32], rows: &[Vec<Value>], notes: &NoteRows) -> StoreResult<bool> {
+/// The kept plans' and join notes' facts entry, made on the run's side (decision 0306).
+fn plans_entry(rows: &[Vec<Value>], notes: &NoteRows) -> Vec<u8> {
     let mut facts = Facts::new();
     facts.insert(PLANS_REL.to_owned(), rows.iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
     if !notes.0.is_empty() {
@@ -334,16 +334,21 @@ fn write_plans(store: &ContentStore, prepared: &[u8; 32], rows: &[Vec<Value>], n
         facts.insert(EXACT_REL.to_owned(), notes.1.iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
         facts.insert(RAISED_REL.to_owned(), notes.2.iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
     }
-    let text = source_text(prepared);
+    program_facts::encode(&facts)
+}
+
+/// Writes the kept plans' entry (`plans_entry`, the item's bytes) under prepared program `prepared`'s source.
+fn apply_plans(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
+    let prepared: [u8; 32] = crate::content_store::record::codec::from_body("the kept plans", body)?;
+    let store = cx.store;
+    let text = source_text(&prepared);
     let hash = HashKey::sha256(text.as_bytes());
     let source = match store.held_source_by_hash(hash)? {
         Some(id) => id,
         None => store.put_source_hashed(text.as_bytes(), hash, &[])?,
     };
     let set = plan();
-    let entry = program_facts::encode(&facts);
-    store.put_facts_memo(FactsMemoKey { source, fact_schema: PLANS_SCHEMA, path: PLANS_PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: true, entry }], &[])?;
-    Ok(true)
+    store.put_facts_memo(FactsMemoKey { source, fact_schema: PLANS_SCHEMA, path: PLANS_PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: true, entry: cx.bytes.to_vec() }], &[]).map(drop)
 }
 
 /// The digest of the rewritten program a choice's entry names, if it names one.

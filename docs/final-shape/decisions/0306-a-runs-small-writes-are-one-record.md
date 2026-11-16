@@ -2,7 +2,7 @@
 
 Status: decided (2026-11-16), by the user ("can we use a really simple encoding for small records like JSON and just
 jam them in a single string at the end of the data flow?"; "go ahead. We may want to change JSON for something
-else"). Building. Builds 0259's guard (no queued write is a closure) for the small writes; replaces the typed-rows
+else"). Building: steps 1 and 2 done. Builds 0259's guard (no queued write is a closure) for the small writes; replaces the typed-rows
 proposal for them (P1–P6, below). Keeps 0295's segments for the bulk writes, and 0104 (no SQL inside the waves).
 
 ## Intro
@@ -86,7 +86,12 @@ a one-file edit (`scratchpad/wal/run.sh`, not kept):
 1. The record, its codec and the registry; `settle`, `queued` and `written` see its keys. Test: a record's items
    are applied in order at the run's end, and a `settle` of an item's key applies it first.
 2. The small kinds, one at a time, each with its targeted tests: the files' stats, the pins and holds, the kept
-   statistics, plans and choices, the programs, the manifest (with 5) last.
+   statistics, plans and choices, the programs, the manifest (with 5) last. **Done (2026-11-16):** every small kind
+   is an item; the programs and facts entries are encoded on the run's side (a cold 10-file run's writer CPU 1.0 s
+   → 0.35 s), and a one-file edit queues 11 jobs where it queued 33, with the same rows. Two kinds go with step 3
+   instead: the rule images and their leases (droppable when the queue is full, and the image store's, not the
+   run's: bulk), and the kept statistics that name symbols (mapped to the store's ids in the writer's transaction,
+   decision 0170, as frames are).
 3. The bulk and store-internal jobs as data variants; `Job` (the closure) removed.
 4. The run-start holds: a running run holds the shared collection lease, which collectors skip, so the holds may be
    redundant. A test that collection never takes a run's plan or source while the run lives, without them, decides
