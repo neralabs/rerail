@@ -113,6 +113,21 @@ pub(in crate::code_rule_dsl) fn identities(
     phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>,
     base: &[u8; 32],
 ) -> Result<BTreeMap<String, [u8; 32]>, String> {
+    Ok(strata(local, rels)?.identities(options, phased, base))
+}
+
+/// What a relation's memo identity is made of in a file-local program (`identities`): its strata's identity (a
+/// digest of its stratum's rules and of what they read down to the inputs), and the relations whose rows its rules
+/// may be read with as values: the inputs and option inputs they reach. A function of the program alone, so a
+/// prepared program keeps it (decision 0246 §4): a run adds the options, the earlier phases' rows and the projection.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Strata {
+    /// Each relation's strata identity, and the relations it reaches that may hold values (`identities`' leaves).
+    pub by_rel: BTreeMap<String, ([u8; 32], Vec<String>)>,
+}
+
+/// `rels`' `Strata` in the file-local program `local`.
+pub(in crate::code_rule_dsl) fn strata(local: &crate::code_rule_dsl::logic::plan::body::Placed, rels: &BTreeSet<String>) -> Result<Strata, String> {
     // Read from the program's version (t36 item 7): its components, dependencies first, and each one's rules by head.
     let sccs = local.components().map_err(|e| e.to_string())?;
     let ids = crate::code_rule_dsl::logic::plan::Leaves::of_placed(local.clone()).identities_by_heads(&sccs).map_err(|e| e.to_string())?;
@@ -125,12 +140,14 @@ pub(in crate::code_rule_dsl) fn identities(
             reads[i].extend(rule.reads().map(|a| v.rel_name(a.rel())));
         }
     }
-    // The value inputs each stratum reaches, in the strata's order.
+    // The leaves each stratum reaches, in the strata's order: an option input, or a relation its program does not
+    // derive (an input; an earlier phase's export is one), where `identities` asks which hold values; through every
+    // other derived relation.
     let mut reach: HashMap<&str, BTreeSet<&str>> = HashMap::new();
     for (scc, reads) in sccs.iter().zip(&reads) {
         let mut leaves: BTreeSet<&str> = BTreeSet::new();
         for &rel in reads {
-            if crate::code_rule_dsl::typing::file_local::option_input(rel) || phased.contains_key(rel) {
+            if crate::code_rule_dsl::typing::file_local::option_input(rel) || !at.contains_key(rel) {
                 leaves.insert(rel);
             } else if let Some(more) = reach.get(rel) {
                 leaves.extend(more.iter().copied());
@@ -140,23 +157,37 @@ pub(in crate::code_rule_dsl) fn identities(
             reach.insert(rel.as_str(), leaves.clone());
         }
     }
-    let mut out = BTreeMap::new();
-    for rel in rels {
-        let Some(id) = ids.get(rel) else { continue };
-        let leaves = reach.get(rel.as_str()).cloned().unwrap_or_default();
-        let mut hash = Sha256::new();
-        hash.update(b"rerail.corpus-local-identity/v2\0");
-        hash.update(id);
-        hash.update(base);
-        let options_read = leaves.iter().any(|r| crate::code_rule_dsl::typing::file_local::option_input(r));
-        if options_read {
-            hash.update(options.to_string().as_bytes());
+    let by_rel = rels
+        .iter()
+        .filter_map(|rel| {
+            let id = *ids.get(rel)?;
+            Some((rel.clone(), (id, reach.get(rel.as_str()).map(|l| l.iter().map(|r| (*r).to_owned()).collect()).unwrap_or_default())))
+        })
+        .collect();
+    Ok(Strata { by_rel })
+}
+
+impl Strata {
+    /// Each relation's identity (decision 0225 §2): its strata's, with the inputs whose rows are not in the program's
+    /// text digested with their values where its rules reach them: the run's options (`option_input`) and the earlier
+    /// phases' exports (`phased`), and the projection the base rows are made under (`base`,
+    /// `Projection::rows_digest`). So an export's identity changes when a rule it is derived from does, or what the
+    /// documents' rows are made of, and only then.
+    pub(in crate::code_rule_dsl) fn identities(&self, options: &serde_json::Value, phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>, base: &[u8; 32]) -> BTreeMap<String, [u8; 32]> {
+        let mut out = BTreeMap::new();
+        for (rel, (id, reached)) in &self.by_rel {
+            let mut hash = Sha256::new();
+            hash.update(b"rerail.corpus-local-identity/v2\0");
+            hash.update(id);
+            hash.update(base);
+            if reached.iter().any(|r| crate::code_rule_dsl::typing::file_local::option_input(r)) {
+                hash.update(options.to_string().as_bytes());
+            }
+            let by_rows: Vec<&str> = reached.iter().map(String::as_str).filter(|r| phased.contains_key(*r)).collect();
+            out.insert(rel.clone(), with_rows(hash.finalize().into(), by_rows.iter().map(|r| (*r, &phased[*r]))));
         }
-        let by_rows: Vec<&str> = leaves.into_iter().filter(|r| phased.contains_key(*r)).collect();
-        let digest = with_rows(hash.finalize().into(), by_rows.iter().map(|r| (*r, &phased[*r])));
-        out.insert(rel.clone(), digest);
+        out
     }
-    Ok(out)
 }
 
 /// Which column of a base relation's row (in `input_columns` order) names the file the row is kept for.

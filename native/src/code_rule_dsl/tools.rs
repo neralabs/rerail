@@ -668,6 +668,7 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
     }
     // Retired instructions and cycles of the whole process: steadier than CPU time on a loaded machine, so a change
     // is compared by them (macOS; nothing elsewhere).
+    timeline_mark("report");
     if let Some((instructions, cycles)) = process_counters() {
         text += &format!("  process {:.2} G instructions, {:.2} G cycles\n", instructions as f64 / 1e9, cycles as f64 / 1e9);
         for (phase, n) in &report.phase_instructions {
@@ -984,7 +985,15 @@ fn translate_json_command(args: &[String]) -> Result<String, String> {
     Ok(format!("{} translated, {failed} failed", files.len() - failed))
 }
 
+/// A timeline's mark (dev, `RERAIL_TIMELINE`): where the process is, with its instructions retired so far.
+fn timeline_mark(what: &str) {
+    if std::env::var_os("RERAIL_TIMELINE").is_some() {
+        eprintln!("RERAIL_TIMELINE {what}: @{:.3} i={:.3}", crate::code_rule_dsl::logic::profile::timeline_clock(), crate::code_rule_dsl::logic::profile::retired_instructions() as f64 / 1e9);
+    }
+}
+
 fn logic_command(args: &[String]) -> Result<String, String> {
+    timeline_mark("cli start");
     let (mut positional, mut modes, mut metal, mut chunk) = (Vec::new(), None, false, 1_usize << 18);
     let (mut sql, mut env, mut full) = (false, Vec::new(), false);
     let mut args = args.iter();

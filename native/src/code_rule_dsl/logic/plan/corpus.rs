@@ -722,6 +722,10 @@ pub struct Prepared {
     /// The run's file-local and cross-file parts, and its constants' program (`run_constants`), made by the first run
     /// for the constants it found (`once`): a later run finding the same ones shares them.
     pub(in crate::code_rule_dsl) parts: std::sync::OnceLock<(BTreeSet<String>, RunParts)>,
+    /// The per-file memo's strata of the file-local part (`memo::strata`), with the digest of the part they are of
+    /// (`memo::program_digest`): made by the first run, or read with the prepared program from the store (decision
+    /// 0246 §4); a run whose part is that one adds its options, phases' rows and projection to them.
+    pub(in crate::code_rule_dsl) memo_strata: std::sync::OnceLock<([u8; 32], memo::Strata)>,
 }
 
 /// A run's parts made from the prepared split (`Prepared::parts`): file-local, cross-file, and the constants'.
@@ -2502,11 +2506,15 @@ fn run_observed(
     let mut last_instructions = crate::code_rule_dsl::logic::settings::process_counters().map_or(0, |c| c.0);
     let mut counted = 0;
     let timeline = std::env::var_os("RERAIL_TIMELINE").is_some();
+    // A timeline (dev, `RERAIL_TIMELINE`): the run's start, and each section's end as it ends, with the process's CPU
+    // it took and the process's instructions retired so far (`i=`, G).
+    if timeline {
+        eprintln!("RERAIL_TIMELINE {} start: @{:.3} i={:.3}", phases::current().unwrap_or_else(|| "main".into()), crate::code_rule_dsl::logic::profile::timeline_clock(), last_instructions as f64 / 1e9);
+    }
     let mut phase = |name: &'static str, statements: usize| {
         let process_now = process_cpu();
-        // A timeline (dev, `RERAIL_TIMELINE`): each section's end, as it ends, with the process's CPU it took.
         if timeline {
-            eprintln!("RERAIL_TIMELINE {} {name}: {:.3} s CPU @{:.3}", phases::current().unwrap_or_else(|| "main".into()), process_now - process_last, crate::code_rule_dsl::logic::profile::timeline_clock());
+            eprintln!("RERAIL_TIMELINE {} {name}: {:.3} s CPU @{:.3} i={:.3}", phases::current().unwrap_or_else(|| "main".into()), process_now - process_last, crate::code_rule_dsl::logic::profile::timeline_clock(), crate::code_rule_dsl::logic::profile::retired_instructions() as f64 / 1e9);
         }
         process_phases.push((name, process_now - process_last));
         process_last = process_now;
@@ -3195,17 +3203,30 @@ fn run_observed(
             // §6, `answers_where_documents_are`): in the cross-file part it answers nothing, without an error.
             {
                 use crate::code_rule_dsl::logic::rr::lower::{Answer, ON_REQUEST};
-                let local = crate::code_rule_dsl::typing::file_local::split(&prog);
-                if let Some(a) = ON_REQUEST.iter().flat_map(|r| r.iter()).find(|a| matches!(a.answer, Answer::Function(_)) && prog.decls.contains_key(a.req) && prog.rules.iter().any(|r| r.head.rel == a.rel) && !local.contains(a.rel)) {
+                let answered = |rel: &str| lowered.program.rules.iter().any(|r| r.head.rel == rel);
+                if let Some(a) = ON_REQUEST.iter().flat_map(|r| r.iter()).find(|a| matches!(a.answer, Answer::Function(_)) && answered(a.rel) && !split.file_local.contains(a.rel)) {
                     return Err(Error::Plan(format!("`{}` is answered on request in the cross-file part, which holds no documents to read it from (decision 0174 §6)", a.rel)));
                 }
             }
             if let Some(path) = std::env::var_os("RERAIL_SPLIT_DUMP") {
                 dump_split(std::path::Path::new(&path), &split);
             }
+            // The per-file memo's strata of the file-local part, kept with the prepared program (decision 0246 §4):
+            // made before the store's writer is handed it.
+            let memo_strata = std::sync::OnceLock::new();
+            {
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "the per-file memo's strata".into());
+                let v = match &split.versions {
+                    Some(p) => Arc::clone(&p.local),
+                    None => super::body::Placed::of_program(&split.local)?.v,
+                };
+                let rels: BTreeSet<String> = split.exports.iter().cloned().chain(v.outputs().map(|o| v.text(o).to_owned())).collect();
+                let strata = memo::strata(&super::body::Placed::whole(Arc::clone(&v)), &rels).map_err(Error::Plan)?;
+                let _ = memo_strata.set((memo::program_digest(&v), strata));
+            }
             // One prepared program, shared by the process's cache, the store's writer and this run (each a copy before:
             // three of a 16 k-rule program's four forms at once, about 0.4 GB of the Python pack's peak).
-            let prepared = Arc::new(Prepared { prog, vocabulary: Arc::new(vocabulary), lowered, sets, matchers, demanded, pushed, factorized, located, merged, split, interned, cone: Default::default(), maintained: Default::default(), parts: Default::default() });
+            let prepared = Arc::new(Prepared { prog, vocabulary: Arc::new(vocabulary), lowered, sets, matchers, demanded, pushed, factorized, located, merged, split, interned, cone: Default::default(), maintained: Default::default(), parts: Default::default(), memo_strata });
             if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
                 eprintln!("RERAIL_PREPARED_TRACE ({}) {} {label}: prepared, durable {:?}", phases::current().unwrap_or_else(|| "main".into()), prepared_key[..6].iter().map(|b| format!("{b:02x}")).collect::<String>(), durable.map(|d| d.is_some()));
             }
@@ -3221,7 +3242,7 @@ fn run_observed(
         (false, _) if durable.is_some() => "prepared, and stored for later processes (decision 0073)".to_owned(),
         (false, _) => "prepared".to_owned(),
     });
-    let Prepared { prog, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), split: shared_split, interned: _, cone: shared_cone, maintained: shared_maintained, parts: shared_parts } = &*prepared;
+    let Prepared { prog, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), split: shared_split, interned: _, cone: shared_cone, maintained: shared_maintained, parts: shared_parts, memo_strata: shared_strata } = &*prepared;
     let (remerged, reshared) = (*remerged, *reshared);
     // The run takes the split's programs apart (`part` below): its own copy, the kept one shared.
     let mut split = shared_split.clone();
@@ -3353,7 +3374,23 @@ fn run_observed(
     let base_rows = projection.rows_digest();
     let memo_ids = {
         let rels: BTreeSet<String> = split.exports.iter().cloned().chain(local_v.outputs().map(|o| local_v.text(o).to_owned())).collect();
-        memo::identities(&local_placed, &rels, options, &phased, &base_rows).map_err(Error::Plan)?
+        // The strata are the prepared program's, for its file-local part: made once, kept with it.
+        let kept = shared_strata.get().filter(|(digest, _)| *digest == memo_local).map(|(_, s)| s);
+        let made;
+        let strata = match kept {
+            Some(s) => {
+                crate::code_rule_dsl::prof::count("corpus.memo_strata_kept", 1);
+                s
+            }
+            None => {
+                crate::code_rule_dsl::prof::count(if shared_strata.get().is_some() { "corpus.memo_strata_other_part" } else { "corpus.memo_strata_made" }, 1);
+                made = memo::strata(&local_placed, &rels).map_err(Error::Plan)?;
+                let _ = shared_strata.set((memo_local, made.clone()));
+                &made
+            }
+        };
+        debug_assert!(phased.keys().all(|r| local_v.rel(r).is_none_or(|id| local_v.heads(id).next().is_none())), "an earlier phase's export the file-local part derives");
+        strata.identities(options, &phased, &base_rows)
     };
     let memo_space = memo::space_digest(&memo_ids, &local_placed, phases::current().as_deref());
     // The components' stored rows are a function of the phases' exports the cross-file rules read too (P3's

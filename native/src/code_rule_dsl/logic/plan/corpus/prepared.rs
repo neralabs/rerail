@@ -43,7 +43,7 @@ const PATH: &str = "rerail/prepared";
 /// run's additions).
 fn pointer_plan(key: &[u8; 32]) -> FactsPlanSet {
     let mut hash = Sha256::new();
-    hash.update(b"rerail.prepared/v2\0");
+    hash.update(b"rerail.prepared/v3\0");
     hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     hash.update(crate::code_rule_dsl::build_ids::grammar_version().to_le_bytes());
     hash.update(key);
@@ -79,6 +79,11 @@ pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
         ("prepared_marker", &["k:int", "marker:sym"]),
         // The split (`file_local::programs`): what it found, the file-local relations and those of constants. Its two
         // parts are the lowered program's rules, a part each, made from it again on reading (`file_local::assemble`).
+        // The per-file memo's strata of the file-local part (`memo::Strata`, decision 0246 §4): the part's digest,
+        // each relation's strata identity and the leaves it reaches.
+        ("prepared_memo_part", &["digest:sym"]),
+        ("prepared_memo_stratum", &["k:int", "rel:sym", "id:sym"]),
+        ("prepared_memo_reach", &["k:int", "i:int", "rel:sym"]),
         ("prepared_split", &["ok:int"]),
         ("prepared_file_local", &["k:int", "rel:sym"]),
         ("prepared_constant", &["k:int", "rel:sym"]),
@@ -163,6 +168,16 @@ fn rest_of(prepared: &Prepared) -> Facts {
         row("prepared_interned", vec![n(k), n(strings.len())]);
         for (i, (x, atom)) in strings.iter().zip(atoms).enumerate() {
             row("prepared_interned_atom", vec![n(k), n(i), s(x), Value::Int(i64::from(*atom))]);
+        }
+    }
+    // The per-file memo's strata (decision 0246 §4), with the digest of the file-local part they are of.
+    if let Some((digest, strata)) = prepared.memo_strata.get() {
+        row("prepared_memo_part", vec![s(&hex(digest))]);
+        for (k, (rel, (id, reached))) in strata.by_rel.iter().enumerate() {
+            row("prepared_memo_stratum", vec![n(k), s(rel), s(&hex(id))]);
+            for (i, r) in reached.iter().enumerate() {
+                row("prepared_memo_reach", vec![n(k), n(i), s(r)]);
+            }
         }
     }
     row("prepared_split", vec![n(1)]);
@@ -337,6 +352,24 @@ pub fn prepared_of(
             crate::code_rule_dsl::typing::file_local::programs(&program)
         }
     };
+    // The memo's strata, when the program was kept with them; else the first run makes them.
+    let memo_strata = std::sync::OnceLock::new();
+    if let Some(part) = facts.get("prepared_memo_part").and_then(|rows| rows.first()) {
+        let digest = unhex(&text(&part[0])?).ok_or_else(|| bad("a memo part's digest".to_owned()))?;
+        let mut reach: BTreeMap<i64, Vec<(i64, String)>> = BTreeMap::new();
+        for r in facts.get("prepared_memo_reach").into_iter().flatten() {
+            reach.entry(int(&r[0])?).or_default().push((int(&r[1])?, text(&r[2])?));
+        }
+        let mut by_rel = BTreeMap::new();
+        for r in facts.get("prepared_memo_stratum").into_iter().flatten() {
+            let k = int(&r[0])?;
+            let id = unhex(&text(&r[2])?).ok_or_else(|| bad("a memo stratum's identity".to_owned()))?;
+            let mut reached = reach.remove(&k).unwrap_or_default();
+            reached.sort();
+            by_rel.insert(text(&r[1])?, (id, reached.into_iter().map(|(_, r)| r).collect()));
+        }
+        let _ = memo_strata.set((digest, super::memo::Strata { by_rel }));
+    }
     Ok(Prepared {
         prog,
         vocabulary: Arc::new(vocabulary),
@@ -353,6 +386,7 @@ pub fn prepared_of(
         cone: Default::default(),
         maintained: Default::default(),
         parts: Default::default(),
+        memo_strata,
     })
 }
 
