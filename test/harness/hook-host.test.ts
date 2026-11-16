@@ -1765,6 +1765,13 @@ const TEST_SETUP_GIT_VARIABLES = new Set(["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYS
  */
 const changesSinceTheAnswer: Array<{ what: string; change: (app: string) => void; startedAt?: number }> = [
   { what: "the answer kept does not parse", change: app => writeFileSync(keptAnswerFile(join(app, "src")), "{") },
+  {
+    // Whole and right in every field but its size: a file of many megabytes there is never read whole.
+    what: "the answer kept grows past 16 KiB", change: app => {
+      const file = keptAnswerFile(join(app, "src"));
+      writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")) as object, padding: "x".repeat(16_384) }));
+    },
+  },
   { what: "the answer kept is older than 30 minutes", change: app => keptAt(join(app, "src"), Date.now() - 30 * 60_000 - 1_000) },
   { what: "the answer kept is dated after now, as once the clock is set back", change: app => keptAt(join(app, "src"), Date.now() + 60_000) },
   {
