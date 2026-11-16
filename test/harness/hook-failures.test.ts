@@ -1,7 +1,7 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, utimesSync, writeFileSync, writeSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -348,18 +348,21 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
 
   // A running hook took the full log a moment ago, though no hook wrote to it for a day, and a hook held up since it
   // opened the log before the take writes into it after another hook moved a log aside. Removed for its write time, the
-  // log would take that failure with it.
+  // log would take that failure with it. The take comes 100 ms after the change time the log had before it, and the move
+  // runs a day and 50 ms past that change time: only a change time the take set keeps the log.
   it("keeps the failure a held-up hook writes into a log a running hook took, though the log was last written a day ago", async () => {
     const rerailHome = await home();
     const live = join(rerailHome, HOOK_FAILURES_FILE);
     writeFullLog(rerailHome);
     const dayAgo = (Date.now() - 25 * 60 * 60 * 1_000) / 1_000;
     utimesSync(live, dayAgo, dayAgo);
+    const beforeTheTake = lstatSync(live).ctimeMs;
+    await new Promise(resolveWait => { setTimeout(resolveWait, 100); });
     const heldUp = openSync(live, "a");
     try {
       renameSync(live, join(rerailHome, `${HOOK_FAILURES_FILE}.${process.ppid}.${randomUUID()}.old`));
       writeFullLog(rerailHome);
-      recordLast(rerailHome, Date.now());
+      recordLast(rerailHome, beforeTheTake + 24 * 60 * 60 * 1_000 + 50);
       writeSync(heldUp, `${JSON.stringify(failure(Date.now(), "HeldUp"))}\n`);
     } finally {
       closeSync(heldUp);
