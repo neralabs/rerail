@@ -159,6 +159,25 @@ fn a_tokens_end_is_leans_max() {
     assert!(body.contains(".trailing_zeros()"), "the run from the token's first byte: {body}");
 }
 
+/// A token's record is written once, at its end, as the lean lexer's `out.add(len).write(Tok
+/// {..})`: in the run loop its start, last and code are three adjacent stores (which rustc
+/// pairs), not the start at the token's head and the rest as they are made.
+#[test]
+fn a_tokens_record_is_written_once() {
+    let src = include_str!("tier1_aot.rs");
+    let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
+    // The run loop: the innermost loop around the token's end (`a_tokens_end_is_leans_max`), to
+    // its `continue`.
+    let at = f0.match_indices(".max(v").map(|(at, _)| at).find(|&at| f0[..at].ends_with(|c: char| c.is_ascii_digit())).expect("a max");
+    let head = f0[..at].rfind(": loop {").expect("the run loop");
+    let label = &f0[f0[..head].rfind('\'').expect("its label")..head];
+    let body = &f0[head..head + f0[head..].find(&format!("continue {label};")).expect("its continue")];
+    let lines: Vec<&str> = body.lines().collect();
+    let writes: Vec<usize> = lines.iter().enumerate().filter(|(_, l)| l.contains("write_unaligned") && l.contains("*mut u32")).map(|(i, _)| i).collect();
+    assert_eq!(writes.len(), 3, "the record's stores in the run loop: {body}");
+    assert!(writes.windows(2).all(|w| w[1] == w[0] + 1), "the record's stores apart: {body}");
+}
+
 /// A bitmask's reduction (`native_cpu_block::bitmask`, a vector's pairwise adds with itself)
 /// is the 64-bit `addp` of its halves (`clif_rust`): rustc keeps one `addp` a step, simdjson's
 /// five instructions, where it made each `vpaddq_u8(a, a)` three.
@@ -523,7 +542,10 @@ fn a_numbers_arm_is_leans_loop() {
         }
     }
     let rest = &f0[close..];
-    let arm = &rest[..rest.find("core::ptr::write_unaligned").expect("the record's write")];
+    // To where its whole rule's call joins its ways (the record written after, with the tail's).
+    let call = rest.find("let t = unsafe { f").expect("the whole rule's call");
+    let join = call + rest[call..].find("break '").expect("the call's join");
+    let arm = &rest[..join];
     assert_eq!(arm.matches("loop {").count(), 2, "the number arm's `while digit` loops: {arm}");
     assert!(!arm.contains("vld1q_u8"), "a window in the number arm: {arm}");
     // Its one call, the whole rule's, cold.

@@ -2183,6 +2183,18 @@ impl FileCols {
 
 }
 
+/// A token's record at cursor `cur`: its start and last where the loop made them, and its code,
+/// at once at its end, as the lean lexer writes its `Tok` (`out.add(len).write(..)`): adjacent
+/// stores in rows (`RecordLayout::Rows`), which rustc pairs as it does lean's fields (`stp`).
+fn write_record(f: &mut FunctionBuilder<'_>, c: &FileCols, stores: MemFlags, cur: Value, start: Option<Value>, last: Option<Value>, code: Value) {
+    for (field, v) in [(crate::records::FIELD_START, start), (crate::records::FIELD_LAST, last), (crate::records::FIELD_CODE, Some(code))] {
+        if let Some(v) = v {
+            let (a, o) = c.at(f, field, cur);
+            f.ins().istore32(stores, v, a, o);
+        }
+    }
+}
+
 /// The signature of a file's record function (`record_fn`).
 fn record_signature(module: &JITModule) -> cranelift_codegen::ir::Signature {
     let mut sig = module.make_signature();
@@ -5714,12 +5726,12 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let (k, after, bad, pending) = (h[0], h[1], h[2], pending_in);
     let (sa, so) = c.at(f, crate::records::FIELD_START, k);
     let (la, lo_off) = c.at(f, crate::records::FIELD_LAST, k);
-    let s = if walked.is_some() {
-        let s = f.block_params(token)[0];
-        f.ins().istore32(stores, s, sa, so);
-        s
+    // The loop's start, written with the token's last and code at its end (`write_record`),
+    // as the lean lexer writes its `Tok` once; else the extract's, read.
+    let (s, start_kept) = if walked.is_some() {
+        (f.block_params(token)[0], true)
     } else {
-        f.ins().uload32(fl, sa, so)
+        (f.ins().uload32(fl, sa, so), false)
     };
     // The token's first eight bytes and its first byte's entry (`RecordTables::token`): its
     // kind, rule, word flag and pair row, one load, as the lean lexer's `TOKEN`.
@@ -5786,9 +5798,8 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             None => (f.ins().uload32(fl, la, lo_off), None, None, zero),
         }
     };
-    if ruled {
-        f.ins().istore32(stores, l, la, lo_off);
-    }
+    // The rules' last, written with the code (`write_record`).
+    let last_kept = ruled.then_some(l);
     let (long, coded) = (f.create_block(), f.create_block());
     for _ in 0..STATE_WORDS + 2 {
         f.append_block_param(coded, types::I64);
@@ -6176,8 +6187,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             (code, pending, from, word_before) = (p[0], p[1], p[2], p[3]);
         }
     }
-    let (ca, co) = c.at(f, crate::records::FIELD_CODE, cv[0]);
-    f.ins().istore32(stores, code, ca, co);
+    write_record(f, c, stores, cv[0], start_kept.then_some(s), last_kept, code);
     let k1 = c.step(f, cv[0]);
     let mut back: Vec<BlockArg> = vec![k1.into(), cv[1].into(), cv[2].into(), pending.into(), from.into(), word_before.into()];
     // The block's starts after the token, while it ends in the block; else none, for a refill.

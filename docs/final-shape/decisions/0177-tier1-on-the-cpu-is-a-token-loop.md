@@ -3382,3 +3382,34 @@ code for the loop around it, not the arm's source.
 Test: `a_words_lookup_is_leans` (a 16-byte slot, no second key read,
 the ninth byte asked at nine); `the_word_multiplier_is_a_literal` now
 asserts `WordRest::Ninth`.
+
+## A token's record is written once, at its end
+
+**Intro.** Lean writes a token once it knows all of it:
+`out.add(len).write(Tok { start, end, kind, word })`. Ours stored the
+start at the token's head, the last once the rule had it, and the code
+at the tail. `write_record` now stores all three at the tail, adjacent,
+where rustc pairs them as it does lean's fields.
+
+First tried: the start and last packed into one 64-bit store
+(`l << 32 | s`). That cost the shift, mask and `or` that lean's struct
+write does not pay. Words went 87.6 → 90.8 instructions a token and
+comments 187.7 → 198.6. Plain adjacent stores left the pairing to rustc.
+
+Nothing reads the current record before its end. `after_last_start`
+reads the record before the cursor, or at the first token reads the
+cursor's and drops it by a `select`.
+
+Measured, as information (instructions a token, before → after):
+
+| Kind | Before | After |
+|---|---|---|
+| Words | 87.6 | 86.7 |
+| Punctuation | 51.3 | 50.2 |
+| Mixed code | 52.8 | 51.8 |
+| Numbers | 118.8 | 117.4 |
+
+Test: `a_tokens_record_is_written_once` (three adjacent stores in the run
+loop). `a_numbers_arm_is_leans_loop` now ends the arm where its whole
+rule's call joins it, not at the record's first store, which is past
+the tail now.
