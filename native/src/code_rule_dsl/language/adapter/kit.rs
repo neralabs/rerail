@@ -1376,7 +1376,7 @@ fn java() {
     });
     super::syntax::kit::check::<Java>(&super::syntax::kit::Expect {
         dollar_names: false,
-        language_options: Some("`languageOptions` is not available for java policies"),
+        language_options: Some("`languageOptions` is not available for Java policies"),
         compiled_options: None,
         when: &[
             ("{}", Ok((true, None))),
