@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createServer, request as httpRequest, type IncomingMessage } from "node:http";
 import { chmod, lstat, mkdtemp, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
@@ -32,6 +33,35 @@ import { linkFolder } from "../support/platform/links.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 const healthyNative = () => ({ ok: true, kernelVersion: "1" });
+
+/**
+ * Another program holding the file at `path` open and sharing only reads, as a virus scan can: Windows then refuses to
+ * delete it. `end` ends the program and waits until it has exited.
+ */
+async function heldSharingOnlyReads(path: string): Promise<{ end: () => Promise<void> }> {
+  const command = `$f = [System.IO.File]::Open('${path.replaceAll("'", "''")}', 'Open', 'Read', 'Read'); `
+    + "[Console]::Out.WriteLine('held'); [Console]::Out.Flush(); Start-Sleep -Seconds 600";
+  const powershell = join(process.env.SystemRoot ?? String.raw`C:\Windows`, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const holder = spawn(powershell, ["-NoProfile", "-NonInteractive", "-Command", command], { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+  const exited = new Promise<void>(resolve => holder.once("exit", () => resolve()));
+  const end = async (): Promise<void> => {
+    if (holder.exitCode === null && holder.signalCode === null) holder.kill();
+    await exited;
+  };
+  const held = new Promise<void>((resolve, reject) => {
+    let printed = "";
+    holder.stdout.on("data", (chunk: Buffer) => {
+      printed += String(chunk);
+      if (printed.includes("held")) resolve();
+    });
+    void exited.then(() => reject(new Error(`the holder of ${path} exited before it held it`)));
+  });
+  await held.catch(async (error: unknown) => {
+    await end();
+    throw error;
+  });
+  return { end };
+}
 
 const originalRerailHome = process.env.RERAIL_HOME;
 
@@ -847,6 +877,33 @@ describe("Rerail daemon", () => {
     // It removes them off its start, so no hook that finds it pays for the removal.
     for (let waited = 0; waited < 10_000 && (await readdir(answers)).length > 0; waited += 50) await delay(50);
     expect({ answers: await readdir(answers), outside: await readdir(outside) }).toEqual({ answers: [], outside: ["keep.txt"] });
+  });
+
+  it.runIf(process.platform === "win32")("runs, and removes the other earlier answers, where Windows refuses to remove an earlier answer another program holds open", { timeout: 30_000 }, async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const home = join(root, "home");
+    const answers = join(home, "stopped-answers");
+    for (const earlier of ["7-1", "8-1"]) {
+      await mkdir(join(answers, earlier), { recursive: true });
+      await writeFile(join(answers, earlier, `${"0".repeat(32)}.json`), "{}");
+    }
+    const holder = await heldSharingOnlyReads(join(answers, "7-1", `${"0".repeat(32)}.json`));
+    // The daemon does not wait for the removal, so a removal that threw would reach no caller but this.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const daemon = await start({ stateFile: join(home, DAEMON_STATE_FILE) });
+      for (let waited = 0; waited < 10_000 && (await readdir(answers)).includes("8-1"); waited += 50) await delay(50);
+      await delay(200);
+      expect({ answers: await readdir(answers), unhandled, health: (await getJson(daemon, "/healthz")).status })
+        .toEqual({ answers: ["7-1"], unhandled: [], health: 200 });
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      await holder.end();
+    }
   });
 
   // Review of #49 (N1): a resource that fails to close does not keep the next one open.

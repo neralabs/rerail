@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmodSync, existsSync, readFileSync, statSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, renameSync, statSync, symlinkSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -20,6 +20,7 @@ import { RERAIL_SCHEMA_STATEMENTS } from "../../../src/engine/storage/schema-sql
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "../../../src/engine/storage/baseline-schema.js";
 import { fixturesPath } from "../../support/oracles.js";
 import { installPack, uninstallPack } from "../../support/installed-packs.js";
+import { pipeAt } from "../../support/platform/named-pipe.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
@@ -702,6 +703,39 @@ describe("an open as it is beside a running daemon", () => {
     expect(existsSync(`${path}${missing}`)).toBe(false);
     expect(() => openRerailDatabaseAsIs(path, { besideDaemon: true })).toThrow(new Error(`${path}${missing} is missing beside the database a daemon holds open`));
     expect(existsSync(`${path}${missing}`)).toBe(false);
+  });
+
+  it.skipIf(process.platform === "win32").for([
+    { file: "the database file", suffix: "" },
+    { file: "its WAL", suffix: "-wal" },
+    { file: "the WAL's index", suffix: "-shm" },
+  ])("refuses at once where a named pipe is in place of $file, which SQLite's open would wait on", { timeout: 30_000 }, async ({ suffix }) => {
+    const path = await temporaryDatabase();
+    openRerailDatabase(path).$client.close();
+    for (const companion of ["-wal", "-shm"]) await writeFile(`${path}${companion}`, "");
+    const pipe = pipeAt(`${path}${suffix}`);
+    try {
+      const begun = performance.now();
+      expect(() => openRerailDatabaseAsIs(path, { besideDaemon: true })).toThrow(new Error(`${path}${suffix} is not a plain file, which SQLite could wait on or read elsewhere`));
+      expect(performance.now() - begun).toBeLessThan(1_000);
+    } finally {
+      await pipe.end();
+    }
+  });
+
+  it("refuses a database file that is a link, which SQLite would follow to another file than the one beside its WAL", async ({ skip }) => {
+    const path = await temporaryDatabase();
+    openRerailDatabase(path).$client.close();
+    for (const companion of ["-wal", "-shm"]) await writeFile(`${path}${companion}`, "");
+    const copy = join(dirname(path), "copy.sqlite");
+    renameSync(path, copy);
+    try {
+      symlinkSync(copy, path, "file");
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "EPERM") skip("this user may not make a symbolic link");
+      throw error;
+    }
+    expect(() => openRerailDatabaseAsIs(path, { besideDaemon: true })).toThrow(new Error(`${path} is not a plain file, which SQLite could wait on or read elsewhere`));
   });
 
   it("opens one beside the daemon's own connection, which keeps both", async () => {

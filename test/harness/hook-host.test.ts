@@ -2,7 +2,7 @@ import { type ChildProcess, execFileSync, spawn, spawnSync } from "node:child_pr
 import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync, closeSync, copyFileSync, cpSync, existsSync, ftruncateSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync,
-  rmSync, symlinkSync, writeFileSync, writeSync,
+  rmSync, statSync, symlinkSync, writeFileSync, writeSync,
 } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -46,6 +46,7 @@ import { runCodexHook } from "../../src/hosts/codex/index.js";
 import { runCursorHook } from "../../src/hosts/cursor/index.js";
 import { hookOptions, serveText, temporaryDirectories, sessionDatabaseQuery } from "../support/hook-events.js";
 import { holdEngineEndpoint, testEngineEndpoint } from "../support/platform/engine-endpoint.js";
+import { pipeAt } from "../support/platform/named-pipe.js";
 import { removeFolderSync } from "../support/platform/remove-folder.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
 
@@ -1778,6 +1779,14 @@ const changesSinceTheAnswer: Array<{ what: string; change: (app: string) => void
       cpSync(join(app, ".git-before"), join(app, ".git"), { recursive: true });
     },
   },
+  {
+    // Only the top's own file id tells this apart: the folder and the `.git` keep theirs, and the path is the same.
+    what: "the checkout's top is made again, its .git and the folder moved into it", change: app => {
+      retried(() => renameSync(app, `${app}-before`));
+      mkdirSync(app);
+      for (const name of ["src", ".git"]) retried(() => renameSync(join(`${app}-before`, name), join(app, name)));
+    },
+  },
   { what: "a .git is made in the folder", change: app => git(join(app, "src"), "init", "-q") },
   { what: "the checkout is started", change: app => inDatabase(database => setCheckoutStarted(database, recordCheckout(database, app), true)) },
   {
@@ -1910,6 +1919,113 @@ const gitFoldersThroughALink: Array<{ what: string; link: (app: string, path: st
     ? [{ what: "a link to a server that does not answer", link: (_app: string, path: string) => symlinkSync(`\\\\${silentServer()}\\share`, path, "dir"), daemonSays: "started", started: true }]
     : []),
 ];
+
+/**
+ * A linked worktree at `<root>/wt` of `<root>/app`, a repository stopped as a whole, recorded with no on/off of its own,
+ * where the daemon's answer of stopped is kept (`keptStopped`); and its repository's key.
+ */
+async function keptInAWorktree(host: StartCheckHost, root: string): Promise<{ app: string; worktree: string; repositoryKey: string }> {
+  const app = gitRepository(join(root, "app"));
+  startTestRepository(app);
+  stopRerail(app, silently, { repository: true });
+  const worktree = join(root, "wt");
+  git(app, "worktree", "add", "-q", worktree);
+  const repositoryKey = inDatabase(database => recordCheckout(database, worktree).repositoryKey);
+  await keptStopped(host, worktree);
+  return { app, worktree, repositoryKey };
+}
+
+/**
+ * Names in a linked worktree's checkout, its Git folders and the Rerail home where a named pipe can be put after the
+ * daemon's answer of stopped was kept there. A read that opened one as a file would wait for a writer, holding the hook
+ * for good; the check of the kept answer reads none of them so, and waits for the daemon at once. A pipe at `.git` is
+ * never opened: its own file id is not the one kept.
+ */
+const pipesTheCheckMeets: Array<{ what: string; at: (worktree: string, app: string) => string }> = [
+  { what: "the kept answer's name", at: worktree => keptAnswerFile(worktree) },
+  { what: "the clone id file of the Git folder the worktree shares", at: (_worktree, app) => cloneIdFile(app) },
+  { what: "the commondir file of the worktree's own Git folder", at: (worktree, app) => join(app, ".git", "worktrees", basename(worktree), "commondir") },
+  { what: "the worktree's .git file", at: worktree => join(worktree, ".git") },
+];
+
+/**
+ * Shapes on Windows that would lead the check of a kept answer to a server that does not answer, where Windows holds
+ * each look about 21 s, each made in a linked worktree once the daemon's answer of stopped is kept there, with the guard
+ * that keeps the check from looking there.
+ */
+const serverShapesAfterTheAnswer: Array<{ what: string; shape: (root: string, worktree: string) => void }> = [
+  {
+    // The `.git` file keeps its file id, so the check reads it; `namedFolder` refuses a server path.
+    what: "the worktree's .git file is written over in place to name a Git folder on a server",
+    shape: (_root, worktree) => rewrittenInPlace(join(worktree, ".git"), `gitdir: \\\\${silentServer()}\\share\\app.git\n`),
+  },
+  {
+    // The look at each folder from the top down stops at the link.
+    what: "the worktree's .git file is written over in place to name a Git folder through a local link to a server",
+    shape: (root, worktree) => {
+      symlinkSync(`\\\\${silentServer()}\\share`, join(root, "srv"), "dir");
+      rewrittenInPlace(join(worktree, ".git"), `gitdir: ${join(root, "srv", "app.git")}\n`);
+    },
+  },
+  {
+    // `.git` is looked at as it is, never through the link, whose own file id is not the one kept.
+    what: "the worktree's .git is a link to a local path through a link to a server",
+    shape: (root, worktree) => {
+      symlinkSync(`\\\\${silentServer()}\\share`, join(root, "srv"), "dir");
+      retried(() => renameSync(join(worktree, ".git"), join(root, "wt.git")));
+      symlinkSync(join(root, "srv", "app.git"), join(worktree, ".git"), "dir");
+    },
+  },
+  {
+    // The folders of kept answers are looked at as they are, never through a link.
+    what: "the folder of kept answers is a link to a server",
+    shape: () => {
+      const answers = join(process.env.RERAIL_HOME!, "stopped-answers");
+      retried(() => renameSync(answers, `${answers}-before`));
+      symlinkSync(`\\\\${silentServer()}\\share`, answers, "dir");
+    },
+  },
+];
+
+/**
+ * `node:fs` for the hook host the test loads next (`startCheckHost`), where this process's list of open files cannot be
+ * read, as `/proc` keeps it for a process of another user: `readdirSync` of `/proc/<pid>/fd` fails with `EACCES`.
+ */
+function openFilesUnlisted(): void {
+  vi.doMock("node:fs", async () => {
+    const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const readdirSync = (...args: Parameters<typeof actual.readdirSync>): ReturnType<typeof actual.readdirSync> => {
+      if (String(args[0]) !== `/proc/${process.pid}/fd`) return actual.readdirSync(...args);
+      throw Object.assign(new Error(`EACCES: permission denied, scandir '${String(args[0])}'`), { code: "EACCES" });
+    };
+    return { ...actual, default: { ...actual, readdirSync }, readdirSync };
+  });
+}
+
+/**
+ * An answer of stopped kept for `share`, the stopped checkout `local` reached as a share of this machine, as a hook would
+ * keep it but for its guard: the database records the checkout at the share's path too, stopped, under its clone id, and
+ * the file holds the ids read through the share. A check of it would find each of them as kept.
+ */
+function plantedForShare(share: string, local: string): void {
+  const real = realpathSync.native(share);
+  const cloneId = readFileSync(cloneIdFile(local), "utf8").trim();
+  const repository = inDatabase(database => {
+    const { repositoryKey } = recordCheckout(database, local);
+    database.$client.prepare("INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at) VALUES (?, ?, ?, 0, 0, 0)")
+      .run(real, repositoryKey, cloneId);
+    return repositoryKey;
+  });
+  const id = (path: string, look: typeof statSync): string => {
+    const { dev, ino } = look(path, { bigint: true });
+    return `${dev}:${ino}`;
+  };
+  const file = keptAnswerFile(share);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify({
+    v: 2, repository, cloneId, depth: 0, folder: id(real, statSync), checkout: id(real, statSync), git: id(join(real, ".git"), lstatSync), at: Date.now(),
+  }));
+}
 
 /**
  * Two start checks in each of `folders`, beside a daemon that answers late as a live one reads the folder, its Git
@@ -2564,38 +2680,133 @@ describe("the hook start check", () => {
     }
   });
 
-  it.runIf(process.platform === "win32").for([
-    { what: "a .git file names a Git folder on a server", shape: (root: string, app: string) => {
-      renameSync(join(app, ".git"), join(root, "app.git"));
-      writeFileSync(join(app, ".git"), `gitdir: \\\\${silentServer()}\\share\\app.git\n`);
-    } },
-    { what: "a .git file names a Git folder through a local link to a server", shape: (root: string, app: string) => {
-      symlinkSync(`\\\\${silentServer()}\\share`, join(root, "srv"), "dir");
-      renameSync(join(app, ".git"), join(root, "app.git"));
-      writeFileSync(join(app, ".git"), `gitdir: ${join(root, "srv", "app.git")}\n`);
-    } },
-    { what: ".git is a link to a local path through a link to a server", shape: (root: string, app: string) => {
-      symlinkSync(`\\\\${silentServer()}\\share`, join(root, "srv"), "dir");
-      renameSync(join(app, ".git"), join(root, "app.git"));
-      symlinkSync(join(root, "srv", "app.git"), join(app, ".git"), "dir");
-    } },
-    { what: "the folder of kept answers is a link to a server", shape: () => {
-      mkdirSync(process.env.RERAIL_HOME!, { recursive: true });
-      symlinkSync(`\\\\${silentServer()}\\share`, join(process.env.RERAIL_HOME!, "stopped-answers"), "dir");
-    } },
-  ])("waits for a late daemon at once where $what", { timeout: 60_000 }, async ({ shape }, { skip }) => {
+  it.runIf(process.platform === "win32").for(serverShapesAfterTheAnswer)("waits for a late daemon at once where, after it last answered stopped there, $what and the repository is started", { timeout: 60_000 }, async ({ shape }, { skip }) => {
     const root = await temporaryDirectory({ started: false });
-    const app = startedApp(root);
+    const host = await startCheckHost();
+    const { worktree, repositoryKey } = await keptInAWorktree(host, root);
     try {
-      shape(root, app);
+      shape(root, worktree);
     } catch (error) {
       if (codeOf(error) === "EPERM") skip("this user may not make a symbolic link");
       throw error;
     }
+    inDatabase(database => setRepositoryStarted(database, repositoryKey, true));
+    const daemon = await daemonAnsweringAfterProof(host, "started");
+    try {
+      await startedFromLateDaemon(host, daemon, worktree);
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it.skipIf(process.platform === "win32").for(pipesTheCheckMeets)("waits for a late daemon at once where, after it last answered stopped there, a named pipe is at $what and the repository is started", { timeout: 30_000 }, async ({ at }) => {
+    const root = await temporaryDirectory({ started: false });
     const host = await startCheckHost();
+    const { app, worktree, repositoryKey } = await keptInAWorktree(host, root);
+    const pipe = pipeAt(at(worktree, app));
+    inDatabase(database => setRepositoryStarted(database, repositoryKey, true));
+    const daemon = await daemonAnsweringAfterProof(host, "started");
+    try {
+      await startedFromLateDaemon(host, daemon, worktree);
+    } finally {
+      await daemon.close();
+      await pipe.end();
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("takes the daemon's answer of stopped in time where a named pipe is at the kept answer's name, and keeps it in a file of its own there", { timeout: 30_000 }, async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    await keptStopped(host, app);
+    const file = keptAnswerFile(app);
+    const pipe = pipeAt(file);
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "stopped");
+    try {
+      const started = await answeredWellBeforeReadLimit(host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES));
+      expect({ started, kept: lstatSync(file).isFile() && wholeKeptAnswer(readFileSync(file, "utf8")) }).toEqual({ started: false, kept: true });
+    } finally {
+      await daemon.close();
+      await pipe.end();
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("repeats the daemon's answer at once where a named pipe is at the checkout's .rerail/repository-id, which the daemon reads only for a folder its Git does not take", { timeout: 30_000 }, async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    await keptStopped(host, app);
+    mkdirSync(join(app, ".rerail"), { recursive: true });
+    const pipe = pipeAt(join(app, ".rerail", "repository-id"));
+    // A daemon that would say started: an answer of stopped is the repeat of the one kept.
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest);
+    try {
+      host.proofs.nextCheck();
+      const started = await answeredWellBeforeReadLimit(host.hookRerailStarted("claude-code", app));
+      expect({ started, checked: host.proofs.found.at(-1), ...await endedStartChecks(daemon) }).toEqual({ started: false, checked: true, asked: 1, ended: 1 });
+    } finally {
+      await daemon.close();
+      await pipe.end();
+    }
+  });
+
+  it("writes the daemon's answer of stopped again only once the one kept is a minute old", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    const keptWhen = (): number => (JSON.parse(readFileSync(keptAnswerFile(app), "utf8")) as { at: number }).at;
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "stopped");
+    try {
+      const inTime = async (): Promise<boolean> => await host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES);
+      expect(await inTime()).toBe(false);
+      keptAt(app, Date.now() - 30_000);
+      const halfAMinute = keptWhen();
+      expect(await inTime()).toBe(false);
+      const afterHalfAMinute = keptWhen();
+      keptAt(app, Date.now() - 61_000);
+      const overAMinute = keptWhen();
+      expect(await inTime()).toBe(false);
+      expect({ halfAMinuteKept: afterHalfAMinute === halfAMinute, overAMinuteWrittenAgain: keptWhen() > overAMinute }).toEqual({ halfAMinuteKept: true, overAMinuteWrittenAgain: true });
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("keeps the daemon's answer in folders only this user may open and a file only this user may read and write", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    await keptStopped(host, app);
+    const file = keptAnswerFile(app);
+    expect([dirname(dirname(file)), dirname(file), file].map(path => (statSync(path).mode & 0o777).toString(8))).toEqual(["700", "700", "600"]);
+  });
+
+  it.runIf(process.platform === "linux")("waits for a late daemon that last answered stopped where the daemon's open files cannot be listed", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    openFilesUnlisted();
+    const host = await startCheckHost();
+    await keptStopped(host, app);
     const daemon = await daemonAnsweringAfterProof(host, "started");
     try {
       await startedFromLateDaemon(host, daemon, app);
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it.runIf(process.platform === "win32")("checks no answer kept for a folder reached as a share of this machine (\\\\localhost\\<drive>$), one planted there included, and waits for the daemon", async ({ skip }) => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const local = realpathSync.native(app);
+    const share = `\\\\localhost\\${local[0]!.toLowerCase()}$${local.slice(2)}`;
+    if (!existsSync(share)) skip("this machine shares no drive to this user as <letter>$");
+    const host = await startCheckHost();
+    plantedForShare(share, local);
+    const daemon = await daemonAnsweringAfterProof(host, "started");
+    try {
+      host.proofs.nextCheck();
+      expect({ started: await host.hookRerailStarted("claude-code", share), checked: host.proofs.found.at(-1) }).toEqual({ started: true, checked: false });
     } finally {
       await daemon.close();
     }
