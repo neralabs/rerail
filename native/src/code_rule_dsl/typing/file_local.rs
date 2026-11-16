@@ -185,6 +185,8 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
 
 pub mod split_memo;
 mod shape;
+mod on_version;
+pub use on_version::FileLocal;
 pub mod export_demand;
 pub use export_demand::demand_exports;
 pub use split_memo::forget as forget_splits;
@@ -781,17 +783,45 @@ pub struct Parts {
 }
 
 pub fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Result<Programs, String> {
+    // A split of a maintained program (its `again`, `together`) has no image: refused.
+    if !prog.again.is_empty() || !prog.together.is_empty() {
+        return Err("a maintained program is not split".into());
+    }
     let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(prog)?.finish()?;
-    programs_over(prog, v)
+    programs_of(v)
 }
 
-/// `programs`, with `prog`'s version where the caller made it (the prepared program's, made once: decision 0281's
-/// path, step 4): the parts are views of it, and no other image of the program is made.
-pub fn programs_over(prog: &crate::code_rule_dsl::logic::front::Program, version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Programs, String> {
-    let (local, constants, locations, same_doc, causes) = found(prog);
-    let mut programs = assemble(prog, version, local, constants, locations, same_doc)?;
-    programs.causes = causes;
+/// The split of the program `version` is (decision 0281's path, step 5): what it found read from the version
+/// (`FileLocal`, an analysis of it), and the parts views of it.
+pub fn programs_of(version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Programs, String> {
+    let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<FileLocal>(&version)?;
+    let (local, constants) = split.found();
+    let mut programs = assemble(version, local, constants, split.locations.clone(), split.same_doc.clone())?;
+    programs.causes = split.causes.clone();
     Ok(programs)
+}
+
+/// `programs_of` the version of the tree `prog` (the prepared program's, made once: decision 0281's path, step 4).
+/// While the preparation passes split the tree too, a debug build checks the version's split is the tree's.
+pub fn programs_over(prog: &crate::code_rule_dsl::logic::front::Program, version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Programs, String> {
+    #[cfg(debug_assertions)]
+    {
+        let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<FileLocal>(&version)?;
+        let (local, constants, locations, same_doc, causes) = found(prog);
+        let (v_local, v_constants) = split.found();
+        assert_eq!(v_local, local, "the version's file-local relations are the tree's");
+        assert_eq!(v_constants, constants, "the version's constant relations are the tree's");
+        assert_eq!(split.locations, locations, "the version's location columns are the tree's");
+        assert_eq!(split.same_doc, same_doc, "the version's same-document columns are the tree's");
+        // Which relations have a cause, not its words: a cause is the first failure a split found, and the tree's
+        // split, made from the last split kept (`split_memo`), finds a relation read already cross-file where a whole
+        // split finds the same rule failing first on its location ("reads cross-file r" against "reads r with no
+        // location"). Both are causes; the run reads them only in its diagnostics.
+        assert_eq!(split.causes.keys().collect::<Vec<_>>(), causes.keys().collect::<Vec<_>>(), "the version's split gives causes for the relations the tree's does");
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = prog;
+    programs_of(version)
 }
 
 /// What `programs` splits `prog` by: its file-local relations, its relations of constants (derived in both parts),
@@ -868,27 +898,24 @@ fn crossing(prog: &crate::code_rule_dsl::logic::front::Program, local: &std::col
 /// the parts and what passes between them. What is costly to find is the arguments; this only selects (`programs`
 /// finds them, a prepared program keeps them).
 pub fn assemble(
-    prog: &crate::code_rule_dsl::logic::front::Program,
     version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     local: std::collections::BTreeSet<String>,
     constants: std::collections::BTreeSet<String>,
     locations: std::collections::BTreeMap<String, Vec<usize>>,
     same_doc: std::collections::BTreeMap<String, Vec<usize>>,
 ) -> Result<Programs, String> {
-    let Crossing { exports, base_read, base, projected } = crossing(prog, &local);
+    let placed = crate::code_rule_dsl::logic::plan::body::Placed::whole(version.clone());
+    let f = placed.fields().map_err(|e| e.to_string())?;
+    let on_version::Crossing { exports, base_read, base, projected } = on_version::crossing(&version, f, &local);
     let is_local = |rel: &str| local.contains(rel);
     let in_cross = |rel: &str| !is_local(rel) || projected.contains(rel);
-    // Each part's inputs and outputs; its rules and other fields are a view of the program's version (below).
-    let local_outputs: Vec<String> = prog.outputs.iter().filter(|o| is_local(o)).cloned().chain(exports.iter().cloned()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+    // Each part's inputs and outputs; its rules and other fields are a view of the program's version (below), an
+    // overlay over it (decision 0244).
+    let local_outputs: Vec<String> = f.outputs().filter(|o| is_local(o)).map(str::to_owned).chain(exports.iter().cloned()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
     // The reference graph is bound for the cross-file part only (no rule reading it is file-local): no chunk has it.
-    let local_inputs: Vec<String> = prog.inputs.iter().filter(|i| !matches!(i.as_str(), "reference_edge" | "reference_open")).cloned().collect();
-    let cross_outputs: Vec<String> = prog.outputs.iter().filter(|o| !is_local(o)).cloned().collect();
+    let local_inputs: Vec<String> = f.inputs().filter(|i| !matches!(*i, "reference_edge" | "reference_open")).map(str::to_owned).collect();
+    let cross_outputs: Vec<String> = f.outputs().filter(|o| !is_local(o)).map(str::to_owned).collect();
     let cross_inputs: Vec<String> = base_read.into_iter().chain(exports.iter().cloned()).collect();
-    // The parts as versions of the program's (decision 0244): the rules each keeps, a view, and the fields above, an
-    // overlay over it. A split of a maintained program (its `again`, `together`) has no image: refused.
-    if !prog.again.is_empty() || !prog.together.is_empty() {
-        return Err("a maintained program is not split".into());
-    }
     let versions = {
         use crate::code_rule_dsl::logic::program_image::PartFields;
         let local_rule = |rel: &str| is_local(rel) || constants.contains(rel);
@@ -899,20 +926,13 @@ pub fn assemble(
     };
     crate::code_rule_dsl::logic::version_trace::note_versions("split.local", &version, &versions.local);
     crate::code_rule_dsl::logic::version_trace::note_versions("split.cross", &version, &versions.cross);
-    // The split's constants are the file-local part's own (`constant_relations` of its tree, made of `prog` here only
-    // in a debug build's check, no version decoded): `corpus` reads `constants` for the part.
+    // The split's constants are the file-local part's own (its split's, read from its version): checked in a debug
+    // build, as `corpus` reads `constants` for the part.
     #[cfg(debug_assertions)]
     {
-        let mut tree = prog.clone();
-        tree.rules.retain(|r| is_local(&r.head.rel) || constants.contains(r.head.rel.as_str()));
-        tree.natives.retain(|rel, _| is_local(rel));
-        tree.lattice.retain(|rel, _| is_local(rel));
-        tree.gates.retain(|(rel, _)| is_local(rel));
-        tree.outputs = local_outputs.clone();
-        tree.inputs = local_inputs.clone();
-        let of_tree = constant_relations(&tree);
+        let part = crate::code_rule_dsl::logic::program_image::manager::analysis::<FileLocal>(&versions.local)?;
         for r in exports.iter().chain(local_outputs.iter()) {
-            assert_eq!(of_tree.contains(r.as_str()), constants.contains(r.as_str()), "the split's constants and the file-local part's disagree on {r}");
+            assert_eq!(part.constants.contains(r.as_str()), constants.contains(r.as_str()), "the split's constants and the file-local part's disagree on {r}");
         }
     }
     Ok(Programs { exports, base, locations, same_doc, file_local: local, constants, versions, causes: Default::default() })

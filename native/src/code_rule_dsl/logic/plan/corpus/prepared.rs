@@ -235,12 +235,12 @@ fn nested<'a>(facts: &'a Facts, rel: &str) -> Result<BTreeMap<i64, Vec<&'a [Valu
         .collect())
 }
 
-/// The prepared program of `facts` (what preparing found, `rest_of`) and its two programs, for `dialect`.
+/// The prepared program of `facts` (what preparing found, `rest_of`), its front program `prog` and its lowered
+/// program's version, for `dialect`.
 pub fn prepared_of(
     facts: &Facts,
     prog: crate::code_rule_dsl::logic::front::Program,
-    program: crate::code_rule_dsl::logic::front::Program,
-    version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
+    version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     dialect: GrammarDialect,
 ) -> Result<Prepared, String> {
     let mut by_rel: BTreeMap<String, Vec<(i64, lower::Domain)>> = BTreeMap::new();
@@ -309,19 +309,6 @@ pub fn prepared_of(
         vocabulary.markers = list("prepared_marker")?;
         vocabulary
     };
-    // The stored image, which the lowered program's readers read: checked, in a debug build, to be its text's program.
-    // A program stored as text has it made here.
-    let version = match version {
-        Some(v) => {
-            #[cfg(debug_assertions)]
-            {
-                let of = crate::code_rule_dsl::logic::plan::body::Placed::of_program(&program).map_err(|e| e.to_string())?;
-                assert_eq!(of.digest(), crate::code_rule_dsl::logic::plan::body::Placed::whole(v.clone()).digest(), "a stored program's image is not its text's program");
-            }
-            v
-        }
-        None => crate::code_rule_dsl::logic::program_image::Builder::of_program(&program)?.finish()?.0,
-    };
     let split = match facts.get("prepared_split").is_some_and(|r| !r.is_empty()) {
         true => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the split's parts, of the lowered program and what the split found".into());
@@ -339,11 +326,11 @@ pub fn prepared_of(
                 }).collect())
             };
             let set = |rel: &str| -> Result<std::collections::BTreeSet<String>, String> { Ok(list(rel)?.into_iter().collect()) };
-            crate::code_rule_dsl::typing::file_local::assemble(&program, version.clone(), set("prepared_file_local")?, set("prepared_constant")?, columns("prepared_location")?, columns("prepared_same_doc")?)?
+            crate::code_rule_dsl::typing::file_local::assemble(version.clone(), set("prepared_file_local")?, set("prepared_constant")?, columns("prepared_location")?, columns("prepared_same_doc")?)?
         }
         false => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "split the lowered program".into());
-            crate::code_rule_dsl::typing::file_local::programs_over(&program, version.clone())?
+            crate::code_rule_dsl::typing::file_local::programs_of(version.clone())?
         }
     };
     Ok(Prepared {
@@ -405,19 +392,23 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDia
     }
     let (Some(front), Some(lowered)) = (texts.get("front"), texts.get("lowered")) else { return Ok(None) };
     let mut documents = Vec::new();
-    let mut programs = Vec::new();
-    for digest in [front, lowered] {
+    // The front program, as a tree (its readers read one still); the lowered program, its version opened from its
+    // image, no tree decoded (decision 0281's path, step 5): the split's parts are views of it.
+    let front = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "read a program's text".into());
-        let Some((program, version, sources)) = program_text::load_version(store, digest, lists)? else { return Ok(None) };
-        programs.push((program, version));
+        let Some((program, sources)) = program_text::load(store, front, lists)? else { return Ok(None) };
         documents.extend(sources);
-    }
+        program
+    };
+    let version = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "open the lowered program's image".into());
+        let Some((version, sources)) = program_text::load_image(store, lowered, lists)? else { return Ok(None) };
+        documents.extend(sources);
+        version
+    };
     let read = start.elapsed();
     let at = std::time::Instant::now();
-    // The lowered program's version, where it is kept as an image: the split's parts are views of it.
-    let (lowered, version) = programs.pop().expect("two");
-    let (front, _) = programs.pop().expect("two");
-    let got = prepared_of(&facts, front, lowered, version, dialect);
+    let got = prepared_of(&facts, front, version, dialect);
     if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
         eprintln!("RERAIL_PREPARED_TRACE lookup ({}): {:.1} kB of facts; read {:.3} s, to a prepared program {:.3} s{}",
             super::phases::current().unwrap_or_else(|| "main".into()), result.entry.len() as f64 / 1e3, read.as_secs_f64(), at.elapsed().as_secs_f64(),
