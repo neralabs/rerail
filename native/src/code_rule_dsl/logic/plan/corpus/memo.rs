@@ -99,13 +99,15 @@ pub(super) fn cover<'a>(entry: &mut Entry, identities: impl Iterator<Item = &'a 
 /// Each of `rels`' identity in the file-local program `local` (decision 0225 §2): `plan::identities`, a digest of its
 /// stratum's rules and of what they read down to the inputs, with the inputs whose rows are not in the program's
 /// text digested with their values where a relation's rules reach them: the run's options (`option_input`) and the
-/// earlier phases' exports (`phased`). So an export's identity changes when a rule it is derived from does, and only
-/// then.
+/// earlier phases' exports (`phased`), and the projection the base rows are made under (`base`,
+/// `Projection::rows_digest`). So an export's identity changes when a rule it is derived from does, or what the
+/// documents' rows are made of, and only then.
 pub(in crate::code_rule_dsl) fn identities(
     local: &crate::code_rule_dsl::logic::plan::body::Placed,
     rels: &BTreeSet<String>,
     options: &serde_json::Value,
     phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>,
+    base: &[u8; 32],
 ) -> Result<BTreeMap<String, [u8; 32]>, String> {
     // Read from the program's version (t36 item 7): its components, dependencies first, and each one's rules by head.
     let sccs = local.components().map_err(|e| e.to_string())?;
@@ -138,13 +140,10 @@ pub(in crate::code_rule_dsl) fn identities(
     for rel in rels {
         let Some(id) = ids.get(rel) else { continue };
         let leaves = reach.get(rel.as_str()).cloned().unwrap_or_default();
-        if leaves.is_empty() {
-            out.insert(rel.clone(), *id);
-            continue;
-        }
         let mut hash = Sha256::new();
-        hash.update(b"rerail.corpus-local-identity/v1\0");
+        hash.update(b"rerail.corpus-local-identity/v2\0");
         hash.update(id);
+        hash.update(base);
         let options_read = leaves.iter().any(|r| crate::code_rule_dsl::typing::file_local::option_input(r));
         if options_read {
             hash.update(options.to_string().as_bytes());

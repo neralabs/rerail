@@ -3811,3 +3811,52 @@ fn a_rule_files_program_is_found_while_what_it_read_holds() {
     std::fs::write(&helper, original).unwrap();
     assert!(found().is_some(), "its bytes put back: its sha holds though its stat moved");
 }
+
+/// Decision 0089 §3 with 0174: a program that adds to a library relation takes the library's readers of it (its
+/// cone), not the on-request rewrite's rules. Through those (`x`'s readers' request for `value`, `value`'s answer) the
+/// cone reached every reader of the attribute: `z` here, and 1,300 of the Python pack's library rules in each of its
+/// five programs that ask of the library.
+#[test]
+fn a_cone_is_taken_without_the_attributes_requests() {
+    let decls = ".decl kind(n: node, k: symbol)\n.input kind\n.decl value(n: node, v: symbol)\n.input value\n.decl x(n: node)\n.decl y(n: node, v: symbol)\n.decl z(n: node, v: symbol)\n";
+    let library = parse(&format!("{decls}x(n) :- kind(n, \"call\").\ny(n, v) :- x(n), value(n, v).\nz(n, v) :- kind(n, \"name\"), value(n, v).\n.output y, z\n")).unwrap();
+    assert!(library.rules.iter().any(|r| r.head.rel == "rr_value_req"), "the library reads `value` on request: {:?}", library.rules.iter().map(|r| r.head.rel.to_string()).collect::<Vec<_>>());
+    // As `Text::lower_in` does: the program's own rewrite undone, the cone added, the rewrite made again over both.
+    let mut program = parse(&format!("{decls}x(n) :- kind(n, \"attribute\").\n")).unwrap();
+    lower::undo_on_request(&mut program);
+    let declared: BTreeSet<String> = ["kind", "value", "x", "y", "z"].into_iter().map(str::to_owned).collect();
+    crate::code_rule_dsl::logic::rr::with_cone(&mut program, &library, &["x".to_owned()].into(), &declared);
+    let heads: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.to_string()).collect();
+    assert!(heads.contains("y"), "`y` reads `x`: {heads:?}");
+    assert!(!heads.contains("z"), "`z` reads only `value`: {heads:?}");
+    assert!(!heads.iter().any(|h| lower::on_request_rule(h)), "the rewrite's rules are not copied from the library: {heads:?}");
+    for round in lower::ON_REQUEST {
+        lower::sources_on_request(&mut program, round);
+    }
+    let asks: Vec<String> = program.rules.iter().filter(|r| r.head.rel == "rr_value_req").map(|r| format!("{:?}", r.body)).collect();
+    assert!(asks.len() == 1 && asks[0].contains("\"x\""), "`y`'s nodes are asked for, by `x`: {asks:?}");
+}
+
+/// Decision 0174 §6: an attribute a cross-file reader asks for stays eager. `@rr_node_value` reads the node's document
+/// from the chunk's batch, which the cross-file part does not hold: answered there, every reader of `value` saw no
+/// value, the file-local ones too (`vals`), as the Python pack's `__all__` and `exports` readers made it.
+#[test]
+fn an_attribute_a_cross_file_reader_asks_for_is_eager() {
+    let rule = r#"
+.policy "t:values" revision 1
+.decl pick(n: node)
+pick(n) :- kind(n, "integer"), kind(m, "integer"), docof(n, d), docof(m, e), d != e.
+.decl cv(v: symbol)
+cv(v) :- pick(n), value(n, v).
+.decl vals(v: symbol)
+vals(v) :- kind(n, "integer"), value(n, v).
+.decl ends(l: number)
+ends(l) :- kind(n, "expression_statement"), last_token(n, t), line(t, l).
+.output cv, vals, ends
+"#;
+    let [cv, vals, ends] = <[Vec<String>; 3]>::try_from(joined(guests_run("cross-value", &[("a.py", "x = 1\n"), ("b.py", "x = 2\n")], rule, &["cv", "vals", "ends"]))).unwrap();
+    assert_eq!(vals, ["1", "2"], "the file-local reader's values");
+    assert_eq!(cv, ["1", "2"], "the cross-file reader's values");
+    // With `value`'s round undone the program still has core.rr's shape: its token leaves are made.
+    assert_eq!(ends, ["1"], "a token leaf's reader");
+}

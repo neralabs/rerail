@@ -171,6 +171,7 @@ impl<'v> Fields<'v> {
         match c {
             Cell::Int(i) => i.to_string(),
             Cell::Str(a) => format!("{:?}", self.v.text(a)),
+            Cell::Branded(b) => b.to_string(),
         }
     }
 

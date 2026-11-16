@@ -981,6 +981,7 @@ fn fields_agree(p: &Program) {
         let want: Vec<Vec<String>> = rows.iter().map(|row| row.iter().map(|x| match x {
             Value::Int(i) => i.to_string(),
             Value::Str(s) => format!("{:?}", s.as_str()),
+            Value::Branded(b) => b.to_string(),
         }).collect()).collect();
         assert_eq!(got, want, "{rel}");
         assert_eq!(f.has_facts(rel), !rows.is_empty());

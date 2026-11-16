@@ -73,6 +73,8 @@ fn term(t: &Term, out: &mut String) -> Result<(), String> {
         Term::Var(v) => out.push_str(&var(v)?),
         Term::Wild => out.push('_'),
         Term::Int(n) => int(*n, out),
+        // A lowered program's atom (decision 0270) is the store's: a lowered program is kept as its image.
+        Term::Branded(b) => return Err(bad(format!("the atom {b}: no text"))),
         Term::Str(s) => out.push_str(&quote(s)),
         Term::Top => out.push_str("top"),
         Term::Call(f, args) => {
@@ -157,11 +159,13 @@ fn literal(l: &Literal, out: &mut String) -> Result<(), String> {
     Ok(())
 }
 
-fn value(v: &Value, out: &mut String) {
+fn value(v: &Value, out: &mut String) -> Result<(), String> {
     match v {
         Value::Int(n) => int(*n, out),
         Value::Str(s) => out.push_str(&quote(s)),
+        Value::Branded(b) => return Err(bad(format!("the atom {b}: no text"))),
     }
+    Ok(())
 }
 
 /// A fact `rel(values…).` on its own line.
@@ -172,7 +176,7 @@ fn fact(rel: &str, row: &[Value], out: &mut String) -> Result<(), String> {
         if i > 0 {
             out.push_str(", ");
         }
-        value(v, out);
+        value(v, out)?;
     }
     out.push_str(").\n");
     Ok(())
@@ -333,6 +337,8 @@ pub fn store(store: &ContentStore, prog: &Program) -> StoreResult<Option<([u8; 3
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
         let digest: [u8; 32] = Sha256::digest(&bytes).into();
         let key = image_key(&digest);
+        // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`, decision 0264) ships it.
+        crate::code_rule_dsl::logic::rr::images::export(key, &bytes);
         let id = match store.source_by_alias(key)? {
             Some(id) => id,
             None => store.put_source(&bytes, &[key])?,
@@ -387,7 +393,8 @@ pub fn texts(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<std::col
             Some(id) => {
                 store.pin_held_sources(&[id])?;
                 let bytes = store.get_source(id)?;
-                out.insert(*d, (Stored::Image(bytes), text_ids[k].into_iter().chain([id]).collect()));
+                // The image's digest is its bytes' (`store`), so it is its own text's source too: named once.
+                out.insert(*d, (Stored::Image(bytes), text_ids[k].into_iter().filter(|t| *t != id).chain([id]).collect()));
             }
             // A program the engine ships (decision 0264): its image from the bundle, kept by no source of the store.
             None if let Some(bytes) = (mode != "off").then(|| crate::code_rule_dsl::logic::rr::images::shipped().and_then(|b| b.get(image_key(d)))).flatten() => {

@@ -521,7 +521,7 @@ pub(super) fn sources(
     let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: its exports read")); read_exports(NAME, &program, &declared, &out)? };
     let text = |v: &Value| match v {
         Value::Str(s) => Some(s.to_string()),
-        Value::Int(_) => None,
+        Value::Int(_) | Value::Branded(_) => None,
     };
     let made: std::collections::HashSet<String> = rows.get("document").into_iter().flatten().filter_map(|r| r.first().and_then(text)).collect();
     let documents: Vec<(String, String, String)> = files.iter().filter(|(p, _, _, _)| made.contains(p)).map(|(p, _, g, c)| (p.clone(), g.clone(), c.clone())).collect();

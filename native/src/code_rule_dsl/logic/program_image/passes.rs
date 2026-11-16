@@ -198,6 +198,7 @@ impl<'a> Normal<'a> {
         let prefix = self.sentinel[head.rel().index()].then_some(Cell::Int(1));
         prefix.into_iter().map(Some).chain(head.args().map(|t| match t {
             TermRef::Int(i) => Some(Cell::Int(i)),
+            TermRef::Branded(b) => Some(Cell::Branded(b)),
             TermRef::Str(a) => Some(Cell::Str(a)),
             TermRef::Top => Some(Cell::Int(top)),
             _ => None,

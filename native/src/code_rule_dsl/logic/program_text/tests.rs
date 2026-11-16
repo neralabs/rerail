@@ -123,8 +123,8 @@ fn a_runs_programs_share_their_lists() {
     same(&one, &read(&text(false)).unwrap());
 }
 
-/// A stored program is kept as its text and its image (decision 0173), and read from its image; one kept as text
-/// alone reads from its text.
+/// A stored program is kept as its image alone (decisions 0173, 0246 §6), and read from it; one kept as text alone
+/// (a store written before images) reads from its text.
 #[test]
 fn a_stored_program_is_read_from_its_image() {
     use crate::content_store::{ContentStore, HashKey};
@@ -138,12 +138,12 @@ fn a_stored_program_is_read_from_its_image() {
     prog.facts.insert("e".into(), vec![[Value::Int(1)].into()]);
     prog.rules.push(Rule { head: atom("p", vec![v("x")]), body: vec![Literal::Atom(atom("e", vec![v("x")])), Literal::Cmp { l: v("x"), op: "<", r: Term::Int(3) }].into() });
     let (digest, sources) = super::store(&store, &prog).unwrap().expect("kept");
-    assert_eq!(sources.len(), 2, "its text and its image");
+    assert_eq!(sources.len(), 1, "its image alone");
     assert!(store.source_by_alias(super::image_key(&digest)).unwrap().is_some());
     let found = super::texts(&store, &[digest]).unwrap();
     let (stored, ids) = &found[&digest];
     assert!(matches!(stored, super::Stored::Image(_)), "read from its image");
-    assert_eq!(ids.len(), 2);
+    assert_eq!(ids, &sources, "the image's source");
     same(&super::read_stored(stored, &Default::default()).unwrap(), &prog);
     same(&super::load(&store, &digest, &Default::default()).unwrap().expect("loads").0, &prog);
     // Kept as text alone (a store written before images): read from its text.

@@ -368,6 +368,8 @@ impl Summary {
         let p = &self.0;
         let env: Vec<Vec<serde_json::Value>> = p.facts.get("env").into_iter().flatten().map(|row| row.iter().map(|v| match v {
             front::Value::Int(i) => serde_json::json!({ "i": i }),
+            // An atom's value at run time is its integer (decision 0270); the settings' rows hold none.
+            front::Value::Branded(b) => serde_json::json!({ "i": b.value() }),
             front::Value::Str(s) => serde_json::json!({ "s": s.as_str() }),
         }).collect()).collect();
         let parts = serde_json::json!({
@@ -488,7 +490,7 @@ fn atoms_source<'a>(store: &ContentStore, width: usize, rows: impl Iterator<Item
     let mut atoms = store.intern_atoms(&texts).map_err(|e| Error::Plan(e.to_string()))?.into_iter().map(i64::from);
     let mut relation = crate::code_rule_dsl::facts::vtab::Relation::new(&cols);
     for row in rows {
-        let row: Vec<i64> = row.iter().map(|v| match v { front::Value::Int(i) => *i, _ => atoms.next().expect("an atom per string") }).collect();
+        let row: Vec<i64> = row.iter().map(|v| match v { front::Value::Int(i) => *i, front::Value::Branded(a) => a.value(), front::Value::Str(_) => atoms.next().expect("an atom per string") }).collect();
         relation.push(&row);
     }
     Ok(Arc::new(relation))
@@ -875,6 +877,27 @@ pub(in crate::code_rule_dsl) struct Cone {
     /// The trees of `load` and `rest` (`lower::Tree::of`), made with the cone and shared by its runs: a reader that
     /// still reads one decodes it once for the prepared program, not each run.
     trees: (lower::Tree, lower::Tree),
+}
+
+/// The attributes answered on request by a function of the node's document (decision 0174: `value`, `node_text`)
+/// whose answers are not file-local, made eager again: their rounds undone, so the projection makes them for every
+/// node. A function's answer reads the node's document from the chunk's batch, which the cross-file part does not
+/// hold: there `@rr_node_value` answered nothing, without an error, and every reader of `value` saw no value (the
+/// Python pack: `__all__`'s and `exports`' readers ask across modules, so `value` went cross-file, and `1 if a else
+/// 0`'s branches compared the same in RUF034). Until a cross-file answer reads its documents (0174 §6), an attribute a
+/// cross-file reader asks for is eager.
+fn answers_where_documents_are(prog: &mut front::Program) {
+    use crate::code_rule_dsl::logic::rr::lower::{Answer, ON_REQUEST, undo_round};
+    loop {
+        let local = crate::code_rule_dsl::typing::file_local::split(prog);
+        let Some((round, rel)) = ON_REQUEST.iter().find_map(|round| {
+            round.iter().find(|a| matches!(a.answer, Answer::Function(_)) && prog.decls.contains_key(a.req) && !local.contains(a.rel)).map(|a| (*round, a.rel))
+        }) else {
+            return;
+        };
+        crate::code_rule_dsl::logic::profile::decision(&format!("{rel} on request"), || format!("no: its answer is not file-local (a cross-file reader asks), and the cross-file part holds no documents to read; {} eager (decision 0174 §6)", round.iter().map(|a| a.rel).collect::<Vec<_>>().join(", ")));
+        undo_round(prog, round);
+    }
 }
 
 /// A measurement (dev only, `RERAIL_SPLIT_DUMP=<file>`): each cross-file relation of the split, by how its rules read
@@ -1371,6 +1394,7 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
         let mut one = parsed.pop().expect("one program");
         requests_file_local(&mut one);
         same_relations(&mut one);
+        answers_where_documents_are(&mut one);
         return Ok(one);
     }
     let axis = crate::code_rule_dsl::logic::front::AXIS;
@@ -1531,8 +1555,10 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
     for round in crate::code_rule_dsl::logic::rr::lower::ON_REQUEST {
         crate::code_rule_dsl::logic::rr::lower::sources_on_request(&mut all, round);
     }
-    // A request the cross-file part would derive asks within the node's document instead (O-cross-file-answers).
+    // A request the cross-file part would derive asks within the node's document instead (O-cross-file-answers,
+    // decision 0286); an answer still cross-file after that is made eager (0174 §8b).
     requests_file_local(&mut all);
+    answers_where_documents_are(&mut all);
     // The combined program bounded once to the documents it shows (decision 0058 §1, 0089 §4): a library's rules are
     // the same for every program, so one analysis gives what each program's would.
     if shared && makes_guests {
@@ -3132,17 +3158,9 @@ fn run_observed(
     let cross_mode = cross_memo::mode();
     // With requests answered inside the fixpoint too: the cone runs first, so every loaded document's exports, the
     // component rules' only reads, are in before the components are (decision 0065 §2a).
-    // The copies hiding made for guests in the run's own language, now that it is known (decision 0058).
-    if prog.decls.keys().any(|r| r.starts_with("rr_in_")) {
-        let _fold = crate::code_rule_dsl::logic::profile::span(|| "fold the copies of guests in the run's language".into());
-        let bound = hiding::bound(&prog);
-        let folded = hiding::fold_own(&mut prog, label, bound);
-        if folded > 0 {
-            let rules = prog.rules.len();
-            let (merged, _, repeated) = merge_and_drop_repeats(&mut prog);
-            crate::code_rule_dsl::logic::profile::decision("copies of guests in the run's language folded (decision 0058)", || format!("{folded} copies and kind sets of {label} guests; then {repeated} repeated rules dropped and {merged} relations merged, {rules} -> {} rules", prog.rules.len()));
-        }
-    }
+    // The copies hiding made for guests in the run's own language are folded where the program is prepared (decision
+    // 0058, `fold_own`): a function of the combined program and the run's language, which the prepared key names, so a
+    // program read prepared is not folded first.
     let loading_run = world::wanted(&prog);
     let cross_declared = cross_memo::declared(&prog).filter(|_| cross_mode != cross_memo::Mode::Off && label == "python");
     // A program that reads the components' relations itself (`rr_cx_reach`: a closure-local lookup) has them with or
@@ -3254,6 +3272,33 @@ fn run_observed(
         memo::named_source(store, text, true, None, &late_sources);
         program_plans.push(plan);
     }
+    // Keeps `prepared` in the store (decision 0073), queued: made into facts, encoded and written by the store's
+    // writer (decision 0102); its documents' sources reach the manifest, queued after it.
+    let keep_durably = |prepared: &Arc<Prepared>| {
+        let (Some(stored), Some(text)) = (durable, durable_text.clone()) else { return };
+        let _keep = crate::code_rule_dsl::logic::profile::span(|| "keep the prepared program in the store (decision 0073), queued".into());
+        let (kept, key, late) = (Arc::clone(prepared), prepared_key, Arc::clone(&late_sources));
+        store.write_back_syms(
+            crate::content_store::write_back::Syms::None, "the prepared program",
+            0,
+            vec![(prepared::queued(&prepared_key), None)],
+            Box::new(move |store| {
+                let source = match stored {
+                    Some(id) => id,
+                    None => {
+                        let id = memo::source(store, &text)?;
+                        late.lock().expect("the late sources").push(id);
+                        id
+                    }
+                };
+                if let Some(documents) = prepared::remember(store, source, &key, &kept)? {
+                    kept.keep_documents(store.database_path(), &documents);
+                    late.lock().expect("the late sources").extend(documents);
+                }
+                Ok(())
+            }),
+        );
+    };
     let (kept, from) = match (kept, durable) {
         (Some(p), durable) => {
             // Its texts' sources, which a run that read it from the store names: known where this process wrote or
@@ -3278,19 +3323,25 @@ fn run_observed(
             }
             (Some(p), "memory")
         }
-        (None, Some(Some(source))) => {
+        // The store's, under the programs' text; or, where the store has none, the one the engine ships (decision 0264).
+        (None, Some(source)) => {
             let _lookup = crate::code_rule_dsl::logic::profile::span(|| "the prepared program, from the store (decision 0073)".into());
             // One this process queued is read once written (`settle`; it is kept in memory, so this is rare).
             store.settle(&prepared::queued(&prepared_key));
             let found = prepared::lookup(store, source, dialect, &prepared_key, &lists).map_err(|e| Error::Plan(e.to_string()))?;
             if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
-                eprintln!("RERAIL_PREPARED_TRACE ({}) {} {label}: {}", phases::current().unwrap_or_else(|| "main".into()), prepared_key[..6].iter().map(|b| format!("{b:02x}")).collect::<String>(), match &found { None => "not in the store", Some((p, _)) if !holds(p) => "in the store, its atoms not the store's", Some(_) => "read" });
+                eprintln!("RERAIL_PREPARED_TRACE ({}) {} {label}: {}", phases::current().unwrap_or_else(|| "main".into()), prepared_key[..6].iter().map(|b| format!("{b:02x}")).collect::<String>(), match &found { None => "not in the store", Some((p, ..)) if !holds(p) => "in the store, its atoms not the store's", Some((_, _, prepared::Found::Moved)) => "read, its atoms moved to the store's", Some(_) => "read" });
             }
-            let found = found.filter(|(p, _)| holds(p));
-            (found.map(|(p, documents)| {
+            let found = found.filter(|(p, ..)| holds(p));
+            (found.map(|(p, documents, how)| {
                 p.keep_documents(store.database_path(), &documents);
                 program_sources.extend(documents);
-                Arc::new(p)
+                let p = Arc::new(p);
+                // Moved to this store's atoms: kept here, so the next run reads it as it is.
+                if how == prepared::Found::Moved {
+                    keep_durably(&p);
+                }
+                p
             }), "store")
         }
         (None, _) => (None, ""),
@@ -3313,6 +3364,20 @@ fn run_observed(
             // What preparing decides is the prepared program's, kept with it (decision 0269).
             let deciding = crate::code_rule_dsl::logic::profile::Deciding::open();
             let mut interned: Vec<(Vec<String>, Vec<u32>)> = Vec::new();
+            // The copies hiding made for guests in the run's own language, now that it is known (decision 0058).
+            if prog.decls.keys().any(|r| r.starts_with("rr_in_")) {
+                let _fold = crate::code_rule_dsl::logic::profile::span(|| "fold the copies of guests in the run's language".into());
+                let bound = hiding::bound(&prog);
+                let folded = hiding::fold_own(&mut prog, label, bound);
+                if folded > 0 {
+                    let rules = prog.rules.len();
+                    let (merged, _, repeated) = merge_and_drop_repeats(&mut prog);
+                    crate::code_rule_dsl::logic::profile::decision("copies of guests in the run's language folded (decision 0058)", || format!("{folded} copies and kind sets of {label} guests; then {repeated} repeated rules dropped and {merged} relations merged, {rules} -> {} rules", prog.rules.len()));
+                }
+                // What the run read of the program before the fold, the same after it.
+                debug_assert_eq!(world::wanted(&prog), loading_run, "folding changed whether the run loads");
+                debug_assert!(cross_declared.is_none() || cross_memo::declared(&prog).is_some(), "folding dropped the cross memo's pragma");
+            }
             // @py_unparse(n) and @ast_dump(n) read the relations the batches bind them as.
             cpython_functors(&mut prog)?;
             // The base relations it reads and does not derive are inputs, `.input` or not, as an authored file's are
@@ -3447,6 +3512,15 @@ fn run_observed(
             let _step = crate::code_rule_dsl::logic::profile::span(|| "split the file-local and cross-file parts".into());
             let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
             drop(_step);
+            // An attribute's answer by a function of the node's document runs where the documents are (decision 0174
+            // §6, `answers_where_documents_are`): in the cross-file part it answers nothing, without an error.
+            {
+                use crate::code_rule_dsl::logic::rr::lower::{Answer, ON_REQUEST};
+                let local = crate::code_rule_dsl::typing::file_local::split(&prog);
+                if let Some(a) = ON_REQUEST.iter().flat_map(|r| r.iter()).find(|a| matches!(a.answer, Answer::Function(_)) && prog.decls.contains_key(a.req) && prog.rules.iter().any(|r| r.head.rel == a.rel) && !local.contains(a.rel)) {
+                    return Err(Error::Plan(format!("`{}` is answered on request in the cross-file part, which holds no documents to read it from (decision 0174 §6)", a.rel)));
+                }
+            }
             if let Some(path) = std::env::var_os("RERAIL_SPLIT_DUMP") {
                 dump_split(std::path::Path::new(&path), &split);
             }
@@ -3458,32 +3532,7 @@ fn run_observed(
                 eprintln!("RERAIL_PREPARED_TRACE ({}) {} {label}: prepared, durable {:?}", phases::current().unwrap_or_else(|| "main".into()), prepared_key[..6].iter().map(|b| format!("{b:02x}")).collect::<String>(), durable.map(|d| d.is_some()));
             }
             keep_prepared(prepared_key, Arc::clone(&prepared));
-            if let (Some(stored), Some(text)) = (durable, durable_text.clone()) {
-                let _keep = crate::code_rule_dsl::logic::profile::span(|| "keep the prepared program in the store (decision 0073), queued".into());
-                // Made into facts, encoded and written by the store's writer (decision 0102); its documents' sources
-                // reach the manifest, queued after it.
-                let (kept, key, late) = (Arc::clone(&prepared), prepared_key, Arc::clone(&late_sources));
-                store.write_back_syms(
-                    crate::content_store::write_back::Syms::None, "the prepared program",
-                    0,
-                    vec![(prepared::queued(&prepared_key), None)],
-                    Box::new(move |store| {
-                        let source = match stored {
-                            Some(id) => id,
-                            None => {
-                                let id = memo::source(store, &text)?;
-                                late.lock().expect("the late sources").push(id);
-                                id
-                            }
-                        };
-                        if let Some(documents) = prepared::remember(store, source, &key, &kept)? {
-                            kept.keep_documents(store.database_path(), &documents);
-                            late.lock().expect("the late sources").extend(documents);
-                        }
-                        Ok(())
-                    }),
-                );
-            }
+            keep_durably(&prepared);
             prepared
         }
     };
@@ -3537,23 +3586,18 @@ fn run_observed(
         crate::code_rule_dsl::logic::profile::decision("documents", || format!("none read: no rule reads a document, so the run is over none of the {} files", docs.len()));
         docs.clear();
     }
-    // The text tests' plans compiled once for the process (decision 0075), their groups of automata read from the store
-    // when an earlier process determinized them.
-    // A group is determinized where that pays: kept in the store for later runs, or for a run over many documents.
-    // A small run with no store searches few strings, and runs a group on the lazy DFA (O-vocabulary-dfa-reuse).
+    // The text tests' plans compiled once for the process (decision 0075), their groups of automata images (0264):
+    // read from the engine's bundle or its build's image store when it or an earlier process determinized them.
+    // A group is determinized where that pays: kept in the image store for later runs, or for a run over many
+    // documents. A small run with no store searches few strings, and runs a group on the lazy DFA
+    // (O-vocabulary-dfa-reuse).
     let compiling = crate::code_rule_dsl::logic::profile::span(|| "compile the text tests".into());
-    let dense = durable.is_some() || docs.len() >= DENSE_TEXT_DOCS;
-    let compiled = match durable {
-        Some(_) => {
-            // The groups' sources reach the manifest with the other late ones: those it stores are the writer's.
-            let groups = prepared::StoredDfas(store, Arc::clone(&late_sources));
-            vocabulary.compile(Some(&groups), dense)
-        }
-        None => vocabulary.compile(None, dense),
-    };
+    let groups = crate::code_rule_dsl::logic::rr::ImageDfas(crate::code_rule_dsl::logic::rr::image_store());
+    let dense = groups.0.is_some() || docs.len() >= DENSE_TEXT_DOCS;
+    let compiled = vocabulary.compile(Some(&groups), dense);
     drop(compiling);
     if let Some(c) = compiled.filter(|c| c.read + c.built + c.lazy > 0) {
-        crate::code_rule_dsl::logic::profile::decision("text tests compiled (decision 0075)", || format!("groups of automata: {} read from the store, {} determinized, {} on the lazy DFA", c.read, c.built, c.lazy));
+        crate::code_rule_dsl::logic::profile::decision("text tests compiled (decision 0075)", || format!("groups of automata: {} read (the bundle, the build's image store or this process), {} determinized, {} on the lazy DFA", c.read, c.built, c.lazy));
     }
     // The run's text tests, each string tested once: the batches' and every program the run evaluates (`Hooks::texts`).
     let vocabulary = Arc::new(vocabulary.again());
@@ -3623,9 +3667,15 @@ fn run_observed(
     };
     // Each relation a file's entry holds, by its identity (decision 0225 §2): a rule's edit misses only the relations
     // derived from it, in every file; the others are read from the entry.
+    // The tree's projection: `core.rr`'s for a program that includes it, T's for one that declares its base relations
+    // itself (decision 0046); relations no rule reads are not made. Made before the memo's identities: an entry's
+    // rows are its relations' only under the projection they were made under (`Projection::rows_digest`).
+    let read: BTreeSet<String> = lowered.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string())).collect();
+    let projection = syntax::Projection::of(&prog, read.clone()).with_long_text(&prog, &matchers);
+    let base_rows = projection.rows_digest();
     let memo_ids = {
         let rels: BTreeSet<String> = split.exports.iter().cloned().chain(local_v.outputs().map(|o| local_v.text(o).to_owned())).collect();
-        memo::identities(&local_placed, &rels, options, &phased).map_err(Error::Plan)?
+        memo::identities(&local_placed, &rels, options, &phased, &base_rows).map_err(Error::Plan)?
     };
     let memo_space = memo::space_digest(&memo_ids, &local_placed, phases::current().as_deref());
     // The components' stored rows are a function of the phases' exports the cross-file rules read too (P3's
@@ -3671,7 +3721,6 @@ fn run_observed(
         (Err(blocked), _) => format!("off: rows of {blocked:?} name no document"),
         _ => format!("off ({})", if memo.is_none() { "no persistent store" } else if t.is_some() { "T's facts" } else if unlocated.is_empty() { "typing, RERAIL_CORPUS_MEMO=off or the run's `memo: off`" } else { "a relation without a location column" }),
     });
-    let read: BTreeSet<String> = lowered.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string())).collect();
     // The reference graph's relations, for a program that reads them: its files are summarized as the chunks are
     // built, and linked once they all are (`references`). W's graph is Python's.
     let references = match CROSS_FILE.get() { Some(make) => make(label, &prog, &read, &docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p, label)).collect::<Vec<_>>())?, None => None };
@@ -3871,7 +3920,7 @@ fn run_observed(
     let slice_ids: BTreeMap<String, [u8; 32]> = match &slice {
         Some(s) => {
             let rels: BTreeSet<String> = guests::LIBRARY.iter().chain(&guests::DEMANDS).map(|r| (*r).to_owned()).collect();
-            memo::identities(&s.placed()?, &rels, options, &phased).map_err(Error::Plan)?.into_iter().map(|(r, id)| {
+            memo::identities(&s.placed()?, &rels, options, &phased, &base_rows).map_err(Error::Plan)?.into_iter().map(|(r, id)| {
                 use sha2::{Digest as _, Sha256};
                 let mut h = Sha256::new();
                 h.update(b"rerail.embed-slice-identity/v1\0");
@@ -3886,9 +3935,6 @@ fn run_observed(
         Some(s) => format!("an embed slice of {} rules runs per chunk, up to {} rounds, before the file-local part (decision 0055)", s.program.rules.len(), guests::DEPTH),
         None => "no rule asks for a guest".into(),
     });
-    // The tree's projection: `core.rr`'s for a program that includes it, T's for one that declares its base relations
-    // itself (decision 0046); relations no rule reads are not made.
-    let projection = syntax::Projection::of(&prog, read.clone()).with_long_text(&prog, &matchers);
     crate::code_rule_dsl::logic::profile::decision("base relations", || format!("{:?} shape (decision 0046)", projection.shape));
     // A run that reads nothing of its documents builds none: every relation its outputs need, through any rule, is
     // derived, given as facts (an earlier phase's exports, the run's constants) or a native function. A main
@@ -9437,8 +9483,8 @@ pub fn constants_tested(prog: &front::Program) -> HashMap<&str, BTreeSet<(usize,
     let mut by: HashMap<&str, BTreeSet<(usize, i64)>> = HashMap::new();
     for a in prog.rules.iter().flat_map(|r| &r.body).filter_map(front::Literal::atom) {
         for (c, t) in a.args.iter().enumerate() {
-            if let front::Term::Int(v) = t {
-                by.entry(a.rel.as_str()).or_default().insert((c, *v));
+            if let Some(v) = t.integer() {
+                by.entry(a.rel.as_str()).or_default().insert((c, v));
             }
         }
     }
@@ -9466,7 +9512,7 @@ pub fn constants_tested_in(v: &crate::code_rule_dsl::logic::program_image::Versi
     for r in v.rules() {
         for a in r.reads() {
             for (c, t) in a.args().enumerate() {
-                if let TermRef::Int(n) = t {
+                if let Some(n) = match t { TermRef::Int(n) => Some(n), TermRef::Branded(b) => Some(b.value()), _ => None } {
                     by.entry(v.rel_name(a.rel())).or_default().insert((c, n));
                 }
             }
@@ -10428,8 +10474,8 @@ impl Own {
                 continue;
             }
             for (i, arg) in atom.args.iter().enumerate() {
-                if let front::Term::Int(v) = arg {
-                    out.entry((atom.rel.to_string(), super::sql_col(&atom.rel, i))).or_default().insert(*v);
+                if let Some(v) = arg.integer() {
+                    out.entry((atom.rel.to_string(), super::sql_col(&atom.rel, i))).or_default().insert(v);
                 }
             }
         }

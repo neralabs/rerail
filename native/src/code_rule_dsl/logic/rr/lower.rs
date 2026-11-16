@@ -4473,6 +4473,29 @@ pub struct OnRequest {
     pub eager: Option<&'static str>,
 }
 
+/// Whether `rel` is one the rewrite adds (`sources_on_request`): a request, an attribute's eager half or named
+/// children, or a widened copy. `core.rr`'s names hold them (it is read with the rewrite), and a program with a round
+/// undone (`undo_round`) has none of that round's: a check that a program declares every core name passes over them.
+pub fn made_on_request(rel: &str) -> bool {
+    rel.starts_with("rr_wide_")
+        || ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| {
+            let named = match a.answer {
+                Answer::Children { named } => Some(named),
+                Answer::Function(_) => None,
+            };
+            a.req == rel || a.eager == Some(rel) || named == Some(rel)
+        })
+}
+
+/// Whether rules of `head` are the on-request rewrite's own (decision 0174): an attribute's answer, its requests, a
+/// widened copy. They are no reader of anything a program adds: a library's cone (`rr::with_cone`) is taken without
+/// them, or it reached, from a relation a program adds to, the widened copies of its readers, their requests, the
+/// attribute's answer and then every reader of the attribute (five of the Python pack's programs took 1,300 of the
+/// library's rules each).
+pub fn on_request_rule(head: &str) -> bool {
+    head.starts_with("rr_wide_") || ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| a.rel == head || a.req == head)
+}
+
 /// What answers an attribute's request for a node.
 #[derive(Clone, Copy)]
 pub enum Answer {
@@ -4678,9 +4701,16 @@ pub fn sources_on_request(prog: &mut crate::code_rule_dsl::logic::front::ast::Pr
 /// (`convert::overlay`): the requests are made over the merged program's readers.
 pub fn undo_on_request(prog: &mut crate::code_rule_dsl::logic::front::ast::Program) {
     for round in ON_REQUEST.iter().rev() {
+        undo_round(prog, round);
+    }
+}
+
+/// One round of `ON_REQUEST` undone (`undo_on_request`): its attributes inputs again, made for every node.
+pub fn undo_round(prog: &mut crate::code_rule_dsl::logic::front::ast::Program, round: &[OnRequest]) {
+    {
         let answered: Vec<&OnRequest> = round.iter().filter(|a| prog.decls.contains_key(a.req)).collect();
         if answered.is_empty() {
-            continue;
+            return;
         }
         // A round's copies are named after its first attribute present (`Widen::new`): any of the round's.
         let wide: Vec<String> = round.iter().map(|a| format!("rr_wide_{}_", a.rel)).collect();

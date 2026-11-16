@@ -164,7 +164,7 @@ fn term_vars(v: &Version, r: RuleRef<'_>, t: TermRef<'_>, out: &mut Vec<String>)
 fn support(f: &Fields<'_>, v: &Version, rule: RuleRef<'_>, domains: &lower::Domains) -> Option<Support> {
     let head = rule.head();
     let hdecl = f.columns(v.rel_name(head.rel()))?;
-    if !head.args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_))) {
+    if !head.args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_))) {
         return None;
     }
     // Each variable's type, from the first positive atom column binding it; wildcards there become variables.
@@ -230,6 +230,7 @@ fn t_of<'v>(v: &'v Version, r: RuleRef<'v>, t: TermRef<'v>) -> T<'v> {
         TermRef::Wild => T::Wild,
         TermRef::Top => T::Top,
         TermRef::Int(i) => T::Int(i),
+        TermRef::Branded(b) => T::Branded(b),
         TermRef::Str(a) => T::StrAtom(a),
         TermRef::Call(f, args) => T::Call(v.text(f), args.map(|a| t_of(v, r, a)).collect()),
     }

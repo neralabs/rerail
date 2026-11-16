@@ -47,6 +47,7 @@ fn t_of<'v>(v: &'v Version, r: RuleRef<'v>, t: TermRef<'v>) -> T<'v> {
         TermRef::Wild => T::Wild,
         TermRef::Top => T::Top,
         TermRef::Int(i) => T::Int(i),
+        TermRef::Branded(b) => T::Branded(b),
         TermRef::Str(a) => T::StrAtom(a),
         TermRef::Call(f, args) => T::Call(v.text(f), args.map(|a| t_of(v, r, a)).collect()),
     }

@@ -276,6 +276,14 @@ and after, and with the library lowered together, on one file (144 rows) and on 
 
 ## Stages 3, 4 and 7, as built so far (2026-11-15)
 
+- **Linking merges helpers equal across modules** (found merging the hub, 2026-11-15). Lowering makes a context's,
+  cover's or aggregate's helper once per stem, columns and rule templates (365610cbf), but only within one lowering:
+  two library modules each made their own, and the linked library had both where lowering them together has one
+  (`library_modules_link_to_the_lowering_of_them_together`, javascript's `rr_cover`s). `append` keys each module's
+  helpers as `helper_once` does, in the order they were made, and an equal one is renamed to the earlier module's.
+  A module image keeps its helpers' stems (`module_helper` rows): an aggregate's names its readers' heads, which its
+  rules do not say.
+
 - **Every program is lowered in its libraries' scope** (`rr::Text::lower_in`, `lower::link_in`): its own clauses,
   as a module against the library modules its includes reach, and the whole-program half over them with the scope
   seeded; the scope's names are then taken out (core's and the kind sets stay, as `own_part` left them). No program
@@ -328,6 +336,31 @@ time: no image exists yet to derive from.
 
 Open, found on the way: `typing::phase_tests::types_resolves_names_bases_members_and_annotations_by_symbol` fails
 ("a dotted annotation through `import pkg.m`"), at stage 2's commit too, so before this work.
+
+## Stage 5, first steps (2026-11-15)
+
+With the shipped bundle (0264) and its prepared programs (0270), preparing a run that reads its program prepared
+was 0.27 s, then 0.125 s once the text tests' automata shipped too. These steps take derivations off that path:
+
+- **The guests' copies are folded where the program is prepared.** `fold_own` and its `merge_and_drop_repeats` ran
+  on the combined program before the prepared program was looked up (0.022 s), though the result is a function of
+  the combined program and the run's language, which the prepared key names. The fold now runs on a miss alone, on
+  the way into preparing; what the run read of the program before it (whether it loads, the cross memo's pragma) is
+  checked to be the same after it in a debug build.
+- **The split's parts are views** (§4). `file_local::assemble` copied the whole lowered program twice, one copy per
+  part, and kept each beside its part's version (`Tree::beside`). Where the parts have versions, a part's tree is
+  now `Tree::of` its version, made where a reader asks. Two readers still ask, both of the cross-file part: the
+  cone of requests (`cone_of`) and the support relations (`supports::supports`), t36 item 7's.
+
+Measured (Python pack, one file, release, one thread, M3 Max, fresh stores, the bundle): prepare 1.71 G → 1.38 G,
+the run 23.44 G → 23.19 G; no bundle 40.4 G (unchanged). Every output relation is the baseline's, and the 50-file
+outputs are the build's before the hub merge, 0174 on and eager.
+
+What preparing still does on this path (unprofiled, the timeline): the memo's program and the components' plan
+0.029 s (the per-file memo's identities 0.016 s, a digest of each stratum's rules), the split's parts 0.015 s, the
+projection 0.012 s, statistics 0.011 s, reading the prepared program's two texts 0.013 s, the cone of requests
+0.006 s. Each is a function of the prepared program (with the run's options and phase rows for the identities): the
+next step keeps them with its image.
 
 ## Aligned with django-bugs (decisions 0239, 0240)
 

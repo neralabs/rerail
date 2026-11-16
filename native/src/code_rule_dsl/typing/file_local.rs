@@ -1084,23 +1084,37 @@ pub fn assemble(
     let Crossing { exports, base_read, base, projected } = crossing(prog, &local);
     let is_local = |rel: &str| local.contains(rel);
     let in_cross = |rel: &str| !is_local(rel) || projected.contains(rel);
-    let mut l = prog.clone();
-    l.rules.retain(|r| is_local(&r.head.rel) || constants.contains(r.head.rel.as_str()));
-    l.natives.retain(|rel, _| is_local(rel));
-    l.lattice.retain(|rel, _| is_local(rel));
-    l.gates.retain(|(rel, _)| is_local(rel));
-    l.outputs = prog.outputs.iter().filter(|o| is_local(o)).cloned().chain(exports.iter().cloned()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+    // The parts' inputs and outputs: what the parts' versions overlay (below), and their trees' where one is made.
+    let l_outputs: Vec<String> = prog.outputs.iter().filter(|o| is_local(o)).cloned().chain(exports.iter().cloned()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
     // The reference graph is bound for the cross-file part only (no rule reading it is file-local): no chunk has it.
-    l.inputs.retain(|i| !matches!(i.as_str(), "reference_edge" | "reference_open"));
-    let mut c = prog.clone();
-    c.rules.retain(|r| in_cross(&r.head.rel));
-    c.natives.retain(|rel, _| in_cross(rel));
-    c.lattice.retain(|rel, _| !is_local(rel));
-    c.gates.retain(|(rel, _)| !is_local(rel));
-    c.outputs.retain(|o| !is_local(o));
-    c.inputs = base_read.into_iter().chain(exports.iter().cloned()).collect();
-    crate::code_rule_dsl::logic::version_trace::note("split.local", prog, &l);
-    crate::code_rule_dsl::logic::version_trace::note("split.cross", prog, &c);
+    let l_inputs: Vec<String> = prog.inputs.iter().filter(|i| !matches!(i.as_str(), "reference_edge" | "reference_open")).cloned().collect();
+    let c_outputs: Vec<String> = prog.outputs.iter().filter(|o| !is_local(o)).cloned().collect();
+    let c_inputs: Vec<String> = base_read.into_iter().chain(exports.iter().cloned()).collect();
+    // The parts as trees: each a copy of the program, less what the other part keeps.
+    let local_tree = || {
+        let mut l = prog.clone();
+        l.rules.retain(|r| is_local(&r.head.rel) || constants.contains(r.head.rel.as_str()));
+        l.natives.retain(|rel, _| is_local(rel));
+        l.lattice.retain(|rel, _| is_local(rel));
+        l.gates.retain(|(rel, _)| is_local(rel));
+        l.outputs = l_outputs.clone();
+        l.inputs = l_inputs.clone();
+        l
+    };
+    let cross_tree = || {
+        let mut c = prog.clone();
+        c.rules.retain(|r| in_cross(&r.head.rel));
+        c.natives.retain(|rel, _| in_cross(rel));
+        c.lattice.retain(|rel, _| !is_local(rel));
+        c.gates.retain(|(rel, _)| !is_local(rel));
+        c.outputs = c_outputs.clone();
+        c.inputs = c_inputs.clone();
+        c
+    };
+    if crate::code_rule_dsl::logic::version_trace::on() {
+        crate::code_rule_dsl::logic::version_trace::note("split.local", prog, &local_tree());
+        crate::code_rule_dsl::logic::version_trace::note("split.cross", prog, &cross_tree());
+    }
     // The parts as versions of the program's (the stored image's, else made here): the rules each keeps, a view, and
     // the fields above, an overlay over it. A program the image has no form for has none.
     let version = version.or_else(|| {
@@ -1110,16 +1124,16 @@ pub fn assemble(
         use crate::code_rule_dsl::logic::program_image::PartFields;
         let local_rule = |rel: &str| is_local(rel) || constants.contains(rel);
         let not_local = |rel: &str| !is_local(rel);
-        let local = v.part(&local_rule, &l.inputs, &l.outputs, PartFields { natives: &is_local, lattice: &is_local, gates: &is_local }).ok()?;
-        let cross = v.part(&in_cross, &c.inputs, &c.outputs, PartFields { natives: &in_cross, lattice: &not_local, gates: &not_local }).ok()?;
+        let local = v.part(&local_rule, &l_inputs, &l_outputs, PartFields { natives: &is_local, lattice: &is_local, gates: &is_local }).ok()?;
+        let cross = v.part(&in_cross, &c_inputs, &c_outputs, PartFields { natives: &in_cross, lattice: &not_local, gates: &not_local }).ok()?;
         Some(Parts { local, cross })
     });
-    // Each part's tree is its version's where it has one, made here beside it (`lower::Tree::beside`): a reader on
-    // the run's path is named as one of a version's tree; else the tree alone.
+    // Each part's tree is its version's where it has one, decoded where a reader asks (`lower::Tree::of`, decision
+    // 0246 §4: the parts are views, nothing cloned); else the tree, a copy of the program.
     use crate::code_rule_dsl::logic::plan::lower::Tree;
     let (l, c) = match &versions {
-        Some(p) => (Tree::beside(p.local.clone(), l), Tree::beside(p.cross.clone(), c)),
-        None => (Tree::given(l), Tree::given(c)),
+        Some(p) => (Tree::of(p.local.clone()), Tree::of(p.cross.clone())),
+        None => (Tree::given(local_tree()), Tree::given(cross_tree())),
     };
     Programs { local: l, cross: c, exports, base, locations, same_doc, file_local: local, constants, versions }
 }
@@ -1263,7 +1277,7 @@ pub fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program)
             let reader = &prog.rules[ri];
             let Literal::Atom(a) = &reader.body[li] else { return false };
             a.args.iter().any(|t| match t {
-                Term::Int(_) | Term::Str(_) => true,
+                Term::Int(_) | Term::Branded(_) | Term::Str(_) => true,
                 Term::Var(v) => reader.body.iter().enumerate().any(|(j, l)| j != li && matches!(l, Literal::Atom(b) if !b.neg && b.vars().contains(v.as_str()))),
                 _ => false,
             })
@@ -1414,7 +1428,7 @@ fn determined(body: &[crate::code_rule_dsl::logic::front::Literal], mut known: s
                 Literal::Atom(a) if !a.neg => {
                     let fixed = |c: &usize| match a.args.get(*c) {
                         Some(Term::Var(v)) => known.contains(v.as_str()),
-                        Some(Term::Int(_) | Term::Str(_)) => true,
+                        Some(Term::Int(_) | Term::Branded(_) | Term::Str(_)) => true,
                         _ => false,
                     };
                     if keys.get(a.rel.as_str()).is_some_and(|ks| ks.iter().any(|k| k.iter().all(fixed))) {

@@ -51,6 +51,7 @@ impl<'v> Tree<'v> {
             TermRef::Wild => Term::Wild,
             TermRef::Top => Term::Top,
             TermRef::Int(i) => Term::Int(i),
+            TermRef::Branded(b) => Term::Branded(b),
             TermRef::Str(a) => Term::Str(self.name(a)),
             TermRef::Call(f, args) => {
                 let f = self.name(f);
@@ -110,6 +111,7 @@ impl<'v> Tree<'v> {
                 row.push(match c {
                     Cell::Int(i) => Value::Int(i),
                     Cell::Str(a) => Value::Str(self.name(a)),
+                    Cell::Branded(b) => Value::Branded(b),
                 });
             }
             out.push(self.lists.values(&row));

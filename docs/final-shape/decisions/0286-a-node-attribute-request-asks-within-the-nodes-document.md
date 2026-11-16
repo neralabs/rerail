@@ -6,6 +6,11 @@ Status: decided (2026-11-15). Answers the hub's work-queue question 2 (Q2/Q5) wi
 O-cross-file-answers. Builds on 0174 (node attributes answered on request), 0145 (requests), and the file-local
 split (list step 29, `typing::file_local::split`).
 
+With 0174 §8b (Benchmarks-and-parity, merged 2026-11-16): combining narrows first (`requests_file_local`), then
+makes eager an attribute whose answer is still cross-file (`answers_where_documents_are`), and preparation refuses
+one left cross-file. The eager fallback is a safety net behind this narrowing: it fires only where narrowing left
+an answer in the cross-file part.
+
 ## Intro
 
 Some node attributes are answered only for the nodes a rule asks about (0174): a node's text (`node_text`), its
