@@ -1185,9 +1185,11 @@ pub mod tests {
         let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default(),input_docs:Default::default(),docs:Default::default(),patched:Default::default(),frames:None,admitted:Default::default(),late:Default::default(),late_stats:Default::default(),past:Default::default()};
         let result=cut(Some(&kept),key,&pl(&p),&st(&p),&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
-        let lowered=lower::Lowered {program:lower::Tree::given(p.clone()),version:None,maint:None,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
-        let reused=result.program(&lowered);
-        assert!(reused.program.rules.is_empty() && reused.program.gates.is_empty());
+        let v=crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0;
+        let lowered=lower::Lowered {program:lower::Tree::beside(v.clone(),p.clone()),version:Some(v),maint:None,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
+        let reused=result.program(&lowered).unwrap();
+        let placed=reused.placed().unwrap();
+        assert!(placed.v.size()==0 && placed.fields().unwrap().gates().is_empty());
         let mut changed=inputs.clone();
         *changed.values_mut().next().unwrap()=8;
         for (candidate,rows) in [(key,changed),([2;32],inputs.clone())] {

@@ -32,9 +32,9 @@ fn kinds_flow_through_derived_columns_and_facts() {
     .unwrap();
     let tag = tape_tag(python).unwrap();
     let integer = i64::from(kind_atom(tag, python.kinds().kind_id("integer")));
-    assert_eq!(l.program.facts["lit"][0][0], Value::Int(integer));
-    assert!(matches!(l.program.facts["lit"][0][1], Value::Int(n) if n > 100));
-    let body = &l.program.rules.iter().find(|r| r.head.rel == "typed").unwrap().body;
+    assert_eq!(l.program.given_tree().unwrap().facts["lit"][0][0], Value::Int(integer));
+    assert!(matches!(l.program.given_tree().unwrap().facts["lit"][0][1], Value::Int(n) if n > 100));
+    let body = &l.program.given_tree().unwrap().rules.iter().find(|r| r.head.rel == "typed").unwrap().body;
     let Literal::Atom(field) = &body[2] else { panic!() };
     let left = i64::from(field_atom(tag, python.kinds().field_id("left").unwrap()));
     assert_eq!(field.args[1], Term::Int(left));
@@ -73,7 +73,7 @@ fn a_kind_membership_compares_kind_atoms() {
     let tag = tape_tag(python).unwrap();
     let atom = |k: &str| Term::Int(i64::from(kind_atom(tag, python.kinds().kind_id(k))));
     let cmp = |op, k: &str| Literal::Cmp { l: Term::Var("k".into()), op, r: atom(k) };
-    let bodies = |rel: &str| l.program.rules.iter().filter(|r| r.head.rel == rel).map(|r| r.body[1..].to_vec()).collect::<Vec<_>>();
+    let bodies = |rel: &str| l.program.given_tree().unwrap().rules.iter().filter(|r| r.head.rel == rel).map(|r| r.body[1..].to_vec()).collect::<Vec<_>>();
     assert_eq!(bodies("r"), [vec![cmp("=", "call")], vec![cmp("=", "attribute")]]);
     assert_eq!(bodies("s"), [vec![cmp("!=", "call"), cmp("!=", "attribute")]]);
 }

@@ -506,6 +506,11 @@ impl Stats {
     pub fn empty(prog: &Program) -> Self {
         Stats::with_kindsets(prog.kindsets.clone())
     }
+    /// `empty`, of a lowered program read through its version's fields.
+    pub fn empty_of_lowered(l: &lower::Lowered) -> Result<Self> {
+        let placed = l.placed()?;
+        Ok(Stats::empty_of(&placed.fields()?))
+    }
     /// `empty`, of a program read through its fields (`Fields::kindsets`).
     pub fn empty_of(f: &fields::Fields<'_>) -> Self {
         Stats::with_kindsets(f.kindsets().iter().map(|(k, ks)| (f.text(*k).to_owned(), ks.iter().map(|&a| f.text(a).to_owned()).collect())).collect())
@@ -4616,7 +4621,7 @@ mod complete_answer_tests {
                         (format!("{}req", super::super::answers::HELD_BACK), keys[immediate..].to_vec())])
                 } else { Ok(vec![("got".into(), keys.to_vec())]) }
             };
-            let result = run_atoms_native_answering(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), "program", &mut answer, None, None, None).unwrap();
+            let result = run_atoms_native_answering(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).unwrap(), BTreeSet::new(), "program", &mut answer, None, None, None).unwrap();
             assert_eq!(result.outputs["shown"].len(), 1000, "later consumers must see all deferred positives");
             assert_eq!(result.outputs["shown"].shown().iter().map(|r| r[0].parse::<i64>().unwrap()).collect::<BTreeSet<_>>(), (0..1000).collect(), "every returned value stays exact");
             assert_eq!(batches.len(), 2, "held keys resume as one batch, never one callback per key");

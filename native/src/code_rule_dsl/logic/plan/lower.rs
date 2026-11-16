@@ -472,36 +472,8 @@ impl Tree {
     }
 }
 
-impl std::fmt::Debug for Tree {
-    /// The tree's: a check comparing programs reads it (and decodes one held as a version).
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(&**self, f)
-    }
-}
-
-impl std::ops::Deref for Tree {
-    type Target = Program;
-    #[track_caller]
-    fn deref(&self) -> &Program {
-        self.get()
-    }
-}
-
-impl std::ops::DerefMut for Tree {
-    /// An edit of the tree: the caller states the same edit on the version (`corpus::made_from`).
-    #[track_caller]
-    fn deref_mut(&mut self) -> &mut Program {
-        let at = std::panic::Location::caller();
-        self.get();
-        if std::sync::Arc::get_mut(&mut self.tree).is_none() {
-            tree_read(1, at);
-            crate::code_rule_dsl::logic::profile::decision("a shared tree copied to be edited", || format!("{}:{}", at.file(), at.line()));
-        }
-        // An edited tree is no longer its version's.
-        self.of = None;
-        std::sync::Arc::make_mut(&mut self.tree).get_mut().expect("decoded above")
-    }
-}
+// No `Deref`, `DerefMut` or `Debug` (decision 0281's path, step 4): a tree is read only where a caller asks for it by
+// name (`given_tree`, `for_check`, `into_program`), never through a `Lowered` in passing.
 
 /// A program lowered for one dialect.
 #[derive(Clone)]
