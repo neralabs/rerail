@@ -1700,6 +1700,25 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     })
 }
 
+/// What a token compares past a word's first eight bytes, by the table's longest word: as
+/// little as the words need, as the lean lexer's `word_code` compares the ninth byte of its one
+/// nine-byte word alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WordRest {
+    /// No word past eight bytes: nothing.
+    None,
+    /// Nine bytes at most: the ninth, in its slot's meta's top byte (`NINTH_SHIFT`), compared
+    /// where the token is nine bytes (lean's `(len != 9) | (ninth == b'n')`).
+    Ninth,
+    /// Sixteen at most: the second eight, in the slot's third word, straight-line.
+    Second,
+    /// Longer: a hit on a long word calls the tail compare (`tail_fn`).
+    Tails,
+}
+
+/// A slot's ninth byte in its meta (`WordRest::Ninth`): the top byte, above the code bits.
+const NINTH_SHIFT: i64 = 56;
+
 /// The record pass's tables (`records::WordTable`), in one buffer the code reads by address:
 /// each byte's kind (256 bytes), the slots' keys, the slots' `len | code << 8`, each long word's
 /// tails (seven words). Byte offsets of each part.
@@ -1709,14 +1728,13 @@ const LONG_WORD: u64 = 1 << 63;
 pub struct RecordTables {
     pub words: Vec<u64>,
     /// The word slots, 16 bytes each: the key (the word's first eight bytes), then its meta.
-    /// A token takes both with one pair load, as the lean lexer's `WORDS` entry. Where every
-    /// word is 16 bytes at most (`second`), 32 bytes each: then its bytes 8 to 16, and a zero.
+    /// A token takes both with one pair load, as the lean lexer's `WORDS` entry. Where a word
+    /// is past nine bytes and none past 16 (`WordRest::Second`), 32 bytes each: then its bytes
+    /// 8 to 16, and a zero.
     pub slots: usize,
     pub tails: usize,
-    /// Every word is 16 bytes at most: a token compares its second eight bytes with its
-    /// slot's, straight-line in the loop, as the lean lexer its ninth byte (`word_code`). Else
-    /// a hit on a long word calls the tail compare (`tail_fn`).
-    pub second: bool,
+    /// What a token compares past a word's first eight bytes (`WordRest`), by the longest word.
+    pub rest: WordRest,
     /// The first bytes whose tokens take no fused rule (`rule_last`), as nibble tables (a bit
     /// where the lookups' `and` is not zero, `set_nibbles`): the lean lexer's `rare`. A
     /// block's rare starts split its starts into runs (`record_tokens`); none where the loop's
@@ -1832,15 +1850,30 @@ impl RecordTables {
         // Each slot's length, then the code bits its word gives (`len | bits << 8`): the word at
         // `KIND_BITS`, and the marks of that word alone at `MARK_SHIFT` (`Records::marks`), so
         // that a token takes them with the slot's one load.
+        let longest = table.meta.iter().map(|&m| m & 0xff).max().unwrap_or(0);
+        let rest = match longest {
+            0..=8 => WordRest::None,
+            9 => WordRest::Ninth,
+            10..=16 => WordRest::Second,
+            _ => WordRest::Tails,
+        };
         let metas: Vec<u64> = table.meta.iter().map(|&m| {
             let word = u64::from(m >> 8);
             let alone = r.marks.iter().enumerate().filter(|(_, x)| x.0 == crate::records::WORD_ALONE && u64::from(x.1) == word && word != 0).fold(0u64, |a, (k, _)| a | 1 << k);
             // A word past eight bytes: its top bit (`LONG_WORD`), whose other words a token
-            // compares.
-            let long = if (m & 0xff) > 8 { LONG_WORD } else { 0 };
-            u64::from(m & 0xff) | (word << crate::records::KIND_BITS | alone << crate::records::MARK_SHIFT) << 8 | long
+            // compares; where the words are nine bytes at most, the ninth byte there instead.
+            let len = m & 0xff;
+            let top = match rest {
+                WordRest::Ninth => {
+                    let code = (m >> 8) as usize;
+                    if len == 9 { (table.tails[code - 1][0] & 0xff) << NINTH_SHIFT } else { 0 }
+                }
+                _ if len > 8 => LONG_WORD,
+                _ => 0,
+            };
+            u64::from(len) | (word << crate::records::KIND_BITS | alone << crate::records::MARK_SHIFT) << 8 | top
         }).collect();
-        let second = table.meta.iter().all(|&m| (m & 0xff) <= 16);
+        let second = rest == WordRest::Second;
         for (&k, (&m, &w)) in table.keys.iter().zip(metas.iter().zip(&table.meta)) {
             words.extend([k, m]);
             if second {
@@ -2001,7 +2034,7 @@ impl RecordTables {
         let punct = 8 * words.len();
         words.extend(punct_codes.iter().map(|&(one, two, _)| one | two << 32));
         let rare_unpaired = rare.is_some_and(|n| (0..256).all(|b| n[0][b & 15] & n[1][b >> 4] == 0 || entries[b] == entries[b | 256]));
-        Ok(RecordTables { words, slots, tails, second, rare, ends: ends_of, rare_unpaired, table, starts: r.starts, lasts: r.lasts, pairs, token, filters, layout: crate::records::RecordLayout::Columns, fused, punct, punct_in_entry, lean })
+        Ok(RecordTables { words, slots, tails, rest, rare, ends: ends_of, rare_unpaired, table, starts: r.starts, lasts: r.lasts, pairs, token, filters, layout: crate::records::RecordLayout::Columns, fused, punct, punct_in_entry, lean })
     }
 }
 
@@ -5895,7 +5928,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let h1 = f.ins().imul(h1, c.mult);
     let slot = f.ins().ushr_imm(h1, i64::from(64 - t.table.bits));
     // The slot's key and meta, side by side: one pair load.
-    let off = f.ins().ishl_imm(slot, if t.second { 5 } else { 4 });
+    let off = f.ins().ishl_imm(slot, if t.rest == WordRest::Second { 5 } else { 4 });
     let sa = f.ins().iadd(c.slots, off);
     let kk = f.ins().load(types::I64, ro, sa, 0);
     let meta = f.ins().load(types::I64, ro, sa, 8);
@@ -5903,7 +5936,17 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let mlen = f.ins().band_imm(meta, 0xff);
     let same_len = f.ins().icmp(IntCC::Equal, mlen, len);
     let mut hit = f.ins().band(same_key, same_len);
-    if t.second {
+    if t.rest == WordRest::Ninth {
+        // Its ninth byte, where it has nine, as the slot's (lean's `(len != 9) | (ninth ==
+        // b'n')`): read past the token where it is shorter, in the padding at the file's end.
+        let ninth = f.ins().uload8(types::I64, fl, from, 8);
+        let want = f.ins().ushr_imm(meta, NINTH_SHIFT);
+        let same = f.ins().icmp(IntCC::Equal, ninth, want);
+        let other = f.ins().icmp_imm(IntCC::NotEqual, len, 9);
+        let ok = f.ins().bor(same, other);
+        hit = f.ins().band(hit, ok);
+    }
+    if t.rest == WordRest::Second {
         // Its second eight bytes, as the slot's: read where it has them (else its first again,
         // in bounds as `raw`), none for a token of eight bytes at most. Straight-line, as the
         // lean lexer's ninth byte.
@@ -5918,8 +5961,10 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         let same = f.ins().icmp(IntCC::Equal, chunk, want);
         hit = f.ins().band(hit, same);
     }
-    // The word's code bits (its word and the marks of it alone, `RecordTables`), on a hit.
+    // The word's code bits (its word and the marks of it alone, `RecordTables`), on a hit; not
+    // the ninth byte above them.
     let w = f.ins().ushr_imm(meta, 8);
+    let w = if t.rest == WordRest::Ninth { f.ins().band_imm(w, (1i64 << (NINTH_SHIFT - 8)) - 1) } else { w };
     let bits = f.ins().select(hit, w, zero);
     let mut code = f.ins().bor(kind, bits);
     // The word itself, where a mark or a long word's tail needs it.
@@ -5959,14 +6004,14 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         }
     }
     // A hit on a word past eight bytes: the meta's top bit, in the bits taken (`LONG_WORD`).
-    if t.second {
+    if t.rest != WordRest::Tails {
         f.ins().jump(coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), code.into(), hits.into()]);
     } else {
         let check = f.ins().ushr_imm(bits, 55);
         f.ins().brif(check, long, &[], coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), code.into(), hits.into()]);
     }
 
-    if !t.second {
+    if t.rest == WordRest::Tails {
         // A word past eight bytes: its other words, compared (seven at most, unrolled).
         f.switch_to_block(long);
         f.set_cold_block(long);
@@ -6896,8 +6941,8 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             }
         }
         // The long words' tail compare (`tail_fn`), out of the loop; none where each slot has
-        // its word's second eight bytes (`RecordTables::second`).
-        if let Some((_, t, _)) = records.filter(|(_, t, _)| !t.second) {
+        // what its word has past eight bytes (`RecordTables::rest`).
+        if let Some((_, t, _)) = records.filter(|(_, t, _)| t.rest == WordRest::Tails) {
             let mut sig = words_signature(module, 3);
             sig.returns.push(cranelift_codegen::ir::AbiParam::new(types::I64));
             let id = module.declare_function(&format!("{name}_tail"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;

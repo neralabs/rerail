@@ -3339,3 +3339,46 @@ not what holds words back.
 
 Test: `a_tokens_end_is_leans_max` (the generated Rust: one branch in the
 run loop before the token's end, a `ctz`, an unsigned `max`).
+
+## A word's lookup is lean's `word_code`
+
+**Intro.** Lean's `word_code` compares a token with its slot by the
+first eight bytes and the length. It compares the ninth byte only where
+the token has nine, because its one long word, `violation`, has nine.
+Ours took a 32-byte slot whenever every word fit 16 bytes. For each
+word, straight-line, it then:
+
+- loaded the token's bytes 8 to 16 from a selected address;
+- masked them to the length;
+- loaded the slot's second key;
+- compared the two.
+
+The compiler now sizes the compare by the table's longest word
+(`RecordTables::rest`, `WordRest`):
+
+| Longest word | Form | Slot | Compared past eight bytes |
+|---|---|---|---|
+| 8 bytes at most | `None` | 16 bytes | nothing |
+| 9 | `Ninth` | 16 bytes | the ninth byte, in the meta's top byte |
+| 16 at most | `Second` | 32 bytes | the second eight bytes |
+| longer | `Tails` | 16 bytes | the tail compare, out of the loop |
+
+rr's words are `Ninth`:
+
+```rust
+let (k, meta) = slot(key ^ len);
+let hit = (k == key) & (meta & 0xff == len)
+        & ((len != 9) | (b[s + 8] == (meta >> 56) as u8));
+let code = if hit { meta >> 8 & (1 << 48) - 1 } else { 0 };
+```
+
+The ninth byte is read past a shorter token, in the zeros after the
+file (`BACK`), as lean reads its window's.
+
+Measured, as information: words 93.7 → 87.6 instructions a token.
+Numbers rose 113.3 → 118.8 with their arm's Rust unchanged: rustc's
+code for the loop around it, not the arm's source.
+
+Test: `a_words_lookup_is_leans` (a 16-byte slot, no second key read,
+the ninth byte asked at nine); `the_word_multiplier_is_a_literal` now
+asserts `WordRest::Ninth`.

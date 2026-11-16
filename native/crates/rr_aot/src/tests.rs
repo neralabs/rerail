@@ -73,8 +73,9 @@ fn aot_tapes_are_the_jits() {
 
 /// The word hash's multiplier is a literal where the hash is, as the lean lexer writes its
 /// own (`word_slot`): no barrier hides it from rustc. And a word past eight bytes is compared
-/// in the loop, straight-line, as the lean lexer's ninth byte: rr's words are 16 bytes at most
-/// (`RecordTables::second`), so no tail compare is a function of its own.
+/// in the loop by its ninth byte alone, as the lean lexer's `word_code`: rr's words are nine
+/// bytes at most (`RecordTables::rest`), so no second key is read and no tail compare is a
+/// function of its own.
 #[test]
 fn the_word_multiplier_is_a_literal() {
     let c = rerail_rr_parser::compiled().expect("compiles");
@@ -82,7 +83,7 @@ fn the_word_multiplier_is_a_literal() {
     let src = include_str!("tier1_aot.rs");
     assert!(!src.contains("kept("), "a barrier on a constant");
     assert!(src.contains(&format!("{}i64 as u64", t.table.mult as i64)), "the multiplier a literal");
-    assert!(t.second, "rr's words fit in two words each");
+    assert_eq!(t.rest, rerail_compiler::native_cpu_block::WordRest::Ninth, "rr's words are nine bytes at most");
 }
 
 /// The token loop's innermost loop, the fused rules' (a word's hash in it), calls nothing: as
@@ -117,6 +118,27 @@ fn the_run_loop_calls_nothing() {
         f0[a..b].matches("(pin, ").count() + f0[a..b].matches("match ").count()
     }).collect();
     assert!(calls.contains(&0), "every word hash's loop has calls or a rules' match: {calls:?}");
+}
+
+/// Each word lookup is lean's `word_code`: one 16-byte slot (key and meta), its key and length
+/// compared, and the ninth byte where the token has nine (`(len != 9) | (ninth == ..)`), no
+/// second key read from a 32-byte slot.
+#[test]
+fn a_words_lookup_is_leans() {
+    let c = rerail_rr_parser::compiled().expect("compiles");
+    let mult = c.parser.tier1.records.as_ref().expect("the record pass").table.mult as i64;
+    let src = include_str!("tier1_aot.rs");
+    let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
+    let vars: Vec<&str> = f0.match_indices(&format!(" = {mult}i64 as u64;")).map(|(at, _)| &f0[f0[..at].rfind(|c: char| !c.is_ascii_alphanumeric()).expect("its name") + 1..at]).collect();
+    let hashes: Vec<usize> = vars.iter().flat_map(|v| f0.match_indices(&format!(".wrapping_mul({v})")).map(|(at, _)| at).collect::<Vec<_>>()).collect();
+    assert!(!hashes.is_empty(), "no word hash");
+    for h in hashes {
+        let look = &f0[h..];
+        let look = &look[..look.find(" = if ").expect("the code chosen on a hit")];
+        assert!(look.contains(".wrapping_shl(4)"), "a slot of 16 bytes: {look}");
+        assert!(!look.contains("wrapping_add(16isize"), "a second key read: {look}");
+        assert!(look.contains("((9i64 as u64) as u64)"), "the ninth byte asked where the token has nine: {look}");
+    }
 }
 
 /// A word's or a punctuation's end is lean's `pos + words.max(n1)`: the run from its first
