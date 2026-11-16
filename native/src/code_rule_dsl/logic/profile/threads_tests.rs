@@ -77,10 +77,52 @@ fn cpu_between_spans_is_named_by_the_spans_around_it() {
     let gaps = profile::gaps();
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("gaps");
     report::write(&dir, "header\n").unwrap();
-    let text = std::fs::read_to_string(dir.join("profile.txt")).unwrap();
+    // gaps.tsv has every gap; profile.txt only the largest 12, which other tests' runs in this process may fill.
+    let text = std::fs::read_to_string(dir.join("gaps.tsv")).unwrap();
     profile::set(false);
     let _ = std::fs::remove_dir_all(&dir);
     let between = gaps.iter().find(|g| g.after == "xgap before" && g.before == "xgap after").expect("the gap between the spans");
     assert!(between.cpu > 0.08, "{} s between the spans", between.cpu);
-    assert!(text.contains("xgap before -> xgap after"), "{text}");
+    assert!(text.lines().any(|l| l.starts_with("xgap before\txgap after\t")), "{text}");
+}
+
+/// Decision 0288: the run's thread's time is charged to the span innermost when it passed, phase by phase. A span's
+/// sleep is its wall off a core, its burn its CPU, its child's time is the child's own, and a phase's time is the sum
+/// of what it charged.
+#[test]
+fn the_run_threads_time_is_charged_to_its_innermost_span_by_phase() {
+    let _run = profile::one_run();
+    profile::set(true);
+    profile::track_run_thread();
+    {
+        let _outer = profile::span(|| "xouter".into());
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        {
+            let _inner = profile::span(|| "xinner".into());
+            burn(0.03);
+        }
+    }
+    profile::run_thread_phase("xfirst");
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    profile::run_thread_phase("xsecond");
+    profile::untrack_run_thread();
+    let clock = profile::PhaseClock { wall: 0.2, own: 0.05, helped: 0.0, process_cpu: 0.1, runnable: 0.15, involuntary: 3 };
+    let text = profile::run_thread_report(&[("xfirst", clock)]);
+    profile::set(false);
+    let row = |phase: &str, path: &str| -> Vec<f64> {
+        let block = text.split("\n-- ").find(|b| b.starts_with(phase)).unwrap_or_else(|| panic!("phase {phase}: {text}"));
+        let line = block.lines().find(|l| l.ends_with(&format!("  {path}"))).unwrap_or_else(|| panic!("{path} in {phase}: {block}"));
+        line.split_whitespace().take(3).map(|x| x.parse().unwrap()).collect()
+    };
+    // xouter's own: its sleep, off a core; xinner's: its burn, on one.
+    let (outer, inner) = (row("xfirst", "xouter"), row("xfirst", "xouter/xinner"));
+    assert!(outer[0] >= 0.06 && outer[1] < 0.02 && outer[2] >= 0.05, "xouter: wall, cpu, off {outer:?}\n{text}");
+    assert!(inner[1] >= 0.03 && inner[0] >= inner[1], "xinner: wall, cpu, off {inner:?}\n{text}");
+    // The second phase is its sleep, outside every span: none of the first phase's time is in it.
+    let outside = row("xsecond", "(outside every span)");
+    assert!(outside[0] >= 0.02 && outside[0] < 0.06, "xsecond: {outside:?}\n{text}");
+    // The table: the phase's clocks, and what is derived from them.
+    let first = text.lines().find(|l| l.starts_with("xfirst ")).expect("the phase's row");
+    let cols: Vec<&str> = first.split_whitespace().collect();
+    assert_eq!(&cols[1..], &["0.200", "0.050", "0.000", "0.150", "0.050", "0.50", "0.050", "3"], "{first}");
 }

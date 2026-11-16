@@ -37,6 +37,17 @@ pub(in crate::code_rule_dsl) fn table(name: &str) -> String {
     let quoted = name.split('.').map(|part| if part.starts_with('"') { std::borrow::Cow::Borrowed(part) } else { ident(part) }).collect::<Vec<_>>().join(".");
     if rest.is_empty() { quoted } else { format!("{quoted} {rest}") }
 }
+/// A relation's name as `ident` wrote it, read back: a quoted identifier without its quotes (`"plan"` is `plan`, a
+/// doubled `""` one `"`); any other name as it is. What finds a relation by its name in a statement's text (setfix's
+/// `view`, which reads a bound input in place) reads it so, or a relation named like a keyword is not found.
+pub(in crate::code_rule_dsl) fn unquote(name: &str) -> std::borrow::Cow<'_, str> {
+    match name.strip_prefix('"').and_then(|n| n.strip_suffix('"')) {
+        Some(inner) if inner.contains("\"\"") => std::borrow::Cow::Owned(inner.replace("\"\"", "\"")),
+        Some(inner) => std::borrow::Cow::Borrowed(inner),
+        None => std::borrow::Cow::Borrowed(name),
+    }
+}
+
 /// A relation's name as an SQL identifier: as written, unless it is a SQLite keyword (`values`, `order`) or not a
 /// plain identifier, which is quoted. Every SQL statement that names a program's relation writes it so (O106).
 pub(in crate::code_rule_dsl) fn ident(name: &str) -> std::borrow::Cow<'_, str> {

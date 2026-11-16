@@ -1,9 +1,18 @@
 # 0258: A maintenance rule starts from its source rule's order
 
-Status: built (2026-11-15). Takes up decision 0230's first open item: a session's first-sight plans. Option one of
+Status: built (2026-11-15); off by default since the same day: a net cost in planning (see "Re-validated" and "The start inside the search"). Takes up decision 0230's first open item: a session's first-sight plans. Option one of
 0123 §5 ("carry the cold run's plans into the session"). `plan.rs` (`Model::started`, `source_order`,
 `RunPlans::orders`), `plan/body.rs` (`Body::origin`, `Body::source_map`), `maintain.rs` (`write_ir`),
 `program_image/build.rs` (`RuleBuilder::source`).
+
+Kept (the user, 2026-11-15): source orders stay. They are an escape hatch from inefficient rules. cost-classifier's
+withdrawal of this decision (49297f11e, "plan: remove source orders") is not taken when that branch is merged.
+django-bugs' form (efcbd0717: tried inside the search, `RERAIL_SOURCE_ORDERS` opt-in) is the form the hub takes.
+Off by default on data (django-bugs' "Re-validated" and "The start inside the search", O125 sessions 12-16): the
+plans are the same (join work at parity, "same as full: true" either way), and on plans for more: 47.7 ms against
+40.7 ms of first-sight planning thread CPU, alternating rounds; 65.5 against 59.0 ms in the start-first form. The
+rule's own work moves by noise only (34.19/33.98/34.43 G off, 33.82/34.19/34.19 G on). Nothing measured shows the
+case it is kept for, a rule the search plans badly; `RERAIL_SOURCE_ORDERS=on` is the hatch there.
 
 ## Intro
 
@@ -90,7 +99,8 @@ moved by up to 2% between rounds, and step 16's join work by a third.
 | cold (11) | 10.44 | 10.47 | +0.3% |
 
 The join work is at parity: at step 12, 5.46 M rows against 5.44 M. On the optimized build a search costs about
-6.5 µs and a start 3.3 µs (step 13: 1,891 searches in 27.8 ms). A started line saves half a search.
+6.5 µs and a start 3.3 µs (step 13: 1,891 searches in 27.8 ms). A started line saves half a search. (Not so, as
+measured per plan call: see "Re-validated" below. The table above was the first form's, and the saving noise.)
 
 **The first form was a loss.** It led each seed with its change and followed the source's joins in their order.
 The sessions came out 0.3% to 2% over the searches, though join work read lower, for two reasons:
@@ -102,16 +112,96 @@ The sessions came out 0.3% to 2% over the searches, though join work read lower,
 
 Both are fixed above: a seed keeps the source's lead, and the next join is a connected one.
 
+## Re-validated: what starts, and what it saves
+
+2026-11-15, after the hub merge (646d533b9). `--profile profiling`, `RERAIL_JOIN_SEED=1`. An A/B worktree built
+this decision's two commits with a diagnostic (each start's verdict, price and search cost; each plan call's thread
+CPU in starts and searches), not committed.
+
+**Sessions 12 to 16 are the full run's** ("same as full: true" at every step, two runs).
+
+**The table of what starts was the first form's.** It was measured at ce8bc3dd2 and carried into f597b540c, whose
+fix (a seed keeps the source's lead, the next join a connected one) changes the orders priced. Step 12:
+
+| code | started | priced over a search's cost |
+|---|---|---|
+| ce8bc3dd2, the first form | 783 (34%) | 414 |
+| f597b540c, as built | 704 (31%) | 493 |
+| after the hub merge, with decision 0265 | 707 (31%) | 491 |
+
+Matched by rule text across the last two (1,033 lines), 5 lines change verdict. The merge did not move it, nor did
+0265 (708 without it). Steps 13 and 14 now: 1,409 of 3,923 (36%) and 1,271 of 2,745 (46%).
+
+**It costs planning, not saves it.** Each plan call's thread CPU in `plan_rule_reused`, sessions 12 to 16, mean of
+three rounds:
+
+| | f597b540c off | on | merged off | on |
+|---|---|---|---|---|
+| searches | 69.8 ms (6,649) | 47.0 ms (4,444) | 58.2 ms (6,345) | 38.7 ms (4,093) |
+| starts taken | | 15.9 ms | | 15.3 ms |
+| starts refused | 0.9 ms | 14.2 ms | 0.8 ms | 11.5 ms |
+| planning in all | 70.7 ms | 77.2 ms | 59.0 ms | 65.5 ms |
+
+- A line that starts saves its search (about 20 ms of searches) for about 15 ms of starts: about 30% of a search,
+  not half.
+- A refused start (about 490 a step, priced over a search's cost) prices the source's order, then searches: 12 to
+  14 ms for nothing.
+- So source orders cost about 7 ms more planning over the five sessions, in both builds.
+
+**Why a start saves so little.** A search costs 400 rows and one per candidate order (`search_rows`). Of step 12's
+707 starts, 272 have one candidate order and 218 two: there a search prices what the start prices. And pricing one
+order runs most of a search's set-up (each atom's binding domains, `delta_misses`, every join priced from no binding
+for `SEED`). The gate (a price under a search's cost) keeps a start safe for the plan; it does not pick the lines
+where a start saves planning.
+
+**The −0.9% above was noise.** The sessions' instruction totals move more between rounds than planning can move
+them: f597b540c off read 36.95, 38.08 and 37.03 G (3%), against about 0.03 G of planning. Merged: off 34.19, 33.98,
+34.43; on 33.82, 34.19, 34.19. The join work is unchanged either way.
+
+## The start inside the search, then off by default
+
+2026-11-15. Two changes, then measured:
+
+1. **The search tries the start first** (`SearchCx::start`, read back as `SearchCx::started`). `start_order` finds
+   the order; the search prices it under its own set-up (`price`, the same loop a kept order is priced by) and takes
+   it, before greedy-first, where it runs, is led by the delta and prices under a search's cost. A refused start
+   then costs its steps, not a second set-up.
+2. **No start where a search prices fewer than three orders** (`START_CANDIDATES`): there the search prices about
+   what the start does.
+
+Thread CPU of first-sight planning, sessions 12 to 16, off and on run alternately (two rounds, load steady):
+
+| | lines | ms |
+|---|---|---|
+| off: every line searched | 6,325 | 40.7, 40.8 |
+| on: in all | 6,332 | 47.7, 47.9 |
+| of which finding start orders (`start_order`) | 2,950 | 5.2, 5.3 |
+| starts taken (with finding them) | 1,503 | 10.1, 10.3 |
+| starts refused (with finding them, and the search) | 1,446 | 18.5, 18.6 |
+| searched with no start | 3,370 | 19.2, 19.0 |
+
+Still 7 ms more, as before the change. Most of it is finding the order (the source's body, its literal map, the
+mapped order, two lookups: about 1.8 µs a line). Without it the starts would still not save: greedy-first (decision
+0123 §7) already prices one cheap order and takes it under a search's cost, under the same set-up, so a start saves
+only greedy's other candidates.
+
+So source orders are **off by default** (`RERAIL_SOURCE_ORDERS=on` turns them on): the plans are the same either
+way (join work at parity, "same as full: true" with them on, steps 12 and 13), and off plans for less. With them
+off, no order is kept for them either (`orders_put`).
+
 ## Open
 
 - **A plan call's fixed cost is the larger part.** A `plan #` span's own time, outside its search, is about 18 µs a
   line on the optimized build (step 13: 57.7 ms over 3,128 lines, against 27.8 ms of searches). That is the kept
   plan's lookup, `live_sizes` (each column's distinct values and fan, and each constant's count), the planning
   budget and the bookkeeping. It is paid by every line, kept or new. Starting from the source's order does not reach it.
+  Taken up by decision 0265: with the profile off it was about 7 µs a line (the rest was the profile's own
+  formatting), and it is 4 to 5 µs now.
 - **The glue rules** (1,049 lines at step 12) have no source rule. They are a few literals over one relation's
   maintenance relations, the same shape for every relation. Their search is mostly its fixed part.
-- **Orders priced over a search's cost** are priced and then searched (414 at step 12). That is a start's cost
-  spent for nothing.
+- **Orders priced over a search's cost** are priced and then searched (493 at step 12, as built). That is a start's
+  cost spent for nothing: 12 to 14 ms over sessions 12 to 16, more than the starts save.
+- **A start where a search prices one or two orders** saves nothing: most of the lines that start.
 - **Across processes.** The line orders live with a session's plans in memory. A new process takes plans from the
   store by key (decision 0116), and its line orders start empty.
 

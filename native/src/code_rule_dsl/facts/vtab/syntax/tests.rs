@@ -1237,22 +1237,34 @@ fn node_text_answered_on_request() {
         if program.inputs.iter().any(|i| i == "node_text") {
             return None;
         }
-        let mut out: Vec<String> = program.rules.iter().filter(|r| r.head.rel == "rr_node_text_req" || r.head.rel.starts_with("rr_wide_")).map(|r| format!("{}.", r.to_string().replace('$', ""))).collect();
+        let mut out: Vec<String> = program.rules.iter().filter(|r| r.head.rel.starts_with("rr_node_text_req") || r.head.rel.starts_with("rr_wide_")).map(|r| format!("{}.", r.to_string().replace('$', ""))).collect();
         out.sort();
         Some(out)
     };
     let one = |body: &str, want: &[&str]| assert_eq!(requests(body), Some(want.iter().map(|s| s.to_string()).collect()), "{body}");
     one("out(s) :- node(_, m, \"module\", _, _), node_text(m, s).", &["rr_node_text_req(m) :- node(_, m, \"module\", _, _)."]);
     one("out(s) :- field(_, \"type\", y), node_text(y, s).", &["rr_node_text_req(y) :- field(_, \"type\", y)."]);
-    // A literal that reads the text is left out; the rest that binds the node is the request.
+    // A literal that reads the text is left out; the rest that binds the node is the request, a variable read once a
+    // wildcard (decision 0291).
     one("out(s) :- field(p, \"name\", y), node_text(y, s), node(_, q, \"call\", _, _), field(q, \"function\", f), node_text(f, s), child(p, x, 0).", &[
         "rr_node_text_req(f) :- node(_, q, \"call\", _, _), field(q, \"function\", f).",
-        "rr_node_text_req(y) :- field(p, \"name\", y), child(p, x, 0).",
+        "rr_node_text_req(y) :- field(p, \"name\", y), child(p, _, 0).",
+    ]);
+    // Decision 0291. A reader that pairs nodes by kind, read only with its first node bound: the request for that node
+    // also joins what its reader binds it by (`rr_node_text_req_by_pair_0`). The request for the other loses the
+    // witness `v` and the atoms the rest already holds (`node(_, _, k, _, _)` beside `node(_, e, k, _, _)`): it was
+    // every same-kind pair.
+    one(".decl pair(v: node, e: node)\npair(v, e) :- node(_, e, \"string\", _, _), node(_, v, k, _, _), node(_, e, k, _, _), node_text(v, s), node_text(e, s).\nout(t) :- field(_, \"right\", v), pair(v, _), t = \"x\".", &[
+        "rr_node_text_req(e) :- node(_, e, \"string\", _, _).",
+        "rr_node_text_req(v) :- node(_, e, \"string\", _, _), node(_, v, k, _, _), node(_, e, k, _, _), rr_node_text_req_by_pair_0(v).",
+        "rr_node_text_req_by_pair_0(rr_dn) :- field(_, \"right\", rr_dn).",
     ]);
     // A node bound by a relation that reads node_text: through its widened copy, on the columns it binds without it.
+    // `named`'s own request is narrowed by its one reader's ask (decision 0291).
     one("named(n, s) :- node(_, n, \"identifier\", _, _), node_text(n, s).\nout(t) :- named(n, \"x\"), field(n, \"name\", m), node_text(m, t).", &[
         "rr_node_text_req(m) :- rr_wide_node_text_named(n), field(n, \"name\", m).",
-        "rr_node_text_req(n) :- node(_, n, \"identifier\", _, _).",
+        "rr_node_text_req(n) :- node(_, n, \"identifier\", _, _), rr_node_text_req_by_named_0(n).",
+        "rr_node_text_req_by_named_0(rr_dn) :- field(rr_dn, \"name\", _).",
         "rr_wide_node_text_named(n) :- node(_, n, \"identifier\", _, _).",
     ]);
     // A negation asks for the nodes it tests.

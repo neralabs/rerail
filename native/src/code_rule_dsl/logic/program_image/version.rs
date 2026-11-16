@@ -11,6 +11,7 @@ use super::handles::{AtomRef, RuleRef};
 use super::{AtomId, Cell, Image, RelId, RuleId, bad};
 use crate::code_rule_dsl::logic::front::{Lists, Program};
 use std::collections::{BTreeMap, HashSet};
+use super::manager::Store;
 use std::sync::Arc;
 
 /// Fewest ranges a view may have; it may have up to a quarter of its parent's rules (`max_ranges`, decision 0244).
@@ -22,11 +23,12 @@ pub fn max_ranges(rules: usize) -> usize {
     (rules / 4).max(MAX_RANGES)
 }
 
+/// Each form holds its analyses (`analyses`, decision 0281 §2), made as they are asked for and dropped with it.
 pub enum Version {
-    Base { image: Arc<Image>, digest: u64 },
+    Base { image: Arc<Image>, digest: u64, analyses: Store },
     /// Ranges of `parent`'s rule ids, ascending; `parent` is never a view (a view of a view is of its parent).
-    View { parent: Arc<Version>, ranges: Vec<(u32, u32)>, size: usize, digest: u64 },
-    Overlay { parent: Arc<Version>, delta: Arc<Image>, size: usize, depth: usize, digest: u64 },
+    View { parent: Arc<Version>, ranges: Vec<(u32, u32)>, size: usize, digest: u64, analyses: Store },
+    Overlay { parent: Arc<Version>, delta: Arc<Image>, size: usize, depth: usize, digest: u64, analyses: Store },
 }
 
 /// What made a version: which form an edit took.
@@ -112,7 +114,7 @@ impl Version {
             return Err(bad("a delta is opened over its parent (`Version::over`)"));
         }
         let digest = image.own_sum();
-        Ok(Arc::new(Version::Base { image: Arc::new(image), digest }))
+        Ok(Arc::new(Version::Base { image: Arc::new(image), digest, analyses: Store::default() }))
     }
 
     /// The overlay of `parent` and the delta `bytes` hold: the delta's bases must be `parent`'s id spaces, and what
@@ -164,13 +166,13 @@ impl Version {
         }
         d = d.wrapping_add(delta.own_sum());
         let size = parent.size() - removed.len() + delta.rules();
-        Ok(Arc::new(Version::Overlay { parent: parent.clone(), size, depth: parent.depth() + 1, digest: d, delta: Arc::new(delta) }))
+        Ok(Arc::new(Version::Overlay { parent: parent.clone(), size, depth: parent.depth() + 1, digest: d, delta: Arc::new(delta), analyses: Store::default() }))
     }
 
     /// A view of `parent`'s rules in `ranges` (of its rule ids), of `size` rules and digest `digest` (the builder's).
     pub(crate) fn view(parent: &Arc<Version>, ranges: Vec<(u32, u32)>, size: usize, digest: u64) -> Arc<Version> {
         debug_assert!(!matches!(**parent, Version::View { .. }), "a view of a view is of its parent");
-        Arc::new(Version::View { parent: parent.clone(), ranges, size, digest })
+        Arc::new(Version::View { parent: parent.clone(), ranges, size, digest, analyses: Store::default() })
     }
     /// Whether rule id `k` is in `ranges`.
     fn in_ranges(ranges: &[(u32, u32)], k: u32) -> bool {
@@ -197,6 +199,12 @@ impl Version {
         self.down().any(|x| std::ptr::eq(x, im))
     }
 
+    /// Its analyses (decision 0281 §2): asked for through a pipeline's `Cx`, or `manager::analysis`.
+    pub fn analyses(&self) -> &Store {
+        match self {
+            Version::Base { analyses, .. } | Version::View { analyses, .. } | Version::Overlay { analyses, .. } => analyses,
+        }
+    }
     /// The number of rules.
     pub fn size(&self) -> usize {
         match self {

@@ -51,6 +51,9 @@ impl Version {
                 let _ = write!(out, "{n}");
             }
             TermRef::Str(a) => out.push_str(&serde_json::to_string(self.text(a)).expect("a string serializes")),
+            TermRef::Branded(b) => {
+                let _ = write!(out, "{b}");
+            }
             TermRef::Top => out.push_str("top"),
             TermRef::Call(f, args) => {
                 out.push('@');

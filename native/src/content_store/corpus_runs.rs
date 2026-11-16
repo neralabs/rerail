@@ -102,8 +102,9 @@ impl CorpusPass {
 /// plans no manifest names, so only a sweep collects them, by number alone (a content-pure row, empty path, is never
 /// the corpus's). So no other user of `facts_results` may take one: each declares its schema through
 /// `live_fact_schema`. The plan choices (3) and kept plans (2) once did, and a new store's first collection swept
-/// the first run's entries (O-kept-strata-flake).
-pub const RETIRED_CORPUS_MEMO_SCHEMAS: &[u32] = &[2, 3];
+/// the first run's entries (O-kept-strata-flake). The text tests' compiled groups (103) were kept in the facts memo
+/// until decision 0264 made them images of the engine's build.
+pub const RETIRED_CORPUS_MEMO_SCHEMAS: &[u32] = &[2, 3, 103];
 
 /// `schema`, refused at compile time when the sweep of `RETIRED_CORPUS_MEMO_SCHEMAS` would delete its rows: every
 /// `facts_results` user's fact schema is declared through this.

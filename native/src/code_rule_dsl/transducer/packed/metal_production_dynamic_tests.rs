@@ -194,6 +194,7 @@ fn dynamic_capture_ties_preserve_ordinary_label_order_and_query_insertion_order(
 
 #[test]
 fn wide_cursor_frames_and_capture_sequences_complete_within_evaluation_budget() {
+    crate::test_languages();
     for slots in [31, 32, 33, 64] {
         let mut words = vec![word(CHILD, NAMED, 0)];
         for slot in 0..slots {

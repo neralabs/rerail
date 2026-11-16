@@ -48,7 +48,9 @@ pub(in crate::code_rule_dsl) enum Place {
 pub struct GapTest {
     pub(in crate::code_rule_dsl) place: Place,
     pub(in crate::code_rule_dsl) regex: Regex,
-    pub(in crate::code_rule_dsl) grammar: Arc<TokenGrammar>,
+    /// The dialect's automata, decoded when the test first runs on a tape ([`Self::grammar`]): compiling a rule
+    /// asks the census, and a warm run that tests no tape decodes nothing.
+    pub(in crate::code_rule_dsl) grammar: std::sync::OnceLock<Option<Arc<TokenGrammar>>>,
     pub(in crate::code_rule_dsl) dialect: GrammarDialect,
     /// A neighbour walk's `stopBy: {not: X}`: X, which must name only kinds and tokens (by a bare
     /// regex), so the walk passes them. `None`: a plain neighbour, where an extra
@@ -63,8 +65,13 @@ impl std::fmt::Debug for GapTest {
 }
 
 impl GapTest {
+    fn grammar(&self) -> Option<&TokenGrammar> {
+        self.grammar.get_or_init(|| TokenGrammar::of_dialect(self.dialect)).as_deref()
+    }
+
     /// Whether an implied token the regex matches is at the test's place.
     pub(in crate::code_rule_dsl) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> bool {
+        let Some(grammar) = self.grammar() else { return false };
         let matches = |token: &(&str, &str)| self.regex.is_match(token.0);
         // What a neighbour walk passes: the stored children its stop rule matches, and the implied
         // tokens its regexes do (no kind is an implied token's).
@@ -79,7 +86,7 @@ impl GapTest {
         let skipped = |token: &str| skips.iter().any(|skip| skip.is_match(token));
         match &self.place {
             Place::Own | Place::Field(_) => {
-                let Some((_, gaps)) = stored_gaps(&self.grammar, node) else { return false };
+                let Some((_, gaps)) = stored_gaps(grammar, node) else { return false };
                 let field = match &self.place {
                     Place::Field(field) => Some(field.as_str()),
                     _ => None,
@@ -88,7 +95,7 @@ impl GapTest {
             }
             Place::Before | Place::After | Place::Earlier | Place::Later => {
                 let Some(parent) = node.parent() else { return false };
-                let Some((children, gaps)) = stored_gaps(&self.grammar, &parent) else { return false };
+                let Some((children, gaps)) = stored_gaps(grammar, &parent) else { return false };
                 let Some(at) = children.iter().position(|child| child.node_id() == node.node_id()) else { return false };
                 // A stored child the walk passes: one its stop rule matches. The gap's word comes
                 // before the extras between the two stored children.
@@ -100,7 +107,7 @@ impl GapTest {
                     // The first token back that the walk does not pass, through the gaps of the
                     // children it passes; a stored child is the relation's own walk's.
                     // An extra right before the node is its neighbour, unless the walk passes it.
-                    Place::Before if past.is_none() && at > 0 && self.grammar.is_extra(&children[at - 1].kind()) => false,
+                    Place::Before if past.is_none() && at > 0 && grammar.is_extra(&children[at - 1].kind()) => false,
                     Place::Before => {
                         let mut k = at;
                         loop {

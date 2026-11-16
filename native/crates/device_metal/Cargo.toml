@@ -113,11 +113,15 @@ tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Memory", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# A batch's chunk block (decision 0289).
+rerail-blocks = { path = "../blocks" }
 block = "0.1.6"
 metal = "0.33.0"
 rerail-metal = { path = "../metal" }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
+# Python's pack, which the crate's tests register once (`test_languages`): their documents are parsed (0289, Q23).
+rerail-lang-python = { path = "../lang_python" }
 
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).

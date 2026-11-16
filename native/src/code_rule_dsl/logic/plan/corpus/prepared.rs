@@ -17,7 +17,9 @@
 //!
 //! A prepared program holds atoms of the store, which lowering interned. They are never given out again (decision
 //! 0049); `prepared_interned` lists every intern call, and the run asks them again before it uses the program, as it
-//! does of one kept in memory (decision 0060).
+//! does of one kept in memory (decision 0060). A program another store prepared (the engine ships them, decision
+//! 0264) has that store's atoms: the strings are interned here and its branded name atoms moved to these
+//! (`lower::relocate`, decision 0270).
 
 pub use super::Prepared;
 use super::lower;
@@ -31,8 +33,9 @@ use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// The pointer's schema: bumped when its meaning changes (105: the programs as their text, decision 0155).
-const POINTER: u32 = crate::content_store::live_fact_schema(105);
+/// The pointer's schema: bumped when its meaning changes (105: the programs as their text, decision 0155; 106: the
+/// decisions preparing made, decision 0269).
+const POINTER: u32 = crate::content_store::live_fact_schema(106);
 
 /// The path a lookup names. The entries read no path (`path_dependent: false`); the store keeps them under none.
 const PATH: &str = "rerail/prepared";
@@ -41,7 +44,7 @@ const PATH: &str = "rerail/prepared";
 /// run's additions).
 fn pointer_plan(key: &[u8; 32]) -> FactsPlanSet {
     let mut hash = Sha256::new();
-    hash.update(b"rerail.prepared/v2\0");
+    hash.update(b"rerail.prepared/v3\0");
     hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     hash.update(crate::code_rule_dsl::build_ids::grammar_version().to_le_bytes());
     hash.update(key);
@@ -77,11 +80,18 @@ pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
         ("prepared_marker", &["k:int", "marker:sym"]),
         // The split (`file_local::programs`): what it found, the file-local relations and those of constants. Its two
         // parts are the lowered program's rules, a part each, made from it again on reading (`file_local::assemble`).
+        // The per-file memo's strata of the file-local part (`memo::Strata`, decision 0246 §4): the part's digest,
+        // each relation's strata identity and the leaves it reaches.
+        ("prepared_memo_part", &["digest:sym"]),
+        ("prepared_memo_stratum", &["k:int", "rel:sym", "id:sym"]),
+        ("prepared_memo_reach", &["k:int", "i:int", "rel:sym"]),
         ("prepared_split", &["ok:int"]),
         ("prepared_file_local", &["k:int", "rel:sym"]),
         ("prepared_constant", &["k:int", "rel:sym"]),
         ("prepared_location", &["rel:sym", "i:int", "col:int"]),
         ("prepared_same_doc", &["rel:sym", "i:int", "col:int"]),
+        // The decisions preparing made (decision 0269): a run that reuses the program states them.
+        ("prepared_decided", &["k:int", "topic:sym", "text:sym", "count:int"]),
     ];
     SCHEMA
         .iter()
@@ -163,6 +173,16 @@ fn rest_of(prepared: &Prepared) -> Facts {
             row("prepared_interned_atom", vec![n(k), n(i), s(x), Value::Int(i64::from(*atom))]);
         }
     }
+    // The per-file memo's strata (decision 0246 §4), with the digest of the file-local part they are of.
+    if let Some((digest, strata)) = prepared.memo_strata.get() {
+        row("prepared_memo_part", vec![s(&hex(digest))]);
+        for (k, (rel, (id, reached))) in strata.by_rel.iter().enumerate() {
+            row("prepared_memo_stratum", vec![n(k), s(rel), s(&hex(id))]);
+            for (i, r) in reached.iter().enumerate() {
+                row("prepared_memo_reach", vec![n(k), n(i), s(r)]);
+            }
+        }
+    }
     row("prepared_split", vec![n(1)]);
     for (k, rel) in prepared.split.file_local.iter().enumerate() {
         row("prepared_file_local", vec![n(k), s(rel)]);
@@ -191,6 +211,9 @@ fn rest_of(prepared: &Prepared) -> Facts {
     for (k, marker) in prepared.vocabulary.markers.iter().enumerate() {
         row("prepared_marker", vec![n(k), s(marker)]);
     }
+    for (k, ((topic, text), count)) in prepared.decided.iter().enumerate() {
+        row("prepared_decided", vec![n(k), s(topic), s(text), Value::Int(*count as i64)]);
+    }
     facts
 }
 
@@ -202,6 +225,7 @@ fn int(v: &Value) -> Result<i64, String> {
     match v {
         Value::Int(i) => Ok(*i),
         Value::Str(x) => Err(bad(format!("{x:?} where a number goes"))),
+        Value::Branded(b) => Err(bad(format!("the atom {b} where a number goes"))),
     }
 }
 
@@ -209,6 +233,7 @@ fn text(v: &Value) -> Result<String, String> {
     match v {
         Value::Str(x) => Ok(x.to_string()),
         Value::Int(i) => Err(bad(format!("{i} where a string goes"))),
+        Value::Branded(b) => Err(bad(format!("the atom {b} where a string goes"))),
     }
 }
 
@@ -333,6 +358,24 @@ pub fn prepared_of(
             crate::code_rule_dsl::typing::file_local::programs(&program)
         }
     };
+    // The memo's strata, when the program was kept with them; else the first run makes them.
+    let memo_strata = std::sync::OnceLock::new();
+    if let Some(part) = facts.get("prepared_memo_part").and_then(|rows| rows.first()) {
+        let digest = unhex(&text(&part[0])?).ok_or_else(|| bad("a memo part's digest".to_owned()))?;
+        let mut reach: BTreeMap<i64, Vec<(i64, String)>> = BTreeMap::new();
+        for r in facts.get("prepared_memo_reach").into_iter().flatten() {
+            reach.entry(int(&r[0])?).or_default().push((int(&r[1])?, text(&r[2])?));
+        }
+        let mut by_rel = BTreeMap::new();
+        for r in facts.get("prepared_memo_stratum").into_iter().flatten() {
+            let k = int(&r[0])?;
+            let id = unhex(&text(&r[2])?).ok_or_else(|| bad("a memo stratum's identity".to_owned()))?;
+            let mut reached = reach.remove(&k).unwrap_or_default();
+            reached.sort();
+            by_rel.insert(text(&r[1])?, (id, reached.into_iter().map(|(_, r)| r).collect()));
+        }
+        let _ = memo_strata.set((digest, super::memo::Strata { by_rel }));
+    }
     Ok(Prepared {
         prog,
         vocabulary: Arc::new(vocabulary),
@@ -346,9 +389,12 @@ pub fn prepared_of(
         merged,
         split,
         interned,
+        documents: Default::default(),
         cone: Default::default(),
         maintained: Default::default(),
         parts: Default::default(),
+        decided: indexed(facts, "prepared_decided")?.iter().map(|(_, r)| Ok(((text(&r[0])?, text(&r[1])?), int(&r[2])? as u64))).collect::<Result<_, String>>()?,
+        memo_strata,
     })
 }
 
@@ -374,15 +420,44 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
-/// The program `key` names, prepared for `dialect`, as an earlier process stored it under `source`; `None` when none
-/// did, or when what it stored no longer reads. With it, the sources of its programs' texts.
-pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDialect, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Prepared, Vec<SourceId>)>> {
+/// What the engine ships the pointer of the program `key` names under (decision 0264): the pointer's plan names the
+/// engine build, so a bundle of another build is never read.
+fn shipped_key(key: &[u8; 32]) -> HashKey {
+    HashKey::sha256(&[format!("rerail prepared pointer {POINTER}\0").as_bytes(), pointer_plan(key).plans[0].as_slice()].concat())
+}
+
+/// Where a prepared program `lookup` found came from.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Found {
+    /// The store's, with its atoms.
+    Kept,
+    /// Another store's (the engine's bundle, or the store's own of other atoms), its atoms moved to this store's:
+    /// the run keeps it in the store, so the next one reads it as `Kept`.
+    Moved,
+}
+
+/// The program `key` names, prepared for `dialect`, as an earlier process stored it under `source`, or else as the
+/// engine ships it; `None` when neither has it, or when what is kept no longer reads. With it, the sources of its
+/// programs' texts, and whether its atoms moved.
+pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: GrammarDialect, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Prepared, Vec<SourceId>, Found)>> {
     super::memo::off();
     let start = std::time::Instant::now();
     let set = pointer_plan(key);
-    let memo = store.facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH })?;
-    let Some(result) = memo.results.get(&set.plans[0]) else { return Ok(None) };
-    let Ok(mut facts) = program_facts::decode(&result.entry) else { return Ok(None) };
+    let kept = match source {
+        Some(source) => store.facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH })?.results.remove(&set.plans[0]).map(|r| r.entry),
+        None => None,
+    };
+    let entry: std::borrow::Cow<'static, [u8]> = match kept {
+        Some(entry) => entry.into(),
+        None => match crate::code_rule_dsl::logic::rr::images::shipped().and_then(|b| b.get(shipped_key(key))) {
+            Some(bytes) => {
+                crate::code_rule_dsl::prof::count("corpus.prepared_shipped", 1);
+                bytes.into()
+            }
+            None => return Ok(None),
+        },
+    };
+    let Ok(mut facts) = program_facts::decode(&entry) else { return Ok(None) };
     let mut texts: BTreeMap<String, [u8; 32]> = BTreeMap::new();
     for row in facts.remove(PROGRAM).unwrap_or_default() {
         let [Value::Str(name), Value::Str(digest)] = row.as_slice() else { return Ok(None) };
@@ -401,15 +476,78 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDia
     let read = start.elapsed();
     let at = std::time::Instant::now();
     // The lowered program's version, where it is kept as an image: the split's parts are views of it.
-    let (lowered, version) = programs.pop().expect("two");
+    let (mut lowered, mut version) = programs.pop().expect("two");
     let (front, _) = programs.pop().expect("two");
+    let found = match relocate(store, &mut facts, &mut lowered) {
+        Some(false) => Found::Kept,
+        Some(true) => {
+            // Its image made again of the moved program: the run reads it in place.
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "the moved program's image".into());
+            let Ok(bytes) = crate::code_rule_dsl::logic::program_image::encode(&lowered) else { return Ok(None) };
+            let Ok(v) = crate::code_rule_dsl::logic::program_image::Version::open(&bytes) else { return Ok(None) };
+            version = Some(v);
+            crate::code_rule_dsl::prof::count("corpus.prepared_moved", 1);
+            Found::Moved
+        }
+        None => return Ok(None),
+    };
     let got = prepared_of(&facts, front, lowered, version, dialect);
     if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
         eprintln!("RERAIL_PREPARED_TRACE lookup ({}): {:.1} kB of facts; read {:.3} s, to a prepared program {:.3} s{}",
-            super::phases::current().unwrap_or_else(|| "main".into()), result.entry.len() as f64 / 1e3, read.as_secs_f64(), at.elapsed().as_secs_f64(),
+            super::phases::current().unwrap_or_else(|| "main".into()), entry.len() as f64 / 1e3, read.as_secs_f64(), at.elapsed().as_secs_f64(),
             got.as_ref().err().map(|e| format!("; not read: {e}")).unwrap_or_default());
     }
-    Ok(got.ok().map(|p| (p, documents)))
+    Ok(got.ok().map(|p| (p, documents, found)))
+}
+
+/// Moves the lowered program's name atoms, and the pointer's (`prepared_op`, `prepared_interned_atom`), to `store`'s
+/// (decision 0270): its strings interned here in one call. `Some(false)` when they are already this store's,
+/// `Some(true)` when they moved; `None` when the program holds a name atom no intern call made, or the store refuses.
+fn relocate(store: &ContentStore, facts: &mut Facts, lowered: &mut crate::code_rule_dsl::logic::front::Program) -> Option<bool> {
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's atoms, in this store".into());
+    let rows = facts.get_mut("prepared_interned_atom")?;
+    let strings: Vec<&str> = rows.iter().map(|r| match r.get(2) { Some(Value::Str(x)) => Some(x.as_str()), _ => None }).collect::<Option<_>>()?;
+    let old: Vec<u32> = rows.iter().map(|r| r.get(3).and_then(Value::integer).and_then(|a| u32::try_from(a).ok())).collect::<Option<_>>()?;
+    let new: Vec<u32> = store.intern_atoms(&strings).ok()?.into_iter().map(u32::from).collect();
+    if new == old {
+        return Some(false);
+    }
+    let to: rustc_hash::FxHashMap<u32, u32> = old.iter().copied().zip(new.iter().copied()).collect();
+    if !lower::relocate(lowered, &to) {
+        return None;
+    }
+    crate::code_rule_dsl::logic::profile::decision("the prepared program's atoms (decision 0270)", || format!("prepared by another store: its {} names moved to this store's atoms", strings.len()));
+    for (row, &a) in rows.iter_mut().zip(&new) {
+        let mut cells: Vec<Value> = row.to_vec();
+        cells[3] = Value::Int(i64::from(a));
+        *row = cells.into();
+    }
+    for row in facts.get_mut("prepared_op")? {
+        let mut cells: Vec<Value> = row.to_vec();
+        let a = u32::try_from(cells.get(1)?.integer()?).ok()?;
+        cells[1] = Value::Int(i64::from(*to.get(&a)?));
+        *row = cells.into();
+    }
+    Some(true)
+}
+
+/// The sources of the programs' texts the program `key` names under `source` (`lookup`'s), with neither program read:
+/// for a run that holds the prepared program in memory. Empty when the store keeps none.
+pub(super) fn documents(store: &ContentStore, source: SourceId, key: &[u8; 32]) -> StoreResult<Vec<SourceId>> {
+    let set = pointer_plan(key);
+    let memo = store.facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH })?;
+    let Some(result) = memo.results.get(&set.plans[0]) else { return Ok(Vec::new()) };
+    let Ok(mut facts) = program_facts::decode(&result.entry) else { return Ok(Vec::new()) };
+    let mut digests = Vec::new();
+    for row in facts.remove(PROGRAM).unwrap_or_default() {
+        if let [Value::Str(name), Value::Str(digest)] = row.as_slice()
+            && (name.as_ref() == "front" || name.as_ref() == "lowered")
+            && let Some(digest) = unhex(digest)
+        {
+            digests.push(digest);
+        }
+    }
+    program_text::sources(store, &digests)
 }
 
 /// What the write of the program `key` is queued under (`write_back`, decision 0102).
@@ -431,61 +569,12 @@ pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], p
     }
     let entry = program_facts::encode(&facts);
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, entry.len() as u64);
+    // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`, decision 0264) ships the pointer; its programs'
+    // images ship with `program_text::store`.
+    crate::code_rule_dsl::logic::rr::images::export(shipped_key(key), &entry);
     let set = pointer_plan(key);
     store.put_facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry }], &[])?;
     Ok(Some(documents))
-}
-
-/// The compiled groups' schema (decision 0075).
-const DFAS: u32 = crate::content_store::live_fact_schema(103);
-
-/// The path a compiled group is kept under (read by no path, as the other entries).
-const DFA_PATH: &str = "rerail/dfa";
-
-/// The plan a compiled group is kept under: what its key does not already name (the key names the engine, its version
-/// and the patterns).
-fn dfa_plan() -> FactsPlanSet {
-    FactsPlanSet::new(vec![Sha256::digest(b"rerail.dfa-entry/v1").into()])
-}
-
-/// Compiled groups of automata in the facts memo (decision 0075): each under its key, stored as a source, so a later
-/// process reads a group's DFA instead of determinizing it. An entry is a tag (1: a DFA follows; 0: the group does
-/// not determinize within the limit) and the DFA's bytes.
-/// Its second field lists the sources of every group read or stored, for the run's manifest: no other root holds them.
-pub(super) struct StoredDfas<'a>(pub(super) &'a ContentStore, pub(super) std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>);
-
-impl crate::code_rule_dsl::text::vocabulary::DfaCache for StoredDfas<'_> {
-    fn get(&self, key: &str) -> Option<Option<Vec<u8>>> {
-        let source = super::memo::stored_source(self.0, key).ok()??;
-        self.1.lock().expect("the groups' sources").push(source);
-        let memo = self.0.facts_memo(FactsMemoKey { source, fact_schema: DFAS, path: DFA_PATH }).ok()?;
-        match memo.results.get(&dfa_plan().plans[0])?.entry.split_first() {
-            Some((1, bytes)) => Some(Some(bytes.to_vec())),
-            Some((0, _)) => Some(None),
-            _ => None,
-        }
-    }
-
-    fn put(&self, key: &str, dfa: Option<&[u8]>) {
-        let mut entry = vec![u8::from(dfa.is_some())];
-        entry.extend_from_slice(dfa.unwrap_or_default());
-        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, entry.len() as u64);
-        // Stored by the store's writer, behind the run (decision 0104); its source reaches the manifest, queued after.
-        // A group not kept is compiled again by the next process.
-        let (key, sources) = (key.to_owned(), std::sync::Arc::clone(&self.1));
-        self.0.write_back_syms(
-            crate::content_store::write_back::Syms::None, "a group of automata",
-            entry.len() + key.len(),
-            Vec::new(),
-            Box::new(move |store| {
-                let source = super::memo::source(store, &key)?;
-                let set = dfa_plan();
-                store.put_facts_memo(FactsMemoKey { source, fact_schema: DFAS, path: DFA_PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry: entry.clone() }], &[])?;
-                sources.lock().expect("the groups' sources").push(source);
-                Ok(())
-            }),
-        );
-    }
 }
 
 // Its tests run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the

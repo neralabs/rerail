@@ -513,6 +513,394 @@ Four 256 MiB slabs recycled over 40 runs cost 2.2 ms a run, an 8 MiB write inclu
 never needs a fresh wrap. A block outlives its slab only by being frozen to a file (the journal) or copied into a
 new full block (a roll-up), both `memcpy`.
 
+### 13. What a frozen relation costs, and what was cut
+
+`paces` now packs every block of a cold run and breaks the in-place form's bytes down by part. At first, at 300
+documents, an in-place relation held 56.7 bytes a row of phase facts and 92 of chunk relations, against about
+3.3 and 13.3 packed. Three changes to the in-place form, each checked by every run against the oracle, the
+GPU join and the packed form:
+
+| Part (B/row, phase facts / chunk relations) | Before | After |
+|---|---|---|
+| Hash buckets: `{hash u64, start, len}` at up to 4 slots a key | 29.2 / 49.3 | 3.2 / 6.2: bucket offsets, 4 bytes a bucket, about one key a bucket; no hash kept (a reader checks the key) |
+| Order array | 4.0 / 4.0 | 0: freeze sorts the rows in place, so an own row's id is its place in the order |
+| Dead bits | 0.1 / 0.1 | 0 in a full relation: only a delta's kills of its base remain |
+| Index rows | 7.5 / 4.1 | 3.5 / 4.0: no index for a key that leads the order (a binary search finds its range) |
+| Total, in place | 56.7 / 92.0 | 22.6 / 44.5 |
+
+At 3,000 documents (8.1M nodes): phase facts are 19.2 B/row in place and 3.5 packed, chunk relations 43.7 and
+13.2, and document arrays 10.0 bytes a node plain and 2.7 packed. Sorting in place also made freeze cheaper (P1's
+first stratum: 4.58 G instructions to 2.66 G), and the cold run fell from 17.6 G to 14.9 G.
+
+Against setfix (§12's test, rerun): the block for 1M rows is 17.3 MB, where it was 28.4 MB and setfix's heap is
+about 34 MB. Its freeze is 1.66 G instructions, where it was 1.32 G and setfix's close is 0.74 G: sorting in
+place costs a pass over the columns, which the order array it replaces did not. An edit is 0.30 M instructions
+against setfix's 7.3 M.
+
+Sorting in place found a bug: the dead bits a delta keeps for its base end in a word whose high bits are its own
+rows' ids, and those ids moved. That word's own bits are now cleared.
+
+Left to cut, by size:
+
+- **Chunk room** (4.8 / 10.2 B/row): the unwritten part of the last doubling chunk. On the CPU it is address
+  space, resident only to the page. In a pinned slab it is held. Four chunks per doubling would bound it at an
+  eighth. Packing removes it.
+- **8-byte columns** (most of chunk relations' 23.4 B/row of values): names held as 64-bit values. As atoms they
+  are 4 bytes.
+- **A freeze's scratch** (about 45 MB of heap per 1M rows): from a scratch slab of the pool instead.
+- **`RUNS` columns read by position** pay a binary search a row. Scans use `for_each`; probes need a run cursor.
+- **Probe instructions.** A bucket now holds every key whose hash falls in it, so a probe checks more rows:
+  setfix's 1M probes cost 0.75 G instructions, a block's 0.90 G with the old buckets and 1.23 G with bucket
+  offsets. Twice the buckets cut that 12% for 1.1 B/row on phase facts, but 6 B/row on chunk relations, whose
+  keys are nearly unique. So it is one bucket a key, and the doubling is a setting per index, for one probed hot.
+  A probe of a leading key by binary search (1.77 G per 1M) costs a third more than a bucket's: the search reads
+  `Rows::get` per step. Searching each chunk's slice would cut that.
+
+### 14. Frozen in place, packed, or both
+
+**Packed** (`packed.rs`) uses MLDB's `RawMappedIntTable` choices, made once at freeze and by exact size. Each
+column is one of:
+
+- `CONST`: no bytes;
+- `PACK`: `v - min` in the bits it needs;
+- `RUNS`: run values and run starts, each packed;
+- `LINE`: residuals from a fitted line (MLDB's `Predictor`).
+
+The rows are in canonical order. A key that leads the order is a range found by binary search. Any other key has
+a permutation index: its sorted distinct values, where each value's positions start, and the positions, all
+packed. The block is made exactly its size. MLDB's factored packing (up to a third smaller at some widths) is not
+used here.
+
+On 1M rows (`examples/encodings.rs`, profiling build):
+
+| | In place (sorted) | Packed |
+|---|---|---|
+| Bytes | 19.0 B/row | 8.0 B/row (2.6 MB of it the index on column 1) |
+| Making it | freeze: 1.67 G insn | straight from open rows: 1.38 G; from the in-place form: 0.64 G more |
+| 1M probes, column 1 | 1.30 G insn | 1.51 G (+16%) |
+| 1M probes, column 0 (leading) | 1.76 G | 2.01 G (+14%) |
+| Scan of a column | 61 M | 33 M (`for_each`) |
+
+On the GPU (64M values under 2^18, buffers kept, warm):
+
+| | Plain (4 bytes) | Packed (18 bits) |
+|---|---|---|
+| Scan, a value a load | 0.74 ms | 1.00 ms |
+| Scan, bits compiled in, 32 values a thread from `bits` aligned words | | 0.77 ms |
+| Gather of 16M scattered values | 2.52 ms | 2.11 ms |
+
+- **Decoding is free on the GPU only when it is written for the GPU.** 64-bit shifts are emulated, so decoders
+  use 32-bit words. The bit width is a function constant, the shifts unroll, and each word is loaded once. A
+  column the GPU reads is laid out by groups at freeze, a target choice made by the compiler, as record layouts
+  are. Then a packed scan runs at the plain one's speed in 56% of the memory. A gather, bound by latency and cache,
+  is faster packed.
+- **On the CPU, packed costs about 15% more instructions to probe and less to scan.**
+
+**The two coexist, at no cost in ids.** A full relation frozen in place is sorted, so its row ids are the packed
+form's positions. `paces` checks this for every relation. A delta's kills name the same rows whichever form its
+base is in. So:
+
+- **In place, inside a run.** A stratum's relations freeze where they were written: in the run's slab, where the
+  GPU writes fixed-width slots. They are readable at once, with no copy and plain loads. A delta stays in place;
+  it is small.
+- **Packed, when a block leaves the run:** kept, journaled, rolled up, or put in a slab for many later reads. The
+  packing costs 0.64 G instructions per 1M rows from the in-place form. At 3,000 documents, packing every block
+  costs about a third of the cold run (4.6 G of 14.9 G), so it runs once the run's answer is out. A block known to
+  leave (a chunk's file-local facts, kept for the next run) packs straight from its open rows, skipping the
+  in-place freeze: 1.38 G against 1.67 G.
+- **Reading across forms** is next: a view over a packed base and an in-place delta. Liveness and kills work
+  unchanged by the ids above; get and probe dispatch on the base's form.
+
+### 15. The pool, generalized
+
+`accel::gpu::shared`'s pool now holds blocks:
+
+- **Size classes** are powers of two to 1 MiB, then four a doubling: at most a quarter wasted where it was half.
+- **Idle buffers** were first kept under two allowances: 32 MB for buffers under 16 MiB, and slabs (16 MiB and
+  up) to a quarter of the Metal budget. Before that, a returned buffer past 32 MB was released, so a large slab
+  was never kept. §16 replaces both with the one budget.
+- **`Pooled::after(cmd)`** returns a lease when its command buffer completes. **`Pooled::grow`** moves a lease's
+  contents into a larger one.
+- **`lease_block(kind, bytes)`** makes a block in a pooled slab (`Block::over`). It binds by the slab's own
+  buffer, which a command has used before once it is recycled, so no dispatch maps it again. A recycled slab
+  holds the last block's bytes, so the block zeroes each allocation as it makes it. Freezing does not protect a
+  slab's pages, since they are the pool's.
+- **`grow_block`** moves an open block into a larger slab by one copy; its references are self-relative.
+
+Any other block keeps the device buffer it was first bound with (`Block::gpu_buffer`). It remakes it, twice as
+long, only when the block outgrows it, so no block is wrapped afresh per dispatch. Tests: the classes; a slab
+recycled with its buffer and read fresh; a lease returned at its command's completion; and a block grown into a
+larger slab that reads the same.
+
+### 16. One budget and one eviction order for all GPU memory
+
+There were four keepers of GPU memory:
+
+- this pool;
+- `rerail_metal::pool`, the device solves' blocks. Its idle blocks were mapped buffers under its own share, the
+  whole Metal budget;
+- `rerail_metal::slabs`, the tapes' residency: anonymous 64 MiB mappings, retired least recently used under half
+  the budget;
+- `rerail-metal`'s reservation ledger, which every mapped buffer reserved in. Only the device blocks' idle buffers
+  gave way to it.
+
+Each refused the others' requests without asking them for room. Now:
+
+- **The residency's slabs are pool leases.** A slab is still append-only and keyed by content, and it is still
+  retired whole, least recently used, under the residency's half of the budget. A retired slab's buffer goes back
+  to the pool when its last batch lets go, and the next lease of its class takes it, whoever leases. A recycled
+  slab holds its last lease's bytes, so each room in it is zeroed as it is handed out (`Pooled::fresh` tells a
+  new buffer, which reads zero, from a recycled one).
+- **The device blocks are pool leases.** `rerail_metal::pool` keeps its API (`lease`, `upload`, `zeroed`,
+  `made`) and a block made for its lease is still written once. Its own idle lists, its share and `give_way` are
+  gone.
+- **One budget.** The Metal budget holds the ledger's reservations, every live lease and every idle buffer. A
+  bounded lease (`lease_within`) fits the ledger, the live leases and itself. A ledger reservation fits itself,
+  the ledger and the live leases. Idle buffers fill what both leave, and no more: each new buffer and each
+  reservation trims them first. The two idle allowances are gone; `set_slab_idle_limit` caps idle slabs further
+  when set.
+- **One eviction order** (`make_room`): idle buffers, least recently returned first, then the evictor's holdings
+  one at a time. The evictor is the residency (`set_evictor(slabs::evict)`): it retires its least recently used
+  slab, which comes back as an idle buffer once its readers end. It takes the residency's lock only when the lock
+  is free (`try_lock`), so a request made while the residency places a document is not deadlocked. The
+  residency's own loop retires in that case.
+
+A test build leaves the live leases out of the ledger's check: there, the ledger is each test thread's own
+(`test_pool`), and the pool is the process's.
+
+Checked by the metal crate's tests, which include a new one: an evicted slab's buffer serves the next lease of its
+class, and a room in it reads zero past the bytes written. Also by the accel pool's tests, the engine's resident
+sources test, and `tapes_are_tape`, in which tier 1 on Metal reads its sources from the slabs and its tapes equal
+the CPU's.
+
+### 17. Costs cut: freeze, probes, chunk room, atoms, scratch
+
+The list from §12–§14, each fixed and measured in instructions retired. The 1M-row comparison against setfix
+(`blocks_compare_tests`, the same 1M rows of a call-edge shape):
+
+| Step, 1M rows | Before | Now | setfix |
+|---|---|---|---|
+| build | 0.14 G | 0.14 G | 0.42 G |
+| freeze (setfix: close) | 1.66 G | 0.43 G | 0.74 G |
+| 1M probes on col 1, with a read per hit | 1.23 G | 0.79 G | 0.75 G |
+| 1M leading-key probes (`encodings`) | 1.77 G | 0.98 G | - |
+
+- **Freeze sorts packed keys by radix** (`sort::radix_pairs`, `relation::sort_canonical`):
+  - each column is read once, a chunk at a time (`Rows::read_col`), and its range taken;
+  - the order key is packed into a `u64`: each column less its minimum, in the bits its range needs, the first
+    highest. Packed keys sort as the rows do, and equal keys are equal rows, so dedup compares one word;
+  - the sort is a least-significant-digit radix of 11 bits a pass, with every pass's counts taken in one read,
+    and a pass whose digit is the same for every key skipped;
+  - a key past 64 bits falls back to comparing rows;
+  - the columns are written back in order, a chunk at a time (`Rows::write_col`);
+  - an index's buckets are filled by one counting pass over the rows in canonical order, which keeps them in
+    canonical order within a bucket. Before, the buckets took a stable sort of `(hash, id)` pairs. The bucket
+    count comes from the number of distinct keys: a bitmap of the key's packed range when it is at most 2^24,
+    else the hashes sorted.
+- **Freeze's temporaries come from scratch** (`scratch::Scratch`), not the heap. A thread's region is mapped
+  once, a take is a bump, and the region is emptied per use; past 64 MB, what a use touched is given back with
+  `MADV_FREE`. `rerail_accel::gpu::shared::lease_scratch` makes a scratch region in a pooled slab, inside the one
+  budget (§16). A freeze of 1M rows now makes 5 small mallocs and holds no heap after (it held 45 MB).
+- **Probes:**
+  - a frozen relation's own rows are always live (its dead bits name only its base's rows), so a probe of a full
+    relation checks the key alone and merges nothing;
+  - a leading key's range is exact, so its rows are not checked;
+  - the probe resolves its first key column once (`ColRead`: directory, width and `min_log`); a wider key's other
+    columns are checked off the hot path;
+  - the reference and row accessors are `#[inline]`. In the profiling build's 256 codegen units, a call to one
+    was a call;
+  - the hash probe was within a few percent of a hand-written bucket loop once the iterator reloaded nothing
+    per row. Its yield reloaded eight resolved columns; it now holds two.
+- **Leading-key search:**
+  - `Rows::lower_bound` binary-searches the chunks' first values, then one chunk's slice (`partition_point`), so
+    there is no chunk arithmetic per step;
+  - the upper bound gallops forward from the lower one (`upper_from`): a key's rows are few.
+- **Chunk room unwritten:** chunks grow by quarter steps. A doubling group of rows is four chunks of a quarter
+  each (`chunk_of`, the same in MSL), so a relation's unwritten room is at most an eighth of its rows; whole
+  doubling chunks left up to half. The directory is 96 slots a column (24 groups), and `min_log` is at least 4.
+  Chunk room per row:
+
+  | | Before | Now |
+  |---|---|---|
+  | Phase facts | 7.5 B | 1.9 B |
+  | Chunk relations | 10.9 B | 1.8 B |
+
+- **4-byte atoms:** `paces`'s node ids were `doc << 32 | i` in 8-byte columns. They are now `doc << 12 | i` in 4
+  bytes: a document has under 4,096 nodes, and a run under 2^20 documents. The chunk relations' values went from
+  23.4 to 15.7 B/row.
+
+At 3,000 documents (`paces 3000 3`; 3,485 checks pass):
+
+| | Before | Now |
+|---|---|---|
+| Chunk relations in place | 43.7 B/row | 27.2 B/row |
+| Phase facts in place | 19.2 B/row | 15.5 B/row |
+| The cold run | 14.9 G | 8.6 G |
+| Packing every block | 4.6 G | 2.8 G |
+
+At 300 documents, 498 checks pass. Packed, the chunk relations went from 13.2 to 5.8 B/row at 3,000 documents:
+their node ids now take 12 bits of a document's place, not 32. In place, the phase facts are now 4.8x their
+packed size at 3,000 documents (5.4x at 300).
+
+Tests: the chunk geometry covers every row once; both searches agree with a scan; the radix sort agrees with a
+stable sort; and freeze agrees with a `BTreeSet` for a full relation and a delta with kills and repeats, with
+the packed key and with a key too wide to pack, with probes on both kinds of index.
+
+### 18. Packing fast, on the CPU and on the GPU
+
+- **Choose, then pack in place.** A column's encoding is chosen first (`col::choose`), without packing anything.
+  The block is then made exactly the size of all of them, and each column packed straight into it
+  (`IntCol::place_chosen`): there are no per-column word vectors and no copy.
+- **A packer per width** (`pack_into` → `pack_fixed::<B>`): 64 values of `B` bits are `B` whole words, so a group
+  of 64 is packed by a loop whose shifts and word boundaries are constants once unrolled. There is one
+  instantiation per width (64), and the input is a slice of `u64`, so callers do not multiply them.
+- **Choosing in fewer passes:**
+  - the range and the run count are one branch-free pass;
+  - the LINE residual pass runs only when a sample (every 64th row) leaves the line a chance. The sample's
+    residual range is inside the full one, so a sample that already needs PACK's bits proves LINE cannot win;
+  - the pass runs in `i64` when `slope * n` cannot overflow it, else in `i128`.
+
+  On 64M values, one thread: choose 106 → 41 ms, 44 → 25 instructions a value with the write.
+- **Packing from open rows** uses freeze's packed-key radix sort (`sort_canonical`). The permutation index takes a
+  radix sort of the column's values. Both come from scratch.
+- **Overflow fixed:** a column spanning more than 2^63 (`[i64::MIN, i64::MAX, 0]`) overflowed the encoder. PACK
+  and RUNS now subtract and add the base wrapping, which is exact modulo 2^64. LINE's residuals are computed in
+  `i128` when they could overflow, and a column whose residuals need more than 64 bits never takes LINE.
+
+Measured, in instructions retired:
+
+| | Before | Now |
+|---|---|---|
+| Pack from the frozen view, 1M rows | 0.68 G | 0.19 G |
+| Pack straight from open rows | 1.41 G | 0.47 G |
+
+A full frozen relation is already in canonical order, so its columns are read a chunk at a time with no merge.
+
+**On the GPU** (`encodings`; 64M values of 18 bits, best of 6, warm):
+
+- A min/max reduction (grid-stride, `simd_min`/`simd_max`, one atomic per simdgroup) takes 0.64 ms.
+- Each thread then packs one group of 32 values into exactly `B` 32-bit words (`B` compiled in as a function
+  constant). No word is shared between threads, so there are no atomics.
+- In sequential order, the words are the CPU's bit stream: a stream of 64-bit words is the same bits as 32-bit
+  words on a little-endian machine. The example checks that every word equals the CPU's.
+
+| Layout | ms | Read + written |
+|---|---|---|
+| CPU layout (`g * B`) | 1.10 | 383 GB/s |
+| Interleaved (word `k` of group `g` at `k * groups + g`: the scan's layout, coalesced stores) | 1.02 | 412 GB/s |
+| Loads through threadgroup memory (64 groups, rows padded to 33 words) | 1.09 | 385 GB/s |
+
+That is about 1.7 ms with the range against about 125 ms on one CPU thread, and at the device's bandwidth: the
+plain scan reads 256 MB in 0.74 ms. Coalescing the loads through threadgroup memory gains nothing, because a
+thread's 32 values are one 128-byte line, which L1 serves. So a block bound for the GPU (a slab of later reads)
+can be packed there in its interleaved layout, which its scans read at 0.52–0.78 ms against 0.74 for plain. The
+CPU packs what leaves for disk. RUNS and LINE on the GPU are in §19.
+
+### 19. Packed probes, packing on every thread, RUNS and LINE on the GPU
+
+The three items §17–§18 left open.
+
+**Packed probes.** They were about twice the cost of in-place probes, because in-place probes got faster and
+packed probes did not. A packed probe made about four full binary searches, and every read went through the
+column's descriptor: its spans are atomics, which the compiler reloads, and each read checked bounds and
+dispatched on the encoding. Now:
+
+- **A column is resolved once a probe** (`IntCol::dec` → `Dec`): its fields, mask and word slices in registers.
+  A read is two loads and two shifts with no branch (`rd`; the spare word at each column's end makes the second
+  load safe).
+- **Searches guess by interpolation, then gallop** (`col::search`). A packed block's sorted columns are near
+  linear: an index's keys, the run values, the starts, a leading column. So one guess between the ends lands
+  within a few positions, a gallop brackets the answer, and a binary search of the bracket finishes it. That is
+  about six reads, where a binary search reads `log2 n`. A skewed column costs at most about twice the binary
+  search.
+- **A leading key's range is one search** (`Dec::equal_range`). RUNS takes the run's end; the others gallop over
+  the key's few rows. It replaces two lower bounds, each with two run lookups.
+- **`IntCol::get` reads PACK without a branch** (at least one bit); the other encodings go through `Dec`.
+
+On 1M rows (`encodings`), in instructions retired:
+
+| | In place | Packed, before | Packed, now |
+|---|---|---|---|
+| 1M probes on col 1, with a read per hit | 0.79 G | 1.51 G | 1.00 G |
+| 1M probes on col 0 (leading), with a read per hit | 0.98 G | 2.01 G | 1.09 G |
+
+Packed probes now cost 11–27% more instructions than in place. In wall time they took less in every run (in
+one, 133 against 194 ms on col 1 and 127 against 285 ms on col 0), likely because a packed block is 2.4 times
+smaller and misses cache less. The test checks both searches against a scan, for each encoding
+and over sub-ranges.
+
+**Packing on every thread.** A relation's packing ran on one thread. Now each of its steps runs on every thread
+once a relation holds 64K values (rows times columns); under that, handing work to other threads costs more than
+the work:
+
+- **Reading** the columns, and gathering them into canonical order, a column a task.
+- **Choosing** each column in parallel, and each column in pieces of 64K values (`over_pieces`): the range, the
+  run count and LINE's sample (the residuals at every 64th row) in one read a piece, folded, and LINE's full
+  residual pass the same way when the sample leaves it a chance. The slope needs only the first and last values,
+  so the sample needs no read of its own. It had one, strided and on one thread, which took a third of the
+  choice's time on one thread and most of it on 18.
+- **Writing** after laying out: the block, its descriptors and every column's words are allocated first
+  (`IntCol::lay_out`), then the columns are written in parallel, each into its own words. Within a column, a
+  piece of 64K values is `64K * bits / 64` whole words, so pieces are packed in parallel and share no word.
+  PACK and LINE now subtract while packing (`pack_resid`, a packer per width and per whether there is a line),
+  with no pass to a temporary. RUNS counts each piece's runs, so each piece knows its first run index, and
+  writes its runs from there. A piece's first and last words may be shared with its neighbours, so a run's bits
+  are ORed in atomically, one atomic per full word.
+- **Sorting** (`sort::split_par`) at 256K keys or more. The top bits split the keys into buckets of about 32K:
+  each piece counts its top digits, and the offsets run bucket by bucket and, within a bucket, piece by piece,
+  so the split is stable. Each bucket is then sorted by the rest of its bits on its own, in cache. When the low
+  bits are a whole number of digits, that is as many passes as one thread's sort, otherwise one more. Recounting
+  every pass of a parallel LSD sort was tried first: it cost 182 M instructions to the split's 138 M, against
+  124 M on one thread, for 1M 49-bit keys.
+
+Two runs, at loads of 38 and 41 (nice 19), in instructions and wall time:
+
+| 1M rows | One thread, before | One thread, now | 18 threads, now |
+|---|---|---|---|
+| Pack from the frozen view | 0.19 G, 14 ms | 0.21 G, 14–19 ms | 0.21 G, 3.5–4.9 ms |
+| Pack from open rows | 0.47 G, 38 ms | 0.46 G, 33–43 ms | 0.52 G, 12–22 ms |
+| 64M values, choose + write | 1.68 G, 43 + 83 ms | 1.60 G, 19–29 + 46–75 ms | 1.56 G, 2.8–31 + 3.5–14 ms |
+
+On one thread, the split sort and the parallel plumbing cost about 10% more instructions packing 1M rows from
+the frozen view, and none from open rows. On every thread, packing 1M rows took 2 to 4 times less wall time.
+Wall times on a loaded machine vary by run: a fork-join waits for its slowest piece, and at nice 19 some worker
+is often descheduled. In earlier runs at loads of 17 to 27, a pool of 18 packed slower than one thread, and a
+pool of 4 took 9.0 ms against 23. On 64M values, the write took 5 to 13 times less wall time on
+18 threads, and the choice up to 7 times less. In `paces` (300 documents), packing 123 mostly small blocks took
+25.6 ms. With no size threshold it took 421 ms, because a small relation's handoff to other threads cost more
+than its packing.
+
+**RUNS and LINE on the GPU** (`encodings`, 32M values, best of 6, warm). Each is checked word for word against
+the CPU's encoder.
+
+- **The choice in one read** (`stats`): the range, the runs that start (a value unlike the one before it) and
+  the line's residual range, as threadgroup partials (simdgroup reductions, then the threadgroup's 8) that the
+  host folds. The line through the first and last values needs only those two, so its residuals come in the
+  same read. The host chooses by exact size, as `col::choose` does.
+- **32-bit arithmetic.** Every residual is within the column's range of 0, because the line runs between the
+  first and last values. So below a range of 2^31, the line and the residuals are exact modulo 2^32. The slope
+  goes in as its high 32 bits (signed) and its low 32 bits, and `j * slope / 2^16` is formed from 32-bit
+  products and `mulhi`. A first version in 64-bit arithmetic, with a threadgroup tree to reduce the residuals,
+  took 1.0–1.4 ms for the choice; emulated 64-bit operations made it bound by arithmetic, not memory. A column
+  with a wider range does not try LINE on the GPU. That is a valid encoding, and LINE cannot win on such columns
+  in practice.
+- **LINE write** (`pack_line`): a thread packs a group of 32 residuals into `B` words, as PACK does.
+- **RUNS write**, three steps. Each threadgroup (8,192 values) counts the runs that start in it. One threadgroup
+  of 1,024 threads turns the counts into an exclusive prefix sum. Then each thread finds its first run index
+  (its threadgroup's offset, plus a simdgroup prefix sum and the earlier simdgroups' totals) and writes each of
+  its runs: the value and the start, ORed in atomically, since a run's bits may share a word with another
+  thread's.
+
+| 32M values | GPU choose | GPU write | CPU `encode`, 1 thread | CPU, 18 threads |
+|---|---|---|---|---|
+| RUNS (1.03M runs; 29 + 26 bits) | 0.64–0.72 ms | 0.99–1.93 ms (two fills, three kernels) | 42–67 ms | 5.6–21 ms |
+| LINE (3 bits) | 0.68–0.71 ms | 0.75–0.82 ms | 48–81 ms | 5.8–22 ms |
+
+So the GPU now packs every encoding: 3 to 15 times faster than the CPU on every thread, and 25 to 55 times faster
+than one. The RUNS write's
+second read could be folded into the count (the count's threadgroups would then take the write's layout); it
+has not been, as 1.9 ms is already small next to the CPU's figures.
+
 ## Path
 
 Each step leaves the engine working and is measured in retired instructions against the access it replaces:

@@ -151,6 +151,10 @@ impl Lines {
     pub(super) fn shared(source: std::sync::Arc<String>, python: bool) -> Self {
         Self { source, python, index: Default::default() }
     }
+    /// Each line's first byte, from line 1 (the device's `Loc` views read them in a chunk block).
+    pub(super) fn starts(&self) -> &[u32] {
+        &self.index().starts
+    }
     fn index(&self) -> &LineIndex {
         self.index.get_or_init(|| {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "projection lines".into());

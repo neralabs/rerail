@@ -72,7 +72,8 @@ On `tmp/warm` (dl10, `layer-violations.rr`, and the 44-policy batch over dl1g), 
 
 The memo sweep reads every memo entry's `reads` in each live plan's space. On the largest local store (120,169
 frames, 390 MB of data) that full scan takes 0.42 s. It runs only after a keep decision, which is rare (decision 0053).
-That is not worth optimising yet.
+That was not worth optimising then. Decision 0253 had the sweep read each entry's digest from `frame_part_used` instead; since decision 0240 §4 the
+entries are rows of `memo_entries`, each with its digest, and the sweep reads that table.
 
 ## What this gives up
 

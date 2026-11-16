@@ -143,6 +143,8 @@ pub enum TermRef<'v> {
     Int(i64),
     Str(AtomId),
     Call(AtomId, Terms<'v>),
+    /// A branded atom (decision 0270); at run time its value, `atom`.
+    Branded(crate::code_rule_dsl::logic::front::Branded),
 }
 
 impl TermRef<'_> {
@@ -160,6 +162,7 @@ pub(crate) fn term(im: &Image, at: u32) -> TermRef<'_> {
         kind::INT if k & kind::BIG != 0 => TermRef::Int(im.big(val)),
         kind::INT => TermRef::Int(val as i64),
         kind::STR => TermRef::Str(AtomId(val)),
+        kind::BRANDED => TermRef::Branded(super::brand_of(k >> 5 & 3, val)),
         _ => TermRef::Call(AtomId(val), Terms { im, at: at + 1, end: at + size }),
     }
 }

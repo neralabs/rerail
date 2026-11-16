@@ -40,6 +40,9 @@
     #[test]
     fn explain_shows_engines_plans_devices_and_decisions() {
         let _serial = one_run();
+        // This thread is a run's, before its waves until it opens them: SQL outside them is the run's own, even while
+        // another test's run is in its waves (a thread of no run goes by the process's count).
+        let _run = crate::code_rule_dsl::logic::profile::run_begins();
         set(true);
         reset();
         decision("xtopic", || "2 chunks".into());

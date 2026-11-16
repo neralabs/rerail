@@ -42,8 +42,6 @@ pub(in crate::code_rule_dsl) struct Session {
     pub(super) stats: Mutex<std::collections::HashMap<[u8; 32], ([u8; 32], super::keptstats::Keeper)>>,
     /// Its runs' connections and stores, kept from run to run (`connections`): an edit's run opens none.
     pub(super) connections: Arc<parking_lot::Mutex<super::connections::Connections>>,
-    /// Its runs' chunk mixes' tree counts (`own_counts`), read from memory as they are written behind the runs.
-    pub(super) own: super::OwnKept,
 }
 
 
@@ -75,7 +73,6 @@ impl Handle {
             stacks: Mutex::new(Default::default()),
             stats: Mutex::new(Default::default()),
             connections: Arc::new(parking_lot::Mutex::new(super::connections::Connections::kept())),
-            own: Default::default(),
         };
         Ok(Handle { generation, session: Arc::new(parking_lot::Mutex::new(session)) })
     }

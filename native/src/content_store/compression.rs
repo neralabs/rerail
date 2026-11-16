@@ -17,7 +17,7 @@
 //! [`decompress_head`] or [`decompress_chunks`].
 
 use std::collections::HashMap;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::io;
 use zstd::stream::raw::{Decoder, Encoder, InBuffer, Operation, OutBuffer};
 
@@ -90,12 +90,31 @@ thread_local! {
     static DICT_ENCODERS: RefCell<HashMap<u32, (i32, Encoder<'static>)>> = RefCell::new(HashMap::new());
     /// This thread's decompression contexts, by dictionary id (0: none).
     static DECODERS: RefCell<HashMap<u32, Decoder<'static>>> = RefCell::new(HashMap::new());
+    /// The bytes of the frames this thread has made for the store: a writer's job reads what it encoded as the
+    /// difference around it (`write_back`'s accounts), whether its payload came encoded or it encoded it there.
+    static ENCODED: Cell<usize> = const { Cell::new(0) };
+}
+
+/// The bytes of the frames this thread has made so far ([`compress`], [`compress_source`], [`compress_tape`]).
+pub(crate) fn encoded_here() -> usize {
+    ENCODED.with(Cell::get)
+}
+
+fn counted(frame: io::Result<Vec<u8>>) -> io::Result<Vec<u8>> {
+    if let Ok(frame) = &frame {
+        ENCODED.with(|n| n.set(n.get() + frame.len()));
+    }
+    frame
 }
 
 /// `bytes` as one plain zstd frame at `level`, byte for byte what `encode_all` writes: streamed,
 /// so the frame header carries no content size. For store-internal blobs (results, pages, memo
 /// entries); sources and tapes use [`compress_source`] and [`compress_tape`].
 pub fn compress(bytes: &[u8], level: i32) -> io::Result<Vec<u8>> {
+    counted(plain(bytes, level))
+}
+
+fn plain(bytes: &[u8], level: i32) -> io::Result<Vec<u8>> {
     ENCODER.with_borrow_mut(|slot| {
         let encoder = match slot {
             Some((known, encoder)) if *known == level => {
@@ -151,7 +170,11 @@ pub(crate) fn file_tag(path: &str, tape: Option<&[u8]>) -> Option<u8> {
 }
 
 fn compress_as(bytes: &[u8], level: i32, dictionary: Option<&'static Dictionary>) -> io::Result<Vec<u8>> {
-    let plain = compress(bytes, level)?;
+    counted(chosen(bytes, level, dictionary))
+}
+
+fn chosen(bytes: &[u8], level: i32, dictionary: Option<&'static Dictionary>) -> io::Result<Vec<u8>> {
+    let plain = plain(bytes, level)?;
     let Some(dictionary) = dictionary.filter(|_| bytes.len() < SMALL) else {
         return Ok(plain);
     };

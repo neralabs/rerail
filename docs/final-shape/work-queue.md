@@ -607,6 +607,76 @@ pass.
   the next read of unchanged rows: their kept statistics should be taken.
   - For phased-facts' 0290: its table's "the kept inputs" (0.76 s on dl10) was measured before a2ff8071e.
 
+### Q17. The hub's gate failures at 692cc9772
+
+- **Found** (2026-11-15, `cargo test --lib --no-fail-fast` on 0288's branch at 51422de6a): 43 failures.
+  - 8 have no pack test data on the host (ruff, sqlfluff, vue fixtures).
+  - 3 are interference: the two profile tests (fixed at their cause: the explain test's thread is a run's,
+    `run_begins`; the gaps test reads `gaps.tsv`, since profile.txt lists only the 12 largest gaps), and
+    `rule_files_pass_their_own_tests` ("a corpus memo entry does not decompress", passes alone; not traced).
+  - The other 32 fail on the hub's own commit too: 11 of them checked one by one on 692cc9772. 21 have the same
+    message as the 23 below.
+- **23 tests: `@rr_node_text without the run's long-text nodes bound`** (typing oracle and phase tests,
+  `base_relations_read_are_inputs`, phases' `a_phase_hands_on_its_exports…`, convert's helpers, rr's tape policy).
+  - 0268 (a20ea5b48) reads a long text only through the run's binding of `rr_long_text_node`, which has the batch
+    (`syntax::LongTexts`). The native step looks that binding up on its connection (`setfix::join_rule_with`).
+  - In `base_relations_read_are_inputs` the failing step compiles on a connection with no binding of it at all,
+    reached by `run_handed → run_native_inputs → plan::run`. Its inputs there are not `main.` bindings (`view` reads
+    other schemas as stored tables), and a stored table carries no batch.
+  - So the batch does not reach every connection that compiles a node read since 0249 and 0254 met 0268 in
+    692cc9772. Which part runs that rule (a chunk's, the cross part's) is not traced.
+- **Each fails alone, on the hub as here**: `a_stored_program_is_read_from_its_image` (1 against 2),
+  `library_modules_link_to_the_lowering_of_them_together` (javascript, line 441),
+  `rule_files_use_the_core_prelude…` ("SQL output already exists"), `every_operation_runs_on_every_executor`
+  (packs.tsv), `executors_are_shared` (blocks/src/gpu.rs:199 makes a command queue), `the_gate_catches_a_widened_walk`,
+  `spilled_walks_find_the_cpus_roots`, `the_backends_find_the_same_keys_on_real_files`, and the replay sample
+  (63 of 268 events).
+- **Done when**: each passes on the hub, fixed at its cause.
+
+### Q17. Two `rr::tests` red on the branch head
+
+- **Found** (2026-11-15, while validating decision 0291; both fail at 86b6c271f without 0291's change):
+  `guests_that_do_not_parse_follow_the_policy` (tests.rs 2286: "the broken guest keeps its partial tree", rows
+  `["1"]`, wanted `["1", "2"]`), and `library_modules_link_to_the_lowering_of_them_together` (tests.rs 3749: the
+  javascript pack's library linked from its modules differs from the one lowered together at line 441,
+  `rr_cover135` against `rr_cover121`, 2,383 lines against 2,385).
+- **Done when**: both pass, each traced to its cause (and a commit that made it red, where one did).
+
+### Q23. The transducer's Metal tests register no language in `rerail-device-metal`
+
+- **Found** (2026-11-16, at the Native-and-GPU-strata merge, 1980a6ea9): four tests of
+  `rerail-device-metal --features metal-tests` panic on "no language registered for Python" (language.rs 733):
+  `metal_successor_tests::unrelated_query_values_do_not_require_all_pairs_within_a_task`,
+  `…::active_successor_generations_keep_complete_winners_within_eighteen_dispatches`,
+  `metal_dynamic_execution::tests::complete_convergence_routing_reaches_terminal_barrier_within_shared_budget`,
+  `metal_frontier_conformance::production::wide_cursor_frames_and_capture_sequences_complete_within_evaluation_budget`.
+  That test binary registers no language on either side (the hub's too). 0289's view test registers Python itself.
+- **Done when**: they pass, the registration made where the crate's tests read a registry (hosted in the engine, as
+  open-items' "Hosted in the engine" did for the others, or registered once for the crate's tests).
+- **Record**: done (2026-11-16). The crate registers Python's pack once for its tests (`test_languages`, lib.rs, under
+  a `Once`; the registry's first registration holds), and the four tests and 0289's view test call it first. The
+  four pass with `--features metal-tests`, as does the view test. Reviewed myself against reviewer-brief.md: the
+  tests' bodies are unchanged; it is no second loader for the product (`cfg(test)`, Python alone, the one pack these
+  tests parse); the engine's `install_languages` registers the same pack, so a test hosted there later reads the
+  same registry.
+
+### Q24. A two-run process's second run names fewer sources when its files are new
+
+- **Found** (2026-11-16, at the Bend-language-investigation merge, 69cd343c5):
+  `a_second_run_in_one_process_records_the_first_runs_manifest` (0251) fails, and fails the same with that branch's
+  own test binary. Files written just before the runs reproduce it: the two-run process's second run records a
+  manifest of 6 sources (ids 20–25) beside the first run's 9 (20–28). With the same files a few seconds old, it
+  adds none.
+- **Done when**: the test passes with fresh files, traced to which of the three sources the second run leaves out
+  and why (the racy-mtime window is the lead).
+
+### Q25. `rrs_records_are_rows_on_the_cpu` expects no `/` among the punctuation bytes
+
+- **Found** (2026-11-16, at the Parser-generators merge, bca645c47): `punct_bytes` holds `/` (47) since 0177's
+  "a `/` alone" step (its code is its kind, no word looked up); the test's expected set is the fused pair rule's
+  bytes. Red with that branch's own binary at its head (23:01), green at 19:32. Theirs to settle, their area.
+- **Done when**: the test states the set the token loop reads codes for, and passes.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
@@ -626,3 +696,7 @@ pass.
    unchanged document, in sessions too); (c) keep every batch held to the end of the run (memory grows with the
    corpus; does not cover sessions). Recommended: (a), the magic-sets widening 0174 already does, and no new
    mechanism.
+   **Answered (2026-11-15): (a).** Built on sync-integration-hub-tape as decision 0286 (numbered 0264 when written)
+   (`corpus::requests_file_local`, `file_local::requests_file_local`), with the test
+   `a_cross_file_reader_finds_the_text_of_another_files_node`; `a_cross_file_text_test_is_maintained_as_a_filter`
+   runs again.

@@ -12,6 +12,7 @@ import json
 import os
 import socket
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import farm  # noqa: E402
@@ -51,7 +52,33 @@ def main(argv):
                 print(f"    no link: it is reached over its {h['arrival']}; a fall back to WiFi is not caught")
             if h.get("route"):
                 print(f"    reached at an address of its {farm.link_of(host)} (its name resolved to another link)")
+        leases(farm.HERE, "this machine")
+        for host, _ in rows:
+            leases(host["name"], host["name"])
     sys.exit(0 if any(h.get("ok") for _, h in rows) else 1)
+
+
+def leases(machine, name):
+    """The benchmark lease on `machine` (scripts/dev/quiet-run), its queue, and the last hour's use."""
+    if not hasattr(farm, "lease_of"):
+        return
+    lease, q = farm.lease_of(machine), farm.queue(machine)
+    used = {}
+    for e in farm.ledger():
+        if e["machine"] == machine:
+            used[e["client"]] = used.get(e["client"], 0) + e["ended"] - e["started"]
+    if not (lease or q or used):
+        return
+    hm = lambda t: time.strftime("%H:%M:%S", time.localtime(t))
+    if not lease:
+        print(f"  {name}: not leased")
+    if lease:
+        print(f"  {name}: leased for a benchmark ({lease.get('label')}, {os.path.basename(lease['client'])}) until "
+              f"{hm(lease['until'])} at the latest: the farm sends it nothing new; heavy work there now is unfair")
+    for i, r in enumerate(q):
+        print(f"    waiting {i + 1}: {os.path.basename(r['client'])} ({r.get('label')}, {r['minutes']:g} min), asked {hm(r['asked'])}")
+    if used:
+        print(f"    leases in the last hour: " + ", ".join(f"{os.path.basename(c)} {s / 60:.1f} min" for c, s in sorted(used.items(), key=lambda kv: -kv[1])))
 
 
 if __name__ == "__main__":
