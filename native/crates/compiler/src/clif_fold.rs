@@ -146,6 +146,8 @@ fn signed(v: u64, w: u32) -> i64 {
 enum Folded {
     Const(u64),
     Same(Value),
+    /// `x + k`, two adds of constants joined.
+    AddImm(Value, i64),
 }
 
 fn binary(op: Opcode, x: u64, y: u64, w: u32) -> Option<u64> {
@@ -307,6 +309,8 @@ fn known(func: &ir::Function, callees: &Summaries) -> HashMap<Value, Bits> {
                         Opcode::Bnot => Bits { zeros: x.ones, ones: x.zeros & mask(w) },
                         Opcode::Uextend => Bits { zeros: (x.zeros & mask(aw)) | (mask(w) & !mask(aw)), ones: x.ones & mask(aw) },
                         Opcode::Ireduce => Bits { zeros: x.zeros & mask(w), ones: x.ones & mask(w) },
+                        // A count of bits: at most the width, 64.
+                        Opcode::Ctz | Opcode::Clz | Opcode::Popcnt if x.value(aw).is_none() => Bits { zeros: mask(w) & !127, ones: 0 },
                         _ => match x.value(aw) {
                             Some(v) => match unary(opcode, v, w, aw) {
                                 Some(c) => Bits::exact(c, w),
@@ -442,6 +446,8 @@ fn fold_once(func: &mut ir::Function, callees: &Summaries) -> bool {
                             (Some(_), None) => decided(opcode, c, y, x, false, w),
                             (None, None) if a == c && matches!(opcode, Opcode::Band | Opcode::Bor) => Some(Folded::Same(a)),
                             (None, None) if a == c && matches!(opcode, Opcode::Bxor | Opcode::Isub | Opcode::BandNot) => Some(Folded::Const(0)),
+                            // `(c + x) - c`, `(x + c) - c`: `x`.
+                            (None, None) if opcode == Opcode::Isub && added(func, a, c).is_some() => added(func, a, c).map(Folded::Same),
                             (None, None) => match opcode {
                                 // An `and` with a side that has ones wherever the other may.
                                 Opcode::Band if (y.ones | x.zeros) & mask(w) == mask(w) => Some(Folded::Same(a)),
@@ -453,11 +459,27 @@ fn fold_once(func: &mut ir::Function, callees: &Summaries) -> bool {
                             _ => None,
                         }
                     }
+                    // `(x + j) + k`: `x + (j + k)`, `x` where it is none.
+                    InstructionData::BinaryImm64 { opcode: Opcode::IaddImm, arg, imm } if kb(arg).value(w).is_none() && add_imm_of(func, arg).is_some() => {
+                        let (x, j) = add_imm_of(func, arg).expect("an add");
+                        let k = j.wrapping_add(imm.bits());
+                        if signed(k as u64, w) == 0 { Some(Folded::Same(x)) } else { Some(Folded::AddImm(x, k)) }
+                    }
                     InstructionData::BinaryImm64 { opcode, arg, imm } => match imm_op(opcode) {
                         Some(Opcode::Isub) | None => None,
                         Some(op) => decided(op, arg, kb(arg), Bits::exact(imm.bits() as u64, w), true, w),
                     },
                     InstructionData::Unary { opcode: Opcode::Uextend | Opcode::Ireduce, .. } => None,
+                    // An unsigned compare its operands' ranges decide (`urange`).
+                    InstructionData::IntCompare { cond, args: [a, c], .. } => {
+                        let aw = width(dfg.value_type(a)).unwrap_or(64);
+                        range_compare(cond, urange(func, &bits, a, aw, 4), urange(func, &bits, c, aw, 4)).map(|t| Folded::Const(u64::from(t)))
+                    }
+                    InstructionData::IntCompareImm { cond, arg, imm, .. } => {
+                        let aw = width(dfg.value_type(arg)).unwrap_or(64);
+                        let k = imm.bits() as u64 & mask(aw);
+                        range_compare(cond, urange(func, &bits, arg, aw, 4), Some((k, k))).map(|t| Folded::Const(u64::from(t)))
+                    }
                     // A complement's complement: the value.
                     InstructionData::Unary { opcode: Opcode::Bnot, arg } => match dfg.value_def(dfg.resolve_aliases(arg)) {
                         cranelift_codegen::ir::ValueDef::Result(d, _) => match dfg.insts[d] {
@@ -512,6 +534,9 @@ fn fold_once(func: &mut ir::Function, callees: &Summaries) -> bool {
                     let c = c & mask(ty.bits());
                     func.dfg.replace(inst).iconst(ty, c as i64);
                 }
+                Folded::AddImm(x, k) => {
+                    func.dfg.replace(inst).iadd_imm(x, k);
+                }
                 Folded::Same(v) => {
                     let v = func.dfg.resolve_aliases(v);
                     if v == r || func.dfg.value_type(v) != ty {
@@ -526,6 +551,72 @@ fn fold_once(func: &mut ir::Function, callees: &Summaries) -> bool {
         }
     }
     changed
+}
+
+/// `a - c`'s other operand where `a` is `c + x` or `x + c`.
+fn added(func: &ir::Function, a: Value, c: Value) -> Option<Value> {
+    let dfg = &func.dfg;
+    let c = dfg.resolve_aliases(c);
+    let ir::ValueDef::Result(d, _) = dfg.value_def(dfg.resolve_aliases(a)) else { return None };
+    let InstructionData::Binary { opcode: Opcode::Iadd, args: [x, y] } = dfg.insts[d] else { return None };
+    let (x, y) = (dfg.resolve_aliases(x), dfg.resolve_aliases(y));
+    if x == c {
+        Some(y)
+    } else if y == c {
+        Some(x)
+    } else {
+        None
+    }
+}
+
+/// `v`'s operand and constant where `v` is `x + j` (`iadd_imm`).
+fn add_imm_of(func: &ir::Function, v: Value) -> Option<(Value, i64)> {
+    let dfg = &func.dfg;
+    let ir::ValueDef::Result(d, _) = dfg.value_def(dfg.resolve_aliases(v)) else { return None };
+    match dfg.insts[d] {
+        InstructionData::BinaryImm64 { opcode: Opcode::IaddImm, arg, imm } => Some((dfg.resolve_aliases(arg), imm.bits())),
+        _ => None,
+    }
+}
+
+/// `v`'s unsigned range at `w` bits: its known bits' (`ones` up to all but `zeros`), and an
+/// add of a constant's where it cannot wrap. `None` where nothing is known.
+fn urange(func: &ir::Function, bits: &HashMap<Value, Bits>, v: Value, w: u32, depth: u32) -> Option<(u64, u64)> {
+    let dfg = &func.dfg;
+    let v = dfg.resolve_aliases(v);
+    let m = mask(w);
+    let b = bits.get(&v).copied().unwrap_or_default();
+    let of_bits = (b.ones & m, m & !b.zeros);
+    if depth == 0 {
+        return Some(of_bits);
+    }
+    if let ir::ValueDef::Result(d, _) = dfg.value_def(v)
+        && let InstructionData::BinaryImm64 { opcode: Opcode::IaddImm, arg, imm } = dfg.insts[d]
+        && let Some((lo, hi)) = urange(func, bits, arg, w, depth - 1)
+    {
+        let k = imm.bits() as u64 & m;
+        if hi.checked_add(k).is_some_and(|h| h <= m) {
+            let (lo, hi) = (lo + k, hi + k);
+            return Some((lo.max(of_bits.0), hi.min(of_bits.1)));
+        }
+    }
+    Some(of_bits)
+}
+
+/// An unsigned compare of two ranges, where they decide it.
+fn range_compare(cc: IntCC, x: Option<(u64, u64)>, y: Option<(u64, u64)>) -> Option<bool> {
+    let ((xl, xh), (yl, yh)) = (x?, y?);
+    match cc {
+        IntCC::UnsignedLessThan if xh < yl => Some(true),
+        IntCC::UnsignedLessThan if xl >= yh => Some(false),
+        IntCC::UnsignedLessThanOrEqual if xh <= yl => Some(true),
+        IntCC::UnsignedLessThanOrEqual if xl > yh => Some(false),
+        IntCC::UnsignedGreaterThan if xl > yh => Some(true),
+        IntCC::UnsignedGreaterThan if xh <= yl => Some(false),
+        IntCC::UnsignedGreaterThanOrEqual if xl >= yh => Some(true),
+        IntCC::UnsignedGreaterThanOrEqual if xh < yl => Some(false),
+        _ => None,
+    }
 }
 
 /// Block parameters every branch to which passes the same value, or the same constant: that
@@ -807,6 +898,48 @@ mod tests {
             InstructionData::UnaryImm { opcode: Opcode::Iconst, imm } => assert_eq!(imm.bits() as u64, expect),
             ref other => panic!("{other:?}"),
         }
+    }
+
+    /// A sum less one of its operands is the other (`(s + n) - s`), and two adds of constants
+    /// are one (`(n + 1) - 1` is `n`), as a compiler writes a token's length from its end.
+    #[test]
+    fn a_sum_less_its_operand_is_the_other() {
+        let mut func = function(2, |f, p| {
+            let e = f.ins().iadd(p[0], p[1]);
+            let n = f.ins().isub(e, p[0]);
+            let len = f.ins().iadd_imm(n, 1);
+            let back = f.ins().iadd_imm(len, -1);
+            let three = f.ins().iadd_imm(len, 2);
+            let r = f.ins().bxor(back, three);
+            f.ins().return_(&[r]);
+        });
+        fold(&mut func);
+        verified(&func);
+        // `p1 ^ (p1 + 3)`: the add of `p0` and its subtract gone, the adds joined.
+        assert_eq!(ops(&func), vec![Opcode::IaddImm, Opcode::Bxor, Opcode::Return], "{}", func.display());
+    }
+
+    /// An unsigned compare its operands' ranges decide: a count of bits (64 at most) over four
+    /// plus one is at least one and below 64; its branch taken. One they do not, kept.
+    #[test]
+    fn a_range_decides_an_unsigned_compare() {
+        let mut func = function(2, |f, p| {
+            let z = f.ins().ctz(p[0]);
+            let lanes = f.ins().ushr_imm(z, 2);
+            let len = f.ins().iadd_imm(lanes, 1);
+            let some = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, len, 1);
+            let small = f.ins().icmp_imm(IntCC::UnsignedLessThan, len, 64);
+            let open = f.ins().icmp_imm(IntCC::UnsignedLessThan, len, 16);
+            let a = f.ins().band(some, small);
+            let b = f.ins().band(a, open);
+            let b = f.ins().uextend(types::I64, b);
+            let r = f.ins().iadd(b, p[1]);
+            f.ins().return_(&[r]);
+        });
+        fold(&mut func);
+        verified(&func);
+        let cmps = func.layout.blocks().flat_map(|b| func.layout.block_insts(b)).filter(|&i| matches!(func.dfg.insts[i].opcode(), Opcode::Icmp | Opcode::IcmpImm)).count();
+        assert_eq!(cmps, 1, "only `len < 16` is open: {}", func.display());
     }
 
     /// A complement's complement is the value: both `bnot`s go, where the inner one has no

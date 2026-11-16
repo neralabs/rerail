@@ -4272,7 +4272,8 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
             // The token's bytes after its first in `pre`'s bits: `len - 1` of them.
             let below = (!pre.is_empty()).then(|| {
                 let n = f.ins().iadd_imm(len, -1);
-                lanes_below(f, n, pre_stride)
+                // The token's bytes after its first: `most - 1` at most.
+                lanes_below(f, n, pre_stride, most.map_or(16, |m| m.saturating_sub(1)).min(16))
             });
             for (t, n) in counts.iter().zip(&ex) {
                 let most = counts.iter().zip(&ex).filter(|(_, m)| *m == n).map(|(t, _)| t.least).max().unwrap_or(0);
@@ -7042,15 +7043,15 @@ pub fn short_mask(f: &mut FunctionBuilder<'_>, part: Value, weights: Value) -> V
     f.ins().extractlane(lanes, 0)
 }
 
-/// The mask of a short window's first `n` lanes (`n` at most 16), `stride` bits a lane: `n *
-/// stride` low bits, all 64 at 16 lanes of four.
-pub fn lanes_below(f: &mut FunctionBuilder<'_>, n: Value, stride: u32) -> Value {
+/// The mask of a short window's first `n` lanes (`n` at most `most`, at most 16), `stride`
+/// bits a lane: `n * stride` low bits, all 64 at 16 lanes of four.
+pub fn lanes_below(f: &mut FunctionBuilder<'_>, n: Value, stride: u32, most: u32) -> Value {
     let one = f.ins().iconst(types::I64, 1);
-    if stride * 16 < 64 {
-        let b = f.ins().ishl(one, n);
+    let bits = if stride > 1 { f.ins().ishl_imm(n, i64::from(stride.trailing_zeros())) } else { n };
+    if stride * most < 64 {
+        let b = f.ins().ishl(one, bits);
         return f.ins().iadd_imm(b, -1);
     }
-    let bits = f.ins().imul_imm(n, i64::from(stride));
     let b = f.ins().ishl(one, bits);
     let b = f.ins().iadd_imm(b, -1);
     let all = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, bits, 64);

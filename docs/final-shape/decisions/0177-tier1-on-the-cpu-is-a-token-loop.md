@@ -2742,3 +2742,41 @@ Tests:
 
 Counts, reported: words 99.1, punctuation 54.4, mixed 56.1,
 strings 263.6, numbers 129.6, comments 233.1.
+
+## A token's length is its run's lanes
+
+Lean's number arm keeps one `end` and writes `end - start` where it
+needs a length.
+
+Our arm worked the length out as `(s + n) - s + 1`. Then each test
+branched on `len >= 1`, which is always true. The cut at the token's
+length multiplied by four and kept a select for "all 64 bits", though
+a token of at most 16 lanes never reaches it.
+
+**The change.**
+
+- **`clif_fold`, algebra.** `(c + x) - c` and `(x + c) - c` are `x`.
+  Two adds of constants are one add, or the value itself where they
+  cancel.
+- **`clif_fold`, ranges.** A count of bits (`ctz`, `clz`, `popcnt`)
+  has its bits above 7 known zero. An unsigned compare is decided
+  where its operands' ranges decide it (`urange`, `range_compare`). A
+  range comes from known bits, and from an add of a constant that
+  cannot wrap.
+- **`lanes_below` takes the most lanes it can be asked for.** The
+  select is made only where that many lanes reach 64 bits, and a lane's
+  bits are a shift (`<< 2`), not a multiply. `tested` passes the
+  token's bound less its first byte.
+
+```rust
+// generated (tier1_aot.rs), the number's tests, after:
+v1087 = (!run).trailing_zeros() >> 2;               // its lanes
+v1034 = dots & ((1 << (v1087 << 2)) - 1);           // its `.`s
+v1035 = v1034 & 0x1111_1111_1111_1111;              // one bit a lane
+// before: v1023 = (s + v1087) - s + 1; if v1023 >= 1 { … select(bits >= 64, !0, …) }
+```
+
+Tests: `a_sum_less_its_operand_is_the_other` and
+`a_range_decides_an_unsigned_compare`.
+
+Counts, reported: unchanged (rustc had folded them in its own pass).

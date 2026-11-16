@@ -521,7 +521,7 @@ impl<'a> Bytewise<'a> {
         let sixteen = f.ins().iconst(types::I64, 16);
         let rem = f.ins().smax(rem, zero);
         let rem = f.ins().smin(rem, sixteen);
-        let low = crate::native_cpu_block::lanes_below(f, rem, stride);
+        let low = crate::native_cpu_block::lanes_below(f, rem, stride, 16);
         f.ins().band(m, low)
     }
 
@@ -1701,7 +1701,7 @@ mod tests {
                 let w = b.word(&mut f, &file, o, at, &mut heads);
                 let set = crate::native_cpu_block::lanes_set(&mut f, m, st);
                 let five = f.ins().iconst(types::I64, 5);
-                let below = crate::native_cpu_block::lanes_below(&mut f, five, st);
+                let below = crate::native_cpu_block::lanes_below(&mut f, five, st, 5);
                 let below = f.ins().band(m, below);
                 for (j, v) in [m, w, set, below].into_iter().enumerate() {
                     f.ins().store(MemFlags::trusted(), v, out, 8 * (4 * i + j) as i32);
