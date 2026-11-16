@@ -203,14 +203,14 @@ function headline(c: CandidateItem): string {
   return `- **${c.candidate}: ${c.status}** · ${c.counts.failing_packs} of ${c.counts.packs} packs fail${lead}`;
 }
 
-function runSection(report: Report): string[] {
+function runSection(report: Report, baseline: string): string[] {
   const short = (sha: string): string => sha.slice(0, 10);
   const lines = [
     "<details><summary>Run, inputs and method</summary>",
     "",
     `- Started ${report.run.started_at ?? "–"}, reported ${report.run.finished_at}, by ${report.run.invoked_by ?? "an unknown caller"}.`,
     `- Command: \`${report.run.command ?? "–"}\`; harness at \`${short(report.run.harness_sha)}\`.`,
-    `- Baseline \`${report.baseline.ref ?? short(report.baseline.sha)}\` (\`${short(report.baseline.sha)}\`); candidate \`${short(report.candidate.sha)}\`.`,
+    `- Baseline ${baseline}; candidate \`${short(report.candidate.sha)}\`.`,
     `- Bar: each metric's median of ${report.bar.runs_per_side} runs at most ${report.bar.max_ratio.toFixed(2)}× the baseline's; ${report.bar.confirm_runs > 0 ? `a failing cell runs ${report.bar.confirm_runs} confirmation repetitions` : "no confirmation runs were recorded"}; ${report.bar.drill_reps > 0 ? `a confirmed slowdown is attributed to rules with ${report.bar.drill_reps} cold runs per rule and side` : "rule attribution, where shown, states its own runs"}.`,
     `- Pinned CPUs ${report.bar.pinned_cpus.join(" / ") || "–"} (${report.bar.threads.join(", ") || "–"} threads, one per physical core, siblings idle); caps ${report.bar.caps.memory.join(", ") || "–"} memory, ${report.bar.caps.time_s.join(", ") || "–"} s.`,
     "",
@@ -235,15 +235,19 @@ function runSection(report: Report): string[] {
 }
 
 export function renderReport(report: Report): string {
+  const sha = report.baseline.sha.slice(0, 10);
+  // A ref that is the commit itself (a sha given as --baseline) is not repeated beside it.
+  const ref = report.baseline.ref;
+  const baseline = ref === null || report.baseline.sha.startsWith(ref) ? `\`${sha}\`` : `\`${ref}\` (\`${sha}\`)`;
   const lines = [
     `# Ship / no-ship: ${report.verdict.status}`,
     "",
     ...report.candidates.map(headline),
     "",
-    `Candidate \`${report.candidate.sha.slice(0, 10)}\` against baseline \`${report.baseline.ref ?? report.baseline.sha.slice(0, 10)}\` (\`${report.baseline.sha.slice(0, 10)}\`) · gate: ${report.verdict.gate.join(", ")} · bar: every metric ≤ ${report.bar.max_ratio.toFixed(2)}× the baseline, findings no worse, every run completes.`,
+    `Candidate \`${report.candidate.sha.slice(0, 10)}\` against baseline ${baseline} · gate: ${report.verdict.gate.join(", ")} · bar: every metric ≤ ${report.bar.max_ratio.toFixed(2)}× the baseline, findings no worse, every run completes.`,
     "",
   ];
   for (const c of report.candidates) lines.push(...candidateSection(c));
-  lines.push(...runSection(report));
+  lines.push(...runSection(report, baseline));
   return `${lines.join("\n")}\n`;
 }
