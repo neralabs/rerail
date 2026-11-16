@@ -30,7 +30,7 @@ export interface RerailCommand {
 export const RERAIL_COMMANDS: readonly RerailCommand[] = [
   { name: "rerail", description: "What Rerail is doing in this repo, and every Rerail command", summary: "what Rerail is doing here" },
   { name: "rerail-manage", description: "Open the Rerail dashboard", summary: "open the dashboard" },
-  { name: "rerail-create", description: "Write a rule in your own words, get rule suggestions for this repo, or change one", summary: "write, suggest or change a rule" },
+  { name: "rerail-create", description: "Write a rule in your own words, change one, or get rule suggestions for this repo", summary: "write or change a rule, or get suggestions" },
   { name: "rerail-stop", description: "Stop Rerail in this checkout and the worktrees inside it; rules and history are kept", summary: "stop Rerail in this repo" },
   { name: "rerail-start", description: "Start Rerail in this checkout and the worktrees inside it, setting the repo up the first time", summary: "start Rerail in this repo" },
   { name: "rerail-update", description: "Update Rerail to the newest version", summary: "get the newest version" },
@@ -221,7 +221,7 @@ export function showMeInstructions({ cli, sigil, write }: ShowMeInstructionsInpu
     "  Broken       <path>, on purpose",
     "  Steered      Rerail told me as I worked, and I fixed it. I wasn't stopped.",
     "  Cleaned up   the demo file and the demo rule are gone",
-    `  Your turn    ${sigil}rerail-create  create a rule, in your own words`,
+    `  Your turn    ${sigil}rerail-create  write or change a rule, or get suggestions`,
     "```",
     "",
     `   Without a steer, the Steered row reads "No steer arrived, so nothing was fixed. Type ${sigil}rerail to see what Rerail is doing here."`,

@@ -164,16 +164,16 @@ describe("T2b may Rerail read sessions", () => {
     expect(text).toContain("OK for Rerail to read your coding agent sessions?");
     expect(text).toContain("Rerail checks your coding agent’s work, not you. It reads what you ask\nthe agent, what the agent does, and the files it edits.");
     expect(text).toContain("  ✓ Stays on this computer. Nothing is sent anywhere.");
-    expect(text).toContain("  ✓ You’re asked once, for every repo you start Rerail in.");
-    expect(text).toContain("1. Sounds good, continue\n");
+    expect(text).toContain("  ✓ You’re asked once, for every repo you start Rerail in.\n  ✓ Stop Rerail in a repo anytime: run rerail stop in its folder.");
+    expect(text).toContain("1. Yes, that’s OK\n");
     expect(text).toMatch(/2\. Not now, cancel set-up +nothing is connected or started/);
     expect(text).toContain("1. rerail setup --answer allow --repo /Users/me/code/acme-web");
     expect(text).toContain("2. rerail setup --answer decline");
   });
 
-  // Run by a coding agent, the person reads the question inside a session: it names that session.
-  it("asked inside a coding agent session, names that session", () => {
-    expect(renderQuestion(sessionsQuestion({ carriedArgs: [], inSession: true }), "agent")).toContain("OK for Rerail to read this session and the ones after it?");
+  // Relayed by a coding agent, the person reads the question in a session; most agents read only sessions started after set-up.
+  it("asked in a coding agent session, asks about sessions like that one", () => {
+    expect(renderQuestion(sessionsQuestion({ carriedArgs: [], inSession: true }), "agent")).toContain("OK for Rerail to read coding agent sessions like this one?");
     expect(renderQuestion(sessionsQuestion({ carriedArgs: [] }), "terminal")).toContain("OK for Rerail to read your coding agent sessions?");
   });
 
@@ -230,9 +230,15 @@ describe("T3 / C3 ask before reading", () => {
   it.each(LANES)("names the repo, says what scanning does, and offers three answers (%s)", lane => {
     const text = stripAnsi(renderReadRepoQuestion(input, lane));
     expect(text).toContain("Find rule packs for acme-web?");
-    expect(text).toContain("Rule packs are Rerail’s standard rules, mostly the same ones linters use\n(ESLint, Ruff, Clippy…), one pack per language or framework.");
+    expect(text).toContain("Rule packs are ready-made rules, mostly the same ones linters use\n(ESLint, Ruff, Clippy…).\n");
     expect(text).toContain("Rerail checks while your coding agent writes it, so the agent\nfixes problems in the same turn, before review or CI.");
-    expect(text).toContain("  ✓ Your linter and CI stay as they are. Rerail doesn’t change them.\n  ✓ It reads the ESLint, oxlint or Ruff config at the repo’s root. Rules\n    it turns off for the repo or a folder start off here too; the next\n    screen lists them.");
+    expect(text).toContain([
+      "  ✓ Your linter and CI stay as they are. Rerail doesn’t change them.",
+      "  ✓ Scanning looks at file types and dependencies to suggest packs, not at",
+      "    how your code is written. Your code stays on this computer.",
+      "  ✓ It also reads the ESLint, oxlint or Ruff config at the repo’s root:",
+      "    rules that config turns off start off in Rerail too.",
+    ].join("\n"));
     expect(text).toContain("  ✓ Nothing is installed or turned on until you say yes.");
     expect(text).toContain("1. Yes, scan acme-web");
     expect(text).toMatch(/2\. Scan a different repo… +e\.g\. ~\/code\/landing-page/);
@@ -275,7 +281,7 @@ describe("T4 / C4 recommended rule packs", () => {
 
   it.each(LANES)("lists each rule pack first, then its rule count, then why it is suggested, then what a yes connects (%s)", lane => {
     const text = stripAnsi(renderRecommendedPacks(PACKS, lane));
-    expect(text).toContain("Scanned acme-web. 2 standard rule packs match what it’s built with:");
+    expect(text).toContain("Scanned acme-web. 2 rule packs suggested for what it’s built with:");
     expect(text).toMatch(/Rule pack\s+Rules\s+Why suggested/);
     expect(text).toMatch(/TypeScript\s+74\s+matches the typescript dependency in package\.json and \*\.ts files/);
     expect(text).toMatch(/acme-api\s+92\s+matches the acme_api package/);
@@ -348,19 +354,19 @@ describe("T4 / C4 recommended rule packs", () => {
   });
 
   it("marks the scan with a bullet in the terminal only", () => {
-    expect(stripAnsi(renderRecommendedPacks(PACKS, "terminal"))).toContain("● Scanned acme-web. 2 standard rule packs match what it’s built with:");
+    expect(stripAnsi(renderRecommendedPacks(PACKS, "terminal"))).toContain("● Scanned acme-web. 2 rule packs suggested for what it’s built with:");
     expect(renderRecommendedPacks(PACKS, "agent")).not.toContain("● Scanned");
   });
 
   it("speaks of one rule pack in the singular", () => {
     const text = renderRecommendedPacks({ ...PACKS, packs: PACKS.packs.slice(0, 1) }, "agent");
-    expect(text).toContain("Scanned acme-web. 1 standard rule pack matches what it’s built with:");
+    expect(text).toContain("Scanned acme-web. 1 rule pack suggested for what it’s built with:");
     expect(text).toContain("Start Rerail in acme-web with this rule pack?");
   });
 
   it("says plainly when no rule pack fits, and when no coding agent was found", () => {
     const text = renderRecommendedPacks({ ...PACKS, packs: [], agentsFound: [] }, "agent");
-    expect(text).toContain("Scanned acme-web. None of Rerail’s rule packs fit it.");
+    expect(text).toContain("Scanned acme-web. No rule pack matches what it’s built with.");
     expect(text).not.toContain("Packs look for");
     expect(text).not.toContain("Rule pack ");
     expect(text).toContain("Start Rerail in acme-web with no rule packs on?");
@@ -387,7 +393,7 @@ describe("T4 / C4 recommended rule packs", () => {
 
   it("says why no rule pack fits: what the scan found and skipped, the pack that came closest, and what each pack looks for", () => {
     const block = [
-      "Scanned acme-web. None of Rerail’s rule packs fit it.",
+      "Scanned acme-web. No rule pack matches what it’s built with.",
       "",
       "  Found           .py 9 · .md 4",
       "                  from Git’s list of files, which leaves out what Git ignores",
@@ -661,7 +667,7 @@ describe("E5 skip for now", () => {
   it.each(LANES)("says Rerail is on in no repo and how to start it later, as the summary is laid out (%s)", lane => {
     const text = stripAnsi(renderSkipped(CONNECTED, lane));
     expect(text).toContain("● Rerail is installed · not on in any repo yet\n\n");
-    expect(text).toContain("  Start     Open a session in one of your repos and type /rerail-start.\n            Rerail asks, suggests rule packs that fit, and starts there.");
+    expect(text).toContain("  Start     Open a session in one of your repos and type /rerail-start.\n            Rerail asks, suggests rule packs, and starts there.");
     expect(text).toContain("  Type /rerail in any session for help and every command.");
     expect(text).not.toMatch(/Connected|Next:/);
   });

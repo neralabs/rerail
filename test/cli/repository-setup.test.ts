@@ -379,7 +379,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     const asked = agentIo();
     await runSetup(asked, request(setup, fakeSetupEnvironment({ packs: countingStore(["python"]) }), { answer: "yes", repo: setup.repo }));
     expect(asked.text()).toContain([
-      "Scanned acme-api. None of Rerail’s rule packs fit it.",
+      "Scanned acme-api. No rule pack matches what it’s built with.",
       "",
       "  Found           .py 3 · .ts 1",
       "                  from Git’s list of files, which leaves out what Git ignores",
@@ -400,7 +400,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     expect(io.text()).toContain("Couldn’t download Rerail’s rule packs, so set-up can’t tell which fit acme-api.");
     expect(io.text()).toContain("npm error code E401");
     expect(io.text()).toContain("Try downloading them again?");
-    expect(io.text()).not.toContain("None of Rerail’s rule packs fit");
+    expect(io.text()).not.toContain("No rule pack matches");
     expect(io.text()).not.toContain("with no rule packs on?");
     expect(environment.connections).toEqual([]);
   });
@@ -450,7 +450,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
       const asked = agentIo();
       await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "yes", repo: setup.repo }));
       expect(asked.text()).toMatch(/@neralabs\/rerail-pack-typescript@\S+: .*0\.2\.0/u);
-      expect(asked.text()).toContain("Scanned acme-api. None of Rerail’s rule packs fit it.");
+      expect(asked.text()).toContain("Scanned acme-api. No rule pack matches what it’s built with.");
     } finally {
       await rm(current, { recursive: true, force: true });
     }

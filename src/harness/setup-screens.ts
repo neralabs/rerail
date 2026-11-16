@@ -335,8 +335,9 @@ export interface SessionsInput {
    */
   readonly remoteHosts?: readonly string[] | null;
   /**
-   * Set-up is run by a coding agent (the agent and json lanes), so the person reads the question inside a session:
-   * it names that session, rather than ask as if sessions were somewhere else.
+   * A coding agent relays set-up (`--relay`, or the json lane), so the person reads the question in a coding agent
+   * session: it asks about sessions like that one, rather than as if sessions were somewhere else. Not "this session":
+   * most coding agents load Rerail's hooks only in sessions started after set-up.
    */
   readonly inSession?: boolean;
 }
@@ -358,7 +359,7 @@ export function sessionsQuestion(input: SessionsInput): QuestionForm {
     id: "sessions",
     lead: [],
     prompt: input.inSession === true
-      ? "OK for Rerail to read this session and the ones after it?"
+      ? "OK for Rerail to read coding agent sessions like this one?"
       : "OK for Rerail to read your coding agent sessions?",
     trail: [
       "Rerail checks your coding agent’s work, not you. It reads what you ask",
@@ -366,10 +367,10 @@ export function sessionsQuestion(input: SessionsInput): QuestionForm {
       "",
       ...sessionsDestination(input.remoteHosts),
       "  ✓ You’re asked once, for every repo you start Rerail in.",
-      "  ✓ Stop it anytime: run rerail stop in the repo’s folder.",
+      "  ✓ Stop Rerail in a repo anytime: run rerail stop in its folder.",
     ],
     choices: [
-      { answer: "allow", label: "Sounds good, continue", args: [SETUP_FLAGS.answer, "allow", ...input.carriedArgs] },
+      { answer: "allow", label: "Yes, that’s OK", args: [SETUP_FLAGS.answer, "allow", ...input.carriedArgs] },
       { answer: "decline", label: "Not now, cancel set-up", hint: "nothing is connected or started", args: [SETUP_FLAGS.answer, "decline"] },
     ],
     ...(input.setupCommand === undefined ? {} : { setupCommand: input.setupCommand }),
@@ -409,19 +410,18 @@ export function readRepoQuestion(input: ReadRepoInput): QuestionForm {
     lead: [],
     prompt: `Find rule packs for ${repo}?`,
     trail: [
-      "Rule packs are Rerail’s standard rules, mostly the same ones linters use",
-      "(ESLint, Ruff, Clippy…), one pack per language or framework.",
+      "Rule packs are ready-made rules, mostly the same ones linters use",
+      "(ESLint, Ruff, Clippy…).",
       "",
       "How they differ from your linter: your linter checks code after it’s",
       "written. Rerail checks while your coding agent writes it, so the agent",
       "fixes problems in the same turn, before review or CI.",
       "",
       "  ✓ Your linter and CI stay as they are. Rerail doesn’t change them.",
-      "  ✓ It reads the ESLint, oxlint or Ruff config at the repo’s root. Rules",
-      "    it turns off for the repo or a folder start off here too; the next",
-      "    screen lists them.",
-      "  ✓ It picks packs from file types and dependencies, not from how your",
-      "    code is written. Your code stays on this computer.",
+      "  ✓ Scanning looks at file types and dependencies to suggest packs, not at",
+      "    how your code is written. Your code stays on this computer.",
+      "  ✓ It also reads the ESLint, oxlint or Ruff config at the repo’s root:",
+      "    rules that config turns off start off in Rerail too.",
       "  ✓ Nothing is installed or turned on until you say yes.",
     ],
     choices: [
@@ -689,8 +689,8 @@ function recommendationLines(input: RecommendedPacksInput, lane: SetupLane): str
   const repo = clean(input.repoName);
   const count = input.packs.length;
   const scanned = count === 0
-    ? `Scanned ${repo}. None of Rerail’s rule packs fit it.`
-    : `Scanned ${repo}. ${count === 1 ? "1 standard rule pack matches" : `${count} standard rule packs match`} what it’s built with:`;
+    ? `Scanned ${repo}. No rule pack matches what it’s built with.`
+    : `Scanned ${repo}. ${count === 1 ? "1 rule pack" : `${count} rule packs`} suggested for what it’s built with:`;
   const connecting = input.agentsFound.length === 0
     ? ["  Will connect to: no coding agents found"]
     : [`  Will connect to: ${agentNames(input.agentsFound).join(", ")}`, `  Adds ${sigilIn(input.agentsFound)}rerail commands and a status line to each. Connecting is free.`];
@@ -1223,8 +1223,8 @@ export function renderSkipped(agents: AgentsConnection, lane: SetupLane): string
   const style = styleFor(lane);
   const { connected } = agents;
   const start = connected.length === 0
-    ? summaryRow("Start", ["Run rerail start in one of your repos.", "Rerail asks, suggests rule packs that fit, and starts there."])
-    : summaryRow("Start", [`Open a session in one of your repos and type ${commandIn(connected, "rerail-start")}.`, "Rerail asks, suggests rule packs that fit, and starts there.", ...otherFormLines(connected, "rerail-start")]);
+    ? summaryRow("Start", ["Run rerail start in one of your repos.", "Rerail asks, suggests rule packs, and starts there."])
+    : summaryRow("Start", [`Open a session in one of your repos and type ${commandIn(connected, "rerail-start")}.`, "Rerail asks, suggests rule packs, and starts there.", ...otherFormLines(connected, "rerail-start")]);
   const summary = [
     bullet("Rerail is installed · not on in any repo yet", style),
     ...connectionNotes(agents, style),

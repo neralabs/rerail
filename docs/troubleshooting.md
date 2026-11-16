@@ -191,10 +191,10 @@ Node.js and React would fit, but have no rules yet, so set-up does not offer the
 These packs are published but have no rules yet, so they would check nothing. Nothing to do: a later version brings
 its rules. `rerail packs recommend` lists them too.
 
-### `None of Rerail’s rule packs fit it`
+### `No rule pack matches what it’s built with`
 
 ```text
-Scanned acme-api. None of Rerail’s rule packs fit it.
+Scanned acme-api. No rule pack matches what it’s built with.
 
   Found           .py 3 · .md 1
                   from Git’s list of files, which leaves out what Git ignores
@@ -604,5 +604,5 @@ finishes the job:
 
 </details>
 
-Choosing "No, cancel set-up" at set-up's sessions question connects and starts nothing, but Rerail is already installed
+Choosing "Not now, cancel set-up" at set-up's sessions question connects and starts nothing, but Rerail is already installed
 and on `PATH`. Set-up says so: `Rerail stays installed, and off; rerail install --remove takes it off this computer.`

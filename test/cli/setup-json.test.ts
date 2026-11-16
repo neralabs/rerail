@@ -140,7 +140,7 @@ describe("rerail setup --json", { timeout: SETUP_TIMEOUT_MS }, () => {
 
     const packs = await runSetupStep(requestFrom(yes.next.args, setup, environment));
     expect(packs.step).toBe("confirm-packs");
-    expect(packs.screen).toContain("Scanned acme api. 1 standard rule pack matches what it’s built with:");
+    expect(packs.screen).toContain("Scanned acme api. 1 rule pack suggested for what it’s built with:");
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
 
     const start = packs.question!.options.find(option => option.answer === "start")!;
@@ -399,6 +399,28 @@ describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(confirm.commands).toHaveLength(3);
     for (const command of confirm.commands) expect(command).toContain("setup --relay --answer ");
     expect(tty.listenedToStdin() || next.listenedToStdin()).toBe(false);
+  });
+
+  it("asks about sessions like the one it is read in only where a coding agent relays set-up, not where stdin is piped", async () => {
+    const { context, io, said } = await commandFixture(false);
+    await context.updater.activateRoot(context.packageRoot);
+    const inSession = "OK for Rerail to read coding agent sessions like this one?";
+    const fromTerminal = "OK for Rerail to read your coding agent sessions?";
+
+    const relayed = terminal();
+    expect(await runSetupCommand(["--relay"], context)).toBe(0);
+    expect(relayed.output()).toContain(inSession);
+
+    expect(await runSetupCommand(["--json"], context, io)).toBe(0);
+    const step = JSON.parse(said[0]!) as SetupStep;
+    expect(step.step).toBe("sessions");
+    expect(step.question!.prompt).toBe(inSession);
+
+    // `rerail setup | tee setup.log` gets the agent lane's stops, but no coding agent is relaying it.
+    const piped = terminal(false);
+    expect(await runSetupCommand([], context)).toBe(0);
+    expect(piped.output()).toContain(fromTerminal);
+    expect(piped.output()).not.toContain(inSession);
   });
 
   it("asks a person at a terminal there, and a piped stdin gets the coding agent's questions instead", async () => {
