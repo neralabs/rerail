@@ -225,6 +225,9 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
     view_sources.push(manifest.join("grammars/token-grammars/csharp/grammar.json"));
     view_sources.push(manifest.join("grammars/token-grammars/html/grammar.json"));
     view_sources.push(manifest.join("grammars/token-grammars/css/grammar.json"));
+    view_sources.push(manifest.join("grammars/token-grammars/go/grammar.json"));
+    view_sources.push(manifest.join("grammars/token-grammars/c/grammar.json"));
+    view_sources.push(manifest.join("grammars/token-grammars/cpp/grammar.json"));
     view_sources.retain(|path| {
         !path
             .file_name()

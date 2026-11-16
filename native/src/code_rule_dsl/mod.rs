@@ -1282,6 +1282,9 @@ mod language {
         // Java's and C#'s families: syntax only so far, their tapes from the lean parsers.
         pub mod csharp;
         pub mod java;
+        // Go's, C's and C++'s families: syntax only so far, their tapes from the lean parsers.
+        pub mod c;
+        pub mod go;
         // HTML's, CSS's and Markdown's families: syntax only so far, read by tree-sitter.
         pub mod css;
         pub mod html;
@@ -4640,7 +4643,7 @@ pub(crate) use rule_api::CodeRuleDslEditor;
 pub(crate) fn install_languages() {
     use language::Family;
     use language::adapter::pack::{Pack, pack, register};
-    use language::adapter::{blade::Blade, css::Css, csharp::Csharp, ecma::Ecma, format::Format, html::Html, java::Java, json::Json, markdown::Markdown, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
+    use language::adapter::{blade::Blade, c::C, css::Css, csharp::Csharp, go::Go, ecma::Ecma, format::Format, html::Html, java::Java, json::Json, markdown::Markdown, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
     register(Family::Python, &Pack::<Python>::NEW);
     language::register_base(Family::Python, &Pack::<Python>::NEW);
     register(Family::Ecma, &Pack::<Ecma>::NEW);
@@ -4665,6 +4668,10 @@ pub(crate) fn install_languages() {
     language::register_base(Family::Java, &Pack::<Java>::NEW);
     register(Family::Csharp, &Pack::<Csharp>::NEW);
     language::register_base(Family::Csharp, &Pack::<Csharp>::NEW);
+    register(Family::Go, &Pack::<Go>::NEW);
+    language::register_base(Family::Go, &Pack::<Go>::NEW);
+    register(Family::C, &Pack::<C>::NEW);
+    language::register_base(Family::C, &Pack::<C>::NEW);
     register(Family::Html, &Pack::<Html>::NEW);
     language::register_base(Family::Html, &Pack::<Html>::NEW);
     register(Family::Css, &Pack::<Css>::NEW);
