@@ -13,9 +13,8 @@ the load settles (at most 2 minutes). Then COMMAND runs, from this checkout's `n
 --dir): on a host in this checkout's copy there, sent as test-remote sends it, with each
 `--tree DIR` (inputs, a program built here).
 
-The first 5 minutes are the run's. Past them it goes on, up to --minutes (default 5, at most 60),
-only while nobody else wants the machine: once someone does, it is stopped, so plan a long
-benchmark in parts of 5 minutes. When it ends it prints how quiet the machine was: the load,
+A run has --minutes (default and most 10): then it is stopped, so plan a long benchmark in parts
+of 10 minutes. When it ends it prints how quiet the machine was: the load,
 and what else ran meanwhile.
 
 The default machine is the usable host with the shortest queue and the most cores to spare.
@@ -55,7 +54,7 @@ def usage(why):
 
 
 def parse(argv):
-    o = {"host": None, "here": False, "minutes": 5.0, "max_wait": 30.0, "label": None, "dir": "native", "trees": []}
+    o = {"host": None, "here": False, "minutes": 10.0, "max_wait": 30.0, "label": None, "dir": "native", "trees": []}
     while argv and argv[0] != "--":
         a = argv.pop(0)
         if a in ("-h", "--help"):
@@ -133,8 +132,7 @@ def fairness(machine, minutes):
             + (f", and {len(waiting)} wait for {machine} now" if waiting else "")
             + ": asking for more is unfair to them. It goes after every checkout that used less.")
     if minutes > farm.LEASE_SECONDS / 60:
-        say(f"the first {farm.LEASE_SECONDS // 60} minutes are guaranteed; past them it runs only while nobody "
-            f"else wants {machine}")
+        say(f"a run has {farm.LEASE_SECONDS // 60} minutes at most: plan a longer benchmark in parts")
 
 
 def take_turn(machine, entry, max_wait):
@@ -393,9 +391,9 @@ def main(argv):
         sys.exit("quiet-run: the farm is not installed (scripts/build/farm/setup)")
     if not hasattr(farm, "lease_of"):
         sys.exit("quiet-run: the installed farm has no leases (version 9 and later): scripts/build/farm/setup")
-    o["minutes"] = max(0.1, min(o["minutes"], farm.LEASE_MAX_SECONDS / 60))
     machine, host = choose(o)
     fairness(machine, o["minutes"])
+    o["minutes"] = max(0.1, min(o["minutes"], farm.LEASE_SECONDS / 60))
     entry = {"id": f"{int(time.time() * 1000)}-{os.getpid()}", "client": CHECKOUT, "pid": os.getpid(), "asked": time.time(),
              "label": o["label"] or " ".join(argv)[:60], "minutes": o["minutes"]}
     lease = take_turn(machine, entry, o["max_wait"])
@@ -407,13 +405,12 @@ def main(argv):
         if started_load is None:
             return 75
         began = time.time()
-        guaranteed = began + min(o["minutes"] * 60, farm.LEASE_SECONDS)
-        lease.update(started=began, until=began + o["minutes"] * 60 + 30, guaranteed=guaranteed)
+        lease.update(started=began, until=began + o["minutes"] * 60 + 30)
         farm.write_json(lease_path, lease)
         proc = start(machine, host, o, argv, lease)
         if proc is None:
             return 75
-        say(f"{machine}: running ({lease['label']}); guaranteed until {time.strftime('%H:%M:%S', time.localtime(guaranteed))}")
+        say(f"{machine}: running ({lease['label']}) until {time.strftime('%H:%M:%S', time.localtime(began + o['minutes'] * 60))} at the latest")
         sampler = Sampler(machine, host, proc, lease["id"], lease["taken"])
         while True:
             c = proc.poll()
@@ -425,11 +422,6 @@ def main(argv):
                 say(f"its {o['minutes']:g} minutes are up: stopping it")
                 stop(proc, host)
                 how, code = "stopped: its minutes were up", 124
-                break
-            if now > guaranteed and farm.wanted_since(machine, began):
-                say(f"past its guaranteed {farm.LEASE_SECONDS // 60} minutes, and {machine} is wanted: stopping it")
-                stop(proc, host)
-                how, code = "stopped: wanted after its guaranteed time", 124
                 break
             try:
                 sampler.sample()

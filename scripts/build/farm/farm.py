@@ -20,7 +20,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 9
+VERSION = 10
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -753,7 +753,6 @@ def usable(kind=None):
         if not host.get("enabled", True) or (kind and not host.get(kind, True)):
             continue
         if leased(host["name"]):
-            want(host["name"])
             continue
         if health(host).get("ok"):
             out.append(host)
@@ -882,12 +881,9 @@ def on_host(script):
 # A client asks for a machine (a host, or HERE) for a command. Requests queue per machine, fairly:
 # the client that used the machine least in the last hour goes first. While a lease holds a
 # machine the farm sends it nothing new (compile slots, test commands, local compiles here wait),
-# and each one turned away is noted as demand. A run is guaranteed LEASE_SECONDS; past them it
-# goes on only while nobody else wants the machine.
+# A run has LEASE_SECONDS at most.
 HERE = "here"
-LEASE_SECONDS = 5 * 60
-# A lease's whole length, at most, while nobody else wants the machine.
-LEASE_MAX_SECONDS = 60 * 60
+LEASE_SECONDS = 10 * 60
 # The window fairness is judged over.
 FAIR_SECONDS = 3600
 # How long a warning to a checkout that loaded a leased machine is shown at its builds.
@@ -930,26 +926,6 @@ def leased(machine):
     if lease is None or lease.get("id") == os.environ.get("RERAIL_FARM_LEASE"):
         return None
     return lease
-
-
-def want(machine):
-    """Notes that work was turned away from leased `machine`: demand, which ends a run past its
-    guaranteed time."""
-    try:
-        open(os.path.join(lease_dir(machine), "want"), "w").close()
-    except OSError:
-        pass
-
-
-def wanted_since(machine, since):
-    """Whether anyone wanted `machine` since `since`: work turned away, or a request queued."""
-    d = lease_dir(machine)
-    try:
-        if os.stat(os.path.join(d, "want")).st_mtime > since:
-            return True
-    except OSError:
-        pass
-    return bool(queue(machine))
 
 
 def queue(machine):
@@ -1028,7 +1004,6 @@ def wait_for_lease(machine, why):
         lease = leased(machine)
         if lease is None:
             return
-        want(machine)
         if not told:
             print(f"warning: rerail-farm: {why}: this machine is leased for a benchmark "
                   f"({lease.get('label') or 'unnamed'}) until {time.strftime('%H:%M:%S', time.localtime(lease['until']))} "
@@ -1047,7 +1022,6 @@ def remote_slot():
         if not h.get("enabled", True):
             continue
         if leased(h["name"]):
-            want(h["name"])
             continue
         open_hosts.append((h, capacity(h)))
     for i in range(max((c for _, c in open_hosts), default=0)):

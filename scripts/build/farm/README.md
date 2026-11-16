@@ -272,14 +272,14 @@ scripts/dev/quiet-run [--host NAME | --here] [--minutes N] [--max-wait M] [--lab
 ```
 
 The default machine is the usable host with the shortest queue and the most cores to spare;
-`--here` is this one. On a host, COMMAND runs in this checkout's copy there, as `test-remote` sends
+`--here` is this one, which other agents keep busy: benchmarks belong on a host. On a host, COMMAND runs in this checkout's copy there, as `test-remote` sends
 it (`--tree` sends inputs or a program built here), at nice 0.
 
 **The rules.**
 
 | Rule | How it holds |
 |---|---|
-| A run has 5 minutes | Past them it goes on, up to `--minutes` (60 at most), only while nobody else wants the machine. A compile or test turned away, or a request queued, wants it, and the run is stopped (exit 124). Plan a long benchmark in parts of 5 minutes. |
+| A run has 10 minutes at most | `--minutes` (default 10) ends it: the run is stopped (exit 124). Plan a longer benchmark in parts of 10 minutes. |
 | Fair turns | The queue is served by use: the checkout that held leases least in the last hour goes first, then the earliest asked. A checkout has one request open or held at a time (a second exits 75). |
 | Unfair use is told | A request from a checkout that held more than its share while others wait is warned. On this machine, a checkout whose processes used 10 CPU-s or more during a lease, started after it, is told at the first compile of each of its cargo commands for 3 hours. Every build's first compile on a leased machine is told so, with the end of the lease. |
 | A person comes first | A host whose user is at it (input in the last 5 minutes) is not taken (exit 75). |
