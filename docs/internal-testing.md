@@ -23,7 +23,7 @@ Every one is experimental and off by default: its variable turns it on ([below](
 | [Steer strategies](#steer-strategies) `rewind` and `subagent`, `RERAIL_EXPERIMENTAL_STEER_STRATEGIES` (daemon) | `steerStrategy` in audit settings (`rerail settings --steer-strategy`, `audit_settings_update`); Pi's `rerail_fix` tool; `benchmark/steer-strategy.ts` | Every steer goes out as `message`, whatever the checkout saved |
 | Automatic first repository audit, `RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT` (daemon) | One full-repository audit in `log` mode at the first session in a checkout | No such audit |
 | [Missed-steer digest](#missed-steer-digest), `RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST` (daemon; Cursor's hook) | Late code-rule steers held and sent as one steer at the agent's yield; Cursor's `stop` follow-up | A late steer reaches the agent at its next event or poll |
-| [Merge Assist](#merge-assist), in-flight conflict detection, `RERAIL_EXPERIMENTAL_MERGE_ASSIST` (daemon; the CLI for `rerail merge-assist`), then off for every repository until a person turns it on ([build](merge-assist-v1-build.md), [reference](reference.md#merge-assist)) | `rerail merge-assist`; the `merge_assist_get`, `merge_assist_settings_get`, `merge_assist_scan`, `merge_assist_settings_set` and `merge_assist_conflict_dismiss` operations; the dashboard's Merge Assist page; its in-session notes ([In-session surfaces](in-session-surfaces.md#merge-assist-notes)) | Nothing of it runs; its operations answer `404 experimental-off` and are no MCP tools, and `rerail merge-assist` refuses |
+| [Merge Assist](#merge-assist), in-flight conflict detection, `RERAIL_EXPERIMENTAL_MERGE_ASSIST` (daemon, or Pi itself for a Pi session running Rerail in process; the CLI for `rerail merge-assist`), then off for every repository until a person turns it on ([build](merge-assist-v1-build.md), [reference](reference.md#merge-assist)) | `rerail merge-assist`; the `merge_assist_get`, `merge_assist_settings_get`, `merge_assist_scan`, `merge_assist_settings_set` and `merge_assist_conflict_dismiss` operations; the dashboard's Merge Assist page; its in-session notes ([In-session surfaces](in-session-surfaces.md#merge-assist-notes)) | Nothing of it runs; its operations answer `404 experimental-off` and are no MCP tools, and `rerail merge-assist` refuses |
 
 An operation of a feature that is off is left out of the MCP tool list, so a coding agent is never offered a tool that
 would only refuse; the HTTP API and the OpenAPI document keep it. The daemon's `/healthz` lists the features it runs
@@ -107,7 +107,8 @@ picks how a code-rule steer reaches the agent; off, every steer is `message`.
 
 Merge Assist is experimental and off by default. Set `RERAIL_EXPERIMENTAL_MERGE_ASSIST=1` (or `RERAIL_EXPERIMENTAL=1`,
 [above](#turning-experimental-features-on)) for the Rerail daemon (it
-runs the sessions' detection, the API and the dashboard) and for the shell that runs `rerail merge-assist`; then a
+runs the sessions' detection, the API and the dashboard), for Pi itself when a Pi session runs Rerail in process (its
+detection and notes run there), and for the shell that runs `rerail merge-assist`; then a
 person still turns it on per repository (`rerail merge-assist on`, or the dashboard's Merge Assist page).
 
 Without the variable nothing of it runs, even in a repository where it was turned on before: no detection, no `gh`, no

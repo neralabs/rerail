@@ -10,7 +10,7 @@ import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArguments } from "../daemon/daemon.js";
 import { repositoryFolderName, repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
-import { mergeAssistExperimentEnabled } from "../engine/experimental-features.js";
+import { experimentOffMessage, mergeAssistExperimentEnabled } from "../engine/experimental-features.js";
 import { sideName } from "../engine/merge-assist/conflict-note.js";
 import {
   conflictHookCommandSchema,
@@ -416,8 +416,6 @@ function outcomeText(outcome: Outcome, name: string, dashboardUrl: string | null
 }
 
 /** What the command answers while the experiment is off, under `experimental-off`. */
-const EXPERIMENTAL_OFF = "Merge Assist is experimental and off: set RERAIL_EXPERIMENTAL_MERGE_ASSIST=1 (or RERAIL_EXPERIMENTAL=1 for every experimental feature) to use it.";
-
 /** A refusal: `{ error, message }` on stdout under `--json`, else `● <message>` on stderr; the command exits 1. */
 function refuse(io: MergeAssistCommandIo, json: boolean, code: string, message: string): number {
   if (json) (io.stdout ?? process.stdout).write(`${JSON.stringify({ error: code, message })}\n`);
@@ -431,7 +429,7 @@ function refuse(io: MergeAssistCommandIo, json: boolean, code: string, message: 
  * Refused before anything is read or opened while the experiment is off ({@link mergeAssistExperimentEnabled}).
  */
 export async function runMergeAssistCommand(args: readonly string[], usage: () => string, io: MergeAssistCommandIo = {}): Promise<number> {
-  if (!mergeAssistExperimentEnabled()) return refuse(io, args.includes("--json"), "experimental-off", EXPERIMENTAL_OFF);
+  if (!mergeAssistExperimentEnabled()) return refuse(io, args.includes("--json"), "experimental-off", experimentOffMessage("MERGE_ASSIST"));
   const stdout = io.stdout ?? process.stdout;
   const { step, root, name, json } = invocation(args, usage);
   const session = (io.openService ?? openDefaultService)();

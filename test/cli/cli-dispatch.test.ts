@@ -66,6 +66,12 @@ describe("rerail's command dispatch", () => {
     refuses(args, experimentOffMessage(feature), false);
   });
 
+  it("merge-assist refuses while its experiment is off, naming the variable", () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "0");
+    const run = rerail(["merge-assist"]);
+    expect(run).toMatchObject({ stdout: "", stderr: `● ${experimentOffMessage("MERGE_ASSIST")}\n`, status: 1 });
+  });
+
   it.each([
     [["profile"]],
     [["profile", "status"]],

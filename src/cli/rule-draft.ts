@@ -243,7 +243,7 @@ function asDraft(value: unknown): unknown {
 function refuseExperimentsOff(draft: RuleDraft): RuleDraft {
   if (draft.kind === "conversation" && !conversationRulesEnabled()) throw new RuleDraftError(experimentOffMessage("CONVERSATION_RULES"));
   if (draft.rule.mode === "block" && !blockModeEnabled() && storedLibraryMode(draft.rule.id) !== "block") {
-    throw new RuleDraftError(`${experimentOffMessage("BLOCK_MODE")} ${BLOCK_STEERS_NOTE} Save it on steer.`);
+    throw new RuleDraftError(`${experimentOffMessage("BLOCK_MODE")} ${BLOCK_STEERS_NOTE} Set its mode to steer.`);
   }
   return draft;
 }
