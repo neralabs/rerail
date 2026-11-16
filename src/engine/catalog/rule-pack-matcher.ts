@@ -1,8 +1,8 @@
 import { lstatSync, readdirSync, readFileSync, type Dirent } from "node:fs";
 import { dirname, join, posix, relative, sep } from "node:path";
 import { checkoutRealpath, withinCheckout } from "./checkout-control.js";
-import { readTomlStringLists } from "./lint-config/lint-config-formats.js";
-import { IGNORED_DIRECTORIES } from "../code-rule/code-rule-enforcer.js";
+import { readTomlStringLists } from "./lint-config/formats/lint-config-formats.js";
+import { IGNORED_DIRECTORIES } from "../code-rule/ignored-directories.js";
 import { GitUnavailableError, runGit } from "../git.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 
@@ -118,7 +118,7 @@ const SKIP_WORKTREE_TAG = "S";
  * (skip-worktree entries, which `--cached` lists and `--deleted` does not report), plus untracked-but-not-ignored;
  * a bounded walk elsewhere. Files under a folder the scan does not enter are left out and counted per folder name.
  */
-function listRepositoryFiles(root: string): Pick<RepositoryScan, "files" | "notScanned" | "git" | "stoppedEarly"> {
+export function listRepositoryFiles(root: string): Pick<RepositoryScan, "files" | "notScanned" | "git" | "stoppedEarly"> {
   // `-t` prefixes each entry with its status tag and a space: `H` tracked, `S` skip-worktree, `?` untracked, ….
   const tagged = gitListing(root, ["-t", "--cached", "--others", "--exclude-standard"]);
   const listed = tagged?.filter(entry => !entry.startsWith(`${SKIP_WORKTREE_TAG} `)).map(entry => entry.slice(2));

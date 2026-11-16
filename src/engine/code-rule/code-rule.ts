@@ -1545,6 +1545,7 @@ export interface CodeRuleAuditor {
   auditGeneratedEdits(sessionId: string, batch: CodeRuleEditBatch): Promise<CodeRuleResponse>;
   /** Wait until every accepted generated edit has completed, without waiting for unrelated audits. */
   settleGeneratedEdits?(): Promise<void>;
+  /** An audit someone asked for, whose runs are recorded as scans (`AuditOrigin`), not as the session's own. */
   audit?(sessionId: string, input: {
     scope: "repository" | "touched-files";
     mode: AuditMode;

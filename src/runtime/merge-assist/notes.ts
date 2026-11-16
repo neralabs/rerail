@@ -1,7 +1,8 @@
 /**
  * The Merge Assist notes a session's coding agent gets (docs/in-session-surfaces.md, "Merge Assist notes"): an open
  * conflict that is not quiet, as information, with what the person's conflict hook command added. A conflict goes to a
- * session once: what a session was handed is kept under `delivered:<session>`, and only once a delivery has taken it.
+ * session once: what a session was handed is kept under `delivered:<session>`, and only once a delivery has taken it;
+ * turning Merge Assist off forgets it, with the conflicts.
  * A note carries the person's line for its conflict (`conflict`).
  */
 import { z } from "zod";
@@ -13,7 +14,7 @@ import type { Conflict } from "../../engine/merge-assist/model.js";
 import type { RerailDatabase } from "../../engine/storage/database.js";
 import { statusText } from "./conflict-delivery.js";
 import { readConflicts, type StoredConflict } from "./conflict-store.js";
-import { STATE_KEYS, readState, writeState, type StateQueries } from "./state.js";
+import { STATE_KEYS, deleteState, readState, stateKeys, writeState, type StateQueries } from "./state.js";
 
 const deliveredSchema = z.array(z.string());
 
@@ -144,4 +145,20 @@ export function markNotesDelivered(db: RerailDatabase, sessionId: string, checko
     const current = readConflicts(tx, checkoutPath).map(entry => conflictMark(entry.conflict));
     writeState(tx, key, [...new Set([...given, ...marks])].filter(entry => current.some(version => entry.startsWith(version))), now);
   }, { behavior: "immediate" });
+}
+
+/**
+ * Forget, in every session, that it was handed the notes of `conflictIds` (their store was cleared, as when Merge Assist
+ * is turned off): such a conflict found again is told again.
+ */
+export function forgetDelivered(db: StateQueries, conflictIds: ReadonlySet<string>, now: number): void {
+  if (conflictIds.size === 0) return;
+  const prefixes = [...conflictIds].map(id => `${id}:`);
+  for (const key of stateKeys(db, STATE_KEYS.delivered(""))) {
+    const given = readState(db, key, deliveredSchema) ?? [];
+    const kept = given.filter(mark => !prefixes.some(prefix => mark.startsWith(prefix)));
+    if (kept.length === given.length) continue;
+    if (kept.length === 0) deleteState(db, key);
+    else writeState(db, key, kept, now);
+  }
 }

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,18 +9,26 @@ import {
   type CodeRuleViolation,
   type RuleSteerDelivery,
   CodeRuleBridge,
+  codeRuleSchema,
+  NativeCodeRuleEnforcer,
   openRerailDatabase,
   SqliteAuditControlStore,
+  SqliteAuditStore,
   setRuleSetting,
   renderSteer,
   languageFor,
 } from "../../src/engine/index.js";
 import { claudeHookEvents } from "../../src/hosts/claude/index.js";
 import { RerailRuntime } from "../../src/runtime/runtime.js";
-import { SqliteSessionStore } from "../../src/runtime/session-store.js";
-import { setUpTestRepository } from "../support/repository-rules.js";
+import { SqliteSessionReader, SqliteSessionStore } from "../../src/runtime/session-store.js";
+import { testEmbedder } from "../support/hook-events.js";
+import { setUpTestRepository, testCodeRuleCatalog } from "../support/repository-rules.js";
+import { startTestRepository } from "../support/started-repository.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { steerLatitude } from "../support/steers.js";
+import { withExperiments } from "../support/environment/experiments.js";
+
+withExperiments("CONVERSATION_RULES");
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -374,6 +383,59 @@ describe("A scan requested while the session's evaluator is still opening", () =
       await test.close();
     }
   });
+});
+
+describe("A scan of a session's checkout", () => {
+  // What `rerail scan --session` finds is the checkout's, not the session's: the dashboard reads none of it.
+  it("is recorded as a scan, and leaves the session's violations, counts and rule activity to its own edits", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-scan-origin-")));
+    directories.push(root);
+    const databasePath = join(root, "rerail.sqlite");
+    await writeFile(join(root, ".gitignore"), "sessions/\nrerail.sqlite*\n");
+    await writeFile(join(root, "old.py"), "NEEDLE\n");
+    execFileSync("git", ["init", "--quiet"], { cwd: root });
+    startTestRepository(root, databasePath);
+    const catalog = testCodeRuleCatalog([codeRuleSchema.parse({
+      format: "rerail.policy/v1", id: "test:needle", revision: 1, mode: "steer",
+      scope: { include: ["**/*.py"], exclude: [] },
+      clauses: [{ id: "needle", violation: { code: "NEEDLE", anchor: "witness.span", message: "No needle" }, forbid: { regex: { pattern: "NEEDLE", source: "file.content" } } }],
+    })]);
+    const runtime = new RerailRuntime({
+      storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
+      createAuditor: options => new NativeCodeRuleEnforcer(catalog, options),
+    });
+    const controls = new SqliteAuditControlStore(databasePath);
+    const audits = new SqliteAuditStore(databasePath);
+    const reader = new SqliteSessionReader(databasePath);
+    const sessionId = "scan-origin";
+    const counts = () => reader.sessionPage({ limit: 10 }).sessions.find(session => session.sessionId === sessionId);
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "codex", sessionId, cwd: root } });
+      await runtime.codeRulesOpened(sessionId);
+      const request = controls.requestAudit(sessionId, { scope: "repository" });
+      const finished = () => controls.listAuditRequests(sessionId).find(item => item.id === request.id)!;
+      await vi.waitFor(() => expect(finished().status).toBe("completed"), { timeout: 10_000 });
+      const [scanId] = finished().auditIds;
+      expect(audits.get(scanId!)).toMatchObject({ origin: "scan", violations: [expect.objectContaining({ path: "old.py", code: "NEEDLE" })] });
+      expect(audits.list({ sessionId, origin: "scan" }).audits.map(audit => audit.auditId)).toEqual([scanId]);
+      expect(audits.listViolationHistory({ since: 0, sessionId }).total).toBe(0);
+      expect(audits.ruleActivity(0).has("test:needle")).toBe(false);
+      expect(counts()).toMatchObject({ violationCount: 0, steeredViolations: 0 });
+
+      // The session's own edit still counts, and only it.
+      await runtime.ingest({ kind: "call", eventId: "write-call", sessionId, toolCallId: "write", toolName: "Write", input: { file_path: join(root, "new.py"), content: "NEEDLE\n" } });
+      await writeFile(join(root, "new.py"), "NEEDLE\n");
+      await runtime.ingest({ kind: "result", eventId: "write-result", sessionId, toolCallId: "write", toolName: "Write", output: "" });
+      await vi.waitFor(() => expect(audits.listViolationHistory({ since: 0, sessionId }).violations.map(entry => entry.violation.path)).toEqual(["new.py"]), { timeout: 10_000 });
+      expect(audits.get(audits.listViolationHistory({ since: 0, sessionId }).violations[0]!.auditId)?.origin).toBe("ongoing");
+      expect(counts()).toMatchObject({ violationCount: 1 });
+    } finally {
+      await runtime.dispose();
+      controls.close();
+      audits.close();
+      reader.close();
+    }
+  }, 30_000);
 });
 
 describe("Rerail tool results waiting for their edit's check", () => {
@@ -886,6 +948,48 @@ describe("Rerail session restore", () => {
         ruleIds: ["acme:no-force-push"],
         rules: [{ id: "acme:no-force-push", state: "steered" }],
       })]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("checks no conversation rule while conversation rules are off, though the repository stores one", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_CONVERSATION_RULES", "0");
+    const root = await mkdtemp(join(tmpdir(), "rerail-tool-steer-off-"));
+    directories.push(root);
+    const databasePath = join(root, "rerail.sqlite");
+    setUpTestRepository(root, {
+      library: [{
+        kind: "conversation",
+        rule: {
+          id: "acme:no-force-push",
+          mode: "steer",
+          match: { field: "input.command", regex: String.raw`\bgit\s+push\b[^\n]*--force\b` },
+          sample: { source: "tool:Bash", boundary: "tool-call" },
+          action: { content: "Ask before force-pushing." },
+          repeat: { mode: "always" },
+        },
+      }],
+    }, databasePath);
+    const runtime = new RerailRuntime({
+      autostart: false,
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      modelPath: resolve("model"),
+      databasePath,
+      createAuditor: () => ({
+        openWorkspace: async () => undefined,
+        acceptsPath: () => false,
+        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
+        close: async () => undefined,
+      }),
+    });
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId: "tool", cwd: root } });
+      expect(await runtime.ingest({
+        kind: "call", eventId: "push", sessionId: "tool", toolCallId: "push", toolName: "Bash", input: { command: "git push --force origin main" },
+      })).toEqual([]);
+      await expect(runtime.manageRules("tool", { action: "list" })).rejects.toThrow("RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1");
     } finally {
       await runtime.dispose();
     }

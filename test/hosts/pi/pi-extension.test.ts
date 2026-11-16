@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, MessageRenderer, MessageRenderOptions, Theme } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 /** A main build's Pi goes through the daemon; tests that set `main` stand in for that daemon. */
@@ -17,6 +17,7 @@ vi.mock("../../../src/runtime/daemon-control.js", async () => ({
 import Database from "better-sqlite3";
 import {
   RULE_MESSAGE_TYPE,
+  conflictNote,
   defaultRerailDatabasePath,
   messageSteer,
   steerBlock,
@@ -32,6 +33,9 @@ import type { HostCommandContext } from "../../../src/harness/index.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
+import { withExperiments } from "../../support/environment/experiments.js";
+
+withExperiments("CONVERSATION_RULES", "SEMANTIC_TOOLS");
 
 // Every test here builds real sessions (native model, engine, rule catalog); on a loaded CI runner a
 // build alone can pass the 5 s default, whichever test happens to pay the cold start.
@@ -43,6 +47,8 @@ interface PiHarness {
   commands: Map<string, CommandHandler>;
   messages: Array<{ message: unknown; options: unknown }>;
   entries: Array<{ customType: string; data: unknown }>;
+  /** The message renderers the extension registered, by `customType`. */
+  renderers: Map<string, MessageRenderer>;
   pi: ExtensionAPI;
   context: ExtensionContext;
   repositoryKey: string;
@@ -86,6 +92,7 @@ function createHarness(branch: unknown[] = []): PiHarness {
   const commands = new Map<string, CommandHandler>();
   const messages: Array<{ message: unknown; options: unknown }> = [];
   const entries: Array<{ customType: string; data: unknown }> = [];
+  const renderers = new Map<string, MessageRenderer>();
   const pi = {
     on(event: string, handler: Handler) {
       handlers.set(event, handler);
@@ -100,13 +107,16 @@ function createHarness(branch: unknown[] = []): PiHarness {
     registerCommand(name: string, options: { handler: CommandHandler }) {
       commands.set(name, options.handler);
     },
+    registerMessageRenderer(customType: string, renderer: MessageRenderer) {
+      renderers.set(customType, renderer);
+    },
   } as unknown as ExtensionAPI;
   const context = {
     cwd,
     sessionManager: { getSessionId: () => "pi-test-session", getBranch: () => branch },
   } as unknown as ExtensionContext;
   shutdowns.push(async () => handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "quit" }, context));
-  return { handlers, commands, messages, entries, pi, context, repositoryKey };
+  return { handlers, commands, messages, entries, renderers, pi, context, repositoryKey };
 }
 
 function receiptCount(harness: PiHarness, sessionId = "pi-test-session"): number {
@@ -175,6 +185,20 @@ describe("Pi conversation-rules extension", () => {
     ]);
     expect(harness.entries.filter((entry) => entry.customType === MATCH_ENTRY_TYPE)).toHaveLength(1);
     expect(receiptCount(harness)).toBe(1);
+  });
+
+  it.each([["on", "1"], ["off", "0"]] as const)("registers conversation_rules, /cosine-rules and the semantic tools only while their experiments are %s", (state, value) => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_CONVERSATION_RULES", value);
+    vi.stubEnv("RERAIL_EXPERIMENTAL_SEMANTIC_TOOLS", value);
+    const harness = createHarness();
+    const tools: string[] = [];
+    harness.pi.registerTool = ((tool: { name: string }) => { tools.push(tool.name); }) as ExtensionAPI["registerTool"];
+    createPiConversationRulesExtension({ modelPath: resolve("model") })(harness.pi);
+    const experimental = ["conversation_rules", "rerail_mark", "rerail_select", "rerail_project", "rerail_relate"];
+    expect(tools.filter(name => experimental.includes(name)).sort()).toEqual(state === "on" ? [...experimental].sort() : []);
+    expect(harness.commands.has("cosine-rules")).toBe(state === "on");
+    // Rerail's own commands do not depend on any experiment.
+    expect(harness.commands.size).toBeGreaterThan(state === "on" ? 1 : 0);
   });
 
   it("draws no footer in a stopped checkout, without asking a daemon (#298)", async () => {
@@ -346,6 +370,30 @@ describe("Pi conversation-rules extension", () => {
           options: { deliverAs: "steer" },
         }]);
         expect(receiptCount(harness)).toBe(1);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("sends a Merge Assist note as it is, which already says once that it is Rerail's, not the user's", async () => {
+      const harness = createHarness();
+      await install(harness);
+      const content = conflictNote({ file: "src/model.ts", peer: "jbarnes-1", author: "Tim", summary: "Share matchers", pullRequest: false });
+      const conflict = { id: "conflict:a", text: "your edit overlaps jbarnes-1 (Tim): model.ts" };
+      const note: AdapterDelivery = { sessionId: "pi-test-session", requested: "steer", mechanism: "native-queue", content, ruleIds: [], rules: [], strategy: "message", conflict };
+      const spy = withDeliveries(event => event.kind === "result" ? [note] : []);
+      try {
+        await harness.handlers.get("tool_result")!(result, harness.context);
+        expect(harness.messages).toEqual([{
+          message: { customType: RULE_MESSAGE_TYPE, content, display: true, details: expect.objectContaining({ conflict }) },
+          options: { deliverAs: "steer" },
+        }]);
+        expect(receiptCount(harness)).toBe(0);
+        // The person sees the conflict's line, not Pi's card of the note the agent read.
+        const sent = harness.messages[0]!.message as Parameters<MessageRenderer>[0];
+        const drawn = harness.renderers.get(RULE_MESSAGE_TYPE)?.(sent, { expanded: false, outputPad: 1 } as MessageRenderOptions, { fg: (_colour: string, text: string) => text } as Theme);
+        const lines = drawn?.render(200).map(line => line.replace(/\u001b\[[0-9;]*m|\u001b\]8;;[^\u0007]*\u0007/gu, "").trimEnd());
+        expect(lines).toEqual([" ◆ R E R A I L · your edit overlaps jbarnes-1 (Tim): model.ts"]);
       } finally {
         spy.mockRestore();
       }
