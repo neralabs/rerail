@@ -419,6 +419,24 @@ pass.
   clean and runs (plan.rs, before the replay: a request with no kept rows and no answers given). The test passes,
   unignored; partial, session, base, reuse, world, answer and request tests pass.
 
+### Q17. A profiled cold run costs about 500 G more than its phases
+
+- **Found** (2026-11-15, dl30 and ep2): with `RERAIL_PROFILE` set, a run with nothing kept (the first on a new
+  build, or the first real run of a new session) spends about 500 G outside every phase and span: 760 G against
+  186 G in its phases (a new process), 674 G against 176 G (a session's first real run; unprofiled, the same run
+  costs 176 G). The profile itself sees 22 s of the run's 72 s of process CPU; a sample puts the main thread in
+  `run_observed`'s native strata. An unprofiled cold run shows no such excess.
+- **Done when**: a profiled cold run costs within a few percent of an unprofiled one, or the excess is named in the
+  profile (its span) and kept out of measurements.
+
+### Q18. An edit combines and prepares all 317 programs again
+
+- **Found** (2026-11-15): after the cross part's keying (decision 0225 §2), an edit of one rule's body costs 80 G
+  in a new process and 54 G in a session, of which combining the programs is 33–34 G and preparing 11–13 G, in
+  both. One program changed; the other 316 are combined again from their texts.
+- **Done when**: an edit's combine and prepare work is in proportion to the programs it changed (decision 0225 §7:
+  a prepared program kept per module), measured on ep2.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
