@@ -16,7 +16,10 @@
 //! A text column holds strings' indexes, a node column `doc << 32 | local`, an int column the integer. A string is
 //! held as its text, once per image, so an image means the same in every process (decision 0212).
 //!
-//! **A stack.** A run's outputs are a file of images, one after another: a base, then overlays. An overlay holds
+//! **A stack.** A run's outputs are a file of images, one after another: a base, then overlays. In the file each image
+//! is the root of a frozen block of kind `OUTPUTS` (decision 0266, `rerail_blocks::block::frame`): the blocks' shared
+//! header, which says the block was written whole, then the image, read where it is. In memory (an image a run just
+//! made, a memo entry's) an image is its bytes alone. An overlay holds
 //! what a later run changed: a relation whole (`kind::WHOLE`), or its rows added (`kind::ADDED`) and the hashes of its
 //! rows gone (`kind::GONE`, [`Rel::hash`]). A relation is read as a [`View`]: from the last image that holds it
 //! whole, through each later image's rows gone and added. Each image's strings, documents and places are its own. A
@@ -655,7 +658,7 @@ impl Backing {
 impl Image {
     /// The images of `bytes`, a stack: each checked, the last first in its reading.
     pub fn stack(bytes: &[u8]) -> Result<Vec<Image>, String> {
-        Image::stack_of(std::sync::Arc::new(Backing::copied(bytes)))
+        Image::stack_of(std::sync::Arc::new(Backing::copied(bytes)), false)
     }
     /// The stack in `file`, mapped: read where its bytes are. The file is never written in place (`write` puts a
     /// whole new file in its place), so a map stays as it was while the stack is read.
@@ -666,18 +669,26 @@ impl Image {
             Ok(m) => Backing::Mapped(m),
             Err(_) => Backing::copied(&std::fs::read(file)?),
         };
-        Image::stack_of(std::sync::Arc::new(backing)).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{}: {e}", file.display())))
+        Image::stack_of(std::sync::Arc::new(backing), true).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{}: {e}", file.display())))
     }
-    fn stack_of(buf: std::sync::Arc<Backing>) -> Result<Vec<Image>, String> {
+    /// The images of `buf`: its bytes alone (`framed`: false), or each the root of a frozen block (a file's).
+    fn stack_of(buf: std::sync::Arc<Backing>, framed: bool) -> Result<Vec<Image>, String> {
         let total = buf.bytes().len();
         let mut out = Vec::new();
         let mut at = 0;
         while at < total {
-            let image = Image::at(&buf, at, total)?;
+            let (image, next) = if framed {
+                let block = rerail_blocks::block::frozen_at(&buf.bytes()[at..], rerail_blocks::block::kind::OUTPUTS).map_err(bad)?;
+                (Image::at(&buf, at + block.root, at + block.length)?, at + block.length)
+            } else {
+                let image = Image::at(&buf, at, total)?;
+                let next = at + image.len;
+                (image, next)
+            };
             if out.is_empty() == image.is_overlay() {
                 return Err(bad(if out.is_empty() { "a stack starts with an overlay" } else { "a base inside a stack" }));
             }
-            at += image.len;
+            at = next;
             out.push(image);
         }
         Ok(out)
@@ -1278,13 +1289,23 @@ pub fn write(dir: &Path, image: &[u8]) -> std::io::Result<()> {
     if overlay && below.is_empty() {
         return Err(std::io::Error::new(std::io::ErrorKind::NotFound, format!("{}: an overlay over no stack", dir.display())));
     }
+    // The blocks below as they are in the file, then the image's.
+    let (head, tail) = rerail_blocks::block::frame(rerail_blocks::block::kind::OUTPUTS, image.len());
     let mut bytes: Vec<&[u8]> = below.first().map(|b| &b.buf.bytes()[..]).into_iter().collect();
-    bytes.push(image);
-    replace(dir, &bytes)
+    bytes.extend([&head[..], image, &tail[..]]);
+    put(dir, &bytes)
 }
 
-/// `dir`'s output file made of `parts`, whole or not at all (a file beside it renamed over it).
+/// `dir`'s output file made of the images `parts` (a base, then overlays), each framed as a block, whole or not at
+/// all (a file beside it renamed over it).
 pub fn replace(dir: &Path, parts: &[&[u8]]) -> std::io::Result<()> {
+    let frames: Vec<(Vec<u8>, Vec<u8>)> = parts.iter().map(|p| rerail_blocks::block::frame(rerail_blocks::block::kind::OUTPUTS, p.len())).collect();
+    let bytes: Vec<&[u8]> = parts.iter().zip(&frames).flat_map(|(p, (head, tail))| [&head[..], p, &tail[..]]).collect();
+    put(dir, &bytes)
+}
+
+/// `dir`'s output file made of `bytes`, as they are.
+fn put(dir: &Path, parts: &[&[u8]]) -> std::io::Result<()> {
     use std::io::Write;
     static WRITES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

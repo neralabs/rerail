@@ -636,6 +636,14 @@ pass.
 - **Done when**: Typing-support's version tests pass on blocks, and dl1's trace validation costs no more
   instructions than 0173's.
 
+### Q27. `value_types_are_ws_value_types` reads only the string-typed values
+
+- **Found** (2026-11-16, validating 0295 step 3; fails the same with `output.rs` as at b8e0d1210, before the
+  outputs' framing): `corpus::base_tests::value_types_are_ws_value_types` (base_tests.rs 751)
+  reads 9 rows, all `str` but one `int`, where 29 are wanted: every `int`, `float`, `bool`, `NoneType` and
+  `ellipsis` value but `12` is missing. Maybe one of the 32 hub failures in Q17 ("The hub's gate failures at 692cc9772"); not checked on the hub.
+- **Done when**: it passes, traced to the commit and cause that dropped the non-string values.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives

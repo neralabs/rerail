@@ -1,6 +1,6 @@
 # 0295. Deferred writes are an application WAL of mapped slabs, archived into SQLite as rows in bulk
 
-Status: decided (2026-11-16), by the user's two requirements and answers below. Path step 2 (the tier) built. Converges 0266 (blocks)
+Status: decided (2026-11-16), by the user's two requirements and answers below. Path steps 2 (the tier) and 3 (Outputs on blocks) built. Converges 0266 (blocks)
 with 0173/0241/0244/0276 (the program image and its versions), 0239 (the output image), 0240 §4 and 0280 (the
 memo's pack), 0259 §5 (the spool) and 0260 §8 (the journal block). Keeps 0008 (facts read through virtual tables)
 and 0024 §5 (work can be redone, so no `fsync`).
@@ -215,7 +215,16 @@ wrap, anonymous or file-backed, so the pool's own budget is what counts those.
    block. Tests: a host-written slab is written back and only then frozen; a kernel's writes reach the disk; a reused
    file reads zero where allocated; a journal in a pool lease is handed off, read, frozen and its file reused. The
    writer thread itself is the store's, wired in with the memo (step 4).
-3. **Outputs on blocks** (0266 path step 1), 0239's tests unchanged.
+3. **Outputs on blocks** (built): the outputs file (`outputs.rro`) is frozen blocks of kind `OUTPUTS` one after
+   another, each one image at its root (`rerail_blocks::block::frame` to write, `frozen_at` to read, the same check
+   as `Block::open_file`), read in place as before; a block cut short or not frozen is refused, and an image without
+   its block. The image format, the stack and its fold are 0239's (§6.3); images in memory (a run's, a memo
+   entry's) are their bytes alone. 0239's tests pass unchanged, with one more
+   (`the_file_holds_each_image_as_a_frozen_block`); a session's and reuse's tests are the check (59 of 60; the
+   other, `value_types_are_ws_value_types`, fails the same without this change: work queue Q27). `rerail-blocks`
+   is a dependency of the logic crate on every target, so it builds without a mapping too (`blocks::mem`: a heap
+   reservation on WASI; `deferrable` is Unix-only); the engine checks for `wasm32-wasip1` again, which it had not
+   since `rerail-accel` took `rerail-blocks`.
 4. **The memo's entries in segments**: 0240's rows found by the archive, the pack retired.
 5. **Frames** (the largest writes), then tapes and sources; 0259's guard (no `write_back` queues a closure).
 6. **Facts as blocks** (0266 step 4) with the fold rule and kills by content decided; **the virtual-table module**.

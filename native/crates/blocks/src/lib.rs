@@ -22,9 +22,11 @@
 pub mod block;
 pub mod chunk;
 pub mod col;
+#[cfg(unix)]
 pub mod deferrable;
 pub mod facts;
 pub mod journal;
+pub mod mem;
 pub mod packed;
 pub mod program;
 pub mod refs;
