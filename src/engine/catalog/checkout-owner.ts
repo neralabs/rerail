@@ -7,7 +7,7 @@ import { lstatSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { physicalPath } from "./checkout-control.js";
 import { runGit } from "../git.js";
-import { repositoryIdentityLocation } from "./repository-identity.js";
+import { checkOwnersAgain, repositoryIdentityLocation } from "./repository-identity.js";
 
 export interface CheckoutOwner {
   /** Physical (symlink-resolved) top-level folder of the owning checkout. */
@@ -228,12 +228,16 @@ export class CheckoutOwners {
     return own ?? this.#gitRoot(dirname(path)) ?? this.#plainRoot(real);
   }
 
-  /** Forget every cached answer when the recorded checkouts changed since the last lookup. */
+  /**
+   * Forget every cached answer when the recorded checkouts changed since the last lookup, and have the answers
+   * `repositoryIdentityLocation` keeps across them read their owners again.
+   */
   #revalidate(): void {
     if (this.#recordedVersion === undefined) return;
     const version = this.#recordedVersion();
     if (version === this.#version) return;
     this.#version = version;
+    checkOwnersAgain(version);
     this.#roots.clear();
     this.#confirmed.clear();
     this.#submodules.clear();

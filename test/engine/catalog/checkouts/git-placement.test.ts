@@ -247,6 +247,45 @@ describe.runIf(process.platform === "win32")("on Windows, where Node reads no ow
   });
 });
 
+/**
+ * Makes the owner read say another account owns every folder, as `chown` or `takeown` would leave them. Git, a process
+ * of its own, still reads the real owners, so its answers stay those of the user's folders.
+ */
+function takeOwnersAway(): void {
+  if (process.platform === "win32") {
+    vi.mocked(pathsOwnedByCurrentUser).mockReturnValue(false);
+    return;
+  }
+  const user = process.geteuid?.() ?? 0;
+  const spy = vi.spyOn(process, "geteuid").mockReturnValue(user + 1);
+  cleanups.push(async () => {
+    spy.mockRestore();
+  });
+}
+
+describe("a kept answer's owners are read again each time the recorded checkouts change", () => {
+  it("asks Git again once its folders are another account's, as each start asked it before answers were kept", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
+    let recorded = "one checkout";
+    const owners = new CheckoutOwners(() => recorded);
+    const folders = [main, join(root, "linked")];
+    expect(expectGitsAnswers(...folders)).toBe(1);
+
+    recorded = "a checkout recorded, its owners as they were";
+    owners.lookAgainAt(root);
+    expect(expectGitsAnswers(...folders)).toBe(0);
+
+    takeOwnersAway();
+    expect(expectGitsAnswers(...folders)).toBe(0);
+    recorded = "a checkout recorded once the owners changed";
+    owners.lookAgainAt(root);
+    expect(expectGitsAnswers(...folders)).toBe(2);
+    expect(expectGitsAnswers(...folders)).toBe(0);
+  });
+});
+
 describe("a repository start", () => {
   it("places every registered worktree with no Git process per worktree", async () => {
     const root = await temporaryRoot();

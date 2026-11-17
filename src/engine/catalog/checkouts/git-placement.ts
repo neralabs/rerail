@@ -241,16 +241,25 @@ function namesBack(inputs: PlacementInputs): boolean {
 }
 
 /**
- * Whether Git, which refuses a repository whose folders another user owns, takes the worktree's folder, its `.git` file
- * and its Git folder as the current user's, and the common folder holds the `objects` and `refs` Git looks for. On
- * POSIX it compares their owner with the effective user, as Git does (root is left to Git, which reads `SUDO_UID`).
- * Windows gives Node no owner: there the engine reads each one's owner as Git for Windows does
- * ({@link pathsOwnedByCurrentUser}), and a network path, or no engine that can tell, leaves the worktree to Git.
+ * Whether Git takes the linked worktree's folders as the current user's ({@link ownedAsGitTakes}), and the common folder
+ * holds the `objects` and `refs` Git looks for.
  */
 function ownedAsGitRequires(inputs: PlacementInputs, common: string): boolean {
+  if (!isFolder(look(join(common, "objects"))) || !isFolder(look(join(common, "refs")))) return false;
+  return ownedAsGitTakes(inputs);
+}
+
+/**
+ * Whether Git, which refuses a repository whose folders another user owns unless `safe.directory` names it, takes the
+ * folder, its `.git` entry and the Git folder that entry is or names as the current user's. On POSIX it compares their
+ * owner with the effective user, as Git does (root is left to Git, which reads `SUDO_UID`). Windows gives Node no
+ * owner: there the engine reads each one's owner as Git for Windows does ({@link pathsOwnedByCurrentUser}), and a
+ * network path, or no engine that can tell, leaves the folder to Git. No Git process: a few lstats, and on Windows one
+ * engine call.
+ */
+export function ownedAsGitTakes(inputs: PlacementInputs): boolean {
   const paths = [inputs.folder, join(inputs.folder, ".git"), inputs.gitFolder];
   const owned = paths.map(look);
-  if (!isFolder(look(join(common, "objects"))) || !isFolder(look(join(common, "refs")))) return false;
   if (!owned.every(isEntry)) return false;
   return process.platform === "win32" ? paths.every(plainlyResolved) && pathsOwnedByCurrentUser(paths) === true : ownedByUser(owned);
 }
