@@ -2,7 +2,7 @@
 .description "Give each function in a stub file a body of exactly one statement such as an ellipsis; stubs only declare types and are never executed."
 .language python
 .mode steer
-.scope include "**/*"
+.scope include "**/*.pyi"
 
 // Ruff PYI048 (flake8-pyi), stubs only: a def whose body has more than one statement, a docstring included.
 // Reported at the def's name.

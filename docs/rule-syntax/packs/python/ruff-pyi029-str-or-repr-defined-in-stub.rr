@@ -2,7 +2,7 @@
 .description "Remove redundant __str__ and __repr__ definitions from stub files; their signatures match the defaults every class inherits, so they add nothing."
 .language python
 .mode steer
-.scope include "**/*"
+.scope include "**/*.pyi"
 
 // Ruff PYI029 (flake8-pyi), stubs only: a method `__str__` or `__repr__` with object's own signature: at most
 // one positional parameter, no keyword-only ones, returning builtin `str`, and not abstract. Reported at the name.

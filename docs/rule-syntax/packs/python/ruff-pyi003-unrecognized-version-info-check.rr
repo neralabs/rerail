@@ -2,7 +2,7 @@
 .description "Compare sys.version_info in stub files only against tuples of integers, or its major version against an integer; type checkers do not understand other forms."
 .language python
 .mode steer
-.scope include "**/*"
+.scope include "**/*.pyi"
 
 // Ruff PYI003 (flake8-pyi), stubs only: an `if` test comparing sys.version_info in a form type checkers do not
 // understand. The left side must be the whole value, `[0]`, `[:1]` or `[:2]`; `[0]` is compared with an int

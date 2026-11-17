@@ -2,7 +2,7 @@
 .description "Assign a value to the module-level exports list and the class slot and match-argument lists in stub files; they mean the same there as at runtime."
 .language python
 .mode steer
-.scope include "**/*"
+.scope include "**/*.pyi"
 
 // Ruff PYI035 (flake8-pyi), stubs only: `__all__` at module level, or `__match_args__` / `__slots__` in a
 // class body, annotated without a value. These names have their runtime meaning in a stub too.

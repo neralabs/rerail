@@ -2,7 +2,7 @@
 .description "Start the names of TypeVar, ParamSpec and TypeVarTuple variables in stub files with an underscore, so the stub does not export them."
 .language python
 .mode steer
-.scope include "**/*"
+.scope include "**/*.pyi"
 
 // Ruff PYI001 (flake8-pyi), stubs only: a TypeVar, ParamSpec or TypeVarTuple assigned in a stub is exported
 // unless its name starts with `_`. Ruff checks plain one-target assignments outside functions; it reports the

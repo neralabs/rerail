@@ -2,7 +2,7 @@
 .description "Replace string and bytes literals longer than 50 characters in stub files with an ellipsis; type checkers ignore default values, so a literal that long is an implementation detail."
 .language python
 .mode steer
-.scope include "**/*"
+.scope include "**/*.pyi"
 
 // Ruff PYI053 (flake8-pyi), stubs only: a str or bytes literal whose value is longer than 50 characters
 // (adjacent literals joined; an f-string counts its written contents). Not reported in a type context
