@@ -1961,3 +1961,27 @@ Red tests found, not from this work:
 - The pre-commit hook can't run in this worktree: no node packages (`tsc`, `semver`), and `check:reference` reports
   three differences in `src/engine/code-rule/*.ts`, which this branch doesn't touch. Commits since 58f1627c3 skip it
   (`--no-verify`).
+
+### Q87. A whole source is probed by its relation's own index in the block
+
+Done 2026-11-17. The user's list, item "the input relations' hash indexes … can read the relation's own index in its
+block". Some base inputs are a whole source whose rows are one block relation: a vtab relation's cells. For a key no
+sorted or lead index answers, such an input used to build a host hash table (`Csr::build`) of its rows. It now uses
+that relation's own index (`InBlock::own_index`): found where the device or an earlier probe built it, else built
+by the host into the block, as the device builds it, and shared with the device from then on. Probes read the
+bucket's rows as candidates and check the key (`Csr::exact`; `probe_each` checks it too).
+
+Measured at 300 files, two runs of this build against the five before it:
+- peak 2.54 and 2.48 GB, against 2.36–2.49 GB (load 25–77);
+- the cross-file joins took 3.08 s, against 4.54 s;
+- findings: the reference's.
+
+Strict 10-file outputs are byte-identical. 194 setfix, vtab, probe, index and device tests pass.
+
+Still host structures over rows, the next items:
+- each stored column's sorted index over the cross part's held columns (`Stored::sorted`, 120–140 MB at the peak);
+- derived inputs' sorted orders (`Csr::runs`, 24–38 MB);
+- the fixpoint's own runs, dedup table and lattice maps.
+
+The held columns are heap columns. For their index to be a block relation's own, they would have to be held as
+block relations, as exports now are (Q83).

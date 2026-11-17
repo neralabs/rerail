@@ -3301,8 +3301,16 @@ impl<'a> RowRef<'a> {
 /// Over a derived relation (no view) with no kept chain answering the key, the index is a sorted order of its own on
 /// the key columns (`order`, decision 0112: 4 bytes a row, not a hash table's 18 and its build's 46). It is made
 /// when first probed (`ordered`: printed or not, decision 0186), so an order no probe reaches costs nothing.
-pub struct Csr { cols: Vec<usize>, table: HashTable<(u32, u32, u32)>, ids: Vec<u32>, source: bool, sorted: bool, chain: Option<usize>, lead: usize, composite: bool, ordered: Option<bool>, order: OnceLock<Index> }
+pub struct Csr { cols: Vec<usize>, table: HashTable<(u32, u32, u32)>, ids: Vec<u32>, source: bool, sorted: bool, chain: Option<usize>, lead: usize, composite: bool, ordered: Option<bool>, order: OnceLock<Index>,
+                 /// A whole source's rows in one block relation, probed by that relation's own index there (its number;
+                 /// decision 0325 step 5), shared with the device: no host table of its rows. Its buckets' rows are
+                 /// candidates, checked against the key by the reader.
+                 block: Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)> }
 impl Csr {
+    /// Whether `get` gives a key's rows alone (not a bucket's candidates).
+    fn exact(&self) -> bool {
+        self.block.is_none()
+    }
     /// The sorted order a probe walks: the relation's kept chain (`chain`) or this index's own order, made now if
     /// this is its first probe.
     fn runs<'a>(&'a self, rel: &'a InRel) -> Option<&'a Index> {
@@ -3389,10 +3397,14 @@ impl Csr {
                 e.2 = (w - s) as u32;
             }
         }
-        Csr { cols: cols.to_vec(), table, ids, source: false, sorted: false, chain: None, lead: 0, composite: false, ordered: None, order: OnceLock::new() }
+        Csr { cols: cols.to_vec(), table, ids, source: false, sorted: false, chain: None, lead: 0, composite: false, ordered: None, order: OnceLock::new(), block: None }
     }
-    /// `key` holds the values of `cols`, in order.
+    /// `key` holds the values of `cols`, in order. Its rows of the key; for an index in the block (`block`), its
+    /// bucket's rows, a key's candidates, which the reader checks (`exact`).
     fn get<'a>(&'a self, rel: &InRel, key: &[i64]) -> &'a [u32] {
+        if let Some((ib, i)) = &self.block {
+            return ib.relation().group(*i, key.iter().fold(rerail_blocks::SEED, |h, &v| rerail_blocks::mix(h, v)));
+        }
         self.table.find(hash_vals(key.iter().copied()), |&(rep, _, _)| self.cols.iter().zip(key).all(|(&c, &v)| rel.at(rep as usize).at(c) == v))
             .map_or(&[], |&(_, start, len)| &self.ids[start as usize..][..len as usize])
     }
@@ -4469,7 +4481,10 @@ impl InRel {
         } else if ix.source && let Some(v) = &self.view {
             for r in v.find(ix.cols[ix.lead], key[ix.lead]) { give(RowRef::Source(v, r as usize).read()) }
         } else {
-            for &id in ix.get(self, key) { if !is_dead(&self.dead, id) { give(self.at(id as usize).read()) } }
+            let exact = ix.exact();
+            for &id in ix.get(self, key) {
+                if !is_dead(&self.dead, id) && (exact || ix.cols.iter().zip(key).all(|(&c, &v)| self.at(id as usize).at(c) == v)) { give(self.at(id as usize).read()) }
+            }
         }
     }
 
@@ -4861,7 +4876,7 @@ impl InRel {
             let _index = crate::code_rule_dsl::logic::profile::span(move || (if base { "open: index of a base input" } else { "open: index of a derived input" }).into());
             let (t0, c0) = (Instant::now(), thread_cpu());
             // No key columns: the step reads every row, not an index.
-            let empty = |source, sorted| Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source, sorted, chain: None, lead: 0, composite: false, ordered: None, order: OnceLock::new() };
+            let empty = |source, sorted| Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source, sorted, chain: None, lead: 0, composite: false, ordered: None, order: OnceLock::new(), block: None };
             let m = if cols.is_empty() {
                 empty(false, false)
             } else if let Some(i) = self.chains.iter().position(|ix| ix.answers(cols)) {
@@ -4899,6 +4914,12 @@ impl InRel {
                     static EAGER: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
                     if *EAGER.get_or_init(|| std::env::var("RERAIL_LAZY_ORDERS").is_ok_and(|v| v == "off")) { csr.runs(self); }
                     csr
+                } else if let Some(v) = self.view.as_ref().filter(|v| v.ids.is_none() && v.eqs.is_empty())
+                    && let Some(ib) = v.src.in_block().filter(|ib| ib.rows as usize == v.src.len())
+                    && let Some(i) = ib.own_index(&cols.iter().map(|&c| v.cols[c] as u16).collect::<Vec<_>>())
+                {
+                    // A whole source in one block relation: that relation's own index, found or built there.
+                    Csr { block: Some((ib, i)), ..empty(false, false) }
                 } else {
                     charge(Unit::IndexEntry, self.len() as u64);
                     Csr::build(self, cols)
@@ -5916,7 +5937,7 @@ fn join_rule(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner) -> Result<
 /// the join must not run on the CPU (`open` parses it again with them when the device refuses it).
 fn join_rule_with(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, index: bool) -> Result<JoinRule> {
     let conn = conn.db();
-    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source: false, sorted: false, chain: None, lead: 0, composite: false, ordered: None, order: OnceLock::new() });
+    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source: false, sorted: false, chain: None, lead: 0, composite: false, ordered: None, order: OnceLock::new(), block: None });
     let mut bound: Vec<bool> = Vec::new();
     let mut steps = Vec::new();
     let mut out = Vec::new();

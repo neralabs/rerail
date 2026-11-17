@@ -433,6 +433,36 @@ pub struct InBlock {
     pub dead: usize,
 }
 
+impl InBlock {
+    /// The relation it binds, where it lies.
+    pub fn relation(&self) -> &Relation {
+        // SAFETY: `at` is a relation's descriptor in `facts`' block, whose pages `own` keeps.
+        unsafe { &*self.facts.block.ptr::<Relation>(self.at) }
+    }
+
+    /// The relation's own index on its columns `cols` over its rows (decision 0325 step 5): found where it was built
+    /// before (by the device, or an earlier probe), else built now into its block, by the host, as the device builds
+    /// it. `None` for a delta (dead rows) or a key past `MAX_KEY`, or when the block has no room for it.
+    pub fn own_index(&self, cols: &[u16]) -> Option<usize> {
+        let r = self.relation();
+        if self.dead != 0 || r.base_rows != 0 || cols.is_empty() || cols.len() > rerail_blocks::relation::MAX_KEY {
+            return None;
+        }
+        let _g = self.facts.ix.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = r.find_index(cols, self.rows) {
+            return Some(i);
+        }
+        // SAFETY: under the block's index lock; the relation's rows `0..rows` are written.
+        let room = unsafe { r.try_reserve_index(&self.facts.block, cols, self.rows) }?;
+        // SAFETY: the room was just reserved under the lock, and nothing reads it until it is marked built.
+        unsafe {
+            r.build_index(&room);
+            r.index_built(&room);
+        }
+        Some(room.index)
+    }
+}
+
 impl Clone for Rows {
     /// The segments shared, and the tail too, not copied: as a segment of the rows it holds now (`Part::prefix`). Its
     /// writer, the one `Rows` holding it, goes on past them; the copy's next row starts a tail of its own.
