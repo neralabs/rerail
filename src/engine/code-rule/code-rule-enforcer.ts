@@ -721,7 +721,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * say, a path Git ignores is refused while the lane follows `.gitignore`.
    */
   acceptsPath(path: string): boolean {
-    return this.readsPath(path) && !this.ignoresPath(path, false);
+    return this.#readsPath(path) && !this.ignoresPath(path, false);
   }
 
   /**
@@ -732,8 +732,13 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return (this.#replacement ?? this.#workspace)?.version;
   }
 
-  /** `acceptsPath` apart from Git's ignore rules. */
+  /** `acceptsPath` apart from Git's ignore rules: what another checkout at `rulesVersion` reads (the router asks it). */
   readsPath(path: string): boolean {
+    return this.#readsPath(path);
+  }
+
+  /** `acceptsPath` apart from Git's ignore rules. */
+  #readsPath(path: string): boolean {
     const language = languageFor(path);
     const workspace = (this.#replacement ?? this.#workspace)?.workspace;
     if (language === undefined) return (workspace?.acceptsTextPath(path) ?? false) && !sensitiveByName(path);
@@ -761,7 +766,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * no rule reads anyway.
    */
   ignoredEdit(path: string): NativeGitIgnoreMatch | undefined {
-    if (!this.#followGitignore || !this.readsPath(path)) return undefined;
+    if (!this.#followGitignore || !this.#readsPath(path)) return undefined;
     return this.#askGitIgnore(path, matcher => matcher.ignoredBy(path, false)) ?? undefined;
   }
 
