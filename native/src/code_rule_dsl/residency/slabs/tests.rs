@@ -149,7 +149,10 @@ fn a_batch_over_several_slabs_is_gathered_into_one_block() {
         assert_eq!(gathered.image(), document.image());
         let v = &gathered.view;
         assert_eq!(gathered.bytes_at(v.source, v.source_len as usize), document.bytes_at(document.view.source, document.view.source_len as usize));
-        assert_eq!(u32s(gathered, v.lines, v.line_count as usize), u32s(document, document.view.lines, document.view.line_count as usize));
+        // Format 15's line starts are placed beside its tape; format 16's are its tape's, compared with the image.
+        if v.format == 15 {
+            assert_eq!(u32s(gathered, v.lines, v.line_count as usize), u32s(document, document.view.lines, document.view.line_count as usize));
+        }
         assert_eq!(gathered.codes(), document.codes());
         // The view moved with the document: its offsets count from its first byte.
         assert_eq!(gathered.view.view(), document.view.view());
@@ -174,18 +177,19 @@ fn the_device_reads_every_format_as_the_document_does() {
     use crate::code_rule_dsl::transducer::packed::metal_backend::{MappedBuffer, pipeline_named};
     use metal::MTLSize;
     const TAPE: &str = concat!(include_str!("../../transducer/packed/metal_tape_reads.metal"), include_str!("../../transducer/packed/metal_tape.metal"));
-    const FIELDS: usize = 12;
+    const FIELDS: usize = 14;
     const KERNEL: &str = r#"
 inline uint tape_global(ChunkTape d,uint i){return i==TAPE_NONE?TAPE_NONE:d.node_base+i;}
 kernel void tape_conformance(device const ChunkTape* docs [[buffer(0)]],device const uint* nodeDoc [[buffer(1)]],device uint* out [[buffer(2)]],device const uchar* s [[buffer(3)]],constant uint& count [[buffer(7)]],uint g [[thread_position_in_grid]]){
  if(g>=count)return;
  ChunkTape d=docs[nodeDoc[g]];
  uint i=g-d.node_base;
- device uint* o=out+g*12u;
+ device uint* o=out+g*14u;
  o[0]=tape_kind(s,d,i);o[1]=tape_field(s,d,i);o[2]=tape_flags(s,d,i);
  o[3]=tape_global(d,tape_parent(s,d,i));o[4]=tape_global(d,tape_next(s,d,i));o[5]=tape_global(d,tape_next_named(s,d,i));
  o[6]=tape_child_count(s,d,i);o[7]=d.node_base+i+tape_size(s,d,i);o[8]=tape_start(s,d,i);o[9]=tape_end(s,d,i);
  o[10]=tape_global(d,tape_first_child(s,d,i));o[11]=tape_code(s,d,i).classCount;
+ uint line=tape_line(s,d,tape_start(s,d,i));o[12]=line;o[13]=tape_line_start(s,d,line);
 }
 "#;
     let Some(device) = metal::Device::system_default() else { return };
@@ -244,6 +248,7 @@ kernel void tape_conformance(device const ChunkTape* docs [[buffer(0)]],device c
         // SAFETY: the kernel wrote `nodes * FIELDS` u32s, and the command finished.
         let read = unsafe { std::slice::from_raw_parts(out.buffer.contents().cast::<u32>(), table.nodes * FIELDS) };
         for (doc, (tape, view)) in docs.iter().zip(&table.views).enumerate() {
+            let source = sources[doc].0.as_bytes();
             let global = |node: Option<u32>| node.map_or(u32::MAX, |node| node + view.node_base);
             let mut classes = vec![0u32; tape.transducer_len()];
             for (node, _) in tape.transducer_supertypes() {
@@ -264,6 +269,9 @@ kernel void tape_conformance(device const ChunkTape* docs [[buffer(0)]],device c
                     span.end as u32,
                     global(tape.transducer_children(node).next()),
                     classes[node as usize],
+                    // The line of the node's start, and that line's first byte: from the source's newlines.
+                    source[..span.start].iter().filter(|&&byte| byte == b'\n').count() as u32,
+                    source[..span.start].iter().rposition(|&byte| byte == b'\n').map_or(0, |at| at as u32 + 1),
                 ];
                 let g = (view.node_base + node) as usize;
                 assert_eq!(&read[g * FIELDS..][..FIELDS], &expected, "{format:?}: document {doc} node {node}");
