@@ -1,16 +1,18 @@
-//! The planner's join estimates, corrected by a learned model (decision 0354). The planner prices each step of a
-//! join's order by a rule of thumb (its `basis`: postings, field statistics, containment, membership…), and some are
-//! wrong by hundreds of times. Each step the engine ran is a sample of what its rule estimated and what the step
-//! made ([`StepSample`]); a regression forest (`rerail-forest`, as the cost model's) learns the step's miss from what
-//! the planner knew when it priced it, and corrects the estimate by it.
+//! Join steps' fanouts, learned from what runs measured (decision 0354). The planner prices each step of a join's
+//! order by a rule of thumb (its `basis`: postings, field statistics, containment, membership…), and some are wrong by
+//! hundreds of times. Each step the engine ran is a sample ([`StepSample`]) of the data it read (the relation, the
+//! columns bound, their distinct values, the relation's rows) and of what it did: its rows in and out. A regression
+//! forest (`rerail-forest`, as the cost model's) learns how far the statistics' estimate of it is from what it made.
 //!
-//! **Step 1, the shadow.** The model is trained and compared, not used: [`compare`] holds out the newest fifth of the
-//! samples, trains on the rest, and measures both the planner's estimates and the corrected ones against what the
-//! held-out steps made ([`JoinComparison`]). No plan changes.
+//! **The target is the measured rows out over the statistics' estimate of them**: ln((rows out + 1) / (estimated
+//! fanout × rows in + 1)). The label is what the run measured (the user, 2026-11-17: "the training data should be
+//! from model runs, not from the planner"); the estimate is the statistics' (a constant's frequency, a key's
+//! postings), a feature (the prior) and what the target is a ratio to. A forest predicts piecewise constants: asked
+//! the measured fanout itself, with the estimate as a feature, it could not follow the estimate across six orders
+//! of magnitude, and missed kind-frequency steps by ×14 where the statistics missed by ×4.5 (Q82). Each step is
+//! also described by the data it reads: the relation, the columns bound, their distinct values, the relation's rows.
 //!
-//! **The target.** A step's miss in rows: ln((made + 1) / (estimated fanout × rows in + 1)). The estimated fanout is
-//! the planner's rows out over its rows in, for the step; it is applied to the rows the step actually read, so that
-//! the miss is the step's own and not the steps' before it.
+//! **In shadow.** The model is trained and compared, not used: no plan changes.
 
 use crate::cost_model::Errors;
 
@@ -18,7 +20,9 @@ use crate::cost_model::Errors;
 #[derive(Clone, Debug, PartialEq)]
 pub struct StepSample {
     /// The rule that priced the step's rows (`StepPlan::basis`, its first words): "postings", "observed"…; "none" for
-    /// a filter.
+    /// a filter. With `est_fan`, the statistics' estimate (the prior): features, never the target. Without them
+    /// (Q82, across corpora) the model knew no constant's frequency, and missed kind-frequency steps by ×37 to ×45
+    /// where the planner's statistics missed by ×3.6.
     pub basis: String,
     /// How the step reads (`StepPlan::access`, its first word): "lookup", "scan", "membership", "filter"…
     pub access: String,
@@ -49,6 +53,11 @@ pub struct StepSample {
     /// The rows the step read and made.
     pub actual_in: f64,
     pub actual_out: f64,
+    /// The relation read (its name, from the literal; empty for a filter), the columns bound when it reads (bit `c`:
+    /// column `c`, constants and bound variables), and its columns.
+    pub relation: String,
+    pub bound_mask: u64,
+    pub cols: u32,
     /// Where the sample came from, not a feature: "ran" (the order a line ran throughout), "replaced" (an order of a
     /// line that ran more than one, decision 0206's handoffs: the orders the planner did not keep).
     pub origin: String,
@@ -60,21 +69,31 @@ impl StepSample {
         self.est_fan.max(0.0) * self.actual_in
     }
 
-    /// The step's miss in rows, on the log scale (the model's target).
+    /// The model's target: the measured rows out over the statistics' estimate for the rows the step read, on the
+    /// log scale.
     pub fn target(&self) -> f64 {
         ((self.actual_out + 1.0) / (self.est_out() + 1.0)).ln().clamp(-30.0, 30.0)
     }
 
-    /// The rows of work the step stands for: what it read, and the more of what it made and what it was planned to
-    /// make. Weighed by what it made alone, an overestimate weighed little, though it misleads a plan as much as an
-    /// underestimate (`up_fn_of` on hogql, planned at 1,000 times its work, priced the GPU cheaper).
+    /// The rows out a predicted target `t` gives for the rows the step read.
+    pub fn out_of(&self, t: f64) -> f64 {
+        ((self.est_out() + 1.0) * t.exp() - 1.0).max(0.0)
+    }
+
+    /// The rows of work the step stands for, measured: what it read and made (training's weight).
     pub fn work(&self) -> f64 {
-        self.actual_in + self.actual_out.max(self.est_out())
+        self.actual_in + self.actual_out
     }
 }
 
 /// The features, in the feature space's column order.
-pub const STEP_FEATURES: [&str; 12] = ["basis", "access", "source", "bound", "step", "steps", "est_in", "est_fan", "card", "solving", "seed", "key_ndv"];
+/// Facts of the data the step reads and of how it reads it: the relation, which columns are bound and how many there
+/// are, the relation's rows, the bound key's distinct values and the rows per key they leave, whether the relation
+/// is still being solved, whether the line is a seed; and the statistics' estimate of its fanout with the rule that
+/// made it (the prior: a constant's frequency, a key's postings, which no other feature carries); and the step's
+/// place in its order and the rows estimated into it (without them, across corpora, ×1.87 and ×1.83 against ×1.83
+/// and ×1.64 with: Q82).
+pub const STEP_FEATURES: [&str; 16] = ["relation", "access", "source", "bound", "bound_mask", "cols", "card", "key_ndv", "rows_per_key", "solving", "seed", "basis", "prior", "est_in", "step", "steps"];
 
 /// The planner's estimates and the model's corrected ones, on the held-out steps.
 #[derive(Clone, Copy, Debug, Default)]
@@ -82,6 +101,8 @@ pub struct JoinComparison {
     pub trained_on: usize,
     pub held_out: usize,
     /// Per step, unweighted: the planner's rows out against what the step made, and the model's.
+    /// Weighted, each step by its rows read and the most of what it made and what either predicted: an overestimate
+    /// misleads a plan as much as an underestimate (`up_fn_of` on hogql, planned at 1,000 times its work).
     pub planner: Errors,
     pub model: Errors,
     /// Weighted by each step's rows of work: the geometric mean miss, as a factor (1.0: none).
@@ -117,11 +138,12 @@ fn weighted_miss(pairs: &[(f64, f64)], w: &[f64]) -> f64 {
     if t > 0.0 { (s / t).exp() } else { 1.0 }
 }
 
-/// The comparison of corrections `corrections` (the predicted target of each of `held`) with the planner's.
-pub fn compared(held: &[StepSample], corrections: &[f64], trained_on: usize) -> JoinComparison {
+/// The comparison of the model's fanouts `predicted` (on the target's scale, one per step of `held`) with the
+/// planner's estimates.
+pub fn compared(held: &[StepSample], predicted: &[f64], trained_on: usize) -> JoinComparison {
     let planner: Vec<(f64, f64)> = held.iter().map(|s| (s.est_out() + 1.0, s.actual_out + 1.0)).collect();
-    let model: Vec<(f64, f64)> = held.iter().zip(corrections).map(|(s, c)| ((s.est_out() + 1.0) * c.exp(), s.actual_out + 1.0)).collect();
-    let w: Vec<f64> = held.iter().map(StepSample::work).collect();
+    let model: Vec<(f64, f64)> = held.iter().zip(predicted).map(|(s, &t)| (s.out_of(t) + 1.0, s.actual_out + 1.0)).collect();
+    let w: Vec<f64> = held.iter().zip(predicted).map(|(s, &t)| s.actual_in + s.actual_out.max(s.est_out()).max(s.out_of(t))).collect();
     JoinComparison {
         trained_on,
         held_out: held.len(),
@@ -144,7 +166,7 @@ mod on {
     use rerail_forest::randomforest_procedure::{RandomForestProcedureConfig, TargetScale, train_regression_flat};
     use std::sync::Arc;
 
-    /// A trained correction: a regression forest over [`STEP_FEATURES`], predicting a step's miss.
+    /// A trained model: a regression forest over [`STEP_FEATURES`], predicting a step's rows out over the statistics' estimate.
     pub struct JoinModel {
         rules: BucketRules,
         forest: FlatForest,
@@ -165,20 +187,35 @@ mod on {
     fn cells(samples: &[StepSample]) -> Vec<Vec<CellValue>> {
         let mut c: Vec<Vec<CellValue>> = vec![Vec::with_capacity(samples.len()); STEP_FEATURES.len()];
         for s in samples {
-            c[0].push(CellValue::String(s.basis.clone()));
+            c[0].push(CellValue::String(s.relation.clone()));
             c[1].push(CellValue::String(s.access.clone()));
             c[2].push(CellValue::String(s.source.clone()));
             c[3].push(CellValue::Integer(s.bound as i64));
-            c[4].push(CellValue::Integer(s.step as i64));
-            c[5].push(CellValue::Integer(s.steps as i64));
-            c[6].push(CellValue::Float(ln1(s.est_in)));
-            c[7].push(CellValue::Float(s.est_fan.max(1e-9).ln()));
-            c[8].push(CellValue::Float(ln1(s.card)));
+            c[4].push(CellValue::Integer(s.bound_mask as i64));
+            c[5].push(CellValue::Integer(s.cols as i64));
+            c[6].push(CellValue::Float(ln1(s.card)));
+            c[7].push(CellValue::Float(ln1(s.key_ndv)));
+            c[8].push(CellValue::Float(rows_per_key(s)));
             c[9].push(CellValue::Integer(s.solving as i64));
             c[10].push(CellValue::Integer(s.seed as i64));
-            c[11].push(CellValue::Float(ln1(s.key_ndv)));
+            c[11].push(CellValue::String(s.basis.clone()));
+            c[12].push(CellValue::Float(prior(s)));
+            c[13].push(CellValue::Float(ln1(s.est_in)));
+            c[14].push(CellValue::Integer(s.step as i64));
+            c[15].push(CellValue::Integer(s.steps as i64));
         }
         c
+    }
+
+    /// The statistics' fanout, on the target's scale (0, a fanout of one, where it has none: an empty basis, as a
+    /// comparison that leaves the prior out makes it; a filter's basis is "none").
+    fn prior(s: &StepSample) -> f64 {
+        if !s.basis.is_empty() && s.est_fan.is_finite() && s.est_fan > 0.0 { s.est_fan.ln().clamp(-30.0, 30.0) } else { 0.0 }
+    }
+
+    /// The relation's rows per value of the bound key, on the log scale (0 where no key is measured).
+    fn rows_per_key(s: &StepSample) -> f64 {
+        if s.key_ndv > 0.0 { ln1(s.card / s.key_ndv) } else { 0.0 }
     }
 
     impl JoinModel {
@@ -196,29 +233,33 @@ mod on {
             Ok(JoinModel { rules: BucketRules::new(&fs)?, forest, scale, trained_on: samples.len() })
         }
 
-        /// The predicted miss of a step (its target: ln of made over estimated), from its features alone.
-        pub fn correction(&self, s: &StepSample) -> Result<f64, String> {
+        /// A step's predicted target (its rows out over the statistics' estimate, on the log scale), from its features.
+        pub fn fanout(&self, s: &StepSample) -> Result<f64, String> {
             let r = &self.rules;
             let b = [
-                r.bucket_of_name(0, Some(&s.basis)),
+                r.bucket_of_name(0, Some(&s.relation)),
                 r.bucket_of_name(1, Some(&s.access)),
                 r.bucket_of_name(2, Some(&s.source)),
                 r.bucket_of_number(3, s.bound as f64),
-                r.bucket_of_number(4, s.step as f64),
-                r.bucket_of_number(5, s.steps as f64),
-                r.bucket_of_number(6, ln1(s.est_in)),
-                r.bucket_of_number(7, s.est_fan.max(1e-9).ln()),
-                r.bucket_of_number(8, ln1(s.card)),
+                r.bucket_of_number(4, s.bound_mask as f64),
+                r.bucket_of_number(5, s.cols as f64),
+                r.bucket_of_number(6, ln1(s.card)),
+                r.bucket_of_number(7, ln1(s.key_ndv)),
+                r.bucket_of_number(8, rows_per_key(s)),
                 r.bucket_of_number(9, s.solving as u8 as f64),
                 r.bucket_of_number(10, s.seed as u8 as f64),
-                r.bucket_of_number(11, ln1(s.key_ndv)),
+                r.bucket_of_name(11, Some(&s.basis)),
+                r.bucket_of_number(12, prior(s)),
+                r.bucket_of_number(13, ln1(s.est_in)),
+                r.bucket_of_number(14, s.step as f64),
+                r.bucket_of_number(15, s.steps as f64),
             ];
             Ok(self.scale.from_unit(self.forest.predict_row(&b)?[1]))
         }
     }
 
-    /// Step 1 (the shadow): trains on all but the newest fifth of `samples` (oldest first), and compares the planner's
-    /// estimates of the held-out steps with the corrected ones. The model is handed back; nothing is put in place.
+    /// The shadow: trains on all but the newest fifth of `samples` (oldest first), and compares the planner's
+    /// estimates of the held-out steps with the model's. The model is handed back; nothing is put in place.
     pub fn compare(samples: &[StepSample], config: &RandomForestProcedureConfig) -> Result<(JoinComparison, JoinModel), String> {
         let cut = samples.len() - samples.len() / 5;
         let (train, held) = samples.split_at(cut);
@@ -228,8 +269,8 @@ mod on {
     /// Trains on `train` and compares on `held`: another run's steps, another corpus's.
     pub fn compare_on(train: &[StepSample], held: &[StepSample], config: &RandomForestProcedureConfig) -> Result<(JoinComparison, JoinModel), String> {
         let model = JoinModel::train(train, config)?;
-        let corrections = held.iter().map(|s| model.correction(s)).collect::<Result<Vec<f64>, String>>()?;
-        Ok((super::compared(held, &corrections, train.len()), model))
+        let predicted = held.iter().map(|s| model.fanout(s)).collect::<Result<Vec<f64>, String>>()?;
+        Ok((super::compared(held, &predicted, train.len()), model))
     }
 }
 
@@ -254,20 +295,26 @@ mod tests {
             key_ndv: 100.0,
             actual_in,
             actual_out,
+            relation: "r".into(),
+            bound_mask: 1,
+            cols: 2,
             origin: "ran".into(),
         }
     }
 
-    /// The target is the step's own miss: the planner's fanout over the rows it read, against what it made.
+    /// The target is the measured rows out over the statistics' estimate for the rows read; a predicted target
+    /// gives back the rows out.
     #[test]
-    fn a_steps_miss_is_its_fanout_over_the_rows_it_read() {
+    fn a_steps_target_is_its_measured_rows_over_the_estimate() {
         let s = step(10.0, 100.0, 999.0);
         assert!((s.target() - (1000.0f64 / 1001.0).ln()).abs() < 1e-12);
         let none = step(4877.0, 10.0, 0.0);
-        assert!((none.target() + 48_771f64.ln()).abs() < 1e-9, "made nothing, planned the relation a key");
+        assert!((none.target() + 48_771f64.ln()).abs() < 1e-9, "made nothing, estimated the relation a key");
+        assert!((s.out_of(s.target()) - 999.0).abs() < 1e-9);
+        assert_eq!(none.out_of(-30.0), 0.0);
     }
 
-    /// A correction that predicts each miss makes the comparison's model exact; none leaves the planner's.
+    /// Predicting each step's target makes the comparison's model exact; predicting none leaves the statistics' misses.
     #[test]
     fn the_comparison_weighs_misses_by_work() {
         let held = [step(1.0, 1000.0, 99_999.0), step(1.0, 10.0, 10.0)];
@@ -279,16 +326,16 @@ mod tests {
         assert!(!compared(&held, &[0.0, 0.0], 8).model_wins());
     }
 
-    /// The forest learns a miss that follows the step's basis: "postings" 30× over, "observed" right.
+    /// The forest learns a fanout that follows the relation read, where the planner priced both alike.
     #[cfg(target_os = "macos")]
     #[test]
-    fn the_model_learns_a_basis_that_overestimates() {
+    fn the_model_learns_a_relations_fanout() {
         let samples: Vec<StepSample> = (0..600)
             .map(|i| {
-                let observed = i % 2 == 0;
+                let wide = i % 2 == 0;
                 let n = 100.0 + (i % 17) as f64 * 50.0;
-                let mut s = step(30.0, n, if observed { 30.0 * n } else { n });
-                s.basis = if observed { "observed" } else { "postings" }.into();
+                let mut s = step(1.0, n, if wide { 30.0 * n } else { n / 30.0 });
+                s.relation = if wide { "calls" } else { "defines" }.into();
                 s
             })
             .collect();

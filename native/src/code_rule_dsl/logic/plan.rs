@@ -2872,19 +2872,27 @@ impl Model {
         if note.is_none() && !joins::pricing() {
             return got;
         }
-        let mut candidates = vec![joins::Candidate { order: got.0.0.clone(), est: got.0.1 }];
-        candidates.extend(alternatives.into_iter().map(|(order, est)| joins::Candidate { order, est }));
+        let mut candidates = vec![joins::Candidate { order: got.0.0.clone(), est: got.0.1, steps: Vec::new() }];
+        candidates.extend(alternatives.into_iter().map(|(order, est)| joins::Candidate { order, est, steps: Vec::new() }));
         if let Some(n) = &note {
             for (o, _) in &n.proposals {
                 if let Ok(((order, est, _), _)) = self.plan_inner(pf, b, first, Some(&joins::unstored(o)), false)
                     && self.valid_live_driver(&order, b, first)
                 {
-                    candidates.push(joins::Candidate { order, est });
+                    candidates.push(joins::Candidate { order, est, steps: Vec::new() });
                 }
             }
         }
         let mut seen: Vec<Vec<Step>> = Vec::new();
         candidates.retain(|c| if seen.contains(&c.order) { false } else { seen.push(c.order.clone()); true });
+        // Decision 0354: with a batch pricer (the learned join model), each candidate's steps as its features.
+        if joins::pricing() {
+            for c in &mut candidates {
+                if let Some(x) = self.explain_order(pf, b, first, &c.order) {
+                    c.steps = step_samples(self, b, &c.order, &x, None, first.is_none(), "model").unwrap_or_default();
+                }
+            }
+        }
         let mut choice = joins::Choice { key, candidates, chosen: 0, why: "" };
         if let Some(round) = round {
             round.push(choice);
@@ -6219,12 +6227,21 @@ fn text_test_defined(vs: &body::Versions, rules: &[body::RuleKey], input: &str) 
 
 /// Decision 0354: the samples of `order`'s steps after its first, from its plan record `x` and the counts it ran with
 /// (`None` where the record is not of this order). A step's bound key is its relation's most distinct values among
-/// the columns bound when it reads.
-fn step_samples(model: &Model, b: &Body<'_>, order: &[Step], x: &super::profile::RulePlan, counts: &[(u64, u64)], seed: bool, origin: &str) -> Option<Vec<super::costs::join_steps::StepSample>> {
+/// the columns bound when it reads. Without `counts`, each step's features for a prediction (the model's choice):
+/// every step after the first, its rows in and out the statistics'.
+fn step_samples(model: &Model, b: &Body<'_>, order: &[Step], x: &super::profile::RulePlan, counts: Option<&[(u64, u64)]>, seed: bool, origin: &str) -> Option<Vec<super::costs::join_steps::StepSample>> {
     use super::costs::join_steps::{StepSample, bound_columns, category};
-    if x.steps.len() != order.len() || counts.len() != order.len() {
+    if x.steps.len() != order.len() || counts.is_some_and(|c| c.len() != order.len()) {
         return None;
     }
+    let planned: Vec<(u64, u64)>;
+    let (counts, predicting) = match counts {
+        Some(c) => (c, false),
+        None => {
+            planned = (0..order.len()).map(|i| ((if i == 0 { 1.0 } else { x.steps[i - 1].rows }).max(0.0) as u64, x.steps[i].rows.max(0.0) as u64)).collect();
+            (&planned[..], true)
+        }
+    };
     let rule = b.observed_key();
     let mut bound = VarSet::new();
     let mut out = Vec::new();
@@ -6234,15 +6251,13 @@ fn step_samples(model: &Model, b: &Body<'_>, order: &[Step], x: &super::profile:
             return None;
         }
         let before = if i == 0 { 1.0 } else { x.steps[i - 1].rows };
-        if i > 0 && n_in > 0 && before > 0.0 {
+        if i > 0 && (predicting || n_in > 0) && before > 0.0 {
             let rel = b.atom(at).map(|a| b.rel(a));
-            let key_ndv = rel.map_or(0.0, |r| {
-                let args = b.args(at);
-                (0..args.len())
-                    .filter(|&c| b.constant(args[c]).is_some() || matches!(args[c], TermRef::Var(v) if bound.contains(v)))
-                    .filter_map(|c| model.ndv.at(&r, c).copied())
-                    .fold(0.0, f64::max)
-            });
+            let args = if rel.is_some() { b.args(at) } else { &[] };
+            let bound_cols: Vec<usize> = (0..args.len()).filter(|&c| b.constant(args[c]).is_some() || matches!(args[c], TermRef::Var(v) if bound.contains(v))).collect();
+            let key_ndv = rel.map_or(0.0, |r| bound_cols.iter().filter_map(|&c| model.ndv.at(&r, c).copied()).fold(0.0, f64::max));
+            // The relation's name, as the literal shows it: the words before its arguments.
+            let relation = if rel.is_some() { s.literal.trim_start_matches(['!', ' ']).split('(').next().unwrap_or("").trim().to_owned() } else { String::new() };
             out.push(StepSample {
                 basis: category(&s.basis, 4),
                 access: category(&s.access, 1),
@@ -6257,7 +6272,10 @@ fn step_samples(model: &Model, b: &Body<'_>, order: &[Step], x: &super::profile:
                 seed,
                 literal: format!("{rule:x}:{at}"),
                 key_ndv,
-                actual_in: n_in as f64,
+                relation,
+                bound_mask: bound_cols.iter().filter(|&&c| c < 64).fold(0, |m, &c| m | 1 << c),
+                cols: args.len() as u32,
+                actual_in: if predicting { before } else { n_in as f64 },
                 actual_out: n_out as f64,
                 origin: origin.to_owned(),
             });
@@ -8921,7 +8939,7 @@ impl<'a> Run<'a, '_> {
                         if !run.cut
                             && super::costs::join_steps::enabled()
                             && let Some(x) = self.model.explain_order(pf, &b, first, o)
-                            && let Some(steps) = step_samples(&self.model, &b, o, &x, &run.steps, false, "trial")
+                            && let Some(steps) = step_samples(&self.model, &b, o, &x, Some(&run.steps), false, "trial")
                         {
                             super::costs::join_steps::submit(steps);
                         }
@@ -9113,7 +9131,7 @@ impl<'a> Run<'a, '_> {
                     match earlier.get(line).filter(|e| !e.is_empty()) {
                         None => {
                             if let Some(Some(x)) = explained.get(line).map(|e| e.2.as_ref())
-                                && let Some(mut steps) = step_samples(&self.model, b, order, x, c, seed, "ran")
+                                && let Some(mut steps) = step_samples(&self.model, b, order, x, Some(c), seed, if joins::pricing() { "model" } else { "ran" })
                             {
                                 sampled.append(&mut steps);
                             }
@@ -9121,7 +9139,7 @@ impl<'a> Run<'a, '_> {
                         Some(e) => {
                             for (o, counts) in e.iter().map(|(o, n)| (o.as_slice(), n.as_slice())).chain(std::iter::once((order, c.as_slice()))) {
                                 if let Some(x) = self.model.explain_order(pf, b, first, o)
-                                    && let Some(mut steps) = step_samples(&self.model, b, o, &x, counts, seed, "replaced")
+                                    && let Some(mut steps) = step_samples(&self.model, b, o, &x, Some(counts), seed, "replaced")
                                 {
                                     sampled.append(&mut steps);
                                 }

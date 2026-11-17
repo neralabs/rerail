@@ -1656,8 +1656,13 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   newest fifth. hogql: weighted miss ×1.65 to ×1.42, median ×1.02 to ×1.04 (the gate wants no worse a median).
 - **Across corpora done** (0354, second part): trained on corpus0 and asked on hogql ×1.93 to ×1.83, the other way
   ×1.81 to ×1.64; median worse (×1.05, ×1.08). Membership tests and the orders not kept are where it is weakest.
-- **Next**: the offline generator of unkept orders' steps over captured components; the first step's samples
-  (delta and seed sizes); one sample per line and place with counts. Then step 2.
+- **Labels from runs, runs the model plans** (the user: "the training data should be from model runs, not from the
+  planner"): the target stays a ratio to the statistics' estimate (the fanout itself lost: ×2.18 against ×1.87);
+  `RERAIL_JOIN_MODEL=1` trains at start and prices every searched line's candidates, exploring a tenth. hogql:
+  1.412 G rows of work to 1.368 G; same findings on corpus0. Replaces the offline generator.
+- **Next**: model-planned runs over more corpora, the model retrained between; filters (×1.58 to ×1.70) and
+  the median; the first step's samples (delta and seed sizes); one sample per line and place with counts. Then the
+  model on by default where it wins, and step 2.
 - **Found along the way**: `facts_only::every_table_is_facts_or_listed` and `every_kept_map_is_state_or_listed` fail
   on HEAD, on tables and maps the hub's merges brought (`frame_segments`, `object_segments`, `OWN_TEXTS`, setfix
   rows' `OPEN`, `CARRY`, `DECODED`, the record's `KINDS` and `LOG`): each to be listed, with a reason, by the branch

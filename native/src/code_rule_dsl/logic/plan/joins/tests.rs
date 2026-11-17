@@ -80,7 +80,7 @@ fn a_choice_is_corrected_by_what_its_order_measured_and_rounds_choose_together()
     let _serial = SERIAL.lock();
     clear();
     let order = |at: &[usize]| at.iter().map(|&a| Step { at: a, mode: None }).collect::<Vec<_>>();
-    let candidates = vec![Candidate { order: order(&[0, 1]), est: 100.0 }, Candidate { order: order(&[1, 0]), est: 300.0 }];
+    let candidates = vec![Candidate { order: order(&[0, 1]), est: 100.0, steps: Vec::new() }, Candidate { order: order(&[1, 0]), est: 300.0, steps: Vec::new() }];
     // Not noted: the search's best.
     let mut round = vec![Choice { key: 200, candidates: candidates.clone(), chosen: 9, why: "" }];
     choose(&mut round);
@@ -104,9 +104,9 @@ fn a_noted_line_explores_untried_orders_within_the_margin() {
     let order = |at: &[usize]| at.iter().map(|&a| Step { at: a, mode: None }).collect::<Vec<_>>();
     critical(&["s".into()], &[vec![]], &[LineRun { stratum: "s".into(), key: 300, rule: 1, order: steps(&order(&[0, 1, 2])), work: 1e6, est: 1e6, ..Default::default() }]);
     let candidates = vec![
-        Candidate { order: order(&[0, 1, 2]), est: 100.0 },
-        Candidate { order: order(&[1, 0, 2]), est: 150.0 },
-        Candidate { order: order(&[2, 1, 0]), est: 10_000.0 },
+        Candidate { order: order(&[0, 1, 2]), est: 100.0, steps: Vec::new() },
+        Candidate { order: order(&[1, 0, 2]), est: 150.0, steps: Vec::new() },
+        Candidate { order: order(&[2, 1, 0]), est: 10_000.0, steps: Vec::new() },
     ];
     let mut explored = [0usize; 3];
     for _ in 0..400 {
@@ -148,7 +148,7 @@ fn walked_orders_are_costed_against_the_walked_order_that_ran() {
     let order = |at: &[usize]| at.iter().map(|&a| Step { at: a, mode: None }).collect::<Vec<_>>();
     // The order that ran measured twice its price; the other is priced ten times higher.
     critical(&["s".into()], &[vec![]], &[LineRun { stratum: "s".into(), key: 210, rule: 1, order: steps(&order(&[0, 1])), work: 2e5, est: 1e5, ..Default::default() }]);
-    let candidates = vec![Candidate { order: order(&[0, 1]), est: 100.0 }, Candidate { order: order(&[1, 0]), est: 1000.0 }];
+    let candidates = vec![Candidate { order: order(&[0, 1]), est: 100.0, steps: Vec::new() }, Candidate { order: order(&[1, 0]), est: 1000.0, steps: Vec::new() }];
     let mut round = vec![Choice { key: 210, candidates: candidates.clone(), chosen: 9, why: "" }];
     choose(&mut round);
     assert_eq!(round[0].chosen, 0, "priced: {}", round[0].why);
@@ -293,7 +293,7 @@ fn a_slow_lines_measure_outlives_its_exact_statistics() {
     let tried = note(&700).unwrap().tried;
     assert!(tried.iter().any(|t| t.order == steps(&ran) && (t.ratio - 255.0).abs() < 1e-9), "its order's measure is kept: {tried:?}");
     // The search's best is the order it ran, at its price; the next order is priced 12 times it, under its measure.
-    let mut round = [Choice { key: 700, candidates: vec![Candidate { order: ran.clone(), est: 400.0 }, Candidate { order: other.clone(), est: 5_000.0 }], chosen: 0, why: "" }];
+    let mut round = [Choice { key: 700, candidates: vec![Candidate { order: ran.clone(), est: 400.0, steps: Vec::new() }, Candidate { order: other.clone(), est: 5_000.0, steps: Vec::new() }], chosen: 0, why: "" }];
     choose(&mut round);
     assert_eq!(round[0].chosen, 1, "the order it ran is priced at its measure");
     // At its check, planned again into the order it runs: a runner-up priced under that order's measure for the rows
@@ -346,7 +346,7 @@ fn a_trial_cut_at_its_budget_never_makes_its_order_look_cheaper_than_priced() {
     // twice the good order's work.
     put_trial(300, 1, &good, 300.0, 100.0, false);
     put_trial(300, 1, &cross, 600.0, 1e6, true);
-    let mut round = vec![Choice { key: 300, candidates: vec![Candidate { order: good.clone(), est: 16_000.0 }, Candidate { order: cross.clone(), est: 2.7e7 }], chosen: 0, why: "" }];
+    let mut round = vec![Choice { key: 300, candidates: vec![Candidate { order: good.clone(), est: 16_000.0, steps: Vec::new() }, Candidate { order: cross.clone(), est: 2.7e7, steps: Vec::new() }], chosen: 0, why: "" }];
     choose(&mut round);
     assert_eq!(round[0].chosen, 0, "the order that ran to its end, measured 3x its price, over one cut short: {}", round[0].why);
     let n = note(&300).unwrap();
@@ -374,7 +374,7 @@ fn a_cut_trial_is_a_floor_of_its_ratio() {
     let n = note(&501).unwrap();
     assert!(n.tried.iter().all(|t| t.order != steps(&dear)), "a floor under the price is not a measure: {:?}", n.tried);
     // The line's choice over its rows left, priced a hundred times apart.
-    let mut round = vec![Choice { key: 501, candidates: vec![Candidate { order: cheap.clone(), est: 10_000.0 }, Candidate { order: dear.clone(), est: 1_000_000.0 }], chosen: 0, why: "" }];
+    let mut round = vec![Choice { key: 501, candidates: vec![Candidate { order: cheap.clone(), est: 10_000.0, steps: Vec::new() }, Candidate { order: dear.clone(), est: 1_000_000.0, steps: Vec::new() }], chosen: 0, why: "" }];
     choose(&mut round);
     assert_eq!(round[0].chosen, 0, "the dear order is not made the least by its cut trial");
     // An order measured under its price is not pulled up by a cut trial under its price.

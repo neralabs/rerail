@@ -260,6 +260,19 @@ fn read() {
     if !path.exists() {
         return;
     }
+    // Decision 0354: the join model trains on a thread of its own: the run waits for this read, not for it.
+    #[cfg(target_os = "macos")]
+    if join_steps::model_wanted() {
+        let p = path.clone();
+        let _ = rerail_accel::exec::service("rerail-join-model", None, move || {
+            crate::code_rule_dsl::logic::profile::behind_the_run();
+            rerail_accel::cost_model::set_qos(rerail_accel::cost_model::Qos::Utility);
+            match rusqlite::Connection::open_with_flags(&p, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
+                Ok(db) => join_steps::install_model(&db, &machine()),
+                Err(e) => eprintln!("rerail: join model: steps not read from {}: {e}", p.display()),
+            }
+        });
+    }
     let r = (|| -> rusqlite::Result<(Vec<rerail_accel::score::Sample>, Option<(i64, f64)>)> {
         let db = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         if let Err(e) = sql_plans::read(&db, &machine(), rerail_accel::exec::threads() as i64) {
@@ -691,9 +704,9 @@ pub mod tests {
         eprintln!("model wins: {}", c.model_wins());
     }
 
-    /// Decision 0354, step 1 (the shadow): the join steps' learned correction against the planner's estimates, on
-    /// this machine's steps in the store at `RERAIL_COSTS` (read only): trained on all but the newest fifth, compared
-    /// on it. Prints the comparison, and the held-out steps' misses by basis; asserts nothing about who wins.
+    /// Decision 0354 (the shadow): the join steps' learned fanouts against the planner's estimates, on this
+    /// machine's steps in the store at `RERAIL_COSTS` (read only): trained on all but the newest fifth (or run, with
+    /// `COSTS_HOLD=run`), compared on it. Prints the comparison, and the held-out steps' misses by basis; asserts nothing about who wins.
     #[test]
     #[ignore = "reads the cost store: RERAIL_COSTS=<costs.sqlite> --ignored --nocapture"]
     fn the_join_model_against_the_planners_estimates() {
@@ -713,12 +726,13 @@ pub mod tests {
             let all: Vec<_> = read.into_iter().map(|r| r.1).collect();
             (all[..cut].to_vec(), all[cut..].to_vec())
         };
-        // `COSTS_DROP=literal,key_ndv`: those features blanked, to measure what each adds.
+        // `COSTS_DROP=prior,relation,key_ndv`: those features blanked, to measure what each adds.
         let drop = std::env::var("COSTS_DROP").unwrap_or_default();
         let blank = |mut v: Vec<rerail_accel::join_model::StepSample>| {
             for s in &mut v {
-                if drop.contains("literal") { s.literal.clear(); }
+                if drop.contains("relation") { s.relation.clear(); }
                 if drop.contains("key_ndv") { s.key_ndv = 0.0; }
+                if drop.contains("prior") { s.basis.clear(); }
             }
             v
         };
@@ -735,7 +749,7 @@ pub mod tests {
         for s in held {
             let e = by.entry(s.basis.as_str()).or_default();
             e.0.push(s.clone());
-            e.1.push(model.correction(s).unwrap());
+            e.1.push(model.fanout(s).unwrap());
         }
         for (basis, (ss, cs)) in by {
             let c = rerail_accel::join_model::compared(&ss, &cs, 0);
@@ -747,7 +761,7 @@ pub mod tests {
             for s in held {
                 let e = by.entry(key(s)).or_default();
                 e.0.push(s.clone());
-                e.1.push(model.correction(s).unwrap());
+                e.1.push(model.fanout(s).unwrap());
             }
             for (k, (ss, cs)) in by {
                 let c = rerail_accel::join_model::compared(&ss, &cs, 0);

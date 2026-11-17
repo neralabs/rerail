@@ -547,11 +547,13 @@ pub(super) fn greedy_limit(run: usize, wide: bool) -> usize {
     if wide { WIDE_GREEDY.max(run) } else { run }
 }
 
-/// An order a choice weighs, at its price now.
+/// An order a choice weighs, at its price now; with a batch pricer, its steps' features (decision 0354: each step
+/// after the first, its rows in and out the statistics'; empty where they could not be read).
 #[derive(Clone, Debug)]
 pub struct Candidate {
     pub order: Vec<Step>,
     pub est: f64,
+    pub steps: Vec<rerail_accel::join_model::StepSample>,
 }
 
 /// One line's choice in a round: its candidates (the search's best first), and what was chosen.
@@ -654,6 +656,18 @@ pub fn choose(round: &mut [Choice]) {
             c.chosen = best;
             c.why = if note.is_some() { "corrected by what its orders measured" } else { "the batch prediction's least" };
             COUNTS[CORRECTED].fetch_add(1, Relaxed);
+        }
+        // Decision 0354: where the learned model chose, a share of its choices take another candidate within the
+        // margin, so that the steps it learns from are not only the orders it picks.
+        if note.is_none() && predicted.is_some() {
+            let near: Vec<usize> = (0..costs.len()).filter(|&i| i != best && costs[i] <= margin() * costs[best].max(1.0)).collect();
+            let mut rng = Rng::new(c.key as u64 ^ 0x6a6f_696e);
+            if !near.is_empty() && rng.unit() < explore_rate() {
+                c.chosen = near[rng.below(near.len())];
+                c.why = "explored: a candidate within the margin of the model's least";
+                COUNTS[EXPLORED].fetch_add(1, Relaxed);
+            }
+            continue;
         }
         let Some(n) = note else { continue };
         if n.critical < critical_share() && n.slow == 0 {

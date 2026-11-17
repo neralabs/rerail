@@ -93,6 +93,52 @@ it is wrong?
   the orders it would choose instead: what step 3 needs. A cold run gives few of them: 1,482 replaced steps of
   341,091, and 8 to 10 trial steps (trials run on a previous run's critical path, decision 0274).
 
+## Labels from runs, and runs the model plans (2026-11-17)
+
+The user: "the training data should be from model runs, not from the planner", and "would it be better to predict
+the ratio rather than the absolute value?". Agreed reading: (1) the label is what a run measured, and (2) the data
+comes from runs whose orders the model chose, with exploration, not only from the planner's choices.
+
+**The target.** Tried, across corpora (trained on one, asked on the other, weighted miss; planner / model):
+
+| target | features | asked on hogql | asked on corpus0 |
+|---|---|---|---|
+| measured fanout, ln((out + 1) / (in + 1)) | data only: relation, bound columns and mask, columns, rows, key distinct values, rows per key, solving, seed | ×1.87 / ×2.18 | ×1.82 / ×2.10 |
+| measured fanout | the same and the statistics' estimate (the prior) | ×1.90 / ×2.00 | ×1.88 / ×1.88 |
+| measured over the statistics' estimate | the same | ×1.86 / ×1.87 | ×1.83 / ×1.83 |
+| measured over the statistics' estimate | the first ratio model's (basis, place, rows in, …) | ×1.93 / ×1.83 | ×1.81 / ×1.64 |
+
+The fanout itself loses: a forest predicts piecewise constants, and with the estimate as a feature it still could
+not follow it across six orders of magnitude (kind-frequency steps ×14, where the statistics missed by ×4.5). The
+ratio to the statistics' estimate is the target: the label still the run's measure, the estimate (a constant's
+frequency, a key's postings) what the model corrects. The step's place and its estimated rows in carry most of the
+first model's lead; the data features are kept with them (`STEP_FEATURES`).
+
+**Runs the model plans** (`RERAIL_JOIN_MODEL=1`). The cost statistics' read starts a thread that trains the model on
+the machine's stored steps (200,000 in 2.4 to 3.8 s; none under 10,000) and sets it as the batch pricer
+(`joins::set_pricer`); until then the planner's estimates choose. With a pricer each searched line's candidates
+carry their steps' features (`Candidate::steps`, from each order's plan record), and the pricer scales the planner's
+price by the rows the model predicts over the statistics' (`join_steps::model_price`: each step's rows the step
+before's times its corrected fanout). Of the model's choices, `explore_rate` (0.1) take another candidate within the
+margin, so the steps it learns from are not only its picks. Its samples are kept as origin `model`.
+
+One store, in turn (m3, cold, profiled): corpus0 and hogql planned by the planner, hogql planned by the model,
+hogql by the planner again.
+
+| hogql | rows of work | strata CPU | load |
+|---|---|---|---|
+| the planner | 1.412 G | 130.9 s | 22 |
+| the model | 1.368 G (−3.1%) | 155.6 s | 39 |
+| the planner again | 1.412 G | 153.5 s | 78 |
+
+The CPU is the host's load, not the plans (the planner's two runs differ by 23 s). The model's run made 1,483 choices
+other than the search's best, and explored 614. With its own run's 382,585 steps in training, asked on the
+planner's last run: weighted ×1.88 to ×1.76, rms ×3.60 to ×2.31, median ×1.02 to ×1.08; membership tests ×4.42 to
+×2.10 (median ×2.00 to ×1.41), kind frequency ×5.82 to ×3.81, postings ×2.47 to ×1.60; filters ×1.58 to ×1.70.
+
+Findings: corpus0 planned twice by the planner and twice by the model (other exploration seeds) gives the same 660
+relations and 30,449 rows, byte for byte (`rerail-engine csv`).
+
 ## Not done
 
 - **Samples of orders not kept, made on purpose**: an offline generator running each line's other orders over the
