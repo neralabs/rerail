@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, type BigIntStats } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, type BigIntStats } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { replaceFileSync } from "../file-replace.js";
@@ -11,7 +11,8 @@ import { loadNativeBinding, type NativeExclusiveFileLock } from "./native.js";
  * the OS drops it however the process ends, so a held lock means a daemon runs in the home whether or not `daemon.json`
  * names it. The holder records its pid beside the lock (`locks/daemon.json`), since Windows' `LockFileEx` keeps other
  * processes from reading a locked file. The record names the holder in a message, and tells a start or a stop whether
- * the lock is worth asking, which loads the engine; the lock alone says whether a daemon holds the home.
+ * the lock is worth asking, which loads the engine on macOS and Linux; the lock alone says whether a daemon holds the
+ * home.
  */
 const LOCK_FILE = "daemon.lock";
 const HOLDER_FILE = "daemon.json";
@@ -171,13 +172,42 @@ function recordHolder(home: string): void {
 }
 
 /**
- * Whether a daemon holds `home`, asked by taking its lock and giving it straight back. False where there is no lock
- * file, which is left unmade; undefined when the lock cannot be asked (the native binding does not load, or the lock
- * file does not open), for the caller to go on as if none did.
+ * Whether a daemon holds `home`. False where there is no lock file, which is left unmade; undefined when the lock cannot
+ * be asked (the native binding does not load, or the lock file does not open), for the caller to go on as if none did.
+ * On Windows the lock file is read ({@link lockedAgainstReading}), which loads no engine: a hook, and the uninstall's
+ * stop before it removes `versions/`, ask it, and Windows keeps a loaded DLL from being deleted. Elsewhere the lock is
+ * taken and given straight back.
  */
 export function homeDaemonLockHeld(home: string): boolean | undefined {
   const path = join(home, LOCKS_DIR, LOCK_FILE);
   if (!existsSync(path)) return false;
+  return process.platform === "win32" ? lockedAgainstReading(path) : lockTaken(path);
+}
+
+/**
+ * Windows: whether another handle holds the lock on `path`. `LockFileEx` keeps every other handle from reading the range
+ * it locks, past the end of the empty file included, so a read fails with EBUSY while a daemon holds it. A file that
+ * does not open, as one another program opened without sharing it, or a read that fails otherwise, proves nothing.
+ */
+function lockedAgainstReading(path: string): boolean | undefined {
+  let fd: number;
+  try {
+    fd = openSync(path, "r");
+  } catch {
+    return undefined;
+  }
+  try {
+    readSync(fd, Buffer.alloc(1), 0, 1, 0);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EBUSY" ? true : undefined;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Whether another handle holds the lock on `path`, asked by taking it and giving it straight back; undefined if it cannot be. */
+function lockTaken(path: string): boolean | undefined {
   let lock: NativeExclusiveFileLock | null;
   try {
     lock = loadNativeBinding().tryLockExclusive(path);

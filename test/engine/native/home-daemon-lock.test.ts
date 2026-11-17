@@ -106,6 +106,22 @@ describe("the daemon lock of a Rerail home", () => {
     expect(homeDaemonHolder(home)).toBe(process.pid);
   });
 
+  // Windows keeps a loaded DLL from being deleted, and the uninstall's stop asks the lock before it removes `versions/`.
+  it.runIf(process.platform === "win32")("tells on Windows that a daemon holds the home without loading the engine", async () => {
+    const home = await temporaryHome();
+    await holdInAnotherProcess(home);
+    const asking = spawn(process.execPath, [
+      "--import", "tsx", "--input-type=module", "-e",
+      `import { homeDaemonLockHeld } from ${JSON.stringify(lockModule)};
+       process.stdout.write(String(homeDaemonLockHeld(${JSON.stringify(home)})));`,
+    ], { cwd: packageRoot, env: { ...process.env, RERAIL_ENGINE_PATH: join(home, "no-engine.node") }, stdio: ["ignore", "pipe", "pipe"] });
+    children.push(asking);
+    let answer = "";
+    asking.stdout.setEncoding("utf8").on("data", (chunk: string) => { answer += chunk; });
+    await once(asking, "exit");
+    expect(answer).toBe("true");
+  }, 30_000);
+
   it("goes on without the lock when its file does not open, as where the engine does not load", async () => {
     const home = await temporaryHome();
     // A folder where the lock file goes: opening it fails on every platform, for any user.
