@@ -1,9 +1,10 @@
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { performance } from "node:perf_hooks";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import { adoptRemote, linkAlias, pruneCheckouts, recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 import {
@@ -161,20 +162,85 @@ describe("the start mark", () => {
     expect({ stuck: existsSync(join(answers(db), STUCK_MARK)), holds: startMarkHolds(db.$client.name, found) }).toEqual({ stuck: false, holds: true });
   });
 
-  it.runIf(process.platform === "win32")("writes the stuck mark where another program holds the mark open sharing nothing, so no kept mark holds", { timeout: 30_000 }, async () => {
+  it.runIf(process.platform === "win32")("writes the stuck mark at once where another program holds the mark open sharing nothing, so no kept mark holds, and renews the mark once the program lets it go", { timeout: 30_000 }, async () => {
     const root = await temporary();
     const db = database(root);
     renewStartMark(db);
     const found = markOf(db)!;
     const end = await heldSharingNothing(join(answers(db), START_MARK));
+    let took: number;
     try {
+      const begun = performance.now();
       renewStartMark(db);
+      took = performance.now() - begun;
       expect({ stuck: existsSync(join(answers(db), STUCK_MARK)), holds: startMarkHolds(db.$client.name, found) }).toEqual({ stuck: true, holds: false });
     } finally {
       await end();
     }
+    // A wait here holds the writer, and where the writer is the daemon every hook asking it: 2.2 s before.
+    expect(took).toBeLessThan(500);
+    await vi.waitFor(() => expect(existsSync(join(answers(db), STUCK_MARK))).toBe(false), { timeout: 5_000, interval: 50 });
+    expect({ renewed: markOf(db) !== found, holds: startMarkHolds(db.$client.name, markOf(db)!) }).toEqual({ renewed: true, holds: true });
+  });
+
+  it("tries a renewal it could not make again later, without waiting for it, and the stuck mark goes once one succeeds", async () => {
+    const root = await temporary();
+    const db = database(root);
+    renewStartMark(db);
+    rmSync(join(answers(db), START_MARK));
+    // A folder with a file in it at the mark's name: no rename replaces it, and none waits for it.
+    mkdirSync(join(answers(db), START_MARK, "held"), { recursive: true });
+    renewStartMark(db);
+    expect(existsSync(join(answers(db), STUCK_MARK))).toBe(true);
+    removeFolderSync(join(answers(db), START_MARK));
+    await vi.waitFor(() => expect(existsSync(join(answers(db), STUCK_MARK))).toBe(false), { timeout: 5_000, interval: 50 });
+    expect(startMarkHolds(db.$client.name, markOf(db)!)).toBe(true);
+  });
+
+  it("does not hold where the folder takes no new file, so that neither a renewal nor its stuck mark can be written", async ({ skip }) => {
+    if (!POSIX_MODES) skip(NO_POSIX_MODES);
+    if (process.getuid?.() === 0) skip("root may add files to any folder");
+    const root = await temporary();
+    const db = database(root);
+    renewStartMark(db);
+    const found = markOf(db)!;
+    chmodSync(answers(db), 0o500);
+    try {
+      renewStartMark(db);
+      expect({ mark: markOf(db), stuck: existsSync(join(answers(db), STUCK_MARK)), holds: startMarkHolds(db.$client.name, found) })
+        .toEqual({ mark: found, stuck: false, holds: false });
+    } finally {
+      chmodSync(answers(db), 0o700);
+    }
+    expect(startMarkHolds(db.$client.name, found)).toBe(true);
+  });
+
+  it.each(writers)("is renewed only once $what has committed, never inside its transaction", async ({ write }) => {
+    const root = await temporary();
+    const db = database(root);
+    const app = gitRepository(join(root, "app"));
+    recordCheckout(db, app);
+    const watched = transactionAtEachRenewal(db);
+    write(watched.db, app, root);
+    expect({ renewed: watched.inTransaction.length > 0, inside: watched.inTransaction.filter(Boolean).length }).toEqual({ renewed: true, inside: 0 });
   });
 });
+
+/**
+ * `db` with each look at its connection's file name, which a renewal makes once before it writes anything, recording
+ * whether a transaction is open on it then.
+ */
+function transactionAtEachRenewal(db: RerailDatabase): { db: RerailDatabase; inTransaction: boolean[] } {
+  const inTransaction: boolean[] = [];
+  const client = new Proxy(db.$client, {
+    get(target, property) {
+      if (property === "name") inTransaction.push(target.inTransaction);
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    },
+  });
+  return { db: new Proxy(db, { get: (target, property, receiver) => (property === "$client" ? client : Reflect.get(target, property, receiver)) }), inTransaction };
+}
 
 /** Another program holding the file at `path` open and sharing nothing, until the function it gives ends it. */
 async function heldSharingNothing(path: string): Promise<() => Promise<void>> {

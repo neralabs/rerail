@@ -1226,6 +1226,14 @@ function inDatabase<T>(change: (database: ReturnType<typeof openRerailDatabase>)
   }
 }
 
+/** The device and file id of the database, its WAL and the WAL's index, or `missing` for one not there. */
+function databaseFileIds(): string {
+  return ["", "-wal", "-shm"].map(suffix => {
+    const found = lstatSync(`${defaultRerailDatabasePath()}${suffix}`, { bigint: true, throwIfNoEntry: false });
+    return found === undefined ? "missing" : `${found.dev}:${found.ino}`;
+  }).join(" ");
+}
+
 /**
  * Marks the newest schema step the Rerail database records as not run, as in a file an older build wrote last, and
  * gives its id: a read-only open by this build, which reads the file in this build's shape, runs it first over a
@@ -1882,9 +1890,11 @@ const TEST_SETUP_GIT_VARIABLES = new Set(["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYS
 /**
  * Changes after the daemon answered stopped in `<app>/src` (`app` a checkout stopped in its own record) that the hook
  * sees, each of which leaves it no answer to repeat there: it waits for the late daemon and takes its answer. A daemon
- * named by another start time (`startedAt`) is another daemon, which places every folder again.
+ * named by another start time (`startedAt`) is another daemon, which places every folder again. With `held`, a
+ * connection holds the database open from before the answer is kept until the hook has run, as the daemon does, so its
+ * WAL and the WAL's index keep their file ids through the change.
  */
-const changesSinceTheAnswer: Array<{ what: string; change: (app: string) => void; startedAt?: number }> = [
+const changesSinceTheAnswer: Array<{ what: string; change: (app: string) => void; startedAt?: number; held?: true }> = [
   { what: "the answer kept does not parse", change: app => writeFileSync(keptAnswerFile(join(app, "src")), "{") },
   {
     // Whole and right in every field but its size: a file of many megabytes there is never read whole.
@@ -1918,8 +1928,9 @@ const changesSinceTheAnswer: Array<{ what: string; change: (app: string) => void
   { what: "a .git is made in the folder", change: app => git(join(app, "src"), "init", "-q") },
   { what: "the checkout is started", change: app => inDatabase(database => setCheckoutStarted(database, recordCheckout(database, app), true)) },
   {
-    // The database says stopped again, as it did; only the start mark tells the change, which a daemon may have read.
-    what: "the checkout is started and stopped again", change: app => inDatabase(database => {
+    // The database says stopped again, as it did, and its files keep their ids (`held`): only the start mark tells the
+    // change, which a daemon may have read.
+    what: "the checkout is started and stopped again", held: true, change: app => inDatabase(database => {
       setCheckoutStarted(database, recordCheckout(database, app), true);
       setCheckoutStarted(database, recordCheckout(database, app), false);
     }),
@@ -2325,20 +2336,27 @@ describe("the hook start check", () => {
     }
   });
 
-  it.each(changesSinceTheAnswer)("waits for a late daemon where it last answered stopped, once $what", async ({ change, startedAt }) => {
+  it.each(changesSinceTheAnswer)("waits for a late daemon where it last answered stopped, once $what", async ({ change, startedAt, held }) => {
     const root = await temporaryDirectory({ started: false });
     const app = stoppedApp(root);
     mkdirSync(join(app, "src"));
-    const host = await startCheckHost();
-    await keptStopped(host, join(app, "src"));
-    change(app);
-    const daemon = await daemonAnsweringAfterProof(host, "started", { startedAt });
+    const holder = held === true ? openRerailDatabase(defaultRerailDatabasePath()) : undefined;
     try {
-      host.proofs.nextCheck();
-      expect({ started: await host.hookRerailStarted("claude-code", join(app, "src")), checked: host.proofs.found.at(-1), requests: daemon.requests, ended: daemon.ended() })
-        .toEqual({ started: true, checked: false, requests: ["/api/presentation"], ended: 0 });
+      const host = await startCheckHost();
+      await keptStopped(host, join(app, "src"));
+      const files = databaseFileIds();
+      change(app);
+      const daemon = await daemonAnsweringAfterProof(host, "started", { startedAt });
+      try {
+        host.proofs.nextCheck();
+        expect({ started: await host.hookRerailStarted("claude-code", join(app, "src")), checked: host.proofs.found.at(-1), requests: daemon.requests, ended: daemon.ended() })
+          .toEqual({ started: true, checked: false, requests: ["/api/presentation"], ended: 0 });
+        if (holder !== undefined) expect(databaseFileIds()).toBe(files);
+      } finally {
+        await daemon.close();
+      }
     } finally {
-      await daemon.close();
+      holder?.$client.close();
     }
   });
 
