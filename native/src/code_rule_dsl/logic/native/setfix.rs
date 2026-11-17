@@ -516,15 +516,21 @@ impl Rel {
         *self = fresh;
         Ok(())
     }
+    /// Whether its rows keep levels (decision 0090; the device writes them, 0311).
+    pub fn keeps_levels(&self) -> bool {
+        self.leveled
+    }
     /// Whether this is a lattice relation, and how the device folds it (`metal_join::Batch::lattice_fold`): `(code,
-    /// top, widen)`, code 0 min, 1 max, 2 flat; or why it cannot (another lattice's join is the CPU's).
+    /// top, widen)`, code 0 min, 1 max, 2 flat, 3 shortlex_min; or why it cannot (another lattice's join is the CPU's).
     pub fn device_lattice(&self) -> Option<std::result::Result<(u32, i64, Option<u32>), String>> {
         let lat = self.lat.as_ref()?;
         Some(match lat.name.as_str() {
             "min" => Ok((0, lat.lattice.top(), lat.widen)),
             "max" => Ok((1, lat.lattice.top(), lat.widen)),
             "flat" => Ok((2, lat.lattice.top(), lat.widen)),
-            other => Err(format!("the lattice {other} (the device folds min, max and flat)")),
+            // Its values are texts the component's rules make into one arena, compared there (decision 0307).
+            "shortlex_min" => Ok((3, lat.lattice.top(), lat.widen)),
+            other => Err(format!("the lattice {other} (the device folds min, max, flat and shortlex_min)")),
         })
     }
     /// A lattice relation's new rows `rows` (row-major): each key's values joined with its row's, and a key whose
@@ -729,6 +735,16 @@ impl Rel {
         let data = &self.data;
         self.pending.reserve(n, |&i| hash_vals(data.row(i, k).iter().copied()));
     }
+    /// A row of the device's fixpoint (decision 0311): pushed, or folded into its lattice, a new row's level
+    /// `lbase + round + 1`, as the CPU's `lbase + wave + 1` (its seeds' wave is 1, the device's first round).
+    fn push_leveled(&mut self, row: &[i64], round: u32) -> bool {
+        let before = self.n;
+        let any = if self.lat.is_some() { self.fold(row) } else { self.push(row) };
+        if self.n > before && self.leveled && self.level.len() == self.n {
+            *self.level.last_mut().expect("a level pushed") = self.lbase + round + 1;
+        }
+        any
+    }
     /// Adds a row (of the next wave, its delta) unless it is there.
     fn push(&mut self, row: &[i64]) -> bool {
         // A dead row derived again is a new row (its old id stays dead).
@@ -924,7 +940,9 @@ impl Cands<'_> {
 /// 0187: the writer records what it knows), so `settle` sorts only the stretches out of order and merges the rest.
 /// `lost`: rows came that were not checked so (`add`), or so many breaks that the whole batch is sorted.
 #[derive(Clone, Default)]
-pub struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize, breaks: Vec<u32>, lost: bool }
+/// `levels`: per row, the device fixpoint's round that made it (decision 0311), where its relation keeps levels; else
+/// empty.
+pub struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize, breaks: Vec<u32>, lost: bool, levels: Vec<u32> }
 
 /// The shortest stretch of a wave's batch taken as in order (`Fresh::settle`): shorter ones are sorted with their
 /// neighbours, as merging them costs about what sorting them does.
@@ -939,6 +957,12 @@ pub static DERIVATIONS: std::sync::Mutex<std::collections::BTreeMap<String, (u64
 impl Fresh {
     /// A row in no known order (its batch is sorted whole).
     pub fn add(&mut self, row: &[i64]) { self.data.extend_from_slice(row); self.n += 1; self.lost = true; }
+    /// A row of the device's fixpoint and the round that made it (decision 0311: its level, above the run's base).
+    pub fn add_leveled(&mut self, row: &[i64], round: u32) {
+        debug_assert_eq!(self.levels.len(), self.n, "a leveled row among unleveled ones");
+        self.add(row);
+        self.levels.push(round);
+    }
     /// A row a rule derived for `rel`: kept unchecked, the rows past `settled` checked a batch at a time. Whether it
     /// comes before the last one in `rel`'s first order is noted (`breaks`): one comparison of two rows at hand.
     #[inline]
@@ -1561,17 +1585,20 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
             // A recursive one folds each round on the device (`device::fixpoint`); a lattice it has no fold for
             // stays on the CPU. Seeds alone fold as the store takes the rows.
             Some(format!("a recursive component over {why}"))
-        } else if recursive && (leveled || !levels.lines.is_empty()) {
-            Some("a recursive component that keeps levels (its maintenance runs on the CPU)".to_owned())
+        } else if recursive && !levels.lines.is_empty() {
+            // Levels the device makes (decision 0311: each row's round); a levels line's checks are the CPU's.
+            Some("a recursive component with levels lines (its maintenance runs on the CPU)".to_owned())
         } else if recursive && probes.iter().any(|p| p.delta != SEED && matches!(p.body, Body::Sql(_))) {
             Some("a recursive component with a SQL probe".to_owned())
         } else {
             None
         };
+        // A shortlex_min relation's value column holds the texts its rules make (decision 0307): read as texts.
+        let own_texts: Vec<(usize, usize)> = rels.iter().enumerate().filter(|(_, r)| matches!(r.device_lattice(), Some(Ok((3, ..))))).map(|(i, r)| (i, r.k - 1)).collect();
         let plans = match refused {
             Some(r) => Err(r),
             None => seed_specs.iter().map(|(pi, js)| (*pi, js.to_text())).chain(delta_specs.iter().cloned()).map(|(pi, text)| match &probes[pi].body {
-                Body::Join(j) => dev.compile_join(j, &text).map(|p| (pi, p)),
+                Body::Join(j) => dev.compile_join(j, &text, &own_texts).map(|p| (pi, p)),
                 Body::Sql(_) => Err("a SQL seed".to_owned()),
                 Body::Unplanned => Err("a probe not planned yet".to_owned()),
             }).collect::<std::result::Result<Vec<_>, String>>(),
@@ -1966,7 +1993,16 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                         per[*pi].0 += wall / plans.len() as f64;
                         per[*pi].2 += cpu / plans.len() as f64;
                     }
-                    for (f, d) in fresh.iter_mut().zip(dev_fresh) {
+                    for (r, (f, d)) in fresh.iter_mut().zip(dev_fresh).enumerate() {
+                        // Rows with their rounds (a relation that keeps levels, decision 0311): each at its level.
+                        if !d.levels.is_empty() {
+                            let rel = &mut store.rels[r];
+                            let k = rel.k;
+                            for (i, &round) in d.levels.iter().enumerate() {
+                                rel.push_leveled(&d.data[i * k..(i + 1) * k], round);
+                            }
+                            continue;
+                        }
                         f.data.extend_from_slice(&d.data);
                         f.n += d.n;
                         // The device's rows, in no order known here.
@@ -3170,7 +3206,11 @@ impl Csr {
     /// this is its first probe.
     fn runs<'a>(&'a self, rel: &'a InRel) -> Option<&'a Index> {
         match self.ordered {
-            Some(printed) => Some(self.order.get_or_init(|| {
+            // Made outside the lock and published by `set`: its sort is parallel, and a pool thread waiting in it
+            // takes other jobs, among them a probe of this index. Blocking that probe on the lock (`get_or_init`)
+            // left the thread waiting on itself. A probe that finds no order makes its own; the first one set is kept.
+            Some(_) if let Some(order) = self.order.get() => Some(order),
+            Some(printed) => Some({
                 let _index = crate::code_rule_dsl::logic::profile::span(|| "probe: order of a derived input".into());
                 let c0 = thread_cpu();
                 charge(Unit::IndexEntry, rel.len() as u64);
@@ -3181,8 +3221,9 @@ impl Csr {
                 if env_set!("RERAIL_SPIKE_INDEX") {
                     eprintln!("O125 order made took {:.3} ms rows={} cols={:?}", (thread_cpu() - c0) * 1e3, rel.len(), self.cols);
                 }
-                order
-            })),
+                let _ = self.order.set(order);
+                self.order.get().expect("set above, or by another probe")
+            }),
             None => self.chain.map(|i| &rel.chains[i]),
         }
     }

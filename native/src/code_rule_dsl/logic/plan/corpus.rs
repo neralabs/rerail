@@ -6302,6 +6302,13 @@ fn run_observed(
             let mut string_files: HashMap<i64, BTreeSet<i64>> = HashMap::new();
             if !wanted.is_empty() {
                 for (rel, source) in &text_sources {
+                    // A row kept by its string (`value_type`, a text test) names no file: it is one of the rows
+                    // being attributed, not a holder. Read as one, each value was held by itself, no file of the
+                    // chunk, and its rows were dropped (since 0174, `value` no longer names the file for a value
+                    // that is no literal string).
+                    if matches!(memo::owner(rel), memo::Owner::Text(_)) {
+                        continue;
+                    }
                     let (Some(columns), Some((_, texts))) = (super::super::sql::select::input_columns(rel), crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(r, _)| r == rel)) else { continue };
                     let have = source.columns();
                     let at = |name: &str| have.iter().position(|h| h == name);
