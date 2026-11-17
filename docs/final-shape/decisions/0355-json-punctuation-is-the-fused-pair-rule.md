@@ -1,8 +1,8 @@
-# 0354: JSON's punctuation is the fused pair rule, and its starts the lean lexer's
+# 0355: JSON's punctuation is the fused pair rule, and its starts the lean lexer's
 
 Status: decided (the user, 2026-11-17: "go ahead with 2 then 1", item 1: the token loop's cost a
 token on numbers and short strings, read against the lean lexer and `rerail-json-lean`, the
-shape differences fixed in the generator). Follows 0353.
+shape differences fixed in the generator). Follows 0353. (Numbered 0354 at first; 0354 was another worktree's.)
 
 ## Intro
 
@@ -42,7 +42,7 @@ bit alone (`left &= left - 1`).
 `json_tier1_by_pass`, tier 1's records pass (load 30–50; cycles move by up to 30% at this
 load):
 
-| Input | Instructions a byte, 0353 → 0354 | Cycles a byte, 0353 → 0354 |
+| Input | Instructions a byte, 0353 → 0355 | Cycles a byte, 0353 → 0355 |
 |---|---|---|
 | corpus (`jsonexamples`) | 20.26 → 16.64 | 4.84 → 4.11 |
 | numbers (`1234,`) | 43.07 → 28.49 | 8.86 → 4.79 |

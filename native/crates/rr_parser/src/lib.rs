@@ -1658,7 +1658,7 @@ pub mod tests {
             _ => None,
         }).collect();
         // `:` `=` `!` `<` `>` `-`: six first bytes, six bits; and `pair empty`'s table of none,
-        // no bits (0354: its word is zero, no lookup).
+        // no bits (0355: its word is zero, no lookup).
         assert_eq!(found, vec![6, 0]);
     }
 

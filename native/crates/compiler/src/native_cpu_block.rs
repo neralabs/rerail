@@ -1892,7 +1892,7 @@ pub struct RecordTables {
     /// Where each pair table's rows (a byte a first byte) and sets (four words each) are
     /// (`Records::nexts`).
     pub pairs: Vec<(usize, usize)>,
-    /// Each pair table holds no pair (`pair empty`, 0354): its tokens are one byte, no row read.
+    /// Each pair table holds no pair (`pair empty`, 0355): its tokens are one byte, no row read.
     pub pairless: Vec<bool>,
     /// Where each first byte's entry is, eight bytes each (`TOKEN_*`): its kind, its end rule,
     /// whether a word starts with it, its pair row. A token's one load, as the lean lexer's
@@ -4463,7 +4463,7 @@ const PAIR_WORD: u16 = 0x2000;
 /// zero; none where the tables do not say exactly `holds` for each first byte of the rule.
 pub fn pair_nibbles(r: &crate::records::Records, t: &crate::records::PairTable, rule: usize) -> Option<[[u8; 16]; 4]> {
     let firsts: Vec<u8> = (0..=255u8).filter(|&a| r.ends.get(usize::from(a)).is_some_and(|&e| usize::from(e) == rule) && (0..=255u8).any(|b| t.holds(a, b))).collect();
-    // No pair (`pair empty`, 0354): tables of zeros, the pair word zero (`pair_word`'s none).
+    // No pair (`pair empty`, 0355): tables of zeros, the pair word zero (`pair_word`'s none).
     if firsts.len() > 8 {
         return None;
     }
@@ -4531,7 +4531,7 @@ pub fn lean_starts(r: &crate::records::Records, native: &crate::block_native::Bl
     let pairs_apart = (0..=255u8).filter(|&a| of(a, kn)).all(|a| !word.has(a) && (0..=255u8).filter(|&b| pt.holds(a, b)).all(|b| !word.has(b) && !space.has(b) && b != 0));
     // A run byte may be zero (JSON's `wordbyte`, `~(ws | op | quote)`): the bytes past the file
     // are then no run's, as the run's word is cut at the file's end (`Bytewise::word`'s `cut64`,
-    // where the output is not false on a zero byte), so no start is put back past it (0354).
+    // where the output is not false on a zero byte), so no start is put back past it (0355).
     let words_start = (0..=255u8).all(|x| !word.has(x) || !space.has(x));
     let starts_pair = |a: u8| of(a, kn) && (0..=255u8).any(|b| pt.holds(a, b));
     let chained = (0..=255u8).filter(|&a| starts_pair(a)).any(|a| (0..=255u8).any(|b| pt.holds(a, b) && starts_pair(b)));
