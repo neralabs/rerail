@@ -1426,10 +1426,22 @@ pass.
   `native`, `report::placed`, `placement::record`), kept per stratum per chunk for the report: profiled peaks are
   0.4–0.5 GB above unprofiled ones. `RERAIL_HEAP_FRAMES=1` (with `RERAIL_HEAP_SAMPLE`) writes `heap-frames.tsv`, the
   live heap by span and allocating stack (frame-pointer walk, aarch64 macOS), for `atos`.
-- **Open**: the engine's own live heap at the cold peak (cross part, 1.51 GB): the inputs (exports 224 MB, base rows
-  201 MB) and their sorted-column indexes (about 250 MB, built lazily inside the in-memory sources, `Stored::index`),
-  held to the end for `write_frames`. Next: the inputs' frames written before the cross run (they depend on the
-  inputs alone), then each input (rows and indexes) dropped after its last reader (`Hooks::unload`).
+- **Done, step 4** (2026-11-17): a cross run that keeps nothing (no clean relation: cold, a new build's first) writes
+  its inputs' frames before it runs (`retain::write_input_frames`) and lets each input go after its last reader
+  (`Hooks::unload`: its binding, its place among the run's inputs, its export's rows; `Report::cross_unloaded`). At
+  300 files only 5 inputs are let go early: the rest are read by late strata.
+- **Done, step 5**: the planner's exact pair statistics (decision 0203 §3) counted a step's rows by a `Vec<i64>` key
+  each, up to 2^20 rows a histogram, strands at once: 0.24 GB at the cold peak. Keyed by a `u64` now (the value for
+  one column, a 64-bit mix for several).
+- **Done, step 6**: each document built a grammar of its own (its kind table), 61 MB of them live at the peak (the
+  guests'); one per dialect a process now (`Grammar::embedded`), and 10% fewer instructions in the local part.
+- **Measured** (300 files, cold, unprofiled): 1.65 GB before steps 4–6, 1.56 GB after; the engine's live heap at the
+  peak 1.51 GB → 1.11 GB (profiled, without the profiler's records). The footprint's rest is the allocator's and
+  SQLite's. Findings the same relation by relation; strict 10-file outputs byte-identical.
+- **Open**: at the peak (cross part, 1.11 GB live): base rows 161 MB and exports 36 MB, read by late strata; the cross
+  part's sorted-column indexes about 190 MB (`Sorted::of`), its evaluation 67 MB, the writer's transaction 75 MB.
+  Next: inputs read in place (the tape, not copies of its columns) so a late reader does not pin a copy; indexes on
+  derived relations let go with them; the allocator's 0.45 GB between live heap and footprint.
 
 ## Questions for the user
 

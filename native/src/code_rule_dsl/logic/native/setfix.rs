@@ -2502,8 +2502,22 @@ pub fn step_tails(conn: impl Scoped, name: &str) -> Result<Vec<usize>> {
     }).collect())
 }
 
-/// One step's histogram (`step_histograms`): its rows past its constants, and their counts by key.
-pub type Histogram = (u64, rustc_hash::FxHashMap<Vec<i64>, u64>);
+/// One step's histogram (`step_histograms`): its rows past its constants, and their counts by key (`histogram_key`).
+pub type Histogram = (u64, rustc_hash::FxHashMap<u64, u64>);
+
+/// A histogram's key for one row's key columns (`values`): the value itself for one column; for several, a 64-bit mix
+/// of them (two keys of a million rows meet once in 10^7 histograms), so a key is 8 bytes in place, not a vector of
+/// its own (Q55: 0.24 GB of `Vec` keys at a cold run's peak, 300 files). Both sides of a pair key alike.
+fn histogram_key(values: impl Iterator<Item = Option<i64>>) -> Option<u64> {
+    let mut h: u64 = 0;
+    let mut n = 0;
+    for v in values {
+        let v = v? as u64;
+        h = if n == 0 { v } else { (h.rotate_left(5) ^ v).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ (h >> 29) };
+        n += 1;
+    }
+    Some(if n > 1 { h ^ (h >> 32).wrapping_mul(0xbf58_476d_1ce4_e5b9) } else { h })
+}
 
 /// Decision 0203 §3: per wanted (step, key columns) of probe `line`'s join, the rows of the step's relation (every
 /// live row, not its delta alone) that pass the step's constants, counted by the values of those columns. A relation
@@ -2524,14 +2538,14 @@ pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, whole: bool, 
         // `at` is the plan's step: the atom is the step made first for it.
         let Some(Step::Atom { src, neg: false, keys, .. }) = j.step_of(*at).and_then(|s| j.steps.get(s)) else { return None };
         let consts: Vec<(usize, i64)> = keys.iter().filter_map(|&(c, k)| match k { Key::Const(v) => Some((c, v)), Key::Slot(_) => None }).collect();
-        let mut counts: rustc_hash::FxHashMap<Vec<i64>, u64> = rustc_hash::FxHashMap::default();
+        let mut counts: rustc_hash::FxHashMap<u64, u64> = rustc_hash::FxHashMap::default();
         let mut passed = 0u64;
         let mut count = |n: usize, value: &dyn Fn(u32, usize) -> Option<i64>| -> u64 {
             let stride = n.div_ceil(cap.max(1)).max(1);
             let mut id = 0usize;
             while id < n {
                 let i = id as u32;
-                if consts.iter().all(|&(c, v)| value(i, c) == Some(v)) && let Some(key) = cols.iter().map(|&c| value(i, c)).collect::<Option<Vec<i64>>>() {
+                if consts.iter().all(|&(c, v)| value(i, c) == Some(v)) && let Some(key) = histogram_key(cols.iter().map(|&c| value(i, c))) {
                     passed += 1;
                     *counts.entry(key).or_insert(0) += 1;
                 }

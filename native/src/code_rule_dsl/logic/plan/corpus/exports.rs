@@ -26,11 +26,13 @@ struct Held {
     unset: Vec<std::ops::Range<u32>>,
     at: Option<usize>,
     unset_docs: rustc_hash::FxHashSet<i64>,
+    /// Let go after its last reader (`release`).
+    released: bool,
 }
 
 impl Held {
     fn new(width: usize) -> Self {
-        Held { columns: vec![Vec::new(); width], set: HashTable::new(), source: None, unset: Vec::new(), at: None, unset_docs: Default::default() }
+        Held { columns: vec![Vec::new(); width], set: HashTable::new(), source: None, unset: Vec::new(), at: None, unset_docs: Default::default(), released: false }
     }
 
     /// The rows appended unchecked put in the set: a row may now come again.
@@ -184,6 +186,7 @@ impl Exports {
     /// move into it, and the set that kept them distinct is dropped.
     pub(super) fn source(&mut self, rel: &str, width: usize) -> Arc<dyn Source> {
         let held = self.rels.entry(rel.to_owned()).or_insert_with(|| Held::new(width));
+        debug_assert!(!held.released, "export {rel} read after it was let go");
         if let Some(s) = &held.source {
             return Arc::clone(s);
         }
@@ -200,6 +203,16 @@ impl Exports {
 }
 
 impl Exports {
+    /// Lets export `rel`'s rows go (Q55): the cross-file part read it for the last time. A later `source` is a
+    /// mistake, caught in debug builds.
+    pub(super) fn release(&mut self, rel: &str) {
+        if let Some(held) = self.rels.get_mut(rel) {
+            let width = held.columns.len().max(held.source.as_ref().map_or(0, |s| s.columns().len()));
+            *held = Held::new(width);
+            held.released = true;
+        }
+    }
+
     /// Export `rel`'s rows are `source` (a session's counted exports, `Counted`): what a chunk added this run is
     /// dropped, as the counted rows hold it.
     pub(super) fn install(&mut self, rel: &str, width: usize, source: Arc<dyn Source>) {

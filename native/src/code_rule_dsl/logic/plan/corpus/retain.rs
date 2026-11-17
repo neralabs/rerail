@@ -2315,7 +2315,7 @@ impl Retained {
     /// rows changed, with the input's digests by document. The relations kept as they were stay as stored.
     /// `sccs`: `prog`'s strata, computed once by the caller.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn write_frames(&self, store: &ContentStore, was: &InFrames, prog: &Placed, domains: &lower::Domains, locations: &Locations, sccs: &[BTreeSet<String>], cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, (Vec<i64>, Vec<i64>)>, mut handed: HashMap<String, Handed>) -> Result<usize> {
+    pub(in crate::code_rule_dsl) fn write_frames(&self, store: &ContentStore, was: &InFrames, prog: &Placed, domains: &lower::Domains, locations: &Locations, sccs: &[BTreeSet<String>], cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, (Vec<i64>, Vec<i64>)>, mut handed: HashMap<String, Handed>, inputs_done: Option<InputsWritten>) -> Result<usize> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept part's changes, to the frames".into());
         let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed(prog.clone());
         // Literal-only leaves are part of the derived relation's identity (leaf_identity), not runtime
@@ -2328,139 +2328,13 @@ impl Retained {
         let literals: BTreeSet<&str> = f.fact_rels().into_iter().map(|r| f.text(r.name())).filter(|r| !dynamic.contains(r)).collect();
         // Each frame encoded as it is made: the rows copied out of a relation are held only until then.
         let mut puts: Vec<EncodedFrame> = Vec::new();
-        let mut now: HashMap<String, u64> = HashMap::new();
-        let mut written = 0;
-        // Digests of content and granules by content (decision 0212): what every process reads back alike.
         let atoms = store.atoms_handle();
-        // Inputs first: their digests are what the relations derived from them record. Each input is a job of its
-        // own (its rows' digests by document, its changed granules' rows, each encoded); their frames are taken in
-        // the inputs' order.
-        let phase = super::phases::current();
-        let input_docs = &self.input_docs;
-        let atoms_ref = &atoms;
-        // Each input's frames are queued as its job makes them (Q55), into the run's wave (`Carry`: the writer takes
-        // the wave whole, in one transaction, with the derived relations' frames queued below): placed in segments of
-        // their own (decision 0295 §1), their bytes leave the run's heap then. Collected to be queued at the end, every
-        // input's encoded frames were held at once beside the inputs' rows (270 MB at a cold run's peak, 300 files).
-        let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
-        let carry = &carry;
-        let one_input = |rel: &String, source: &Arc<dyn Source>| -> Option<(u64, usize)> {
-            let _in = carry.enter();
-            let _span = crate::code_rule_dsl::logic::profile::span(|| "an input's frames (job)".into());
-            let queue = |puts: Vec<EncodedFrame>| {
-                if !puts.is_empty() {
-                    store.queue_encoded_retagged(was.space, puts, Vec::new(), Vec::new(), Vec::new(), None);
-                }
-            };
-            let atoms: &crate::content_store::atoms::Atoms = atoms_ref;
-            let mut puts: Vec<EncodedFrame> = Vec::new();
-            let mut written = 0;
-            let name = was.names.get(rel)?;
-            let width = source.columns().len();
-            let types = types_of(prog, domains, rel);
-            let cells = if types.len() == width { Cells::new(&atoms, &types) } else { Cells::plain(width) };
-            let digest = digests.get(rel).copied().unwrap_or_else(|| digest(source.as_ref(), &cells));
-            if was.inputs.get(rel).is_some_and(|(d, _)| *d == digest) {
-                return Some((digest, written));
-            }
-            // A relation of no columns is its count: one document's entry, its digest the input's (`digest`).
-            if width == 0 {
-                let n = source.len() as u64;
-                let rows = vec![0, (digest ^ n.wrapping_mul(0xff51_afd7_ed55_8ccd)) as i64, n as i64];
-                puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: Vec::new(), rows: FrameRows { types: vec![b'i'; 3], n: 1, rows } }.encoded());
-                queue(puts);
-                return Some((digest, written));
-            }
-            let g = group_col(prog, locations, rel).min(width - 1);
-            let atom_owner = types.len() == width && atom_owners(&types, g);
-            let owners = atom_owner.then_some(&*atoms);
-            let granule = |d: i64| granule(d, owners);
-            let docs = input_docs.get(rel).cloned().filter(|d| digest_of_docs(d) == digest).unwrap_or_else(|| Arc::new(docs_of(source.as_ref(), g, &cells)));
-            let old = was.inputs.get(rel).map(|(_, d)| Arc::clone(d));
-            // The granules whose documents differ, or that hold a document come or gone.
-            let differ = |doc: &i64| old.as_ref().is_none_or(|o| o.get(doc) != docs.get(doc));
-            let mut changed: BTreeSet<i64> = docs.keys().filter(|d| differ(d)).map(|d| granule(*d)).collect();
-            if let Some(o) = &old {
-                changed.extend(o.keys().filter(|d| !docs.contains_key(*d)).map(|d| granule(*d)));
-            }
-            if std::env::var_os("RERAIL_INPUT_TRACE").is_some() && changed.len() <= 8 && source.len() > 20_000 {
-                let differ_n: Vec<(i64, Option<(u64, u64)>, Option<(u64, u64)>)> = docs.iter().filter(|(d, _)| differ(d)).take(4).map(|(d, v)| (*d, Some(*v), old.as_ref().and_then(|o| o.get(d)).copied())).collect();
-                eprintln!("rerail: input {rel} {:?} (group col {g} of {width}, {} rows, {} owners): granules {changed:?}; owners differ {differ_n:?}", prog.fields().ok().and_then(|f| f.columns(rel)), source.len(), docs.len());
-            }
-            if changed.len() > 8 && std::env::var_os("RERAIL_INPUT_TRACE").is_some() {
-                let differ_n = docs.keys().filter(|d| differ(d)).count();
-                let gone_n = old.as_ref().map_or(0, |o| o.keys().filter(|d| !docs.contains_key(*d)).count());
-                let ex: Vec<String> = docs.iter().filter(|(d, _)| differ(d)).take(3).map(|(d, v)| format!("{d}: {v:?} was {:?}", old.as_ref().and_then(|o| o.get(d)))).collect();
-                let hit = input_docs.get(rel).is_some_and(|d| digest_of_docs(d) == digest);
-                eprintln!("rerail: input {rel} (group col {g} of {width}, {} rows, docs {}, phase {:?}, layered {}): {} granules, {} owners of {} differ, {gone_n} gone; {}", source.len(), if hit { "the run's" } else { "recomputed" }, phase, source.as_any().and_then(|a| a.downcast_ref::<Layered>()).is_some(), changed.len(), differ_n, docs.len(), ex.join("; "));
-            }
-            // Each changed granule's rows, grouped by owner, owners ascending (`kept_inputs` reads each owner's
-            // rows as one range), each in the source's order. One granule's rows at a time are copied out, encoded
-            // and let go: a first write changes every granule, and holding every granule's copy (with a second, the
-            // granule's rows joined) made each input's job hold twice its rows, several inputs at once (the peak of
-            // a new build's first edit, 2026-11-17). A maintained input (`Layered`) gives each owner's rows from its
-            // ranges; another is read through once for its rows' places (4 bytes a row), then by them.
-            let encode = |part: i64, rows: Vec<i64>| -> (EncodedFrame, usize) {
-                let n = rows.len() / width;
-                (FramePut { rel: name.clone(), part, digest: 0, reads: Vec::new(), rows: FrameRows { types: types.clone(), rows, n } }.encoded(), n)
-            };
-            match source.as_any().and_then(|a| a.downcast_ref::<Layered>()) {
-                Some(l) => {
-                    let mut by: BTreeMap<i64, Vec<i64>> = changed.iter().map(|g| (*g, Vec::new())).collect();
-                    for owner in docs.keys().filter(|d| changed.contains(&granule(**d))) {
-                        by.get_mut(&granule(*owner)).expect("a changed granule").push(*owner);
-                    }
-                    for (part, mut owners) in by {
-                        owners.sort_unstable();
-                        let rows: Vec<i64> = owners.iter().flat_map(|o| l.owner_rows(*o)).collect();
-                        let (frame, n) = encode(part, rows);
-                        written += n;
-                        puts.push(frame);
-                    }
-                }
-                None => {
-                    let all: Vec<usize> = (0..width).collect();
-                    let mut row = vec![0i64; width];
-                    let mut at: BTreeMap<i64, BTreeMap<i64, Vec<u32>>> = changed.iter().map(|g| (*g, BTreeMap::new())).collect();
-                    for r in 0..source.len() {
-                        source.row_at(r, &all[g..=g], &mut row[g..=g]);
-                        let owner = super::memo::document_of(row[g]);
-                        if let Some(out) = at.get_mut(&granule(owner)) {
-                            out.entry(owner).or_default().push(u32::try_from(r).expect("an input of fewer than 2^32 rows"));
-                        }
-                    }
-                    for (part, owners) in at {
-                        let mut rows: Vec<i64> = Vec::with_capacity(owners.values().map(Vec::len).sum::<usize>() * width);
-                        for r in owners.into_values().flatten() {
-                            source.row_at(r as usize, &all, &mut row);
-                            rows.extend_from_slice(&row);
-                        }
-                        let (frame, n) = encode(part, rows);
-                        written += n;
-                        puts.push(frame);
-                    }
-                }
-            }
-            let mut table: Vec<(i64, (u64, u64))> = docs.iter().map(|(d, v)| (*d, *v)).collect();
-            table.sort_unstable();
-            let rows: Vec<i64> = table.iter().flat_map(|(d, (s, n))| [*d, *s as i64, *n as i64]).collect();
-            puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: Vec::new(), rows: FrameRows { types: docs_types(atom_owner), n: table.len(), rows } }.encoded());
-            queue(puts);
-            Some((digest, written))
+        // Inputs first: their digests are what the relations derived from them record (written before the run when it
+        // lets its inputs go, `inputs_done`).
+        let InputsWritten { mut now, mut written, queued: inputs_queued } = match inputs_done {
+            Some(done) => done,
+            None => write_input_frames(store, was, prog, domains, locations, inputs, digests, &self.input_docs),
         };
-        let framed_inputs: Vec<Option<(u64, usize)>> = {
-            use rayon::prelude::*;
-            inputs.par_iter().map(|(rel, source)| one_input(rel, source)).collect()
-        };
-        // Whether an input's frames were queued: then the derived relations' are queued with the program's hold even
-        // when none of theirs changed.
-        let mut inputs_queued = false;
-        for ((rel, _), done) in inputs.iter().zip(framed_inputs) {
-            let Some((digest, n)) = done else { continue };
-            now.insert(rel.clone(), digest);
-            inputs_queued |= was.inputs.get(rel).is_none_or(|(d, _)| *d != digest);
-            written += n;
-        }
         // Every input the run bound, framed or not (an option's `env`, an earlier phase's export): its digest is
         // what a relation derived from it records.
         for (rel, d) in digests {
@@ -2634,6 +2508,156 @@ impl Retained {
         crate::code_rule_dsl::logic::profile::behind(|| store.queue_encoded_retagged(was.space, puts, retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token(), self.key))));
         Ok(written)
     }
+}
+
+/// What `write_input_frames` wrote: each input's digest (what the relations derived from it record), the rows
+/// written, and whether any input's frames were queued.
+pub(in crate::code_rule_dsl) struct InputsWritten {
+    now: HashMap<String, u64>,
+    written: usize,
+    queued: bool,
+}
+
+/// The inputs' part of `Retained::write_frames`: each input's granules whose documents' rows changed, and its digests
+/// by document, queued as each input's job makes them. They depend on the inputs alone, so a run that lets its inputs
+/// go after their last reader (Q55) writes them before it runs, and hands what it wrote to `write_frames`.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &InFrames, prog: &Placed, domains: &lower::Domains, locations: &Locations, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, input_docs: &HashMap<String, Arc<DocDigests>>) -> InputsWritten {
+    let _span = crate::code_rule_dsl::logic::profile::span(|| "the inputs' frames".into());
+    let mut now: HashMap<String, u64> = HashMap::new();
+    let mut written = 0;
+    // Digests of content and granules by content (decision 0212): what every process reads back alike.
+    let atoms = store.atoms_handle();
+    // Inputs first: their digests are what the relations derived from them record. Each input is a job of its
+    // own (its rows' digests by document, its changed granules' rows, each encoded); their frames are taken in
+    // the inputs' order.
+    let phase = super::phases::current();
+    let atoms_ref = &atoms;
+    // Each input's frames are queued as its job makes them (Q55), into the run's wave (`Carry`: the writer takes
+    // the wave whole, in one transaction, with the derived relations' frames when they are written together; before
+    // the run, in the wave it seals as it ends, `Boundary::CrossDerived`): placed in segments of
+    // their own (decision 0295 §1), their bytes leave the run's heap then. Collected to be queued at the end, every
+    // input's encoded frames were held at once beside the inputs' rows (270 MB at a cold run's peak, 300 files).
+    let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
+    let carry = &carry;
+    let one_input = |rel: &String, source: &Arc<dyn Source>| -> Option<(u64, usize)> {
+        let _in = carry.enter();
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "an input's frames (job)".into());
+        let queue = |puts: Vec<EncodedFrame>| {
+            if !puts.is_empty() {
+                store.queue_encoded_retagged(was.space, puts, Vec::new(), Vec::new(), Vec::new(), None);
+            }
+        };
+        let atoms: &crate::content_store::atoms::Atoms = atoms_ref;
+        let mut puts: Vec<EncodedFrame> = Vec::new();
+        let mut written = 0;
+        let name = was.names.get(rel)?;
+        let width = source.columns().len();
+        let types = types_of(prog, domains, rel);
+        let cells = if types.len() == width { Cells::new(&atoms, &types) } else { Cells::plain(width) };
+        let digest = digests.get(rel).copied().unwrap_or_else(|| digest(source.as_ref(), &cells));
+        if was.inputs.get(rel).is_some_and(|(d, _)| *d == digest) {
+            return Some((digest, written));
+        }
+        // A relation of no columns is its count: one document's entry, its digest the input's (`digest`).
+        if width == 0 {
+            let n = source.len() as u64;
+            let rows = vec![0, (digest ^ n.wrapping_mul(0xff51_afd7_ed55_8ccd)) as i64, n as i64];
+            puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: Vec::new(), rows: FrameRows { types: vec![b'i'; 3], n: 1, rows } }.encoded());
+            queue(puts);
+            return Some((digest, written));
+        }
+        let g = group_col(prog, locations, rel).min(width - 1);
+        let atom_owner = types.len() == width && atom_owners(&types, g);
+        let owners = atom_owner.then_some(&*atoms);
+        let granule = |d: i64| granule(d, owners);
+        let docs = input_docs.get(rel).cloned().filter(|d| digest_of_docs(d) == digest).unwrap_or_else(|| Arc::new(docs_of(source.as_ref(), g, &cells)));
+        let old = was.inputs.get(rel).map(|(_, d)| Arc::clone(d));
+        // The granules whose documents differ, or that hold a document come or gone.
+        let differ = |doc: &i64| old.as_ref().is_none_or(|o| o.get(doc) != docs.get(doc));
+        let mut changed: BTreeSet<i64> = docs.keys().filter(|d| differ(d)).map(|d| granule(*d)).collect();
+        if let Some(o) = &old {
+            changed.extend(o.keys().filter(|d| !docs.contains_key(*d)).map(|d| granule(*d)));
+        }
+        if std::env::var_os("RERAIL_INPUT_TRACE").is_some() && changed.len() <= 8 && source.len() > 20_000 {
+            let differ_n: Vec<(i64, Option<(u64, u64)>, Option<(u64, u64)>)> = docs.iter().filter(|(d, _)| differ(d)).take(4).map(|(d, v)| (*d, Some(*v), old.as_ref().and_then(|o| o.get(d)).copied())).collect();
+            eprintln!("rerail: input {rel} {:?} (group col {g} of {width}, {} rows, {} owners): granules {changed:?}; owners differ {differ_n:?}", prog.fields().ok().and_then(|f| f.columns(rel)), source.len(), docs.len());
+        }
+        if changed.len() > 8 && std::env::var_os("RERAIL_INPUT_TRACE").is_some() {
+            let differ_n = docs.keys().filter(|d| differ(d)).count();
+            let gone_n = old.as_ref().map_or(0, |o| o.keys().filter(|d| !docs.contains_key(*d)).count());
+            let ex: Vec<String> = docs.iter().filter(|(d, _)| differ(d)).take(3).map(|(d, v)| format!("{d}: {v:?} was {:?}", old.as_ref().and_then(|o| o.get(d)))).collect();
+            let hit = input_docs.get(rel).is_some_and(|d| digest_of_docs(d) == digest);
+            eprintln!("rerail: input {rel} (group col {g} of {width}, {} rows, docs {}, phase {:?}, layered {}): {} granules, {} owners of {} differ, {gone_n} gone; {}", source.len(), if hit { "the run's" } else { "recomputed" }, phase, source.as_any().and_then(|a| a.downcast_ref::<Layered>()).is_some(), changed.len(), differ_n, docs.len(), ex.join("; "));
+        }
+        // Each changed granule's rows, grouped by owner, owners ascending (`kept_inputs` reads each owner's
+        // rows as one range), each in the source's order. One granule's rows at a time are copied out, encoded
+        // and let go: a first write changes every granule, and holding every granule's copy (with a second, the
+        // granule's rows joined) made each input's job hold twice its rows, several inputs at once (the peak of
+        // a new build's first edit, 2026-11-17). A maintained input (`Layered`) gives each owner's rows from its
+        // ranges; another is read through once for its rows' places (4 bytes a row), then by them.
+        let encode = |part: i64, rows: Vec<i64>| -> (EncodedFrame, usize) {
+            let n = rows.len() / width;
+            (FramePut { rel: name.clone(), part, digest: 0, reads: Vec::new(), rows: FrameRows { types: types.clone(), rows, n } }.encoded(), n)
+        };
+        match source.as_any().and_then(|a| a.downcast_ref::<Layered>()) {
+            Some(l) => {
+                let mut by: BTreeMap<i64, Vec<i64>> = changed.iter().map(|g| (*g, Vec::new())).collect();
+                for owner in docs.keys().filter(|d| changed.contains(&granule(**d))) {
+                    by.get_mut(&granule(*owner)).expect("a changed granule").push(*owner);
+                }
+                for (part, mut owners) in by {
+                    owners.sort_unstable();
+                    let rows: Vec<i64> = owners.iter().flat_map(|o| l.owner_rows(*o)).collect();
+                    let (frame, n) = encode(part, rows);
+                    written += n;
+                    puts.push(frame);
+                }
+            }
+            None => {
+                let all: Vec<usize> = (0..width).collect();
+                let mut row = vec![0i64; width];
+                let mut at: BTreeMap<i64, BTreeMap<i64, Vec<u32>>> = changed.iter().map(|g| (*g, BTreeMap::new())).collect();
+                for r in 0..source.len() {
+                    source.row_at(r, &all[g..=g], &mut row[g..=g]);
+                    let owner = super::memo::document_of(row[g]);
+                    if let Some(out) = at.get_mut(&granule(owner)) {
+                        out.entry(owner).or_default().push(u32::try_from(r).expect("an input of fewer than 2^32 rows"));
+                    }
+                }
+                for (part, owners) in at {
+                    let mut rows: Vec<i64> = Vec::with_capacity(owners.values().map(Vec::len).sum::<usize>() * width);
+                    for r in owners.into_values().flatten() {
+                        source.row_at(r as usize, &all, &mut row);
+                        rows.extend_from_slice(&row);
+                    }
+                    let (frame, n) = encode(part, rows);
+                    written += n;
+                    puts.push(frame);
+                }
+            }
+        }
+        let mut table: Vec<(i64, (u64, u64))> = docs.iter().map(|(d, v)| (*d, *v)).collect();
+        table.sort_unstable();
+        let rows: Vec<i64> = table.iter().flat_map(|(d, (s, n))| [*d, *s as i64, *n as i64]).collect();
+        puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: Vec::new(), rows: FrameRows { types: docs_types(atom_owner), n: table.len(), rows } }.encoded());
+        queue(puts);
+        Some((digest, written))
+    };
+    let framed_inputs: Vec<Option<(u64, usize)>> = {
+        use rayon::prelude::*;
+        inputs.par_iter().map(|(rel, source)| one_input(rel, source)).collect()
+    };
+    // Whether an input's frames were queued: then the derived relations' are queued with the program's hold even
+    // when none of theirs changed.
+    let mut inputs_queued = false;
+    for ((rel, _), done) in inputs.iter().zip(framed_inputs) {
+        let Some((digest, n)) = done else { continue };
+        now.insert(rel.clone(), digest);
+        inputs_queued |= was.inputs.get(rel).is_none_or(|(d, _)| *d != digest);
+        written += n;
+    }
+    InputsWritten { now, written, queued: inputs_queued }
 }
 
 /// A relation written whole (`write_frames`): its digest, and its rows' bytes when its rows are not the stored ones.

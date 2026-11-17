@@ -316,6 +316,8 @@ pub struct Report {
     /// The cross-file relations handed off as the run went, their frames made once no later stratum read them and
     /// their rows let go (Q55): a run not driven by deltas.
     pub cross_handed: usize,
+    /// The cross-file inputs let go after their last reader, their frames written before the run (Q55).
+    pub cross_unloaded: usize,
     /// A session's run: the cross part's inputs that changed, and why its strata derived again were (each count).
     pub cross_changed: Vec<String>,
     pub cross_again: BTreeMap<&'static str, usize>,
@@ -7940,6 +7942,7 @@ fn run_observed(
     let mut cross_kept: Option<(usize, usize)> = None;
     let mut cross_maintained = 0;
     let mut cross_handed = 0usize;
+    let mut cross_unloaded = 0usize;
     let mut cross_derived_again = 0;
     let mut cross_quiet = (0, 0);
     let (mut cross_changed, mut cross_again) = (Vec::new(), BTreeMap::new());
@@ -8436,15 +8439,28 @@ fn run_observed(
                     // A derived relation derived again (no delta: every one of a cold run's, a new build's first) is handed
                     // off once no later stratum reads it, its frame made then, and the engine drops its rows (Q55): only
                     // where the frames are written, and not one the caller reads after the run or a check reads. One
-                    // maintained by a delta is held, and written as its delta at the end.
+                    // maintained by a delta is held, and written as its delta at the end. A run that keeps nothing (no
+                    // clean relation: a cold run, a new build's first) lets its inputs go too: their frames written
+                    // before the run, each input (its rows and the indexes built in them) let go after its last reader
+                    // (`Hooks::unload`). Its part is not held for the next run (it reads the frames), so neither are
+                    // its inputs; a run that keeps some (a session's edit) keeps its inputs for the next (0094 §4).
+                    // Never with the kept strata (`kept_strata::keep`, which writes each input as held): those need
+                    // one fixpoint, the frames need K4.
                     let hand_off = was_frames.is_some()
                         && !spike
                         && std::env::var_os("RERAIL_CROSS_VERIFY").is_none()
                         && std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_none()
                         && std::env::var("RERAIL_CROSS_HAND_OFF").map_or(true, |v| v != "off");
                     let handed: std::cell::RefCell<HashMap<String, retain::Handed>> = std::cell::RefCell::new(HashMap::new());
+                    let mut unloaded: Vec<String> = Vec::new();
+                    let let_go_inputs = hand_off && cut.clean.is_empty();
                     // The relations the driver derives again (`Maintain::no_delta`), as it reaches them.
                     let derived_again: std::cell::RefCell<BTreeSet<String>> = std::cell::RefCell::new(BTreeSet::new());
+                    // The inputs' frames, before the run: they depend on the inputs alone.
+                    let inputs_done = match (&was_frames, let_go_inputs) {
+                        (Some(was), true) => Some(retain::write_input_frames(store, was, &cross_placed, &cross.domains, &split.locations, &cross_inputs, &digests, &input_docs)),
+                        _ => None,
+                    };
                     // `false`: not taken, so the run holds it to its end as before.
                     let mut hand = |rel: &str| -> Result<bool> {
                         if wanted.contains(rel) || fields.is_output(rel) || (driven && !derived_again.borrow().contains(rel)) {
@@ -8454,6 +8470,24 @@ fn run_observed(
                         let Some(h) = retain::Handed::of(store, &cross_placed, &cross.domains, rel, &held) else { return Ok(false) };
                         handed.borrow_mut().insert(rel.to_owned(), h);
                         Ok(true)
+                    };
+                    // An input no later stratum reads: its binding, its place among the run's inputs and its
+                    // export's rows let go, so its rows and the indexes built in them go (the engine has dropped
+                    // its own copy, `forget_inputs_of`). Not one read after the run (`wanted`, typing's `fn_q`).
+                    let mut unload = |gone: &[String]| -> Result<()> {
+                        for rel in gone.iter().filter(|r| !wanted.contains(*r) && r.as_str() != "fn_q") {
+                            if let Some(b) = modules.get(rel) {
+                                b.clear();
+                            }
+                            if let Some((_, held)) = cross_inputs.iter_mut().find(|(r, _)| r == rel) {
+                                let columns = held.columns();
+                                let width = columns.len();
+                                *held = crate::code_rule_dsl::logic::native::component::columns_source(columns, vec![Some(Vec::new()); width]);
+                            }
+                            exports.borrow_mut().release(rel);
+                            unloaded.push(rel.clone());
+                        }
+                        Ok(())
                     };
                     let got = match driven.then_some(()) {
                         // Decision 0117 step 3: the base program, each stratum maintained by its own form when reached.
@@ -8489,7 +8523,7 @@ fn run_observed(
                                 walked: (0, 0, 0),
                                 atoms: None,
                             };
-                            let hooks = crate::code_rule_dsl::logic::plan::Hooks { maintain: Some(&mut driver), hand_off: hand_off.then_some(&mut hand as &mut dyn FnMut(&str) -> Result<bool>), texts: Some(Arc::clone(&vocabulary)), ..Default::default() };
+                            let hooks = crate::code_rule_dsl::logic::plan::Hooks { maintain: Some(&mut driver), hand_off: hand_off.then_some(&mut hand as &mut dyn FnMut(&str) -> Result<bool>), unload: let_go_inputs.then_some(&mut unload as &mut dyn FnMut(&[String]) -> Result<()>), texts: Some(Arc::clone(&vocabulary)), ..Default::default() };
                             let got = super::run_atoms_native_hooked(part, &db, "main", stats, keep, modes, hooks)?;
                             let (rows_read, rels_read) = kept.admitted();
                             if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
@@ -8508,17 +8542,19 @@ fn run_observed(
                             got
                         }
                         None if hand_off => {
-                            let hooks = crate::code_rule_dsl::logic::plan::Hooks { hand_off: Some(&mut hand), texts: Some(Arc::clone(&vocabulary)), ..Default::default() };
+                            let hooks = crate::code_rule_dsl::logic::plan::Hooks { hand_off: Some(&mut hand), unload: let_go_inputs.then_some(&mut unload as &mut dyn FnMut(&[String]) -> Result<()>), texts: Some(Arc::clone(&vocabulary)), ..Default::default() };
                             super::run_atoms_native_hooked(part, &db, "main", stats, keep, modes, hooks)?
                         }
                         None => texts_run(part, &db, stats, keep, modes, &vocabulary)?,
                     };
                     drop(s);
                     let handed = handed.into_inner();
-                    let handed_any = !handed.is_empty();
+                    let handed_any = !handed.is_empty() || !unloaded.is_empty();
                     cross_handed += handed.len();
+                    cross_unloaded += unloaded.len();
                     if hand_off {
                         crate::code_rule_dsl::logic::profile::decision("derived relations handed off (Q55)", || format!("{} relations' frames made once no later stratum read them, their rows let go", handed.len()));
+                        crate::code_rule_dsl::logic::profile::decision("inputs let go (Q55)", || format!("{} inputs' rows and indexes let go after their last reader, their frames written before the run: {}", unloaded.len(), unloaded.join(", ")));
                     }
                     cross_atoms_ahead(store);
                     let Binder { constants, mut measured_kept, mut bound_old, mut lazies, .. } = binder;
@@ -8848,7 +8884,7 @@ fn run_observed(
                     let s = span("retain");
                     let mut next = retain::after(cell.take(), ckey, digests.clone(), &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_stats, input_docs, (run_docs_held.lock().expect("the run's documents").clone(), memo_whole), patched, retain::budget());
                     if let Some(was) = &was_frames {
-                        let written = next.write_frames(store, was, &cross_placed, &cross.domains, &split.locations, &cross_sccs, &cut, &cross_inputs, &digests, &unchanged_rels, &run_deltas, handed)?;
+                        let written = next.write_frames(store, was, &cross_placed, &cross.domains, &split.locations, &cross_sccs, &cut, &cross_inputs, &digests, &unchanged_rels, &run_deltas, handed, inputs_done)?;
                         crate::code_rule_dsl::logic::profile::decision("the kept part, to the frames (t33 K4)", || format!("{written} rows of what changed queued to the store"));
                     }
                     drop(s);
@@ -9323,7 +9359,7 @@ fn run_observed(
     if !nested && !phase0::active() {
         crate::code_rule_dsl::logic::profile::run_ends(crate::code_rule_dsl::logic::profile::snapshot());
     }
-    let report = Report { phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_handed, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
+    let report = Report { phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
     handed.succeeded();
     Ok(report)
 }
