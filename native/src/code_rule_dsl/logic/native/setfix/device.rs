@@ -2265,7 +2265,7 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
     rep.decode_cpu += thread_cpu() - d0;
     // The placed heads' rows into the store: their parts, as the device wrote them.
     for (h, part) in placed.into_parts() {
-        fresh[h].place(part);
+        fresh[h].place(part, None);
     }
     Ok(out)
 }
@@ -2374,7 +2374,7 @@ fn place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], store: &Sto
         let device = rerail_accel::gpu::join::device()?;
         let block = rerail_accel::gpu::join::Held::kept(part.facts().block.gpu_buffer(device), Box::new(part.facts().clone()));
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
-        b.place_rows(&rows, cap, slot, &words, &ident, block, part.rows_at() as u64).map_err(|e| format!("{e:?}"))?;
+        b.place_rows(mj::Rows::Table(&rows), cap, slot, &words, &ident, block, part.rows_at() as u64).map_err(|e| format!("{e:?}"))?;
         hold.push(rows);
         pending.push((h, part, slot, cap, words));
     }
@@ -2743,10 +2743,50 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             break;
         }
     }
-    // The rows into the store, once.
+    // A set head's rows written in place (decision 0325 step 4): its total, every row new (its relation had none
+    // before the run), into a relation of a block the store takes as it lies, each row with its round where the
+    // head keeps levels. One submission for the component's set heads.
+    let mut parts: Vec<(usize, crate::code_rule_dsl::facts::rows::Part, usize)> = Vec::new();
+    let mut batch: Option<mj::Batch> = None;
+    // No count slot: each total's rows are known. Held until the batch completes.
+    let no_counts = mj::Words::zeroed(1).map_err(|e| format!("{e:?}"))?;
+    for &h in heads {
+        let Some(total) = own.total.get(&h) else { continue };
+        if lattices.contains_key(&h) || total.rows == 0 {
+            continue;
+        }
+        let k = store.rels[h].k;
+        let b = match &mut batch {
+            Some(b) => b,
+            None => batch.insert(direct_batch(None)?),
+        };
+        let part = crate::code_rule_dsl::facts::rows::Part::for_writes(k, total.rows);
+        let device = rerail_accel::gpu::join::device()?;
+        let block = rerail_accel::gpu::join::Held::kept(part.facts().block.gpu_buffer(device), Box::new(part.facts().clone()));
+        let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
+        b.place_rows(mj::Rows::Rel(total), total.rows, None, &no_counts, &ident, block, part.rows_at() as u64).map_err(|e| format!("{e:?}"))?;
+        parts.push((h, part, total.rows));
+    }
+    if let Some(mut b) = batch {
+        finish_timed(&mut b, &mut rep)?;
+    }
+    drop(no_counts);
+    let placed_heads: Vec<usize> = parts.iter().map(|p| p.0).collect();
+    for (h, part, n) in parts {
+        // SAFETY: the batch is finished, and `rows_place` wrote every column of the `n` rows reserved.
+        unsafe { part.written(n as u32) };
+        let rounds = set_levels.get(&h).filter(|_| leveled(h)).map(|r| (0..n).map(|x| r.get(x).copied().unwrap_or(0)).collect());
+        fresh[h].place(part, rounds);
+        rep.distinct += n as u64;
+        rep.placed += n as u64;
+    }
+    // The rest into the store: a lattice head's rows, read back.
     let d0 = thread_cpu();
     for &h in heads {
         let Some(total) = own.total.get(&h) else { continue };
+        if placed_heads.contains(&h) {
+            continue;
+        }
         let k = store.rels[h].k;
         let cols: Vec<&[i64]> = (0..k).map(|c| total.column(c)).collect();
         // A shortlex_min value is an arena text (decision 0307): stored as a symbol, all of the head's at once.

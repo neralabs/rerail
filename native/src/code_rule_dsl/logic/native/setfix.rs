@@ -785,23 +785,31 @@ impl Rel {
         let placed = std::mem::take(&mut f.placed);
         if !placed.is_empty() && (f.n > 0 || self.lat.is_some()) {
             let k = self.k;
-            for p in placed {
+            for (p, rounds) in placed {
                 let rows = { let mut r = Rows::new(k); r.append_part(p); r };
                 for id in 0..rows.rows() {
-                    f.data.extend_from_slice(&rows.row(id as u32, k));
-                    f.n += 1;
+                    let row = rows.row(id as u32, k);
+                    // A fixpoint's row at its round (decision 0311), as its rows were added before step 4.
+                    match &rounds {
+                        Some(r) if f.levels.len() == f.n => f.add_leveled(&row, r[id]),
+                        _ => {
+                            f.data.extend_from_slice(&row);
+                            f.n += 1;
+                        }
+                    }
+                    f.lost = true;
                 }
-                f.lost = true;
             }
         } else if !placed.is_empty() {
             let k = self.k;
             let from = self.n;
-            for p in placed {
+            for (p, rounds) in placed {
                 let m = p.len() as usize;
                 self.data.append_part(p);
-                for _ in 0..m {
+                for x in 0..m {
                     if self.leveled && self.level.len() == self.n {
-                        self.level.push(self.lbase + self.wave + 1);
+                        let round = rounds.as_ref().map_or(self.wave, |r| r[x]);
+                        self.level.push(self.lbase + round + 1);
                     }
                     self.n += 1;
                 }
@@ -993,7 +1001,8 @@ impl Cands<'_> {
 pub struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize, breaks: Vec<u32>, lost: bool, levels: Vec<u32>,
                    /// Rows written in place by another writer (the device, decision 0325 step 4), each part distinct,
                    /// not held by the relation, and in no order: the relation takes them as they lie (`push_fresh`).
-                   placed: Vec<crate::code_rule_dsl::facts::rows::Part> }
+                   /// With each part, its rows' rounds when the device's fixpoint made them (decision 0311's levels).
+                   placed: Vec<(crate::code_rule_dsl::facts::rows::Part, Option<Vec<u32>>)> }
 
 /// The shortest stretch of a wave's batch taken as in order (`Fresh::settle`): shorter ones are sorted with their
 /// neighbours, as merging them costs about what sorting them does.
@@ -1006,10 +1015,12 @@ const FRESH_BATCH: usize = 1 << 16;
 /// `RERAIL_SPIKE_DERIVATIONS`: rows derived (new or already held) and rows held new, by relation, over the process.
 pub static DERIVATIONS: std::sync::Mutex<std::collections::BTreeMap<String, (u64, u64)>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
 impl Fresh {
-    /// Rows another writer wrote in place (`placed`): distinct, none held by the relation.
-    pub fn place(&mut self, part: crate::code_rule_dsl::facts::rows::Part) {
+    /// Rows another writer wrote in place (`placed`): distinct, none held by the relation; with `rounds`, each row's
+    /// round of the device's fixpoint (its level, as `add_leveled`'s).
+    pub fn place(&mut self, part: crate::code_rule_dsl::facts::rows::Part, rounds: Option<Vec<u32>>) {
+        debug_assert!(rounds.as_ref().is_none_or(|r| r.len() == part.len() as usize), "a round per row");
         if part.len() > 0 {
-            self.placed.push(part);
+            self.placed.push((part, rounds));
         }
     }
     /// A row in no known order (its batch is sorted whole).

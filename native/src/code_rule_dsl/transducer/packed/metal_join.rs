@@ -2676,13 +2676,14 @@ impl Batch {
     /// at `rows_at` in `block`, whose chunks hold `cap` rows of 8-byte columns. Each column of the head is a column of
     /// `src` or a constant (`cols`). The batch keeps `block` until its work completes.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn place_rows(&mut self, src: &Table, cap: usize, count: Option<usize>, totals: &Words, cols: &[Col], block: Held, rows_at: u64) -> Result<(), Error> {
+    pub(in crate::code_rule_dsl) fn place_rows(&mut self, src: Rows<'_>, cap: usize, count: Option<usize>, totals: &Words, cols: &[Col], block: Held, rows_at: u64) -> Result<(), Error> {
         if cap == 0 {
             return Ok(());
         }
-        assert!(cols.len() <= 16 && cap <= src.cap, "{cap} rows of a table of {}", src.cap);
+        let (s, stride) = src.of();
+        assert!(cols.len() <= 16 && cap <= stride, "{cap} rows of a source of {stride}");
         let place = pipeline("join", "rows_place", || SOURCE.to_owned())?;
-        let mut p = PlaceParams { konst: [0; 16], src: [NONE; 16], cap: cap as u32, ncols: cols.len() as u32, src_stride: src.cap as u32, count_slot: count.map_or(NONE, |c| c as u32), rows_at };
+        let mut p = PlaceParams { konst: [0; 16], src: [NONE; 16], cap: cap as u32, ncols: cols.len() as u32, src_stride: stride as u32, count_slot: count.map_or(NONE, |c| c as u32), rows_at };
         for (k, c) in cols.iter().enumerate() {
             match *c {
                 Col::From(c) => p.src[k] = c as u32,
@@ -2692,7 +2693,8 @@ impl Batch {
         // SAFETY: `PlaceParams` is `repr(C)` integers with no padding (its size asserted above).
         let bytes = unsafe { std::slice::from_raw_parts((&p as *const PlaceParams).cast::<u8>(), std::mem::size_of::<PlaceParams>()) };
         let pass = self.pass(1)?;
-        pass.run_bytes(&place, &[&src.buffer.buffer, &block.buffer, &totals.buffer.buffer], bytes, groups(cap));
+        let s = s.to_owned();
+        pass.run_bytes(&place, &[&s, &block.buffer, &totals.buffer.buffer], bytes, groups(cap));
         self.keep.push(block);
         Ok(())
     }

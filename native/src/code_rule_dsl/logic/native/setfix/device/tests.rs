@@ -149,6 +149,8 @@
                 let r = report.as_ref().expect("a device report");
                 assert!(r.refused.is_none(), "{r:?}");
                 assert!(r.rounds > 5, "the closure takes rounds: {r:?}");
+                // Written in place into the head's block (decision 0325 step 4): none read back.
+                assert!(r.placed > 1000 && r.placed == r.distinct, "the fixpoint's rows written in place: {r:?}");
             }
             super::super::close(&db, "dev_rec").unwrap();
             let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
@@ -211,6 +213,8 @@
                     let r = report.as_ref().expect("a device report");
                     assert!(r.refused.is_none(), "{r:?}");
                     assert!(r.rounds > 3, "the recursion takes rounds: {r:?}");
+                    // A set head's rows written in place with their rounds (decision 0325 step 4); a lattice's read.
+                    assert_eq!(r.placed > 0, lattice.is_none(), "{r:?}");
                 }
                 super::super::close(&db, "dev_lev").unwrap();
                 let held = super::super::held(&db, "h0").expect("the relation held");

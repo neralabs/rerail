@@ -242,3 +242,13 @@ Step by step, each leaving the engine working (see the commits that name this de
   - Tests: `a_strata_seeds_on_the_device_are_the_cpus_rows_and_counts` runs again with the head holding rows
     before the run, some of them derived again; both runs' rows written in place (`placed == distinct`) and equal
     the CPU's. `a_part_written_elsewhere_is_appended_as_a_segment` (facts::rows).
+- **Step 4, the recursive fixpoint's set heads** (2026-11-17): at the fixpoint, each set head's total (every row
+  new, since its relation is empty before the run) is written in place by `rows_place` from the device relation
+  itself (`place_rows` takes a table or a relation), one submission for the component. Each row carries its
+  round where the head keeps levels (`Fresh::place(part, rounds)`), and `push_fresh` gives it level
+  `lbase + round + 1`, as `push_leveled` did. Lattice heads, the `shortlex_min` text heads among them, are still
+  read back (their fold and their texts' symbols are the host's).
+  - Tests: `a_recursive_stratum_on_the_device_is_the_cpus_fixpoint` asserts `placed == distinct`;
+    `a_leveled_recursion_on_the_device_has_the_cpus_levels` asserts the set head placed and the lattice read, with
+    rows and levels equal to the CPU's.
+  - On hogql, few rows are recursive: 4.507 M rows written in place against 4.498 M. Findings 1,629.
