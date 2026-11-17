@@ -478,6 +478,16 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
 - **Done when**: the D416 clause's work is accounted (a limit too small for its walk, or a walk that loops), and
   the coverage test's count is explained (the pack's clauses) or met; both gates pass.
 
+### Q20. The CPU JIT's capture pairs compare and scan a byte a step
+
+Found 2026-11-16 (0310 step 2, moving the JIT's spans onto the tape): `native_cpu_capture_pair.rs`'s `text_equal`
+compares two captures' texts a byte an iteration, and `same_line` looks for a newline between two starts a byte an
+iteration. Both are per-byte loops, which the engine's code refuses elsewhere.
+
+- **Keep**: the pair's verdicts (equal texts, same line) as now.
+- **Done when**: both compare a word at a time over the window (or `same_line` reads the document's line table,
+  as the device's does), with no loop a byte a step.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives

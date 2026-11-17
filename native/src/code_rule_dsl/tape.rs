@@ -375,11 +375,12 @@ pub enum Held {
 /// Format 15's columns (above), its code table, and the table as the tape API reads it (made once).
 #[derive(Clone)]
 pub struct Columns15 {
-    pub code: Vec<u8>,
-    pub size: Vec<u8>,
-    pub base: Vec<u8>,
-    pub off: Vec<u8>,
-    pub tail: Vec<u8>,
+    /// The five columns (code, size, base, off, tail) in one buffer, each from a `COLUMN_ALIGN` boundary and
+    /// padded with zeros, as the stored image lays them after its header: one base addresses every column, as a
+    /// reader of the tape in place takes it (decision 0310).
+    bytes: Vec<u8>,
+    /// Each column's start in `bytes`, and its length.
+    at: [(usize, usize); 5],
     pub widths: [u8; 3],
     pub codes: Vec<Code>,
     /// Contextual Tree-sitter aliases whose displayed kind or named flag differs from the static
@@ -1124,7 +1125,7 @@ impl TapeImage {
         let lengths = [c.node_count(), c.codes.len(), code_bytes, c.kind_aliases.len(), alias_bytes];
         let mut bytes = Vec::with_capacity(
             HEADER_BYTES
-                + [&c.code, &c.size, &c.base, &c.off, &c.tail].iter().map(|column| padded(column.len())).sum::<usize>()
+                + c.bytes.len()
                 + code_bytes
                 + alias_bytes,
         );
@@ -1137,10 +1138,7 @@ impl TapeImage {
             bytes.extend_from_slice(&(length as u64).to_le_bytes());
         }
         debug_assert_eq!(bytes.len() % COLUMN_ALIGN, 0);
-        for column in [&c.code, &c.size, &c.base, &c.off, &c.tail] {
-            bytes.extend_from_slice(column);
-            bytes.resize(padded(bytes.len()), 0);
-        }
+        bytes.extend_from_slice(&c.bytes);
         for code in &c.codes {
             bytes.extend_from_slice(&code.kf.to_le_bytes());
             bytes.push(code.flags);
@@ -1196,10 +1194,10 @@ impl TapeImage {
         Ok(image)
     }
 
-    /// An image of format 15's columns.
-    #[allow(clippy::too_many_arguments)]
-    fn of15(code: Vec<u8>, size: Vec<u8>, base: Vec<u8>, off: Vec<u8>, tail: Vec<u8>, widths: [u8; 3], codes: Vec<Code>, kind_aliases: Vec<(String, bool)>, language: GrammarDialect, source_len: usize, source_digest: Option<[u8; 32]>) -> Self {
-        Self { held: Held::F15(Columns15 { code, size, base, off, tail, widths, codes, kind_aliases, table: Default::default() }), language, source_len, source_digest }
+    /// An image of format 15's columns (code, size, base, off, tail), laid out in one buffer.
+    fn of15(columns: [&[u8]; 5], widths: [u8; 3], codes: Vec<Code>, kind_aliases: Vec<(String, bool)>, language: GrammarDialect, source_len: usize, source_digest: Option<[u8; 32]>) -> Self {
+        let (bytes, at) = Columns15::laid(columns);
+        Self { held: Held::F15(Columns15 { bytes, at, widths, codes, kind_aliases, table: Default::default() }), language, source_len, source_digest }
     }
 
     /// The tape as held.
@@ -1275,16 +1273,13 @@ impl TapeImage {
             return Err("invalid contextual grammar alias count".into());
         }
         // Each column, then its padding to `COLUMN_ALIGN`, which must be zero.
-        let mut columns = lengths.into_iter().map(|length| {
-            let column = reader.take(length)?.to_vec();
+        let mut columns: [&[u8]; 5] = [&[]; 5];
+        for (column, length) in columns.iter_mut().zip(lengths) {
+            *column = reader.take(length)?;
             if reader.take(padded(length) - length)?.iter().any(|&byte| byte != 0) {
                 return Err("noncanonical tape column padding".to_owned());
             }
-            Ok(column)
-        });
-        let mut next = || columns.next().expect("five columns");
-        let (code, size, base, off, tail) = (next()?, next()?, next()?, next()?, next()?);
-        drop(columns);
+        }
         #[cfg(any(test, feature = "test-hooks"))]
         note_table_reservation(code_count);
         let codes_end = reader.offset + code_bytes;
@@ -1339,7 +1334,7 @@ impl TapeImage {
         if reader.offset != bytes.len() {
             return Err("trailing tape image bytes".into());
         }
-        Ok(Self::of15(code, size, base, off, tail, widths, codes, kind_aliases, language, source_len, None))
+        Ok(Self::of15(columns, widths, codes, kind_aliases, language, source_len, None))
     }
 
     /// Parses `source` as `grammar`'s dialect and encodes its documents: with tree-sitter (a PHP
@@ -1589,7 +1584,7 @@ impl TapeImage {
             Some(digest) => digest,
             None => source_digest(source, &budget)?,
         };
-        Ok(Self::of15(code, size, base, off, tail, widths, codes, Vec::new(), grammar.lang, source.len(), Some(digest)))
+        Ok(Self::of15([&code, &size, &base, &off, &tail], widths, codes, Vec::new(), grammar.lang, source.len(), Some(digest)))
     }
 
     /// The columns of `nodes`, in preorder with their sizes set: codes folded and numbered by
@@ -1689,8 +1684,8 @@ impl TapeImage {
         }
         checked(budget)?;
         let widths = [size_width as u8, off_width as u8, tail_width as u8 | if from_last { 0 } else { TAIL_FROM_START }];
-        let base = bases.iter().flat_map(|base| base.to_le_bytes()).collect();
-        Ok(Self::of15(code, size, base, off, tail, widths, codes, kind_aliases, grammar.lang, source.len(), Some(source_digest(source, budget)?)))
+        let base: Vec<u8> = bases.iter().flat_map(|base| base.to_le_bytes()).collect();
+        Ok(Self::of15([&code, &size, &base, &off, &tail], widths, codes, kind_aliases, grammar.lang, source.len(), Some(source_digest(source, budget)?)))
     }
 
     /// The format it is held in.
@@ -1809,6 +1804,64 @@ impl std::ops::DerefMut for TapeImage {
 }
 
 impl Columns15 {
+    pub const CODE: usize = 0;
+    pub const SIZE: usize = 1;
+    pub const BASE: usize = 2;
+    pub const OFF: usize = 3;
+    pub const TAIL: usize = 4;
+
+    /// The columns laid out in one buffer, as the stored image lays them.
+    fn laid(columns: [&[u8]; 5]) -> (Vec<u8>, [(usize, usize); 5]) {
+        let mut bytes = Vec::with_capacity(columns.iter().map(|column| padded(column.len())).sum());
+        let mut at = [(0, 0); 5];
+        for (k, column) in columns.into_iter().enumerate() {
+            at[k] = (bytes.len(), column.len());
+            bytes.extend_from_slice(column);
+            bytes.resize(padded(bytes.len()), 0);
+        }
+        (bytes, at)
+    }
+
+    /// Column `k` (`CODE` … `TAIL`).
+    pub fn column(&self, k: usize) -> &[u8] {
+        let (start, length) = self.at[k];
+        &self.bytes[start..start + length]
+    }
+
+    pub fn code(&self) -> &[u8] {
+        self.column(Self::CODE)
+    }
+
+    pub fn size(&self) -> &[u8] {
+        self.column(Self::SIZE)
+    }
+
+    pub fn base(&self) -> &[u8] {
+        self.column(Self::BASE)
+    }
+
+    pub fn off(&self) -> &[u8] {
+        self.column(Self::OFF)
+    }
+
+    pub fn tail(&self) -> &[u8] {
+        self.column(Self::TAIL)
+    }
+
+    /// The buffer every column lies in, and where each starts in it: what a reader in place takes.
+    pub fn laid_out(&self) -> (&[u8], [usize; 5]) {
+        (&self.bytes, self.at.map(|(start, _)| start))
+    }
+
+    /// A test's change of column `k` (its bytes, or its length): the columns laid out again.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn edit(&mut self, k: usize, change: impl FnOnce(&mut Vec<u8>)) {
+        let mut columns: Vec<Vec<u8>> = (0..5).map(|k| self.column(k).to_vec()).collect();
+        change(&mut columns[k]);
+        (self.bytes, self.at) = Self::laid(std::array::from_fn(|k| columns[k].as_slice()));
+        self.table = Default::default();
+    }
+
     pub fn size_width(&self) -> usize {
         usize::from(self.widths[0])
     }
@@ -1822,23 +1875,23 @@ impl Columns15 {
     }
 
     pub fn code_at(&self, i: usize) -> u16 {
-        u16::from_le_bytes([self.code[2 * i], self.code[2 * i + 1]])
+        u16::from_le_bytes([self.code()[2 * i], self.code()[2 * i + 1]])
     }
 
     pub fn size_at(&self, i: usize) -> u32 {
-        cell(&self.size, i, self.size_width())
+        cell(self.size(), i, self.size_width())
     }
 
     pub fn start_at(&self, i: usize) -> u32 {
-        cell(&self.base, i / CHECKPOINT_STRIDE, 4).saturating_add(cell(&self.off, i, self.off_width()))
+        cell(self.base(), i / CHECKPOINT_STRIDE, 4).saturating_add(cell(self.off(), i, self.off_width()))
     }
 
     pub fn tail_at(&self, i: usize) -> u32 {
-        cell(&self.tail, i, self.tail_width())
+        cell(self.tail(), i, self.tail_width())
     }
 
     pub fn node_count(&self) -> usize {
-        self.code.len() / 2
+        self.code().len() / 2
     }
 
     /// The code table's stored bytes.
@@ -1848,11 +1901,7 @@ impl Columns15 {
     }
 
     fn estimated_bytes(&self) -> usize {
-        self.code.capacity()
-            + self.size.capacity()
-            + self.base.capacity()
-            + self.off.capacity()
-            + self.tail.capacity()
+        self.bytes.capacity()
             + self.codes.capacity() * std::mem::size_of::<Code>()
             + self.kind_aliases.capacity() * std::mem::size_of::<(String, bool)>()
             + self.kind_aliases.iter().map(|(name, _)| name.capacity()).sum::<usize>()

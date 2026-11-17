@@ -9,6 +9,8 @@
 //!   one stays a call of the read compiled once in the module.
 #[cfg(feature = "ir")]
 pub mod inline;
+#[cfg(feature = "jit")]
+pub mod jit;
 #[cfg(feature = "ir")]
 pub mod reads;
 pub mod view;

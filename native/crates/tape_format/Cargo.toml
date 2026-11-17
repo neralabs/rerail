@@ -18,8 +18,4 @@ sha2 = { version = "0.10", features = ["asm"] }
 
 [dev-dependencies]
 # The reads in Cranelift's IR, run against this crate's readers (decision 0310).
-rerail-clif = { path = "../clif" }
-cranelift-codegen = "=0.125.4"
-cranelift-frontend = "=0.125.4"
-cranelift-module = "=0.125.4"
-cranelift-jit = "=0.125.4"
+rerail-clif = { path = "../clif", features = ["jit"] }

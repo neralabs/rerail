@@ -48,49 +48,12 @@ pub fn aligned(length: usize) -> usize {
     length.div_ceil(ALIGN) * ALIGN
 }
 
-/// A document as the device reads it: byte offsets into its slab, as `DocView` in
-/// `metal_tape.metal`. `node_base` is the document's first node in a batch's numbering, set by
-/// the batch's document table (`DocTable`). The tape is read where it lies, format 15's columns or
-/// format 16's arrays (decision 0293): nothing per node is derived beside it.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct DocView {
-    /// The batch's slab binding the document is in (`DocTable::slabs`).
-    pub slab: u32,
-    pub nodes: u32,
-    pub node_base: u32,
-    /// The tape's format: 15 or 16 (a 16z tape is laid out as format 16 where it is placed).
-    pub format: u32,
-    /// Format 15: `size`'s, `off`'s and `tail`'s widths in bytes, at bits 0, 4 and 8; bit 12: tails
-    /// measured from the node's own start. Format 16: the slot, gap and length widths at bits 0, 4
-    /// and 8, the checkpoints' at 12, and the four side lists' value widths at 16, 20, 24 and 28.
-    pub widths: u32,
-    /// Format 15's columns (code, size, base, off, tail), or format 16's arrays (codes, slots, gaps,
-    /// lengths, checkpoints).
-    pub columns: [u32; 5],
-    /// Format 16: the four side lists (codes' low parts, escaped slots, gaps, lengths), and each
-    /// one's part starts (u32s, a part a 1,024 nodes).
-    pub side: [u32; 4],
-    pub parts: [u32; 4],
-    /// Format 16: its language's cutoff and the numbers a prefix byte covers.
-    pub cut: u32,
-    pub per: u32,
-    /// The code table (`DeviceCode`, format 16's: the language's).
-    pub codes: u32,
-    pub source: u32,
-    pub source_len: u32,
-    /// Line starts (u32, document-local bytes), the first 0, and how many.
-    pub lines: u32,
-    pub line_count: u32,
-    /// The code table's length.
-    pub code_count: u32,
-    /// The document's place in a batch's numbering of source bytes and lines, as a packed batch
-    /// concatenates them (set by `DocTable`).
-    pub source_base: u32,
-    pub line_base: u32,
-    /// Where the tape starts (its header).
-    pub tape: u32,
-}
+/// A document as the device reads it: byte offsets into its slab, as `DocView` in `metal_tape.metal`. It is the
+/// view the reads written once take (`rerail_clif::view::TapeView`, decision 0310), one definition for the device
+/// and the JIT. `node_base` is the document's first node in a batch's numbering, set by the batch's document table
+/// (`DocTable`). The tape is read where it lies, format 15's columns or format 16's arrays (decision 0293): nothing
+/// per node is derived beside it.
+pub use rerail_clif::view::TapeView as DocView;
 const _: () = assert!(std::mem::size_of::<DocView>() == 116);
 
 /// A slab: its buffer and identity. Its bump position is the residency's (`State`).

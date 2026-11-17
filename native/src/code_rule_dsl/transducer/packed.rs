@@ -169,6 +169,7 @@ pub mod native_cpu_output_transform;
 pub mod native_cpu_reduction;
 pub mod native_cpu_regex;
 pub mod native_cpu_scheduler;
+pub mod native_cpu_tape;
 pub mod native_cpu_value;
 // Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2), the compiler crate's.
 #[allow(unused_imports)]

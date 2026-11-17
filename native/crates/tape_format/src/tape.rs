@@ -298,19 +298,33 @@ impl Tape for F15<'_> {
 }
 
 /// A stored format 15 image's columns and its code table (`MAGIC`, `FORMAT_VERSION`), read where they lie.
-/// The view a format 15 tape's reads take (decision 0310), the tape at byte `base` of what the view's offsets count
-/// from (0: the tape's own bytes).
+/// The view a format 15 tape's reads take (decision 0310), the stored tape at byte `base` of what the view's
+/// offsets count from (0: the tape's own bytes).
 pub fn f15_view(bytes: &[u8], base: usize) -> Result<rerail_clif::view::TapeView, String> {
-    let (c, _) = f15_columns(bytes)?;
-    let at = |column: &[u8]| u32::try_from(base + (column.as_ptr() as usize - bytes.as_ptr() as usize)).map_err(|_| "a tape placed past 4 GiB".to_owned());
-    let widths = u32::from(c.widths[0]) | u32::from(c.widths[1]) << 4 | u32::from(c.widths[2]) << 8 | u32::from(c.from_start) << 12;
-    Ok(rerail_clif::view::TapeView {
-        nodes: u32::try_from(c.code.len() / 2).map_err(|_| "a tape past 4 G nodes".to_owned())?,
-        format: 15,
-        widths,
-        columns: [at(c.code)?, at(c.size)?, at(c.base)?, at(c.off)?, at(c.tail)?],
-        ..Default::default()
-    })
+    f15_columns(bytes)?.0.view(bytes, base)
+}
+
+impl F15Columns<'_> {
+    /// The view the reads take (decision 0310): every column lies in `within`, which lies at byte `base` of what
+    /// the view's offsets count from.
+    pub fn view(&self, within: &[u8], base: usize) -> Result<rerail_clif::view::TapeView, String> {
+        let range = within.as_ptr_range();
+        let at = |column: &[u8]| {
+            let inside = range.start <= column.as_ptr() && column.as_ptr_range().end <= range.end;
+            if !inside {
+                return Err("a column outside the tape's bytes".to_owned());
+            }
+            u32::try_from(base + (column.as_ptr() as usize - range.start as usize)).map_err(|_| "a tape placed past 4 GiB".to_owned())
+        };
+        let widths = u32::from(self.widths[0]) | u32::from(self.widths[1]) << 4 | u32::from(self.widths[2]) << 8 | u32::from(self.from_start) << 12;
+        Ok(rerail_clif::view::TapeView {
+            nodes: u32::try_from(self.code.len() / 2).map_err(|_| "a tape past 4 G nodes".to_owned())?,
+            format: 15,
+            widths,
+            columns: [at(self.code)?, at(self.size)?, at(self.base)?, at(self.off)?, at(self.tail)?],
+            ..Default::default()
+        })
+    }
 }
 
 pub fn f15_columns(bytes: &[u8]) -> Result<(F15Columns<'_>, CodeTable), String> {

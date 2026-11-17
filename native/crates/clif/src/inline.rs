@@ -4,14 +4,15 @@
 //! the read's mark, never the call site's.
 //!
 //! A read is declared in a module by name (`func_ref`), as any other function the JIT's code calls.
-//! The pass needs no state of its own: it reads the module's declarations, builds the bodies of the
-//! reads the function reaches, and defines a cold read's body, itself through the pass, the first
-//! time a function calls it.
+//! The pass needs no state of its own: it reads the module's declarations and builds the bodies of the
+//! hot reads the function reaches. The module defines its cold reads once, when it is made
+//! (`define_cold`).
 
 use crate::reads::{self, READS, Read};
 use cranelift_codegen::Context;
 use cranelift_codegen::inline::{Inline, InlineCommand};
 use cranelift_codegen::ir::{self, ExternalName, Function, Signature, UserFuncName};
+use cranelift_codegen::isa::CallConv;
 use cranelift_module::{FuncId, Linkage, Module, ModuleError};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -25,6 +26,44 @@ pub fn func_ref<M: Module>(module: &mut M, name: &str, func: &mut Function) -> R
 fn declare<M: Module>(module: &mut M, read: &Read) -> Result<FuncId, ModuleError> {
     let signature = reads::signature(read, module.isa().default_call_conv());
     module.declare_function(read.name, Linkage::Local, &signature)
+}
+
+/// Every read declared in a module, by id: what a function's builder imports a read by, with no module at
+/// hand (a helper deep in the code that builds a function). Copied where it is needed.
+#[derive(Clone, Copy, Debug)]
+pub struct ReadIds {
+    ids: [FuncId; READS.len()],
+    call_conv: CallConv,
+}
+
+impl ReadIds {
+    /// Every read declared in `module` (again: the same ids).
+    pub fn declare<M: Module>(module: &mut M) -> Result<Self, ModuleError> {
+        let mut ids = [FuncId::from_u32(0); READS.len()];
+        for (id, read) in ids.iter_mut().zip(READS) {
+            *id = declare(module, read)?;
+        }
+        Ok(Self { ids, call_conv: module.isa().default_call_conv() })
+    }
+
+    /// `func`'s reference to the read `name`: its import of it, made the first time.
+    pub fn func_ref(&self, name: &str, func: &mut Function) -> ir::FuncRef {
+        let k = READS.iter().position(|read| read.name == name).expect("a read");
+        let index = self.ids[k].as_u32();
+        let known = func.dfg.ext_funcs.iter().find(|(_, data)| match &data.name {
+            ExternalName::User(name) => {
+                let name = &func.params.user_named_funcs()[*name];
+                name.namespace == 0 && name.index == index
+            }
+            _ => false,
+        });
+        if let Some((func_ref, _)) = known {
+            return func_ref;
+        }
+        let signature = func.import_signature(reads::signature(&READS[k], self.call_conv));
+        let name = func.declare_imported_user_function(ir::UserExternalName { namespace: 0, index });
+        func.import_function(ir::ExtFuncData { name: ExternalName::user(name), signature, colocated: false })
+    }
 }
 
 /// The reads `func`'s call instructions call: (id, read), each once.
@@ -93,33 +132,35 @@ impl Inline for &Policy {
     }
 }
 
-/// The pass over `context`'s function before it is compiled in `module`: every call of a hot read
-/// inlined (and the reads its body calls, through the pass), every cold read it still calls defined
-/// in the module. A function that calls no read is left as it is.
+/// The pass over `context`'s function before it is compiled in `module`: every call of a hot read inlined,
+/// and the hot reads its body calls, through the pass. A cold read stays a call, of the read the module
+/// defined once (`define_cold`). A function that calls no hot read is left as it is.
 pub fn reads<M: Module>(module: &mut M, context: &mut Context) -> Result<(), ModuleError> {
-    if called(module, &context.func).is_empty() {
+    let mut work: Vec<(FuncId, &Read)> = called(module, &context.func).into_iter().filter(|(_, read)| read.hot).collect();
+    if work.is_empty() {
         return Ok(());
     }
-    // Every hot read: their bodies call each other.
+    // The hot reads the function reaches: their bodies call each other.
     let mut bodies = HashMap::new();
-    for read in READS.iter().filter(|read| read.hot) {
-        let id = declare(module, read)?;
-        bodies.insert(id, body(module, id, read)?);
+    while let Some((id, read)) = work.pop() {
+        if bodies.contains_key(&id) {
+            continue;
+        }
+        let body = body(module, id, read)?;
+        work.extend(called(module, &body).into_iter().filter(|(id, read)| read.hot && !bodies.contains_key(id)));
+        bodies.insert(id, body);
     }
-    let policy = Policy { bodies };
-    context.inline(&policy).map_err(ModuleError::Compilation)?;
-    for (id, read) in called(module, &context.func) {
-        define(module, id, read)?;
-    }
-    Ok(())
+    context.inline(&Policy { bodies }).map(|_| ()).map_err(ModuleError::Compilation)
 }
 
-/// The read's body defined in `module`, through the pass, unless it is already.
-fn define<M: Module>(module: &mut M, id: FuncId, read: &Read) -> Result<(), ModuleError> {
-    let mut context = Context::for_function(body(module, id, read)?);
-    reads(module, &mut context)?;
-    match module.define_function(id, &mut context) {
-        Ok(()) | Err(ModuleError::DuplicateDefinition(_)) => Ok(()),
-        Err(error) => Err(error),
+/// Every cold read defined in `module`, once, by `define` (the module's way to define a function), each
+/// through the pass: what a call the pass leaves calls.
+pub fn define_cold<M: Module>(module: &mut M, define: &mut dyn FnMut(&mut M, FuncId, &mut Context) -> Result<(), ModuleError>) -> Result<(), ModuleError> {
+    for read in READS.iter().filter(|read| !read.hot) {
+        let id = declare(module, read)?;
+        let mut context = Context::for_function(body(module, id, read)?);
+        reads(module, &mut context)?;
+        define(module, id, &mut context)?;
     }
+    Ok(())
 }

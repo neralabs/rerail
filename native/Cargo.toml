@@ -82,6 +82,8 @@ cranelift-codegen = "=0.125.4"
 rerail-compiler = { path = "crates/compiler" }
 rerail-rr-syntax = { path = "crates/rr_syntax" }
 rerail-tape-format = { path = "crates/tape_format" }
+# The tape's reads written once in CLIF, and the JIT's inlining pass over them (decision 0310).
+rerail-clif = { path = "crates/clif" }
 # The .rr parser: its grammar compiled, the engine's tape from it (`packed::rr_parser`).
 rerail-rr-parser = { path = "crates/rr_parser" }
 rerail-prof = { path = "crates/prof" }
@@ -195,6 +197,8 @@ rerail-metal = { path = "crates/metal", features = ["test-hooks"] }
 rerail-device-metal = { path = "crates/device_metal", default-features = false, features = ["test-hooks"] }
 
 [dev-dependencies]
+# The tape's reads JIT-compiled whole, run against the documents' own reads (`tape::tests`, decision 0310).
+rerail-clif = { path = "crates/clif", features = ["jit"] }
 # JSON's parser, measured directly (`tape::tests::json_parse_costs`).
 rerail-simdjson = { path = "crates/simdjson" }
 # Python's lean parser, measured directly (`tape::tests::python_parse_costs`).

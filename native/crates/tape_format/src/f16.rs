@@ -1357,87 +1357,29 @@ mod tests {
         }
     }
 
-    /// The tape's reads written once in CLIF (decision 0310), compiled by the JIT through its inlining pass, each
-    /// called through an exported function of its own (a hot read inlined into it, a cold one a call).
-    struct Reads {
-        _module: cranelift_jit::JITModule,
-        fns: std::collections::HashMap<&'static str, *const u8>,
-    }
-
-    impl Reads {
-        fn new() -> Self {
-            use cranelift_codegen::ir::{InstBuilder, UserFuncName};
-            use cranelift_module::{Linkage, Module};
-            let builder = cranelift_jit::JITBuilder::new(cranelift_module::default_libcall_names()).unwrap();
-            let mut module = cranelift_jit::JITModule::new(builder);
-            let mut ids = Vec::new();
-            for read in rerail_clif::reads::READS {
-                let signature = rerail_clif::reads::signature(read, module.isa().default_call_conv());
-                let id = module.declare_function(&format!("call_{}", read.name), Linkage::Export, &signature).unwrap();
-                let mut context = module.make_context();
-                context.func.signature = signature;
-                context.func.name = UserFuncName::user(0, id.as_u32());
-                let mut fctx = cranelift_frontend::FunctionBuilderContext::new();
-                let mut f = cranelift_frontend::FunctionBuilder::new(&mut context.func, &mut fctx);
-                let entry = f.create_block();
-                f.append_block_params_for_function_params(entry);
-                f.switch_to_block(entry);
-                f.seal_block(entry);
-                let params = f.block_params(entry).to_vec();
-                let callee = rerail_clif::inline::func_ref(&mut module, read.name, f.func).unwrap();
-                let call = f.ins().call(callee, &params);
-                let result = f.inst_results(call)[0];
-                f.ins().return_(&[result]);
-                f.finalize();
-                rerail_clif::inline::reads(&mut module, &mut context).unwrap();
-                // A hot read is inlined (what it calls is cold); a cold one stays a call.
-                let called = rerail_clif::inline::reads_called(&module, &context.func);
-                assert_eq!(called.contains(&read.name), !read.hot, "{} after the pass calls {called:?}", read.name);
-                assert!(called.iter().all(|name| !rerail_clif::reads::read(name).unwrap().hot), "{} calls a hot read: {called:?}", read.name);
-                module.define_function(id, &mut context).unwrap();
-                ids.push((read.name, id));
+    /// Every read of every node equals `t`'s, read where the tape lies.
+    fn same_reads<T: Tape>(reads: &rerail_clif::jit::Reads, t: &T, tape: &[u8], view: &rerail_clif::view::TapeView) {
+        const NONE: u32 = u32::MAX;
+        let none = |v: Option<usize>| v.map_or(NONE, |v| v as u32);
+        for i in 0..t.len() {
+            let end = t.subtree_end(i);
+            assert_eq!(reads.one("tape_size", tape, view, i) as usize, end - i, "size of {i}");
+            assert_eq!(reads.one("tape_end_of", tape, view, i) as usize, end, "end of {i}'s subtree");
+            assert_eq!(reads.one("tape_number", tape, view, i), t.code(i), "code of {i}");
+            assert_eq!(u64::from(reads.one("tape_start", tape, view, i)), t.start(i), "start of {i}");
+            assert_eq!(u64::from(reads.one("tape_end", tape, view, i)), t.end(i), "end of {i}");
+            let parent = t.parent(i);
+            assert_eq!(reads.one("tape_parent", tape, view, i), none(parent), "parent of {i}");
+            let next = parent.and_then(|p| Some(end).filter(|&n| n < t.subtree_end(p)));
+            assert_eq!(reads.one("tape_next", tape, view, i), none(next), "next of {i}");
+            if let Some(p) = parent {
+                assert_eq!(reads.two("tape_next_in", tape, view, i, t.subtree_end(p) as u32), none(next), "next of {i} in its parent");
             }
-            module.finalize_definitions().unwrap();
-            let fns = ids.into_iter().map(|(name, id)| (name, module.get_finalized_function(id))).collect();
-            Self { _module: module, fns }
-        }
-
-        fn one(&self, name: &str, tape: &[u8], view: &rerail_clif::view::TapeView, i: usize) -> u32 {
-            // SAFETY: the read's signature: the tape's base, its view, a node.
-            let f: extern "C" fn(*const u8, *const rerail_clif::view::TapeView, u32) -> u32 = unsafe { std::mem::transmute(self.fns[name]) };
-            f(tape.as_ptr(), view, i as u32)
-        }
-
-        fn two(&self, name: &str, tape: &[u8], view: &rerail_clif::view::TapeView, i: usize, k: u32) -> u32 {
-            // SAFETY: as `one`, with a second u32.
-            let f: extern "C" fn(*const u8, *const rerail_clif::view::TapeView, u32, u32) -> u32 = unsafe { std::mem::transmute(self.fns[name]) };
-            f(tape.as_ptr(), view, i as u32, k)
-        }
-
-        /// Every read of every node equals `t`'s, read where the tape lies.
-        fn same_as<T: Tape>(&self, t: &T, tape: &[u8], view: &rerail_clif::view::TapeView) {
-            const NONE: u32 = u32::MAX;
-            let none = |v: Option<usize>| v.map_or(NONE, |v| v as u32);
-            for i in 0..t.len() {
-                let end = t.subtree_end(i);
-                assert_eq!(self.one("tape_size", tape, view, i) as usize, end - i, "size of {i}");
-                assert_eq!(self.one("tape_end_of", tape, view, i) as usize, end, "end of {i}'s subtree");
-                assert_eq!(self.one("tape_number", tape, view, i), t.code(i), "code of {i}");
-                assert_eq!(u64::from(self.one("tape_start", tape, view, i)), t.start(i), "start of {i}");
-                assert_eq!(u64::from(self.one("tape_end", tape, view, i)), t.end(i), "end of {i}");
-                let parent = t.parent(i);
-                assert_eq!(self.one("tape_parent", tape, view, i), none(parent), "parent of {i}");
-                let next = parent.and_then(|p| Some(end).filter(|&n| n < t.subtree_end(p)));
-                assert_eq!(self.one("tape_next", tape, view, i), none(next), "next of {i}");
-                if let Some(p) = parent {
-                    assert_eq!(self.two("tape_next_in", tape, view, i, t.subtree_end(p) as u32), none(next), "next of {i} in its parent");
-                }
-                let kids = crate::tape::children(t, i).collect::<Vec<_>>();
-                assert_eq!(self.one("tape_first_child", tape, view, i), none(kids.first().copied()), "first child of {i}");
-                assert_eq!(self.one("tape_child_count", tape, view, i) as usize, kids.len(), "children of {i}");
-                for k in 0..=kids.len().min(12) {
-                    assert_eq!(self.two("tape_child", tape, view, i, k as u32), none(kids.get(k).copied()), "child {k} of {i}");
-                }
+            let kids = crate::tape::children(t, i).collect::<Vec<_>>();
+            assert_eq!(reads.one("tape_first_child", tape, view, i), none(kids.first().copied()), "first child of {i}");
+            assert_eq!(reads.one("tape_child_count", tape, view, i) as usize, kids.len(), "children of {i}");
+            for k in 0..=kids.len().min(12) {
+                assert_eq!(reads.two("tape_child", tape, view, i, k as u32), none(kids.get(k).copied()), "child {k} of {i}");
             }
         }
     }
@@ -1449,7 +1391,7 @@ mod tests {
         use rerail_clif::view;
         assert_eq!((view::F16_K, view::F16_BLOCK, view::F16_PART), (K as u32, BLOCK as u32, PART as u32));
         assert_eq!(1 << view::F15_STRIDE_SHIFT, crate::CHECKPOINT_STRIDE);
-        let reads = Reads::new();
+        let reads = rerail_clif::jit::Reads::new();
         // Format 16, every side list in use.
         let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
         let table = CodeTable::new(entries);
@@ -1458,13 +1400,13 @@ mod tests {
         let plain = Plain(&nodes, &table);
         let t = sixteen(&lang, &plain, &(0..600).collect::<Vec<_>>(), pos + 2);
         let v = placement(t.as_bytes()).unwrap().view(&lang, 0).unwrap();
-        reads.same_as(&t.reader(&lang).unwrap(), t.as_bytes(), &v);
+        same_reads(&reads, &t.reader(&lang).unwrap(), t.as_bytes(), &v);
         // Format 15.
         let (image, _) = crate::tape::tests::sample();
         let (columns, table) = crate::tape::f15_columns(&image).unwrap();
         let f15 = crate::tape::F15::new(columns, &table).unwrap();
         let v = crate::tape::f15_view(&image, 0).unwrap();
-        reads.same_as(&f15, &image, &v);
+        same_reads(&reads, &f15, &image, &v);
     }
 
     /// Every shipped table loads, and its text reads back to the same choices.
