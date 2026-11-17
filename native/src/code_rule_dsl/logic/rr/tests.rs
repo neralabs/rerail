@@ -3557,9 +3557,22 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
             let mut facts: Vec<String> = p.facts.iter().filter(|(r, _)| named.contains(r.as_str()) || p.outputs.contains(r)).map(|(r, rows)| mask(&format!("{r}{rows:?}"))).collect();
             facts.sort();
             // The inputs the rules read: the lowering declares one (`node_order`, `rr_inside_<set>`) for each clause
-            // that reads it, and an unreached clause's stays among the inputs after `prune`, read by none.
-            let text = format!("{:?}{:?}", p.rules, p.natives);
-            let mut inputs: Vec<String> = p.inputs.iter().filter(|i| text.contains(&format!("\"{i}\""))).cloned().collect();
+            // that reads it, and an unreached clause's stays among the inputs after `prune`, read by none. Read: an atom of
+            // a rule's body names it (an aggregate's too), or a native's text does; a string equal to its name (a
+            // field named `value`, `field($p, "value", _)`) is no read of it (decision 0174 keeps an attribute no rule
+            // reads an input, where answering it made it a relation).
+            let read: BTreeSet<String> = p
+                .rules
+                .iter()
+                .flat_map(|r| r.body.iter())
+                .filter_map(|l| match l {
+                    Literal::Atom(a) => Some(a.rel.to_string()),
+                    Literal::Agg { atom, .. } => Some(atom.rel.to_string()),
+                    _ => None,
+                })
+                .collect();
+            let native_text = format!("{:?}", p.natives);
+            let mut inputs: Vec<String> = p.inputs.iter().filter(|i| read.contains(i.as_str()) || native_text.contains(&format!("\"{i}\""))).cloned().collect();
             inputs.sort();
             let mut outputs = p.outputs.clone();
             outputs.sort();
