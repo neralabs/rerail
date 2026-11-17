@@ -1,1 +1,0 @@
-A daemon whose `--tls-key` other accounts can read (on Windows any account besides you, SYSTEM and Administrators, as under `C:\certs`) now serves this computer alone, over http on loopback. Before, Windows served https with it as asked, and macOS and Linux refused to start. `rerail daemon start` exits 1 if it asked for `--allow-remote` or `--public-host`.
