@@ -1,6 +1,7 @@
 # 0334. Work budgets and result limits never change results
 
-Status: decided (2026-11-17); the replanning is built for packed batches, the rest is listed under Progress. After 0324 (the grid retired). The user, on Q19: "Allow a mode where we let the kernels run over. The goal
+Status: decided (2026-11-17); the replanning is built (packed batches, the label sweep, the wave's root walks, the
+memory restart); `replan` as the default is what remains (Progress). After 0324 (the grid retired). The user, on Q19: "Allow a mode where we let the kernels run over. The goal
 of stopping them is for a horribly misplanned kernel to not spend minutes or hours churning when replanning could
 make it fast (we need planning to be very fast, so we will not be able to always do it right). We need to re-plan
 over-long jobs, not just re-run them elsewhere. We still need to be able to do that. Help me think through the
@@ -30,8 +31,7 @@ operand or work failure in the original evaluation."
 2. **The budget is a mode** (`RERAIL_DEVICE_BUDGET`):
    - `full`, the default: the CPU's limits. A task runs past its estimate, and the device's results are the
      CPU's. This is the mode the user asked for: kernels run over.
-   - `estimate`: the task stops at its estimate, an error (`WorkLimit`), as before. Kept only until the replanning
-     below replaces it, since it changes results.
+   - `replan`: the replanning below. (`estimate`, the old stop at the estimate, which changed results, is gone.)
    The resident label batches (`assign_resident`) take the same budget: under `full`, the evaluation's work per
    node is 2^26, which `resident_work` clamps to 2^26.
 3. **A result limit selects; it sizes nothing.** `assign_workspace_with_result_limits` keeps the limits on the batch
@@ -101,31 +101,44 @@ The user's answers (2026-11-17, the recommendations taken):
 
 ## Progress
 
-Done:
+Done (2026-11-17):
 - §1 to §5 of the decision (Q19's cause).
-- **The replanning of packed batches** (the CPU JIT's and Metal's, `execute_planned`):
-  - `WorkBudget::Replan { slack, doublings }` (`RERAIL_DEVICE_BUDGET=replan`): a task's budget is its estimate
-    times the slack, doubled per restart, below the ceiling.
-  - A task stopped below the ceiling is `Error::OverBudget`, its evaluation unfinished (`status_error` reads the
-    task's budget). At the ceiling it stays `WorkLimit`.
-  - The CPU JIT holds a task, its paths and its values to the same budget as the device (its task limit was
-    always the ceiling): one mechanism.
-  - `execute_planned_budgeted` takes the unfinished evaluations (`PackedExecution::over_budget`), records the
-    misprediction (a profile decision), and restarts them alone, with the same programs and files (so the same
-    compiled binding) and twice the budget, until they finish or reach the ceiling. The restart's results stand
-    for theirs (`with_restarted`: its pages, its task ordinals moved to the batch's).
-  - The test plans an evaluation badly on purpose (slack 1 under a long string's regex): it restarts and gives
-    `Full`'s results, on the CPU JIT and on Metal
-    (`a_misplanned_evaluation_is_restarted_and_gives_the_full_budgets_results`).
+- **Packed batches** (the CPU JIT's and Metal's, `execute_planned`): `WorkBudget::Replan { slack, doublings }`
+  (`RERAIL_DEVICE_BUDGET=replan`). A task stopped below the ceiling is `Error::OverBudget`, its evaluation
+  unfinished; at the ceiling it stays `WorkLimit`. The CPU JIT holds tasks, paths and values to the same budget
+  as the device. Each backend restarts its unfinished evaluations alone (`packed::restarting`), same programs and
+  files, twice the budget, until they finish; the restart's results stand for theirs (`with_restarted`).
+  Test: `a_misplanned_evaluation_is_restarted_and_gives_the_full_budgets_results` (CPU JIT and Metal).
+- **The budget's basis is a prediction** (§4): an evaluation's predicted steps are its program's measured rate
+  (steps per unit of size) times the task's size (its subtree's nodes, the file's where the program repeats,
+  plus its bytes / 8 where the program tests text); without a rate, a prior (size × words × 2). At least 256
+  (`MIN_PREDICTED`). The workspace formula is gone from the budget. Both backends count a task's steps the same
+  way (the most steps of any of its paths, folded at no per-step cost), so rates from either apply to both.
+- **Mispredictions in the cost store** (§5): each evaluation's steps, size and prediction, and whether it ran over
+  (`rerail_accel::program_steps`), go into `costs.sqlite`'s `program_steps` table (sums, halved past 1,024
+  evaluations), read back as rates at the next run. The overrun's steps count as its budget: a lower bound.
+- **Memory** (§9): a task's states are sized from its size (4 a unit, at least 512), not from the step count. A
+  task whose states run out below the worst case is `Error::StatesOutgrown`, and its evaluation restarts through
+  the same mechanism with twice its states (per task, `StateGrowth`). Metal's workspace halves its lanes where the
+  buffer pool refuses it. Q22's 15 capacity refusals: 12 pass; the 3 left differ in results on Metal at any state
+  size (Metal semantics, Q22). Test: `outgrown_states_restart_and_give_the_worst_cases_results`.
+- **The label sweep** (`assign_resident`): under `replan` an evaluation's budget per node is its predicted steps
+  per node times the slack, within [256, 2^26] a task. A task stopped below the ceiling reports its own status, and
+  the host runs the sweep again with twice the budget (`Outcome::replanned`). Test:
+  `a_misplanned_label_sweep_runs_again_and_finds_the_full_budgets_roots` (slow tier).
+- **Another plan before the ceiling** (§5's choice): the wave's root walks on the CPU (`clause_roots`) are held to
+  the evaluation's (clause × file) prediction times the slack. At an overrun, W's matcher at the candidates (its
+  rate per subtree node, measured where it confirms roots, key `w:<program>`; else 4) is weighed against the
+  transducer again with twice the budget, and the cheaper runs; W through `WaveRun::limited`, as at the ceiling.
+  Test: `a_clause_over_its_budget_goes_to_w_where_w_costs_less_and_runs_again_where_it_does_not`.
 
-Next, in order:
-1. **Another plan before the ceiling.** The wave answers an evaluation at the ceiling with W's matcher
-   (`WaveRun::limited`). It is to choose by cost at the first overrun: W's matcher at the candidate roots
-   against the doubled budget. That needs W's cost per root in the cost store.
-2. **The planner's estimate as the budget's basis.** Today it is the workspace formula (subtree × words × 4,096),
-   which is a bound, not a prediction.
-3. **The label sweep** (`assign_resident`) is not replanned yet: under `Replan` it runs as `Full`.
-4. **The misprediction into the cost store**, where the planner reads it (today a profile decision).
-5. **§9, memory**: a task whose states overflow restarts with twice the states, through the same restart
-   (Q22's 15 refusals).
-6. **`replan` as the default**, once 1 and 2 hold on the corpus.
+Not yet:
+1. **`replan` as the default.** Wanted first: the corpus run under `replan` gives `full`'s findings, and the cost
+   store holds rates for the pack's programs.
+2. **The wave's label passes on the CPU** (`labelled_sets`) run at the ceiling: only the root walks are budgeted.
+   Measured on the fixtures, the root walks take at most about 2,000 steps an evaluation; the labels do the work.
+3. **The Metal wave's root walks** (`roots_metal_split`) give no `limited`, so W's matcher is never chosen there.
+4. The other plans of §5 (another anchor or driver, a prefilter, a split by subtree): only W and the doubled
+   budget are weighed today.
+5. A misprediction reprices the clause for the next run, not for the wave's chunks not yet started: the rates are
+   read once a run.

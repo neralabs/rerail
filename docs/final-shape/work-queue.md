@@ -469,17 +469,17 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
 - **Fixed** (2026-11-17, decision 0334). The device read each task's workspace estimate as its work limit, where
   the CPU's is 2^26 a task and 2^20 a path; the ABI's own comment said the estimate only sizes. The estimate and
   the budget are now two fields, and the budget is a mode (`RERAIL_DEVICE_BUDGET`: `full`, the CPU's limits, the
-  default; `estimate`, the old stop). `lowered_clauses_find_the_same_roots_on_the_resident_interpreter` passes.
+  default; `replan`). `lowered_clauses_find_the_same_roots_on_the_resident_interpreter` passes.
 - The 16 semantic fixtures listed here under Q19 were mostly not the work limit: a result limit was applied as the
   result capacity, so an evaluation past its witness limit failed (`WorkLimit` on Metal, `BackendCapacity` on the
   CPU JIT). It is now a selection at compaction (0334 §3). 13 of them pass; 3 differ in what they find (Q22).
 - `metal_catches_a_widened_walk` caught 2 widened clauses of the 3 it wanted, and so does its CPU twin
   (`the_gate_catches_a_widened_walk`, in the slow tier, failing unseen): the pack's clauses give 2. Both now read
   the same tapes (`widened_tapes`, Metal 16 a launch) and want 2 (`WIDENED_CAUGHT`); both pass.
-- The replanning of over-long jobs is built for packed batches (2026-11-17, 0334 Progress): `replan` budgets,
-  `OverBudget`, the unfinished evaluations restarted with twice the budget on the CPU JIT and Metal. **Open**, in
-  0334's order: another plan (W's matcher) chosen by cost before the ceiling; the planner's estimate as the basis;
-  the label sweep; the misprediction in the cost store; memory (§9); `replan` as the default.
+- The replanning of over-long jobs is built (2026-11-17, 0334 Progress): budgets from predicted steps (rates in
+  the cost store), restarts with twice the budget (packed batches, the label sweep), W chosen by cost in the
+  wave's root walks, states restarted when outgrown. **Open** (0334 "Not yet"): `replan` as the default (a corpus
+  run under `replan` first); the CPU wave's label passes and the Metal wave's root walks are not budgeted.
 
 ### Q20. The CPU JIT's capture pairs compare and scan a byte a step
 
@@ -521,8 +521,13 @@ output-directive failures were a stale rejected slot and a failed task's early r
 - **Refused (`BackendCapacity`)**, where the CPU runs the batch (15). The cause: the workspace is sized from the
   workspace estimate, a step count (subtree × words × 4,096), as up to 65,536 states a kind a task, times the
   lanes. `finite_literal_register_work_stays_broad_across_programs_and_files` (3 three-word programs, 128 files of
-  three lines) plans 471 MB, which the Metal buffer pool refuses (`metal_buffer_limit`). The fix is 0334 §9: size
-  from the plan, restart an overflowing evaluation with twice the states. It waits on the user's answers to 0334.
+  three lines) plans 471 MB, which the Metal buffer pool refuses (`metal_buffer_limit`). **Fixed** 2026-11-17
+  (0334 §9): states sized from the task, an outgrown evaluation restarted with twice its states, fewer lanes where
+  the pool refuses. 12 pass. The 3 left find other results on Metal than the interpreter (the CPU JIT agrees with
+  it) at 1×, 2× and 4× the states: Metal semantics, hidden behind the refusal until now, **open**:
+  `inputs_nested_optional_type_captures_preserve_raw_candidate_ordinals`,
+  `inputs_compact_stage_capture_predicates_use_the_correct_capture_generation`,
+  `inputs_compact_stage_waves_match_cpu_navigation_and_control_flow`. The 15 were:
   - `corpus_optional_test_bodies_and_regex_injections_match_cpu`
   - `finite_literal_register_work_stays_broad_across_programs_and_files`
   - `inputs_absent_field_uses_shared_facts_for_wide_and_file_local_inputs`
