@@ -999,7 +999,7 @@ export function setupEnvironment(context: SetupContext, port?: number): SetupEnv
       // will, and one that fails is a failed connection.
       if (agents.includes("claude-code") && !result.failures.some(({ agent }) => agent === "claude-code")) {
         const problem = await runRegisteredClaudeHook(home);
-        if (problem !== undefined) result.failures.push({ agent: "claude-code", message: problem });
+        if (problem !== undefined) result.failures.push({ agent: "claude-code", message: problem, registered: true });
       }
       // One that could not be connected stays unseen, even if `rerail install` recorded it before, so set-up run again
       // connects it once its config is fixed.

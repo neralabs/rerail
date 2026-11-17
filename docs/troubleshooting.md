@@ -353,13 +353,14 @@ Codex and Cursor run commands in PowerShell on Windows. Rerail 0.1.4 and earlier
 
 ```text
   △ Couldn’t connect Claude Code: Claude Code's Rerail hook did not answer within 30 s
-    Rerail left its config as it is. Fix that, then run rerail setup again to connect Claude Code.
+    Rerail’s hooks are written, but they fail. Fix that, then run rerail setup again to connect Claude Code.
 ```
 
 After connecting Claude Code, set-up runs the hook it registered once, as Claude Code will. A hook that cannot run
-records nothing and says nothing in a session, so set-up reports the connection as failed. The message ends with what
-happened: `did not answer within 30 s`, `exited <code>: <its output>`, `failed: rerail hook: <reason>`,
-`answered with no JSON object` or `could not run: <reason>`. Fix what it names, then run `rerail setup` again.
+records nothing and says nothing in a session, so set-up reports the connection as failed, though the hooks stay in
+Claude Code's `settings.json`. The message ends with what happened: `did not answer within 30 s`, `exited <code>: <its
+output>`, `failed: rerail hook: <reason>`, `answered with no JSON object` or `could not run: <reason>`. Fix what it
+names, then run `rerail setup` again.
 
 ### `Couldn’t connect …: … is not plain JSON`
 
