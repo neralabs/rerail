@@ -887,8 +887,18 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   /** A lane with no workspace and edits queued takes one, in its turn unless it keeps its workspace. */
   async #workspaceForPending(): Promise<void> {
     if (!this.#released || this.#pending.size === 0) return;
+    this.#startFirstPending();
     const turn = this.#kept ? undefined : await this.#workspaceTurns?.take();
     this.#takeWorkspaceInTurn(turn);
+  }
+
+  /**
+   * The audit of the first queued edit starts now, as an open lane's starts when its pump picks the edit up, so a lane
+   * waiting its turn records its audit in the order the session's batch named it, at the catalog's rules.
+   */
+  #startFirstPending(): void {
+    const first = this.#pending.entries().next().value;
+    if (first !== undefined) this.#ensureStoredAudit(first[1], first[0], this.#catalog.provenance());
   }
 
   #takeWorkspaceInTurn(turn: (() => void) | undefined): void {
