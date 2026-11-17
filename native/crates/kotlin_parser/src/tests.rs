@@ -275,8 +275,17 @@ fn generic_functions_are_the_lean_parsers() {
     ]);
 }
 
+/// Step 17: delegation, and the three-byte operators.
 #[test]
-fn what_step_16_does_not_read_is_refused() {
+fn delegates_are_the_lean_parsers() {
+    same(&[
+        "class A(b: B) : I by b, J {\n    val x by lazy { 1 }\n    private val y: Int by mapOf()\n}\nval z by lazy {\n    2\n}\n",
+        "val a = b === c\nval d = e !== f\nval g = 0..<n\nval h = 1..2\n",
+    ]);
+}
+
+#[test]
+fn what_step_17_does_not_read_is_refused() {
     refused(&[
         "val a = b to f<T>()\n",
         "val a = x + f<T>(1)\n",
@@ -304,6 +313,7 @@ fn what_step_16_does_not_read_is_refused() {
         "fun f(noinline: Int) {}\n",
         "fun <T : Any> T.f() {}\n",
         "fun String?.h() = 1\n",
+        "val h = i as? J\n",
         "val s = \"a $field b\"\n",
         "abstract class A {\n    fun f() {}\n    /* c */\n    abstract fun g()\n}\n",
         "fun f() {\n    a()\n    /* c */\n    // d\n    b()\n}\n",

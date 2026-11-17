@@ -430,6 +430,19 @@ in (mostly `by` and type constraints), so the counts hold.
 
 Corpus: 185 the same, 306 refused, 0 differ.
 
+## Kotlin, step 17 (`17-delegates.bitlex`)
+
+- **A property's delegate:** `val x by lazy { 1 }` is a `property_delegate`.
+- **A delegated supertype:** `I by b` wraps the user type in `explicit_delegation`.
+- `by` keeps no leaf.
+
+`===`, `!==` and `..<` are tokens of three bytes, a row of their own (`op3`): a mask and a
+`last` two bytes on. The two-byte operators' `pairs` read two bytes only. `as?` stays refused:
+the lean lexer reads it as one token, but `as` is a word of `simple_identifier`. A row of its own
+at `a` would take first bytes from a kind the token marks name.
+
+Corpus: 204 the same, 287 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
