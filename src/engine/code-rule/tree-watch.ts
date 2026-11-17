@@ -20,11 +20,6 @@ export interface TreeWatch {
   take(): TreeNotice[];
   /** Releases every watch and the engine's thread. Idempotent. */
   close(): void;
-  /**
-   * Another watch through the same engine watch, with notices of its own, which a shared watch's user hands to a session
-   * folder's notices (`SessionNotices`); the engine's own watch has none.
-   */
-  readonly another?: () => TreeWatch;
 }
 
 /**

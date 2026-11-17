@@ -91,7 +91,7 @@ async function opened(root: string, watch: StampTreeWatch): Promise<{ bridge: Co
   };
   const shared = new SharedTreeWatch(watch);
   watches.push(shared);
-  const worktreeWalks = new WorktreeWalks({ gapMs: 0, notices: new WorktreeNotices({ treeWatch: shared.user() }) });
+  const worktreeWalks = new WorktreeWalks({ gapMs: 0, notices: new WorktreeNotices({ treeWatch: shared.user() }), sessionWatch: () => shared.user() });
   const bridge = new CodeRuleBridge(root, auditor, { worktreeWalks });
   bridges.push(bridge);
   await bridge.openWorkspace("session-1");

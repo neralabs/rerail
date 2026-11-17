@@ -135,11 +135,6 @@ export class WorktreeNotices {
     return this.#watched.size > 0;
   }
 
-  /** A watch of a session folder through the engine watch these notices come from (`SessionNotices`); undefined without one. */
-  sessionWatch(): TreeWatch | undefined {
-    return this.#watch?.another?.();
-  }
-
   /**
    * Takes the worktrees a notice counted in since the last call, and since a read of each began: each may hold a
    * change no read has seen, which a notice taken as the read began, or while it ran, would not.
@@ -310,7 +305,6 @@ export class SharedTreeWatch {
       unwatch: root => this.#unwatchFor(user, root),
       take: () => this.#takeFor(user),
       close: () => this.#closeFor(user),
-      another: () => this.user(),
     };
   }
 
