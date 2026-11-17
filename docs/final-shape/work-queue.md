@@ -1472,3 +1472,13 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   a kept plan not led by it is searched again (`valid_live_driver`); decision 0048's last section. Test
   `a_demanded_rule_is_driven_by_its_demand`. Two PostHog runs: every demanded plan led by its demand (the outlier
   run: 19 of 24 not), 2,531 and 2,509 G, findings the same.
+
+### Q60. A run's plans depend on which concurrent chunk planned first
+
+- **Found** (2026-11-17, from Q59): the run's kept plans (`PLANS`, decision 0301) are shared by the chunks that run at
+  once (15 on PostHog). A job plans with its own chunk's statistics, keeps the order in its own map
+  (`OWN_PLANS`) and publishes it as it ends; a job that finds a published order re-prices it and keeps it unless its
+  work per node grew over 4x. Which job publishes first is thread timing, so the orders a run uses, and its cost,
+  differ run to run (Q59: +600 G in 2 of 7 runs). Findings do not. `plans_learnt` (a kept plan's price and work) is
+  last writer wins as well.
+- **Wanted**: what a chunk plans with is a function of the run's inputs, never of timing.
