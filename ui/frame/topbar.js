@@ -31,31 +31,44 @@ function updatedAgo(at) {
   return `${Math.round(min / 1440)}d ago`;
 }
 
-/* Labels stay short and leave out the repo (it is in the pill); the tooltip says what is known and what to do. Any
- * failed poll that is not the repository's 404 counts as disconnected, so the words claim only that the daemon did not
- * answer, not why. Only running sessions lose steering: the hook that starts a session may start the daemon. */
+/* Labels stay short and leave out the repo (it is in the pill); the tooltip says what is known and what to do. The
+ * first of the daemon's, the repository's and the data's freshness to have something to say is the status. */
 function status() {
   if (!data.loaded && !data.disconnected && !data.accessRequired) return { cls: "", text: "Connecting…", title: `Waiting for the local daemon at ${location.origin}.` };
   const rel = data.updatedAt ? updatedAgo(data.updatedAt) : "never";
   const version = data.health ? ` ${data.health.version}` : "";
+  return daemonStatus(rel) ?? repositoryStatus() ?? freshnessStatus(rel, version);
+}
+
+/** The daemon, whichever repo the page shows: it wants the dashboard link, has stopped answering, or its model is broken. */
+function daemonStatus(rel) {
   if (data.accessRequired) {
     return { cls: "down", text: "Needs the dashboard link",
       title: `${location.origin} answers only a browser that has opened its dashboard link once. Run rerail manage, or rerail daemon start --open, on this computer.` };
   }
-  if (data.disconnected) {
-    if (!data.updatedAt || Date.now() - data.updatedAt > DOWN_AFTER_MS) {
-      const since = data.updatedAt ? ` since ${new Date(data.updatedAt).toLocaleTimeString()}` : "";
-      return { cls: "down", text: "Daemon not responding",
-        title: `No answer from ${location.origin}${since}. Running sessions aren't steered until it's back; a new session starts it, or run rerail daemon start.` };
-    }
-    return { cls: "warn", text: "Reconnecting…", title: `The last refresh failed. Showing data from ${rel}; retrying.` };
-  }
+  if (data.disconnected) return disconnectedStatus(rel);
   // A model whose files do not match its manifest fails every session's attach, whichever repo the page shows.
   const model = data.health?.model;
   if (model && !model.ok) {
     return { cls: "down", text: `Model: ${model.message}`,
       title: "The engine's model files do not match model/manifest.json, so no session can attach. Reinstall Rerail, or in a source checkout run git lfs install && git lfs pull and rebuild; then run rerail daemon stop and rerail daemon start." };
   }
+  return null;
+}
+
+/* Any failed poll that is not the repository's 404 counts as disconnected, so the words claim only that the daemon did
+ * not answer, not why. Only running sessions lose steering: the hook that starts a session may start the daemon. */
+function disconnectedStatus(rel) {
+  if (!data.updatedAt || Date.now() - data.updatedAt > DOWN_AFTER_MS) {
+    const since = data.updatedAt ? ` since ${new Date(data.updatedAt).toLocaleTimeString()}` : "";
+    return { cls: "down", text: "Daemon not responding",
+      title: `No answer from ${location.origin}${since}. Running sessions aren't steered until it's back; a new session starts it, or run rerail daemon start.` };
+  }
+  return { cls: "warn", text: "Reconnecting…", title: `The last refresh failed. Showing data from ${rel}; retrying.` };
+}
+
+/** The repository the page shows: none picked, one the daemon does not know, one not set up, or Rerail stopped in it. */
+function repositoryStatus() {
   if (ui.scope === null) return { cls: "", dot: false, text: "No repo selected", title: "Open the dashboard from a session, or pick a repo." };
   if (data.missing) return { cls: "warn", text: "Repo not found", title: "The daemon has no record of this checkout. Run /rerail-start in a session there, or pick another repo." };
   if (data.repository?.setUp === false) {
@@ -64,6 +77,11 @@ function status() {
   if (stateHere() === "stopped") {
     return { cls: "warn", text: "Stopped", title: "No rules run here, and nothing is logged. Start it from Overview or Settings, or run /rerail-start." };
   }
+  return null;
+}
+
+/** All is well: live while the polls come in, else how long ago the data was refreshed. */
+function freshnessStatus(rel, version) {
   if (Date.now() - data.updatedAt < LIVE_MS) return { cls: "", text: "Live", title: `Connected to daemon${version} · refreshing every 5 s.` };
   return { cls: "", text: `Updated ${rel}`, title: `Last refreshed ${new Date(data.updatedAt).toLocaleString()}. Refreshing pauses while the tab is hidden.` };
 }

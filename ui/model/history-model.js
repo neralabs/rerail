@@ -66,6 +66,12 @@ function sessionsSinceInstall() {
   return sinceFor() === 0 ? data.activitySessions : data.activityAllSessions;
 }
 
+/** Whether any violation was logged since install: a session that had one, or a measured rule that logged one. */
+function everLogged() {
+  return (sessionsSinceInstall()?.withViolations ?? 0) > 0
+    || Object.values(sinceFor() === 0 ? data.activity : data.activityAll).some(a => a.measured !== false && a.distinctViolations > 0);
+}
+
 /**
  * What History shows when no rule has a violation in the range (whatever the chip), or `null` when some does:
  * - `nothingInRange`: violations exist, none in the range, whether or not any rule is on now;
@@ -75,9 +81,7 @@ function sessionsSinceInstall() {
  */
 export function historyEmpty(ranked = rankedRules("all")) {
   if (ranked.length > 0) return null;
-  const everLogged = (sessionsSinceInstall()?.withViolations ?? 0) > 0
-    || Object.values(sinceFor() === 0 ? data.activity : data.activityAll).some(a => a.measured !== false && a.distinctViolations > 0);
-  if (everLogged) return { kind: "nothingInRange" };
+  if (everLogged()) return { kind: "nothingInRange" };
   if (![...data.rules.values()].some(stored => stored.enabled)) return { kind: "noRules" };
   const sessions = sessionsSinceInstall()?.started ?? 0;
   return sessions === 0 ? { kind: "noSessions" } : { kind: "noViolations", sessions };

@@ -16,9 +16,14 @@ export function h(spec, attrs, ...children) {
   return el;
 }
 
+/** `null`, `undefined` and `false` stand for nothing: no child, and no attribute. */
+function isNothing(value) {
+  return value === null || value === undefined || value === false;
+}
+
 function append(el, children) {
   for (const child of children) {
-    if (child === null || child === undefined || child === false) continue;
+    if (isNothing(child)) continue;
     if (Array.isArray(child)) append(el, child);
     else el.append(child instanceof Node ? child : document.createTextNode(String(child)));
   }
@@ -31,7 +36,12 @@ export function setAttr(el, name, value) {
     return;
   }
   if (name.startsWith("on") && typeof value === "function") { el[name] = value; return; }
-  if (value === null || value === undefined || value === false) {
+  setPlainAttr(el, name, value);
+}
+
+/** The attribute itself, for a name that is neither `hidden` nor a handler: `true` is written as the empty string. */
+function setPlainAttr(el, name, value) {
+  if (isNothing(value)) {
     if (el.hasAttribute(name)) el.removeAttribute(name);
     return;
   }
@@ -139,9 +149,7 @@ export function syncChildren(parent, items, key, create, update) {
       cursor.remove();
       cursor = next;
     }
-    if (node !== cursor) {
-      if (cursor === null) parent.append(node); else cursor.before(node);
-    }
+    placeAt(parent, node, cursor);
     update(node, item, index);
     cursor = node.nextSibling;
   });
@@ -151,4 +159,11 @@ export function syncChildren(parent, items, key, create, update) {
     cursor = next;
   }
   for (const k of map.keys()) if (!want.has(k)) map.delete(k);
+}
+
+/** Put `node` where `cursor` stands in `parent` (at the end once `cursor` is `null`), unless it is already there. */
+function placeAt(parent, node, cursor) {
+  if (node !== cursor) {
+    if (cursor === null) parent.append(node); else cursor.before(node);
+  }
 }

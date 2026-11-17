@@ -115,6 +115,15 @@ export function packSettingDecides(state, packId, owner, checkoutPath) {
   if (state.source?.kind !== "pack" || state.source.id !== packId) return false;
   const source = state.suppressionsSource;
   if (source?.by !== "checkout" && source?.by !== "repository") return true;
+  return outranksSetting(state, owner, source, checkoutPath);
+}
+
+/**
+ * Whether a setting written as `owner` from the worktree `checkoutPath` at `state`'s folder outranks the setting
+ * `source` that decides it now: the nearer owner first, then the deeper folder, then the pack's setting only where
+ * `source` is itself the pack's.
+ */
+function outranksSetting(state, owner, source, checkoutPath) {
   // Lower outranks: this worktree, a worktree containing it, the repository.
   const ownerRank = owner === "repository" ? 2 : 0;
   const sourceRank = source.by === "repository" ? 2 : source.checkoutPath === checkoutPath ? 0 : 1;

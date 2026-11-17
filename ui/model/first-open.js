@@ -15,6 +15,16 @@
  * @property {number} sessionsEver    Sessions recorded in it since install.
  */
 
+/** Each state but `mature` and the facts that make it, in the order `firstOpenState` tries them. */
+const FIRST_OPEN_STATES = [
+  [({ scoped }) => !scoped, "no-repo"],
+  [({ missing }) => missing, "missing"],
+  [({ setUp }) => !setUp, "not-set-up"],
+  [({ stopped }) => stopped, "stopped"],
+  [({ ruleCount }) => ruleCount === 0, "no-packs"],
+  [({ sessionsEver }) => sessionsEver === 0, "packs-no-session"],
+];
+
 /**
  * The repository's state, first match wins: no repository in the URL, one the daemon does not know, not set up,
  * stopped, no rule added (Jeff's decision 2: no banner, the empty block is the message), rules but no session yet
@@ -22,14 +32,8 @@
  * @param {RepositoryFacts} facts
  * @returns {FirstOpenState}
  */
-export function firstOpenState({ scoped, missing, setUp, stopped, ruleCount, sessionsEver }) {
-  if (!scoped) return "no-repo";
-  if (missing) return "missing";
-  if (!setUp) return "not-set-up";
-  if (stopped) return "stopped";
-  if (ruleCount === 0) return "no-packs";
-  if (sessionsEver === 0) return "packs-no-session";
-  return "mature";
+export function firstOpenState(facts) {
+  return FIRST_OPEN_STATES.find(([test]) => test(facts))?.[1] ?? "mature";
 }
 
 /**

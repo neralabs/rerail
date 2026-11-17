@@ -49,15 +49,30 @@ const RUN_KIND = c => RUN_KINDS.find(([re]) => re.test(c))?.[1] ?? "command";
 /** The one string that names what a tool call touched. */
 function targetOf(verb, input) {
   if (input === null || typeof input !== "object") return typeof input === "string" ? input : "";
-  const pick = keys => { for (const k of keys) { const v = input[k]; if (typeof v === "string" && v.trim()) return v.trim(); } return ""; };
-  if (verb === "run") return pick(["command", "cmd", "code", "script"]);
-  if (verb === "web") return pick(["url", "query"]);
-  if (verb === "search" || verb === "find") return pick(["pattern", "query", "path", "glob"]);
-  if (verb === "ask") return pick(["question", "prompt", "message"]);
-  if (verb === "agent") return pick(["description", "task", "prompt", "label"]);
-  if (verb === "todo") return "plan";
-  return pick(["file_path", "path", "filePath", "target_file", "file", "target", "message", "text", "i", "description"]) || firstString(input);
+  return (TARGET_BY_VERB.get(verb) ?? otherTarget)(input);
 }
+
+/** The first of `input`'s `keys` holding a non-blank string, trimmed; "" when none does. */
+function pick(input, keys) {
+  for (const k of keys) { const v = input[k]; if (typeof v === "string" && v.trim()) return v.trim(); }
+  return "";
+}
+
+const pickFrom = keys => input => pick(input, keys);
+const SEARCH_TARGET = pickFrom(["pattern", "query", "path", "glob"]);
+/** A verb's target, read from the input keys its tools name it by; a verb missing here reads `otherTarget`. */
+const TARGET_BY_VERB = new Map([
+  ["run", pickFrom(["command", "cmd", "code", "script"])],
+  ["web", pickFrom(["url", "query"])],
+  ["search", SEARCH_TARGET],
+  ["find", SEARCH_TARGET],
+  ["ask", pickFrom(["question", "prompt", "message"])],
+  ["agent", pickFrom(["description", "task", "prompt", "label"])],
+  ["todo", () => "plan"],
+]);
+const OTHER_TARGET_KEYS = ["file_path", "path", "filePath", "target_file", "file", "target", "message", "text", "i", "description"];
+/** Any other verb's target: a file or message key, else the input's first non-blank string. */
+const otherTarget = input => pick(input, OTHER_TARGET_KEYS) || firstString(input);
 
 function firstString(input) {
   for (const v of Object.values(input)) if (typeof v === "string" && v.trim()) return v.trim();
@@ -67,10 +82,14 @@ function firstString(input) {
 /** A result's text body, if the harness recorded one. */
 export function outputText(output) {
   if (typeof output === "string") return output;
-  if (output && typeof output === "object") {
-    if (Array.isArray(output.content)) return output.content.map(c => (typeof c === "string" ? c : c?.text ?? "")).join("\n");
-    for (const k of ["text", "stdout", "output", "result"]) if (typeof output[k] === "string") return output[k];
-  }
+  if (output && typeof output === "object") return recordedText(output);
+  return "";
+}
+
+/** A result object's text: its content blocks' text joined by lines, else its first text field. */
+function recordedText(output) {
+  if (Array.isArray(output.content)) return output.content.map(c => (typeof c === "string" ? c : c?.text ?? "")).join("\n");
+  for (const k of ["text", "stdout", "output", "result"]) if (typeof output[k] === "string") return output[k];
   return "";
 }
 

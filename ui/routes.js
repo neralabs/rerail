@@ -50,32 +50,39 @@ const SESSION_FILTER = { violations: "corr", "in-progress": "open" };
 /** `table[key]` for a key the table itself holds; a URL's text never reaches inherited names like "constructor". */
 const own = (table, key) => (typeof key === "string" && Object.hasOwn(table, key) ? table[key] : undefined);
 
+/** Links whose rest is an id, `?` included, each with the route it makes of that id ("" when it decodes to none). */
+const ID_LINKS = [
+  ["rule/", rule => (rule === "" ? { view: null } : { view: null, rule })],
+  ["pack/", pack => (pack === "" ? { view: "overview" } : { view: "pack", pack })],
+];
+
+/** The route a view's query parameters make, for the views that read any; `undefined` leaves the plain view. */
+const QUERY_ROUTES = {
+  packs: params => (params.get("review") === "1" ? { view: "review" } : undefined),
+  history: params => {
+    const filterRule = params.get("rule"), outcome = params.get("outcome");
+    return { view: "history", ...(filterRule ? { filterRule } : {}), ...(own(OUTCOMES, outcome) ? { outcome } : {}) };
+  },
+  sessions: params => {
+    const sessionFilter = own(SESSION_FILTER, params.get("filter"));
+    return sessionFilter ? { view: "sessions", sessionFilter } : undefined;
+  },
+  merge: params => {
+    const conflict = params.get("conflict");
+    return conflict ? { view: "merge", conflict } : undefined;
+  },
+};
+
 /** The route a hash (with or without its `#`) names; anything unknown is Overview. */
 export function parseRoute(hash) {
   const raw = hash.startsWith("#") ? hash.slice(1) : hash;
-  // The rest of a rule or pack link is the id, `?` included.
-  if (raw.startsWith("rule/")) {
-    const rule = decode(raw.slice(5));
-    return rule === "" ? { view: null } : { view: null, rule };
-  }
-  if (raw.startsWith("pack/")) {
-    const pack = decode(raw.slice(5));
-    return pack === "" ? { view: "overview" } : { view: "pack", pack };
-  }
+  const link = ID_LINKS.find(([prefix]) => raw.startsWith(prefix));
+  if (link) return link[1](decode(raw.slice(link[0].length)));
   const at = raw.indexOf("?");
   const path = at < 0 ? raw : raw.slice(0, at);
   const params = new URLSearchParams(at < 0 ? "" : raw.slice(at + 1));
   const view = PLAIN[path] ?? "overview";
-  if (view === "packs" && params.get("review") === "1") return { view: "review" };
-  if (view === "history") {
-    const filterRule = params.get("rule"), outcome = params.get("outcome");
-    return { view, ...(filterRule ? { filterRule } : {}), ...(own(OUTCOMES, outcome) ? { outcome } : {}) };
-  }
-  const sessionFilter = own(SESSION_FILTER, params.get("filter"));
-  if (view === "sessions" && sessionFilter) return { view, sessionFilter };
-  const conflict = params.get("conflict");
-  if (view === "merge" && conflict) return { view, conflict };
-  return { view };
+  return own(QUERY_ROUTES, view)?.(params) ?? { view };
 }
 
 /** `key=value` pairs (values encoded as ids are), joined into a hash's query; "" without any. */
