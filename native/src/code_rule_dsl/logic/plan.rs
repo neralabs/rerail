@@ -2225,9 +2225,16 @@ impl Model {
     /// The plan a kept one gives as it is under the planning budget (decision 0122), or `None` if it is to be priced:
     /// its line did less work than a search when it last ran, scaled by how much what it reads grew (`sizes`, this
     /// plan's `live_sizes`). It reads the relations' rows only, never their columns' statistics (decision 0123).
+    /// Decision 0203 §3: a rule whose exact pair statistics were measured is priced at each plan, never taken as it
+    /// was kept: its kept price was made without them. (Q80: not by its plan key, which then changed at the flag that
+    /// measured them, and the line forgot what it measured.)
+    fn exact_reprices(b: &Body<'_>) -> bool {
+        joins::any_exact() && joins::epoch(b.observed_key()) != 0
+    }
+
     fn budget_takes(&self, kept: &Kept, b: &Body<'_>, first: Option<usize>, sizes: &[f64]) -> Option<(Plan, Option<super::profile::RulePlan>)> {
         let (order, _, _, _, Some(previous), Some(ran)) = kept else { return None };
-        if !plan_budget() {
+        if !plan_budget() || Self::exact_reprices(b) {
             return None;
         }
         // The rows of what it reads (not the corpus's nodes, nor distributions): their product bounds its growth.
@@ -2618,8 +2625,9 @@ impl Model {
             for &i in misses { d.u64(i as u64); }
             // A join shape directive narrows the search: an order kept without it is not this rule's.
             for shape in self.shapes_for(b.rel(b.head())) { d.str(&shape.text); }
-            // Exact statistics measured for the rule (decision 0203 §3) price it anew: its kept prices are not taken.
-            if joins::any_exact() { d.u64(u64::from(joins::epoch(b.observed_key()))); }
+            // Exact statistics measured for the rule (decision 0203 §3) are not in the key (Q80): they re-key what
+            // the line measured, and a slow line's flag, which measures them, forgot its own line. A rule with exact
+            // statistics is priced at each plan instead, never taken as it is kept (`exact_reprices`).
         })
     }
 
@@ -2773,12 +2781,14 @@ impl Model {
         let line = (joins::any_noted() || joins::pricing()).then(|| self.plan_key_at("", b, first, &misses));
         let kept = if line.is_some_and(|l| joins::pending(&l)) { None } else { kept };
         if let Some((priced, searched)) = &kept {
-            if near(&priced.sizes, &sizes) && self.valid_live_driver(&priced.got.0.0, b, first) {
+            let exact = Self::exact_reprices(b);
+            if !exact && near(&priced.sizes, &sizes) && self.valid_live_driver(&priced.got.0.0, b, first) {
                 super::profile::decision("plan cache (decision 0038)", || format!("a live replan kept: no size it reads moved over {PRICE_DRIFT}x"));
                 return Ok(priced.got.clone());
             }
             let alternate = plans_get(&earlier).and_then(|k| k.4);
             if let Some(alt) = alternate
+                && !exact
                 && near(&alt.sizes, &sizes)
                 && self.valid_live_driver(&alt.got.0.0, b, first)
             {
@@ -8208,7 +8218,10 @@ impl<'a> Run<'a, '_> {
                     let work = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) as f64;
                     let due = match &handoff[line] {
                         Some(h) => Some(h.limit),
-                        None => keys.get(line).copied().flatten().and_then(joins::next_due),
+                        None => keys.get(line).copied().flatten().and_then(|key| {
+                            let k = line.wrapping_sub(nseeds);
+                            joins::next_due(key, if line < nseeds { &orders[line].1 } else { wholes.get(&k).unwrap_or(&probes[k].2) })
+                        }),
                     };
                     (line, due.map(|d| (d - work).max(1.0) as u64))
                 }).collect();
@@ -8321,7 +8334,7 @@ impl<'a> Run<'a, '_> {
                     }
                     let (Some(Some(key)), Some(c)) = (keys.get(line).copied(), counted.get(line)) else { continue };
                     let work = super::profile::plan_work(c) as f64;
-                    if !joins::check(key, work) {
+                    if !joins::check(key, work, &probes[k].2) {
                         continue;
                     }
                     let (r, ai) = (probes[k].0, probes[k].1);
@@ -8336,7 +8349,7 @@ impl<'a> Run<'a, '_> {
                         continue;
                     }
                     let rule = order_rules[line];
-                    joins::flag_slow(key, rule, est, work);
+                    joins::flag_slow(key, rule, &probes[k].2, est, work);
                     super::profile::decision("slow joins (decision 0203)", || format!("{} (delta at {ai}): {work:.0} rows of work, priced {est:.0} for its {delta:.0} delta rows", b.head_text()));
                     let exact = self.exact_statistics(&name, line, false, &b, &probes[k].2);
                     joins::log(|| format!("slow {} (delta at {ai}): {work:.0} rows of work, priced {est:.0} for its {delta:.0} delta rows; {} exact pair statistics", b.head_text(), exact.len()));
@@ -8561,10 +8574,10 @@ impl<'a> Run<'a, '_> {
                     // The walk cut now is judged by its own work over its own rows (a line's work so far may be an
                     // earlier walk's too: then a few rows read under a short budget stood for all of it).
                     let ran = c.work as f64;
-                    let est = if joins::check(key, work) { self.model.price_for_delta(pf, &b, Some(cut_lead), &running, c.done.max(1) as f64) } else { None };
+                    let est = if joins::check(key, work, &running) { self.model.price_for_delta(pf, &b, Some(cut_lead), &running, c.done.max(1) as f64) } else { None };
                     if let Some(est) = est && ran > joins::slow_factor() * est.max(1.0) && positive_atoms(&b) >= 2 {
                         let rule = order_rules[line];
-                        joins::flag_slow(key, rule, est, ran);
+                        joins::flag_slow(key, rule, &running, est, ran);
                         super::profile::decision("slow joins (decision 0203)", || format!("{} {}: {ran:.0} rows of work, priced {est:.0} for its {} rows read", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done));
                         let exact = self.exact_statistics(&name, line, whole, &b, &running);
                         joins::log(|| format!("slow {} {}: {ran:.0} rows of work, priced {est:.0} for its {} rows read; {} exact pair statistics; its share of a critical path {:.3}{}", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done, exact.len(), joins::note(&key).map_or(0.0, |n| n.critical), if joins::trial_due(&key) { ", trialled" } else { "" }));
@@ -8577,11 +8590,24 @@ impl<'a> Run<'a, '_> {
                         // and its replacement runs under the handoff's limit. That is a line whose sample is under
                         // `TRIAL_LEAST` (its few lead rows each cost more than its check's budget: `pre_570` did 0 of
                         // 423 in 201,431 rows of work, then ran 22 s unbounded). A line in a handoff is judged by it.
-                        if !joins::measured_below(sample >= TRIAL_LEAST && joined && joins::trial_due(&key), handoff[line].is_some()) && let Some(new) = self.model.plan_for_rows(pf, &b, cut_lead, c.left.max(1) as f64) && !same_order(&new, &running) {
-                            if joins::trials_on() {
-                                joins::log(|| format!("slow {}: {} of its lead rows done, under a trial's {TRIAL_LEAST}: planned again now", b.head_text(), c.done));
+                        // Q80: where the exact statistics plan the order it runs, they did not explain its work, and
+                        // its price stays as wrong: the least priced of the search's runners-up under what the order
+                        // measured goes in its place, under the handoff's limit (`joins::over_measured`).
+                        if !joins::measured_below(sample >= TRIAL_LEAST && joined && joins::trial_due(&key), handoff[line].is_some()) {
+                            let mut cx = joins::SearchCx::default();
+                            let new = self.model.plan_for_rows_in(pf, &b, cut_lead, c.left.max(1) as f64, &mut cx).and_then(|new| {
+                                if !same_order(&new, &running) {
+                                    return Some((new, "planned again now"));
+                                }
+                                let others: Vec<(Vec<Step>, f64)> = cx.runners_up.into_iter().filter(|(o, _)| o.len() == b.len() && !same_order(o, &running)).collect();
+                                joins::over_measured(&others, ran, c.done, c.left).map(|o| (o, "planned again into the order it runs: a runner-up priced under what it measured goes on"))
+                            });
+                            if let Some((new, why)) = new {
+                                if joins::trials_on() {
+                                    joins::log(|| format!("slow {}: {} of its lead rows done, under a trial's {TRIAL_LEAST}: {why}", b.head_text(), c.done));
+                                }
+                                place!(new);
                             }
-                            place!(new);
                         }
                     }
                 }

@@ -261,7 +261,7 @@ fn trials_are_taken_once_and_their_ratios_kept() {
     assert!(!take_trial(500), "decision 0274: a line not seen on a critical path is not trialled");
     noted_mut(&mut MEMO.write(), 500, 1).critical = 0.5;
     assert!(take_trial(500) && !take_trial(500), "once");
-    flag_slow(500, 1, 10.0, 1e6);
+    flag_slow(500, 1, &[Step { at: 0, mode: None }, Step { at: 1, mode: None }], 10.0, 1e6);
     assert!(take_trial(500), "again after a flag");
     let order = vec![Step { at: 1, mode: None }, Step { at: 0, mode: None }];
     put_tried(500, 1, &order, 4.0);
@@ -271,6 +271,36 @@ fn trials_are_taken_once_and_their_ratios_kept() {
     // Decision 0247: a trial moves the ratio a quarter of the way (in logs), as a run would half of it.
     let quarter = 4f64.powf(0.75) * 16f64.powf(0.25);
     assert!((t.ratio - quarter).abs() < 1e-9 && t.runs == 2, "a trial weighs a quarter: {t:?}");
+    clear();
+}
+
+/// Q80: a slow line keeps what it measured. Its flag measures its rule's exact statistics, which no longer key its
+/// plans anew: the line's note, flag and measured order stay under its key. Its next choice prices the order it ran
+/// at what it measured, and takes another; a flag holds for the order it flagged.
+#[test]
+fn a_slow_lines_measure_outlives_its_exact_statistics() {
+    let _serial = SERIAL.lock();
+    clear();
+    let order = |at: &[usize]| at.iter().map(|&a| Step { at: a, mode: None }).collect::<Vec<_>>();
+    let (ran, other) = (order(&[0, 1, 2]), order(&[1, 0, 2]));
+    // `pre_546` on hogql: priced 400 for its first rows, 102 K rows of work.
+    flag_slow(700, 9, &ran, 400.0, 102_000.0);
+    assert!(!check(700, 2e5, &ran), "flagged in the order it runs");
+    assert!(check(700, 2e5, &other), "another order of the line is checked again");
+    put_exact(700, 9, vec![(("r".into(), vec![(0, None), (1, None)]), [10, 100])]);
+    assert!(pending(&700) && note(&700).is_some_and(|n| n.slow == 1), "the note is the line's after its exact statistics");
+    assert!(!check(700, 1e6, &ran), "and so is its flag");
+    let tried = note(&700).unwrap().tried;
+    assert!(tried.iter().any(|t| t.order == steps(&ran) && (t.ratio - 255.0).abs() < 1e-9), "its order's measure is kept: {tried:?}");
+    // The search's best is the order it ran, at its price; the next order is priced 12 times it, under its measure.
+    let mut round = [Choice { key: 700, candidates: vec![Candidate { order: ran.clone(), est: 400.0 }, Candidate { order: other.clone(), est: 5_000.0 }], chosen: 0, why: "" }];
+    choose(&mut round);
+    assert_eq!(round[0].chosen, 1, "the order it ran is priced at its measure");
+    // At its check, planned again into the order it runs: a runner-up priced under that order's measure for the rows
+    // left (102 K over 10 rows, for 4,000 left) goes on; one priced over it does not.
+    assert_eq!(over_measured(&[(other.clone(), 5_000.0)], 102_000.0, 10, 4_000), Some(other.clone()));
+    assert_eq!(over_measured(&[(other.clone(), 5e7)], 102_000.0, 10, 4_000), None);
+    assert_eq!(over_measured(&[(other.clone(), 5e4)], 102_000.0, 0, 4_000), Some(other), "no row done: at least its work again");
     clear();
 }
 

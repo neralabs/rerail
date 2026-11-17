@@ -1648,6 +1648,18 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 - **Seen beside it**: the measurement script's watchdog killed its shell, not the engine: four hung engines ran on
   for hours on the m3. Scripts kill the engine by name now.
 
+### Q80. (done) The slow-join net tripped again and again, and changed nothing (decision 0352)
+
+- **Asked** (the user, 2026-11-17): "we had designed and implemented a replanning for strata whose execution time
+  exceeds their expected runtime. What happened to that? The ultra-wrong plans should trigger a more accurate
+  replanning. Find and resurrect that".
+- **Found**: the replanning is decision 0203's slow flag (with 0206's handoff and 0271's bounds). It was on and
+  firing: 138 flags on hogql. But the flag re-keyed its own line (the exact-statistics epoch is in the plan key),
+  kept no measure of the slow order, and where the exact statistics planned the same order it ran on unchecked.
+  `pre_546` tripped in 32 chunks, each time priced at about 400 for 102 K rows of work. (Decision 0334, on
+  `sync-integration-hub-tape`, replans the packed batch's over-budget tasks; another mechanism, not merged here.)
+- **Done**: decision 0352. 138 flags to 60, `pre_540`-`pre_549` 26 M units of work to 18 M.
+
 ### Q69. (done) A test's store stays open after its test (`a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test`)
 
 - **Found** (2026-11-17, at this branch's merge of the hub at 52a579d59): fails on both sides before the merge, on
