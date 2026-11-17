@@ -132,7 +132,13 @@ pub const ARG: u8 = 0x70;
 pub const PRE: u8 = 0x71;
 /// `T` onto the open level.
 pub const KEEP: u8 = 0x72;
-/// A `#define`'s line read into the macro table (a malformed one left).
+/// A `#define`'s line read into the macro table, a token a turn (`pp_words::DefState`; a malformed
+/// one left): `m=0`, a test: its name read (else the line passed); `m=1`, a test: `(` right after
+/// it, function-like; `m=2`, a test: a parameter list's token read, the list going on; `m=3`, a
+/// test: the list closed (else malformed or unterminated: no definition); `m=4` the body begun;
+/// `m=5`, a test: the body's next token read and marked (a parameter, `__VA_OPT__`, `##`); `m=6`
+/// the walk of its argument uses begun; `m=7`, a test: one body token walked (`Def::pre`'s
+/// order); `m=8` the definition entered.
 pub const DEFINE: u8 = 0x74;
 /// An `#undef`'s line read: its macro taken out of the table.
 pub const UNDEF: u8 = 0x75;

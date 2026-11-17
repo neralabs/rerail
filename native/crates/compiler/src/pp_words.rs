@@ -236,7 +236,7 @@ const VA_OPT: &[u8] = b"__VA_OPT__";
 
 /// Whether a word is a test (it runs the next word where it holds, skips it where not).
 fn is_test(opcode: u8, mode: u8) -> bool {
-    matches!(opcode, LINE | IS | PEEK | LOOKUP | MACRO | DEFINED) || (opcode == INCLUDE && mode <= 1) || (opcode == EMBED && mode == 0) || (opcode == SUB && matches!(mode, 1..=4 | 6 | 7)) || (opcode == STR && mode == 1) || opcode == GLUE || (opcode == BUILTIN && mode >= 1) || (opcode == ARG && (mode == 2 || mode == 4)) || (opcode == PRE && mode == 0) || (opcode == COND && (mode == 2 || mode == 3)) || (opcode == IF && mode == 1)
+    matches!(opcode, LINE | IS | PEEK | LOOKUP | MACRO | DEFINED) || (opcode == INCLUDE && mode <= 1) || (opcode == EMBED && mode == 0) || (opcode == SUB && matches!(mode, 1..=4 | 6 | 7)) || (opcode == STR && mode == 1) || opcode == GLUE || (opcode == DEFINE && matches!(mode, 0..=3 | 5 | 7)) || (opcode == BUILTIN && mode >= 1) || (opcode == ARG && (mode == 2 || mode == 4)) || (opcode == PRE && mode == 0) || (opcode == COND && (mode == 2 || mode == 3)) || (opcode == IF && mode == 1)
 }
 
 /// A preprocessing program's rules: only these words, `GOTO`, `PUSH` (each followed by its
@@ -244,7 +244,8 @@ fn is_test(opcode: u8, mode: u8) -> bool {
 /// and every cycle steps a stated cursor, a call counting as one where every way through its
 /// callee does. The steps: a token read (`READ`, `LINE`); on the held side of their tests, a
 /// body token taken (`SUB m=1`), a `__VA_OPT__`'s content closed (`SUB m=7`), a token
-/// stringized (`STR m=1`), a paste's step (`GLUE`). Each is a backend's loop head.
+/// stringized (`STR m=1`), a paste's step (`GLUE`), a `#define`'s token read or walked
+/// (`DEFINE m=2, 5, 7`). Each is a backend's loop head.
 pub fn validate(program: &Words) -> Result<(), Error> {
     let words = &program.words;
     let n = words.len();
@@ -252,7 +253,7 @@ pub fn validate(program: &Words) -> Result<(), Error> {
     for (pc, &w) in words.iter().enumerate() {
         let (op, mode, operand) = split(w);
         let ok = match op {
-            READ | LINE | LOOKUP | PAINT | PUT | FRAME | KEEP | DEFINE | UNDEF | SKIPLINE | SKIP | DEFINED | PRAGMA => mode == 0 && operand == 0,
+            READ | LINE | LOOKUP | PAINT | PUT | FRAME | KEEP | UNDEF | SKIPLINE | SKIP | DEFINED | PRAGMA => mode == 0 && operand == 0,
             INCLUDE => mode <= 2 && operand == 0,
             IS => match mode {
                 0 => operand < u16::from(KINDS),
@@ -268,6 +269,7 @@ pub fn validate(program: &Words) -> Result<(), Error> {
             LINEDIR => mode <= 1 && operand == 0,
             EMBED => mode <= 2 && operand == 0,
             SUB => mode <= 10 && operand == 0,
+            DEFINE => mode <= 8 && operand == 0,
             STR => mode <= 3 && operand == 0,
             GLUE => mode == 0 && operand == 0,
             ARG => mode <= 5 && operand == 0,
@@ -333,6 +335,8 @@ fn after(words: &[u32], pc: usize, memo: &mut HashMap<usize, Option<bool>>) -> V
         DEFINED | GLUE => vec![pc + 2],
         SUB if mode == 1 || mode == 7 => vec![pc + 2],
         STR if mode == 1 => vec![pc + 2],
+        // A parameter list's token, a body token read, a use walked.
+        DEFINE if matches!(mode, 2 | 5 | 7) => vec![pc + 2],
         GOTO => vec![usize::from(operand)],
         PUSH => {
             let callee = usize::from(split(words[pc + 1]).2);
@@ -405,7 +409,7 @@ impl Src {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct Def {
     fnlike: bool,
     variadic: bool,
@@ -498,6 +502,30 @@ struct Machine<'a> {
     /// where mode (a) read its name (`Some(NONE)`: not found).
     embed: (Vec<Tok>, Option<(Vec<u8>, bool)>, Option<u32>),
     sub: Sub,
+    def: DefState,
+}
+
+/// The `#define` being read (`DEFINE`).
+#[derive(Clone, Copy, Default)]
+struct DefState {
+    name: Tok,
+    /// Its parameters: `params[p0..]`.
+    p0: u32,
+    fnlike: bool,
+    variadic: bool,
+    /// A parameter list: a parameter is wanted next; it closed.
+    want: bool,
+    closed: bool,
+    /// The token after the name or the list, read already.
+    first: Option<Tok>,
+    /// The definition made so far (its body's tokens, marks).
+    d: Def,
+    /// The walk of the uses: the range's start, its next token, its end, and an open
+    /// `__VA_OPT__`'s content (the walk after it: its next token and end).
+    lo: u32,
+    i: u32,
+    hi: u32,
+    content: Option<(u32, u32)>,
 }
 
 /// The substitution being made (`SUB`, `STR`, `GLUE`): one at a time, as a call's arguments
@@ -595,6 +623,7 @@ pub fn run(program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Resul
         line_last: eof(0),
         embed: (Vec::new(), None, None),
         sub: Sub::default(),
+        def: DefState::default(),
     };
     m.install_builtins().map_err(|why| Refused { pc: 0, why })?;
     let words = &program.words;
@@ -703,10 +732,7 @@ pub fn run(program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Resul
             SUB => m.sub(mode).map_err(fail)?,
             STR => m.str_word(mode).map_err(fail)?,
             GLUE => Some(m.paste_step().map_err(fail)?),
-            DEFINE => {
-                m.define().map_err(fail)?;
-                None
-            }
+            DEFINE => m.define(mode).map_err(fail)?,
             UNDEF => {
                 m.undef().map_err(fail)?;
                 None
@@ -1943,140 +1969,195 @@ impl Machine<'_> {
 
     // The directives.
 
-    fn define(&mut self) -> R<()> {
-        let Some(name) = self.line_tok()?.filter(|t| t.kind == IDENT) else {
-            return self.skip_line();
-        };
-        let s = *self.sources.last().unwrap();
-        let p0 = self.params.len();
-        let (mut fnlike, mut variadic) = (false, false);
-        let mut first = self.line_tok()?;
-        if first.is_some_and(|t| self.spelled(&t, b"(") && t.flags & SPACE == 0) {
-            fnlike = true;
-            let mut want = true;
-            loop {
+    fn define(&mut self, mode: u8) -> R<Option<bool>> {
+        let v = self.def;
+        let held = match mode {
+            0 => {
+                let Some(name) = self.line_tok()?.filter(|t| t.kind == IDENT) else {
+                    self.skip_line()?;
+                    return Ok(Some(false));
+                };
+                self.def = DefState { name, p0: self.params.len() as u32, want: true, ..DefState::default() };
+                true
+            }
+            1 => {
+                let first = self.line_tok()?;
+                if first.is_some_and(|t| self.spelled(&t, b"(") && t.flags & SPACE == 0) {
+                    self.def.fnlike = true;
+                    true
+                } else {
+                    self.def.first = first;
+                    false
+                }
+            }
+            2 => {
+                let p0 = v.p0 as usize;
                 let Some(t) = self.line_tok()? else {
+                    // Unterminated: no definition.
                     self.params.truncate(p0);
-                    return Ok(());
+                    return Ok(Some(false));
                 };
                 let n = self.params.len() - p0;
-                if self.spelled(&t, b")") && (!want || n == 0) && !(want && variadic) {
-                    break;
+                if self.spelled(&t, b")") && (!v.want || n == 0) && !(v.want && v.variadic) {
+                    self.def.closed = true;
+                    return Ok(Some(false));
                 }
-                let malformed = if variadic {
+                let malformed = if v.variadic {
                     true
-                } else if want && t.kind == IDENT {
+                } else if v.want && t.kind == IDENT {
                     self.params.push(t);
-                    want = false;
+                    self.def.want = false;
                     false
-                } else if want && self.spelled(&t, b"...") {
+                } else if v.want && self.spelled(&t, b"...") {
                     // `__VA_ARGS__`'s spelling, made once.
                     let va = self.scratch_tok(IDENT, VA_ARGS, 0)?;
                     self.params.push(va);
-                    variadic = true;
-                    want = false;
+                    (self.def.variadic, self.def.want) = (true, false);
                     false
-                } else if !want && self.spelled(&t, b"...") && n > 0 {
+                } else if !v.want && self.spelled(&t, b"...") && n > 0 {
                     // GNU's `name...`.
-                    variadic = true;
+                    self.def.variadic = true;
                     false
-                } else if !want && self.spelled(&t, b",") {
-                    want = true;
+                } else if !v.want && self.spelled(&t, b",") {
+                    self.def.want = true;
                     false
                 } else {
                     true
                 };
                 if malformed {
                     self.params.truncate(p0);
-                    return self.skip_line();
+                    self.skip_line()?;
+                    return Ok(Some(false));
                 }
+                true
             }
-            first = self.line_tok()?;
-        }
-        // The body: the line's tokens from `first`, a range of the file's tape.
-        let top = *self.sources.last().unwrap();
-        let first_at = if first.is_some() { top.pos - 1 } else { top.pos };
-        while self.line()? {}
-        let end = self.sources.last().unwrap().pos;
-        let def_params: Vec<Tok> = self.params[p0..].to_vec();
-        self.params.truncate(p0);
-        if def_params.len() > 0xfff0 {
-            return Err("past the parameters' bound");
-        }
-        let file = s.file;
-        let marks = self.marks.len() as u32;
-        let n = end - first_at;
-        for k in 0..n {
-            let t = self.files[file as usize].toks[(first_at + k) as usize];
-            let text = self.text(&t);
-            let mut m = NO_PARAM;
-            if t.kind == IDENT {
-                if variadic && text == VA_OPT {
-                    m = VA_OPT_MARK;
-                } else if fnlike && let Some(p) = def_params.iter().position(|p| self.text(p) == text) {
-                    m = p as u32;
+            3 => {
+                if v.closed {
+                    self.def.first = self.line_tok()?;
                 }
+                v.closed
             }
-            if t.kind == HASHHASH && k > 0 && k + 1 < n {
-                m |= PASTE_MARK;
+            4 => {
+                // The body: the line's tokens from `first`, a range of the file's tape.
+                let top = *self.sources.last().ok_or("a directive with no file")?;
+                let first_at = if v.first.is_some() { top.pos - 1 } else { top.pos };
+                if self.params.len() - v.p0 as usize > 0xfff0 {
+                    return Err("past the parameters' bound");
+                }
+                let params = (self.params.len() - v.p0 as usize) as u16;
+                self.def.d = Def { fnlike: v.fnlike, variadic: v.variadic, params, file: top.file, first: first_at, end: first_at, marks: self.marks.len() as u32, pre: (0, 0), disabled: false, builtin: 0 };
+                if let Some(t) = v.first {
+                    self.mark_body(t);
+                }
+                return Ok(None);
             }
-            self.marks.push(m);
-        }
-        let mut def = Def { fnlike, variadic, params: def_params.len() as u16, file, first: first_at, end, marks, pre: (0, 0), disabled: false, builtin: 0 };
-        let u0 = self.uses.len() as u32;
-        if fnlike {
-            self.walk_uses(&def, 0, n, false);
-        }
-        def.pre = (u0, self.uses.len() as u32);
-        if self.defs.len() >= self.bounds.macros * 4 {
-            return Err("past the definitions' bound");
-        }
-        self.defs.push(def);
-        let d = (self.defs.len() - 1) as u32;
-        let b = self.text(&name).to_vec();
-        match self.find(&b)? {
-            Ok(i) => self.table[i].as_mut().unwrap().def = d,
-            Err(i) => self.table[i] = Some(Slot { key: key(&b), name, def: d }),
-        }
-        Ok(())
+            5 => {
+                if let Some(t) = self.line_tok()? {
+                    self.mark_body(t);
+                    return Ok(Some(true));
+                }
+                // A `##` last is no paste operator.
+                if v.d.end > v.d.first {
+                    let k = (v.d.marks + v.d.end - v.d.first - 1) as usize;
+                    self.marks[k] &= !PASTE_MARK;
+                }
+                false
+            }
+            6 => {
+                let u0 = self.uses.len() as u32;
+                self.def.d.pre = (u0, u0);
+                (self.def.lo, self.def.i, self.def.hi, self.def.content) = (0, 0, if v.d.fnlike { v.d.end - v.d.first } else { 0 }, None);
+                return Ok(None);
+            }
+            7 => self.walk_use()?,
+            _ => {
+                let mut d = v.d;
+                d.pre.1 = self.uses.len() as u32;
+                self.params.truncate(v.p0 as usize);
+                if self.defs.len() >= self.bounds.macros * 4 {
+                    return Err("past the definitions' bound");
+                }
+                self.defs.push(d);
+                let k = (self.defs.len() - 1) as u32;
+                let b = self.text(&v.name).to_vec();
+                match self.find(&b)? {
+                    Ok(i) => self.table[i].as_mut().unwrap().def = k,
+                    Err(i) => self.table[i] = Some(Slot { key: key(&b), name: v.name, def: k }),
+                }
+                return Ok(None);
+            }
+        };
+        Ok(Some(held))
     }
 
-    /// The arguments substitution expands, in the order it first asks for each (`substitute`'s
-    /// walk): `(parameter, inside a __VA_OPT__)`.
-    fn walk_uses(&mut self, def: &Def, lo: u32, hi: u32, inside: bool) {
-        let va = def.params.wrapping_sub(1);
-        let mut i = lo;
-        while i < hi {
-            let bt = self.body_tok(def, i);
-            if bt.kind == HASH {
-                if i + 1 < hi && self.param(def, i + 1).is_some() {
-                    i += 2;
-                    continue;
-                }
-                if def.variadic && i + 1 < hi && self.mark(def, i + 1) == VA_OPT_MARK {
-                    self.uses.push((va, inside));
-                    let (clo, chi, end) = self.va_opt_content(def, i + 1, hi);
-                    self.walk_uses(def, clo, chi, true);
-                    i = end;
-                    continue;
-                }
+    /// Body token `t` (the next of the definition being read) marked: a parameter's index,
+    /// `__VA_OPT__`, and `##` (but first).
+    fn mark_body(&mut self, t: Tok) {
+        let v = self.def;
+        let k = v.d.end - v.d.first;
+        let text = self.text(&t);
+        let mut m = NO_PARAM;
+        if t.kind == IDENT {
+            if v.d.variadic && text == VA_OPT {
+                m = VA_OPT_MARK;
+            } else if v.d.fnlike && let Some(p) = self.params[v.p0 as usize..].iter().position(|p| self.text(p) == text) {
+                m = p as u32;
             }
-            if def.variadic && self.mark(def, i) == VA_OPT_MARK {
-                self.uses.push((va, inside));
-                let (clo, chi, end) = self.va_opt_content(def, i, hi);
-                self.walk_uses(def, clo, chi, true);
-                i = end;
-                continue;
-            }
-            if let Some(p) = self.param(def, i) {
-                let before = i > lo && self.body_tok(def, i - 1).flags & PASTE != 0;
-                let after = i + 1 < hi && self.body_tok(def, i + 1).flags & PASTE != 0;
-                if !(before || after) {
-                    self.uses.push((p as u16, inside));
-                }
-            }
-            i += 1;
         }
+        if t.kind == HASHHASH && k > 0 {
+            m |= PASTE_MARK;
+        }
+        self.marks.push(m);
+        self.def.d.end += 1;
+    }
+
+    /// One step of the walk of the definition's argument uses, in the order substitution first
+    /// asks for each (`SUB`'s walk): `(parameter, inside a __VA_OPT__)`.
+    fn walk_use(&mut self) -> R<bool> {
+        let v = self.def;
+        let def = v.d;
+        if v.i >= v.hi {
+            // A content's end: the walk after it.
+            return Ok(match v.content {
+                Some((i, hi)) => {
+                    (self.def.lo, self.def.i, self.def.hi, self.def.content) = (0, i, hi, None);
+                    true
+                }
+                None => false,
+            });
+        }
+        let (i, hi, inside) = (v.i, v.hi, v.content.is_some());
+        let va = def.params.wrapping_sub(1);
+        let bt = self.body_tok(&def, i);
+        let opens = |m: &Self, k: u32| def.variadic && k < hi && m.mark(&def, k) == VA_OPT_MARK;
+        let at = if bt.kind == HASH && i + 1 < hi && self.param(&def, i + 1).is_some() {
+            self.def.i = i + 2;
+            return Ok(true);
+        } else if bt.kind == HASH && opens(self, i + 1) {
+            Some(i + 1)
+        } else if opens(self, i) {
+            Some(i)
+        } else {
+            None
+        };
+        if let Some(k) = at {
+            if inside {
+                return Err("a __VA_OPT__ inside a __VA_OPT__");
+            }
+            self.uses.push((va, false));
+            let (clo, chi, end) = self.va_opt_content(&def, k, hi);
+            (self.def.lo, self.def.i, self.def.hi, self.def.content) = (clo, clo, chi, Some((end, hi)));
+            return Ok(true);
+        }
+        if let Some(p) = self.param(&def, i) {
+            let before = i > v.lo && self.body_tok(&def, i - 1).flags & PASTE != 0;
+            let after = i + 1 < hi && self.body_tok(&def, i + 1).flags & PASTE != 0;
+            if !(before || after) {
+                self.uses.push((p as u16, inside));
+            }
+        }
+        self.def.i = i + 1;
+        Ok(true)
     }
 
     fn undef(&mut self) -> R<()> {

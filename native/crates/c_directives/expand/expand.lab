@@ -228,7 +228,25 @@ he:     INCLUDE m=1 0
         GOTO @raw         ; malformed, or a name the host resolves for the next round
 enter:  INCLUDE m=2 0
         GOTO @raw
-def:    DEFINE 0
+; `#define`: its name, its parameters, its body marked, its uses walked, a token a turn.
+def:    DEFINE m=0 0      ; its name
+        GOTO @d1
+        GOTO @raw
+d1:     DEFINE m=1 0      ; `(` right after it
+        GOTO @dp
+        GOTO @db
+dp:     DEFINE m=2 0      ; a parameter list's token
+        GOTO @dp
+        DEFINE m=3 0      ; the list closed
+        GOTO @db
+        GOTO @raw
+db:     DEFINE m=4 0
+dm:     DEFINE m=5 0      ; a body token marked
+        GOTO @dm
+        DEFINE m=6 0
+du:     DEFINE m=7 0      ; a use walked
+        GOTO @du
+        DEFINE m=8 0
         GOTO @raw
 undef:  UNDEF 0
         GOTO @raw

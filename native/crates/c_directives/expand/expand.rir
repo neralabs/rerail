@@ -290,23 +290,23 @@ program - ir=7 grammar=none
   0140 IS m=1 s3
   0141 GOTO @0218
   0142 IS m=1 s4
-  0143 GOTO @0220
+  0143 GOTO @0237
   0144 IS m=1 s5
-  0145 GOTO @0248
+  0145 GOTO @0265
   0146 IS m=1 s6
-  0147 GOTO @0222
+  0147 GOTO @0239
   0148 IS m=1 s7
-  0149 GOTO @0232
+  0149 GOTO @0249
   0150 IS m=1 s8
-  0151 GOTO @0261
+  0151 GOTO @0278
   0152 IS m=1 s9
-  0153 GOTO @0261
+  0153 GOTO @0278
   0154 IS m=1 s10
-  0155 GOTO @0261
+  0155 GOTO @0278
   0156 IS m=1 s11
-  0157 GOTO @0261
+  0157 GOTO @0278
   0158 IS m=1 s12
-  0159 GOTO @0269
+  0159 GOTO @0286
   0160 IS m=1 s13
   0161 GOTO @0204
   0162 IS m=1 s14
@@ -368,119 +368,137 @@ program - ir=7 grammar=none
   0215 GOTO @0131  ; malformed, or a name the host resolves for the next round
   0216 INCLUDE m=2 0
   0217 GOTO @0131
-  0218 DEFINE 0
-  0219 GOTO @0131
-  0220 UNDEF 0
-  0221 GOTO @0131
-  ; `#ifdef` and `#ifndef`: no name is not defined (the lean pass's reading).
-  0222 LINE 0
-  0223 GOTO @0226
-  0224 COND m=0 0
-  0225 GOTO @0272
-  0226 IS m=0 0  ; an identifier
+  ; `#define`: its name, its parameters, its body marked, its uses walked, a token a turn.
+  0218 DEFINE m=0 0  ; its name
+  0219 GOTO @0221
+  0220 GOTO @0131
+  0221 DEFINE m=1 0  ; `(` right after it
+  0222 GOTO @0224
+  0223 GOTO @0229
+  0224 DEFINE m=2 0  ; a parameter list's token
+  0225 GOTO @0224
+  0226 DEFINE m=3 0  ; the list closed
   0227 GOTO @0229
-  0228 GOTO @0245
-  0229 LOOKUP 0
-  0230 GOTO @0242
-  0231 GOTO @0245
-  0232 LINE 0
-  0233 GOTO @0236
-  0234 COND m=1 0
-  0235 GOTO @0131
-  0236 IS m=0 0
-  0237 GOTO @0239
-  0238 GOTO @0242
-  0239 LOOKUP 0
-  0240 GOTO @0245
-  0241 GOTO @0242
-  0242 SKIPLINE 0
-  0243 COND m=1 0
-  0244 GOTO @0131
-  0245 SKIPLINE 0
-  0246 COND m=0 0
-  0247 GOTO @0272
+  0228 GOTO @0131
+  0229 DEFINE m=4 0
+  0230 DEFINE m=5 0  ; a body token marked
+  0231 GOTO @0230
+  0232 DEFINE m=6 0
+  0233 DEFINE m=7 0  ; a use walked
+  0234 GOTO @0233
+  0235 DEFINE m=8 0
+  0236 GOTO @0131
+  0237 UNDEF 0
+  0238 GOTO @0131
+  ; `#ifdef` and `#ifndef`: no name is not defined (the lean pass's reading).
+  0239 LINE 0
+  0240 GOTO @0243
+  0241 COND m=0 0
+  0242 GOTO @0289
+  0243 IS m=0 0  ; an identifier
+  0244 GOTO @0246
+  0245 GOTO @0262
+  0246 LOOKUP 0
+  0247 GOTO @0259
+  0248 GOTO @0262
+  0249 LINE 0
+  0250 GOTO @0253
+  0251 COND m=1 0
+  0252 GOTO @0131
+  0253 IS m=0 0
+  0254 GOTO @0256
+  0255 GOTO @0259
+  0256 LOOKUP 0
+  0257 GOTO @0262
+  0258 GOTO @0259
+  0259 SKIPLINE 0
+  0260 COND m=1 0
+  0261 GOTO @0131
+  0262 SKIPLINE 0
+  0263 COND m=0 0
+  0264 GOTO @0289
   ; `#if`: its line expanded, `defined` an operator, then evaluated.
-  0248 IF m=0 0
-  0249 PUSH @0251
-  0250 GOTO @0007
-  0251 IS m=0 8
-  0252 GOTO @0255
-  0253 KEEP 0
-  0254 GOTO @0249
-  0255 IF m=1 0
-  0256 GOTO @0259
-  0257 COND m=0 0
-  0258 GOTO @0272
-  0259 COND m=1 0
-  0260 GOTO @0131
+  0265 IF m=0 0
+  0266 PUSH @0268
+  0267 GOTO @0007
+  0268 IS m=0 8
+  0269 GOTO @0272
+  0270 KEEP 0
+  0271 GOTO @0266
+  0272 IF m=1 0
+  0273 GOTO @0276
+  0274 COND m=0 0
+  0275 GOTO @0289
+  0276 COND m=1 0
+  0277 GOTO @0131
   ; An `#elif…` or `#else` read: its chain was taken, so the rest of it is passed, to its `#endif`.
-  0261 COND m=2 0
-  0262 GOTO @0265
-  0263 SKIPLINE 0  ; no group open: unmatched
-  0264 GOTO @0131
-  0265 IS m=1 s11
-  0266 COND m=5 0
-  0267 SKIPLINE 0
-  0268 GOTO @0272
-  0269 SKIPLINE 0
-  0270 COND m=6 0
-  0271 GOTO @0131
+  0278 COND m=2 0
+  0279 GOTO @0282
+  0280 SKIPLINE 0  ; no group open: unmatched
+  0281 GOTO @0131
+  0282 IS m=1 s11
+  0283 COND m=5 0
+  0284 SKIPLINE 0
+  0285 GOTO @0289
+  0286 SKIPLINE 0
+  0287 COND m=6 0
+  0288 GOTO @0131
   ; skip: a group not taken, passed by its chain to the next directive of it (lean `skip_group`).
-  0272 SKIP 0
-  0273 READ 0  ; its `#`
-  0274 IS m=0 8  ; the file's end, the chain open
-  0275 GOTO @0131
-  0276 LINE 0
-  0277 GOTO @0279
-  0278 GOTO @0272
-  0279 IS m=1 s12
-  0280 GOTO @0269
-  0281 COND m=3 0  ; taken already, or past its `#else`: passed too
-  0282 GOTO @0292
-  0283 IS m=1 s11
-  0284 GOTO @0295
-  0285 IS m=1 s8
-  0286 GOTO @0299
-  0287 IS m=1 s9
-  0288 GOTO @0309
-  0289 IS m=1 s10
-  0290 GOTO @0318
-  0291 GOTO @0272
-  0292 IS m=1 s11
-  0293 COND m=5 0
-  0294 GOTO @0272
-  0295 SKIPLINE 0
-  0296 COND m=5 0
-  0297 COND m=4 0
-  0298 GOTO @0131
-  0299 IF m=0 0
-  0300 PUSH @0302
-  0301 GOTO @0007
-  0302 IS m=0 8
-  0303 GOTO @0306
-  0304 KEEP 0
-  0305 GOTO @0300
-  0306 IF m=1 0
-  0307 GOTO @0327
-  0308 GOTO @0272
-  0309 LINE 0
-  0310 GOTO @0312
-  0311 GOTO @0272
-  0312 IS m=0 0
-  0313 GOTO @0315
-  0314 GOTO @0272
-  0315 LOOKUP 0
-  0316 GOTO @0327
-  0317 GOTO @0272
-  0318 LINE 0
-  0319 GOTO @0321
-  0320 GOTO @0327
-  0321 IS m=0 0
-  0322 GOTO @0324
-  0323 GOTO @0327
-  0324 LOOKUP 0
-  0325 GOTO @0272
-  0326 GOTO @0327
-  0327 SKIPLINE 0
-  0328 COND m=4 0
-  0329 GOTO @0131
+  0289 SKIP 0
+  0290 READ 0  ; its `#`
+  0291 IS m=0 8  ; the file's end, the chain open
+  0292 GOTO @0131
+  0293 LINE 0
+  0294 GOTO @0296
+  0295 GOTO @0289
+  0296 IS m=1 s12
+  0297 GOTO @0286
+  0298 COND m=3 0  ; taken already, or past its `#else`: passed too
+  0299 GOTO @0309
+  0300 IS m=1 s11
+  0301 GOTO @0312
+  0302 IS m=1 s8
+  0303 GOTO @0316
+  0304 IS m=1 s9
+  0305 GOTO @0326
+  0306 IS m=1 s10
+  0307 GOTO @0335
+  0308 GOTO @0289
+  0309 IS m=1 s11
+  0310 COND m=5 0
+  0311 GOTO @0289
+  0312 SKIPLINE 0
+  0313 COND m=5 0
+  0314 COND m=4 0
+  0315 GOTO @0131
+  0316 IF m=0 0
+  0317 PUSH @0319
+  0318 GOTO @0007
+  0319 IS m=0 8
+  0320 GOTO @0323
+  0321 KEEP 0
+  0322 GOTO @0317
+  0323 IF m=1 0
+  0324 GOTO @0344
+  0325 GOTO @0289
+  0326 LINE 0
+  0327 GOTO @0329
+  0328 GOTO @0289
+  0329 IS m=0 0
+  0330 GOTO @0332
+  0331 GOTO @0289
+  0332 LOOKUP 0
+  0333 GOTO @0344
+  0334 GOTO @0289
+  0335 LINE 0
+  0336 GOTO @0338
+  0337 GOTO @0344
+  0338 IS m=0 0
+  0339 GOTO @0341
+  0340 GOTO @0344
+  0341 LOOKUP 0
+  0342 GOTO @0289
+  0343 GOTO @0344
+  0344 SKIPLINE 0
+  0345 COND m=4 0
+  0346 GOTO @0131
