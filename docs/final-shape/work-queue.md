@@ -1520,6 +1520,30 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 - **Done: the totals' value columns sketched** (user: HyperLogLog, 2026-11-17; decision 0096's last section): exact
   to 64 values and for tested ones, else HyperLogLog and AMS. The totals held 0.3 MB through the chunk phase (was
   68 MB); findings and the cross plans the same.
+- **The exports' encoding, measured** (2026-11-17, `RERAIL_EXPORT_ENCODINGS=1`, PostHog cold): held as `Vec<i64>`
+  columns, 8 B a value, 220 MB (9.5 M rows of 17 exports; plus, during the chunks, the set that keeps rows distinct).
+  Packed by `rerail_blocks::col` (MLDB's `RawMappedIntTable` choices, the blocks crate's port):
+
+  | form | MB |
+  |---|---|
+  | held | 219.8 |
+  | packed, rows as held, best of whole and ranges of 4,096 | 117.1 |
+  | rows in canonical order, ranges of 4,096; a node column split at the granule | 53.0 |
+
+  - Node columns: 85.8 → 30.4 MB (2.8 B a value). A node id is `document << 32 | slot << 18 | index`
+    (`syntax::DefIds`, by definition, not preorder): a document's nodes spread over 2^14 slots, so a split at 32
+    bits saves little (4.1 B); at 18 bits, sorted, the granule is runs and the index small.
+  - Value columns (symbols, atoms, ints): 134.0 → 22.7 MB (1.35 B a value); columns a row's node determines go to
+    ~0.1 B sorted.
+  - Unsorted, ranges barely help: rows are appended chunk by chunk, so each range spans the whole id space.
+  - Of MLDB's other forms: factored packing (at most a third at some widths) and per-range predictor clusters with
+    selectors (`MappedIntTable`) find no linear structure in ids or symbols here; not worth it for exports.
+- **Next for the exports (proposed):** freeze each export at `source()` into a packed relation
+  (`rerail_blocks::packed`: canonical order, a column an `IntCol`), with two additions to the blocks crate's
+  columns, shared with the sibling workstreams that use them: an `IntCol` per range of 4,096 rows with a range
+  directory (MLDB's ranges; a read is a shift to the range, then the extract), and a node column stored as two
+  columns split at the granule (0095 §6's stratified ids). Rows deduplicated by the freeze's sort instead of the
+  hash set kept through the chunks. 220 → about 55 MB held through the cross part, read in place.
 - **Found, not mine:** `corpus::tests::a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test` (4 files
   held open after it) and `the_run_after_a_cold_one_writes_nothing` (a warm run records a manifest and commits a
   write) fail at 2fd15f524 too, on the M3 farm host.

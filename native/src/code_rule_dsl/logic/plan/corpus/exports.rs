@@ -188,6 +188,9 @@ impl Exports {
             return Arc::clone(s);
         }
         let columns = std::mem::take(&mut held.columns);
+        if std::env::var_os("RERAIL_EXPORT_ENCODINGS").is_some() {
+            encodings(rel, &columns);
+        }
         held.set = HashTable::new();
         held.unset.clear();
         held.unset_docs.clear();
@@ -196,6 +199,38 @@ impl Exports {
         let source = crate::code_rule_dsl::logic::native::component::columns_source(names, values);
         held.source = Some(Arc::clone(&source));
         source
+    }
+}
+
+/// `RERAIL_EXPORT_ENCODINGS=1` (a measurement aid, Q61): what export `rel`'s columns would take packed by
+/// `rerail_blocks::col` (MLDB's `RawMappedIntTable` choices), one profile line a column, in bytes a row: chosen whole,
+/// per range of 4,096 rows (MLDB's `MappedIntTable` ranges, a 64-byte descriptor each), and with the rows in
+/// canonical order (as `rerail_blocks::packed` holds a relation) per range of 4,096, a node column split into its
+/// granule (`x >> 18`: document and slot, `syntax::DefIds`) and its index there, each packed apart.
+fn encodings(rel: &str, columns: &[Vec<i64>]) {
+    use rerail_blocks::col::choose;
+    const DESCRIPTOR: usize = 64;
+    let ranged = |v: &[i64]| v.chunks(4096).map(|c| choose(c).bytes() + DESCRIPTOR).sum::<usize>();
+    let n = columns.first().map_or(0, Vec::len);
+    let mut order: Vec<u32> = (0..n as u32).collect();
+    order.sort_unstable_by(|&a, &b| columns.iter().map(|col| col[a as usize].cmp(&col[b as usize])).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal));
+    for (c, v) in columns.iter().enumerate() {
+        let per = |b: usize| b as f64 / n.max(1) as f64;
+        let nodes = v.iter().filter(|&&x| x >= 1 << 32).count();
+        let sorted: Vec<i64> = order.iter().map(|&i| v[i as usize]).collect();
+        let split = (nodes * 2 > n).then(|| {
+            let (granule, index): (Vec<i64>, Vec<i64>) = sorted.iter().map(|&x| (x >> 18, x & 0x3_ffff)).unzip();
+            ranged(&granule) + ranged(&index)
+        });
+        crate::code_rule_dsl::logic::profile::decision("export encodings (Q61)", || {
+            format!(
+                "{rel}.c{c}: {n} rows, {nodes} nodes; B/row: held 8, whole {:.2}, ranges of 4096 {:.2}; sorted: ranges of 4096 {:.2}{}",
+                per(choose(v).bytes() + DESCRIPTOR),
+                per(ranged(v)),
+                per(ranged(&sorted)),
+                split.map_or(String::new(), |b| format!(", granule and index apart {:.2}", per(b)))
+            )
+        });
     }
 }
 
