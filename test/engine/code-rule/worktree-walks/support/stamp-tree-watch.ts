@@ -79,14 +79,19 @@ export class StampTreeWatch implements TreeWatch {
     const notices: TreeNotice[] = [];
     for (const [root, before] of this.#entries) {
       // Seen at a later take, as a notice the system hands over late.
-      if (this.#held.has(root)) continue;
-      const after = entriesOf(root);
-      this.#entries.set(root, after);
-      const notice = this.#watched(root, noticeOf(root, before, after, this.#lost.delete(root), this.#ended.delete(root)));
-      if (notice.ended) this.unwatch(root);
-      if (notice.lost || notice.ended || notice.changed.length > 0 || notice.renamed.length > 0) notices.push(notice);
+      const notice = this.#held.has(root) ? undefined : this.#takeRoot(root, before);
+      if (notice !== undefined) notices.push(notice);
     }
     return notices;
+  }
+
+  /** What a take tells of `root`, whose entries were `before` at the last take; undefined when it tells nothing. */
+  #takeRoot(root: string, before: ReadonlyMap<string, string>): TreeNotice | undefined {
+    const after = entriesOf(root);
+    this.#entries.set(root, after);
+    const notice = this.#watched(root, noticeOf(root, before, after, this.#lost.delete(root), this.#ended.delete(root)));
+    if (notice.ended) this.unwatch(root);
+    return tells(notice) ? notice : undefined;
   }
 
   /** `notice` as the watch of `root` tells it: with `byFolder`, only the entries of the folders it was watched with. */
@@ -133,6 +138,10 @@ export class StampTreeWatch implements TreeWatch {
   unwatchable(root: string): void {
     this.#unwatchable.add(root);
   }
+}
+
+function tells(notice: TreeNotice): boolean {
+  return notice.lost || notice.ended || notice.changed.length > 0 || notice.renamed.length > 0;
 }
 
 function parentOf(path: string): string {
