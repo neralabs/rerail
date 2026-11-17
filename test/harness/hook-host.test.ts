@@ -56,15 +56,21 @@ import { removeFolderSync } from "../support/platform/remove-folder.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
 
 // The lookup of a named engine socket, and a later hook's lookup of the running daemon, work as they do; a test stands
-// in for one call of either at a time.
+// in for one call of either at a time. `autostartOffError` makes the error an off autostart throws, of the class the
+// hook host holds: the start checks load modules afresh (`vi.resetModules`), and daemon-control loaded in a test after
+// that would give another class, whose error the hook host would log as a failure.
 const lookups = vi.hoisted(() => ({
   engineEndpointAt: vi.fn<(socketPath: string) => Promise<EngineEndpoint>>(),
   runningDaemonEngineEndpoint: vi.fn<(deadline?: number) => Promise<unknown>>(),
+  autostartOffError: (message: string): Error => {
+    throw new Error(`daemon-control is not loaded yet, so there is no AutostartOffError for: ${message}`);
+  },
 }));
 vi.mock("../../src/runtime/daemon-control.js", async () => {
   const actual = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
   lookups.engineEndpointAt.mockImplementation(socketPath => actual.engineEndpointAt(socketPath));
   lookups.runningDaemonEngineEndpoint.mockImplementation(deadline => actual.runningDaemonEngineEndpoint(deadline));
+  lookups.autostartOffError = message => new actual.AutostartOffError(message);
   return { ...actual, engineEndpointAt: lookups.engineEndpointAt, runningDaemonEngineEndpoint: lookups.runningDaemonEngineEndpoint };
 });
 
@@ -3519,9 +3525,8 @@ describe("a session's start where RERAIL_AUTOSTART keeps the daemon off and none
     const root = await temporaryDirectory();
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
     vi.stubEnv("RERAIL_AUTOSTART", "0");
-    const { AutostartOffError } = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
     const reason = "RERAIL_AUTOSTART=0 requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET";
-    lookups.runningDaemonEngineEndpoint.mockClear().mockRejectedValueOnce(new AutostartOffError(reason));
+    lookups.runningDaemonEngineEndpoint.mockClear().mockRejectedValueOnce(lookups.autostartOffError(reason));
     const { embedder: _testRuntime, ...daemonPath } = hookOptions(root);
     expect(await serveText(parsed => run(parsed, daemonPath), JSON.stringify(input(root)))).toEqual({ stdout: "{}\n", stderr: `rerail hook: ${reason}\n` });
     expect(lookups.runningDaemonEngineEndpoint).toHaveBeenCalledTimes(1);
