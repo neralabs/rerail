@@ -349,8 +349,10 @@ fn congruence(v: &Version, f: Fields<'_>) -> Vec<Vec<String>> {
         rows.sort();
         rows
     };
-    // What keeps a relation its own (`simplify::fixed`).
-    let fixed = |rel: &str| f.is_input(rel) || f.native(rel).is_some() || f.lattice(rel) || f.demanded(rel) || f.gate(rel) || !f.qualifiers_of(rel).is_empty();
+    // What keeps a relation its own (`simplify::fixed`): a request relation too (decision 0174), whose widened copy
+    // (`rr_wide_<attr>_<req>`) is read as it and must not take its place.
+    let request = |rel: &str| crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| a.req == rel);
+    let fixed = |rel: &str| f.is_input(rel) || f.native(rel).is_some() || f.lattice(rel) || f.demanded(rel) || f.gate(rel) || !f.qualifiers_of(rel).is_empty() || request(rel);
     let read = read_rels(v, f);
     let cands: Vec<&str> = rules_of
         .keys()
@@ -463,6 +465,29 @@ mod tests {
         let (want, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
         assert_eq!((out.size(), out.digest()), (want.size(), want.digest()), "{}\n---\n{}", out.show(), want.show());
         assert!(out.rules().any(|r| out.rel_name(r.head().rel()) == "s_q"), "{}", out.show());
+    }
+
+    /// A request relation (decision 0174, `rr_node_text_req`) keeps its own, as the tree's merge keeps it
+    /// (`simplify::fixed`): equal rules do not merge it with another relation. The version's merge took it as any
+    /// relation, so the two merges differed (a replay sample's program: merged 1 against the tree's 0, the debug
+    /// check "the version's merges are the tree's").
+    #[test]
+    fn a_request_relation_keeps_its_own_on_a_version_as_on_the_tree() {
+        let text = ".decl e(x: number, y: number)\n.input e\n\
+                    .decl rr_node_text_req(n: number)\nrr_node_text_req(n) :- e(n, _).\n\
+                    .decl other(n: number)\nother(n) :- e(n, _).\n\
+                    .decl uses(n: number)\nuses(n) :- other(n), rr_node_text_req(n).\n.output uses\n";
+        let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        let mut p = Pipeline::new("test", v);
+        let (mut merge, mut repeats) = (super::MergeIdentical::default(), super::DropRepeated::default());
+        p.program(&mut repeats).program(&mut merge).program(&mut repeats);
+        let (out, _) = p.finish().unwrap();
+        let (m, s, r) = crate::code_rule_dsl::logic::plan::corpus::merge_and_drop_repeats(&mut tree);
+        assert_eq!((m, s), (0, 0), "the tree keeps the request apart");
+        assert_eq!((merge.merged, merge.shared, repeats.0), (m, s, r));
+        let (want, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        assert_eq!((out.size(), out.digest()), (want.size(), want.digest()), "{}\n---\n{}", out.show(), want.show());
     }
 
     /// A rule's branded atoms (decision 0270, a lowered program's names) compare as `canonical` writes them, the atom
