@@ -1821,3 +1821,23 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 - **Fix**: `Rows::frozen(rows, n, k)` takes the width from its caller. Test:
   `a_relation_started_from_an_empty_kept_one_holds_its_rows`; the session tests pass but Q52's two.
 
+
+### Q80. `the_run_after_a_cold_one_writes_nothing` fails here: phased-facts' Q68, fixed there, not merged yet
+
+- **Found** (2026-11-17, after the hub's merge d1875e723): the warm child run exits 3. The observer's store is asked
+  inside the waves under the root's canonical form (`/private/var/…`: `World::resolve_all` in the load rounds), and
+  the warm run then records new manifests naming 8 and 9 sources where the cold run's named 29.
+- **Already fixed** on final-rerail-shape-phased-facts (its Q68, f7e047997 and the `World::watch` commit before it):
+  the roots are watched before the first wave, and phase 0's graph image keeps its plans. Not fixed again here (a
+  preload of the canonical root cleared the first fault alone): it comes with phased-facts' next merge.
+- **Done when**: that merge is in, and the test passes here.
+
+### Q81. An edited include is read with its old digest in the same process (`programs_are_kept_by_the_hashes_of_what_they_read`)
+
+- **Found** (2026-11-17, steady, at f5b6023e8 and after): after the helper's edit and `observe(|o| o.flush())`,
+  `read_file` does not reuse its program (it lowers again), but `program_shared` → `read_shared` gets the helper's
+  old digest from the observer (`Observer::digest`), so the files list equals the first and the test's
+  `assert_ne!(files, edited_files)` fails. The edit is one byte, same size, written milliseconds after the first
+  read: the observer vouches for the old answer (the journal's `trusted`, a root asked since the flush, or the
+  racy window's settling, Q45).
+- **Done when**: the cause is named in the observer and fixed there; the test passes.
