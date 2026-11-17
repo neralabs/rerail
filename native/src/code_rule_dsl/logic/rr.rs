@@ -320,7 +320,7 @@ impl Text {
         closed_program(&files, &own)?;
         let own: Vec<syntax::Statement> = own.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect();
         let m = lower::lower_module_seeded(own, &scoped.seeds)?;
-        let version = link_seeded_version(m, &scoped.seeds, core_names())?;
+        let version = link_seeded_version(m, scoped, core_names())?;
         // A text that adds to library relations asks of the library (decision 0089 §3): its request's cone, the library
         // relations that read what it adds, and the helpers they read, are copied from the linked library, made once
         // (decision 0246 §2: a cone is made at link time). The run's `own_part` then holds them as the request.
@@ -437,9 +437,21 @@ impl Text {
 pub struct Scoped {
     pub keys: Vec<crate::content_store::HashKey>,
     seeds: lower::Seeds,
+    /// The scope's program as a version (its seeds' header), made once: each program lowered in the scope starts from
+    /// it (`link_seeded_version`).
+    version: std::sync::OnceLock<std::sync::Arc<super::program_image::Version>>,
 }
 
 impl Scoped {
+    /// The scope's program as a version, made on first use.
+    fn version(&self) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+        if let Some(v) = self.version.get() {
+            return Ok(std::sync::Arc::clone(v));
+        }
+        let v = version_of(self.seeds.program())?;
+        Ok(std::sync::Arc::clone(self.version.get_or_init(|| v)))
+    }
+
     /// The alias a program of text `src` lowered in this scope is kept under as its image.
     pub fn program_image(&self, src: &str) -> crate::content_store::HashKey {
         program_key(src, &self.keys)
@@ -471,7 +483,7 @@ impl Library {
     /// The scope of a program whose library files are `files`, seeded.
     pub fn scoped(&self, files: &[PathBuf]) -> Scoped {
         let (scope, keys) = self.scope(files);
-        Scoped { keys, seeds: lower::seeds(&scope) }
+        Scoped { keys, seeds: lower::seeds(&scope), version: Default::default() }
     }
 
     /// The modules a program whose library files are `files` reads: those all of whose files it includes, in order,
@@ -948,19 +960,23 @@ pub fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<Stri
 
 /// A lowered program's image (decision 0173): its rules, declarations, facts and `.about` rows.
 /// `program` as a version, opened from the image the store keeps of it (`encode_program`).
-/// `lower::link_seeded` as a version (decision 0281's path, step 7b): the program made a version before its three-valued relations, findings, core.rr's declarations, its span patterns, grammar names, `builtins_out`, `kind_sets`,
+/// `lower::link_seeded` as a version (decision 0281's path, step 7b): the module's program appended onto the scope's
+/// version (made once, `Scoped`), then its three-valued relations, findings, core.rr's declarations, its span patterns, grammar names, `builtins_out`, `kind_sets`,
 /// `unit`, `whole_back`,
 /// `front::finish` and `whole()`'s tail (`lower::link_seeded_front`), the tail run on it as program passes (`preparation::lowering_tail` and
 /// `DropRepeated`: aggregate demand, `unit`, the sets, then the widened contexts), then the
 /// scope's declarations taken out of its header (`lower::unseed`). A debug build runs the tree's tail beside it and
 /// checks the two images agree.
-fn link_seeded_version(m: lower::Module, seeds: &lower::Seeds, core: &BTreeSet<String>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+fn link_seeded_version(m: lower::Module, scoped: &Scoped, core: &BTreeSet<String>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     use super::program_image::{Builder, manager::Pipeline};
-    let lower::Lowered { program, sets, rewritten, docof_of_locs, findings, three, modal } = lower::link_seeded_front(m, seeds)?;
-    let v = version_of(&program)?;
-    let mut p = Pipeline::new("the lowering's tail", v);
+    let seeds = &scoped.seeds;
+    let lower::Linked { lowered, own, stated, own_stated } = lower::link_seeded_parts(m, seeds)?;
+    let lower::Lowered { sets, rewritten, docof_of_locs, findings, three, modal, .. } = lowered;
+    let mut p = Pipeline::new("the lowering's tail", scoped.version()?);
     {
         use super::plan::corpus::preparation::{lowering_tail, on_request::SourcesOnRequest};
+        // The module linked onto the scope's version, and checked declared.
+        p.program(&mut lowering_tail::AppendModule { own: version_of(&own)?, stated, own_stated }).program(&mut lowering_tail::Declared);
         p.program(&mut lowering_tail::ThreeValued { three: three.clone(), modal: modal.clone() });
         p.program(&mut lowering_tail::Findings { pending: findings.clone() });
         p.program(&mut lowering_tail::CoreDecls { docof_of_locs }).program(&mut lowering_tail::SpanPatterns).program(&mut lowering_tail::GrammarNames).program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
@@ -996,7 +1012,9 @@ fn link_seeded_version(m: lower::Module, seeds: &lower::Seeds, core: &BTreeSet<S
     let (v, _) = b.finish().map_err(Error::Syntax)?;
     #[cfg(debug_assertions)]
     {
-        let mut tree = program;
+        let mut tree = seeds.program().clone();
+        lower::append_parts(&mut tree, own, &mut stated.clone(), own_stated);
+        super::front::declared(&tree)?;
         lower::three_valued(&mut tree, &three, &modal);
         lower::findings(&mut tree, &findings)?;
         lower::core_and_projections(&mut tree, docof_of_locs)?;

@@ -4176,3 +4176,23 @@ fn three_valued_relations_are_written_on_the_version() {
     let head = v.header(&Default::default()).unwrap();
     assert!(head.decls.contains_key("rr_must_p") && head.decls.contains_key("rr_must_q"), "{:?}", head.decls.keys().collect::<Vec<_>>());
 }
+
+/// A modular text's module is linked onto its scope's version and checked declared there (decision 0281's path, step
+/// 7b): a rule reading a relation no one declares is refused, and so is one reading a library relation with other
+/// columns than it declares, as the tree's `front::declared` refuses them; a rule reading the library's is linked.
+#[test]
+fn a_module_is_linked_and_checked_declared_on_the_version() {
+    let lower = |body: &str| {
+        let src = format!("#include \"python/compare.rr\"\n.decl hit(n: node)\n.output hit\n{body}\n");
+        let files = super::read_text(&src).unwrap().files().expect("a modular text");
+        let library = super::lower_library(&files, None).unwrap();
+        let scoped = library.scoped(&files);
+        super::read_text(&src).unwrap().lower_in_version(&src, &library, &scoped, None).map(|v| v.expect("a modular text")).map_err(|e| e.to_string())
+    };
+    let e = lower("hit(n) :- kind(n, \"call\"), nowhere(n).").map(|_| ()).unwrap_err();
+    assert!(e.contains("relation nowhere is read by the rule for hit and not declared"), "{e}");
+    let e = lower("hit(n) :- kind(n, \"call\"), child(n).").map(|_| ()).unwrap_err();
+    assert!(e.contains("relation child is declared with 3 columns and read with 1"), "{e}");
+    let v = lower("hit(n) :- kind(n, \"call\"), child(_, n, _).").unwrap();
+    assert!(v.rules().any(|r| v.rel_name(r.head().rel()) == "hit"), "{}", v.show());
+}

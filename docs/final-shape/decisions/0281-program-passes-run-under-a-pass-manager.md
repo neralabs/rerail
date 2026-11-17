@@ -669,7 +669,16 @@ step 3 replaces what is under the writer.
      `three_valued_header`, which `lowering_tail::ThreeValued { three, modal }` builds of too (each side a `Rewrite`'s
      `atom_as` and `head_as`). Test: `three_valued_relations_are_written_on_the_version` (fails with the pass left
      out); ep2's 317 policies: 0 rows. `whole_front` is now the clauses alone: every analysis of `whole()` after them
-     runs on the text's version. Next: the link of modules (`append`).
+     runs on the text's version. Then the link of modules: `Lowerer::append` is `link` (what the lowerer knows, and
+     the module's helpers renamed after the modules before it) and `append_parts` (the union of two programs, which
+     may be headers alone). `lower::link_seeded_parts` returns the module's linked program apart from the scope's;
+     the scope's program (its seeds' header: no rules) is a version made once per scope (`Scoped::version`), and
+     `lowering_tail::AppendModule` appends the module's version onto it, then `lowering_tail::Declared` checks it
+     (`front::declared`, now built of `read_declared` and `columns_declared`, which the pass uses too). So a text's
+     own program is the only part encoded per text. Tests: `a_module_is_linked_and_checked_declared_on_the_version`,
+     and `declared_on_a_version_is_the_trees` on its own (a debug build's tree check refuses the same, so only there
+     does the pass left out show); ep2's 317 policies: 0 rows. Next: each clause written through the builder, so
+     the module's program is a version from the tape walk.
    - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.

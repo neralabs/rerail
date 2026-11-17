@@ -717,6 +717,14 @@ impl Lowerer {
 
     /// `m` after the modules linked so far: its helpers numbered after theirs, its parts added to theirs.
     fn append(&mut self, m: Module) {
+        let (b, b_stated) = self.link(m);
+        append_parts(&mut self.prog, b, &mut self.stated, b_stated);
+    }
+
+    /// `append` but the union of the programs: `m`'s helpers numbered after the modules linked so far, and what the
+    /// lowerer knows of them added to theirs. `m`'s program, so renamed, is returned with the count of its inputs
+    /// stated first, for `append_parts`.
+    fn link(&mut self, m: Module) -> (Program, usize) {
         let Module { l: mut m, docof, places, .. } = m;
         let mut rename: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         for (stem, n) in &m.made {
@@ -778,49 +786,55 @@ impl Lowerer {
         if let Some(d) = docof {
             self.docof_of_locs = d;
         }
-        let (a, b) = (&mut self.prog, m.prog);
-        a.rules.extend(b.rules);
-        a.decls.extend(b.decls);
-        a.nullary.extend(b.nullary);
-        a.lattice.extend(b.lattice);
-        for (rel, rows) in b.facts {
-            a.facts.entry(rel).or_default().extend(rows);
-        }
-        for (k, rel) in b.inputs.into_iter().enumerate() {
-            if a.inputs.contains(&rel) {
-                continue;
-            }
-            if k < m.stated {
-                a.inputs.insert(self.stated, rel);
-                self.stated += 1;
-            } else {
-                a.inputs.push(rel);
-            }
-        }
-        for (list, more) in [(&mut a.outputs, b.outputs), (&mut a.demand, b.demand)] {
-            for rel in more {
-                if !list.contains(&rel) {
-                    list.push(rel);
-                }
-            }
-        }
-        a.kindsets.extend(b.kindsets);
-        a.demand_dropped.extend(b.demand_dropped);
-        a.gates.extend(b.gates);
-        a.policies.extend(b.policies);
-        a.settings.extend(b.settings);
-        a.natives.extend(b.natives);
-        a.rx_spans.extend(b.rx_spans);
-        a.ast_patterns.extend(b.ast_patterns);
-        a.answers.extend(b.answers);
-        for (rel, q) in b.qualifiers {
-            a.qualifiers.entry(rel).or_default().extend(q);
-        }
-        for (rel, cols) in b.tapes {
-            a.tapes.entry(rel).or_default().extend(cols);
-        }
-        a.shapes.extend(b.shapes);
+        (m.prog, m.stated)
     }
+}
+
+/// `b`, a module's program (`Lowerer::link`), added to `a`, the modules linked so far: its rules after theirs, its
+/// parts added to theirs; its first `b_stated` inputs after `a`'s first `stated`, which counts them. `a` and `b` may be
+/// headers alone (a version's: `lowering_tail::AppendModule`).
+pub fn append_parts(a: &mut Program, b: Program, stated: &mut usize, b_stated: usize) {
+    a.rules.extend(b.rules);
+    a.decls.extend(b.decls);
+    a.nullary.extend(b.nullary);
+    a.lattice.extend(b.lattice);
+    for (rel, rows) in b.facts {
+        a.facts.entry(rel).or_default().extend(rows);
+    }
+    for (k, rel) in b.inputs.into_iter().enumerate() {
+        if a.inputs.contains(&rel) {
+            continue;
+        }
+        if k < b_stated {
+            a.inputs.insert(*stated, rel);
+            *stated += 1;
+        } else {
+            a.inputs.push(rel);
+        }
+    }
+    for (list, more) in [(&mut a.outputs, b.outputs), (&mut a.demand, b.demand)] {
+        for rel in more {
+            if !list.contains(&rel) {
+                list.push(rel);
+            }
+        }
+    }
+    a.kindsets.extend(b.kindsets);
+    a.demand_dropped.extend(b.demand_dropped);
+    a.gates.extend(b.gates);
+    a.policies.extend(b.policies);
+    a.settings.extend(b.settings);
+    a.natives.extend(b.natives);
+    a.rx_spans.extend(b.rx_spans);
+    a.ast_patterns.extend(b.ast_patterns);
+    a.answers.extend(b.answers);
+    for (rel, q) in b.qualifiers {
+        a.qualifiers.entry(rel).or_default().extend(q);
+    }
+    for (rel, cols) in b.tapes {
+        a.tapes.entry(rel).or_default().extend(cols);
+    }
+    a.shapes.extend(b.shapes);
 }
 
 /// A name's place in a helper's columns: its text, a helper's (`rr_<stem><n>`) as its stem and number.
@@ -966,23 +980,35 @@ pub fn unseed(program: &mut Program, seeds: &Seeds, core: &BTreeSet<String>) {
     program.qualifiers.retain(|r, _| !(seeded.qualifiers.contains(r) && gone(r)));
 }
 
-/// `link_seeded` up to `three_valued`, `findings`, `core_and_projections`, `span_patterns`, `grammar_names`, `builtins_out`, `kind_sets`, `unit`, `whole_back`, `front::finish` and `whole()`'s tail (aggregate demand, `unit`, `sets`,
-/// `widen_cyclic_contexts`): the program `rr::link_seeded_version`
-/// makes a version of, with what the lowerer knows of it; `declared` checked. `builtins_out` takes out declarations
-/// of relations no rule reads (the built-ins are written out), but `within`, which it declares where read. `kind_sets` takes out only sets no rule
-/// reads, and declares the axes' helpers it writes. `whole_back` adds a column to nullary relations, in their declarations
-/// and reads alike, and the requests' relations it declares. `finish` declares only the axes (transduced, which `declared` passes)
-/// and `node_order` with the helpers it reads. Aggregate demand adds only relations it declares. The tail drops repeats (a literal or rule another copy keeps), a rule
-/// whose body is its own head, and literals of relations the program derives, and adds `node` only where it is
-/// declared: the check before it refuses what the check after it does, but for a relation read only by its own
-/// copy-rule, which the lowering does not declare apart.
-pub fn link_seeded_front(m: Module, seeds: &Seeds) -> Result<Lowered, Error> {
+/// `link_seeded` up to the program's analyses, apart: the scope's program (its seeds' header: no rules), the
+/// module's own program linked into it (`Lowerer::link`), and what the lowerer knows of them (`Lowered`, its program
+/// the scope's). `rr::link_seeded_version` makes the scope's version once (`Scoped`), appends the module's onto it
+/// (`append_parts`, `lowering_tail::AppendModule`), checks it is `declared`, and runs the analyses on it.
+pub fn link_seeded_parts(m: Module, seeds: &Seeds) -> Result<Linked, Error> {
     let mut l = seeds.l.clone();
     l.violations.clear();
-    l.append(m);
+    let (own, own_stated) = l.link(m);
+    let stated = l.stated;
     let lowered = whole_front(l)?;
-    crate::code_rule_dsl::logic::front::declared(&lowered.program)?;
-    Ok(lowered)
+    debug_assert!(lowered.program.rules.is_empty(), "a scope's seeds hold no rules");
+    Ok(Linked { lowered, own, stated, own_stated })
+}
+
+/// `link_seeded_parts`'s parts.
+pub struct Linked {
+    pub lowered: Lowered,
+    /// The module's own program, linked.
+    pub own: Program,
+    /// The scope's inputs stated first, and the module's (`append_parts`).
+    pub stated: usize,
+    pub own_stated: usize,
+}
+
+impl Seeds {
+    /// The scope's program: its seeds' header, which every module linked in it starts from (`link_seeded_parts`).
+    pub fn program(&self) -> &Program {
+        &self.l.prog
+    }
 }
 
 /// The lowering's whole-program half (decision 0246 §1), over the modules appended into `l`.

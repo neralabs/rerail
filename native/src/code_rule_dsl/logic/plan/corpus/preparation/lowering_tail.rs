@@ -1501,9 +1501,98 @@ impl ProgramPass for ThreeValued {
     }
 }
 
+/// A module's program linked onto the scope's (`lower::append_parts`, as `Lowerer::append` adds it on the tree):
+/// its header added to the input's, its rules copied after the input's. Its settings: the module's version (by
+/// digest) and the counts of inputs stated first.
+pub struct AppendModule {
+    pub own: std::sync::Arc<Version>,
+    pub stated: usize,
+    pub own_stated: usize,
+}
+
+impl ProgramPass for AppendModule {
+    const NAME: &'static str = "append a module";
+    fn settings(&self) -> Vec<u8> {
+        format!("{} {} {} {}", self.own.digest(), self.own.size(), self.stated, self.own_stated).into_bytes()
+    }
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        let v = cx.v();
+        let was = v.header(&Default::default())?;
+        let mut head = was.clone();
+        let mut stated = self.stated;
+        crate::code_rule_dsl::logic::rr::lower::append_parts(&mut head, self.own.header(&Default::default())?, &mut stated, self.own_stated);
+        let input = std::sync::Arc::clone(w.input());
+        let b = w.derive()?;
+        b.set_header(&was, &head);
+        for r in input.rules() {
+            b.keep(&input, r);
+        }
+        for r in self.own.rules() {
+            b.copy(&self.own, r);
+        }
+        Ok(())
+    }
+}
+
+/// `front::declared` on the version: every relation a rule reads is declared, and each atom has the columns its
+/// relation declares (`front::read_declared`, `front::columns_declared`).
+pub struct Declared;
+
+impl ProgramPass for Declared {
+    const NAME: &'static str = "declared";
+    fn run(&mut self, cx: &Cx<'_>, _w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::logic::front::{columns_declared, read_declared};
+        let v = cx.v();
+        let head = v.header(&Default::default())?;
+        for r in v.rules() {
+            let name = v.rel_name(r.head().rel());
+            let atoms = || {
+                r.body().filter_map(|l| match l.view() {
+                    L::Atom(a) | L::Agg { atom: a, .. } => Some(a),
+                    _ => None,
+                })
+            };
+            for a in atoms() {
+                read_declared(&head, v.rel_name(a.rel()), name).map_err(|e| e.to_string())?;
+            }
+            for a in std::iter::once(r.head()).chain(atoms()) {
+                columns_declared(&head, v.rel_name(a.rel()), a.args().count(), name).map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::code_rule_dsl::logic::program_image::{build::Builder, manager::Pipeline};
+
+    /// `Declared` on a version refuses what the tree's `front::declared` refuses: a read of a relation not declared,
+    /// and an atom with other columns than its relation declares; it passes a program the tree's passes.
+    #[test]
+    fn declared_on_a_version_is_the_trees() {
+        use crate::code_rule_dsl::logic::front::{Atom, Literal, Term};
+        let text = ".decl e(x: number)\n.input e\n.decl r(x: number)\nr(x) :- e(x).\n.output r\n";
+        let check = |rel: &str, args: usize| {
+            let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+            let mut reads = tree.rules[0].clone();
+            let arg = Term::Var("x".to_owned().into());
+            reads.body = [Literal::Atom(Atom { rel: rel.to_owned().into(), args: vec![arg; args].into(), neg: false, gated: false })].into();
+            tree.rules.push(reads);
+            let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+            let mut p = Pipeline::new("test", v);
+            p.program(&mut super::Declared);
+            let got = p.finish().map(|_| ()).map_err(|e| e.to_string());
+            let want = crate::code_rule_dsl::logic::front::declared(&tree).map_err(|e| e.to_string());
+            (got, want)
+        };
+        let (got, want) = check("nowhere", 1);
+        assert!(want.is_err() && got.as_ref().err().is_some_and(|e| e.contains(want.as_ref().unwrap_err().as_str())), "{got:?} {want:?}");
+        let (got, want) = check("e", 2);
+        assert!(want.is_err() && got.as_ref().err().is_some_and(|e| e.contains(want.as_ref().unwrap_err().as_str())), "{got:?} {want:?}");
+        let (got, want) = check("e", 1);
+        assert!(got.is_ok() && want.is_ok(), "{got:?} {want:?}");
+    }
 
     /// `BuiltinsOut` on a version is the tree's `lower::builtins_out`: the built-ins' and the rewritten relations'
     /// declarations and inputs go, and `within`, read by a rule, is declared and an input. (On a modular text's path

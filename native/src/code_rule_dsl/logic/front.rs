@@ -734,37 +734,40 @@ pub fn declared(prog: &Program) -> Result<(), Error> {
     prog.rules.iter().try_for_each(|rule| rule_declared(prog, rule))
 }
 
-/// `declared` for one rule: every relation it reads is declared in `prog`.
+/// `declared` for one rule: every relation it reads is declared in `prog` (`read_declared`), and each atom of it has
+/// the columns its relation declares (`columns_declared`).
 pub fn rule_declared(prog: &Program, rule: &Rule) -> Result<(), Error> {
-    let mut read = rule.body.iter().filter_map(|l| match l {
-        Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a),
-        _ => None,
-    });
-    // The import components' relations (`rr_cx_reach`, decision 0076) are added by the run to a program that reads
-    // them: declared there.
-    if let Some(a) = read.find(|a| {
-        !prog.decls.contains_key(a.rel.as_str()) && !is_transduced(&a.rel) && !a.rel.starts_with("rr_cx_") && !matches!(a.rel.as_str(), "match_all" | "match_group")
-    }) {
-        return Err(Error::Syntax(format!("relation {} is read by the rule for {} and not declared: declare it with `.decl`", a.rel, rule.head.rel)));
+    let atoms = || {
+        rule.body.iter().filter_map(|l| match l {
+            Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a),
+            _ => None,
+        })
+    };
+    for a in atoms() {
+        read_declared(prog, &a.rel, &rule.head.rel)?;
     }
-    // And with the columns it declares: a read of another arity names some other relation (a rule's own `field(n)`
-    // beside the core `field(p, f, c)`), which no plan can join.
-    let atoms = rule.body.iter().filter_map(|l| match l {
-        Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a),
-        _ => None,
-    });
-    for a in std::iter::once(&rule.head).chain(atoms) {
-        if let Some(cols) = prog.decls.get(a.rel.as_str())
-            && cols.len() != a.args.len()
-        {
-            return Err(Error::Syntax(format!(
-                "relation {} is declared with {} columns and read with {} in the rule for {}",
-                a.rel,
-                cols.len(),
-                a.args.len(),
-                rule.head.rel
-            )));
-        }
+    for a in std::iter::once(&rule.head).chain(atoms()) {
+        columns_declared(prog, &a.rel, a.args.len(), &rule.head.rel)?;
+    }
+    Ok(())
+}
+
+/// A read of `rel` in a rule for `head` names a declared relation. The import components' relations (`rr_cx_reach`,
+/// decision 0076) are added by the run to a program that reads them: declared there.
+pub fn read_declared(prog: &Program, rel: &str, head: &str) -> Result<(), Error> {
+    if !prog.decls.contains_key(rel) && !is_transduced(rel) && !rel.starts_with("rr_cx_") && !matches!(rel, "match_all" | "match_group") {
+        return Err(Error::Syntax(format!("relation {rel} is read by the rule for {head} and not declared: declare it with `.decl`")));
+    }
+    Ok(())
+}
+
+/// An atom of `rel` with `arity` columns, in a rule for `head`, has the columns `rel` declares: a read of another
+/// arity names some other relation (a rule's own `field(n)` beside the core `field(p, f, c)`), which no plan can join.
+pub fn columns_declared(prog: &Program, rel: &str, arity: usize, head: &str) -> Result<(), Error> {
+    if let Some(cols) = prog.decls.get(rel)
+        && cols.len() != arity
+    {
+        return Err(Error::Syntax(format!("relation {rel} is declared with {} columns and read with {arity} in the rule for {head}", cols.len())));
     }
     Ok(())
 }
