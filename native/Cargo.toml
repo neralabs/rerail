@@ -60,7 +60,8 @@ tikv-jemalloc-ctl = { version = "=0.7.0", features = ["stats"] }
 tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
+# `Win32_System_IO` and `Win32_System_Ioctl`: the tree watch's completion port, reads and oplock (`tree_watch/windows.rs`).
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 metal = { version = "0.33.0", optional = true }

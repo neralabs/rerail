@@ -33,7 +33,7 @@ import {
 import { ACTIVE_PROFILE_FILE, DEVICE_SECRETS_DIR, PROFILES_DIR } from "../../src/activation/index.js";
 import { DAEMON_PORT_FILE } from "../../src/daemon/index.js";
 import { INSTALLED_PACKS_DIR, LOCKS_DIR, openRerailDatabase, RERAIL_DATABASE_FILE, RULES_DUMP_FILE } from "../../src/engine/index.js";
-import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, START_LOCK_DIR } from "../../src/runtime/index.js";
+import { AUTOSTART_CLAIM_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, START_LOCK_DIR } from "../../src/runtime/index.js";
 import { POSIX_MODES } from "../support/platform/file-mode.js";
 import { stubUserHome } from "../support/user-home.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -284,6 +284,31 @@ describe("rerail install --root", () => {
     expect(text).not.toContain("delete it if you will not install Rerail again");
   });
 
+  it("deletes the pack verdicts a catalog read keeps and the remote sink's files with --delete-data, then the home", async () => {
+    const { context, packageRoot } = await fixture();
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    // By the names on disk: what every command that reads the rule packs writes, and what `rerail remote add` and the
+    // daemon's sender write, a token included.
+    const written = ["pack-compile-checks.json", "remote.json", "machine-id", "remote-outbox.sqlite", "remote-outbox.sqlite-wal"];
+    for (const name of written) await writeFile(join(context.home, name), "");
+    await mkdir(join(context.home, "remote-tokens"));
+    await writeFile(join(context.home, "remote-tokens", "acme"), "token");
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    expect(await runInstallCommand(["--root", packageRoot, "--remove", "--delete-data", "--dry-run"], context)).toBe(0);
+    const planned = output.mock.calls.join("");
+    for (const name of [...written, "remote-tokens"]) {
+      expect(planned).toContain(`Would delete ${join(context.home, name)} (Rerail's settings, logs and records).`);
+    }
+    expect(planned).toContain(`Would delete ${context.home} (the Rerail home).`);
+    output.mockClear();
+
+    expect(await runInstallCommand(["--root", packageRoot, "--remove", "--delete-data"], context)).toBe(0);
+
+    expect(existsSync(context.home)).toBe(false);
+    expect(output.mock.calls.join("")).toContain(`Deleted ${context.home} (the Rerail home).`);
+  });
+
   it("keeps the files that are not Rerail's in a shared Rerail home with --delete-data, and the folders holding them", async () => {
     const { context, packageRoot } = await fixture();
     await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
@@ -486,7 +511,7 @@ describe("rerail install --root", () => {
     await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
     const folders = [PROFILES_DIR, DEVICE_SECRETS_DIR, LOCKS_DIR, START_LOCK_DIR, UPDATE_LOCK_DIR, VERSIONS_DIR, INSTALLED_PACKS_DIR, LAUNCHER_DIR];
     const files = [
-      CONSENT_FILE, SEEN_AGENTS_FILE, LAUNCHER_PATH_FILE, DAEMON_STATE_FILE, DAEMON_PORT_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE,
+      CONSENT_FILE, SEEN_AGENTS_FILE, LAUNCHER_PATH_FILE, DAEMON_STATE_FILE, DAEMON_PORT_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, AUTOSTART_CLAIM_FILE,
       RULES_DUMP_FILE, ACTIVE_PROFILE_FILE, UPDATE_STATE_FILE, RERAIL_DATABASE_FILE, `${RERAIL_DATABASE_FILE}-wal`, `${RERAIL_DATABASE_FILE}.pre-update`,
       CLAUDE_STATUS_DATABASE_FILE, `${CLAUDE_STATUS_DATABASE_FILE}-shm`, `${DAEMON_ACCESS_TOKEN_FILE}.4242.tmp`, `${CURRENT_LINK}.4242.0b8f6a3e-6d1c.old`,
     ];

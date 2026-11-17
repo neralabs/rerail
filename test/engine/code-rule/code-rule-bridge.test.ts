@@ -20,6 +20,7 @@ import {
 import { MAX_FINISHED_CALLS, ToolCallWindows } from "../../../src/engine/code-rule/tool-call-windows.js";
 import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
 import type { IgnoreRulesChange } from "../../../src/engine/code-rule/ignore-rule-files.js";
+import type * as Git from "../../../src/engine/git.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
 import type * as WalkReads from "../../../src/engine/code-rule/walk-read-buffers.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
@@ -30,10 +31,31 @@ const discovery = vi.hoisted(() => ({
   directories: new Map<string, Array<() => Promise<void>>>(),
 }));
 /**
- * The arguments of every Git process Rerail started without blocking, for the tests that pin what a pass costs, and a
- * Git command (`failing`) that is made to fail, by an option Git does not know, while it is set.
+ * The arguments of every Git process Rerail started without blocking, for the tests that pin what a pass costs, a Git
+ * command (`failing`) that is made to fail, by an option Git does not know, while it is set, and one (`hanging`, by
+ * every argument it holds) that runs until it is ended instead: `cat-file --batch` waits for revisions on an input
+ * nothing writes to. The next command holding `throwsNext` throws as it starts, as a spawn Node cannot make (ENOMEM) does.
  */
-const asyncGitCalls = vi.hoisted(() => ({ args: [] as string[][], failing: undefined as string | undefined }));
+const asyncGitCalls = vi.hoisted(() => ({
+  args: [] as string[][], failing: undefined as string | undefined, hanging: undefined as readonly string[] | undefined,
+  throwsNext: undefined as string | undefined,
+}));
+/**
+ * The listings of a checkout's changed files a test makes late: the next walk listing (`gitModifiedOrUntrackedPaths`) of
+ * each checkout in `late`, and the next listing asked again (`gitModifiedOrUntrackedListing`) of each in `lateAgain`,
+ * once per entry, answer as a Git still at work at its time limit does, and start no Git. While `held` is set, each
+ * listing asked again waits for it first; each of the next ones asked again takes the first hold left in `next`, names
+ * its checkout to it and waits for its release; each then waits `delayMs` before it asks Git. `calls` names each
+ * listing asked for, in order: `walk <checkout>` or `again <checkout>`; `asked` holds each listing asked again, in
+ * order, with when the bridge asked for it and when it answered (`performance.now()`).
+ */
+const listings = vi.hoisted(() => ({
+  late: [] as string[], lateAgain: [] as string[], held: undefined as Promise<void> | undefined, calls: [] as string[],
+  next: [] as Array<{ asked(checkout: string): void; released: Promise<void> }>, delayMs: 0,
+  asked: [] as Array<{ checkout: string; asked: number; answered: number | undefined }>,
+}));
+/** For each path in it, the next file handles opened there call these, in turn, once closed (`readEnded`). */
+const closedReads = vi.hoisted(() => new Map<string, Array<() => void>>());
 /** How many of the next Git reads run, in Git's place, a program that stays until it is ended, as a Git still at work does. */
 const heldGit = vi.hoisted(() => ({ reads: 0 }));
 /** How many of the files a walk read were made into text (`LentBytes.text`), for the tests that pin what a walk keeps. */
@@ -42,12 +64,18 @@ const decodedReads = vi.hoisted(() => ({ count: 0 }));
 const readBuffers = vi.hoisted(() => ({ watching: false, seen: new Set<ArrayBufferLike>() }));
 vi.mock("node:child_process", async importOriginal => {
   const actual = await importOriginal<typeof ChildProcess>();
-  const { promisify } = await import("node:util");
-  const execFile = (...call: Parameters<typeof actual.execFile>) => {
-    if (Array.isArray(call[1])) {
+  // `git.ts` starts the Git of each read that does not block through `spawn`, with `-C <checkout>`; any other process
+  // goes through unchanged.
+  const spawn = (...call: Parameters<typeof actual.spawn>) => {
+    if (Array.isArray(call[1]) && call[1].includes("-C")) {
       const args = call[1] as readonly string[];
+      if (asyncGitCalls.throwsNext !== undefined && args.includes(asyncGitCalls.throwsNext)) {
+        asyncGitCalls.throwsNext = undefined;
+        throw new Error("spawn ENOMEM");
+      }
       const fails = asyncGitCalls.failing !== undefined && args.includes(asyncGitCalls.failing);
-      const forwarded = fails ? [...args, "--no-such-option"] : [...args];
+      const hangs = asyncGitCalls.hanging?.every(part => args.includes(part)) === true;
+      const forwarded = hangs ? [...args.slice(0, args.indexOf("-C") + 2), "cat-file", "--batch"] : fails ? [...args, "--no-such-option"] : [...args];
       call[1] = forwarded;
       asyncGitCalls.args.push(forwarded);
       if (heldGit.reads > 0) {
@@ -56,10 +84,9 @@ vi.mock("node:child_process", async importOriginal => {
         call[1] = ["-e", "setTimeout(() => {}, 30_000)", "--", ...forwarded];
       }
     }
-    return (actual.execFile as (...forwarded: unknown[]) => ReturnType<typeof actual.execFile>)(...call);
+    return (actual.spawn as (...forwarded: unknown[]) => ReturnType<typeof actual.spawn>)(...call);
   };
-  // `promisify(execFile)` resolves to `{ stdout, stderr }` through this symbol: the wrapper keeps it.
-  return { ...actual, execFile: Object.assign(execFile, { [promisify.custom]: (actual.execFile as unknown as Record<symbol, unknown>)[promisify.custom] }) };
+  return { ...actual, spawn };
 });
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof FileSystem>();
@@ -72,6 +99,14 @@ vi.mock("node:fs/promises", async importOriginal => {
     },
     open: async (...args: Parameters<typeof actual.open>) => {
       const handle = await actual.open(...args);
+      const closed = closedReads.get(String(args[0]))?.shift();
+      if (closed !== undefined) {
+        const close = handle.close.bind(handle);
+        handle.close = async () => {
+          await close();
+          closed();
+        };
+      }
       if (!readBuffers.watching) return handle;
       // Every form of `read` passes through unchanged; only the buffer it fills is noted.
       const read = handle.read.bind(handle) as (...call: unknown[]) => ReturnType<typeof handle.read>;
@@ -106,6 +141,37 @@ vi.mock("../../../src/engine/code-rule/walk-read-buffers.js", async importOrigin
   }
   return { ...actual, WalkReadBuffers: HeldReadBuffers };
 });
+vi.mock("../../../src/engine/git.js", async importOriginal => {
+  const actual = await importOriginal<typeof Git>();
+  /** Takes `checkout` out of `list` once, and says whether it was there. */
+  const taken = (list: string[], checkout: string): boolean => {
+    const at = list.indexOf(checkout);
+    if (at >= 0) list.splice(at, 1);
+    return at >= 0;
+  };
+  return {
+    ...actual,
+    gitModifiedOrUntrackedPaths: async (checkout: string, options?: Git.GitReadOptions) => {
+      listings.calls.push(`walk ${checkout}`);
+      return taken(listings.late, checkout) ? undefined : await actual.gitModifiedOrUntrackedPaths(checkout, options);
+    },
+    gitModifiedOrUntrackedListing: async (checkout: string, options?: Git.GitReadOptions): Promise<Git.ChangedPathsListing> => {
+      listings.calls.push(`again ${checkout}`);
+      const asked = { checkout, asked: performance.now(), answered: undefined as number | undefined };
+      listings.asked.push(asked);
+      try {
+        const next = listings.next.shift();
+        next?.asked(checkout);
+        await next?.released;
+        await listings.held;
+        if (listings.delayMs > 0) await new Promise(resolve => setTimeout(resolve, listings.delayMs));
+        return taken(listings.lateAgain, checkout) ? { ended: "timed-out" } : await actual.gitModifiedOrUntrackedListing(checkout, options);
+      } finally {
+        asked.answered = performance.now();
+      }
+    },
+  };
+});
 
 interface DiscoveryGate {
   entered: Promise<void>;
@@ -127,6 +193,68 @@ function holdDiscovery(kind: "reads" | "directories", path: string): DiscoveryGa
   discovery[kind].set(path, queue);
   releases.push(gate.release);
   return gate;
+}
+
+/** Holds every listing asked again before it asks Git (`listings.held`) until `release`, which the clean-up calls too. */
+function holdListingsAgain(): { release(): void } {
+  const held = Promise.withResolvers<void>();
+  listings.held = held.promise;
+  releases.push(held.resolve);
+  return { release: held.resolve };
+}
+
+/**
+ * Holds the next listing asked again that no earlier hold took before it asks Git (`listings.next`) until `release`,
+ * which the clean-up calls too; `asked` resolves with its checkout.
+ */
+function holdNextListingAgain(): { asked: Promise<string>; release(): void } {
+  const asked = Promise.withResolvers<string>();
+  const released = Promise.withResolvers<void>();
+  listings.next.push({ asked: asked.resolve, released: released.promise });
+  releases.push(released.resolve);
+  return { asked: asked.promise, release: released.resolve };
+}
+
+/**
+ * Runs `run` with every `setTimeout` held back, and drops those it started once it ends: a slot a listing asked again
+ * took meanwhile is handed on only once its Git answers, never at the wait (`LISTING_AGAIN_WAIT_MS`), however slow the
+ * machine. Nothing `run` waits for may need a timer.
+ */
+async function withoutSlotWaits<T>(run: () => Promise<T>): Promise<T> {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    return await run();
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
+/** As in `code-rule-bridge.ts`: how many listings asked again hold a slot to ask Git at once, and for how long at most. */
+const LISTINGS_AGAIN_AT_ONCE = 4;
+const LISTING_AGAIN_WAIT_MS = 1_000;
+
+/**
+ * The most listings asked again that held a slot as another was asked for: asked before it, not answered yet, and asked
+ * less than the wait before it (less 50 ms, the timers' leeway). A slot its listing handed on at the wait is not held.
+ */
+function mostHoldingSlots(asked: typeof listings.asked): number {
+  const holding = asked.map(({ asked: at }, index) => asked.slice(0, index)
+    .filter(before => (before.answered === undefined || before.answered > at) && at - before.asked < LISTING_AGAIN_WAIT_MS - 50).length);
+  return Math.max(0, ...holding);
+}
+
+/** Resolves once the next file handle opened at `path` is closed: a read of the file has ended. */
+function readEnded(path: string): Promise<void> {
+  const ended = Promise.withResolvers<void>();
+  closedReads.set(path, [...(closedReads.get(path) ?? []), ended.resolve]);
+  return ended.promise;
+}
+
+/** Resolves once `promise` has, or after `ms` whatever it does. */
+async function atMost(promise: Promise<unknown>, ms: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([promise, new Promise(resolve => { timer = setTimeout(resolve, ms); })]);
+  clearTimeout(timer);
 }
 
 function createBridge(...args: ConstructorParameters<typeof CodeRuleBridge>): CodeRuleBridge {
@@ -154,6 +282,18 @@ async function settled<T>(promise: Promise<T>): Promise<boolean> {
 
 const directories: string[] = [];
 afterEach(async () => {
+  // A test that timed out never reached its own `finally`: no Git hangs in the tests after it, and no timer stays held.
+  vi.useRealTimers();
+  asyncGitCalls.hanging = undefined;
+  asyncGitCalls.throwsNext = undefined;
+  listings.late.length = 0;
+  listings.lateAgain.length = 0;
+  listings.held = undefined;
+  listings.next.length = 0;
+  listings.delayMs = 0;
+  listings.asked.length = 0;
+  listings.calls.length = 0;
+  closedReads.clear();
   releases.splice(0).forEach(release => release());
   discovery.reads.clear();
   discovery.directories.clear();
@@ -513,6 +653,408 @@ describe("CodeRuleBridge", () => {
     expect(auditGeneratedEdits.mock.calls.at(-1)?.[1].edits).toEqual([
       { path: "src/pkg/m.py", language: "python", previousText: "moved\n", generatedText: "moved\nmine\n" },
     ]);
+  });
+
+  it("puts in checkpoint's answer once a checkout whose Git did not list the files changed before the session in time, and lists them again off the walks' path", async () => {
+    const root = await workspace();
+    const dirty = join(root, "src", "dirty.py");
+    await writeFile(dirty, "committed\n");
+    commitAll(root);
+    await writeFile(dirty, "uncommitted\n");
+    await awaitClockAfter(dirty);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    // The baseline walk's listing runs past its time limit; the listing asked again answers.
+    listings.late.push(root);
+    await bridge.openWorkspace("session-1");
+    await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({
+      failures: [expect.objectContaining({ code: "source-incomplete", message: ".: Git did not list the checkout's changed files in time" })],
+    }));
+    await bridge.settleListingsAgain();
+    expect((await bridge.checkpoint("turn")).failures).toEqual([]);
+    // The listing asked again kept the session's first sight of the file.
+    await shell(bridge, () => writeFile(dirty, "uncommitted\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/dirty.py", language: "python", previousText: "uncommitted\n", generatedText: "uncommitted\nmine\n" }],
+    ]);
+  });
+
+  it("checks a shell write at the boundary it reaches while Git does not list the files changed before the session in time", async () => {
+    const root = await workspace();
+    const dirty = join(root, "src", "dirty.py");
+    const clean = join(root, "src", "clean.py");
+    await writeFile(dirty, "committed\n");
+    await writeFile(clean, "committed\n");
+    commitAll(root);
+    await writeFile(dirty, "uncommitted\n");
+    await awaitClockAfter(dirty);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    // Both listings run past their time limit: the baseline walk's, then the one asked again once that walk is applied,
+    // which waits until the shell write has been checked.
+    const asked = holdListingsAgain();
+    listings.late.push(root);
+    listings.lateAgain.push(root);
+    await bridge.openWorkspace("session-1");
+    expect((await bridge.checkpoint("turn")).failures).toEqual([
+      expect.objectContaining({ code: "source-incomplete", message: ".: Git did not list the checkout's changed files in time" }),
+    ]);
+    // While the listing asked again waits, the walk this shell write asks for checks it within the boundary's wait.
+    await shell(bridge, () => writeFile(clean, "committed\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/clean.py", language: "python", previousText: "committed\n", generatedText: "committed\nmine\n" }],
+    ]);
+    asked.release();
+    await bridge.settleListingsAgain();
+    // The second late listing enters checkpoint's answer once, and is the last.
+    expect((await bridge.checkpoint("turn")).failures).toEqual([expect.objectContaining({
+      code: "source-incomplete",
+      message: ".: Git did not list the checkout's changed files in time again: a shell edit to a file changed there before the session is checked against Git's text of it, or whole",
+    })]);
+    expect((await bridge.checkpoint("turn")).failures).toEqual([]);
+    expect(listings.calls).toEqual([`walk ${root}`, `again ${root}`]);
+  });
+
+  it("puts a checkout whose listing asked again failed in checkpoint's answer once, and its files changed before the session keep no first sight", async () => {
+    const root = await workspace();
+    const dirty = join(root, "src", "dirty.py");
+    await writeFile(dirty, "committed\n");
+    commitAll(root);
+    await writeFile(dirty, "uncommitted\n");
+    await awaitClockAfter(dirty);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    // The baseline walk's listing runs past its time limit; the one asked again fails, as a Git that exits with an error does.
+    listings.late.push(root);
+    asyncGitCalls.failing = "--modified";
+    const answered: string[] = [];
+    try {
+      await bridge.openWorkspace("session-1");
+      answered.push(...(await bridge.checkpoint("turn")).failures.map(failure => failure.message));
+      await bridge.settleListingsAgain();
+    } finally {
+      asyncGitCalls.failing = undefined;
+    }
+    answered.push(...(await bridge.checkpoint("turn")).failures.map(failure => failure.message));
+    // In one answer: the first boundary's after it, or that one beside the late listing when it failed first.
+    expect(answered.flatMap(message => message.split("; ")).filter(message => message.includes("asked again"))).toEqual([
+      ".: Git could not list the checkout's changed files when asked again: a shell edit to a file changed there before the session is checked against Git's text of it, or whole",
+    ]);
+    expect((await bridge.checkpoint("turn")).failures).toEqual([]);
+  });
+
+  it("asks Git again at the next late listing of a checkout whose listing asked again threw, and puts the throw in checkpoint's answer once", async () => {
+    const root = await workspace();
+    const dirty = join(root, "src", "dirty.py");
+    const draft = join(root, "deep", "draft.py");
+    await writeFile(dirty, "committed\n");
+    commitAll(root);
+    await writeFile(dirty, "uncommitted\n");
+    await mkdir(join(root, "deep"));
+    await writeFile(draft, "draft\n");
+    await awaitClockAfter(dirty, draft);
+    // The baseline walk cannot read `deep`, so the walk after it is the first to see draft.py there and lists it.
+    discovery.directories.set(join(root, "deep"), [async () => { throw new Error("EMFILE: too many open files"); }]);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits), { discoveryWaitMs: 100 });
+    // Both walks' listings run past their time limit. The one asked again after the first walk throws as it starts; the
+    // one asked again after the second answers.
+    listings.late.push(root, root);
+    asyncGitCalls.throwsNext = "--modified";
+    const secondWalk = holdDiscovery("reads", draft);
+    await bridge.openWorkspace("session-1");
+    await secondWalk.entered;
+    // Taken while the second walk waits at draft.py.
+    const afterThrow = await bridge.checkpoint("turn");
+    secondWalk.release();
+    await vi.waitFor(async () => expect((await bridge.checkpoint("turn")).failures).toEqual([
+      expect.objectContaining({ code: "source-incomplete", message: ".: Git did not list the checkout's changed files in time" }),
+    ]), { timeout: 10_000, interval: 20 });
+    await bridge.settleListingsAgain();
+    await shell(bridge, () => writeFile(draft, "draft\nmine\n"));
+    // The shell call's boundary waits 100 ms for its walk; a slower walk is audited once it ends.
+    await vi.waitFor(() => expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "deep/draft.py", language: "python", previousText: "draft\n", generatedText: "draft\nmine\n" }],
+    ]), { timeout: 10_000, interval: 20 });
+    expect(afterThrow.failures).toEqual([expect.objectContaining({
+      code: "source-incomplete", message: expect.stringContaining(".: Git could not list the checkout's changed files when asked again: "),
+    })]);
+  });
+
+  it("puts both in checkpoint's answer: a checkout's listing asked again failed, and a later walk's listing ran late, with no boundary between", async () => {
+    const root = await workspace();
+    const dirty = join(root, "src", "dirty.py");
+    const draft = join(root, "deep", "draft.py");
+    await writeFile(dirty, "committed\n");
+    commitAll(root);
+    await writeFile(dirty, "uncommitted\n");
+    await mkdir(join(root, "deep"));
+    await writeFile(draft, "draft\n");
+    await awaitClockAfter(dirty, draft);
+    // The baseline walk cannot read `deep`, so the walk after it is the first to see draft.py there and lists it.
+    discovery.directories.set(join(root, "deep"), [async () => { throw new Error("EMFILE: too many open files"); }]);
+    const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))));
+    // Both walks' listings run past their time limit. The one asked again after the first fails, as a Git that exits with
+    // an error does, while the second walk waits at draft.py.
+    listings.late.push(root, root);
+    asyncGitCalls.failing = "--modified";
+    const secondWalk = holdDiscovery("reads", draft);
+    try {
+      await bridge.openWorkspace("session-1");
+      await secondWalk.entered;
+      await bridge.settleListingsAgain();
+    } finally {
+      asyncGitCalls.failing = undefined;
+    }
+    secondWalk.release();
+    // The first boundary's answer holds what the failure cost the files changed before the session, besides the late listings.
+    expect((await bridge.checkpoint("turn")).failures.map(failure => failure.message)).toEqual([
+      ".: Git did not list the checkout's changed files in time; .: Git could not list the checkout's changed files when asked again: a shell edit to a file changed there before the session is checked against Git's text of it, or whole",
+    ]);
+    await bridge.settleListingsAgain();
+    expect((await bridge.checkpoint("turn")).failures).toEqual([]);
+  });
+
+  it(`asks Git again for the checkouts a walk found late ${LISTINGS_AGAIN_AT_ONCE} at a time, each until it answers, and keeps what it first saw in each`, async () => {
+    const { root, checkouts, changed, sourceRoot } = await changedCheckouts(LISTINGS_AGAIN_AT_ONCE + 2);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, { ...auditor(auditGeneratedEdits), sourceRoot });
+    // The baseline walk's listing of each checkout runs past its time limit. Each listing asked again answers 50 ms or
+    // more after it was asked: a fast Git, slower than a timer of 0 ms.
+    listings.late.push(...checkouts);
+    listings.delayMs = 50;
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await bridge.settleListingsAgain();
+    expect(listings.asked).toHaveLength(checkouts.length);
+    // The first ones asked filled every slot at once, and no listing was asked while every slot was held: by a listing
+    // asked and not answered yet, and asked less than the wait before. This holds however slow Git is.
+    expect(mostHoldingSlots(listings.asked)).toBe(LISTINGS_AGAIN_AT_ONCE - 1);
+    // Each asked Git in the order the walk found its checkout late: a slot goes to the listing that has waited longest.
+    const walked = listings.calls.filter(call => call.startsWith("walk ")).map(call => call.slice("walk ".length));
+    expect(listings.asked.map(listing => listing.checkout)).toEqual(walked);
+    await shell(bridge, async () => { await Promise.all(changed.map(path => writeFile(path, "uncommitted\nmine\n"))); });
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([firstSightEdits(root, changed)]);
+  });
+
+  it("asks Git again for the checkouts behind slow listings asked again once one has run a second in its slot, keeps what it first saw in them, and hands each slot on once", async () => {
+    const { root, checkouts, changed, sourceRoot } = await changedCheckouts(2 * LISTINGS_AGAIN_AT_ONCE + 2);
+    // Every walk until the last one below fails to list each checkout's `deep`, so that walk is the first to see a file
+    // there and lists each checkout again.
+    const deep = checkouts.map(checkout => join(checkout, "deep"));
+    await Promise.all(deep.map(async folder => {
+      await mkdir(folder);
+      await writeFile(join(folder, "d.py"), "d\n");
+    }));
+    await awaitClockAfter(...deep.map(folder => join(folder, "d.py")));
+    const failing = async () => { throw new Error("EMFILE: too many open files"); };
+    for (const folder of deep) discovery.directories.set(folder, Array.from({ length: 20 }, () => failing));
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, { ...auditor(auditGeneratedEdits), sourceRoot });
+    // The baseline walk's listing of each checkout runs past its time limit. The first listings asked again, one in each
+    // slot, wait until the end of the test, as Gits that take long do; the six behind them answer 50 ms or more after
+    // they ask.
+    listings.late.push(...checkouts);
+    const slow = Array.from({ length: LISTINGS_AGAIN_AT_ONCE }, () => holdNextListingAgain());
+    listings.delayMs = 50;
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    const held = await Promise.all(slow.map(hold => hold.asked));
+    const behind = changed.filter(path => !held.includes(sourceRoot(path)));
+    // Each listing behind them reads the file the walk saw first there once a slow one has run a second: without that
+    // wait, not before a slow one answered.
+    await atMost(Promise.all(behind.map(path => readEnded(path))), 5_000);
+    await shell(bridge, async () => { await Promise.all(behind.map(path => writeFile(path, "uncommitted\nmine\n"))); });
+    const asked = listings.calls.filter(call => call.startsWith("again"));
+    // Released before any check, so a failing run leaves no listing for the tests after it.
+    for (const hold of slow) hold.release();
+    await bridge.settleListingsAgain();
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([firstSightEdits(root, behind)]);
+    expect(asked).toHaveLength(checkouts.length);
+    // The four that took the slots the slow ones handed on asked Git once the first slot's wait had run out, and well
+    // before a wait twice as long would have.
+    const heldAt = listings.asked.slice(0, LISTINGS_AGAIN_AT_ONCE).map(listing => listing.asked);
+    for (const { asked: at } of listings.asked.slice(LISTINGS_AGAIN_AT_ONCE, 2 * LISTINGS_AGAIN_AT_ONCE)) {
+      expect(at - Math.min(...heldAt)).toBeGreaterThanOrEqual(LISTING_AGAIN_WAIT_MS - 50);
+      expect(at - Math.max(...heldAt)).toBeLessThan(2 * LISTING_AGAIN_WAIT_MS - 100);
+    }
+    // Each of those four held its slot from then until its Git answered, its own wait counted from when it took the
+    // slot, not from when it was asked for a second before: the last two asked only once one of the four had answered.
+    expect(mostHoldingSlots(listings.asked.slice(LISTINGS_AGAIN_AT_ONCE))).toBe(LISTINGS_AGAIN_AT_ONCE - 1);
+    // Each slow listing handed its slot on once, at the wait, and each behind once, at its answer: a later late walk
+    // finds the four slots free again, and no more.
+    const before = listings.asked.length;
+    listings.late.push(...checkouts);
+    for (const folder of deep) discovery.directories.delete(folder);
+    await bridge.checkpoint("turn");
+    await bridge.settleListingsAgain();
+    expect(listings.asked).toHaveLength(before + checkouts.length);
+    expect(mostHoldingSlots(listings.asked.slice(before))).toBe(LISTINGS_AGAIN_AT_ONCE - 1);
+  }, 30_000);
+
+  it("hands the slot of a slow listing asked again on once it has held it a second, and not before", async () => {
+    const { root, checkouts, sourceRoot } = await changedCheckouts(LISTINGS_AGAIN_AT_ONCE + 1);
+    const bridge = createBridge(root, { ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), sourceRoot });
+    // The baseline walk's listing of each checkout runs past its time limit. The first listings asked again, one in each
+    // slot, wait until the end of the test, as Gits that take long do; the last waits for a slot. Only the test moves the
+    // faked timers the slots' waits run on, so a slow machine cannot move them past the second.
+    listings.late.push(...checkouts);
+    const slow = Array.from({ length: LISTINGS_AGAIN_AT_ONCE }, () => holdNextListingAgain());
+    const askedGit = (): number => listings.calls.filter(call => call.startsWith("again ")).length;
+    // Resolves at the next turn of the event loop, once what the timers just settled has run its callbacks.
+    const nextTurn = async (): Promise<void> => { await new Promise(resolve => setImmediate(resolve)); };
+    const asked: number[] = [];
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await bridge.openWorkspace("session-1");
+      await bridge.checkpoint("turn");
+      await Promise.all(slow.map(hold => hold.asked));
+      vi.advanceTimersByTime(LISTING_AGAIN_WAIT_MS - 1);
+      await nextTurn();
+      asked.push(askedGit());
+      vi.advanceTimersByTime(1);
+      await nextTurn();
+      asked.push(askedGit());
+    } finally {
+      vi.useRealTimers();
+    }
+    for (const hold of slow) hold.release();
+    await bridge.settleListingsAgain();
+    // A millisecond before the second, the last still waited for a slot; at the second it took one and asked Git.
+    expect(asked).toEqual([LISTINGS_AGAIN_AT_ONCE, LISTINGS_AGAIN_AT_ONCE + 1]);
+  });
+
+  it("asks Git for the next checkout once a listing asked again has answered, while an audit holds the bridge's queue", async () => {
+    const { root, checkouts, sourceRoot } = await changedCheckouts(LISTINGS_AGAIN_AT_ONCE + 1);
+    const audited = Promise.withResolvers<void>();
+    const audit = Promise.withResolvers<void>();
+    releases.push(audit.resolve);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => {
+      audited.resolve();
+      await audit.promise;
+      return response(batch);
+    });
+    const bridge = createBridge(root, { ...auditor(auditGeneratedEdits), sourceRoot });
+    // The baseline walk's listing of each checkout runs past its time limit. The listings asked again, one in each slot
+    // and one waiting for a slot, wait until an edit's audit holds the bridge's queue. Until then no slot's wait runs
+    // out, so only a Git's answer can hand a slot on, however long the edit and its audit take.
+    listings.late.push(...checkouts);
+    const asking = holdListingsAgain();
+    const { edited } = await withoutSlotWaits(async () => {
+      await bridge.openWorkspace("session-1");
+      await bridge.checkpoint("turn");
+      await bridge.begin("edit-1", "write", { path: "src/held.py" });
+      await writeFile(join(root, "src", "held.py"), "held\n");
+      const finishing = bridge.finish("edit-1");
+      await audited.promise;
+      expect(listings.asked).toHaveLength(LISTINGS_AGAIN_AT_ONCE);
+      asking.release();
+      return { edited: finishing };
+    });
+    // Those in a slot answer, read what they list and wait for the queue to keep it; the last asks Git once one answered.
+    await vi.waitFor(() => expect(listings.asked.length).toBeGreaterThan(LISTINGS_AGAIN_AT_ONCE), { timeout: 5_000, interval: 5 }).catch(() => undefined);
+    const releasedAt = performance.now();
+    audit.resolve();
+    await edited;
+    await bridge.settleListingsAgain();
+    const answered = Math.min(...listings.asked.slice(0, LISTINGS_AGAIN_AT_ONCE).map(listing => listing.answered ?? Infinity));
+    expect(listings.asked).toHaveLength(checkouts.length);
+    // Asked while the audit still held the queue, as soon as a slot's Git answered, not once the reads and the keep of
+    // the listing in that slot were done.
+    expect(listings.asked[LISTINGS_AGAIN_AT_ONCE]?.asked).toBeLessThan(releasedAt);
+    expect(listings.asked[LISTINGS_AGAIN_AT_ONCE]?.asked).toBeLessThanOrEqual(answered + 100);
+  }, 30_000);
+
+  it("asks Git nothing for the listings asked again still waiting for a slot once the session closes, while an audit holds the bridge's queue", async () => {
+    // Four listings in the slots and six behind them. No slot's wait runs out before the session closes, so the six
+    // still wait for a slot as it closes, however long the edit and its audit take.
+    const { root, checkouts, sourceRoot } = await changedCheckouts(2 * LISTINGS_AGAIN_AT_ONCE + 2);
+    const audited = Promise.withResolvers<void>();
+    const audit = Promise.withResolvers<void>();
+    releases.push(audit.resolve);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => {
+      audited.resolve();
+      await audit.promise;
+      return response(batch);
+    });
+    const bridge = createBridge(root, { ...auditor(auditGeneratedEdits), sourceRoot });
+    // The baseline walk's listing of each checkout runs past its time limit. The four listings in the slots wait until the
+    // session is closing; each listing asked again answers as a Git its time limit ended, starting none.
+    listings.late.push(...checkouts);
+    listings.lateAgain.push(...checkouts);
+    const slow = Array.from({ length: LISTINGS_AGAIN_AT_ONCE }, () => holdNextListingAgain());
+    const { edited, closed, askedAfter } = await withoutSlotWaits(async () => {
+      await bridge.openWorkspace("session-1");
+      await bridge.checkpoint("turn");
+      await Promise.all(slow.map(hold => hold.asked));
+      await bridge.begin("edit-1", "write", { path: "src/held.py" });
+      await writeFile(join(root, "src", "held.py"), "held\n");
+      const finishing = bridge.finish("edit-1");
+      await audited.promise;
+      // Only the four in the slots have asked Git: the six behind them still wait for a slot.
+      expect(listings.calls.filter(call => call.startsWith("again "))).toHaveLength(LISTINGS_AGAIN_AT_ONCE);
+      // The close cancels the session at once, then waits for the audit to leave the bridge's queue before it stops the
+      // session's Git reads. Meanwhile the listings in the slots answer and hand their slots on.
+      const askedBefore = listings.calls.length;
+      const closing = bridge.close();
+      for (const hold of slow) hold.release();
+      await bridge.settleListingsAgain();
+      return { edited: finishing, closed: closing, askedAfter: listings.calls.slice(askedBefore) };
+    });
+    audit.resolve();
+    await edited;
+    await closed;
+    expect(askedAfter).toEqual([]);
+  });
+
+  it("keeps the first sight of a file a later walk saw first, whose listing ran late while the one asked again waited", async () => {
+    const root = await workspace();
+    const dirty = join(root, "src", "dirty.py");
+    const draft = join(root, "deep", "draft.py");
+    await writeFile(dirty, "committed\n");
+    commitAll(root);
+    await writeFile(dirty, "uncommitted\n");
+    await mkdir(join(root, "deep"));
+    await writeFile(draft, "draft\n");
+    await awaitClockAfter(dirty, draft);
+    // The baseline walk cannot read `deep`, so the walk after it is the first to see draft.py there.
+    discovery.directories.set(join(root, "deep"), [async () => { throw new Error("EMFILE: too many open files"); }]);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    // Both walks' listings run past their time limit, and the listing asked again after the first waits until both walks
+    // are applied: the second walk hands it draft.py rather than asking Git again.
+    const asked = holdListingsAgain();
+    listings.late.push(root, root);
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    asked.release();
+    await bridge.settleListingsAgain();
+    expect(listings.calls).toEqual([`walk ${root}`, `again ${root}`, `walk ${root}`]);
+    await shell(bridge, () => writeFile(draft, "draft\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "deep/draft.py", language: "python", previousText: "draft\n", generatedText: "draft\nmine\n" }],
+    ]);
+  });
+
+  it("closes with no Git a listing asked again started still running in the folder", async () => {
+    const root = await workspace();
+    const dirty = join(root, "src", "dirty.py");
+    await writeFile(dirty, "committed\n");
+    commitAll(root);
+    await writeFile(dirty, "uncommitted\n");
+    await awaitClockAfter(dirty);
+    const bridge = new CodeRuleBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))));
+    // The baseline walk's listing runs past its time limit; the one asked again starts a Git that never finishes.
+    listings.late.push(root);
+    asyncGitCalls.hanging = ["--modified"];
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await vi.waitFor(() => expect(runningIn(root).filter(entry => entry.includes("--batch"))).toHaveLength(1), { timeout: 10_000 });
+    await bridge.close();
+
+    expect(runningIn(root)).toEqual([]);
+    // One try: on Windows a process still running in the folder keeps it from being removed.
+    await removeFolder(root, { retry: false });
   });
 
   it("audits nothing Git wrote over a file changed before the session, and measures the next shell edit from Git's text", async () => {
@@ -1084,6 +1626,109 @@ describe("CodeRuleBridge", () => {
 
     expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([]);
   });
+
+  // A session suspended while a tool call waited is opened again by that call's result, and the call is begun again
+  // once the evaluator is open. The reopened session's first walk could read the call's edit before that, as another
+  // writer's change (Log mode), so the edit was read twice and the call's steer could miss the next answer.
+  it("leaves the files of a call the ledger held open out of the reopened session's first walk, for the call's own check", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "before\n");
+    const first = createBridge(root, auditor(async (_sessionId, batch) => response(batch)));
+    await first.openWorkspace("session-1");
+    await first.checkpoint("turn");
+    // The session's own edit, so the suspension holds the file as the session's, then a call that waits on a person.
+    await first.begin("edit-0", "write", { path: "src/a.py" });
+    await writeFile(path, "mine\n");
+    await first.finish("edit-0");
+    const preimages = await first.begin("edit-1", "write", { path: "src/a.py" });
+    const resume = await first.walkResume();
+    await first.close();
+    // The call's write lands while the session is closed.
+    await writeFile(path, "mine\nlater\n");
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const second = createBridge(root, auditor(auditGeneratedEdits), {
+      ...(resume === undefined ? {} : { resume }),
+      heldCalls: [{ toolCallId: "edit-1", paths: ["src/a.py"], preimages }],
+    });
+    await second.openWorkspace("session-1");
+    await second.checkpoint("turn");
+    await second.begin("edit-1", "write", { paths: ["src/a.py"] }, preimages);
+    await second.finish("edit-1");
+
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => ({ mode: batch.mode ?? "session", edits: batch.edits }))).toEqual([
+      { mode: "session", edits: [{ path: "src/a.py", language: "python", previousText: "mine\n", generatedText: "mine\nlater\n" }] },
+    ]);
+  });
+
+  // The open session holds a source as its own until the text budget drops its text. A source held before a suspension
+  // stayed held after the budget dropped its text: another writer's change to it was checked as the open session would
+  // not have, and every later suspension carried it on.
+  it("lets go of a source held before a suspension once the session's text budget drops its text, as the open session does", async () => {
+    const root = await workspace();
+    const [held, other] = [join(root, "src", "a.py"), join(root, "src", "b.py")];
+    await writeFile(held, "before\n");
+    const first = createBridge(root, auditor(async (_sessionId, batch) => response(batch)));
+    await first.openWorkspace("session-1");
+    await first.checkpoint("turn");
+    await first.begin("edit-0", "write", { path: "src/a.py" });
+    await writeFile(held, "mine\n");
+    await first.finish("edit-0");
+    const resume = await first.walkResume();
+    await first.close();
+    expect([...resume?.held.keys() ?? []]).toEqual(["src/a.py"]);
+    // Room for the five bytes of a.py's text, read back as the session opens again, and not for b.py's nine as well.
+    const second = createBridge(root, auditor(async (_sessionId, batch) => response(batch)), {
+      ...(resume === undefined ? {} : { resume }),
+      sessionTextBytes: 8,
+    });
+    await second.openWorkspace("session-1");
+    await second.checkpoint("turn");
+    await second.begin("edit-1", "write", { path: "src/b.py" });
+    await writeFile(other, "mine too\n");
+    await second.finish("edit-1");
+
+    expect([...(await second.walkResume())?.held.keys() ?? []]).toEqual([]);
+  });
+
+  // Held on after the budget dropped its text, a source was compared at the next open with what was last observed of it,
+  // so that open's first walk read no text of it: the agent's next shell write there was measured from nothing, where
+  // a session opened fresh measures it from the text the agent left.
+  it("measures the agent's shell write to a source the budget let go of from the text it left there, at a later open too", async () => {
+    const root = await workspace();
+    const [held, other] = [join(root, "src", "a.py"), join(root, "src", "b.py")];
+    await writeFile(held, "before\n");
+    git(root, "init", "--quiet");
+    git(root, "config", "core.autocrlf", "false");
+    git(root, "add", ".");
+    git(root, "commit", "--quiet", "-m", "seed");
+    const first = createBridge(root, auditor(async (_sessionId, batch) => response(batch)));
+    await first.openWorkspace("session-1");
+    await first.checkpoint("turn");
+    await first.begin("edit-0", "write", { path: "src/a.py" });
+    await writeFile(held, "mine\n");
+    await first.finish("edit-0");
+    const quiet = await first.walkResume();
+    await first.close();
+    // Room for the five bytes of a.py's text or the nine of b.py's, not both: b.py's edit drops a.py's text.
+    const second = createBridge(root, auditor(async (_sessionId, batch) => response(batch)), { ...(quiet === undefined ? {} : { resume: quiet }), sessionTextBytes: 12 });
+    await second.openWorkspace("session-1");
+    await second.checkpoint("turn");
+    await second.begin("edit-1", "write", { path: "src/b.py" });
+    await writeFile(other, "mine too\n");
+    await second.finish("edit-1");
+    const quietAgain = await second.walkResume();
+    await second.close();
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const third = createBridge(root, auditor(auditGeneratedEdits), { ...(quietAgain === undefined ? {} : { resume: quietAgain }), sessionTextBytes: 12 });
+    await third.openWorkspace("session-1");
+    await third.checkpoint("turn");
+    await shell(third, async () => await writeFile(held, "mine\nmore\n"));
+
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => ({ mode: batch.mode ?? "session", ...edit })))).toEqual([
+      { mode: "session", path: "src/a.py", language: "python", previousText: "mine\n", generatedText: "mine\nmore\n" },
+    ]);
+  });
 });
 
 describe("ledgerPreimage", () => {
@@ -1109,6 +1754,30 @@ function commitAll(root: string): void {
   git(root, "init", "--quiet");
   git(root, "add", ".");
   git(root, "commit", "--quiet", "-m", "seed");
+}
+/**
+ * A session folder that is a repository holding `count - 1` nested ones, each with `src/x.py` changed since its commit;
+ * `sourceRoot` names the checkout of a path, as a bridge's option.
+ */
+async function changedCheckouts(count: number) {
+  const root = await workspace();
+  const checkouts = [root, ...Array.from({ length: count - 1 }, (_, at) => join(root, `n${at}`))];
+  for (const checkout of checkouts) {
+    await mkdir(join(checkout, "src"), { recursive: true });
+    await writeFile(join(checkout, "src", "x.py"), "committed\n");
+    commitAll(checkout);
+    await writeFile(join(checkout, "src", "x.py"), "uncommitted\n");
+  }
+  const changed = checkouts.map(checkout => join(checkout, "src", "x.py"));
+  await awaitClockAfter(...changed);
+  const nested = checkouts.slice(1);
+  const sourceRoot = (path: string) => nested.find(checkout => resolve(root, path).startsWith(`${checkout}${sep}`)) ?? root;
+  return { root, checkouts, changed, sourceRoot };
+}
+/** The shell edits of `changed` (from `uncommitted` to `uncommitted` and `mine`) as audited from what the walk first saw. */
+function firstSightEdits(root: string, changed: readonly string[]) {
+  return changed.map(path => ({ path: repositoryPath(root, path), language: "python", previousText: "uncommitted\n", generatedText: "uncommitted\nmine\n" }))
+    .sort((left, right) => left.path.localeCompare(right.path));
 }
 /** A repository on `main`, with a branch `other` ahead of it: it changes `src/a.py`, adds `src/new.py` and removes `src/gone.py`. */
 async function twoBranches(): Promise<string> {
@@ -1154,17 +1823,11 @@ async function gitReads(run: () => Promise<unknown>): Promise<{ heads: number; e
   return { heads: named("--verify"), entries: named("--unmerged") };
 }
 /**
- * A repository with a checkout in `lib` that owns its files: a repository of its own, or with `linked` a worktree of one
- * elsewhere, whose `.git` is a file. `lib` is on `ours`, which changed `src/gone.py`; `other` removed it, so merging
- * `other` stops on a modify/delete conflict that changes no file. With `both`, each branch also changed `src/both.py`
- * in its own place, and that merge writes it.
+ * Makes `repository` one on `ours`, which changed `src/gone.py`; `other` removed it, so merging `other` stops on a
+ * modify/delete conflict that changes no file. With `both`, each branch also changed `src/both.py` in its own place, and
+ * that merge writes it.
  */
-async function nestedCheckout({ both = false, linked = false } = {}) {
-  const root = await workspace();
-  await writeFile(join(root, "src", "a.py"), "old\n");
-  commitAll(root);
-  const nested = join(root, "lib");
-  const repository = linked ? await workspace() : nested;
+async function modifyDeleteBranches(repository: string, both: boolean): Promise<void> {
   await mkdir(join(repository, "src"), { recursive: true });
   await writeFile(join(repository, "src", "gone.py"), "gone\n");
   await writeFile(join(repository, "src", "both.py"), "1\n2\n3\n4\n5\n6\n7\n");
@@ -1179,6 +1842,18 @@ async function nestedCheckout({ both = false, linked = false } = {}) {
   await writeFile(join(repository, "src", "gone.py"), "gone\nours\n");
   if (both) await writeFile(join(repository, "src", "both.py"), "1\n2\n3\n4\n5\n6\nours\n");
   git(repository, "commit", "--quiet", "-am", "ours");
+}
+/**
+ * A repository with a checkout in `lib` that owns its files: a repository of its own (`modifyDeleteBranches`), or with
+ * `linked` a worktree of one elsewhere, whose `.git` is a file.
+ */
+async function nestedCheckout({ both = false, linked = false } = {}) {
+  const root = await workspace();
+  await writeFile(join(root, "src", "a.py"), "old\n");
+  commitAll(root);
+  const nested = join(root, "lib");
+  const repository = linked ? await workspace() : nested;
+  await modifyDeleteBranches(repository, both);
   if (linked) {
     git(repository, "switch", "--quiet", "main");
     git(repository, "worktree", "add", "--quiet", nested, "ours");
@@ -1219,6 +1894,45 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     ]);
   });
 
+  // Once a shared walk's snapshot agrees with what the session saw of a file in another worktree, the session keeps no
+  // observation of its own (`#observe`). A suspension read only the session's own, so it recorded each such held file as
+  // gone: the reopened session read back no text of it, and took another writer's change made meanwhile as its baseline.
+  it("holds the files it edited in another worktree across a suspension, once a shared snapshot agrees with them", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const [changed, kept] = [join(worktree, "src", "a.py"), join(worktree, "src", "b.py")];
+    const { bridge } = await opened(root, extra);
+    await shellInWorktree(bridge, async () => {
+      await writeFile(changed, "old\nviolation\nmine\n");
+      await writeFile(kept, "b = 1\n");
+    });
+    const resume = await bridge.walkResume();
+    await bridge.close();
+    const digest = (text: string) => createHash("sha256").update(text).digest("hex");
+    expect([changed, kept].map(file => resume?.held.get(repositoryPath(root, file))?.digest)).toEqual([digest("old\nviolation\nmine\n"), digest("b = 1\n")]);
+    // Another writer, while the session is suspended: its change is recorded, though the suspension kept no text of it.
+    await writeFile(changed, "old\nviolation\nmine\ntheirs\n");
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const second = createBridge(root, { ...auditor(auditGeneratedEdits), ...extra }, {
+      worktreeWalkGapMs: 0,
+      ...(resume === undefined ? {} : { resume }),
+    });
+    await second.openWorkspace("session-1");
+    await second.checkpoint("turn");
+    await second.settleWorktreeWalk();
+    // The unchanged file's text was read back as the session opened, so a later change to it is measured from it.
+    await writeFile(kept, "b = 1\ntheirs\n");
+    await second.checkpoint("turn");
+    await second.settleWorktreeWalk();
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
+      [[{
+        path: repositoryPath(root, changed), language: "python",
+        previousReadError: "Source changed outside a tool with a captured preimage", generatedText: "old\nviolation\nmine\ntheirs\n",
+      }], "log"],
+      [[{ path: repositoryPath(root, kept), language: "python", previousText: "b = 1\n", generatedText: "b = 1\ntheirs\n" }], "log"],
+    ]);
+  });
+
   it("records a shell write in another worktree in Log, so it steers no session, and steers on one in its own folder", async () => {
     const root = await twoBranches();
     const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
@@ -1238,6 +1952,26 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await writeFile(path, "old\nviolation\nlocal\n");
     await awaitClockAfter(path);
     const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    await shellInWorktree(bridge, () => writeFile(path, "old\nviolation\nlocal\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "wt/src/a.py", language: "python", previousText: "old\nviolation\nlocal\n", generatedText: "old\nviolation\nlocal\nmine\n" }],
+    ]);
+  });
+
+  it("puts in checkpoint's answer a worktree whose Git did not list the files changed before the session in time, and lists them again off the walks' path", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(root, "wt"));
+    const path = join(worktree, "src", "a.py");
+    await writeFile(path, "old\nviolation\nlocal\n");
+    await awaitClockAfter(path);
+    // The worktree's first walk's listing runs past its time limit; the one asked again answers.
+    listings.late.push(worktree);
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    expect((await bridge.checkpoint("turn")).failures).toEqual([
+      expect.objectContaining({ code: "source-incomplete", message: "wt: Git did not list the checkout's changed files in time" }),
+    ]);
+    await bridge.settleWorktreeWalk();
+    await bridge.settleListingsAgain();
     await shellInWorktree(bridge, () => writeFile(path, "old\nviolation\nlocal\nmine\n"));
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
       [{ path: "wt/src/a.py", language: "python", previousText: "old\nviolation\nlocal\n", generatedText: "old\nviolation\nlocal\nmine\n" }],
@@ -1266,6 +2000,164 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await shellInWorktree(bridge, () => writeFile(path, "gone\nours\nmine\n"));
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
       [[{ path: repositoryPath(root, path), language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\nmine\n" }], "log"],
+    ]);
+  });
+
+  /** A worktree outside the session's folder with a repository of its own in its `lib` (`modifyDeleteBranches`), which owns its files. */
+  async function checkoutInWorktree({ both = false } = {}) {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const nested = join(worktree, "lib");
+    await modifyDeleteBranches(nested, both);
+    await awaitClockAfter(join(nested, "src", "gone.py"), join(nested, "src", "both.py"));
+    const sourceRoot = (path: string) => resolve(root, path).startsWith(`${nested}${sep}`) ? nested : extra.sourceRoot!(path);
+    return { root, nested, extra: { ...extra, sourceRoot } };
+  }
+  /** Merges `other` in `nested`, which stops on the modify/delete conflict and leaves its unmerged entries. */
+  const stopMerge = (nested: string) => () => {
+    expect(() => git(nested, "merge", "--quiet", "other")).toThrow();
+    expect(execFileSync("git", ["ls-files", "--unmerged"], { cwd: nested, encoding: "utf8" })).not.toBe("");
+  };
+
+  const eitherWay = [["", false], [", once a walk has found a change there", true]] as const;
+  /** With `earlier`, a shell write the worktrees' walk finds in `nested` first, which no later assertion counts. */
+  async function openedOn(root: string, nested: string, extra: Partial<CodeRuleAuditor>, earlier: boolean) {
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    if (earlier) await shellInWorktree(bridge, () => writeFile(join(nested, "src", "note.py"), "mine\n"));
+    auditGeneratedEdits.mockClear();
+    return { bridge, auditGeneratedEdits };
+  }
+
+  it.each(eitherWay)("records a shell edit of a file a modify/delete conflict left as it was, in a checkout inside another worktree%s", async (_name, earlier) => {
+    const { root, nested, extra } = await checkoutInWorktree();
+    const path = join(nested, "src", "gone.py");
+    const { bridge, auditGeneratedEdits } = await openedOn(root, nested, extra, earlier);
+    await shellInWorktree(bridge, stopMerge(nested));
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+    await shellInWorktree(bridge, () => writeFile(path, "gone\nours\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
+      [[{ path: repositoryPath(root, path), language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\nmine\n" }], "log"],
+    ]);
+  });
+
+  it.each(eitherWay)("records nothing a merge wrote beside a modify/delete conflict, in a checkout inside another worktree%s", async (_name, earlier) => {
+    const { root, nested, extra } = await checkoutInWorktree({ both: true });
+    const { bridge, auditGeneratedEdits } = await openedOn(root, nested, extra, earlier);
+    await shellInWorktree(bridge, stopMerge(nested));
+    expect(await readFile(join(nested, "src", "both.py"), "utf8")).toBe("theirs\n2\n3\n4\n5\n6\nours\n");
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  it.each(eitherWay)("records nothing a branch switch wrote or removed in a checkout inside another worktree%s, and a file written and committed after it from the branch's text", async (_name, earlier) => {
+    const { root, nested, extra } = await checkoutInWorktree({ both: true });
+    const path = join(nested, "src", "both.py");
+    const { bridge, auditGeneratedEdits } = await openedOn(root, nested, extra, earlier);
+    await shellInWorktree(bridge, () => git(nested, "switch", "--quiet", "other"));
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+    // Measured from `other`'s blob only by the `HEAD` the switch left: read before the worktrees' walk, each time.
+    await shellInWorktree(bridge, async () => {
+      await writeFile(path, "theirs\n2\n3\n4\n5\n6\n7\nmine\n");
+      git(nested, "commit", "--quiet", "-am", "mine");
+    });
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
+      [[{ path: repositoryPath(root, path), language: "python", previousText: "theirs\n2\n3\n4\n5\n6\n7\n", generatedText: "theirs\n2\n3\n4\n5\n6\n7\nmine\n" }], "log"],
+    ]);
+  });
+
+  /** `extra` with a `worktreeRoots` that throws while `failing.on`, as a Git that cannot list the worktrees does. */
+  function failingRoots(extra: Partial<CodeRuleAuditor>) {
+    const failing = { on: false };
+    const worktreeRoots = () => {
+      if (failing.on) throw new Error("git worktree list failed");
+      return extra.worktreeRoots!();
+    };
+    return { extra: { ...extra, worktreeRoots }, failing };
+  }
+  /** Walks while the session cannot list its worktrees, so it takes no part, and the shared walk drops what it kept of them. */
+  async function walkUnlisted(bridge: CodeRuleBridge, failing: { on: boolean }): Promise<void> {
+    failing.on = true;
+    try {
+      await shellInWorktree(bridge, () => undefined);
+    } finally {
+      failing.on = false;
+    }
+  }
+
+  /** Runs `run` as a shell call, and the one walk of the other worktrees its finish asks for, as a call followed by another in one turn has. */
+  async function shellThenWalk(bridge: CodeRuleBridge, run: () => void | Promise<void>): Promise<void> {
+    await shell(bridge, run);
+    await bridge.settleWorktreeWalk();
+  }
+
+  it.each(eitherWay)("records a shell edit of a file a modify/delete conflict left as it was, in a checkout inside another worktree whose walk dropped what it kept%s", async (_name, earlier) => {
+    const { root, nested, extra: listed } = await checkoutInWorktree();
+    const { extra, failing } = failingRoots(listed);
+    const path = join(nested, "src", "gone.py");
+    const { bridge, auditGeneratedEdits } = await openedOn(root, nested, extra, earlier);
+    await walkUnlisted(bridge, failing);
+    await shellThenWalk(bridge, stopMerge(nested));
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+    await shellThenWalk(bridge, () => writeFile(path, "gone\nours\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
+      [[{ path: repositoryPath(root, path), language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\nmine\n" }], "log"],
+    ]);
+  });
+
+  it.each(eitherWay)("records nothing a branch switch wrote in a checkout inside another worktree whose walk dropped what it kept%s, and a file written and committed after it from the branch's text", async (_name, earlier) => {
+    const { root, nested, extra: listed } = await checkoutInWorktree({ both: true });
+    const { extra, failing } = failingRoots(listed);
+    const path = join(nested, "src", "both.py");
+    const { bridge, auditGeneratedEdits } = await openedOn(root, nested, extra, earlier);
+    await walkUnlisted(bridge, failing);
+    await shellThenWalk(bridge, () => git(nested, "switch", "--quiet", "other"));
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+    await shellThenWalk(bridge, async () => {
+      await writeFile(path, "theirs\n2\n3\n4\n5\n6\n7\nmine\n");
+      git(nested, "commit", "--quiet", "-am", "mine");
+    });
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
+      [[{ path: repositoryPath(root, path), language: "python", previousText: "theirs\n2\n3\n4\n5\n6\n7\n", generatedText: "theirs\n2\n3\n4\n5\n6\n7\nmine\n" }], "log"],
+    ]);
+  });
+
+  it("starts no Git process for a checkout inside another worktree until its index file changes, and reads its `HEAD` before one walk only", async () => {
+    const { root, nested, extra } = await checkoutInWorktree();
+    const { bridge } = await opened(root, extra);
+    const bothWalks = async () => {
+      await bridge.checkpoint("turn");
+      await bridge.settleWorktreeWalk();
+    };
+    // Walks that find nothing read the session checkout's `HEAD` and the worktree's, and nothing of the one inside it.
+    expect(await gitReads(bothWalks)).toEqual({ heads: 2, entries: 0 });
+    // The walks after a write to its index list its entries once, and those after that do not.
+    stopMerge(nested)();
+    expect(await gitReads(bothWalks)).toEqual({ heads: 2, entries: 1 });
+    expect(await gitReads(bothWalks)).toEqual({ heads: 2, entries: 0 });
+    // Once a walk has found a change there, the worktrees' walk reads its `HEAD` too, and the session folder's does not.
+    await writeFile(join(nested, "src", "gone.py"), "gone\nours\nmine\n");
+    await bothWalks();
+    expect(await gitReads(bothWalks)).toEqual({ heads: 3, entries: 0 });
+  });
+
+  it("audits a shell edit of a file a modify/delete conflict left as it was, in a checkout inside a session folder that another worktree's folder holds", async () => {
+    // The session is in a worktree kept inside the main checkout, which is then one of its other worktrees.
+    const main = await twoBranches();
+    git(main, "worktree", "add", "--quiet", "wt", "other");
+    const root = await realpath(join(main, "wt"));
+    const nested = join(root, "lib");
+    await modifyDeleteBranches(nested, false);
+    await awaitClockAfter(join(nested, "src", "gone.py"));
+    const within = (folder: string, path: string) => resolve(root, path).startsWith(`${folder}${sep}`);
+    const { bridge, auditGeneratedEdits } = await opened(root, {
+      sourceRoot: path => within(nested, path) ? nested : within(root, path) ? root : main,
+      worktreeRoots: () => [main],
+    });
+    // The checkout is the session folder's walk's, though it lies in the main checkout's folder too.
+    await shellInWorktree(bridge, stopMerge(nested));
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+    await shellInWorktree(bridge, () => writeFile(join(nested, "src", "gone.py"), "gone\nours\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
+      [[{ path: "lib/src/gone.py", language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\nmine\n" }], undefined],
     ]);
   });
 
@@ -1324,7 +2216,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => edit.path))).toEqual(["wt/src/a.py"]);
   });
 
-  it("leaves the other worktrees' sources, and files a tool wrote outside its folder, out of the observations it shares once it closes", async () => {
+  it("keeps no observation of its own of the other worktrees' sources while it lives, and of files a tool wrote outside its folder once it closes", async () => {
     const root = await twoBranches();
     const roots: string[] = [];
     for (const name of ["w1", "w2", "w3"]) {
@@ -1348,10 +2240,11 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.checkpoint("turn");
     await bridge.settleWorktreeWalk();
     const own = ["src/a.py", "src/gone.py"];
-    const others = roots.flatMap(worktree => ["a.py", "new.py"].map(file => relative(root, join(worktree, "src", file)).split(sep).join("/")));
     const outside = relative(root, join(sibling, "x.py")).split(sep).join("/");
-    // While the session walks them, a session opening in its folder starts from the worktrees' sources too.
-    expect([...observations.get(root)?.keys() ?? []].sort()).toEqual([...others, ...own, outside].sort());
+    // The bridge shares every observation it keeps of its own. The other worktrees' sources are the shared walk's: a
+    // live session that kept one of each held every file of every worktree, and the daemon's heap grew with the live
+    // sessions times the worktrees times their files.
+    expect([...observations.get(root)?.keys() ?? []].sort()).toEqual([...own, outside].sort());
     await bridge.close();
     // The daemon keeps a folder's observations while it serves the folder, so each folder sessions started in held every
     // file of every worktree: its heap grew with the folders times the files of all the repository's worktrees.
@@ -1448,8 +2341,8 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.checkpoint("turn");
     await bridge.settleWorktreeWalk();
     const own = ["src/a.py", "src/gone.py", "wt/w1-notes/a.py"];
-    const others = ["w1", "w2"].flatMap(name => ["a.py", "new.py"].map(file => `wt/${name}/src/${file}`));
-    expect([...observations.get(root)?.keys() ?? []].sort()).toEqual([...own, ...others].sort());
+    // The worktrees inside the folder are the shared walk's: the session keeps no observation of their sources.
+    expect([...observations.get(root)?.keys() ?? []].sort()).toEqual(own);
     await bridge.close();
     expect([...observations.get(root)?.keys() ?? []].sort()).toEqual(own);
   });
@@ -1653,7 +2546,9 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
       await requestDiscovery(bridge, walk);
       git(root, "worktree", "remove", worktree);
       roots.length = 0;
-      await vi.advanceTimersByTimeAsync(200);
+      // The walk is timed the gap or the last walk's length after that walk, whichever is longer: on a slow machine, as
+      // Git on Windows is, longer than the gap. The checkpoint's wait and Git's timeouts come later, so it is the next timer.
+      await vi.advanceTimersToNextTimerAsync();
       await bridge.settleWorktreeWalk();
       walk.release();
       await bridge.checkpoint("turn");
@@ -1680,7 +2575,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
 
-  it("records only the deletions of a worktree nested in another walked worktree and removed during its first walk", async () => {
+  it("records nothing of a worktree nested in another walked worktree and removed during its first walk", async () => {
     const root = await twoBranches();
     const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
     git(root, "worktree", "add", "--quiet", "-b", "nested", join(worktree, "nest"), "main");
@@ -1710,11 +2605,10 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.settleWorktreeWalk();
     await bridge.checkpoint("turn");
     await bridge.settleWorktreeWalk();
-    // No one wrote these files. A walk that kept their text recorded each one created, then deleted.
-    const deleted = { language: "python", previousReadError: "Source was deleted without a captured preimage", deleted: true };
-    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
-      [[{ path: `${nest}/src/a.py`, ...deleted }, { path: `${nest}/src/gone.py`, ...deleted }], "log"],
-    ]);
+    // No one wrote these files. A walk that kept their text recorded each one created, then deleted; a session that kept
+    // the removed worktree's first walk as its own observations recorded each one deleted. The shared walk's snapshot of
+    // a worktree gone before the session took it is never the session's, so a removed worktree stays silent.
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
 
   it("reports no deletions for a worktree removed while its own walk ran, with no other walk between", async () => {

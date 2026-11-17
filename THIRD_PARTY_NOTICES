@@ -796,6 +796,173 @@ SOFTWARE.
 
 ----------------------------------------------------------------------
 
+Bundled data: ESLint shared configs' rule entries
+Files: src/engine/catalog/lint-config/generated/eslint-presets.generated.ts
+Source: @eslint/js at eslint/eslint 3c0b7c6e1fe2dec778b97a996018126f22d437ae (packages/js/src/configs);
+typescript-eslint and @typescript-eslint/eslint-plugin 8.70.1; eslint-plugin-react 7.37.5;
+eslint-plugin-react-hooks 7.1.1; eslint-plugin-unicorn 76.0.0; eslint-plugin-n 18.4.1;
+@next/eslint-plugin-next and eslint-config-next 16.3.8; eslint-plugin-vue 10.11.1; @vitest/eslint-plugin 1.6.27
+License: MIT
+
+Modified by the Rerail authors: each shared config's rule entries, with their files, written as data by
+scripts/generate/lint-config/eslint-presets.mjs.
+
+Copyright OpenJS Foundation and other contributors, <www.openjsf.org>
+Copyright (c) 2019 typescript-eslint and other contributors
+Copyright (c) 2014 Yannick Croissant
+Copyright (c) Meta Platforms, Inc. and affiliates.
+Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
+Copyright (c) 2015 Toru Nagashima
+Copyright (c) 2025 Vercel, Inc.
+Copyright (c) 2017 Toru Nagashima
+Copyright (c) 2022 - PRESENT Verité Mugabo Makuza
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+----------------------------------------------------------------------
+
+Bundled data: oxlint's built-in rules by plugin and category
+Files: src/engine/catalog/lint-config/generated/oxlint-rules.generated.ts
+Source: oxlint 1.88.0, `oxlint --rules --format=json` (https://github.com/oxc-project/oxc)
+License: MIT
+
+Modified by the Rerail authors: the rule list written as data by scripts/generate/lint-config/oxlint-rules.mjs.
+
+Copyright (c) 2024-present VoidZero Inc. & Contributors
+Copyright (c) 2023 Boshen
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+----------------------------------------------------------------------
+
+Bundled data: Ruff's rules, their status and its default selection
+Files: src/engine/catalog/lint-config/generated/ruff-rules.generated.ts
+Source: ruff 0.16.9, `ruff rule --all` and `ruff check --show-settings` (https://github.com/astral-sh/ruff)
+License: MIT
+
+Modified by the Rerail authors: the rule list written as data by scripts/generate/lint-config/ruff-rules.mjs.
+
+Copyright (c) 2022 Charles Marsh
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+----------------------------------------------------------------------
+
+Bundled data: Biome's lint rules, their recommended flags and domains
+Files: src/engine/catalog/lint-config/generated/biome-rules.generated.ts
+Source: biomejs/biome at @biomejs/biome@2.5.15, 0b4c11f553a7e702f9851af139662e1de45dc131 (https://github.com/biomejs/biome)
+License: MIT
+
+Modified by the Rerail authors: the rule metadata written as data by scripts/generate/lint-config/biome-rules.mjs.
+
+Copyright (c) 2023-present Biome Developers and Contributors
+Copyright (c) 2020-2023 Rome Tools, Inc. and its affiliates
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+----------------------------------------------------------------------
+
+Bundled data: PHP_CodeSniffer's standards, their sniffs and severities
+Files: src/engine/catalog/lint-config/generated/phpcs-standards.generated.ts
+Source: PHP_CodeSniffer 4.0.4, bbdc3d0532623e21838b7041a4364383a8126f96, src/Standards/*/ruleset.xml
+(https://github.com/PHPCSStandards/PHP_CodeSniffer)
+License: BSD-3-Clause
+
+Modified by the Rerail authors: each standard's resolved sniffs and severities, written as data by
+scripts/generate/lint-config/phpcs-standards.ts.
+
+Copyright (c) 2012, Squiz Pty Ltd (ABN 77 084 670 600)
+Copyright (c) 2023, PHPCSStandards and contributors
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+    * Neither the name of the copyright holder nor the
+      names of its contributors may be used to endorse or promote products
+      derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+----------------------------------------------------------------------
+
 Logo (documentation only, not in the published package): can1357/oh-my-pi
 Files: docs/images/agents/omp.svg
 Revision: 9b4488d3b520dcf9cca7778d8072f16c3c183167

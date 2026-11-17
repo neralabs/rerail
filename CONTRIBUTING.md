@@ -133,7 +133,8 @@ is open to others again.
 4. Set up your checkout ([Development setup](#development-setup)), make the change, and add tests for the behavior it
    changes.
 5. Run the checks in [Before you open a pull request](#before-you-open-a-pull-request).
-6. Open a pull request against `main` that links the issue (`Fixes #123`) and says how you tested the change.
+6. Open a pull request against `main` that links the issue (`Fixes #123`) and says how you tested the change. The pull
+   request takes the issue's labels, except the triage ones such as `needs-triage`.
 7. A code owner reviews it, and the `neralabs-reviewer` bot may too (never on a pull request from a fork). The bot
    approves when it finds nothing blocking and the pull request touches no high-risk path in
    [REVIEW.md](REVIEW.md#high-risk-areas); that approval counts as the one main requires. Push fixes to the same
@@ -212,7 +213,11 @@ npm run package:check     # build and dry-run the npm pack
 `npm ci` and `npm install` (`prepare`) install a Git pre-commit hook that runs `scripts/check/pre-commit.sh`, the
 checks of CI's "Lint and type-check" job: the Justfile's format, the release notes your branch adds against your local
 `origin/main`, `npm run check`, `check:ui-tokens` and `check:reference`. It checks the working tree, not only what is
-staged; `git commit --no-verify` skips it. A `pre-commit` hook of your own is left in place.
+staged. CI checks a pull request merged into main, so when your branch is behind your local `origin/main` the hook
+checks your working tree merged into it, in a throwaway worktree (about a second more): main's newer files then count,
+as they do in CI (a folder over its file limit, a migration both sides added). It never fetches, so `git fetch` first
+for the newest main. When the merge would conflict, it says so and checks your branch alone. `git commit --no-verify`
+skips it. A `pre-commit` hook of your own is left in place.
 
 The pack tests also need the pack test data: run `npm run fixtures:pull` ([Pack test data](#pack-test-data)).
 
@@ -460,6 +465,9 @@ Open a pull request against `main` that links its issue, if it has one. Changes 
   script of every installed package that ships its addon prebuilt. While the pull request stages pack data in a
   `publish/`, structure metric #3 fails for each such tool-pack until the data is published.
 - `npm test` passes, with `npm run build` run first (several suites run the built package from `dist/`).
+- A change to reading a repository's own lint config (`src/engine/catalog/lint-config/`, `rerail packs calibrate`)
+  keeps `npm run test:coverage:lint-config` at 100% statements, branches, functions and lines for every file. Cover a
+  new branch with a test of what it decides, or delete it if no input reaches it; CI runs the gate.
 - `npm run check:licenses` and `reuse lint` pass (`uvx --from 'reuse[charset-normalizer]==6.2.0' reuse lint`, as CI
   runs it).
 - A change to a published pack under `packs/` adds a changeset, its name opening with its change type
