@@ -19,6 +19,7 @@
 //! Descriptors are never `Copy`: a reference is only meaningful at its own address, so a descriptor is only ever
 //! reached by reference into its block.
 
+pub mod alloc;
 pub mod block;
 pub mod chunk;
 pub mod col;

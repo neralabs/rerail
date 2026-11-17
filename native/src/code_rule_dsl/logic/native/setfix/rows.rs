@@ -82,31 +82,36 @@ pub fn in_chunk<R>(f: impl FnOnce() -> R) -> R {
     f()
 }
 
-/// A block of at least `bytes`: in a run bound to the device, the pool's when it has room to spare (nothing evicted
-/// for it); else anonymous, resident only where written. A CPU run's block is never a pinned buffer of the pool's,
-/// which its footprint would count whole (Q58); the device can still read an anonymous block in place (a no-copy
-/// buffer, `Block::gpu_buffer`).
+/// A block of at least `bytes` for relations, from the one block policy (decision 0342): a run bound to the device
+/// may read it in place (a pool slab when one is spare), a CPU run's never (Q58); its relations are made and
+/// dropped, so it keeps a free list.
 fn lease(bytes: usize) -> Block {
-    let bytes = bytes.max(FACTS_BYTES);
-    #[cfg(target_os = "macos")]
-    if crate::code_rule_dsl::logic::plan::placement::device()
-        && let Ok(b) = rerail_accel::gpu::shared::lease_block_spare(kind::FACTS, bytes)
-    {
-        return b;
-    }
-    Block::anon(kind::FACTS, bytes)
+    use rerail_blocks::alloc::{Need, Writes};
+    let device = crate::code_rule_dsl::logic::plan::placement::block_device();
+    rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes: bytes.max(FACTS_BYTES), writes: Writes::Churn, device })
+        .expect("a block a run may read on the host")
 }
 
-/// One relation of a block: a segment or a tail.
+/// One relation of a block: a segment or a tail, shared by its holders; given back to the block's free list when
+/// the last lets go (decision 0342).
 #[derive(Clone)]
-pub struct Part {
+pub struct Part(Arc<Held>);
+
+struct Held {
     facts: Arc<Facts>,
     rel: *const Relation,
 }
 
+impl Drop for Held {
+    fn drop(&mut self) {
+        // SAFETY: the relation lies in `facts`' block, and this was its last holder.
+        unsafe { (*self.rel).release(&self.facts.block) };
+    }
+}
+
 // SAFETY: the relation lies in `facts`' block, which the part keeps; its writer is the one `Rows` holding it.
-unsafe impl Send for Part {}
-unsafe impl Sync for Part {}
+unsafe impl Send for Held {}
+unsafe impl Sync for Held {}
 
 impl Part {
     /// An empty relation of `k` columns with room for `rows` rows, in the open block or a new one.
@@ -131,7 +136,7 @@ impl Part {
                 && rel.rows.try_reserve(&facts.block, rows as u64)
             {
                 let rel = std::ptr::from_ref(rel);
-                return Part { facts, rel };
+                return Part(Arc::new(Held { facts, rel }));
             }
         }
         unreachable!("a new block of {} bytes holds a relation of {need}", 2 * need + MARGIN)
@@ -140,12 +145,12 @@ impl Part {
     #[inline]
     pub fn rel(&self) -> &Relation {
         // SAFETY: the part keeps its block.
-        unsafe { &*self.rel }
+        unsafe { &*self.0.rel }
     }
 
     /// The block it lies in.
     pub fn facts(&self) -> &Arc<Facts> {
-        &self.facts
+        &self.0.facts
     }
 
     #[inline]
@@ -172,7 +177,7 @@ impl Part {
 
     /// Room for `n` rows: chunks in its block, or the relation moved to a block with room for twice as many.
     fn grow(&mut self, n: u64) {
-        if self.rel().rows.try_reserve(&self.facts.block, n) {
+        if self.rel().rows.try_reserve(&self.0.facts.block, n) {
             return;
         }
         let k = self.rel().rows.ncols as usize;
@@ -227,6 +232,8 @@ pub struct InBlock {
     pub facts: Arc<Facts>,
     pub at: usize,
     pub rows: u32,
+    /// The relation read, held while this lives: its chunks are not given back meanwhile (decision 0342).
+    pub part: Part,
 }
 
 impl Clone for Rows {
@@ -364,12 +371,12 @@ impl Rows {
                 one
             }),
         };
-        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len() })
+        Some(InBlock { facts: one.0.facts.clone(), at: one.0.facts.block.offset_of(one.0.rel), rows: one.len(), part: one.clone() })
     }
 
     /// Whether these rows share a frozen segment with `other` (a relation started from it).
     pub(super) fn shares(&self, other: &Rows) -> bool {
-        self.segs.iter().any(|(_, a)| other.segs.iter().any(|(_, b)| std::ptr::eq(a.rel, b.rel)))
+        self.segs.iter().any(|(_, a)| other.segs.iter().any(|(_, b)| std::ptr::eq(a.0.rel, b.0.rel)))
     }
 
     /// The relation holding row `id`, and the row's place in it.
@@ -592,5 +599,43 @@ mod tests {
         let r = in_chunk(some_rows);
         crate::code_rule_dsl::logic::plan::placement::set_binding(was);
         assert!(!block_of(&r).block.in_slab(), "a CPU run's block is anonymous");
+    }
+
+    /// A relation a chunk drops gives its chunks back to the chunk's block (decision 0342): the next relation of
+    /// its size takes them, so the block's used bytes grow by the descriptors alone.
+    #[test]
+    fn a_dropped_relations_chunks_are_taken_by_the_next() {
+        in_chunk(|| {
+            let fill = |base: i64| {
+                let mut r = Rows::new(3);
+                r.extend_from_slice(&(0..90_000).map(|v| base + v).collect::<Vec<i64>>());
+                r
+            };
+            let first = fill(0);
+            let facts = block_of(&first);
+            drop(first);
+            let used = facts.block.used();
+            let next = fill(1_000_000);
+            assert!(Arc::ptr_eq(&facts, &block_of(&next)), "the same block");
+            assert!(facts.block.used() - used < 64 << 10, "grew {} bytes: the chunks were taken again", facts.block.used() - used);
+            assert_eq!(*next.row(29_999, 3), [1_089_997, 1_089_998, 1_089_999]);
+        });
+    }
+
+    /// A reader of the rows in place (`InBlock`, the device's) holds the relation: its chunks are not given back
+    /// while it reads them.
+    #[test]
+    fn a_reader_in_place_keeps_the_relation() {
+        in_chunk(|| {
+            let mut r = Rows::new(2);
+            r.extend_from_slice(&[5, 6, 7, 8]);
+            let reading = r.in_block().unwrap();
+            let free = reading.facts.block.free_bytes();
+            drop(r);
+            assert_eq!(reading.facts.block.free_bytes(), free, "nothing given back while read");
+            let facts = reading.facts.clone();
+            drop(reading);
+            assert!(facts.block.free_bytes() > free, "given back after");
+        });
     }
 }

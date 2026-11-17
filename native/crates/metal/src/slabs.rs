@@ -112,7 +112,9 @@ pub struct Slab {
 impl Slab {
     /// A slab of at least `bytes`, within the Metal budget.
     fn lease(id: u64, bytes: usize) -> Result<Slab, Error> {
-        let block = rerail_accel::gpu::shared::lease_block_within(rerail_blocks::block::kind::CHUNK, bytes).map_err(|_| Error::BackendCapacity)?;
+        // From the one block policy (decision 0342): a device slab, room made within the Metal budget.
+        let need = rerail_blocks::alloc::Need { kind: rerail_blocks::block::kind::CHUNK, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::Must };
+        let block = rerail_blocks::alloc::block(&need).map_err(|_| Error::BackendCapacity)?;
         let device = crate::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
         let buffer = block.gpu_buffer(device);
         Ok(Slab { id, block, buffer })

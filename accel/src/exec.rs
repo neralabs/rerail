@@ -64,6 +64,8 @@ pub fn threads() -> usize {
 pub fn configure(this_thread: bool) {
     static MADE: OnceLock<()> = OnceLock::new();
     MADE.get_or_init(|| {
+        // Every block is made by the one policy from here on (decision 0342).
+        crate::blocks::install();
         let b = rayon::ThreadPoolBuilder::new().num_threads(threads()).thread_name(|i| format!("rerail-cpu {i}")).stack_size(POOL_STACK);
         let _ = if this_thread { b.use_current_thread() } else { b }.build_global();
     });

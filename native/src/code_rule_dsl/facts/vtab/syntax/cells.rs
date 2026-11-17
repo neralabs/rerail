@@ -8,7 +8,9 @@ pub use rerail_blocks::{Block, Cells};
 /// A block of `bytes` for a batch's (or one projection's) arrays: address space, not memory.
 #[cfg(target_os = "macos")]
 pub fn block(bytes: usize) -> std::sync::Arc<Block> {
-    std::sync::Arc::new(Block::anon(rerail_blocks::block::kind::CHUNK, bytes))
+    // From the one block policy (decision 0342): host memory (a reservation of a GB and more, never a pool
+    // slab), which the device reads in place through a no-copy buffer.
+    std::sync::Arc::new(rerail_blocks::alloc::host(rerail_blocks::block::kind::CHUNK, bytes))
 }
 
 #[cfg(not(target_os = "macos"))]

@@ -128,12 +128,13 @@ pub(super) struct Sample {
     pub(super) open: Vec<String>,
     pub(super) threads: usize,
     /// What else holds memory then, beside the heap (MB): the Metal driver's allocations, the device buffer pool's
-    /// reservations, relational work's leases (live, idle), SQLite's heap.
-    pub(super) holders: [usize; 5],
+    /// reservations, relational work's leases (live, idle), SQLite's heap, the host blocks (used, and of it free
+    /// on their lists; decision 0342).
+    pub(super) holders: [usize; 7],
 }
 
 /// The holders a sample reads (`Sample::holders`), in MB.
-fn holders() -> [usize; 5] {
+fn holders() -> [usize; 7] {
     let (reserved, driver) = crate::code_rule_dsl::prof::device_memory();
     // Relational work's device leases exist only where the device does (macOS).
     #[cfg(target_os = "macos")]
@@ -141,7 +142,8 @@ fn holders() -> [usize; 5] {
     #[cfg(not(target_os = "macos"))]
     let (live, idle) = (0, 0);
     let sqlite = unsafe { rusqlite::ffi::sqlite3_memory_used() }.max(0) as usize;
-    [driver, reserved, live >> 20, idle >> 20, sqlite >> 20]
+    let (host, host_free) = rerail_accel::blocks::host_held();
+    [driver, reserved, live >> 20, idle >> 20, sqlite >> 20, host >> 20, host_free >> 20]
 }
 
 #[derive(Default)]
@@ -279,11 +281,11 @@ pub(super) fn sampled_report(r: &mut String) {
     // The footprint then, by holder: the heap's live bytes and what it keeps resident beyond them, the device's
     // buffers (the driver's count; of them the pool's reservations and relational work's leases), SQLite's heap
     // (inside jemalloc's when it allocates there), and the rest (stacks, code, maps, other allocators).
-    let [driver, reserved, leased, idle, sqlite] = t.holders;
+    let [driver, reserved, leased, idle, sqlite, host, host_free] = t.holders;
     let heap_mb = |b: u64| (b >> 20) as usize;
     let accounted = heap_mb(t.resident) + driver;
-    let _ = writeln!(r, "  by holder then (MB): heap live {}, heap resident beyond live {}; Metal driver {} (device pool {}, relational leases {} + {} idle); SQLite heap {}; the rest {}",
-        heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), driver, reserved, leased, idle, sqlite, heap_mb(t.footprint).saturating_sub(accounted));
+    let _ = writeln!(r, "  by holder then (MB): heap live {}, heap resident beyond live {}; Metal driver {} (device pool {}, relational leases {} + {} idle); SQLite heap {}; host blocks {} ({} free on their lists); the rest {}",
+        heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), driver, reserved, leased, idle, sqlite, host, host_free, heap_mb(t.footprint).saturating_sub(accounted + host));
     if !s.heap.is_empty() {
         let total: u64 = s.heap.iter().map(|h| h.1).sum();
         let _ = writeln!(r, "Live heap (and device leases) by the span that allocated it, near the peak (at {} MB footprint; sampled 1 in {} KB, all of 64 KB and more; {} MB in all, {} samples dropped):",
@@ -304,10 +306,10 @@ pub(super) fn sampled_report(r: &mut String) {
 pub fn sampled_tsv() -> String {
     use std::fmt::Write as _;
     let s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut t = String::from("at_s\tunix_s\tfootprint_bytes\tmax_bytes\tjemalloc_live_bytes\tjemalloc_resident_bytes\tmetal_driver_mb\tdevice_pool_mb\trelational_leased_mb\trelational_idle_mb\tsqlite_mb\tthreads\topen\n");
+    let mut t = String::from("at_s\tunix_s\tfootprint_bytes\tmax_bytes\tjemalloc_live_bytes\tjemalloc_resident_bytes\tmetal_driver_mb\tdevice_pool_mb\trelational_leased_mb\trelational_idle_mb\tsqlite_mb\thost_blocks_mb\thost_free_mb\tthreads\topen\n");
     for r in &s.rows {
-        let [d, p, l, i, q] = r.holders;
-        let _ = writeln!(t, "{:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{d}\t{p}\t{l}\t{i}\t{q}\t{}\t{}", r.at, r.unix, r.footprint, r.max, r.live, r.resident, r.threads, r.open.join(" | "));
+        let [d, p, l, i, q, h, f] = r.holders;
+        let _ = writeln!(t, "{:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{d}\t{p}\t{l}\t{i}\t{q}\t{h}\t{f}\t{}\t{}", r.at, r.unix, r.footprint, r.max, r.live, r.resident, r.threads, r.open.join(" | "));
     }
     t
 }

@@ -63,10 +63,18 @@ pub trait Backing: Send + Sync {
     }
 }
 
+/// What a block has used, and holds free (its free list's bytes): shared with a ledger that counts live blocks
+/// (`meter`), which reads it while the block lives.
+#[derive(Default)]
+pub struct Extent {
+    pub top: AtomicUsize,
+    pub free: AtomicUsize,
+}
+
 pub struct Block {
     base: *mut u8,
     reserved: usize,
-    top: AtomicUsize,
+    ext: Arc<Extent>,
     file: Option<File>,
     writable: bool,
     /// A slab's owner, when the block lives in one: dropped with the block, which never unmaps it.
@@ -75,8 +83,6 @@ pub struct Block {
     dirty: bool,
     /// The offset of its free list's heads (`free`, decision 0342), when it keeps one: 0 for a bump block.
     free: usize,
-    /// The bytes on its free list.
-    free_bytes: AtomicUsize,
     /// It kept a free list until its freeze: its reservation past its length is released then.
     was_free_listed: bool,
     /// The device buffer this block is read through, kept: a buffer's first use maps it into the GPU's address
@@ -131,13 +137,12 @@ impl Block {
         Block {
             base,
             reserved,
-            top: AtomicUsize::new(top),
+            ext: Arc::new(Extent { top: AtomicUsize::new(top), free: AtomicUsize::new(0) }),
             file,
             writable,
             backing,
             dirty,
             free: 0,
-            free_bytes: AtomicUsize::new(0),
             was_free_listed: false,
             #[cfg(target_os = "macos")]
             gpu: std::sync::Mutex::new(None),
@@ -158,6 +163,11 @@ impl Block {
         self.ptr::<std::sync::atomic::AtomicU64>(self.free)
     }
 
+    /// Its extent, for a ledger of live blocks: gone once the block is.
+    pub fn meter(&self) -> std::sync::Weak<Extent> {
+        Arc::downgrade(&self.ext)
+    }
+
     /// Whether it keeps a free list.
     pub fn has_free_list(&self) -> bool {
         self.free != 0
@@ -165,7 +175,7 @@ impl Block {
 
     /// The bytes its free list holds.
     pub fn free_bytes(&self) -> usize {
-        self.free_bytes.load(Relaxed)
+        self.ext.free.load(Relaxed)
     }
 
     /// A chunk of `bytes` at `align`: in a block with a free list, of `bytes`' class (a power of two of at least
@@ -177,7 +187,7 @@ impl Block {
         let (class, size) = crate::free::class_of(bytes);
         // SAFETY: the block's own heads; its chunks lie in it.
         if let Some(at) = unsafe { crate::free::pop(self.base, self.heads(), class) } {
-            self.free_bytes.fetch_sub(size, Relaxed);
+            self.ext.free.fetch_sub(size, Relaxed);
             unsafe { std::ptr::write_bytes(self.base.add(at), 0, size) };
             return Some(at);
         }
@@ -193,7 +203,7 @@ impl Block {
         let (class, size) = crate::free::class_of(bytes);
         // SAFETY: the block's own heads; the chunk is the caller's, of this class.
         unsafe { crate::free::push(self.base, self.heads(), class, at) };
-        self.free_bytes.fetch_add(size, Relaxed);
+        self.ext.free.fetch_add(size, Relaxed);
     }
 
     /// A block in memory it does not own: `backing`'s, which may be dirty. Freezing it does not protect it (a
@@ -261,7 +271,7 @@ impl Block {
     }
 
     fn init(&self, kind: u32) {
-        self.top.store(round_up(size_of::<Header>(), 64), Relaxed);
+        self.ext.top.store(round_up(size_of::<Header>(), 64), Relaxed);
         let h = unsafe { &mut *(self.base as *mut Header) };
         h.magic = MAGIC;
         h.kind = kind;
@@ -295,14 +305,14 @@ impl Block {
     /// `size` bytes at `align`, or `None` when the block's reservation cannot hold them.
     pub fn try_alloc(&self, size: usize, align: usize) -> Option<usize> {
         assert!(self.writable, "alloc in a frozen block");
-        let mut cur = self.top.load(Relaxed);
+        let mut cur = self.ext.top.load(Relaxed);
         loop {
             let start = round_up(cur, align);
             let end = start + size;
             if end > self.reserved {
                 return None;
             }
-            match self.top.compare_exchange_weak(cur, end, AcqRel, Relaxed) {
+            match self.ext.top.compare_exchange_weak(cur, end, AcqRel, Relaxed) {
                 Ok(_) => {
                     if self.dirty {
                         unsafe { std::ptr::write_bytes(self.base.add(start), 0, size) };
@@ -319,7 +329,7 @@ impl Block {
     /// allocation of a block that is not dirty is zero, as the mapping gave it.
     pub fn shrink_last(&self, at: usize, size: usize, keep: usize) -> bool {
         assert!(keep <= size);
-        self.top.compare_exchange(at + size, at + keep, AcqRel, Relaxed).is_ok()
+        self.ext.top.compare_exchange(at + size, at + keep, AcqRel, Relaxed).is_ok()
     }
 
     /// `n` zeroed `T`s, or `None` when the block cannot hold them.
@@ -352,7 +362,7 @@ impl Block {
 
     /// Bytes used so far (the frozen length, once frozen).
     pub fn used(&self) -> usize {
-        self.top.load(Acquire)
+        self.ext.top.load(Acquire)
     }
 
     pub fn set_root<T>(&self, p: *const T) {
@@ -430,7 +440,7 @@ impl Block {
             unsafe { crate::free::each(self.base, self.heads(), class, |at| crate::mem::free_pages(self.base.add(at), size)) };
         }
         self.free = 0;
-        self.free_bytes.store(0, Relaxed);
+        self.ext.free.store(0, Relaxed);
         self.was_free_listed = true;
     }
 

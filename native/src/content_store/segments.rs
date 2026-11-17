@@ -37,7 +37,7 @@ impl SegmentBytes {
     }
     /// `bytes` alone, in a block of their own (a test's entry, an entry not stored).
     pub fn of(bytes: &[u8]) -> SegmentBytes {
-        let block = rerail_blocks::block::Block::anon(kind::JOURNAL, rerail_blocks::journal::reserve_for(1, std::iter::once(bytes.len()), ALIGN).next_multiple_of(rerail_blocks::block::PAGE));
+        let block = rerail_blocks::alloc::host(kind::JOURNAL, rerail_blocks::journal::reserve_for(1, std::iter::once(bytes.len()), ALIGN).next_multiple_of(rerail_blocks::block::PAGE));
         rerail_blocks::journal::init(&block, 1);
         let at = rerail_blocks::journal::put(&block, bytes, ALIGN, 0, 0);
         SegmentBytes { block: block.freeze(), at, len: bytes.len() }
@@ -242,7 +242,7 @@ impl SegmentWriter {
         #[cfg(all(unix, not(target_os = "macos")))]
         let open = Open::Mapped(rerail_blocks::deferrable::Deferrable::create(&file, kind::JOURNAL, bytes, true)?);
         #[cfg(not(unix))]
-        let open = Open::Memory(rerail_blocks::block::Block::anon(kind::JOURNAL, bytes.next_multiple_of(rerail_blocks::block::PAGE)), file);
+        let open = Open::Memory(rerail_blocks::alloc::host(kind::JOURNAL, bytes.next_multiple_of(rerail_blocks::block::PAGE)), file);
         rerail_blocks::journal::init(open.block(), self.left.max(1));
         Ok(open)
     }
