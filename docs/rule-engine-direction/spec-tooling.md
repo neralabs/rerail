@@ -6,9 +6,9 @@ Status: proposed part of `spec.md` (new §18). It follows `findings-contract.md`
 - memory limits, debugging, testing tools and profiling are first-class design parts.
 
 The paths below are relative to the merged worktree (`Pulling-it-all-together`) unless prefixed:
-- `N1562:` means `jbarnes/ner-1562-sql-rerailer@8b6576f0`;
+- `N1562:` means `jbarnes/sql-rerailer@8b6576f0`;
 - `SSC:` means `jeremy/sql-capture-demand-spikes@b87eba3b`;
-- `Tempo:` means `nera-landing-2/ner-1562-scale-test-the-re-railer@e95613625`, under `tempo/`;
+- `Tempo:` means `scale-test-the-re-railer@e95613625`, under `tempo/`;
 - `DLRE:` means the DLRE worktree.
 
 ---

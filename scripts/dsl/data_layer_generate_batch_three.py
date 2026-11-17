@@ -56,7 +56,7 @@ def W(name,clauses,utils=None,options=None,roots=None,exclude=None,mode='block')
  definition={'options':options}
  if utils:definition.update(language='python',utils=utils)
  doc={'format':'rerail.policy/v1','id':'data-layer-'+name.replace('_','-'),'revision':1,'mode':mode,
-      'description':'Candidate port of nera-data-layer '+name+' at '+PIN+'.',
+      'description':'Candidate port of the data-layer repository's '+name+' at '+PIN+'.',
       'scope':{'include':roots or PRODUCTION,'exclude':EXCLUDE if exclude is None else exclude},
       'clauses':[{'id':'shared','define':definition},*clauses]}
  (OUT/(doc['id']+'.json')).write_text(json.dumps(doc,indent=2)+'\n')

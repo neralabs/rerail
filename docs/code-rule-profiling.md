@@ -26,7 +26,7 @@ Start with the one-file dispatch selection:
 
 ```sh
 npm run profile:code-rule-dsl -- \
-  --source /path/to/pinned/nera-data-layer \
+  --source /path/to/pinned/data-layer \
   --selection fixtures/host/data-layer-port/profiling/dispatch-one.json \
   --output .rerail/profiles/dispatch
 ```
@@ -43,7 +43,7 @@ Use the seven-file state selection for a short external profile:
 
 ```sh
 npm run profile:code-rule-dsl -- \
-  --source /path/to/pinned/nera-data-layer \
+  --source /path/to/pinned/data-layer \
   --selection fixtures/host/data-layer-port/profiling/state-seven.json \
   --external sample --sample-every 3 --sample-count 3 \
   --output .rerail/profiles/state
@@ -53,7 +53,7 @@ Use the five-file quality selection for the largest repeated-stage cost:
 
 ```sh
 npm run profile:code-rule-dsl -- \
-  --source /path/to/pinned/nera-data-layer \
+  --source /path/to/pinned/data-layer \
   --selection fixtures/host/data-layer-port/profiling/quality-five.json \
   --cold-only --external sample --sample-every 5 --sample-count 4 \
   --output .rerail/profiles/quality
@@ -132,7 +132,7 @@ Run a diagnostic capture:
 
 ```sh
 npm run profile:code-rule-dsl -- \
-  --source /path/to/pinned/nera-data-layer \
+  --source /path/to/pinned/data-layer \
   --selection fixtures/host/data-layer-port/profiling/quality-memory-sixty-four.json \
   --cold-only --memory-census --memory-tool vmmap \
   --external sample --sample-every 2 --sample-count 3 \
@@ -180,8 +180,8 @@ The comparison command rejects cProfile runs and native diagnostic captures.
 
 ```sh
 /path/to/data-layer/.venv/bin/python scripts/dsl/data_layer_suite_record.py \
-  --source /path/to/pinned/nera-data-layer \
-  --repo /path/to/pinned/nera-data-layer --batches 6 --workers 1 \
+  --source /path/to/pinned/data-layer \
+  --repo /path/to/pinned/data-layer --batches 6 --workers 1 \
   --selection fixtures/host/data-layer-port/profiling/batch-six-memory-twelve.json \
   --output .rerail/profiles/python-oracle.json
 

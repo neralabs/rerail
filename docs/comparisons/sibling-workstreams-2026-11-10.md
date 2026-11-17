@@ -62,7 +62,7 @@ A relation-based cache design alone does not ensure bulk storage execution.
 | `Tetris` | Browser/WASM demonstration | Clean tip, latest commit November 8 |
 | `skimmer` | Public-repository audit/release work | Clean tip, latest commit November 4 |
 
-The literal `Pulling-it-all-together`, original SQL-capture branch, NER-1562, and `Shared-structural-execution` worktrees are clean.
+The literal `Pulling-it-all-together`, original SQL-capture branch, the scale-test branch, and `Shared-structural-execution` worktrees are clean.
 Their latest commits are from October 26. They provide prior work, not evidence of a current parallel implementation.
 
 ## What remains for this branch

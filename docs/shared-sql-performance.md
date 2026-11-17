@@ -142,7 +142,7 @@ Collect attributed timings without an external sampler:
 
 ```sh
 npm run profile:code-rule-dsl -- \
-  --source /path/to/pinned/nera-data-layer \
+  --source /path/to/pinned/data-layer \
   --selection fixtures/host/data-layer-port/profiling/quality-five.json \
   --output .rerail/profiles/shared-sql-attributed
 ```

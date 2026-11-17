@@ -1,6 +1,6 @@
 # Behavior reference
 
-Repository: https://github.com/neralabs/nera-data-layer
+Repository: Nera's private data-layer repository
 
 Commit: `2b1504adc4291daaf080b2e932962b134da1a69a`
 

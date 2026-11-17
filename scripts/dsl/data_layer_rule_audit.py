@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Inventory data-layer checks without importing or running the source repository.
 
-python3 scripts/dsl/data_layer_rule_audit.py --repo /path/to/nera-data-layer
+python3 scripts/dsl/data_layer_rule_audit.py --repo /path/to/data-layer
 
 Optional oracle probes require the dependencies of the supplied data-layer checkout:
   /path/to/venv/bin/python scripts/dsl/data_layer_rule_audit.py \
-    --repo /path/to/nera-data-layer --oracle-root /path/to/pinned/source
+    --repo /path/to/data-layer --oracle-root /path/to/pinned/source
 
 The inventory counts LinterConfig declarations, not individual diagnostic codes.
 Source signals describe references in the configured script, not proven DSL gaps.

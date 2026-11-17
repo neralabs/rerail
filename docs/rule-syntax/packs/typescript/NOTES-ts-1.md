@@ -5,7 +5,7 @@ There are 33 rules. Each rule is checked against one of two references:
 - **rrlab score.** `rrlab score typescript <id> --all` compares the rule with the typescript-eslint 8.70.1
   recording, across every fixture.
 - **ad-hoc.** Seven rules have no recording ("cannot tell which upstream tool"). For those, the reference is the
-  installed ESLint 9.39.3 with @typescript-eslint 8.56.1 (in `nera-landing-2/Data-layer-main-up/node_modules`),
+  installed ESLint 9.39.3 with @typescript-eslint 8.56.1 (in an internal checkout's `Data-layer-main-up/node_modules`),
   run on hand-written cases under several option sets. "matches" means the two agree on every reported
   line:column.
 

@@ -5,7 +5,7 @@ The private pack remains inactive.
 Its manifest still has an empty `rules` list.
 No Linear issues were created or amended.
 
-The source pin is `2b1504adc4291daaf080b2e932962b134da1a69a` in `neralabs/nera-data-layer`.
+The source pin is `2b1504adc4291daaf080b2e932962b134da1a69a` in the data-layer repository.
 The [evidence file](../fixtures/host/data-layer-port/batch-06-evidence.json) records the final policy identities and validation results.
 
 | Check | Ported behavior |
@@ -56,8 +56,8 @@ All 40 transitions must match the source oracle.
 
 ## Engine capabilities driven by the ports
 
-The [target analyzer](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_serverplan_target_architecture.py#L599) reports required contracts when their files are absent.
-The [conditional analyzer](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/conditional_architecture_facts.py#L526) also reports missing canonical owners.
+The target analyzer (`scripts/lint_serverplan_target_architecture.py`, line 599) reports required contracts when their files are absent.
+The conditional analyzer (`scripts/conditional_architecture_facts.py`, line 526) also reports missing canonical owners.
 Relational plans can now declare normalized diagnostic paths in `locations`.
 Only declared paths can produce diagnostics without an input anchor, and their byte offsets must both be zero.
 Undeclared paths and invalid offsets fail evaluation.
@@ -72,11 +72,11 @@ Most clauses analyze each file independently.
 Their relational plans now declare `partitionBy: "file"`.
 The workspace caches final findings by source and context version, then reevaluates changed files.
 File partitions cannot declare project references or virtual diagnostic locations.
-The [project state API](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_serverplan_state_tripwires.py#L3679) and conditional contracts keep repository partitions.
+The project state API (`scripts/lint_serverplan_state_tripwires.py`, line 3679) and conditional contracts keep repository partitions.
 
-The [runtime annotation analyzer](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_serverplan_quality.py#L3590) needs lexical imports, shadowing, quoted annotations, and metadata exclusions.
+The runtime annotation analyzer (`scripts/lint_serverplan_quality.py`, line 3590) needs lexical imports, shadowing, quoted annotations, and metadata exclusions.
 Authored SQL stages represent those relationships.
-The [taxonomy analyzer](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_serverplan_quality.py#L3035) combines recursive shapes and feature counts.
+The taxonomy analyzer (`scripts/lint_serverplan_quality.py`, line 3035) combines recursive shapes and feature counts.
 Bounded AST predicates supply those counts before project grouping.
 These rule semantics remain in policies and authoring scripts.
 The native engine contains no data-layer detector names or semantic allowlists.

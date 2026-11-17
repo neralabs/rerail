@@ -47,7 +47,7 @@ General recursive inference can require additional semantic waves.
 
 ## Provenance
 
-Landing NER-1562 at `ce7d2da32` supplies the execution-shape reference.
+Landing's scale-test branch at `ce7d2da32` supplies the execution-shape reference.
 Its broad classes, homogeneous signature blocks, compact frontiers, and shared-command counts inform this contract.
 Its dynamic production integration remains incomplete.
 Rerail does not import Landing's complete rule engine or persisted tape ABI.

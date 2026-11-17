@@ -13,7 +13,7 @@ The survey used these local revisions:
 | Current worktree | `5616076ad60127d6ac3df0fbf60eff9f7a523ca0`, with existing changes | Shared typed facts, candidate indexes, SQL profiling |
 | `Moti-Velz/sql-set-composition` | `e1a46a28` | Relational compiler experiments |
 | `jeremy/sql-capture-demand-spikes` | `f09077070123f01890630a963a24e480ef78a37e` | Demand, answer frontiers, shared recursive components |
-| `jbarnes/ner-1562-sql-rerailer` | `9bc40b37`, with uncommitted changes | Utility catalog and immutable terminal batches |
+| `jbarnes/sql-rerailer` | `9bc40b37`, with uncommitted changes | Utility catalog and immutable terminal batches |
 
 The SQL sibling is 26 commits ahead of the named composition branch.
 The inspected local `main` is `f3f92c24` and does not contain that branch head.

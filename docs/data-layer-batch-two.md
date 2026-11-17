@@ -5,7 +5,7 @@ The original test corpus and additional oracle probes pass with zero detection m
 The first batch still passes.
 The twenty policies remain inactive candidates while integration work remains open.
 
-The oracle revision is `2b1504adc4291daaf080b2e932962b134da1a69a` in `neralabs/nera-data-layer`.
+The oracle revision is `2b1504adc4291daaf080b2e932962b134da1a69a` in the data-layer repository.
 The [evidence file](../fixtures/host/data-layer-port/batch-02-evidence.json) records provenance, coverage, policy digests, and the native binary hash.
 No new Linear issues were created.
 Jeremy must approve every proposed issue before creation.
@@ -87,11 +87,11 @@ The native engine contains no data-layer check names or Python callbacks.
 
 | Feature | Proven source need | Implementation requirements |
 |---|---|---|
-| Complete-file content filters | [Dynamic loading's fast trigger](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_dynamic_module_loading.py#L253) | Test the current file before scanning; support bounded include/exclude regexes; update after edits. |
-| Per-file line state | [Dynamic loading's delimiter state](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_dynamic_module_loading.py#L258), [admin quote parity](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_admin_async_purity.py#L210) | Start fresh per file; apply ordered regex transitions; support bounded counts and parity; decide emission from starting state and transition suppression. |
-| Line indentation filters | [Dynamic loading's type-checking heuristic](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_dynamic_module_loading.py#L209) | Preserve marker indentation until reset; ignore configured blank/comment lines; judge current line before updating state. |
-| LF-only line splitting | [Executor source scanner](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_async_executor.py#L123) | Keep Python splitlines behavior as the default; allow LF-only scanning with correct original offsets. |
-| Bounded context windows | [Signature scanner](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_type_safety_patterns.py#L483), [async fallback comments](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_async_patterns.py#L578) | Match complete lines before/after a witness; clip at file bounds; optionally stop at a matching line, inclusive. |
+| Complete-file content filters | Dynamic loading's fast trigger (`scripts/lint_dynamic_module_loading.py`, line 253) | Test the current file before scanning; support bounded include/exclude regexes; update after edits. |
+| Per-file line state | Dynamic loading's delimiter state (`scripts/lint_dynamic_module_loading.py`, line 258), admin quote parity (`scripts/lint_admin_async_purity.py`, line 210) | Start fresh per file; apply ordered regex transitions; support bounded counts and parity; decide emission from starting state and transition suppression. |
+| Line indentation filters | Dynamic loading's type-checking heuristic (`scripts/lint_dynamic_module_loading.py`, line 209) | Preserve marker indentation until reset; ignore configured blank/comment lines; judge current line before updating state. |
+| LF-only line splitting | Executor source scanner (`scripts/lint_async_executor.py`, line 123) | Keep Python splitlines behavior as the default; allow LF-only scanning with correct original offsets. |
+| Bounded context windows | Signature scanner (`scripts/lint_type_safety_patterns.py`, line 483), async fallback comments (`scripts/lint_async_patterns.py`, line 578) | Match complete lines before/after a witness; clip at file bounds; optionally stop at a matching line, inclusive. |
 
 The compiler limits state names, state counts, transitions, context ranges, and regex sizes.
 Counted transition scans and context searches observe the work budget.

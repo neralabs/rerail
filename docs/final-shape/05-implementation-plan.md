@@ -23,12 +23,12 @@ Status: plan, 2026-10-26.
 
 | Key | Worktree / ref | SHA |
 |---|---|---|
-| N | `rerail/ner-1562-scale-test-the-re-railer` | 17991359 |
+| N | `rerail/scale-test-the-re-railer` | 17991359 |
 | D | `rerail/Data-layer-rule-expressivity` | fe4a6707 |
 | P | `rerail/Pulling-it-all-together` | cbee7a03 |
 | S | `rerail/Shared-structural-execution` | e1ffeaf2 |
 | T | `rerail/Typing-support` (`spikes/datalog-engines/`) | 7ebcffe0 |
-| G | `nera-landing-2/ner-1562-scale-test-the-re-railer/tempo` (Tempo) | 4c94cf77e (committed HEAD only) |
+| G | `scale-test-the-re-railer/tempo` (Tempo) | 4c94cf77e (committed HEAD only) |
 | M | `origin/Moti-Velz/facts-engine` | 5b0d63a7 |
 | W | wolfeel itself (main) | 5cf4246e |
 

@@ -3553,7 +3553,7 @@ Run each measurement in a fresh process and a new output directory:
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 scripts/profiling/run.py \
   --trace off --deadline 115 \
-  --source /path/to/pinned/nera-data-layer \
+  --source /path/to/pinned/data-layer \
   --selection fixtures/host/data-layer-port/profiling/quality-five.json \
   --policies packs/data-layer/candidates/rules \
   --allocator system-malloc-shim \

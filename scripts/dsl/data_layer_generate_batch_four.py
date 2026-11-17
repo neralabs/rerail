@@ -65,7 +65,7 @@ def W(name,clauses,utils=None,options=None,roots=None,exclude=None,mode='block')
  if exclude is None and name not in ('render_fstrings','render_raw_strings'):
   exclude=['**/.git/**','**/.venv/**','**/venv/**','**/__pycache__/**','**/tmp/**','**/tests/**','**/test/**']
  d={'format':'rerail.policy/v1','id':'data-layer-'+name.replace('_','-'),'revision':1,'mode':mode,
-    'description':'Candidate port of nera-data-layer '+name+' at '+PIN+'.',
+    'description':'Candidate port of the data-layer repository's '+name+' at '+PIN+'.',
     'scope':{'include':roots or ['impl/common/l2100_sql_grammar/**/*.py'],
              'exclude': ['**/.git/**','**/.venv/**','**/venv/**','**/__pycache__/**','**/tmp/**'] if exclude is None else exclude},
     'clauses':[{'id':'shared','define':definition},*clauses]}
