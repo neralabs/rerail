@@ -235,7 +235,15 @@ function unpatched(after: string, hunks: readonly ReportedHunk[]): string | unde
     next = before.next;
   }
   parts.push(lines.slice(next).join(""));
-  return parts.join("");
+  return withMarkOf(parts.join(""), after);
+}
+
+/**
+ * `text` with the byte order mark `after` starts with. A line diff may show the file's first line without the mark, so a
+ * first line put back from it (`-`) lacks it.
+ */
+function withMarkOf(text: string, after: string): string {
+  return after.startsWith(BYTE_ORDER_MARK) && !text.startsWith(BYTE_ORDER_MARK) ? `${BYTE_ORDER_MARK}${text}` : text;
 }
 
 /** `text`'s lines, each with its line ending, the last one without where the text ends without one. */
@@ -340,10 +348,13 @@ function heldLine(mark: string, held: string | undefined, text: string, ends: bo
 
 /**
  * Whether the file's line `held` is the diff's line `text`, as it is or with the tabs it starts with shown as two spaces
- * each (`shownIndentation`), ending in a line feed (with or without a carriage return) when `ends`.
+ * each (`shownIndentation`), ending in a line feed (with or without a carriage return) when `ends`. A line that starts
+ * with a byte order mark, as a file's first line may, is the diff's line with or without it: a line diff may leave the
+ * mark out.
  */
 function sameLine(held: string, text: string, ends: boolean): boolean {
-  return sameText(held, text, ends) || sameText(shownIndentation(held), text, ends);
+  if (sameText(held, text, ends) || sameText(shownIndentation(held), text, ends)) return true;
+  return held.startsWith(BYTE_ORDER_MARK) && sameLine(held.slice(BYTE_ORDER_MARK.length), text, ends);
 }
 
 function sameText(line: string, text: string, ends: boolean): boolean {

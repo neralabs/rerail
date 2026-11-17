@@ -1818,6 +1818,21 @@ describe("CodeRuleBridge and a call it takes up only after its tool wrote the fi
     expect(await lateEdit(before, after, output)).toEqual([{ path: "src/a.py", language: "python", previousText: before, generatedText: after }]);
   });
 
+  // A file that starts with a byte order mark, whose line diff may show its first line with or without the mark: the
+  // file's first line is matched either way, and the text rebuilt holds the mark once, as the file does.
+  it.each([
+    { edit: "beside line 1", after: "﻿one\nTWO\nthree\n", lines: [" one", "-two", "+TWO", " three"] },
+    { edit: "beside line 1, which the diff shows with the mark", after: "﻿one\nTWO\nthree\n", lines: [" ﻿one", "-two", "+TWO", " three"] },
+    { edit: "of line 1", after: "﻿ONE\ntwo\nthree\n", lines: ["-one", "+ONE", " two", " three"] },
+    { edit: "of line 1, which the diff shows with the mark", after: "﻿ONE\ntwo\nthree\n", lines: ["-﻿one", "+﻿ONE", " two", " three"] },
+  ])("rebuilds a file with a byte order mark from a line diff $edit", async ({ after, lines }) => {
+    const before = "﻿one\ntwo\nthree\n";
+    const output = (path: string) => ({ ...editResult([])(path), structuredPatch: [{ oldStart: 1, oldLines: 3, newStart: 1, newLines: 3, lines }] });
+    expect(await lateEdit(before, after, output)).toEqual([{ path: "src/a.py", language: "python", previousText: before, generatedText: after }]);
+    const then = `${after}four\n`;
+    expect(await lateEdit(before, after, output, { then })).toEqual([{ path: "src/a.py", language: "python", previousText: before, generatedText: then }]);
+  });
+
   it("checks the edit over its whole file, saying why, when the file no longer holds the diff's lines and the result gives no text it replaced", async () => {
     // Changed again after the tool wrote it, and `originalFile` is null: nothing says what the file held, so the edit is
     // read as one whose earlier text is unknown, as a shell write to a file never seen is, not as no change.
@@ -2052,6 +2067,26 @@ describe("CodeRuleBridge and a call it takes up only after its tool wrote the fi
     await bridge.finish("edit-1", false, { reported: claudeCodeReportedPreimage(output) });
     expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([
       { path: "src/a.py", language: "python", previousText: "x\nx\nx\n", generatedText: "x\nx\n" },
+    ]);
+  });
+
+  it.each([
+    { then: undefined },
+    { then: "﻿ONE\ntwo\nthree  # fmt\n" },
+  ])("reads an on-time Edit of line 1 of a file with a byte order mark against its capture (then $then)", async ({ then }) => {
+    const before = "﻿one\ntwo\nthree\n";
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, before);
+    await awaitClockAfter(path);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await bridge.begin("edit-1", "Edit", { file_path: path });
+    await writeFile(path, "﻿ONE\ntwo\nthree\n");
+    if (then !== undefined) await writeFile(path, then);
+    const output = { ...editResult([])(path), structuredPatch: [{ oldStart: 1, oldLines: 3, newStart: 1, newLines: 3, lines: ["-one", "+ONE", " two", " three"] }] };
+    await bridge.finish("edit-1", false, { reported: claudeCodeReportedPreimage(output) });
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([
+      { path: "src/a.py", language: "python", previousText: before, generatedText: then ?? "﻿ONE\ntwo\nthree\n" },
     ]);
   });
 

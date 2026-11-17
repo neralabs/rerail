@@ -270,6 +270,28 @@ describe("The rewind steer strategy", () => {
     }
   });
 
+  // The same, in a file with a byte order mark, where the line diff covers line 1 and the result gives no text the tool
+  // replaced: the capture holds the tool's write, so it is not written back.
+  it("leaves a late call's file with a byte order mark as it is, and steers as a message, when the file changed again before the result", async () => {
+    const written = "﻿X = 0\nNEEDLE = 1\n";
+    const formatted = "﻿X = 0\nNEEDLE = 1  # fmt\n";
+    const session = await strategySession({ strategy: "rewind", host: "claude-code", files: { "existing.py": "﻿X = 0\n" } });
+    try {
+      const path = join(session.root, "existing.py");
+      await writeFile(path, written);
+      await session.call("w1", "existing.py");
+      await writeFile(path, formatted);
+      const patch = [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, lines: [" X = 0", "+NEEDLE = 1"] }];
+      const output = { filePath: path, oldString: "", newString: "", originalFile: null, structuredPatch: patch, userModified: false, replaceAll: false };
+      const deliveries = await session.result("w1", output);
+      expect(deliveries).toEqual([expect.objectContaining({ strategy: "message", toolCallId: "w1", ruleIds: ["test:needle"] })]);
+      expect(deliveries[0]).not.toHaveProperty("rewound");
+      expect(await readFile(path, "utf8")).toBe(formatted);
+    } finally {
+      await session.runtime.dispose();
+    }
+  });
+
   it("keeps no copy of what a late call's result says a secret-like file held, and steers as a message", async () => {
     const before = "TOKEN = 'sk-live-0123456789'\n";
     const written = `${before}NEEDLE = 1\n`;
@@ -307,6 +329,23 @@ describe("The rewind steer strategy", () => {
       const lines = [...held.map(line => ` ${shown(line)}`), "+NEEDLE = 1"];
       const patch = [{ oldStart: 1, oldLines: held.length, newStart: 1, newLines: held.length + 1, lines }];
       const output = { filePath: path, oldString: "", newString: "", originalFile: shownFile, structuredPatch: patch, userModified: false, replaceAll: false };
+      const deliveries = await session.result("w1", output);
+      expect(deliveries).toEqual([expect.objectContaining({ strategy: "rewind", toolCallId: "w1", rewound: ["existing.py"] })]);
+      expect(await readFile(path, "utf8")).toBe(file);
+    } finally {
+      await session.runtime.dispose();
+    }
+  });
+
+  it("rolls back an on-time Claude Code Edit of line 1 of a file with a byte order mark, its result giving no text it replaced", async () => {
+    const file = "﻿X = 0\n";
+    const session = await strategySession({ strategy: "rewind", host: "claude-code", files: { "existing.py": file } });
+    try {
+      const path = join(session.root, "existing.py");
+      await session.call("w1", "existing.py");
+      await writeFile(path, "﻿NEEDLE = 1\n");
+      const patch = [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ["-X = 0", "+NEEDLE = 1"] }];
+      const output = { filePath: path, oldString: "", newString: "", originalFile: null, structuredPatch: patch, userModified: false, replaceAll: false };
       const deliveries = await session.result("w1", output);
       expect(deliveries).toEqual([expect.objectContaining({ strategy: "rewind", toolCallId: "w1", rewound: ["existing.py"] })]);
       expect(await readFile(path, "utf8")).toBe(file);
