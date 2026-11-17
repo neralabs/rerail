@@ -593,6 +593,11 @@ function recordSentPackages(packages: Map<string, string>, edit: CodeRuleEdit, f
 }
 
 /** Generated snapshots and repository audits have independent native state. */
+/** Turns to take a workspace: `take` resolves with the function that gives the turn back. */
+export interface WorkspaceTurns {
+  take(): Promise<() => void>;
+}
+
 export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #workspaceRoot: string;
   readonly #catalog: CodeRuleDslCatalog;
@@ -607,6 +612,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #followGitignore: boolean;
   readonly #openGitIgnore: (root: string) => NativeGitIgnoreMatcher | null;
   readonly #steerShell: SteerShell | undefined;
+  readonly #workspaceTurns: WorkspaceTurns | undefined;
+  readonly #readsAt: ((version: string) => ((path: string) => boolean) | undefined) | undefined;
+  /** The turn this lane holds while it takes a workspace again (`#workspaceForPending`); given back with the workspace. */
+  #turn: (() => void) | undefined;
+  /** The session's own work reached the lane, or it is the session's own checkout's: it keeps its workspace. */
+  #kept = false;
   /** Git's exclude stack for this checkout, opened on first use; null outside Git or where it cannot be opened. */
   #gitIgnore: NativeGitIgnoreMatcher | null | undefined;
   #scope: AuditScope;
@@ -696,6 +707,13 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       openGitIgnore?: (root: string) => NativeGitIgnoreMatcher | null;
       /** The shell the session's coding agent runs commands in, which a steer's command is written for (`steerShell`). */
       steerShell?: SteerShell | undefined;
+      /**
+       * A lane that gave its workspace back waits its turn to take one again (`releaseWorkspace`), so a batch across
+       * many worktrees holds a few workspaces at once rather than one in each; every turn is given back.
+       */
+      workspaceTurns?: WorkspaceTurns;
+      /** What an open lane at a rules version reads (its `readsPath`), which answers for this lane at that version while it has no workspace. */
+      readsAt?: (version: string) => ((path: string) => boolean) | undefined;
     },
   ) {
     this.#catalog = catalog;
@@ -710,6 +728,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#followGitignore = options.followGitignore ?? false;
     this.#openGitIgnore = options.openGitIgnore ?? (root => loadNativeBinding().openGitIgnoreMatcher(root));
     this.#steerShell = options.steerShell;
+    this.#workspaceTurns = options.workspaceTurns;
+    this.#readsAt = options.readsAt;
     this.#ownedAudits =
       options.audits === undefined
         ? new SqliteAuditStore(defaultRerailDatabasePath())
@@ -753,7 +773,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
 
   /** `#readsPath` by the lane's rules: a lane that gave its workspace back takes one again to answer (`releaseWorkspace`). */
   #readsNow(path: string): boolean {
-    if (this.#released) this.#takeWorkspaceAgain();
+    if (!this.#released) return this.#readsPath(path);
+    const reads = this.#readsAt?.(this.#catalog.status.version);
+    if (reads !== undefined) return reads(path);
+    this.#takeWorkspaceAgain();
     return this.#readsPath(path);
   }
 
@@ -810,12 +833,63 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * as a rules change does, so it judges each edit as an open one would.
    */
   releaseWorkspace(): boolean {
+    const released = this.#disposeIdleWorkspace();
+    // Given back whether or not the lane gave its workspace back, so no lane waits on a lane that stays busy.
+    this.#giveTurnBack();
+    return released;
+  }
+
+  #disposeIdleWorkspace(): boolean {
     const prepared = this.#workspace;
-    if (prepared === undefined || this.#replacement !== undefined || this.#closing || this.#working()) return false;
+    if (prepared === undefined || this.#kept || this.#closing || this.#working()) return false;
+    if (this.#replacement !== undefined) this.#disposeWorkspace(this.#replacement.workspace);
+    this.#replacement = undefined;
     this.#workspace = undefined;
     this.#released = true;
     this.#disposeWorkspace(prepared.workspace);
     return true;
+  }
+
+  /** The session's own work reached the lane: it keeps its workspace from now on, and needs no turn to take one. */
+  keepWorkspace(): void {
+    this.#kept = true;
+    this.#giveTurnBack();
+  }
+
+  /** Whether the lane keeps its workspace (`keepWorkspace`). */
+  get kept(): boolean {
+    return this.#kept;
+  }
+
+  /**
+   * Opens the lane with no workspace, as one that gave its own back: an audit takes one in its turn (`workspaceTurns`),
+   * and until then a lane at the same rules answers what it reads (`readsAt`).
+   */
+  openReleased(sessionId: string): void {
+    if (this.#sessionId !== undefined || this.#closing) throw new Error("Executable policy enforcer cannot be reopened");
+    this.#sessionId = sessionId;
+    this.#reportQuarantined();
+    this.#released = true;
+  }
+
+  #giveTurnBack(): void {
+    const turn = this.#turn;
+    this.#turn = undefined;
+    turn?.();
+  }
+
+  /** A lane with no workspace and edits queued takes one, in its turn unless it keeps its workspace. */
+  async #workspaceForPending(): Promise<void> {
+    if (!this.#released || this.#pending.size === 0) return;
+    const turn = this.#kept ? undefined : await this.#workspaceTurns?.take();
+    this.#takeWorkspaceInTurn(turn);
+  }
+
+  #takeWorkspaceInTurn(turn: (() => void) | undefined): void {
+    this.#turn = turn;
+    // A lane the session's work reached, or that closed, while it waited holds no turn.
+    if (this.#kept || this.#closing) this.#giveTurnBack();
+    this.#takeWorkspaceAgain();
   }
 
   /** Whether an edit is being stored, queued, evaluated or audited. */
@@ -825,6 +899,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
 
   /** A workspace for a lane that gave its own back, at the catalog's version; the next evaluation installs it (`#run`). */
   #takeWorkspaceAgain(): void {
+    if (!this.#released) return;
     this.#released = false;
     if (this.#closing) return;
     try {
@@ -1074,6 +1149,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     }
     this.#workspace?.workspace.close();
     this.#replacement?.workspace.close();
+    this.#giveTurnBack();
   }
 
   /** Ends the audits this evaluator started and left running, without touching the session's other audits. */
@@ -1235,6 +1311,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   async #run(): Promise<void> {
     await yieldToHost();
     while (!this.#closing) {
+      await this.#workspaceForPending();
       while (this.#replacement !== undefined && !this.#closing) await this.#replaceWorkspace(this.#replacement);
       const entry = this.#pending.entries().next().value;
       if (entry === undefined) return;
