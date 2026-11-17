@@ -320,7 +320,6 @@ fn operator_cases() -> Vec<(CapturePredicate, usize)> {
 }
 
 #[test]
-#[ignore = "Q22: the packed Metal JIT finds other results than the CPU interpreter (a result missing, or other candidates)"]
 fn shared_capture_operators_preserve_pairing_quantifiers_empty_groups_and_properties() {
     let cases = operator_cases();
     let programs = cases
@@ -837,7 +836,6 @@ fn general_capture_predicates_gate_later_regex_work_and_keep_errors_evaluation_s
 }
 
 #[test]
-#[ignore = "Q22: the packed Metal JIT finds other results than the CPU interpreter (a result missing, or other candidates)"]
 fn ordinary_capture_operators_apply_the_complete_truth_table_at_the_assertion() {
     let cases = operator_cases();
     let programs = cases

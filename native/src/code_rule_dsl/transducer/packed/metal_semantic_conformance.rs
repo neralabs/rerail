@@ -220,9 +220,13 @@ fn assert_fixture<F: FixtureDocument>(
         .map(|batch| (batch.outputs, batch.errors));
     if actual != expected {
         let trace = scope.snapshot();
+        let cpu_jit = execute_with_backend_outcomes(ExecutionBackend::CpuJit, programs, &files, anchors)
+            .map(|batch| (batch.outputs, batch.errors));
         eprintln!(
             "FIXTURE_FAILURE_TRACE {}",
             serde_json::json!({
+                "cpuJitAgrees": cpu_jit == expected,
+                "cpuJitAgreesWithMetal": cpu_jit == actual,
                 "attempts": trace.len(),
                 "kernels": trace.iter().map(|record| &record.kernel).collect::<Vec<_>>(),
             })
@@ -819,7 +823,6 @@ pub mod retained_grid_runtime {
         assert_fixture(&programs, &files, &anchors);
     }
     #[test]
-    #[ignore = "Q22: the packed Metal JIT's results differ from the CPU interpreter's"]
     fn inputs_captured_membership_contains_and_ancestors_yield_with_exact_quantifiers() {
         use crate::code_rule_dsl::transducer::packed::{ASSERT, CapturePredicate};
         let language = SupportLang::Python.get_ts_language();
@@ -3381,7 +3384,6 @@ pub mod retained_grid_frontier_runtime {
         assert_fixture(&programs, &files, &anchors);
     }
     #[test]
-    #[ignore = "Q22: the packed Metal JIT's results differ from the CPU interpreter's"]
     fn inputs_repeated_disjoint_alternatives_share_a_bounded_capture_tail() {
         let source = (0..130)
             .map(|i| {

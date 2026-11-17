@@ -535,13 +535,20 @@ output-directive failures were a stale rejected slot and a failed task's early r
   - `inputs_shared_root_predicates_intern_values_and_need_no_frontier_records`
   - `inputs_small_automata_defer_long_inputs_into_shared_value_frontiers`
   - `shared_ancestor_sets_exclude_self_cross_scan_groups_and_file_boundaries`
-- **Different results** (6): the JIT finds other results than the CPU interpreter: a result missing in an
-  evaluation, or other candidates (other local ordinals, a capture fewer). Not yet read one by one.
-  - `bounded_body_admission_preserves_guarded_capture_identity_and_multiplicity`
-  - `finite_literals_filter_before_witness_limits_across_register_and_dynamic_branches`
-  - `inputs_captured_membership_contains_and_ancestors_yield_with_exact_quantifiers`
-  - `inputs_repeated_disjoint_alternatives_share_a_bounded_capture_tail`
-  - `ordinary_capture_operators_apply_the_complete_truth_table_at_the_assertion`
-  - `shared_capture_operators_preserve_pairing_quantifiers_empty_groups_and_properties`
+- **Different results** (6): fixed 2026-11-17, all on the Metal kernel (the CPU JIT agreed with the interpreter):
+  - `Relation` passed only when every capture had the kind as parent or ancestor; the CPU's passes when any does.
+    `Contains` with no strings was vacuously true with captures; the CPU's is only without captures (the truth
+    tables, and `inputs_captured_membership`'s root results).
+  - A query without repeats was reduced (dominated results dropped); the CPU reduces only with repeats
+    (`program_flags` bit 2, not bit 1) (`finite_literals`).
+  - Capture containment counted occurrences, so captures of one node under labels in another order "contained"
+    each other; the CPU's (`capture_containment`) is ordered: per byte span, the right's captures are a prefix of
+    the left's (`capture_query_contains`) (`bounded_body`).
+  - A query state was admitted unless an admitted one's captures contained it; the CPU's admits unless equal
+    (`admit_query_state`). The pruned paths' candidates are numbered on the CPU: raw candidate ordinals are a
+    public contract (t6) (`inputs_repeated_disjoint`).
+  - A query's same-span captures sorted by label; the CPU keeps them in capture order (`bounded_body`).
+  - Open: the CPU JIT's containment and queue equality still count occurrences (`define_capture_contains`), as
+    the device's queue and greedy equality do; no fixture shows a difference yet.
 - **Done when**: every fixture passes on the packed JIT, or is shown to test the grid's own machinery and goes.
 

@@ -58,7 +58,6 @@ fn program(literal: &[u8], prefix: bool, route: usize) -> Program {
 }
 
 #[test]
-#[ignore = "Q22: the packed Metal JIT finds other results than the CPU interpreter (a result missing, or other candidates)"]
 fn finite_literals_filter_before_witness_limits_across_register_and_dynamic_branches() {
     for length in [0, 1, 63, 64] {
         let literal = if length == 0 {
@@ -96,7 +95,8 @@ fn finite_literals_filter_before_witness_limits_across_register_and_dynamic_bran
                 assert!(!output.captures.is_empty());
             }
         }
-        for limit in [0, 1, 2, u32::MAX] {
+        // Unlimited first: a difference shows every result.
+        for limit in [u32::MAX, 0, 1, 2] {
             let mut limited = expected.clone();
             for outputs in &mut limited[0] {
                 outputs.truncate(limit as usize);

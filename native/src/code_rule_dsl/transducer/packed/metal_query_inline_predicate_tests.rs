@@ -105,7 +105,6 @@ struct QueryWorkSource {
 }
 
 #[test]
-#[ignore = "Q22: the packed Metal JIT's results differ from the CPU interpreter's"]
 fn bounded_body_admission_preserves_guarded_capture_identity_and_multiplicity() {
     let language = SupportLang::Python.get_ts_language();
     let comment = language.id_for_node_kind("comment", true);
@@ -202,8 +201,8 @@ fn bounded_body_admission_preserves_guarded_capture_identity_and_multiplicity() 
     }
     for backend in [ExecutionBackend::CpuJit, ExecutionBackend::MetalJit] {
         let actual = execute_with_backend_outcomes(backend, &programs, &files, &anchors).unwrap();
-        assert_eq!(actual.errors, expected.errors);
-        assert_eq!(actual.outputs, expected.outputs);
+        assert_eq!(actual.errors, expected.errors, "{backend:?}");
+        assert_eq!(actual.outputs, expected.outputs, "{backend:?}");
     }
 }
 
