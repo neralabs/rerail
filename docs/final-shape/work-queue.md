@@ -1482,3 +1482,18 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   differ run to run (Q59: +600 G in 2 of 7 runs). Findings do not. `plans_learnt` (a kept plan's price and work) is
   last writer wins as well.
 - **Wanted**: what a chunk plans with is a function of the run's inputs, never of timing.
+
+### Q61. The fast path's peak, by holder (PostHog cold, the memory line lifted)
+
+- **Done** (5920ecb84): a kind-set axis's batch solve (every node's chain of member ancestors, as pairs) was made
+  only for the guest rounds' input digest (`len`) and their new documents' rows (`owners_delta`): 780 MB, then 348
+  MB of the live heap at the peak. The chunks' peak 2,330–2,518 MB → 2,075 MB; page faults 2.42 M → 1.67 M.
+- **Now the peak** (2,263–2,304 MB in every run, before and after): the cross part's last second, while
+  `retain`'s "the kept part's changes, to the frames" encodes each kept relation's frame (two jobs at once): the
+  footprint 1,816 → 2,304 MB, and 800 MB freed but still resident half a second after. Live as the cross part
+  starts: 1,140 MB, of which at the peak `export to cross/hold the export` 288 MB, the store writer's atoms held 138
+  MB, `an input's frames` 109 MB, `cross` 105 MB, `text tests` (a chunk's projection) 57 MB, `record stats` 42 MB.
+  Host blocks 287 MB.
+- **Next**: the frames' encoding as a stream (a relation's frame written as it is digested, not built whole), and
+  what the cross part holds from the local part (the export, the writer's atoms).
+- Scripts: `working-data/m3/{peak,phases,timeline}.py`.
