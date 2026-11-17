@@ -7613,8 +7613,12 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         f.switch_to_block(body_block);
         let p = f.block_params(body_block).to_vec();
         let st = p[params..].to_vec();
+        // The body's constants, made at its head each block (decision 0350): made once at the
+        // function's entry they live across the token loop's calls, and were spilled there and
+        // reloaded at each use (about 20 loads a block, against a `movi` and a `dup` here).
+        let body_consts = Consts::make(&mut f);
         let again;
-        (again, gate_branches, round_branches) = step(&mut f, &lp, &consts, &p[..params], len, true, scratch, Some(&calls), &mut heads);
+        (again, gate_branches, round_branches) = step(&mut f, &lp, &body_consts, &p[..params], len, true, scratch, Some(&calls), &mut heads);
         let again: Vec<BlockArg> = again.into_iter().map(BlockArg::from).collect();
         // The hot loop's back edge: to itself while the next block is full.
         hot.push(body_block);
