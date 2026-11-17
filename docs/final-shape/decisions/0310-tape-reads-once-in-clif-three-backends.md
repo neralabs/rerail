@@ -47,3 +47,16 @@ read. Emitting the reads into the JIT by hand would make a third copy of every r
    children, next sibling, subtree end); the packed batch's node records go from the CPU path.
 3. The Rust backend in the tape crate; the hand-written primitive reads go.
 4. The MSL backend; `metal_tape.metal`'s hand port goes.
+
+## Progress
+
+- **Step 1** (3b6f4355b): `rerail-clif` holds the reads of format 15 and 16 and the inlining pass. The hot reads are
+  inlined, and the cold ones (`tape_f16_side`, `tape_parent`) are defined once per module and called. A test equals
+  them with the tape crate's own on every node of format 16's test tapes and on format 15. `clif_rust::translate`
+  has not moved in yet: it moves with step 3, its first user.
+- **Step 2** (7d975e96b, 1ed1adff9, bb9787c65): every node read the JIT makes is a read call (`native_cpu_tape.rs`),
+  on the document's tape where it is held. Format 15 is held in one buffer, and a 16z tape is laid out as 16 once
+  (`DocTape::in_place`). The CPU path's batch (`PackedBatch::new_in_place`) packs no node records, children or
+  class pairs; Metal's packed path still does, until step 5's kernels read the slabs alone. A test equals the
+  reads with the document's on every format (`the_clif_reads_read_every_format_as_the_document_does`). The JIT
+  finds the same keys as the interpreter and both Metal backends on real files.
