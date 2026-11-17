@@ -78,7 +78,10 @@ export const HELD_OFF_SINCE = "0.1.5";
  * so a pack shipping a rule in one has to leave those cores out of its core range once that release ships (the pack
  * validation's check 5).
  */
-export const LANGUAGE_SINCE: ReadonlyMap<string, string> = new Map([["java", "0.1.5"]]);
+export const LANGUAGE_SINCE: ReadonlyMap<string, string> = new Map(
+  ["csharp", "css", "eslint-directive", "html", "java", "json", "markdown", "python-format", "rr"]
+    .map(id => [id, "0.1.5"] as const),
+);
 
 const packRuleFields = {
   id: z.string().regex(RULE_PACK_RULE_ID, "must be lowercase letters, digits and dashes"),
