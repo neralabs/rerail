@@ -9,9 +9,9 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../src/engine/child-process.js", { spy: true });
 
-import { spawn } from "../../src/engine/child-process.js";
-import { gitCrlfPaths, gitHead, gitModifiedOrUntrackedPaths, readGitBlobIds, readGitBlobs, runGitAsync } from "../../src/engine/git.js";
-import { startGit, startGitThroughNode, startGitWithoutCopying, type GitProcess } from "../../src/engine/git-start.js";
+import { spawn, spawnSync } from "../../src/engine/child-process.js";
+import { gitCrlfPaths, gitHead, gitModifiedOrUntrackedPaths, readGitBlobIds, readGitBlobs, runGit, runGitAsync } from "../../src/engine/git.js";
+import { runGitSync, startGit, startGitThroughNode, startGitWithoutCopying, type GitProcess } from "../../src/engine/git-start.js";
 import { loadNativeBinding } from "../../src/engine/native/native.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { daemonProcess, packageRoot, until, watchedEnvironment } from "../support/processes/daemon-home.js";
@@ -22,6 +22,7 @@ const folders: string[] = [];
 afterEach(() => {
   startGitThroughNode();
   vi.mocked(spawn).mockClear();
+  vi.mocked(spawnSync).mockClear();
 });
 
 afterAll(async () => {
@@ -63,6 +64,9 @@ async function answers(root: string): Promise<unknown> {
     changed: await gitModifiedOrUntrackedPaths(root),
     hashed: await runGitAsync(root, ["hash-object", "--stdin"], { input: "some text\n" }),
     failed: await runGitAsync(root, ["rev-parse", "--verify", "no-such-ref"]),
+    ran: runGit(root, ["cat-file", "-p", "HEAD:blob.bin"]),
+    ranAndFailed: runGit(root, ["rev-parse", "--verify", "no-such-ref"]),
+    listed: runGit(root, ["ls-files", "-z"], { maxBuffer: 64 }),
   };
 }
 
@@ -92,11 +96,12 @@ describe.runIf(LINUX)("Git started through the engine, on Linux", () => {
     const root = await repository();
     const throughNode = await answers(root);
     vi.mocked(spawn).mockClear();
+    vi.mocked(spawnSync).mockClear();
     expect(startGitWithoutCopying(loadNativeBinding)).toBe(true);
     const throughEngine = await answers(root);
     expect(throughEngine).toEqual(throughNode);
     // Node started none of them.
-    expect(spawn).not.toHaveBeenCalled();
+    expect([vi.mocked(spawn).mock.calls.length, vi.mocked(spawnSync).mock.calls.length]).toEqual([0, 0]);
   }, 30_000);
 
   it("gives Git the signal state, descriptors, environment and folder Node gives it", async () => {
@@ -138,9 +143,28 @@ describe.runIf(LINUX)("Git started through the engine, on Linux", () => {
     expect([zombies(), readdirSync("/proc/self/fd").length]).toEqual([0, open]);
   }, 30_000);
 
+  it("runs a blocking Git as spawnSync does: its output, its exit, and SIGTERM at its time limit or past its output limit", () => {
+    const runs = (): unknown => {
+      const late = runGitSync("/bin/sh", ["-c", "echo started; exec sleep 5"], process.env, { timeout: 200 });
+      const long = runGitSync("/bin/sh", ["-c", "head -c 3000000 /dev/zero; exec sleep 5"], process.env, { maxBuffer: 1024 * 1024 });
+      const plain = runGitSync("/bin/sh", ["-c", "read nothing || echo no-input; echo warned >&2; exit 5"], process.env);
+      const error = (run: { error?: Error }): unknown => {
+        const { message, code, errno, syscall, path, spawnargs } = (run.error ?? {}) as NodeJS.ErrnoException & { spawnargs?: string[] };
+        return { message, code, errno, syscall, path, spawnargs };
+      };
+      return { late: { ...late, error: error(late) }, long: { status: long.status, signal: long.signal, error: error(long) }, plain };
+    };
+    const throughNode = runs();
+    expect(startGitWithoutCopying(loadNativeBinding)).toBe(true);
+    const throughEngine = runs();
+    expect(throughEngine).toEqual(throughNode);
+    expect(throughEngine).toMatchObject({ late: { signal: "SIGTERM", error: { code: "ETIMEDOUT" } }, long: { signal: "SIGTERM", error: { code: "ENOBUFS" } }, plain: { status: 5, stdout: "no-input\n" } });
+  }, 30_000);
+
   it("starts through Node a start the engine fails and a program named without a folder", async () => {
     const root = await repository();
-    const refusing = { startGit: (): never => { throw new Error("posix_spawn: Resource temporarily unavailable"); }, reapGit: () => ({}) };
+    const refuse = (): never => { throw new Error("posix_spawn: Resource temporarily unavailable"); };
+    const refusing = { startGit: refuse, reapGit: () => ({}), runGit: refuse };
     expect(startGitWithoutCopying(() => refusing)).toBe(true);
     expect(await gitHead(root)).toBe(execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" }).trim());
     expect(spawn).toHaveBeenCalledTimes(1);

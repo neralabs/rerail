@@ -14,7 +14,7 @@ import { EventEmitter } from "node:events";
 import { Socket } from "node:net";
 import { constants } from "node:os";
 import type { Readable, Writable } from "node:stream";
-import { spawn } from "./child-process.js";
+import { spawn, spawnSync } from "./child-process.js";
 
 /** A Git process as its readers use it: Node's child, or one the engine started. */
 export interface GitProcess<Stderr extends Readable | null = Readable | null> extends EventEmitter {
@@ -39,14 +39,25 @@ export interface EngineStartedGit {
 
 /** How a reaped child ended; neither is set when it was not this process's to reap. */
 export interface EngineGitExit {
-  code?: number | null;
-  signal?: number | null;
+  code?: number | null | undefined;
+  signal?: number | null | undefined;
 }
 
-/** The engine's two calls for it, as `native.ts` types them; absent in an engine older than this module. */
+/** How a blocking run through the engine ended (`native/src/git_start/run.rs`). */
+export interface EngineGitRun {
+  status?: number | null | undefined;
+  signal?: number | null | undefined;
+  stdout: Buffer;
+  stderr: Buffer;
+  timedOut: boolean;
+  pastMaxBuffer: boolean;
+}
+
+/** The engine's calls for it, as `native.ts` types them; absent in an engine older than this module. */
 export interface EngineGitStarts {
   startGit?: (program: string, args: string[], env: string[], pipeStderr: boolean) => EngineStartedGit;
   reapGit?: (pid: number) => EngineGitExit;
+  runGit?: (program: string, args: string[], env: string[], timeoutMs: number | undefined, maxBuffer: number) => EngineGitRun;
 }
 
 type Starts = Required<EngineGitStarts>;
@@ -61,8 +72,8 @@ let engine: Starts | undefined;
 export function startGitWithoutCopying(load: () => EngineGitStarts, platform: NodeJS.Platform = process.platform): boolean {
   if (platform !== "linux") return false;
   try {
-    const { startGit, reapGit } = load();
-    if (typeof startGit === "function" && typeof reapGit === "function") engine = { startGit, reapGit };
+    const { startGit, reapGit, runGit } = load();
+    if (typeof startGit === "function" && typeof reapGit === "function" && typeof runGit === "function") engine = { startGit, reapGit, runGit };
   } catch { /* No engine: Git starts through Node, as it did before. */ }
   return engine !== undefined;
 }
@@ -98,6 +109,60 @@ function startedByEngine(starts: Starts, executable: string, args: readonly stri
   } catch {
     return undefined;
   }
+}
+
+/** What a blocking Git run answers: `spawnSync`'s status, signal, output as UTF-8, and error. */
+export interface GitRunResult {
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  /** Null where `spawnSync` could not start the program. */
+  stdout: string | null;
+  stderr: string | null;
+  error?: Error;
+}
+
+/** A blocking run's limits, as `spawnSync` takes them; without a `maxBuffer`, spawnSync's 1 MiB. */
+export interface GitRunLimits {
+  timeout?: number | undefined;
+  maxBuffer?: number | undefined;
+}
+
+const SPAWN_SYNC_MAX_BUFFER = 1024 * 1024;
+
+/**
+ * `executable` with `args` and `env`, run to its end while this thread waits, with no input, as `spawnSync` runs it
+ * with `encoding: "utf8"` and `limits`: through the engine where {@link startGitWithoutCopying} turned it on, so the
+ * wait is Git's run and no copy of this process; else, and for any run the engine cannot start, through `spawnSync`.
+ */
+export function runGitSync(executable: string, args: readonly string[], env: NodeJS.ProcessEnv, limits: GitRunLimits = {}): GitRunResult {
+  const ran = engine === undefined ? undefined : ranByEngine(engine, executable, args, env, limits);
+  if (ran !== undefined) return ran;
+  const result = spawnSync(executable, [...args], { encoding: "utf8", ...limits, env });
+  return { status: result.status, signal: result.signal, stdout: result.stdout, stderr: result.stderr, ...(result.error === undefined ? {} : { error: result.error }) };
+}
+
+function ranByEngine(starts: Starts, executable: string, args: readonly string[], env: NodeJS.ProcessEnv, limits: GitRunLimits): GitRunResult | undefined {
+  if (!executable.includes("/")) return undefined;
+  try {
+    return answerOf(starts.runGit(executable, [...args], environment(env), limits.timeout || undefined, limits.maxBuffer ?? SPAWN_SYNC_MAX_BUFFER), executable, args);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The engine's run as `spawnSync` answers it. */
+function answerOf(ran: EngineGitRun, executable: string, args: readonly string[]): GitRunResult {
+  const [status, signal] = endOf({ code: ran.status, signal: ran.signal });
+  const error = runError(ran, executable, args);
+  return { status, signal, stdout: ran.stdout.toString("utf8"), stderr: ran.stderr.toString("utf8"), ...(error === undefined ? {} : { error }) };
+}
+
+/** The error `spawnSync` gives a run its time limit or its output limit ended: `spawnSync <file> ETIMEDOUT` or `ENOBUFS`. */
+function runError(ran: EngineGitRun, executable: string, args: readonly string[]): Error | undefined {
+  const code = ran.timedOut ? "ETIMEDOUT" : ran.pastMaxBuffer ? "ENOBUFS" : undefined;
+  if (code === undefined) return undefined;
+  const syscall = `spawnSync ${executable}`;
+  return Object.assign(new Error(`${syscall} ${code}`), { errno: -constants.errno[code], code, syscall, path: executable, spawnargs: [...args] });
 }
 
 /** `env` as Node hands it to a child: `NAME=value` for each variable that is set. */

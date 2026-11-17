@@ -3,7 +3,7 @@ import { stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { dirname, join, posix, resolve, win32 } from "node:path";
 import { endProcessTree, spawnSync } from "./child-process.js";
-import { startGit, type GitProcess } from "./git-start.js";
+import { runGitSync, startGit, type GitProcess } from "./git-start.js";
 import { fileStamp } from "./file-stamp.js";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
@@ -353,12 +353,7 @@ function gitEnvironment(): NodeJS.ProcessEnv {
  * missing, never on a non-zero exit.
  */
 export function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
-  const result = spawnSync(gitExecutable(), [...SAFE_CONFIG, "-C", cwd, ...args], {
-    encoding: "utf8",
-    timeout: DEFAULT_TIMEOUT_MS,
-    ...options,
-    env: gitEnvironment(),
-  });
+  const result = runGitSync(gitExecutable(), [...SAFE_CONFIG, "-C", cwd, ...args], gitEnvironment(), { timeout: DEFAULT_TIMEOUT_MS, ...options });
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
 }
 
