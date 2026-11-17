@@ -215,6 +215,20 @@ fn a_views_filter_scan_holds_the_rows_a_per_row_read_finds() {
         let width = source.columns().len();
         let n = source.len();
         assert!(n > 0, "{name}: no rows");
+        // The view's row passes (`for_rows`, `rows_of`) give the rows a per-row read gives: every column, and the
+        // last alone (no parent read, so no walk).
+        for cols in [(0..width).collect::<Vec<_>>(), vec![width - 1]] {
+            let per_row: Vec<i64> = (0..n).flat_map(|r| cols.iter().map(move |&c| (r, c))).map(|(r, c)| source.value(r, c)).collect();
+            let mut passed = Vec::new();
+            source.for_rows(&cols, &mut |r, row| {
+                assert_eq!(r, passed.len() / cols.len(), "{name}: rows in order");
+                passed.extend_from_slice(row);
+            });
+            assert_eq!(passed, per_row, "{name} {cols:?}: for_rows");
+            let mut all = Vec::new();
+            source.rows_of(&cols, &mut all);
+            assert_eq!(all, per_row, "{name} {cols:?}: rows_of");
+        }
         for (c, eqs) in (0..width).flat_map(|c| {
             let (a, b) = (source.value(n / 3, c), source.value(n - 1, c));
             let pair = if width > 1 { vec![(c, a), ((c + 1) % width, source.value(n / 3, (c + 1) % width))] } else { vec![(c, a)] };
@@ -544,15 +558,15 @@ fn within_holds_exactly_the_contained_pairs() {
     let id = |r: usize| batch.id(r);
     // Borrow the demanded columns once, as a bulk consumer does. Keep lazy initialization
     // out of the exhaustive reference loop; that loop checks the relation, not setup cost.
-    let axes: Vec<(&[u32], &[u32])> = batch.docs.iter().map(|p| (p.sizes(), p.depths())).collect();
+    let axes: Vec<&[u32]> = batch.docs.iter().map(|p| p.depths()).collect();
     // (document, local, size, depth, start, end) of node row r.
     // Read once: the reference loop below visits every pair.
     let rows: Vec<_> = (0..nodes)
         .map(|r| {
             let doc = batch.nodes.partition_point(|&o| o <= r) - 1;
             let (p, local) = (&batch.docs[doc], r - batch.nodes[doc]);
-            let (start, end) = p.facts.span(p.core[local]);
-            (p.key, local, axes[doc].0[local] as usize, axes[doc].1[local] as usize, start, end)
+            let (start, end) = p.facts.span(p.node(local as u32));
+            (p.key, local, p.size(local) as usize, axes[doc][local] as usize, start, end)
         })
         .collect();
     let at = |r: usize| rows[r];
@@ -640,7 +654,7 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     };
     let kind = |r: usize| {
         let (p, local) = batch.locate(View::Node, r);
-        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.core[local]));
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
         i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
     };
     // Nested kinds: the root's, and two from inside the documents; and every kind of broken.py's nodes, ERROR's
@@ -863,17 +877,17 @@ fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
     let f = facts("a.py", "f(a + 1)\ng(b)\n");
     let dialect = Dialect::new(tape_tag(GrammarDialect::Python).unwrap()).unwrap();
     let p = Projected::new(7, Arc::clone(&f), Some(&dialect), Shape::Core, false, None);
-    // `core` is exactly its nodes: the walk's spare room was given back to the block (`Cells::build`).
-    assert_eq!(p.core.len(), p.local.iter().filter(|&&l| l != NONE).count());
-    assert!(p.idx.get().is_none() && p.size.get().is_none() && p.depth.get().is_none() && p.fielded.get().is_none());
+    assert!(p.idx.get().is_none() && p.depth.get().is_none() && p.fielded.get().is_none());
     assert!(p.extra.as_ref().unwrap().token_spans.get().is_none());
-    // Independent eager reference: tokens grouped by the named parent's preorder, then source and lines.
+    // Independent eager reference: the named nodes' tokens in preorder (by start: they do not overlap), then source
+    // and lines.
     let mut expected = Vec::new();
-    for &id in p.core.iter() {
+    for (_, id) in p.nodes() {
         for c in f.children(id) {
             if !f.named(c) && f.end(c) > f.start(c) { expected.push([f.start(c), f.end(c)]); }
         }
     }
+    expected.sort_unstable();
     let tokens = expected.len();
     expected.push([0,f.source.len() as u32]);
     let lines = core_rr::Lines::new(&f.source,true);
@@ -884,7 +898,7 @@ fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
     for i in tokens..expected.len() { assert_eq!(p.span(p.len()+i as u32),expected[i]); }
     assert!(p.extra.as_ref().unwrap().token_spans.get().is_none());
     for (i,&span) in expected.iter().enumerate() { assert_eq!(p.span(p.len()+i as u32),span); }
-    for l in 0..p.core.len() {
+    for l in 0..(p.len() as usize) {
         let parent=p.parent(l);
         if l==0 { assert_eq!(parent,NONE); }
         else {
@@ -894,8 +908,8 @@ fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
         let mut depth=0;let mut up=parent;
         while up!=NONE { depth+=1;up=p.parent(up as usize); }
         assert_eq!(p.depth(l),depth);
-        let subtree_end=f.subtree_end(p.core[l]);
-        assert_eq!(p.size(l),p.core[l+1..].iter().filter(|&&id|id<subtree_end).count() as u32);
+        let subtree_end=f.subtree_end(p.node(l as u32));
+        assert_eq!(p.size(l),p.nodes().skip(l+1).filter(|&(_,id)|id<subtree_end).count() as u32);
     }
     assert!(p.fielded.get().is_none(),"reading other axes must not build field rows");
 }
@@ -998,7 +1012,7 @@ fn leaf_ids(label: &str, path: &str, source: &str) -> (BTreeSet<(String, i64)>, 
     let dialect = Dialect::new(core::facts_tag(&d.facts)).unwrap();
     let p = Projected::new(d.key, Arc::clone(&d.facts), Some(&dialect), Shape::Core, false, None);
     let f = &*d.facts;
-    let leaves = (0..p.len()).map(|l| (f.text(p.core[l as usize]).to_owned(), p.global(l))).collect();
+    let leaves = (0..p.len()).map(|l| (f.text(p.node(l as u32)).to_owned(), p.global(l))).collect();
     (leaves, p)
 }
 
@@ -1096,7 +1110,7 @@ fn node_order_keys_follow_preorder_and_keep_other_granules() {
         let (_, p) = leaf_ids("python", "a.py", source);
         let ascending = (1..p.len()).all(|l| p.order(l - 1) < p.order(l));
         let f = &*p.facts;
-        let leaves: BTreeSet<(String, i64, u32)> = (0..p.len()).filter(|&l| f.children(p.core[l as usize]).is_empty()).map(|l| (f.text(p.core[l as usize]).to_owned(), p.global(l), p.order(l))).collect();
+        let leaves: BTreeSet<(String, i64, u32)> = (0..p.len()).filter(|&l| f.children(p.node(l as u32)).is_empty()).map(|l| (f.text(p.node(l as u32)).to_owned(), p.global(l), p.order(l))).collect();
         assert!((0..p.len()).all(|l| p.local_of_order(p.order(l)) == Some(l)), "a key does not map back");
         (ascending, leaves)
     };
@@ -1174,12 +1188,12 @@ fn definition_ids_census() {
                         let p = Projected::new(1, Arc::clone(&facts), Some(&dialect), Shape::Core, false, None);
                         row.parse += cpu_now() - t_parse;
                         let f = &*facts;
-                        let tokens: Vec<u32> = p.core.iter().enumerate().flat_map(|(l, &id)| f.children(id).into_iter().filter(|&c| !f.named(c) && f.end(c) > f.start(c)).map(move |_| l as u32)).collect();
+                        let tokens: Vec<u32> = p.nodes().flat_map(|(l, id)| f.children(id).into_iter().filter(|&c| !f.named(c) && f.end(c) > f.start(c)).map(move |_| l as u32)).collect();
                         let t0 = cpu_now();
-                        let _ = granules::number(&p, &dialect, &tokens, &mut vec![0; p.core.len() + tokens.len()], false);
+                        let _ = granules::number(&p, &dialect, &tokens, &mut vec![0; (p.len() as usize) + tokens.len()], false);
                         row.cpu += cpu_now() - t0;
                         let (g, cont, biggest, fold) = granules::census(&p, &dialect, &tokens);
-                        row.nodes += p.core.len() + tokens.len();
+                        row.nodes += (p.len() as usize) + tokens.len();
                         if g > row.granules.iter().copied().max().unwrap_or(0) {
                             row.most_at = path.display().to_string();
                         }
@@ -1381,7 +1395,7 @@ fn node_order_keys_census() {
         let (_, p) = leaf_ids("python", "a.py", &src);
         let dialect = Dialect::new(core::facts_tag(&p.facts)).unwrap();
         let of = granules::granule_of(&p, &dialect);
-        let n = p.core.len();
+        let n = p.len() as usize;
         let mut pre = BTreeSet::new();
         let mut runs = BTreeSet::new();
         let mut ids = BTreeSet::new();
@@ -1528,7 +1542,7 @@ fn granule_kinds_are_a_table_by_kind_code() {
 fn node_ids_in_place_equal_the_numbered_ones() {
     use crate::code_rule_dsl::lines::{LineTable, Terminators};
     use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
-    use granules::Item;
+    use ranks::Item;
     if !definition_ids() {
         return;
     }
@@ -1556,24 +1570,28 @@ fn node_ids_in_place_equal_the_numbered_ones() {
             let dialect = Dialect::new(core::facts_tag(f)).unwrap();
             for shape in [Shape::Core, Shape::T] {
                 let p = Projected::new(1, Arc::clone(&facts), Some(&dialect), shape, false, None);
+                // The walk's parents (one pass, no tape parent read) are `parent`'s.
+                for (l, _, q) in p.walk() {
+                    assert_eq!(q, p.parent(l as usize), "{label} {format:?} {shape:?}: the parent of local {l}");
+                }
                 let (low, table) = p.numbered().expect("ids by definition");
                 let table = table.expect("a granule table");
                 let at = format!("{label} {} {shape:?}", format.name());
                 // Every item the projection numbers, by tape node: nodes, then (Core) tokens in preorder.
-                let mut want: Vec<(u32, u32, Item)> = p.core.iter().enumerate().map(|(l, &x)| (x, low[l], Item::Node)).collect();
+                let mut want: Vec<(u32, u32, Item)> = p.nodes().map(|(l, x)| (x, low[l as usize], Item::Node)).collect();
                 if shape == Shape::Core {
-                    want.extend(p.token_order().into_iter().enumerate().map(|(i, (x, _))| (x, low[p.core.len() + i], Item::Token)));
+                    want.extend(p.token_order().into_iter().enumerate().map(|(i, (x, _))| (x, low[(p.len() as usize) + i], Item::Token)));
                 }
                 assert_eq!(want.len(), low.len(), "{at}: an id for each node and token");
                 let by_node: HashMap<u32, (u32, Item)> = want.iter().map(|&(x, low, item)| (x, (low, item))).collect();
                 for x in 0..f.len() as u32 {
-                    assert_eq!(table.id(x), by_node.get(&x).copied(), "{at}: tape node {x} ({})", dialect.name(f, x));
+                    assert_eq!(table.id(p.ranks(), x), by_node.get(&x).copied(), "{at}: tape node {x} ({})", dialect.name(f, x));
                 }
                 for &(x, low, item) in &want {
-                    assert_eq!(table.node(low), Some((x, item)), "{at}: the node of {low:#x}");
+                    assert_eq!(table.node(p.ranks(), low), Some((x, item)), "{at}: the node of {low:#x}");
                 }
                 let mut scanned = Vec::new();
-                table.scan(|x, low, item| scanned.push((x, low, item)));
+                table.scan(p.ranks(), |x, low, item| scanned.push((x, low, item)));
                 want.sort_unstable();
                 assert_eq!(scanned, want, "{at}: the scan");
             }

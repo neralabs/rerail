@@ -1516,8 +1516,10 @@ inventory of today's copies (12 sites, marked `copy (0353 step N)`) and the plan
 1. Step 1 is done: the record, `AGENTS.md`, the guard (`scripts/check/check-no-block-copies.py`, in pre-commit) and
    the marks. Left of it: the profile's `copies (decision 0353)` counter.
 2. Step 2 in progress. The granule table and its rank index answer every id equal to `DefIds::low`'s, in all three
-   formats, and are measured: a point read is 171 instructions, a scan 59 an id (0353, "Node identity"). Left: the
-   table in the batch's block, the reads in CLIF (Rust, MSL), narrowed projections, then the arrays removed.
+   formats, and are measured: a point read is 171 instructions, a scan 59 an id (0353, "Node identity").
+   `Projected`'s `core`, `local`, `up` and `size` are gone: the rank index, read by passes in order, at parity on
+   hogql (0353). Left: `idx`, `depth`, `fielded` in place; `DefIds` replaced by the table; the table in the batch's
+   block; the reads in CLIF (Rust, MSL); narrowed projections.
 3. Then steps 3 (CPU views on the tape), 4 (GPU views on the tape: the 660.8 MB a run), 5 (axes written once),
    6 (in-place writes and indexes), 7 (the transducer's packed batch, its owners'), 8 (0325 step 7), 9 (prices).
 

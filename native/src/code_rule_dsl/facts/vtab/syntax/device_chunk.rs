@@ -153,6 +153,20 @@ fn made<T: Copy>(b: &Block, span: *const Span<T>, n: usize, at: impl Fn(usize) -
     }
 }
 
+/// `n` values from `values`, in order, put in `b`, and `span` set to them.
+fn made_in_order<T: Copy>(b: &Block, span: *const Span<T>, n: usize, values: impl Iterator<Item = T>) {
+    let p: *mut T = b.alloc_t(n.max(1));
+    let mut k = 0;
+    // SAFETY: `p` holds `n` items, just allocated in `b`, as `span` is.
+    unsafe {
+        for v in values.take(n) {
+            p.add(k).write(v);
+            k += 1;
+        }
+        Span::set(span, p, k);
+    }
+}
+
 /// Points `span` at `cells`, which are in `b` (a projection's, made in its batch's block); copied in when they are
 /// not (a projection made apart from the batch).
 fn point<T: Copy + rerail_blocks::Pod>(b: &Arc<Block>, span: *const Span<T>, cells: &Cells<T>) {
@@ -165,8 +179,8 @@ fn point<T: Copy + rerail_blocks::Pod>(b: &Arc<Block>, span: *const Span<T>, cel
 }
 
 /// The batch's chunk, in the batch's block: every document's arrays the views read.
-// copy (0353 step 4): the node columns (`start`, `end`, `kind`, `field`), the canonical codes and the
-// projection's arrays copied or made here. They go: the kernels read the placed tapes (decision 0353).
+// copy (0353 step 4): the node columns (`core`, `up`, `start`, `end`, `kind`, `field`), the canonical codes and
+// the projection's arrays copied or made here. They go: the kernels read the placed tapes (decision 0353).
 pub fn build(batch: &Batch) -> Chunk {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "a batch's chunk block".into());
     let b = Arc::clone(&batch.block);
@@ -194,7 +208,14 @@ pub fn build(batch: &Batch) -> Chunk {
             let fielded = p.fielded();
             (*d).nfielded = fielded.len() as u32;
             (*d).preorder = u32::from(p.defs.is_none());
-            point(&b, &raw const (*d).core, &p.core);
+            // The tape node and the parent of each local id, made from the rank index and the tape (the host reads
+            // them there, decision 0353 step 2): node columns, as `start` and `end` are, until the kernels read the
+            // placed tapes.
+            let n = p.len() as usize;
+            made_in_order(&b, &raw const (*d).core, n, p.nodes().map(|(_, x)| x));
+            made_in_order(&b, &raw const (*d).up, n, p.walk().map(|(_, _, q)| q));
+            let core: &[u32] = (*d).core.as_slice();
+            let ids = |l: usize| core[l];
             // Every local's, past the nodes too: a token's id is by definition as well (`Projected::global`).
             match p.defs.as_ref() {
                 Some(x) => point(&b, &raw const (*d).low, &x.low),
@@ -202,12 +223,10 @@ pub fn build(batch: &Batch) -> Chunk {
             }
             point(&b, &raw const (*d).ord, p.ordinals());
             point(&b, &raw const (*d).fielded, fielded);
-            point(&b, &raw const (*d).up, &p.up);
-            let ids = &p.core;
-            made(&b, &raw const (*d).start, ids.len(), |l| f.start(ids[l]));
-            made(&b, &raw const (*d).end, ids.len(), |l| f.end(ids[l]));
-            made(&b, &raw const (*d).kind, ids.len(), |l| f.kind(ids[l]));
-            made(&b, &raw const (*d).field, ids.len(), |l| f.field(ids[l]));
+            made(&b, &raw const (*d).start, n, |l| f.start(ids(l)));
+            made(&b, &raw const (*d).end, n, |l| f.end(ids(l)));
+            made(&b, &raw const (*d).kind, n, |l| f.kind(ids(l)));
+            made(&b, &raw const (*d).field, n, |l| f.field(ids(l)));
             match canon.get(&p.tag) {
                 Some(&(c, n)) => Span::set(&raw const (*d).canonical, c, n),
                 None => Span::set(&raw const (*d).canonical, std::ptr::null::<u16>(), 0),
@@ -293,8 +312,8 @@ pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
                 let Some(pl) = b.try_alloc_t::<u32>(3 * locs as usize + 1) else { return false };
                 // SAFETY: `pl` holds `3 * locs` values, just allocated in the block; entry `i` of the table, as above.
                 unsafe {
-                    for local in 0..locs {
-                        let (line, last, col) = x.place(p.span(local));
+                    for (local, span) in p.spans().take(locs as usize) {
+                        let (line, last, col) = x.place(span);
                         let at = pl.add(3 * local as usize);
                         (*at, *at.add(1), *at.add(2)) = (line, last, col);
                     }

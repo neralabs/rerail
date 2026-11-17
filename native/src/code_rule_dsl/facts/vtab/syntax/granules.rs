@@ -45,6 +45,7 @@
 //! **Embedded documents** (guests: SQL in a string, a Vue file's script) are numbered by the same rules in their own
 //! grammar. A guest's document key is a hash of its host node's id (`corpus::guests`), so it is as stable as that.
 
+use super::ranks::{Item, Ranks};
 use super::{Dialect, Projected};
 use crate::code_rule_dsl::facts::core::Facts;
 use std::collections::HashMap;
@@ -192,6 +193,8 @@ pub(super) struct Cut {
     /// Each granule's first node (its start), in preorder; the root's is 0.
     pub(super) starts: Vec<u32>,
     pub(super) keys: Vec<String>,
+    /// Each local node's parent (`Projected::parent`), read in the cut's walk.
+    pub(super) up: Vec<u32>,
     /// Each granule's slots, once placed (`place`): its first, then its continuations.
     pub(super) slots: Vec<Vec<u32>>,
 }
@@ -270,21 +273,27 @@ pub fn granule_of(p: &Projected, dialect: &Dialect) -> Vec<u32> {
 /// The granules of `p`, folded as `fold` says.
 fn cut(p: &Projected, dialect: &Dialect, fold: Fold) -> Cut {
     let f = &*p.facts;
-    let n = p.core.len();
-    let kind = |l: usize| dialect.name(f, p.core[l]);
-    let is = |l: usize, flag: u8| dialect.granule_kind(dialect.code(f, p.core[l])) & flag != 0;
+    let n = p.len() as usize;
+    let kind = |l: usize| dialect.name(f, p.node(l as u32));
     let starts_span = crate::code_rule_dsl::logic::profile::span(|| "granule starts".into());
+    // The numbering's working state, one walk of the nodes: each node's parent and what its kind is to the granules.
+    let (mut up, mut flags) = (vec![super::NONE; n], vec![0u8; n]);
+    for (l, x, q) in p.walk() {
+        up[l as usize] = q;
+        flags[l as usize] = dialect.granule_kind(dialect.code(f, x));
+    }
+    let is = |l: usize, flag: u8| flags[l] & flag != 0;
     let mut start: Vec<Option<Start>> = vec![None; n];
     // A wrapper's definition is in the wrapper's granule.
     let mut claimed = vec![false; n];
     if fold != Fold::All {
         for l in 1..n {
-            let q = p.parent(l) as usize;
+            let q = up[l] as usize;
             let owner = |q: usize| {
-                let o = p.parent(q) as usize;
+                let o = up[q] as usize;
                 is(o, OWNER) && (start[o].is_some() || claimed[o])
             };
-            let in_container = q == 0 || (is(q, BODY) && p.parent(q) != super::NONE && owner(q));
+            let in_container = q == 0 || (is(q, BODY) && up[q] != super::NONE && owner(q));
             if is(l, DEF) && !claimed[l] {
                 start[l] = Some(Start::Def);
             } else if in_container && fold == Fold::None {
@@ -309,7 +318,7 @@ fn cut(p: &Projected, dialect: &Dialect, fold: Fold) -> Cut {
             starts.push(l as u32);
             starts.len() as u32 - 1
         } else {
-            of[p.parent(l) as usize]
+            of[up[l] as usize]
         };
     }
     drop(starts_span);
@@ -319,20 +328,20 @@ fn cut(p: &Projected, dialect: &Dialect, fold: Fold) -> Cut {
     let mut seen: HashMap<String, u32> = HashMap::new();
     for g in 1..starts.len() {
         let l = starts[g] as usize;
-        let parent = &keys[of[p.parent(l) as usize] as usize];
-        let base = format!("{parent}/{}:{}", kind(l), name(p, dialect, &of, &starts, g));
+        let parent = &keys[of[up[l] as usize] as usize];
+        let base = format!("{parent}/{}:{}", kind(l), name(p, dialect, &of, &up, &starts, g));
         let ord = seen.entry(base.clone()).or_insert(0);
         keys.push(format!("{base}#{ord}"));
         *ord += 1;
     }
-    Cut { of, starts, keys, slots: Vec::new() }
+    Cut { of, starts, keys, up, slots: Vec::new() }
 }
 
 /// Granule `g`'s name: what it defines or binds, an import's text, or its own text's digest.
-fn name(p: &Projected, dialect: &Dialect, of: &[u32], starts: &[u32], g: usize) -> String {
+fn name(p: &Projected, dialect: &Dialect, of: &[u32], up: &[u32], starts: &[u32], g: usize) -> String {
     let f = &*p.facts;
     let l = starts[g];
-    let id = p.core[l as usize];
+    let id = p.node(l as u32);
     let kind = dialect.name(f, id);
     // A wrapper is named by its definition, or by the declaration it exports.
     let inner = |want: fn(&str) -> bool| f.children(id).iter().copied().find(|&c| f.named(c) && want(dialect.name(f, c)));
@@ -357,7 +366,7 @@ fn name(p: &Projected, dialect: &Dialect, of: &[u32], starts: &[u32], g: usize) 
         // A Vue file's template, script and style: by kind and ordinal.
         return String::new();
     }
-    own_digest(p, of, starts, g)
+    own_digest(p, of, up, starts, g)
 }
 
 /// The names a declaration binds: its declarators' names, or an assignment's targets, joined.
@@ -396,20 +405,20 @@ fn bound(f: &Facts, dialect: &Dialect, id: u32) -> Option<String> {
 }
 
 /// A digest of granule `g`'s own text: its source with each nested granule cut out (standing for its kind).
-fn own_digest(p: &Projected, of: &[u32], starts: &[u32], g: usize) -> String {
+fn own_digest(p: &Projected, of: &[u32], up: &[u32], starts: &[u32], g: usize) -> String {
     use sha2::{Digest, Sha256};
     let f = &*p.facts;
     let l = starts[g] as usize;
-    let id = p.core[l] as usize;
+    let id = p.node(l as u32) as usize;
     let (start, end) = (f.start(id as u32) as usize, f.end(id as u32) as usize);
     let mut h = Sha256::new();
     let mut at = start;
-    // Core IDs retain preorder. Find this subtree without materializing projection sizes.
-    let until = p.core.partition_point(|&node| node < f.subtree_end(id as u32));
+    // Local ids are in preorder: the subtree's are those ranked below its end.
+    let until = p.ranks().rank(Item::Node, f.subtree_end(id as u32)) as usize;
     for x in l + 1..until {
         // A nested granule's start whose parent is in this one: cut it out.
-        if of[x] as usize != g && of[p.parent(x) as usize] as usize == g {
-            let c = p.core[x] as usize;
+        if of[x] as usize != g && of[up[x] as usize] as usize == g {
+            let c = p.node(x as u32) as usize;
             h.update(&f.source.as_bytes()[at..f.start(c as u32) as usize]);
             h.update([0]);
             at = f.end(c as u32) as usize;
@@ -518,19 +527,14 @@ pub fn census(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> (usize, usize
     unreachable!()
 }
 
-/// A document's granule table (decision 0353 step 2): what answers a tape node's id, and the tape node of an id,
-/// with no per-node array. Written once where the granules are numbered, a derived fact of the tape.
+/// A document's granule table (decision 0353 step 2): with the projection's rank index (`Ranks`), what answers a tape
+/// node's id, and the tape node of an id, with no per-node array. Written once where the granules are numbered, a
+/// derived fact of the tape.
 ///
 /// A granule is its start's subtree less its nested granules' subtrees. So a node's granule is the innermost one
 /// whose subtree holds it, and its index is its rank among the granule's numbered nodes: those from the granule's
 /// start to it, less those of the granules nested between (their counts' prefix sums). A token's is the granule's
 /// node count and its rank among its tokens.
-///
-/// The ranks are read off a rank index (`Group`): for each 64 tape nodes, which are numbered nodes and which tokens,
-/// and how many of each come before. 24 bytes for 64 nodes, 3 bits a node, where the array held 32 (and its way
-/// back 64 more). A code alone cannot say which nodes are numbered (an anonymous node under an anonymous one, Python's
-/// `is not`'s `is`, is no token), and testing codes 64 at a time cost about 1,200 instructions a group on hogql
-/// (decision 0353, "Node identity"), so the bits are kept.
 pub struct Table {
     /// Each granule's start and its subtree's end (tape ids), and its parent granule (`u32::MAX` for the root's), in
     /// preorder of the starts.
@@ -549,17 +553,6 @@ pub struct Table {
     /// nodes and tokens of `g` before it: the stretches of `g` between them, found by bisection.
     first_kid: Vec<u32>,
     kids: Vec<Kid>,
-    /// The rank index from tape node `64 * first` on, one past the document's last group.
-    first: u32,
-    groups: Vec<Group>,
-}
-
-/// 64 tape nodes of the rank index: bit j of `bits[item]` set when node `64 * group + j` is a numbered `item`, and
-/// how many numbered of each item the document has before the group.
-#[derive(Clone, Copy, Default)]
-struct Group {
-    bits: [u64; 2],
-    before: [u32; 2],
 }
 
 /// A child granule, and its parent's own numbered nodes and tokens before its start.
@@ -569,83 +562,53 @@ struct Kid {
     before: [u32; 2],
 }
 
-/// What a numbered tape node is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Item {
-    Node = 0,
-    Token = 1,
-}
-
 impl Table {
     fn new(p: &Projected, cut: &Cut, nodes: &[u32], tokens: &[u32]) -> Self {
-        let f = &*p.facts;
-        // A projection with no node (a withheld document) numbers nothing: no granule, no group.
-        let g = if p.core.is_empty() { 0 } else { cut.starts.len() };
-        let starts: Vec<u32> = cut.starts[..g].iter().map(|&l| p.core[l as usize]).collect();
+        let (f, r) = (&*p.facts, p.ranks());
+        // A projection with no node (a withheld document) numbers nothing: no granule.
+        let g = if p.len() == 0 { 0 } else { cut.starts.len() };
+        let starts: Vec<u32> = cut.starts[..g].iter().map(|&l| p.node(l)).collect();
         let ends: Vec<u32> = starts.iter().map(|&s| f.subtree_end(s)).collect();
-        let parents = (0..g).map(|i| if i == 0 { u32::MAX } else { cut.of[p.parent(cut.starts[i] as usize) as usize] }).collect();
+        let parents: Vec<u32> = (0..g).map(|i| if i == 0 { u32::MAX } else { cut.of[cut.up[cut.starts[i] as usize] as usize] }).collect();
         let mut ntok = vec![0u32; g];
         for &t in tokens {
             ntok[cut.of[t as usize] as usize] += 1;
         }
         let prefix = |c: &[u32]| std::iter::once(0).chain(c.iter().scan(0u32, |a, &n| { *a += n; Some(*a) })).collect::<Vec<u32>>();
-        let at = prefix(&slots_len(&cut.slots[..g]));
+        let at = prefix(&cut.slots[..g].iter().map(|s| s.len() as u32).collect::<Vec<_>>());
         let mut by_slot: Vec<(u32, u32, u32)> = cut.slots[..g].iter().enumerate().flat_map(|(i, s)| s.iter().enumerate().map(move |(c, &slot)| (slot, i as u32, c as u32))).collect();
         by_slot.sort_unstable();
-        // The rank index: the numbered nodes' bits, then the tokens', then the counts before each group.
-        let first = starts.first().map_or(0, |&s| s / 64);
-        let last = ends.first().map_or(0, |&e| e.div_ceil(64));
-        let mut groups = vec![Group::default(); if g == 0 { 0 } else { (last - first) as usize + 1 }];
-        let mut mark = |x: u32, item: Item| groups[(x / 64 - first) as usize].bits[item as usize] |= 1 << (x % 64);
-        for &x in p.core.iter() {
-            mark(x, Item::Node);
-        }
-        if !tokens.is_empty() {
-            for (x, _) in p.token_order() {
-                mark(x, Item::Token);
-            }
-        }
-        let mut before = [0u32; 2];
-        for group in &mut groups {
-            group.before = before;
-            before[0] += group.bits[0].count_ones();
-            before[1] += group.bits[1].count_ones();
-        }
-        let mut t = Table { starts, ends, parents, nodes: prefix(&nodes[..g]), tokens: prefix(&ntok), at, slots: cut.slots[..g].concat(), by_slot, first_kid: Vec::new(), kids: Vec::new(), first, groups };
         // Each granule's children (parents come first in preorder, so a counting pass places them), and its own
         // items before each: the stretch before it, and the stretches before that.
         let mut count = vec![0u32; g + 1];
-        for h in 1..g {
-            count[t.parents[h] as usize + 1] += 1;
+        for &q in parents.iter().skip(1) {
+            count[q as usize + 1] += 1;
         }
         let first_kid: Vec<u32> = count.iter().scan(0u32, |a, &n| { *a += n; Some(*a) }).collect();
         let mut kids = vec![Kid { granule: 0, before: [0; 2] }; g.saturating_sub(1)];
         let mut fill = first_kid.clone();
-        for h in 1..g {
-            let q = t.parents[h] as usize;
-            kids[fill[q] as usize].granule = h as u32;
-            fill[q] += 1;
+        for (h, &q) in parents.iter().enumerate().skip(1) {
+            kids[fill[q as usize] as usize].granule = h as u32;
+            fill[q as usize] += 1;
         }
         for q in 0..g {
-            let (mut pos, mut own) = (t.starts[q], [0u32; 2]);
+            let (mut pos, mut own) = (starts[q], [0u32; 2]);
             for kid in &mut kids[first_kid[q] as usize..first_kid[q + 1] as usize] {
                 let h = kid.granule as usize;
                 for item in [Item::Node, Item::Token] {
-                    own[item as usize] += t.rank(item, t.starts[h]) - t.rank(item, pos);
+                    own[item as usize] += r.rank(item, starts[h]) - r.rank(item, pos);
                 }
                 kid.before = own;
-                pos = t.ends[h];
+                pos = ends[h];
             }
         }
-        (t.first_kid, t.kids) = (first_kid, kids);
-        t
+        Table { starts, ends, parents, nodes: prefix(&nodes[..g]), tokens: prefix(&ntok), at, slots: cut.slots[..g].concat(), by_slot, first_kid, kids }
     }
 
     /// Bytes the table holds.
     pub fn bytes(&self) -> usize {
         4 * (self.starts.len() * 3 + self.nodes.len() * 2 + self.at.len() + self.slots.len() + 3 * self.by_slot.len() + self.first_kid.len())
             + std::mem::size_of::<Kid>() * self.kids.len()
-            + std::mem::size_of::<Group>() * self.groups.len()
     }
 
     /// The most nodes and tokens of one granule.
@@ -675,43 +638,27 @@ impl Table {
         Some((g, j))
     }
 
-    /// Numbered `item`s before tape node `x` (within the document's groups).
-    #[inline]
-    fn rank(&self, item: Item, x: u32) -> u32 {
-        let group = &self.groups[(x / 64 - self.first) as usize];
-        group.before[item as usize] + (group.bits[item as usize] & ((1u64 << (x % 64)) - 1)).count_ones()
-    }
-
-    /// The tape node of numbered `item` number `r` (the document's, from 0).
-    fn select(&self, item: Item, r: u32) -> Option<u32> {
-        let i = self.groups.partition_point(|g| g.before[item as usize] <= r).checked_sub(1)?;
-        let group = &self.groups[i];
-        let m = group.bits[item as usize];
-        let k = r - group.before[item as usize];
-        if k >= m.count_ones() {
-            return None;
-        }
-        Some((self.first + i as u32) * 64 + select64(m, k))
-    }
-
     /// Tape node `x`'s id's low 32 bits, and what it is; `None` for a node the projection does not number.
-    pub fn id(&self, x: u32) -> Option<(u32, Item)> {
-        let group = self.groups.get((x / 64).checked_sub(self.first)? as usize)?;
-        let bit = 1u64 << (x % 64);
-        let item = if group.bits[0] & bit != 0 {
+    pub fn id(&self, r: &Ranks, x: u32) -> Option<(u32, Item)> {
+        let item = if r.is(Item::Node, x) {
             Item::Node
-        } else if group.bits[1] & bit != 0 {
+        } else if r.is(Item::Token, x) {
             Item::Token
         } else {
             return None;
         };
         let (g, j) = self.granule_of(x)?;
-        let own = self.rank(item, x) - self.rank(item, self.starts[g]);
-        let index = match item {
+        Some((self.low(g, self.index(r, item, x, g, j)), item))
+    }
+
+    /// Numbered `item` `x`'s index in its granule `g` (`j` the last granule starting at or before it).
+    #[inline]
+    fn index(&self, r: &Ranks, item: Item, x: u32, g: usize, j: usize) -> u32 {
+        let own = r.rank(item, x) - r.rank(item, self.starts[g]);
+        match item {
             Item::Node => own - (self.nodes[j + 1] - self.nodes[g + 1]),
             Item::Token => self.nodes[g + 1] - self.nodes[g] + own - (self.tokens[j + 1] - self.tokens[g + 1]),
-        };
-        Some((self.low(g, index), item))
+        }
     }
 
     /// Granule `g`'s item `index`'s low bits.
@@ -721,7 +668,7 @@ impl Table {
     }
 
     /// The tape node whose id's low 32 bits are `low` (`id`'s inverse), and what it is.
-    pub fn node(&self, low: u32) -> Option<(u32, Item)> {
+    pub fn node(&self, r: &Ranks, low: u32) -> Option<(u32, Item)> {
         let slot = low >> INDEX_BITS;
         let at = self.by_slot.partition_point(|e| e.0 < slot);
         let &(s, g, c) = self.by_slot.get(at)?;
@@ -739,101 +686,38 @@ impl Table {
         if k >= all {
             return None;
         }
-        Some((self.own(g, item, k)?, item))
-    }
-
-    /// Granule `g`'s `k`-th numbered `item`: the stretch it lies in, the last whose child granule has at most `k` of
-    /// `g`'s before it (by bisection), then a select from the stretch's start.
-    fn own(&self, g: usize, item: Item, k: u32) -> Option<u32> {
+        // The stretch of `g` the item lies in: after the last child granule with at most `k` of `g`'s before it.
         let kids = &self.kids[self.first_kid[g] as usize..self.first_kid[g + 1] as usize];
         let i = kids.partition_point(|kid| kid.before[item as usize] <= k);
         let (pos, before) = match i.checked_sub(1) {
             None => (self.starts[g], 0),
             Some(i) => (self.ends[kids[i].granule as usize], kids[i].before[item as usize]),
         };
-        self.select_from(item, pos, k - before)
-    }
-
-    /// The `k`-th numbered `item` from tape node `pos` on: forward over the groups from `pos`'s, where a stretch's
-    /// items mostly lie; past 8 groups, by bisection of the counts.
-    fn select_from(&self, item: Item, pos: u32, mut k: u32) -> Option<u32> {
-        let at = (pos / 64 - self.first) as usize;
-        let mut m = self.groups.get(at)?.bits[item as usize] & (!0u64 << (pos % 64));
-        for i in at..(at + 8).min(self.groups.len()) {
-            if i > at {
-                m = self.groups[i].bits[item as usize];
-            }
-            let c = m.count_ones();
-            if k < c {
-                return Some((self.first + i as u32) * 64 + select64(m, k));
-            }
-            k -= c;
-        }
-        self.select(item, self.rank(item, pos) + self.count_from(item, pos, k))
-    }
-
-    /// `k` plus the `item`s from `pos` to the end of the 8 groups `select_from` walked: the rank from `pos` it had
-    /// left to go.
-    fn count_from(&self, item: Item, pos: u32, k: u32) -> u32 {
-        let at = (pos / 64 - self.first) as usize;
-        let end = ((at + 8).min(self.groups.len() - 1) as u32 + self.first) * 64;
-        k + self.rank(item, end) - self.rank(item, pos)
+        Some((r.select(item, r.rank(item, pos) + k - before)?, item))
     }
 
     /// Every numbered node and token of the document, in preorder, with its id's low bits: one walk over the rank
     /// index's set bits that carries the innermost granule and its running counts.
-    pub fn scan(&self, mut out: impl FnMut(u32, u32, Item)) {
+    pub fn scan(&self, r: &Ranks, mut out: impl FnMut(u32, u32, Item)) {
         // The open granules, innermost last: (granule, its nodes so far, its tokens so far).
         let mut open: Vec<(usize, u32, u32)> = Vec::new();
         let mut next = 0;
-        for (i, group) in self.groups.iter().enumerate() {
-            let mut m = group.bits[0] | group.bits[1];
-            while m != 0 {
-                let j = m.trailing_zeros();
-                m &= m - 1;
-                let x = (self.first + i as u32) * 64 + j;
-                while open.last().is_some_and(|&(q, _, _)| x >= self.ends[q]) {
-                    open.pop();
-                }
-                if next < self.starts.len() && self.starts[next] == x {
-                    open.push((next, 0, 0));
-                    next += 1;
-                }
-                let Some((q, n, t)) = open.last_mut() else { continue };
-                if group.bits[0] >> j & 1 != 0 {
-                    out(x, self.low(*q, *n), Item::Node);
-                    *n += 1;
-                } else {
-                    out(x, self.low(*q, self.nodes[*q + 1] - self.nodes[*q] + *t), Item::Token);
-                    *t += 1;
-                }
+        for (x, item) in r.iter_both() {
+            while open.last().is_some_and(|&(q, _, _)| x >= self.ends[q]) {
+                open.pop();
+            }
+            if next < self.starts.len() && self.starts[next] == x {
+                open.push((next, 0, 0));
+                next += 1;
+            }
+            let Some((q, n, t)) = open.last_mut() else { continue };
+            if item == Item::Node {
+                out(x, self.low(*q, *n), item);
+                *n += 1;
+            } else {
+                out(x, self.low(*q, self.nodes[*q + 1] - self.nodes[*q] + *t), item);
+                *t += 1;
             }
         }
     }
-}
-
-/// The position of `m`'s set bit `k` (from 0; `k` below its popcount): the byte by the bytes' running popcounts,
-/// then the bit within it.
-#[inline]
-fn select64(m: u64, k: u32) -> u32 {
-    const ONES: u64 = 0x0101_0101_0101_0101;
-    let mut x = m - ((m >> 1) & 0x5555_5555_5555_5555);
-    x = (x & 0x3333_3333_3333_3333) + ((x >> 2) & 0x3333_3333_3333_3333);
-    x = (x + (x >> 4)) & 0x0f0f_0f0f_0f0f_0f0f;
-    // Byte b of `sums`: the set bits of bytes 0..=b.
-    let sums = x.wrapping_mul(ONES);
-    // The bytes whose running count is at most `k` come before the bit's byte: one per high bit set below.
-    let k8 = u64::from(k) * ONES;
-    let le = ((k8 | 0x8080_8080_8080_8080) - sums) & 0x8080_8080_8080_8080;
-    let byte = le.count_ones();
-    let before = if byte == 0 { 0 } else { (sums >> (8 * (byte - 1))) & 0xff } as u32;
-    let mut b = (m >> (8 * byte)) & 0xff;
-    for _ in 0..k - before {
-        b &= b - 1;
-    }
-    8 * byte + b.trailing_zeros()
-}
-
-fn slots_len(slots: &[Vec<u32>]) -> Vec<u32> {
-    slots.iter().map(|s| s.len() as u32).collect()
 }

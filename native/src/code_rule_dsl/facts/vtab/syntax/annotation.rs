@@ -95,11 +95,9 @@ impl Annotations {
         // The string hosts of the projection, by range.
         let f = &*p.facts;
         let by_range: ByRange = p
-            .core
-            .iter()
-            .enumerate()
-            .filter(|&(_, &id)| HOSTS.contains(&dialect.name(f, id)))
-            .map(|(local, &id)| ((f.start(id), f.end(id)), p.global(local as u32)))
+            .nodes()
+            .filter(|&(_, id)| HOSTS.contains(&dialect.name(f, id)))
+            .map(|(local, id)| ((f.start(id), f.end(id)), p.global(local)))
             .collect();
         if let Some(g) = d.guest.as_deref() {
             if g.grammar == GRAMMAR {

@@ -53,6 +53,7 @@ pub mod normalized;
 use core_rr::Family;
 pub mod guests;
 pub mod granules;
+pub mod ranks;
 mod cells;
 #[cfg(target_os = "macos")]
 pub mod device_chunk;
@@ -266,12 +267,13 @@ pub struct TextNodes {
 impl TextNodes {
     /// Whether node `id` of `f` is one of these: of a kind read, in a field read, a child of a kind read or of a node in
     /// a field read, or with a text a rule compares it with.
-    pub(crate) fn reads(&self, p: &Projected, local: u32, dialect: &Dialect) -> bool {
-        let (f, id) = (&*p.facts, p.core[local as usize]);
+    /// `id` is the node's tape node (`Projected::node`), which the caller's walk holds.
+    pub(crate) fn reads(&self, p: &Projected, id: u32, dialect: &Dialect) -> bool {
+        let f = &*p.facts;
         self.kinds.contains(dialect.name(f, id))
             || dialect.catalog.field_name(f.field(id)).is_some_and(|name| self.fields.contains(name))
             || !(self.parents.is_empty() && self.parent_fields.is_empty())
-                && p.parent_node(local as usize).is_some_and(|q| {
+                && f.parent(id).is_some_and(|q| {
                     self.parents.contains(dialect.name(f, q))
                         || dialect.catalog.field_name(f.field(q)).is_some_and(|name| self.parent_fields.contains(name))
                 })
@@ -391,7 +393,7 @@ impl LongTexts {
         let (key, low) = ((n >> 32) as u32, n as u32);
         let p = &self.batch.docs[*self.docs.get(&key)?];
         let local = p.local_of(low)?;
-        let core = *p.core.get(local as usize)?;
+        let core = p.ranks().select(Item::Node, local)?;
         let text = p.facts.text(core);
         (text.len() > core_rr::TEXT_INLINE).then(|| text.to_owned())
     }
@@ -412,7 +414,7 @@ impl LongTexts {
                 if !f.named(id) || !is_comment_kind(dialect.name(f, id)) || up.is_some_and(|q| is_comment_kind(dialect.name(f, q))) {
                     continue;
                 }
-                if p.local[id as usize] == NONE {
+                if p.local_of_node(id as u32) == NONE {
                     j += 1;
                     if j == k {
                         return Some(f.text(id).to_owned());
@@ -421,7 +423,7 @@ impl LongTexts {
             }
             return None;
         }
-        let core = *p.core.get(p.local_of(low)? as usize)?;
+        let core = p.ranks().select(Item::Node, p.local_of(low)?)?;
         Some(f.text(core).to_owned())
     }
 
@@ -439,7 +441,7 @@ impl LongTexts {
             let mut values = HashMap::new();
             if let Some(reader) = crate::code_rule_dsl::facts::core::value_reader() {
                 reader.values(&valued.tape, valued.file.as_ref(), true, false, &mut |followed, ordinal, v, _| {
-                    let local = p.local[ordinal as usize];
+                    let local = p.local_of_node(ordinal as u32);
                     if !followed && local != NONE && let Some(v) = v {
                         values.insert(local, v);
                     }
@@ -1411,7 +1413,7 @@ pub fn numbering(doc: &Document, shape: Shape) -> StoreResult<Numbering> {
     // In `core.rr`'s shape a guest's nodes are its root's subtree; in T's, its whole tree (`Batch::build`).
     let guest = doc.guest.as_deref().filter(|_| shape == Shape::Core).map(|g| (g, Arc::new(core_rr::Lines::new("", false))));
     let p = Projected::new(doc.key, Arc::clone(&doc.facts), Some(&*dialect), shape, false, guest);
-    let nodes = p.core.iter().map(|&id| (id, dialect.name(&doc.facts, id))).collect();
+    let nodes = p.nodes().map(|(_, id)| (id, dialect.name(&doc.facts, id))).collect();
     // The ids the projection gives (`Projected::id`): per definition where it numbered the document so. A unit's own
     // nodes are numbered before its tokens, so the nodes' ids need no tokens.
     Ok(Numbering { nodes, back: p.defs.as_ref().map(|d| d.back().to_vec()) })
@@ -1646,23 +1648,17 @@ impl Dialect {
 
 /// A document's nodes, numbered in preorder: its named nodes other than comments (T's), or every named node
 /// (`core.rr`'s).
-// copy (0353 step 2): the per-node arrays (`core`, `local`, `up`, `idx`, `fielded`, `size`, `depth`) are
-// copies of the tape's answers. They go: readers read the tape and the granule table in place (decision 0353).
+// copy (0353 step 2): the per-node arrays left (`idx`, `fielded`, `depth`) are copies of the tape's answers.
+// They go: readers read the tape and the rank index in place (decision 0353).
 pub struct Projected {
     pub module: Option<crate::code_rule_dsl::module_path::ModulePath>,
     pub key: u32,
     pub tag: u8,
     pub facts: Arc<Facts>,
-    /// The projection's arrays are in its batch's block (decision 0289 §3), which the device reads them in.
-    /// The core id of each node.
-    pub core: Cells<u32>,
-    /// The node of each core id, `NONE` for one left out.
-    pub local: Cells<u32>,
-    /// The parent of each core id, as a core id (`parent`), found in the walk that numbers them: the tape stores no
-    /// parent, and format 15's is a search back. In the block too: the device's climbs read it (0289 §3).
-    up: Cells<u32>,
+    /// The tape nodes it numbers, its nodes and tokens, as a rank index (`ranks::Ranks`, decision 0353 step 2): a
+    /// node's local id is its rank among the nodes. In its batch's block (decision 0289 §3), which the device reads.
+    ranks: ranks::Ranks,
     pub idx: OnceLock<Cells<u32>>,
-    pub size: OnceLock<Vec<u32>>,
     pub depth: OnceLock<Vec<u32>>,
     /// The nodes hanging from their parent under a field, ascending.
     pub fielded: OnceLock<Cells<u32>>,
@@ -1692,6 +1688,7 @@ struct DefIds {
 }
 
 use granules::INDEX_BITS;
+pub use ranks::Item;
 
 /// Whether this process numbers nodes per definition: the default; `RERAIL_NODE_IDS=preorder` numbers them in
 /// preorder, to compare.
@@ -1717,7 +1714,7 @@ impl DefIds {
     fn new(p: &Projected, dialect: &Dialect, tokens: &[u32], in_place: bool) -> Self {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "granules".into());
         let (mut order, mut table) = (Vec::new(), None);
-        let low = Cells::build(p.core.block(), p.core.len() + tokens.len(), |low| {
+        let low = Cells::build(p.block(), (p.len() as usize) + tokens.len(), |low| {
             (order, table) = granules::number(p, dialect, tokens, low, in_place);
             low.len()
         })
@@ -1811,7 +1808,6 @@ impl Projected {
     pub fn narrowed(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>, anchors: Option<&BTreeSet<String>>, block: &Arc<Block>) -> Self {
         let identity_span = crate::code_rule_dsl::logic::profile::span(|| "identity maps".into());
         let f = &*facts;
-        let mut tokens = 0;
         let (first, last) = match guest {
             Some((g, _)) => (g.root, if (g.root as usize) < f.len() { f.subtree_end(g.root) } else { g.root + 1 }.max(g.root + 1)),
             None => (0, f.len() as u32),
@@ -1834,72 +1830,60 @@ impl Projected {
             }
             _ => vec![(first, end)],
         };
-        // At most the nodes the walk below keeps.
-        let count = if withheld {
-            0
-        } else {
-            ranges.iter().flat_map(|&(a, b)| a..b).filter(|&id| f.named(id) && dialect.is_some_and(|d| shape != Shape::T || d.class(f, id) != Class::Comment)).count()
-        };
-        // Walked by anchors, the root's own range is the root alone: its tokens between the anchored subtrees (a `;`
-        // between two statements) are in no range, yet are tokens of an included node, as `Projected::span` reads
-        // them. Counted here, so the tokens' ids are the spans'.
-        if ranges.len() > 1 && !withheld && shape == Shape::Core && dialect.is_some() && f.named(first) {
-            let outside = |c: u32| !ranges.iter().any(|&(a, b)| a <= c && c < b);
-            tokens += f.children(first).iter().filter(|&&c| !f.named(c) && f.end(c) > f.start(c) && outside(c)).count() as u32;
-        }
-        // The walk: `local` filled as `core` and `up` grow, all in the block. `up` is the last made, so its unused
-        // tail is given back; `core`'s stays (the nodes under a left-out parent, which `count` counts).
-        let (mut core, mut up) = (None, None);
-        let local = Cells::build(block, f.len(), |local| {
-            local.fill(NONE);
-            core = Some(Cells::build(block, count, |core| {
-                let mut n = 0usize;
-                up = Some(Cells::build(block, count, |ups| {
-                    for (id, above) in ranges.iter().flat_map(|&(a, b)| f.with_parents(a, b)) {
-                        if !f.named(id) {
-                            // A token (`Facts::tokens`) of an included node: its span is made on first read (`Projected::span`).
-                            if shape == Shape::Core && dialect.is_some() && f.end(id) > f.start(id)
-                                && above.is_some_and(|q| local[q as usize] != NONE) { tokens += 1; }
-                            continue;
-                        }
-                        if dialect.is_none_or(|dialect| shape == Shape::T && dialect.class(f, id) == Class::Comment) {
-                            continue;
-                        }
-                        // T walks named children from the root: a node under one left out is not reached.
-                        let parent = match above {
-                            _ if id == first => NONE,
-                            None => NONE,
-                            Some(q) if local[q as usize] != NONE => local[q as usize],
-                            // An outermost anchor's parent is left out: it hangs from the root.
-                            Some(_) if ranges.len() > 1 && ranges.iter().any(|&(a, _)| a == id) => 0,
-                            Some(_) => continue,
-                        };
-                        if parent == NONE && n != 0 {
-                            continue;
-                        }
-                        local[id as usize] = n as u32;
-                        core[n] = id;
-                        ups[n] = above.map_or(NONE, |q| local[q as usize]);
-                        n += 1;
+        // The walk: which tape nodes the projection numbers, marked in its rank index (`ranks`) in the block. A node's
+        // local id is its rank among them, in preorder.
+        let (lo, hi) = (ranges.first().map_or(first, |r| r.0), ranges.last().map_or(first, |r| r.1).max(first + 1));
+        let core_tokens = shape == Shape::Core && dialect.is_some() && !withheld;
+        let ranks = ranks::Ranks::build(block, lo, hi, |marks| {
+            if withheld {
+                return;
+            }
+            // Walked by anchors, the root's own range is the root alone: its tokens between the anchored subtrees (a
+            // `;` between two statements) are in no range, yet are tokens of an included node, as `Projected::span`
+            // reads them.
+            if ranges.len() > 1 && core_tokens && f.named(first) {
+                let outside = |c: u32| !ranges.iter().any(|&(a, b)| a <= c && c < b);
+                for c in f.children(first) {
+                    if !f.named(c) && f.end(c) > f.start(c) && outside(c) {
+                        marks.mark(Item::Token, c);
                     }
-                    n
-                }));
-                n
-            }));
-            local.len()
+                }
+            }
+            let mut n = 0usize;
+            for (id, above) in ranges.iter().flat_map(|&(a, b)| f.with_parents(a, b)) {
+                if !f.named(id) {
+                    // A token (`Facts::tokens`) of an included node: its span is made on first read (`Projected::span`).
+                    if core_tokens && f.end(id) > f.start(id) && above.is_some_and(|q| marks.has(Item::Node, q)) {
+                        marks.mark(Item::Token, id);
+                    }
+                    continue;
+                }
+                if dialect.is_none_or(|dialect| shape == Shape::T && dialect.class(f, id) == Class::Comment) {
+                    continue;
+                }
+                // T walks named children from the root: a node under one left out is not reached.
+                let rooted = match above {
+                    _ if id == first => false,
+                    None => false,
+                    Some(q) if marks.has(Item::Node, q) => true,
+                    // An outermost anchor's parent is left out: it hangs from the root.
+                    Some(_) if ranges.len() > 1 && ranges.iter().any(|&(a, _)| a == id) => true,
+                    Some(_) => continue,
+                };
+                if !rooted && n != 0 {
+                    continue;
+                }
+                marks.mark(Item::Node, id);
+                n += 1;
+            }
         });
-        let (Some(local), Some(Some(core)), Some(Some(up))) = (local, core, up) else {
-            panic!("a batch's block holds its projection");
-        };
+        let tokens = ranks.count(Item::Token);
         let mut p = Projected {
             module: None,
             key,
             tag: f.tag,
-            core,
-            local,
-            up,
+            ranks,
             idx: OnceLock::new(),
-            size: OnceLock::new(),
             depth: OnceLock::new(),
             fielded: OnceLock::new(),
             extra: None,
@@ -1928,29 +1912,64 @@ impl Projected {
         }
         p
     }
+    /// The tape node of local id `local` (a select of the rank index).
+    #[inline]
+    #[cfg_attr(feature = "tape-reads", track_caller)]
+    pub fn node(&self, local: u32) -> u32 {
+        self.ranks.select(Item::Node, local).expect("a local id of the projection")
+    }
+    /// The local id of tape node `id`, `NONE` for one the projection leaves out.
+    #[inline]
+    pub fn local_of_node(&self, id: u32) -> u32 {
+        self.ranks.local(Item::Node, id).unwrap_or(NONE)
+    }
+    /// Every node, in preorder: `(local id, tape node)`.
+    pub fn nodes(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+        self.ranks.iter(Item::Node)
+    }
+    /// Every node, in preorder, with its parent (`parent`): `(local id, tape node, parent's local id)`, the root's
+    /// `NONE`. One pass that keeps the open subtrees, so no parent is read off the tape: a node's parent is the
+    /// nearest included node whose subtree holds it (an anchor's, the root).
+    pub fn walk(&self) -> impl Iterator<Item = (u32, u32, u32)> + '_ {
+        self.walk_up().map(|(l, x, up)| (l, x, up.map_or(NONE, |(q, _)| q)))
+    }
+    /// `walk`, with the parent's tape node: `(local id, tape node, (parent's local id, its tape node))`.
+    pub fn walk_up(&self) -> impl Iterator<Item = (u32, u32, Option<(u32, u32)>)> + '_ {
+        let mut open: Vec<(u32, u32, u32)> = Vec::new();
+        self.ranks.iter(Item::Node).map(move |(l, x)| {
+            while open.last().is_some_and(|&(_, _, end)| end <= x) {
+                open.pop();
+            }
+            let parent = open.last().map(|&(q, qx, _)| (q, qx));
+            open.push((l, x, self.facts.subtree_end(x)));
+            (l, x, parent)
+        })
+    }
+    /// Every node's and span's byte span, in local order (`span`): the nodes in one pass of the index, then the spans
+    /// past them (tokens, the text, lines, end points). No select a node.
+    pub fn spans(&self) -> impl Iterator<Item = (u32, [u32; 2])> + '_ {
+        let f = &*self.facts;
+        self.nodes().map(|(l, x)| (l, [f.start(x), f.end(x)])).chain((self.len()..self.locs()).map(|l| (l, self.span(l))))
+    }
+    /// The block the projection's cells are in.
+    pub fn block(&self) -> &Arc<Block> {
+        self.ranks.block()
+    }
+    /// The rank index of the tape nodes it numbers.
+    pub fn ranks(&self) -> &ranks::Ranks {
+        &self.ranks
+    }
+    /// Local id `local`'s parent, as a local id: its tape parent's, or the root's for an anchor of a narrowed
+    /// projection (`narrowed`), whose parent is left out; `NONE` for the root.
     #[inline]
     #[cfg_attr(feature = "tape-reads", track_caller)]
     pub fn parent(&self, local: usize) -> u32 {
-        // Only an anchor of a narrowed projection (`narrowed`) has no parent in it but the root: it hangs from the root.
-        match self.up[local] {
-            NONE if local != 0 => 0,
-            p => p,
+        if local == 0 {
+            return NONE;
         }
-    }
-    /// What `parent` answers without `up`: the parent read off the tape, mapped to its core id. For the measurement
-    /// of `up` (native/examples/kept_parents.rs).
-    pub fn parent_off_tape(&self, local: usize) -> u32 {
-        match self.facts.parent(self.core[local]).map_or(NONE, |p| self.local[p as usize]) {
-            NONE if local != 0 => 0,
+        match self.facts.parent(self.node(local as u32)).map_or(NONE, |q| self.local_of_node(q)) {
+            NONE => 0,
             p => p,
-        }
-    }
-    /// The node above core id `local`, as a node id: the parent the walk found, or read off the tape where the
-    /// projection leaves it out (an anchor's, a guest's root's).
-    pub fn parent_node(&self, local: usize) -> Option<u32> {
-        match self.up[local] {
-            NONE => self.facts.parent(self.core[local]),
-            q => Some(self.core[q as usize]),
         }
     }
     #[inline]
@@ -1959,27 +1978,22 @@ impl Projected {
     fn ordinals(&self) -> &Cells<u32> {
         self.idx.get_or_init(|| {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "projection ordinals".into());
-            let mut next = vec![0; self.core.len()];
-            Cells::build(self.core.block(), self.core.len(), |out| {
-                for (l, slot) in out.iter_mut().enumerate().skip(1) {
-                    let p = self.parent(l) as usize;
-                    *slot = next[p]; next[p] += 1;
+            let mut next = vec![0; self.len() as usize];
+            Cells::build(self.block(), self.len() as usize, |out| {
+                for (l, _, p) in self.walk().skip(1) {
+                    out[l as usize] = next[p as usize];
+                    next[p as usize] += 1;
                 }
                 out.len()
             })
             .expect("a batch's block holds its projection")
         })
     }
+    /// The nodes under local id `local`: those of its tape subtree, by rank.
     #[inline]
-    pub fn size(&self, local: usize) -> u32 { self.sizes()[local] }
-    #[inline]
-    pub fn sizes(&self) -> &[u32] {
-        self.size.get_or_init(|| {
-            let _span = crate::code_rule_dsl::logic::profile::span(|| "projection subtree sizes".into());
-            let mut out = vec![0; self.core.len()];
-            for l in (1..out.len()).rev() { let p = self.parent(l) as usize; out[p] += out[l] + 1; }
-            out
-        })
+    pub fn size(&self, local: usize) -> u32 {
+        let id = self.node(local as u32);
+        self.ranks.rank(Item::Node, self.facts.subtree_end(id)) - local as u32 - 1
     }
     #[inline]
     pub fn depth(&self, local: usize) -> u32 { self.depths()[local] }
@@ -1987,17 +2001,17 @@ impl Projected {
     pub fn depths(&self) -> &[u32] {
         self.depth.get_or_init(|| {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "projection depths".into());
-            let mut out = vec![0; self.core.len()];
-            for l in 1..out.len() { out[l] = out[self.parent(l) as usize] + 1; }
+            let mut out = vec![0; self.len() as usize];
+            for (l, _, p) in self.walk().skip(1) { out[l as usize] = out[p as usize] + 1; }
             out
         })
     }
     fn fielded(&self) -> &Cells<u32> {
         self.fielded.get_or_init(|| {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "projection fields".into());
-            let count = self.core.iter().skip(1).filter(|&&id| self.facts.field(id) != 0).count();
-            Cells::build(self.core.block(), count, |out| {
-                for (slot, l) in out.iter_mut().zip(self.core.iter().enumerate().skip(1).filter_map(|(l, &id)| (self.facts.field(id) != 0).then_some(l as u32))) {
+            let count = self.nodes().skip(1).filter(|&(_, id)| self.facts.field(id) != 0).count();
+            Cells::build(self.block(), count, |out| {
+                for (slot, l) in out.iter_mut().zip(self.nodes().skip(1).filter_map(|(l, id)| (self.facts.field(id) != 0).then_some(l))) {
                     *slot = l;
                 }
                 count
@@ -2009,16 +2023,7 @@ impl Projected {
     /// node's local id: the order their ids and spans follow.
     pub fn token_order(&self) -> Vec<(u32, u32)> {
         let f = &self.facts;
-        let mut out: Vec<(u32, u32)> = Vec::new();
-        for (l, &id) in self.core.iter().enumerate() {
-            f.each_child(id, |c| {
-                if !f.named(c) && f.end(c) > f.start(c) {
-                    out.push((c, l as u32));
-                }
-            });
-        }
-        out.sort_unstable();
-        out
+        self.ranks.iter(Item::Token).map(|(_, x)| (x, f.parent(x).map_or(0, |q| self.local_of_node(q)))).collect()
     }
     /// The numbered ids' low bits (nodes, then tokens) and the granule table, where ids are by definition: what the
     /// in-place ids are checked and measured against (decision 0353 step 2).
@@ -2033,22 +2038,22 @@ impl Projected {
     pub fn span(&self, local: u32) -> [u32; 2] {
         match local.checked_sub(self.len()) {
             None => {
-                let id = self.core[local as usize] as usize;
-                [self.facts.start(id as u32), self.facts.end(id as u32)]
+                let id = self.node(local);
+                [self.facts.start(id), self.facts.end(id)]
             }
             Some(i) => self.extra.as_ref().map_or([0, 0], |x| {
                 if i < x.tokens {
                     let spans = x.token_spans.get_or_init(|| {
                         let _span = crate::code_rule_dsl::logic::profile::span(|| "token spans".into());
                         let f = &self.facts;
-                        let spans: Vec<[u32; 2]> = self.token_order().into_iter().map(|(c, _)| [f.start(c), f.end(c)]).collect();
+                        let spans: Vec<[u32; 2]> = self.ranks.iter(Item::Token).map(|(_, c)| [f.start(c), f.end(c)]).collect();
                         debug_assert_eq!(spans.len(), x.tokens as usize);
                         spans
                     });
                     spans[i as usize]
                 } else if i >= x.ends_from() {
-                    let id = self.core[(i - x.ends_from()) as usize] as usize;
-                    [self.facts.end(id as u32), self.facts.end(id as u32)]
+                    let id = self.node(i - x.ends_from());
+                    [self.facts.end(id), self.facts.end(id)]
                 } else if i == x.tokens {
                     [0, self.facts.source.len() as u32]
                 } else {
@@ -2058,7 +2063,7 @@ impl Projected {
         }
     }
     pub fn len(&self) -> u32 {
-        self.core.len() as u32
+        self.ranks.count(Item::Node)
     }
     pub fn global(&self, local: u32) -> i64 {
         Self::id(self.key, &self.defs, local)
@@ -2092,14 +2097,22 @@ impl Projected {
     }
     /// The included children of `local`, in order.
     pub fn children(&self, local: u32) -> impl Iterator<Item = u32> + '_ {
-        self.facts.children(self.core[local as usize]).into_iter().map(move |c| self.local[c as usize]).filter(|&c| c != NONE)
+        self.children_of_node(self.node(local))
+    }
+    /// `children` of the node whose tape node is `x`.
+    pub fn children_of_node(&self, x: u32) -> impl Iterator<Item = u32> + '_ {
+        self.facts.children(x).into_iter().map(move |c| self.local_of_node(c)).filter(|&c| c != NONE)
     }
     /// `children`, each handed to `f`: a parent's probe makes no list of them.
     pub fn each_child(&self, local: u32, mut f: impl FnMut(u32)) {
-        self.facts.each_child(self.core[local as usize], |c| {
-            let c = self.local[c as usize];
+        self.each_child_node(local, |c, _| f(c));
+    }
+    /// `each_child`, with each child's tape node: `f(local id, tape node)`.
+    pub fn each_child_node(&self, local: u32, mut f: impl FnMut(u32, u32)) {
+        self.facts.each_child(self.node(local), |x| {
+            let c = self.local_of_node(x);
             if c != NONE {
-                f(c);
+                f(c, x);
             }
         });
     }
@@ -2519,7 +2532,7 @@ impl Extra {
         let ends = p.extra.as_ref().map_or(0..0, |x| p.len() + x.ends_from()..p.len() + x.ends_from() + x.ends);
         let guest = p.extra.as_deref().filter(|x| x.host.is_some());
         if self.line_rows() || self.end_line || self.col || self.node_text {
-            for (local, &id) in p.core.iter().enumerate() {
+            for (local, id) in p.nodes().map(|(l, x)| (l as usize, x)) {
                 let n = p.global(local as u32);
                 let (start, end) = (f.start(id) as usize, f.end(id) as usize);
                 if self.node_text {
@@ -2631,7 +2644,7 @@ impl Extra {
                 return Err(StoreError::Invalid(format!("{}: no reader of W's values is registered", d.path)));
             };
             reader.values(tape, file.as_ref(), plain, self.static_value, &mut |followed, ordinal, v, names| {
-                let local = p.local[ordinal as usize];
+                let local = p.local_of_node(ordinal as u32);
                 if local == NONE {
                     return;
                 }
@@ -2681,7 +2694,7 @@ impl Extra {
                     continue;
                 }
                 let whole = f.text(id);
-                let c = match p.local[id as usize] {
+                let c = match p.local_of_node(id as u32) {
                     NONE => {
                         k += 1;
                         let c = span(ExtraSpan::Comment, k)?;
@@ -2790,12 +2803,10 @@ impl Extra {
         let rx = if self.rx_span { rx } else { &[] };
         let nodes_of = |test: &dyn Fn(&str) -> bool| -> Vec<Container> {
             match dialect {
-                Some(dialect) => (0..p.len())
-                    .filter(|&l| test(dialect.name(f, p.core[l as usize])))
-                    .map(|l| {
-                        let [a, b] = p.span(l);
-                        (p.global(l), a as usize..b as usize, None)
-                    })
+                Some(dialect) => p
+                    .nodes()
+                    .filter(|&(_, x)| test(dialect.name(f, x)))
+                    .map(|(l, x)| (p.global(l), f.start(x) as usize..f.end(x) as usize, None))
                     .collect(),
                 None => Vec::new(),
             }
@@ -2803,15 +2814,10 @@ impl Extra {
         // The children of the nodes of one kind (`SpanIn::ChildOf`).
         let children_of = |kind: &str| -> Vec<Container> {
             match dialect {
-                Some(dialect) => (1..p.len())
-                    .filter(|&l| {
-                        let parent = p.parent(l as usize);
-                        parent != NONE && dialect.name(f, p.core[parent as usize]) == kind
-                    })
-                    .map(|l| {
-                        let [a, b] = p.span(l);
-                        (p.global(l), a as usize..b as usize, None)
-                    })
+                Some(dialect) => p
+                    .walk_up()
+                    .filter(|&(_, _, up)| up.is_some_and(|(_, q)| dialect.name(f, q) == kind))
+                    .map(|(l, x, _)| (p.global(l), f.start(x) as usize..f.end(x) as usize, None))
                     .collect(),
                 None => Vec::new(),
             }
@@ -2991,7 +2997,7 @@ impl NodeRows {
     /// Document `p`'s rows (`dialect` its grammar's kinds; `core`: in `core.rr`'s shape).
     fn document(&mut self, p: &Projected, dialect: &Dialect, core: bool, string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
-        for (local, &id) in p.core.iter().enumerate() {
+        for (local, id) in p.nodes().map(|(l, x)| (l as usize, x)) {
             let n = p.global(local as u32);
             match dialect.class(f, id) {
                 Class::Text | Class::Attribute | Class::String if core => {}
@@ -3231,10 +3237,11 @@ impl Batch {
             let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, projection.node_anchors.as_ref().filter(|_| core), &block);
             drop(new_span);
             // A program that reads `end_point` has each node's end point among the positions, after the lines.
+            let nodes = p.len();
             if core && projection.wants("end_point")
                 && let Some(x) = p.extra.as_mut()
             {
-                x.ends = p.core.len() as u32;
+                x.ends = nodes;
             }
             p.module = crate::code_rule_dsl::module_path::ModulePath::dotted(d.module.as_deref().unwrap_or(&module(&d.path)));
             // Its positions (tokens, text, lines) in the top slots (`granules::span_low`): past them ids would clash.
@@ -3304,16 +3311,13 @@ impl Batch {
                 }
                 if core_nodes || wants_long_text_nodes {
                     let visits = c.visits(wants_text, wants_parts, wants_part_starts, wants_words);
-                    for local in 0..p.len() {
-                        if wants_long_text_nodes {
-                            let id = p.core[local as usize] as usize;
-                            if (p.facts.end(id as u32) - p.facts.start(id as u32)) as usize > core_rr::TEXT_INLINE {
-                                long_text_nodes.push(p.global(local));
-                            }
+                    for (local, id) in p.nodes() {
+                        if wants_long_text_nodes && (p.facts.end(id) - p.facts.start(id)) as usize > core_rr::TEXT_INLINE {
+                            long_text_nodes.push(p.global(local));
                         }
-                        if core_nodes && c.visited(visits, &p, dialect, local) {
+                        if core_nodes && c.visited(visits, &p, dialect, id) {
                             visited += 1;
-                            c.node(&p, dialect, local, &mut string, wants_text, wants_parts, wants_part_starts, wants_words);
+                            c.node(&p, dialect, local, id, &mut string, wants_text, wants_parts, wants_part_starts, wants_words);
                         }
                     }
                 }
@@ -3383,11 +3387,11 @@ impl Batch {
             })
             .collect();
         crate::code_rule_dsl::logic::profile::decision("input payload", || {
-            let identities: usize = docs.iter().map(|p| (p.core.len() + p.local.len() + [&p.idx, &p.fielded].iter().map(|v| v.get().map_or(0, |v| v.len())).sum::<usize>() + [&p.size, &p.depth].iter().map(|v| v.get().map_or(0, |v| v.capacity())).sum::<usize>()) * 4).sum();
+            let identities: usize = docs.iter().map(|p| p.ranks().bytes() + ([&p.idx, &p.fielded].iter().map(|v| v.get().map_or(0, |v| v.len())).sum::<usize>() + p.depth.get().map_or(0, |v| v.capacity())) * 4).sum();
             let extras: usize = docs.iter().filter_map(|p| p.extra.as_ref()).map(|x| x.token_spans.get().map_or(0, |v| v.capacity()) * 8).sum();
             serde_json::json!({"documents": docs.len(), "coreColumnBytes": docs.iter().map(|p| p.facts.bytes()).sum::<usize>(), "identityCapacityBytes": identities, "extraSpanCapacityBytes": extras}).to_string()
         });
-        crate::code_rule_dsl::logic::profile::decision("projection demand",||serde_json::json!({"coreNodes":if core_nodes {docs.iter().map(|p|p.core.len()).sum::<usize>()}else{0},"scalarNodes":visited,"nodes":docs.iter().map(|p|p.core.len()).sum::<usize>(),"strings":strings.len(),"reads":projection.reads}).to_string());
+        crate::code_rule_dsl::logic::profile::decision("projection demand",||serde_json::json!({"coreNodes":if core_nodes {docs.iter().map(|p| p.len() as usize).sum::<usize>()}else{0},"scalarNodes":visited,"nodes":docs.iter().map(|p| p.len() as usize).sum::<usize>(),"strings":strings.len(),"reads":projection.reads}).to_string());
         let intern = crate::code_rule_dsl::logic::profile::span(|| "intern atoms".into());
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, strings.len() as u64);
         let atoms = store.intern_atoms(&strings.iter().map(String::as_str).collect::<Vec<_>>())?;
@@ -3456,8 +3460,8 @@ impl Batch {
             docs.iter().for_each(|p| v.push(v.last().unwrap() + count(p)));
             v
         };
-        let nodes = offsets(&|p| p.core.len());
-        let children = offsets(&|p| p.core.len().saturating_sub(1));
+        let nodes = offsets(&|p| p.len() as usize);
+        let children = offsets(&|p| (p.len() as usize).saturating_sub(1));
         let fields = offsets(&|p| if projection.wants("field") { p.fielded().len() } else { 0 });
         let locs = OnceLock::new();
         // W's values on request (decision 0174): the tapes of the documents W reads values of.
@@ -3649,8 +3653,8 @@ pub fn node_column_counts(batch: &Batch, column: usize) -> Option<(i64, i64, Opt
             for p in &batch.docs {
                 let dialect = &batch.dialects[p.tag];
                 let counts = by_code.entry(p.tag).or_default();
-                for l in 0..p.len() {
-                    let code = usize::from(dialect.code(&p.facts, p.core[l as usize]));
+                for (_, id) in p.nodes() {
+                    let code = usize::from(dialect.code(&p.facts, id));
                     if counts.len() <= code {
                         counts.resize(code + 1, 0);
                     }
@@ -3762,7 +3766,7 @@ impl Source for Viewed {
         if column == 2 {
             let Some((doc, local)) = b.node(value) else { return Some(Vec::new()) };
             let p = &b.docs[doc];
-            let own = i64::from(field_atom(p.tag, p.facts.field(p.core[local as usize]))) == f;
+            let own = i64::from(field_atom(p.tag, p.facts.field(p.node(local as u32)))) == f;
             return Some(if own { b.row(View::Field, doc, local).into_iter().collect() } else { Vec::new() });
         }
         if column != 0 {
@@ -3771,8 +3775,8 @@ impl Source for Viewed {
         let mut rows = Vec::new();
         if let Some((doc, local)) = b.node(value) {
             let p = &b.docs[doc];
-            p.each_child(local, |c| {
-                if i64::from(field_atom(p.tag, p.facts.field(p.core[c as usize]))) == f {
+            p.each_child_node(local, |c, x| {
+                if i64::from(field_atom(p.tag, p.facts.field(x))) == f {
                     rows.extend(b.row(View::Field, doc, c));
                 }
             });
@@ -3805,11 +3809,11 @@ impl Source for Viewed {
         let mut out = Vec::new();
         for (doc, p) in self.batch.docs.iter().enumerate() {
             let base = offsets[doc];
-            for i in 0..offsets[doc + 1] - base {
-                if eqs.iter().all(|&(c, v)| self.value_at(p, i, c) == v) {
+            self.each_row(p, offsets[doc + 1] - base, eqs.iter().map(|&(c, _)| c), |i, value| {
+                if eqs.iter().all(|&(c, v)| value(c) == v) {
                     out.push((base + i) as u32);
                 }
-            }
+            });
         }
         out
     }
@@ -3817,15 +3821,36 @@ impl Source for Viewed {
         let offsets = self.batch.offsets(self.view);
         out.reserve(self.len() * columns.len());
         for (doc, p) in self.batch.docs.iter().enumerate() {
-            for i in 0..offsets[doc + 1] - offsets[doc] {
-                out.extend(columns.iter().map(|&c| self.value_at(p, i, c)));
-            }
+            self.each_row(p, offsets[doc + 1] - offsets[doc], columns.iter().copied(), |_, value| out.extend(columns.iter().map(|&c| value(c))));
         }
     }
+    fn for_rows(&self, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) {
+        let offsets = self.batch.offsets(self.view);
+        let mut row = vec![0i64; columns.len()];
+        for (doc, p) in self.batch.docs.iter().enumerate() {
+            let base = offsets[doc];
+            self.each_row(p, offsets[doc + 1] - base, columns.iter().copied(), |i, value| {
+                for (o, &c) in row.iter_mut().zip(columns) {
+                    *o = value(c);
+                }
+                each(base + i, &row);
+            });
+        }
+    }
+    /// The row's node selected once (`Projected::node`), however many columns read it.
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
         let (p, i) = self.batch.locate(self.view, row);
+        if matches!(self.view, View::Loc(_)) {
+            for (o, &c) in out.iter_mut().zip(columns) {
+                *o = self.value_at(p, i, c);
+            }
+            return;
+        }
+        let local = self.local_of_row(p, i);
+        let node = std::cell::OnceCell::new();
+        let up = std::cell::OnceCell::new();
         for (o, &c) in out.iter_mut().zip(columns) {
-            *o = self.value_at(p, i, c);
+            *o = self.value_of(p, local, &|| *node.get_or_init(|| p.node(local)), &|| *up.get_or_init(|| p.parent(local as usize)), c);
         }
     }
 }
@@ -3854,9 +3879,9 @@ impl Viewed {
                 rows.extend(b.doc(v).map_or(0..0, |doc| b.nodes[doc]..b.nodes[doc + 1]));
             } else if matches!(self.view, View::Core) && column == 1 {
                 // A tape node of each document that has it as a node; the statement filters `d`.
-                let Ok(t) = usize::try_from(v) else { continue };
+                let Ok(t) = u32::try_from(v) else { continue };
                 for (doc, p) in b.docs.iter().enumerate().filter(|(doc, _)| kept(doc)) {
-                    if let Some(&local) = p.local.get(t).filter(|&&local| local != NONE) {
+                    if let Some(local) = p.ranks().local(Item::Node, t) {
                         rows.push(b.nodes[doc] + local as usize);
                     }
                 }
@@ -3868,7 +3893,7 @@ impl Viewed {
                 let atoms: Vec<u32> = dialect.codes.get(&code).map_or(&[][..], Vec::as_slice).iter().map(|&c| kind_atom(tag, c)).collect();
                 for (doc, p) in b.docs.iter().enumerate().filter(|(doc, p)| p.tag == tag && kept(doc)) {
                     for &kind in &atoms {
-                        rows.extend(p.facts.of_kind(kind).iter().map(|&id| p.local[id as usize]).filter(|&l| l != NONE).map(|l| b.nodes[doc] + l as usize));
+                        rows.extend(p.facts.of_kind(kind).iter().map(|&id| p.local_of_node(id as u32)).filter(|&l| l != NONE).map(|l| b.nodes[doc] + l as usize));
                     }
                 }
             } else {
@@ -3884,6 +3909,46 @@ impl Viewed {
 }
 
 impl Viewed {
+    /// Each of document `p`'s `n` rows in this view, in order: its index and its columns' reader. A view whose rows are
+    /// nodes visits them in order (`Projected::nodes`), so a row's tape node comes with it, not from a select a row;
+    /// where `columns` read the parent, the walk (`Projected::walk`) brings it too, not a tape parent read a row.
+    fn each_row(&self, p: &Projected, n: usize, columns: impl Iterator<Item = usize>, mut row: impl FnMut(usize, &dyn Fn(usize) -> i64)) {
+        let up = |l: u32| p.parent(l as usize);
+        let walked = self.parent().is_some_and(|q| columns.into_iter().any(|c| c == q));
+        let visit = |row: &mut dyn FnMut(usize, &dyn Fn(usize) -> i64), skip: usize, only: Option<&[u32]>| {
+            let mut i = 0;
+            let mut each = |l: u32, x: u32, q: &dyn Fn() -> u32| {
+                if let Some(only) = only {
+                    if only.get(i) != Some(&l) {
+                        return;
+                    }
+                }
+                row(i, &|c| self.value_of(p, l, &|| x, q, c));
+                i += 1;
+            };
+            if walked {
+                for (l, x, q) in p.walk().skip(skip) {
+                    each(l, x, &|| q);
+                }
+            } else {
+                for (l, x) in p.nodes().skip(skip) {
+                    each(l, x, &|| up(l));
+                }
+            }
+        };
+        match self.view {
+            View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order => visit(&mut row, 0, None),
+            View::Child => visit(&mut row, 1, None),
+            // The nodes below the root with a field, in order (`fielded`).
+            View::Field => visit(&mut row, 1, Some(&p.fielded()[..])),
+            View::Loc(_) => {
+                for i in 0..n {
+                    row(i, &|c| self.value_at(p, i, c));
+                }
+            }
+        }
+    }
+
     /// Column `column` of row `i` of document `p` in this view.
     fn value_at(&self, p: &Projected, i: usize, column: usize) -> i64 {
         if let View::Loc(place) = self.view {
@@ -3900,27 +3965,38 @@ impl Viewed {
                 Place::Docof => i64::from(p.key),
             };
         }
-        let local = match self.view {
+        let local = self.local_of_row(p, i);
+        self.value_of(p, local, &|| p.node(local), &|| p.parent(local as usize), column)
+    }
+
+    /// The local id of document `p`'s row `i` in this view.
+    fn local_of_row(&self, p: &Projected, i: usize) -> u32 {
+        match self.view {
             View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order | View::Loc(_) => i as u32,
             View::Child => i as u32 + 1,
             View::Field => p.fielded()[i],
-        };
+        }
+    }
+
+    /// Column `column` of node `local`'s row in this view, its tape node and parent (`Projected::parent`) read by
+    /// `node` and `up` when the column needs them.
+    fn value_of(&self, p: &Projected, local: u32, node: &dyn Fn() -> u32, up: &dyn Fn() -> u32, column: usize) -> i64 {
         let l = local as usize;
-        let id = p.core[l] as usize;
-        let parent = || match p.parent(l) {
+        let id = || node() as usize;
+        let parent = || match up() {
             NONE => -1,
             q => p.global(q),
         };
         match (self.view, column) {
             (View::Node | View::Core, 0) => i64::from(p.key),
-            (View::Core, 1) => id as i64,
-            (View::Node, 2) => self.batch.dialects[p.tag].kind(&p.facts, id as u32),
-            (View::Node, 3) => i64::from(p.facts.start(id as u32)),
-            (View::Node, 4) => i64::from(p.facts.end(id as u32)),
-            (View::Line, 1) => i64::from(p.facts.start_line(id as u32)),
+            (View::Core, 1) => id() as i64,
+            (View::Node, 2) => self.batch.dialects[p.tag].kind(&p.facts, id() as u32),
+            (View::Node, 3) => i64::from(p.facts.start(id() as u32)),
+            (View::Node, 4) => i64::from(p.facts.end(id() as u32)),
+            (View::Line, 1) => i64::from(p.facts.start_line(id() as u32)),
             (View::Child | View::Field, 0) | (View::Tape, 1) => parent(),
             (View::Child, 2) => i64::from(p.idx(l)),
-            (View::Field, 1) => i64::from(field_atom(p.tag, p.facts.field(id as u32))),
+            (View::Field, 1) => i64::from(field_atom(p.tag, p.facts.field(id() as u32))),
             (View::Tape, 2) => i64::from(p.size(l)),
             (View::Tape, 3) => i64::from(p.depth(l)),
             (View::Depth, 1) => i64::from(p.depth(l)),
@@ -3940,11 +4016,9 @@ pub fn field_atom(tag: u8, code: u16) -> u32 {
 pub fn definitions(key: u32, facts: &Arc<Facts>) -> StoreResult<HashMap<(u32, u32), i64>> {
     let dialect = Dialect::new(crate::code_rule_dsl::facts::core::facts_tag(facts))?;
     let p = Projected::new(key, Arc::clone(facts), Some(&dialect), Shape::T, false, None);
-    Ok(p.core
-        .iter()
-        .enumerate()
-        .filter(|(_, id)| matches!(dialect.name(facts, **id), "function_definition" | "class_definition"))
-        .map(|(local, &id)| ((facts.start(id), facts.end(id)), p.global(local as u32)))
+    Ok(p.nodes()
+        .filter(|&(_, id)| matches!(dialect.name(facts, id), "function_definition" | "class_definition"))
+        .map(|(local, id)| ((facts.start(id), facts.end(id)), p.global(local)))
         .collect())
 }
 

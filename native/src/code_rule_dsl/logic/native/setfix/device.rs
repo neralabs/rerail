@@ -1372,14 +1372,15 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     let row_of = |r: usize| ids.as_ref().map_or(r, |ids| ids[r]);
                     match (&owner, &rel.view) {
                         (Owner::Src(_), Some(view)) => {
-                            // The source's rows, the columns held read at once per row (`Source::row_at`).
-                            let mut row = vec![0i64; k];
-                            for r in 0..n {
-                                view.src.row_at(r, &want, &mut row);
+                            // The source's rows in order, the columns held read at once per row (`Source::for_rows`).
+                            view.src.for_rows(&want, &mut |r, row| {
+                                if r >= n {
+                                    return;
+                                }
                                 for (c, &x) in row.iter().enumerate() {
                                     v[c * n + r] = x;
                                 }
-                            }
+                            });
                         }
                         (_, None) => {
                             // Each wanted value read where it lies (`RowRef::Rows`), not the row copied whole.

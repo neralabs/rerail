@@ -97,6 +97,16 @@ pub trait Source: Send + Sync {
             *o = self.value(row, c);
         }
     }
+    /// Each row's values of `columns`, row after row, given to `each` with the row's number: `row_at` a row at a time
+    /// by default; a view of a batch's documents walks each document's nodes once, finding no row's place and
+    /// selecting no node.
+    fn for_rows(&self, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) {
+        let mut row = vec![0i64; columns.len()];
+        for r in 0..self.len() {
+            self.row_at(r, columns, &mut row);
+            each(r, &row);
+        }
+    }
     /// Every row's values of `columns`, row after row, appended to `out`: `row_at` a row at a time by default; a
     /// view of a batch's documents reads each document's rows in turn, finding no row's place.
     fn rows_of(&self, columns: &[usize], out: &mut Vec<i64>) {

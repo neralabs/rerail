@@ -194,11 +194,35 @@ Findings stay 1,629 on hogql. Interleaved first runs on fresh stores, at load 22
 instructions, and with the table built beside the arrays 71.8 B, inside the earlier spread of 65.7–80 B. The table's
 build is 0.05 s of CPU (the `granule slots` span).
 
+`Projected`'s `core`, `local`, `up` and `size` are gone (2026-11-17). Which tape nodes are the projection's nodes
+and tokens is the rank index (`syntax/ranks.rs`, in the batch's block): per 64 tape nodes, the nodes' bits, the
+tokens' bits and the counts before, and a select sample per 64 items. The granule table reads it too, so the table
+holds no groups of its own. The reads, by kind of reader:
+- a pass visits the set bits in order (`Projected::nodes`), and with the open subtrees it carries each node's parent
+  (`walk`, `walk_up`), not a parent read a node;
+- a node's byte spans in local order come from one pass (`spans`);
+- a point read selects once a row (`Viewed::row_at`, however many columns read it);
+- the vtab's bulk reads (`filter_eq`, `rows_of`, and the new `Source::for_rows`, which the device's upload uses) visit
+  each document's nodes once, and walk only when a column reads the parent.
+
+Checks: the walk's parent equals `parent` for every node of the test's documents, in every format and both shapes, and
+a view's row passes equal its per-row reads (`for_rows`, `rows_of` and `filter_eq` on `node`, `child`, `field`,
+`tape`). Findings stay 1,629 on hogql. Three interleaved pairs on fresh stores, at load 45–58: 232.4 B instructions
+for the base, 227.4 B without the arrays, inside the spread of each binary's own runs (±5 B). The span profile's self
+time is 6.34 s against 6.35 s.
+
+The first build without the arrays was 7% more instructions. Sampled call stacks showed where: each loop that went
+`0..len` and selected a node a step (`Ranks::select`), a scan that read the tape parent a row (`Facts::parent`), and
+the vtab's reads selecting once per column. Those are now the passes above. What still costs, by the span profile:
+- `idx` and `depth`, each one walk of a projection (0.04 s a run each), still held as arrays;
+- `open: input load` (+0.09 s): `setfix::view`'s filter reads each candidate row's values by point reads.
+
 Still to do in step 2:
+- `idx`, `depth` and `fielded` read in place;
+- `DefIds`' `low`, `order` and `back` replaced by the table (`order` needs each document's run starts);
 - place the table and its rank index in the batch's block beside the tape;
 - write the reads once in CLIF, for Rust and MSL;
-- answer a narrowed projection (anchors) too;
-- then remove `Projected`'s arrays and `DefIds`.
+- answer a narrowed projection (anchors) too.
 
 ## The copies today
 
@@ -206,9 +230,9 @@ Each row is marked in the code with `copy (0353 step N)`.
 
 | # | Copy | Where | Size or cost (hogql) | Removed by |
 |---|---|---|---|---|
-| 1 | The projection's per-node arrays: `core`, `local`, `up`, `idx`, `fielded`, `size`, `depth` | `syntax.rs`, `Projected` | 4 bytes a node each | Step 2 |
+| 1 | The projection's per-node arrays: `idx`, `fielded`, `depth` (`core`, `local`, `up` and `size` are gone: the rank index) | `syntax.rs`, `Projected` | 4 bytes a node each | Step 2 |
 | 2 | Definition ids by node: `DefIds::low`, `order`, `back` | `syntax.rs`, `DefIds` | 4 + 4 + 8 bytes a node | Step 2 |
-| 3 | The chunk block's node columns: `start`, `end`, `kind`, `field`, and the canonical code copy | `device_chunk.rs`, `build` (`made`, `put`) | 14 bytes a node; 0.07 s a run | Step 4 |
+| 3 | The chunk block's node columns: `core`, `up`, `start`, `end`, `kind`, `field`, and the canonical code copy. `core` and `up` are made here from the rank index and the walk, now that the host holds no arrays of them. | `device_chunk.rs`, `build` (`made`, `made_in_order`, `put`) | 22 bytes a node; 0.07 s a run | Step 4 |
 | 4 | Views expanded into device relations | `metal_join.rs`, `expand_view`; `device.rs`, `resident` | 660.8 MB, 111.5 ms a run | Step 4 |
 | 5 | Views, flat relations and names uploaded from the host | `metal_join.rs`, `DevRel::upload`; `device.rs`, `resident`, `texts` | 7.4 MB, 22.1 ms a run | Steps 4, 6 |
 | 6 | An axis's pairs copied into the chunk, then expanded to ids | `within.rs`; `device_chunk.rs`, `put_pairs`; `VIEW_AXIS` | 8 bytes a pair, then the expansion | Step 5 |
