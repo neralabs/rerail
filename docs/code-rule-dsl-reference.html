@@ -506,20 +506,32 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <tr><td><span class="b">sql</span></td><td>sql</td><td><code>sql</code>: <code>.sql</code></td><td>sql</td></tr>
 <tr><td><span class="b">rr</span></td><td>rr</td><td><code>rr</code>: <code>.rr</code></td><td>rr</td></tr>
 <tr><td><span class="b">java</span></td><td>java</td><td><code>java</code>: <code>.java</code></td><td>java</td></tr>
+<tr><td><span class="b">json</span></td><td>json</td><td><code>json</code>: <code>.json</code></td><td>json</td></tr>
+<tr><td><span class="b">csharp</span></td><td>csharp</td><td><code>csharp</code>: <code>.cs</code></td><td>csharp</td></tr>
+<tr><td><span class="b">html</span></td><td>html</td><td><code>html</code>: <code>.html</code>, <code>.htm</code></td><td>html</td></tr>
+<tr><td><span class="b">css</span></td><td>css</td><td><code>css</code>: <code>.css</code></td><td>css</td></tr>
+<tr><td><span class="b">markdown</span></td><td>markdown, markdown-inline</td><td><code>markdown</code>: <code>.md</code>, <code>.markdown</code>; <code>markdown-inline</code>: none (the content of a block's <code>inline</code> nodes)</td><td>markdown</td></tr>
+<tr><td><span class="b">go</span></td><td>go</td><td><code>go</code>: <code>.go</code></td><td>go</td></tr>
+<tr><td><span class="b">c</span></td><td>c</td><td><code>c</code>: <code>.c</code></td><td>c</td></tr>
+<tr><td><span class="b">cpp</span></td><td>cpp</td><td><code>cpp</code>: <code>.cc</code>, <code>.cpp</code>, <code>.cxx</code>, <code>.c++</code>, <code>.hpp</code>, <code>.hxx</code>, <code>.hh</code>, <code>.h++</code>, <code>.h</code></td><td>c</td></tr>
 </tbody></table></div>
 <div class="table-wrap"><table>
-<thead><tr><th>Capability</th><th>Predicates</th><th>python</th><th>ecma</th><th>php</th><th>blade</th><th>rust</th><th>vue</th><th>sql</th><th>rr</th><th>java</th></tr></thead>
+<thead><tr><th>Capability</th><th>Predicates</th><th>python</th><th>ecma</th><th>php</th><th>blade</th><th>rust</th><th>vue</th><th>sql</th><th>rr</th><th>java</th><th>json</th><th>csharp</th><th>html</th><th>css</th><th>markdown</th><th>go</th><th>c</th></tr></thead>
 <tbody>
-<tr><td>Scope</td><td><code>resolves</code>, <code>binds</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>not yet</td></tr>
-<tr><td>Value</td><td><code>value</code>, <code>compare</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>not yet</td></tr>
-<tr><td>Arguments</td><td><code>arguments</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>not yet</td></tr>
-<tr><td>Calls</td><td><code>calls</code></td><td>yes</td><td>no</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>no</td><td>no</td><td>not yet</td></tr>
-<tr><td>Format arguments</td><td><code>formatArgs</code></td><td>yes</td><td>no</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>no</td><td>no</td><td>not yet</td></tr>
-<tr><td>Suppression</td><td><code>suppress</code></td><td><code>noqa</code>, <code>nosec</code></td><td><code>eslint</code>, <code>oxlint</code>, <code>biome</code></td><td><code>phpstan</code>, <code>psalm</code>, <code>phpcs</code></td><td>none</td><td><code>clippy</code></td><td><code>eslint</code></td><td><code>sqlfluff</code></td><td>none</td><td>none</td></tr>
+<tr><td>Scope</td><td><code>resolves</code>, <code>binds</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>not yet</td><td>no</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td></tr>
+<tr><td>Value</td><td><code>value</code>, <code>compare</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>not yet</td><td>no</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td></tr>
+<tr><td>Arguments</td><td><code>arguments</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>not yet</td><td>no</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td></tr>
+<tr><td>Calls</td><td><code>calls</code></td><td>yes</td><td>no</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>no</td><td>no</td><td>not yet</td><td>no</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td></tr>
+<tr><td>Format arguments</td><td><code>formatArgs</code></td><td>yes</td><td>no</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>no</td><td>no</td><td>not yet</td><td>no</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td><td>not yet</td></tr>
+<tr><td>Suppression</td><td><code>suppress</code></td><td><code>noqa</code>, <code>nosec</code></td><td><code>eslint</code>, <code>oxlint</code>, <code>biome</code></td><td><code>phpstan</code>, <code>psalm</code>, <code>phpcs</code></td><td>none</td><td><code>clippy</code></td><td><code>eslint</code></td><td><code>sqlfluff</code></td><td>none</td><td>none</td><td>none</td><td>none</td><td>none</td><td>none</td><td>none</td><td>none</td><td>none</td></tr>
 </tbody></table></div>
 <p>TypeScript rules also run on JavaScript with the JavaScript grammar; kinds unique to another dialect are <code>Never</code> there.</p>
 
 <p><b>Java.</b> Structural terms only, over tree-sitter-java 0.23.5: its files parse and <code>kind</code>, <code>pattern</code>, <code>regex</code>, the relations, <code>field</code>, <code>nthChild</code>, <code>count</code>, <code>layout</code> and <code>matches</code> run. Every semantic capability is <i>not yet</i> supported: a rule naming <code>resolves</code>, <code>binds</code>, <code>value</code>, <code>compare</code> (in every text mode), <code>arguments</code>, <code>calls</code> or <code>formatArgs</code>, or whose <code>transform</code> reads a value (<code>toPrecision</code>, a <code>value</code> source), is stored but refused with <code>language-not-supported</code>, and stays inactive until the engine reads it. <code>languageOptions</code>, <code>parse</code> and <code>suppress</code> are refused. The grammar does not parse a type-use annotation on an array or varargs type (<code>@Nullable Object @Nullable ... args</code>), nor Java 25&#39;s flexible constructor bodies and module imports: such a file is read around the syntax error.</p>
+
+<p><b>C#, HTML, CSS, Markdown, Go, C and C++.</b> Structural terms only, as Java, over tree-sitter-c-sharp 0.23.5, tree-sitter-html 0.23.2, tree-sitter-css 0.25.0, tree-sitter-md 0.5.4, tree-sitter-go 0.25.0, tree-sitter-c 0.24.2 and tree-sitter-cpp 0.23.4. Every semantic capability is <i>not yet</i> supported: a rule naming one, or whose <code>transform</code> reads a value, is stored but refused with <code>language-not-supported</code>, and stays inactive until the engine reads it. <code>languageOptions</code>, <code>parse</code> and <code>suppress</code> are refused. C and C++ are one family, <code>c</code>, with a dialect each; <code>.h</code> is read as C++, since tree-sitter-cpp reads C headers and tree-sitter-c does not read C++ ones. Markdown's <code>markdown-inline</code> dialect is no file's: it reads the content of the block grammar's <code>inline</code> nodes.</p>
+
+<p><b>JSON.</b> Every semantic capability is refused, as for rr: a rule naming one is invalid. Rules read its tree, in tree-sitter-json 0.24.8's kinds, with structural terms; <code>languageOptions</code>, <code>parse</code> and <code>suppress</code> are refused.</p>
 
 <p><b>PHP.</b> PHP-only files; <code>.blade.php</code> templates use Blade.</p>
 <ul>
@@ -719,6 +731,8 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <li><b>Blade, Vue</b>: the template's comments; under <a href="#embedded"><code>ast.embedded</code></a>, the program's (<a href="#blade">Blade</a>, <a href="#vue">Vue</a>).</li>
 <li><b>Rust</b>: <code>line_comment</code> and <code>block_comment</code>; a doc comment has an <code>outer_doc_comment_marker</code> or <code>inner_doc_comment_marker</code> child and a <code>doc_comment</code> text child.</li>
 <li><b>Java</b>: <code>line_comment</code> and <code>block_comment</code>; a Javadoc comment is a <code>block_comment</code>, told apart by its opening (below).</li>
+<li><b>CSS</b>: <code>comment</code> (<code>/* */</code>) and <code>js_comment</code>, a <code>//</code> line, which tree-sitter-css reads too.</li>
+<li><b>Markdown</b>: none; an HTML comment is an <code>html_block</code>.</li>
 </ul>
 <p>Elsewhere, tell line, block and doc comments apart by their opening, with <code>regex</code>:</p>
 <div class="table-wrap"><table>
@@ -5537,7 +5551,7 @@ ModuleType = "unknown" | "relative" | "absolute" | "node" | "npm" | "http" | "da
 <li>A witness regex group's text is known only once the rule matched.</li>
 <li><code>toPrecision</code> reads a numeric literal as written (<code>0x</code>, <code>0o</code>, <code>0b</code>, legacy octal and <code>_</code> separators included) or a <code>value</code>'s text. <code>digits</code> is a number, or the text of another capture or variable read as an integer.</li>
 <li>ESLint's <code>no-loss-of-precision</code> compares a literal with <code>value.toPrecision(n)</code> for its <code>n</code> significant digits: <code>9223372036854775808</code> is exact at 19 digits though <code>String</code> gives <code>9223372036854776000</code>.</li>
-<li><code>toPrecision</code> gives the empty text where the source is no number (a BigInt, a name) or the digits no integer from 1 to 100, and <code>String(x)</code> for an infinite or NaN number. Other families' numbers are not laid out as ECMAScript's, so compiling it there is refused; in a language whose values are not read yet (Java), it is <code>language-not-supported</code> instead.</li>
+<li><code>toPrecision</code> gives the empty text where the source is no number (a BigInt, a name) or the digits no integer from 1 to 100, and <code>String(x)</code> for an infinite or NaN number. Other families' numbers are not laid out as ECMAScript's, so compiling it there is refused; in a language whose values are not read yet (Java, C#, HTML, CSS, Markdown, Go, C, C++), it is <code>language-not-supported</code> instead.</li>
 <li><code>line</code> uses the linter's terminators. <code>count</code> skips comments and Python line continuations.</li>
 <li><code>default: ""</code> with <code>replace: "^$"</code> supplies a fallback. Without <code>default</code>, an unbound source gives the empty text and runs no operation, as upstream.</li>
 <li><code>value: true</code> conversions: JavaScript <code>String(v)</code> (<code>'\x61'</code> is <code>a</code>, <code>1e2</code> is <code>100</code>); Python <code>str(v)</code> (<code>1e2</code> is <code>100.0</code>).</li>
