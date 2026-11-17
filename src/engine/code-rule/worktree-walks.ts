@@ -13,7 +13,8 @@
  * every file of every worktree on each walk: with 190 worktrees, about 5 s of the daemon's main thread a walk.
  */
 import { sep } from "node:path";
-import { gitHead, gitModifiedOrUntrackedPaths, GitReads, gitTrackedIgnoredReader, gitUnmergedReader } from "../git.js";
+import { gitModifiedOrUntrackedPaths, GitReads, gitTrackedIgnoredReader, gitUnmergedReader } from "../git.js";
+import { readGitHead } from "../git-head-reader.js";
 import type { ObservedSource, ScanError, Source, SourceScan } from "./code-rule-bridge.js";
 import type { TreeWatch } from "./tree-watch.js";
 import { lookMoved, type WalkFiles, type WorktreeLook, WorktreeLooks } from "./worktree-look.js";
@@ -703,7 +704,7 @@ export class WorktreeWalks {
     const checkouts = new Map<string, CheckoutState>();
     const git = this.#git;
     for (const root of roots) {
-      const head = await git.run(signal => gitHead(root, { signal }));
+      const head = await git.run(signal => readGitHead(root, { signal }));
       if (head === undefined) {
         checkouts.set(root, { head, unmerged: undefined, trackedIgnored: undefined });
         continue;

@@ -3,6 +3,7 @@ import type * as FileSystem from "node:fs/promises";
 import { cp, lstat, mkdir, mkdtemp, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve, sep } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { removeFolder, runningIn } from "../../../support/platform/remove-folder.js";
 import { CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
@@ -26,6 +27,7 @@ const counted = vi.hoisted(() => ({
   held: new Map<string, () => Promise<void>>(),
   listings: new Map<string, number>(),
   busy: new Set<string>(),
+  heads: 0,
 }));
 vi.mock("../../../../src/engine/code-rule/walk-read-buffers.js", async importOriginal => {
   const actual = await importOriginal<typeof WalkReads>();
@@ -64,6 +66,15 @@ vi.mock("../../../../src/engine/git.js", async importOriginal => {
     gitModifiedOrUntrackedPaths: async (...args: Parameters<typeof actual.gitModifiedOrUntrackedPaths>) => {
       counted.listings.set(args[0], (counted.listings.get(args[0]) ?? 0) + 1);
       return await actual.gitModifiedOrUntrackedPaths(...args);
+    },
+    // Each question of `HEAD` that starts Git: `gitHead`, or a `rev-parse` naming `HEAD`.
+    gitHead: async (...args: Parameters<typeof actual.gitHead>) => {
+      counted.heads += 1;
+      return await actual.gitHead(...args);
+    },
+    runGitAsync: async (...args: Parameters<typeof actual.runGitAsync>) => {
+      if (args[1].includes("rev-parse") && args[1].includes("HEAD")) counted.heads += 1;
+      return await actual.runGitAsync(...args);
     },
   };
 });
@@ -437,7 +448,10 @@ async function heldTake(first: Session, second: Session, worktree: string): Prom
 }
 /** How many times `lstat` was asked about each of `roots` or anything in it. */
 function statsUnder(...roots: string[]): number[] {
-  return roots.map(root => stats.filter(path => path === root || path.startsWith(`${root}${sep}`)).length);
+  // The entries of each root's tree: the HEAD reader's look at its `.git` entry and at what is inside a `.git` folder
+  // (the owners Git checks, `git-head-reader.ts`) is no look at an entry.
+  const inGit = (path: string): boolean => path.split(sep).includes(".git");
+  return roots.map(root => stats.filter(path => (path === root || path.startsWith(`${root}${sep}`)) && !inGit(path.slice(root.length))).length);
 }
 
 /** Every batch of edits a session's auditor was given, whole, with its mode. */
@@ -521,6 +535,22 @@ describe("a walk of the other worktrees with change notices", () => {
     // `w3`, its `src` and `src/a.py`, once for both sessions.
     expect(statsUnder(main, worktrees[2]!)).toEqual([0, 3]);
     expect([audited(first), audited(second)]).toEqual([[[["written ../w3/src/a.py"], "log"]], [[["written ../w3/src/a.py"], "log"]]]);
+  });
+
+  it("asks Git for no worktree's HEAD at the walks after their first, while the files Git reads it from hold", async () => {
+    const { worktrees, checkouts } = await repository();
+    const watching = await session(worktrees[0]!, checkouts, noticedWalks());
+    // A configuration file vouches for a checkout's files only once it is the reader's settle time (2 s) old.
+    await sleep(2_100);
+    await turn(watching);
+    counted.heads = 0;
+    for (const round of [1, 2, 3]) {
+      await writeFile(join(worktrees[2]!, "src", "a.py"), `old\n${round}\n`);
+      await turn(watching);
+    }
+    // The walks still follow the worktree: its last write is recorded in Log.
+    expect(audited(watching).at(-1)).toEqual([["written ../w3/src/a.py"], "log"]);
+    expect(counted.heads).toBe(0);
   });
 
   it("reads a worktree whose HEAD moved though no file in it changed", async () => {

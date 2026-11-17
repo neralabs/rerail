@@ -21,7 +21,6 @@ import {
   gitBranchTips,
   gitCommitsBetween,
   gitCrlfPaths,
-  gitHead,
   gitModifiedOrUntrackedListing,
   gitModifiedOrUntrackedPaths,
   GitReads,
@@ -32,6 +31,7 @@ import {
   type ChangedPathsListing,
   type CrlfRule,
 } from "../git.js";
+import { readGitHead } from "../git-head-reader.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { removeScratch, renameWithRetry } from "../file-replace.js";
@@ -202,7 +202,7 @@ interface GitView extends GitBlobs {
 }
 async function readGitView(discovery: SourceDiscovery, checkout: string, paths: readonly string[]): Promise<GitBlobs | undefined> {
   const { git } = discovery;
-  const head = await git.run(signal => gitHead(checkout, { signal }));
+  const head = await git.run(signal => readGitHead(checkout, { signal }));
   if (head === undefined) return undefined;
   const from = discovery.heads.get(checkout);
   if (from === undefined) discovery.heads.set(checkout, head);
@@ -2382,7 +2382,7 @@ export class CodeRuleBridge {
     const session = this.#owningCheckout(discovery.root, "");
     const withHead = new Set(session === undefined ? others : [session, ...others]);
     for (const root of withHead) {
-      const head = await discovery.git.run(signal => gitHead(root, { signal }));
+      const head = await discovery.git.run(signal => readGitHead(root, { signal }));
       if (head === undefined) continue;
       heads.set(root, head);
       await readEntries(root);

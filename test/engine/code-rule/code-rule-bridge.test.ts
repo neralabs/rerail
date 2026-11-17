@@ -21,6 +21,7 @@ import { MAX_FINISHED_CALLS, ToolCallWindows } from "../../../src/engine/code-ru
 import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
 import type { IgnoreRulesChange } from "../../../src/engine/code-rule/ignore-rule-files.js";
 import type * as Git from "../../../src/engine/git.js";
+import type * as HeadReader from "../../../src/engine/git-head-reader.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
 import type * as WalkReads from "../../../src/engine/code-rule/walk-read-buffers.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
@@ -54,6 +55,18 @@ const listings = vi.hoisted(() => ({
   next: [] as Array<{ asked(checkout: string): void; released: Promise<void> }>, delayMs: 0,
   asked: [] as Array<{ checkout: string; asked: number; answered: number | undefined }>,
 }));
+/** How many times a checkout's `HEAD` was read (`readGitHead`), whether from Git's files or by asking Git. */
+const headReads = vi.hoisted(() => ({ count: 0 }));
+vi.mock("../../../src/engine/git-head-reader.js", async importOriginal => {
+  const actual = await importOriginal<typeof HeadReader>();
+  return {
+    ...actual,
+    readGitHead: async (...args: Parameters<typeof actual.readGitHead>) => {
+      headReads.count += 1;
+      return await actual.readGitHead(...args);
+    },
+  };
+});
 /** For each path in it, the next file handles opened there call these, in turn, once closed (`readEnded`). */
 const closedReads = vi.hoisted(() => new Map<string, Array<() => void>>());
 /** How many of the next Git reads run, in Git's place, a program that stays until it is ended, as a Git still at work does. */
@@ -1544,10 +1557,11 @@ describe("CodeRuleBridge", () => {
     const root = await workspace();
     git(root, "init", "--quiet");
     const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))));
-    // The first session's walk reads HEAD first, through a Git that runs until it is ended.
+    // The first session's walk reads HEAD first, through a Git that runs until it is ended. The read looks at Git's own
+    // files before it starts that Git, so the Git starts a moment after the open returns.
     heldGit.reads = 1;
     await bridge.openWorkspace("session-1");
-    const first = runningIn(root);
+    const first = await runningSoon(root);
     expect(first).not.toEqual([]);
 
     await bridge.openWorkspace("session-2");
@@ -1706,18 +1720,30 @@ async function opened(root: string, extra: Partial<CodeRuleAuditor> = {}, worktr
   await bridge.settleWorktreeWalk();
   return { bridge, auditGeneratedEdits };
 }
+/** The processes this test started that run in `folder`, once there is one, or none after 5 s. */
+async function runningSoon(folder: string): Promise<string[]> {
+  for (const deadline = Date.now() + 5_000; Date.now() < deadline; await new Promise(wake => setTimeout(wake, 10))) {
+    const running = runningIn(folder);
+    if (running.length > 0) return running;
+  }
+  return [];
+}
 /** Runs `run` as a shell tool call of `bridge`, and what the call's finish answered. */
 async function shell(bridge: CodeRuleBridge, run: () => void | Promise<void>): Promise<readonly CodeRuleResponse[]> {
   await bridge.begin("shell-1", "shell", { command: "./run.sh" });
   await run();
   return await bridge.finish("shell-1");
 }
-/** How many Git processes `run` started to read a checkout's `HEAD`, and to list its unmerged entries. */
+/**
+ * How many times `run` read a checkout's `HEAD` (`readGitHead`, which asks Git only when its files cannot answer), and
+ * how many Git processes it started to list a checkout's unmerged entries.
+ */
 async function gitReads(run: () => Promise<unknown>): Promise<{ heads: number; entries: number }> {
   asyncGitCalls.args.length = 0;
+  const before = headReads.count;
   await run();
   const named = (name: string) => asyncGitCalls.args.filter(args => args.includes(name)).length;
-  return { heads: named("--verify"), entries: named("--unmerged") };
+  return { heads: headReads.count - before, entries: named("--unmerged") };
 }
 /**
  * A repository with a checkout in `lib` that owns its files: a repository of its own, or with `linked` a worktree of one
@@ -2640,9 +2666,7 @@ describe("CodeRuleBridge and Git's own writes", () => {
     const { bridge, auditGeneratedEdits } = await opened(join(root, "src"), { sourceRoot: () => root });
     await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nmine\n"));
     expect(auditGeneratedEdits).toHaveBeenCalledTimes(1);
-    asyncGitCalls.args.length = 0;
-    await bridge.checkpoint("turn");
-    expect(asyncGitCalls.args.filter(args => args.includes("--verify"))).toHaveLength(1);
+    expect((await gitReads(() => bridge.checkpoint("turn"))).heads).toBe(1);
   });
 
   it("audits a shell edit of a file a modify/delete conflict left as it was, where the conflict's pass found no change", async () => {
