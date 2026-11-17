@@ -1525,6 +1525,15 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 - **Way round**: move `target/debug/deps/*cranelift_frontend-07f6…*` and its `.fingerprint` directory out,
   then build once with `SCCACHE_RECACHE=1 RERAIL_FARM_LOCAL=1`. Moving it out alone isn't enough: the
   cache returns the same file.
-- **Done when**: a dependent's cache key includes the metadata hash of each `--extern` it reads (or the
-  wrapper refuses a hit whose dependencies' hashes differ), shown by the reproduction above. This is the
-  farm owner's.
+- **Cause** (2026-11-17, read in the farm's source): sccache's key already hashes each `--extern`
+  file's whole content (`hash_all_externs`), so a compile here can't mismatch. `cranelift-frontend`
+  is a registry crate, so it may compile on a host through the mirror. The host links against its
+  own copy of `libcranelift_codegen-0c39….rmeta`, the same file name for every version of the
+  vendored crate. After the compile the daemon checks only the files the dep-info lists, and those
+  leave out `--extern`. So a host holding another version built the crate against it, and the
+  result was cached under this version's key.
+- **Fix**: branch `jeremybarnes/farm-extern-check` (`13fc8d062`, farm 24, on farm 23's
+  `jeremybarnes/build-and-test-loop-time`). The caller sends the `--extern` paths; the agent
+  reports each one as it read it; a difference compiles here, uncached. The daemon also asks the
+  host again for them before each compile. Not installed: the farm owner merges and installs it.
+- **Done when**: farm 24 (or its merge) is installed and the reproduction above no longer fails.
