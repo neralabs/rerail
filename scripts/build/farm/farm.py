@@ -22,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 24
+VERSION = 25
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -1355,6 +1355,11 @@ def run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up,
     # A crate whose build script generated sources (OUT_DIR) would read them from the farm's root.
     if not any(cwd.startswith(p + "/") for p in IN_PLACE):
         return give_up("its sources are not cargo's registry's (a path of this machine's only)")
+    # The host maps this machine's paths in the arguments by their normalized prefixes: one with a
+    # `..` or `.` component (a CARGO_TARGET_DIR of `../tmp/x`) matched none, and rustc there was
+    # handed this machine's own path, outside the farm's root (2026-11-17).
+    if any(re.search(r"/\.\.?(/|$)", a) for a in args):
+        return give_up("a path in its arguments has a `..` or `.` component")
     out = env.get("OUT_DIR")
     if out and os.path.isdir(out) and os.listdir(out):
         return give_up("its build script wrote OUT_DIR, which a compile there would read from another path")
