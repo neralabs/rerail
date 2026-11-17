@@ -1,13 +1,14 @@
 //! Decision 0293: a document's tape through the one API (`rerail_tape_format::tape`), in the format the run stores
 //! (`RERAIL_TAPE`), read in place:
 //!
-//! - **15** (the default): format 15's columns, as the parsers write them;
-//! - **16**: format 16, written from them where a file's documents are made (`FileImage::single`, `embedding`),
-//!   until the parsers write it; the store keeps it, and a load reads it as stored;
+//! - **16** (the default since 2026-11-17, 0156): format 16, written by the lean parsers directly (`lean`), else
+//!   from format 15's columns where a file's documents are made (`FileImage::single`, `embedding`); the store
+//!   keeps it, and a load reads it as stored;
+//! - **15**: format 15's columns, as the other parsers write them;
 //! - **16z**: format 16 in fixed LZ4 blocks, a block decoded where a read falls in it.
 //!
 //! A language without format 16's table (`f16::lang`), or an image with a code the table lacks, keeps format 15,
-//! and the run says so once a language.
+//! and the profile counts it (`tape.keeps_15.<language>`); a run that set `RERAIL_TAPE` is told once a language.
 
 use super::{Code, Columns15, FileImage, Grammar, Held, SENTINEL, TAIL_FROM_START, TapeDoc, TapeImage};
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -28,8 +29,8 @@ pub enum Format {
 impl Format {
     pub const ALL: [Format; 3] = [Format::F15, Format::F16, Format::F16Z];
 
-    /// `RERAIL_TAPE`: `15` (the default until 0156 is decided), `16` or `16z`. Another value stops the run, so a
-    /// measurement never reads a format it did not ask for.
+    /// `RERAIL_TAPE`: `16` (the default since the user took 0156, 2026-11-17), `15` or `16z`. Another value stops
+    /// the run, so a measurement never reads a format it did not ask for.
     pub fn of_run() -> Format {
         #[cfg(any(test, feature = "test-hooks"))]
         if let Some(format) = AS_RUN.with(std::cell::Cell::get) {
@@ -37,8 +38,8 @@ impl Format {
         }
         static RUN: OnceLock<Format> = OnceLock::new();
         *RUN.get_or_init(|| match std::env::var("RERAIL_TAPE").as_deref() {
-            Err(_) | Ok("" | "15") => Format::F15,
-            Ok("16") => Format::F16,
+            Err(_) | Ok("" | "16") => Format::F16,
+            Ok("15") => Format::F15,
             Ok("16z") => Format::F16Z,
             Ok(other) => panic!("RERAIL_TAPE={other}: the formats are 15, 16 and 16z"),
         })
@@ -77,6 +78,13 @@ pub fn as_run<R>(format: Format, f: impl FnOnce() -> R) -> R {
     let out = f();
     AS_RUN.with(|r| r.set(before));
     out
+}
+
+/// This thread runs as a run that stores `format` until it ends: a test of one format's image (format 15's columns,
+/// say) whatever the process's run stores. Each test has a thread of its own.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn this_thread_stores(format: Format) {
+    AS_RUN.with(|r| r.set(Some(format)));
 }
 
 /// The tape format version the store keys this run's tapes by (`Format::store_version`).
@@ -128,10 +136,16 @@ impl Columns15 {
     }
 }
 
-/// The run says once a language that its documents keep format 15, and why.
+/// A language whose documents keep format 15, and why: said once a language where the run asked for its format
+/// (`RERAIL_TAPE`), and counted in the profile always (format 16 is the default, so a run that asked nothing is
+/// not told).
 fn keeps_15(language: GrammarDialect, tag: u8, why: &str) {
     static SAID: [AtomicBool; 256] = [const { AtomicBool::new(false) }; 256];
     if !SAID[usize::from(tag)].swap(true, Ordering::Relaxed) {
+        crate::code_rule_dsl::prof::count_named(format!("tape.keeps_15.{language:?}"), 1);
+        if std::env::var_os("RERAIL_TAPE").is_none() {
+            return;
+        }
         eprintln!("rerail: RERAIL_TAPE asks for format {}; {language:?} documents are read as format 15: {why}", Format::of_run().name());
     }
 }
