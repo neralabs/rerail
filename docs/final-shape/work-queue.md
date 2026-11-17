@@ -5,9 +5,9 @@
 This is the list of open work from the merges of 2026-11-15, kept so that nobody has to remember it. The agent doing
 the work keeps it current and works through it in order, without being prompted.
 
-An item is **done** only when an independent reviewer, given the code and not the author's explanation, finds the
-result no worse than either side on every property listed. The brief the reviewer gets is
-[reviewer-brief.md](reviewer-brief.md). The author fixes what the reviewer finds and does not argue with it.
+An item is **done** once the agent doing it has reviewed its own diff against
+[reviewer-brief.md](reviewer-brief.md) (read cold, callers traced, every property listed kept) and fixed what that
+finds. No separate reviewer: the user stopped review by subagents (2026-11-15).
 
 A real tradeoff, where both properties cannot hold at once, goes to the user with evidence for each option. Such
 questions wait in "Questions for the user" and go to the user together.
