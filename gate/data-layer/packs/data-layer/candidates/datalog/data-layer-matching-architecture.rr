@@ -192,6 +192,7 @@ matching_file_kind("function_definition").
 .decl rr_demand_agg_rr_agg2(i: number, n: node)
 .decl rr_demand_agg_rr_agg5(n: node, s: number)
 .decl rr_demand_agg_rr_agg8(n: node, s: number)
+.decl rr_node_text_req_by_matching_file_empty_content_0(n: node)
 .decl source(d: number, sp: node)
 .decl strprefix(n: node, p: symbol)
 .decl text(n: node, s: symbol)
@@ -628,6 +629,7 @@ matching_file_finding(d, "MA038", f) :- matching_file_implementation(d), matchin
 matching_file_elt(t, e) :- matching_file_tuple(t), child(t, e0, _), matching_file_unparen(e0, e).
 matching_file_finding(d, "MA032", t) :- matching_file_implementation(d), matching_file_elt(t, a), matching_file_const(a, _, "working_memory_bytes"), matching_file_elt(t, b), matching_file_name(b, "payload_bytes"), node(d, t, _, _, _).
 violation("data-layer-matching-architecture", "matching-file-checks", k, p, l) :- matching_file_finding_line(d, k, l), matching_file_doc(d), doc(d, p, _).
+rr_node_text_req_by_matching_file_empty_content_0(rr_dn) :- matching_file_interpolated(n_rr_d112_5), matching_file_joined_piece(n_rr_d112_5, p_rr_d112_5), matching_file_fstr(p_rr_d112_5), child(p_rr_d112_5, rr_dn, _), node(_, rr_dn, "string_content", _, _).
 rr_demand_agg_rr_agg11(d) :- matching_file_application(d), matching_file_backend(d, _).
 rr_demand_agg_rr_agg11(d) :- matching_file_implementation(d), matching_file_backend(d, _).
 rr_demand_agg_rr_agg13(d, x) :- matching_file_forward(d, x, _, _, _), matching_file_forward(d, x, f, _, _), node(_, f, _, s, _).
@@ -638,3 +640,4 @@ rr_demand_agg_rr_agg17(d, f, k) :- matching_file_first(d, k, f, _).
 rr_demand_agg_rr_agg2(i, n) :- matching_file_part(n, i, _).
 rr_demand_agg_rr_agg5(n, s) :- matching_file_field(n, x, s).
 rr_demand_agg_rr_agg8(n, s) :- matching_file_contrib(n, x, s).
+rr_node_text_req_by_matching_file_empty_content_0(rr_dn) :- matching_file_interpolated(n_rr_d119_5), matching_file_joined_piece(n_rr_d119_5, p_rr_d119_5), matching_file_fstr(p_rr_d119_5), child(p_rr_d119_5, rr_dn, _), node(_, rr_dn, "string_content", _, _).

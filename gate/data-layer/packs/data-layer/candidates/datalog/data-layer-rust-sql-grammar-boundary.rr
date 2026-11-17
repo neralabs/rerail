@@ -23,6 +23,9 @@
 .decl pattern_7_hit(d: number, n: node)
 .decl pattern_7_later(n: node, l: number)
 .decl pattern_7_middle(n: node, l: number)
+.decl rr_node_text_req_by_pattern_5_first_0(n: node)
+.decl rr_node_text_req_by_pattern_6_first_0(n: node)
+.decl rr_node_text_req_by_pattern_7_first_0(n: node)
 .decl tape_line(d: number, l: number, sp: node)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -66,3 +69,21 @@ pattern_7_at_line(n, l) :- pattern_7_first(n), line(n, l).
 pattern_7_at_line(n, l) :- pattern_7_middle(n, l), !pattern_7_later(n, l).
 pattern_7_at_line(n, l) :- pattern_7_hit(_, n), !pattern_7_first(n), !pattern_7_middle(n, _), end_line(n, l).
 violation("data-layer-rust-sql-grammar-boundary", "pattern-7", "rust_sql_grammar_boundary", p, l) :- pattern_7_at_line(n, l), node(d, n, _, _, _), in_scope(d), doc(d, p, _).
+rr_node_text_req_by_pattern_5_first_0(rr_dn) :- line(rr_dn, _), end_line(rr_dn, _).
+rr_node_text_req_by_pattern_5_first_0(rr_dn) :- line(rr_dn, _).
+rr_node_text_req_by_pattern_5_first_0(rr_dn) :- end_line(rr_dn, _).
+rr_node_text_req_by_pattern_6_first_0(rr_dn) :- line(rr_dn, _), end_line(rr_dn, _).
+rr_node_text_req_by_pattern_6_first_0(rr_dn) :- line(rr_dn, _).
+rr_node_text_req_by_pattern_6_first_0(rr_dn) :- end_line(rr_dn, _).
+rr_node_text_req_by_pattern_7_first_0(rr_dn) :- line(rr_dn, _), end_line(rr_dn, _).
+rr_node_text_req_by_pattern_7_first_0(rr_dn) :- line(rr_dn, _).
+rr_node_text_req_by_pattern_7_first_0(rr_dn) :- end_line(rr_dn, _).
+rr_node_text_req_by_pattern_5_first_0(rr_dn) :- line(rr_dn, _), end_line(rr_dn, _).
+rr_node_text_req_by_pattern_5_first_0(rr_dn) :- line(rr_dn, _).
+rr_node_text_req_by_pattern_5_first_0(rr_dn) :- end_line(rr_dn, _).
+rr_node_text_req_by_pattern_6_first_0(rr_dn) :- line(rr_dn, _), end_line(rr_dn, _).
+rr_node_text_req_by_pattern_6_first_0(rr_dn) :- line(rr_dn, _).
+rr_node_text_req_by_pattern_6_first_0(rr_dn) :- end_line(rr_dn, _).
+rr_node_text_req_by_pattern_7_first_0(rr_dn) :- line(rr_dn, _), end_line(rr_dn, _).
+rr_node_text_req_by_pattern_7_first_0(rr_dn) :- line(rr_dn, _).
+rr_node_text_req_by_pattern_7_first_0(rr_dn) :- end_line(rr_dn, _).

@@ -38,6 +38,7 @@ lazy_sql_region_kind("with_statement").
 .decl node_text(n: node, s: symbol)
 .decl op(n: node, s: symbol)
 .decl out_scope(d: number)
+.decl rr_node_text_req_by_lazy_sql_bad_0(n: node)
 .decl syntax_error(d: number)
 .decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
@@ -128,3 +129,5 @@ violation("data-layer-lazy-sql-surface", "sql-surface", code, p, l) :- lazy_sql_
 violation("data-layer-lazy-sql-surface", "sql-surface", code, p, l) :- lazy_sql_attr(a, s, o), lazy_sql_ctx_attr(s), node(_, o, "identifier", _, _), text(o, "ctx"), nearest(a, f, lazy_sql_fn_kind), field(f, "name", i), text(i, "compile"), code = @concat("step compile() reads ctx.", s), node(d, a, _, _, _), lazy_sql_file(d), doc(d, p, _), line(a, l).
 violation("data-layer-lazy-sql-surface", "sql-surface", code, p, l) :- node(d, f, "function_definition", _, _), field(f, "name", i), text(i, s), lazy_sql_grammar_terminal(s), nearest(f, k, lazy_sql_class_kind), field(k, "name", j), text(j, "SyncSqlConnection"), code = @concat("SyncSqlConnection defines forbidden grammar terminal: ", s), lazy_sql_file(d), doc(d, p, _), line(f, l).
 violation("data-layer-lazy-sql-surface", "sql-surface", code, p, l) :- lazy_sql_subscript(g, "LazyResult", x), lazy_sql_bad(x, r), code = @concat(@concat("untyped LazyResult[", r), "]"), node(d, g, _, _, _), lazy_sql_file(d), doc(d, p, _), match("(impl/common/l2070_server_plan/|impl/common/l2200_sql_dialect/|impl/sqlite/|impl/postgres/|impl/mariadb/|impl/doltdb/|l7000_versioned_schema/|l7200_versioned_transactions/|l7800_versioned_merge/|l9750_graphql/|l9900_auto_api/).*", p), line(g, l).
+rr_node_text_req_by_lazy_sql_bad_0(rr_dn) :- lazy_sql_subscript(g_rr_d38_1, "LazyResult", rr_dn), node(d_rr_d38_1, g_rr_d38_1, _, _, _), doc(d_rr_d38_1, p_rr_d38_1, _), line(g_rr_d38_1, _), match("(impl/common/l2070_server_plan/|impl/common/l2200_sql_dialect/|impl/sqlite/|impl/postgres/|impl/mariadb/|impl/doltdb/|l7000_versioned_schema/|l7200_versioned_transactions/|l7800_versioned_merge/|l9750_graphql/|l9900_auto_api/).*", p_rr_d38_1).
+rr_node_text_req_by_lazy_sql_bad_0(rr_dn) :- lazy_sql_subscript(g_rr_d54_1, "LazyResult", rr_dn), node(d_rr_d54_1, g_rr_d54_1, _, _, _), doc(d_rr_d54_1, p_rr_d54_1, _), line(g_rr_d54_1, _), match("(impl/common/l2070_server_plan/|impl/common/l2200_sql_dialect/|impl/sqlite/|impl/postgres/|impl/mariadb/|impl/doltdb/|l7000_versioned_schema/|l7200_versioned_transactions/|l7800_versioned_merge/|l9750_graphql/|l9900_auto_api/).*", p_rr_d54_1).

@@ -15,6 +15,8 @@
 .decl or_empty_left(n: node)
 .decl or_empty_right(r: node)
 .decl out_scope(d: number)
+.decl rr_node_text_req_by_or_empty_right_0(n: node)
+.decl rr_value_req_by_or_empty_right_0(n: node)
 .decl syntax_error(d: number)
 .decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
@@ -60,3 +62,7 @@ violation("data-layer-unknown-contract-defaults", "or-empty", "UNKNOWN_DEFAULTED
 bool_counted(g, c) :- node(_, x, "call", _, _), field(x, "arguments", g), child(g, c, _), !node(_, c, "keyword_argument", _, _).
 bool_args(g) :- node(_, x, "call", _, _), field(x, "arguments", g), child(g, a, _), node(_, a, "attribute", _, _), field(a, "attribute", y), node(_, y, "identifier", _, _), text(y, s), bool_field(s), k = count : { bool_counted(g, _) }, k = 1.
 violation("data-layer-unknown-contract-defaults", "bool", "UNKNOWN_AS_FALSY", p, l) :- node(_, n, "call", _, _), field(n, "function", f), node(_, f, "identifier", _, _), text(f, "bool"), field(n, "arguments", g), bool_args(g), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+rr_node_text_req_by_or_empty_right_0(rr_dn) :- or_empty_left(n_rr_d6_2), field(n_rr_d6_2, "right", rr_dn), node(d_rr_d6_2, n_rr_d6_2, _, _, _), in_scope(d_rr_d6_2), doc(d_rr_d6_2, _, _), line(n_rr_d6_2, _).
+rr_value_req_by_or_empty_right_0(rr_dn) :- or_empty_left(n_rr_d6_2), field(n_rr_d6_2, "right", rr_dn), node(d_rr_d6_2, n_rr_d6_2, _, _, _), in_scope(d_rr_d6_2), doc(d_rr_d6_2, _, _), line(n_rr_d6_2, _).
+rr_node_text_req_by_or_empty_right_0(rr_dn) :- or_empty_left(n_rr_d22_2), field(n_rr_d22_2, "right", rr_dn), node(d_rr_d22_2, n_rr_d22_2, _, _, _), in_scope(d_rr_d22_2), doc(d_rr_d22_2, _, _), line(n_rr_d22_2, _).
+rr_value_req_by_or_empty_right_0(rr_dn) :- or_empty_left(n_rr_d22_2), field(n_rr_d22_2, "right", rr_dn), node(d_rr_d22_2, n_rr_d22_2, _, _, _), in_scope(d_rr_d22_2), doc(d_rr_d22_2, _, _), line(n_rr_d22_2, _).

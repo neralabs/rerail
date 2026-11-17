@@ -36,6 +36,7 @@ unreachable_nest_k("function_definition"). unreachable_nest_k("class_definition"
 .decl rr_ctx2(o: symbol, x: node)
 .decl rr_demand_agg_rr_agg1(o: symbol, x: node)
 .decl rr_demand_agg_rr_agg3(n: symbol, o: symbol)
+.decl rr_node_text_req_by_unreachable_base_name_of_0(n: node)
 .decl source(d: number, sp: node)
 .decl syntax_error(d: number)
 .decl tape_line(d: number, l: number, sp: node)
@@ -542,5 +543,7 @@ unreachable_category(id, x, d, "high_confidence_other_classes") :- unreachable_h
 unreachable_shown(d) :- unreachable_doc(d, _, _), option_on("oracleAnalyzer").
 unreachable_shown(d) :- unreachable_doc(d, p, _), !option_on("oracleAnalyzer"), !prefix("impl/browser/", p).
 violation("data-layer-internal-dead-code", "unreachable-internal-symbols", c, p, l) :- unreachable_category(_, x, d, c), unreachable_shown(d), doc(d, p, _), line(x, l).
+rr_node_text_req_by_unreachable_base_name_of_0(rr_dn) :- unreachable_raw_base(c_rr_d66_2, rr_dn), unreachable_decl(_, c_rr_d66_2, _, _, "class", _, _), node(_, rr_dn, _, _, _).
 rr_demand_agg_rr_agg1(o, x) :- unreachable_reach(o, b), unreachable_decl_node(x, b).
 rr_demand_agg_rr_agg3(n, o) :- unreachable_hier_d(o, c, _), unreachable_pub(c, n, _).
+rr_node_text_req_by_unreachable_base_name_of_0(rr_dn) :- unreachable_raw_base(c_rr_d167_2, rr_dn), unreachable_decl(_, c_rr_d167_2, _, _, "class", _, _), node(_, rr_dn, _, _, _).

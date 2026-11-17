@@ -143,6 +143,8 @@ eager_region_set("lambda"). eager_region_set("class_definition").
 .decl option_item(name: symbol, i: number, v: symbol)
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
+.decl rr_node_text_req_by_eager_raw_string_0(n: node)
+.decl rr_value_req_by_eager_string_0(n: node)
 .decl source(d: number, sp: node)
 .decl syntax_error(d: number)
 .decl tape_syntax_error(d: number)
@@ -529,3 +531,9 @@ eager_finding(d, l, i) :- eager_preprocess(d, l, i), !eager_entry_case(1).
 eager_finding(d, l, i) :- eager_preprocess(d, l, i), option_value("entryPoint", "_scan_preprocess_ast").
 eager_finding(d, l, i) :- eager_direct(d, l, i), !eager_entry_case(1).
 violation("data-layer-eager-resolve", "eager-resolution", i, p, l) :- eager_finding(d, l, i), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _).
+rr_node_text_req_by_eager_raw_string_0(rr_dn) :- inside(rr_dn, _, eager_call_set).
+rr_node_text_req_by_eager_raw_string_0(rr_dn) :- child(p_rr_d44_0, rr_dn, _), node(_, p_rr_d44_0, "subscript", _, _).
+rr_value_req_by_eager_string_0(rr_dn) :- node(_, rr_dn, _, _, _).
+rr_node_text_req_by_eager_raw_string_0(rr_dn) :- inside(rr_dn, _, eager_call_set).
+rr_node_text_req_by_eager_raw_string_0(rr_dn) :- child(p_rr_d59_0, rr_dn, _), node(_, p_rr_d59_0, "subscript", _, _).
+rr_value_req_by_eager_string_0(rr_dn) :- node(_, rr_dn, _, _, _).

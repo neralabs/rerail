@@ -68,6 +68,7 @@ hnsw_architecture_patterns("case_pattern").
 .decl rr_ctx6(h: node, i: number)
 .decl rr_demand_agg_rr_agg2(h: node, s: number)
 .decl rr_demand_agg_rr_agg5(h: node, i: number)
+.decl rr_value_req_by_hnsw_architecture_const_0(n: node)
 .decl strprefix(n: node, p: symbol)
 .decl syntax_error(d: number)
 .decl tape_syntax_error(d: number)
@@ -219,5 +220,11 @@ hnsw_architecture_found(d, l, "HNSW002") :- hnsw_architecture_piece_const(d, l, 
 hnsw_architecture_generated(d) :- doc(d, p, _), match("(?:.*/)?rust_bridge/(?:.*/)?generated_[^/]*", p).
 violation("data-layer-hnsw-architecture", "hnsw-architecture", issue, p, l) :- hnsw_architecture_found(d, l, issue), hnsw_architecture_gate(d), !hnsw_architecture_generated(d), in_scope(d), !out_scope(d), doc(d, p, _).
 violation("data-layer-hnsw-architecture", "hnsw-forbidden-files", "HNSW006", p, 1) :- hnsw_entry("find_hnsw_architecture_findings"), doc(d, p, _), hnsw_withheld_path(p), in_scope(d), !out_scope(d).
+rr_value_req_by_hnsw_architecture_const_0(rr_dn) :- hnsw_architecture_unparen(w_rr_d70_0, rr_dn), child(e_rr_d70_0, w_rr_d70_0, 0), node(_, e_rr_d70_0, "expression_statement", _, _), child(b_rr_d70_0, e_rr_d70_0, 0), hnsw_architecture_body(b_rr_d70_0).
+rr_value_req_by_hnsw_architecture_const_0(rr_dn) :- node(d_rr_d86_0, rr_dn, _, _, _), hnsw_architecture_module(d_rr_d86_0).
+rr_value_req_by_hnsw_architecture_const_0(rr_dn) :- node(_, rr_dn, _, _, _).
 rr_demand_agg_rr_agg2(h, s) :- hnsw_architecture_interp(h, x, s).
 rr_demand_agg_rr_agg5(h, i) :- hnsw_architecture_host(h), fstring_piece(h, i, "interpolation", _), hnsw_architecture_interp_k(h, x, k).
+rr_value_req_by_hnsw_architecture_const_0(rr_dn) :- hnsw_architecture_unparen(w_rr_d81_0, rr_dn), child(e_rr_d81_0, w_rr_d81_0, 0), node(_, e_rr_d81_0, "expression_statement", _, _), child(b_rr_d81_0, e_rr_d81_0, 0), hnsw_architecture_body(b_rr_d81_0).
+rr_value_req_by_hnsw_architecture_const_0(rr_dn) :- node(d_rr_d97_0, rr_dn, _, _, _), hnsw_architecture_module(d_rr_d97_0).
+rr_value_req_by_hnsw_architecture_const_0(rr_dn) :- node(_, rr_dn, _, _, _).

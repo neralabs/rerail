@@ -17,6 +17,8 @@ tcw_type("type").
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
 .decl out_scope(d: number)
+.decl rr_node_text_req_by_tcw_cb_word_node_0(n: node)
+.decl rr_node_text_req_by_tcw_ir_owner_2(n: node)
 .decl syntax_error(d: number)
 .decl tape_syntax_error(d: number)
 .decl tcw_cb_annotation(t: node)
@@ -124,3 +126,13 @@ tcw_ir_lambda(al, y) :- tcw_ir_second(al, y), node(_, y, "lambda", _, _), !tcw_i
 tcw_ir_lambda_versioned(la) :- field(la, "body", lb), tcw_ir_vcall(lb).
 tcw_ir_lambda_versioned(la) :- field(la, "body", lb), node(_, lb, _, bs, be), inside(x, la, tcw_lambda), tcw_ir_vcall(x), node(_, x, _, xs, xe), xs >= bs, xe <= be.
 violation("data-layer-transaction-callback-wrappers", "inline-reentrant", "transaction_callback_wrapper", p, l) :- tcw_ir_owner(_, p, f), tcw_reads_call(c), tcw_in_body(f, c), field(c, "arguments", al), tcw_ir_lambda(al, la), tcw_ir_lambda_versioned(la), line(f, l).
+rr_node_text_req_by_tcw_cb_word_node_0(rr_dn) :- node(_, t_rr_d10_2, "type", _, _), inside(rr_dn, t_rr_d10_2, tcw_type).
+rr_node_text_req_by_tcw_cb_word_node_0(rr_dn) :- node(_, t_rr_d10_4, "type", _, _), inside(rr_dn, t_rr_d10_4, tcw_type).
+rr_node_text_req_by_tcw_ir_owner_2(rr_dn) :- tcw_reads_call(c_rr_d28_0), tcw_in_body(rr_dn, c_rr_d28_0), field(c_rr_d28_0, "arguments", al_rr_d28_0), tcw_ir_callback(al_rr_d28_0, _).
+rr_node_text_req_by_tcw_ir_owner_2(rr_dn) :- field(rr_dn, "body", b_rr_d35_0), child(b_rr_d35_0, g_rr_d35_0, _), node(_, g_rr_d35_0, "function_definition", _, _), field(g_rr_d35_0, "name", gn_rr_d35_0), node(_, gn_rr_d35_0, "identifier", _, _), text(gn_rr_d35_0, _), line(rr_dn, _).
+rr_node_text_req_by_tcw_ir_owner_2(rr_dn) :- tcw_reads_call(c_rr_d40_0), tcw_in_body(rr_dn, c_rr_d40_0), field(c_rr_d40_0, "arguments", al_rr_d40_0), tcw_ir_lambda(al_rr_d40_0, _), line(rr_dn, _).
+rr_node_text_req_by_tcw_cb_word_node_0(rr_dn) :- node(_, t_rr_d23_2, "type", _, _), inside(rr_dn, t_rr_d23_2, tcw_type).
+rr_node_text_req_by_tcw_cb_word_node_0(rr_dn) :- node(_, t_rr_d23_4, "type", _, _), inside(rr_dn, t_rr_d23_4, tcw_type).
+rr_node_text_req_by_tcw_ir_owner_2(rr_dn) :- tcw_reads_call(c_rr_d41_0), tcw_in_body(rr_dn, c_rr_d41_0), field(c_rr_d41_0, "arguments", al_rr_d41_0), tcw_ir_callback(al_rr_d41_0, _).
+rr_node_text_req_by_tcw_ir_owner_2(rr_dn) :- field(rr_dn, "body", b_rr_d48_0), child(b_rr_d48_0, g_rr_d48_0, _), node(_, g_rr_d48_0, "function_definition", _, _), field(g_rr_d48_0, "name", gn_rr_d48_0), node(_, gn_rr_d48_0, "identifier", _, _), text(gn_rr_d48_0, _), line(rr_dn, _).
+rr_node_text_req_by_tcw_ir_owner_2(rr_dn) :- tcw_reads_call(c_rr_d53_0), tcw_in_body(rr_dn, c_rr_d53_0), field(c_rr_d53_0, "arguments", al_rr_d53_0), tcw_ir_lambda(al_rr_d53_0, _), line(rr_dn, _).

@@ -604,6 +604,9 @@ spq_vector_filter_constants_kinds1("concatenated_string").
 .decl rr_demand_agg_rr_agg2(d: number, nm: symbol)
 .decl rr_demand_agg_rr_agg3(d: number, nm: symbol)
 .decl rr_demand_agg_rr_agg6(c: node, j: number)
+.decl rr_token_req_by_conditional_architecture_cx_shift_0(n: node)
+.decl rr_value_req_by_quality_local_taxonomy_shape_message_0(n: node)
+.decl rr_value_req_by_quality_project_taxonomy_shape_message_0(n: node)
 .decl source(d: number, sp: node)
 .decl spq_can_batch_lock_10(n: node)
 .decl spq_can_batch_lock_11(n: node)
@@ -3957,7 +3960,13 @@ violation("data-layer-serverplan-quality", "conditional-architecture", "SPQ-029"
 violation("data-layer-serverplan-quality", "conditional-architecture", "SPQ-029", "impl/common/l2070_server_plan/sql_backend_executor.py", 1) :- conditional_architecture_present(_), !conditional_architecture_has_qn("impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor").
 violation("data-layer-serverplan-quality", "conditional-architecture", "SPQ-029", p, l) :- conditional_architecture_cfunc(d, n, _, _, "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step"), !conditional_architecture_compiler_ok(n), conditional_architecture_present(_), doc(d, p, _), line(n, l).
 violation("data-layer-serverplan-quality", "conditional-architecture", "SPQ-029", "impl/common/l2070_server_plan/steps/_conditional_compile.py", 1) :- conditional_architecture_present(_), !conditional_architecture_has_cfunc("impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step").
+rr_token_req_by_conditional_architecture_cx_shift_0(rr_dn) :- node(_, rr_dn, "conditional_expression", _, _), child(rr_dn, c237_rr_d1540_2, 1), conditional_architecture_245(c237_rr_d1540_2).
+rr_value_req_by_quality_local_taxonomy_shape_message_0(rr_dn) :- quality_local_taxonomy_def(n_rr_d1380_2, _), inside(rr_dn, n_rr_d1380_2, quality_local_taxonomy_kinds0).
+rr_value_req_by_quality_project_taxonomy_shape_message_0(rr_dn) :- quality_project_taxonomy_def(n_rr_d1458_2, _), inside(rr_dn, n_rr_d1458_2, quality_project_taxonomy_kinds0).
 rr_demand_agg_rr_agg1(c, d, nm) :- spq_sync_async_duplication_pm(d, n, c, nm), node(d, n, _, st, _).
 rr_demand_agg_rr_agg2(d, nm) :- spq_sync_async_duplication_pf(d, n, nm), node(d, n, _, st, _).
 rr_demand_agg_rr_agg3(d, nm) :- spq_vector_filter_constants_ms(d, s, nm, v), node(d, s, _, b, _).
 rr_demand_agg_rr_agg6(c, j) :- conditional_architecture_cut(c, j), conditional_architecture_sup(c, t, _).
+rr_token_req_by_conditional_architecture_cx_shift_0(rr_dn) :- node(_, rr_dn, "conditional_expression", _, _), child(rr_dn, c237_rr_d2218_2, 1), conditional_architecture_245(c237_rr_d2218_2).
+rr_value_req_by_quality_local_taxonomy_shape_message_0(rr_dn) :- quality_local_taxonomy_def(n_rr_d2058_2, _), inside(rr_dn, n_rr_d2058_2, quality_local_taxonomy_kinds0).
+rr_value_req_by_quality_project_taxonomy_shape_message_0(rr_dn) :- quality_project_taxonomy_def(n_rr_d2136_2, _), inside(rr_dn, n_rr_d2136_2, quality_project_taxonomy_kinds0).

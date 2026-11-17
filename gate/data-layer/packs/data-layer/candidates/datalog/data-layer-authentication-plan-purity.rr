@@ -39,6 +39,7 @@ auth_plan_def("function_definition").
 .decl rr_agg2(b: number, c: node, s: symbol)
 .decl rr_demand_agg_rr_agg1(d: number, k: number, s: symbol)
 .decl rr_demand_agg_rr_agg2(c: node, s: symbol)
+.decl rr_node_text_req_by_auth_plan_decorator_name_0(n: node)
 .decl syntax_error(d: number)
 .decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
@@ -115,5 +116,7 @@ violation("data-layer-authentication-plan-purity", "authentication-contracts", "
 auth_plan_lazy_wrapper(f) :- auth_plan_function_decorators(f, s), (s = "legacy_sync" ; s = "legacy_async").
 auth_plan_lazy_wrapper(f) :- auth_plan_function_decorators(f, s), (s = "direct_legacy_sync" ; s = "direct_legacy_async"), auth_plan_calls(k, x), suffix("_lazy", x), inside(k, f, auth_plan_def).
 violation("data-layer-authentication-plan-purity", "authentication-contracts", "APP004", p, l) :- auth_plan_functions(n, d, s), (suffix("_sync", s) ; suffix("_async", s)), (icontains("auth", s) ; icontains("credential", s) ; icontains("admission", s)), !auth_plan_lazy_wrapper(n), auth_plan_doc(d, p), line(n, l).
+rr_node_text_req_by_auth_plan_decorator_name_0(rr_dn) :- auth_plan_functions(f_rr_d35_7, _, _), child(w_rr_d35_7, f_rr_d35_7, _), node(_, w_rr_d35_7, "decorated_definition", _, _), child(w_rr_d35_7, dc_rr_d35_7, _), node(_, dc_rr_d35_7, "decorator", _, _), child(dc_rr_d35_7, rr_dn, _).
 rr_demand_agg_rr_agg1(d, k, s) :- auth_plan_deepest(d, s, k).
 rr_demand_agg_rr_agg2(c, s) :- auth_plan_methods(_, c, s, _).
+rr_node_text_req_by_auth_plan_decorator_name_0(rr_dn) :- auth_plan_functions(f_rr_d51_7, _, _), child(w_rr_d51_7, f_rr_d51_7, _), node(_, w_rr_d51_7, "decorated_definition", _, _), child(w_rr_d51_7, dc_rr_d51_7, _), node(_, dc_rr_d51_7, "decorator", _, _), child(dc_rr_d51_7, rr_dn, _).

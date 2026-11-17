@@ -103,6 +103,7 @@ rr_kind_function_definition("function_definition").
 .decl rr_ctx6(h: node, i: number)
 .decl rr_demand_agg_rr_agg2(h: node, st: number)
 .decl rr_demand_agg_rr_agg5(h: node, i: number)
+.decl rr_node_text_req_by_optimizer_paren_pattern_0(n: node)
 .decl source(d: number, sp: node)
 .decl src_line_lf(d: number, l: number, sp: node)
 .decl syntax_error(d: number)
@@ -304,5 +305,9 @@ violation("data-layer-plan-optimizer-v2", "optimizer-invariant-registry", "PV2-0
 violation("data-layer-plan-optimizer-v2", "optimizer-invariant-registry", "PV2-052", p, l) :- oir_any(1), oir_registered(n, v), oir_doc(_), !oir_cited(v), oir_at(n, p, l).
 violation("data-layer-plan-optimizer-v2", "optimizer-invariant-registry", "PV2-050", "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md", 1) :- oir_run(1), !oir_doc(_).
 violation("data-layer-plan-optimizer-v2", "optimizer-invariant-registry", "PV2-051", p, 1) :- oir_run(1), oir_doc_code(c), !oir_code(c), oir_doc(d), doc(d, p, _).
+rr_node_text_req_by_optimizer_paren_pattern_0(rr_dn) :- optimizer_unparen(_, rr_dn).
+rr_node_text_req_by_optimizer_paren_pattern_0(rr_dn) :- optimizer_unparen(_, rr_dn), child(rr_dn, _, 0).
 rr_demand_agg_rr_agg2(h, st) :- optimizer_fslot_at(h, s, st).
 rr_demand_agg_rr_agg5(h, i) :- optimizer_fhost(h), fstring_piece(h, i, "literal", v).
+rr_node_text_req_by_optimizer_paren_pattern_0(rr_dn) :- optimizer_unparen(_, rr_dn).
+rr_node_text_req_by_optimizer_paren_pattern_0(rr_dn) :- optimizer_unparen(_, rr_dn), child(rr_dn, _, 0).

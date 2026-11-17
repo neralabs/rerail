@@ -67,6 +67,7 @@ constructor_fdef_kinds("function_definition").
 .decl rr_agg5(p: node, rr_any1: number, rr_any2: number, rr_any3: symbol, rr_any4: number, s: number, x: node, xs: number)
 .decl rr_ctx6(p: node, s: number)
 .decl rr_demand_agg_rr_agg5(p: node, s: number)
+.decl rr_node_text_req_by_constructor_sync_def_0(n: node)
 .decl strprefix(n: node, p: symbol)
 .decl syntax_error(d: number)
 .decl tape_syntax_error(d: number)
@@ -240,4 +241,12 @@ captured_return_row(d, r, c, x) :- captured_return(d, r, c, _), captured_returns
 captured_reach(c, "render") :- captured_return_row(_, _, c, _).
 captured_reach(c, y) :- captured_reach(c, x), captured_edge(c, x, y).
 violation("data-layer-grammar-fragment-usage", "captured-return", "sqlfragment_usage", p, l) :- captured_return_row(d, r, c, x), captured_reach(c, x), doc(d, p, _), line(r, l).
+rr_node_text_req_by_constructor_sync_def_0(rr_dn) :- node(d_rr_d34_1, rr_dn, "function_definition", _, _), field(rr_dn, "name", i_rr_d34_1), node(_, i_rr_d34_1, "identifier", _, _), text(i_rr_d34_1, "__init__"), field(rr_dn, "parameters", ps_rr_d34_1), child(ps_rr_d34_1, q_rr_d34_1, _), constructor_param_shape(q_rr_d34_1), field(q_rr_d34_1, "type", _), in_scope(d_rr_d34_1), doc(d_rr_d34_1, _, _), line(rr_dn, _).
+rr_node_text_req_by_constructor_sync_def_0(rr_dn) :- field(rr_dn, "name", i_rr_d54_2), node(_, i_rr_d54_2, "identifier", _, _), text(i_rr_d54_2, "__init__").
+rr_node_text_req_by_constructor_sync_def_0(rr_dn) :- node(_, c_rr_d62_3, "class_definition", _, _), field(c_rr_d62_3, "body", b_rr_d62_3), child(b_rr_d62_3, rr_dn, _), field(rr_dn, "name", i_rr_d62_3), node(_, i_rr_d62_3, "identifier", _, _), text(i_rr_d62_3, "__init__").
+rr_node_text_req_by_constructor_sync_def_0(rr_dn) :- node(_, c_rr_d63_5, "class_definition", _, _), field(c_rr_d63_5, "body", b_rr_d63_5), child(b_rr_d63_5, g_rr_d63_5, _), node(_, g_rr_d63_5, "decorated_definition", _, _), field(g_rr_d63_5, "definition", rr_dn), field(rr_dn, "name", i_rr_d63_5), node(_, i_rr_d63_5, "identifier", _, _), text(i_rr_d63_5, "__init__").
 rr_demand_agg_rr_agg5(p, s) :- captured_index_list(p), child(p, c, _), node(_, c, _, s, _).
+rr_node_text_req_by_constructor_sync_def_0(rr_dn) :- node(d_rr_d49_1, rr_dn, "function_definition", _, _), field(rr_dn, "name", i_rr_d49_1), node(_, i_rr_d49_1, "identifier", _, _), text(i_rr_d49_1, "__init__"), field(rr_dn, "parameters", ps_rr_d49_1), child(ps_rr_d49_1, q_rr_d49_1, _), constructor_param_shape(q_rr_d49_1), field(q_rr_d49_1, "type", _), in_scope(d_rr_d49_1), doc(d_rr_d49_1, _, _), line(rr_dn, _).
+rr_node_text_req_by_constructor_sync_def_0(rr_dn) :- field(rr_dn, "name", i_rr_d69_2), node(_, i_rr_d69_2, "identifier", _, _), text(i_rr_d69_2, "__init__").
+rr_node_text_req_by_constructor_sync_def_0(rr_dn) :- node(_, c_rr_d77_3, "class_definition", _, _), field(c_rr_d77_3, "body", b_rr_d77_3), child(b_rr_d77_3, rr_dn, _), field(rr_dn, "name", i_rr_d77_3), node(_, i_rr_d77_3, "identifier", _, _), text(i_rr_d77_3, "__init__").
+rr_node_text_req_by_constructor_sync_def_0(rr_dn) :- node(_, c_rr_d78_5, "class_definition", _, _), field(c_rr_d78_5, "body", b_rr_d78_5), child(b_rr_d78_5, g_rr_d78_5, _), node(_, g_rr_d78_5, "decorated_definition", _, _), field(g_rr_d78_5, "definition", rr_dn), field(rr_dn, "name", i_rr_d78_5), node(_, i_rr_d78_5, "identifier", _, _), text(i_rr_d78_5, "__init__").
