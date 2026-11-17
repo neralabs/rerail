@@ -56,6 +56,28 @@ pub(super) fn encode(width: usize, values: &[i64]) -> Vec<u8> {
     out
 }
 
+/// A block as `encode` writes it, of `width` columns read a batch at a time (`column(c, f)`: column `c`'s values in
+/// row order, `f` per batch): the rows are read where they lie, never copied whole. The columns are encoded at once.
+pub(super) fn encode_columns(width: usize, column: &(dyn Fn(usize, &mut dyn FnMut(&[i64])) + Sync)) -> Vec<u8> {
+    use rayon::prelude::*;
+    let parts: Vec<Vec<u8>> = (0..width).into_par_iter().map(|c| {
+        let mut out = Vec::new();
+        let mut last = 0i64;
+        column(c, &mut |values| {
+            if let Some(&end) = values.last() {
+                encode_column(1, 0, values, last, &mut out);
+                last = end;
+            }
+        });
+        out
+    }).collect();
+    let mut out = Vec::with_capacity(parts.iter().map(Vec::len).sum());
+    for p in &parts {
+        out.extend_from_slice(p);
+    }
+    out
+}
+
 /// Column `c` of `values` (rows of `width`) onto `out`, as `encode` writes it: `last` is the value of the row above
 /// the first.
 fn encode_column(width: usize, c: usize, values: &[i64], mut last: i64, out: &mut Vec<u8>) {

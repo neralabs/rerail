@@ -86,6 +86,7 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "rel_dead", params: &[I32], ret: I32, hot: true, body: crate::relation::rel_dead },
     Read { family: Family::Relation, name: "rel_group", params: &[I32, I64], ret: I64, hot: true, body: crate::relation::rel_group },
     Read { family: Family::Relation, name: "rel_group_row", params: &[I32, I32], ret: I32, hot: true, body: crate::relation::rel_group_row },
+    Read { family: Family::Relation, name: "rel_key_mix", params: &[I64, I64], ret: I64, hot: true, body: crate::relation::rel_key_mix },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by

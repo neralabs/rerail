@@ -1,7 +1,6 @@
 use super::*;
 use crate::code_rule_dsl::language::{self, GrammarDialect};
 use crate::code_rule_dsl::fixtures::{document, temp};
-use crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION;
 // What the slabs module reads through its own imports, which its facade in the engine does not re-export.
 use crate::code_rule_dsl::tape::{Grammar, resident};
 use crate::content_store::ContentStore;
@@ -36,6 +35,12 @@ fn stored_tapes_are_admitted_into_slabs_and_read_in_place() {
         return;
     }
     let _serial = SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    // Format 15's columns, read through `resident::layout`; every format's admission is
+    // `the_device_reads_every_format_as_the_document_does`.
+    crate::code_rule_dsl::tape::formats::as_run(crate::code_rule_dsl::tape::formats::Format::F15, stored_tapes_of_format_15_are_admitted);
+}
+
+fn stored_tapes_of_format_15_are_admitted() {
     drop_all();
     let path = temp();
     let store = ContentStore::open(&path).unwrap();
@@ -47,7 +52,7 @@ fn stored_tapes_are_admitted_into_slabs_and_read_in_place() {
         assert!(resident::layout(&stored).is_ok(), "a stored image is read in place");
         let bytes = tape.resident_parts(None).unwrap().0;
         let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
-        store.put_tape(source_id, i64::from(language::tape_tag(lang).unwrap()), 1, i64::from(TAPE_FORMAT_VERSION), &bytes).unwrap();
+        store.put_tape(source_id, i64::from(language::tape_tag(lang).unwrap()), 1, i64::from(crate::code_rule_dsl::tape::formats::stored_version()), &bytes).unwrap();
         digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));
         tapes.push((tape, bytes, source));
     }

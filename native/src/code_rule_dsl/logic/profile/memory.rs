@@ -156,6 +156,8 @@ pub(super) struct Sampled {
     /// `RERAIL_HEAP_SAMPLE`: the live heap by allocating span at the peak (`rerail_prof::heap::snapshot`), and the
     /// footprint it was taken at.
     pub(super) heap: Vec<(u32, u64)>,
+    /// The same by allocating call stack (`RERAIL_HEAP_FRAMES`).
+    pub(super) heap_frames: Vec<((u32, Vec<usize>), u64)>,
     pub(super) heap_at: u64,
 }
 
@@ -215,8 +217,10 @@ pub(super) fn sample() {
                         s.heap_at = now;
                         drop(s);
                         let heap = rerail_prof::heap::snapshot();
+                        let heap_frames = rerail_prof::heap::snapshot_frames();
                         s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                         s.heap = heap;
+                        s.heap_frames = heap_frames;
                     }
                 }
                 if keep {
@@ -298,6 +302,31 @@ pub(super) fn sampled_report(r: &mut String) {
     for (p, (rise, most)) in rose.iter().take(20) {
         let _ = writeln!(r, "{:>10} MB {:>10} MB  {}", mb(*rise as f64), mb(*most as f64), super::short(p, 140));
     }
+}
+
+/// The live heap by allocating span near the peak (`RERAIL_HEAP_SAMPLE`), every span's, as TSV: the report shows
+/// the first 30, and a peak's tail of many small holders is where its bulk can be.
+pub fn heap_tsv() -> String {
+    use std::fmt::Write as _;
+    let s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut t = String::from("bytes\tspan\n");
+    for (id, bytes) in &s.heap {
+        let _ = writeln!(t, "{bytes}\t{}", rerail_prof::heap::name(*id));
+    }
+    t
+}
+
+/// The live heap by allocating call stack (`RERAIL_HEAP_FRAMES`), taken with the span snapshot near the peak, as
+/// TSV: bytes, then the return addresses innermost first; the header gives the executable's load address for
+/// `atos -o <binary> -l <load> <addresses>`. Empty when stacks were not recorded.
+pub fn heap_frames_tsv() -> String {
+    use std::fmt::Write as _;
+    let s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut t = format!("# load {:#x}\nbytes\tframes\tspan\n", rerail_prof::heap::load_address());
+    for ((span, frames), bytes) in &s.heap_frames {
+        let _ = writeln!(t, "{bytes}\t{}\t{}", frames.iter().map(|f| format!("{f:#x}")).collect::<Vec<_>>().join(" "), rerail_prof::heap::name(*span));
+    }
+    t
 }
 
 /// The sampler's timeline as TSV.

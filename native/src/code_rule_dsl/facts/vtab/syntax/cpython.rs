@@ -182,6 +182,9 @@ impl super::Producer for Producer {
 }
 
 impl super::ProducerRun for CPython {
+    fn name(&self) -> &'static str {
+        "CPython syntax"
+    }
     fn document(&mut self, p: &super::Projected, d: &super::Document, dialect: Option<&super::Dialect>, own: bool, string: &mut dyn FnMut(&str) -> usize) -> crate::content_store::StoreResult<()> {
         CPython::document(self, p, &d.path, dialect, own, string)
     }
