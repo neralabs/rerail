@@ -233,19 +233,12 @@ impl<'a> P<'a> {
             self.toks.push(t);
             return;
         }
-        self.toks.reserve(BATCH);
-        for _ in 0..BATCH {
-            let t = match self.lx.token(self.next, &mut self.t.extras) {
-                Ok(t) => t,
-                // A token the lexer refuses is refused where the parser reads it.
-                Err(Refusal::Lex(at)) | Err(Refusal::Parse(at)) => Tok { kind: T::Eof, word: u8::MAX, nl: false, tick: false, start: at, end: at },
-                Err(Refusal::TooLarge) => Tok { kind: T::Eof, word: u8::MAX, nl: false, tick: false, start: 0, end: 0 },
-            };
-            self.next = t.end as usize;
-            self.toks.push(t);
-            if t.kind == T::Eof {
-                return;
-            }
+        // A block at a time (`Lexer::lex_run`), at least a batch.
+        match self.lx.lex_run(self.next, &mut self.toks, BATCH, &mut self.t.extras) {
+            Ok(next) => self.next = next,
+            // A token the lexer refuses is refused where the parser reads it.
+            Err(Refusal::Lex(at)) | Err(Refusal::Parse(at)) => self.toks.push(Tok { kind: T::Eof, word: u8::MAX, nl: false, tick: false, start: at, end: at }),
+            Err(Refusal::TooLarge) => self.toks.push(Tok { kind: T::Eof, word: u8::MAX, nl: false, tick: false, start: 0, end: 0 }),
         }
     }
 
