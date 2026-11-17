@@ -1,0 +1,41 @@
+// C's and C++'s directives as facts (decision 0327, mode (a)).
+//
+// A rule that reads one of these relations with its path bound asks for that file's directives
+// (`c_pp_file_req(path)`), and the runner answers inside the fixpoint, as it answers `file_line`
+// (`language::FileAnswerer`; the scan is `rerail_c_pp::directives`). The answer is every directive
+// of the file, whatever the configuration: each branch of a conditional is read. Only the relations
+// the program declares are made, so a program that reads `c_include` makes no `c_define` rows.
+//
+// Positions (`start`, `end`, `body_start`, …) are the file's bytes; `line` is from 1. Directive
+// `i` is the file's i-th, from 0; the other relations name it by `i`. A `.c` file is read as C, any
+// other as C++ (the two read alike but for a raw string and C++'s `::`).
+
+// Every directive: its kind (`define`, `include`, `if`, …, `null` for a `#` alone, `unknown`,
+// `line_marker` for GNU's `# 33 "file"`), its bytes and line.
+.decl c_directive(path: symbol, i: number, kind: symbol, start: number, end: number, line: number)
+// A macro's definition: `fnlike` is 1 for a function-like macro, `params` its parameters joined
+// by `,`, `variadic` "" or `standard` (`...`) or `named` (GNU's `args...`, the last parameter).
+.decl c_define(path: symbol, i: number, name: symbol, fnlike: number, params: symbol, variadic: symbol, body_start: number, body_end: number)
+.decl c_undef(path: symbol, i: number, name: symbol)
+// `kind`: `include`, `include_next`, `import`, `embed`; `form`: `quote`, `angle`, or `macro` (tokens
+// that make a header name once expanded); `spelled` with its quotes or brackets.
+.decl c_include(path: symbol, i: number, kind: symbol, form: symbol, spelled: symbol)
+// A conditional's directive (`if`, `ifdef`, `ifndef`, `elif`, `elifdef`, `elifndef`, `else`,
+// `endif`) and its expression's bytes (`#ifdef`'s name); the next directive of its chain; and the
+// group each directive sits in (its nearest open conditional's directive).
+.decl c_cond(path: symbol, i: number, kind: symbol, expr_start: number, expr_end: number)
+.decl c_cond_next(path: symbol, i: number, j: number)
+.decl c_cond_parent(path: symbol, i: number, p: number)
+// A pragma's first two words (`once`; `GCC`, `system_header`; `push_macro`), and its text.
+.decl c_pragma(path: symbol, i: number, first: symbol, second: symbol, text: symbol)
+// `#line` and GNU's line markers: the number (-1 where macros give it, `file` then the tokens).
+.decl c_line(path: symbol, i: number, n: number, file: symbol)
+// The text of `#error`, `#warning`, `#ident`, `#sccs`, `#assert`, `#unassert` and an unknown
+// directive.
+.decl c_text(path: symbol, i: number, text: symbol)
+// The include guard, by clang's multiple-include rule: `#ifndef X` (or `#if !defined X`) first,
+// its `#endif` last, nothing outside them. `i` is the `#ifndef`.
+.decl c_guard(path: symbol, i: number, name: symbol)
+// What the file gets wrong: `unmatched`, `after_else`, `unterminated`, `malformed` (by directive),
+// and `unclosed_comment` (i = -1).
+.decl c_pp_problem(path: symbol, i: number, kind: symbol)

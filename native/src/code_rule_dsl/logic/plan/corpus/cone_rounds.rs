@@ -123,7 +123,7 @@ impl RulePass for Rounds<'_> {
         // The file system's answers as joins: each request with a relation of the file system, the input.
         let mut inputs: Vec<String> = f.inputs().map(str::to_owned).collect();
         let mut kept = Vec::new();
-        for (answer, req) in crate::code_rule_dsl::logic::rr::WORLD {
+        for &(answer, req) in crate::code_rule_dsl::logic::rr::WORLD.iter() {
             let Some(width) = produced.iter().find(|(r, _)| r == answer).map(|(_, w)| *w) else { continue };
             if !answers.contains_key(req) || f.arity(req) != Some(1) {
                 continue;
@@ -471,7 +471,7 @@ impl RoundProgram {
             // answers are its answer again, and it is not asked.
             if let Some(still) = on.still {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "rounds/answers the journal keeps".into());
-                for (answer, req) in crate::code_rule_dsl::logic::rr::WORLD {
+                for &(answer, req) in crate::code_rule_dsl::logic::rr::WORLD.iter() {
                     let produced = self.kept_as(answer);
                     let Some(rows) = provisional.get(&produced) else { continue };
                     let mut by: HashMap<i64, Vec<&Vec<i64>>> = HashMap::new();

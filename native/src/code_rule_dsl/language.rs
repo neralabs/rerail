@@ -730,6 +730,56 @@ pub fn base(family: Family) -> &'static dyn LanguageBase {
     BASES[family as usize].get().copied().unwrap_or_else(|| panic!("no language registered for {family:?}"))
 }
 
+// A language's answers to a file's request (`FileAnswerer`).
+// A language's answers to a file's request, made inside the fixpoint (decisions 0065 §2a, 0104, 0327).
+//
+// The engine answers some requests natively: `dir_entry`, `file_line` and `file_digest` from the file system
+// (`rr::WORLD`), and `load` by loading a document. A language adds answers of the same shape here. A rule that reads
+// one of the answer's relations with its path bound asks for that path, and the runner gives the relations' rows for
+// the file at that path. C's preprocessor gives a file's directives this way (`c_pp_file_req`, 0327 mode (a)).
+//
+// Such an answer is a file system answer in every other respect: it is read only under the run's roots, its key is
+// the file's path, the journal keeps it while the file is unchanged, and an edit asks for it again. It is a native
+// step keyed by a fact (0104), with no store of its own.
+//
+// The core knows no language: a language registers its answerers as the languages are installed
+// (`install_languages`).
+/// A column of an answer's row, after the path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Cell {
+    Int(i64),
+    Text(String),
+}
+
+/// What answers one request of a file, by its path.
+pub trait FileAnswerer: Sync {
+    /// The request relation: one column, the path.
+    fn request(&self) -> &'static str;
+    /// The relations an answer gives rows of; each row's first column is the path.
+    fn produces(&self) -> &'static [&'static str];
+    /// The rows of the relations `wanted` says the program reads, for the file `path` whose bytes are `bytes`:
+    /// `out(relation, columns after the path)`.
+    fn answer(&self, path: &str, bytes: &[u8], wanted: &dyn Fn(&str) -> bool, out: &mut dyn FnMut(&'static str, &[Cell]));
+}
+
+static ANSWERERS: std::sync::OnceLock<Vec<&'static dyn FileAnswerer>> = std::sync::OnceLock::new();
+
+/// Registers the languages' answerers (`FileAnswerer`), once a process (`install_languages`); the first registration holds.
+pub fn install_answerers(answerers: Vec<&'static dyn FileAnswerer>) {
+    let _ = ANSWERERS.set(answerers);
+}
+
+/// The registered answerers. The languages are installed as the library loads (`install_languages`), before any
+/// program is lowered.
+pub fn answerers() -> &'static [&'static dyn FileAnswerer] {
+    ANSWERERS.get().map_or(&[], Vec::as_slice)
+}
+
+/// The answerer of request `req`.
+pub fn answerer(req: &str) -> Option<&'static dyn FileAnswerer> {
+    answerers().iter().copied().find(|a| a.request() == req)
+}
+
 /// The `type` of an ECMA file's nearest `package.json` (its `package`'s `type`).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PackageType {

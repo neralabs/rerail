@@ -6545,7 +6545,13 @@ fn run_observed(
         let load_placed = super::body::Placed::whole(load.clone());
         let load_f = load_placed.fields()?;
         let load_answers: Vec<(&str, &str)> = load_f.answers().iter().map(|&(q, a)| (load_f.rel_name(q), load_f.rel_name(a))).collect();
-        let per_file: Vec<String> = load_answers.iter().filter(|(q, a)| *q == world::LOAD && split.exports.iter().any(|e| e == a)).map(|(_, a)| (*a).to_owned()).collect();
+        let mut per_file: Vec<String> = load_answers.iter().filter(|(q, a)| *q == world::LOAD && split.exports.iter().any(|e| e == a)).map(|(_, a)| (*a).to_owned()).collect();
+        // A cone that loads nothing (its requests the file system's, or a language's) still reads the exports its
+        // rules read: the corpus's rows of them, bound as a load's would be. Their requests are keyed by them (a C
+        // file's directives asked for each document's path).
+        if !load_answers.iter().any(|(q, _)| *q == world::LOAD) {
+            per_file = load.rules().flat_map(|r| r.reads()).map(|a| load.rel_name(a.rel()).to_owned()).filter(|r| split.exports.contains(r)).collect::<BTreeSet<_>>().into_iter().collect();
+        }
         let world_rels: Vec<(String, usize)> = load_answers.iter().map(|(_, a)| *a).filter(|r| !split.exports.iter().any(|e| e == r)).filter_map(|r| load_f.arity(r).map(|w| (r.to_owned(), w))).collect();
         // Those the cone takes as inputs start empty; the others are its own tables.
         let world_inputs: Vec<(String, usize)> = world_rels.iter().filter(|(r, _)| load_f.is_input(r)).cloned().collect();
@@ -6845,6 +6851,26 @@ fn run_observed(
                 t.rows += rows.len();
                 t.total += t_call.elapsed().as_secs_f64();
             });
+            // A language's answer of a file (`answerers`): the relations of it the program reads.
+            if let Some(answerer) = crate::code_rule_dsl::language::answerer(rel) {
+                let _s = crate::code_rule_dsl::logic::profile::span(|| format!("answer {rel}"));
+                let wanted: Vec<&str> = answerer.produces().iter().copied().filter(|r| world_rels.iter().any(|(w, _)| w == r)).collect();
+                let mut cells: Vec<(&'static str, i64, Vec<crate::code_rule_dsl::language::Cell>)> = Vec::new();
+                for row in rows {
+                    let asked = text(row[0])?;
+                    let Some(bytes) = world.bytes(&asked) else { continue };
+                    answerer.answer(&asked, &bytes, &|r| wanted.contains(&r), &mut |r, c| cells.push((r, row[0], c.to_vec())));
+                }
+                use crate::code_rule_dsl::language::Cell;
+                let texts: Vec<&str> = cells.iter().flat_map(|(_, _, c)| c.iter().filter_map(|c| if let Cell::Text(t) = c { Some(t.as_str()) } else { None })).collect();
+                let mut atoms = atoms(&texts)?.into_iter();
+                let mut out: BTreeMap<&str, Vec<Vec<i64>>> = wanted.iter().map(|r| (*r, Vec::new())).collect();
+                for (r, key, c) in &cells {
+                    let row = std::iter::once(*key).chain(c.iter().map(|c| match c { Cell::Int(i) => *i, Cell::Text(_) => atoms.next().expect("an atom a text") })).collect();
+                    out.entry(r).or_default().push(row);
+                }
+                return Ok(out.into_iter().map(|(r, rows)| (r.to_owned(), rows)).collect());
+            }
             if let Some((produced, _)) = WORLD.iter().find(|(_, req)| *req == rel) {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("answer {rel}"));
                 let mut out = Vec::new();

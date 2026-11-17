@@ -22,7 +22,7 @@
 //! to the root or absolute), are read. A path elsewhere, or missing, has no entries or lines.
 
 use super::front;
-use crate::code_rule_dsl::logic::rr::WORLD;
+use crate::code_rule_dsl::logic::rr::{FILE_SYSTEM, WORLD};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -46,14 +46,17 @@ fn asks(prog: &front::Program, req: &str) -> bool {
 /// The requests a program makes, each with what answers it, before a load's per-file rows are added
 /// (`corpus::loading`): a directory's entries, a file's lines and a load's `loaded` row.
 pub(super) fn answers(f: &crate::code_rule_dsl::logic::plan::fields::Fields<'_>) -> BTreeMap<String, Vec<String>> {
-    WORLD
-        .iter()
-        .map(|(rel, req)| (*req, *rel))
-        .chain([(LOAD, LOADED)])
-        // By a rule, or as facts, as `asks` counts them (a constant key lowers to a request fact).
-        .filter(|(req, _)| f.derives(req) || f.has_facts(req))
-        .map(|(req, rel)| (req.to_owned(), vec![rel.to_owned()]))
-        .collect()
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (req, rel) in WORLD.iter().map(|(rel, req)| (*req, *rel)).chain([(LOAD, LOADED)]) {
+        // By a rule, or as facts, as `asks` counts them (a constant key lowers to a request fact). A language's
+        // answer gives only the relations the program declares (0327: a program that reads `c_include` makes no
+        // `c_define` rows).
+        let language = !FILE_SYSTEM.iter().any(|(r, _)| *r == rel) && rel != LOADED;
+        if (f.derives(req) || f.has_facts(req)) && (!language || f.arity(rel).is_some()) {
+            out.entry(req.to_owned()).or_default().push(rel.to_owned());
+        }
+    }
+    out
 }
 
 /// A loaded document: its path as the rule gave it, and the module it is.
@@ -71,6 +74,8 @@ pub(super) struct World {
     dirs: BTreeMap<String, Vec<(String, bool)>>,
     files: BTreeMap<String, Vec<String>>,
     digests: BTreeMap<String, String>,
+    /// The files a language's answer read whole (`bytes`).
+    read: BTreeSet<String>,
     loads: BTreeMap<String, Loaded>,
     refused: BTreeSet<String>,
     budget: usize,
@@ -159,6 +164,17 @@ impl World {
         let lines: Vec<String> = text.split_terminator('\n').map(str::to_owned).collect();
         self.files.insert(asked.to_owned(), lines.clone());
         lines
+    }
+
+    /// A file's bytes, for a language's answer (`answerers`); none when it is refused or missing. Consulted as a
+    /// file's lines are: by its digest.
+    pub(super) fn bytes(&mut self, asked: &str) -> Option<Vec<u8>> {
+        let Some((bytes, _)) = self.allowed(asked).and_then(|p| super::observe(|o| o.read(&p))) else {
+            self.refused.insert(asked.to_owned());
+            return None;
+        };
+        self.read.insert(asked.to_owned());
+        Some(bytes)
     }
 
     /// A file's content digest (none when it is refused or missing): the observer's, read only where it cannot vouch
@@ -295,7 +311,7 @@ impl World {
         for (asked, entries) in &self.dirs {
             out.push(("dir".to_owned(), asked.clone(), listing_digest(entries)));
         }
-        for asked in self.files.keys() {
+        for asked in self.files.keys().chain(self.read.iter().filter(|a| !self.files.contains_key(*a))) {
             out.push(("file".to_owned(), asked.clone(), self.allowed(asked).map(|p| bytes_digest(&p)).unwrap_or_default()));
         }
         for (asked, d) in &self.digests {

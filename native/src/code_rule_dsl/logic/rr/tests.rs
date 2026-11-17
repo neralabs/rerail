@@ -3860,3 +3860,48 @@ ends(l) :- kind(n, "expression_statement"), last_token(n, t), line(t, l).
     // With `value`'s round undone the program still has core.rr's shape: its token leaves are made.
     assert_eq!(ends, ["1"], "a token leaf's reader");
 }
+
+/// C's directives as facts (decision 0327, mode (a)): a rule reading `c_include`, `c_guard` or `c_define` of a path
+/// asks for the file's directives (`c_pp_file_req`), answered inside the fixpoint as a file's lines are. Only the
+/// relations the program declares are made. `h.h` is no document (a `.h` file is C++'s): it is asked for in the next
+/// wave, once `a.c`'s include names it.
+#[test]
+fn c_directives_are_answered_by_file() {
+    let rule = r#"
+.language c
+#include "c/preprocess.rr"
+.decl c_file(p: symbol)
+c_file(p) :- kind(n, "translation_unit"), docof(n, d), doc(d, p, _).
+.decl inc(p: symbol, form: symbol, s: symbol)
+inc(p, f, s) :- c_file(p), c_include(p, _, "include", f, s).
+.decl seen(p: symbol)
+seen(p) :- c_file(p).
+seen(h) :- seen(p), c_include(p, _, "include", "quote", s), h = substr(s, 1, strlen(s) - 2).
+.decl guard(p: symbol, n: symbol)
+guard(p, n) :- seen(p), c_guard(p, _, n).
+.decl macro(p: symbol, n: symbol, ps: symbol, v: symbol)
+macro(p, n, ps, v) :- seen(p), c_define(p, _, n, 1, ps, v, _, _).
+.output inc, guard, macro
+"#;
+    let a = "#include \"h.h\"\n#include <stdio.h>\n#define MAX(a, b) ((a) > (b) ? (a) : (b))\n#define LOG(fmt, ...) printf(fmt, __VA_ARGS__)\nint main(void) { return MAX(1, 2); }\n";
+    let h = "#ifndef H_H\n#define H_H\n#define \\\n  SQ(x) ((x) * (x))\nint f(int);\n#endif\n";
+    let [inc, guard, macros] = <[Vec<Vec<String>>; 3]>::try_from(guests_run("cdirectives", &[("a.c", a), ("h.h", h)], rule, &["inc", "guard", "macro"])).unwrap();
+    assert_eq!(inc, [shown_row(&["a.c", "angle", "<stdio.h>"]), shown_row(&["a.c", "quote", "\"h.h\""])]);
+    assert_eq!(guard, [shown_row(&["h.h", "H_H"])]);
+    assert_eq!(macros, [shown_row(&["a.c", "LOG", "fmt", "standard"]), shown_row(&["a.c", "MAX", "a,b", ""]), shown_row(&["h.h", "SQ", "x", ""])]);
+}
+
+/// A cone that loads nothing reads the exports its requests are keyed by: `f` (located as `f_at`, each row its
+/// document) asks for each document's lines. It was left unbound, and the planner had no statistics for it.
+#[test]
+fn a_request_keyed_by_an_export_needs_no_load() {
+    let rule = r#"
+.decl f(p: symbol)
+f(p) :- kind(n, "module"), docof(n, d), doc(d, p, _).
+.decl lines(p: symbol, i: number)
+lines(p, i) :- f(p), file_line(p, i, _), i < 2.
+.output lines
+"#;
+    let [lines] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("exportkeyed", &[("a.py", "x = 1\ny = 2\n")], rule, &["lines"])).unwrap();
+    assert_eq!(lines, [shown_row(&["a.py", "1"])]);
+}

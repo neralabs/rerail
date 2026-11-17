@@ -1284,6 +1284,7 @@ mod language {
         pub mod java;
         // Go's, C's and C++'s families: syntax only so far, their tapes from the lean parsers.
         pub mod c;
+        pub mod c_pp;
         pub mod go;
         // HTML's, CSS's and Markdown's families: syntax only so far, read by tree-sitter.
         pub mod css;
@@ -4672,6 +4673,8 @@ pub(crate) fn install_languages() {
     language::register_base(Family::Go, &Pack::<Go>::NEW);
     register(Family::C, &Pack::<C>::NEW);
     language::register_base(Family::C, &Pack::<C>::NEW);
+    // Answers inside the fixpoint (`answers`): C's directives by file (0327 mode (a)).
+    language::install_answerers(vec![&language::adapter::c_pp::Directives]);
     register(Family::Html, &Pack::<Html>::NEW);
     language::register_base(Family::Html, &Pack::<Html>::NEW);
     register(Family::Css, &Pack::<Css>::NEW);

@@ -60,7 +60,7 @@ the rules resolve it, and the key grows by it. That is phase 1's import fixpoint
 | relation | what it holds |
 |---|---|
 | `c_tu(tu, lang, std)` | a translation unit, its language (`c`, `c++`, `objective-c`) and standard |
-| `c_predefine(cfg, name, body)`, `c_undef(cfg, name)` | the predefined macros, `-D` and `-U`, in order |
+| `c_predefine(cfg, name, body)`, `c_config_undef(cfg, name)` | the predefined macros, `-D` and `-U`, in order (`c_config_undef`: mode (a) has `c_undef`) |
 | `c_include_dir(cfg, order, dir, kind)` | the search path, by kind (`quote`, `angle`, `system`, `after`, `framework`) |
 | `c_feature(cfg, kind, name, value)` | what `__has_attribute`, `__has_builtin`, `__has_feature`, `__has_extension`, `__has_cpp_attribute`, `__has_c_attribute` and `__has_warning` answer |
 | `c_fixed(cfg, name, value)` | `__DATE__`, `__TIME__` and `__TIMESTAMP__`, fixed so that a run is deterministic |
@@ -87,6 +87,7 @@ requests with their own rows.
 | `c_include(path, i, kind, form, spelled)` | `kind`: `include`, `include_next`, `import`, `embed`; `form`: `quote`, `angle`, `macro` (tokens that make a header name once expanded) |
 | `c_cond(path, i, kind, expr_start, expr_end)` | `if`, `ifdef`, `ifndef`, `elif`, `elifdef`, `elifndef`, `else`, `endif` |
 | `c_cond_next(path, i, j)`, `c_cond_parent(path, i, p)` | the chain of a conditional's groups, and the group a directive sits in |
+| `c_text(path, i, text)` | the text of `#error`, `#warning`, `#ident`, `#sccs`, `#assert`, `#unassert` and an unknown directive |
 | `c_pragma(path, i, first, second, text)`, `c_line(path, i, n, file)` | a pragma's first two words (`once`; `GCC system_header`; `push_macro`), so rules join on words, not text (ledger row 18) |
 | `c_guard(path, i, name)` | the file's include guard, by clang's multiple-include rule: `#ifndef X` or `#if !defined X` first, its `#endif` last, no token outside |
 | `c_pp_problem(path, i, kind)` | an unmatched `#elif`/`#else`/`#endif`, one after `#else`, an unclosed `#if`, a malformed operand, an unclosed comment |
@@ -214,6 +215,22 @@ must not become a per-token one (history index, lesson 6).
   pp-number is split where the parser's lexer ends a number, so `100ms` is a number and a name.
   Digraphs are written in their plain spelling. Origins are run-length segments: a segment holds
   while the text follows its file byte for byte, or one expansion.
+- **Mode (a) in the engine (built).**
+  - A language registers answers to a file's request, `language::FileAnswerer`: a request
+    relation, the relations it gives, and the rows for a file's bytes. C's is
+    `language/adapter/c_pp.rs`, registered in `install_languages`.
+  - `rr::WORLD` lists the file system's answers (`FILE_SYSTEM`) and then each registered one,
+    one row a relation. Lowering, the cone's rounds, the journal's carry and the consulted
+    record treat them alike. A file a language's answer reads is consulted by its digest, as a
+    file's lines are.
+  - The answer gives only the relations the program declares (`world::answers`).
+  - The rules: `docs/rule-syntax/lib/c/preprocess.rr`. Test:
+    `c_directives_are_answered_by_file`. A header no document names is asked for in the next
+    wave, once an include names it.
+  - **Fixed on the way.** A cone that loads nothing left the exports its rules read unbound.
+    A request keyed by a document's path failed on missing statistics, in any language. Such a
+    cone now binds the corpus's rows of them (test
+    `a_request_keyed_by_an_export_needs_no_load`).
 - **The compiled forms** are held to the lean preprocessor: the same rows and the same tokens, on
   every backend.
 
