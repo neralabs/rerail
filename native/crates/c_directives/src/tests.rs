@@ -149,6 +149,9 @@ fn directives_read_as_the_lean_scan_reads_them() {
         "#define A(x) x \\\n  + 1\n#pragma a \\\n b\n",
         "#ifndef G\r\n#define G 1 \r\n#define L(a) a \\\r\n + 1\r\n#include \"x.h\"\r\n// c\r\n#pragma once\r\n#endif\r\n",
         "#error done\r\n#define S \"a\"\r\nint x;\r\n",
+        "auto s = R\"(\n#define NOT_ONE\n)\";\n#define A u8R\"(x)\" LR\"()\"\n",
+        "#ifndef G\n#define G\nconst char* s = R\"(\"\\)\";\n#endif\n",
+        "#define S R\"(two\nlines)\" after\n#define FOOR\n",
     ];
     for src in cases {
         let b = src.as_bytes();
@@ -176,7 +179,7 @@ fn directives_read_as_the_lean_scan_reads_them() {
 #[test]
 fn what_the_step_does_not_read_is_refused() {
     let c = compiled_or_panic();
-    for src in ["#if A\n#define X\n", "#define X 1\rx\n", "auto s = R\"(x)\";\n", "int n = 1'000;\n", "#define X \"open\n", "/* open\n", "??=define X\n", "%:define X\n", "#error don't\n"] {
+    for src in ["#if A\n#define X\n", "#define X 1\rx\n", "auto s = R\"x(x)x\";\n", "auto s = R\"(x\n", "auto s = R\"(a\\\nb)\";\n", "int n = 1'000;\n", "#define X \"open\n", "/* open\n", "??=define X\n", "%:define X\n", "#error don't\n"] {
         assert!(c.read(src.as_bytes()).is_none(), "{src:?}");
     }
 }

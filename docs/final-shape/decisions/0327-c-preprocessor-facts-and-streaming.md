@@ -412,6 +412,19 @@ alone is still refused. Corpus: 3,040 the same, 95 refused, 0 differ (the 24 CRL
 read). Of the refusals left, raw strings are most (59 files have one); then digit separators,
 quotes a line break closes, trigraphs and `%:`.
 
+### Mode (a) compiled, step 6 (`06-raw.bitlex`): raw strings
+
+A raw string with no delimiter (`R"(…)"`, prefixed by `u8`, `u`, `U` or `L` too) is a region
+from its `"(` to the first `)"`, line breaks inside it too (a directive's line runs on past
+them). One with a delimiter, one open at the file's end, and a splice inside one (phase 2 undoes
+it there) are refused. A configuration without raw strings (C, not GNU) has the lean scan read a
+file with an `R"`. Corpus: 3,075 the same, 60 refused, 0 differ, on every backend.
+
+- **A compiler fix found here.** Two region kinds' openers on one byte (a raw string's `"` is a
+  string's opener too): the walk, the regions' meaning, opens the first-listed kind, but the
+  rounds Metal runs opened both. Each kind's rounds opener now excludes the earlier kinds'
+  (`bitlex_masks::regions`; `regions_tests`).
+
 ### Prior art in the other worktrees (surveyed 2026-11-17)
 
 | Where | What | For mode (a) compiled |

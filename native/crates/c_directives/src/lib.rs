@@ -12,7 +12,7 @@ use rerail_compiler::bitlex_masks as bitlex_compile;
 use rerail_compiler::{native_cpu_clusters, native_cpu_stream, native_ir, rir_asm as rir};
 
 /// The grammar: the ladder's last step.
-pub const GRAMMAR: &str = include_str!("../bitlex_ladder/05-crlf.bitlex");
+pub const GRAMMAR: &str = include_str!("../bitlex_ladder/06-raw.bitlex");
 
 /// The tape's kinds, by id: the root, the directives' kinds (their names the lean scan's
 /// `Kind::name`), then the tokens' leaves and the operands' nodes.
@@ -328,7 +328,10 @@ pub use facts::Facts;
 /// `src`'s mode (a) facts: from the compiled grammar's tape where it reads the file, else (a
 /// construct the ladder does not read, or a grammar that does not compile) the lean scan's.
 pub fn facts(src: &[u8], opts: rerail_c_pp::Options) -> Facts {
-    compiled().ok().and_then(|c| c.facts(src)).unwrap_or_else(|| Facts::lean(src, opts))
+    // The grammar reads raw strings: a configuration without them (C, not GNU) has the lean scan
+    // read a file that may have one.
+    let raw_free = opts.raw_strings || rerail_simd8::micro::find_pair(src, 0, b'R', b'"').is_none();
+    raw_free.then(compiled).and_then(Result::ok).and_then(|c| c.facts(src)).unwrap_or_else(|| Facts::lean(src, opts))
 }
 
 #[cfg(test)]
