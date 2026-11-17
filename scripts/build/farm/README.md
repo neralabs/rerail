@@ -353,7 +353,8 @@ that carries 600 MB/s; over TCP a fresh 330 MB tree reaches a host at 220–330 
 own disk writes included. ssh stays open as the lifeline: the agent ends when it does, and a
 dead TCP connection is noticed in about 10 s (keepalive). If the agent cannot connect back
 within 8 s, the stream stays on ssh. The data on the link is not encrypted: `tcp: false` keeps it
-on ssh. Every file the compile read (its dep-info) must have the size and mtime
+on ssh. Every file the compile read (its dep-info, and each `--extern` crate, which the dep-info leaves
+out and the host is asked for again before each compile) must have the size and mtime
 it has here, or the compile runs here. The agent refuses to write when its root is under a network
 mount.
 

@@ -21,12 +21,12 @@ From the daemon:
   "same?", "id", "differ"}: those missing or different here. Only read: a compile then reads that
   crate in place, at the very path the build machine compiles it from, and rustc's output is the
   same bytes (rustc hashes a source file's real path into it, remapped or not).
-- {"op": "run", "id", "cwd", "argv", "env", "dirs", "outputs", "depinfo", "map", "inplace"}: runs
+- {"op": "run", "id", "cwd", "argv", "env", "dirs", "outputs", "depinfo", "map", "inplace", "externs"}: runs
   the compile in a thread of its own; `inplace` lists the directories it reads in place (`same`). `map` lists the build machine's paths that are kept here: every one of
   them in the arguments, the environment and `cwd` is replaced by where it is kept, and
   `--remap-path-prefix ROOT=/` (rustc's lowest-precedence remap; rustc strips a prefix by path components, so `/` puts the leading slash back) gives the compile's paths back.
   Replies with a "file" frame per output (the dep-info with ROOT taken out), then {"op": "done",
-  "id", "code", "stdout", "stderr", "read"}: `read` maps each file the dep-info lists to
+  "id", "code", "stdout", "stderr", "read"}: `read` maps each file the dep-info lists, and each of `externs` (its `--extern` crates), to
   [mtime_ns, size] as `seen`, for the daemon to check against its own. An output that names ROOT
   (a path written into it that no remap reached, such as `env!("CARGO_MANIFEST_DIR")`) is not sent:
   code 71, and the compile runs on the build machine. A put that fails makes every later run fail
@@ -245,6 +245,9 @@ def run(job):
                         full = p if p.startswith("/") else os.path.normpath(os.path.join(job["cwd"], p))
                         # Read in place: its content was checked (`same`) just before.
                         read[p] = "inplace" if under(full, inplace) else seen(at(full))
+            # The `--extern` crates it read: the dep-info does not list them.
+            for p in job.get("externs", []):
+                read[p] = seen(at(p))
     send({"op": "done", "id": job["id"], "code": code, "stdout": stdout.decode("latin-1").replace(ROOT + "/", "/"),
           "stderr": stderr.decode("latin-1").replace(ROOT + "/", "/"), "read": read})
 

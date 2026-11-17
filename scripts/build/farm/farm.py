@@ -22,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 23
+VERSION = 24
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -1373,7 +1373,12 @@ def run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up,
            "depinfo": os.path.join(out_dir, f"{crate}{extra}.d") if "dep-info" in kinds else None,
            "env": {k: v for k, v in env.items() if k not in LOCAL_ONLY and not k.startswith(("SCCACHE_", "RERAIL_FARM_"))},
            # What the host keeps under its farm root, and maps there in the arguments and environment.
-           "map": [r for r, _ in roots] + files}
+           "map": [r for r, _ in roots] + files,
+           # The crates it links against, whose copies there are checked as its sources are: the
+           # dep-info lists no `--extern`, and sccache keys the compile by this machine's copy. A
+           # vendored crate keeps its file name across edits, so a host's older copy compiled a
+           # crate against another version under this one's key (Q68: E0463 above it).
+           "externs": files}
     reply = mirror.compile({"host": host["name"], "since": since, "roots": roots, "files": files, "run": run})
     if reply is None:
         return give_up("the mirror daemon did not answer")
