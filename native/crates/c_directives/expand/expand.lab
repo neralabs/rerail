@@ -100,8 +100,43 @@ p1:     IS m=0 8          ; the argument's end
         GOTO @pl
 pend:   PRE m=1 0
         GOTO @pre
-subst:  SUBST 0           ; read next, its macro disabled while it is
+; subst: the top frame's body substituted, a body token a turn (`SUB`), its `__VA_OPT__`s'
+; contents walked in place, `#`'s literals made a token a turn (`STR`), then its pastes (`GLUE`);
+; then read, its macro disabled while it is.
+subst:  SUB m=0 0
+sl:     SUB m=1 0         ; the body's next token, B
+        GOTO @sb
+        SUB m=7 0         ; a __VA_OPT__'s content ended
+        GOTO @vend
+        SUB m=9 0         ; the output's pastes
+fp:     GLUE 0
+        GOTO @fp
+        SUB m=10 0
         GOTO @one
+sb:     SUB m=2 0         ; `#` and a parameter
+        GOTO @sstr
+        SUB m=3 0         ; `#__VA_OPT__(`
+        GOTO @sl
+        SUB m=4 0         ; `__VA_OPT__(`
+        GOTO @sl
+        SUB m=5 0         ; a parameter's argument, or B
+        GOTO @sl
+sstr:   STR m=0 0
+st:     STR m=1 0
+        GOTO @st
+        STR m=2 0
+        GOTO @sl
+vend:   SUB m=6 0         ; a `#__VA_OPT__`'s content: pasted, then stringized
+        GOTO @vp
+        GOTO @sl
+vp:     GLUE 0
+        GOTO @vp
+        SUB m=8 0
+        STR m=0 0
+vs:     STR m=1 0
+        GOTO @vs
+        STR m=3 0
+        GOTO @sl
 ; raw: T <- the next token, unexpanded; directives carried out as their `#` is read.
 raw:    READ 0
         IS m=3 0

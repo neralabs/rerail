@@ -73,7 +73,6 @@ pub const OPCODES: &[(u8, &str)] = &[
     (ARG, "ARG"),
     (PRE, "PRE"),
     (KEEP, "KEEP"),
-    (SUBST, "SUBST"),
     (DEFINE, "DEFINE"),
     (UNDEF, "UNDEF"),
     (SKIPLINE, "SKIPLINE"),
@@ -86,6 +85,9 @@ pub const OPCODES: &[(u8, &str)] = &[
     (BUILTIN, "BUILTIN"),
     (LINEDIR, "LINEDIR"),
     (EMBED, "EMBED"),
+    (SUB, "SUB"),
+    (STR, "STR"),
+    (GLUE, "GLUE"),
 ];
 
 /// How an opcode's operand prints.

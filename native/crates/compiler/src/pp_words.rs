@@ -30,7 +30,7 @@ use std::collections::HashMap;
 
 /// Whether a word is one of the preprocessing words.
 pub fn is_pp(opcode: u8) -> bool {
-    (READ..=EMBED).contains(&opcode)
+    (READ..=EMBED).contains(&opcode) || (SUB..=GLUE).contains(&opcode)
 }
 
 // A token's kind.
@@ -236,13 +236,15 @@ const VA_OPT: &[u8] = b"__VA_OPT__";
 
 /// Whether a word is a test (it runs the next word where it holds, skips it where not).
 fn is_test(opcode: u8, mode: u8) -> bool {
-    matches!(opcode, LINE | IS | PEEK | LOOKUP | MACRO | DEFINED) || (opcode == INCLUDE && mode <= 1) || (opcode == EMBED && mode == 0) || (opcode == BUILTIN && mode >= 1) || (opcode == ARG && (mode == 2 || mode == 4)) || (opcode == PRE && mode == 0) || (opcode == COND && (mode == 2 || mode == 3)) || (opcode == IF && mode == 1)
+    matches!(opcode, LINE | IS | PEEK | LOOKUP | MACRO | DEFINED) || (opcode == INCLUDE && mode <= 1) || (opcode == EMBED && mode == 0) || (opcode == SUB && matches!(mode, 1..=4 | 6 | 7)) || (opcode == STR && mode == 1) || opcode == GLUE || (opcode == BUILTIN && mode >= 1) || (opcode == ARG && (mode == 2 || mode == 4)) || (opcode == PRE && mode == 0) || (opcode == COND && (mode == 2 || mode == 3)) || (opcode == IF && mode == 1)
 }
 
 /// A preprocessing program's rules: only these words, `GOTO`, `PUSH` (each followed by its
 /// callee's `GOTO`), `RETURN`, `ACCEPT` and `STOP`; operands in range; no word falls off the end;
-/// and every cycle reads a token (`READ`, `LINE`), a call counting as one where every way through
-/// its callee does.
+/// and every cycle steps a stated cursor, a call counting as one where every way through its
+/// callee does. The steps: a token read (`READ`, `LINE`); on the held side of their tests, a
+/// body token taken (`SUB m=1`), a `__VA_OPT__`'s content closed (`SUB m=7`), a token
+/// stringized (`STR m=1`), a paste's step (`GLUE`). Each is a backend's loop head.
 pub fn validate(program: &Words) -> Result<(), Error> {
     let words = &program.words;
     let n = words.len();
@@ -250,7 +252,7 @@ pub fn validate(program: &Words) -> Result<(), Error> {
     for (pc, &w) in words.iter().enumerate() {
         let (op, mode, operand) = split(w);
         let ok = match op {
-            READ | LINE | LOOKUP | PAINT | PUT | FRAME | KEEP | SUBST | DEFINE | UNDEF | SKIPLINE | SKIP | DEFINED | PRAGMA => mode == 0 && operand == 0,
+            READ | LINE | LOOKUP | PAINT | PUT | FRAME | KEEP | DEFINE | UNDEF | SKIPLINE | SKIP | DEFINED | PRAGMA => mode == 0 && operand == 0,
             INCLUDE => mode <= 2 && operand == 0,
             IS => match mode {
                 0 => operand < u16::from(KINDS),
@@ -265,6 +267,9 @@ pub fn validate(program: &Words) -> Result<(), Error> {
             BUILTIN => mode <= 4 && operand == 0,
             LINEDIR => mode <= 1 && operand == 0,
             EMBED => mode <= 2 && operand == 0,
+            SUB => mode <= 10 && operand == 0,
+            STR => mode <= 3 && operand == 0,
+            GLUE => mode == 0 && operand == 0,
             ARG => mode <= 5 && operand == 0,
             PRE => mode <= 1 && operand == 0,
             PUSH => mode == 0 && usize::from(operand) < n && words.get(pc + 1).is_some_and(|&w| split(w).0 == GOTO),
@@ -318,13 +323,16 @@ pub fn validate(program: &Words) -> Result<(), Error> {
     Ok(())
 }
 
-/// The words that can follow `pc` with no token read.
+/// The words that can follow `pc` with no step (`validate`).
 fn after(words: &[u32], pc: usize, memo: &mut HashMap<usize, Option<bool>>) -> Vec<usize> {
     let (op, mode, operand) = split(words[pc]);
     match op {
         READ | LINE | RETURN | ACCEPT | STOP => vec![],
-        // `defined` reads its operand where it holds, and nothing where it does not.
-        DEFINED => vec![pc + 2],
+        // `defined` reads its operand where it holds, and nothing where it does not; a step
+        // test steps where it holds.
+        DEFINED | GLUE => vec![pc + 2],
+        SUB if mode == 1 || mode == 7 => vec![pc + 2],
+        STR if mode == 1 => vec![pc + 2],
         GOTO => vec![usize::from(operand)],
         PUSH => {
             let callee = usize::from(split(words[pc + 1]).2);
@@ -335,8 +343,8 @@ fn after(words: &[u32], pc: usize, memo: &mut HashMap<usize, Option<bool>>) -> V
     }
 }
 
-/// Whether every way from `entry` to a `RETURN` reads a token (a callee still being asked about
-/// counts as not).
+/// Whether every way from `entry` to a `RETURN` steps (a callee still being asked about counts
+/// as not).
 fn reads(words: &[u32], entry: usize, memo: &mut HashMap<usize, Option<bool>>) -> bool {
     match memo.get(&entry) {
         Some(&Some(r)) => return r,
@@ -489,6 +497,41 @@ struct Machine<'a> {
     /// The `#embed` read: its parameters' tokens until they are pushed, its name, and its file
     /// where mode (a) read its name (`Some(NONE)`: not found).
     embed: (Vec<Tok>, Option<(Vec<u8>, bool)>, Option<u32>),
+    sub: Sub,
+}
+
+/// The substitution being made (`SUB`, `STR`, `GLUE`): one at a time, as a call's arguments
+/// are expanded before it begins.
+#[derive(Clone, Copy, Default)]
+struct Sub {
+    /// The expansion's index + 1 (`Tok::exp`).
+    id: u32,
+    /// The body's range walked (all of it, or a `__VA_OPT__`'s content) and its next token.
+    lo: u32,
+    i: u32,
+    hi: u32,
+    /// The output's first arena index, and the range's (a content's) being made.
+    base: u32,
+    out: u32,
+    /// The body token taken last (`B`), and its index.
+    bt: Tok,
+    at: u32,
+    /// An open `__VA_OPT__`'s content: the walk after it, its output's start, whether it is
+    /// stringized, and its `#` or `__VA_OPT__` token.
+    va: Option<(u32, u32, u32, u32, bool, Tok)>,
+    /// The content closed last: its output's start, and whether it is stringized.
+    closed: (u32, bool, Tok),
+    /// The pastes: the range's start, the read and write cursors, and the range's end.
+    ps: u32,
+    r: u32,
+    w: u32,
+    end: u32,
+    /// The range to stringize, its first token, the literal's first scratch byte, and the token
+    /// whose flags it takes.
+    s: (u32, u32),
+    s_first: u32,
+    sb: u32,
+    like: Tok,
 }
 
 type R<T> = Result<T, &'static str>;
@@ -551,6 +594,7 @@ pub fn run(program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Resul
         marker: None,
         line_last: eof(0),
         embed: (Vec::new(), None, None),
+        sub: Sub::default(),
     };
     m.install_builtins().map_err(|why| Refused { pc: 0, why })?;
     let words = &program.words;
@@ -656,10 +700,9 @@ pub fn run(program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Resul
                 m.kept.push(m.t);
                 None
             }
-            SUBST => {
-                m.subst().map_err(fail)?;
-                None
-            }
+            SUB => m.sub(mode).map_err(fail)?,
+            STR => m.str_word(mode).map_err(fail)?,
+            GLUE => Some(m.paste_step().map_err(fail)?),
             DEFINE => {
                 m.define().map_err(fail)?;
                 None
@@ -996,93 +1039,6 @@ impl Machine<'_> {
         (i + 2, hi, hi)
     }
 
-    fn arena_toks(&self, (a, b): (u32, u32)) -> Vec<Tok> {
-        self.arena[a as usize..b as usize].to_vec()
-    }
-
-    /// The body's tokens `lo..hi` with the top frame's arguments substituted.
-    fn substitute(&mut self, f: &Frame, lo: u32, hi: u32, id: u32) -> R<Vec<Tok>> {
-        let def = self.defs[f.def as usize];
-        let va = def.variadic.then(|| usize::from(def.params) - 1);
-        let mut out: Vec<Tok> = Vec::new();
-        let mut i = lo;
-        while i < hi {
-            let bt = self.body_tok(&def, i);
-            let next_param = if i + 1 < hi { self.param(&def, i + 1) } else { None };
-            if def.fnlike && bt.kind == HASH {
-                if let Some(p) = next_param {
-                    let toks = self.arena_toks(self.arg_range(f, p));
-                    let t = self.stringized(&toks, &bt)?;
-                    out.push(Tok { exp: id, ..t });
-                    i += 2;
-                    continue;
-                }
-                if va.is_some() && i + 1 < hi && self.mark(&def, i + 1) == VA_OPT_MARK {
-                    // `#__VA_OPT__(…)`: the content, substituted and pasted, stringized.
-                    let (clo, chi, end) = self.va_opt_content(&def, i + 1, hi);
-                    let mut c = if self.va_present(f) { self.substitute(f, clo, chi, id)? } else { Vec::new() };
-                    self.paste_all(&mut c, id)?;
-                    c.retain(|t| t.flags & PLACEMARKER == 0);
-                    let t = self.stringized(&c, &bt)?;
-                    out.push(Tok { exp: id, ..t });
-                    i = end;
-                    continue;
-                }
-            }
-            if va.is_some() && self.mark(&def, i) == VA_OPT_MARK {
-                let (clo, chi, end) = self.va_opt_content(&def, i, hi);
-                if self.va_present(f) {
-                    let mut c = self.substitute(f, clo, chi, id)?;
-                    if let Some(x) = c.first_mut() {
-                        x.flags = (x.flags & !SPACE) | (bt.flags & SPACE);
-                    }
-                    out.extend(c);
-                } else {
-                    out.push(Tok { flags: PLACEMARKER, ..bt });
-                }
-                i = end;
-                continue;
-            }
-            if let Some(p) = self.param(&def, i) {
-                let before = i > lo && self.body_tok(&def, i - 1).flags & PASTE != 0;
-                let after = i + 1 < hi && self.body_tok(&def, i + 1).flags & PASTE != 0;
-                let raw = self.arg_range(f, p);
-                let comma_paste = |out: &Vec<Tok>, m: &Self| out.len() >= 2 && m.spelled(&out[out.len() - 2], b",") && out[out.len() - 2].kind == PUNCT && out[out.len() - 1].flags & PASTE != 0;
-                // GNU's `, ## __VA_ARGS__`: with no variadic arguments the comma goes...
-                if before && Some(p) == va && raw.0 == raw.1 && comma_paste(&out, self) {
-                    out.pop();
-                    out.pop();
-                    i += 1;
-                    continue;
-                }
-                // ...and with some, the `##` is no paste.
-                if before && Some(p) == va && comma_paste(&out, self) {
-                    out.pop();
-                }
-                let toks = if before || after {
-                    self.arena_toks(raw)
-                } else {
-                    let r = self.pres[f.pres as usize + p];
-                    if r.0 == NONE {
-                        return Err("an argument substituted before its expansion");
-                    }
-                    self.arena_toks(r)
-                };
-                if toks.is_empty() {
-                    out.push(Tok { flags: PLACEMARKER, ..bt });
-                } else {
-                    let k = out.len();
-                    out.extend(toks);
-                    out[k].flags = (out[k].flags & !(BOL | SPACE)) | (bt.flags & SPACE);
-                }
-                i += 1;
-                continue;
-            }
-            out.push(Tok { exp: id, ..bt });
-            i += 1;
-        }
-        Ok(out)
-    }
 
     fn scratch_tok(&mut self, kind: u8, text: &[u8], flags: u8) -> R<Tok> {
         if self.scratch.len() + text.len() > self.bounds.scratch {
@@ -1091,62 +1047,6 @@ impl Machine<'_> {
         let start = self.scratch.len() as u32;
         self.scratch.extend_from_slice(text);
         Ok(Tok { kind, flags, buf: 0, start, end: self.scratch.len() as u32, exp: 0 })
-    }
-
-    /// `#`'s literal of `toks` (C17 §6.10.3.2): a blank where there was white space, `"` and `\`
-    /// escaped in literals; its flags `like`'s.
-    fn stringized(&mut self, toks: &[Tok], like: &Tok) -> R<Tok> {
-        let mut s = vec![b'"'];
-        for (k, t) in toks.iter().enumerate() {
-            if t.flags & PLACEMARKER != 0 {
-                continue;
-            }
-            if k > 0 && t.flags & (SPACE | BOL) != 0 && s.len() > 1 {
-                s.push(b' ');
-            }
-            let text = self.text(t);
-            if t.kind == LITERAL {
-                for &c in text {
-                    if c == b'"' || c == b'\\' {
-                        s.push(b'\\');
-                    }
-                    s.push(c);
-                }
-            } else {
-                s.extend_from_slice(text);
-            }
-        }
-        s.push(b'"');
-        self.scratch_tok(LITERAL, &s, like.flags & (BOL | SPACE))
-    }
-
-    /// The pastes of `out`, left to right.
-    fn paste_all(&mut self, out: &mut Vec<Tok>, id: u32) -> R<()> {
-        if !out.iter().any(|t| t.flags & PASTE != 0) {
-            return Ok(());
-        }
-        let mut res: Vec<Tok> = Vec::with_capacity(out.len());
-        let mut i = 0;
-        while i < out.len() {
-            let t = out[i];
-            if t.flags & PASTE != 0 && !res.is_empty() && i + 1 < out.len() {
-                let l = res.pop().unwrap();
-                let r = out[i + 1];
-                match self.paste(l, r, id)? {
-                    Some(m) => res.push(m),
-                    None => {
-                        res.push(l);
-                        res.push(r);
-                    }
-                }
-                i += 2;
-                continue;
-            }
-            res.push(t);
-            i += 1;
-        }
-        *out = res;
-        Ok(())
     }
 
     /// `l ## r`: one token, or `None` where the two spell no one token.
@@ -1196,30 +1096,252 @@ impl Machine<'_> {
         })
     }
 
-    fn subst(&mut self) -> R<()> {
+    // The substitution.
+
+    fn sub(&mut self, mode: u8) -> R<Option<bool>> {
         let f = *self.frames.last().ok_or("a substitution with no frame")?;
         let def = self.defs[f.def as usize];
-        if self.exps.len() >= self.bounds.output {
-            return Err("past the expansions' bound");
+        let v = self.sub;
+        let held = match mode {
+            0 => {
+                if self.exps.len() >= self.bounds.output {
+                    return Err("past the expansions' bound");
+                }
+                self.exps.push((f.name, f.end));
+                let a = self.arena.len() as u32;
+                self.sub = Sub { id: self.exps.len() as u32, hi: def.end - def.first, base: a, out: a, ..Sub::default() };
+                return Ok(None);
+            }
+            1 => {
+                if v.i >= v.hi {
+                    return Ok(Some(false));
+                }
+                self.sub.bt = self.body_tok(&def, v.i);
+                self.sub.at = v.i;
+                self.sub.i += 1;
+                true
+            }
+            2 => match (def.fnlike && v.bt.kind == HASH && v.at + 1 < v.hi).then(|| self.param(&def, v.at + 1)).flatten() {
+                Some(p) => {
+                    let (a, b) = self.arg_range(&f, p);
+                    self.sub.i = v.at + 2;
+                    self.sub.s = (a, b);
+                    self.sub.like = v.bt;
+                    true
+                }
+                None => false,
+            },
+            3 | 4 => {
+                // `#__VA_OPT__(…)` (3), `__VA_OPT__(…)` (4).
+                let k = if mode == 3 { v.at + 1 } else { v.at };
+                let is = def.variadic && k < v.hi && self.mark(&def, k) == VA_OPT_MARK && (mode == 4 || (def.fnlike && v.bt.kind == HASH));
+                if !is {
+                    return Ok(Some(false));
+                }
+                if self.sub.va.is_some() {
+                    return Err("a __VA_OPT__ inside a __VA_OPT__");
+                }
+                let (clo, chi, end) = self.va_opt_content(&def, k, v.hi);
+                let present = self.va_present(&f);
+                if mode == 4 && !present {
+                    self.push_arena(Tok { flags: PLACEMARKER, ..v.bt })?;
+                    self.sub.i = end;
+                    return Ok(Some(true));
+                }
+                let a = self.arena.len() as u32;
+                self.sub.va = Some((v.lo, end, v.hi, v.out, mode == 3, v.bt));
+                // Not present, stringized: its content is empty, its literal `""`.
+                let (lo, hi) = if present { (clo, chi) } else { (chi, chi) };
+                (self.sub.lo, self.sub.i, self.sub.hi, self.sub.out) = (lo, lo, hi, a);
+                true
+            }
+            5 => {
+                self.substitute_one(&f, &def)?;
+                return Ok(None);
+            }
+            6 => {
+                let (at, stringized, _) = v.closed;
+                if stringized {
+                    (self.sub.ps, self.sub.r, self.sub.w, self.sub.end) = (at, at, at, self.arena.len() as u32);
+                }
+                stringized
+            }
+            7 => match v.va {
+                Some((lo, i, hi, out, stringized, bt)) => {
+                    let at = v.out;
+                    if !stringized && (at as usize) < self.arena.len() {
+                        let x = &mut self.arena[at as usize];
+                        x.flags = (x.flags & !SPACE) | (bt.flags & SPACE);
+                    }
+                    self.sub = Sub { lo, i, hi, out, va: None, closed: (at, stringized, bt), ..v };
+                    true
+                }
+                None => false,
+            },
+            8 => {
+                let at = v.closed.0;
+                self.retain_from(at);
+                self.sub.s = (at, self.arena.len() as u32);
+                self.sub.like = v.closed.2;
+                return Ok(None);
+            }
+            9 => {
+                (self.sub.ps, self.sub.r, self.sub.w, self.sub.end) = (v.base, v.base, v.base, self.arena.len() as u32);
+                return Ok(None);
+            }
+            _ => {
+                self.retain_from(v.base);
+                if let Some(x) = self.arena.get_mut(v.base as usize) {
+                    x.flags = (x.flags & !(BOL | SPACE)) | (f.name.flags & (BOL | SPACE));
+                }
+                self.drop_frame();
+                if self.sources.len() >= self.bounds.depth {
+                    return Err("past the sources' bound");
+                }
+                self.defs[f.def as usize].disabled = true;
+                self.sources.push(Src::arena(v.base, self.arena.len() as u32, f.def, false));
+                return Ok(None);
+            }
+        };
+        Ok(Some(held))
+    }
+
+    /// `B` substituted (`SUB m=5`): a parameter's argument, or `B` itself.
+    fn substitute_one(&mut self, f: &Frame, def: &Def) -> R<()> {
+        let v = self.sub;
+        let (bt, i) = (v.bt, v.at);
+        let Some(p) = self.param(def, i) else {
+            return self.push_arena(Tok { exp: v.id, ..bt });
+        };
+        let va = def.variadic.then(|| usize::from(def.params) - 1);
+        let before = i > v.lo && self.body_tok(def, i - 1).flags & PASTE != 0;
+        let after = i + 1 < v.hi && self.body_tok(def, i + 1).flags & PASTE != 0;
+        let raw = self.arg_range(f, p);
+        let n = self.arena.len();
+        let comma_paste = n >= v.out as usize + 2 && self.spelled(&self.arena[n - 2], b",") && self.arena[n - 2].kind == PUNCT && self.arena[n - 1].flags & PASTE != 0;
+        // GNU's `, ## __VA_ARGS__`: with no variadic arguments the comma goes...
+        if before && Some(p) == va && raw.0 == raw.1 && comma_paste {
+            self.arena.truncate(n - 2);
+            return Ok(());
         }
-        self.exps.push((f.name, f.end));
-        let id = self.exps.len() as u32;
-        let mut out = self.substitute(&f, 0, def.end - def.first, id)?;
-        self.paste_all(&mut out, id)?;
-        out.retain(|t| t.flags & PLACEMARKER == 0);
-        if let Some(x) = out.first_mut() {
-            x.flags = (x.flags & !(BOL | SPACE)) | (f.name.flags & (BOL | SPACE));
+        // ...and with some, the `##` is no paste.
+        if before && Some(p) == va && comma_paste {
+            self.arena.pop();
         }
-        let a = self.arena.len() as u32;
-        for t in out {
+        let (a, b) = if before || after {
+            raw
+        } else {
+            let r = self.pres[f.pres as usize + p];
+            if r.0 == NONE {
+                return Err("an argument substituted before its expansion");
+            }
+            r
+        };
+        if a == b {
+            return self.push_arena(Tok { flags: PLACEMARKER, ..bt });
+        }
+        let k = self.arena.len();
+        for x in a..b {
+            let t = self.arena[x as usize];
             self.push_arena(t)?;
         }
-        self.drop_frame();
-        if self.sources.len() >= self.bounds.depth {
-            return Err("past the sources' bound");
+        self.arena[k].flags = (self.arena[k].flags & !(BOL | SPACE)) | (bt.flags & SPACE);
+        Ok(())
+    }
+
+    /// The arena's placemarkers from `at` on dropped.
+    fn retain_from(&mut self, at: u32) {
+        let mut w = at as usize;
+        for r in at as usize..self.arena.len() {
+            if self.arena[r].flags & PLACEMARKER == 0 {
+                self.arena[w] = self.arena[r];
+                w += 1;
+            }
         }
-        self.defs[f.def as usize].disabled = true;
-        self.sources.push(Src::arena(a, self.arena.len() as u32, f.def, false));
+        self.arena.truncate(w);
+    }
+
+    /// One step of the pastes of `arena[r..end]`, written from `w` (the lean pass's `paste_all`,
+    /// left to right: a `##` joins the token written last and the one after it).
+    fn paste_step(&mut self) -> R<bool> {
+        let v = self.sub;
+        if v.r >= v.end {
+            self.arena.truncate(v.w as usize);
+            return Ok(false);
+        }
+        let t = self.arena[v.r as usize];
+        if t.flags & PASTE != 0 && v.w > v.ps && v.r + 1 < v.end {
+            let l = self.arena[v.w as usize - 1];
+            let r = self.arena[v.r as usize + 1];
+            match self.paste(l, r, v.id)? {
+                Some(m) => self.arena[v.w as usize - 1] = m,
+                None => {
+                    self.arena[v.w as usize] = r;
+                    self.sub.w += 1;
+                }
+            }
+            self.sub.r += 2;
+            return Ok(true);
+        }
+        self.arena[v.w as usize] = t;
+        self.sub.w += 1;
+        self.sub.r += 1;
+        Ok(true)
+    }
+
+    fn str_word(&mut self, mode: u8) -> R<Option<bool>> {
+        let v = self.sub;
+        match mode {
+            0 => {
+                self.sub.s_first = v.s.0;
+                self.sub.sb = self.scratch.len() as u32;
+                self.scratch_push(b"\"")?;
+                Ok(None)
+            }
+            1 => {
+                if v.s.0 >= v.s.1 {
+                    return Ok(Some(false));
+                }
+                let t = self.arena[v.s.0 as usize];
+                self.sub.s.0 += 1;
+                if t.flags & PLACEMARKER != 0 {
+                    return Ok(Some(true));
+                }
+                if v.s.0 > v.s_first && t.flags & (SPACE | BOL) != 0 && self.scratch.len() as u32 > v.sb + 1 {
+                    self.scratch_push(b" ")?;
+                }
+                let text = self.text(&t).to_vec();
+                if t.kind == LITERAL {
+                    let mut e = Vec::with_capacity(text.len() + 2);
+                    for c in text {
+                        if c == b'"' || c == b'\\' {
+                            e.push(b'\\');
+                        }
+                        e.push(c);
+                    }
+                    self.scratch_push(&e)?;
+                } else {
+                    self.scratch_push(&text)?;
+                }
+                Ok(Some(true))
+            }
+            _ => {
+                self.scratch_push(b"\"")?;
+                if mode == 3 {
+                    self.arena.truncate(v.s_first as usize);
+                }
+                let t = Tok { kind: LITERAL, flags: v.like.flags & (BOL | SPACE), buf: 0, start: v.sb, end: self.scratch.len() as u32, exp: v.id };
+                self.push_arena(t)?;
+                Ok(None)
+            }
+        }
+    }
+
+    fn scratch_push(&mut self, b: &[u8]) -> R<()> {
+        if self.scratch.len() + b.len() > self.bounds.scratch {
+            return Err("past the scratch bytes' bound");
+        }
+        self.scratch.extend_from_slice(b);
         Ok(())
     }
 

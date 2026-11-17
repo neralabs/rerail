@@ -132,9 +132,6 @@ pub const ARG: u8 = 0x70;
 pub const PRE: u8 = 0x71;
 /// `T` onto the open level.
 pub const KEEP: u8 = 0x72;
-/// The top frame's macro substituted (`#`, `##`, `__VA_OPT__`, the arguments), into the arena,
-/// the frame dropped, the result pushed as a source that disables the macro while it is read.
-pub const SUBST: u8 = 0x73;
 /// A `#define`'s line read into the macro table (a malformed one left).
 pub const DEFINE: u8 = 0x74;
 /// An `#undef`'s line read: its macro taken out of the table.
@@ -179,6 +176,24 @@ pub const LINEDIR: u8 = 0x7e;
 /// closed, the name made, the parameters pushed; `m=2` the parameters' level closed and read
 /// (`limit`, `prefix`, `suffix`, `if_empty`), the file's bytes as numbers and commas pushed.
 pub const EMBED: u8 = 0x7f;
+/// The top frame's macro substituted into the arena, a body token a turn (`pp_words::Sub`):
+/// `m=0` begun (the expansion recorded); `m=1`, a test: the body's next token taken (`B`);
+/// `m=2`, a test: `B` is `#` before a parameter, its argument the range to stringize; `m=3`, a
+/// test: `B` is `#` before `__VA_OPT__`, its content opened, to be stringized; `m=4`, a test:
+/// `B` is `__VA_OPT__`, its content opened (or a placemarker); `m=5` `B` substituted: a
+/// parameter's argument (raw beside `##`, else expanded; GNU's comma elision), or `B` itself;
+/// `m=6`, a test: the content closed by `m=7` is to be stringized, its pastes begun; `m=7`, a
+/// test: a content ended, the body's walk after it resumed; `m=8` the content's placemarkers
+/// dropped, the range to stringize; `m=9` the output's pastes begun; `m=10` its placemarkers
+/// dropped, the frame dropped, the output pushed as a source that disables the macro.
+pub const SUB: u8 = 0x80;
+/// `#`'s literal (C17 §6.10.3.2), a token a turn: `m=0` begun; `m=1`, a test: the range's next
+/// token's spelling appended (a blank where white space was, `"` and `\` escaped in literals);
+/// `m=2` the literal appended to the output; `m=3` the range replaced by the literal.
+pub const STR: u8 = 0x81;
+/// `m=0`, a test: one step of the range's pastes (`##` joins its neighbours into one token, or
+/// leaves them two); where none is left, the range ends at its last token written.
+pub const GLUE: u8 = 0x82;
 
 pub const NAMED: u8 = 1;
 pub const GREEDY: u8 = 1;
