@@ -288,7 +288,9 @@ copies cleaned. Nothing waits on one for long, and anything a host cannot do run
 - **Disk.** `test-remote`'s target directories (one per checkout, by a hash of its path) are
   cleaned after each command (above), go after 3 unused days, and the least recently used go while
   the host has less than `min_free_gb` + 40 GB free: pruning only to `min_free_gb` left the host
-  just above it, and the next build took it under.
+  just above it, and the next build took it under. Never one a command is running in: each command
+  holds its target's lock (`targets.noindex/.locks`) until it ends, and pruning skips a held one
+  (farm 21; before, a checkout's run on a short disk removed another's target mid-build).
 
 `scripts/build/farm/status` probes every host now and prints whether it is usable and why not,
 with its round trip, throughput and free disk (`--json` for scripts; exit 1 when none is usable).

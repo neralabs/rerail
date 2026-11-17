@@ -273,14 +273,30 @@ def free_gb():
     return st.f_bavail * st.f_frsize / (1 << 30)
 
 
+def target_lock(name, exclusive):
+    """The lock of the test target `name` (in TARGETS/.locks, outside the directory it guards): a
+    command holds it shared while it runs, prune exclusively while it removes the directory. Held
+    until the returned file closes; None when `exclusive` and someone holds it."""
+    import fcntl
+    os.makedirs(os.path.join(TARGETS, ".locks"), exist_ok=True)
+    f = open(os.path.join(TARGETS, ".locks", name), "a+")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB if exclusive else fcntl.LOCK_SH)
+    except OSError:
+        f.close()
+        return None
+    return f
+
+
 def prune(keep, min_free_gb):
     """Removes test target directories of TARGETS (never anything else): those unused for TARGET_DAYS,
-    then the least recently used while the disk is short of `min_free_gb`."""
+    then the least recently used while the disk is short of `min_free_gb`. Never one a command is
+    running in (its lock is held): removing those failed other checkouts' builds mid-run (2026-11-16)."""
     import shutil, time
     used = []
     for name in os.listdir(TARGETS):
         d = os.path.join(TARGETS, name)
-        if name == keep or not os.path.isdir(d) or os.path.islink(d):
+        if name == keep or name.startswith(".") or not os.path.isdir(d) or os.path.islink(d):
             continue
         try:
             used.append((os.stat(os.path.join(d, ".used")).st_mtime, d))
@@ -289,8 +305,14 @@ def prune(keep, min_free_gb):
     used.sort()
     for when, d in used:
         if time.time() - when > TARGET_DAYS * 86400 or free_gb() < min_free_gb + PRUNE_HEADROOM_GB:
-            print(f"farm-agent: removing the test target {os.path.basename(d)} (unused since {time.ctime(when)})", file=sys.stderr, flush=True)
-            shutil.rmtree(d, ignore_errors=True)
+            lock = target_lock(os.path.basename(d), True)
+            if lock is None:
+                continue
+            try:
+                print(f"farm-agent: removing the test target {os.path.basename(d)} (unused since {time.ctime(when)})", file=sys.stderr, flush=True)
+                shutil.rmtree(d, ignore_errors=True)
+            finally:
+                lock.close()
 
 
 def run_command(job):
@@ -307,6 +329,10 @@ def run_command(job):
     env["PATH"] = os.path.expanduser("~/.cargo/bin") + ":/opt/homebrew/bin:" + env.get("PATH", "")
     if job.get("target"):
         os.makedirs(TARGETS, exist_ok=True)
+        # Held until this process exits (after the command): prune leaves the directory alone. Taken
+        # before the directory is made, so a removal under way ends first.
+        global HELD
+        HELD = target_lock(job["target"], False)
         target = os.path.join(TARGETS, job["target"])
         os.makedirs(target, exist_ok=True)
         open(os.path.join(target, ".used"), "w").close()
