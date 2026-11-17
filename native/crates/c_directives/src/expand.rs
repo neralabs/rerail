@@ -99,11 +99,18 @@ struct Unit {
     src: Vec<u8>,
     lines: Vec<u32>,
     found_by: Option<u32>,
+    /// Its directives, tape and chains: `None` for a file only embedded (data, never lexed).
+    lexed: Option<Lexed>,
+    includes: Vec<(u32, u32)>,
+    named: Vec<pp_words::Named>,
+    /// Its includes mode (a) read are resolved.
+    resolved: bool,
+}
+
+struct Lexed {
     read: crate::Read,
     tape: Vec<Tok>,
     chains: Vec<(u32, u32)>,
-    includes: Vec<(u32, u32)>,
-    named: Vec<pp_words::Named>,
 }
 
 /// The TU's files, found and read as the words need them.
@@ -114,57 +121,64 @@ struct Tu<'a, F: rerail_c_pp::files::Files> {
     units: Vec<Unit>,
     /// Literals respelled (`tape`), every file's: the file after the last.
     spelled: Vec<u8>,
-    /// Files whose literal includes are resolved: `units[..done]`.
-    done: usize,
 }
 
 impl<F: rerail_c_pp::files::Files> Tu<'_, F> {
-    /// The file at `path` (read and lexed the first time), or `NONE` where it cannot be read.
-    fn file(&mut self, path: String, found_by: Option<u32>) -> Result<u32, String> {
-        if let Some(k) = self.units.iter().position(|u| u.path == path) {
-            return Ok(k as u32);
+    /// The file at `path` (read the first time, and lexed the first time it is included, `lex`),
+    /// or `NONE` where it cannot be read.
+    fn file(&mut self, path: String, found_by: Option<u32>, lex: bool) -> Result<u32, String> {
+        let k = match self.units.iter().position(|u| u.path == path) {
+            Some(k) => k,
+            None => {
+                let Some(src) = self.io.read(&path) else { return Ok(pp_words::NONE) };
+                let mut lines = Vec::new();
+                let mut i = 0;
+                while let Some(k) = rerail_simd8::micro::find(&src, i, b'\n') {
+                    lines.push(k as u32);
+                    i = k + 1;
+                }
+                self.units.push(Unit { path, src, lines, found_by, lexed: None, includes: Vec::new(), named: Vec::new(), resolved: false });
+                self.units.len() - 1
+            }
+        };
+        if lex && self.units[k].lexed.is_none() {
+            let (src, path) = (&self.units[k].src, &self.units[k].path);
+            let toks = (self.g.tokens)(src, self.cpp).ok_or_else(|| format!("the token grammar refuses {path}"))?;
+            let read = (self.g.read)(src).ok_or_else(|| format!("the directives' grammar refuses {path}"))?;
+            // The spelled buffer's index is set when the files are laid out (`expand_tu`).
+            let tape = tape(src, &toks, k as u32, &mut self.spelled, u32::MAX - 1);
+            let chains = chains(&read, &tape).ok_or("a directive's `#` is no token's")?;
+            self.units[k].lexed = Some(Lexed { read, tape, chains });
         }
-        let Some(src) = self.io.read(&path) else { return Ok(pp_words::NONE) };
-        let toks = (self.g.tokens)(&src, self.cpp).ok_or_else(|| format!("the token grammar refuses {path}"))?;
-        let read = (self.g.read)(&src).ok_or_else(|| format!("the directives' grammar refuses {path}"))?;
-        // The spelled buffer's index is set when the files are laid out (`run`).
-        let tape = tape(&src, &toks, self.units.len() as u32, &mut self.spelled, u32::MAX - 1);
-        let chains = chains(&read, &tape).ok_or("a directive's `#` is no token's")?;
-        let mut lines = Vec::new();
-        let mut i = 0;
-        while let Some(k) = rerail_simd8::micro::find(&src, i, b'\n') {
-            lines.push(k as u32);
-            i = k + 1;
-        }
-        self.units.push(Unit { path, src, lines, found_by, read, tape, chains, includes: Vec::new(), named: Vec::new() });
-        Ok(self.units.len() as u32 - 1)
+        Ok(k as u32)
     }
 
     /// The file a header name names from file `from`.
-    fn find(&mut self, from: usize, name: &[u8], angle: bool, next: bool) -> Result<u32, String> {
+    fn find(&mut self, from: usize, name: &[u8], angle: bool, next: bool, lex: bool) -> Result<u32, String> {
         let next_after = next.then_some(self.units[from].found_by);
         let includer = self.units[from].path.clone();
         match self.io.find(name, angle, &includer, next_after) {
-            Some((path, found_by)) => self.file(path, found_by),
+            Some((path, found_by)) => self.file(path, found_by, lex),
             None => Ok(pp_words::NONE),
         }
     }
 
-    /// The includes mode (a) read the names of, of the files not yet resolved (each may add
-    /// files).
+    /// The includes and embeds mode (a) read the names of, of the lexed files not yet resolved
+    /// (each may add files).
     fn resolve(&mut self) -> Result<(), String> {
-        while self.done < self.units.len() {
-            let k = self.done;
-            self.done += 1;
-            let facts = crate::Facts::of(&self.units[k].read, &self.units[k].src);
+        while let Some(k) = self.units.iter().position(|u| u.lexed.is_some() && !u.resolved) {
+            self.units[k].resolved = true;
+            let lx = self.units[k].lexed.as_ref().unwrap();
+            let facts = crate::Facts::of(&lx.read, &self.units[k].src);
             for inc in facts.includes {
-                if inc.kind == "embed" || inc.form == "macro" || inc.spelled.len() < 2 {
+                if inc.form == "macro" || inc.spelled.len() < 2 {
                     continue;
                 }
                 let name = inc.spelled[1..inc.spelled.len() - 1].to_vec();
                 let next = inc.kind == "include_next" && k != 0;
-                let to = self.find(k, &name, inc.form == "angle", next)?;
-                let at = hash_at(&self.units[k].read, &self.units[k].tape, inc.i).ok_or("an include's `#` is no token's")?;
+                let to = self.find(k, &name, inc.form == "angle", next, inc.kind != "embed")?;
+                let lx = self.units[k].lexed.as_ref().unwrap();
+                let at = hash_at(&lx.read, &lx.tape, inc.i).ok_or("an include's `#` is no token's")?;
                 self.units[k].includes.push((at, to));
             }
             self.units[k].includes.sort_unstable();
@@ -181,16 +195,16 @@ const ROUNDS: usize = 16;
 /// `Files`), expanded by the words; `Err` where a grammar or the words refuse it.
 pub fn expand_tu<F: rerail_c_pp::files::Files>(main: &str, io: &mut F, cpp: bool, g: &Grammars) -> Result<Vec<Out>, String> {
     let program = program(cpp)?;
-    let mut tu = Tu { io, g, cpp, units: Vec::new(), spelled: Vec::new(), done: 0 };
-    if tu.file(main.to_string(), None)? == pp_words::NONE {
+    let mut tu = Tu { io, g, cpp, units: Vec::new(), spelled: Vec::new() };
+    if tu.file(main.to_string(), None, true)? == pp_words::NONE {
         return Err(format!("{main} cannot be read"));
     }
     for _ in 0..ROUNDS {
         tu.resolve()?;
         let n = tu.units.len() as u32;
         // The respelled literals' buffer is the file after the last.
-        let tapes: Vec<Vec<Tok>> = tu.units.iter().map(|u| u.tape.iter().map(|t| if t.buf == u32::MAX { Tok { buf: n + 1, ..*t } } else { *t }).collect()).collect();
-        let mut files: Vec<File> = tu.units.iter().zip(&tapes).map(|(u, t)| File { path: u.path.as_bytes(), bytes: &u.src, lines: &u.lines, toks: t, chains: &u.chains, includes: &u.includes, named: &u.named }).collect();
+        let tapes: Vec<Vec<Tok>> = tu.units.iter().map(|u| u.lexed.as_ref().map_or(Vec::new(), |l| l.tape.iter().map(|t| if t.buf == u32::MAX { Tok { buf: n + 1, ..*t } } else { *t }).collect())).collect();
+        let mut files: Vec<File> = tu.units.iter().zip(&tapes).map(|(u, t)| File { path: u.path.as_bytes(), bytes: &u.src, lines: &u.lines, toks: t, chains: u.lexed.as_ref().map_or(&[][..], |l| &l.chains), includes: &u.includes, named: &u.named }).collect();
         files.push(File { bytes: &tu.spelled, ..File::default() });
         let e = pp_words::run(program, &files, &pp_words::Env::DEFAULT, &Bounds::of(&files)).map_err(|r| format!("refused at word {}: {}", r.pc, r.why))?;
         if e.wanted.is_empty() {
@@ -199,10 +213,10 @@ pub fn expand_tu<F: rerail_c_pp::files::Files>(main: &str, io: &mut F, cpp: bool
         drop(files);
         for (from, mut w) in e.wanted {
             let from = from as usize;
-            if tu.units[from].named.iter().any(|n| (&n.name, n.angle, n.next) == (&w.name, w.angle, w.next)) {
+            if tu.units[from].named.iter().any(|n| (&n.name, n.angle, n.next, n.embed) == (&w.name, w.angle, w.next, w.embed)) {
                 continue;
             }
-            w.to = tu.find(from, &w.name, w.angle, w.next)?;
+            w.to = tu.find(from, &w.name, w.angle, w.next, !w.embed)?;
             tu.units[from].named.push(w);
         }
     }

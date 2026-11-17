@@ -174,6 +174,11 @@ pub const BUILTIN: u8 = 0x7d;
 /// `#line` and GNU's line marker: `m=0` `T` the marker's number; `m=1` the level `IF m=2` opened
 /// closed, the file's presumed line (and name) set from its tokens.
 pub const LINEDIR: u8 = 0x7e;
+/// `#embed` (`T` its word): `m=0`, a test: its name's tokens pushed to be expanded (a
+/// level), else its parameters' (the name read by mode (a) or spelled); `m=1` the name's level
+/// closed, the name made, the parameters pushed; `m=2` the parameters' level closed and read
+/// (`limit`, `prefix`, `suffix`, `if_empty`), the file's bytes as numbers and commas pushed.
+pub const EMBED: u8 = 0x7f;
 
 pub const NAMED: u8 = 1;
 pub const GREEDY: u8 = 1;

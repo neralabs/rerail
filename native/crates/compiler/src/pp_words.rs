@@ -30,7 +30,7 @@ use std::collections::HashMap;
 
 /// Whether a word is one of the preprocessing words.
 pub fn is_pp(opcode: u8) -> bool {
-    (READ..=LINEDIR).contains(&opcode)
+    (READ..=EMBED).contains(&opcode)
 }
 
 // A token's kind.
@@ -158,13 +158,21 @@ pub struct File<'a> {
 }
 
 /// An include whose header name is made by expanding its line: the name (its quotes or brackets
-/// taken off), `<…>`, `#include_next`, and the file it names (`NONE`: not found).
+/// taken off), `<…>`, `#include_next`, an `#embed`'s (or `__has_embed`'s: its file is data, never
+/// lexed), and the file it names (`NONE`: not found).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Named {
     pub name: Vec<u8>,
     pub angle: bool,
     pub next: bool,
+    pub embed: bool,
     pub to: u32,
+}
+
+impl Named {
+    fn is(&self, name: &[u8], angle: bool, next: bool, embed: bool) -> bool {
+        self.name == name && self.angle == angle && self.next == next && self.embed == embed
+    }
 }
 
 /// The file includes nest to at most (clang's bound).
@@ -189,7 +197,8 @@ impl Bounds {
         let toks: usize = files.iter().map(|f| f.toks.len()).sum();
         let bytes: usize = files.iter().map(|f| f.bytes.len()).sum();
         let hashes = files.iter().flat_map(|f| f.toks.iter()).filter(|t| t.kind == HASH && t.flags & BOL != 0).count();
-        Bounds { arena: 64 * toks + 4096, scratch: 64 * bytes + 4096, depth: 256, macros: hashes + 64, output: 64 * toks + 4096, steps: 4096 * (toks as u64 + 64) }
+        // An `#embed` makes two tokens a byte.
+        Bounds { arena: 64 * toks + 2 * bytes + 4096, scratch: 64 * bytes + 4096, depth: 256, macros: hashes + 64, output: 64 * toks + 2 * bytes + 4096, steps: 4096 * (toks as u64 + 64) + 64 * bytes as u64 }
     }
 }
 
@@ -227,7 +236,7 @@ const VA_OPT: &[u8] = b"__VA_OPT__";
 
 /// Whether a word is a test (it runs the next word where it holds, skips it where not).
 fn is_test(opcode: u8, mode: u8) -> bool {
-    matches!(opcode, LINE | IS | PEEK | LOOKUP | MACRO | DEFINED) || (opcode == INCLUDE && mode <= 1) || (opcode == BUILTIN && mode >= 1) || (opcode == ARG && (mode == 2 || mode == 4)) || (opcode == PRE && mode == 0) || (opcode == COND && (mode == 2 || mode == 3)) || (opcode == IF && mode == 1)
+    matches!(opcode, LINE | IS | PEEK | LOOKUP | MACRO | DEFINED) || (opcode == INCLUDE && mode <= 1) || (opcode == EMBED && mode == 0) || (opcode == BUILTIN && mode >= 1) || (opcode == ARG && (mode == 2 || mode == 4)) || (opcode == PRE && mode == 0) || (opcode == COND && (mode == 2 || mode == 3)) || (opcode == IF && mode == 1)
 }
 
 /// A preprocessing program's rules: only these words, `GOTO`, `PUSH` (each followed by its
@@ -255,6 +264,7 @@ pub fn validate(program: &Words) -> Result<(), Error> {
             MACRO => mode <= 2 && operand == 0,
             BUILTIN => mode <= 4 && operand == 0,
             LINEDIR => mode <= 1 && operand == 0,
+            EMBED => mode <= 2 && operand == 0,
             ARG => mode <= 5 && operand == 0,
             PRE => mode <= 1 && operand == 0,
             PUSH => mode == 0 && usize::from(operand) < n && words.get(pc + 1).is_some_and(|&w| split(w).0 == GOTO),
@@ -476,6 +486,9 @@ struct Machine<'a> {
     marker: Option<Tok>,
     /// The directive line's token read last.
     line_last: Tok,
+    /// The `#embed` read: its parameters' tokens until they are pushed, its name, and its file
+    /// where mode (a) read its name (`Some(NONE)`: not found).
+    embed: (Vec<Tok>, Option<(Vec<u8>, bool)>, Option<u32>),
 }
 
 type R<T> = Result<T, &'static str>;
@@ -537,6 +550,7 @@ pub fn run(program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Resul
         bi: (0, eof(0), 0),
         marker: None,
         line_last: eof(0),
+        embed: (Vec::new(), None, None),
     };
     m.install_builtins().map_err(|why| Refused { pc: 0, why })?;
     let words = &program.words;
@@ -613,6 +627,7 @@ pub fn run(program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Resul
                 m.linedir(mode).map_err(fail)?;
                 None
             }
+            EMBED => m.embed(mode).map_err(fail)?,
             PAINT => {
                 m.t.flags |= NOEXP;
                 None
@@ -1337,13 +1352,13 @@ impl Machine<'_> {
                 // `#include_next` in the main file is `#include` (clang's reading).
                 let next = self.inc.0 == 1 && s.file != 0;
                 let named = self.files[s.file as usize].named;
-                match named.iter().find(|n| n.name == name && n.angle == angle && n.next == next) {
+                match named.iter().find(|n| n.is(&name, angle, next, false)) {
                     Some(n) => {
                         self.inc.1 = n.to;
                         Ok(Some(true))
                     }
                     None => {
-                        self.wanted.push((s.file, Named { name, angle, next, to: NONE }));
+                        self.wanted.push((s.file, Named { name, angle, next, embed: false, to: NONE }));
                         Ok(Some(false))
                     }
                 }
@@ -1609,14 +1624,15 @@ impl Machine<'_> {
                 let v = match self.header_name(op) {
                     Some((name, angle)) => {
                         let next = b == B_HAS_INCLUDE_NEXT && file != 0;
+                        let embed = b == B_HAS_EMBED;
                         let named = self.files[file as usize].named;
-                        match named.iter().find(|n| n.name == name && n.angle == angle && n.next == next) {
+                        match named.iter().find(|n| n.is(&name, angle, next, embed)) {
                             Some(n) if n.to == NONE => 0,
                             // 1: found, and not empty; 2: found and empty (`__STDC_EMBED_EMPTY__`).
                             Some(n) if b == B_HAS_EMBED && self.files[n.to as usize].bytes.is_empty() => 2,
                             Some(_) => 1,
                             None => {
-                                self.wanted.push((file, Named { name, angle, next, to: NONE }));
+                                self.wanted.push((file, Named { name, angle, next, embed, to: NONE }));
                                 0
                             }
                         }
@@ -1666,6 +1682,141 @@ impl Machine<'_> {
             self.sources[i].presumed = (t.start, t.end);
         }
         Ok(())
+    }
+
+    // `#embed`.
+
+    /// `toks` pushed to be expanded: a stop source, and a level.
+    fn push_expand(&mut self, toks: Vec<Tok>) -> R<()> {
+        let a = self.arena.len() as u32;
+        for t in toks {
+            self.push_arena(t)?;
+        }
+        if self.sources.len() >= self.bounds.depth || self.levels.len() >= self.bounds.depth {
+            return Err("past the sources' bound");
+        }
+        self.sources.push(Src::arena(a, self.arena.len() as u32, NONE, true));
+        self.levels.push((u16::MAX, self.kept.len() as u32));
+        Ok(())
+    }
+
+    fn embed(&mut self, mode: u8) -> R<Option<bool>> {
+        match mode {
+            0 => {
+                let i = self.file_src()?;
+                let s = self.sources[i];
+                let mut rest = Vec::new();
+                while let Some(t) = self.line_tok()? {
+                    rest.push(t);
+                }
+                // The name's tokens, then the parameters: the name ends with its `"…"` or `>`.
+                let k = if rest.first().is_some_and(|t| t.kind == PUNCT && self.spelled(t, b"<")) { rest.iter().position(|t| t.kind == PUNCT && self.spelled(t, b">")).map_or(rest.len(), |k| k + 1) } else { 1.min(rest.len()) };
+                let name: Vec<Tok> = rest.drain(..k).collect();
+                let incs = self.files[s.file as usize].includes;
+                self.embed = (Vec::new(), None, incs.binary_search_by_key(&s.hash, |x| x.0).ok().map(|k| incs[k].1));
+                let spelled = name.first().is_some_and(|t| (t.kind == LITERAL && self.text(t).first() == Some(&b'"')) || (t.kind == PUNCT && self.spelled(t, b"<")));
+                if spelled || name.is_empty() {
+                    self.embed.1 = self.header_name(&name);
+                    // Malformed: nothing, its parameters not expanded (the lean pass's order).
+                    self.push_expand(if self.embed.1.is_some() { rest } else { Vec::new() })?;
+                    return Ok(Some(false));
+                }
+                self.embed.0 = rest;
+                self.push_expand(name)?;
+                Ok(Some(true))
+            }
+            1 => {
+                let name = self.line_close()?;
+                self.embed.1 = self.header_name(&name);
+                let rest = if self.embed.1.is_some() { std::mem::take(&mut self.embed.0) } else { Vec::new() };
+                self.push_expand(rest)?;
+                Ok(None)
+            }
+            _ => {
+                let rest = self.line_close()?;
+                let Some((name, angle)) = self.embed.1.take() else { return Ok(None) };
+                let (mut limit, mut prefix, mut suffix, mut if_empty) = (None, Vec::new(), Vec::new(), Vec::new());
+                let mut i = 0;
+                while i < rest.len() {
+                    let p = rest[i];
+                    let mut arg = Vec::new();
+                    let mut j = i + 1;
+                    if rest.get(j).is_some_and(|t| self.spelled(t, b"(")) {
+                        let mut depth = 0;
+                        j += 1;
+                        while j < rest.len() {
+                            if self.spelled(&rest[j], b"(") {
+                                depth += 1;
+                            } else if self.spelled(&rest[j], b")") {
+                                if depth == 0 {
+                                    break;
+                                }
+                                depth -= 1;
+                            }
+                            arg.push(rest[j]);
+                            j += 1;
+                        }
+                        j += 1;
+                    }
+                    if p.kind == IDENT {
+                        match self.text(&p) {
+                            b"limit" => {
+                                let items: Vec<crate::pp_expr::Item> = arg.iter().map(|t| crate::pp_expr::item(t.kind, self.text(t), self.program.pp.cpp)).collect();
+                                limit = crate::pp_expr::eval(&items, self.program.pp.cpp).ok().map(|v| v.bits as usize);
+                            }
+                            b"prefix" => prefix = arg,
+                            b"suffix" => suffix = arg,
+                            b"if_empty" => if_empty = arg,
+                            _ => {}
+                        }
+                    }
+                    i = j;
+                }
+                let file = self.cur_file();
+                let to = match self.embed.2.take() {
+                    Some(to) => to,
+                    None => match self.files[file as usize].named.iter().find(|n| n.is(&name, angle, false, true)) {
+                        Some(n) => n.to,
+                        None => {
+                            self.wanted.push((file, Named { name, angle, next: false, embed: true, to: NONE }));
+                            NONE
+                        }
+                    },
+                };
+                if to == NONE {
+                    return Ok(None);
+                }
+                let bytes = self.files[to as usize].bytes;
+                let bytes = &bytes[..limit.unwrap_or(bytes.len()).min(bytes.len())];
+                let mut out = Vec::new();
+                if bytes.is_empty() {
+                    out = if_empty;
+                } else {
+                    out.extend(prefix);
+                    for (k, &b) in bytes.iter().enumerate() {
+                        if k > 0 {
+                            out.push(self.scratch_tok(PUNCT, b",", 0)?);
+                        }
+                        out.push(self.scratch_tok(NUMBER, b.to_string().as_bytes(), 0)?);
+                    }
+                    out.extend(suffix);
+                }
+                if let Some(f) = out.first_mut() {
+                    f.flags |= BOL;
+                }
+                if !out.is_empty() {
+                    let a = self.arena.len() as u32;
+                    for t in out {
+                        self.push_arena(t)?;
+                    }
+                    if self.sources.len() >= self.bounds.depth {
+                        return Err("past the sources' bound");
+                    }
+                    self.sources.push(Src::arena(a, self.arena.len() as u32, NONE, false));
+                }
+                Ok(None)
+            }
+        }
     }
 
     // The directives.

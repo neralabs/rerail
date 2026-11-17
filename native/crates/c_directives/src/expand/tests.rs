@@ -247,6 +247,24 @@ const TUS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "#embed and __has_embed",
+        &[
+            (
+                "main.c",
+                concat!(
+                    "#embed \"d.bin\"\n#embed <d.bin> limit(2) prefix(p,) suffix(,s)\n#embed \"e.bin\" if_empty(empty) prefix(no)\n",
+                    "#define L 1+2\n#embed \"d.bin\" limit(L) unknown(x) if_empty(not)\n#define NAME \"d.bin\"\n#embed NAME suffix(;)\n",
+                    "#define P prefix(q,)\n#embed \"d.bin\" P\n#embed \"none.bin\" if_empty(x)\n#embed\n#embed \"d.bin\" limit(0) if_empty(zero)\n",
+                    "#if __has_embed(\"d.bin\") == 1 && __has_embed(\"e.bin\") == 2 && !__has_embed(\"none\")\nyes\n#endif\n",
+                    "#include \"d.bin\"\nend\n",
+                ),
+            ),
+            ("d.bin", "AB\u{0}~\n"),
+            ("e.bin", ""),
+            ("inc/d.bin", "xy"),
+        ],
+    ),
+    (
         "push_macro and pop_macro",
         &[(
             "main.c",
@@ -298,24 +316,8 @@ fn the_builtins_are_the_lean_passs() {
     assert_eq!(words, lean);
 }
 
-/// Why the words do not run `src` yet, where they do not: `#embed` (stage 3).
-/// (An `#include` finds nothing here, in both passes: the TU is one file; `TUS` has includes.)
-fn outside_stage_2(src: &[u8], cpp: bool) -> Option<&'static str> {
-    let toks = tokens::interpreted(src, cpp)?;
-    let text = |t: &tokens::Tok| &src[t.start as usize..t.end as usize];
-    for (k, t) in toks.iter().enumerate() {
-        if t.kind == "hash" && t.flags & BOL != 0 {
-            let name = toks.get(k + 1).filter(|n| n.flags & BOL == 0).map(text).unwrap_or(b"");
-            if !matches!(name, b"define" | b"undef" | b"" | b"error" | b"warning" | b"ident" | b"sccs" | b"include" | b"include_next" | b"import" | b"pragma" | b"line" | b"if" | b"ifdef" | b"ifndef" | b"elif" | b"elifdef" | b"elifndef" | b"else" | b"endif") && !name.first().is_some_and(u8::is_ascii_digit) {
-                return Some("a directive the words do not read yet");
-            }
-        }
-    }
-    None
-}
-
 /// The corpus's files, each a TU of its own: the words' tokens equal the lean pass's on every
-/// file stage 2 runs.
+/// file the grammars read.
 #[test]
 #[ignore = "reads the corpus (~/orca/rerail-shared/lean-corpus, or RERAIL_C_CORPUS)"]
 fn the_corpus_expands_as_the_lean_pass_does() {
@@ -333,10 +335,6 @@ fn the_corpus_expands_as_the_lean_pass_does() {
             }
             if tokens::interpreted(&src, cpp).is_none() {
                 *out.entry("the token grammar refuses it".into()).or_default() += 1;
-                continue;
-            }
-            if let Some(why) = outside_stage_2(&src, cpp) {
-                *out.entry(why.into()).or_default() += 1;
                 continue;
             }
             match expand(&src, cpp) {

@@ -268,6 +268,13 @@ lines).
   `named` table: a name not there is wanted, as an include's is.
 - **Corpus:** 3,059 of 3,135 files equal the lean pass, 0 differ (the 57 files with built-ins
   among them). Not run: 75 a grammar refuses, 1 `#embed`.
+- **`#embed`** (`EMBED`): its name spelled (by mode (a)'s table) or made by expanding its first
+  tokens, its parameters expanded and read (`limit`, `prefix`, `suffix`, `if_empty`), and its
+  file's bytes pushed as numbers and commas, read again as a source. An embedded file is data:
+  the host never lexes it unless it is also included (`Named::embed` keeps the two apart).
+
+**Stage 3 is complete:** every directive and built-in the lean pass carries out. Corpus: 3,060
+of 3,135 files equal the lean pass, 0 differ; the 75 a grammar refuses go to the lean pass.
 
 ## Open
 

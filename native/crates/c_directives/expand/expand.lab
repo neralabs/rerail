@@ -142,8 +142,30 @@ named:  IS m=0 1          ; a number: GNU's line marker
         GOTO @pragma
         IS m=1 "line"
         GOTO @line
+        IS m=1 "embed"
+        GOTO @embed
         SKIPLINE 0
         GOTO @raw
+; `#embed`: its name (expanded where it is not spelled), then its parameters expanded, then its
+; file's bytes.
+embed:  EMBED m=0 0
+        GOTO @en
+er:     PUSH @er1
+        GOTO @one
+er1:    IS m=0 8
+        GOTO @ere
+        KEEP 0
+        GOTO @er
+ere:    EMBED m=2 0
+        GOTO @raw
+en:     PUSH @en1
+        GOTO @one
+en1:    IS m=0 8
+        GOTO @ene
+        KEEP 0
+        GOTO @en
+ene:    EMBED m=1 0
+        GOTO @er
 lmark:  LINEDIR m=0 0
 line:   IF m=2 0          ; its line expanded
 ll:     PUSH @l1
