@@ -643,6 +643,10 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::Bor => set(format!("{} | {}", args[0], args[1])),
         Opcode::Bxor => set(format!("{} ^ {}", args[0], args[1])),
         Opcode::Bnot => set(format!("!{}", args[0])),
+        // The vendored Cranelift's carry-less multiply (`native_cpu_block::prefix_xor`), as
+        // simdjson's `prefix_xor` writes it: PMULL, `aes`, a default feature of every arm64 Mac.
+        #[cfg(cranelift_clmul)]
+        Opcode::Clmul if bits == 64 => set(format!("(unsafe {{ core::arch::aarch64::vmull_p64({}, {}) }} as u64)", args[0], args[1])),
         Opcode::IaddImm => set(format!("{}.wrapping_add({}i64 as {u})", args[0], imm()?)),
         Opcode::ImulImm => set(format!("{}.wrapping_mul({}i64 as {u})", args[0], imm()?)),
         // A divisor that is a constant and not zero (Cranelift's verifier refuses a zero one).

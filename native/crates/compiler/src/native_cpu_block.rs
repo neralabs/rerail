@@ -504,6 +504,36 @@ impl State {
     }
 }
 
+/// Whether the host's Cranelift lowers `clmul` here: the vendored Cranelift has it
+/// (`cranelift_clmul`, set by `build.rs`), and the CPU has the multiply, as
+/// `cranelift_native` finds it (`pmull`, `pclmulqdq`). Every module's ISA is the host's, with
+/// its detected flags.
+pub fn clmul() -> bool {
+    #[cfg(all(cranelift_clmul, target_arch = "aarch64"))]
+    return std::arch::is_aarch64_feature_detected!("pmull");
+    #[cfg(all(cranelift_clmul, target_arch = "x86_64"))]
+    return std::arch::is_x86_feature_detected!("pclmulqdq");
+    #[allow(unreachable_code)]
+    false
+}
+
+/// simdjson's `prefix_xor`: bit `i` is the XOR of `x`'s bits `0..=i`. A carry-less multiply by
+/// all ones where Cranelift has one (`clmul`, the vendored Cranelift's, PATCHES.md), as
+/// simdjson's `vmull_p64(x, !0)`; else six shift-XOR rounds.
+pub(crate) fn prefix_xor(f: &mut FunctionBuilder<'_>, x: Value) -> Value {
+    #[cfg(cranelift_clmul)]
+    if clmul() {
+        let ones = f.ins().iconst(types::I64, -1);
+        return f.ins().clmul(x, ones);
+    }
+    let mut x = x;
+    for k in [1, 2, 4, 8, 16, 32] {
+        let up = f.ins().ishl_imm(x, k);
+        x = f.ins().bxor(x, up);
+    }
+    x
+}
+
 /// The constants every body uses, made once in the function's entry: the nibble mask, the
 /// bitmask's weights, and simdjson's even bits.
 pub struct Consts {
@@ -1033,17 +1063,13 @@ impl Emit<'_, '_> {
                 f.ins().bor(up, halo)
             }
             BlockInst::Toggle(a) => {
-                // prefix XOR by six shift-XOR rounds (Cranelift has no carry-less multiply),
-                // then the parity carried in: the top bit of the previous word, all ones or zero.
+                // simdjson's prefix XOR (`prefix_xor`), then the parity carried in: the top bit
+                // of the previous word, all ones or zero.
                 let field = state.fields[state.top[at].expect("a toggle has a field")];
                 let bit = field.pos + field.width - 1;
                 let parity = f.ins().ishl_imm(self.packed_in[field.word], i64::from(63 - bit));
                 let parity = f.ins().sshr_imm(parity, 63);
-                let mut x = v(a);
-                for k in [1, 2, 4, 8, 16, 32] {
-                    let up = f.ins().ishl_imm(x, k);
-                    x = f.ins().bxor(x, up);
-                }
+                let x = prefix_xor(&mut *f, v(a));
                 f.ins().bxor(x, parity)
             }
             BlockInst::Escaped(a) => {

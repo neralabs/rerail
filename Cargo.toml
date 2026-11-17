@@ -10,6 +10,11 @@ block = { path = "native/vendor/block-0.1.6" }
 tree-sitter = { path = "native/vendor/tree-sitter-0.27.1" }
 # Patterns end their children where a tape leaves out implied tokens (native/vendor/ast-grep-core-0.51.0/PATCHES.md).
 ast-grep-core = { path = "native/vendor/ast-grep-core-0.51.0" }
+# Cranelift with `clmul`, a carry-less multiply (native/vendor/cranelift-codegen-0.125.4/PATCHES.md).
+cranelift-codegen = { path = "native/vendor/cranelift-codegen-0.125.4" }
+cranelift-codegen-meta = { path = "native/vendor/cranelift-codegen-meta-0.125.4" }
+cranelift-assembler-x64-meta = { path = "native/vendor/cranelift-assembler-x64-meta-0.125.4" }
+cranelift-native = { path = "native/vendor/cranelift-native-0.125.4" }
 
 # Dependencies (SQLite's C, tree-sitter, regex, cranelift, ast-grep) are optimized in dev and test
 # builds: they compile once and stay cached, while this crate keeps its fast unoptimized rebuilds.

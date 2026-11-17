@@ -2972,7 +2972,9 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
         for (k, v) in flags.iter().copied().chain([("use_colocated_libcalls", "false"), ("is_pic", "false")]) {
             shared.set(k, v).map_err(|_| Error::BackendFailure)?;
         }
-        let isa = cranelift_codegen::isa::lookup_by_name("aarch64-apple-darwin")
+        // The host's ISA with its detected flags, as the JIT's (a toggle's `clmul` needs
+        // `has_pmull`, `native_cpu_block::clmul`).
+        let isa = cranelift_native::builder()
             .map_err(|_| Error::BackendFailure)?
             .finish(cranelift_codegen::settings::Flags::new(shared))
             .map_err(|_| Error::BackendFailure)?;
