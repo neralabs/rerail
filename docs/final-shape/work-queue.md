@@ -542,6 +542,16 @@ pass.
 
   P costs more than it saves on this edit, as Typing-support found (+1.0 s writing, +0.5 s opening). The pass
   that gained most (`columns no reader reads`) is whole-program work in either design.
+- **`columns no reader reads` made one step a round** (2026-11-17): the driver ran one pipeline step per relation
+  each round (6,663 steps, each deriving the fields and rewriting every rule, and each a stage of P's stored run).
+  Now one step projects every relation of the round in one rewrite. Within a round no projection decides another's:
+  the columns read are the round's, and a projection drops only arguments no reader names. The debug build's tree
+  check holds. ep2's edit, same m3 sequence, load 34–41:
+  - 40.7 G and 3.31 s CPU, from 70.7 G and 7.55 s;
+  - `prepare` 18.5 G, from 38.0 G; the pass 0.06 s, from 0.96 s; P's stored run 0.085 s, from 0.68 s;
+  - written per edit: 12 MB, from 71 MB.
+  - Left over 743c3de74's 32.7 G: `prepare` is 18.5 G against 9.8 G. Push is 0.18 s, the export cut and the
+    factorizing 0.06 s each.
 
 ### Q19. A new process reads every kept frame of the cross part, its own or not
 

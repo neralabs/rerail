@@ -2427,63 +2427,76 @@ fn columns_read(v: &Version) -> HashMap<String, Option<BTreeSet<usize>>> {
     read
 }
 
-/// One relation of `project_unread_columns`' round: projected on the columns its readers read (and a location),
-/// where that drops one. The columns it kept, where it projected.
-struct ProjectOne {
-    rel: String,
-    cols: Option<Option<BTreeSet<usize>>>,
-    kept: Option<Vec<usize>>,
+/// One round of `project_unread_columns`: each relation projected on the columns its readers read (and a location),
+/// where that drops one, all in one rewrite of the program. Within a round one relation's projection decides nothing
+/// of another's: the columns read are the round's (`columns_read`), and a projection drops only arguments no reader
+/// names. The columns each projected relation kept.
+struct ProjectAll {
+    read: HashMap<String, Option<BTreeSet<usize>>>,
+    kept: BTreeMap<String, Vec<usize>>,
 }
 
-impl ProgramPass for ProjectOne {
+impl ProgramPass for ProjectAll {
     const NAME: &'static str = "columns no reader reads";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()> {
         let (v, d) = fields(cx)?;
         let f = Fields::over(v, &d);
-        let rel = self.rel.as_str();
-        if kept(&f, rel) || f.nullary(rel) || f.answer(rel) {
-            return Ok(());
+        let heads: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
+        let mut keep_of: HashMap<String, Vec<usize>> = HashMap::new();
+        for rel in heads {
+            if kept(&f, rel) || f.nullary(rel) || f.answer(rel) {
+                continue;
+            }
+            let Some(Some(cols)) = self.read.get(rel) else { continue };
+            let Some(n) = f.arity(rel) else { continue };
+            let mut keep: Vec<usize> = (0..n).filter(|c| cols.contains(c)).collect();
+            if !keep.iter().any(|&c| location_column(v, &f, rel, c))
+                && let Some(c) = (0..n).find(|&c| location_column(v, &f, rel, c))
+            {
+                keep.push(c);
+                keep.sort_unstable();
+            }
+            if keep.is_empty() {
+                keep.push(0);
+            }
+            if keep.len() < n {
+                keep_of.insert(rel.to_owned(), keep);
+            }
         }
-        let Some(Some(cols)) = &self.cols else { return Ok(()) };
-        let Some(n) = f.arity(rel) else { return Ok(()) };
-        let mut keep: Vec<usize> = (0..n).filter(|c| cols.contains(c)).collect();
-        if !keep.iter().any(|&c| location_column(v, &f, rel, c))
-            && let Some(c) = (0..n).find(|&c| location_column(v, &f, rel, c))
-        {
-            keep.push(c);
-            keep.sort_unstable();
-        }
-        if keep.is_empty() {
-            keep.push(0);
-        }
-        if keep.len() == n {
+        if keep_of.is_empty() {
             return Ok(());
         }
         struct Project<'a> {
             v: &'a Version,
-            rel: &'a str,
-            keep: &'a [usize],
+            keep: &'a HashMap<String, Vec<usize>>,
         }
         impl Rewrite for Project<'_> {
             fn drop_arg(&mut self, a: AtomRef<'_>, c: usize) -> bool {
-                self.v.rel_name(a.rel()) == self.rel && !self.keep.contains(&c)
+                self.keep.get(self.v.rel_name(a.rel())).is_some_and(|k| !k.contains(&c))
             }
         }
-        let cols_of = f.columns(rel).unwrap_or_default().into_iter().map(|(c, t)| (c.to_owned(), t.to_owned())).collect::<Vec<_>>();
+        let decls: Vec<(String, Vec<(String, String)>)> = keep_of
+            .iter()
+            .map(|(rel, keep)| {
+                let cols: Vec<(String, String)> = f.columns(rel).unwrap_or_default().into_iter().map(|(c, t)| (c.to_owned(), t.to_owned())).collect();
+                (rel.clone(), keep.iter().map(|&c| cols[c].clone()).collect())
+            })
+            .collect();
         let input = w.input().clone();
         let b = w.derive()?;
-        let rid = input.rel(rel);
         for r in input.rules() {
-            let touches = std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).any(|a| Some(a.rel()) == rid);
+            let touches = std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).any(|a| keep_of.contains_key(input.rel_name(a.rel())));
             if touches {
-                b.rewrite(&input, r, &mut Project { v: &input, rel, keep: &keep }).finish()?;
+                b.rewrite(&input, r, &mut Project { v: &input, keep: &keep_of }).finish()?;
             } else {
                 b.keep(&input, r);
             }
         }
-        let decl: Vec<(&str, &str)> = keep.iter().map(|&c| (cols_of[c].0.as_str(), cols_of[c].1.as_str())).collect();
-        b.declare(rel, &decl);
-        self.kept = Some(keep);
+        for (rel, cols) in &decls {
+            let decl: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+            b.declare(rel, &decl);
+        }
+        self.kept = keep_of.into_iter().collect();
         Ok(())
     }
 }
@@ -2575,13 +2588,10 @@ pub fn passes(p: &mut crate::code_rule_dsl::logic::program_image::manager::Pipel
         let mut lost: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         loop {
             let v = p.current()?.clone();
-            let read = columns_read(&v);
-            let heads: BTreeSet<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect();
-            let mut changed = false;
-            for rel in heads {
-                let mut one = ProjectOne { cols: read.get(&rel).cloned(), rel: rel.clone(), kept: None };
-                p.program(&mut one);
-                let Some(keep) = one.kept else { continue };
+            let mut round = ProjectAll { read: columns_read(&v), kept: BTreeMap::new() };
+            p.program(&mut round);
+            let changed = !round.kept.is_empty();
+            for (rel, keep) in round.kept {
                 let n = v.decl_of(&rel).map_or(0, |d| d.arity());
                 let gone: Vec<usize> = (0..n).filter(|c| !keep.contains(c)).collect();
                 let orig = lost.entry(rel).or_default();
@@ -2590,7 +2600,6 @@ pub fn passes(p: &mut crate::code_rule_dsl::logic::program_image::manager::Pipel
                     orig.push(at.remove(*g));
                 }
                 orig.sort_unstable();
-                changed = true;
             }
             if !changed {
                 break;
