@@ -76,7 +76,7 @@ function main() {
     // A refused version stays refused: said once, by the run that tags the packs.
     if (!again) failure = refusal;
   } catch (error) {
-    failure = `could not tag core, so no core release has started; the next push to main tries again: ${error.message}`;
+    failure = `tagging core failed, so its tag may not have been made; while it is missing, the next push to main makes it: ${error.message}`;
   }
   if (again) console.log(`Release pull request ${merged.number} is released: ${train} exists.`);
   else {

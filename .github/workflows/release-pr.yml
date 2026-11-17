@@ -173,11 +173,23 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           FROZEN: ${{ steps.release.outputs.frozen }}
+          CANDIDATE: ${{ steps.release.outputs.candidate }}
         run: |
           set -euo pipefail
-          # A run that another overtook since it pushed must not write its description over the later one.
-          if [ "$(gh api "repos/{owner}/{repo}/git/ref/heads/${RELEASE_BRANCH}" --jq .object.sha)" != "$(git rev-parse HEAD)" ]; then
-            echo "::notice::The Release pull request changed while this run was building: its description is left as it is."
+          # A run that another overtook since it pushed must not write its description over the later one. The
+          # description is the candidate's: frozen, a push's run may apply the same candidate to main's tip again, which
+          # leaves this description standing, so the candidate's branch is what must not have moved.
+          if [ "$FROZEN" = "true" ]; then
+            branch="$CANDIDATE_BRANCH"
+            built="$CANDIDATE"
+          else
+            branch="$RELEASE_BRANCH"
+            built="$(git rev-parse HEAD)"
+          fi
+          # Empty when the branch is gone, as after an unfreeze; an error from gh fails the step.
+          remote="$(gh api "repos/{owner}/{repo}/git/matching-refs/heads/${branch}" --jq ".[] | select(.ref == \"refs/heads/${branch}\") | .object.sha")"
+          if [ "$remote" != "$built" ]; then
+            echo "::notice::The release changed while this run was building: the Release pull request's description is left as it is."
             exit 0
           fi
           number="$(gh pr list --head "$RELEASE_BRANCH" --base main --state open --json number --jq '.[0].number // empty')"

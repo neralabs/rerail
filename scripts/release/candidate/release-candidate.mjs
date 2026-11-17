@@ -26,8 +26,8 @@ if (action === undefined || bodyPath === undefined || commentPath === undefined)
 const { TARGET: target = "", FIXES: fixes = "", CORE_VERSION: coreVersion = "", RELEASE_REMOTE: remote = "origin", GITHUB_ACTOR: actor = "someone", GITHUB_REPOSITORY: repository = "" } = process.env;
 
 const git = gitIn(ROOT);
-/** The commit whose dependencies are installed: the checkout's when the action starts. */
-const installed = git(["rev-parse", "HEAD"]);
+/** The commit whose dependencies are installed: the checkout's when the action starts, then each one `npm ci` installs. */
+let installed = git(["rev-parse", "HEAD"]);
 
 /**
  * This environment less what the install and the version script must not reach: the app's write token, the remote
@@ -47,7 +47,11 @@ function version(frozen, setVersion) {
   // release-version.mjs runs `changeset version` and reads semver: the candidate's lockfile decides which. Neither
   // needs an install script, so none runs.
   const sameDependencies = git(["diff", "--name-only", installed, "HEAD", "--", "package-lock.json"]) === "";
-  if (!sameDependencies) execFileSync("npm", ["ci", "--ignore-scripts"], { cwd: ROOT, stdio: "inherit", env: childEnv() });
+  if (!sameDependencies) {
+    execFileSync("npm", ["ci", "--ignore-scripts"], { cwd: ROOT, stdio: "inherit", env: childEnv() });
+    // An action that loses the race builds again, maybe on another lockfile: it compares with this install.
+    installed = git(["rev-parse", "HEAD"]);
+  }
   const frozenAt = frozen === null ? null : { ...frozen, baseSubject: git(["log", "-1", "--format=%s", frozen.base]) };
   const env = { ...childEnv(), RELEASE_FROZEN: frozenAt === null ? "" : JSON.stringify(frozenAt), RELEASE_VERSION: setVersion };
   execFileSync(process.execPath, ["scripts/release/release-version.mjs", bodyPath], { cwd: ROOT, stdio: "inherit", env });

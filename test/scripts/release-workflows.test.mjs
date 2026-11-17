@@ -73,6 +73,15 @@ describe("release-pr.yml", () => {
     expect(release.concurrency["cancel-in-progress"]).toBe("${{ github.event_name == 'push' }}");
   });
 
+  it("writes the description unless the release moved: frozen, the candidate's branch, which a push's run never moves", () => {
+    const step = release.jobs["pull-request"].steps.find((candidate) => candidate.name === "Open or update the Release pull request");
+    expect(step.env.CANDIDATE).toBe("${{ steps.release.outputs.candidate }}");
+    expect(step.run).toContain('branch="$CANDIDATE_BRANCH"\n  built="$CANDIDATE"');
+    expect(step.run).toContain('branch="$RELEASE_BRANCH"\n  built="$(git rev-parse HEAD)"');
+    // On a line of its own, so `set -e` fails the step when gh does, rather than reading a failure as a race.
+    expect(step.run).toMatch(/^remote="\$\(gh api /mu);
+  });
+
   it("offers the four actions, and names the branches the scripts use", () => {
     expect(release.on.workflow_dispatch.inputs.action.options).toEqual(["freeze", "cherry-pick", "unfreeze", "set-version"]);
     expect(release.env).toEqual({ RELEASE_BRANCH, CANDIDATE_BRANCH });
