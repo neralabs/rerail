@@ -959,6 +959,27 @@ pass.
     views are as before). Kept part: such a relation is `viewed`, never kept. fixtures/python cold, two rounds on
     m1max (load about 8): 5.68 and 5.94 s of strata CPU against the copies' 6.09 and 6.03 s; user 13.05 and 13.34
     s against 13.44 and 13.47 s. Outputs equal as sets (660), the warm run writes nothing.
+  - **Correction** (a profile per stratum, then the 300-file corpus `bench/step-vs-main/corpus0`). On
+    fixtures/python the copy of `kind` was 0.05 s of 6.8 s (52,657 rows): the 2–7% above was the host's load, not
+    the change. On corpus0 `kind` held flat costs 0.03 s against the copy's 0.35 s (its stratum and `kind__sup0`),
+    every round, and reading every view's rows 0.10 s (316 views) — but the whole run was slower, 49.1 s of strata
+    CPU against 46.8 s, its plans moved (`node_text` 0.07 → 0.64 s). The cause: a copy's readers plan with its live
+    statistics (`live_stats`: each column's sketch and, for a column of few values, every value's exact count, the
+    complete `kind` histogram `kind_frequency` holds authoritative). The view was given the input's column
+    statistics instead (`Run::view_stats`), with `node`'s postings, which hold no constant the program tests on
+    `kind` (`kind(x, "call")`): such a probe was priced as the average kind.
+  - Now `hold_view` sketches the view's columns as a stratum's relation does its rows (`indexed_to_n`: a job a
+    column over `SPANNED_ROWS`) and the planner takes them through `live_stats`, so a view's statistics are its
+    copy's by construction; `Run::view_stats` is gone. `a_views_statistics_are_its_copys` pushes the same rows
+    into a relation as a stratum would and compares its live statistics, both sizes. corpus0, two rounds a side
+    (load 8–24): 43.5 and 48.0 s of strata CPU against 49.7 and 47.3 s; planned work 440.7 and 442.0 M against
+    443.9 and 443.6 M (the copy's own 2.3 M gone). Two copy runs differ by 2.4 s and 5% of work between
+    themselves, so the totals cannot show the 0.3 s; the per-stratum costs and equal statistics are the evidence.
+    Outputs equal as sets (660), the warm run writes nothing. `retain`'s gated-reuse test now expects the views'
+    rules (`docof`, `kind`) left in a reused program, as 6fe55cb12 made them; it had failed since then.
+  - Not done: hogql (3.5 M rows of `kind`) is not in this worktree. Lookups on the flat rows build their own
+    orders, where `node`'s source answers by node and by kind already; rows are one per source row, so the
+    source's row numbers are the view's, and its lookups could serve the view's probes.
 
 ### Q38. (Q32 on Native-and-GPU-strata at e75b66095) A kind-set axis's tape code set counted ERROR nodes as members
 

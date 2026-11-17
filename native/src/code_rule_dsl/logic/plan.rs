@@ -7057,18 +7057,6 @@ impl<'a> Run<'a, '_> {
         Some((base.to_owned(), src, cols))
     }
 
-    /// Gives view `rel` of `base`'s source columns `cols` (`input_view`) those columns' statistics, and its rows.
-    fn view_stats(&mut self, rel: &str, base: &str, src: &dyn crate::code_rule_dsl::facts::vtab::Source, cols: &[usize]) -> Result<()> {
-        self.model.stats.card.insert(rel.to_owned(), src.len().max(1) as f64);
-        let f = self.versions.whole(self.version);
-        self.model.resolve(f, [base])?;
-        let names = crate::code_rule_dsl::facts::vtab::named(base, src);
-        let Some((stats, vals)) = self.model.stats.of_columns(base, &names, cols) else { return Ok(()) };
-        let width = stats.len();
-        self.model.stats.measured(rel, stats.into_iter().enumerate().map(|(c, m)| (sql_col(rel, c), m)), vals.into_iter().map(|(c, v, n)| (sql_col(rel, c), v, n)));
-        input_stats(&mut self.model.stats, &mut self.model.ndv, Some(width), rel)
-    }
-
     /// Stratum `scc` (`rules`) as a view of an input's columns (`input_view`): its relation, and what it views.
     fn input_view_stratum(&self, scc: &BTreeSet<String>, rules: &[RuleKey]) -> Option<(String, String)> {
         let f = self.fields();
@@ -7313,16 +7301,18 @@ impl<'a> Run<'a, '_> {
             return Ok(Native::Ran);
         }
         // A copy of a bound input's columns (Q37: `kind(n, k) :- node(_, n, k, _, _)`, 3.5 M rows a cold run of
-        // hogql): its relation is held as a view of the input's columns (`hold_view`), read in place by every reader,
-        // and no component copies it. `RERAIL_COPY_VIEWS` derives it as before (to measure what the view saves).
+        // hogql): its relation is the input's columns read once into flat rows (`hold_view`), and no component
+        // copies it. `RERAIL_COPY_VIEWS` derives it as before (to measure what the view saves).
         if let ([rel], [r]) = (rels.as_slice(), rules.as_slice())
             && based.is_empty() && gates.is_empty() && levels.is_empty() && !asks && !facts
             && let Some((base, src, cols)) = self.input_view(*r)
         {
-            // Its rows are the input's, one each, so each column's statistics are the input column's: without them
-            // each column read as one value, and its readers' plans probed it as all its rows.
-            self.view_stats(rel, &base, src.as_ref(), &cols)?;
-            super::native::component::hold_view(self.db, rel, src, cols.clone(), types(rel).into_bytes());
+            // Its statistics are a copy's (`hold_view`): its readers plan as they did when a stratum copied it.
+            let l = {
+                let _span = super::profile::span(|| "a view of an input's columns: its rows".into());
+                super::native::component::hold_view(self.db, rel, src, cols.clone(), types(rel).into_bytes())
+            };
+            live_stats(&mut self.model, rel, LiveRel { n: l.n, delta: l.delta, ndv: l.ndv, sq: l.sq, freq: l.freq.into_iter().map(|(c, v)| (c, v.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect())).collect() });
             INPUT_VIEWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             super::profile::stratum(&stratum_key(scc), "native set engine", || format!("a view of {base}'s columns {cols:?}: held in place, no component opened"));
             self.native_rels.extend(scc.iter().cloned());

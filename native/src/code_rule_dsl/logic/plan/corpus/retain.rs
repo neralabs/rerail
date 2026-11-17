@@ -1220,7 +1220,12 @@ pub mod tests {
         assert_eq!(result.strata,(0,strata.len()));
         let lowered=lower::Lowered {program:lower::Tree::given(p.clone()),version:None,maint:None,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
         let reused=result.program(&lowered);
-        assert!(reused.program.rules.is_empty() && reused.program.gates.is_empty());
+        // A view of an input's columns (Q37: `kind(n, k) :- node(_, n, k, _, _).`) is never kept: its rule stays, to
+        // hold it again. Nothing else runs.
+        let left:BTreeSet<&str>=reused.program.rules.iter().map(|r| r.head.rel.as_str()).collect();
+        assert_eq!(left,BTreeSet::from(["docof","kind"]));
+        assert!(reused.program.rules.iter().all(|r| matches!(r.body.as_slice(),[l] if l.atom().is_some_and(|a| p.inputs.iter().any(|i| *i == a.rel.to_string())))));
+        assert!(reused.program.gates.is_empty());
         let mut changed=inputs.clone();
         *changed.values_mut().next().unwrap()=8;
         for (candidate,rows) in [(key,changed),([2;32],inputs.clone())] {

@@ -2706,12 +2706,16 @@ pub fn live_changed(conn: impl Scoped, name: &str, seen: &mut Vec<[usize; 3]>) -
 
 fn live_of(r: &Rel) -> Live {
     if probed::on() { probed::note(&format!("{} [stats]", r.table), std::iter::empty()); }
-    let cols = &r.sketches;
+    live_from(r.n, r.hi - r.lo, &r.sketches)
+}
+
+/// `n` rows' live statistics, `delta` of them the last wave's, from their columns' sketches.
+fn live_from(n: usize, delta: usize, cols: &[Sketch]) -> Live {
     let freq = cols.iter().enumerate().filter_map(|(c, sk)| sk.exact_counts().map(|s| (c, s.iter().map(|&(v, n)| (v, i64::from(n))).collect())))
         .collect();
     Live {
-        n: r.n as i64,
-        delta: (r.hi - r.lo) as i64,
+        n: n as i64,
+        delta: delta as i64,
         ndv: cols.iter().map(|sk| sk.ndv() as i64).collect(),
         sq: cols.iter().map(|sk| sk.sq() as i64).collect(),
         freq,
@@ -3410,19 +3414,49 @@ pub fn hold_source(conn: impl Scoped, table: &str, src: Arc<dyn crate::code_rule
 /// or index is made for it. Read in place instead, each reader's row went through the source (its row's document,
 /// a kind's dialect), and the readers read more rows than it holds: 8.4 s against the copy's 6.0 on
 /// fixtures/python.
-pub fn hold_view(conn: impl Scoped, table: &str, src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vec<usize>, types: Vec<u8>) {
+/// Its live statistics are a copy's: each column's sketch, fed its rows as a stratum's relation is as they arrive
+/// (`live_of`), so its readers plan as they did with the copy. Given the input's column statistics instead, it had
+/// no histogram of its kinds (`kind(x, "call")` priced at the average kind), and the 300-file corpus's plans
+/// moved: 49.1 s of strata CPU against the copies' 46.8.
+pub fn hold_view(conn: impl Scoped, table: &str, src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vec<usize>, types: Vec<u8>) -> Live {
     let conn = conn.db();
-    debug_assert_eq!(cols.len(), types.len());
+    let k = cols.len();
+    debug_assert_eq!(k, types.len());
     let n = src.len();
-    let mut flat = Vec::new();
-    src.rows_of(&cols, &mut flat);
-    debug_assert_eq!(flat.len(), n * cols.len());
+    let (flat, sketches) = view_rows(src.as_ref(), &cols);
+    let live = live_from(n, n, &sketches);
     let mut rel = Arc::into_inner(InRel::from_flat(flat, n, types)).expect("a new relation");
+    rel.sketches = sketches;
     rel.viewed = true;
     let rel = Arc::new(rel);
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
     DERIVED.lock(conn.at()).insert((conn.at(), table.to_owned()), rel);
+    live
+}
+
+/// `src`'s columns `cols`, row after row, and each column's sketch of them (`hold_view`).
+fn view_rows(src: &dyn crate::code_rule_dsl::facts::vtab::Source, cols: &[usize]) -> (Vec<i64>, Vec<Sketch>) {
+    let k = cols.len();
+    let mut flat = Vec::new();
+    src.rows_of(cols, &mut flat);
+    debug_assert_eq!(flat.len(), src.len() * k);
+    // Each column's sketch, its values in row order, as a stratum's relation sketches its rows (`indexed_to_n`):
+    // many rows, a job a column.
+    let mut sketches = vec![Sketch::default(); k];
+    let sketch = |c: usize, sk: &mut Sketch| for row in flat.chunks_exact(k) { sk.add(row[c]); };
+    if src.len() >= SPANNED_ROWS && k > 1 && crate::threads::max() > 1 {
+        crate::threads::scope(|jobs| {
+            for (c, sk) in sketches.iter_mut().enumerate() {
+                jobs.spawn("a view's column sketched", move |_| sketch(c, sk));
+            }
+        });
+    } else {
+        for (c, sk) in sketches.iter_mut().enumerate() {
+            sketch(c, sk);
+        }
+    }
+    (flat, sketches)
 }
 
 /// The source a relation of `conn`'s run is held as (`hold_source`), for a caller that reads the index itself.
@@ -6935,6 +6969,39 @@ pub mod posted_tests {
                 assert!(got.ids[got.starts[i] as usize..got.starts[i + 1] as usize].iter().all(|&r| col[r as usize] == *k));
             }
             assert_eq!(*got.starts.last().unwrap() as usize, col.len());
+        }
+    }
+
+    /// A view of a source's columns (`hold_view`, Q37) has the live statistics a stratum's copy of them has: each
+    /// column's distinct values, squared postings and exact counts, so its readers plan as they did with the copy.
+    #[test]
+    fn a_views_statistics_are_its_copys() {
+        let node = |d: i64, i: i64| (d << 32) | i;
+        // Few rows, and enough for a job a column (`SPANNED_ROWS`).
+        for per in [300, SPANNED_ROWS as i64 / 3 + 1] {
+            let mut input = Rel::new("node", b"iiii");
+            // Documents, nodes (a key), kinds (few, skewed), and starts (many).
+            for d in 1..4 {
+                for i in 0..per {
+                    input.push(&[d, node(d, i), if i % 5 == 0 { 7 } else { i % 90 }, i * 3]);
+                }
+            }
+            let source = Derived::new(Arc::new(InRel::moved(input)), None);
+            for cols in [vec![1, 2], vec![2, 1, 3], vec![0, 1]] {
+                let (flat, sketches) = view_rows(source.as_ref(), &cols);
+                let n = flat.len() / cols.len();
+                let viewed = live_from(n, n, &sketches);
+                let mut copy = Rel::new("kind", &vec![b'i'; cols.len()]);
+                for row in flat.chunks_exact(cols.len()) {
+                    copy.push(row);
+                }
+                copy.indexed_to_n();
+                let copied = live_of(&copy);
+                let sorted = |l: &Live| l.freq.iter().map(|(c, v)| { let mut v = v.clone(); v.sort_unstable(); (*c, v) }).collect::<Vec<_>>();
+                assert_eq!((viewed.n, &viewed.ndv, &viewed.sq), (copied.n, &copied.ndv, &copied.sq), "{cols:?}");
+                assert_eq!(sorted(&viewed), sorted(&copied), "{cols:?}");
+                assert_eq!(viewed.freq.iter().any(|(c, _)| cols[*c] == 2), cols.contains(&2), "the kinds' exact counts: {cols:?}");
+            }
         }
     }
 
