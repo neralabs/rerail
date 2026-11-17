@@ -3,7 +3,7 @@
 // had before such a rewrite, which a fast enough rewrite gives on a machine with a coarse clock.
 import { execFileSync, spawnSync } from "node:child_process";
 import { lstatSync, mkdirSync, realpathSync, type Stats } from "node:fs";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -55,6 +55,20 @@ function placements(folder: string): number {
   return vi.mocked(runGit).mock.calls.filter(([cwd, args]) => cwd === resolve(folder) && args.includes("--show-toplevel")).length;
 }
 
+/**
+ * Writes `text` over the file at `path` in place, as Git rewrites a `.git` file. Git for Windows hides a worktree's
+ * `.git` file, and Windows refuses to make a file anew over a hidden one.
+ */
+async function rewriteInPlace(path: string, text: string): Promise<void> {
+  const file = await open(path, "r+");
+  try {
+    await file.truncate(0);
+    await file.write(text, 0);
+  } finally {
+    await file.close();
+  }
+}
+
 /** From now on, an lstat of `path` gives `stats`, as if nothing had changed there since. */
 function lstatKeeps(path: string, stats: Stats): void {
   vi.mocked(lstatSync).mockImplementation(((target: Parameters<typeof lstatSync>[0], options?: Parameters<typeof lstatSync>[1]) =>
@@ -78,7 +92,7 @@ describe("a file Git reads to place a folder, rewritten within one clock tick at
 
     expect(repositoryIdentityLocation(first)).toEqual(gitsAnswer(first));
     expect(repositoryIdentityLocation(join(root, "w"))).toEqual(gitsAnswer(join(root, "w")));
-    await writeFile(dotGit, `gitdir: ${join(other, ".git", "worktrees", "w")}\n`);
+    await rewriteInPlace(dotGit, `gitdir: ${join(other, ".git", "worktrees", "w")}\n`);
     lstatKeeps(dotGit, before);
 
     expect(repositoryIdentityLocation(join(root, "w"))).toEqual(gitsAnswer(join(root, "w")));

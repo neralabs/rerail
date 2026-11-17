@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, realpathSync } from "node:fs";
-import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -303,6 +303,20 @@ function expectGitsRegistries(...checkouts: string[]): void {
   }
 }
 
+/**
+ * Writes `text` over the file at `path` in place, as Git rewrites a `.git` file. Git for Windows hides a worktree's
+ * `.git` file, and Windows refuses to make a file anew over a hidden one.
+ */
+async function rewriteInPlace(path: string, text: string): Promise<void> {
+  const file = await open(path, "r+");
+  try {
+    await file.truncate(0);
+    await file.write(text, 0);
+  } finally {
+    await file.close();
+  }
+}
+
 /** A repository `first` with the worktrees w1 and w2 beside it, each asked once as a start asks after them. */
 async function firstWithWorktrees(): Promise<{ root: string; main: string; w1: string; w2: string }> {
   const root = await temporaryRoot();
@@ -356,7 +370,7 @@ describe("a checkout's folder that comes to hold another repository's checkout w
     const { root, main, w1, w2 } = await firstWithWorktrees();
     const other = repository(join(root, "other"));
     git(other, "worktree", "add", "--quiet", "-b", "o1", join(root, "o1"));
-    await writeFile(join(w1, ".git"), `gitdir: ${join(other, ".git", "worktrees", "o1")}\n`);
+    await rewriteInPlace(join(w1, ".git"), `gitdir: ${join(other, ".git", "worktrees", "o1")}\n`);
 
     expectGitsRegistries(w1, main, w2);
   });
