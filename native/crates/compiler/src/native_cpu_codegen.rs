@@ -46,8 +46,10 @@ pub fn define_function(
         function.colocated = false;
     }
     switch_trees(&mut context.func);
-    // The function may have changed since its flow graph was made (`clif_fold`, `switch_trees`):
-    // made again.
+    // Each integer constant made again in the blocks that read it (decision 0351).
+    remat_consts(&mut context.func);
+    // The function may have changed since its flow graph was made (`clif_fold`, `switch_trees`,
+    // `remat_consts`): made again.
     context.cfg.clear();
     context.domtree.clear();
     if let Err(e) = module.define_function(id, context) {
@@ -170,6 +172,56 @@ pub const SWITCH_TREE_RUNS: usize = 32;
 /// table's load. The IR keeps the table, as lean keeps its `match` (`clif_rust` writes it as
 /// one, and rustc lowers it so); only the JIT's copy is rewritten, before Cranelift lowers it.
 /// A table whose targets take arguments stays.
+/// Each integer constant a block reads but another made, made again in the block, before its
+/// first reader there (decision 0351): the optimizer's `remat` of an `iconst`, which tier 1 runs
+/// without (0069). A constant the token loop's entry makes (a table's address, the word hash's
+/// multiplier, zero, all ones) was one value live through the loop, its calls included: so it was
+/// spilled and reloaded at each token, where the lean lexer has it in an immediate or a `movz`
+/// beside its reader. Only the JIT's copy: the AOT's rustc does the same.
+pub fn remat_consts(func: &mut cranelift_codegen::ir::Function) {
+    use cranelift_codegen::cursor::{Cursor, FuncCursor};
+    use cranelift_codegen::ir::{InstBuilder, InstructionData, Opcode, ValueDef};
+    let blocks: Vec<cranelift_codegen::ir::Block> = func.layout.blocks().collect();
+    for block in blocks {
+        let mut made: std::collections::HashMap<cranelift_codegen::ir::Value, cranelift_codegen::ir::Value> = Default::default();
+        let insts: Vec<cranelift_codegen::ir::Inst> = func.layout.block_insts(block).collect();
+        for inst in insts {
+            let reads: Vec<cranelift_codegen::ir::Value> = func.dfg.inst_values(inst).collect();
+            let mut swap: Vec<(cranelift_codegen::ir::Value, cranelift_codegen::ir::Value)> = Vec::new();
+            for v in reads {
+                let v = func.dfg.resolve_aliases(v);
+                let ValueDef::Result(def, 0) = func.dfg.value_def(v) else { continue };
+                if func.layout.inst_block(def) == Some(block) {
+                    continue;
+                }
+                let InstructionData::UnaryImm { opcode: Opcode::Iconst, imm } = func.dfg.insts[def] else { continue };
+                let again = match made.get(&v) {
+                    Some(&x) => x,
+                    None => {
+                        let ty = func.dfg.value_type(v);
+                        let mut pos = FuncCursor::new(func).at_inst(inst);
+                        let x = pos.ins().iconst(ty, imm);
+                        made.insert(v, x);
+                        x
+                    }
+                };
+                swap.push((v, again));
+            }
+            if !swap.is_empty() {
+                let dfg = &mut func.dfg;
+                let resolved: Vec<cranelift_codegen::ir::Value> = dfg.inst_values(inst).map(|x| dfg.resolve_aliases(x)).collect();
+                let mut k = 0;
+                let new: Vec<cranelift_codegen::ir::Value> = resolved.iter().map(|&x| swap.iter().find(|s| s.0 == x).map_or(x, |s| s.1)).collect();
+                dfg.map_inst_values(inst, |_| {
+                    let x = new[k];
+                    k += 1;
+                    x
+                });
+            }
+        }
+    }
+}
+
 pub fn switch_trees(func: &mut cranelift_codegen::ir::Function) {
     use cranelift_codegen::ir::{Block, InstructionData};
     let mut found = Vec::new();

@@ -3306,6 +3306,10 @@ mod json_probe {
         if let Ok(path) = std::env::var("RERAIL_JSON_ASM") {
             std::fs::write(&path, &p.tier1.disassembly).expect("writes");
         }
+        // `RERAIL_JSON_CLIF=<path>`: each pass's Cranelift IR, as the JIT was given it.
+        if let Ok(path) = std::env::var("RERAIL_JSON_CLIF") {
+            std::fs::write(&path, p.tier1.passes.iter().map(|x| x.clif.as_str()).collect::<Vec<_>>().join("\n")).expect("writes");
+        }
         if let Ok(path) = std::env::var("RERAIL_JSON_RUST") {
             rerail_compiler::native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
             let bit = rerail_compiler::native_cpu_lanes::BIT_TEST.swap(true, std::sync::atomic::Ordering::Relaxed);
@@ -3352,11 +3356,14 @@ mod json_probe {
         // tokens: the masks alone), the same of two-byte UTF-8, white space, and dense tokens.
         // Each input is cut into files under the tape's 16-bit widths: 16 files of about 60 KB.
         let n = 60_000;
-        let synth: [(&str, Vec<u8>); 5] = [
+        // Numbers of 1, 4 and 12 digits part the token loop's cost a token from its cost a byte.
+        let synth: [(&str, Vec<u8>); 7] = [
             ("long ASCII strings", [b"[".as_slice(), &format!("\"{}\",", "a".repeat(5_000)).repeat(n / 5_000).into_bytes(), b"0]"].concat()),
             ("long UTF-8 strings", [b"[".as_slice(), &format!("\"{}\",", "\u{e9}".repeat(2_500)).repeat(n / 5_000).into_bytes(), b"0]"].concat()),
             ("white space", [b"[".as_slice(), &vec![b' '; n], b"]"].concat()),
             ("numbers", [b"[".as_slice(), &"1234,".repeat(n / 5).into_bytes(), b"0]"].concat()),
+            ("one-digit numbers", [b"[".as_slice(), &"1,".repeat(n / 2).into_bytes(), b"0]"].concat()),
+            ("12-digit numbers", [b"[".as_slice(), &"123456789012,".repeat(n / 13).into_bytes(), b"0]"].concat()),
             ("short strings", [b"[".as_slice(), &"\"ab\",".repeat(n / 5).into_bytes(), b"0]"].concat()),
         ];
         for (name, f) in &synth {
