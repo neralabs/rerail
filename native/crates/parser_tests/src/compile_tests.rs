@@ -751,6 +751,22 @@ fn json_loop_keeps_values_in_registers() {
         // The loop's machine code, to read where its stack traffic is.
         std::fs::write(path, lines.join("\n")).expect("writes");
     }
+    if let Ok(path) = std::env::var("RERAIL_DUMP_LOOP_CLIF") {
+        std::fs::write(path, &compiled.clif).expect("writes");
+    }
+    // `RERAIL_LOOP_PRESSURE`: the values live through the hot loop while it is over the registers.
+    if std::env::var_os("RERAIL_LOOP_PRESSURE").is_some() {
+        for pass in &compiled.passes {
+            let q = &pass.pressure;
+            eprintln!("pass: {} values live through the hot loop; integer peak {}", q.hot_through, q.hot_int.iter().max().unwrap_or(&0));
+            let n = q.hot_int.len().max(1);
+            eprintln!("  integer live, 32 stretches: {:?}", (0..32).map(|k| q.hot_int[k * n / 32..((k + 1) * n / 32).max(k * n / 32 + 1).min(q.hot_int.len())].iter().copied().max().unwrap_or(0)).collect::<Vec<_>>());
+            eprintln!("  at the peak: {:?}", q.at_peak);
+            for b in q.blame.iter().take(20) {
+                eprintln!("  {:>6} / {:<6} {} {} %{:?}", b.over, b.live, if b.vector { "v" } else { "x" }, b.made, b.origin);
+            }
+        }
+    }
     assert_eq!(mvn, 0, "json's loop inverts vectors");
     // The state is packed: one carried word per 64 state bits (decision 0070), but a chain's
     // carry, in a word of its own as simdjson's (0346).
@@ -780,9 +796,12 @@ fn json_loop_keeps_values_in_registers() {
 /// toggle, the classes one lookup, the multiply), not raised then. 704 and 10 with 0346: the
 /// toggle's multiply of the raw quotes adds the rounds of the escaped ones (+7), and the string's
 /// two chains in words of their own, as simdjson's (-2), hold two more registers across the loop,
-/// and Cranelift spills two values elsewhere.
-const JSON_LOOP: usize = 704;
-const JSON_LOOP_STACK: usize = 10;
+/// and Cranelift spills two values elsewhere. 667 and 4 with 0353: a class one `cmtst` (24
+/// fewer), the escaped quotes' rounds behind a branch (5), no complement of a complement (5),
+/// the bitmask's weights one load, the constants made at the body's head, and a total read
+/// back from its row at the step's end, not held through the body.
+const JSON_LOOP: usize = 667;
+const JSON_LOOP_STACK: usize = 4;
 
 // --- Tier 1 is simdjson's stage 1 (decision 0071) ---------------------------------------------
 //

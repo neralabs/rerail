@@ -3397,6 +3397,18 @@ fn test_aarch64_binemit() {
 
     insns.push((
         Inst::VecRRR {
+            alu_op: VecALUOp::Cmtst,
+            rd: writable_vreg(3),
+            rn: vreg(23),
+            rm: vreg(24),
+            size: VectorSize::Size8x16,
+        },
+        "E38E384E",
+        "cmtst v3.16b, v23.16b, v24.16b",
+    ));
+
+    insns.push((
+        Inst::VecRRR {
             alu_op: VecALUOp::Cmgt,
             rd: writable_vreg(3),
             rn: vreg(23),

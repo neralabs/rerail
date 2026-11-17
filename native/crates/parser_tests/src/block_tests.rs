@@ -134,6 +134,9 @@ const BODY_OPCODES: &[&str] = &[
     "band_imm",
     // The extracts' flattening (simdjson's): a position per set bit, eight at a time.
     "ctz", "istore32", "icmp_imm", "jump",
+    // A toggle's prefix XOR as one carry-less multiply (0346), its escaped quotes' correction
+    // behind a cold branch (0353).
+    "clmul",
 ];
 
 /// Check the lowered forms of a program and print them.
@@ -147,7 +150,10 @@ fn check_lowering(name: &str, p: &Program) {
     }
     // The loop's branch, and two per extract: more than eight bits in the block, and the loop
     // over them eight at a time, which steps its count by 8 and loops on itself.
-    let branches = body.iter().filter(|l| opcode(l) == "brif").count();
+    // A branch to a cold block (a toggle's escaped quotes' correction, 0353) is not counted:
+    // the rare path, off the loop's.
+    let cold: Vec<String> = compiled.clif.lines().filter_map(|l| l.trim().strip_suffix(" cold:").map(str::to_owned)).collect();
+    let branches = body.iter().filter(|l| opcode(l) == "brif" && !cold.iter().any(|c| l.contains(&format!("{c},")) || l.contains(&format!("{c}(")))).count();
     assert_eq!(branches, 1 + 2 * native.extracts.len() + usize::from(compiled.ascii_branch) + compiled.gate_branches + compiled.round_branches, "{name}: the body's only branches are the loop's, the flattening's, the ASCII test's and the gates'");
     for (block, lines) in hot_loop(&compiled.clif).iter().skip(1) {
         if lines.iter().any(|l| opcode(l) == "brif" && l.contains(&format!("{block}("))) {
@@ -1278,8 +1284,9 @@ fn within_lowers_to_straight_bit_operations() {
 
 
 
-/// Stage 1's loop's stack loads and stores (a ratchet, to reach 0).
-const STAGE1_LOOP_STACK: usize = 9;
+/// Stage 1's loop's stack loads and stores (a ratchet, to reach 0). 3 when the body makes its
+/// constants at its head and a class is one `cmtst` (0353).
+const STAGE1_LOOP_STACK: usize = 3;
 
 /// Stage 1 compiles to a loop with little stack traffic and no vector `mvn`: its values and
 /// constants in registers, its carried state packed into words.

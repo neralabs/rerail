@@ -27,9 +27,10 @@ use cranelift_codegen::ir::{ConstantData, InstBuilder, MemFlags, Value, condcode
 use cranelift_frontend::FunctionBuilder;
 
 /// The backend tests a vector's bits against a mask in one instruction (NEON's `vtst`, which
-/// `clif_rust`'s Rust has; Cranelift's aarch64 lowering does not): a class's lane is then the
-/// test itself, not its complement. Set by a build for such a backend (`rr_aot_gen`).
-pub static BIT_TEST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// `clif_rust`'s Rust has, and the vendored Cranelift's aarch64 lowering since 0353: `cmtst`): a
+/// class's lane is then the test itself, not its complement. On by default where the vendored
+/// Cranelift is built for aarch64 (`cranelift_clmul`, its mark); upstream's has no `cmtst`.
+pub static BIT_TEST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(cfg!(all(cranelift_clmul, target_arch = "aarch64")));
 
 /// How far back a byte-local value may look: the bytes before a file (`FRONT`).
 const MAX_LAG: u8 = 16;

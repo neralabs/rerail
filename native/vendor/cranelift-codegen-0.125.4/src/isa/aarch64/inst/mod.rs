@@ -2209,6 +2209,7 @@ impl Inst {
                     VecALUOp::Sqsub => ("sqsub", size),
                     VecALUOp::Uqsub => ("uqsub", size),
                     VecALUOp::Cmeq => ("cmeq", size),
+                    VecALUOp::Cmtst => ("cmtst", size),
                     VecALUOp::Cmge => ("cmge", size),
                     VecALUOp::Cmgt => ("cmgt", size),
                     VecALUOp::Cmhs => ("cmhs", size),

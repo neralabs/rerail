@@ -1506,6 +1506,8 @@
     (Uqsub)
     ;; Compare bitwise equal
     (Cmeq)
+    ;; Compare bitwise test bits nonzero (rerail, PATCHES.md: NEON's `vtst`)
+    (Cmtst)
     ;; Compare signed greater than or equal
     (Cmge)
     ;; Compare signed greater than
@@ -4078,18 +4080,27 @@
 
 ;; Lower a constant f128.
 (decl constant_f128 (u128) Reg)
-(rule 3 (constant_f128 0)
+(rule 6 (constant_f128 0)
         (vec_dup_imm (asimd_mov_mod_imm_zero (ScalarSize.Size8))
                      false
                      (VectorSize.Size8x16)))
 
 ;; If the upper 64-bits are all zero then defer to `constant_f64`.
-(rule 2 (constant_f128 (u64_from_u128 n)) (constant_f64 n))
+(rule 5 (constant_f128 (u64_from_u128 n)) (constant_f64 n))
 
 ;; If the low half of the u128 equals the high half then delegate to the splat
-;; logic as a splat of a 64-bit value.
-(rule 1 (constant_f128 (u128_replicated_u64 n))
+;; logic as a splat of a 64-bit value: where it repeats a 32-bit value (the
+;; splat's narrower immediates), or where one `movi` makes it. rerail (PATCHES.md):
+;; any other such constant is loaded from the pool, one `ldr`, not built in a
+;; general register (up to four instructions) and duplicated.
+(rule 4 (constant_f128 (u128_replicated_u64 n @ (u64_replicated_u32 _)))
         (splat_const n (VectorSize.Size64x2)))
+(rule 3 (constant_f128 (u128_replicated_u64 n))
+        (if-let imm (asimd_mov_mod_imm_from_u64 n (ScalarSize.Size64)))
+        (vec_dup_imm imm false (VectorSize.Size64x2)))
+(rule 2 (constant_f128 (u128_replicated_u64 n))
+        (if-let imm (asimd_mov_mod_imm_from_u64 (u64_not n) (ScalarSize.Size64)))
+        (vec_dup_imm imm true (VectorSize.Size64x2)))
 
 ;; Base case is to load the constant from memory.
 (rule (constant_f128 n)

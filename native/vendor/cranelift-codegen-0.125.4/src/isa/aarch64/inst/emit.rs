@@ -2657,6 +2657,7 @@ impl MachInstEmit for Inst {
                     VecALUOp::Uqadd => (0b001_01110_00_1 | enc_size << 1, 0b000011),
                     VecALUOp::Uqsub => (0b001_01110_00_1 | enc_size << 1, 0b001011),
                     VecALUOp::Cmeq => (0b001_01110_00_1 | enc_size << 1, 0b100011),
+                    VecALUOp::Cmtst => (0b000_01110_00_1 | enc_size << 1, 0b100011),
                     VecALUOp::Cmge => (0b000_01110_00_1 | enc_size << 1, 0b001111),
                     VecALUOp::Cmgt => (0b000_01110_00_1 | enc_size << 1, 0b001101),
                     VecALUOp::Cmhi => (0b001_01110_00_1 | enc_size << 1, 0b001101),

@@ -582,12 +582,23 @@ pub(crate) fn toggle(f: &mut FunctionBuilder<'_>, x: Value) -> Value {
         });
     }
     let whole = prefix_xor(f, lane);
-    let mut fix = out.expect("a term");
+    // The rounds behind a branch, cold (0353): the quotes the terms take out are zero but where
+    // one is escaped or gated off, as simdjson's escape handling is its rare path.
+    let taken = out.expect("a term");
+    let (rare, join) = (f.create_block(), f.create_block());
+    f.append_block_param(join, types::I64);
+    f.ins().brif(taken, rare, &[], join, &[whole.into()]);
+    f.switch_to_block(rare);
+    f.set_cold_block(rare);
+    let mut fix = taken;
     for k in [1, 2, 4, 8, 16, 32] {
         let up = f.ins().ishl_imm(fix, k);
         fix = f.ins().bxor(fix, up);
     }
-    f.ins().bxor(whole, fix)
+    let fixed = f.ins().bxor(whole, fix);
+    f.ins().jump(join, &[fixed.into()]);
+    f.switch_to_block(join);
+    f.block_params(join)[0]
 }
 
 /// `x` as a bitmask's lane (`extractlane` of an `i64x2`'s lane 0) ANDed with terms: the lane,
@@ -7160,7 +7171,7 @@ fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value]
     let words: Vec<Value> = values
         .iter()
         .enumerate()
-        .map(|(k, &v)| if full || (slot_of.is_empty() && early[k]) { v } else {
+        .map(|(k, &v)| if full || (slot_of.is_empty() && sunk[k]) { v } else {
             let inside = within_word(&mut *f, i, len, native.output_delays[k]);
             f.ins().band(v, inside)
         })
@@ -7196,7 +7207,11 @@ fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value]
             // The totals only test for a bit (`BlockProgram::totals`): every total's words OR-ed
             // into one running word.
             let _ = k;
-            let any = native.totals.iter().fold(n, |acc, &t| f.ins().bor(acc, words[t]));
+            let any = native.totals.iter().fold(n, |acc, &t| {
+                // A sunk total's word, back from its row (the body stored it there).
+                let w = if slot_of.is_empty() && sunk[t] { f.ins().load(types::I64, MemFlags::trusted(), dst, 8 * t as i32) } else { words[t] };
+                f.ins().bor(acc, w)
+            });
             counts_out.push(any);
         }
     }
@@ -7256,8 +7271,10 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     let mut builder_context = FunctionBuilderContext::new();
     let counted = counted(native);
     let delayed: Vec<usize> = (0..native.outputs.len()).filter(|&k| native.output_delays[k] > 0).collect();
-    // Every total is read at the step's end, into the totals' one running word.
-    let early: Vec<bool> = (0..native.outputs.len()).map(|k| !counted.contains(&k) && !native.totals.contains(&k)).collect();
+    // Every output but the extracts is stored where the body makes it. A total with a row is
+    // read back from it at the step's end, into the totals' one running word (0353): held from
+    // where it was made to there, it took a register through the body, or a spill.
+    let early: Vec<bool> = (0..native.outputs.len()).map(|k| !native.extracts.contains(&k)).collect();
     let state = State::of(native);
     let carried = state.words;
     let rowed = slots > 0;
@@ -7616,8 +7633,9 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         // The body's constants, made at its head each block (decision 0350): made once at the
         // function's entry they live across the token loop's calls, and were spilled there and
         // reloaded at each use (about 20 loads a block, against a `movi` and a `dup` here).
-        // Without a token loop, the entry's stay in registers: no call crosses the loop.
-        let body_consts = if tokened { Consts::make(&mut f) } else { Consts { nibble: consts.nibble, weights: consts.weights, even: consts.even } };
+        // In every loop: where none crosses a call, the entry's were still spilled around the
+        // gated regions and reloaded at the loop's head (0353).
+        let body_consts = Consts::make(&mut f);
         let again;
         (again, gate_branches, round_branches) = step(&mut f, &lp, &body_consts, &p[..params], len, true, scratch, Some(&calls), &mut heads);
         let again: Vec<BlockArg> = again.into_iter().map(BlockArg::from).collect();

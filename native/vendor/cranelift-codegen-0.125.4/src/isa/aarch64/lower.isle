@@ -1039,6 +1039,17 @@
             (p Reg (pmull64 xv (put_in_reg vec))))
         (mov_from_vec p 0 (ScalarSize.Size64))))
 
+;; rerail (PATCHES.md): an all-ones multiplier (simdjson's `prefix_xor`,
+;; `vmull_p64(x, !0)`) is one `movi`, not a general register's all ones moved over.
+(rule 4 (lower (has_type $I64 (clmul (extractlane vec @ (value_type $I64X2) (u8_from_uimm8 0)) (i64_from_iconst -1))))
+      (if-let true (use_pmull))
+      (let ((p Reg (pmull64 (put_in_reg vec) (constant_f128 0xffffffffffffffffffffffffffffffff))))
+        (mov_from_vec p 0 (ScalarSize.Size64))))
+(rule 3 (lower (has_type $I64 (clmul x (i64_from_iconst -1))))
+      (if-let true (use_pmull))
+      (let ((p Reg (pmull64 (mov_to_fpu x (ScalarSize.Size64)) (constant_f128 0xffffffffffffffffffffffffffffffff))))
+        (mov_from_vec p 0 (ScalarSize.Size64))))
+
 ;;;; Rules for `umulhi` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (rule 1 (lower (has_type $I64 (umulhi x y)))
@@ -2191,6 +2202,13 @@
       (vec_cmp x y in_ty (fp_cond_code cond)))
 
 ;;;; Rules for `icmp` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; rerail (PATCHES.md): a vector's bits tested against a mask, `(x & m) != 0`, is
+;; one `cmtst`, as NEON's `vtst`.
+(rule 4 (lower (has_type ty @ (multi_lane _ _) (icmp (IntCC.NotEqual) (band x m) y)))
+      (if (zero_value y))
+      (if (ty_vector_not_float ty))
+      (value_reg (vec_rrr (VecALUOp.Cmtst) x m (vector_size ty))))
 
 (rule 3 (lower (has_type ty @ (multi_lane _ _) (icmp (icmp_zero_cond_not_eq cond) x y)))
       (if (zero_value y))

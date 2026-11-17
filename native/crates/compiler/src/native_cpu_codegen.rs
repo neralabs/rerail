@@ -48,6 +48,8 @@ pub fn define_function(
     switch_trees(&mut context.func);
     // Each integer constant made again in the blocks that read it (decision 0351).
     remat_consts(&mut context.func);
+    // No complement of a complement (0353).
+    fold_nots(&mut context.func);
     // The function may have changed since its flow graph was made (`clif_fold`, `switch_trees`,
     // `remat_consts`): made again.
     context.cfg.clear();
@@ -178,6 +180,39 @@ pub const SWITCH_TREE_RUNS: usize = 32;
 /// multiplier, zero, all ones) was one value live through the loop, its calls included: so it was
 /// spilled and reloaded at each token, where the lean lexer has it in an immediate or a `movz`
 /// beside its reader. Only the JIT's copy: the AOT's rustc does the same.
+/// A complement read complemented, folded (0353): `band_not`, `bor_not` and `bxor_not` of a
+/// `bnot y` are `band`, `bor` and `bxor` of `y`. The body keeps a class complemented while its
+/// readers can take it so (`Sym`); where one could not, it made the `bnot`, and a later reader
+/// that wanted the complement complemented it again: without the optimizer (0069) nothing folds
+/// that, and the `bnot` was one more value live. Only the JIT's copy; rustc folds the AOT's.
+pub fn fold_nots(func: &mut cranelift_codegen::ir::Function) {
+    use cranelift_codegen::ir::{InstructionData, Opcode, ValueDef};
+    let not_of = |func: &cranelift_codegen::ir::Function, v: cranelift_codegen::ir::Value| -> Option<cranelift_codegen::ir::Value> {
+        let v = func.dfg.resolve_aliases(v);
+        let ValueDef::Result(def, 0) = func.dfg.value_def(v) else { return None };
+        match func.dfg.insts[def] {
+            InstructionData::Unary { opcode: Opcode::Bnot, arg } => Some(arg),
+            _ => None,
+        }
+    };
+    let blocks: Vec<cranelift_codegen::ir::Block> = func.layout.blocks().collect();
+    for block in blocks {
+        let insts: Vec<cranelift_codegen::ir::Inst> = func.layout.block_insts(block).collect();
+        for inst in insts {
+            let InstructionData::Binary { opcode, args: [a, b] } = func.dfg.insts[inst] else { continue };
+            let plain = match opcode {
+                Opcode::BandNot => Opcode::Band,
+                Opcode::BorNot => Opcode::Bor,
+                Opcode::BxorNot => Opcode::Bxor,
+                _ => continue,
+            };
+            if let Some(y) = not_of(func, b) {
+                func.dfg.insts[inst] = InstructionData::Binary { opcode: plain, args: [a, y] };
+            }
+        }
+    }
+}
+
 pub fn remat_consts(func: &mut cranelift_codegen::ir::Function) {
     use cranelift_codegen::cursor::{Cursor, FuncCursor};
     use cranelift_codegen::ir::{InstBuilder, InstructionData, Opcode, ValueDef};
