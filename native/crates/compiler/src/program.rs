@@ -237,6 +237,10 @@ pub struct TokenElem {
     pub offset: i8,
     pub kinds: u64,
     pub words: Vec<u16>,
+    /// The kinds' hard keywords (strings): a record of one of the kinds whose word is one of
+    /// these is that keyword's token, of the keyword's own kind (as Bitlex's evaluator has it),
+    /// not one of the kinds. `simple_identifier "<"` holds at `foo <` but not at `fun <`.
+    pub except: Vec<u16>,
     /// A token none of the kinds and words (never the file's end).
     pub not: bool,
     /// The file's end takes it too: no token left (the last element only).
@@ -248,7 +252,8 @@ impl TokenElem {
     pub fn takes(&self, code: u32) -> bool {
         let kind = code & 0xff;
         let word = crate::records::word_of(code);
-        (kind < 64 && self.kinds >> kind & 1 == 1) || (word > 0 && self.words.contains(&((word - 1) as u16)))
+        let keyword = word > 0 && self.except.contains(&((word - 1) as u16));
+        (kind < 64 && self.kinds >> kind & 1 == 1 && !keyword) || (word > 0 && self.words.contains(&((word - 1) as u16)))
     }
 
     /// Whether the element holds at a record's code (`None`: no record left, the file's end).

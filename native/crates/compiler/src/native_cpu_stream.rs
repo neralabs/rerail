@@ -1380,7 +1380,24 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
             let zero = f.ins().iconst(types::I64, 0);
             let bit = f.ins().select(small, bit, zero);
             let other = f.create_block();
-            f.ins().brif(bit, ok_to, &[], other, &[]);
+            if el.except.is_empty() {
+                f.ins().brif(bit, ok_to, &[], other, &[]);
+            } else {
+                // Of the kinds, but not one of their hard keywords (`TokenElem::except`): those
+                // go on to the words.
+                let kind_hit = f.create_block();
+                f.ins().brif(bit, kind_hit, &[], other, &[]);
+                f.switch_to_block(kind_hit);
+                let w = f.ins().ushr_imm(c, i64::from(crate::records::KIND_BITS));
+                let w = f.ins().band_imm(w, 0xff);
+                for &s in &el.except {
+                    let same = f.ins().icmp_imm(IntCC::Equal, w, i64::from(s) + 1);
+                    let next = f.create_block();
+                    f.ins().brif(same, other, &[], next, &[]);
+                    f.switch_to_block(next);
+                }
+                f.ins().jump(ok_to, &[]);
+            }
             f.switch_to_block(other);
         }
         if !el.words.is_empty() {

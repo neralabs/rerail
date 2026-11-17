@@ -400,6 +400,36 @@ Refused for now:
 
 Corpus: 185 the same, 306 refused, 0 differ.
 
+## Kotlin, step 16 (`16-generic-functions.bitlex`)
+
+A function's type parameters come after `fun`: `fun <T> List<T>.g()`.
+
+Step 15 refused these because the token mark `generic` (`simple_identifier "<" …`) held at
+`fun`. That was a compiler bug, not a missing feature: the compiled program and the reference
+evaluator disagreed.
+
+- **The reference evaluator** gives a hard keyword's token the keyword's own kind (`fun`), so
+  `simple_identifier` does not match it there.
+- **The compiled program** tested the record's kind, which is the row's (`simple_identifier`),
+  with the keyword only in its word.
+
+A compiled element of kinds now also lists the kinds' hard keywords (`TokenElem::except`, `x`
+in the RIR's `tokenmark` rows). A record with one of those words is not of the kinds. Soft
+keywords stay the row's kind, as in the evaluator. All three places that evaluate token marks
+test the list: the interpreter (`TokenElem::takes`), Cranelift's tier 2 (`token_pattern`), and
+the generated Rust (`rust_stream::pattern`).
+
+A row made only of keywords (`required`, kind 0) is the exception: its kind in a token mark names
+the row, and every token of the row is a keyword. rr's `io_bare` (`"." "input" hash_word`) means
+`#include` by `hash_word`. Bitlex's evaluator gives that token the kind `#include`, so there the
+evaluator and rr's tests still disagree. That is open: the evaluator should match a keywords-only
+row's kind.
+
+The 16 generic functions are no longer refused at `fun`. Each now meets another refusal further
+in (mostly `by` and type constraints), so the counts hold.
+
+Corpus: 185 the same, 306 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
@@ -527,6 +557,8 @@ Corpus: 185 the same, 306 refused, 0 differ.
     unshifted (`delayed_store`), and the next block or the row's end shifts it in. The `Last`
     rule read the token's own word unchecked, so a number at the file's end had its last
     byte read `d` bytes late. Every word it reads is now checked against the ready blocks.
+23. **A token mark's kinds exclude their hard keywords** (step 16). The compiled program now
+    agrees with Bitlex's evaluator, which gives a keyword's token the keyword's kind.
 
 Single-extra grammars compile as before: rr's tests and the compiler's targeted tests pass.
 

@@ -266,8 +266,17 @@ fn receivers_are_the_lean_parsers() {
     ]);
 }
 
+/// Step 16: generic functions.
 #[test]
-fn what_step_15_does_not_read_is_refused() {
+fn generic_functions_are_the_lean_parsers() {
+    same(&[
+        "fun <T> List<T>.g() {}\nfun <T> f(x: T): T = x\nprivate fun <A, B> h() {}\n",
+        "class C {\n    fun <T> g(): T? = null\n    val x = foo<Int>(1)\n}\n",
+    ]);
+}
+
+#[test]
+fn what_step_16_does_not_read_is_refused() {
     refused(&[
         "val a = b to f<T>()\n",
         "val a = x + f<T>(1)\n",
@@ -294,7 +303,6 @@ fn what_step_15_does_not_read_is_refused() {
         "fun f() {\n    get(1)\n}\n",
         "fun f(noinline: Int) {}\n",
         "fun <T : Any> T.f() {}\n",
-        "fun <T> List<T>.g() {}\n",
         "fun String?.h() = 1\n",
         "val s = \"a $field b\"\n",
         "abstract class A {\n    fun f() {}\n    /* c */\n    abstract fun g()\n}\n",

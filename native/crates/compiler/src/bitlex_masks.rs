@@ -3093,7 +3093,17 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             let mut out = Vec::new();
             for (offset, names, words, not, end) in elems {
                 let mut set = 0u64;
+                // The kinds' hard keywords: a record of the kind with one of these words is the
+                // keyword's token (`TokenElem::except`). Not a row of keywords only (`required`,
+                // kind 0): its kind names the row, every token of it a keyword.
+                let mut except: Vec<u16> = Vec::new();
                 for name in names {
+                    for r in (0..rows.len()).filter(|&r| &token_rows[r].0 == name && rows[r].kind != 0) {
+                        for (w, _) in &rows[r].keywords {
+                            let s = lowered.strings.iter().position(|x| x == w).ok_or("a keyword not among the words")?;
+                            except.push(s as u16);
+                        }
+                    }
                     for b in (0..256).filter(|&b| starts_kind(name, b)) {
                         let k = kinds[b];
                         if k >= 64 {
@@ -3102,7 +3112,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                         set |= 1 << k;
                     }
                 }
-                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone(), not: *not, end: *end });
+                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone(), except, not: *not, end: *end });
             }
             tms.push(crate::program::TokenMark { order: *order, elems: out, refuses: *refuses });
         }

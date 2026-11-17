@@ -1211,7 +1211,14 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: u8) {
     let test = |el: &crate::program::TokenElem| -> String {
         let mut t = Vec::new();
         if el.kinds != 0 {
-            t.push(format!("((c & 0xff) < 64 && {:#x}u64 >> (c & 0xff) & 1 != 0)", el.kinds));
+            // Not one of the kinds' hard keywords (`TokenElem::except`).
+            let keyword = if el.except.is_empty() {
+                String::new()
+            } else {
+                let x: Vec<String> = el.except.iter().map(|&s| (u32::from(s) + 1).to_string()).collect();
+                format!(" && !matches!((c >> 8) & 0xff, {})", x.join(" | "))
+            };
+            t.push(format!("((c & 0xff) < 64 && {:#x}u64 >> (c & 0xff) & 1 != 0{keyword})", el.kinds));
         }
         if !el.words.is_empty() {
             let w: Vec<String> = el.words.iter().map(|&s| (u32::from(s) + 1).to_string()).collect();
