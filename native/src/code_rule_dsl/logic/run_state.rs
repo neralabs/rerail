@@ -47,7 +47,9 @@ use Class::*;
 /// are carried).
 pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/blocks/src/scratch.rs", "THREAD", Thread, "this thread's scratch region for a freeze's sort keys, emptied at each use"),
-    ("crates/compiler/src/clif_rust.rs", "ADDRESSES", Thread, "this thread's scratch or counters in a backend"),
+    ("crates/clif/src/rust.rs", "ADDRESSES", Thread, "this thread's scratch or counters in a backend"),
+    ("crates/clif/src/rust.rs", "READS", Thread, "this thread's scratch or counters in a backend"),
+    ("crates/tape_format/src/f16.rs", "BLOCKS", Thread, "the 16z blocks this thread decoded last, keyed by their tape: correct on any thread"),
     ("crates/compiler/src/native_cpu_stream.rs", "IDS", Thread, "this thread's scratch or counters in a backend"),
     ("crates/metal/src/buffer_observation.rs", "ACTIVE", Thread, "this thread's scratch or counters in a backend"),
     ("crates/metal/src/launch.rs", "EVALUATION", Thread, "this thread's scratch or counters in a backend"),

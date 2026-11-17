@@ -30,6 +30,7 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
                 upload_bytes: d.upload_bytes,
                 upload_by: d.upload_by,
                 resident: u64::from(d.resident_hits),
+                in_place: u64::from(d.in_place),
                 sorts: u64::from(d.sorts),
                 sort_hits: u64::from(d.sort_hits),
                 rows: d.rows,
@@ -49,6 +50,10 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
         None => false,
     };
     t.on_gpu += u64::from(ran);
+    if ran {
+        t.gpu_cpu += cpu;
+        t.gpu_work += work;
+    }
     t.gpu_cheaper += u64::from(p.gpu_cheaper);
     t.device |= p.device;
     t.forms = shape.forms.iter().map(|f| f.name()).collect();
@@ -97,16 +102,19 @@ pub(in crate::code_rule_dsl) fn placements(r: &mut String, state: &State) {
         runs - gpu,
         if device { "Metal" } else { "CPU" }
     );
-    let _ = writeln!(r, "Prices: CPU measured (100 ns a unit of planned work, 0.13 ms a stratum); GPU: each join step on its device form (the relational lab's measures), each stage and submission at the host's measured cost.");
+    {
+        use crate::code_rule_dsl::logic::plan::placement::{CPU_PER_STRATUM, CPU_PER_WORK, GPU_BIAS};
+        let _ = writeln!(r, "Prices: CPU measured ({:.0} ns a unit of planned work, {:.2} ms a stratum); GPU: each join step on its device form (the relational lab's measures), each stage and submission at the host's measured cost; the GPU taken while under {GPU_BIAS} times the CPU's price (decision 0321).", CPU_PER_WORK * 1e9, CPU_PER_STRATUM * 1e3);
+    }
     device_strata(r, all);
-    // The strata the GPU would run cheaper in at least one run, and did not.
+    // The strata whose GPU price was within its bias in at least one run, and that did not run there.
     let cheaper: Vec<(&String, &PlacedTotal)> = all.iter().filter(|(_, t)| t.gpu_cheaper > t.on_gpu).collect();
     let cheaper_cpu: f64 = cheaper.iter().map(|(_, t)| t.cpu).sum();
     // The GPU priced at the work each stratum did, not the work planned: a planned estimate can be far off (a cross
     // product priced at 10^20 rows that met none).
     let at_work = |t: &PlacedTotal| gpu_price(t.runs, t.work as f64);
     let cheaper_gpu: f64 = cheaper.iter().map(|(_, t)| at_work(t)).sum();
-    let _ = writeln!(r, "The GPU would be cheaper for {} strata: {cheaper_cpu:.2} s CPU taken, against {cheaper_gpu:.2} s on the GPU at the work they did.", cheaper.len());
+    let _ = writeln!(r, "The GPU's price was within its bias for {} strata it did not run: {cheaper_cpu:.2} s CPU taken, against {cheaper_gpu:.2} s on the GPU at the work they did.", cheaper.len());
     // Strata whose planned work is off by 10x or more, either way, by their CPU: the placement read a wrong price, and
     // the join order likely came from the same estimate.
     let off = |t: &PlacedTotal| {
@@ -295,6 +303,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     std::fs::write(dir.join("analysis.json"), serde_json::to_vec_pretty(&analysis_json)?)?;
     r.push('\n');
     r.push_str(&analysis_text);
+    metal_summary(&mut r, &state);
     fallbacks(&mut r, &state);
     executors(&mut r, &state);
     hazards(&mut r, &state);
@@ -470,6 +479,13 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
             warned += 1;
         }
     }
+    // Chunks the memory line cut: the device's grain, and the per-chunk runs of every stratum and matcher wave.
+    let cut: u64 = state.decisions.iter().filter(|((topic, _), _)| topic == "chunk cut by the run's memory line").map(|(_, n)| n).sum();
+    let sized: u64 = state.decisions.iter().filter(|((topic, _), _)| topic == "chunk size").map(|(_, n)| n).sum();
+    if cut > 0 {
+        let _ = writeln!(r, "- {cut} of {sized} chunk sizings (every phase's) were cut by the run's memory line (the footprint left under a quarter of a chunk's MB): every stratum and matcher wave runs once per chunk, so the device gets small grains and pays its per-launch latency per chunk. See \"chunk size\" under == Decisions; RERAIL_RUN_MB moves the line.");
+        warned += 1;
+    }
     if !state.hazards.is_empty() {
         let runs: u64 = state.hazards.values().map(|v| v.0).sum();
         let _ = writeln!(r, "- {} SQL statements ({runs} runs) force waits inside the waves: see == Forces SQL waits.", state.hazards.len());
@@ -628,5 +644,83 @@ mod tests {
         super::span_tree(&mut r, &spans, 20.0);
         let names: Vec<&str> = r.lines().map(|l| &l[38..]).collect();
         assert_eq!(names, ["a", "  b", "    c", "  d", "y", "z", "  e"], "{r}");
+    }
+}
+
+/// A device run's summary, first: where the CPU went against what could run on the GPU. Each line names the section
+/// with its detail. Relational strata by where their runs ran and why; launches (matcher waves, joins) by lane, with
+/// the GPU's own time; the work that has no device form; and the grain (chunks the memory line cut).
+fn metal_summary(r: &mut String, state: &State) {
+    let lanes = crate::code_rule_dsl::logic::lanes::prof::by_lane();
+    let device_lanes = lanes.iter().any(|l| l.1 != rerail_accel::Lane::Cpu);
+    if !device_lanes && !state.placements.values().any(|t| t.device || t.gpu.runs > 0) {
+        return;
+    }
+    let _ = writeln!(r, "\n== Metal: what ran where, and what kept work off the GPU (a device run's summary; details in the sections named)");
+    // Own CPU by kind of work, as == Where the time went.
+    let mut kinds: BTreeMap<String, f64> = BTreeMap::new();
+    for (p, t) in &state.spans {
+        *kinds.entry(kinds::kind(p)).or_default() += t.own;
+    }
+    let spanned: f64 = kinds.values().sum();
+    let _ = writeln!(r, "Spanned CPU {spanned:.2} s (== CPU by thread has the process's).");
+    // Strata: a stratum's runs on the GPU, and its runs on the CPU by why.
+    let (mut g_runs, mut g_cpu, mut g_ms) = (0u64, 0.0f64, 0.0f64);
+    let mut why: BTreeMap<&str, (u64, u64, f64)> = BTreeMap::new();
+    for t in state.placements.values() {
+        g_runs += t.gpu.runs;
+        g_cpu += t.gpu_cpu;
+        g_ms += t.gpu.gpu * 1e3;
+        let runs = t.runs - t.gpu.runs;
+        if runs == 0 {
+            continue;
+        }
+        let k = if !t.missing.is_empty() {
+            "no device form for one of its steps (== Executor hazards, GPU support missing)"
+        } else if t.refused.is_some() {
+            "placed on the GPU, refused there at run time (== Placement, refused)"
+        } else {
+            "priced cheaper on the CPU (== Placement; grain: CPU ms a run)"
+        };
+        let e = why.entry(k).or_default();
+        e.0 += 1;
+        e.1 += runs;
+        e.2 += t.cpu - t.gpu_cpu;
+    }
+    let all: f64 = state.placements.values().map(|t| t.cpu).sum();
+    let runs: u64 = state.placements.values().map(|t| t.runs).sum();
+    let _ = writeln!(r, "Relational strata (native engine): {all:.2} s CPU in {runs} runs");
+    let _ = writeln!(r, "  {:>9.2} s  {g_runs} runs on the GPU ({g_ms:.1} ms GPU)", g_cpu);
+    let mut why: Vec<_> = why.into_iter().collect();
+    why.sort_by(|a, b| b.1.2.total_cmp(&a.1.2));
+    for (k, (n, runs, cpu)) in why {
+        let _ = writeln!(r, "  {cpu:>9.2} s  {runs} runs of {n} strata on the CPU, {:.3} ms a run: {k}", cpu * 1e3 / runs.max(1) as f64);
+    }
+    // Launches by lane.
+    let stages = rerail_prof::stages();
+    let label_gpu = stages.get("gpu.device_us").map_or(0, |e| e.1) as f64 / 1e3;
+    let walks: u64 = stages.iter().filter(|(n, _)| n.starts_with("walk_steps.")).map(|(_, e)| e.1 as u64).sum();
+    let longest = stages.iter().filter(|(n, _)| n.starts_with("walk_max.")).map(|(_, e)| e.1).max().unwrap_or(0);
+    drop(stages);
+    let _ = writeln!(r, "Launches by lane (== Acceleration; == Executor for estimates against actual):");
+    for (form, lane, n, wall, cpu) in &lanes {
+        let _ = writeln!(r, "  {form:<26} {:<4} {n:>6} launches {wall:>9.2} s wall {cpu:>9.2} s job CPU ({:.2} ms wall a launch)", lane.name(), wall * 1e3 / *n as f64);
+    }
+    let _ = writeln!(r, "  matcher label passes: {label_gpu:.1} ms on the GPU (command buffers); the GPU lane's wall less it is the host's part and the waits");
+    if walks > 0 {
+        let _ = writeln!(r, "  micro walks: {walks} steps, the longest {longest} (== Stages: a long walk is a dispatch's critical path)");
+    } else {
+        let _ = writeln!(r, "  for the GPU's time by kernel and the walks' steps: RERAIL_GPU_KERNEL_TIMES=1 RERAIL_GPU_WALK_STEPS=1 (== Stages)");
+    }
+    // Work with no device form.
+    let none: Vec<(&String, &f64)> = kinds.iter().filter(|(k, _)| k.starts_with("parsing") || k.starts_with("W's reference graph")).collect();
+    let none_s: f64 = none.iter().map(|(_, s)| **s).sum();
+    let named: Vec<String> = none.iter().map(|(k, s)| format!("{k} {s:.2} s")).collect();
+    let _ = writeln!(r, "No device form: {none_s:.2} s ({:.0}% of the spanned CPU): {}", 100.0 * none_s / spanned.max(1e-9), named.join("; "));
+    // The grain.
+    let sized: u64 = state.decisions.iter().filter(|((t, _), _)| t == "chunk size").map(|(_, n)| n).sum();
+    let cut: u64 = state.decisions.iter().filter(|((t, _), _)| t == "chunk cut by the run's memory line").map(|(_, n)| n).sum();
+    if sized > 0 {
+        let _ = writeln!(r, "Grain: {cut} of {sized} chunk sizings (every phase's) cut by the run's memory line; each stratum and matcher wave runs once a chunk (== Warnings)");
     }
 }

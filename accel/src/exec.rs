@@ -529,8 +529,8 @@ impl Report {
     }
 }
 
-/// A job's outputs, and when it started and ended.
-type Reply = (Result<Vec<Output>, String>, Instant, Instant);
+/// A job's outputs, when it started and ended, and its CPU seconds (every thread it ran on).
+type Reply = (Result<Vec<Output>, String>, Instant, Instant, f64);
 
 /// A device lane's job: a batch's claims, from which its worker takes its launches.
 type Task = Arc<Claims>;
@@ -556,8 +556,8 @@ fn run_job(backend: &dyn Backend, board: &Scoreboard, ks: &[&Kernel], mut ticket
     board.start(&mut ticket);
     let start = Instant::now();
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| backend.submit(ks))).unwrap_or_else(|_| Err("its submission panicked".into()));
-    board.finish(ticket, r.is_ok());
-    (r, start, Instant::now())
+    let (_, cpu) = board.finish(ticket, r.is_ok());
+    (r, start, Instant::now(), cpu)
 }
 
 /// A device lane's submission in flight: begun, its outputs not yet read.
@@ -572,10 +572,11 @@ struct Flight<'a> {
 impl Flight<'_> {
     /// Waits for it and hands its outputs to the batch's waiter.
     fn end(self, board: &Scoreboard, lane: Lane) {
-        let Flight { claims, ids, ticket, start, pending } = self;
+        let Flight { claims, ids, mut ticket, start, pending } = self;
+        ticket.resume();
         let r = pending.and_then(|p| std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| p.finish())).unwrap_or_else(|_| Err("its submission panicked".into())));
-        board.finish(ticket, r.is_ok());
-        claims.reply((lane, ids, (r, start, Instant::now())));
+        let (_, cpu) = board.finish(ticket, r.is_ok());
+        claims.reply((lane, ids, (r, start, Instant::now(), cpu)));
     }
 }
 
@@ -667,7 +668,15 @@ fn worker(backend: Arc<dyn Backend>, board: Arc<Scoreboard>) -> std::sync::mpsc:
                     let start = Instant::now();
                     let pending = {
                         let ks: Vec<&Kernel> = ids.iter().map(|&i| &claims.kernels[i]).collect();
-                        lane_host(lane, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| backend.start(&ks))).unwrap_or_else(|_| Err("its submission panicked".into())))
+                        // The job's host work runs on the lanes' pool: its CPU is counted on the thread it ran on.
+                        ticket.pause();
+                        let (t, backend, ks) = (&mut ticket, &backend, &ks);
+                        lane_host(lane, move || {
+                            t.resume();
+                            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| backend.start(ks))).unwrap_or_else(|_| Err("its submission panicked".into()));
+                            t.pause();
+                            r
+                        })
                     };
                     if let Some(f) = flight.replace(Flight { claims, ids, ticket, start, pending }) {
                         lane_host(lane, || f.end(&board, lane));
@@ -1289,8 +1298,10 @@ impl Running {
         let mut got = 0usize;
         let mut helped = 0u64;
         let mut wait = Waiting::new("a batch's launches");
-        let mut store = |(lane, ids, (r, start, end)): Got, got: &mut usize| {
+        let mut lane_cpu = [0.0f64; Lane::COUNT];
+        let mut store = |(lane, ids, (r, start, end, cpu)): Got, got: &mut usize| {
             *got += ids.len();
+            lane_cpu[lane.index()] += cpu;
             let s = &mut span[lane.index()];
             *s = Some(s.map_or((start, end), |(a, b)| (a.min(start), b.max(end))));
             ran[lane.index()] += end.duration_since(start).as_secs_f64();
@@ -1362,6 +1373,7 @@ impl Running {
             report.joules[lane.index()] = WATTS[lane.index()] * ran[lane.index()];
         }
         report.cpu = process_cpu() - cpu0;
+        report.lane_cpu = lane_cpu;
         let mut on = [0u64; Lane::COUNT];
         let mut moved = 0u64;
         let mut done = Vec::with_capacity(n);
@@ -1418,7 +1430,7 @@ impl Running {
 }
 
 impl EachState {
-    fn store(&mut self, (lane, ids, (r, _, _)): Got) {
+    fn store(&mut self, (lane, ids, (r, _, _, _)): Got) {
         match r {
             Ok(r) if r.len() == ids.len() => {
                 for (&i, o) in ids.iter().zip(r) {

@@ -47,11 +47,11 @@ pub fn visit(
         let count = c.node_count();
         let widths_valid = [c.widths[0], c.widths[1], c.widths[2] & !TAIL_FROM_START].iter().all(|width| matches!(width, 2 | 4));
         if !widths_valid
-            || c.code.len() != count * 2
-            || c.size.len() != count * c.size_width()
-            || c.base.len() != count.div_ceil(CHECKPOINT_STRIDE) * 4
-            || c.off.len() != count * c.off_width()
-            || c.tail.len() != count * c.tail_width()
+            || c.code().len() != count * 2
+            || c.size().len() != count * c.size_width()
+            || c.base().len() != count.div_ceil(CHECKPOINT_STRIDE) * 4
+            || c.off().len() != count * c.off_width()
+            || c.tail().len() != count * c.tail_width()
         {
             return Err("malformed v9np tape".into());
         }
