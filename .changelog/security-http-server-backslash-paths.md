@@ -1,0 +1,1 @@
+The daemon's HTTP server, `@hono/node-server`, moves from 2.1.5 to 2.1.8, which closes GHSA-jpvv-r467-5p4w: a backslash in a request's path was read as a path separator, which could get a request past path rules at a reverse proxy in front of the daemon.
