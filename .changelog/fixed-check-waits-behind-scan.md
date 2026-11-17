@@ -1,1 +1,1 @@
-An edit checked while another session scans a repository no longer waits until that scan ends: checks and scan steps now take turns at the rule engine in the order they arrive, so a check waits for one scan step at most.
+An edit checked while another session scans a repository no longer waits until that scan ends: checks and scan steps now wait in one line at the rule engine, in the order they arrive, so a check waits for one scan step at most.
