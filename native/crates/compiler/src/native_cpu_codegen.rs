@@ -43,7 +43,9 @@ pub fn define_function(
     for (_, function) in context.func.dfg.ext_funcs.iter_mut() {
         function.colocated = false;
     }
-    // The function may have changed since its flow graph was made (`clif_fold`): made again.
+    switch_trees(&mut context.func);
+    // The function may have changed since its flow graph was made (`clif_fold`, `switch_trees`):
+    // made again.
     context.cfg.clear();
     context.domtree.clear();
     if let Err(e) = module.define_function(id, context) {
@@ -69,6 +71,7 @@ pub fn define_functions(module: &mut JITModule, items: Vec<(FuncId, Context)>, n
     use cranelift_module::{Module, ModuleReloc};
     let mut items = items;
     for (_, context) in &mut items {
+        switch_trees(&mut context.func);
         context.cfg.clear();
         context.domtree.clear();
         for (_, function) in context.func.dfg.ext_funcs.iter_mut() {
@@ -139,3 +142,52 @@ pub fn parallel_pass_times() -> cranelift_codegen::timing::PassTimes {
 #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos", target_arch = "aarch64"))]
 #[path = "native_cpu_relocation_tests.rs"]
 pub mod relocations;
+
+/// The most runs of one target a `br_table` may have to be lowered as a tree (`switch_trees`):
+/// five levels of compares at most.
+pub const SWITCH_TREE_RUNS: usize = 32;
+
+/// Each `br_table` of at most `SWITCH_TREE_RUNS` runs, lowered as rustc lowers a `match`
+/// (LLVM's switch lowering, `native_cpu_stream::dispatch`): a tree of compares and bit tests
+/// over the runs of one target. Cranelift's `br_table` on aarch64 is a bound check, then `csel`
+/// and `csdb` before the indirect branch, always (a Spectre guard, no flag): the barrier keeps
+/// the core from running ahead into the arm, so each token waits for its entry's load. Tier
+/// 1's numbers took 75 cycles a token by the JIT against 17 by the AOT, most samples at the
+/// table's load. The IR keeps the table, as lean keeps its `match` (`clif_rust` writes it as
+/// one, and rustc lowers it so); only the JIT's copy is rewritten, before Cranelift lowers it.
+/// A table whose targets take arguments stays.
+pub fn switch_trees(func: &mut cranelift_codegen::ir::Function) {
+    use cranelift_codegen::ir::{Block, InstructionData};
+    let mut found = Vec::new();
+    for block in func.layout.blocks() {
+        let Some(inst) = func.layout.last_inst(block) else { continue };
+        if let InstructionData::BranchTable { arg, table, .. } = func.dfg.insts[inst] {
+            let (jt, pool) = (&func.dfg.jump_tables[table], &func.dfg.value_lists);
+            if jt.all_branches().iter().any(|c| c.args(pool).len() != 0) {
+                continue;
+            }
+            // The table's targets, then its default on past them.
+            let targets = jt.as_slice().iter().map(|c| c.block(pool)).chain([jt.default_block().block(pool)]);
+            let mut runs: Vec<(u32, Block)> = Vec::new();
+            for (x, b) in targets.enumerate() {
+                if runs.last().is_none_or(|&(_, l)| l != b) {
+                    runs.push((x as u32, b));
+                }
+            }
+            if runs.len() <= SWITCH_TREE_RUNS {
+                found.push((block, inst, arg, runs));
+            }
+        }
+    }
+    if found.is_empty() {
+        return;
+    }
+    let mut ctx = cranelift_frontend::FunctionBuilderContext::new();
+    let mut f = cranelift_frontend::FunctionBuilder::new(func, &mut ctx);
+    for (block, inst, index, runs) in found {
+        f.func.layout.remove_inst(inst);
+        f.switch_to_block(block);
+        let end = 1u64 << f.func.dfg.value_type(index).bits();
+        crate::native_cpu_stream::dispatch(&mut f, index, &runs, end);
+    }
+}

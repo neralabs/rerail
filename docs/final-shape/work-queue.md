@@ -726,6 +726,9 @@ pass.
   rule's table), and the rare `/` arm writes its punctuation from them. The test now states that set: the fused
   pair rule's first bytes and those whose reader's other reads the same pair table, `<` aside, and checks `/` is
   among them. Passes.
+  At the merge of Parser-generators-final-shape (90aa222b0), its own fix of the test (342f632c1) is taken: it states
+  `pair_of` as the compiler has it, any pair table (the byte's own rule's or its reader's other's), not only the
+  fused rule's.
 
 ### Q26. The tape lab's clippy warnings
 
@@ -777,6 +780,9 @@ pass.
   steps. Ignored, each naming this item.
 - **Done when**: Parser-generators states what each should check now (`a_readers_short_form_is_the_loops_arm` may
   hold the first's intent), or removes it.
+- **Record**: done (2026-11-16), by Parser-generators-final-shape, merged at 90aa222b0: both tests removed,
+  `a_returned_call_is_the_return` kept in `clif_rust` for the JIT's IR, and `a_short_tokens_arm_calls_only_its_whole`
+  states the shape now (the number's and `/` arms call at most their whole function).
 
 ## Questions for the user
 

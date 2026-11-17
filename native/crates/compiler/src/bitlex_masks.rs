@@ -202,6 +202,11 @@ pub struct Lowering {
     /// The tokens read by a reader (`read K | …`, `records::Reader`): each region's opener,
     /// closer, last byte's offset from the closer, and what no closer means.
     pub token_reads: HashMap<String, Vec<(Val, Val, i8, crate::records::ReadNone)>>,
+    /// A kind read in parts (`read K parts { … }`): each part's start mask and bytes, in order.
+    pub token_parts: HashMap<String, Vec<(Val, u8)>>,
+    /// Each token row's (`tokens`, in order): read inside a region by its reader (`Inside`),
+    /// so no first byte ends it by a rule.
+    pub inside: Vec<bool>,
     pub keywords: Vec<(String, Vec<(Vec<u8>, Option<String>)>, bool)>,
     /// Each row's soft keywords: a word's kind where the grammar takes it, the row's elsewhere.
     pub soft: Vec<(String, Vec<Vec<u8>>)>,
@@ -316,6 +321,8 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         token_rules: HashMap::new(),
         token_pairs: HashMap::new(),
         token_reads: HashMap::new(),
+        token_parts: HashMap::new(),
+        inside: Vec::new(),
         keywords: Vec::new(),
         skip: None,
         tree: Vec::new(),
@@ -465,6 +472,10 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                     *k = low.program.outputs.iter().position(|&o| o == v).ok_or("a reader's mask not an output")? as u16;
                 }
             }
+            for p in r.readers.iter_mut().flat_map(|rd| rd.parts.iter_mut()) {
+                let v = low.program.masks[usize::from(p.start)];
+                p.start = low.program.outputs.iter().position(|&o| o == v).ok_or("a part's start mask not an output")? as u16;
+            }
             for c in r.checks.iter_mut() {
                 let v = low.program.masks[usize::from(c.o)];
                 c.o = low.program.outputs.iter().position(|&o| o == v).ok_or("a token test's mask not an output")? as u16;
@@ -606,6 +617,18 @@ impl Lowering {
                 }
                 Stmt::Token { kind, start, through, last, rule } => {
                     match rule {
+                        // A region read in parts: its reader's arm, and each part's start and
+                        // bytes; the closer and the parts are rows of their own (`Inside`).
+                        Some(::bitlex::syntax::TokenRule::ReadParts(r, parts)) => {
+                            let (opener, closer) = (self.expr(&r.opener)?, self.expr(&r.closer)?);
+                            self.token_reads.insert(kind.clone(), vec![(opener, closer, r.bytes as i8 - 1, crate::records::ReadNone::Refuse)]);
+                            let mut ps = Vec::new();
+                            for (_, e, n) in &parts.parts {
+                                ps.push((self.expr(e)?, *n));
+                            }
+                            self.token_parts.insert(kind.clone(), ps);
+                        }
+                        Some(::bitlex::syntax::TokenRule::Inside(_)) => {}
                         Some(::bitlex::syntax::TokenRule::Read(regions)) => {
                             let mut arms = Vec::new();
                             for r in regions {
@@ -628,7 +651,7 @@ impl Lowering {
                                     self.token_pairs.insert(kind.clone(), pairs.clone());
                                     (true, mask)
                                 }
-                                ::bitlex::syntax::TokenRule::Read(_) => unreachable!(),
+                                ::bitlex::syntax::TokenRule::Read(_) | ::bitlex::syntax::TokenRule::ReadParts(..) | ::bitlex::syntax::TokenRule::Inside(_) => unreachable!(),
                             };
                             let v = self.expr(e)?;
                             self.token_rules.insert(kind.clone(), (pair, v));
@@ -644,6 +667,7 @@ impl Lowering {
                         },
                     };
                     self.tokens.push((kind.clone(), start, through));
+                    self.inside.push(matches!(rule, Some(::bitlex::syntax::TokenRule::Inside(_))));
                 }
                 Stmt::Keywords { kind, words, soft, required } => {
                     self.keywords.push((kind.clone(), words.clone(), *required));
@@ -2757,7 +2781,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             Some(crate::records::EndRule::Next(at as u16))
         };
         for b in 0..256usize {
-            let these: Vec<usize> = (0..rows.len()).filter(|&r| rows[r].first[b / 64] >> (b % 64) & 1 == 1).collect();
+            // A row read inside a region (`inside`) its reader starts: no byte's rule.
+            let these: Vec<usize> = (0..rows.len()).filter(|&r| !low.inside.get(r).copied().unwrap_or(false) && rows[r].first[b / 64] >> (b % 64) & 1 == 1).collect();
             if these.is_empty() {
                 continue;
             }
@@ -2797,7 +2822,12 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 let arms: Vec<crate::records::ReadArm> = low.token_reads[&kind].clone().into_iter().map(|(o, c, off, none)| crate::records::ReadArm { opener: mask_of(low, o, &mut mark_masks), closer: mask_of(low, c, &mut mark_masks), off, none }).collect();
                 // Its kind's own, where its rows were moved (above).
                 let retag = moved.iter().find(|&&(r, _)| token_rows[r].0 == kind).map(|&(_, f)| (kinds[usize::from(f)], if low.extra.contains(&kind) { extra_mark.map_or(0, |e| 1u32 << e) } else { 0 }));
-                let reader = crate::records::Reader { arms, other, retag };
+                // A region read in parts: each part's start, a mask output.
+                let parts = match low.token_parts.get(&kind).cloned() {
+                    Some(ps) => ps.into_iter().map(|(v, bytes)| crate::records::ReadPart { start: mask_of(low, v, &mut mark_masks), bytes }).collect(),
+                    None => Vec::new(),
+                };
+                let reader = crate::records::Reader { arms, other, retag, parts };
                 let at = match readers.iter().position(|x| *x == reader) {
                     Some(at) => at,
                     None => {

@@ -493,7 +493,22 @@ pub mod tests {
         // Metal sets the gap marks the CPU's tier 2 tests itself (`lazy_marks`).
         let lazy = lazy_bits(native);
         for (k, (g, w)) in got.run.files.iter().zip(&want).enumerate() {
-            if !same_outputs(&g.outputs, &w.outputs) || g.positions != w.positions || g.totals != w.totals || unlazy(&g.codes, lazy) != unlazy(&w.codes, lazy) {
+            // A refused file: both refuse it, and its records are the same up to its first
+            // refusal (decision 0177, "A refusal leaves the loop"): the CPU's are cut at the
+            // token that refused, Metal's at its first token refused, or none where a total
+            // refused it, and Metal runs no segment again past a total's (`dropped`), so only
+            // the records before the first total's bit (Metal's outputs) are compared.
+            let refused = refusal(&w.totals);
+            let differs = if refused {
+                let cut = native.totals.iter().filter_map(|&t| g.outputs.get(t)).filter_map(|o| o.iter().position(|&x| x != 0).map(|j| j as u32 * 64 + o[j].trailing_zeros())).min().unwrap_or(u32::MAX);
+                let before = |v: &[Vec<u32>]| v.iter().map(|p| p.iter().copied().filter(|&x| x < cut).collect::<Vec<_>>()).collect::<Vec<_>>();
+                let r = native.records.as_ref().expect("records");
+                let n = w.positions[usize::from(r.lasts)].iter().filter(|&&x| x < cut).count().min(w.codes.len()).min(g.codes.len());
+                refusal(&g.totals) != refused || !prefix_of(&before(&w.positions), &before(&g.positions)) || unlazy(&g.codes[..n], lazy) != unlazy(&w.codes[..n], lazy)
+            } else {
+                !same_outputs(&g.outputs, &w.outputs) || g.positions != w.positions || g.totals != w.totals || unlazy(&g.codes, lazy) != unlazy(&w.codes, lazy)
+            };
+            if differs {
                 differ += 1;
                 if differ < 4 {
                     let o = (0..w.outputs.len()).find(|&o| !unmade.contains(&o) && g.outputs.get(o) != w.outputs.get(o));
@@ -502,8 +517,59 @@ pub mod tests {
             }
         }
         let bytes: usize = refs.iter().map(|b| b.len()).sum();
-        eprintln!("{} files, {bytes} bytes: {differ} differ; GPU {:.2} ms ({:.2} GB/s), {} launches, {} segments, {} reruns", files.len(), got.run.seconds * 1e3, bytes as f64 / got.run.seconds / 1e9, got.run.launches, got.segments, got.reruns);
+        eprintln!("{} files, {bytes} bytes: {differ} differ; GPU {:.2} ms ({:.2} GB/s), {} launches, {} segments, {} reruns ({} dropped: refused)", files.len(), got.run.seconds * 1e3, bytes as f64 / got.run.seconds / 1e9, got.run.launches, got.segments, got.reruns, got.dropped);
         assert_eq!(differ, 0);
+    }
+
+    /// A file refused at its start, then many tokens: Metal's record pass stops at the first
+    /// token refused (decision 0177, "A refusal leaves the loop"), as the CPU's loop does. Its
+    /// codes end there and are the CPU's; the same tokens without the refusal are all coded.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn a_refused_files_records_stop_on_metal() {
+        use rerail_compiler::block;
+        use rerail_metal::block_program::serial::{Segments, run_serial_split};
+        let c = super::compiled().expect("compiles");
+        let lazy = lazy_bits(&c.native);
+        let body = "r(x) :- a(x), \"s\". // c\n".repeat(400);
+        // Refused by a mask total (no token coded), and by a token the record pass refuses.
+        for head in ["\u{1}", "````a````.", "x = 1.2.3."] {
+            let (bad, good) = (format!("a(x).\n{head}\n{body}"), format!("a(x).\n{body}"));
+            let refs = [bad.as_bytes(), good.as_bytes()];
+            let files: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
+            let got = run_serial_split(&[&c.native], &files, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
+            let want = c.parser.tier1.run_files(&refs);
+            let (g, w) = (&got.run.files[0], &want[0]);
+            assert!(refusal(&g.totals) && refusal(&w.totals), "{head:?}: refused on both");
+            assert!(g.codes.len() < 16, "{head:?}: Metal's codes stop at the refusal: {} of {}", g.codes.len(), g.positions[0].len());
+            eprintln!("{head:?}: Metal coded {} tokens, the CPU {}", g.codes.len(), w.codes.len());
+            let n = g.codes.len().min(w.codes.len());
+            assert_eq!(unlazy(&g.codes[..n], lazy), unlazy(&w.codes[..n], lazy), "{head:?}: the codes before the refusal");
+            let (g, w) = (&got.run.files[1], &want[1]);
+            assert!(!refusal(&g.totals), "accepted");
+            assert_eq!(unlazy(&g.codes, lazy), unlazy(&w.codes, lazy), "the accepted file's codes, all of them");
+            assert!(g.codes.len() > 2000);
+        }
+        // Strings over many segments, refused in the first: with the scans' carries speculated
+        // (`RERAIL_SERIAL_CONE=0`) the later segments' starts are wrong and listed, and none of
+        // them is run again (`dropped`): the total is in a segment before them, whose start is
+        // final. With the carries exact (the default) none is listed.
+        let long = format!("a(\"{}\").\n", "s ".repeat(3000)).repeat(4);
+        let (bad, good) = (format!("\u{1}\n{long}"), long.clone());
+        for (src, refused) in [(&bad, true), (&good, false)] {
+            let f = [block::BatchFile { bytes: src.as_bytes(), program: 0 }];
+            let got = run_serial_split(&[&c.native], &f, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
+            let w = &c.parser.tier1.run_files(&[src.as_bytes()])[0];
+            assert_eq!(refusal(&got.run.files[0].totals), refused);
+            if !refused {
+                assert_eq!(unlazy(&got.run.files[0].codes, lazy), unlazy(&w.codes, lazy));
+            }
+            eprintln!("refused {refused}: {} segments, {} run again, {} dropped", got.segments, got.reruns - got.dropped, got.dropped);
+            if std::env::var("RERAIL_SERIAL_CONE").is_ok_and(|v| v == "0") {
+                assert!(got.reruns > 0, "the speculated starts are wrong");
+                assert_eq!(got.dropped > 0, refused, "a refused file's segments are not run again");
+            }
+        }
     }
 
     /// `tapes` (tier 1 on Metal, tier 2 over its buffers in place) gives `tape`'s tables: on
@@ -1697,6 +1763,19 @@ pub mod tests {
         }
     }
 
+    /// The JIT's dispatches are compare trees, as rustc lowers a `match`
+    /// (`native_cpu_codegen::switch_trees`), not Cranelift's `br_table`, whose `csdb` barrier
+    /// held each rare token (a number, a string, a comment) until its entry's load: 75 cycles
+    /// a number against the AOT's 17. The IR keeps its tables (the AOT's `match`).
+    #[test]
+    fn the_jits_dispatches_are_trees() {
+        let c = crate::compiled().expect("compiles");
+        assert!(c.parser.tier1.clif.contains(" br_table "), "the IR keeps the rules' table");
+        for (name, code) in [("tier 1", &c.parser.tier1.disassembly), ("tier 2", &c.parser.tier2.disassembly)] {
+            assert!(!code.contains("csdb"), "{name}: a table's barrier");
+        }
+    }
+
     /// The records' layout the compiler chose (`records::RecordLayout`): rr's token loop writes
     /// each token's start, last and code, its only extracts, so on the CPU they are rows, the
     /// lean lexer's `Tok`; tier 2 reads them a row a token and its tapes are the columns'.
@@ -1706,20 +1785,15 @@ pub mod tests {
         let t = c.parser.tier1.records.as_ref().expect("the record pass");
         assert_eq!(t.layout, rerail_compiler::records::RecordLayout::Rows);
         // Every first byte of the fused pair rule (punctuation, most of rr's tokens) takes its
-        // code from the table, as the lean lexer's `TOKEN`: no word looked up. So does a byte
-        // whose reader's other rule reads the same pair table (`/` alone, the comment reader's
-        // other), as the lean lexer's `/` arm writes its punctuation (0177). But `<`, whose two
-        // pairs (`<=`, `<:`) are two words: its two-byte tokens look theirs up.
-        use rerail_compiler::records::EndRule;
+        // code from the table, as the lean lexer's `TOKEN`: no word looked up. But `<`, whose
+        // two pairs (`<=`, `<:`) are two words: its two-byte tokens look theirs up. And `/`,
+        // the comment's reader's first byte, whose tokens not a comment are a pair rule's.
         let r = c.native.records.as_ref().expect("records");
         let (kn, _) = t.fused.expect("the fused rules");
-        let EndRule::Next(table) = r.rules[kn] else { panic!("the fused pair rule reads a pair table") };
-        let pairs = |e: u8| {
-            usize::from(e) == kn
-                || matches!(r.rules.get(usize::from(e)), Some(&EndRule::Read(i)) if r.readers.get(usize::from(i)).is_some_and(|rd| matches!(r.rules.get(usize::from(rd.other)), Some(&EndRule::Next(o)) if o == table)))
-        };
+        let rerail_compiler::records::EndRule::Next(_) = r.rules[kn] else { panic!("the fused pair rule reads a pair table") };
+        let pairs = |e: u8| usize::from(e) == kn || matches!(r.rules.get(usize::from(e)), Some(&rerail_compiler::records::EndRule::Read(i)) if matches!(r.rules.get(usize::from(r.readers[usize::from(i)].other)), Some(rerail_compiler::records::EndRule::Next(_))));
         let pair_bytes: Vec<u8> = (0..=255u8).filter(|&b| r.ends.get(usize::from(b)).is_some_and(|&e| pairs(e)) && b != b'<').collect();
-        assert!(pair_bytes.contains(&b'/'), "the comment reader's other reads the pair table");
+        assert!(pair_bytes.contains(&b'/'), "the comment's reader's byte: {pair_bytes:?}");
         assert_eq!(c.parser.tier1.punct_bytes(), pair_bytes);
         // Their codes fit their entries: no load beside the entry's.
         assert!(c.parser.tier1.punct_in_entry());
@@ -1770,6 +1844,17 @@ pub mod tests {
     /// The interpreter's codes without those bits.
     fn unlazy(codes: &[u32], lazy: u32) -> Vec<u32> {
         codes.iter().map(|c| c & !lazy).collect()
+    }
+
+    /// A file refused: any of its totals set (an error output's count, or the loop's flag).
+    fn refusal(totals: &[u64]) -> bool {
+        totals.iter().any(|&t| t != 0)
+    }
+
+    /// Each of `short`'s position lists a prefix of `long`'s: a refused file's records, cut at
+    /// the token that refused.
+    fn prefix_of(short: &[Vec<u32>], long: &[Vec<u32>]) -> bool {
+        short.len() == long.len() && short.iter().zip(long).all(|(s, l)| l.starts_with(s))
     }
 
     /// A string's, a comment's and a backtick's tokens end plainly (`plain_end`): no start is
@@ -1840,7 +1925,7 @@ pub mod tests {
             inputs.push(format!("{}=>=>=>=>", " ".repeat(pad)).into_bytes());
         }
         // A word past eight bytes (`violation`) beside words that differ from it past its eighth
-        // byte, or are it with a byte more or less (`RecordTables::second`): at a block's start,
+        // byte, or are it with a byte more or less (`RecordTables::rest`): at a block's start,
         // across its edge, and as the file's last bytes.
         for t in ["violation", "violatiox", "violationx", "violatio", "violations", "violation_x", "aviolation"] {
             for pad in [0usize, 55, 56, 58, 63] {
@@ -1919,9 +2004,15 @@ pub mod tests {
         let got = c.parser.tier1.run_files(&refs);
         for (k, (f, g)) in refs.iter().zip(&got).enumerate() {
             let want = block.run(f);
+            // A refused file (any total set) goes to the fallback: both refuse it, and its
+            // records are a prefix, up to the token that refused (decision 0177, "A refusal
+            // leaves the loop"): the CPU's stop there, the interpreter's go on.
+            let refused = refusal(&want.totals);
+            assert_eq!(refusal(&g.totals), refused, "file {k}: the refusal");
+            let upto = |x: usize, y: usize| if refused { x.min(y) } else { x.max(y) };
             for (what, e) in [("starts", usize::from(r.starts)), ("lasts", usize::from(r.lasts))] {
                 let (x, y) = (&g.positions[e], &want.positions[e]);
-                if let Some(i) = (0..x.len().max(y.len())).find(|&i| x.get(i) != y.get(i)) {
+                if let Some(i) = (0..upto(x.len(), y.len())).find(|&i| x.get(i) != y.get(i)) {
                     let at = y.get(i).or(x.get(i)).copied().unwrap_or(0) as usize;
                     let text = String::from_utf8_lossy(&f[at.saturating_sub(8).min(f.len())..(at + 12).min(f.len())]).into_owned();
                     let around = |v: &Vec<u32>, w: &Vec<u32>| (i.saturating_sub(2)..(i + 3).min(v.len())).map(|j| (v[j], w.get(j).copied())).collect::<Vec<_>>();
@@ -1931,12 +2022,14 @@ pub mod tests {
             // The marks with token tests too keep their tests' hits on the CPU
             // (`lazy_coded`): `the_marks_tests_are_the_masks` compares those.
             let (w, gc) = (unlazy(&want.codes, lazy), unlazy(&g.codes, lazy));
-            if let Some(i) = (0..gc.len().max(w.len())).find(|&i| gc.get(i) != w.get(i)) {
+            if let Some(i) = (0..upto(gc.len(), w.len())).find(|&i| gc.get(i) != w.get(i)) {
                 let at = g.positions[usize::from(r.starts)].get(i).copied().unwrap_or(0) as usize;
                 let text = String::from_utf8_lossy(&f[at.saturating_sub(40).min(f.len())..(at + 12).min(f.len())]).into_owned();
                 panic!("file {k} ({} bytes): the codes (the gap marks tier 2 tests itself apart) differ at token {i}, byte {at}, the CPU's {:#x}, the interpreter's {:#x}, near {text:?}", f.len(), g.codes[i], w[i]);
             }
-            assert_eq!(g.totals, want.totals, "file {k}: the totals");
+            if !refused {
+                assert_eq!(g.totals, want.totals, "file {k}: the totals");
+            }
         }
     }
 
@@ -3005,5 +3098,90 @@ pub mod tests {
         }
         let load = std::process::Command::new("uptime").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned()).unwrap_or_default();
         eprintln!("load: {load}");
+    }
+}
+
+#[cfg(test)]
+mod json_probe {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    /// A grammar's program, as `compile_padded` makes it, without the CPU's code (the
+    /// interpreter's input), its kinds by their own ids.
+    fn program(g: &str) -> Result<rerail_compiler::program::Words, String> {
+        let stmts = ::bitlex::syntax::parse(g)?;
+        let own: RefCell<HashMap<String, u16>> = RefCell::new(HashMap::new());
+        let id = |name: &str| -> u16 {
+            let mut own = own.borrow_mut();
+            let next = 1 + own.len() as u16;
+            *own.entry(name.to_owned()).or_insert(next)
+        };
+        let kind = |n: &str| Some(if n == "ERROR" { u16::MAX } else { id(n) });
+        let field = |n: &str| Some(id(n.trim_start_matches("field ")));
+        let symbols = rerail_compiler::bitlex_masks::Symbols { kind: &kind, field: &field };
+        let compiled = rerail_compiler::bitlex_masks::compile_shaped(&stmts, &[rerail_compiler::bitlex_masks::FALLBACK], Some(&symbols), rerail_compiler::bitlex_masks::Shape::Rules)?;
+        rerail_compiler::rir_asm::assemble(&compiled.text())
+    }
+
+    /// A probe (JSON step 1): the token-loop JSON (`json_parser/json.bitlex`) against the ladder's
+    /// step 14, both by the interpreter: the same nodes on each input.
+    #[test]
+    #[ignore = "a probe: run by hand"]
+    fn json_loop_against_step_14() {
+        let new = program(include_str!("../../json_parser/json.bitlex")).unwrap_or_else(|e| panic!("json.bitlex: {e}"));
+        let old = program(include_str!("../../compiler/bitlex_ladder/14-json.bitlex")).unwrap_or_else(|e| panic!("14-json: {e}"));
+        let r = new.block_programs[0].records.as_ref().expect("records");
+        eprintln!("rules {:?}\nreaders {:?}", r.rules, r.readers);
+        let inputs: Vec<&[u8]> = vec![
+            br#"{"a": [1, -2.5e3, true, null], "b\n": {"c": "d\u0041x"}}"#,
+            br#""""#,
+            br#""\\""#,
+            br#"["a\"b", "\\\"", "x"]"#,
+            br#"  [ 1 , 2 ]  "#,
+            br#"{"k":"v"}"#,
+            br#""open"#,
+            br#"[01]"#,
+            br#"[1.]"#,
+            br#"tru"#,
+            br#"["\q"]"#,
+        ];
+        // JSONTestSuite's files and the corpus's small ones (`RERAIL_JSON_SUITE`,
+        // `RERAIL_JSON_CORPUS`).
+        let mut owned: Vec<(String, Vec<u8>)> = Vec::new();
+        for var in ["RERAIL_JSON_SUITE", "RERAIL_JSON_CORPUS"] {
+            let Ok(dir) = std::env::var(var) else { continue };
+            let mut paths: Vec<_> = std::fs::read_dir(&dir).expect("the directory").flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+            paths.sort();
+            for p in paths {
+                let b = std::fs::read(&p).expect("reads");
+                if b.len() < 1 << 20 {
+                    owned.push((p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), b));
+                }
+            }
+        }
+        let quiet = !owned.is_empty();
+        let inputs: Vec<(String, &[u8])> = inputs.into_iter().map(|f| (String::from_utf8_lossy(f).into_owned(), f)).chain(owned.iter().map(|(n, b)| (n.clone(), b.as_slice()))).collect();
+        let (mut bad, mut ok, mut refused) = (0, 0, 0);
+        for (name, f) in inputs {
+            let a = rerail_compiler::stream::run(&new, f, &new.block_programs[0].run(f)).map(|n| n.iter().map(|x| (x.kind, x.start, x.end, x.size)).collect::<Vec<_>>());
+            let b = rerail_compiler::stream::run(&old, f, &old.block_programs[0].run(f)).map(|n| n.iter().map(|x| (x.kind, x.start, x.end, x.size)).collect::<Vec<_>>());
+            let same = match (&a, &b) {
+                (Ok(x), Ok(y)) => x == y,
+                (Err(_), Err(_)) => true,
+                _ => false,
+            };
+            if !same {
+                bad += 1;
+            } else if a.is_ok() {
+                ok += 1;
+            } else {
+                refused += 1;
+            }
+            if !same || !quiet {
+                eprintln!("{} {name:?}: new {:?}, step 14 {:?}", if same { "same" } else { "DIFF" }, a.as_ref().map(|n| n.len()).map_err(|e| e.why), b.as_ref().map(|n| n.len()).map_err(|e| e.why));
+            }
+        }
+        eprintln!("{ok} parsed the same, {refused} refused by both, {bad} differ");
+        assert_eq!(bad, 0);
     }
 }

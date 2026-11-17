@@ -12,6 +12,14 @@
 use cranelift_codegen::ir::{self, InstructionData, Opcode, condcodes::IntCC, types};
 use std::fmt::Write;
 
+/// A cold block's first line. `cold_path` makes the branch to it unlikely; the empty `asm!`
+/// (no instruction, no memory, flags kept) keeps it a branch. Without it LLVM folded small
+/// cold arms into `csel`s, so the hot way waited on the cold way's inputs: the refill's next
+/// block on the block's last token's end, every block's loads after its token chain (0177,
+/// "The next block waits on no token"), where the compiler's IR has a branch the core predicts.
+const COLD: &str = "core::hint::cold_path(); unsafe { core::arch::asm!(\"\", options(nomem, nostack, preserves_flags)) };\n";
+
+
 /// A fingerprint of a text (FNV-1a). The generated source carries its own (`SOURCE`): the
 /// ahead-of-time build runs only where the JIT's program translates to it again.
 pub fn fingerprint(clif: &str) -> u64 {
@@ -156,9 +164,9 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<bool, String>
             let mut s = String::new();
             // A cold block (`set_cold_block`) says so to rustc, as Cranelift lays it out: the
             // branch to it unlikely, its code out of the hot path, and no register kept for it
-            // where the hot path wants one.
+            // where the hot path wants one (`COLD`).
             if f.layout.is_cold(blocks[node]) {
-                s.push_str("core::hint::cold_path();\n");
+                s.push_str(COLD);
             }
             for inst in f.layout.block_insts(blocks[node]).filter(|i| !absorbed.contains(i)) {
                 s.push_str(&instruction(f, inst, &name, &|k, _| jump(k))?);
@@ -176,7 +184,8 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<bool, String>
     for blk in f.layout.blocks() {
         writeln!(out, "            {} => {{", blk.as_u32()).unwrap();
         if f.layout.is_cold(blk) {
-            out.push_str("                core::hint::cold_path();\n");
+            out.push_str("                ");
+            out.push_str(COLD);
         }
         for inst in f.layout.block_insts(blk).filter(|i| !absorbed.contains(i)) {
             let s = instruction(f, inst, &name, &|_, to: ir::Block| Ok(format!("b = {}; continue;", to.as_u32())))?;
@@ -931,7 +940,12 @@ fn vector_instruction(f: &ir::Function, inst: ir::Inst, op: Opcode, args: &[Stri
         Opcode::Shuffle if is(rt, types::I8X16) => {
             let InstructionData::Shuffle { imm, .. } = data else { return Err("a shuffle with no mask".into()) };
             let mask = dfg.immediates.get(*imm).ok_or("a shuffle's mask")?.as_slice();
-            u(format!("vqtbl2q_u8(uint8x16x2_t({}, {}), {})", args[0], args[1], bytes16(mask)?))
+            // Sixteen bytes in a row of the pair, from byte `n`: an `ext`, one instruction
+            // and no table (as the lean lexer's `vextq_u8::<1>` makes a block's next bytes).
+            match mask.first().filter(|&&n| n < 16 && mask.iter().enumerate().all(|(k, &m)| usize::from(m) == usize::from(n) + k)) {
+                Some(&n) => u(format!("vextq_u8::<{n}>({}, {})", args[0], args[1])),
+                None => u(format!("vqtbl2q_u8(uint8x16x2_t({}, {}), {})", args[0], args[1], bytes16(mask)?)),
+            }
         }
         Opcode::Splat if is(rt, types::I8X16) => u(format!("vdupq_n_u8({} as u8)", args[0])),
         Opcode::Vconst if is(rt, types::I8X16) => {
@@ -1021,6 +1035,36 @@ mod tests {
         assert!(src.contains("STRUCTURED: (usize, usize) = (1, 1)"), "{src}");
         assert!(!src.contains("match b {"), "no loop over the blocks: {src}");
         assert!(src.contains("loop {"), "{src}");
+    }
+
+    /// A call whose results are returned as they are is the return's (`returned_call`):
+    /// `return f(…)`, so rustc hands its caller's result on, a tail call, where a copy through
+    /// a temporary kept the caller's frame. (Moved from `rr_aot`'s generated source, where no
+    /// function returns a call since the short forms are the loop's arms.)
+    #[test]
+    fn a_returned_call_is_the_return() {
+        let callee = two_entries();
+        let mut sig = Signature::new(CallConv::Tail);
+        sig.params.push(AbiParam::new(I64));
+        sig.returns.push(AbiParam::new(I64));
+        let mut f = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, 1), sig.clone());
+        let mut ctx = FunctionBuilderContext::new();
+        let mut b = FunctionBuilder::new(&mut f, &mut ctx);
+        let entry = b.create_block();
+        b.append_block_params_for_function_params(entry);
+        b.switch_to_block(entry);
+        let n = b.block_params(entry)[0];
+        let name = b.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, 0));
+        let signature = b.import_signature(sig);
+        let r = b.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
+        let call = b.ins().call(r, &[n]);
+        let got = b.inst_results(call).to_vec();
+        b.ins().return_(&got);
+        b.seal_all_blocks();
+        b.finalize();
+        let src = super::translate(&[(0, callee), (1, f)], &[(1, "outer")], &[]).expect("translates");
+        assert!(src.contains("return unsafe { f0("), "no call returned as it is: {src}");
+        assert!(!src.contains("let t = unsafe { f0("), "a call's results copied into a return: {src}");
     }
 
     /// A 16-byte compare's mask by NEON's narrowing shift (`native_cpu_block::short_mask`) is

@@ -86,6 +86,68 @@ pub enum TokenRule {
     /// last byte the closer's last (`outside`: the byte before it). A lexer's reader of a
     /// string or a comment: on the CPU, a search of the closer's bits from the start.
     Read(Vec<Region>),
+    /// `read K parts { P = E bytes N, … } else C`: a region read in parts, as a lexer reads a
+    /// string with escapes. Its tokens are the opener's byte and the closer's bytes (this kind),
+    /// each part `P` (`N` bytes from a bit of `E` in the region), and each run of the region's
+    /// other bytes (`C`). The parts' kinds are tokens of their own (`Inside`, after this one).
+    ReadParts(Region, Parts),
+    /// A token of a region read in parts (`ReadParts`): `last` its last-byte mask. The reader
+    /// starts it, not the token loop: no first byte ends it by a rule.
+    Inside(Expr),
+}
+
+/// A region's parts (`TokenRule::ReadParts`): each part's kind, start mask and bytes, and the
+/// kind of the bytes between them.
+#[derive(Clone, Debug)]
+pub struct Parts {
+    pub parts: Vec<(String, Expr, u8)>,
+    pub content: String,
+}
+
+impl Parts {
+    /// The token rows of a region `r` read in parts from its opener `s` (one byte, the reader's
+    /// own row), as masks: the closer, of the reader's kind (`kind`), then each part's and the
+    /// content's. With `f` the region's fill and `body = f & ~s`,
+    ///
+    /// ```text
+    /// closer:  c = prev(f) & ~f                    # its first byte; its last N - 1 after
+    /// part P:  ps = E & body;   last prev(ps, N - 1)
+    /// content: x = body & ~(each part's bytes);   start x & ~prev(x), last x & ~next(x)
+    /// ```
+    pub fn rows(&self, kind: &str, r: &Region, s: &Expr) -> Vec<Stmt> {
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
+        let not = |a: Expr| Expr::Not(Box::new(a));
+        let prev = |e: Expr, k: u8| match k {
+            0 => e,
+            1 => Expr::Call("prev".into(), vec![Arg::E(e)]),
+            k => Expr::Call("prev".into(), vec![Arg::E(e), Arg::N(u64::from(k))]),
+        };
+        let next = |e: Expr| Expr::Call("next".into(), vec![Arg::E(e)]);
+        let f = Expr::Name(format!("f_{}", r.kind));
+        let body = and(f.clone(), not(s.clone()));
+        let closer = and(prev(f.clone(), 1), not(f));
+        let token = |kind: &str, start: Expr, last: Expr| Stmt::Token { kind: kind.to_owned(), start, through: None, last: Some(last.clone()), rule: Some(TokenRule::Inside(last)) };
+        // The reader's own row is its token's, the opener; the closer is its kind's too.
+        let mut out = vec![token(kind, closer.clone(), prev(closer, r.bytes - 1))];
+        let mut covered: Option<Expr> = None;
+        for (p, e, n) in &self.parts {
+            let ps = and(e.clone(), body.clone());
+            out.push(token(p, ps.clone(), prev(ps.clone(), n - 1)));
+            for k in 0..*n {
+                covered = Some(match covered {
+                    Some(c) => or(c, prev(ps.clone(), k)),
+                    None => prev(ps.clone(), k),
+                });
+            }
+        }
+        let x = match covered {
+            Some(c) => and(body, not(c)),
+            None => body,
+        };
+        out.push(token(&self.content, and(x.clone(), not(prev(x.clone(), 1))), and(x.clone(), not(next(x)))));
+        out
+    }
 }
 
 impl TokenRule {
@@ -134,6 +196,9 @@ impl TokenRule {
                 }
                 out.unwrap_or(Expr::Empty)
             }
+            // The opener, one byte; the closer and the parts are rows of their own (`Parts::rows`).
+            TokenRule::ReadParts(..) => s.clone(),
+            TokenRule::Inside(last) => last.clone(),
         }
     }
 }
@@ -641,6 +706,8 @@ struct P {
     /// Statements the one just read needs before it: a `pairs`' classes, one a byte, each made
     /// once (`classed`).
     before: Vec<Stmt>,
+    /// Statements the one just read makes after it: a region's parts' tokens (`Parts::rows`).
+    after: Vec<Stmt>,
     classed: Vec<u8>,
     /// The `pairs` read so far, by name, for a token's `pair` (`TokenRule::Pairs`).
     pair_sets: Vec<(String, Vec<[u8; 2]>)>,
@@ -1112,6 +1179,7 @@ impl P {
             let st = self.stmt()?;
             out.append(&mut self.before);
             out.push(st);
+            out.append(&mut self.after);
             self.nls();
         }
         Ok(out)
@@ -1588,12 +1656,47 @@ impl P {
                             break;
                         }
                     }
-                    Some(TokenRule::Read(regions))
+                    if self.eat_kw("parts") {
+                        let [r] = regions.as_slice() else {
+                            return self.err("one region read in parts");
+                        };
+                        if r.outside || r.empty.is_some() {
+                            return self.err("a region read in parts with its closer its own, no `else`");
+                        }
+                        self.want_p("{")?;
+                        let mut parts = vec![];
+                        loop {
+                            self.nls();
+                            if self.eat_p("}") {
+                                break;
+                            }
+                            let p = self.kind()?;
+                            self.want_p("=")?;
+                            let e = self.expr()?;
+                            self.want_kw("bytes")?;
+                            let n = u8::try_from(self.int()?).map_err(|_| "a part of at most 255 bytes".to_owned())?;
+                            if n == 0 {
+                                return self.err("a part of one byte or more");
+                            }
+                            parts.push((p, e, n));
+                            self.nls();
+                            let _ = self.eat_p(",");
+                        }
+                        self.want_kw("else")?;
+                        let content = self.kind()?;
+                        Some(TokenRule::ReadParts(r.clone(), Parts { parts, content }))
+                    } else {
+                        Some(TokenRule::Read(regions))
+                    }
                 } else {
                     None
                 };
                 if let Some(r) = &rule {
                     last = Some(r.last(&start));
+                }
+                // A region read in parts: its other rows after it (`Parts::rows`).
+                if let Some(TokenRule::ReadParts(r, parts)) = &rule {
+                    self.after.extend(parts.rows(&kind, r, &start));
                 }
                 Stmt::Token { kind, start, through, last, rule }
             }
@@ -1706,13 +1809,14 @@ impl P {
 }
 
 pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
-    let mut p = P { t: lex(src)?, i: 0, regions: vec![], before: vec![], classed: vec![], pair_sets: vec![] };
+    let mut p = P { t: lex(src)?, i: 0, regions: vec![], before: vec![], after: vec![], classed: vec![], pair_sets: vec![] };
     p.nls();
     let mut out = vec![];
     while p.peek().is_some() {
         let st = p.stmt()?;
         out.append(&mut p.before);
         out.push(st);
+        out.append(&mut p.after);
         p.nls();
     }
     Ok(out)
