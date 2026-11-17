@@ -75,8 +75,14 @@ function isFolder(looked: Looked): looked is Stats {
 }
 
 interface FileText {
+  /** Changes when the file's lstat changes, or its text under the same lstat (a rewrite within one clock tick). */
   readonly stamp: string;
   readonly text: string;
+}
+
+/** A file's text as last read, with the lstat it was read under. */
+interface KnownText extends FileText {
+  readonly looked: string;
 }
 
 function isText(read: FileText | "none" | undefined): read is FileText {
@@ -86,27 +92,56 @@ function isText(read: FileText | "none" | undefined): read is FileText {
 /** Git refuses a `.git` file larger than this; the other files read here are smaller still. */
 const LARGEST_READ = 1 << 20;
 
-/** The small files read here, each read again only once its lstat changed. */
-const texts = new Map<string, FileText>();
+/**
+ * How long a file's lstat cannot yet show a rewrite: one at the same size within the same tick of the file system's
+ * clock leaves every time as it was (Git's racy-index rule). The longest tick is FAT's 2 s; this adds a margin.
+ */
+const SAME_TICK_MS = 3_000;
+
+/** How many rewrites under an unchanged lstat were seen, to give each its own stamp. */
+let rewritesUnderOneLstat = 0;
+
+/** The small files read here, each read again once its lstat changed, and at each use while its times are recent. */
+const texts = new Map<string, KnownText>();
 
 /** A regular file's text and stamp, `"none"` when nothing is there, undefined when it is something else or unreadable. */
 function fileText(path: string): FileText | "none" | undefined {
   const looked = look(path);
   if (!isEntry(looked)) return looked;
   if (!looked.isFile() || looked.size > LARGEST_READ) return undefined;
-  const stamp = `${looked.ino}:${looked.size}:${looked.mtimeMs}:${looked.ctimeMs}`;
+  const lstat = `${looked.ino}:${looked.size}:${looked.mtimeMs}:${looked.ctimeMs}`;
   const known = texts.get(path);
-  return known?.stamp === stamp ? known : readText(path, stamp);
+  return stillKnown(known, lstat, looked) ? known : readText(path, lstat, known);
 }
 
-function readText(path: string, stamp: string): FileText | undefined {
+/** Whether `known` holds for a file whose lstat reads `lstat` now: the same, and its last write a clock tick ago. */
+function stillKnown(known: KnownText | undefined, lstat: string, looked: Stats): known is KnownText {
+  return known !== undefined && known.looked === lstat && Math.max(looked.mtimeMs, looked.ctimeMs) < Date.now() - SAME_TICK_MS;
+}
+
+/**
+ * The file's text, read now. Read under the lstat `known` was and the same, it is `known`, stamp and all; another text
+ * under that lstat gets a stamp of its own, so every answer read from the file before is read again.
+ */
+function readText(path: string, lstat: string, known: KnownText | undefined): FileText | undefined {
+  let text: string;
   try {
-    const read = { stamp, text: readFileSync(path, "utf8") };
-    texts.set(path, read);
-    return read;
+    text = readFileSync(path, "utf8");
   } catch {
     return undefined;
   }
+  if (known === undefined || known.looked !== lstat) return keepText(path, { looked: lstat, stamp: lstat, text });
+  return known.text === text ? known : keepText(path, { looked: lstat, stamp: rewriteStamp(lstat), text });
+}
+
+function rewriteStamp(lstat: string): string {
+  rewritesUnderOneLstat += 1;
+  return `${lstat}#${rewritesUnderOneLstat}`;
+}
+
+function keepText(path: string, read: KnownText): KnownText {
+  texts.set(path, read);
+  return read;
 }
 
 /**
