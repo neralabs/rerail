@@ -248,6 +248,7 @@ pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
             splits: Vec::new(),
             relexes: 0,
         };
+        p.ahead();
         if let Err(r) = p.program() {
             return Err(match r {
                 Refusal::Parse(at) => Refusal::Parse(at.max(p.far)),
@@ -457,6 +458,9 @@ fn is_primitive(code: u8) -> bool {
     (w::BOOL..=w::CHAR64_T).contains(&code)
 }
 
+/// How many tokens past the next one the buffer always holds (`P::ahead`).
+const AHEAD: usize = 2;
+
 fn kind_of(k: u16) -> K {
     debug_assert!(k <= crate::kinds::LAST as u16);
     // SAFETY: `K` is `repr(u16)` with variants 0 to `KINDS.len() - 1`, and every key's kind is one.
@@ -498,10 +502,28 @@ impl<'a> P<'a> {
         }
     }
 
+    /// The buffer holds the next token and `AHEAD` more, from the moment the parse moves
+    /// (`bump`, `reset`, a relex): a look that near needs no check.
+    #[inline(always)]
+    fn ahead(&mut self) {
+        if self.toks.len() <= self.i + AHEAD {
+            self.refill();
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn refill(&mut self) {
+        while self.toks.len() <= self.i + AHEAD {
+            self.lex_batch();
+        }
+    }
+
     #[inline(always)]
     fn tok(&mut self) -> Tok {
-        self.fill(0);
-        self.toks[self.i]
+        debug_assert!(self.i + AHEAD < self.toks.len());
+        // SAFETY: the buffer holds `AHEAD` tokens past `i` (`ahead`).
+        unsafe { *self.toks.get_unchecked(self.i) }
     }
 
     #[inline(always)]
@@ -509,7 +531,13 @@ impl<'a> P<'a> {
         self.tok().kind
     }
 
+    #[inline(always)]
     fn peek_at(&mut self, k: usize) -> Tok {
+        if k <= AHEAD {
+            debug_assert!(self.i + AHEAD < self.toks.len());
+            // SAFETY: the buffer holds `AHEAD` tokens past `i` (`ahead`).
+            return unsafe { *self.toks.get_unchecked(self.i + k) };
+        }
         self.fill(k);
         self.toks[self.i + k]
     }
@@ -579,6 +607,7 @@ impl<'a> P<'a> {
         self.flush(t.start);
         if t.kind != T::Eof {
             self.i += 1;
+            self.ahead();
         }
         self.last_end = t.end;
         Ok(t)
@@ -760,6 +789,7 @@ impl<'a> P<'a> {
             self.relexes = m.relexes;
         }
         self.e = m.e;
+        self.ahead();
         self.w.rewind(m.n);
         self.last_end = m.last_end;
         self.depth = m.depth;

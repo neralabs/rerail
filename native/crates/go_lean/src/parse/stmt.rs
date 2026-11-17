@@ -378,9 +378,9 @@ impl<'a> P<'a> {
 
     /// `switch`: an expression switch or a type switch.
     fn switch_statement(&mut self, s: Slot) -> R<N> {
-        self.fill(0);
         let i = self.i;
         self.i += 1;
+        self.ahead();
         let ts = self.type_switch_ahead();
         self.i = i;
         let Some((semi, alias)) = ts else { return self.expression_switch(s) };

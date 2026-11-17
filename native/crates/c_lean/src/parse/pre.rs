@@ -60,6 +60,7 @@ impl<'a> P<'a> {
         self.next = pos;
         let keep = self.extras[self.e..].iter().position(|x| x.start as usize >= from).map_or(self.extras.len(), |k| self.e + k);
         self.extras.truncate(keep);
+        self.ahead();
     }
 
     /// A directive's line end: the `\n` in its span, no node (a comment before it is the
