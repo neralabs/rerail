@@ -78,10 +78,20 @@ describe.runIf(NPM_RUNS)("release-version.mjs, the pull request's description", 
     const body = readFileSync(join(repo.root, "body.md"), "utf8");
     const checklist = body.slice(body.indexOf("## Before merging"));
     expect(body.indexOf(`\`${packName("fresh")}\``)).toBeLessThan(body.indexOf("## Before merging"));
-    expect(checklist.match(/^- \[ \] \*\*.+$/gmu)).toHaveLength(7);
-    for (const item of ["End-user testing", "Release notes", "Documentation", "`context7.json`", "`docs/internal-testing.md`", "Scrub", "npm package pages"]) {
+    expect(checklist.match(/^- \[ \] \*\*.+$/gmu)).toHaveLength(6);
+    for (const item of ["Release notes", "Documentation", "`context7.json`", "`docs/internal-testing.md`", "Scrub", "npm package pages"]) {
       expect(checklist).toContain(`- [ ] **${item}.**`);
     }
+  });
+
+  it("leaves testing the release to after merging, on next, before it is promoted", () => {
+    const repo = repository();
+    writePack(repo, "fresh", ["fresh-one"]);
+    commit(repo, "the pack");
+    releaseVersion(repo);
+    const checklist = readFileSync(join(repo.root, "body.md"), "utf8").split("## Before merging")[1];
+    expect(checklist).not.toContain("End-user testing");
+    expect(checklist).toContain('After merging, test the release on `next`, then promote it (docs/release.md, "Before promoting").');
   });
 });
 

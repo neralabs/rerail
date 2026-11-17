@@ -19,7 +19,8 @@
 //     while core stays older than the release that first loads it (core left out of this pull request, say) is named
 //     in a warning not to merge: published so, no Rerail could load it.
 // The description ends with the checklist whoever merges it ticks first (BEFORE_MERGING; docs/release.md, "Before
-// merging"). It is written unticked each time, so a push to main clears it.
+// merging"). It is written unticked each time, so a push to main clears it. Testing the release comes after merging,
+// on `next`, before it is promoted to `latest` (docs/release.md, "Before promoting").
 // Writes `releasable` (true when anything changed) to $GITHUB_OUTPUT when it is set. Needs the `v*` tags and the
 // packs' release tags fetched, with the history back to each pack's last release.
 //
@@ -46,7 +47,6 @@ const LISTED_CHANGES = 20;
  * as a whole.
  */
 const BEFORE_MERGING = [
-  "**End-user testing.** One hour using the staged release the way a user does. Core: `gh workflow run release.yml --ref changeset-release/main` builds it from this branch as the `rerail-package` run artifact, unpublished. Packs: this pull request's Release packs run uploads their tarballs as `rule-packs`, and `rerail packs add <tarball>` installs one (docs/release.md, \"Before merging\").",
   "**Release notes.** The notes above are accurate and complete, and each says what changed for the person upgrading.",
   "**Documentation.** `README.md` and `docs/` are accurate for what this releases: nothing merged since the last release left them behind.",
   "**`context7.json`.** Its folders, exclusions and rules match the docs and commands as they are now, so AI tools pull current Rerail docs.",
@@ -321,6 +321,8 @@ if (rows.length === 0) {
     "Whoever merges this ticks each box first. A push to `main` rewrites this description and clears them, because what you checked is no longer what merging releases: check again.",
     "",
     ...BEFORE_MERGING.map((item) => `- [ ] ${item}`),
+    "",
+    'After merging, test the release on `next`, then promote it (docs/release.md, "Before promoting").',
   );
 }
 lines.push("", "This pull request is rewritten from `main` on every push to it (.github/workflows/release-pr.yml).");

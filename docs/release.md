@@ -4,7 +4,9 @@ How core is built, versioned and published. Rule packs release separately; see [
 
 ## Release
 
-Merging the Release pull request tags a version; the tag builds, checks and publishes core.
+Merging the Release pull request tags a version; the tag builds, checks and publishes core to `next`, and the packs
+publish to `next` beside it. That published version is the release candidate. Once it is tested, a person promotes it
+to `latest` ([Before promoting](#before-promoting), [Promoting](#promoting)), and `main` stays open throughout.
 
 ### Build
 
@@ -41,7 +43,7 @@ rule pack bumps ([docs/pack-format.md](pack-format.md#release)).
 - **Core ranges:** a pack it releases that an older core cannot load, because it holds a rule off or ships a rule in
   a language added since, has its core range raised to leave those cores out, once core is at the release that first
   loads it. The description lists each.
-- **Merge:** tags the merge commit `v<version>`, which starts `release.yml`.
+- **Merge:** tags the merge commit `v<version>`, which starts `release.yml`. Core and the packs publish to `next`.
 
 <details>
 <summary>Exact bump and tag details</summary>
@@ -65,14 +67,9 @@ rule pack bumps ([docs/pack-format.md](pack-format.md#release)).
 
 ### Before merging
 
-The Release pull request's description ends with a checklist. Whoever merges it ticks each box first:
+The Release pull request's description ends with a checklist of what the merged commit holds. Whoever merges it ticks
+each box first:
 
-- **End-user testing.** One hour using the staged release the way a user does.
-  - **Core:** `gh workflow run release.yml --ref changeset-release/main` builds it from the release branch as the
-    `rerail-package` run artifact, unpublished ([Manual runs and put-back](#manual-runs-and-put-back)).
-  - **Packs:** the pull request's **Release packs** run uploads the tarballs it would publish as the `rule-packs`
-    artifact; `rerail packs add <tarball>` installs one. A pack from a tarball counts as unpublished, so its rules run
-    in Log until approved ([rule packs](rule-packs.md)).
 - **Release notes.** Accurate, complete, and written for the person upgrading ([Release notes](#release-notes)).
 - **Documentation.** `README.md` and `docs/` are accurate for what the release ships.
 - **`context7.json`.** Its folders, exclusions and rules match the docs and commands, so AI tools pull current Rerail
@@ -90,7 +87,38 @@ Each pull request's author confirms the same of their own change
 
 A push to `main` rewrites the description and clears the boxes, because what was checked is no longer what merging
 releases. Nothing in CI reads them: the checklist is the merger's word (`BEFORE_MERGING` in
-`scripts/release/release-version.mjs`).
+`scripts/release/release-version.mjs`). Testing the release itself comes after the merge, on `next`.
+
+### Before promoting
+
+Merging publishes the release to `next`; nothing reaches `latest` until a person promotes it. First:
+
+- **End-user testing.** One hour using the release the way a user does: `rerail update --channel next` installs its
+  core, and set-up and `rerail packs add` then fetch its packs from `next`.
+
+If testing finds a problem, fix it on `main` as any pull request. The next Release pull request releases the fix as the
+next version on `next`, and that version is the one to test and promote. The version that failed stays on `next` and
+never reaches `latest`.
+
+### Promoting
+
+Core first, then the packs, each behind the `release` environment's approval:
+
+```bash
+gh workflow run release.yml --ref main -f latest=<version>
+```
+
+```bash
+gh workflow run release-packs.yml --ref main
+```
+
+- **Core:** points `latest` at that released plain version and makes its GitHub Release the repository's latest. A
+  preview or a version never released is refused.
+- **Packs:** with no inputs, points `latest` at every released pack version not `latest` yet, less any pack held where
+  it was put back ([pack-format.md](pack-format.md#release)). It refuses a pack whose core range leaves out the core on
+  `latest`, naming it: Rerail leaves such a pack out, so the people on stable would lose it. Promote core first, then
+  run it again.
+- The tested bytes are what `latest` gets: promoting moves the dist-tag and rebuilds nothing.
 
 ### Installer plugins
 
@@ -117,35 +145,37 @@ after a reviewer approves.
 
 | Tag | Channel |
 | --- | --- |
-| `v0.2.0` | `latest` (stable) |
+| `v0.2.0` | `next`, then `latest` (stable) once [promoted](#promoting) |
 | `v0.2.0-beta.1` | `beta` |
 | `v0.2.0-next.1` | `next` |
 
 - `beta` and `next` are opt-in: `rerail update --channel <tag>`.
-- The Release pull request makes only plain versions, for `latest`. For a `beta` or `next` preview, set the version
-  and push the tag by hand.
+- The Release pull request makes only plain versions. For a `beta` or `next` preview, set the version and push the tag
+  by hand.
 
 <details>
 <summary>Publishing rules and checks</summary>
 
 - Publishing uses npm trusted publishing from the protected `release` environment. The channel is the npm dist-tag.
-- Other prerelease suffixes are rejected. The run refuses a preview older than core's `latest` before building.
-- `next` never trails `latest`: a `latest` release raises `next` to it (`scripts/release/raise-next.mjs`) unless `next`
-  holds a newer preview. Whoever follows `next` gets every stable release. A `beta` or `next` release leaves other tags
-  alone.
+- Other prerelease suffixes are rejected. The run refuses a version older than core's `latest` before building
+  (`releaseChannel` and `previewRefusal` in `scripts/release/dist-tags.mjs`).
+- `next` never trails `latest`: a promotion or put-back raises `next` to the version (`scripts/release/raise-next.mjs`)
+  unless `next` holds a newer one. Whoever follows `next` gets every release first. A publish moves only its own
+  channel.
 - Re-running the publish job is safe: npm refusing to publish over an existing version counts as published.
-- The run's summary lists core's dist-tags. It fails if the channel's tag is not the new version, or, for `latest` and
-  `next` releases, `next` is unset or older than `latest`.
+- The run's summary lists core's dist-tags. It fails if the channel's tag is not the new version, or, for a `next`
+  release, `next` is unset or older than `latest`.
 
 </details>
 
 ### Manual runs and put-back
 
-`workflow_dispatch` builds a trial tarball, retries a failed release, or puts `latest` back to an earlier version.
+`workflow_dispatch` builds a trial tarball, retries a failed release, or moves `latest`.
 
 - **No inputs:** uploads the tarball as a run artifact, unpublished. Try it with `npm install <tarball>`.
-- **`publish` set to a version:** retries that version's release from `main`; see below.
-- **`latest` set to an earlier released version:** builds nothing and points `latest` back to it.
+- **`publish` set to a version:** retries that version's release from `main`, to `next`; see below.
+- **`latest` set to a released plain version:** builds nothing and points `latest` at it: a newer version promotes it
+  ([Promoting](#promoting)), an older one puts core back.
 
 <details>
 <summary>Retrying a failed release</summary>
@@ -176,10 +206,10 @@ updating past it.
 </details>
 
 <details>
-<summary>What a put-back also does</summary>
+<summary>What a promotion or put-back also does</summary>
 
-The put-back uses trusted publishing behind the same approval as a release, so no one needs an npm login to put core
-back. If `next` is older than that version, it raises `next` to it too. The run's **GitHub Release** job then makes
+It uses trusted publishing behind the same approval as a release, so no one needs an npm login to move core's
+`latest`. If `next` is older than that version, it raises `next` to it too. The run's **GitHub Release** job then makes
 that version's Release the repository's latest.
 
 </details>
@@ -280,15 +310,16 @@ notes.
 <summary>How Releases are made, and which tags backfill skips</summary>
 
 - `scripts/release/github-release.mjs` builds them, so notes are written once.
-- `release.yml`'s **GitHub Release** job makes core's, titled `v<version>`: a pre-release for `next` and `beta`, the
-  repository's latest release for `latest`. It runs once the tarball passes the shrinkwrap check and the three managed
+- `release.yml`'s **GitHub Release** job makes core's, titled `v<version>`: a pre-release while it is on `next` or
+  `beta`, the repository's latest release once promoted to `latest`. It runs once the tarball passes the shrinkwrap check and the three managed
   installs, beside the npm publish, and waits on nothing npm does: a slow publish or a failed dist-tag read-back
   cannot hold back or skip it. If the publish then fails, the Release stands, and the retry (`publish` input) runs the
   job again.
 - A version without its own changelog section says no changelog entries were written.
-- Re-runs rewrite an existing Release's notes, pre-release and latest flags. After a put-back, the restored version
-  becomes the latest release.
-- `release-packs.yml` makes a pack's Release ([pack-format.md](pack-format.md#release)).
+- Re-runs rewrite an existing Release's notes, pre-release and latest flags. After a promotion or a put-back, that
+  version becomes the latest release.
+- `release-packs.yml` makes a pack's Release, a pre-release until its promote makes it a full release
+  ([pack-format.md](pack-format.md#release)).
 - Step 1 makes the checkout's tags the remote's. The dry run prints each Release it would create, with notes from the
   changelog at the tag's commit.
 - Backfill reads only the remote's tags, and names each tag it skips: local-only, local commit differing from the

@@ -854,9 +854,10 @@ Core's `v*` release (`release.yml`) is separate.
 1. **Version.** Each push to `main` with anything releasable opens or updates the **Release** pull request. Merging it
    is the release.
 2. **Publish.** On each push to `main`, every published pack (not private) whose `package.json` version has no git tag
-   `@neralabs/rerail-pack-<id>@<version>` passes the publish gate and is published.
-3. **Put back.** Run the workflow from `main` (Actions → Release packs → Run workflow) with the pack's id and an older
-   released version, to point `latest` back at it.
+   `@neralabs/rerail-pack-<id>@<version>` passes the publish gate and is published under `next`.
+3. **Promote.** Once the release is tested on `next`, and core is promoted, run the workflow from `main` with no inputs
+   (`gh workflow run release-packs.yml --ref main`) to point `latest` at each released version
+   ([release.md](release.md#promoting)). To put a pack back, run it with the pack's id and an older released version.
 
 <details>
 <summary>Step 1: the Release pull request</summary>
@@ -892,36 +893,41 @@ The publish gate is:
 - `npm pack`, and a check that the tarball holds only `package.json` and what `files` publishes, never validation
   material whatever `files` says (`packedFileFailures` in `conformance/pack-validation.ts`);
 - the tag, made as soon as the two checks above pass and before anything is published, so a pack's release never
-  waits on npm; then, side by side, its GitHub Release and `npm publish --access public --tag latest` with npm trusted
-  publishing (the `release` environment, so a reviewer approves the run), with `next` moved up to it.
+  waits on npm; then, side by side, its GitHub Release and `npm publish --access public --tag next` with npm trusted
+  publishing (the `release` environment, so a reviewer approves the run).
 
-Set-up and `rerail packs add <id>` fetch under `latest` (on the default update channel), so the version is used from
-then on. `next` never trails `latest`: it moves to the version too unless already at a newer one, so the `next`
-channel gets the release. A pack held at an older `latest` (step 3) is published under `next` instead and stays held.
+Set-up and `rerail packs add <id>` fetch under the update channel: `latest` by default, so the version is used once it
+is promoted (step 3), and `next` for whoever follows `next`, who gets it straight away. A publish moves no other
+dist-tag, so a pack held at an older `latest` (step 3) stays held.
 
 Packs publish one by one, and a failed publish leaves its tags and Releases standing. A version is released once it is
 tagged and on npm: every run's plan reads npm for each tagged version and publishes again one npm doesn't have, with a
 warning naming it. So re-running the run (all jobs or only the failed ones) or the next push to `main` finishes it,
 with no time limit, and a run whose plan can't read npm fails rather than call the version released. One the registry
-already has counts as published, and has `next` moved up. A version older than the pack's `latest` (an old run re-run
-after a newer one shipped) is never published, since that would move `latest` back; the run fails naming it. The
+already has counts as published. A version older than the pack's `latest` (an old run re-run after a newer one
+shipped) is never published, since that would put `next` behind `latest`; the run fails naming it. The
 **Published dist-tags** job lists each published pack's dist-tags in the run summary, read with no npm login. It fails
-if a pack can't be read that way (it isn't public), if `latest` (`next` for a held pack) is not the version just
-published, or if `next` is older than `latest`. It gates nothing. A pull request touching packs runs the gate and
+if a pack can't be read that way (it isn't public), if `next` is not the version just published, or if `next` is older
+than `latest`. It gates nothing. A pull request touching packs runs the gate and
 packing as a dry run.
 
 </details>
 
 <details>
-<summary>Step 3: holds and promotion</summary>
+<summary>Step 3: promotion and holds</summary>
 
 The first job lists in the run summary what will move. After a reviewer approves the `release` environment, the
-promote job points `latest` at that version and tags it `held` there.
+promote job points `latest` at each version, and the **Promoted GitHub Releases** job makes each one's Release a full
+release.
 
-- Publishes and runs with no inputs leave a held pack's `latest` alone (the summary names it). Promoting the pack by
-  id again, at its `package.json` version, releases the hold.
 - With no inputs, the workflow points `latest` at every published pack's released version not yet `latest`, less any
   held.
+- It refuses a pack whose core range leaves out the core on `latest`, naming the pack and the core it needs: Rerail
+  leaves such a pack out, so the people on stable would lose it. Promote core first
+  ([release.md](release.md#promoting)), then run it again. A put-back is never refused for it.
+- Naming a pack and an older released version puts it back and tags it `held` there. Publishes and runs with no inputs
+  leave a held pack's `latest` alone (the summary names it). Promoting the pack by id again, at its `package.json`
+  version, releases the hold.
 - Each promotion moves `next` up to the version unless it is already newer, so a put-back leaves it. The promote job
   then lists each promoted pack's dist-tags, and fails if `latest` is not the version or `next` is older than
   `latest`.
@@ -944,8 +950,8 @@ summaries.
 - Once the **Tag each release** job has tagged them, the **GitHub Releases** job makes one per tagged version
   (`scripts/release/github-release.mjs`), beside the npm publish rather than after it, so npm can neither hold back
   nor skip a Release. Rerun, it rewrites an existing Release's notes and flags.
-- A pack's Release is never the repository's latest release, which is core's. It is a pre-release only for a held pack
-  published under `next`.
+- A pack's Release is never the repository's latest release, which is core's. It is a pre-release while its version is
+  on `next`, and the promote makes it a full release.
 - Releases missing for older tags, or from a run that failed before its Release, are made by hand with the script's
   backfill, which skips a version whose changelog has no section ([release.md](release.md#release)).
 

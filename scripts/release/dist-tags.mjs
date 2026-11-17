@@ -8,7 +8,10 @@ import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 
 const REGISTRY = "https://registry.npmjs.org";
-/** The preview channel's dist-tag. It never trails `latest`: a version published under `latest` moves it up too. */
+/**
+ * The dist-tag a release publishes to, and the preview channel. It never trails `latest`: a version promoted to
+ * `latest` moves it up too.
+ */
 export const NEXT_TAG = "next";
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/u;
@@ -93,7 +96,7 @@ export async function readLatestTag(name) {
 export const addDistTag = (name, version, tag) => execFileSync("npm", ["dist-tag", "add", `${name}@${version}`, tag, "--registry", REGISTRY], { stdio: "inherit" });
 
 /**
- * Points `name`'s `next` at `version`, just published under `latest`, unless `next` is already there or at a newer
+ * Points `name`'s `next` at `version`, just moved to `latest`, unless `next` is already there or at a newer
  * version (a preview past it), so the preview channel never trails the stable one. `steps.readNext(name)` resolves to
  * `next` or null, and `steps.distTag(name, version, tag)` moves it; both throw on failure. Returns what it did, for
  * the log. Running it again is safe: a `next` already moved is left where it is.
