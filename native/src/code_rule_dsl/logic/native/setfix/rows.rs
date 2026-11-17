@@ -200,12 +200,13 @@ impl Rows {
         Rows { k, ..Rows::default() }
     }
 
-    /// `n` rows of a relation that does not grow (an `InRel` made of them): one frozen segment, shared by a
-    /// relation started from it without a copy.
-    pub(super) fn frozen(rows: Vec<i64>, n: usize) -> Rows {
-        let mut r = Rows::default();
-        if n > 0 && !rows.is_empty() {
-            r.k = rows.len() / n;
+    /// `n` rows of `k` values (`rows`, flat) of a relation that does not grow (an `InRel` made of them): one frozen
+    /// segment, shared by a relation started from it without a copy. `k` is given, not read off the rows: a relation
+    /// kept with no rows still has its columns, and a run started from it pushes rows of them.
+    pub(super) fn frozen(rows: Vec<i64>, n: usize, k: usize) -> Rows {
+        debug_assert_eq!(rows.len(), n * k, "{n} rows of {k} values");
+        let mut r = Rows::new(k);
+        if !rows.is_empty() {
             r.hint = n;
             r.extend_from_slice(&rows);
         }
@@ -328,7 +329,10 @@ impl Rows {
     #[inline]
     fn part_of(&self, id: u32) -> (&Part, u32) {
         if id >= self.from {
-            return (self.tail.as_ref().expect("a row of the tail"), id - self.from);
+            let Some(t) = self.tail.as_ref() else {
+                panic!("row {id} of the tail, but none: {} rows in {} segments from {}, k {}", self.rows(), self.segs.len(), self.from, self.k)
+            };
+            return (t, id - self.from);
         }
         let (first, p) = match &self.segs[..] {
             [only] => only,
@@ -448,7 +452,7 @@ mod tests {
     #[test]
     fn started_rows_share_the_kept_segments_and_freeze_their_own() {
         let k = 2;
-        let kept = Rows::frozen((0..20).collect(), 10);
+        let kept = Rows::frozen((0..20).collect(), 10, 2);
         let mut next = kept.shared(10);
         assert!(next.shares(&kept));
         next.extend_from_slice(&[100, 101]);
@@ -475,5 +479,17 @@ mod tests {
         assert_eq!(*rows.row(12, k), [1000, 2000]);
         assert_eq!(*rows.row(31, k), [1019, 2019]);
         assert_eq!(rows.len(), n * k);
+    }
+
+    /// A relation kept with no rows keeps its columns: one started from it holds the rows it pushes (they were
+    /// dropped, the rows read as `k` 0, and the next index's read of row 0 panicked).
+    #[test]
+    fn a_relation_started_from_an_empty_kept_one_holds_its_rows() {
+        let kept = Rows::frozen(Vec::new(), 0, 2);
+        let mut next = kept.shared(0);
+        next.extend_from_slice(&[7, 8, 9, 10]);
+        assert_eq!(next.len(), 4);
+        assert_eq!(*next.row(1, 2), [9, 10]);
+        assert_eq!(next.value(0, 2, 1), 8);
     }
 }

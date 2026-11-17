@@ -3643,7 +3643,7 @@ impl InRel {
     /// A relation of `rows` (flat, `types.len()` values each) an earlier run kept (decision 0077 §4), in no table.
     pub fn kept(types: Vec<u8>, rows: Vec<i64>, n: usize) -> Arc<InRel> {
         let k = types.len();
-        Arc::new(InRel { viewed: false, keyed: None, k, n, rows: Rows::frozen(rows, n), view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None })
+        Arc::new(InRel { viewed: false, keyed: None, k, n, rows: Rows::frozen(rows, n, k), view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None })
     }
     /// Its columns' value types (the engine's codes).
     pub fn types(&self) -> &[u8] {
@@ -3654,13 +3654,13 @@ impl InRel {
         let k = types.len();
         let n = rows.len();
         let flat: Vec<i64> = rows.iter().flat_map(|r| r.iter().copied()).collect();
-        Arc::new(InRel { viewed: false, keyed: None, k, n, rows: Rows::frozen(flat, n), view: None, base: false, types, stored: n, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None })
+        Arc::new(InRel { viewed: false, keyed: None, k, n, rows: Rows::frozen(flat, n, k), view: None, base: false, types, stored: n, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None })
     }
     /// A relation of `n` rows, flat (`types.len()` values each), as a stored frame gives them (t33 K4): read as a
     /// relation the run derived.
     pub fn from_flat(rows: Vec<i64>, n: usize, types: Vec<u8>) -> Arc<InRel> {
         let k = types.len();
-        Arc::new(InRel { viewed: false, keyed: None, k, n, rows: Rows::frozen(rows, n), view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None })
+        Arc::new(InRel { viewed: false, keyed: None, k, n, rows: Rows::frozen(rows, n, k), view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None })
     }
     /// `from_flat`'s relation with each row's level (decision 0090), as a frame of its levels gives them: `None` when
     /// they are not one per row.
@@ -4881,7 +4881,7 @@ fn input_of(conn: impl Scoped, spec: &InputKey, syms: &mut Interner) -> Result<A
         for (i, &t) in types.iter().enumerate() { rows.push(read_value(r.get_ref(i)?, t, syms).map_err(|e| err(format!("{table}: {e}")))?); }
         n += 1;
     }
-    let rel = Arc::new(InRel { viewed: false, keyed: None, k: types.len(), n, rows: Rows::frozen(rows, n), view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
+    let rel = Arc::new(InRel { viewed: false, keyed: None, k: types.len(), n, rows: Rows::frozen(rows, n, types.len()), view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
     {
         let l = &mut LOADS.lock().unwrap()[usize::from(!base)];
         l.0 += thread_cpu() - c0;

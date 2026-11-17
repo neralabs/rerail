@@ -1619,3 +1619,16 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   merge of the hub (52a579d59) by the build under the lock on its own thread, which does each order once.
 - **Seen beside it**: the measurement script's watchdog killed its shell, not the engine: four hung engines ran on
   for hours on the m3. Scripts kill the engine by name now.
+
+### Q69. A test's store stays open after its test (`a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test`)
+
+- **Found** (2026-11-17, at this branch's merge of the hub at 52a579d59): fails on both sides before the merge, on
+  the m3. After both probe runs end and their stores are dropped, the process still holds four descriptors of one
+  probe's store: `store.sqlite`, `-wal`, `-shm` and one more (the assertion names them now, `test_store::held_under`).
+- **Known**: at each probe run's end the store's handles and registered thread connections are none
+  (`content_store::holding` is `(0, 0)`, asserted in the probe now), and the run joins its collection
+  (`Collecting::join`). So the holder is a connection opened outside `ThreadConnection`'s registry, or one opened
+  after the run returned (a job behind the run: upkeep, the image store, a writer of another store's wave).
+- **Next**: list the raw `Connection::open` calls on the run's path (outside `content_store::connection`) and the
+  services that outlive a run; the one holding it closes with the run or registers its connection.
+- **Done when**: the test passes, the store's directory gone and nothing of it held.
