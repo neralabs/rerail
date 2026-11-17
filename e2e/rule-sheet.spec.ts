@@ -84,6 +84,17 @@ test("the switch in the sheet saves the rule's on, across a reload", async ({ pa
   await expect(sheetSwitch(page)).toHaveAttribute("aria-checked", was ?? "true");
 });
 
+test("Block mode is experimental: the sheet offers no Block button, but shows it pressed for a rule already on Block", async ({ page, rerail }) => {
+  const block = sheet(page).locator('.modes button[data-v="block"]');
+  await page.goto(await rerail.dashboard("mature", { hash: `rule/${STEER_LIBRARY_RULE}` }));
+  await expect(sheet(page).locator('.modes button[data-v="steer"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(block).toBeHidden();
+
+  await page.goto(await rerail.dashboard("mature", { hash: `rule/${BLOCK_LIBRARY_RULE}` }));
+  await expect(block).toBeVisible();
+  await expect(block).toHaveAttribute("aria-pressed", "true");
+});
+
 test("Source shows when a rule created by you was added, with the year", async ({ page, rerail }) => {
   await page.goto(await rerail.dashboard("mature", { hash: `rule/${BLOCK_LIBRARY_RULE}` }));
   // Added 30 days before the seed clock (Oct 22, 2026).

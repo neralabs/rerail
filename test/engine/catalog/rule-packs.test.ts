@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,7 +13,7 @@ import {
   rulePackRecommendationsSchema,
   DatabaseApiStores,
 } from "../../../src/api/index.js";
-import { globPattern, scanRepository, signalEvidence } from "../../../src/engine/catalog/rule-pack-matcher.js";
+import { fileEndings, globPattern, nearMiss, packLooksFor, scanRepository, signalEvidence, type RepositoryScan, type RulePackMatch } from "../../../src/engine/catalog/rule-pack-matcher.js";
 import {
   cachedRecommendRulePacks,
   RECOMMENDATION_CACHE_MS,
@@ -27,10 +27,12 @@ import { recordCheckout } from "../../../src/engine/catalog/repository-registry.
 import { MOCK_CONVERSATION_RULES } from "../../../src/cli/index.js";
 import { installPack, removeInstalledPacks } from "../../support/installed-packs.js";
 import { repositoryPath } from "../../support/oracles.js";
+import { symlinkOrSkip } from "../../support/platform/links.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  for (const directory of temporaryDirectories.splice(0)) await rm(directory, { recursive: true, force: true });
+  for (const directory of temporaryDirectories.splice(0)) await removeFolder(directory);
 });
 
 async function temporaryDirectory(prefix: string): Promise<string> {
@@ -133,6 +135,12 @@ describe("rule pack definitions", () => {
     expect(() => readRulePacks(directories)).toThrow("Conversation rule talk in rule pack one takes no example path");
   });
 
+  it("reject a code rule example without a file", async () => {
+    const examples = { caught: { path: "a.ts", text: "a" }, passes: { text: "b" } };
+    const directories = await packFolder([definition("one", "cyclomatic", { examples })]);
+    expect(() => readRulePacks(directories)).toThrow("Code rule cyclomatic in rule pack one needs a path on both examples");
+  });
+
   it("reject a pack whose globs do not compile, naming the pack, when the packs are read", async () => {
     const nested = { ...definition("one", "cyclomatic"), match: { any: [{ files: ["**/*.{ts,{js,jsx}}"], label: "code" }] } };
     const directories = await packFolder([nested]);
@@ -144,6 +152,22 @@ describe("rule pack definitions", () => {
     const loaded = readRulePacks(directories);
     expect(loaded.find(found => found.id === "one")!.rules[0]).toMatchObject({ kind: "conversation", mode: "log", on: false });
     expect(loaded.find(found => found.id === "two")!.rules[0]).toMatchObject({ kind: "code", mode: typescriptRule.rule.mode, on: true });
+  });
+
+  it("list a held-off rule with its reason, off", async () => {
+    const directories = await packFolder([definition("one", "cyclomatic", { on: false, heldOff: "its steer did harm" }), definition("two", "talk", { on: false })]);
+    const loaded = readRulePacks(directories);
+    expect(loaded.find(found => found.id === "one")!.rules[0]).toMatchObject({ on: false, heldOff: "its steer did harm" });
+    expect(loaded.find(found => found.id === "two")!.rules[0]).not.toHaveProperty("heldOff");
+  });
+
+  it.each([
+    ["on", { on: true, heldOff: "its steer did harm" }, "rules.0.heldOff needs \"on\": false"],
+    ["on by default", { heldOff: "its steer did harm" }, "rules.0.heldOff needs \"on\": false"],
+    ["with no reason", { on: false, heldOff: " " }, "rules.0.heldOff must be a non-empty string"],
+  ])("reject a held-off rule %s", async (_, rule, message) => {
+    const directories = await packFolder([definition("one", "cyclomatic", rule)]);
+    expect(() => readRulePacks(directories)).toThrow(message);
   });
 });
 
@@ -171,10 +195,13 @@ describe("globPattern", () => {
   });
 });
 
+/** A scan of `files` alone, as Git would list them. */
+const scanOf = (files: string[]): RepositoryScan => ({ files, dependencies: new Map(), notScanned: [], git: true, stoppedEarly: false });
+/** The match definition of Rerail's own pack `id`. */
+const packMatch = (id: string): RulePackMatch => JSON.parse(readFileSync(fileURLToPath(new URL(`../../../packs/${id}/pack.json`, import.meta.url)), "utf8")).match;
+
 describe("the Python pack's match", () => {
-  const pack = JSON.parse(readFileSync(fileURLToPath(new URL("../../../packs/python/pack.json", import.meta.url)), "utf8"));
-  const [signal] = pack.match.any;
-  const scan = (files: string[]) => ({ root: "/", files, dependencies: new Map() });
+  const [signal] = packMatch("python").any;
 
   it.each([
     ["src/app/models.py", true],
@@ -195,7 +222,101 @@ describe("the Python pack's match", () => {
     ["doc/source/conf.py", false],
     ["docs/_ext/directive.py", false],
   ])("counts %s as Python source: %s", (path, expected) => {
-    expect(signalEvidence(signal, scan([path]))).toEqual(expected ? [path] : []);
+    expect(signalEvidence(signal!, scanOf([path]))).toEqual(expected ? [path] : []);
+  });
+});
+
+describe("nearMiss", () => {
+  const python = packMatch("python");
+
+  it("counts the files a pack looks for by the exclude glob that left each out, most first", () => {
+    const files = [
+      ...["a", "b", "c"].map(name => `scripts/${name}.py`),
+      ...["a", "b", "c", "d", "e", "f"].map(name => `tests/test_${name}.py`),
+    ];
+    expect(nearMiss(python, scanOf(files))).toEqual({ fileCount: 9, excludedBy: [{ glob: "tests/", fileCount: 6 }, { glob: "scripts/", fileCount: 3 }] });
+  });
+
+  it("counts a file under the first of the pack's excludes that catches it, and ties in the pack's order", () => {
+    const files = ["src/app/models_test.py", "src/app/test_views.py", "src/tests/test_api.py"];
+    expect(nearMiss(python, scanOf(files))).toEqual({
+      fileCount: 3,
+      excludedBy: [{ glob: "tests/", fileCount: 1 }, { glob: "test_*.py", fileCount: 1 }, { glob: "*_test.py", fileCount: 1 }],
+    });
+  });
+
+  it("counts a file two signals look for once, under the excludes of the signal that names it most closely", () => {
+    // The Complexity pack's PHP signal excludes *.blade.php, which its Blade signal looks for: tests/ is why it is
+    // skipped. The first signal that matches, PHP, would say *.blade.php.
+    expect(nearMiss(packMatch("complexity"), scanOf(["tests/view.blade.php"]))).toEqual({ fileCount: 1, excludedBy: [{ glob: "tests/", fileCount: 1 }] });
+  });
+
+  it("tells an exclude anchored at the root from one at any depth, as .gitignore writes them", () => {
+    const match = { any: [{ files: ["**/*.py"], exclude: ["tests/**", "**/tests/**"], label: "*.py files" }] };
+    expect(nearMiss(match, scanOf(["tests/a.py", "src/tests/b.py"]))).toEqual({
+      fileCount: 2,
+      excludedBy: [{ glob: "/tests/", fileCount: 1 }, { glob: "tests/", fileCount: 1 }],
+    });
+  });
+
+  it("is undefined when none of its files are there, and for a dependency signal", () => {
+    expect(nearMiss(python, scanOf(["main.go", "README.md"]))).toBeUndefined();
+    expect(nearMiss({ any: [{ dependencies: { ecosystem: "pypi", names: ["django"] } }] }, scanOf(["tests/test_views.py"]))).toBeUndefined();
+  });
+});
+
+describe("packLooksFor", () => {
+  it("names each file glob and dependency once, as a person reads the glob", () => {
+    expect(packLooksFor(packMatch("typescript"))).toEqual({ files: ["*.ts", "*.mts", "*.cts", "*.tsx"], dependencies: ["typescript"] });
+  });
+});
+
+describe("fileEndings", () => {
+  it("counts files by ending, lowercased, most first and then alphabetically", () => {
+    const files = ["a.py", "src/B.PY", "src/c.py", "README.md", "pyproject.toml"];
+    expect(fileEndings(scanOf(files))).toEqual([{ ending: ".py", fileCount: 3 }, { ending: ".md", fileCount: 1 }, { ending: ".toml", fileCount: 1 }]);
+  });
+
+  it("leaves out files with no ending", () => {
+    expect(fileEndings(scanOf(["Makefile", "docker/Dockerfile", ".gitignore", "notes."]))).toEqual([]);
+  });
+});
+
+describe("scanRepository's folders not scanned", () => {
+  it("counts, under Git, the listed files in each folder it does not enter, and never lists Git-ignored ones", async () => {
+    const root = await temporaryDirectory("rerail-unseen-");
+    writeFiles(root, {
+      ".gitignore": "local/\n",
+      ".rerail/rules/own.json": "{}\n",
+      "fixtures/app.py": "app = None\n",
+      "testdata/sample.py": "sample = None\n",
+      ".venv/lib/site.py": "site = None\n",
+      "build/generated.py": "generated = None\n",
+      "build/more.py": "more = None\n",
+      "local/output.py": "output = None\n",
+      "notes.md": "notes\n",
+    });
+    execFileSync("git", ["-C", root, "init", "-q"]);
+    const found = scanRepository(root);
+    expect(found.files).toEqual([".gitignore", "notes.md"]);
+    expect(found.git).toBe(true);
+    // .rerail is skipped too, but holds no project code, so it is not named.
+    expect(found.notScanned).toEqual([
+      { folder: "build", fileCount: 2 },
+      { folder: ".venv", fileCount: 1 },
+      { folder: "fixtures", fileCount: 1 },
+      { folder: "testdata", fileCount: 1 },
+    ]);
+  });
+
+  it("names, outside Git, the folders it walked past without entering them, and never version control's", async () => {
+    const root = await temporaryDirectory("rerail-unseen-walk-");
+    writeFiles(root, { ".hg/store/data": "\n", "fixtures/app.py": "app = None\n", "node_modules/pkg/index.js": "\n", "notes.md": "notes\n" });
+    const found = scanRepository(root);
+    expect(found.files).toEqual(["notes.md"]);
+    expect(found.git).toBe(false);
+    expect(found.stoppedEarly).toBe(false);
+    expect(found.notScanned).toEqual([{ folder: "fixtures" }, { folder: "node_modules" }]);
   });
 });
 
@@ -250,7 +371,8 @@ describe("the complexity pack's match", () => {
     [{ "app/Grade.php": "<?php\n", "resources/views/grade.blade.php": "<p></p>\n" }, "matches *.php files in app and *.blade.php files in resources/views", ""],
     [{ "crates/core/src/lib.rs": "pub fn f() {}\n" }, "matches *.rs files in crates/core/src", "crates/core/src"],
     [{ "web/src/App.vue": "<template></template>\n" }, "matches *.vue files in web/src", "web/src"],
-  ])("fits Python, TypeScript, JavaScript, PHP, Blade, Rust and Vue source: %j", async (files, reason, folder) => {
+    [{ "service/src/main/java/com/example/Plan.java": "class Plan {}\n" }, "matches *.java files in service/src/main/java/com/example", "service/src/main/java/com/example"],
+  ])("fits Python, TypeScript, JavaScript, PHP, Blade, Rust, Vue and Java source: %j", async (files, reason, folder) => {
     const root = await temporaryDirectory("rerail-complexity-match-");
     writeFiles(root, files);
     expect(recommendRulePacks(root, [complexity!]).map(found => [found.reason, found.folder])).toEqual([[reason, folder]]);
@@ -266,6 +388,8 @@ describe("the complexity pack's match", () => {
       "tests/views/grade.blade.php": "<p></p>\n",
       "tests/grade.rs": "fn f() {}\n",
       "src/__tests__/Grade.vue": "<template></template>\n",
+      "src/test/java/com/example/Grades.java": "class Grades {}\n",
+      "src/main/java/com/example/GradeTest.java": "class GradeTest {}\n",
       "main.go": "package main\n",
     });
     expect(recommendRulePacks(root, [complexity!])).toEqual([]);
@@ -407,7 +531,7 @@ describe("recommendRulePacks", () => {
     }
   });
 
-  it("reads no package.json that is a symlink, outside the repository or to a device, and none larger than 1 MiB", async () => {
+  it("reads no package.json that is a symlink, outside the repository or to a device, and none larger than 1 MiB", async context => {
     const parent = await temporaryDirectory("rerail-manifest-guard-");
     const typescriptManifest = JSON.stringify({ devDependencies: { typescript: "5.9.0" } });
     writeFiles(parent, { "outside/package.json": typescriptManifest });
@@ -417,14 +541,17 @@ describe("recommendRulePacks", () => {
       // Valid JSON that names typescript, padded past the cap.
       "big/package.json": `${typescriptManifest.slice(0, -1)}, "padding": "${"x".repeat(1024 * 1024)}"}`,
     });
-    mkdirSync(join(root, "linked"));
-    mkdirSync(join(root, "device"));
-    symlinkSync(join(parent, "outside/package.json"), join(root, "linked/package.json"));
-    symlinkSync("/dev/zero", join(root, "device/package.json"));
     execFileSync("git", ["init", "-q", root]);
     execFileSync("git", ["-C", root, "add", "."]);
-
     const from = await withTestPacks();
+    expect(recommendRulePacks(root, from)).toEqual([]);
+
+    // The links last, since a Windows machine that cannot make a file link skips the rest of the test here.
+    mkdirSync(join(root, "linked"));
+    mkdirSync(join(root, "device"));
+    symlinkOrSkip(context, join(parent, "outside/package.json"), join(root, "linked/package.json"));
+    symlinkOrSkip(context, "/dev/zero", join(root, "device/package.json"));
+    execFileSync("git", ["-C", root, "add", "."]);
     expect(recommendRulePacks(root, from)).toEqual([]);
     writeFileSync(join(root, "package.json"), typescriptManifest);
     expect(recommendRulePacks(root, from).map(({ pack: found, reason }) => [found.id, reason])).toEqual([["lang-ts", "matches the typescript dependency in package.json"]]);

@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { type AdapterDelivery, type RerailEventLoop, sessionStartNote } from "../../../src/engine/index.js";
+import { type AdapterDelivery, conflictNote, type RerailEventLoop, sessionStartNote } from "../../../src/engine/index.js";
 import { codexHookOutput, handleCodexEvent } from "../../../src/hosts/codex/codex-hook-adapter.js";
 import { runCodexHook } from "../../../src/hosts/codex/codex-hook.js";
 import { bindSteerReceipt, type HookInput, type HookOptions } from "../../../src/harness/index.js";
@@ -102,16 +102,21 @@ describe("Codex one-shot hook", () => {
     expect(JSON.parse(start.stdout)).toEqual({ systemMessage: "Rerail ✕ not running · start it with: rerail daemon start" });
   });
 
-  it("shows one plain line per steered rule with the link printed, and only the lines at Stop", () => {
+  it("shows one plain line per steered rule with the link printed", () => {
     const linked = (id: string) => delivery("steer", editSteer(id, `Fix ${id}.`), [id], steeredRules([id], "http://127.0.0.1:4791/"));
-    const steers = [linked("a"), linked("b")];
-    expect(codexHookOutput("PostToolUse", steers)).toMatchObject({
+    expect(codexHookOutput("PostToolUse", [linked("a"), linked("b")])).toMatchObject({
       systemMessage: "◆ Rerail · a  steered  ·  why? → http://127.0.0.1:4791/#rule/a\n◆ Rerail · b  steered  ·  why? → http://127.0.0.1:4791/#rule/b",
     });
-    // Codex records a Stop block's reason as the user's turn, so the blocks wait for the next message.
-    expect(codexHookOutput("Stop", steers)).toEqual({
-      systemMessage: "◆ Rerail · a  steered  ·  why? → http://127.0.0.1:4791/#rule/a\n◆ Rerail · b  steered  ·  why? → http://127.0.0.1:4791/#rule/b",
+  });
+
+  it("shows the person a plain line for a conflict a note surfaces, with its card's link printed", () => {
+    const note = conflictNote({ file: "src/model.ts", peer: "jbarnes/shape", author: null, summary: "SQLite stays the system of record", pullRequest: false });
+    const conflict = { id: "conflict:overlap:abc:12345678", text: "your edit overlaps jbarnes/shape: model.ts", url: "http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678" };
+    expect(codexHookOutput("PostToolUse", [{ ...delivery("steer", note), conflict }])).toEqual({
+      systemMessage: "◆ Rerail · your edit overlaps jbarnes/shape: model.ts  ·  open → http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678",
+      hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: note },
     });
+    expect(note).toContain("End your final message with one line telling the user which branch overlaps and what you did.");
   });
 
   it("routes steer and block deliveries through additionalContext or the pending file, never a Stop block", async () => {
@@ -161,7 +166,7 @@ describe("Codex one-shot hook", () => {
     expect(codexHookOutput("SessionEnd", [delivery("steer", "ignored")])).toEqual({});
   });
 
-  it("shows a late steer's line at Stop and gives the coding agent its block at the next message, counted once", async () => {
+  it("holds a turn-end steer, line and all, for the next message, and counts it when its block reaches the agent", async () => {
     const root = await temporaryDirectory();
     const storageRoot = join(root, "sessions");
     const common = { session_id: "codex-session", cwd: root };
@@ -172,16 +177,15 @@ describe("Codex one-shot hook", () => {
     )).stdout) as unknown;
     const late = [delivery("steer", editSteer("a", "Fix a."), ["a"]), delivery("steer", editSteer("b", "Fix b."), ["b"])];
 
-    // Without a daemon the rules stay unlinked, so each line is the header alone.
-    expect(await serve({ ...common, hook_event_name: "Stop", turn_id: "t1", last_assistant_message: "Done." }, scriptedLoop({ "turn-end": late })))
-      .toEqual({ systemMessage: "◆ Rerail · a  steered\n◆ Rerail · b  steered" });
-    expect(receipts).toEqual([["a", "b"]]);
+    expect(await serve({ ...common, hook_event_name: "Stop", turn_id: "t1", last_assistant_message: "Done." }, scriptedLoop({ "turn-end": late }))).toEqual({});
+    expect(receipts).toEqual([]);
 
+    // Without a daemon the rules stay unlinked, so each line is the header alone.
     expect(await serve(
       { ...common, hook_event_name: "PostToolUse", turn_id: "t2", tool_name: "Bash", tool_use_id: "call-2", tool_response: "ok" },
       scriptedLoop({ result: [delivery("steer", editSteer("c", "Fix c."), ["c"])] }),
     )).toEqual({
-      systemMessage: "◆ Rerail · c  steered",
+      systemMessage: "◆ Rerail · a  steered\n◆ Rerail · b  steered\n◆ Rerail · c  steered",
       hookSpecificOutput: {
         hookEventName: "PostToolUse",
         // The held steers reached the agent after it had moved on, and their lead says so; the new one leads as an edit's.
@@ -192,7 +196,7 @@ describe("Codex one-shot hook", () => {
         ].join("\n\n"),
       },
     });
-    expect(receipts).toEqual([["a", "b"], ["c"]]);
+    expect(receipts).toEqual([["a", "b", "c"]]);
     expect(await serve({ ...common, hook_event_name: "Stop", turn_id: "t2", last_assistant_message: "Done." }, scriptedLoop({}))).toEqual({});
   });
 

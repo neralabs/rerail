@@ -8,7 +8,6 @@ import {
   linkSync,
   lstatSync,
   mkdirSync,
-  openSync,
   readdirSync,
   readFileSync,
   readSync,
@@ -17,6 +16,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { physicalPath } from "./checkout-control.js";
+import { openNoFollowSync } from "../no-follow.js";
 import { GitUnavailableError, gitText, runGit } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
 
@@ -34,8 +34,11 @@ function nonGitLocation(requested: string): RepositoryIdentityLocation {
   return { git: false, workspaceRoot: requested, identityPath: join(requested, ".rerail", "repository-id"), main: true };
 }
 
+/** The file in Git's common metadata directory that holds a clone's id, shared by every linked worktree. */
+export const GIT_IDENTITY_FILE = "rerail-repository-id";
+
 /**
- * Where `workspace`'s clone id lives: `rerail-repository-id` in Git's common metadata directory, shared by every
+ * Where `workspace`'s clone id lives: {@link GIT_IDENTITY_FILE} in Git's common metadata directory, shared by every
  * linked worktree, or `.rerail/repository-id` outside Git (or when Git is not installed).
  */
 export function repositoryIdentityLocation(workspace: string): RepositoryIdentityLocation {
@@ -59,7 +62,7 @@ function gitLocation(requested: string, stdout: string): RepositoryIdentityLocat
   if (top === undefined || commonDirectory === undefined || gitDirectory === undefined) {
     throw new Error(`could not resolve Git common directory for ${requested}`);
   }
-  return { git: true, workspaceRoot: top, identityPath: join(commonDirectory, "rerail-repository-id"), main: commonDirectory === gitDirectory };
+  return { git: true, workspaceRoot: top, identityPath: join(commonDirectory, GIT_IDENTITY_FILE), main: commonDirectory === gitDirectory };
 }
 
 /** A recorded checkout's Git registry, as `git worktree list` last gave it, and what the registry then held. */
@@ -164,7 +167,7 @@ const MAX_IDENTITY_BYTES = 128;
 function readIdentityFile(identityPath: string): string | undefined {
   let descriptor: number;
   try {
-    descriptor = openSync(identityPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    descriptor = openNoFollowSync(identityPath, fsConstants.O_RDONLY);
   } catch (error) {
     if (errorCode(error) === "ENOENT") return undefined;
     throw new Error(`Rerail repository identity at ${identityPath} is not a regular file`);

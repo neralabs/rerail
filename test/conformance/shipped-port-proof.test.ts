@@ -4,13 +4,14 @@
  * fails unless pack.json gives its rule examples, which the pack checks prove fire. A candidate fails nothing, but its
  * fixtures expected findings must still cover it.
  */
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadPack, type Divergence } from "../../conformance/languages/pack.js";
 import { reportFailures, runPack } from "../../conformance/languages/runner.js";
 import { fixturesPath } from "../support/oracles.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
 
 const OPTIONS = { fixtures: true, samples: false, date: "2026-01-01" };
 
@@ -42,7 +43,7 @@ describe("a shipped port with no fixture TP", () => {
     writeFileSync(join(directory, "divergences.json"), JSON.stringify([excused(1), excused(3)], null, 2));
   });
 
-  afterEach(() => rmSync(directory, { recursive: true, force: true }));
+  afterEach(() => removeFolderSync(directory));
 
   it("fails the gate when pack.json gives its rule no examples", async () => {
     const report = await runPack(loadPack(directory), OPTIONS);

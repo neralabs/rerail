@@ -293,6 +293,22 @@ impl Usage {
         })
     }
 
+    /// The index of a file whose family's scope the engine does not read yet (registry
+    /// `not-supported-yet`): no binding carries a fact and no name is a site.
+    pub(crate) fn unread(table: &ScopeTable, steps: &Steps<'_>) -> Self {
+        Self {
+            facts: table.scopes.iter().map(|_| HashMap::new()).collect(),
+            sites: Vec::new(),
+            exports: Vec::new(),
+            comment_exports: BTreeSet::new(),
+            occurrences: HashMap::new(),
+            privates: Vec::new(),
+            private_names: Vec::new(),
+            before_local: Vec::new(),
+            cost: steps.cost,
+        }
+    }
+
     /// SQL's index, from the file's query blocks (`sql::SqlScopes::usage`): a binding is used,
     /// and referenced, where AL05's walk finds a reference to it, a CTE also where a relation
     /// selects from it, and a DML target by its own statement. SQL exports nothing.

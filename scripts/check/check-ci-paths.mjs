@@ -96,8 +96,8 @@ export const GROUPS = {
     // step bundles, and the built package.
     entries: ["vitest.config.ts", "integration/**/*.ts", ...PACKAGE_BUILD],
     // The dashboard page daemon-cli.test.ts compares, the model the OMP host loads, Codex's hooks file, the OMP host
-    // the job provisions.
-    reads: [...PACKAGE_READS, "hooks/codex.json", "scripts/host/install-omp-host.mjs"],
+    // the job provisions, the pack claude-hook-rules.test.ts adds from this checkout.
+    reads: [...PACKAGE_READS, "hooks/codex.json", "scripts/host/install-omp-host.mjs", "packs/complexity/package.json"],
   },
   sessions: {
     jobs: ["real-sessions", "provider-smoke"],

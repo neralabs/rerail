@@ -517,7 +517,7 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             }
         }
     }
-    assert_eq!(queries.len(), 1668, "pinned catalog query inventory");
+    assert_eq!(queries.len(), 1669, "pinned catalog query inventory");
     // Every catalog grammar needs a fixture here; an unknown language fails rather than being skipped.
     let fixtures = [
         (
@@ -557,6 +557,11 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             "vue",
             GrammarDialect::TypeScript,
             "function route(a: any, b: any, c: any): number {\n  if (a) return 1;\n  if (b) return 2;\n  if (c) return 3;\n  for (const x of a) { if (x) return 4; }\n  while (b) { if (c) break; }\n  return a && b ? 5 : 6;\n}\n",
+        ),
+        (
+            "java",
+            GrammarDialect::Java,
+            "class Router {\n    int route(boolean a, boolean b, boolean c, int[] v) {\n        if (a) return 1;\n        if (b) return 2;\n        if (c) return 3;\n        for (int x : v) { if (x > 0) return 4; }\n        return a && b ? 5 : 6;\n    }\n}\n",
         ),
     ];
     for (query, _) in &queries {

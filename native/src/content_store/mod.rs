@@ -17,6 +17,8 @@ mod schema;
 mod search_index;
 mod snapshots;
 #[cfg(test)]
+pub(crate) mod test_support;
+#[cfg(test)]
 mod tests;
 mod workspaces;
 
