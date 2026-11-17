@@ -48,16 +48,18 @@ function user(name: string): object {
 }
 
 describe("GitIgnoreMatchers", () => {
-  it("shares one matcher for a checkout while nothing it read changed", async () => {
+  it("shares one matcher for a checkout while nothing it read changed, a configuration change that leaves its rules alone included", async () => {
     const { main } = await checkout();
     const opened = vi.spyOn(loadNativeBinding(), "openGitIgnoreMatcher");
     const matchers = new GitIgnoreMatchers();
     const first = matchers.matcher(main, user("first"));
     expect(first?.ignored("gen/a.py", false)).toBe(true);
     expect(matchers.matcher(main, user("second"))).toBe(first);
+    // A configuration change that names no other excludes file and folds no case (an upstream `git push -u` sets).
+    git(main, "config", "branch.main.remote", "origin");
+    expect(matchers.matcher(main, user("third"))).toBe(first);
     expect(opened).toHaveBeenCalledTimes(1);
-    matchers.release(user("first"));
-    matchers.release(user("second"));
+    for (const name of ["first", "second", "third"]) matchers.release(user(name));
     expect(matchers.size).toBe(0);
   });
 
@@ -111,5 +113,8 @@ describe("GitIgnoreMatchers", () => {
     expect(ask("configured", "named.py")).toBe(false);
     await writeFile(named, "named.py\n");
     expect(ask("named", "named.py")).toBe(true);
+    // Git folds the case of patterns once core.ignoreCase holds (on Windows from `git init` already).
+    git(main, "config", "core.ignoreCase", "true");
+    expect(ask("folded", "GEN/x.py")).toBe(true);
   });
 });
