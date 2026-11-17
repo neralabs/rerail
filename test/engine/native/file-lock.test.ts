@@ -70,27 +70,6 @@ describe.each<[string, LockRequest]>([
     expect((refused as Busy).holder).toMatchObject({ pid: process.pid });
   });
 
-  it("waits while another holds it, then takes it", async () => {
-    const home = await temporaryHome();
-    const events: string[] = [];
-    const firstHolds = Promise.withResolvers<void>();
-    const firstMayEnd = Promise.withResolvers<void>();
-    const first = withHomeLock(home, lock, async () => {
-      events.push("first runs");
-      firstHolds.resolve();
-      await firstMayEnd.promise;
-      events.push("first ends");
-    });
-    await firstHolds.promise;
-    // The second finds the lock held; its first wait lets the first end. No real time passes.
-    const second = withHomeLock(home, { ...lock, waitMs: 60_000, sleep: async () => { firstMayEnd.resolve(); await first; } }, async () => {
-      events.push("second runs");
-    });
-
-    await Promise.all([first, second]);
-    expect(events).toEqual(["first runs", "first ends", "second runs"]);
-  });
-
   it("lets go when the work throws", async () => {
     const home = await temporaryHome();
 
@@ -107,14 +86,44 @@ describe.each<[string, LockRequest]>([
 const lock = ${JSON.stringify({ name: "work", withoutEngine: lock.withoutEngine })};
 ${lock.withoutEngine === "folder" ? `lock.engine = () => { throw new Error("no engine"); };` : ""}
 const take = inside => withHomeLock(${JSON.stringify(home)}, { ...lock, waitMs: 60_000, busy: () => new Error("busy") }, inside);`,
+      busy: /^busy$/u,
       ...size,
     });
 
-    expect(race).toEqual({ overlaps: 0, ran: size.processes * size.rounds, busy: 0, errors: [] });
+    // The OS lock waits, so every racer runs in turn. The folder lock, which only an update takes, tries once: each
+    // round one racer at least takes it, and the rest find it held.
+    const total = size.processes * size.rounds;
+    if (lock.withoutEngine === "folder") {
+      expect({ overlaps: race.overlaps, errors: race.errors, takes: race.ran + race.busy }).toEqual({ overlaps: 0, errors: [], takes: total });
+      expect(race.ran).toBeGreaterThanOrEqual(size.rounds);
+    } else {
+      expect(race).toEqual({ overlaps: 0, ran: total, busy: 0, errors: [] });
+    }
   }, 600_000);
 });
 
 describe("the OS lock", () => {
+  it("waits while another holds it, then takes it", async () => {
+    const home = await temporaryHome();
+    const events: string[] = [];
+    const firstHolds = Promise.withResolvers<void>();
+    const firstMayEnd = Promise.withResolvers<void>();
+    const first = withHomeLock(home, request, async () => {
+      events.push("first runs");
+      firstHolds.resolve();
+      await firstMayEnd.promise;
+      events.push("first ends");
+    });
+    await firstHolds.promise;
+    // The second finds the lock held; its first wait lets the first end. No real time passes.
+    const second = withHomeLock(home, { ...request, waitMs: 60_000, sleep: async () => { firstMayEnd.resolve(); await first; } }, async () => {
+      events.push("second runs");
+    });
+
+    await Promise.all([first, second]);
+    expect(events).toEqual(["first runs", "first ends", "second runs"]);
+  });
+
   it("records its holder while it holds the lock, and keeps the lock file once it lets go", async () => {
     const home = await temporaryHome();
     const locks = join(home, LOCKS_DIR);

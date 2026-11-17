@@ -48,7 +48,10 @@ export interface LockRequest {
   readonly name: string;
   /** The error for a lock another process still holds after the wait, given who holds it if that is known. */
   readonly busy: (holder: LockHolder | undefined) => Error;
-  /** How long to wait while another process holds the lock; 0, the default, tries once. */
+  /**
+   * How long to wait while another process holds the OS lock; 0, the default, tries once. The folder lock, which only an
+   * update takes and never waits for, tries once.
+   */
   readonly waitMs?: number | undefined;
   /** Waits between tries. */
   readonly sleep?: ((ms: number) => Promise<void>) | undefined;
@@ -65,8 +68,6 @@ export interface LockRequest {
   /** The system the home is kept private on (`keepFolderPrivate`); tests pass their own. */
   readonly machine?: PrivateMachine | undefined;
 }
-
-type Wait = Pick<LockRequest, "waitMs" | "sleep">;
 
 /** A lock this process holds: `release` lets go; `forget` removes its files first, while it is still held. */
 interface Held {
@@ -122,7 +123,7 @@ async function take(locks: string, request: LockRequest): Promise<Taken> {
     engine = (request.engine ?? loadNativeBinding)();
   } catch (error) {
     if (request.withoutEngine !== "folder") throw error;
-    return await takeFolderLock(join(locks, `${request.name}-without-engine`), request);
+    return await takeFolderLock(join(locks, `${request.name}-without-engine`));
   }
   return await takeOsLock(engine, locks, request);
 }
@@ -213,11 +214,10 @@ function runningHolder(record: string): LockHolder | undefined {
  * without an init process) reads as gone, as it holds no lock. A dead one whose pid the system has given to another
  * process reads as running: its lock stays until a person removes the folder.
  */
-async function takeFolderLock(folder: string, wait: Wait): Promise<Taken> {
+async function takeFolderLock(folder: string): Promise<Taken> {
   const token = randomUUID();
   const owner = `owner-${token}.json`;
   const staged = `${folder}.${token}.tmp`;
-  const deadline = Date.now() + (wait.waitMs ?? 0);
   await mkdir(staged, { mode: 0o700 });
   try {
     await writeFile(join(staged, owner), holderText(), { mode: 0o600 });
@@ -226,8 +226,7 @@ async function takeFolderLock(folder: string, wait: Wait): Promise<Taken> {
       if (await moveIn(staged, folder)) return { kind: "held", release: () => { letGo(folder, owner); }, forget: async () => {} };
       const found = await folderOwner(folder);
       if (found.kind !== "held" && await clear(folder, found)) continue;
-      if (Date.now() >= deadline) return { kind: "busy", holder: found.kind === "empty" ? undefined : found.holder };
-      await (wait.sleep ?? sleep)(POLL_MS);
+      return { kind: "busy", holder: found.kind === "empty" ? undefined : found.holder };
     }
   } finally {
     // Gone already once moved in. Otherwise it holds the owner file this process just wrote, which a virus scan on
@@ -287,7 +286,7 @@ async function clear(folder: string, found: Exclude<FolderOwner, { kind: "held" 
     // Another taker cleared it first and may hold it now (ENOENT, ENOTEMPTY or EEXIST): the next rename tells.
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT" || code === "ENOTEMPTY" || code === "EEXIST") return true;
-    // On Windows, another process is deleting it or has it open: wait.
+    // On Windows, another process is deleting it or has it open: busy.
     if (heldOnWindows(error)) return false;
     throw error;
   }
