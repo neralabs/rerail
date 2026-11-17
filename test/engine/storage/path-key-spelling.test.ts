@@ -1198,6 +1198,32 @@ describe("path keys an earlier build stored under another spelling", () => {
     expect(earlierBuildReads(databasePath, stored)).toEqual(EARLIER_BUILD_READS);
   });
 
+  // A key that waited could keep the watermark of the open that first met it, so a preference saved as the disk spells
+  // the folder while the key waited would read as a copy and take the earlier build's later change under its spelling.
+  it("keep a preference saved as the disk spells the folder while its earlier spelling waited, when the earlier build changes its own later", async () => {
+    const { folder, databasePath } = await checkoutFolder();
+    onTheSystemDrive(folder);
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    let answers = false;
+    vi.mocked(currentPathKey).mockImplementation(path => {
+      if (path === stored && !answers) throw Object.assign(new Error("ETIMEDOUT: connection timed out, access"), { code: "ETIMEDOUT" });
+      return path === stored ? folder : path;
+    });
+    openRerailDatabase(databasePath).$client.close();
+    expect(spellings(databasePath)).toEqual([{ stored, current: null }]);
+    // While the key waits, a session spelt as the disk spells the folder saves the same choice for Claude Code.
+    write(databasePath, [["INSERT INTO presentation_preferences (repository, host, presence) VALUES (?, 'claude-code', 'silent')", folder]]);
+    answers = true;
+    openRerailDatabase(databasePath).$client.close();
+    expect(spellings(databasePath)).toEqual([{ stored, current: folder }]);
+
+    // The earlier build sets its own status line back to compact.
+    write(databasePath, [["UPDATE presentation_preferences SET presence = 'compact' WHERE repository = ? AND host = 'claude-code'", stored]]);
+    expect(fileRows(databasePath, "SELECT presence FROM presentation_preferences WHERE repository = ? AND host = 'claude-code'", folder))
+      .toEqual([{ presence: "silent" }]);
+  });
+
   // `existsSync` reads any failure as a folder that is not there, so a folder the check could not read kept its spelling.
   // Two links that lead to each other fail the check with ELOOP; Windows answers it for two such junctions without an
   // error, so the case is made off Windows, with the lookup run as on Windows.
