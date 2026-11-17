@@ -64,7 +64,8 @@ transducer, and what is done ahead of time, data-parallel.
 ### 2. Per TU, sequential: tier 2 words over a re-entrant token source
 
 Expansion is a tier 2 program: words in the transducer's `Program`, written once by hand in
-`rir` (`c_pp/expand.rir`, page 12 §2.4's route), assembled and lowered by the same compiler.
+`rir` (`rerail-c-directives`' `expand/expand.rir`, page 12 §2.4's route), assembled and lowered
+by the same compiler.
 The configuration is data the words read (tables in `Program` and the TU's inputs), not code.
 
 The new words and the state they act on:
@@ -167,6 +168,46 @@ directives' ladder, so mode (a) keeps its lean tape.
   `R & ~S` gave every backend Metal's answer, but it cost JSON's tier 2 its shape (30 calls of
   its own, where it has none), so it was not kept. The grammar keeps its starts out of its runs
   (`run lit_bytes & ~lit_start`). Work queue Q32 has the guard this needs.
+
+## Stage 2, built: the words, on the interpreter
+
+The words are `rerail-compiler`'s `pp_words` (opcodes `0x67`–`0x76` in `program.rs`), and the
+program is `rerail-c-directives`' `expand/expand.rir` (84 words; C's leaves out its `C++ only`
+lines).
+- **The words.** Each acts on one store, and a test runs the next word or skips it, as tier 2's
+  tests do:
+  - `READ` and `LINE` read: the next token unexpanded, the directive line's next token;
+  - `IS`, `PEEK` (the next token, unread), `LOOKUP` and `MACRO` test;
+  - `PAINT` and `PUT` act on `T`;
+  - `FRAME`, `ARG` (its modes: append, `(`, `)`, `,`, the count, drop), `PRE`/`KEEP` and
+    `SUBST` make a call;
+  - `DEFINE`, `UNDEF` and `SKIPLINE` are the directives.
+- **The control is the program's.** `one` (lean `Pp::next`), `raw` (`lex_raw`), the argument
+  loop and the pre-expansion loop are `rir`, with `PUSH`/`RETURN` calls. A call's arguments are
+  expanded by calling `one` again, over a stop source.
+- **A run of its own.** `pp_words::run` beside `stream::run`: the parser's words act on nodes
+  and marks over tier 1's records, these on sources, frames and a table. One program has one
+  family, and `rir_asm::validate` sends it to its verifier: every cycle reads a token, a call
+  counting as a read where every way through its callee reads.
+- **Exact where the order shows.** An argument is expanded where the substitution first asks
+  for it, in the lean pass's order, and one asked for only inside a `__VA_OPT__` only where the
+  variadic argument is present (`Def::pre`, made once per `#define`): `__COUNTER__` and the
+  diagnostics will see the same order.
+- **A paste is a table.** The kinds of the two tokens and the punctuators (`ppop`, the token
+  grammar's `munch` list, `%:` and `%:%:`) decide it, and `ppsuffix` (C++) lets a literal take an
+  identifier. A raw string's prefix pasted refuses the TU.
+- **Spelling.** A file token is its bytes; a literal a splice is inside is spelled by phase 2,
+  in a second buffer of the TU (`expand::tape`).
+- **Found and fixed on the way:**
+  - The lean pass dropped a pasted digraph's `DIGRAPH` flag (`<` `##` `:`), so it read unlike the
+    same `<:` from a file.
+  - Stage 1 refused every `\` in code. Only `\u` and `\U` need refusing; a lone `\` is now an
+    `other` token, as the lean lexer reads it.
+- **Tests:** the standard's examples (C17 §6.10.3.3–5, C++20 `__VA_OPT__`), GNU's comma and
+  named variadics, painting, calls across lines and with the wrong count, every kind of paste,
+  and stringizing. Each is run in C and in C++, and equals the lean pass's tokens, kinds and
+  flags. Corpus: of the 3,135 files, 1,681 are in stage 2's reach (no conditionals, `#embed` or
+  built-ins), and all 1,681 expand as the lean pass does.
 
 ## Open
 

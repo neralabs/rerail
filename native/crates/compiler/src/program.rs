@@ -97,6 +97,51 @@ pub const COUNT: u8 = 0x65;
 /// string's `\u` escapes where it notes one.
 pub const CHECK: u8 = 0x66;
 
+// The preprocessing words (decision 0348, `pp_words`): tier 2's words over a stack of token
+// sources (a file's tape, a range of the TU's arena), with a token register `T`, a macro register
+// `D`, the macro table and a stack of call frames. A test runs the next word where it holds and
+// skips it where not.
+/// `T` ← the next token, unexpanded: an ended source left (its macro enabled again), a stop
+/// source's end read as `EOF` with `STOP`.
+pub const READ: u8 = 0x67;
+/// A test: `T` ← the directive line's next token (the file source on top); not where it ended.
+pub const LINE: u8 = 0x68;
+/// A test of `T`: `m=0` its kind is the operand; `m=1` it is spelled string `operand`; `m=3` it is
+/// a directive's `#` (a line's first token, read from a file).
+pub const IS: u8 = 0x69;
+/// A test of the next token, unread (through ended sources, never past a stop): spelled string
+/// `operand`.
+pub const PEEK: u8 = 0x6a;
+/// A test: `D` ← the macro `T` names, unless `T` is painted.
+pub const LOOKUP: u8 = 0x6b;
+/// A test of `D`: `m=0` disabled (being expanded); `m=1` function-like.
+pub const MACRO: u8 = 0x6c;
+/// `T` painted: never expanded again.
+pub const PAINT: u8 = 0x6d;
+/// `T` onto the output tape.
+pub const PUT: u8 = 0x6e;
+/// A call frame for `D`, named by `T` (a function-like macro's first argument opened).
+pub const FRAME: u8 = 0x6f;
+/// The top frame's arguments: `m=0` `T` appended; `m=1` a `(`, appended; `m=2` a test, a `)`:
+/// the call's end at depth 0, else appended; `m=3` a `,`: a new argument at depth 0 (not the
+/// variadic one's), else appended; `m=4` a test, the call's end: the arguments' count right, else
+/// the frame dropped and `T` its name, painted; `m=5` the frame dropped (no `)`).
+pub const ARG: u8 = 0x70;
+/// `m=0` a test: the top frame's next argument to expand before substitution, pushed as a stop
+/// source with a level opened for its tokens; `m=1`: that level closed, the argument's expansion.
+pub const PRE: u8 = 0x71;
+/// `T` onto the open level.
+pub const KEEP: u8 = 0x72;
+/// The top frame's macro substituted (`#`, `##`, `__VA_OPT__`, the arguments), into the arena,
+/// the frame dropped, the result pushed as a source that disables the macro while it is read.
+pub const SUBST: u8 = 0x73;
+/// A `#define`'s line read into the macro table (a malformed one left).
+pub const DEFINE: u8 = 0x74;
+/// An `#undef`'s line read: its macro taken out of the table.
+pub const UNDEF: u8 = 0x75;
+/// The directive line's tokens left unread.
+pub const SKIPLINE: u8 = 0x76;
+
 pub const NAMED: u8 = 1;
 pub const GREEDY: u8 = 1;
 pub const EXTRA: u8 = 2;
@@ -161,6 +206,18 @@ pub struct Words {
     /// at `ACCEPT`, the file is refused where `L` holds at a bit of `A`. As the lean lexer checks
     /// a string's `\u` escapes where it notes one.
     pub local_checks: Vec<LocalCheck>,
+    /// The preprocessing words' tables (`pp_words`), when the program has them.
+    pub pp: PpTables,
+}
+
+/// The preprocessing words' tables: what a paste (`##`) may make, which a dialect sets.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PpTables {
+    /// The punctuators (`ppop sN`): two punctuators paste into one where their bytes spell one.
+    pub ops: Vec<u16>,
+    /// A literal pastes with an identifier after it into one literal, its suffix (`ppsuffix`,
+    /// C++'s user-defined literals).
+    pub suffix: bool,
 }
 
 /// A local check (`Words::local_checks`): at each byte `j` of mask `mask`, `ops`' last value at

@@ -40,6 +40,24 @@ pub fn compiled(cpp: bool) -> Result<&'static Compiled, &'static str> {
     cell.get_or_init(|| compile_kinds(&grammar(cpp), KINDS, &[])).as_ref().map_err(String::as_str)
 }
 
+static C_WORDS: std::sync::OnceLock<Result<rerail_compiler::program::Words, String>> = std::sync::OnceLock::new();
+static CPP_WORDS: std::sync::OnceLock<Result<rerail_compiler::program::Words, String>> = std::sync::OnceLock::new();
+
+/// The grammar lowered to the transducer's words only (no Cranelift), the first time: the
+/// interpreter's input.
+pub fn lowered(cpp: bool) -> Result<&'static rerail_compiler::program::Words, &'static str> {
+    let cell = if cpp { &CPP_WORDS } else { &C_WORDS };
+    cell.get_or_init(|| crate::lower_kinds(&grammar(cpp), KINDS, &[]).map(|l| l.0)).as_ref().map_err(String::as_str)
+}
+
+/// `src`'s tokens by the interpreter, or `None` where it refuses the file.
+pub fn interpreted(src: &[u8], cpp: bool) -> Option<Vec<Tok>> {
+    let program = lowered(cpp).ok()?;
+    let run = program.block_programs[0].run(src);
+    let nodes = rerail_compiler::stream::run(program, src, &run).ok()?;
+    read(&rerail_compiler::stream::image(&nodes, &program.readings.extras, 0, src), src).ok()
+}
+
 /// A token tape's tokens (of file `src`), with their flags: `BOL` a line's first, `SPACE` where
 /// the byte before is white space or a comment's, not the line break the token starts after.
 pub fn read(image: &[u8], src: &[u8]) -> Result<Vec<Tok>, String> {
@@ -142,6 +160,7 @@ mod tests {
             "\u{feff}int a;\n",
             "a\r\nb \r\n c\r\n",
             "x \\\n y\n",
+            "a \\ b\\n c\\ \\\n d \\",
             "",
             "a",
         ];

@@ -861,7 +861,8 @@ impl<'a> Pp<'a> {
             self.diag(f, 0, Diag::BadPaste, &text);
             return Err(());
         }
-        Ok(self.scratch_tok(t.kind, t.punct, &text, l.flags & (BOL | SPACE), id))
+        // A digraph made is one, as one read from a file is.
+        Ok(self.scratch_tok(t.kind, t.punct, &text, (l.flags & (BOL | SPACE)) | (t.flags & DIGRAPH), id))
     }
 
     /// A built-in's tokens for the call (or use) `t`.

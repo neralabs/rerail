@@ -834,6 +834,17 @@ pass.
   tape-format, Metal, rr-parser and parser-tests sources of each. So it came in with that line,
   not with 0327's or 0348's work. Found by the farm run for 0348 stage 1.
 
+### Q34. Lowering C's token grammar takes minutes in a debug build
+
+- **Keep**: the c-directives tests' claims (every backend's tape, the expansion's tokens).
+- **Done when**: a test that lowers `bitlex_tokens/tokens.bitlex` (no Cranelift) runs in well
+  under a minute on the farm, by finding which pass of `lower_kinds` takes the time and making
+  it cheaper, not by raising the timeout or the crate's opt-level (a profile setting every
+  worktree's builds share).
+- **Record** (2026-11-17): on the farm (cargo, debug), `the_examples_expand_as_the_lean_pass_does`
+  took 416 s, lowering C's and C++'s grammars and interpreting 14 small files twice; the
+  nextest override ends a c-directives test at 480 s. Under Relax the same test takes 43 s.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives

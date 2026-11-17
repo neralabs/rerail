@@ -344,6 +344,7 @@ pub fn image_text(image: &[u8]) -> Result<String, String> {
 
 mod facts;
 pub use facts::Facts;
+pub mod expand;
 pub mod tokens;
 
 /// `src`'s mode (a) facts: from the compiled grammar's tape where it reads the file, else (a

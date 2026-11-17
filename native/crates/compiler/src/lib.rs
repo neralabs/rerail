@@ -41,6 +41,9 @@ pub mod native_cpu_stream;
 pub mod native_cpu_tape;
 pub mod native_ir;
 pub mod program;
+pub mod pp_words;
+#[cfg(test)]
+mod pp_words_tests;
 pub mod records;
 pub mod rir_asm;
 pub mod rir_text;

@@ -1,0 +1,212 @@
+program - ir=7 grammar=none
+; Decision 0348: a translation unit's macro expansion, as preprocessing words (the compiler's
+; `pp_words`, which says what each word does). The lean preprocessor's `Pp::next` is its
+; reference. A line ending `; C++ only` is left out of C's program (`expand::program`).
+  mode set=0 query=0
+  string 0 "("
+  string 1 ")"
+  string 2 ","
+  string 3 "define"
+  string 4 "undef"
+  string 5 "<<="
+  string 6 ">>="
+  string 7 "..."
+  string 8 "->*"
+  string 9 "<=>"
+  string 10 "->"
+  string 11 "++"
+  string 12 "--"
+  string 13 "<<"
+  string 14 ">>"
+  string 15 "<="
+  string 16 ">="
+  string 17 "=="
+  string 18 "!="
+  string 19 "&&"
+  string 20 "||"
+  string 21 "*="
+  string 22 "/="
+  string 23 "%="
+  string 24 "+="
+  string 25 "-="
+  string 26 "&="
+  string 27 "^="
+  string 28 "|="
+  string 29 "::"
+  string 30 ".*"
+  string 31 "<:"
+  string 32 ":>"
+  string 33 "<%"
+  string 34 "%>"
+  string 35 "%:"
+  string 36 "%:%:"
+  string 37 "##"
+  string 38 "#"
+  string 39 "("
+  string 40 ")"
+  string 41 "["
+  string 42 "]"
+  string 43 "{"
+  string 44 "}"
+  string 45 ";"
+  string 46 ","
+  string 47 "~"
+  string 48 "?"
+  string 49 ":"
+  string 50 "."
+  string 51 "="
+  string 52 "!"
+  string 53 "+"
+  string 54 "-"
+  string 55 "*"
+  string 56 "/"
+  string 57 "%"
+  string 58 "^"
+  string 59 "&"
+  string 60 "|"
+  string 61 "<"
+  string 62 ">"
+  ppop s5
+  ppop s6
+  ppop s7
+  ppop s8  ; C++ only
+  ppop s9  ; C++ only
+  ppop s10
+  ppop s11
+  ppop s12
+  ppop s13
+  ppop s14
+  ppop s15
+  ppop s16
+  ppop s17
+  ppop s18
+  ppop s19
+  ppop s20
+  ppop s21
+  ppop s22
+  ppop s23
+  ppop s24
+  ppop s25
+  ppop s26
+  ppop s27
+  ppop s28
+  ppop s29
+  ppop s30  ; C++ only
+  ppop s31
+  ppop s32
+  ppop s33
+  ppop s34
+  ppop s35
+  ppop s36
+  ppop s37
+  ppop s38
+  ppop s39
+  ppop s40
+  ppop s41
+  ppop s42
+  ppop s43
+  ppop s44
+  ppop s45
+  ppop s46
+  ppop s47
+  ppop s48
+  ppop s49
+  ppop s50
+  ppop s51
+  ppop s52
+  ppop s53
+  ppop s54
+  ppop s55
+  ppop s56
+  ppop s57
+  ppop s58
+  ppop s59
+  ppop s60
+  ppop s61
+  ppop s62
+  ppsuffix  ; C++ only
+  ; main: the TU's tokens, macros expanded, onto the output tape.
+  0000 PUSH @0002
+  0001 GOTO @0007
+  0002 IS m=0 8  ; EOF
+  0003 GOTO @0006
+  0004 PUT 0
+  0005 GOTO @0000
+  0006 ACCEPT 0
+  ; one: T <- the next token, macros expanded (lean `Pp::next`).
+  0007 PUSH @0009
+  0008 GOTO @0062
+  0009 LOOKUP 0  ; an identifier, not painted, naming a macro
+  0010 GOTO @0012
+  0011 RETURN 0
+  0012 MACRO m=0 0  ; being expanded: painted
+  0013 GOTO @0018
+  0014 MACRO m=1 0
+  0015 GOTO @0020
+  0016 FRAME 0  ; object-like
+  0017 GOTO @0049
+  0018 PAINT 0
+  0019 RETURN 0
+  0020 PEEK m=1 s0  ; a call only where `(` follows
+  0021 GOTO @0023
+  0022 RETURN 0
+  0023 FRAME 0
+  0024 READ 0  ; the `(`
+  ; args: the call's arguments, unexpanded, to its `)`.
+  0025 PUSH @0027
+  0026 GOTO @0062
+  0027 IS m=0 8  ; EOF (or a stop source's end): no `)`
+  0028 GOTO @0047
+  0029 IS m=1 s0
+  0030 GOTO @0037
+  0031 IS m=1 s1
+  0032 GOTO @0039
+  0033 IS m=1 s2
+  0034 GOTO @0042
+  0035 ARG m=0 0
+  0036 GOTO @0025
+  0037 ARG m=1 0
+  0038 GOTO @0025
+  0039 ARG m=2 0  ; the call's `)`, at depth 0
+  0040 GOTO @0044
+  0041 GOTO @0025
+  0042 ARG m=3 0
+  0043 GOTO @0025
+  0044 ARG m=4 0  ; the count right
+  0045 GOTO @0049
+  0046 RETURN 0  ; else T is the call's name, painted
+  0047 ARG m=5 0
+  0048 GOTO @0007
+  ; pre: each argument substitution expands, expanded in isolation, in the order it asks.
+  0049 PRE m=0 0
+  0050 GOTO @0052
+  0051 GOTO @0060
+  0052 PUSH @0054
+  0053 GOTO @0007
+  0054 IS m=0 8  ; the argument's end
+  0055 GOTO @0058
+  0056 KEEP 0
+  0057 GOTO @0052
+  0058 PRE m=1 0
+  0059 GOTO @0049
+  0060 SUBST 0  ; read next, its macro disabled while it is
+  0061 GOTO @0007
+  ; raw: T <- the next token, unexpanded; directives carried out as their `#` is read.
+  0062 READ 0
+  0063 IS m=3 0
+  0064 GOTO @0066
+  0065 RETURN 0
+  0066 LINE 0
+  0067 GOTO @0069
+  0068 GOTO @0062  ; the null directive
+  0069 IS m=1 s3
+  0070 GOTO @0075
+  0071 IS m=1 s4
+  0072 GOTO @0077
+  0073 SKIPLINE 0
+  0074 GOTO @0062
+  0075 DEFINE 0
+  0076 GOTO @0062
+  0077 UNDEF 0
+  0078 GOTO @0062
+

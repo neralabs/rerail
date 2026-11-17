@@ -1,0 +1,204 @@
+use super::*;
+
+/// The words over the token tape by the interpreter (the same tape as every backend's,
+/// `tokens::tests`), so a test compiles no grammar through Cranelift.
+fn expand(src: &[u8], cpp: bool) -> Result<Vec<Out>, String> {
+    expand_tokens(src, cpp, tokens::interpreted(src, cpp))
+}
+
+/// The words' tokens equal the lean preprocessor's, kinds, spellings and flags, in C and C++.
+#[track_caller]
+fn same(src: &str) {
+    for cpp in [false, true] {
+        let got = expand(src.as_bytes(), cpp).unwrap_or_else(|e| panic!("cpp {cpp}: {e}\n{src}"));
+        let want = lean(src.as_bytes(), cpp);
+        let show = |v: &[Out]| v.iter().map(|(k, f, s)| format!("{}:{k}:{f}", String::from_utf8_lossy(s))).collect::<Vec<_>>().join(" ");
+        assert_eq!(show(&got), show(&want), "cpp {cpp}\n{src}");
+    }
+}
+
+#[test]
+fn the_programs_assemble() {
+    for cpp in [false, true] {
+        program(cpp).unwrap_or_else(|e| panic!("cpp {cpp}: {e}"));
+    }
+    assert!(program(true).unwrap().pp.suffix && !program(false).unwrap().pp.suffix);
+}
+
+/// The examples: the standard's (C17 §6.10.3.3–5, C++20's `__VA_OPT__`) and the cases the lean
+/// pass's tests name. One test, so the token grammar is lowered once a process.
+const EXAMPLES: &[(&str, &str)] = &[
+    (
+        "C17 example 3, rescanning",
+        r#"#define x 3
+#define f(a) f(x * (a))
+#undef x
+#define x 2
+#define g f
+#define z z[0]
+#define h g(~
+#define m(a) a(w)
+#define w 0,1
+#define t(a) a
+#define p() int
+#define q(x) x
+#define r(x,y) x ## y
+#define str(x) # x
+f(y+1) + f(f(z)) % t(t(g)(0) + t)(1);
+g(x+(3,4)-w) | h 5) & m
+(f)^m(m);
+p() i[q()] = { q(1), r(2,3), r(4,), r(,5), r(,) };
+char c[2][6] = { str(hello), str() };
+"#,
+    ),
+    (
+        "C17 example 4, strings and pastes",
+        r#"#define str(s) # s
+#define xstr(s) str(s)
+#define debug(s, t) printf("x" # s "= %d, x" # t "= %s", \
+ x ## s, x ## t)
+#define INCFILE(n) vers ## n
+#define glue(a, b) a ## b
+#define xglue(a, b) glue(a, b)
+#define HIGHLOW "hello"
+#define LOW LOW ", world"
+debug(1, 2);
+fputs(str(strncmp("abc\0d", "abc", '\4') // this goes away
+ == 0) str(: @\n), s);
+xstr(INCFILE(2).h)
+glue(HIGH, LOW);
+xglue(HIGH, LOW)
+"#,
+    ),
+    ("C17 example 5, placemarkers", "#define t(x,y,z) x ## y ## z\nint j[] = { t(1,2,3), t(,4,5), t(6,,7), t(8,9,),\n t(10,,), t(,11,), t(,,12), t(,,) };\n"),
+    (
+        "C17 example 7, variadic",
+        r#"#define debug(...) fprintf(stderr, __VA_ARGS__)
+#define showlist(...) puts(#__VA_ARGS__)
+#define report(test, ...) ((test)?puts(#test):\
+ printf(__VA_ARGS__))
+debug("Flag");
+debug("X = %d\n", x);
+showlist(The first, second, and third items.);
+report(x>y, "x is %d but y is %d", x, y);
+"#,
+    ),
+    (
+        "__VA_OPT__",
+        r#"#define F(...) f(0 __VA_OPT__(,) __VA_ARGS__)
+#define G(X, ...) f(0, X __VA_OPT__(,) __VA_ARGS__)
+#define SDEF(sname, ...) S sname __VA_OPT__(= { __VA_ARGS__ })
+#define EMP
+F(a,b,c)
+F()
+F(EMP)
+G(a,b,c)
+G(a,)
+G(a)
+SDEF(foo);
+SDEF(bar, 1, 2);
+"#,
+    ),
+    (
+        "__VA_OPT__, C++20's examples",
+        r#"#define LPAREN() (
+#define G(Q) 42
+#define F(R, X, ...) __VA_OPT__(G R X) )
+int x = F(LPAREN(), 0, <:-);
+#define H2(X, Y, ...) __VA_OPT__(X ## Y,) __VA_ARGS__
+H2(a, b, c, d)
+#define H3(X, ...) #__VA_OPT__(X##X X##X)
+H3(, 0)
+#define H4(X, ...) __VA_OPT__(a X ## X) ## b
+H4(, 1)
+#define H5A(...) __VA_OPT__()/**/__VA_OPT__()
+#define H5B(X) a ## X ## b
+#define H5C(X) H5B(X)
+H5C(H5A())
+"#,
+    ),
+    ("GNU's comma and named variadics", "#define e(fmt, ...) p(fmt, ## __VA_ARGS__)\n#define n(fmt, args...) p(fmt, ## args)\ne(x) e(x, 1, 2) n(y) n(y, 3)\n"),
+    ("painted names stay painted", "#define f(a) a*g\n#define g(a) f(a)\nf(2)(9)\n#define AA BB\n#define BB AA\nAA BB\n"),
+    ("calls across lines", "#define f(a, b) [a|b]\nf(1,\n2) f(1) f\n(3, 4) f + f(\n#define g 5\ng, g)\n"),
+    ("wrong counts, no `)`", "#define f(a) a\nf(1, 2) f() f(f(f)) x f(\n"),
+    ("no parameters", "#define e() E\ne() e( ) e(1) e\n"),
+    (
+        "pastes of every kind",
+        concat!(
+            "#define P(a, b) a ## b\n",
+            "P(x, y) P(x, 12) P(x, 1.5) P(1, e) P(1e, +) P(1, .) P(1, +) P(., 5) P(., x)\n",
+            "P(-, >) P(<, <=) P(<, :) P(%, >) P(#, #) P(/, /) P(+, -) P(L, \"s\") P(u8, 'c') P(x, \"s\")\n",
+            "P(\"s\", _x) P(\"s\", 1) P(-, 1) P(, ) P(a, ) P(, b) P(., .) P(.., .)\n",
+        ),
+    ),
+    ("stringizing", "#define s(x) #x\n#define t(...) #__VA_ARGS__\ns(  a  +  b ) s(\"q\\\"\" 'c' \\n) s() t(a,  b , c) s(\n  x\n  y)\n"),
+    ("undefines and redefinitions", "#define A 1\nA\n#undef A\nA\n#define A 2\nA\n#undef B\n#define F(x) x\n#undef F\nF(1)\n# \n#pragma x\nA\n"),
+];
+
+#[test]
+fn the_examples_expand_as_the_lean_pass_does() {
+    let failed: Vec<String> = EXAMPLES.iter().filter_map(|(name, src)| std::panic::catch_unwind(|| same(src)).err().map(|_| (*name).to_owned())).collect();
+    assert!(failed.is_empty(), "differ: {failed:?}");
+}
+
+/// Why stage 2 does not run `src`, where it does not: conditionals, `#embed` and the built-ins come
+/// in stage 3. (An `#include` finds nothing here, in both passes: the TU is one file.)
+fn outside_stage_2(src: &[u8], cpp: bool) -> Option<&'static str> {
+    let toks = tokens::interpreted(src, cpp)?;
+    let text = |t: &tokens::Tok| &src[t.start as usize..t.end as usize];
+    for (k, t) in toks.iter().enumerate() {
+        if t.kind == "hash" && t.flags & BOL != 0 {
+            let name = toks.get(k + 1).filter(|n| n.flags & BOL == 0).map(text).unwrap_or(b"");
+            if !matches!(name, b"define" | b"undef" | b"" | b"error" | b"warning" | b"ident" | b"sccs" | b"include" | b"include_next" | b"import" | b"pragma" | b"line") {
+                return Some("a directive of stage 3");
+            }
+        }
+        if t.kind == "identifier" && rerail_c_pp::macros::BUILTINS.iter().any(|b| b.0.as_bytes() == text(t)) {
+            return Some("a built-in macro");
+        }
+    }
+    None
+}
+
+/// The corpus's files, each a TU of its own: the words' tokens equal the lean pass's on every
+/// file stage 2 runs.
+#[test]
+#[ignore = "reads the corpus (~/orca/rerail-shared/lean-corpus, or RERAIL_C_CORPUS)"]
+fn the_corpus_expands_as_the_lean_pass_does() {
+    let root = std::env::var("RERAIL_C_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"));
+    let (mut same, mut out, mut differ) = (0, std::collections::BTreeMap::<String, usize>::new(), Vec::new());
+    for (dir, cpp) in [("c", false), ("cpp", true)] {
+        let Ok(entries) = std::fs::read_dir(root.join(dir)) else { continue };
+        let mut paths: Vec<_> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+        paths.sort();
+        for p in paths {
+            let src = std::fs::read(&p).unwrap();
+            if tokens::interpreted(&src, cpp).is_none() {
+                *out.entry("the token grammar refuses it".into()).or_default() += 1;
+                continue;
+            }
+            if let Some(why) = outside_stage_2(&src, cpp) {
+                *out.entry(why.into()).or_default() += 1;
+                continue;
+            }
+            match expand(&src, cpp) {
+                Err(e) => *out.entry(e.chars().take(80).collect()).or_default() += 1,
+                Ok(got) if got == lean(&src, cpp) => same += 1,
+                Ok(got) => {
+                    let want = lean(&src, cpp);
+                    let k = got.iter().zip(&want).position(|(a, b)| a != b).unwrap_or(got.len().min(want.len()));
+                    let show = |v: &[Out]| v[k.saturating_sub(2)..(k + 3).min(v.len())].iter().map(|(k, f, s)| format!("{}:{k}:{f}", String::from_utf8_lossy(s))).collect::<Vec<_>>().join(" ");
+                    differ.push(format!("{}: token {k} of {}/{}: words [{}] lean [{}]", p.display(), got.len(), want.len(), show(&got), show(&want)));
+                }
+            }
+        }
+    }
+    eprintln!("the same {same}, not run {}, differ {}", out.values().sum::<usize>(), differ.len());
+    for (why, n) in &out {
+        eprintln!("  {n:5} {why}");
+    }
+    for d in differ.iter().take(15) {
+        eprintln!("  {d}");
+    }
+    assert!(differ.is_empty());
+}

@@ -10,8 +10,9 @@
 # and flags. The lines marked `C++ only` are left out of C's grammar (`TOKENS_C`).
 #
 # What it does not read goes to the lean lexer: as in the directives' grammar (`06-raw`), and a
-# byte past ASCII in code (an identifier's by its XID class), a `\` in code that splices no line
-# (`\u` names), a splice between two tokens' bytes, and C++'s `<::`.
+# byte past ASCII in code (an identifier's by its XID class), a `\u` or `\U` in code (a name in
+# an identifier; a lone `\` is a token of its own, `other`), a splice between two tokens' bytes,
+# and C++'s `<::`.
 
 lexer c_pp_tokens
 
@@ -119,7 +120,9 @@ mask blank      = (code & blankc) | (cr & next(lf)) | comment | splice | bom_byt
 
 class high      = 0x80..0xff
 escape "a byte past ASCII in code" when code & high & ~bom_bytes
-escape "a `\` in code that splices no line" when code & backslash & ~splice_bs
+class ucn_u     = 'u' 'U'
+mask lone_bs    = code & backslash & ~splice_bs
+escape "a `\u` or `\U` in code" when lone_bs & next(ucn_u)
 # A splice with code right before it and right after it: the lean lexer reads the two as one text.
 mask solid      = code & ~blank & ~lf & ~cr
 escape "a splice between two tokens' bytes" when splice_bs & prev(solid) & (next(solid, 2) | (next(cr) & next(solid, 3)))
@@ -193,13 +196,13 @@ munch op over code & opc & ~number_b {
 }
 
 class otherc    = 0x00..0x08 0x0e..0x1f '@' '`' 0x7f
-token other      = start code & otherc
+token other      = start (code & otherc) | lone_bs
 
 skip blank | (nl & code)
 
 # --- Flags ---------------------------------------------------------------------------------------
 
-mask starts     = id_start | num_start | lit_start | munch_op_win3 | (code & otherc)
+mask starts     = id_start | num_start | lit_start | munch_op_win3 | (code & otherc) | lone_bs
 # A line break outside a block comment (or the file's start) since the token before.
 mask eol        = nl & ~f_block & ~f_raw
 mask gap        = blank | nl

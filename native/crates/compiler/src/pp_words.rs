@@ -1,0 +1,1136 @@
+//! The preprocessing words (decision 0348): tier 2's words over a re-entrant token source, and
+//! their interpreter, which is their meaning.
+//!
+//! A translation unit's expansion is a program of these words (`rerail-c-directives`'
+//! `expand.rir`). The machine they act on:
+//! - **sources**, a stack of cursors: a file's token tape (read-only), or a range of the TU's token
+//!   arena. An ended source is left as `READ` passes it; one that carries a macro enables it again
+//!   (clang's painting). A stop source's end reads as `EOF` with `STOP` and is never passed: an
+//!   argument expanded before substitution ends there.
+//! - **the arena**, append-only: arguments, substituted bodies, and the tokens of `##` and `#`,
+//!   their spellings in the scratch bytes (`buf` 0).
+//! - **the macro table**, by open addressing on a word-at-a-time key of the name, then its bytes.
+//!   A definition's body is a range of its file's tape, never copied, with a mark per token (its
+//!   parameter, a `__VA_OPT__`, a paste).
+//! - **frames**, one per call being made: its arguments (arena ranges), and each argument's
+//!   expansion once it is made (`PRE`), in the order the substitution first asks for it.
+//! - **levels**, one per argument being expanded: the tokens it gave so far (`KEEP`), moved to the
+//!   arena when it ends, so an argument's expansion is one range however deep its calls nest.
+//! - the registers: `T`, the token read last, and `D`, the macro found last.
+//!
+//! Every store has a bound from the work (`Bounds::of`); past one the TU is refused, to the lean
+//! pass. Expansion's worst case is exponential, and a refusal is the answer to it.
+
+use crate::Error;
+use crate::program::*;
+use std::collections::HashMap;
+
+/// Whether a word is one of the preprocessing words.
+pub fn is_pp(opcode: u8) -> bool {
+    (READ..=SKIPLINE).contains(&opcode)
+}
+
+// A token's kind.
+pub const IDENT: u8 = 0;
+pub const NUMBER: u8 = 1;
+/// A string or character literal, its prefix and (C++) suffix included.
+pub const LITERAL: u8 = 2;
+pub const PUNCT: u8 = 3;
+/// `<:` `:>` `<%` `%>`.
+pub const DIGRAPH: u8 = 4;
+pub const HASH: u8 = 5;
+pub const HASHHASH: u8 = 6;
+pub const OTHER: u8 = 7;
+/// The input's end, or (with `STOP`) a stop source's.
+pub const EOF: u8 = 8;
+pub const KINDS: u8 = 9;
+
+// A token's flags.
+/// A line's first token.
+pub const BOL: u8 = 1;
+/// White space before it.
+pub const SPACE: u8 = 2;
+/// Painted: it named a macro being expanded where it was read, and is never expanded.
+pub const NOEXP: u8 = 4;
+/// A `##` of a replacement list, the paste operator (an argument's `##` is none).
+pub const PASTE: u8 = 8;
+/// An empty argument, until the pastes are done.
+pub const PLACEMARKER: u8 = 16;
+/// An `EOF` that is a stop source's end.
+pub const STOP: u8 = 32;
+
+/// A token: its kind, flags and spelling (`buf` 0: the scratch bytes; `f + 1`: file `f`'s).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Tok {
+    pub kind: u8,
+    pub flags: u8,
+    pub buf: u32,
+    pub start: u32,
+    pub end: u32,
+}
+
+/// A file of the TU: its bytes, and its token tape (`buf` its index + 1).
+pub struct File<'a> {
+    pub bytes: &'a [u8],
+    pub toks: &'a [Tok],
+}
+
+/// The stores' bounds.
+#[derive(Clone, Debug)]
+pub struct Bounds {
+    pub arena: usize,
+    pub scratch: usize,
+    /// Sources, frames, levels and calls: each.
+    pub depth: usize,
+    pub macros: usize,
+    pub output: usize,
+    pub steps: u64,
+}
+
+impl Bounds {
+    /// The bounds the work sets: the arena and output a multiple of the TU's tokens, the table
+    /// its directives (each could be a `#define`), the depths clang's nesting limit.
+    pub fn of(files: &[File]) -> Bounds {
+        let toks: usize = files.iter().map(|f| f.toks.len()).sum();
+        let bytes: usize = files.iter().map(|f| f.bytes.len()).sum();
+        let hashes = files.iter().flat_map(|f| f.toks.iter()).filter(|t| t.kind == HASH && t.flags & BOL != 0).count();
+        Bounds { arena: 64 * toks + 4096, scratch: 64 * bytes + 4096, depth: 256, macros: hashes + 64, output: 64 * toks + 4096, steps: 4096 * (toks as u64 + 64) }
+    }
+}
+
+/// The expansion: the output tokens and their made spellings (`buf` 0).
+pub struct Expanded {
+    pub toks: Vec<Tok>,
+    pub scratch: Vec<u8>,
+}
+
+impl Expanded {
+    /// A token's spelling.
+    pub fn text<'a>(&'a self, files: &'a [File], t: &Tok) -> &'a [u8] {
+        let b = if t.buf == 0 { &self.scratch[..] } else { files[t.buf as usize - 1].bytes };
+        &b[t.start as usize..t.end as usize]
+    }
+}
+
+/// A TU refused: the word, and why.
+#[derive(Debug)]
+pub struct Refused {
+    pub pc: usize,
+    pub why: &'static str,
+}
+
+/// The standard's names the words know.
+const VA_ARGS: &[u8] = b"__VA_ARGS__";
+const VA_OPT: &[u8] = b"__VA_OPT__";
+
+/// Whether a word is a test (it runs the next word where it holds, skips it where not).
+fn is_test(opcode: u8, mode: u8) -> bool {
+    matches!(opcode, LINE | IS | PEEK | LOOKUP | MACRO) || (opcode == ARG && (mode == 2 || mode == 4)) || (opcode == PRE && mode == 0)
+}
+
+/// A preprocessing program's rules: only these words, `GOTO`, `PUSH` (each followed by its
+/// callee's `GOTO`), `RETURN`, `ACCEPT` and `STOP`; operands in range; no word falls off the end;
+/// and every cycle reads a token (`READ`, `LINE`), a call counting as one where every way through
+/// its callee does.
+pub fn validate(program: &Words) -> Result<(), Error> {
+    let words = &program.words;
+    let n = words.len();
+    let string = |s: u16| program.strings.get(usize::from(s)).is_some_and(|s| !s.is_empty());
+    for (pc, &w) in words.iter().enumerate() {
+        let (op, mode, operand) = split(w);
+        let ok = match op {
+            READ | LINE | LOOKUP | PAINT | PUT | FRAME | KEEP | SUBST | DEFINE | UNDEF | SKIPLINE => mode == 0 && operand == 0,
+            IS => match mode {
+                0 => operand < u16::from(KINDS),
+                1 => string(operand),
+                3 => operand == 0,
+                _ => false,
+            },
+            PEEK => mode == 1 && string(operand),
+            MACRO => mode <= 1 && operand == 0,
+            ARG => mode <= 5 && operand == 0,
+            PRE => mode <= 1 && operand == 0,
+            PUSH => mode == 0 && usize::from(operand) < n && words.get(pc + 1).is_some_and(|&w| split(w).0 == GOTO),
+            GOTO => mode == 0 && usize::from(operand) < n,
+            RETURN | ACCEPT | STOP => mode == 0 && operand == 0,
+            _ => return Err(Error::InvalidOpcode(pc)),
+        };
+        if !ok {
+            return Err(Error::InvalidOperand(pc));
+        }
+        let ends = matches!(op, GOTO | RETURN | ACCEPT | STOP);
+        if (is_test(op, mode) && pc + 2 >= n) || (!ends && pc + 1 >= n) {
+            return Err(Error::InvalidTarget(pc));
+        }
+    }
+    if program.pp.ops.iter().any(|&s| program.strings.get(usize::from(s)).is_none_or(|b| !(1..=4).contains(&b.len()))) {
+        return Err(Error::InvalidOperand(0));
+    }
+    let mut memo: HashMap<usize, Option<bool>> = HashMap::new();
+    // The words after `pc` with no token read between: a read's are none; a call's return place
+    // only where its callee can return without reading.
+    let mut edges: Vec<Vec<usize>> = Vec::with_capacity(n);
+    for pc in 0..n {
+        edges.push(after(words, pc, &mut memo));
+    }
+    // No cycle in that graph.
+    let mut color = vec![0u8; n];
+    for root in 0..n {
+        if color[root] != 0 {
+            continue;
+        }
+        let mut stack = vec![(root, 0usize)];
+        color[root] = 1;
+        while let Some(&mut (pc, ref mut k)) = stack.last_mut() {
+            if let Some(&q) = edges[pc].get(*k) {
+                *k += 1;
+                match color[q] {
+                    0 => {
+                        color[q] = 1;
+                        stack.push((q, 0));
+                    }
+                    1 => return Err(Error::NonProgressingCycle(q)),
+                    _ => {}
+                }
+            } else {
+                color[pc] = 2;
+                stack.pop();
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The words that can follow `pc` with no token read.
+fn after(words: &[u32], pc: usize, memo: &mut HashMap<usize, Option<bool>>) -> Vec<usize> {
+    let (op, mode, operand) = split(words[pc]);
+    match op {
+        READ | LINE | RETURN | ACCEPT | STOP => vec![],
+        GOTO => vec![usize::from(operand)],
+        PUSH => {
+            let callee = usize::from(split(words[pc + 1]).2);
+            if reads(words, callee, memo) { vec![pc + 1] } else { vec![pc + 1, usize::from(operand)] }
+        }
+        _ if is_test(op, mode) => vec![pc + 1, pc + 2],
+        _ => vec![pc + 1],
+    }
+}
+
+/// Whether every way from `entry` to a `RETURN` reads a token (a callee still being asked about
+/// counts as not).
+fn reads(words: &[u32], entry: usize, memo: &mut HashMap<usize, Option<bool>>) -> bool {
+    match memo.get(&entry) {
+        Some(&Some(r)) => return r,
+        Some(None) => return false,
+        None => {}
+    }
+    memo.insert(entry, None);
+    let mut seen = vec![false; words.len()];
+    let mut work = vec![entry];
+    let mut ok = true;
+    while let Some(pc) = work.pop() {
+        if std::mem::replace(&mut seen[pc], true) {
+            continue;
+        }
+        if split(words[pc]).0 == RETURN {
+            ok = false;
+            break;
+        }
+        work.extend(after(words, pc, memo));
+    }
+    memo.insert(entry, Some(ok));
+    ok
+}
+
+const NONE: u32 = u32::MAX;
+/// A body token's mark: no parameter.
+const NO_PARAM: u32 = 0xffff;
+/// ...a `__VA_OPT__`.
+const VA_OPT_MARK: u32 = 0xfffe;
+/// ...and with this bit, a paste operator.
+const PASTE_MARK: u32 = 1 << 16;
+
+#[derive(Clone, Copy)]
+struct Src {
+    /// The file, or `NONE`: the arena.
+    file: u32,
+    pos: u32,
+    end: u32,
+    /// The macro enabled again where it is left, or `NONE`.
+    def: u32,
+    stop: bool,
+}
+
+#[derive(Clone, Copy)]
+struct Def {
+    fnlike: bool,
+    variadic: bool,
+    params: u16,
+    /// The body: file `file`'s tokens `first..end`, and their marks from `marks`.
+    file: u32,
+    first: u32,
+    end: u32,
+    marks: u32,
+    /// The arguments to expand before substitution, in the order it asks: `uses[pre.0..pre.1]`.
+    pre: (u32, u32),
+    disabled: bool,
+}
+
+#[derive(Clone, Copy)]
+struct Slot {
+    key: u64,
+    name: Tok,
+    /// The definition, or `NONE` (undefined).
+    def: u32,
+}
+
+#[derive(Clone, Copy)]
+struct Frame {
+    def: u32,
+    name: Tok,
+    /// Its arguments: `argv[args..]`; their expansions: `pres[pres..pres + params]`.
+    args: u32,
+    pres: u32,
+    depth: u32,
+    next_use: u32,
+}
+
+struct Machine<'a> {
+    program: &'a Words,
+    files: &'a [File<'a>],
+    bounds: &'a Bounds,
+    arena: Vec<Tok>,
+    scratch: Vec<u8>,
+    sources: Vec<Src>,
+    defs: Vec<Def>,
+    marks: Vec<u32>,
+    /// A definition's argument uses (`Def::pre`): the parameter, and whether it is inside a
+    /// `__VA_OPT__` (expanded only where the variadic argument is present).
+    uses: Vec<(u16, bool)>,
+    params: Vec<Tok>,
+    table: Vec<Option<Slot>>,
+    frames: Vec<Frame>,
+    argv: Vec<(u32, u32)>,
+    /// An argument's expansion, or `(NONE, NONE)` while it is not made.
+    pres: Vec<(u32, u32)>,
+    /// The open levels: the parameter, and where its tokens start in `kept`.
+    levels: Vec<(u16, u32)>,
+    kept: Vec<Tok>,
+    out: Vec<Tok>,
+    t: Tok,
+    d: u32,
+    /// `T` was read from a file.
+    from_file: bool,
+}
+
+type R<T> = Result<T, &'static str>;
+
+fn eof(flags: u8) -> Tok {
+    Tok { kind: EOF, flags, buf: 0, start: 0, end: 0 }
+}
+
+/// A name's key: its bytes eight at a time, and its length.
+pub fn key(b: &[u8]) -> u64 {
+    let mut h = (b.len() as u64) ^ 0x9e37_79b9_7f4a_7c15;
+    for c in b.chunks(8) {
+        let mut w = [0u8; 8];
+        w[..c.len()].copy_from_slice(c);
+        h = (h ^ u64::from_le_bytes(w)).wrapping_mul(0xff51_afd7_ed55_8ccd).rotate_left(31);
+    }
+    h
+}
+
+fn word_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_' || c == b'$'
+}
+
+/// Runs a preprocessing program over a TU (file 0 its main file), in bounds.
+pub fn run(program: &Words, files: &[File], bounds: &Bounds) -> Result<Expanded, Refused> {
+    let table = bounds.macros.next_power_of_two() * 2;
+    let mut m = Machine {
+        program,
+        files,
+        bounds,
+        arena: Vec::new(),
+        scratch: Vec::new(),
+        sources: vec![Src { file: 0, pos: 0, end: files.first().map_or(0, |f| f.toks.len() as u32), def: NONE, stop: false }],
+        defs: Vec::new(),
+        marks: Vec::new(),
+        uses: Vec::new(),
+        params: Vec::new(),
+        table: vec![None; table],
+        frames: Vec::new(),
+        argv: Vec::new(),
+        pres: Vec::new(),
+        levels: Vec::new(),
+        kept: Vec::new(),
+        out: Vec::new(),
+        t: eof(0),
+        d: NONE,
+        from_file: false,
+    };
+    let words = &program.words;
+    let mut returns: Vec<usize> = Vec::new();
+    let mut pc = 0usize;
+    let mut steps = 0u64;
+    loop {
+        steps += 1;
+        if steps > bounds.steps {
+            return Err(Refused { pc, why: "past the steps' bound" });
+        }
+        let (op, mode, operand) = split(words[pc]);
+        let at = pc;
+        pc += 1;
+        let fail = |why| Refused { pc: at, why };
+        let held = match op {
+            GOTO => {
+                pc = usize::from(operand);
+                None
+            }
+            PUSH => {
+                if returns.len() >= bounds.depth {
+                    return Err(fail("past the calls' bound"));
+                }
+                returns.push(usize::from(operand));
+                None
+            }
+            RETURN => {
+                pc = returns.pop().ok_or_else(|| fail("a return with no call"))?;
+                None
+            }
+            ACCEPT => return Ok(Expanded { toks: m.out, scratch: m.scratch }),
+            STOP => return Err(fail("the program stopped")),
+            READ => {
+                m.read();
+                None
+            }
+            LINE => Some(m.line().map_err(fail)?),
+            SKIPLINE => {
+                while m.line().map_err(fail)? {}
+                None
+            }
+            IS => Some(match mode {
+                0 => m.t.kind == operand as u8,
+                1 => m.text(&m.t) == &program.strings[usize::from(operand)][..],
+                _ => m.t.kind == HASH && m.t.flags & BOL != 0 && m.from_file,
+            }),
+            PEEK => Some(m.peek(&program.strings[usize::from(operand)])),
+            LOOKUP => Some(m.lookup().map_err(fail)?),
+            MACRO => Some(if mode == 0 { m.defs[m.d as usize].disabled } else { m.defs[m.d as usize].fnlike }),
+            PAINT => {
+                m.t.flags |= NOEXP;
+                None
+            }
+            PUT => {
+                if m.out.len() >= bounds.output {
+                    return Err(fail("past the output's bound"));
+                }
+                m.out.push(m.t);
+                None
+            }
+            FRAME => {
+                m.frame().map_err(fail)?;
+                None
+            }
+            ARG => m.arg(mode).map_err(fail)?,
+            PRE if mode == 0 => Some(m.pre().map_err(fail)?),
+            PRE => {
+                m.pre_end().map_err(fail)?;
+                None
+            }
+            KEEP => {
+                if m.kept.len() >= bounds.arena {
+                    return Err(fail("past the arena's bound"));
+                }
+                m.kept.push(m.t);
+                None
+            }
+            SUBST => {
+                m.subst().map_err(fail)?;
+                None
+            }
+            DEFINE => {
+                m.define().map_err(fail)?;
+                None
+            }
+            UNDEF => {
+                m.undef().map_err(fail)?;
+                None
+            }
+            _ => return Err(fail("not a preprocessing word")),
+        };
+        if held == Some(false) {
+            pc += 1;
+        }
+    }
+}
+
+impl Machine<'_> {
+    fn text(&self, t: &Tok) -> &[u8] {
+        let b = if t.buf == 0 { &self.scratch[..] } else { self.files[t.buf as usize - 1].bytes };
+        &b[t.start as usize..t.end as usize]
+    }
+
+    fn src_tok(&self, s: &Src, at: u32) -> Tok {
+        if s.file == NONE { self.arena[at as usize] } else { self.files[s.file as usize].toks[at as usize] }
+    }
+
+    fn read(&mut self) {
+        loop {
+            let Some(&s) = self.sources.last() else {
+                (self.t, self.from_file) = (eof(0), false);
+                return;
+            };
+            if s.pos < s.end {
+                self.t = self.src_tok(&s, s.pos);
+                self.from_file = s.file != NONE;
+                self.sources.last_mut().unwrap().pos += 1;
+                return;
+            }
+            // A stop source's end, and (until includes) the main file's, are read again and again.
+            if s.stop || s.file != NONE {
+                (self.t, self.from_file) = (eof(if s.stop { STOP } else { 0 }), false);
+                return;
+            }
+            self.sources.pop();
+            if s.def != NONE {
+                self.defs[s.def as usize].disabled = false;
+            }
+        }
+    }
+
+    /// The directive line's next token, from the file on top.
+    fn line(&mut self) -> R<bool> {
+        let s = *self.sources.last().ok_or("a directive with no file")?;
+        if s.file == NONE {
+            return Err("a directive's line not in a file");
+        }
+        if s.pos >= s.end {
+            return Ok(false);
+        }
+        let t = self.src_tok(&s, s.pos);
+        if t.flags & BOL != 0 {
+            return Ok(false);
+        }
+        self.t = t;
+        self.sources.last_mut().unwrap().pos += 1;
+        Ok(true)
+    }
+
+    fn line_tok(&mut self) -> R<Option<Tok>> {
+        Ok(if self.line()? { Some(self.t) } else { None })
+    }
+
+    fn peek(&self, s: &[u8]) -> bool {
+        for src in self.sources.iter().rev() {
+            if src.pos < src.end {
+                return self.text(&self.src_tok(src, src.pos)) == s;
+            }
+            if src.stop || src.file != NONE {
+                return false;
+            }
+        }
+        false
+    }
+
+    /// The slot of the name spelled `b`, or the free slot where it would go.
+    fn find(&self, b: &[u8]) -> R<Result<usize, usize>> {
+        let k = key(b);
+        let mask = self.table.len() - 1;
+        let mut i = k as usize & mask;
+        for _ in 0..self.table.len() {
+            match &self.table[i] {
+                None => return Ok(Err(i)),
+                Some(s) if s.key == k && self.text(&s.name) == b => return Ok(Ok(i)),
+                _ => i = (i + 1) & mask,
+            }
+        }
+        Err("past the macro table's bound")
+    }
+
+    fn lookup(&mut self) -> R<bool> {
+        if self.t.kind != IDENT || self.t.flags & NOEXP != 0 {
+            return Ok(false);
+        }
+        let b = self.text(&self.t).to_vec();
+        Ok(match self.find(&b)? {
+            Ok(i) if self.table[i].unwrap().def != NONE => {
+                self.d = self.table[i].unwrap().def;
+                true
+            }
+            _ => false,
+        })
+    }
+
+    fn frame(&mut self) -> R<()> {
+        if self.frames.len() >= self.bounds.depth {
+            return Err("past the frames' bound");
+        }
+        let def = self.defs[self.d as usize];
+        self.frames.push(Frame { def: self.d, name: self.t, args: self.argv.len() as u32, pres: self.pres.len() as u32, depth: 0, next_use: 0 });
+        self.pres.extend(std::iter::repeat_n((NONE, NONE), usize::from(def.params)));
+        if def.fnlike {
+            let a = self.arena.len() as u32;
+            self.argv.push((a, a));
+        }
+        Ok(())
+    }
+
+    fn drop_frame(&mut self) {
+        let f = self.frames.pop().unwrap();
+        self.argv.truncate(f.args as usize);
+        self.pres.truncate(f.pres as usize);
+    }
+
+    fn push_arena(&mut self, t: Tok) -> R<()> {
+        if self.arena.len() >= self.bounds.arena {
+            return Err("past the arena's bound");
+        }
+        self.arena.push(t);
+        Ok(())
+    }
+
+    /// `T` appended to the open argument (a line's first token is one with space before it).
+    fn append(&mut self) -> R<()> {
+        let mut t = self.t;
+        if t.flags & BOL != 0 {
+            t.flags = (t.flags & !BOL) | SPACE;
+        }
+        self.push_arena(t)?;
+        self.argv.last_mut().ok_or("an argument with no frame")?.1 = self.arena.len() as u32;
+        Ok(())
+    }
+
+    fn arg(&mut self, mode: u8) -> R<Option<bool>> {
+        let f = *self.frames.last().ok_or("an argument with no frame")?;
+        let def = self.defs[f.def as usize];
+        match mode {
+            0 => self.append()?,
+            1 => {
+                self.frames.last_mut().unwrap().depth += 1;
+                self.append()?;
+            }
+            2 => {
+                if f.depth == 0 {
+                    return Ok(Some(true));
+                }
+                self.frames.last_mut().unwrap().depth -= 1;
+                self.append()?;
+                return Ok(Some(false));
+            }
+            3 => {
+                let nargs = self.argv.len() - f.args as usize;
+                if f.depth == 0 && !(def.variadic && nargs == usize::from(def.params)) {
+                    let a = self.arena.len() as u32;
+                    self.argv.push((a, a));
+                } else {
+                    self.append()?;
+                }
+            }
+            4 => {
+                let n = usize::from(def.params);
+                let nargs = self.argv.len() - f.args as usize;
+                let ok = if n == 0 {
+                    let (a, b) = self.argv[f.args as usize];
+                    nargs == 1 && a == b
+                } else {
+                    // The variadic arguments left out (C++20, C23, and GNU before them).
+                    nargs == n || (nargs + 1 == n && def.variadic)
+                };
+                if !ok {
+                    // A call with the wrong count of arguments is its name alone (clang's).
+                    self.drop_frame();
+                    self.t = Tok { flags: f.name.flags | NOEXP, ..f.name };
+                    return Ok(Some(false));
+                }
+                if n == 0 {
+                    self.argv.truncate(f.args as usize);
+                } else if nargs + 1 == n {
+                    let a = self.arena.len() as u32;
+                    self.argv.push((a, a));
+                }
+                return Ok(Some(true));
+            }
+            _ => self.drop_frame(),
+        }
+        Ok(None)
+    }
+
+    fn arg_range(&self, f: &Frame, p: usize) -> (u32, u32) {
+        self.argv[f.args as usize + p]
+    }
+
+    /// Whether the variadic argument has tokens once expanded (`__VA_OPT__`'s test).
+    fn va_present(&self, f: &Frame) -> bool {
+        let def = &self.defs[f.def as usize];
+        let va = usize::from(def.params) - 1;
+        let (a, b) = self.arg_range(f, va);
+        let (x, y) = self.pres[f.pres as usize + va];
+        a != b && x != NONE && x != y
+    }
+
+    fn pre(&mut self) -> R<bool> {
+        let f = *self.frames.last().ok_or("an expansion with no frame")?;
+        let def = self.defs[f.def as usize];
+        let mut u = f.next_use;
+        while def.pre.0 + u < def.pre.1 {
+            let (p, inside) = self.uses[(def.pre.0 + u) as usize];
+            u += 1;
+            let p = usize::from(p);
+            if self.pres[f.pres as usize + p].0 != NONE || (inside && !self.va_present(&f)) {
+                continue;
+            }
+            let (a, b) = self.arg_range(&f, p);
+            if a == b {
+                self.pres[f.pres as usize + p] = (b, b);
+                continue;
+            }
+            self.frames.last_mut().unwrap().next_use = u;
+            if self.sources.len() >= self.bounds.depth || self.levels.len() >= self.bounds.depth {
+                return Err("past the sources' bound");
+            }
+            self.sources.push(Src { file: NONE, pos: a, end: b, def: NONE, stop: true });
+            self.levels.push((p as u16, self.kept.len() as u32));
+            return Ok(true);
+        }
+        self.frames.last_mut().unwrap().next_use = u;
+        Ok(false)
+    }
+
+    fn pre_end(&mut self) -> R<()> {
+        let (p, at) = self.levels.pop().ok_or("no level open")?;
+        if !self.sources.pop().is_some_and(|s| s.stop) {
+            return Err("a level's source not on top");
+        }
+        let a = self.arena.len() as u32;
+        for k in at as usize..self.kept.len() {
+            self.push_arena(self.kept[k])?;
+        }
+        self.kept.truncate(at as usize);
+        let f = *self.frames.last().ok_or("a level with no frame")?;
+        self.pres[f.pres as usize + usize::from(p)] = (a, self.arena.len() as u32);
+        Ok(())
+    }
+
+    // The body.
+
+    fn body_tok(&self, def: &Def, k: u32) -> Tok {
+        let mut t = self.files[def.file as usize].toks[(def.first + k) as usize];
+        if k == 0 {
+            t.flags &= !SPACE;
+        }
+        if self.marks[(def.marks + k) as usize] & PASTE_MARK != 0 {
+            t.flags |= PASTE;
+        }
+        t
+    }
+
+    fn mark(&self, def: &Def, k: u32) -> u32 {
+        self.marks[(def.marks + k) as usize] & 0xffff
+    }
+
+    fn param(&self, def: &Def, k: u32) -> Option<usize> {
+        let m = self.mark(def, k);
+        (m < VA_OPT_MARK).then_some(m as usize)
+    }
+
+    fn spelled(&self, t: &Tok, s: &[u8]) -> bool {
+        self.text(t) == s
+    }
+
+    /// `__VA_OPT__`'s content at body token `i` (its `(`'s match, else the body's end), and the
+    /// token after it.
+    fn va_opt_content(&self, def: &Def, i: u32, hi: u32) -> (u32, u32, u32) {
+        if !(i + 1 < hi && self.spelled(&self.body_tok(def, i + 1), b"(")) {
+            return (i + 1, i + 1, i + 1);
+        }
+        let mut depth = 0;
+        for j in i + 2..hi {
+            let t = self.body_tok(def, j);
+            if self.spelled(&t, b"(") {
+                depth += 1;
+            } else if self.spelled(&t, b")") {
+                if depth == 0 {
+                    return (i + 2, j, j + 1);
+                }
+                depth -= 1;
+            }
+        }
+        (i + 2, hi, hi)
+    }
+
+    fn arena_toks(&self, (a, b): (u32, u32)) -> Vec<Tok> {
+        self.arena[a as usize..b as usize].to_vec()
+    }
+
+    /// The body's tokens `lo..hi` with the top frame's arguments substituted.
+    fn substitute(&mut self, f: &Frame, lo: u32, hi: u32) -> R<Vec<Tok>> {
+        let def = self.defs[f.def as usize];
+        let va = def.variadic.then(|| usize::from(def.params) - 1);
+        let mut out: Vec<Tok> = Vec::new();
+        let mut i = lo;
+        while i < hi {
+            let bt = self.body_tok(&def, i);
+            let next_param = if i + 1 < hi { self.param(&def, i + 1) } else { None };
+            if def.fnlike && bt.kind == HASH {
+                if let Some(p) = next_param {
+                    let toks = self.arena_toks(self.arg_range(f, p));
+                    let t = self.stringized(&toks, &bt)?;
+                    out.push(t);
+                    i += 2;
+                    continue;
+                }
+                if va.is_some() && i + 1 < hi && self.mark(&def, i + 1) == VA_OPT_MARK {
+                    // `#__VA_OPT__(…)`: the content, substituted and pasted, stringized.
+                    let (clo, chi, end) = self.va_opt_content(&def, i + 1, hi);
+                    let mut c = if self.va_present(f) { self.substitute(f, clo, chi)? } else { Vec::new() };
+                    self.paste_all(&mut c)?;
+                    c.retain(|t| t.flags & PLACEMARKER == 0);
+                    let t = self.stringized(&c, &bt)?;
+                    out.push(t);
+                    i = end;
+                    continue;
+                }
+            }
+            if va.is_some() && self.mark(&def, i) == VA_OPT_MARK {
+                let (clo, chi, end) = self.va_opt_content(&def, i, hi);
+                if self.va_present(f) {
+                    let mut c = self.substitute(f, clo, chi)?;
+                    if let Some(x) = c.first_mut() {
+                        x.flags = (x.flags & !SPACE) | (bt.flags & SPACE);
+                    }
+                    out.extend(c);
+                } else {
+                    out.push(Tok { flags: PLACEMARKER, ..bt });
+                }
+                i = end;
+                continue;
+            }
+            if let Some(p) = self.param(&def, i) {
+                let before = i > lo && self.body_tok(&def, i - 1).flags & PASTE != 0;
+                let after = i + 1 < hi && self.body_tok(&def, i + 1).flags & PASTE != 0;
+                let raw = self.arg_range(f, p);
+                let comma_paste = |out: &Vec<Tok>, m: &Self| out.len() >= 2 && m.spelled(&out[out.len() - 2], b",") && out[out.len() - 2].kind == PUNCT && out[out.len() - 1].flags & PASTE != 0;
+                // GNU's `, ## __VA_ARGS__`: with no variadic arguments the comma goes...
+                if before && Some(p) == va && raw.0 == raw.1 && comma_paste(&out, self) {
+                    out.pop();
+                    out.pop();
+                    i += 1;
+                    continue;
+                }
+                // ...and with some, the `##` is no paste.
+                if before && Some(p) == va && comma_paste(&out, self) {
+                    out.pop();
+                }
+                let toks = if before || after {
+                    self.arena_toks(raw)
+                } else {
+                    let r = self.pres[f.pres as usize + p];
+                    if r.0 == NONE {
+                        return Err("an argument substituted before its expansion");
+                    }
+                    self.arena_toks(r)
+                };
+                if toks.is_empty() {
+                    out.push(Tok { flags: PLACEMARKER, ..bt });
+                } else {
+                    let k = out.len();
+                    out.extend(toks);
+                    out[k].flags = (out[k].flags & !(BOL | SPACE)) | (bt.flags & SPACE);
+                }
+                i += 1;
+                continue;
+            }
+            out.push(bt);
+            i += 1;
+        }
+        Ok(out)
+    }
+
+    fn scratch_tok(&mut self, kind: u8, text: &[u8], flags: u8) -> R<Tok> {
+        if self.scratch.len() + text.len() > self.bounds.scratch {
+            return Err("past the scratch bytes' bound");
+        }
+        let start = self.scratch.len() as u32;
+        self.scratch.extend_from_slice(text);
+        Ok(Tok { kind, flags, buf: 0, start, end: self.scratch.len() as u32 })
+    }
+
+    /// `#`'s literal of `toks` (C17 §6.10.3.2): a blank where there was white space, `"` and `\`
+    /// escaped in literals; its flags `like`'s.
+    fn stringized(&mut self, toks: &[Tok], like: &Tok) -> R<Tok> {
+        let mut s = vec![b'"'];
+        for (k, t) in toks.iter().enumerate() {
+            if t.flags & PLACEMARKER != 0 {
+                continue;
+            }
+            if k > 0 && t.flags & (SPACE | BOL) != 0 && s.len() > 1 {
+                s.push(b' ');
+            }
+            let text = self.text(t);
+            if t.kind == LITERAL {
+                for &c in text {
+                    if c == b'"' || c == b'\\' {
+                        s.push(b'\\');
+                    }
+                    s.push(c);
+                }
+            } else {
+                s.extend_from_slice(text);
+            }
+        }
+        s.push(b'"');
+        self.scratch_tok(LITERAL, &s, like.flags & (BOL | SPACE))
+    }
+
+    /// The pastes of `out`, left to right.
+    fn paste_all(&mut self, out: &mut Vec<Tok>) -> R<()> {
+        if !out.iter().any(|t| t.flags & PASTE != 0) {
+            return Ok(());
+        }
+        let mut res: Vec<Tok> = Vec::with_capacity(out.len());
+        let mut i = 0;
+        while i < out.len() {
+            let t = out[i];
+            if t.flags & PASTE != 0 && !res.is_empty() && i + 1 < out.len() {
+                let l = res.pop().unwrap();
+                let r = out[i + 1];
+                match self.paste(l, r)? {
+                    Some(m) => res.push(m),
+                    None => {
+                        res.push(l);
+                        res.push(r);
+                    }
+                }
+                i += 2;
+                continue;
+            }
+            res.push(t);
+            i += 1;
+        }
+        *out = res;
+        Ok(())
+    }
+
+    /// `l ## r`: one token, or `None` where the two spell no one token.
+    fn paste(&mut self, l: Tok, r: Tok) -> R<Option<Tok>> {
+        if r.flags & PLACEMARKER != 0 {
+            return Ok(Some(l));
+        }
+        if l.flags & PLACEMARKER != 0 {
+            return Ok(Some(Tok { flags: (r.flags & !(BOL | SPACE)) | (l.flags & (BOL | SPACE)), ..r }));
+        }
+        let (lb, rb) = (self.text(&l).to_vec(), self.text(&r).to_vec());
+        let mut text = lb.clone();
+        text.extend_from_slice(&rb);
+        let Some(kind) = self.pasted_kind(&l, &r, &lb, &rb, &text)? else { return Ok(None) };
+        Ok(Some(self.scratch_tok(kind, &text, l.flags & (BOL | SPACE))?))
+    }
+
+    /// The kind of the one token `l`'s and `r`'s bytes spell, `None` where they spell none.
+    fn pasted_kind(&self, l: &Tok, r: &Tok, lb: &[u8], rb: &[u8], text: &[u8]) -> R<Option<u8>> {
+        let op_like = |k: u8| matches!(k, PUNCT | DIGRAPH | HASH | HASHHASH);
+        Ok(match (l.kind, r.kind) {
+            (IDENT, IDENT) => Some(IDENT),
+            (IDENT, NUMBER) => rb.iter().all(|&c| word_byte(c)).then_some(IDENT),
+            (IDENT, LITERAL) if matches!(rb.first(), Some(b'"' | b'\'')) => {
+                if matches!(lb, b"L" | b"u" | b"U" | b"u8") {
+                    Some(LITERAL)
+                } else if matches!(lb, b"R" | b"LR" | b"uR" | b"UR" | b"u8R") {
+                    return Err("a raw string's prefix pasted");
+                } else {
+                    None
+                }
+            }
+            (NUMBER, IDENT | NUMBER) => Some(NUMBER),
+            (NUMBER, PUNCT) => (rb.iter().all(|&c| c == b'.') || (matches!(rb, b"+" | b"-") && matches!(lb.last(), Some(b'e' | b'E' | b'p' | b'P')))).then_some(NUMBER),
+            (PUNCT, NUMBER) => (lb == b"." && rb.first().is_some_and(u8::is_ascii_digit)).then_some(NUMBER),
+            (LITERAL, IDENT) => self.program.pp.suffix.then_some(LITERAL),
+            (a, b) if op_like(a) && op_like(b) => {
+                let strings = &self.program.strings;
+                self.program.pp.ops.iter().any(|&s| strings[usize::from(s)] == text).then(|| match text {
+                    b"#" | b"%:" => HASH,
+                    b"##" | b"%:%:" => HASHHASH,
+                    b"<:" | b":>" | b"<%" | b"%>" => DIGRAPH,
+                    _ => PUNCT,
+                })
+            }
+            _ => None,
+        })
+    }
+
+    fn subst(&mut self) -> R<()> {
+        let f = *self.frames.last().ok_or("a substitution with no frame")?;
+        let def = self.defs[f.def as usize];
+        let mut out = self.substitute(&f, 0, def.end - def.first)?;
+        self.paste_all(&mut out)?;
+        out.retain(|t| t.flags & PLACEMARKER == 0);
+        if let Some(x) = out.first_mut() {
+            x.flags = (x.flags & !(BOL | SPACE)) | (f.name.flags & (BOL | SPACE));
+        }
+        let a = self.arena.len() as u32;
+        for t in out {
+            self.push_arena(t)?;
+        }
+        self.drop_frame();
+        if self.sources.len() >= self.bounds.depth {
+            return Err("past the sources' bound");
+        }
+        self.defs[f.def as usize].disabled = true;
+        self.sources.push(Src { file: NONE, pos: a, end: self.arena.len() as u32, def: f.def, stop: false });
+        Ok(())
+    }
+
+    // The directives.
+
+    fn define(&mut self) -> R<()> {
+        let Some(name) = self.line_tok()?.filter(|t| t.kind == IDENT) else {
+            return self.skip_line();
+        };
+        let s = *self.sources.last().unwrap();
+        let p0 = self.params.len();
+        let (mut fnlike, mut variadic) = (false, false);
+        let mut first = self.line_tok()?;
+        if first.is_some_and(|t| self.spelled(&t, b"(") && t.flags & SPACE == 0) {
+            fnlike = true;
+            let mut want = true;
+            loop {
+                let Some(t) = self.line_tok()? else {
+                    self.params.truncate(p0);
+                    return Ok(());
+                };
+                let n = self.params.len() - p0;
+                if self.spelled(&t, b")") && (!want || n == 0) && !(want && variadic) {
+                    break;
+                }
+                let malformed = if variadic {
+                    true
+                } else if want && t.kind == IDENT {
+                    self.params.push(t);
+                    want = false;
+                    false
+                } else if want && self.spelled(&t, b"...") {
+                    // `__VA_ARGS__`'s spelling, made once.
+                    let va = self.scratch_tok(IDENT, VA_ARGS, 0)?;
+                    self.params.push(va);
+                    variadic = true;
+                    want = false;
+                    false
+                } else if !want && self.spelled(&t, b"...") && n > 0 {
+                    // GNU's `name...`.
+                    variadic = true;
+                    false
+                } else if !want && self.spelled(&t, b",") {
+                    want = true;
+                    false
+                } else {
+                    true
+                };
+                if malformed {
+                    self.params.truncate(p0);
+                    return self.skip_line();
+                }
+            }
+            first = self.line_tok()?;
+        }
+        // The body: the line's tokens from `first`, a range of the file's tape.
+        let top = *self.sources.last().unwrap();
+        let first_at = if first.is_some() { top.pos - 1 } else { top.pos };
+        while self.line()? {}
+        let end = self.sources.last().unwrap().pos;
+        let def_params: Vec<Tok> = self.params[p0..].to_vec();
+        self.params.truncate(p0);
+        if def_params.len() > 0xfff0 {
+            return Err("past the parameters' bound");
+        }
+        let file = s.file;
+        let marks = self.marks.len() as u32;
+        let n = end - first_at;
+        for k in 0..n {
+            let t = self.files[file as usize].toks[(first_at + k) as usize];
+            let text = self.text(&t);
+            let mut m = NO_PARAM;
+            if t.kind == IDENT {
+                if variadic && text == VA_OPT {
+                    m = VA_OPT_MARK;
+                } else if fnlike && let Some(p) = def_params.iter().position(|p| self.text(p) == text) {
+                    m = p as u32;
+                }
+            }
+            if t.kind == HASHHASH && k > 0 && k + 1 < n {
+                m |= PASTE_MARK;
+            }
+            self.marks.push(m);
+        }
+        let mut def = Def { fnlike, variadic, params: def_params.len() as u16, file, first: first_at, end, marks, pre: (0, 0), disabled: false };
+        let u0 = self.uses.len() as u32;
+        if fnlike {
+            self.walk_uses(&def, 0, n, false);
+        }
+        def.pre = (u0, self.uses.len() as u32);
+        if self.defs.len() >= self.bounds.macros * 4 {
+            return Err("past the definitions' bound");
+        }
+        self.defs.push(def);
+        let d = (self.defs.len() - 1) as u32;
+        let b = self.text(&name).to_vec();
+        match self.find(&b)? {
+            Ok(i) => self.table[i].as_mut().unwrap().def = d,
+            Err(i) => self.table[i] = Some(Slot { key: key(&b), name, def: d }),
+        }
+        Ok(())
+    }
+
+    /// The arguments substitution expands, in the order it first asks for each (`substitute`'s
+    /// walk): `(parameter, inside a __VA_OPT__)`.
+    fn walk_uses(&mut self, def: &Def, lo: u32, hi: u32, inside: bool) {
+        let va = def.params.wrapping_sub(1);
+        let mut i = lo;
+        while i < hi {
+            let bt = self.body_tok(def, i);
+            if bt.kind == HASH {
+                if i + 1 < hi && self.param(def, i + 1).is_some() {
+                    i += 2;
+                    continue;
+                }
+                if def.variadic && i + 1 < hi && self.mark(def, i + 1) == VA_OPT_MARK {
+                    self.uses.push((va, inside));
+                    let (clo, chi, end) = self.va_opt_content(def, i + 1, hi);
+                    self.walk_uses(def, clo, chi, true);
+                    i = end;
+                    continue;
+                }
+            }
+            if def.variadic && self.mark(def, i) == VA_OPT_MARK {
+                self.uses.push((va, inside));
+                let (clo, chi, end) = self.va_opt_content(def, i, hi);
+                self.walk_uses(def, clo, chi, true);
+                i = end;
+                continue;
+            }
+            if let Some(p) = self.param(def, i) {
+                let before = i > lo && self.body_tok(def, i - 1).flags & PASTE != 0;
+                let after = i + 1 < hi && self.body_tok(def, i + 1).flags & PASTE != 0;
+                if !(before || after) {
+                    self.uses.push((p as u16, inside));
+                }
+            }
+            i += 1;
+        }
+    }
+
+    fn undef(&mut self) -> R<()> {
+        if let Some(n) = self.line_tok()?.filter(|t| t.kind == IDENT) {
+            let b = self.text(&n).to_vec();
+            if let Ok(i) = self.find(&b)? {
+                self.table[i].as_mut().unwrap().def = NONE;
+            }
+        }
+        self.skip_line()
+    }
+
+    fn skip_line(&mut self) -> R<()> {
+        while self.line()? {}
+        Ok(())
+    }
+}
