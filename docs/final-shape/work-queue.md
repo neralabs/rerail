@@ -1201,7 +1201,7 @@ pass.
 - **Done when**: the next launch is encoded while the GPU runs this one, and the matcher's GPU price comes from
   measured samples.
 
-### Q53. On the device, a group of 64 nodes' roots run serially in one thread, and a parent is a search (oscar's to take)
+### Q53. On the device, a group of 64 nodes' roots run serially in one thread, and a parent is a search (this branch's, since oscar is merged)
 
 - **Found** (2026-11-16, t41's last section, measured on oscar's f51cab698 against the hub's tree at s1000): 0293
   §10's thread per (pass, group of 64 nodes) runs the group's roots one after another. `clause_patterns` went from
@@ -1212,12 +1212,38 @@ pass.
   a walk's frame carries its parent where its step knew it, and the micro kernels' GPU time on the same s1000
   matches the hub's tree's or beats it, with the host still listing nothing.
 
-### Q54. Oscar's engine stops on the data-layer corpus in `step_histograms` (oscar's to check)
+### Q54. Oscar's engine stops on the data-layer corpus in `step_histograms` (to check on the merged tree)
 
 - **Found** (2026-11-16, two runs of internal_dead_code with `--metal` over the whole corpus, f51cab698):
   `setfix.rs:3043`, `RowRef::at`, index 5 of a view row's 2 columns, from `step_histograms` in
   `Run::exact_statistics`. The hub's tree runs the same corpus.
 - **Done when**: oscar's next hub merge runs the corpus, or the cause is found and fixed there.
+
+### Q55. (Q19 at f51cab698) The matcher's `metal-tests` gates: one clause past its work limit, one coverage count short
+
+Found 2026-11-16 (0293 step 5): the gated tests had not compiled (`LoweredWave::roots_metal` was private to the
+transducer crate, which the engine's `waves::matches` test calls; now `pub`). Compiled, two fail, the same in 15,
+16 and 16z, and the first the same at 6afcddb0a, before the device read format 16:
+
+- `lowered_clauses_find_the_same_roots_on_the_resident_interpreter`: 114 of 122 clauses equal, 7 refused, and
+  `ruff-d416-missing-section-name-colon/missing-colon-underlined` fails on the device (`BackendFailure`): a task's
+  status is 4, the work limit (`resident_work`), with every walk on the interpreter (`INTERPRET_ONLY`).
+- `metal_catches_a_widened_walk`: Metal and the CPU agree on every widened clause, but only 2 differ from W's
+  matcher where the test wants 3.
+
+- **Keep**: the device's roots equal the CPU's on every clause the device takes; a refused launch stays a refusal.
+- **Done when**: the D416 clause's work is accounted (a limit too small for its walk, or a walk that loops), and
+  the coverage test's count is explained (the pack's clauses) or met; both gates pass.
+
+### Q56. (Q20 at f51cab698) The CPU JIT's capture pairs compare and scan a byte a step
+
+Found 2026-11-16 (0310 step 2, moving the JIT's spans onto the tape): `native_cpu_capture_pair.rs`'s `text_equal`
+compares two captures' texts a byte an iteration, and `same_line` looks for a newline between two starts a byte an
+iteration. Both are per-byte loops, which the engine's code refuses elsewhere.
+
+- **Keep**: the pair's verdicts (equal texts, same line) as now.
+- **Done when**: both compare a word at a time over the window (or `same_line` reads the document's line table,
+  as the device's does), with no loop a byte a step.
 
 ## Questions for the user
 

@@ -149,7 +149,8 @@ The sibling branches are rebuilding the engine's structures to be the same bytes
 device half (0293 §9, §10) and 0310, not yet in the hub. Its merge here conflicts in 17 files, in one place: the
 document view, `ChunkTape` (0289 §4: a block's offsets from the document's start, from `structure!`) against
 `rerail_clif::view::TapeView` (0310: the one view the generated reads take, with nothing per node derived). The
-merge keeps oscar's contents in 0289's form. That is the hub's roll-up to make, so it was not made here.
+merge keeps oscar's contents in 0289's form: one view (`TapeView`, `at` its first word), its parts offsets from
+`at`, one block bound. Merged here (2026-11-16, below).
 
 **On the hub's shape, nothing above changes** (internal_dead_code, whole corpus, at load 25–31: the reference
 graph 35.2 s, 393 of 443 chunk sizings cut by the memory line, 858 M walk steps, the longest 6,607).
@@ -181,3 +182,18 @@ at s1000, alternated with the hub's build at load 24–35 (`RERAIL_GPU_KERNEL_TI
 - **Found too:** oscar's engine stops on the whole corpus, in both runs: `setfix.rs:3043`, index 5 of a view row's
   2 columns, in `step_histograms` (exact statistics, 0203), not on the device. The hub's tree runs the corpus. Oscar
   lacks the hub's later `setfix.rs` changes, so it may be gone at oscar's next hub merge.
+
+## Oscar merged here
+
+Oscar's f51cab698 is merged into this branch. Each side's invariants are kept:
+
+- 0289 §4: one block per batch, and the view's parts as offsets from `at`.
+- 0293 §9–10: nothing per node derived, and roots as a rule.
+- 0310: one view definition, and the reads through CLIF.
+
+At s100 with `--metal`, warm, the findings are the hub's (none). The label passes' GPU time is 53.6 ms on the hub's
+tree and 239.7 ms on the merged tree, the Q53 shape. The CPU is 1.6 s against 1.9 s, and the instructions 22.8 G
+against 27.6 G.
+
+The first run of a new engine compiles its shaders (22.8 s of CPU here), so the first run after a kernel change is
+never a measurement. Q53 is now this branch's to fix.

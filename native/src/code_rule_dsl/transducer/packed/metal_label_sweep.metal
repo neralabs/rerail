@@ -15,20 +15,10 @@
 // The entries (in place of the tasks): their count, then per entry {kind (0 a program, 1 a
 // complement), program or target, -, the rule's word} or {1, target, of, -}; then the rules, each
 // {kind count or NONE (any kind), kinds, test count, tests (op << 16 | argument)}.
-inline bool sweep_admits(device const uint* rule,device const DeviceCode& code){
- uint kinds=rule[0],at=1u;
- if(kinds!=0xffffffffu){bool found=false;for(uint k=0u;k<kinds;k++)if(rule[1u+k]==code.kind){found=true;break;}if(!found)return false;at+=kinds;}
- for(uint k=0u,tests=rule[at];k<tests;k++){
-  uint test=rule[at+1u+k],op=test>>16u,arg=test&0xffffu;
-  if(op==1u){if(code.kind!=arg)return false;}
-  else{bool found=false;for(uint m=0u;m<code.classCount;m++)if(code.classes[m]==arg){found=true;break;}if(!found)return false;}
- }
- return true;
-}
 // The evaluation of (file, program), or NONE: evaluations are ordered by file, then program.
 inline uint sweep_evaluation(device const Evaluation* evaluations,uint count,uint file,uint program){uint low=0u,high=count;while(low<high){uint middle=(low+high)/2u;uint f=evaluations[middle].file,p=evaluations[middle].program;if(f<file||(f==file&&p<program))low=middle+1u;else high=middle;}return low<count&&evaluations[low].file==file&&evaluations[low].program==program?low:0xffffffffu;}
 #define SWEEP_TASK(E,NODE) {uint sweepEvaluation=(E);lane.generation+=2u;device Evaluation& evaluation=evaluations[sweepEvaluation];for(uint kind=0u;kind<=9u;kind++)lane.quotas[kind].limit=evaluation.quotas[kind].limit;for(uint kind=1u;kind<=9u;kind++)atomic_store_explicit(&lane.quotas[kind].used,0u,memory_order_relaxed);Task own={sweepEvaluation,0u,evaluation.file,evaluation.program,(NODE),resident_work(chunk,doc,evaluation.workLimit,(NODE)-doc.node_base)};device Status& sweepStatus=statuses[tid];run_task(own,header,files,nodes,programs,words,longs,children,supertypes,pending,captures,cursors,repeats,schedulerStorage,results,sweepStatus,values,strings,nfaStates,nfaData,nfaRanges,luaInstructions,luaMembers,assertions,assertionData,stringBytes,source,valueWork,lineStarts,finalCaptures,outputStorage,lane,evaluation);if(sweepStatus.error!=0u)failed=true;else if((sweepStatus.reserved&0x80000000u)!=0u)changed=true;}
-#define SWEEP_NODE(LOCAL) {uint sweepLocal=(LOCAL),node=doc.node_base+sweepLocal;device const DeviceCode& code=tape_code(chunk,doc,sweepLocal);for(uint e=0u;e<entryCount;e++){device const uint* entry=entries+4u*e;if(entry[0]==0u){if(!sweep_admits(sweep+entry[3],code))continue;uint at=sweep_evaluation(evaluations,header.evaluationCount,file,entry[1]);if(at!=0xffffffffu)SWEEP_TASK(at,node)}else{uint bit=1u<<(node%32u);device atomic_uint* target=&labelBits[entry[1]*labelWords+node/32u];bool set=(atomic_load_explicit(&labelBits[entry[2]*labelWords+node/32u],memory_order_relaxed)&bit)==0u;uint old=set?atomic_fetch_or_explicit(target,bit,memory_order_relaxed):atomic_fetch_and_explicit(target,~bit,memory_order_relaxed);if(((old&bit)!=0u)!=set)changed=true;}}}
+#define SWEEP_NODE(LOCAL) {uint sweepLocal=(LOCAL),node=doc.node_base+sweepLocal;device const DeviceCode& code=tape_code(chunk,doc,sweepLocal);for(uint e=0u;e<entryCount;e++){device const uint* entry=entries+4u*e;if(entry[0]==0u){if(!code_admits(sweep+entry[3],code))continue;uint at=sweep_evaluation(evaluations,header.evaluationCount,file,entry[1]);if(at!=0xffffffffu)SWEEP_TASK(at,node)}else{uint bit=1u<<(node%32u);device atomic_uint* target=&labelBits[entry[1]*labelWords+node/32u];bool set=(atomic_load_explicit(&labelBits[entry[2]*labelWords+node/32u],memory_order_relaxed)&bit)==0u;uint old=set?atomic_fetch_or_explicit(target,bit,memory_order_relaxed):atomic_fetch_and_explicit(target,~bit,memory_order_relaxed);if(((old&bit)!=0u)!=set)changed=true;}}}
 kernel void label_sweep(/*PARAMETERS*/uint tid [[thread_position_in_grid]],uint lanesCount [[threads_per_grid]]){
  device uint* head=(device uint*)supertypes;
  device atomic_uint* sweepFlags=(device atomic_uint*)(head+2u+(head[0]&0x7fffffffu)*head[1]);
@@ -60,7 +50,7 @@ kernel void label_sweep(/*PARAMETERS*/uint tid [[thread_position_in_grid]],uint 
  device const uchar* chunk=nodes;
  bool changed=false,failed=false;
  for(uint file=tid;file<header.fileCount;file+=lanesCount){
-  ChunkTape doc=files[file];
+  DocView doc=files[file];
   if(!reverse){for(uint local=0u;local<doc.nodes;local++)SWEEP_NODE(local)}
   else{for(uint local=doc.nodes;local>0u;local--)SWEEP_NODE(local-1u)}
  }

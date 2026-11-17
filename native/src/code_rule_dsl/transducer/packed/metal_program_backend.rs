@@ -284,7 +284,12 @@ const BATCH_ENTRY: &str = include_str!("metal_batch_runtime.metal");
 /// The interpreter over resident tapes (decision 0032): `run_batch` reading the batch's documents
 /// in the batch's chunk block through the tape view, as the label passes bind it.
 static RESIDENT_PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-    format!("#define RERAIL_RESIDENT 1\n#include <metal_stdlib>\nusing namespace metal;\n{}{}", crate::code_rule_dsl::residency::slabs::msl(), include_str!("metal_tape.metal"))
+    format!(
+        "#define RERAIL_RESIDENT 1\n#include <metal_stdlib>\nusing namespace metal;\n{}{}{}",
+        crate::code_rule_dsl::residency::slabs::msl(),
+        include_str!("metal_tape_reads.metal"),
+        include_str!("metal_tape.metal")
+    )
 });
 
 #[derive(Clone, Eq, PartialEq)]

@@ -2,9 +2,11 @@
 //! Capture links are immutable insertion histories. Geometry ties retain insertion order.
 use super::{context_pointer, declare, pointer_at};
 use crate::code_rule_dsl::transducer::packed::{
-    metal_batch_abi::{LinkRecord, MetalNode},
+    metal_batch_abi::LinkRecord,
     native_cpu::NativeTaskContext,
+    native_cpu_tape,
 };
+use rerail_clif::inline::ReadIds;
 use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::JITModule;
@@ -27,18 +29,10 @@ fn link(function: &mut FunctionBuilder<'_>, task: Value, head: Value) -> [Value;
     })
 }
 
-fn geometry(function: &mut FunctionBuilder<'_>, task: Value, node: Value) -> [Value; 2] {
-    let nodes = context_pointer(function, task, mem::offset_of!(NativeTaskContext, nodes));
-    let record = pointer_at(function, nodes, node, mem::size_of::<MetalNode>());
-    [
-        mem::offset_of!(MetalNode, source_start),
-        mem::offset_of!(MetalNode, source_end),
-    ]
-    .map(|offset| {
-        function
-            .ins()
-            .load(types::I32, MemFlags::trusted(), record, offset as i32)
-    })
+/// A node's span (the tape's, decision 0310).
+fn geometry(function: &mut FunctionBuilder<'_>, reads: &ReadIds, task: Value, node: Value) -> [Value; 2] {
+    let (start, end) = native_cpu_tape::span(function, reads, task, node);
+    [start, end]
 }
 
 fn signature(module: &JITModule, parameters: usize) -> cranelift_codegen::ir::Signature {
@@ -60,6 +54,7 @@ fn define_geometry_walk(
     id: FuncId,
     lookup: bool,
 ) -> Result<(), Box<cranelift_module::ModuleError>> {
+    let reads = ReadIds::declare(module)?;
     let mut context = module.make_context();
     context.func.signature = signature(module, if lookup { 4 } else { 3 });
     let mut builder_context = FunctionBuilderContext::new();
@@ -78,7 +73,7 @@ fn define_geometry_walk(
         let task = f.block_params(entry)[0];
         let head = f.block_params(entry)[1];
         let node = f.block_params(entry)[2];
-        let expected = geometry(&mut f, task, node);
+        let expected = geometry(&mut f, &reads, task, node);
         let zero = f.ins().iconst(types::I32, 0);
         f.ins().jump(walk, &[head.into(), zero.into()]);
         f.switch_to_block(walk);
@@ -90,7 +85,7 @@ fn define_geometry_walk(
             .brif(present, inspect, &[], done, &[exhausted.into()]);
         f.switch_to_block(inspect);
         let [previous, _, node] = link(&mut f, task, head);
-        let actual = geometry(&mut f, task, node);
+        let actual = geometry(&mut f, &reads, task, node);
         let start_same = f.ins().icmp(IntCC::Equal, actual[0], expected[0]);
         let end_same = f.ins().icmp(IntCC::Equal, actual[1], expected[1]);
         let same = f.ins().band(start_same, end_same);
