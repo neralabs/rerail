@@ -145,18 +145,29 @@ user time, 12 MB resident).
   keeps the parenthesized condition unless a `then` follows; a bound's `<:`/`>:` end it
   (`A >: L <: U`), but not inside brackets; colon arguments (`xs.map: x =>`, `f(a):`) take the
   operand before the `:` as the function; `10 seconds` is a postfix expression.
-- **Refused** where not probed: XML literals, quotes and splices (`'{…}`, `'[T]`, `'*`), type
-  lambdas and polymorphic function types (`[A] => …`), a postfix operator inside an operation,
-  `as` in patterns, given conditionals (`given [T](x) => …`), `a.extension.B` in a type,
-  operators past ASCII where an infix precedence is needed, and a vararg splice after an infix
-  operand (`0 to 9: _*`).
+- **XML** (`parse/xml.rs`): elements, attributes, text, comments, CDATA, processing
+  instructions and embedded `{ … }` blocks and patterns, read on the bytes. Runs (text,
+  attribute strings, the ends of comments) are found 64 bytes a step (`find3`, three compares and
+  a bitmask over `rerail_simd8`'s backends). The token buffer is cut at the literal's start, at
+  each embedded block (read as code) and at its end. Blanks before a child tag are the
+  external scanner's and give no text; elsewhere `xml_text` takes them, as tree-sitter's lexer
+  does.
+- **Read since the first count:** quotes and splices (`'{…}`, `'[T]`, `${…}`), type lambdas,
+  polymorphic function types and lambdas (`[A] => …`), dependent function types, structural
+  types, `?=>`, given conditionals, `as` and other alphanumeric pattern operators, a postfix
+  operator after an operation, `a op b: _*`, operators past ASCII (`≺:`, `⊕`), `a.extension.B`,
+  `new A` with `with B` on the following lines, `new:`, `val x` with `: T =` on the next line.
+- **Refused** still: what tree-sitter itself reads with an error (`'*` symbol literals), a `type`
+  definition inside `'[…]`, and several XML nodes side by side at the top of a literal.
 
 Oracle (`RERAIL_SCALA_OUT`): 440 files from 22 repositories
-(`~/orca/rerail-shared/lean-corpus/scala`), 439 without errors: **422 the same, 16 refused, 1
-differs**; the error text refused. The one that differs: tree-sitter reads
-`new BoxPanel(x) { … }` as a call of an instance with a block argument there, and as an instance
-with a template body when the same text is taken alone: the choice depends on the GLR versions the
-file's later text keeps alive. Left open. Golden tests: 19 probe texts (`golden.rs`), the same.
+(`~/orca/rerail-shared/lean-corpus/scala`), 439 without errors: **438 the same, none refused, 1
+differs**; the error text refused. The one that differs: tree-sitter reads the outermost
+`new BoxPanel(x) { … }` of a 5 KB nest of `new X(…) { … }` bodies as a call of an instance with a
+block argument, and every nested one of the same shape (and the same text taken alone) as an
+instance with a template body. Each `new X(…) {` is ambiguous until its body closes, so the nest
+holds more GLR versions than tree-sitter keeps (6), and which survives is its pruning's choice,
+not the grammar's. Left open. Golden tests: 22 probe texts (`golden.rs`), the same.
 
 About 58 MB/s on one core while the machine was loaded (`scala_costs`, the corpus 20 times: 71.6 MB
 in 1.24 s of user time, 16 MB resident, `quiet-run --here` with a load average of 78 on 18 cores),
