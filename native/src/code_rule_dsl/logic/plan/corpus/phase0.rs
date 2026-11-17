@@ -112,6 +112,12 @@ impl Graph {
         Ok(())
     }
 
+    /// `holds`, for the engine's tests of phase 0 (`phase0::tests`, hosted where the languages are registered).
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn holds_now(&self) -> bool {
+        self.holds()
+    }
+
     /// Its includes, missing names and absent candidates, for a test's message.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn describe(&self) -> String {
@@ -169,8 +175,23 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
         };
         let graphs: Vec<Option<Graph>> = wanted.iter().map(|seed| crate::code_rule_dsl::logic::rr::graph_image(images.store.as_deref(), images.key(seed)).and_then(|b| images.decode(&b))).collect();
         let mut graphs = graphs.into_iter();
+        let trace = std::env::var_os("RERAIL_PHASE0_TRACE").is_some();
         wanted.retain(|seed| {
-            let Some(g) = graphs.next().flatten().filter(|g| holds(g)) else {
+            let image = graphs.next().flatten();
+            if trace {
+                let why = match &image {
+                    None => "no image".to_owned(),
+                    Some(g) => match g.digests.iter().chain(&g.rules).find(|(p, d)| super::observe(|o| o.digest(p)).as_ref() != Some(*d)) {
+                        Some((p, _)) => format!("an image whose {} changed", p.display()),
+                        None => match g.absent.iter().find(|p| super::observe(|o| o.kind(p)) != crate::content_store::observe::Kind::Missing) {
+                            Some(p) => format!("an image whose absent {} is there", p.display()),
+                            None => "an image that holds".to_owned(),
+                        },
+                    },
+                };
+                eprintln!("rerail: phase 0 seed {}: {why}", format!("{seed:?}").chars().take(300).collect::<String>());
+            }
+            let Some(g) = image.filter(|g| holds(g)) else {
                 return true;
             };
             crate::code_rule_dsl::prof::count("phase0.graph_image_read", 1);
@@ -184,6 +205,9 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
         }
     }
     if !wanted.is_empty() {
+        if std::env::var_os("RERAIL_PHASE0_TRACE").is_some() {
+            eprintln!("rerail: phase 0 derives {} seeds (images {})", wanted.len(), if Images::here().is_some() { "on" } else { "off" });
+        }
         let whole = derive(&wanted).map_err(|e| Error::Syntax(format!("phase 0: {e}")))?;
         let made: HashMap<Seed, Arc<Graph>> = wanted.iter().enumerate().map(|(k, seed)| (seed.clone(), Arc::new(whole.of(seed, k)))).collect();
         // Kept as images (decision 0246) whichever process derived them: an image is the engine build's, not the
@@ -530,6 +554,13 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
             }
         }
     }
+    // The roots the loader may read (`world::World::new`: each setting that is a directory), canonical.
+    let roots: Vec<PathBuf> = [Some(lib.clone()), lib.parent().map(std::path::Path::to_path_buf), phase_lib()]
+        .into_iter()
+        .flatten()
+        .chain(dirs.iter().cloned())
+        .filter_map(|d| std::fs::canonicalize(d).ok())
+        .collect();
     for dir in dirs {
         text.push_str(&format!("env(\"rerail.program_dir\", {}).\n", quote(&dir.to_string_lossy())));
     }
@@ -568,6 +599,11 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
         }
         g.missing.sort();
         g.absent = outputs.rows("p0_absent").iter().filter_map(|r| r.get(0).text().map(PathBuf::from)).collect();
+        // A candidate whose directory lies outside every root (`rules/../packs/…`, beside a rule file outside the
+        // library) was refused, not looked at: its listing came back empty. It is no absent file the graph depends
+        // on, and `holds`, which stats it, found it whenever it was there: such a graph never held, and phase 0 ran
+        // again on every run, warm ones too (its first wave read every frame of the store, 250 MB).
+        g.absent.retain(|p| p.parent().and_then(|d| std::fs::canonicalize(d).ok()).is_none_or(|d| roots.iter().any(|r| d.starts_with(r))));
         for r in outputs.rows("p0_phase") {
             if let (V::Text(from), V::Text(phase), V::Text(path)) = (r.get(0), r.get(1), r.get(2)) {
                 g.phases.entry(from.to_owned()).or_default().push((phase.to_owned(), PathBuf::from(path)));
@@ -638,3 +674,4 @@ pub mod benchmarks {
         );
     }
 }
+

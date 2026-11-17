@@ -2862,7 +2862,7 @@ fn run_observed(
         }
         // The timeline's line for this section's end (above).
         if timeline {
-            eprintln!("RERAIL_TIMELINE {} {name}: {:.3} s CPU @{:.3} i={:.3}", phases::current().unwrap_or_else(|| "main".into()), process_now - process_last, crate::code_rule_dsl::logic::profile::timeline_clock(), crate::code_rule_dsl::logic::profile::retired_instructions() as f64 / 1e9);
+            eprintln!("RERAIL_TIMELINE {} {name}: {:.3} s CPU @{:.3} i={:.3} mb={}/{}", phases::current().unwrap_or_else(|| "main".into()), process_now - process_last, crate::code_rule_dsl::logic::profile::timeline_clock(), crate::code_rule_dsl::logic::profile::retired_instructions() as f64 / 1e9, crate::code_rule_dsl::prof::footprint_mb(), crate::code_rule_dsl::prof::max_footprint_mb());
         }
         process_phases.push((name, process_now - process_last));
         process_last = process_now;
@@ -4422,6 +4422,12 @@ fn run_observed(
     // tree counts and lines), and its rows come from the kept inputs after the waves. Not for a run that answers
     // requests as it goes (its cone reads the chunks' rows before the waves end). `RERAIL_KEPT_INPUTS=off` decodes
     // every hit whole, as before.
+    if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
+        eprintln!(
+            "rerail: kept route: session {}, durable {}, memoised {memoised}, loading {}, keeper {}",
+            session.is_some(), durable.is_some(), loading.is_some(), keeper.is_some()
+        );
+    }
     let kept_route = session.is_none()
         && durable.is_some()
         && memoised
@@ -4564,6 +4570,17 @@ fn run_observed(
             // outputs the store does not keep (an entry written before them) is found whole.
             let unchanged = |i: usize| counted_now.get(&window[i].1).is_some_and(|c| keptstats::same(*c, (memo::Content::Stored(known[i].expect("known")), window[i].0)));
             let (light, mut asked): (Vec<usize>, Vec<usize>) = asked.into_iter().partition(|i| kept_route && unchanged(*i));
+            if kept_route && std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
+                // Why a file is not unchanged: not counted, or counted under another content or key.
+                let (mut uncounted, mut other) = (0usize, Vec::new());
+                for &i in &asked {
+                    match counted_now.get(&window[i].1) {
+                        None => uncounted += 1,
+                        Some(c) => other.push(format!("{}: counted {:?}, now {:?}", window[i].1, c, (memo::Content::Stored(known[i].expect("known")), window[i].0))),
+                    }
+                }
+                eprintln!("rerail: kept route lookups: {} unchanged, {} not ({uncounted} not counted, {} counted otherwise{}); {} counted in all", light.len(), asked.len(), other.len(), other.first().map_or(String::new(), |o| format!(", e.g. {o}")), counted_now.len());
+            }
             if !light.is_empty() {
                 let keys: Vec<(memo::Content, &str)> = light.iter().map(|i| (memo::Content::Stored(known[*i].expect("known")), world::store_path(&window[*i].1))).collect();
                 for (i, f) in light.into_iter().zip(memo.found_outputs_all(&memo_plan, &keys).map_err(|e| Error::Plan(e.to_string()))?) {
@@ -4633,6 +4650,24 @@ fn run_observed(
             // the waves every content is looked up by its digest, in the frames held in memory (decision 0104).
             if memoised {
                 let asked: Vec<usize> = (0..rest.len()).filter(|r| contents[*r].is_some() && !(known[rest[*r]].is_some() && known[rest[*r]] == contents[*r].and_then(memo::Content::stored))).collect();
+                // A file read because its stat could not be trusted (git's racy rule, `RACY_NS`: written just before
+                // the last run recorded it) whose content is the one the keeper counted: its outputs alone, as a file
+                // the index knew (decision 0117 step 1). Else an edit right after a run on freshly written files
+                // decoded every hit whole.
+                let counted_same = |r: usize| contents[r].is_some_and(|c| counted_now.get(&window[rest[r]].1).is_some_and(|k| keptstats::same(*k, (c, window[rest[r]].0))));
+                let (light, mut asked): (Vec<usize>, Vec<usize>) = asked.into_iter().partition(|r| kept_route && counted_same(*r));
+                if !light.is_empty() {
+                    let keys: Vec<(memo::Content, &str)> = light.iter().map(|r| (contents[*r].expect("a content"), world::store_path(&window[rest[*r]].1))).collect();
+                    for (r, f) in light.into_iter().zip(memo.found_outputs_all(&memo_plan, &keys).map_err(|e| Error::Plan(e.to_string()))?) {
+                        match f {
+                            Some(f) => {
+                                found[rest[r]] = Some(f);
+                                outputs[rest[r]] = true;
+                            }
+                            None => asked.push(r),
+                        }
+                    }
+                }
                 let keys: Vec<(memo::Content, &str)> = asked.iter().map(|r| (contents[*r].expect("a content"), world::store_path(&window[rest[*r]].1))).collect();
                 for (r, f) in asked.into_iter().zip(memo.found_all(&memo_plan, &keys).map_err(|e| Error::Plan(e.to_string()))?) {
                     found[rest[r]] = f;
@@ -7400,6 +7435,8 @@ fn run_observed(
                     owners.extend(old.iter().flatten().chain(new.iter()).map(|r| retain::owner_of(r, *g)).filter(|o| *o < values));
                 }
                 let evaluated: BTreeSet<i64> = owners.into_iter().collect();
+                // `RERAIL_STATS_KEEP_TRACE`: what the patches read, by input.
+                let mut read_trace: Option<Vec<(usize, usize, usize, String)>> = std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some().then(Vec::new);
                 for (rel, g, base, names, old, new) in staged {
                     let k = &kept[rel];
                     let width = fields.width(rel);
@@ -7409,6 +7446,9 @@ fn run_observed(
                     let atoms = store.atoms_handle();
                     let cells = retain::cells_of(&atoms, prog, &maintained.0.domains, rel, width);
                     let mut patch = patch_owners(rel, k, g, holders, &evaluated, &old, new, &cells)?;
+                    if let Some(t) = read_trace.as_mut() {
+                        t.push((patch.read.1, patch.read.0, patch.read.2, rel.clone()));
+                    }
                     if let Some((o, n)) = trace_rows.filter(|(o, n)| !o.iter().all(Vec::is_empty) || !n.is_empty() || !patch.changed.is_empty()) {
                         eprintln!("rerail: kept input {rel} (owner column {g}, {} kept rows): old {o:?}; new {n:?}; owners changed {:?}; minus {:?}; plus {:?}", k.source.len(), patch.changed.iter().map(|(o, r)| (*o, r.len())).collect::<Vec<_>>(), patch.minus, patch.plus);
                     }
@@ -7423,6 +7463,12 @@ fn run_observed(
                         Arc::new(retain::Layered::new(bound.clone(), Arc::clone(&k.source), Arc::clone(&k.ranges), std::mem::take(&mut patch.changed)))
                     };
                     results.push((rel.clone(), width, base.is_some(), bound, source, patch));
+                }
+                if let Some(mut t) = read_trace {
+                    let real = evaluated.len();
+                    t.sort_unstable_by(|a, b| b.cmp(a));
+                    let (rows, owners, same) = t.iter().fold((0, 0, 0), |(r, o, s), x| (r + x.0, o + x.1, s + x.2));
+                    eprintln!("rerail: kept inputs patched: {real} documents evaluated; {owners} owners read ({same} unchanged), {rows} kept rows read; most: {:?}", &t[..t.len().min(6)]);
                 }
                 // Every input made: only now are they the run's, so a failure above leaves the run as it was.
                 drop(_s2);
@@ -11106,6 +11152,8 @@ struct OwnerPatch {
     minus: Vec<Vec<i64>>,
     docs: Option<retain::DocDigests>,
     digest: u64,
+    /// Measured (`RERAIL_STATS_KEEP_TRACE`): the owners read, the kept rows read, the owners found unchanged.
+    read: (usize, usize, usize),
 }
 
 /// Decision 0117 step 2: input `rel` after an edit, from its kept rows `kept` (each owner's a range, owner by
@@ -11126,7 +11174,7 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
     let text = matches!(memo::owner(rel), memo::Owner::Text(_));
     if width == 0 {
         // A relation of no columns is its rows' count (`write_frames`): none of its rows names an owner.
-        return if old.iter().all(Vec::is_empty) && new.is_empty() { Ok(OwnerPatch { changed: Vec::new(), plus: Vec::new(), minus: Vec::new(), docs: None, digest: kept.digest }) } else { Err(format!("{rel}: a relation of no columns changed")) };
+        return if old.iter().all(Vec::is_empty) && new.is_empty() { Ok(OwnerPatch { changed: Vec::new(), plus: Vec::new(), minus: Vec::new(), docs: None, digest: kept.digest, read: (0, 0, 0) }) } else { Err(format!("{rel}: a relation of no columns changed")) };
     }
     let mut by_old: BTreeMap<i64, Vec<Vec<Vec<i64>>>> = BTreeMap::new();
     for rows in old {
@@ -11159,6 +11207,7 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
         rows
     };
     let set = |rows: &[Vec<i64>]| rows.iter().cloned().collect::<BTreeSet<Vec<i64>>>();
+    let mut read = (0usize, 0usize, 0usize);
     for o in touched {
         // A real document evaluated this run, which no changed file's old entry names: its rows are this run's
         // (below), so when they are its kept digest's it is unchanged, and its kept rows are not read (Q20: read,
@@ -11179,6 +11228,9 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
                 continue;
             }
         }
+        // Read (`RERAIL_STATS_KEEP_TRACE`): an owner found unchanged above reads no kept rows and is not counted.
+        read.0 += 1;
+        read.1 += kept.ranges.get(&o).map_or(0, |r| r.1 as usize);
         // The owner's kept rows, checked against its digest: the only kept rows the edit reads.
         let was: Vec<Vec<i64>> = match kept.ranges.get(&o) {
             Some(&(start, n)) => {
@@ -11251,6 +11303,7 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
             }
         };
         if now == sorted(was.clone()) {
+            read.2 += 1;
             continue;
         }
         let (a, b) = (set(&was), set(&now));
@@ -11265,5 +11318,5 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
         changed.push((o, now));
     }
     let digest = docs.as_ref().map_or(kept.digest, retain::digest_of_docs);
-    Ok(OwnerPatch { changed, plus, minus, docs, digest })
+    Ok(OwnerPatch { changed, plus, minus, docs, digest, read })
 }
