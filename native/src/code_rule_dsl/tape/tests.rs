@@ -4148,9 +4148,7 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
                 "function f(a? = 1) {}\n",
                 "class A { m(...a = 0) {} }\n",
                 "export import a = require('a');\n",
-                // `using` as a parameter's name, `type.a<T>`, `get` then a property's name on
-                // the next line.
-                "f = (a, using?: string) => 1;\n",
+                // `type.a<T>`, `get` then a property's name on the next line.
                 "let t: [type.cast<unknown>, '?'];\n",
                 "interface I {\n  get\n  foo: string;\n}\n",
             ]);
@@ -4186,6 +4184,9 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
                 "namespace as {}\n",
                 "const u = new\n  URL(a);\n",
                 "var r = / /**/a /;\n",
+                // `using` as a parameter's name: a name since #735's grammar (Patch 30), which the
+                // lean parser refuses, as every `using`.
+                "f = (a, using?: string) => 1;\n",
             ]);
         }
         if dialect == Dialect::JavaScript {
@@ -4251,6 +4252,32 @@ fn the_product_reads_ecma_with_the_lean_parser() {
                 .unwrap()
                 .is_ok()
         );
+    }
+}
+
+/// `using` as a name (#735's grammars, Patch 18 and Patch 30) reads without a syntax error on the product's path:
+/// the lean parser refuses every `using`, and tree-sitter, which once read it as a declaration's keyword and left
+/// every TypeScript clause of such a file source-incomplete (src/cli/rule-draft.ts), reads it as a name.
+#[test]
+fn using_as_a_name_reads_without_an_error_on_the_products_path() {
+    use crate::code_rule_dsl::tape::ecma_lean;
+    use rerail_ecma_lean::Dialect;
+    let sources = ["const using = [1]; using.filter(x => x)\n", "function f(using: number[]) { return using.length; }\n"];
+    for (dialect, gd) in [(Dialect::JavaScript, GrammarDialect::JavaScript), (Dialect::TypeScript, GrammarDialect::TypeScript), (Dialect::Tsx, GrammarDialect::Tsx)] {
+        let grammar = Grammar::new(gd).unwrap();
+        for source in sources {
+            // A parameter's type is TypeScript's: JavaScript reads the first only.
+            if dialect == Dialect::JavaScript && source.contains(": number") {
+                continue;
+            }
+            let product = TapeImage::parse(&grammar, source, &|| false).expect("read to its end").unwrap_or_else(|e| panic!("{gd:?}: {source:?}: {e}"));
+            let doc = TapeDoc::restore(Arc::new(source.to_owned()), Arc::clone(&grammar), &product.primary, &|| false).unwrap();
+            assert_eq!(doc.syntax_error_ranges(), Vec::<std::ops::Range<usize>>::new(), "{gd:?}: {source:?}");
+            // Accepted, the lean parser's tape is the product's.
+            if let Ok(Ok(lean)) = ecma_lean::encode(dialect, &grammar, source, &|| false) {
+                assert_eq!(product.primary.to_bytes().unwrap(), lean.to_bytes().unwrap(), "{gd:?}: {source:?}");
+            }
+        }
     }
 }
 
