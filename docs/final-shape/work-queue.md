@@ -1506,6 +1506,39 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 
 ### Q67. Every workload on formats 15, 16 and 16z side by side, before format 15 is retired (0336 §3)
 
+- **Now** (2026-11-17): `tmp/q67/run.sh <name> <rules> <corpus>` runs one workload on each format. Each format
+  gets its own store, cost model and image store, runs cold and then warm, strict and capped, and the sorted
+  `violation.csv` keys are compared against format 15's. Runs used the CPU binding (nearest on Cpu), a profiling
+  build, at load 30–80, so instructions are the number to trust.
+
+  | workload | files | findings | instr 15 / 16 / 16z (G, cold) | peak RSS 15 / 16 / 16z (MB) |
+  |---|---|---|---|---|
+  | rules B-now (317), corpus0 subset | 50 | 213, equal | 287 / 290 / 321 | 1416 / 1476 / 1437 |
+  | rules B-now, corpus0 | 300 | 463, equal | 909 / 872 / 1037 | 2797 / 2963 / 2879 |
+  | data-layer authored (96), q2corpus n10 | 10 | 35, equal | 185 / 188 / 196 | 925 / 971 / 974 |
+  | data-layer authored, q2corpus n50 | 50 | 35, equal | 1184 / 1193 / 1325 | 2307 / 2281 / 2280 |
+  | data-layer authored, corpus0 first 100 | 100 | 35, equal | 1442 / 1467 / 1617 | 2656 / 2700 / 2769 |
+
+  Warm runs are equal (1.4–1.8 G). Fixed along the way:
+  - The kind-set axes built a code set per document over the whole code table. Format 16's table is the
+    language's, so on 50 files this cost +1.4 s and +1.1 GB allocated, and 300 files peaked at 5.9 GB. Sets are
+    now made once per (language, table) (ba740b3f8).
+  - The data-layer pack panicked on any file ("no declaration of rr_token_anon", in every format). When several
+    programs were combined, each part's on-request rewrite was undone after hiding had already copied `token`'s
+    answer rules into `rr_in_<g>_token`. It is now undone before hiding (4117281bb), with the test
+    `programs_hidden_alone_keep_their_attribute_copies_declared`.
+
+  **Left**:
+  - 16z's cold runs cost 10–14% more instructions than 15. This is the writer's LZ4 HC compression; reads are
+    level, and warm runs are equal.
+  - Format 16's cold parse phase writes the newline index and regions: about +0.2 s on 50 files ("issued
+    components").
+  - `Facts::of_kind`, `of_class`, `histogram` and `transducer_nodes_where` still build a set over the whole table
+    per call. On format 16 that is the language's table (about 140k Python entries, against a document's own on
+    format 15). It is not measurable in these runs. The fix is an index of the table's codes by kind, in the table.
+  - The Metal binding's side-by-side runs.
+  - The full data-layer repo (9,010 files), which is past the 2-minute cap per run.
+  - `.rr`'s format 16 table.
 - **Done when**: each workload runs on 15, 16 and 16z with the same finding keys (the loose findings contract) and
   its costs recorded per format; every difference is fixed; `.rr` has a format 16 table. Then format 15 is retired
   for documents, and not before: the user (2026-11-17), "I don't want to do it right now, as we still haven't proven
