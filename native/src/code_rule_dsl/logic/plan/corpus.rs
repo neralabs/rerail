@@ -620,17 +620,38 @@ fn embed_slice(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> 
         return Ok(None);
     }
     let mut need: BTreeSet<String> = wanted.iter().map(|r| (*r).to_owned()).collect();
-    loop {
-        let more: BTreeSet<String> = v
-            .rules()
-            .filter(|r| need.contains(v.rel_name(r.head().rel())))
-            .flat_map(|r| r.reads().map(|a| v.rel_name(a.rel()).to_owned()).collect::<Vec<_>>())
-            .filter(|rel| !need.contains(rel.as_str()))
-            .collect();
+    // `RERAIL_DUMP_SLICE=<file>`: each relation of the slice, the round of the walk that reached it and the relation
+    // whose rule read it first (a debugging aid).
+    let dump = std::env::var_os("RERAIL_DUMP_SLICE");
+    let mut by: BTreeMap<String, (usize, String)> = BTreeMap::new();
+    for round in 1.. {
+        let mut more: BTreeSet<String> = BTreeSet::new();
+        for r in v.rules().filter(|r| need.contains(v.rel_name(r.head().rel()))) {
+            for a in r.reads() {
+                let rel = v.rel_name(a.rel());
+                if !need.contains(rel) && more.insert(rel.to_owned()) && dump.is_some() {
+                    by.insert(rel.to_owned(), (round, v.rel_name(r.head().rel()).to_owned()));
+                }
+            }
+        }
         if more.is_empty() {
             break;
         }
         need.extend(more);
+    }
+    if let Some(path) = dump {
+        let rules = |rel: &str| v.rules().filter(|r| v.rel_name(r.head().rel()) == rel).count();
+        let text: String = need.iter().map(|rel| match by.get(rel) {
+            Some((round, reader)) => format!("{rel}\t{}\t{round}\t{reader}\n", rules(rel)),
+            None => format!("{rel}\t{}\t0\t(a root)\n", rules(rel)),
+        }).collect();
+        let _ = std::fs::write(&path, text);
+        // Its rules, as written (`<file>.rules`), to compare one program's slice with another's.
+        let mut rules: Vec<String> = v.rules().filter(|r| need.contains(v.rel_name(r.head().rel()))).map(|r| format!("{}.\n", v.show_rule(r))).collect();
+        rules.sort();
+        let mut at = path.clone();
+        at.push(".rules");
+        let _ = std::fs::write(at, rules.concat());
     }
     // A part of the program's version (decision 0244): the rules of `need`, every field, the wanted relations its
     // outputs.
