@@ -42,9 +42,10 @@ Each of these sits between the stored bytes and the reads today (oscar's line; t
 
 1. **The view is derived, not stored.** A stored format 16 header holds each region's *length* (`head::LENGTHS`),
    not its start. `f16::placement` computes the starts by a prefix sum and checks the side lists' part starts
-   (once per tape loaded: `Tape16::from_bytes`, and once per placement on the device). `bind` then adds
-   **the language's current** cutoff, prefix numbers and slot/gap/length widths (`Lang::device`): they are not in
-   the tape. A tape is read with whatever numbers its language has now, not the ones it was written with.
+   (once per tape loaded: `Tape16::from_bytes`, and once per placement on the device). `bind` then adds the
+   language's cutoff, prefix numbers and slot/gap/length widths (`Lang::device`). These are the language's, fixed
+   by its revision, which the header's mark names; the device's placement refuses a tape whose mark is not the
+   language's (`residency/slabs.rs:249`).
 2. **A 16z tape is decoded at placement.** `residency/slabs.rs` lays a 16z tape out as format 16 in its slab
    (`Tape16Z::unblock_into`): the device never reads 16z. On the CPU, a 16z block is decoded into the thread's
    cache and read there (`Tape16Z`).
@@ -69,15 +70,14 @@ Each axis is independent. Within an axis, the scenarios are alternatives.
 
 - **A1: derived at load (today).** One record per document, built from the header and the language. Costs O(1)
   per document plus the part-start check. It is a translation of the header, and it reads the language's numbers
-  at read time, so a language table change can misread stored tapes unless the store's keys catch it (not checked
-  here).
+  at read time; the header's revision mark keeps a stored tape from being read with another revision's.
 - **A2: the stored header is the view.** The writer writes the region starts (tape-relative u32s), the widths and
   the cutoff and prefix numbers into the header, in the layout the reads take. A reader is given the tape's first
   byte, and the header is the view's tape half. The batch keeps a per-document entry for what is the batch's,
   not the tape's: its block offset, its source, and its first byte and line in the batch's numbering. Nothing is
-  built. A tape carries the numbers it was written with, so (1)'s hazard goes. Cost: a format revision of 16 and 16z
-  (stored tapes are written again; a store built before reads cold), about 40 bytes more a header (noticeable
-  only for documents of a few dozen nodes). The reads change only in where `at::` points.
+  built. Cost: a format revision of 16 and 16z (stored tapes are written again; a store built before reads cold).
+  The header need not grow: nine u64 lengths (72 bytes) become ten u32 starts (40); the language's numbers stay
+  the language's, placed once with its table. The reads change only in where `at::` points.
 - **A3: no view; the reads take the header's lengths.** Each read (or each kernel's entry) sums the region lengths.
   It keeps the format unchanged but puts a 9-term sum before the first load of every read that is not hoisted.
   Not recommended: A2 gets the same "read the stored bytes" with no work.
@@ -126,11 +126,20 @@ record. C2 is the alternative if device memory or bandwidth binds. On a 1 GB bud
 format 16, so it does not bind yet; measure it before choosing it.
 
 What is unmeasured and would change the choice: (a) how often line questions are asked against the region's cost
-(B2 vs B3), (b) the device's residency pressure at the data-layer scale (C3 vs C2), and (c) how many small
-documents there are, against A2's larger header.
+(B2 vs B3), (b) the device's residency pressure at the data-layer scale (C3 vs C2), and (c) whether A2's format
+revision is worth its rewrite of every stored tape.
 
 ## For the roll-up
 
 None of the four lines builds A2–D3; each is A1 + B1 + C1 + D1. The merge keeps oscar's reads (the one
 definition), takes `at` (0289 §4) as the block offset, and declares the record once (the spelling that prints its
 MSL from the Rust fields). The final shape's steps go on the work queue as their own items, not into the merge.
+
+## The user's answers (2026-11-17), recorded in decision 0336
+
+- **B:** line starts and the code table come with format 16 (0156 §1.6 designs the newline index into the tape);
+  the implementation owes them.
+- **C:** the GPU decompresses 16z blocks as it reads; a full decompression is a planner step, on the GPU, weighing
+  CPU and memory per job. C3 is not the direction.
+- **D:** format 15 is retired after every workload runs on 15 and 16 side by side and every difference is fixed.
+- **A:** open.
