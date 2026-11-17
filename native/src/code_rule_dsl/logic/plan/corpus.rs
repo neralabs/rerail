@@ -5538,7 +5538,7 @@ fn run_observed(
         };
         phase("wait", statements.count());
         statements.enter("local");
-        let Ctx { chunk_nodes_built, chunk_docs, chunk_own, start_mb, start_max_mb, at_once, chunk_partials, cone } = ctx;
+        let Ctx { chunk_nodes_built, chunk_docs, chunk_own, start_mb, start_max_mb, at_once, mut chunk_partials, cone } = ctx;
         let Evaluated { got, host_of, askers, text_sources, stored_bound, totals_add, export_rows, mut mentioned, slice_rounds } = ev;
         for (rel, rows, measured) in &totals_add {
             totals.add(rel, *rows, measured);
@@ -5748,8 +5748,11 @@ fn run_observed(
                 let width = types.len();
                 let at = split.locations.get(rel).and_then(|l| l.first().copied()).filter(|a| *a < width && unchecked);
                 let (mut own_cols, mut shared_cols): (Vec<Vec<i64>>, Vec<Vec<i64>>) = (vec![Vec::new(); width], vec![Vec::new(); width]);
-                for (d, e) in docs.iter().map(|d| (d, &chunk_partials[d])) {
-                    let Some((w, values)) = e.rows.get(rel) else { continue };
+                // Moved out of the old entry into the new one: only the cone's relations and the base rows are read
+                // of the old entry after this (`standing`, the base rows below).
+                for d in &docs {
+                    let Some((w, values)) = chunk_partials.get_mut(d).and_then(|e| e.rows.remove(rel)) else { continue };
+                    let w = &w;
                     if *w != width {
                         return Err(Error::Plan(format!("{rel}: a memo entry's rows are {w} wide, its declaration {width}")));
                     }
@@ -5760,7 +5763,7 @@ fn run_observed(
                         }
                     }
                     if let Some(entry) = entries.get_mut(d) {
-                        entry.rows.insert(rel.clone(), (width, values.clone()));
+                        entry.rows.insert(rel.clone(), (width, values));
                     }
                 }
                 let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
@@ -5786,12 +5789,16 @@ fn run_observed(
                 }
             }
             // Their outputs' rows, as a hit's are (`memo replay`): into the run's outputs, and kept in the new entries.
-            for (d, e) in docs.iter().map(|d| (d, &chunk_partials[d])) {
-                for (rel, (columns, rows)) in e.outputs.iter().filter(|(r, _)| !cone.contains(*r) && !r.starts_with(memo::GUESTS)) {
-                    outputs.entry(rel.clone()).or_default().push(Arc::new(rows.clone()));
+            for d in &docs {
+                let Some(e) = chunk_partials.get_mut(d) else { continue };
+                let moved: Vec<String> = e.outputs.keys().filter(|r| !cone.contains(*r) && !r.starts_with(memo::GUESTS)).cloned().collect();
+                for rel in moved {
+                    let (columns, rows) = e.outputs.remove(&rel).expect("listed");
+                    let rows = Arc::new(rows);
+                    outputs.entry(rel.clone()).or_default().push(Arc::clone(&rows));
                     node_columns.insert(rel.clone(), columns.clone());
                     if let Some(entry) = entries.get_mut(d) {
-                        entry.outputs.insert(rel.clone(), (columns.clone(), rows.clone()));
+                        entry.outputs.insert(rel, (columns, Arc::unwrap_or_clone(rows)));
                     }
                 }
             }
