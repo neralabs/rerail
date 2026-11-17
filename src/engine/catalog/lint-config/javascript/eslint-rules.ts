@@ -7,7 +7,8 @@
  */
 import { posix } from "node:path";
 import { z } from "zod";
-import { filesScope, readEslintFlatConfig, type FilePatterns, type FlatConfigEntry, type FlatConfigRead, type FlatConfigScope } from "./eslint-flat-config.js";
+import { readEslintFlatConfig, type FilePatterns, type FlatConfigEntry, type FlatConfigRead, type FlatConfigScope } from "./eslint-flat-config.js";
+import { filesScope } from "./eslint-flat-config-scope.js";
 import { ESLINTRC_PRESETS, type EslintPresetEntry } from "../generated/eslint-presets.generated.js";
 import { configFile, jsoncFile, jsonObject, severityOf, type ConfigFile, type SeverityReading } from "./jsonc-lint-config.js";
 import { readFormat } from "../formats/lint-config-formats.js";

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { presetScope, readEslintFlatConfig, type FilePatterns, type FlatConfigEntry, type FlatConfigScope } from "../../../../../src/engine/catalog/lint-config/javascript/eslint-flat-config.js";
+import { readEslintFlatConfig, type FilePatterns, type FlatConfigEntry, type FlatConfigScope } from "../../../../../src/engine/catalog/lint-config/javascript/eslint-flat-config.js";
+import { presetScope } from "../../../../../src/engine/catalog/lint-config/javascript/eslint-flat-config-scope.js";
 import { readFormat } from "../../../../../src/engine/catalog/lint-config/formats/lint-config-formats.js";
 
 const ALL: FlatConfigScope = { kind: "all" };
