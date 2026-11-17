@@ -782,6 +782,20 @@ describe("path keys an earlier build stored under another spelling", () => {
     } finally {
       database.$client.close();
     }
+    // The dashboard's repository list and repository page show the folder once.
+    const stores = new DatabaseApiStores(databasePath, {
+      health: () => ({ pid: process.pid, database: { path: databasePath, exists: true }, native: { ok: true } }),
+      origin: () => "http://127.0.0.1:4737",
+    });
+    ends.push(() => { stores.close(); });
+    const operation = (id: string) => operations.find(candidate => candidate.id === id)!;
+    const listing = await invokeOperation(operation("repositories_list"), stores, {}, { kind: "person" }) as { repositories: Array<{ checkoutCount: number }> };
+    const page = await invokeOperation(operation("repository_context_get"), stores, { checkout: folder }, { kind: "person" }) as
+      { clones: Array<{ checkouts: Array<{ checkoutPath: string }> }> };
+    expect({
+      counts: listing.repositories.map(repository => repository.checkoutCount),
+      page: page.clones.flatMap(clone => clone.checkouts.map(checkout => checkout.checkoutPath)),
+    }).toEqual({ counts: [1], page: [folder] });
   });
 
   it("stay where the key cannot be resolved or is no whole path, and the database still opens", async () => {
