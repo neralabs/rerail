@@ -252,9 +252,12 @@ The measurement found a race the timing change exposed (work queue Q90): a parke
 than its submission's found that thread's stratum of the same per-thread ticket, and ran it with its rules (a panic
 in 1 run of 20, 1,422 findings in another). Tickets and waves are now numbered for the process.
 
-Still to do in step 2:
-- place the table and its rank index in the batch's block beside the tape;
-- write the reads once in CLIF, for Rust and MSL; the chunk's `low` column (row 3) goes with them.
+The table's columns are in the projection's block beside its rank index (`cells::Cells`), written once where they
+are computed. Six interleaved pairs on hogql: findings 1,629; the samples show no cost in the placing, and the
+table's build unchanged.
+
+Still to do in step 2: write the reads once in CLIF, for Rust and MSL; the chunk's `low` column (row 3) goes with
+them.
 
 ## The copies today
 

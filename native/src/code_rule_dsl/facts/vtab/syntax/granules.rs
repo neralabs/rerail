@@ -45,10 +45,12 @@
 //! **Embedded documents** (guests: SQL in a string, a Vue file's script) are numbered by the same rules in their own
 //! grammar. A guest's document key is a hash of its host node's id (`corpus::guests`), so it is as stable as that.
 
+use super::cells::{Block, Cell, Cells};
 use super::ranks::{Item, Ranks};
 use super::{Dialect, Projected};
 use crate::code_rule_dsl::facts::core::Facts;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub(super) const SLOT_BITS: u32 = 14;
 pub const INDEX_BITS: u32 = 32 - SLOT_BITS;
@@ -556,40 +558,55 @@ pub fn census(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> (usize, usize
 pub struct Table {
     /// Each granule's start and its subtree's end (tape ids), and its parent granule (`u32::MAX` for the root's), in
     /// preorder of the starts.
-    starts: Vec<u32>,
-    ends: Vec<u32>,
-    parents: Vec<u32>,
+    starts: Cells<u32>,
+    ends: Cells<u32>,
+    parents: Cells<u32>,
     /// The numbered nodes and tokens of granules `..g`: prefix sums, one longer than the granules.
-    nodes: Vec<u32>,
-    tokens: Vec<u32>,
+    nodes: Cells<u32>,
+    tokens: Cells<u32>,
     /// Granule `g`'s slots are `slots[at[g]..at[g + 1]]`: its first, then its continuations.
-    at: Vec<u32>,
-    slots: Vec<u32>,
+    at: Cells<u32>,
+    slots: Cells<u32>,
     /// `(slot, granule, continuation)`, by slot.
-    by_slot: Vec<(u32, u32, u32)>,
+    by_slot: Cells<[u32; 3]>,
     /// Granule `g`'s child granules are `kids[first_kid[g]..first_kid[g + 1]]`, in order, each with the numbered
     /// nodes and tokens of `g` before it: the stretches of `g` between them, found by bisection.
-    first_kid: Vec<u32>,
-    kids: Vec<Kid>,
+    first_kid: Cells<u32>,
+    kids: Cells<Kid>,
     /// The run rank of each stretch of each granule (`order`): granule `g`'s stretch `s` (after `s` of its child
     /// granules) is `runs[first_kid[g] + g + s]`, `u32::MAX` where the stretch holds no node.
-    runs: Vec<u32>,
+    runs: Cells<u32>,
     /// Each run's granule and stretch, by rank.
-    run_at: Vec<(u32, u32)>,
+    run_at: Cells<[u32; 2]>,
     /// The order keys are preorder indexes: the runs or a granule's nodes outgrow the key's bits (`order`).
     preorder_keys: bool,
     /// Each granule's start and end as ranks, by item (`[nodes, tokens]`): the numbered items before its start and
     /// before its subtree's end. With them a numbered item's id is read from its number alone, no select.
-    rank_starts: [Vec<u32>; 2],
-    rank_ends: [Vec<u32>; 2],
+    rank_starts: [Cells<u32>; 2],
+    rank_ends: [Cells<u32>; 2],
+}
+
+/// `v`, a table column being computed, written into `block`.
+fn placed<T: Cell>(block: &Arc<Block>, v: &[T]) -> Cells<T> {
+    Cells::build(block, v.len(), |out| {
+        // copy: derived (a table column, computed here and written once into the block)
+        out.copy_from_slice(v);
+        v.len()
+    })
+    .expect("a batch's block holds its projection")
 }
 
 /// A child granule, and its parent's own numbered nodes and tokens before its start.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
+#[repr(C)]
 struct Kid {
     granule: u32,
     before: [u32; 2],
 }
+
+// SAFETY: `#[repr(C)]`, three `u32`s: every byte a named field, no address.
+#[cfg(target_os = "macos")]
+unsafe impl rerail_blocks::Pod for Kid {}
 
 impl Table {
     fn new(p: &Projected, cut: &Cut, nodes: &[u32], tokens: &[u32]) -> Self {
@@ -605,7 +622,7 @@ impl Table {
         }
         let prefix = |c: &[u32]| std::iter::once(0).chain(c.iter().scan(0u32, |a, &n| { *a += n; Some(*a) })).collect::<Vec<u32>>();
         let at = prefix(&cut.slots[..g].iter().map(|s| s.len() as u32).collect::<Vec<_>>());
-        let mut by_slot: Vec<(u32, u32, u32)> = cut.slots[..g].iter().enumerate().flat_map(|(i, s)| s.iter().enumerate().map(move |(c, &slot)| (slot, i as u32, c as u32))).collect();
+        let mut by_slot: Vec<[u32; 3]> = cut.slots[..g].iter().enumerate().flat_map(|(i, s)| s.iter().enumerate().map(move |(c, &slot)| [slot, i as u32, c as u32])).collect();
         by_slot.sort_unstable();
         // Each granule's children (parents come first in preorder, so a counting pass places them), and its own
         // items before each: the stretch before it, and the stretches before that.
@@ -634,7 +651,7 @@ impl Table {
         // The runs (`order`): a run starts where a node's granule is not the one before it. A granule's stretch is how
         // many of its child granules started before the node.
         let mut runs = vec![u32::MAX; g + kids.len()];
-        let mut run_at: Vec<(u32, u32)> = Vec::new();
+        let mut run_at: Vec<[u32; 2]> = Vec::new();
         let mut passed = vec![0u32; g];
         let mut next = 1;
         for (l, &q) in cut.of.iter().enumerate().take(if g == 0 { 0 } else { cut.of.len() }) {
@@ -645,14 +662,35 @@ impl Table {
             if l == 0 || q != cut.of[l - 1] {
                 let (q, s) = (q as usize, passed[q as usize]);
                 runs[first_kid[q] as usize + q + s as usize] = run_at.len() as u32;
-                run_at.push((q as u32, s));
+                run_at.push([q as u32, s]);
             }
         }
         let preorder_keys = run_at.len() as u64 > 1 << (32 - ORDER_INDEX_BITS) || nodes[..g].iter().any(|&n| n > 1 << ORDER_INDEX_BITS);
         let ranked = |at: &[u32], item: Item| at.iter().map(|&x| r.rank(item, x)).collect::<Vec<u32>>();
         let rank_starts = [ranked(&starts, Item::Node), ranked(&starts, Item::Token)];
         let rank_ends = [ranked(&ends, Item::Node), ranked(&ends, Item::Token)];
-        Table { starts, ends, parents, nodes: prefix(&nodes[..g]), tokens: prefix(&ntok), at, slots: cut.slots[..g].concat(), by_slot, first_kid, kids, runs, run_at, preorder_keys, rank_starts, rank_ends }
+        // Written once into the projection's block, beside its rank index (decision 0353 step 2), where the device's
+        // reads will find them too.
+        let b = r.block();
+        let [rs0, rs1] = rank_starts;
+        let [re0, re1] = rank_ends;
+        Table {
+            starts: placed(b, &starts),
+            ends: placed(b, &ends),
+            parents: placed(b, &parents),
+            nodes: placed(b, &prefix(&nodes[..g])),
+            tokens: placed(b, &prefix(&ntok)),
+            at: placed(b, &at),
+            slots: placed(b, &cut.slots[..g].concat()),
+            by_slot: placed(b, &by_slot),
+            first_kid: placed(b, &first_kid),
+            kids: placed(b, &kids),
+            runs: placed(b, &runs),
+            run_at: placed(b, &run_at),
+            preorder_keys,
+            rank_starts: [placed(b, &rs0), placed(b, &rs1)],
+            rank_ends: [placed(b, &re0), placed(b, &re1)],
+        }
     }
 
     /// The innermost granule holding `item` number `k`, and the last granule starting at or before it: by ranks.
@@ -692,8 +730,8 @@ impl Table {
     /// The item whose id's low 32 bits are `low` (`low_of`'s inverse): what it is and its number.
     pub fn number_of(&self, low: u32) -> Option<(Item, u32)> {
         let slot = low >> INDEX_BITS;
-        let at = self.by_slot.partition_point(|e| e.0 < slot);
-        let &(s, g, c) = self.by_slot.get(at)?;
+        let at = self.by_slot.partition_point(|e| e[0] < slot);
+        let &[s, g, c] = self.by_slot.get(at)?;
         if s != slot {
             return None;
         }
@@ -744,7 +782,7 @@ impl Table {
         if self.preorder_keys {
             return (key < nodes).then_some(key);
         }
-        let (g, s) = *self.run_at.get((key >> ORDER_INDEX_BITS) as usize)?;
+        let [g, s] = *self.run_at.get((key >> ORDER_INDEX_BITS) as usize)?;
         let (g, k) = (g as usize, key & ((1 << ORDER_INDEX_BITS) - 1));
         if k >= self.nodes[g + 1] - self.nodes[g] {
             return None;

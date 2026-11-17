@@ -11,8 +11,20 @@ pub fn block(bytes: usize) -> std::sync::Arc<Block> {
     std::sync::Arc::new(Block::anon(rerail_blocks::block::kind::CHUNK, bytes))
 }
 
+/// What cells can hold: plain data a block holds as its bytes (`rerail_blocks::Pod`).
+#[cfg(target_os = "macos")]
+pub trait Cell: rerail_blocks::Pod + Copy + Default {}
+#[cfg(target_os = "macos")]
+impl<T: rerail_blocks::Pod + Copy + Default> Cell for T {}
+
 #[cfg(not(target_os = "macos"))]
 pub use heap::{Block, Cells, block};
+
+/// What cells can hold (heap arrays: any plain value).
+#[cfg(not(target_os = "macos"))]
+pub trait Cell: Copy + Default {}
+#[cfg(not(target_os = "macos"))]
+impl<T: Copy + Default> Cell for T {}
 
 #[cfg(not(target_os = "macos"))]
 mod heap {
