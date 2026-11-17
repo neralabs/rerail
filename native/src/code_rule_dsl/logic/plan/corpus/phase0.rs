@@ -185,18 +185,28 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     }
     if !wanted.is_empty() {
         let whole = derive(&wanted).map_err(|e| Error::Syntax(format!("phase 0: {e}")))?;
-        let images = Images::here();
-        let mut map = kept.lock().expect("phase 0's graphs");
-        for (k, seed) in wanted.iter().enumerate() {
-            let g = whole.of(seed, k);
-            if let Some(images) = &images {
-                crate::code_rule_dsl::logic::rr::keep_graph_image(images.store.as_deref(), images.key(seed), images.encode(&g));
+        let made: HashMap<Seed, Arc<Graph>> = wanted.iter().enumerate().map(|(k, seed)| (seed.clone(), Arc::new(whole.of(seed, k)))).collect();
+        // Kept as images (decision 0246) whichever process derived them: an image is the engine build's, not the
+        // process's.
+        if let Some(images) = Images::here() {
+            for (seed, g) in &made {
+                crate::code_rule_dsl::logic::rr::keep_graph_image(images.store.as_deref(), images.key(seed), images.encode(g));
             }
-            map.insert(seed.clone(), Arc::new(g));
+        }
+        // A test store's template is filled in whichever test process asks first (`test_store`): its graphs are not
+        // kept for the process, whose own runs then derived none, and prepared one program fewer than a process that
+        // found the template made (the identity test's first child after a rebuild).
+        #[cfg(any(test, feature = "test-hooks"))]
+        let keep = !super::test_store::filling();
+        #[cfg(not(any(test, feature = "test-hooks")))]
+        let keep = true;
+        if keep {
+            let mut map = kept.lock().expect("phase 0's graphs");
+            map.extend(made.iter().map(|(s, g)| (s.clone(), Arc::clone(g))));
         }
         for (g, seed) in found.iter_mut().zip(seeds) {
             if g.is_none() {
-                *g = map.get(seed).cloned();
+                *g = made.get(seed).cloned();
             }
         }
     }

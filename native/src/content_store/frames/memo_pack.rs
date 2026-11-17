@@ -118,6 +118,20 @@ type Kept<'a> = (&'a [u8], i64, i64, [u8; 32], SegmentBytes, Option<SegmentBytes
 
 const COLUMNS: &str = "part, path, digest, doc, pack, at, len, over_pack, over_at, over_len";
 
+/// A batch of memo entries as the writer writes them (`queue_memo_segments`).
+pub(in crate::content_store) struct MemoWrite {
+    space: [u8; 32],
+    segments: SealedSegments,
+    rows: Vec<MemoRow>,
+    keep: usize,
+}
+
+impl MemoWrite {
+    pub(in crate::content_store) fn run(&mut self, store: &ContentStore) -> StoreResult<()> {
+        store.put_memo_segments(&self.space, &mut self.segments, &self.rows, self.keep)
+    }
+}
+
 impl ContentStore {
     /// The entries of `rows` (`COLUMNS`), in their segments, by part. What is kept over an entry that is not there is
     /// left: its identities are read again (decision 0280).
@@ -221,6 +235,13 @@ impl ContentStore {
     /// The directory a run's `SegmentWriter` writes the store's segments in.
     pub fn memo_dir(&self) -> PathBuf {
         pack_dir(&self.database_path)
+    }
+
+    /// Queues a batch's entries (`put_memo_segments`) for the store's writer, behind the run (decision 0306 §8), as
+    /// `what`: `bytes` held until written, `keys` each with the entry a read gets meanwhile.
+    pub fn queue_memo_segments(&self, what: &'static str, bytes: usize, keys: Vec<(super::super::write_back::Key, Option<super::super::write_back::Held>)>, space: [u8; 32], segments: SealedSegments, rows: Vec<MemoRow>, keep: usize) {
+        let write = MemoWrite { space, segments, rows, keep };
+        self.write_back_syms(super::super::write_back::Syms::None, what, bytes, keys, super::super::write_back::Work(super::super::write_back::Kind::Memo(Box::new(write))));
     }
 
     /// The writer's half of a batch (`SegmentWriter`): its segments written back (`Sealed::write_back`), then, in

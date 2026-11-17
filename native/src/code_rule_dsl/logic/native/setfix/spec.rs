@@ -96,6 +96,12 @@ pub enum JoinItem {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct JoinSpec {
     pub items: Vec<JoinItem>,
+    /// Per item before the head, the planner's step it was made for (`plan_steps` for the head's computed terms),
+    /// and its steps: a literal can make several items (`$k = @sub(@strlen($d), 1)` makes two), so the engine's
+    /// steps are not the plan's. The engine reports counts, CPU and histograms by plan step through it
+    /// (`JoinRule::from`). Empty (a spec read from text): each item is its own step.
+    pub from: Vec<u32>,
+    pub plan_steps: u32,
 }
 
 /// How a relation starts: its table's rows, none, a query's rows, or a kept native relation less another's
@@ -410,7 +416,7 @@ impl JoinSpec {
                 other => return Err(format!("unknown join item {other}")),
             });
         }
-        Ok(JoinSpec { items })
+        Ok(JoinSpec { items, ..Default::default() })
     }
 }
 

@@ -96,6 +96,11 @@
         let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
         let prepared = [9u8; 32];
         assert!(read_plans(&store, &prepared).unwrap().is_empty());
+        // As the run's record applies it: the entry made on the run's side.
+        let write_plans = |store: &ContentStore, prepared: &[u8; 32], rows: &[Vec<Value>], notes: &NoteRows| {
+            let entry = plans_entry(rows, notes);
+            apply_plans(&crate::content_store::record::Apply { store, bytes: &entry }, crate::content_store::record::codec::body(prepared)).map(|()| true)
+        };
         assert!(write_plans(&store, &prepared, &[row.into_iter().map(Value::Int).collect()], &Default::default()).unwrap());
         let read = read_plans(&store, &prepared).unwrap();
         assert_eq!((read.len(), read.get(&key)), (1, Some(&stored)));

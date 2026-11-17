@@ -3602,6 +3602,17 @@ impl Source for Viewed {
     fn len(&self) -> usize {
         *self.batch.offsets(self.view).last().unwrap()
     }
+    /// A node's document or column found from its id (`docof`, `col`: 4 and 3.5 derived lookups), a parent's
+    /// children listed (`child` 2, `field` 1.7): decision 0312. The rest about one.
+    fn lookup_cost(&self, column: usize) -> f64 {
+        match (self.view, column) {
+            (View::Loc(Place::Docof), 0) => 4.0,
+            (View::Loc(Place::Col), 0) => 3.5,
+            (View::Child, 0) => 2.0,
+            (View::Field, 0) => 1.7,
+            _ => 1.0,
+        }
+    }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         let per = if column == self.own() {
             1

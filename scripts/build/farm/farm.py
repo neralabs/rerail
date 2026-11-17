@@ -22,12 +22,20 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 19
+VERSION = 20
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
 STATE = os.path.join(HOME, "Library/Caches/rerail-farm")
 SCCACHE = os.path.join(SHARE, "bin/sccache")
+
+# Farm 20 removed benchmark leases. A checkout whose branch predates it has the old
+# scripts/dev/quiet-run, which imports this module and would queue, drain and wait (or stop, finding
+# no leases here): it is handed to the pass-through (scripts/dev/quiet-run, installed beside this),
+# which runs its command at once. The pass-through never imports this module.
+if sys.argv and os.path.basename(sys.argv[0]) == "quiet-run" and os.path.isfile(os.path.join(SHARE, "quiet-run")):
+    os.environ["RERAIL_QUIET_RUN_CHECKOUT"] = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), "../.."))
+    os.execv(os.path.join(SHARE, "quiet-run"), [os.path.join(SHARE, "quiet-run")] + sys.argv[1:])
 SCCACHE_CONF = os.path.join(CONFIG, "sccache.toml")
 HOSTS = os.path.join(CONFIG, "hosts.json")
 PORT = "4227"
@@ -603,12 +611,6 @@ def advise(checkout, rustc):
         lines.append("this builds the engine's CLI without `--features test-hooks`, so every dependency crate is compiled "
                      "apart from the tests' build of it, and keeps a second set of incremental state: "
                      "`nice -n 19 cargo build --bin rerail-engine --features test-hooks` (AGENTS.md)")
-    lease = leased(HERE)
-    if lease:
-        lines.append(f"a benchmark lease holds this machine until {time.strftime('%H:%M:%S', time.localtime(lease['until']))} "
-                     f"at the latest ({lease.get('label') or 'unnamed'}): this build's compiles wait for it, and anything heavy "
-                     "you run here now (tests, Relax) is unfair to the benchmark: run it with scripts/dev/test-remote, or after")
-    lines += interference_advice(checkout)
     lines += variant_advice(checkout)
     try:
         f = findings_path(checkout)
@@ -652,10 +654,6 @@ def wrapper(rustc, args):
             note_variant(checkout, args, out_dir, crate)
         except (OSError, ValueError, KeyError):
             pass  # never fail a compile over its bookkeeping
-    # Every compile of a checkout's waits while this machine is leased for a benchmark: a hot
-    # incremental one too, which runs rustc itself (scripts/dev/quiet-run).
-    if crate != "___":
-        wait_for_lease(HERE, f"{crate} waits to compile")
     args = args + same_in_every_checkout(args, out_dir, crate)
     stripped, inc = without_incremental(args)
     if inc is not None:
@@ -947,8 +945,6 @@ def usable(kind=None):
     for host in hosts():
         if not host.get("enabled", True) or (kind and not host.get(kind, True)):
             continue
-        if leased(host["name"]):
-            continue
         if health(host).get("ok"):
             out.append(host)
     return sorted(out, key=lambda h: -spare(h))
@@ -1170,142 +1166,6 @@ def agent_exec(job):
     return on_host("farm-agent") + " exec " + shlex.quote(json.dumps(job))
 
 
-# ---- leases: a quiet machine for a benchmark (scripts/dev/quiet-run, README.md "Quiet runs")
-#
-# A client asks for a machine (a host, or HERE) for a command. Requests queue per machine, fairly:
-# the client that used the machine least in the last hour goes first. While a lease holds a
-# machine the farm sends it nothing new (compile slots, test commands, local compiles here wait),
-# A run has LEASE_SECONDS at most.
-HERE = "here"
-LEASE_SECONDS = 10 * 60
-# The window fairness is judged over.
-FAIR_SECONDS = 3600
-# How long a warning to a checkout that loaded a leased machine is shown at its builds.
-INTERFERED_SECONDS = 3 * 3600
-
-
-def lease_dir(machine):
-    return state("leases", machine, "x")[:-2]
-
-
-def pid_alive(pid):
-    try:
-        os.kill(int(pid), 0)
-        return True
-    except (ValueError, TypeError, ProcessLookupError):
-        return False
-    except PermissionError:
-        return True
-
-
-def lease_of(machine):
-    """The lease holding `machine` now, or None (one whose holder died or whose time is past goes)."""
-    path = os.path.join(lease_dir(machine), "lease.json")
-    lease = read_json(path, None)
-    if lease is None:
-        return None
-    if not pid_alive(lease.get("pid")) or time.time() > lease.get("until", 0):
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
-        return None
-    return lease
-
-
-def leased(machine):
-    """The lease that keeps the farm's work off `machine`, or None: not the caller's own (a lease
-    holder's command runs with RERAIL_FARM_LEASE set to its id)."""
-    lease = lease_of(machine)
-    if lease is None or lease.get("id") == os.environ.get("RERAIL_FARM_LEASE"):
-        return None
-    return lease
-
-
-def queue(machine):
-    """The live requests for `machine`, in the order they are served: least use of the machine in
-    the last FAIR_SECONDS first, then the earliest asked."""
-    d = os.path.join(lease_dir(machine), "queue")
-    os.makedirs(d, exist_ok=True)
-    out = []
-    for n in os.listdir(d):
-        r = read_json(os.path.join(d, n), None)
-        if r is None or not pid_alive(r.get("pid")):
-            try:
-                os.unlink(os.path.join(d, n))
-            except OSError:
-                pass
-            continue
-        out.append(r)
-    used = {c: used_seconds(c, machine) for c in {r["client"] for r in out}}
-    return sorted(out, key=lambda r: (used[r["client"]], r["asked"]))
-
-
-def ledger():
-    """Every lease that ended in the last FAIR_SECONDS (state/leases/ledger.jsonl)."""
-    since = time.time() - FAIR_SECONDS
-    out = []
-    try:
-        for line in open(state("leases", "ledger.jsonl")):
-            try:
-                e = json.loads(line)
-            except ValueError:
-                continue
-            if e.get("ended", 0) > since:
-                out.append(e)
-    except OSError:
-        pass
-    return out
-
-
-def used_seconds(client, machine=None):
-    """The seconds `client` held leases in the last FAIR_SECONDS (on `machine`, or anywhere)."""
-    since = time.time() - FAIR_SECONDS
-    return sum(e["ended"] - max(e["started"], since) for e in ledger()
-               if e["client"] == client and (machine is None or e["machine"] == machine))
-
-
-def record_lease(lease, ended, how, report):
-    with open(state("leases", "ledger.jsonl"), "a") as f:
-        f.write(json.dumps({"machine": lease["machine"], "client": lease["client"], "label": lease.get("label"),
-                            "started": lease["started"], "ended": ended, "how": how} | report) + "\n")
-
-
-def interfered(checkout, entry):
-    """Records that `checkout`'s processes loaded a leased machine: `advise` tells its builds."""
-    path = state("interfered", key(checkout) + ".json")
-    seen = [e for e in read_json(path, []) if time.time() - e.get("at", 0) < INTERFERED_SECONDS]
-    write_json(path, seen + [entry])
-
-
-def interference_advice(checkout):
-    """The warnings `advise` prints for `checkout`: its processes loaded a leased machine lately."""
-    out = []
-    for e in read_json(state("interfered", key(checkout) + ".json"), []):
-        if time.time() - e.get("at", 0) < INTERFERED_SECONDS:
-            out.append(f"this checkout's {e['what']} used {e['cpu_s']:.0f} CPU-s on this machine during a benchmark lease "
-                       f"({time.strftime('%H:%M', time.localtime(e['at']))}, {e.get('label') or 'unnamed'}): that is unfair to "
-                       "the benchmark; check scripts/build/farm/status for a lease before heavy runs, or run them with "
-                       "scripts/dev/test-remote")
-    return out
-
-
-def wait_for_lease(machine, why):
-    """Waits while a lease holds `machine` (its time is bounded), saying so once: work held back is
-    told why, so it knows it is waiting on a benchmark, not on the farm."""
-    told = False
-    while True:
-        lease = leased(machine)
-        if lease is None:
-            return
-        if not told:
-            print(f"warning: rerail-farm: {why}: this machine is leased for a benchmark "
-                  f"({lease.get('label') or 'unnamed'}) until {time.strftime('%H:%M:%S', time.localtime(lease['until']))} "
-                  "at the latest (scripts/build/farm/status)", file=sys.stderr, flush=True)
-            told = True
-        time.sleep(1)
-
-
 def remote_slot():
     """A free compile slot on a host, and its lock. Slots are taken in turn across the hosts (each
     one's first, then each one's second, ...), so every host works, not only the first listed."""
@@ -1314,8 +1174,6 @@ def remote_slot():
     open_hosts = []
     for h in hosts():
         if not h.get("enabled", True):
-            continue
-        if leased(h["name"]):
             continue
         open_hosts.append((h, capacity(h)))
     for i in range(max((c for _, c in open_hosts), default=0)):
@@ -1480,7 +1338,6 @@ def farm_rustc(argv0, args):
 def local(rustc, args):
     """Compiles here, in one of this machine's slots: held by this process, since a lock does not
     survive an exec."""
-    wait_for_lease(HERE, f"{value(args, '--crate-name')} waits to compile")
     lock = local_slot()
     try:
         code = subprocess.run([rustc] + args).returncode

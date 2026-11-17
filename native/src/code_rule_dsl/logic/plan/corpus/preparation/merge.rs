@@ -481,4 +481,43 @@ mod tests {
         let (m, _, _) = crate::code_rule_dsl::logic::plan::corpus::merge_and_drop_repeats(&mut tree);
         assert_eq!(merge.merged, m);
     }
+
+    /// A rule's branded atoms (decision 0270, a lowered program's names) compare as `canonical` writes them, the atom
+    /// itself: `a1` and `a2` read the same branded atom and merge, `b` reads another and stays apart, though the three
+    /// rules differ in nothing else. The same program, the same counts as the tree's.
+    #[test]
+    fn rules_merge_only_on_the_same_branded_atom() {
+        use crate::code_rule_dsl::logic::front::{Branded, Literal, Term};
+        let text = ".decl e(x: number, k: symbol)\n.input e\n\
+                    .decl a1(x: number)\n.decl a2(x: number)\n.decl b(x: number)\n\
+                    a1(x) :- e(x, \"p\").\na2(x) :- e(x, \"p\").\nb(x) :- e(x, \"q\").\n\
+                    .decl uses(x: number)\nuses(x) :- a1(x), a2(x), b(x).\n.output uses\n";
+        let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        // As lowering brands them: each string constant the name atom it became.
+        let brand = |t: &mut Term| {
+            if let Term::Str(s) = t {
+                *t = Term::Branded(Branded::name(if s.as_str() == "p" { 1 } else { 2 }));
+            }
+        };
+        for r in &mut tree.rules {
+            for l in &mut r.body {
+                if let Literal::Atom(a) = l {
+                    a.args.iter_mut().for_each(brand);
+                }
+            }
+        }
+        let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        assert!(v.show().matches("e($x, ").count() == 3 && !v.show().contains("\"p\""), "branded: {}", v.show());
+        let mut p = Pipeline::new("test", v);
+        let mut merge = super::MergeIdentical::default();
+        p.program(&mut merge);
+        let (out, _) = p.finish().unwrap();
+        let (m, s, _) = crate::code_rule_dsl::logic::plan::corpus::merge_and_drop_repeats(&mut tree);
+        assert_eq!((merge.merged, merge.shared), (m, s));
+        assert_eq!(m, 1, "a1 and a2 alone: {}", out.show());
+        let heads: std::collections::BTreeSet<&str> = out.rules().map(|r| out.rel_name(r.head().rel())).collect();
+        assert!(heads.contains("b") && !(heads.contains("a1") && heads.contains("a2")), "{}", out.show());
+        let (want, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        assert_eq!((out.size(), out.digest()), (want.size(), want.digest()), "{}\n---\n{}", out.show(), want.show());
+    }
 }

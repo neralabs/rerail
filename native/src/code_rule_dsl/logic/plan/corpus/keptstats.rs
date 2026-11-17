@@ -424,6 +424,12 @@ impl Keeper {
     /// (by its key and width); a relation it does not know keeps no exact maps when `strict`, so its constants are
     /// counted from the rows held. The sketches hash the values as they are counted, and stay as they are: a run
     /// across numberings perturbs their estimates, never a finding.
+    /// What `syms` says of each relation's columns (`map_symbols`'s first argument), asked now: for a write that maps
+    /// them later, where `syms` is not at hand (the store's writer, decision 0306).
+    pub(super) fn symbol_columns(&self, syms: &dyn Fn(&str, &[String]) -> Option<Vec<bool>>) -> BTreeMap<String, Option<Vec<bool>>> {
+        self.rels.iter().map(|(rel, stats)| (rel.clone(), syms(rel, stats.columns()))).collect()
+    }
+
     pub(super) fn map_symbols(&mut self, syms: &dyn Fn(&str, &[String]) -> Option<Vec<bool>>, strict: bool, f: impl FnOnce(&mut [i64]) -> crate::content_store::StoreResult<()>) -> crate::content_store::StoreResult<()> {
         let mut taken: Vec<(String, usize, Vec<i64>)> = Vec::new();
         let mut values: Vec<i64> = Vec::new();

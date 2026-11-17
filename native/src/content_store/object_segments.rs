@@ -9,12 +9,12 @@
 
 use super::rows::{generation, intern_hash};
 use super::segments::{ALIGN, Place, SealedSegments, SegmentBytes, SegmentMaps, SegmentWriter, segment_path};
-use super::write_back::{Closed, Gather, Held, Key, Syms};
+use super::write_back::{Closed, Gather, Held, Key, Kind, Syms, Work};
 use super::{CODEC_ZSTD, ContentStore, HashKey, SourceId, StoreError, StoreResult, TapeId, TapePayload};
 use rusqlite::{Connection, params};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 /// The codec of a row whose bytes are in a segment, uncompressed.
 pub(super) const CODEC_RAW: i64 = 0;
@@ -144,10 +144,8 @@ impl ObjectMaps {
 /// then in its segment (`ContentStore::queued_tape`).
 pub struct QueuedTape(pub ObjectBytes);
 
-/// Who learns the id a source is stored under, once written: a run's manifest (`facts::core::Stored`).
-pub type StoredIds = Arc<Mutex<Vec<SourceId>>>;
 
-struct Item {
+pub(super) struct Item {
     key: Key,
     canonical: HashKey,
     grammar_id: i64,
@@ -156,20 +154,20 @@ struct Item {
     source: Arc<String>,
     tape: Arc<Vec<u8>>,
     tape_identity: HashKey,
-    stored: Option<StoredIds>,
+    /// Whether the run's manifest names the source once written (`ContentStore::name_sources`).
+    named: bool,
 }
 
 /// A run's parsed files gathered for the store: placed in one segment when closed.
 pub(super) struct ObjectGather {
     dir: PathBuf,
-    holder: Option<(String, i64)>,
     items: Vec<Item>,
     at: HashMap<Key, usize>,
     bytes: usize,
 }
 
 /// What the writer inserts of a placed file: its source's and tape's entries are `2 i` and `2 i + 1`.
-struct Row {
+pub(super) struct Row {
     canonical: HashKey,
     grammar_id: i64,
     grammar_version: i64,
@@ -177,7 +175,7 @@ struct Row {
     source_len: usize,
     tape_len: usize,
     tape_identity: HashKey,
-    stored: Option<StoredIds>,
+    named: bool,
 }
 
 impl ObjectGather {
@@ -231,23 +229,7 @@ impl Gather for ObjectGather {
             drop(segments);
             let keys = self.items.iter().map(|i| (i.key, Some(Self::held(i)))).collect();
             let bytes = self.bytes;
-            let items = self.items;
-            return Some(Closed {
-                what,
-                bytes,
-                keys,
-                syms: Syms::None,
-                holder: self.holder,
-                job: Box::new(move |store| {
-                    for i in &items {
-                        let (id, _) = store.put_source_and_tape(i.source.as_bytes(), i.canonical, i.grammar_id, i.grammar_version, i.tape_format_version, &i.tape)?;
-                        if let Some(stored) = &i.stored {
-                            stored.lock().expect("the stored sources").push(id);
-                        }
-                    }
-                    Ok(())
-                }),
-            });
+            return Some(Closed { what, bytes, keys, syms: Syms::None, job: ObjectsWrite::Each(self.items).work() });
         }
         let keys = self.items.iter().enumerate().map(|(i, item)| (item.key, Some(Arc::new(QueuedTape(ObjectBytes::Mapped(segments.entry(2 * i + 1)))) as Held))).collect();
         let rows: Vec<Row> = self
@@ -261,63 +243,74 @@ impl Gather for ObjectGather {
                 source_len: i.source.len(),
                 tape_len: i.tape.len(),
                 tape_identity: i.tape_identity,
-                stored: i.stored,
+                named: i.named,
             })
             .collect();
         // The queue holds the rows; the bytes are the OS's pages.
         let bytes = rows.len() * 96;
-        let mut segments = segments;
-        Some(Closed {
-            what,
-            bytes,
-            keys,
-            syms: Syms::None,
-            holder: self.holder,
-            job: Box::new(move |store| {
-                let ids = store.put_objects_placed(&rows, &mut segments)?;
-                for (row, id) in rows.iter().zip(ids) {
-                    if let Some(stored) = &row.stored {
-                        stored.lock().expect("the stored sources").push(id);
+        Some(Closed { what, bytes, keys, syms: Syms::None, job: ObjectsWrite::Placed { rows, segments }.work() })
+    }
+}
+
+/// Sources and tapes as the writer writes them (decision 0306 §8).
+pub(super) enum ObjectsWrite {
+    /// A gather's, in its segments.
+    Placed { rows: Vec<Row>, segments: SealedSegments },
+    /// A gather's where no segment could be placed: each compressed into its own rows.
+    Each(Vec<Item>),
+    /// One file's, queued outside a run's waves.
+    Lone { canonical: HashKey, grammar: (i64, i64, i64), frames: Arc<super::SourceAndTapeFrames>, named: bool },
+}
+
+impl ObjectsWrite {
+    fn work(self) -> Work {
+        Work(Kind::Objects(Box::new(self)))
+    }
+
+    pub(super) fn run(&mut self, store: &ContentStore) -> StoreResult<()> {
+        match self {
+            ObjectsWrite::Placed { rows, segments } => {
+                let ids = store.put_objects_placed(rows, segments)?;
+                store.name_sources(rows.iter().zip(ids).filter(|(row, _)| row.named).map(|(_, id)| id));
+            }
+            ObjectsWrite::Each(items) => {
+                for i in items.iter() {
+                    let (id, _) = store.put_source_and_tape(i.source.as_bytes(), i.canonical, i.grammar_id, i.grammar_version, i.tape_format_version, &i.tape)?;
+                    if i.named {
+                        store.name_sources([id]);
                     }
                 }
-                Ok(())
-            }),
-        })
+            }
+            ObjectsWrite::Lone { canonical, grammar: (gid, gv, fv), frames, named } => {
+                let (id, _) = store.put_source_and_tape_framed(*canonical, *gid, *gv, *fv, frames)?;
+                if *named {
+                    store.name_sources([id]);
+                }
+            }
+        }
+        Ok(())
     }
 }
 
 impl ContentStore {
     /// Queues a parsed file's source and tape for the store, behind the run (decision 0104), under `key` (a read of
     /// the tape meanwhile: [`Self::queued_tape`]): gathered with the run's others into one segment (0295 step 5), or,
-    /// outside a run's waves, compressed here and queued alone. `stored` learns the source's id once it is written.
+    /// outside a run's waves, compressed here and queued alone. `named`: the run's manifest names the source once it is
+    /// written (`name_sources`).
     /// Where the queue is full a lone write is dropped, and the next run parses the file again.
     #[allow(clippy::too_many_arguments)]
-    pub fn queue_source_and_tape(&self, key: Key, canonical: HashKey, grammar_id: i64, grammar_version: i64, tape_format_version: i64, source: &Arc<String>, tape: Arc<Vec<u8>>, stored: Option<StoredIds>) -> StoreResult<()> {
+    pub fn queue_source_and_tape(&self, key: Key, canonical: HashKey, grammar_id: i64, grammar_version: i64, tape_format_version: i64, source: &Arc<String>, tape: Arc<Vec<u8>>, named: bool) -> StoreResult<()> {
         let tape_identity = HashKey::tape_identity(canonical, &tape);
-        let mut item = Some(Item { key, canonical, grammar_id, grammar_version, tape_format_version, source: Arc::clone(source), tape, tape_identity, stored });
+        let mut item = Some(Item { key, canonical, grammar_id, grammar_version, tape_format_version, source: Arc::clone(source), tape, tape_identity, named });
         let dir = object_dir(&self.database_path);
-        let holder = self.holder.lock().clone();
-        let make = || ObjectGather { dir, holder, items: Vec::new(), at: HashMap::new(), bytes: 0 };
+        let make = || ObjectGather { dir, items: Vec::new(), at: HashMap::new(), bytes: 0 };
         if self.gather("tapes and their sources", make, |g| g.add(item.take().expect("the file"))) {
             return Ok(());
         }
         let item = item.take().expect("the file, not gathered");
         let frames = Arc::new(self.source_and_tape_frames(item.source.as_bytes(), canonical, &item.tape)?);
-        let held = Arc::clone(&frames);
-        let (stored, (gid, gv, fv)) = (item.stored, (grammar_id, grammar_version, tape_format_version));
-        self.write_back_unless_full(
-            Syms::None,
-            "a tape and its source",
-            frames.bytes(),
-            vec![(key, Some(frames as Held))],
-            Box::new(move |store| {
-                let (id, _) = store.put_source_and_tape_framed(canonical, gid, gv, fv, &held)?;
-                if let Some(stored) = &stored {
-                    stored.lock().expect("the stored sources").push(id);
-                }
-                Ok(())
-            }),
-        );
+        let write = ObjectsWrite::Lone { canonical, grammar: (grammar_id, grammar_version, tape_format_version), frames: Arc::clone(&frames), named: item.named };
+        self.write_back_unless_full(Syms::None, "a tape and its source", frames.bytes(), vec![(key, Some(frames as Held))], write.work());
         Ok(())
     }
 
@@ -353,9 +346,7 @@ impl ContentStore {
             for (i, row) in rows.iter().enumerate() {
                 let source = put_source_placed_tx(t, row.canonical, row.source_len, place(2 * i), created)?;
                 let tape = TapePayload { grammar_id: row.grammar_id, grammar_version: row.grammar_version, tape_format_version: row.tape_format_version, bytes: &[], documents: &[] };
-                let tape = put_tape_placed_tx(t, source, tape, row.tape_len, row.tape_identity, place(2 * i + 1), created)?;
-                self.pin_held(t, source)?;
-                self.pin_held_tape(t, tape)?;
+                put_tape_placed_tx(t, source, tape, row.tape_len, row.tape_identity, place(2 * i + 1), created)?;
                 ids.push(source);
             }
             Ok((ids, numbers))
@@ -491,10 +482,10 @@ mod tests {
         let big = write_back::gather_cap() + 1;
         let files: Vec<(Arc<String>, Arc<Vec<u8>>)> = (0..4).map(|i| (Arc::new(format!("source {i}\n")), Arc::new(vec![i as u8 + 1; if i == 3 { big } else { 100 + i }]))).collect();
         let key = |i: usize| Key::of(&[b"a test's tape", &[i as u8]]);
-        let queue = |stored: &StoredIds| {
+        let queue = || {
             let _waves = write_back::run_waves();
             for (i, (source, tape)) in files.iter().enumerate() {
-                store.queue_source_and_tape(key(i), HashKey::sha256(source.as_bytes()), 7, 1, 1, source, Arc::clone(tape), Some(Arc::clone(stored))).unwrap();
+                store.queue_source_and_tape(key(i), HashKey::sha256(source.as_bytes()), 7, 1, 1, source, Arc::clone(tape), true).unwrap();
                 match i {
                     // Gathered: read where the run holds it.
                     0 => assert!(matches!(store.queued_tape(&key(0)), Some(Ok(ObjectBytes::Heap(_))))),
@@ -504,10 +495,9 @@ mod tests {
                 }
             }
         };
-        let stored: StoredIds = Default::default();
-        queue(&stored);
+        queue();
         store.written().unwrap();
-        let ids: Vec<SourceId> = stored.lock().unwrap().clone();
+        let ids: Vec<SourceId> = files.iter().map(|(source, _)| store.source_by_hash(HashKey::sha256(source.as_bytes())).unwrap().expect("stored")).collect();
         assert_eq!(ids.len(), 4);
         let rows: Vec<(i64, i64, i64)> = store.connection.lock().unwrap().prepare("SELECT codec_id, seg, length(frame) FROM tape_objects UNION ALL SELECT codec_id, seg, length(frame) FROM source_objects").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().collect::<Result<_, _>>().unwrap();
         assert!(rows.len() == 8 && rows.iter().all(|&(codec, seg, frame)| codec == CODEC_RAW && seg > 0 && frame == 0), "pointers, no frames: {rows:?}");
@@ -523,11 +513,11 @@ mod tests {
             std::fs::remove_file(e.unwrap().path()).unwrap();
         }
         assert_eq!(tape_of(&store, ids[0]), None);
-        queue(&Default::default());
+        queue();
         store.written().unwrap();
         assert_eq!(tape_of(&store, ids[0]).as_deref(), Some(&files[0].1[..]));
         // Stored again: the first copy is no row's, and compaction keeps one segment.
-        queue(&Default::default());
+        queue();
         store.written().unwrap();
         assert!(store.compact_object_segments(0).unwrap() > 0);
         assert_eq!(std::fs::read_dir(object_dir(&store.database_path)).unwrap().count(), 1, "one segment left");

@@ -148,7 +148,6 @@ impl ContentStore {
                 [canonical_hash_id],
                 |row| row.get(0),
             )?;
-            self.pin_held(transaction, SourceId(source_id))?;
             for alias in aliases {
                 let alias_hash_id = intern_hash(transaction, *alias)?;
                 let existing = transaction
@@ -713,8 +712,6 @@ impl ContentStore {
                 tape_frame,
                 created_generation,
             )?;
-            self.pin_held(transaction, source_id)?;
-            self.pin_held_tape(transaction, tape_id)?;
             Ok((source_id, tape_id))
         })
     }

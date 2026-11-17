@@ -101,6 +101,12 @@ pub trait Source: Send + Sync {
         self.len()
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize;
+    /// A lookup on `column`'s CPU, as a multiple of a derived relation's (placement's `CPU_PER_PROBE` a row in and
+    /// `CPU_PER_ROW_OUT` a row out; decision 0312): a view whose lookup walks the tree or searches the documents
+    /// costs several. Fitted from the profile's `sources.tsv`.
+    fn lookup_cost(&self, _column: usize) -> f64 {
+        1.0
+    }
     /// The rows estimated to match one value on each of `columns` at once. By default the columns are taken
     /// as independent (each keeps its share of the rows), bounded by the most selective one.
     fn estimated_matches_all(&self, columns: &[usize]) -> usize {
