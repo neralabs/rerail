@@ -2,7 +2,7 @@
 .description "Annotate simple assignments in stub files with their type; a stub declares types, so a bare assignment of a literal or small container should carry an explicit annotation."
 .language python
 .mode steer
-.scope include "**/*"
+.scope include "**/*.pyi"
 
 // Ruff PYI052 (flake8-pyi), stubs only: `x = <simple value>` outside functions, with no annotation. A name,
 // call, subscript or union is an alias (PYI026's business); anything else is PYI015's. Enum members, the

@@ -2,7 +2,7 @@
 .description "Replace complex assigned values in stub files with an ellipsis; only simple literal values belong in a stub."
 .language python
 .mode steer
-.scope include "**/*"
+.scope include "**/*.pyi"
 
 // Ruff PYI015 (flake8-pyi), stubs only: an assigned value outside functions that is not a simple value.
 //   annotated:    x: int = f()        ← PYI015    (not for `X: TypeAlias = …`, nor `x: Final = name`)

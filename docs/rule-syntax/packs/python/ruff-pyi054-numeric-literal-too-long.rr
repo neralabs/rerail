@@ -2,7 +2,7 @@
 .description "Replace long numeric literals in stub files with an ellipsis; a value that long is an implementation detail or varies by system."
 .language python
 .mode steer
-.scope include "**/*"
+.scope include "**/*.pyi"
 
 // Ruff PYI054 (flake8-pyi), stubs only: a number literal written with more than 10 characters, anywhere,
 // annotations included. `-1234567890` is fine: the literal is the 10 digits. Inside a string annotation, the

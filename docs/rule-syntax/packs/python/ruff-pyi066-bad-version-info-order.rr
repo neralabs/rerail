@@ -2,7 +2,7 @@
 .description "Put the branch for newer Python versions first in stub files that branch on the interpreter version, testing with a greater-or-equal comparison."
 .language python
 .mode steer
-.scope include "**/*"
+.scope include "**/*.pyi"
 
 // Ruff PYI066 (flake8-pyi), stubs only (every file in preview): an if or elif test `sys.version_info < X` in an
 // if chain that has an `else`. Newer versions should come first, with `>=`, so the else holds the old code. As
