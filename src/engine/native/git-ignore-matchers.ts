@@ -88,29 +88,49 @@ function leaveFolders(matcher: NativeGitIgnoreMatcher | null): void {
 }
 
 /**
- * The files a matcher read Git's ignore rules from, besides the `.gitignore` of each folder below the root, which it
- * reads as it enters the folder (`leaveFolders`): the root's `.gitignore`, `info/exclude` in the common Git folder, Git's
- * default excludes file, the configuration files that can name another (`gitConfigFiles` names the same ones) and each
- * file they name; each with its stamp. Read on each router's ask, without Git: about ten `stat` calls.
+ * What a matcher read Git's ignore rules from, besides the `.gitignore` of each folder below the root, which it reads as
+ * it enters the folder (`leaveFolders`): the root's `.gitignore`, `info/exclude` in the common Git folder, Git's default
+ * excludes file and each file the configuration names, each with its stamp; and the configuration files that can name
+ * one (`gitConfigFiles` names the same ones), by what they set of the two keys the matcher reads, `core.excludesFile`
+ * and `core.ignoreCase`. Git writes those files for much else (`git push -u` sets a branch's upstream there), which
+ * leaves the matcher's rules as they were. Read on each router's ask, without Git: about ten `stat` calls, and the
+ * configuration files read again once their stamps change.
  */
 class IgnoreSources {
   readonly #files: readonly string[];
   readonly #stamps: string;
+  readonly #configs: readonly string[];
+  #configStamps: string;
+  readonly #settings: string;
 
-  private constructor(files: readonly string[]) {
-    this.#files = files;
-    this.#stamps = stampsOf(files);
+  private constructor(root: string, folders: { git: string; common: string }, env: NodeJS.ProcessEnv) {
+    this.#configs = configFiles(folders, env);
+    this.#configStamps = stampsOf(this.#configs);
+    const settings = ignoreSettings(this.#configs);
+    this.#settings = JSON.stringify(settings);
+    const excludes = [defaultExcludesFile(env), ...namedExcludesFiles(settings, root, env)];
+    this.#files = [join(root, ".gitignore"), join(folders.common, "info", "exclude"), ...excludes];
+    this.#stamps = stampsOf(this.#files);
   }
 
   /** `root`'s sources as they are now; undefined where `root` holds no `.git` (a folder below a checkout's root, or none). */
   static of(root: string, env: NodeJS.ProcessEnv): IgnoreSources | undefined {
     const folders = gitFolders(root);
-    return folders === undefined ? undefined : new IgnoreSources(sourceFiles(root, folders, env));
+    return folders === undefined ? undefined : new IgnoreSources(root, folders, env);
   }
 
-  /** Whether every source is as it was when stamped. */
+  /** Whether every source is as it was when stamped, the configuration files in what they set of the two keys. */
   unchanged(): boolean {
-    return stampsOf(this.#files) === this.#stamps;
+    return stampsOf(this.#files) === this.#stamps && this.#settingsUnchanged();
+  }
+
+  /** Whether the configuration files are as stamped, or set the two keys as they did: then their new stamps are taken. */
+  #settingsUnchanged(): boolean {
+    const stamps = stampsOf(this.#configs);
+    if (stamps === this.#configStamps) return true;
+    if (JSON.stringify(ignoreSettings(this.#configs)) !== this.#settings) return false;
+    this.#configStamps = stamps;
+    return true;
   }
 }
 
@@ -127,27 +147,29 @@ function gitFolders(root: string): { git: string; common: string } | undefined {
   return { git, common: common === "" ? git : resolve(git, common) };
 }
 
-function sourceFiles(root: string, folders: { git: string; common: string }, env: NodeJS.ProcessEnv): string[] {
-  const excludes = defaultExcludesFile(env);
+/** The configuration files that can name an excludes file: the repository's, the worktree's and the global ones. */
+function configFiles(folders: { git: string; common: string }, env: NodeJS.ProcessEnv): string[] {
   const global = env.GIT_CONFIG_GLOBAL;
-  const configs = [
-    join(folders.common, "config"),
-    join(folders.git, "config.worktree"),
-    ...(global === undefined || global === "" ? [join(gitHome(env), ".gitconfig"), join(dirname(excludes), "config")] : [global]),
-  ];
-  const named = configs.flatMap(config => namedExcludesFiles(config, root, env));
-  return [join(root, ".gitignore"), join(folders.common, "info", "exclude"), excludes, ...configs, ...named];
+  const globals = global === undefined || global === "" ? [join(gitHome(env), ".gitconfig"), join(dirname(defaultExcludesFile(env)), "config")] : [global];
+  return [join(folders.common, "config"), join(folders.git, "config.worktree"), ...globals];
 }
 
-/** `core.excludesFile` in a configuration file, in any section: a file named elsewhere is stamped too, never missed. */
-const EXCLUDES_FILE = /^\s*excludesfile\s*=\s*"?([^"\r\n]*?)"?\s*$/gimu;
+/** `core.excludesFile` and `core.ignoreCase` in a configuration file, in any section: one set elsewhere is read too, never missed. */
+const IGNORE_SETTING = /^\s*(excludesfile|ignorecase)\s*=\s*"?([^"\r\n]*?)"?\s*$/gimu;
 
-function namedExcludesFiles(config: string, root: string, env: NodeJS.ProcessEnv): string[] {
-  return [...readText(config).matchAll(EXCLUDES_FILE)]
+/** What the configuration files set of the two keys, file by file, in order. */
+function ignoreSettings(configs: readonly string[]): Array<{ key: string; value: string }> {
+  return configs.flatMap(config => [...readText(config).matchAll(IGNORE_SETTING)].map(match => ({
+    key: (match[1] ?? "").toLowerCase(),
     // Git writes a backslash or a quote in a value with a backslash before it (a Windows path: `C:\\Users\\...`).
-    .map(match => (match[1] ?? "").replace(/\\(["\\])/gu, "$1"))
-    .filter(value => value !== "")
-    .map(value => (value.startsWith("~/") ? join(gitHome(env), value.slice(2)) : resolve(root, value)));
+    value: (match[2] ?? "").replace(/\\(["\\])/gu, "$1"),
+  })));
+}
+
+function namedExcludesFiles(settings: ReadonlyArray<{ key: string; value: string }>, root: string, env: NodeJS.ProcessEnv): string[] {
+  return settings
+    .filter(setting => setting.key === "excludesfile" && setting.value !== "")
+    .map(({ value }) => (value.startsWith("~/") ? join(gitHome(env), value.slice(2)) : resolve(root, value)));
 }
 
 function readText(file: string): string {
