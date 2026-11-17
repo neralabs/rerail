@@ -276,6 +276,49 @@ lines).
 **Stage 3 is complete:** every directive and built-in the lean pass carries out. Corpus: 3,060
 of 3,135 files equal the lean pass, 0 differ; the 75 a grammar refuses go to the lean pass.
 
+## Stage 4a, built: small words, the algorithms in the program
+
+Before Cranelift (and then Metal) lowers the words, each word is made small: its meaning is
+straight code and at most one stated loop. Where a word held an algorithm (a recursion, a
+nested walk), the algorithm moved into `expand.lab` as rules over smaller words. The
+interpreter stays the meaning, and every backend lowers the same few dozen small words.
+
+| Word before | The program now |
+|---|---|
+| `SUBST` (the body's substitution, `__VA_OPT__`, pastes, `#`) | A loop a body token a turn: `SUB` (modes 0–10: the token's parameter, `#`, `__VA_OPT__` walked in place, an argument, the output pushed), `STR` (`#`'s literal a token a turn), `GLUE` (one paste a step, in place, with read and write cursors). |
+| `DEFINE` | Its name, its parameter list, its body (each token marked: a parameter, `__VA_OPT__`, `##`) and the walk of its argument uses, each a token a turn (`DEFINE` modes 0–8). |
+| `IF` (`pp_expr`'s recursive descent) | Rules `cond`, `ternary`, `binary(min)` and `unary`, the evaluator's precedence climbing, over `EXPR` (modes 0–14) on the line's tokens in place. Values, pending operators, least precedences and liveness (`&&`, `||` and `?:` evaluate only what they take) are stacks. An error sets a flag, and the rules unwind with no more tokens read. A parenthesis costs four calls. |
+| `EMBED`'s parameters and bytes | The parameters a token a turn (`limit` by the `#if` rules), the bytes a `,` and a number a turn. The numbers' spellings are a const table copied to scratch once per TU. |
+
+The verifier's rule widened from "every cycle reads a token" to "every cycle steps a stated
+cursor". The held side of these tests is a step: a body token taken, a `__VA_OPT__`'s content
+closed, a token stringized, a paste, a `#define`'s token read or walked, an expression's token,
+an `#embed`'s parameter, argument token or byte. Each is a loop head for a backend.
+
+**No heap in the words.** The compiled code can't allocate, so the meaning doesn't either:
+- A line's tokens are a range of `kept`, left in place (`line_end`).
+- Header names, `_Pragma`'s and `#line`'s text, `#pragma`'s arguments, built-in strings and
+  numbers, pastes and stringizing are *spellings*: a scratch range, or the input's bytes in
+  place. Where they are written, they go to scratch in runs (between the escapes).
+- The probe takes a token's spelling in place. Before, every identifier read copied its
+  spelling to the heap.
+
+**Primitives, shared.** The probe (`key` eight bytes a step, then a slot a step), a line's
+number (a binary search of `File::lines`), the top file source and a spelling's copy are each
+one stated loop. Several words use each, so they are lowered once, not split into program
+loops: a dispatch per probed slot would cost more than the probe.
+
+**Corpus** after each group: 3,060 of 3,135 files equal the lean pass, 0 differ. New examples
+check `#if`'s edges (a division by zero not evaluated, unsigned arms, shifts past 63, the comma,
+nested `?:`, 20 parentheses, malformed lines) and `#embed`'s (nested and unclosed arguments,
+`limit`'s errors) against the lean pass.
+
+**Left for 4b:**
+- The records handed to the host on a miss (wanted files, unanswered features) are still
+  `Vec`s. In compiled code they become (file, scratch range) rows.
+- `_Pragma`'s text is scanned a byte at a time (`pragma_words`); the token grammar should lex
+  it instead, as it lexes a file.
+
 ## Open
 
 - **Header units:** a header expanded once per entry macro state (0327, open).
