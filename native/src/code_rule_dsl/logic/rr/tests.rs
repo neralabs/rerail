@@ -3772,3 +3772,19 @@ fn a_program_adds_only_to_extensible_library_relations() {
     let open = "#include \"python/compare.rr\"\n.decl hit(a: node)\ncmp_same_ask(a, a) :- kind(a, \"call\").\nhit(a) :- cmp_same(a, a).\n.output hit\n";
     super::read_text(open).unwrap().lower(false).expect("cmp_same_ask is extensible");
 }
+
+/// A program that adds to an extensible library relation (`cmp_same_ask`, decision 0263) asks the library for its
+/// cone (decision 0089 §3): the library rules reading it (`cmp_same`) are copied in. On the version (`lower_in_version`, the run's path) the
+/// cone is copied from the library's version, and its image is the tree's (`lower_in`).
+#[test]
+fn a_cone_copied_onto_the_version_is_the_trees() {
+    let src = "#include \"python/compare.rr\"\n.decl hit(a: node)\ncmp_same_ask(a, a) :- kind(a, \"call\").\nhit(a) :- cmp_same(a, a).\n.output hit\n";
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    assert!(v.rules().any(|r| v.rel_name(r.head().rel()) == "cmp_same"), "the cone's rules are copied");
+    let tree = super::read_text(src).unwrap().lower_in(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let (t, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).unwrap();
+    assert_eq!((t.size(), t.digest()), (v.size(), v.digest()), "{}", crate::code_rule_dsl::logic::program_image::differences(&t, &v));
+}

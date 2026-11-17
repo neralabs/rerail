@@ -588,6 +588,18 @@ step 3 replaces what is under the writer.
      run's outputs. Two version passes found differing from the tree's on the 317 rules, and fixed (the split over
      an undeclared axis; hide's copy of a negated rows read).
    - **7b–7c**: `rr::lower`'s per-clause half as rule passes, the loader writing versions; `front::Program` deleted.
+     The order, as 7a's (2026-11-17): the version made earlier one pass at a time, from the last reader back, each
+     checked against the tree in a debug build: the library's cone (`with_cone`); `whole()`'s tail (the widened
+     contexts, the sets of rules and facts, `unit`, aggregate demand); `front::finish`; the rest of `whole()`
+     (`sources_on_request` is a pass already, 7a-1); the link of modules (`append`); then each clause written
+     through the builder in the tape walk, form by form; then `front::Program` deleted.
+     *Done, first slice (2026-11-17):* the cone is copied on the version (`rr::with_cone_version`): the cone's
+     relations found over the library version's heads and reads (`cone_of`, one definition with the tree's), its
+     rules copied (`Builder::copy`, a rule the program holds matched by its content hash), and their declarations,
+     natives, facts and lattices set in the header. `lower_in_version` lowers the text's own program
+     (`lowered_own`), makes its image, and copies the cone onto it: the library's tree is never decoded on the
+     run's path. A debug build copies the tree's cone beside it. Test: `a_cone_copied_onto_the_version_is_the_trees`;
+     ep2's 317 policies lowered on fresh stores under a debug build give the same 427 rows.
    - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.
