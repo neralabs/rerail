@@ -148,6 +148,8 @@ struct P<'a> {
     next: usize,
     extras: Vec<Extra>,
     e: usize,
+    /// `extras[e]`'s start (`sync_extra`).
+    extra_at: u32,
     w: Writer<Widths>,
     last_end: u32,
     depth: u32,
@@ -178,6 +180,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
             next: if src.starts_with("\u{feff}".as_bytes()) { 3 } else { 0 },
             extras: Vec::new(),
             e: 0,
+            extra_at: u32::MAX,
             w: Writer::new(0, widths, src.len() / 3 + 16),
             last_end: 0,
             depth: 0,
@@ -311,6 +314,19 @@ impl<'a> P<'a> {
     /// Tokens lexed into the buffer, up to 16 in one loop (simdjson's stage 2 over its index).
     #[cold]
     fn lex_batch(&mut self) {
+        self.lex_tokens();
+        self.sync_extra();
+    }
+
+    /// The next comment's start, kept for `flush` (`u32::MAX`: none lexed yet): after any change
+    /// to the comments or to `e`.
+    #[inline(always)]
+    fn sync_extra(&mut self) {
+        self.extra_at = self.extras.get(self.e).map_or(u32::MAX, |x| x.start);
+    }
+
+    #[inline(always)]
+    fn lex_tokens(&mut self) {
         const BATCH: usize = 16;
         if let Some(t) = self.toks.last().filter(|t| t.kind == T::Eof) {
             let t = *t;
@@ -414,6 +430,14 @@ impl<'a> P<'a> {
     /// The extras before `before`, written into the node open.
     #[inline(always)]
     fn flush(&mut self, before: u32) {
+        // Most tokens have no comment before them: one compare.
+        if self.extra_at < before {
+            self.flush_extras(before);
+        }
+    }
+
+    #[inline(never)]
+    fn flush_extras(&mut self, before: u32) {
         while let Some(&x) = self.extras.get(self.e) {
             if x.start >= before {
                 break;
@@ -421,6 +445,7 @@ impl<'a> P<'a> {
             self.e += 1;
             self.extra(x);
         }
+        self.sync_extra();
     }
 
     /// A comment, a leaf.
