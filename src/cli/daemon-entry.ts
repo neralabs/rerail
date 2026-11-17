@@ -4,6 +4,8 @@
  */
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { startGitWithoutCopying } from "../engine/git-start.js";
+import { loadNativeBinding } from "../engine/native/native.js";
 import { scrubWrites } from "../engine/secret-scrub.js";
 import { runHomeDaemon } from "../daemon/daemon.js";
 import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
@@ -23,6 +25,10 @@ if (!node.ok) {
   process.stderr.write(node.message);
   process.exit(1);
 }
+
+// On Linux Node starts a child by copying the whole daemon, which holds its event loop longer the larger it grows; the
+// daemon starts its Git through the engine, which copies nothing (`git-start.ts`).
+startGitWithoutCopying(loadNativeBinding);
 
 // A home runs one daemon, whatever starts it (`runHomeDaemon`). A TLS key other accounts can read keeps the daemon from
 // other machines only: it then serves this one (`serveRerailDaemon`).

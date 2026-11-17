@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { PACKAGE_ROOT } from "../package-root.js";
 import type { MatchOperator, SampleBoundary, SampleSource } from "../catalog/rule-schema.js";
+import type { EngineGitExit, EngineStartedGit } from "../git-start.js";
 
 export interface NativeHealth {
   ok: boolean;
@@ -380,6 +381,13 @@ export interface NativeBinding {
    * the handle it kept, so a pid Windows has given to another process is no answer. A binary built before it lacks it.
    */
   detachedExitCode?(pid: number): number | null;
+  /**
+   * Linux only: starts Git through `posix_spawn`, which copies nothing of this process (`git-start.ts`). A binary built
+   * before it lacks it.
+   */
+  startGit?(program: string, args: string[], env: string[], pipeStderr: boolean): EngineStartedGit;
+  /** Linux only: reaps a child `startGit` started once its exit pipe has closed. A binary built before it lacks it. */
+  reapGit?(pid: number): EngineGitExit;
   /** The content-store file name this binary's store schema owns (`content-v1.sqlite` at store floor 1). */
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
