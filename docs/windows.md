@@ -240,23 +240,21 @@ A database an earlier version wrote can hold keys in the caller's spelling: a fo
 the audit settings and presentation preferences of a session opened as `c:\…`. The first time this version opens the
 database, its `path-keys-as-stored` migration step (`src/engine/storage/path-key-spelling.ts`) copies the rows under
 each key to the spelling this version looks it up by (`currentPathKey`), or, for a key on another drive, leaves them for
-the first reader of that folder (below), so a checkout keeps its start state, its rule settings, its audit settings and
-audit, and its presentation preferences. The rows under the old spelling stay as they were, so an earlier version that
-opens the database later, after a downgrade or for a coding agent whose Rerail is still on that version, finds each row
-it wrote where it wrote it. Its own lists show this version's copies beside its rows (a folder outside Git twice among
-the checkouts). Where a folder already has a row under the spelling this version looks it up by (the earlier version
-saved the folder under both spellings, or a version without the step recorded it), that row stays as it is and only
-the records it lacks are copied in, so each version reads it there as a version without the step does. The step records each spelling it copied from in the table `path_key_spellings`, and this
-version's lists leave the copies under those spellings out, so each folder is listed once: repositories and their
-checkouts, the checkouts above one whose rule settings apply there, presentation preferences, and the list of
-repository audits, which also reads where each audit ran through that table (an earlier version wrote a Git checkout's
-audits under the session's spelling and its repository audit under Git's). Removing a presentation preference removes
-its copies too. A start state still counts an earlier version's row of a folder as a checkout above or inside it, as a
-version without the step does: that version's `rerail stop` or `rerail start` in one folder sets every row its own
-check counts as inside the folder to follow it, which on Windows, where the check ignores letter case, includes this
-version's row of the same folder; and this version's start or stop of a folder sets the earlier version's rows inside it
-to follow, so each version reads what the other set last. The audit
-history itself is never rewritten.
+the first reader of that folder (below). So a checkout keeps its start state, its audit settings and its presentation
+preferences, and this version finds its rule settings under the new spelling. The rows under the old spelling stay as
+they were, so an earlier version that opens the database later, after a downgrade or for a coding agent whose Rerail
+is still on that version, finds each row it wrote where it wrote it. Its own lists show this version's copies beside
+its rows (a folder outside Git twice among the checkouts). Where a folder already has a row under the spelling this
+version looks it up by (the earlier version saved the folder under both spellings, or a version without the step
+recorded it), that row stays as it is and only the records it lacks are copied in, so each version reads it there as a
+version without the step does. The step records each spelling it copied from in the table `path_key_spellings`, and
+this version's list of repositories and their checkouts leaves the copies under those spellings out, so each folder is
+listed once there. Removing a presentation preference removes its copies too. A start state still counts an earlier
+version's row of a folder as a checkout above or inside it, as a version without the step does: that version's
+`rerail stop` or `rerail start` in one folder sets every row its own check counts as inside the folder to follow it,
+which on Windows, where the check ignores letter case, includes this version's row of the same folder; and this
+version's start or stop of a folder sets the earlier version's rows inside it to follow, so each version reads what the
+other set last. The audit history itself is never rewritten.
 
 The step reads the keys, and where the audit history says each audit ran, and looks every folder up before it takes the
 database's write lock; under the lock it only copies rows. So no other writer waits for a lookup, nor for the read of a
@@ -270,13 +268,12 @@ writing made from the folder, and copy their rows: the daemon, when a coding age
 a folder (`copyWaitingKeys`); a hook or a runtime that reads the database itself, when it checks whether Rerail runs
 there (`workspaceStartState`); and `rerail start`, `rerail stop`, `rerail status` and `rerail state`. So a folder on
 another disk or a mapped drive keeps its start state and settings from the first coding agent event or the first of
-these commands there. A reader that never writes the database (the status line and `/rerail` while no daemon runs)
-reads the folder as it is until one of them has run there. The copy a hook, a runtime's check or the daemon makes takes
+these commands there. A reader that never writes the database (the status line while no daemon runs) reads the folder
+as it is until one of them has run there. The copy a hook, a runtime's check or the daemon makes takes
 the write lock only when no other writer holds it, so none of them waits on a writer for it: while one does, or when
 the copy fails, the folder reads as the database holds it and the next of them copies (the daemon says why in its
-log). A coding agent's request through Rerail's MCP tools copies only on the drive of the agent's own checkout. The
-daemon reads where keys wait once, so a request from a folder on any other drive reads nothing for them, and once a
-drive's keys are copied no request from it does. A hook or
+log). The daemon reads where keys wait once, so a request from a folder on any other drive reads nothing for them, and
+once a drive's keys are copied no request from it does. A hook or
 a status line names its folder to the daemon as the session spells it, not by its realpath: through a drive mapped to a
 share, or made with `subst`, the realpath names what the letter stands for, and the daemon would not see the letter the
 keys wait on. A key on a drive mapped to a share is looked up through the mapping, which gives the share's spelling,
