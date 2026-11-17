@@ -26,7 +26,7 @@
 
 use crate::micro;
 use crate::tape::{ERROR, FIRST_ANONYMOUS, Field, Kind, code, kind_field};
-use rerail_tape_format::{CODE_EXTRA, Layout, Narrow, Redo, Widths, Writer};
+use rerail_tape_format::{CODE_EXTRA, Finish, Layout, Narrow, Redo, Widths, Writer};
 
 // Token kinds; punctuation is `P0` plus its place in `syntax::PUNCT` (and in the anonymous kinds).
 const ID: u8 = 0;
@@ -610,20 +610,33 @@ pub fn token_count(src: &str) -> usize {
 
 /// `src`'s tape: the engine's (`code_rule_dsl::tape`'s image of `crate::tape(src)`), its bytes.
 pub fn tape(src: &str) -> Vec<u8> {
+    struct Image<'s>(&'s str);
+    impl Finish for Image<'_> {
+        type Out = Vec<u8>;
+        fn finish<L: Layout>(&mut self, w: Writer<L>) -> Result<Vec<u8>, Redo> {
+            w.finish(self.0.as_bytes())
+        }
+    }
+    tape_into(src, &mut Image(src))
+}
+
+/// [`tape`], the writer finished by `finish`: format 15's image (`tape`), or format 16 written in one pass over it
+/// (`Writer::finish_16`, decision 0293).
+pub fn tape_into<F: Finish>(src: &str, finish: &mut F) -> F::Out {
     let lexed = lex(src);
     let mut widths = Widths::guess(src.len());
     loop {
         // Nearly every file is written at the narrow widths, fixed in the parser's code.
-        let at = if widths == Narrow::WIDTHS { tape_at(src, &lexed, Narrow) } else { tape_at(src, &lexed, widths) };
+        let at = if widths == Narrow::WIDTHS { tape_at(src, &lexed, Narrow, finish) } else { tape_at(src, &lexed, widths, finish) };
         match at {
-            Ok(bytes) => return bytes,
+            Ok(out) => return out,
             Err(Redo(w)) => widths = w,
         }
     }
 }
 
 /// `tape` at `layout`'s widths, the lexer's tokens given.
-fn tape_at<L: Layout>(src: &str, lexed: &Lexed, layout: L) -> Result<Vec<u8>, Redo> {
+fn tape_at<L: Layout, F: Finish>(src: &str, lexed: &Lexed, layout: L, finish: &mut F) -> Result<F::Out, Redo> {
     let Lexed { toks, n, comments } = lexed;
     let mut out = Writer::new(rerail_tape_format::RR_TAG, layout, n + n / 2 + comments.len() + 8);
     out.push(code(Kind::SourceFile as u16, 0, false), 0);
@@ -640,7 +653,7 @@ fn tape_at<L: Layout>(src: &str, lexed: &Lexed, layout: L) -> Result<Vec<u8>, Re
     // Comments after the last statement are the file's.
     p.comments_before(0, u32::MAX);
     p.out.close(0, src.len() as u32);
-    p.out.finish(src.as_bytes())
+    finish.finish(p.out)
 }
 
 impl<L: Layout> Parser<'_, L> {
@@ -1473,6 +1486,11 @@ impl<L: Layout> Parser<'_, L> {
             }
             self.bump_as(Kind::CodeLiteral);
             self.field(Field::Pattern);
+            if self.is_word_at(0, b"at") && self.kind_at(1) == STR {
+                self.implied();
+                self.bump_as(Kind::String);
+                self.field(Field::Selector);
+            }
             self.close();
             return Ok(Lit::Other);
         }
@@ -1721,6 +1739,29 @@ mod tests {
             }
         }
         files
+    }
+
+    /// An image read in place (`rerail_tape_format::View`) is the image decoded (`decode`): each
+    /// node's key and span, and each node's children the nodes whose parent it is, on every `.rr`
+    /// file and on one with columns at 4 bytes (more than 65,535 nodes).
+    #[test]
+    fn a_view_reads_each_node_as_decode_does() {
+        let mut texts = corpus();
+        texts.push(("20,000 facts".to_owned(), (0..20_000).map(|i| format!("f({i}, \"x\").\n")).collect()));
+        for (path, src) in &texts {
+            let image = crate::tape(src);
+            let decoded = rerail_tape_format::decode(&image).unwrap_or_else(|e| panic!("{path}: {e}"));
+            let view = rerail_tape_format::View::new(&image).unwrap_or_else(|e| panic!("{path}: {e}"));
+            assert_eq!(view.len(), decoded.len(), "{path}");
+            let mut parent = vec![None; decoded.len()];
+            for (i, d) in decoded.iter().enumerate() {
+                assert_eq!((view.key(i), view.start(i), view.end(i)), (d.key, d.start, d.end), "{path}: node {i}");
+                for c in view.children(i) {
+                    parent[c] = Some(i as u32);
+                }
+            }
+            assert!(decoded.iter().zip(&parent).all(|(d, p)| d.parent == *p), "{path}: parents");
+        }
     }
 
     /// The lexer's tokens and comments are the engine's lexer's (`syntax::lex`), kind for kind

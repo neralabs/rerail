@@ -14,6 +14,6 @@
 //     from datetime import date      seen_module(d, "datetime")
 #include "python/names.rr"    // and through it python/imports, which reads names's relations
 
-.decl seen_ask(m: symbol)
+.decl seen_ask(m: symbol) extensible
 .decl seen_module(d: number, m: symbol)
 seen_module(d, m) :- seen_ask(m), import_alias(i, _, q, _, _), (q = m ; prefix(cat(m, "."), q)), docof(i, d).

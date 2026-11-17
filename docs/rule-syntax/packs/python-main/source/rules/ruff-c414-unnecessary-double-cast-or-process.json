@@ -1,0 +1,578 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-c414-unnecessary-double-cast-or-process",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove a list, tuple, set, sorted or reversed call nested directly inside a list, tuple, set or sorted call; the outer call already accepts any iterable.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "fn-list-tuple": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "list",
+                    "tuple"
+                  ],
+                  "import": [
+                    "builtins.list",
+                    "builtins.tuple"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "fn-list-tuple"
+                }
+              }
+            ]
+          },
+          "fn-set": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "set"
+                  ],
+                  "import": [
+                    "builtins.set"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "fn-set"
+                }
+              }
+            ]
+          },
+          "fn-sorted": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "sorted"
+                  ],
+                  "import": [
+                    "builtins.sorted"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "fn-sorted"
+                }
+              }
+            ]
+          },
+          "fn-reversed": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "reversed"
+                  ],
+                  "import": [
+                    "builtins.reversed"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "fn-reversed"
+                }
+              }
+            ]
+          },
+          "inner-call": {
+            "any": [
+              {
+                "kind": "call",
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "pattern": "$I"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "pattern": "$IA"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "inner-call"
+                }
+              }
+            ]
+          },
+          "lead": {
+            "any": [
+              {
+                "kind": "comment"
+              },
+              {
+                "kind": "line_continuation"
+              },
+              {
+                "regex": "^[(]$"
+              }
+            ]
+          },
+          "nested-call": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "any": [
+                    {
+                      "kind": "list_splat",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "pattern": "$O"
+                      }
+                    },
+                    {
+                      "not": {
+                        "kind": "list_splat"
+                      },
+                      "pattern": "$O"
+                    }
+                  ]
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "pattern": "$OA",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "inner-call",
+                    "not": {
+                      "follows": {
+                        "stopBy": "end",
+                        "not": {
+                          "matches": "lead"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "kw": {
+            "params": [
+              "N",
+              "V",
+              "S"
+            ],
+            "rule": {
+              "any": [
+                {
+                  "kind": "keyword_argument",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "name",
+                        "pattern": "$N"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "value",
+                        "pattern": "$V"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "dictionary_splat",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^\\*\\*$"
+                        },
+                        {
+                          "kind": "comment"
+                        }
+                      ]
+                    },
+                    "pattern": "$S"
+                  }
+                }
+              ]
+            }
+          },
+          "kw-eq": {
+            "params": [
+              "N",
+              "V",
+              "S"
+            ],
+            "rule": {
+              "any": [
+                {
+                  "kind": "keyword_argument",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "name",
+                        "pattern": "$A",
+                        "compare": {
+                          "left": "A",
+                          "op": "eq",
+                          "right": "N"
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "value",
+                        "pattern": "$B",
+                        "compare": {
+                          "left": "B",
+                          "op": "eq",
+                          "right": "V",
+                          "text": "structure"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "dictionary_splat",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^\\*\\*$"
+                        },
+                        {
+                          "kind": "comment"
+                        }
+                      ]
+                    },
+                    "pattern": "$C",
+                    "compare": {
+                      "left": "C",
+                      "op": "eq",
+                      "right": "S",
+                      "text": "structure"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "inside-set",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "nested-call",
+            "regex": "(?s)^(?:\\*\\s*)?(?P<M>.*)$"
+          },
+          "constraints": {
+            "O": {
+              "matches": "fn-set"
+            },
+            "I": {
+              "any": [
+                {
+                  "matches": "fn-list-tuple"
+                },
+                {
+                  "matches": "fn-set"
+                },
+                {
+                  "matches": "fn-sorted"
+                },
+                {
+                  "matches": "fn-reversed"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.M",
+        "code": "C414",
+        "message": "Remove the inner `$I()` call and pass its argument straight to `$O()`, which accepts any iterable and gives the same result.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C414"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "list-or-tuple-inside",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "nested-call",
+            "regex": "(?s)^(?:\\*\\s*)?(?P<M>.*)$"
+          },
+          "constraints": {
+            "O": {
+              "any": [
+                {
+                  "matches": "fn-list-tuple"
+                },
+                {
+                  "matches": "fn-sorted"
+                }
+              ]
+            },
+            "I": {
+              "matches": "fn-list-tuple"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.M",
+        "code": "C414",
+        "message": "Remove the inner `$I()` call and pass its argument straight to `$O()`, which accepts any iterable and gives the same result.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C414"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "sorted-inside-sorted",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "all": [
+              {
+                "matches": "nested-call"
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "arguments",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": {
+                        "kw": {
+                          "N": "$KN",
+                          "V": "$KV",
+                          "S": "$KS"
+                        }
+                      },
+                      "not": {
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "call",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "argument_list",
+                            "pattern": "$Y",
+                            "compare": {
+                              "left": "Y",
+                              "op": "eq",
+                              "right": "IA",
+                              "text": "node"
+                            },
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": {
+                                "kw-eq": {
+                                  "N": "$KN",
+                                  "V": "$KV",
+                                  "S": "$KS"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "argument_list",
+                    "pattern": "$Z",
+                    "compare": {
+                      "left": "Z",
+                      "op": "eq",
+                      "right": "IA",
+                      "text": "node"
+                    },
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": {
+                        "kw": {
+                          "N": "$JN",
+                          "V": "$JV",
+                          "S": "$JS"
+                        }
+                      },
+                      "not": {
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "argument_list",
+                          "pattern": "$W",
+                          "compare": {
+                            "left": "W",
+                            "op": "eq",
+                            "right": "OA",
+                            "text": "node"
+                          },
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": {
+                              "kw-eq": {
+                                "N": "$JN",
+                                "V": "$JV",
+                                "S": "$JS"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "regex": "(?s)^(?:\\*\\s*)?(?P<M>.*)$"
+          },
+          "constraints": {
+            "O": {
+              "matches": "fn-sorted"
+            },
+            "I": {
+              "matches": "fn-sorted"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.M",
+        "code": "C414",
+        "message": "Remove the inner `$I()` call and pass its argument straight to `$O()`, which accepts any iterable and gives the same result.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C414"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "reversed-inside-sorted",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "nested-call",
+            "regex": "(?s)^(?:\\*\\s*)?(?P<M>.*)$"
+          },
+          "constraints": {
+            "O": {
+              "matches": "fn-sorted"
+            },
+            "I": {
+              "matches": "fn-reversed"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.M",
+        "code": "C414",
+        "message": "Remove the inner `$I()` call and pass its argument straight to `$O()`; keep it only if items that sort equal must stay in reversed input order.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C414"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

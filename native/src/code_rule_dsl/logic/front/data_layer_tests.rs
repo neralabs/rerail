@@ -52,7 +52,7 @@ fn data_layer_programs_parse() {
             (None, Ok(p)) => {
                 let atoms = p.rules.iter().flat_map(|r| std::iter::once(&r.head).chain(r.body.iter().filter_map(Literal::atom)));
                 let undeclared = atoms.into_iter().find(|a| p.decls.get(a.rel.as_str()).is_none_or(|c| c.len() != a.args.len()));
-                let fact = p.facts.iter().find(|(rel, rows)| rows.iter().any(|row| p.decls.get(*rel).is_none_or(|c| c.len() != row.len())));
+                let fact = p.facts.iter().find(|(rel, rows)| rows.iter().any(|row| p.decls.get(rel.as_str()).is_none_or(|c| c.len() != row.len())));
                 let undeclared = undeclared.map(|a| a.to_string()).or_else(|| fact.map(|(rel, _)| format!("a fact of {rel}")));
                 undeclared.map(|a| format!("{a}: undeclared, or not the declared arity")).or_else(|| {
                     p.rules.iter().flat_map(|r| &r.body).find_map(|l| match l {

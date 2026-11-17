@@ -203,7 +203,7 @@ impl CodeRuleSqlExecutor {
             }
             let documents =
                 super::facts::families::stored_documents(&this.store, &scope, &paths).map_err(error)?;
-            if documents.len() != paths.len() || documents.iter().any(|d| d.facts.syntax_errors) {
+            if documents.len() != paths.len() || documents.iter().any(|d| d.facts.syntax_errors()) {
                 return Err(error(
                     "requested stored documents have missing or incomplete core facts",
                 ));
@@ -394,10 +394,10 @@ impl CodeRuleSqlExecutor {
                 Some(cols) => (corpus::Form::Lines, cols.clone()),
                 None => (corpus::Form::Rows, value),
             };
-            let decl: Vec<(String, String)> = serde_json::from_value(decl).map_err(error)?;
+            let decl: Vec<(front::Name, front::Name)> = serde_json::from_value(decl).map_err(error)?;
             let columns = if decl.is_empty() { vec!["__presence".to_owned()] } else { catalog::view_columns(&decl) };
             self.check_input(rel, &columns, decl.len())?;
-            let types = decl.iter().map(|(_, t)| t.clone()).collect();
+            let types = decl.iter().map(|(_, t)| t.clone()).map(String::from).collect();
             let source = corpus::Corpus::new(Arc::clone(&run), rel, columns, types, form, self.store.atoms_handle());
             let bound_types = source.bound_types();
             bound.insert(rel.clone(), json!(if form == corpus::Form::Lines { "lines" } else { "rows" }));

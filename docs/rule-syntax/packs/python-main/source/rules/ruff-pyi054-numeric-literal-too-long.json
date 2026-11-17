@@ -1,0 +1,242 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi054-numeric-literal-too-long",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Replace long numeric literals in stub files with an ellipsis; a value that long is an implementation detail or varies by system.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "numeric-literal-too-long",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "integer"
+              },
+              {
+                "kind": "float"
+              }
+            ],
+            "regex": "^[\\s\\S]{11,}$"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI054",
+        "message": "Replace this long numeric literal with `...` in the stub; the exact value is an implementation detail that stubs should not pin.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI054"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "numeric-literal-too-long-in-string-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          },
+          "utils": {
+            "escaped-or-concatenated": {
+              "any": [
+                {
+                  "kind": "concatenated_string"
+                },
+                {
+                  "kind": "string",
+                  "regex": "^[uU]?['\"]+[\\s\\S]*\\\\([\\\\'\"abfnrtv0-7xNuU]|\\r|\\n)"
+                }
+              ]
+            },
+            "plain-annotation": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "not": {
+                "matches": "escaped-or-concatenated"
+              }
+            },
+            "long-in-annotation": {
+              "matches": "plain-annotation",
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "any": [
+                        {
+                          "kind": "integer"
+                        },
+                        {
+                          "kind": "float"
+                        }
+                      ],
+                      "regex": "^[\\s\\S]{11,}$",
+                      "capture": "LONG"
+                    },
+                    {
+                      "matches": "long-in-annotation"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "matches": "long-in-annotation"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.LONG",
+        "code": "PYI054",
+        "message": "Replace this long numeric literal with `...` in the stub; the exact value is an implementation detail that stubs should not pin.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI054"
+            ]
+          }
+        },
+        "each": "LONG"
+      }
+    },
+    {
+      "id": "number-in-escaped-or-concatenated-string-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          },
+          "utils": {
+            "escaped-or-concatenated": {
+              "any": [
+                {
+                  "kind": "concatenated_string"
+                },
+                {
+                  "kind": "string",
+                  "regex": "^[uU]?['\"]+[\\s\\S]*\\\\([\\\\'\"abfnrtv0-7xNuU]|\\r|\\n)"
+                }
+              ]
+            },
+            "plain-annotation": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "not": {
+                "matches": "escaped-or-concatenated"
+              }
+            },
+            "any-number-in-annotation": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "any": [
+                        {
+                          "kind": "integer"
+                        },
+                        {
+                          "kind": "float"
+                        }
+                      ],
+                      "capture": "NUM"
+                    },
+                    {
+                      "matches": "any-number-in-annotation"
+                    }
+                  ]
+                }
+              }
+            },
+            "long-escaped-or-concatenated": {
+              "any": [
+                {
+                  "matches": "escaped-or-concatenated",
+                  "regex": "^[\\s\\S]{11,}$",
+                  "all": [
+                    {
+                      "matches": "any-number-in-annotation"
+                    }
+                  ]
+                },
+                {
+                  "matches": "plain-annotation",
+                  "parse": {
+                    "grammar": "annotation",
+                    "has": {
+                      "stopBy": "end",
+                      "matches": "long-escaped-or-concatenated"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "long-escaped-or-concatenated"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.NUM",
+        "code": "PYI054",
+        "message": "Write this string annotation as one plain string without escapes, and replace any numeric literal in it longer than ten characters with `...`; stubs should not pin exact values.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI054"
+            ]
+          }
+        },
+        "each": "NUM"
+      }
+    }
+  ]
+}

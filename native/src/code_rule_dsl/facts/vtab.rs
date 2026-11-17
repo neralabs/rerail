@@ -50,6 +50,17 @@ pub trait RowCells: Send+Sync {
 }
 pub struct ReadRow {pub id:i64,pub cells:Arc<dyn RowCells>}
 pub trait RowStream:Send {fn next(&mut self)->Option<ReadRow>;}
+/// A view the device makes in place from a chunk block (`Source::device_view`, decision 0289).
+#[cfg(target_os = "macos")]
+pub struct DeviceView<'a> {
+    pub block: &'a rerail_blocks::Block,
+    pub root: usize,
+    pub view: u32,
+    pub rows: usize,
+    /// An axis's pairs in the block (`device_chunk::VIEW_AXIS`), else 0.
+    pub pairs: usize,
+}
+
 pub trait Source: Send + Sync {
     fn python_batch(&self) -> Option<Arc<syntax::Batch>> { None }
     fn row_stream(&self,_range:Range<usize>,_reverse:bool)->Option<Box<dyn RowStream>> {None}
@@ -90,6 +101,12 @@ pub trait Source: Send + Sync {
         self.len()
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize;
+    /// A lookup on `column`'s CPU, as a multiple of a derived relation's (placement's `CPU_PER_PROBE` a row in and
+    /// `CPU_PER_ROW_OUT` a row out; decision 0312): a view whose lookup walks the tree or searches the documents
+    /// costs several. Fitted from the profile's `sources.tsv`.
+    fn lookup_cost(&self, _column: usize) -> f64 {
+        1.0
+    }
     /// The rows estimated to match one value on each of `columns` at once. By default the columns are taken
     /// as independent (each keeps its share of the rows), bounded by the most selective one.
     fn estimated_matches_all(&self, columns: &[usize]) -> usize {
@@ -125,10 +142,23 @@ pub trait Source: Send + Sync {
     fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
         (0..self.len()).filter(|&r| eqs.iter().all(|&(c, v)| self.value(r, c) == v)).map(|r| r as u32).collect()
     }
+    /// A view the device makes from its batch's chunk block (decision 0289): the block, its root, the view's code
+    /// (`syntax::device_chunk::VIEW_*`) and its rows. `None`: the device uploads its rows.
+    #[cfg(target_os = "macos")]
+    fn device_view(&self) -> Option<DeviceView<'_>> {
+        None
+    }
     /// Rows are made per looked-up value, so reading them all (a scan, a hash index of every row)
     /// makes every one: a join probes such a source through `lookup`, whatever its match estimate.
     fn made_on_lookup(&self) -> bool {
         false
+    }
+    /// For a reader that takes the whole relation where a join would look it up (the device's keyed read, which
+    /// sorts the rows it is given, decision 0277): whether its rows can be made at once, at the cost of a solve the
+    /// source runs, rather than one lookup each. A source that answers so makes them (and its lookups then read
+    /// them). Every source not made on lookup has them.
+    fn complete_rows(&self) -> bool {
+        !self.made_on_lookup()
     }
     /// The planner expects `keys` lookups on `column` (decision 0143): a source that can make every row at once for
     /// less than that many lookups cost chooses to.
@@ -163,6 +193,12 @@ pub trait Source: Send + Sync {
     }
     /// The rows whose `column` is one of `values`; `None` scans.
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>>;
+    /// The rows whose `column` is `value` and whose columns hold every `(column, value)` of `eqs`, in `lookup`'s
+    /// order, where the source tests `eqs` as it finds them (a view's children by parent and field, off the tape)
+    /// rather than each row's values read back; `None`: looked up, then filtered.
+    fn lookup_eq(&self, _column: usize, _value: i64, _eqs: &[(usize, i64)]) -> Option<Vec<usize>> {
+        None
+    }
     fn value(&self, row: usize, column: usize) -> i64;
     /// The rows whose `column` is `value`, as a slice of the source's own sorted index (no allocation); `None`
     /// where the source keeps none.
@@ -184,8 +220,18 @@ pub struct Counters {
     pub columns: AtomicU64,
 }
 
+/// `source`'s columns as relation `rel`'s table names them: a derived relation named like a base one is read by the
+/// base names (`core::input_column_name`: `value`, handed on from the chunks as `c0`, `c1`, is read as `value(n, v)`).
+/// Its first binding names the table so; every later one is compared so (`Binding::set`), and a reader of the bound
+/// source finds a column so (`setfix::view`).
+pub fn named(rel: &str, source: &dyn Source) -> Vec<String> {
+    source.columns().into_iter().map(|c| crate::code_rule_dsl::facts::core::input_column_name(rel, &c).map_or(c, str::to_owned)).collect()
+}
+
 #[derive(Clone)]
 pub struct Binding {
+    /// The relation's name: its table's columns are its source's as `named` reads them.
+    name: Arc<str>,
     current: Arc<parking_lot::RwLock<Arc<dyn Source>>>,
     schema: Arc<Metadata>,
     stats: Arc<Counters>,
@@ -195,8 +241,8 @@ impl Binding {
         *self.current.write() = self.schema.clone();
     }
     pub fn set(&self, source: Arc<dyn Source>) -> Result<()> {
-        if self.schema.columns != source.columns() || self.schema.writable!=source.writable() || self.schema.text.iter().enumerate().any(|(c,t)| *t!=source.text_column(c)) {
-            return Err(failure("native binding schema changed"));
+        if self.schema.columns != named(&self.name, source.as_ref()) || self.schema.writable!=source.writable() || self.schema.text.iter().enumerate().any(|(c,t)| *t!=source.text_column(c)) {
+            return Err(failure(&format!("native binding schema changed: bound with columns {:?} (writable {}), now {:?} (writable {})", self.schema.columns, self.schema.writable, source.columns(), source.writable())));
         }
         *self.current.write() = source;
         Ok(())
@@ -287,7 +333,8 @@ impl Modules {
         }
         // A kept connection's table of this shape from its last run (`reuse`): its module is registered still.
         let at = connection_scope(db);
-        let shape = (source.columns(), (0..source.columns().len()).map(|c| source.text_column(c)).collect::<Vec<_>>(), source.writable());
+        let columns = named(name, source.as_ref());
+        let shape = (columns.clone(), (0..source.columns().len()).map(|c| source.text_column(c)).collect::<Vec<_>>(), source.writable());
         let kept = REGISTERED.lock().remove(&(at, name.to_owned()));
         // (A writable table's `temp` virtual table is there still: the run's clean-up drops none it binds, and one it
         // drops is no longer kept, `dropped_temp`.)
@@ -298,7 +345,8 @@ impl Modules {
             return Ok(());
         }
         let binding = Binding {
-            schema: Arc::new(Metadata { text:(0..source.columns().len()).map(|c|source.text_column(c)).collect(), columns: source.columns(), writable:source.writable() }),
+            name: name.into(),
+            schema: Arc::new(Metadata { text:(0..source.columns().len()).map(|c|source.text_column(c)).collect(), columns, writable:source.writable() }),
             current: Arc::new(parking_lot::RwLock::new(source)),
             stats: Arc::new(Counters::default()),
         };
@@ -622,6 +670,11 @@ static BOUND: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), Bi
 /// The source bound now to the table `name` on `db`'s connection, if one is.
 pub fn bound_source(db: impl Scoped, name: &str) -> Option<Arc<dyn Source>> {
     BOUND.lock().get(&(db.db().at(), name.to_owned())).map(Binding::current)
+}
+
+/// `bound_source` by the connection's scope (`Scoped::at`), for a callback that holds the scope, not the connection.
+pub fn bound_source_at(at: usize, name: &str) -> Option<Arc<dyn Source>> {
+    BOUND.lock().get(&(at, name.to_owned())).map(Binding::current)
 }
 
 /// Rebind through the existing cell so its owning Modules and prepared cursors agree.
@@ -1166,15 +1219,24 @@ unsafe impl VTabCursor for Cursor {
 
 /// Row-major integer cells with every column indexed: each column's rows sorted by value, built on
 /// first use. Producers' compact relations (S `relation.rs`) and small derived relations.
+/// A column whose values were pushed in order (a document's lines, columns and texts, by node) is its own index:
+/// searched in the cells, with no sort and no row list. Its distinct values are counted as it is pushed.
 pub struct Relation {
     columns: Vec<String>,
     cells: Vec<i64>,
     indexes: Box<[OnceLock<ColumnIndex>]>,
+    /// Per column, its distinct values while its values have come in nondecreasing order, else `None`.
+    ordered: Box<[Option<usize>]>,
 }
 struct ColumnIndex {
     rows: Vec<u32>,
     distinct: usize,
+    /// Every `FENCE`th row's value, in order: a search reads these, contiguous, before the rows they bound, whose
+    /// values it reads one random access each (a search of 100 k rows was 34 of them a probe, two bounds).
+    fence: Vec<i64>,
 }
+/// Rows a fence entry stands for (0.125 bytes a row).
+const FENCE: usize = 64;
 impl Relation {
     pub fn new(columns: &[&str]) -> Self {
         assert!(!columns.is_empty());
@@ -1182,11 +1244,22 @@ impl Relation {
             columns: columns.iter().map(|c| (*c).to_owned()).collect(),
             cells: Vec::new(),
             indexes: columns.iter().map(|_| OnceLock::new()).collect(),
+            ordered: columns.iter().map(|_| Some(0)).collect(),
         }
     }
     pub fn push(&mut self, row: &[i64]) {
         assert_eq!(row.len(), self.columns.len());
         assert!(self.len() < u32::MAX as usize);
+        let last = self.len().checked_sub(1);
+        for (c, o) in self.ordered.iter_mut().enumerate() {
+            let prev = last.map(|l| self.cells[l * row.len() + c]);
+            *o = match (*o, prev) {
+                (Some(d), None) => Some(d + 1),
+                (Some(d), Some(p)) if row[c] > p => Some(d + 1),
+                (Some(d), Some(p)) if row[c] == p => Some(d),
+                _ => None,
+            };
+        }
         self.cells.extend_from_slice(row);
         self.indexes.iter_mut().for_each(|i| *i = OnceLock::new());
     }
@@ -1195,14 +1268,51 @@ impl Relation {
             let mut rows: Vec<u32> = (0..self.len() as u32).collect();
             rows.sort_by_key(|&r| self.value(r as usize, column));
             let distinct = 1 + rows.windows(2).filter(|w| self.value(w[0] as usize, column) != self.value(w[1] as usize, column)).count();
-            ColumnIndex { rows, distinct }
+            let fence = rows.iter().step_by(FENCE).map(|&r| self.value(r as usize, column)).collect();
+            ColumnIndex { rows, distinct, fence }
         })
+    }
+    /// Whether `column`'s values were pushed in order, so that it is its own index.
+    pub fn ordered(&self, column: usize) -> bool {
+        self.ordered[column].is_some()
+    }
+    /// The rows with values in `lo..=hi` of a column pushed in order (`ordered`): a search of the cells.
+    fn ordered_between(&self, column: usize, lo: i64, hi: i64) -> Range<usize> {
+        let first = |below: &dyn Fn(i64) -> bool| -> usize {
+            let (mut a, mut b) = (0, self.len());
+            while a < b {
+                let m = a + (b - a) / 2;
+                if below(self.value(m, column)) { a = m + 1 } else { b = m }
+            }
+            a
+        };
+        let start = first(&|v| v < lo);
+        start..first(&|v| v <= hi).max(start)
+    }
+    /// The rows with values in `lo..=hi`, in value order.
+    fn rows_between(&self, column: usize, lo: i64, hi: i64) -> Vec<usize> {
+        if self.ordered[column].is_some() {
+            return self.ordered_between(column, lo, hi).collect();
+        }
+        self.index(column).rows[self.between(column, lo, hi)].iter().map(|&r| r as usize).collect()
     }
     /// The positions in `column`'s index of the rows with values in `lo..=hi`.
     fn between(&self, column: usize, lo: i64, hi: i64) -> Range<usize> {
-        let rows = &self.index(column).rows;
-        let start = rows.partition_point(|&r| self.value(r as usize, column) < lo);
-        let end = rows.partition_point(|&r| self.value(r as usize, column) <= hi);
+        let index = self.index(column);
+        // The first position whose value is not `below` (ascending): the fence's entry past it bounds the rows to
+        // search to one fence's span.
+        // `RERAIL_FENCE=off`: every row searched, as before (to measure the fence).
+        static OFF: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_FENCE").is_ok_and(|v| v == "off"));
+        let first = |below: &dyn Fn(i64) -> bool| -> usize {
+            if *OFF {
+                return index.rows.partition_point(|&r| below(self.value(r as usize, column)));
+            }
+            let j = index.fence.partition_point(|&k| below(k));
+            let (from, to) = (j.saturating_sub(1) * FENCE, (j * FENCE).min(index.rows.len()));
+            from + index.rows[from..to].partition_point(|&r| below(self.value(r as usize, column)))
+        };
+        let start = first(&|v| v < lo);
+        let end = first(&|v| v <= hi);
         start..end.max(start)
     }
 }
@@ -1215,7 +1325,8 @@ impl Source for Relation {
         self.cells.len() / self.columns.len()
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
-        let one = self.len().div_ceil(self.index(column).distinct.max(1));
+        let distinct = self.ordered[column].unwrap_or_else(|| self.index(column).distinct);
+        let one = self.len().div_ceil(distinct.max(1));
         if batch { one * 8 } else { one }
     }
     fn indexed(&self, _: usize) -> bool {
@@ -1241,12 +1352,14 @@ impl Source for Relation {
                 None => return Some(Vec::new()),
             },
         };
-        let rows = &self.index(column).rows;
-        Some(rows[self.between(column, lo, hi)].iter().map(|&r| r as usize).collect())
+        Some(self.rows_between(column, lo, hi))
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         #[cfg(any(test, feature = "test-hooks"))]
         if let Some(rows) = lookup_spike::selected(self, column, values) { return Some(rows); }
+        if self.ordered[column].is_some() {
+            return Some(values.iter().flat_map(|&v| self.ordered_between(column, v, v)).collect());
+        }
         let rows = &self.index(column).rows;
         Some(values.iter().flat_map(|&v| rows[self.between(column, v, v)].iter().map(|&r| r as usize)).collect())
     }

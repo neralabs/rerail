@@ -277,7 +277,7 @@ impl ContentStore {
                         .expect("content store connection unavailable");
                     let transaction =
                         super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
-                    #[cfg(any(test, feature = "test-hooks"))]
+                    #[cfg(test)]
                     let _write_lock = super::WriteLockSection::enter();
                     let started = Instant::now();
                     let statement_count = execute_object_pass(&transaction, &object_pass)?;
@@ -401,7 +401,7 @@ impl ContentStore {
                 .expect("content store connection unavailable");
             let transaction =
                 super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
-            #[cfg(any(test, feature = "test-hooks"))]
+            #[cfg(test)]
             let _write_lock = super::WriteLockSection::enter();
             let transaction_started = Instant::now();
             if !relationship_references_current(

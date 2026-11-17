@@ -177,8 +177,13 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
         fused: (0..rest.len()).map(|_| None).collect(),
         forms: (0..rest.len()).map(|_| Default::default()).collect(),
         spec: 0,
+        probes: Vec::new(),
         passed_over: Default::default(),
+        step_ns: (0..=rest.len()).map(|_| Default::default()).collect(),
+        from: (0..rest.len()).collect(),
+        plan_steps: rest.len(),
     };
+    let rest = JoinRule { probes: super::probes(&rest.steps, &rest.out), ..rest };
     Some(Closure { col, rest, y })
 }
 
@@ -228,7 +233,7 @@ pub(super) fn prepare(cl: &Closure, store: &mut Store, syms: &mut super::Interne
         if rel.dead(id as u32) {
             continue;
         }
-        let v = rel.row(id)[cl.col];
+        let v = rel.value(id, cl.col);
         index.entry(v).or_insert_with(|| {
             nodes.push(v);
             (nodes.len() - 1) as u32
@@ -454,7 +459,7 @@ pub(super) fn finish(cl: &Closure, p: Prepared, outs: Vec<Output>, store: &mut S
         if rel.dead(id as u32) {
             continue;
         }
-        row.copy_from_slice(rel.row(id));
+        row.copy_from_slice(&rel.row(id));
         into.clear();
         reach(p.index[&row[cl.col]], &mut into);
         for &z in &into {
@@ -504,7 +509,7 @@ fn by_distance(cl: &Closure, rel: &mut super::Rel, index: &HashMap<i64, u32>, no
         if rel.dead(id as u32) {
             continue;
         }
-        row.copy_from_slice(rel.row(id));
+        row.copy_from_slice(&rel.row(id));
         let base = rel.level[id];
         let s = index[&row[cl.col]];
         let reach = reach_of.entry(s).or_insert_with(|| search(s));

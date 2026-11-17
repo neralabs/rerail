@@ -24,7 +24,7 @@ pub fn find(prog: &mut Program) -> Result<(usize, usize), Error> {
     let asked: BTreeSet<String> = prog.qualifiers.iter().filter(|(_, w)| w.contains(QUALIFIER)).map(|(r, _)| r.clone()).collect();
     let refused: BTreeSet<String> = prog.qualifiers.iter().filter(|(_, w)| w.contains("no_reach")).map(|(r, _)| r.clone()).collect();
     let mut reaches = 0;
-    let candidates: Vec<String> = prog.decls.iter().filter(|(r, c)| c.len() == 2 && !refused.contains(*r)).map(|(r, _)| r.clone()).collect();
+    let candidates: Vec<String> = prog.decls.iter().filter(|(r, c)| c.len() == 2 && !refused.contains(r.as_str())).map(|(r, _)| r.to_string()).collect();
     for rel in &candidates {
         if !auto && !asked.contains(rel) {
             continue;
@@ -84,7 +84,7 @@ pub fn undo_in_cycles(prog: &mut Program) -> Result<Vec<String>, Error> {
                 }
             }
         }
-        prog.decls.remove(&seed);
+        prog.decls.remove(seed.as_str());
         let through: Vec<String> = prog.natives.iter().filter(|(_, n)| matches!(n, Native::ReachThrough { reach, .. } if *reach == rel)).map(|(r, _)| r.clone()).collect();
         for t in through {
             prog.natives.remove(&t);
@@ -224,15 +224,15 @@ fn rewrite_reach(prog: &mut Program, rel: &str, at: usize, edge: &str) {
     for r in prog.rules.iter_mut().filter(|r| r.head.rel == rel) {
         r.head.rel = seed.clone().into();
     }
-    let v = |n: &str| Term::Var(n.to_owned());
-    let atom = |r: &str, args: Vec<Term>| Literal::Atom(Atom { rel: r.to_owned().into(), args, neg: false, gated: false });
+    let v = |n: &str| Term::Var(n.to_owned().into());
+    let atom = |r: &str, args: Vec<Term>| Literal::Atom(Atom { rel: r.to_owned().into(), args: args.into(), neg: false, gated: false });
     // Its one rule only orders it after the seeds and the edges: the evaluator makes its rows.
     prog.rules[at] = Rule {
-        head: Atom { rel: rel.to_owned().into(), args: vec![v("x"), v("z")], neg: false, gated: false },
-        body: vec![atom(&seed, vec![v("x"), v("y")]), atom(edge, vec![v("y"), v("z")])],
+        head: Atom { rel: rel.to_owned().into(), args: [v("x"), v("z")].into(), neg: false, gated: false },
+        body: [atom(&seed, vec![v("x"), v("y")]), atom(edge, vec![v("y"), v("z")])].into(),
     };
     let cols = prog.decls[rel].clone();
-    prog.decls.insert(seed.clone(), cols);
+    prog.decls.insert(seed.clone().into(), cols);
     prog.natives.insert(rel.to_owned(), Native::Reach { seed, edge: edge.to_owned() });
 }
 

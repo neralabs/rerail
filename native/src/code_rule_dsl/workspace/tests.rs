@@ -25,7 +25,7 @@ pub(super) static WORKSPACE_TEST_SLOT: Mutex<()> = Mutex::new(());
 #[cfg(test)]
 /// Build a Git fixture repository. Tests only: production discovery reads Git through gix.
 pub(super) fn git(root: &std::path::Path, arguments: &[&str]) {
-    let status = std::process::Command::new("git")
+    let status = std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1")
         .arg("-C")
         .arg(root)
         .args(arguments)
@@ -772,7 +772,7 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
             root,
             1,
             HashKey::sha256(b"rerail-grammars-v1"),
-            i64::from(tape::TAPE_FORMAT_VERSION),
+            i64::from(tape::formats::stored_version()),
         )
         .unwrap();
     let owner = "stored-workspace-test";
@@ -862,7 +862,7 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
         store
             .tapes_without_search_index_after(
                 grammar_version(),
-                i64::from(tape::TAPE_FORMAT_VERSION),
+                i64::from(tape::formats::stored_version()),
                 None,
                 8
             )

@@ -28,7 +28,9 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
                 decode: d.decode_cpu,
                 uploads: u64::from(d.uploads),
                 upload_bytes: d.upload_bytes,
+                upload_by: d.upload_by,
                 resident: u64::from(d.resident_hits),
+                in_place: u64::from(d.in_place),
                 sorts: u64::from(d.sorts),
                 sort_hits: u64::from(d.sort_hits),
                 rows: d.rows,
@@ -48,11 +50,17 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
         None => false,
     };
     t.on_gpu += u64::from(ran);
+    if ran {
+        t.gpu_cpu += cpu;
+        t.gpu_work += work;
+    }
     t.gpu_cheaper += u64::from(p.gpu_cheaper);
     t.device |= p.device;
     t.forms = shape.forms.iter().map(|f| f.name()).collect();
     t.missing = p.missing.iter().map(|f| f.name()).collect();
     t.planned_work += shape.work;
+    t.planned_scanned += shape.scanned.min(shape.work).max(0.0);
+    t.steps += shape.steps as u64;
     t.work += work;
     t.cpu_estimate += p.cpu_s;
     t.gpu_estimate += p.gpu_s;
@@ -94,16 +102,19 @@ pub(in crate::code_rule_dsl) fn placements(r: &mut String, state: &State) {
         runs - gpu,
         if device { "Metal" } else { "CPU" }
     );
-    let _ = writeln!(r, "Prices: CPU measured (100 ns a unit of planned work, 0.13 ms a stratum); GPU: each join step on its device form (the relational lab's measures), each stage and submission at the host's measured cost.");
+    {
+        use crate::code_rule_dsl::logic::plan::placement::{CPU_PER_STRATUM, CPU_PER_WORK, GPU_BIAS};
+        let _ = writeln!(r, "Prices: CPU measured ({:.0} ns a unit of planned work, {:.2} ms a stratum); GPU: each join step on its device form (the relational lab's measures), each stage and submission at the host's measured cost; the GPU taken while under {GPU_BIAS} times the CPU's price (decision 0321).", CPU_PER_WORK * 1e9, CPU_PER_STRATUM * 1e3);
+    }
     device_strata(r, all);
-    // The strata the GPU would run cheaper in at least one run, and did not.
+    // The strata whose GPU price was within its bias in at least one run, and that did not run there.
     let cheaper: Vec<(&String, &PlacedTotal)> = all.iter().filter(|(_, t)| t.gpu_cheaper > t.on_gpu).collect();
     let cheaper_cpu: f64 = cheaper.iter().map(|(_, t)| t.cpu).sum();
     // The GPU priced at the work each stratum did, not the work planned: a planned estimate can be far off (a cross
     // product priced at 10^20 rows that met none).
     let at_work = |t: &PlacedTotal| gpu_price(t.runs, t.work as f64);
     let cheaper_gpu: f64 = cheaper.iter().map(|(_, t)| at_work(t)).sum();
-    let _ = writeln!(r, "The GPU would be cheaper for {} strata: {cheaper_cpu:.2} s CPU taken, against {cheaper_gpu:.2} s on the GPU at the work they did.", cheaper.len());
+    let _ = writeln!(r, "The GPU's price was within its bias for {} strata it did not run: {cheaper_cpu:.2} s CPU taken, against {cheaper_gpu:.2} s on the GPU at the work they did.", cheaper.len());
     // Strata whose planned work is off by 10x or more, either way, by their CPU: the placement read a wrong price, and
     // the join order likely came from the same estimate.
     let off = |t: &PlacedTotal| {
@@ -152,10 +163,99 @@ pub(in crate::code_rule_dsl) fn placements(r: &mut String, state: &State) {
     }
 }
 
+/// Where the process's CPU went, by thread: the spans measure their own thread's CPU, so a worker's is under a span
+/// only where it opens one (`span_at`). Threads by name, digits folded (a pool's threads are one line). `gaps` are
+/// read before the profile's state is held: reading them takes each thread's account, and a span that closes holds its
+/// thread's account while it takes the state.
+fn cpu_by_thread(r: &mut String, threads: &super::Threads, gaps: &[super::Gap]) {
+    let covered: f64 = threads.rows.iter().map(|t| t.covered).sum();
+    let _ = writeln!(
+        r,
+        "\n== CPU by thread: process {:.2} s; under spans {:.2} s ({:.0}%), outside every span {:.2} s",
+        threads.process,
+        covered,
+        100.0 * covered / threads.process.max(1e-9),
+        (threads.process - covered).max(0.0)
+    );
+    let mut groups: BTreeMap<String, (usize, f64, f64)> = BTreeMap::new();
+    for t in &threads.rows {
+        let name: String = t.name.chars().map(|c| if c.is_ascii_digit() { '#' } else { c }).collect();
+        let g = groups.entry(name).or_default();
+        g.0 += 1;
+        g.1 += t.cpu;
+        g.2 += t.covered;
+    }
+    let mut by: Vec<_> = groups.into_iter().filter(|(_, g)| g.1 >= 0.005).collect();
+    by.sort_by(|a, b| (b.1.1 - b.1.2).total_cmp(&(a.1.1 - a.1.2)));
+    let _ = writeln!(r, "{:>9} {:>9} {:>9} {:>8}  thread", "cpu s", "spans s", "outside s", "threads");
+    for (name, (n, cpu, cov)) in by.iter().take(20) {
+        let _ = writeln!(r, "{cpu:>9.2} {cov:>9.2} {:>9.2} {n:>8}  {name}", (cpu - cov).max(0.0));
+    }
+    // By the spans' last steps: a pool's items share them wherever they were started (gaps.tsv has the paths).
+    let mut by: BTreeMap<(&str, &str), (f64, usize)> = BTreeMap::new();
+    for g in gaps {
+        let e = by.entry((last_step(&g.after), last_step(&g.before))).or_default();
+        e.0 += g.cpu;
+        e.1 += 1;
+    }
+    let mut by: Vec<_> = by.into_iter().filter(|(_, (cpu, _))| *cpu >= 0.01).collect();
+    by.sort_by(|a, b| b.1.0.total_cmp(&a.1.0));
+    if !by.is_empty() {
+        let total: f64 = gaps.iter().map(|g| g.cpu).sum();
+        let _ = writeln!(r, "Outside every span, between a thread's spans: {total:.2} s (the outermost span that closed -> the next that opened, by");
+        let _ = writeln!(r, "their last steps; on a pool's threads, its own work between items: stealing, splitting, spinning; gaps.tsv):");
+        let _ = writeln!(r, "{:>9} {:>7}  closed -> opened", "cpu s", "paths");
+        for ((after, before), (cpu, n)) in by.iter().take(12) {
+            let _ = writeln!(r, "{cpu:>9.2} {n:>7}  {after} -> {before}");
+        }
+    }
+}
+
+/// A span path's last step.
+fn last_step(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+/// The spans as a tree: each under its parent (its path less the last part, when that span was recorded; a root
+/// otherwise), children by CPU; below the roots, spans under 0.1% of `all` are left out (the tables keep them). The
+/// children are grouped in one pass: a scan of every span per node printed is quadratic in a run's ~100k spans.
+pub(super) fn span_tree(r: &mut String, spans: &BTreeMap<String, SpanTotal>, all: f64) {
+    let mut kids: std::collections::HashMap<Option<&str>, Vec<(&String, &SpanTotal)>> = Default::default();
+    for (p, t) in spans {
+        let parent = p.rsplit_once('/').map(|(par, _)| par).filter(|par| spans.contains_key(*par));
+        kids.entry(parent).or_default().push((p, t));
+    }
+    for v in kids.values_mut() {
+        v.sort_by(|a, b| b.1.total.total_cmp(&a.1.total));
+    }
+    fn walk(r: &mut String, kids: &std::collections::HashMap<Option<&str>, Vec<(&String, &SpanTotal)>>, parent: Option<&str>, depth: usize, all: f64) {
+        for &(p, t) in kids.get(&parent).map_or(&[][..], Vec::as_slice) {
+            if t.total < all * 0.001 && depth > 0 {
+                continue;
+            }
+            let _ = writeln!(r, "{:>9.3} {:>9.3} {:>5.1}% {:>9}  {}{}", t.total, t.own, 100.0 * t.total / all.max(1e-9), t.calls, "  ".repeat(depth), short(last_step(p), 100));
+            walk(r, kids, Some(p), depth + 1, all);
+        }
+    }
+    walk(r, &kids, None, 0, all);
+}
+
 /// The report, and the tables, into `dir`. `header`: what was run (lines put first).
 pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
-    let state = super::state();
+    let threads = super::threads();
+    let mut threads_tsv = String::from("thread\tcpu_s\tunder_spans_s\toutside_spans_s\n");
+    for t in &threads.rows {
+        let _ = writeln!(threads_tsv, "{}\t{:.4}\t{:.4}\t{:.4}", t.name, t.cpu, t.covered, (t.cpu - t.covered).max(0.0));
+    }
+    std::fs::write(dir.join("threads.tsv"), threads_tsv)?;
+    let mut gaps_tsv = String::from("after\tbefore\tcpu_s\n");
+    let gaps = super::gaps();
+    for g in &gaps {
+        let _ = writeln!(gaps_tsv, "{}\t{}\t{:.4}", g.after, g.before, g.cpu);
+    }
+    std::fs::write(dir.join("gaps.tsv"), gaps_tsv)?;
+    let state = super::merged();
     let mut spans_tsv = String::from("path\tcalls\tcpu_s\town_s\talloc_bytes\town_alloc_bytes\tfreed_bytes\tpeak_rise_bytes\town_peak_rise_bytes\n");
     for (p, t) in &state.spans {
         let _ = writeln!(spans_tsv, "{p}\t{}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}\t{}", t.calls, t.total, t.own, t.alloc, t.own_alloc, t.freed, t.rise, t.own_rise);
@@ -172,31 +272,38 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     let work = |steps: &Vec<(u64, u64)>| super::plan_work(steps);
     let mut native: Vec<_> = state.native.iter().collect();
     native.sort_by_key(|(_, s)| std::cmp::Reverse(work(s)));
-    let mut native_tsv = String::from("span\twork\tsteps_in_out\tplan\tcpu_s\n");
+    let mut native_tsv = String::from("span\twork\tsteps_in_out\tplan\tcpu_s\tsteps_cpu_ms\n");
     for ((p, plan), steps) in &native {
         let s: Vec<String> = steps.iter().map(|(a, b)| format!("{a}:{b}")).collect();
         let cpu = state.native_cpu.get(&(p.clone(), plan.clone())).copied().unwrap_or(0.0);
-        let _ = writeln!(native_tsv, "{p}\t{}\t{}\t{plan}\t{cpu:.4}", work(steps), s.join(","));
+        // Per step, and last the head's rows made (`setfix::step_cpu`): empty where the steps were not timed.
+        let stepped: Vec<String> = state.native_step_cpu.get(&(p.clone(), plan.clone())).map_or_else(Vec::new, |c| c.iter().map(|c| format!("{:.3}", c * 1e3)).collect());
+        let _ = writeln!(native_tsv, "{p}\t{}\t{}\t{plan}\t{cpu:.4}\t{}", work(steps), s.join(","), stepped.join(","));
     }
     std::fs::write(dir.join("native.tsv"), native_tsv)?;
-    let mut placement_tsv = String::from("stratum\truns\ton_gpu\tgpu_cheaper\tplanned_work\twork\tcpu_s\tcpu_estimate_s\tgpu_estimate_s\tforms\tmissing\n");
+    let mut placement_tsv = String::from("stratum\truns\ton_gpu\tgpu_cheaper\tplanned_work\twork\tcpu_s\tcpu_estimate_s\tgpu_estimate_s\tforms\tmissing\tplanned_scanned\tsteps\n");
     for (key, t) in &state.placements {
         let _ = writeln!(
             placement_tsv,
-            "{key}\t{}\t{}\t{}\t{:.0}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}",
-            t.runs, t.on_gpu, t.gpu_cheaper, t.planned_work, t.work, t.cpu, t.cpu_estimate, t.gpu_estimate, t.forms.join(","), t.missing.join(",")
+            "{key}\t{}\t{}\t{}\t{:.0}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{:.0}\t{}",
+            t.runs, t.on_gpu, t.gpu_cheaper, t.planned_work, t.work, t.cpu, t.cpu_estimate, t.gpu_estimate, t.forms.join(","), t.missing.join(","), t.planned_scanned, t.steps
         );
     }
     std::fs::write(dir.join("placement.tsv"), placement_tsv)?;
 
-    // The report.
+    // The report. The process's life (`life`) as it begins: put after the header once the report's own work is known.
+    let life = super::life::now();
+    let mut after: Vec<(String, f64, f64)> = Vec::new();
     let mut r = String::new();
     r.push_str(header);
+    let _ = writeln!(r, "Memory budgets (decision 0126): overall {} MB, Metal {} MB on top of it", rerail_accel::budget::memory() >> 20, rerail_accel::budget::metal() >> 20);
+    cpu_by_thread(&mut r, &threads, &gaps);
     let (analysis_text, analysis_json) = analysis_report::report(&state);
     std::fs::write(dir.join("analysis.txt"), &analysis_text)?;
     std::fs::write(dir.join("analysis.json"), serde_json::to_vec_pretty(&analysis_json)?)?;
     r.push('\n');
     r.push_str(&analysis_text);
+    metal_summary(&mut r, &state);
     fallbacks(&mut r, &state);
     executors(&mut r, &state);
     hazards(&mut r, &state);
@@ -207,33 +314,15 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     let roots: f64 = state.spans.iter().filter(|(p, _)| root(p)).map(|(_, t)| t.total).sum();
     let _ = writeln!(r, "\n== Spans: CPU (user + system), summed over calls; own = less the spans inside it ({roots:.2} s in all)");
     let _ = writeln!(r, "{:>9} {:>9} {:>6} {:>9}  span", "cpu s", "own s", "%", "calls");
-    // A tree: each span under its parent, children by CPU.
-    fn walk(r: &mut String, spans: &BTreeMap<String, SpanTotal>, parent: Option<&str>, depth: usize, all: f64) {
-        let mut kids: Vec<(&String, &SpanTotal)> = spans
-            .iter()
-            .filter(|(p, _)| match parent {
-                None => p.rsplit_once('/').is_none_or(|(parent, _)| !spans.contains_key(parent)),
-                Some(par) => p.strip_prefix(par).and_then(|rest| rest.strip_prefix('/')).is_some_and(|rest| !rest.contains('/')),
-            })
-            .collect();
-        kids.sort_by(|a, b| b.1.total.total_cmp(&a.1.total));
-        for (p, t) in kids {
-            // Spans under 0.1% of the run are left out of the tree (the tables keep them).
-            if t.total < all * 0.001 && depth > 0 {
-                continue;
-            }
-            let name = p.rsplit('/').next().unwrap_or(p);
-            let _ = writeln!(r, "{:>9.3} {:>9.3} {:>5.1}% {:>9}  {}{}", t.total, t.own, 100.0 * t.total / all.max(1e-9), t.calls, "  ".repeat(depth), short(name, 100));
-            walk(r, spans, Some(p), depth + 1, all);
-        }
-    }
-    walk(&mut r, &state.spans, None, 0, roots);
+    span_tree(&mut r, &state.spans, roots);
     let kinds_tsv = kinds::by_kind(&mut r, &state.spans);
     std::fs::write(dir.join("kinds.tsv"), kinds_tsv)?;
     kinds::unexplained(&mut r, &state.spans);
     kinds::searches(&mut r, &state.spans);
     let heads_tsv = kinds::by_head(&mut r, &native, &state.native_cpu);
     std::fs::write(dir.join("heads.tsv"), heads_tsv)?;
+    let sources_tsv = super::sources::by_source(&mut r, &state, crate::code_rule_dsl::logic::plan::placement::CPU_PER_WORK);
+    std::fs::write(dir.join("sources.tsv"), sources_tsv)?;
     memory_report(&mut r, &state.spans);
 
     let sql_ns: u64 = sql.iter().map(|(_, s)| s.ns).sum();
@@ -283,7 +372,8 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
             j.0 += work(steps) + made;
             j.1 += made;
         }
-        roofline::report(&mut r, &own, &charged, &joins);
+        let (wall, cpu, what) = roofline::report(&mut r, &own, &charged, &joins);
+        after.push((what, wall, cpu));
     }
 
     let _ = writeln!(r, "\n== Waits: wall time each thread spent blocked, on what, and what that was doing when the wait began");
@@ -299,6 +389,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     }
 
     r.push_str(&crate::code_rule_dsl::logic::lanes::prof::report());
+    stages(&mut r);
     let _ = writeln!(r, "\n== Device (Metal): per span and kernel; GPU = command buffers' GPU time, wait = host wall time");
     if state.devices.is_empty() {
         r.push_str("(no device work)\n");
@@ -381,6 +472,20 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     // Warnings: the shapes that usually explain a slow rule.
     let _ = writeln!(r, "\n== Warnings");
     let mut warned = 0;
+    // A device path that failed and ran on the CPU instead.
+    for ((topic, why), n) in &state.decisions {
+        if topic.contains("fell back to the CPU") {
+            let _ = writeln!(r, "- {topic}: {n} times: {why}");
+            warned += 1;
+        }
+    }
+    // Chunks the memory line cut: the device's grain, and the per-chunk runs of every stratum and matcher wave.
+    let cut: u64 = state.decisions.iter().filter(|((topic, _), _)| topic == "chunk cut by the run's memory line").map(|(_, n)| n).sum();
+    let sized: u64 = state.decisions.iter().filter(|((topic, _), _)| topic == "chunk size").map(|(_, n)| n).sum();
+    if cut > 0 {
+        let _ = writeln!(r, "- {cut} of {sized} chunk sizings (every phase's) were cut by the run's memory line (the footprint left under a quarter of a chunk's MB): every stratum and matcher wave runs once per chunk, so the device gets small grains and pays its per-launch latency per chunk. See \"chunk size\" under == Decisions; RERAIL_RUN_MB moves the line.");
+        warned += 1;
+    }
     if !state.hazards.is_empty() {
         let runs: u64 = state.hazards.values().map(|v| v.0).sum();
         let _ = writeln!(r, "- {} SQL statements ({runs} runs) force waits inside the waves: see == Forces SQL waits.", state.hazards.len());
@@ -470,8 +575,152 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     for (k, v) in state.notes.iter().filter(|(k, _)| !k.starts_with("plan:")) {
         let _ = writeln!(r, "{k}: {}", short(v, 600));
     }
+    r.insert_str(header.len(), &super::life::section(&life, &after));
     std::fs::write(dir.join("profile.txt"), r)
+}
+
+/// The stage counters (`rerail_prof`): the device runs' host stages (CPU of the thread that ran
+/// them), their GPU time (`gpu.device_us`), memory readings and counts. With
+/// `RERAIL_GPU_KERNEL_TIMES` set, `kernel_us.<kernel>` splits the GPU time by kernel (each a
+/// command buffer of its own: slower, for profiling only).
+fn stages(r: &mut String) {
+    use std::fmt::Write as _;
+    let stages = rerail_prof::stages();
+    let _ = writeln!(r, "\n== Stages (rerail-prof): CPU ms of the threads that ran each, its calls (or its count); kernel_us = GPU µs by kernel");
+    if stages.is_empty() {
+        r.push_str("(no stages)\n");
+        return;
+    }
+    // Timed stages by CPU, then the counts by name.
+    let mut timed: Vec<_> = stages.iter().filter(|(_, (d, _))| !d.is_zero()).collect();
+    timed.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+    for (name, (d, calls)) in timed {
+        let _ = writeln!(r, "{:>12.1} ms {calls:>9}  {name}", d.as_secs_f64() * 1e3);
+    }
+    let mut kernels: Vec<_> = stages.iter().filter(|(n, _)| n.starts_with("kernel_us.")).collect();
+    kernels.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+    for (name, (_, us)) in &kernels {
+        let k = &name["kernel_us.".len()..];
+        let n = stages.get(&format!("kernel_n.{k}")).map_or(0, |e| e.1);
+        let _ = writeln!(r, "{:>12.1} ms {n:>9}  GPU {k}", *us as f64 / 1e3);
+    }
+    // `RERAIL_GPU_WALK_STEPS`: the micro walks by their steps (a GPU thread's serial work), with
+    // their walks and longest walk: a long walk is a dispatch's critical path.
+    let mut walks: Vec<_> = stages.iter().filter_map(|(n, e)| n.strip_prefix("walk_steps.").map(|w| (w, e.1))).collect();
+    if !walks.is_empty() {
+        walks.sort_by(|a, b| b.1.cmp(&a.1));
+        let total: usize = walks.iter().map(|w| w.1).sum();
+        let _ = writeln!(r, "\n  micro walks by steps ({total} steps in all; t0 = 8 frames, t2 = the loop tier):");
+        let _ = writeln!(r, "{:>14} {:>10} {:>10} {:>10}  walk words", "steps", "walks", "per walk", "longest");
+        for (w, steps) in walks.iter().take(30) {
+            let items = stages.get(&format!("walk_items.{w}")).map_or(0, |e| e.1);
+            let max = stages.get(&format!("walk_max.{w}")).map_or(0, |e| e.1);
+            let _ = writeln!(r, "{steps:>14} {items:>10} {:>10.1} {max:>10}  {w}", *steps as f64 / items.max(1) as f64);
+        }
+    }
+    for (name, (d, count)) in stages.iter() {
+        if d.is_zero() && !name.starts_with("kernel_") && !name.starts_with("walk_") {
+            let _ = writeln!(r, "{:>12} {count:>12}  {name}", "count");
+        }
+    }
 }
 
 // Its tests (the report over what a run recorded, and the projection's provenance over a parsed program) run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
 // engine registers as it loads (the languages, their `.rr` libraries).
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The span tree: each span under its recorded parent, children by CPU; a span whose parent was not recorded is
+    /// a root (`x/y`), and a span under 0.1% of the run below the roots is left out (`a/tiny`).
+    #[test]
+    fn the_span_tree_nests_children_by_cpu() {
+        let mut spans = BTreeMap::new();
+        for (path, cpu) in [("a", 10.0), ("a/b", 6.0), ("a/b/c", 5.0), ("a/d", 3.0), ("a/tiny", 0.001), ("x/y", 2.0), ("z", 1.0), ("z/e", 0.5)] {
+            spans.insert(path.to_owned(), SpanTotal { calls: 1, total: cpu, ..Default::default() });
+        }
+        let mut r = String::new();
+        super::span_tree(&mut r, &spans, 20.0);
+        let names: Vec<&str> = r.lines().map(|l| &l[38..]).collect();
+        assert_eq!(names, ["a", "  b", "    c", "  d", "y", "z", "  e"], "{r}");
+    }
+}
+
+/// A device run's summary, first: where the CPU went against what could run on the GPU. Each line names the section
+/// with its detail. Relational strata by where their runs ran and why; launches (matcher waves, joins) by lane, with
+/// the GPU's own time; the work that has no device form; and the grain (chunks the memory line cut).
+fn metal_summary(r: &mut String, state: &State) {
+    let lanes = crate::code_rule_dsl::logic::lanes::prof::by_lane();
+    let device_lanes = lanes.iter().any(|l| l.1 != rerail_accel::Lane::Cpu);
+    if !device_lanes && !state.placements.values().any(|t| t.device || t.gpu.runs > 0) {
+        return;
+    }
+    let _ = writeln!(r, "\n== Metal: what ran where, and what kept work off the GPU (a device run's summary; details in the sections named)");
+    // Own CPU by kind of work, as == Where the time went.
+    let mut kinds: BTreeMap<String, f64> = BTreeMap::new();
+    for (p, t) in &state.spans {
+        *kinds.entry(kinds::kind(p)).or_default() += t.own;
+    }
+    let spanned: f64 = kinds.values().sum();
+    let _ = writeln!(r, "Spanned CPU {spanned:.2} s (== CPU by thread has the process's).");
+    // Strata: a stratum's runs on the GPU, and its runs on the CPU by why.
+    let (mut g_runs, mut g_cpu, mut g_ms) = (0u64, 0.0f64, 0.0f64);
+    let mut why: BTreeMap<&str, (u64, u64, f64)> = BTreeMap::new();
+    for t in state.placements.values() {
+        g_runs += t.gpu.runs;
+        g_cpu += t.gpu_cpu;
+        g_ms += t.gpu.gpu * 1e3;
+        let runs = t.runs - t.gpu.runs;
+        if runs == 0 {
+            continue;
+        }
+        let k = if !t.missing.is_empty() {
+            "no device form for one of its steps (== Executor hazards, GPU support missing)"
+        } else if t.refused.is_some() {
+            "placed on the GPU, refused there at run time (== Placement, refused)"
+        } else {
+            "priced cheaper on the CPU (== Placement; grain: CPU ms a run)"
+        };
+        let e = why.entry(k).or_default();
+        e.0 += 1;
+        e.1 += runs;
+        e.2 += t.cpu - t.gpu_cpu;
+    }
+    let all: f64 = state.placements.values().map(|t| t.cpu).sum();
+    let runs: u64 = state.placements.values().map(|t| t.runs).sum();
+    let _ = writeln!(r, "Relational strata (native engine): {all:.2} s CPU in {runs} runs");
+    let _ = writeln!(r, "  {:>9.2} s  {g_runs} runs on the GPU ({g_ms:.1} ms GPU)", g_cpu);
+    let mut why: Vec<_> = why.into_iter().collect();
+    why.sort_by(|a, b| b.1.2.total_cmp(&a.1.2));
+    for (k, (n, runs, cpu)) in why {
+        let _ = writeln!(r, "  {cpu:>9.2} s  {runs} runs of {n} strata on the CPU, {:.3} ms a run: {k}", cpu * 1e3 / runs.max(1) as f64);
+    }
+    // Launches by lane.
+    let stages = rerail_prof::stages();
+    let label_gpu = stages.get("gpu.device_us").map_or(0, |e| e.1) as f64 / 1e3;
+    let walks: u64 = stages.iter().filter(|(n, _)| n.starts_with("walk_steps.")).map(|(_, e)| e.1 as u64).sum();
+    let longest = stages.iter().filter(|(n, _)| n.starts_with("walk_max.")).map(|(_, e)| e.1).max().unwrap_or(0);
+    drop(stages);
+    let _ = writeln!(r, "Launches by lane (== Acceleration; == Executor for estimates against actual):");
+    for (form, lane, n, wall, cpu) in &lanes {
+        let _ = writeln!(r, "  {form:<26} {:<4} {n:>6} launches {wall:>9.2} s wall {cpu:>9.2} s job CPU ({:.2} ms wall a launch)", lane.name(), wall * 1e3 / *n as f64);
+    }
+    let _ = writeln!(r, "  matcher label passes: {label_gpu:.1} ms on the GPU (command buffers); the GPU lane's wall less it is the host's part and the waits");
+    if walks > 0 {
+        let _ = writeln!(r, "  micro walks: {walks} steps, the longest {longest} (== Stages: a long walk is a dispatch's critical path)");
+    } else {
+        let _ = writeln!(r, "  for the GPU's time by kernel and the walks' steps: RERAIL_GPU_KERNEL_TIMES=1 RERAIL_GPU_WALK_STEPS=1 (== Stages)");
+    }
+    // Work with no device form.
+    let none: Vec<(&String, &f64)> = kinds.iter().filter(|(k, _)| k.starts_with("parsing") || k.starts_with("W's reference graph")).collect();
+    let none_s: f64 = none.iter().map(|(_, s)| **s).sum();
+    let named: Vec<String> = none.iter().map(|(k, s)| format!("{k} {s:.2} s")).collect();
+    let _ = writeln!(r, "No device form: {none_s:.2} s ({:.0}% of the spanned CPU): {}", 100.0 * none_s / spanned.max(1e-9), named.join("; "));
+    // The grain.
+    let sized: u64 = state.decisions.iter().filter(|((t, _), _)| t == "chunk size").map(|(_, n)| n).sum();
+    let cut: u64 = state.decisions.iter().filter(|((t, _), _)| t == "chunk cut by the run's memory line").map(|(_, n)| n).sum();
+    if sized > 0 {
+        let _ = writeln!(r, "Grain: {cut} of {sized} chunk sizings (every phase's) cut by the run's memory line; each stratum and matcher wave runs once a chunk (== Warnings)");
+    }
+}

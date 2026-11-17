@@ -320,14 +320,14 @@ pub struct SharedArenaRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct EvaluationQuotaRecord {
+pub struct EvaluationQuotaRecord {
     pub used: u32,
     pub limit: u32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct LazyArenaBlockRecord {
+pub struct LazyArenaBlockRecord {
     pub start: u32,
     pub limit: u32,
     pub state: u32,
@@ -347,12 +347,12 @@ pub struct MetalEvaluation {
     pub task_start: u32,
     pub task_count: u32,
     /// A resident label batch's (decision 0033): the evaluation's program and file, and its
-    /// roots: its rule's segments (their header) and its first root's index in the rule. Its
-    /// tasks are those roots, with no task records. Zero elsewhere.
+    /// roots' rule (its word in the run's root table, `root_mask`). Its tasks are its document's
+    /// groups of 64 nodes, with no task records. Zero elsewhere.
     pub program: u32,
     pub file: u32,
-    pub root_segment: u32,
-    pub root_base: u32,
+    pub root_rule: u32,
+    pub root_reserved: u32,
     pub quotas: [EvaluationQuotaRecord; ARENA_KIND_COUNT],
     pub pending: LazyArenaBlockRecord,
     pub capture: LazyArenaBlockRecord,

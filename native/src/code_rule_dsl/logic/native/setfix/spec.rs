@@ -96,6 +96,12 @@ pub enum JoinItem {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct JoinSpec {
     pub items: Vec<JoinItem>,
+    /// Per item before the head, the planner's step it was made for (`plan_steps` for the head's computed terms),
+    /// and its steps: a literal can make several items (`$k = @sub(@strlen($d), 1)` makes two), so the engine's
+    /// steps are not the plan's. The engine reports counts, CPU and histograms by plan step through it
+    /// (`JoinRule::from`). Empty (a spec read from text): each item is its own step.
+    pub from: Vec<u32>,
+    pub plan_steps: u32,
 }
 
 /// How a relation starts: its table's rows, none, a query's rows, or a kept native relation less another's
@@ -138,6 +144,9 @@ pub enum Line {
     /// Its relations started from kept rows (`Start::Base`) hold them as no wave's delta: its first wave is driven by
     /// its inputs' changes (seeds that read them, `plan::reads_change`), not by its kept rows (decision 0122 §2).
     KeptOld,
+    /// Relation `rel` is a lattice's (decision 0124): its last column the value, joined by the lattice `name`'s join,
+    /// the `keys` columns before it the key; after `widen` changes of a key, widened.
+    Lattice { rel: usize, keys: usize, name: String, widen: Option<u32> },
     Request(usize),
     Produced(usize),
     /// The relation's statistics are kept as its rows come (`Rel::stats`): a session keeps it for its next run.
@@ -145,6 +154,9 @@ pub enum Line {
     Seed { head: usize, join: Arc<JoinSpec> },
     Join { head: usize, delta: usize, join: Arc<JoinSpec>, whole: Option<Arc<JoinSpec>> },
     Probe { head: usize, delta: usize, sql: String },
+    /// A probe not planned yet (decision 0123 §9): its delta has had no rows. The run returns for its plan when its
+    /// delta first has rows (`done 4`), and the caller gives it its join (`reprobe`).
+    Unplanned { head: usize, delta: usize },
     Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usize> },
     /// A recursive relation maintained by levels (decision 0090): its candidates, the level checked, those held,
     /// those gone and the kept rows shown (`levels <cand> <chk> <held> <gone> <live>`).
@@ -404,7 +416,7 @@ impl JoinSpec {
                 other => return Err(format!("unknown join item {other}")),
             });
         }
-        Ok(JoinSpec { items })
+        Ok(JoinSpec { items, ..Default::default() })
     }
 }
 
@@ -424,6 +436,7 @@ impl std::fmt::Display for Line {
             Line::Device => f.write_str("device"),
             Line::Leveled(rels) => write!(f, "leveled {}", comma(rels)),
             Line::KeptOld => f.write_str("keptold"),
+            Line::Lattice { rel, keys, name, widen } => write!(f, "lattice {rel} {keys} {} {}", hex(name), widen.map_or_else(|| "-".to_owned(), |w| w.to_string())),
             Line::Request(r) => write!(f, "request {r}"),
             Line::Produced(r) => write!(f, "produced {r}"),
             Line::Stats(r) => write!(f, "stats {r}"),
@@ -436,6 +449,7 @@ impl std::fmt::Display for Line {
                 }
             }
             Line::Probe { head, delta, sql } => write!(f, "probe {head} {delta} {}", hex(sql)),
+            Line::Unplanned { head, delta } => write!(f, "unplanned {head} {delta}"),
             Line::Gate { done, src, quiet, after } => {
                 write!(f, "gate {done} {} {} {}", src.map_or("-".to_owned(), |s| s.to_string()), comma(quiet), comma(after))
             }
@@ -510,6 +524,12 @@ impl ComponentSpec {
                 "device" => Line::Device,
                 "leveled" => Line::Leveled(t.get(1).map(|x| list(x)).transpose()?.unwrap_or_default()),
                 "keptold" => Line::KeptOld,
+                "lattice" => Line::Lattice {
+                    rel: num(at(1)?)?,
+                    keys: num(at(2)?)?,
+                    name: unhex(at(3)?)?,
+                    widen: if at(4)? == "-" { None } else { Some(num(at(4)?)?) },
+                },
                 "request" => Line::Request(num(at(1)?)?),
                 "produced" => Line::Produced(num(at(1)?)?),
                 "stats" => Line::Stats(num(at(1)?)?),
@@ -521,6 +541,7 @@ impl ComponentSpec {
                     whole: t.get(4).map(|w| join(w)).transpose()?,
                 },
                 "probe" => Line::Probe { head: num(at(1)?)?, delta: num(at(2)?)?, sql: unhex(at(3)?)? },
+                "unplanned" => Line::Unplanned { head: num(at(1)?)?, delta: num(at(2)?)? },
                 "gate" => Line::Gate {
                     done: num(at(1)?)?,
                     src: if at(2)? == "-" { None } else { Some(num(at(2)?)?) },

@@ -48,11 +48,17 @@ impl Source for Overlay {
             .estimated_matches(c, batch)
             .saturating_add(self.deleted.estimated_matches(c, batch))
     }
+    fn lookup_cost(&self, c: usize) -> f64 {
+        self.current.lookup_cost(c)
+    }
     fn indexed(&self, c: usize) -> bool {
         self.current.indexed(c)
     }
     fn made_on_lookup(&self) -> bool {
         self.current.made_on_lookup()
+    }
+    fn complete_rows(&self) -> bool {
+        self.current.complete_rows()
     }
     fn expect_lookups(&self, column: usize, keys: f64) {
         self.current.expect_lookups(column, keys);

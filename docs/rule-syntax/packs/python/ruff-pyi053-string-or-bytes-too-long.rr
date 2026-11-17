@@ -18,7 +18,7 @@ PYI053(s) :- long_literal(s), in_stub(s), !in_annotation(s), !stmt_string(s), !d
     !in_dunder_all(s).
 // long_literal(s): the value's 51st character exists.
 .decl long_literal(s: node)
-long_literal(s) :- (plain_str(s, v) ; string_form(s, "bytes"), value(s, v)), !inside_concat(s), @slice(v, 50, 51) != "".
+long_literal(s) :- (plain_str(s, v) ; string_form(s, "bytes"), str(s, v)), !inside_concat(s), @slice(v, 50, 51) != "".
 long_literal(s) :- fstring(s), kind(s, "string"), !inside_concat(s), fstring_body(s, v), @slice(v, 50, 51) != "".
 .decl fstring_body(s: node, v: symbol)  // an f-string's text inside its quotes
 fstring_body(s, v) :- child(s, a, 0), kind(a, "string_start"), text(a, q0), child(s, z, _), kind(z, "string_end"),

@@ -232,3 +232,50 @@ They do not establish performance acceptance for the complete product.
 
 Remaining costs include cold preparation, schema-triggered automatic reprepares, global or nested scalar evaluation, and unsupported CTE kernels.
 Composite statistics and learned ranking of complete schedules remain separate planner work.
+
+## Call-analysis regression after the decision-hub update
+
+The update to `293647a70` preserved the CPython fixture and its rule files.
+The first call-analysis edit increased from the earlier 66.4 million optimized VM steps to 198,987,622.
+Full evaluation used 210,299,783 VM steps.
+Both paths still used three submissions, so the submission check alone missed the increased work.
+
+Temporary stage timing located most of the CPU in the descendant queries for `retval` and `isgen`.
+SQL descent still used `node_order` as dense preorder positions.
+Decision 0121 changed those keys to stable labels with gaps between granule runs.
+The generated SQL added one or a subtree size to a label, then joined the label back to a node.
+This arithmetic lost descendants across a gap, and the reverse-order joins dominated the queries.
+
+The replacement follows indexed `child` edges in SQL and stops expansion at nested members of the scope set.
+It needs neither an order-key lookup nor arithmetic on an order key.
+The isolated first edit used 66,329,646 VM steps with the replacement.
+The `retval` stage's diagnostic owner CPU decreased from 13.76 seconds to 2.84 seconds.
+These stage timings came from separate debug runs on a shared machine.
+The temporary tracing is removed from the final code.
+
+The small regression case checks a nested scope followed by another return across an order-key gap.
+It also checks empty scopes, roots outside the scope set, and a bound descendant target.
+A separate CPython check compares the retained return facts with an independent parent traversal after an edit.
+The complete replay also limits optimized edit work to 20 million VM steps for workload and 100 million for call analysis.
+It retains result comparisons, the identical-edit check, restoration, and the session cap of 100 submissions.
+Observation version 4 separates the new traversal's costs from reports made with the old SQL.
+
+The final debug comparison passed with two configured workers and no temporary tracing.
+
+| First edit | Before fix, optimized VM steps | After fix, optimized VM steps | Before fix, owner CPU | After fix, owner CPU |
+|---|---:|---:|---:|---:|
+| Workload | 13,015,977 | 14,489,558 | 2.41 s | 2.68 s |
+| Call analysis | 198,987,622 | 66,329,646 | 20.63 s | 9.15 s |
+
+Call-analysis VM work decreased 66.7 percent, and measured owner CPU decreased 55.7 percent.
+The fixed full-evaluation control used 78,860,896 VM steps and 12.80 seconds of owner CPU for that edit.
+The workload edit used 11.3 percent more optimized VM steps than before the fix.
+This change restores correct traversal and removes the call-analysis regression, but it does not improve every measurement.
+The workload program also reads nearest-scope facts in its recursive type analysis.
+
+Both programs used three submissions per edit and zero for an identical edit.
+Restoration passed with full input and derived-result comparisons.
+Both sessions stayed within 100 submissions, including result reads.
+Fifty focused checks passed, including traversal in both node-ID modes, tree axes, CTEs, scaling, retained replay, shared workers, and planning feedback.
+The independent CPython parent-walk oracle and the complete replay comparison passed separately.
+These measurements do not establish performance acceptance for the complete product.

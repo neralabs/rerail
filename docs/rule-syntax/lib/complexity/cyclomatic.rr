@@ -28,9 +28,9 @@
 //
 // Builds on core only (within_stop).
 
-.decl cc_boundary(k: symbol)
-.decl cc_decision(n: node, i: number)
-.decl cc_name(f: node, x: symbol)
+.decl cc_boundary(k: symbol) extensible
+.decl cc_decision(n: node, i: number) extensible
+.decl cc_name(f: node, x: symbol) extensible
 
 .decl cc_ccn(f: node, k: number)
 cc_ccn(f, 1 + count : { cc_decision(n, i), within_stop(n, f, cc_boundary) }) :- kind(f, b), cc_boundary(b).

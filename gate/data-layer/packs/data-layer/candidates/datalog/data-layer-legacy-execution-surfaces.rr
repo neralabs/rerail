@@ -219,7 +219,7 @@ les_walk(r, c) :- les_root(r), child(r, c, _).
 les_walk(r, c2) :- les_walk(r, c), les_open(c), child(c, c2, _).
 les_cast_args(c, a) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, "cast"), field(c, "arguments", a).
 les_cast_comment(a, s) :- les_cast_args(_, a), token(a, _, t, s, _), prefix("#", t).
-rr_ctx2(a, xs) :- child(a, x, j), node(_, x, _, xs, _), j <= 1.
+rr_ctx2(a, xs) :- les_cast_args(c, a), child(a, x, j), node(_, x, _, xs, _), j <= 1.
 rr_agg1(a, s, xs) :- rr_demand_agg_rr_agg1(a, xs), rr_ctx2(a, xs), les_cast_comment(a, s), s < xs.
 les_cast_arg(c, x) :- les_cast_args(c, a), child(a, x, j), j <= 1, node(_, x, _, xs, _), k = count : { rr_agg1(a, _, xs) }, @add(j, k) = 1.
 raw_cursor_target(n, o) :- node(_, n, "call", _, _), field(n, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, s), (s = "execute" ; s = "fetchall" ; s = "fetchone"), field(f, "object", o).

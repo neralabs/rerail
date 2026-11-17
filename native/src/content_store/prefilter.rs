@@ -18,6 +18,8 @@
 //!   characters, too long) are kept as terms only while the store-wide residue of their kind stays
 //!   under `RESIDUE_CAP`.
 
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use super::bounded_insert::insert;
 use super::postings::{append_delta, pack_edges};
 use super::{ContentStore, MAX_PUBLICATION_BATCH, StoreError, StoreResult, TapeId};
@@ -67,13 +69,14 @@ impl ContentStore {
             return Err(StoreError::Invalid("prefilter publication exceeds 64 tapes".to_owned()));
         }
         self.require_write_capacity()?;
-        self.immediate_transaction(|transaction| {
+        // Its terms are the store's ids (`Counts::flush`): written after a fork too (decision 0170).
+        super::atoms::mapped(|| self.immediate_transaction(|transaction| {
             let mut counts = Counts::default();
             for set in sets {
                 put(transaction, set, &mut counts, &self.atoms)?;
             }
             counts.flush(transaction, &self.atoms)
-        })?;
+        }))?;
         self.hold_prefilters(sets);
         Ok(())
     }
@@ -97,7 +100,7 @@ impl ContentStore {
     pub fn remove_prefilter(&self, tape: TapeId) -> StoreResult<()> {
         self.working_set().forget_kinds(tape.row());
         self.immediate_transaction(|transaction| {
-            transaction.execute("DELETE FROM prefilter_sets WHERE tape_id=?1", [tape.row()])?;
+            transaction.execute_cached("DELETE FROM prefilter_sets WHERE tape_id=?1", [tape.row()])?;
             Ok(())
         })
     }
@@ -142,7 +145,9 @@ impl ContentStore {
             Ok(())
         };
         cache(CANDIDATE_CACHE_KB)?;
-        let value = (|| {
+        // Its statements read and write terms as the store numbers them (the `atoms` table answers in the store's ids,
+        // decision 0170), never this process's: written after a fork too.
+        let value = super::atoms::mapped(|| {
             if writes {
                 self.require_write_capacity()?;
                 return self.immediate_transaction(|transaction| Ok(operation(transaction)?));
@@ -152,7 +157,7 @@ impl ContentStore {
             let value = operation(&transaction)?;
             self.commit(transaction)?;
             Ok(value)
-        })();
+        });
         cache(1_024)?;
         value
     }
@@ -179,7 +184,7 @@ impl ContentStore {
         }
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let target = path.to_str().ok_or_else(|| StoreError::Invalid("capture path is not UTF-8".to_owned()))?;
-        connection.execute("ATTACH DATABASE ?1 AS capture", [target])?;
+        connection.execute_cached("ATTACH DATABASE ?1 AS capture", [target])?;
         // The copies keep their keys, not their parents (sources, hashes), so the capture is
         // written with foreign keys off; that pragma is per connection and outside transactions.
         connection.execute_batch("PRAGMA foreign_keys = OFF")?;
@@ -193,12 +198,22 @@ impl ContentStore {
             // (`RERAIL_LAB_FALLBACK`), whose relations read them through `nera_tree`.
             if std::env::var_os("RERAIL_CAPTURE_TAPES").is_some() {
                 connection.execute_batch(
-                    "INSERT INTO capture.tape_objects SELECT t.* FROM temp.capture_tapes c JOIN main.tape_objects t USING(tape_id);",
+                    "INSERT INTO capture.tape_objects SELECT t.* FROM temp.capture_tapes c JOIN main.tape_objects t USING(tape_id); \
+                     INSERT INTO capture.object_segments SELECT * FROM main.object_segments;",
                 )?;
+                // The segments the tapes are in (decision 0295 step 5), beside the capture as beside the store.
+                let (from, to) = (super::object_segments::object_dir(&self.database_path), super::object_segments::object_dir(path));
+                if let Ok(entries) = std::fs::read_dir(&from) {
+                    let io = |e: std::io::Error| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
+                    std::fs::create_dir_all(&to).map_err(io)?;
+                    for e in entries.flatten() {
+                        std::fs::copy(e.path(), to.join(e.file_name())).map_err(io)?;
+                    }
+                }
             } else {
                 connection.execute_batch(
                     "INSERT INTO capture.tape_objects SELECT t.tape_id, t.source_id, t.canonical_hash_id, t.grammar_id, \
-                       t.grammar_version, t.tape_format_version, t.codec_id, 0, x'', t.created_generation \
+                       t.grammar_version, t.tape_format_version, t.codec_id, 0, x'', t.created_generation, 0, 0, 0 \
                        FROM temp.capture_tapes c JOIN main.tape_objects t USING(tape_id);",
                 )?;
             }
@@ -236,7 +251,7 @@ impl ContentStore {
     pub fn delete_tape_for_test(&self, tape: TapeId) -> StoreResult<()> {
         self.working_set().clear();
         self.immediate_transaction(|transaction| {
-            transaction.execute("DELETE FROM tape_objects WHERE tape_id=?1", [tape.row()])?;
+            transaction.execute_cached("DELETE FROM tape_objects WHERE tape_id=?1", [tape.row()])?;
             Ok(())
         })
     }
@@ -277,10 +292,12 @@ impl Counts {
     fn flush(&mut self, transaction: &Connection, store: &super::atoms::Atoms) -> StoreResult<()> {
         let counts = std::mem::take(self);
         // Each term's atom, from the store's arena (decision 0049): new ones are pending, and the
-        // transaction's commit appends them before these rows (`ContentStore::commit`).
+        // transaction's commit appends them before these rows (`ContentStore::commit`). The term columns
+        // hold the store's ids: a process whose atoms are mapped (decision 0170) maps them here, in one batch.
         let texts = counts.term_freq.keys().map(|(_, term)| term.as_str()).collect::<Vec<_>>();
-        let ids = store.intern_all(&texts)?;
-        let atoms: BTreeMap<&str, i64> = texts.iter().copied().zip(ids.into_iter().map(i64::from)).collect();
+        let mut ids: Vec<i64> = store.intern_all(&texts)?.into_iter().map(i64::from).collect();
+        store.to_store(transaction, super::ProcessIds::of_process(&mut ids))?;
+        let atoms: BTreeMap<&str, i64> = texts.iter().copied().zip(ids).collect();
         let atom = |term: &str| atoms.get(term).copied().ok_or_else(|| StoreError::Invalid("a posting's term has no atom".to_owned()));
         insert(
             transaction,
@@ -347,8 +364,8 @@ fn put(transaction: &Connection, set: &TapePrefilter, counts: &mut Counts, atoms
             counts.flush(transaction, atoms)?;
         }
     }
-    transaction.execute("DELETE FROM prefilter_sets WHERE tape_id=?1", [tape])?;
-    transaction.execute(
+    transaction.execute_cached("DELETE FROM prefilter_sets WHERE tape_id=?1", [tape])?;
+    transaction.execute_cached(
         "INSERT INTO prefilter_sets(tape_id,version,nodes,edges) VALUES(?1,?2,?3,?4)",
         params![tape, PREFILTER_VERSION, set.nodes, pack_edges(&set.edges)],
     )?;

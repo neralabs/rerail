@@ -1772,7 +1772,7 @@ pub fn run_resident(programs: &[&BlockNative], files: &[BatchFile<'_>], segments
 
 /// `run_resident` with each file's SHA-256 given (`digests`, in the files' order), as the
 /// residency's documents take theirs (decision 0032 §4): the engine knows them from a `stat` or
-/// a Git blob (decision 0095 §3), and the run hashes no file's bytes.
+/// a Git blob (decision 0142 §3), and the run hashes no file's bytes.
 pub fn run_resident_digested(programs: &[&BlockNative], files: &[BatchFile<'_>], digests: Option<&[[u8; 32]]>, segments: Segments) -> Result<(SerialRun, Resident), Error> {
     let (run, kept) = run_kept(programs, files, digests, segments, false)?;
     Ok((run, kept.ok_or(Error::BackendFailure)?))
@@ -2162,7 +2162,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     let records_pass = kernel(source_key, source, "serial_records")?;
     let mut common: Vec<(u64, &metal::BufferRef, u64)> = vec![(1, out.buffer(), 0), (2, table.buffer(), 0), (3, seg_table.buffer(), 0)];
     for (k, &at) in SLAB_BUFFERS.iter().enumerate() {
-        common.push((at, &slabs.get(k).unwrap_or(&slabs[0]).buffer.buffer, 0));
+        common.push((at, slabs.get(k).unwrap_or(&slabs[0]).buffer(), 0));
     }
     let with = |extra: &[(u64, &'static str)]| -> Vec<(u64, &metal::BufferRef, u64)> {
         let mut b = common.clone();

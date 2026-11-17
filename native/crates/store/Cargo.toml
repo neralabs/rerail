@@ -12,10 +12,13 @@ description = "The engine's content store (SQLite): sources, tapes, memos, run r
 # The store's test hooks (busy-wait overrides, write counters, test-only writers), for the engine's tests. The
 # engine turns it on always, not only for its tests: a feature that differed between its test and bin builds
 # would rebuild the engine at each switch. The hooks do nothing unless a test sets them.
-test-hooks = []
+test-hooks = ["rerail-prof/test-hooks"]
 
 [dependencies]
+rerail-prof = { path = "../prof" }
 rerail-accel = { path = "../../../accel" }
+# The memo's segments are journal blocks of deferrable leases (decision 0295 §4).
+rerail-blocks = { path = "../blocks" }
 foldhash = "=0.2.0"
 gix = { version = "=0.90.0", default-features = false, features = ["status", "parallel", "sha1", "sha256", "revision"] }
 hashbrown = { version = "=0.16.1", default-features = false }

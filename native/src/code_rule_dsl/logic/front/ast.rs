@@ -2,26 +2,89 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use crate::code_rule_dsl::logic::front::name::Name;
+use crate::code_rule_dsl::logic::front::name::{List, Name};
 
-#[derive(Clone, Debug, PartialEq, Hash)]
+/// A term. Its names and texts are `Name`s, interned for the process as relation names are: a program read or
+/// copied makes no string for a name it has met before (decision 0166).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Term {
-    Var(String),
+    Var(Name),
     Wild,
     Int(i64),
-    Str(String),
+    Str(Name),
     Top,
-    Call(String, Vec<Term>),
+    Call(Name, List<Term>),
+    /// An atom a string became when the program was lowered for a store (`plan::lower`, decision 0270): never an
+    /// integer, so no pass takes one for the other, and a program moved to another store finds every name it holds.
+    Branded(Branded),
+}
+
+/// What an atom names (decision 0270): a name is the store's (interned, numbered as the store met it); a kind or a
+/// field is the grammar's (`kind_atom`, `field_atom`), the same in every store.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Class {
+    Name,
+    Kind,
+    Field,
+}
+
+/// An atom with what it names (decision 0270). Its value at run time is `atom`, as an integer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Branded {
+    pub class: Class,
+    pub atom: u32,
+}
+
+impl Branded {
+    pub fn name(atom: u32) -> Branded {
+        Branded { class: Class::Name, atom }
+    }
+    /// Its value as the run holds it.
+    pub fn value(self) -> i64 {
+        i64::from(self.atom)
+    }
+    /// Its printed tag (`#n12`, `#k1034`, `#f3`), which the rr parser reads back.
+    pub fn tag(self) -> char {
+        match self.class {
+            Class::Name => 'n',
+            Class::Kind => 'k',
+            Class::Field => 'f',
+        }
+    }
+    pub fn of_tag(tag: char, atom: u32) -> Option<Branded> {
+        let class = match tag {
+            'n' => Class::Name,
+            'k' => Class::Kind,
+            'f' => Class::Field,
+            _ => return None,
+        };
+        Some(Branded { class, atom })
+    }
+}
+
+impl fmt::Display for Branded {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "#{}{}", self.tag(), self.atom)
+    }
 }
 
 impl Term {
     pub fn vars(&self, out: &mut BTreeSet<String>) {
         match self {
             Term::Var(v) => {
-                out.insert(v.clone());
+                out.insert(v.to_string());
             }
             Term::Call(_, args) => args.iter().for_each(|a| a.vars(out)),
             _ => {}
+        }
+    }
+
+    /// The integer the run holds for a constant: an integer's, or a branded atom's (decision 0270).
+    pub fn integer(&self) -> Option<i64> {
+        match self {
+            Term::Int(i) => Some(*i),
+            Term::Branded(a) => Some(a.value()),
+            _ => None,
         }
     }
 
@@ -31,10 +94,10 @@ impl Term {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Atom {
     pub rel: Name,
-    pub args: Vec<Term>,
+    pub args: List<Term>,
     pub neg: bool,
     /// A negation held until its relation's `done_` gate passes (magic sets, row 4): not a negative edge.
     pub gated: bool,
@@ -66,7 +129,7 @@ pub enum AggOp {
     Join { by: Vec<String>, sep: String },
 }
 
-#[derive(Clone, Debug, PartialEq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Literal {
     Atom(Atom),
     Cmp { l: Term, op: &'static str, r: Term },
@@ -117,8 +180,8 @@ impl Literal {
 pub fn cmp_binds(l: &Term, op: &str, r: &Term, bound: &BTreeSet<String>) -> Option<BTreeSet<String>> {
     let mut rv = BTreeSet::new();
     r.vars(&mut rv);
-    if op == "=" && let Term::Var(x) = l && !bound.contains(x) {
-        return rv.is_subset(bound).then(|| BTreeSet::from([x.clone()]));
+    if op == "=" && let Term::Var(x) = l && !bound.contains(x.as_str()) {
+        return rv.is_subset(bound).then(|| BTreeSet::from([x.to_string()]));
     }
     let mut all = rv.clone();
     l.vars(&mut all);
@@ -140,6 +203,7 @@ impl fmt::Display for Term {
             Term::Str(s) => f.write_str(&serde_json::to_string(s).expect("a string serializes")),
             Term::Top => f.write_str("top"),
             Term::Call(name, args) => write!(f, "@{name}({})", join(args)),
+            Term::Branded(b) => write!(f, "{b}"),
         }
     }
 }
@@ -190,10 +254,10 @@ pub fn join<T: fmt::Display>(items: &[T]) -> String {
     items.iter().map(T::to_string).collect::<Vec<_>>().join(", ")
 }
 
-#[derive(Clone, Debug, PartialEq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Rule {
     pub head: Atom,
-    pub body: Vec<Literal>,
+    pub body: List<Literal>,
 }
 
 /// A relation's lattice column: the last, after `keys` key columns.
@@ -217,20 +281,22 @@ impl LatticeDecl {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Value {
     Int(i64),
-    Str(String),
+    Str(Name),
+    /// A string a fact held, lowered to its atom (decision 0270).
+    Branded(Branded),
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct Program {
     /// Each relation's columns: (name, type).
-    pub decls: BTreeMap<String, Vec<(String, String)>>,
+    pub decls: BTreeMap<Name, List<(Name, Name)>>,
     /// Logically nullary relations encoded with one physical unit column.
     pub nullary: BTreeSet<String>,
     pub lattice: BTreeMap<String, LatticeDecl>,
-    pub facts: BTreeMap<String, Vec<Vec<Value>>>,
+    pub facts: BTreeMap<String, Vec<List<Value>>>,
     pub rules: Vec<Rule>,
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
@@ -273,6 +339,10 @@ pub struct Program {
     /// Relations run as one component though no rule makes them one (decision 0101 §3, `maintain::together`): a
     /// maintained stratum's pieces at one level, ordered inside it by unit gates (`gates`), each in one set.
     pub together: Vec<BTreeSet<String>>,
+    /// The rules lowering made to ask for a node's attribute (decision 0174's `rr_node_text_req` …), by request
+    /// relation: for each of its rules, in order, the relations whose readers it serves. `prune` keeps a request
+    /// rule only while one of them is reached, as a reader's request is kept with the reader.
+    pub asked_by: BTreeMap<String, Vec<BTreeSet<String>>>,
     /// Join shape directives (`.shape`, O-join-shape-directives), each on the rules of its relation and every form
     /// made from them.
     pub shapes: Vec<Shape>,
@@ -393,6 +463,9 @@ pub enum SpanIn {
     Comment,
     /// Nodes of this kind.
     Kind(String),
+    /// The children of nodes of this kind: a node a rule reaches as such a child (`child(p, n, _), kind(p, "block")`),
+    /// whose own kinds it does not name.
+    ChildOf(String),
     /// The spans group `.1` of pattern `.0` captured.
     Capture(String, String),
 }
@@ -406,6 +479,10 @@ pub enum Native {
     /// `match_all(re, s)` over symbols: `(s, g…)`, a row per non-overlapping match of `pattern` in each `s` of
     /// `input`'s one column whose `groups` all take part, each group's text (`logic::native::match_all`).
     MatchAll { input: String, pattern: String, groups: Vec<String>, positions: bool },
+    /// A text test (`@op(s, patterns) = 1`) over a column the program derives: the rows of `input` whose `column`
+    /// passes it, each distinct string tested by the run's vocabulary with every other test at once (decision 0037),
+    /// once a run (`logic::strings::as_relations`). A row is there as its input row is and its string passes.
+    TextTest { input: String, column: usize, op: String, patterns: Vec<String> },
     /// `components(d, c, key, edge, own)`: each document's strongly connected component of `edge(d, e)` (its
     /// smallest document) and the component's Merkle key over `own(d, digest)` (`logic::native::components`).
     Components { edge: String, own: String },
@@ -429,7 +506,7 @@ impl Native {
                 *target = rename(target);
                 if let Some(roots) = roots { *roots = rename(roots); }
             }
-            Native::MatchAll { input, .. } => *input = rename(input),
+            Native::MatchAll { input, .. } | Native::TextTest { input, .. } => *input = rename(input),
             Native::PythonCandidates {input,targets,..} => { *input=rename(input); *targets=rename(targets); },
             Native::Python {input,targets,..} => { *input=rename(input); if let Some(t)=targets {*t=rename(t);} },
             Native::Components { edge, own } => {
@@ -450,7 +527,7 @@ impl Native {
     pub fn reads(&self) -> Vec<&str> {
         match self {
             Native::DfsFirst { edge, target, roots } => [Some(edge.as_str()), Some(target.as_str()), roots.as_deref()].into_iter().flatten().collect(),
-            Native::MatchAll { input, .. } => vec![input.as_str()],
+            Native::MatchAll { input, .. } | Native::TextTest { input, .. } => vec![input.as_str()],
             Native::PythonCandidates {input,targets,..} => vec![input.as_str(),targets.as_str()],
             Native::Python {input,targets,..} => std::iter::once(input.as_str()).chain(targets.as_deref()).collect(),
             Native::Components { edge, own } => vec![edge.as_str(), own.as_str()],
@@ -515,4 +592,129 @@ pub struct Gate {
     pub level: usize,
     pub quiet: Vec<String>,
     pub deps: Vec<String>,
+}
+
+/// A term's parts by their addresses (`Shallow`): its names and its call's arguments.
+impl crate::code_rule_dsl::logic::front::name::Shallow for Term {
+    fn shallow_hash(&self, h: &mut rustc_hash::FxHasher) {
+        use std::hash::Hasher;
+        match self {
+            Term::Var(v) => {
+                h.write_u8(0);
+                h.write_usize(v.address());
+            }
+            Term::Wild => h.write_u8(1),
+            Term::Int(i) => {
+                h.write_u8(2);
+                h.write_i64(*i);
+            }
+            Term::Str(s) => {
+                h.write_u8(3);
+                h.write_usize(s.address());
+            }
+            Term::Top => h.write_u8(4),
+            Term::Call(f, args) => {
+                h.write_u8(5);
+                h.write_usize(f.address());
+                h.write_usize(args.address());
+            }
+            Term::Branded(b) => {
+                h.write_u8(6);
+                h.write_u8(b.class as u8);
+                h.write_u32(b.atom);
+            }
+        }
+    }
+    fn shallow_eq(&self, other: &Term) -> bool {
+        match (self, other) {
+            (Term::Call(f, a), Term::Call(g, b)) => f == g && a.same(b),
+            (a, b) => a == b,
+        }
+    }
+}
+
+impl Atom {
+    fn shallow_hash(&self, h: &mut rustc_hash::FxHasher) {
+        use std::hash::Hasher;
+        h.write_usize(self.rel.address());
+        h.write_usize(self.args.address());
+        h.write_u8(u8::from(self.neg) | u8::from(self.gated) << 1);
+    }
+    fn shallow_eq(&self, other: &Atom) -> bool {
+        self.rel == other.rel && self.args.same(&other.args) && self.neg == other.neg && self.gated == other.gated
+    }
+}
+
+/// A literal's parts by their addresses (`Shallow`): its atom's relation and arguments, its terms.
+impl crate::code_rule_dsl::logic::front::name::Shallow for Literal {
+    fn shallow_hash(&self, h: &mut rustc_hash::FxHasher) {
+        use std::hash::{Hash, Hasher};
+        match self {
+            Literal::Atom(a) => {
+                h.write_u8(0);
+                a.shallow_hash(h);
+            }
+            Literal::Cmp { l, op, r } => {
+                h.write_u8(1);
+                l.shallow_hash(h);
+                op.hash(h);
+                r.shallow_hash(h);
+            }
+            Literal::Agg { var, op, over, atom } => {
+                h.write_u8(2);
+                var.hash(h);
+                op.hash(h);
+                over.hash(h);
+                atom.shallow_hash(h);
+            }
+            other => {
+                h.write_u8(3);
+                other.hash(h);
+            }
+        }
+    }
+    fn shallow_eq(&self, other: &Literal) -> bool {
+        match (self, other) {
+            (Literal::Atom(a), Literal::Atom(b)) => a.shallow_eq(b),
+            (Literal::Cmp { l, op, r }, Literal::Cmp { l: l2, op: op2, r: r2 }) => op == op2 && l.shallow_eq(l2) && r.shallow_eq(r2),
+            (Literal::Agg { var, op, over, atom }, Literal::Agg { var: v2, op: o2, over: w2, atom: a2 }) => var == v2 && op == o2 && over == w2 && atom.shallow_eq(a2),
+            (a, b) => std::mem::discriminant(a) == std::mem::discriminant(b) && !matches!(a, Literal::Atom(_) | Literal::Cmp { .. } | Literal::Agg { .. }) && a == b,
+        }
+    }
+}
+
+impl Value {
+    /// The integer the run holds for it: an integer's, or a branded atom's (decision 0270).
+    pub fn integer(&self) -> Option<i64> {
+        match self {
+            Value::Int(i) => Some(*i),
+            Value::Branded(a) => Some(a.value()),
+            Value::Str(_) => None,
+        }
+    }
+}
+
+/// A value by its name's address (`Shallow`).
+impl crate::code_rule_dsl::logic::front::name::Shallow for Value {
+    fn shallow_hash(&self, h: &mut rustc_hash::FxHasher) {
+        use std::hash::Hasher;
+        match self {
+            Value::Int(i) => {
+                h.write_u8(0);
+                h.write_i64(*i);
+            }
+            Value::Str(s) => {
+                h.write_u8(1);
+                h.write_usize(s.address());
+            }
+            Value::Branded(b) => {
+                h.write_u8(2);
+                h.write_u8(b.class as u8);
+                h.write_u32(b.atom);
+            }
+        }
+    }
+    fn shallow_eq(&self, other: &Value) -> bool {
+        self == other
+    }
 }

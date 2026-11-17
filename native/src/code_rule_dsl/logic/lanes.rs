@@ -24,18 +24,24 @@ static MADE: [std::sync::atomic::AtomicBool; 3] = [const { std::sync::atomic::At
 
 static CPU: LazyLock<Executor> = LazyLock::new(|| {
     MADE[0].store(true, std::sync::atomic::Ordering::Relaxed);
+    // The statistics kept; their stored prices are read when the first job is priced (`costs::ready`).
     super::costs::start();
-    let all = Executor::new();
+    Executor::with(cpu_lanes())
+});
+
+/// The CPU binding's lanes: the cores, SQL and, where the CPU has one, its matrix unit (`sme::backend` asks the CPU
+/// itself). No device lane is asked for: asking compiles the GPU's kernels and builds the Neural Engine's lane (11 ms
+/// of a run on the cores, decision 0285).
+fn cpu_lanes() -> Vec<Arc<dyn Backend>> {
+    #[cfg_attr(not(all(target_os = "macos", target_arch = "aarch64")), allow(unused_mut))]
     let mut lanes: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default()), Arc::new(SqlBackend)];
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    if all.lanes().contains(&rerail_accel::Lane::Sme) {
-        lanes.extend(rerail_accel::sme::backend());
-    }
-    drop(all);
-    Executor::with(lanes)
-});
+    lanes.extend(rerail_accel::sme::backend());
+    lanes
+}
 static ALL: LazyLock<Executor> = LazyLock::new(|| {
     MADE[1].store(true, std::sync::atomic::Ordering::Relaxed);
+    // The statistics kept; their stored prices are read when the first job is priced (`costs::ready`).
     super::costs::start();
     // Every submission the executor makes is checked against the engine's launch budget (decision 0100 §2).
     if let Some(dev) = crate::code_rule_dsl::logic::device::solver() {
@@ -98,7 +104,6 @@ pub mod wave {
         static SUSPENDABLE: Cell<u32> = const { Cell::new(0) };
         static QUEUED: RefCell<Vec<(&'static str, u64, Kernel)>> = const { RefCell::new(Vec::new()) };
         static DONE: RefCell<HashMap<u64, Output>> = RefCell::new(HashMap::new());
-        static NEXT: Cell<u64> = const { Cell::new(0) };
         /// Waves flushed on this thread and the launches they held (for tests).
         static FLUSHED: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
         /// What else the wave runs when it is flushed, after its launches: a form's own submission (the device
@@ -110,6 +115,64 @@ pub mod wave {
     /// level's strata, commits it there): once, after the wave's launches.
     pub fn defer(f: Box<dyn FnOnce() -> Result<(), String>>) {
         DEFERRED.with_borrow_mut(|d| d.push(f));
+    }
+
+    /// The next launch's ticket, of the process: a component's job queues on its own thread and hands its launches to
+    /// the run's (`take_queued`, `requeue`), where they share the run's tickets.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    /// Launches queued on one thread and not flushed (`take_queued`): a component's job hands them to the run's thread,
+    /// whose wave runs them with the level's (decision 0123 §6).
+    pub struct Queued(Vec<(&'static str, u64, Kernel)>);
+
+    impl Queued {
+        pub fn len(&self) -> usize {
+            self.0.len()
+        }
+
+        pub fn tickets(&self) -> Vec<u64> {
+            self.0.iter().map(|l| l.1).collect()
+        }
+    }
+
+    /// A flushed wave's outputs, taken off the thread that flushed it for the one that resumes their launches' strata
+    /// (`take_outputs`, `put_outputs`).
+    pub struct Outputs(Vec<(u64, Output)>);
+
+    /// The outputs of `tickets`' launches that this thread's waves ran, taken off it.
+    pub fn take_outputs(tickets: &[u64]) -> Outputs {
+        DONE.with_borrow_mut(|d| Outputs(tickets.iter().filter_map(|t| d.remove(t).map(|o| (*t, o))).collect()))
+    }
+
+    /// Outputs another thread's wave ran (`take_outputs`), for `take` on this one.
+    pub fn put_outputs(o: Outputs) {
+        DONE.with_borrow_mut(|d| d.extend(o.0));
+    }
+
+    /// Where this thread's wave stood (its launches queued, its deferred submissions) before a job ran on it
+    /// (`take_queued`, `deferred_since`). A thread waiting on a job may run others meanwhile (`Stream::wait` helps the
+    /// pool), so what is queued on it is not all the job's.
+    #[derive(Clone, Copy)]
+    pub struct Mark(usize, usize);
+
+    pub fn mark() -> Mark {
+        Mark(QUEUED.with_borrow(Vec::len), DEFERRED.with_borrow(Vec::len))
+    }
+
+    /// The launches queued on this thread since `mark`, taken off it.
+    pub fn take_queued(mark: Mark) -> Queued {
+        Queued(QUEUED.with_borrow_mut(|q| if q.len() > mark.0 { q.split_off(mark.0) } else { Vec::new() }))
+    }
+
+    /// Whether a submission was deferred to this thread's wave since `mark` (a device joins' command buffer,
+    /// `setfix::device::submit`): it is this thread's, and cannot go to another's wave.
+    pub fn deferred_since(mark: Mark) -> bool {
+        DEFERRED.with_borrow(Vec::len) > mark.1
+    }
+
+    /// Queues another thread's launches (`take_queued`) on this one, for its next `flush`.
+    pub fn requeue(q: Queued) {
+        QUEUED.with_borrow_mut(|mine| mine.extend(q.0));
     }
 
     /// While held, a form's launches may wait for the wave.
@@ -142,8 +205,7 @@ pub mod wave {
             kernels
                 .into_iter()
                 .map(|k| {
-                    let t = NEXT.get();
-                    NEXT.set(t + 1);
+                    let t = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     q.push((form, t, k));
                     t
                 })
@@ -216,12 +278,30 @@ pub mod wave {
 }
 
 #[cfg(test)]
+mod cpu_lane_tests {
+    /// A run under the CPU binding asks for no device lane (2026-11-15): its lanes were picked from an executor of
+    /// every lane, made and dropped, which compiled the GPU's kernels and prewarmed its sorts (about a hundred
+    /// pipelines) and built the Neural Engine's lane in every CPU run.
+    #[test]
+    fn the_cpu_bindings_lanes_ask_for_no_device_lane() {
+        let before = rerail_accel::lanes::device_lanes_asked();
+        let lanes: Vec<_> = super::cpu_lanes().iter().map(|b| b.lane()).collect();
+        assert_eq!(rerail_accel::lanes::device_lanes_asked(), before, "the CPU binding asked for a device lane");
+        assert!(lanes.iter().all(|l| matches!(l, rerail_accel::Lane::Cpu | rerail_accel::Lane::Sql | rerail_accel::Lane::Sme)), "{lanes:?}");
+        assert!(lanes.contains(&rerail_accel::Lane::Cpu) && lanes.contains(&rerail_accel::Lane::Sql), "{lanes:?}");
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        assert_eq!(lanes.contains(&rerail_accel::Lane::Sme), rerail_accel::sme::backend().is_some(), "{lanes:?}");
+    }
+}
+
+#[cfg(test)]
 mod wave_tests {
     use super::wave;
 
     /// Smoking gun 7 (t34, 2026-11-13): a level's strata may run as a job off the run's thread (decision 0113 §4), and
     /// the wave their launches join is flushed there. The job takes its waves off its thread's count (`since`) and
     /// the run's thread credits them when it takes the job back (`credit`, in `absorb`): the run counts them.
+    /// A thread outside the run, whose waves nothing credits, counts into its own.
     #[test]
     fn a_jobs_waves_are_credited_to_the_run_that_takes_it_back() {
         let before = wave::flushed();
@@ -238,6 +318,13 @@ mod wave_tests {
         assert_eq!(wave::flushed(), before, "not the run's until it takes the job back");
         wave::credit(waves);
         assert_eq!(wave::flushed().0 - before.0, 1, "the job's wave is the run's");
+        std::thread::spawn(|| {
+            wave::defer(Box::new(|| Ok(())));
+            wave::flush(1).unwrap();
+        })
+        .join()
+        .unwrap();
+        assert_eq!(wave::flushed().0 - before.0, 1, "another thread's wave is not the run's");
     }
 }
 
@@ -422,6 +509,21 @@ pub mod prof {
             }
         }
         Ok(r)
+    }
+
+    /// Per form and lane with launches: (form, lane, launches, wall seconds, the lane's job CPU seconds).
+    pub fn by_lane() -> Vec<(&'static str, Lane, u64, f64, f64)> {
+        let forms = FORMS.lock().unwrap();
+        let mut out = Vec::new();
+        for (name, f) in forms.iter() {
+            for l in Lane::ALL {
+                let i = l.index();
+                if f.launches[i] > 0 {
+                    out.push((*name, l, f.launches[i], f.wall[i], f.lane_cpu[i]));
+                }
+            }
+        }
+        out
     }
 
     /// The section: per form, the host phases, then per lane the launches and where the submission's time went, then

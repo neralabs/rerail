@@ -1,0 +1,155 @@
+// sql/names: the names a SQL query block binds (its FROM and JOIN relations, CTE names, DML targets) and the
+// references that use them, after SQLFluff 4.4.0's AL05 walk, as main reads them (native scope/sql.rs).
+//
+// What a rule gets from this library (main's binding terms, rerail.policy/v1 `binds`):
+//   bind_name(n, site)     n is the identifier that names the binding at site: a relation's alias, else the last
+//                          part of its table name; a CTE's name; a DML target's alias or table name
+//   main_form(site, f)     "relation", "cte" or "target"
+//   binding(b, x, site, f) query block b binds the folded name x at site, of form f
+//   site_used(site)        some reference uses the binding (AL05's "used")
+//   site_scope(site, k)    "query": every SQL binding sits in a query block
+//
+// Example:
+//   SELECT a.x FROM t AS a JOIN u AS b ON a.k = 1
+//   bind_name(<a>, <t AS a>), bind_name(<b>, <u AS b>); a.x and a.k use a, so site_used(<t AS a>); b is unused.
+//
+// Builds on sql/syntax (ident_pg, the name PostgreSQL resolves an identifier to) and core.
+#include "sql/syntax.rr"
+
+// ---- query blocks ---------------------------------------------------------------------------------------------------
+// A `select`, `update`, `delete` or `insert` node opens a block. The grammar writes the clauses after the keyword
+// node as its siblings (`select`, then `from` holding WHERE, GROUP BY and the rest), so a node belongs to the block of
+// the nearest such sibling before it, or else to its parent's block. In a set operation the second `select` opens a
+// block of its own beside the first. An INSERT's `ON CONFLICT` action, from its `ON` on, is the insert's again.
+// A statement with a CTE, and a `CREATE POLICY` or `ALTER POLICY`, is a wrapper block around the whole node.
+//   SELECT a FROM t UNION SELECT b FROM u    two blocks: <SELECT a> holds `FROM t`, <SELECT b> holds `FROM u`
+.decl sql_open_kind(k: symbol)
+sql_open_kind("select"). sql_open_kind("update"). sql_open_kind("delete"). sql_open_kind("insert").
+.decl sql_opener(o: node)
+sql_opener(o) :- kind(o, k), sql_open_kind(k).
+// sql_wrapper(w, k): w is a wrapper block: "with" (a node with a CTE child) or "policy".
+.decl sql_wrapper(w: node, k: symbol)
+sql_wrapper(w, "with") :- child(w, c, _), kind(c, "cte").
+sql_wrapper(w, "policy") :- kind(w, "create_policy").
+sql_wrapper(w, "policy") :- kind(w, "alter_object"), child(w, c, 1), kind(c, "keyword_policy").
+// sql_cut(p, i, j): p is an INSERT whose first `ON` stands at child index a with i < a <= j, so an opener at i does
+// not reach the child at j.
+.decl sql_cut(p: node, i: number, j: number)
+sql_cut(p, i, j) :- kind(p, "insert"), child(p, on, a), kind(on, "keyword_on"),
+    count : { child(p, on2, a2), kind(on2, "keyword_on"), a2 < a } = 0,
+    child(p, o, i), sql_opener(o), i < a, child(p, c, j), a <= j.
+// sql_after(c, o): opener o is the nearest one among c's earlier siblings, and reaches c.
+.decl sql_after(c: node, o: node)
+sql_after(c, o) :- child(p, c, j), !sql_opener(c), child(p, o, i), sql_opener(o), i < j,
+    count : { child(p, o2, k), sql_opener(o2), i < k, k < j } = 0, !sql_cut(p, i, j).
+// sql_in(n, b): the block n is read in, from outside (an opener opens its own).
+.decl sql_in(n: node, b: node)
+sql_in(o, o) :- sql_opener(o), child(_, o, _).
+sql_in(c, o) :- sql_after(c, o).
+sql_in(c, b) :- child(p, c, _), !sql_opener(c), !sql_after(c, _), sql_self(p, b).
+// sql_self(n, b): the block n's own names bind in and its children start from: a wrapper's own, else sql_in.
+.decl sql_self(n: node, b: node)
+sql_self(w, w) :- sql_wrapper(w, _).
+sql_self(n, b) :- sql_in(n, b), !sql_wrapper(n, _).
+// sql_block(b, k): b is a block, of kind "select", "dml", "insert", "with" or "policy".
+.decl sql_block(b: node, k: symbol)
+sql_block(o, "select") :- sql_opener(o), kind(o, "select").
+sql_block(o, "dml") :- sql_opener(o), (kind(o, "update") ; kind(o, "delete")).
+sql_block(o, "insert") :- sql_opener(o), kind(o, "insert").
+sql_block(w, k) :- sql_wrapper(w, k).
+// sql_parent(b, pb): block pb encloses block b. A top-level statement's blocks have none.
+.decl sql_parent(b: node, pb: node)
+sql_parent(o, pb) :- sql_opener(o), child(p, o, _), sql_self(p, pb).
+sql_parent(w, pb) :- sql_wrapper(w, _), sql_in(w, pb).
+
+// ---- bindings -------------------------------------------------------------------------------------------------------
+// sql_bind(b, x, n, site, f, k): block b binds folded name x at name node n for site, form f ("relation", "cte",
+// "target"), class k: "table", "function", "derived" (a subquery or VALUES), or "named" (a CTE, a DML target, a
+// policy's table). Names fold as PostgreSQL's: `a` and `A` are one name, `"A"` another (AL05's `_cs_str_id`).
+.decl sql_bind(b: node, x: symbol, n: node, site: node, f: symbol, k: symbol)
+// A relation over a table: `t`, `s.t`, `t AS a`, `t a`. It binds its alias, else the table name's last part.
+sql_bind(b, x, a, r, "relation", "table") :- (kind(r, "relation") ; kind(r, "lateral_join")), sql_self(r, b),
+    child(r, o, _), kind(o, "object_reference"), field(r, "alias", a), ident_pg(a, x).
+sql_bind(b, x, t, r, "relation", "table") :- (kind(r, "relation") ; kind(r, "lateral_join")), sql_self(r, b),
+    child(r, o, _), kind(o, "object_reference"), !field(r, "alias", _), field(o, "name", t), ident_pg(t, x).
+// A relation over something else, with an alias: a function call (`unnest(xs) AS u`), or a derived table.
+sql_bind(b, x, a, r, "relation", k) :- (kind(r, "relation") ; kind(r, "lateral_join")), sql_self(r, b),
+    !sql_table_rel(r), field(r, "alias", a), ident_pg(a, x),
+    (child(r, i, _), kind(i, "invocation"), k = "function" ; !sql_call_rel(r), k = "derived").
+.decl sql_table_rel(r: node)  // r reads a table by name
+sql_table_rel(r) :- child(r, o, _), kind(o, "object_reference").
+.decl sql_call_rel(r: node)  // r is a function call's rows
+sql_call_rel(r) :- child(r, i, _), kind(i, "invocation").
+// `DELETE FROM t [AS a]` and `INSERT INTO t [AS a]`: the target is written directly, not as a relation.
+sql_bind(b, x, n, f, "target", "named") :- (kind(f, "from") ; kind(f, "insert")), sql_self(f, b),
+    child(f, o, _), kind(o, "object_reference"), sql_target_name(f, o, n), ident_pg(n, x).
+.decl sql_target_name(f: node, o: node, n: node)
+sql_target_name(f, o, a) :- child(f, o, _), field(f, "alias", a).
+sql_target_name(f, o, t) :- child(f, o, _), !field(f, "alias", _), field(o, "name", t).
+// `WITH c AS (…)`: the CTE's name, bound in the wrapper block around its statement.
+sql_bind(b, x, n, c, "cte", "named") :- kind(c, "cte"), sql_self(c, b), child(c, n, i), kind(n, "identifier"),
+    count : { child(c, m, j), kind(m, "identifier"), j < i } = 0, ident_pg(n, x).
+// `CREATE POLICY p ON t USING (…)`: the policy's table, which the queries in its expressions see.
+sql_bind(w, x, t, w, "target", "named") :- sql_wrapper(w, "policy"), child(w, o, i), kind(o, "object_reference"),
+    count : { child(w, o2, j), kind(o2, "object_reference"), j < i } = 0, field(o, "name", t), ident_pg(t, x).
+// sql_named(k, c): class k counts as named (c = 1) or not (c = 0): a reference walks the two sets apart.
+.decl sql_named(k: symbol, c: number)
+sql_named("table", 0). sql_named("function", 0). sql_named("derived", 0). sql_named("named", 1).
+.decl sql_has(b: node, x: symbol, c: number)  // block b binds x in class set c
+sql_has(b, x, c) :- sql_bind(b, x, _, _, _, k), sql_named(k, c).
+
+// ---- references -----------------------------------------------------------------------------------------------------
+// sql_ref(r, b, x): column reference r, in block b, uses the folded name x: the table part of `t.col` or `s.t.col`
+// (the part next to the column), or a bare single-part `t` (a row reference, as AL05 allows on PostgreSQL:
+// `to_json(t)`, `SELECT t`). A bare name that is a column uses no binding, but AL05 cannot tell, and neither can this.
+.decl sql_ref(r: node, b: node, x: symbol)
+sql_ref(r, b, x) :- (kind(r, "field") ; kind(r, "all_fields")), child(r, o, 0), kind(o, "object_reference"),
+    field(o, "name", t), ident_pg(t, x), sql_self(r, b).
+sql_ref(r, b, x) :- kind(r, "field"), child(r, t, 0), kind(t, "identifier"), field(r, "name", t),
+    count : { child(r, _, j), j > 0 } = 0, count : { op(r, _) } = 0, ident_pg(t, x), sql_self(r, b).
+
+// The walk: from a reference's block outwards to the first block that binds its name, once among the tables and
+// functions and derived tables, once among the named bindings; that block's bindings of the name are used.
+.decl sql_seed(b: node, x: symbol)
+sql_seed(b, x) :- sql_ref(_, b, x).
+.decl sql_walk(b0: node, x: symbol, c: number, b: node)
+sql_walk(b, x, c, b) :- sql_seed(b, x), sql_named(_, c).
+sql_walk(b0, x, c, pb) :- sql_walk(b0, x, c, b), !sql_has(b, x, c), sql_parent(b, pb).
+.decl sql_mark(b: node, x: symbol, c: number)
+sql_mark(b, x, c) :- sql_walk(_, x, c, b), sql_has(b, x, c).
+// A relation over a one-part table name, outside an UPDATE's own target, also uses the CTE of that name it sees
+// (PostgreSQL looks FROM names up among the visible WITH queries first): walking out, the first block with a CTE of
+// the name visible at the relation. A CTE is visible after its own definition; under RECURSIVE, in its whole WITH.
+.decl sql_cte_rel(r: node, b: node, x: symbol)
+sql_cte_rel(r, b, x) :- sql_bind(b, x, _, r, "relation", "table"), child(r, o, _), kind(o, "object_reference"),
+    !field(o, "schema", _), sql_table_word(o, x), !sql_update_rel(r).
+.decl sql_table_word(o: node, x: symbol)  // the folded table name of o (not the relation's alias)
+sql_table_word(o, x) :- field(o, "name", t), ident_pg(t, x).
+.decl sql_update_rel(r: node)
+sql_update_rel(r) :- child(u, r, _), kind(u, "update").
+.decl sql_cte_vis(b: node, x: symbol, r: node)  // block b has a CTE named x that relation r sees
+sql_cte_vis(b, x, r) :- sql_cte_rel(r, _, x), sql_bind(b, x, _, c, "cte", _), sql_cte_from(c, from), node(_, r, _, rs, _),
+    from <= rs.
+.decl sql_cte_from(c: node, from: number)
+sql_cte_from(c, s) :- kind(c, "cte"), child(w, c, _), child(w, k, _), kind(k, "keyword_recursive"), node(_, w, _, s, _).
+sql_cte_from(c, e) :- kind(c, "cte"), child(w, c, _), count : { child(w, k, _), kind(k, "keyword_recursive") } = 0,
+    node(_, c, _, _, e).
+.decl sql_cwalk(r: node, x: symbol, b: node)
+sql_cwalk(r, x, b) :- sql_cte_rel(r, b, x).
+sql_cwalk(r, x, pb) :- sql_cwalk(r, x, b), !sql_cte_vis(b, x, r), sql_parent(b, pb).
+sql_mark(b, x, 1) :- sql_cwalk(r, x, b), sql_cte_vis(b, x, r).
+
+// ==== interface =====================================================================================================
+.decl binding(b: node, x: symbol, site: node, form: symbol)
+binding(b, x, s, f) :- sql_bind(b, x, _, s, f, _).
+.decl bind_name(n: node, site: node)
+bind_name(n, s) :- sql_bind(_, _, n, s, _, _).
+.decl main_form(site: node, form: symbol)
+main_form(s, f) :- sql_bind(_, _, _, s, f, _).
+.decl site_scope(site: node, k: symbol)
+site_scope(s, "query") :- sql_bind(_, _, _, s, _, _).
+// site_used(site): AL05's walk reaches the binding, a CTE is selected from, or the site is a DML target, which its
+// own statement writes whether or not anything names it.
+.decl site_used(site: node)
+site_used(s) :- sql_bind(b, x, _, s, _, k), sql_named(k, c), sql_mark(b, x, c).
+site_used(s) :- sql_bind(_, _, _, s, "target", _).

@@ -32,14 +32,14 @@ logic::native::reach::tests	rerail-engine
 logic::native::setfix::lab::tests	rerail-engine
 logic::native::setfix::scalars::tests	rerail-engine
 logic::native::tests	rerail-engine
-logic::plan::corpus::base_tests	rerail-device-metal
+logic::plan::corpus::base_tests	rerail-engine
 logic::plan::corpus::matchers::tests	rerail-engine
 logic::plan::corpus::session::tests	rerail-engine
 logic::plan::corpus::tests	rerail-engine
 logic::plan::native_demand::tests::integration_tests	rerail-engine
 logic::plan::tests	rerail-engine
-logic::profile::analysis_report::tests	rerail-logic
-logic::profile::tests	rerail-logic
+logic::profile::analysis_report::tests	rerail-prof
+logic::profile::tests	rerail-prof
 logic::rr::aggregate_demand::tests	rerail-logic
 logic::rr::tape_tests	rerail-engine
 logic::rr::tape_type::tests	rerail-logic
@@ -77,6 +77,7 @@ tape::token_readers	rerail-w
 test_support	rerail-engine
 transducer::packed::block_rows_tests	rerail-device-metal
 transducer::packed::compile_matcher_tests	rerail-engine
+transducer::packed::metal_semantic_conformance	rerail-engine
 transducer::packed::regex_block::tests	rerail-device-metal
 transducer::packed::tests	rerail-device-metal
 typing::file_local::tests	rerail-device-metal
@@ -96,3 +97,7 @@ workspace::placement_tests	rerail-engine
 workspace::results::tests	rerail-engine
 workspace::storage_tests	rerail-engine
 workspace::tests	rerail-engine
+logic::liveness::tests	rerail-engine
+typing::phase_tests	rerail-engine
+waves::owner::tests	rerail-engine
+logic::strings::registered_tests	rerail-engine

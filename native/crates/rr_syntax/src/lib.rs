@@ -10,6 +10,9 @@ mod micro;
 pub mod syntax;
 pub mod tape;
 
+/// The tape image's format and its in-place reader (`View`), for the readers of this crate's images.
+pub use rerail_tape_format as tape_format;
+
 /// A `.rr` file that does not parse: the engine's `Error::Syntax`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -38,6 +41,9 @@ pub fn engine_tape(src: &str) -> Vec<tape::Node> {
     parser.into_tape().0
 }
 
+// The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
+#[cfg(target_family = "wasm")]
+extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 extern crate self as rerail_rr_syntax;
 #[path = "../../../src/code_rule_dsl"]

@@ -34,7 +34,7 @@ log_reraise_stop("except_clause"). log_reraise_stop("function_definition"). log_
 .decl text(n: node, s: symbol)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, text, line, syntax_error, node_text, field, token
+.input doc, node, child, text, line, syntax_error, field, node_text, token
 .output violation
 log_reraise_level("error").
 log_reraise_level("warning").

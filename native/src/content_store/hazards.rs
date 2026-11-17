@@ -1,50 +1,69 @@
-//! The profile's SQL hazards (decision 0104: no wave waits for SQL), as the engine reports them: the store's
-//! connections trace their statements and its writer its waits here, and the engine, whose profile counts them, sets
-//! where they go as it loads ([`set`]). Unset (the store alone, its own tests), each is nothing.
+//! The profile's SQL hazards (decision 0104: no wave waits for SQL): the store's connections trace their statements and
+//! its writer its waits in the profile (`rerail_prof`'s, below this crate), which counts them. With the profile off
+//! (the store alone, its own tests), each is nothing.
 
-/// Where the store's hazards go: whether the profile is on, a statement run (its connection, text and time), a wait
-/// (what, wall seconds), and a write queued behind the run.
-#[derive(Clone, Copy)]
-pub struct Hazards {
-    pub on: fn() -> bool,
-    pub sql_in_wave: fn(&'static str, &str, u64),
-    pub wait_in_wave: fn(&str, f64),
-    pub behind_the_run: fn(),
-    /// A statement about to run (its connection and text): the strict mode's check (`RERAIL_SQL_STRICT`).
-    pub statement: fn(&'static str, &str),
-}
-
-static HAZARDS: std::sync::OnceLock<Hazards> = std::sync::OnceLock::new();
-
-/// Sets where the store's hazards go; the first setting stays.
-pub fn set(hazards: Hazards) {
-    let _ = HAZARDS.set(hazards);
-}
+use rerail_prof::code_rule_dsl::logic::profile;
 
 pub(crate) fn on() -> bool {
-    HAZARDS.get().is_some_and(|h| (h.on)())
+    profile::tracing()
 }
 
 pub(crate) fn sql_in_wave(conn: &'static str, text: &str, ns: u64) {
-    if let Some(h) = HAZARDS.get() {
-        (h.sql_in_wave)(conn, text, ns);
-    }
+    profile::sql_in_wave(conn, text, ns);
 }
 
 pub(crate) fn statement(conn: &'static str, text: &str) {
-    if let Some(h) = HAZARDS.get() {
-        (h.statement)(conn, text);
-    }
+    profile::strict_statement(conn, text);
+}
+
+pub(crate) fn inside_waves() -> bool {
+    profile::inside_waves()
 }
 
 pub(crate) fn wait_in_wave(what: &str, wall: f64) {
-    if let Some(h) = HAZARDS.get() {
-        (h.wait_in_wave)(what, wall);
-    }
+    profile::wait_in_wave(what, wall);
+}
+
+/// The profile's span for `what` (the writer's CPU under the profile's spans, a job at a time), open until dropped.
+pub(crate) fn span(what: &'static str) -> Option<Box<dyn std::any::Any>> {
+    Some(Box::new(profile::span(move || format!("store writer: {what}"))))
 }
 
 pub(crate) fn behind_the_run() {
-    if let Some(h) = HAZARDS.get() {
-        (h.behind_the_run)();
-    }
+    profile::behind_the_run();
+}
+
+/// A recomputation in a warm run (`RERAIL_WARM`, `profile::warm_fault`): nothing without it.
+pub(crate) fn warm_fault(kind: &'static str, detail: impl FnOnce() -> String) {
+    profile::warm_fault(kind, detail);
+}
+
+/// A commit on `db` in a warm run (`profile::warm_commit`), for a connection whose commit hook is the store's own.
+///
+/// # Safety
+/// As `profile::warm_commit`: `db` is open, and this runs inside its commit hook.
+pub(crate) unsafe fn warm_commit(db: *mut rusqlite::ffi::sqlite3) {
+    // SAFETY: the caller's guarantee.
+    unsafe { profile::warm_commit(db) };
+}
+
+/// A transaction of the store's writer (`profile::warm_scope`): its commit is not a fault of the warm check if every
+/// job it ran is one of the writes a warm run may make (`profile::WARM_WRITES_ALLOWED`).
+pub(crate) fn warm_scope() -> profile::WarmScope {
+    profile::warm_scope()
+}
+
+/// The writer runs the job `what` in its open `warm_scope`.
+pub(crate) fn warm_job(what: &str) {
+    profile::warm_job(what);
+}
+
+/// Whether a warm run may queue the job `what` (`profile::WARM_WRITES_ALLOWED`).
+pub(crate) fn warm_write_allowed(what: &str) -> bool {
+    profile::warm_write_allowed(what)
+}
+
+/// Whether a store may be asked here: not inside the waves (`profile::may_read_store`, decision 0104).
+pub(crate) fn may_read_store() -> bool {
+    profile::may_read_store()
 }

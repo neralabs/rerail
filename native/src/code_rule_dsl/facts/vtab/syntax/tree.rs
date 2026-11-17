@@ -35,10 +35,15 @@ pub(super) struct Tree {
     op_at: bool,
     prev_token: bool,
     token: bool,
+    /// `token` answered on request (decision 0174): its anonymous children's rows (`rr_token_anon`, their text their
+    /// kind) and its named children's by node (`rr_token_named(p, i, c, start, end)`, the text `node_text`'s).
+    token_parts: bool,
     visit_index: bool,
     op_ats: Vec<[i64; 3]>,
     prev_tokens: Vec<[i64; 2]>,
     tokens: Vec<[i64; 5]>,
+    anon_tokens: Vec<[i64; 5]>,
+    named_tokens: Vec<[i64; 5]>,
     visit_indexes: Vec<[i64; 2]>,
 }
 
@@ -49,8 +54,27 @@ impl Tree {
             op_at: read("op_at"),
             prev_token: read("prev_token"),
             token: read("token"),
+            token_parts: read("rr_token_anon") || read("rr_token_named"),
             visit_index: read("visit_index"),
             ..Self::default()
+        }
+    }
+
+    /// `op_at` of `p`'s nodes. A guest's (a string annotation's comparison, `x: "123 is not y"`) are made too: this
+    /// `op_at` stands in for `core_rr`'s, which holds every node's, the guests' included.
+    pub(super) fn operators(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize) {
+        if !self.op_at {
+            return;
+        }
+        let f = &*p.facts;
+        let fields = [dialect.operator, dialect.operators];
+        for (local, &id) in p.core.iter().enumerate() {
+            let n = p.global(local as u32);
+            let kids = f.children(id);
+            let operators = kids.iter().filter(|&&c| f.field(c) != 0 && fields.contains(&Some(f.field(c))));
+            for (i, &c) in operators.enumerate() {
+                self.op_ats.push([n, i as i64, string(dialect.name(f, c)) as i64]);
+            }
         }
     }
 
@@ -58,13 +82,20 @@ impl Tree {
     pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, python: bool, string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
         let Some(dialect) = dialect else { return };
-        if self.op_at {
-            let fields = [dialect.operator, dialect.operators];
+        self.operators(p, dialect, string);
+        if self.token_parts {
             for (local, &id) in p.core.iter().enumerate() {
                 let n = p.global(local as u32);
-                let operators = f.children(id).iter().filter(|&&c| f.field[c as usize] != 0 && fields.contains(&Some(f.field[c as usize])));
-                for (i, &c) in operators.enumerate() {
-                    self.op_ats.push([n, i as i64, string(dialect.name(f, c)) as i64]);
+                for (i, &c) in f.children(id).iter().enumerate() {
+                    let (a, b) = (i64::from(f.start(c)), i64::from(f.end(c)));
+                    let at = p.local[c as usize];
+                    if f.named(c) && at != NONE {
+                        self.named_tokens.push([n, i as i64, p.global(at), a, b]);
+                    } else {
+                        // A named child no node is (a comment, a withheld node) keeps its text here.
+                        let text = if f.named(c) { f.text(c) } else { dialect.name(f, c) };
+                        self.anon_tokens.push([n, i as i64, string(text) as i64, a, b]);
+                    }
                 }
             }
         }
@@ -76,7 +107,7 @@ impl Tree {
                 let text = |c: u32| if f.named(c) { f.text(c) } else { dialect.name(f, c) };
                 if self.token {
                     for (i, &c) in children.iter().enumerate() {
-                        self.tokens.push([n, i as i64, string(text(c)) as i64, i64::from(f.start[c as usize]), i64::from(f.end[c as usize])]);
+                        self.tokens.push([n, i as i64, string(text(c)) as i64, i64::from(f.start(c)), i64::from(f.end(c))]);
                     }
                 }
                 if self.prev_token {
@@ -111,6 +142,10 @@ impl Tree {
         if self.token {
             out.push(("token", relation(&["p", "i", "s", "start", "end_"], &mut self.tokens.iter().map(|&[p, i, s, a, b]| vec![p, i, atom(s), a, b]))));
         }
+        if self.token_parts {
+            out.push(("rr_token_anon", relation(&["p", "i", "s", "start", "end_"], &mut self.anon_tokens.iter().map(|&[p, i, s, a, b]| vec![p, i, atom(s), a, b]))));
+            out.push(("rr_token_named", relation(&["p", "i", "c", "start", "end_"], &mut self.named_tokens.iter().map(|r| r.to_vec()))));
+        }
         if self.visit_index {
             out.push(("visit_index", relation(&["n", "i"], &mut self.visit_indexes.iter().map(|r| r.to_vec()))));
         }
@@ -144,7 +179,7 @@ impl Order<'_> {
     }
 
     fn field(&self, id: u32) -> &'static str {
-        self.dialect.catalog.field_name(self.f.field[id as usize]).unwrap_or("")
+        self.dialect.catalog.field_name(self.f.field(id)).unwrap_or("")
     }
 
     fn run(&mut self, root: u32) {
@@ -195,11 +230,11 @@ impl Order<'_> {
                 let (keywords, positional): (Vec<u32>, Vec<u32>) = children.iter().copied().partition(keyword);
                 positional.into_iter().chain(keywords).map(visit).collect()
             }
-            "parameters" | "lambda_parameters" => self.parameters(children),
+            "parameters" | "lambda_parameters" => self.parameters(&children),
             "dictionary" => {
-                let part = |c: u32, value: bool| self.f.children(c).iter().copied().filter(move |&k| (self.field(k) == "value") == value).map(visit);
+                let part = |c: u32, value: bool| self.f.children(c).into_iter().filter(move |&k| (self.field(k) == "value") == value).map(visit);
                 let mut out = Vec::new();
-                for &c in children {
+                for &c in &children {
                     match self.kind(c) {
                         "pair" => {
                             out.push(Step::Number(c));
@@ -209,7 +244,7 @@ impl Order<'_> {
                         _ => out.push(visit(c)),
                     }
                 }
-                for &c in children {
+                for &c in &children {
                     match self.kind(c) {
                         "pair" => out.extend(part(c, true)),
                         "dictionary_splat" => out.push(visit(c)),

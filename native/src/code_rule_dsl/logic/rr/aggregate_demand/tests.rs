@@ -141,17 +141,17 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
         .unwrap();
     let result = plan::run_sql(&p, &file).unwrap();
     assert_eq!(
-        result.outputs["counts"],
-        ["1\t1\t1\t2", "2\t1\t1\t1", "3\t1\t1\t0"]
+        result.shown()["counts"],
+        [["1", "1", "1", "2"], ["2", "1", "1", "1"], ["3", "1", "1", "0"]]
     );
     assert_eq!(
-        result.outputs["sums"],
-        ["1\t1\t1\t16", "2\t1\t1\t20", "3\t1\t1\t0"]
+        result.shown()["sums"],
+        [["1", "1", "1", "16"], ["2", "1", "1", "20"], ["3", "1", "1", "0"]]
     );
-    assert_eq!(result.outputs["absent"], ["3\t1\t1"]);
+    assert_eq!(result.shown()["absent"], [["3", "1", "1"]]);
     for h in &helpers {
         assert_eq!(
-            result.outputs[h.as_str()].len(),
+            result.shown()[h.as_str()].len(),
             3,
             "unrequested groups published in {h}"
         );
@@ -173,7 +173,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
         Ok(())
     })
     .unwrap();
-    assert_eq!(native.outputs, result.outputs);
+    assert_eq!(native.shown(), result.shown());
     // Measure the production atom-backed engine, not the frozen legacy extension above.
     crate::code_rule_dsl::logic::profile::reset();
     let path = crate::code_rule_dsl::fixtures::temp();
@@ -182,9 +182,9 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     let lowered = plan::lower::lower(&p, crate::code_rule_dsl::language::GrammarDialect::Python,
         &mut |s| store.intern_atoms(s).map_err(|e| plan::Error::Plan(e.to_string()))).unwrap();
-    let native = plan::run_atoms_native_over(&lowered, &db, "main", plan::Stats::empty(&lowered.program),
+    let native = plan::run_atoms_native_over(&lowered, &db, "main", plan::Stats::empty_of_lowered(&lowered).unwrap(),
         BTreeSet::new(), "program").unwrap();
-    assert_eq!(native.outputs, result.outputs);
+    assert_eq!(native.shown(), result.shown());
     assert!(native.native.contains("sums"), "production sum must use the native reduction");
     let dir = file.with_extension("profile");
     crate::code_rule_dsl::logic::profile::report::write(&dir, "Demanded aggregate growth gate").unwrap();
@@ -341,8 +341,32 @@ hit(f) :- fn(f), count : { ident(x), count : { ref(n,f,x) } = 0 } > 0.
         native::register(&db).unwrap();
         let lowered = plan::lower::lower(&p, crate::code_rule_dsl::language::GrammarDialect::Python,
             &mut |s| store.intern_atoms(s).map_err(|e| plan::Error::Plan(e.to_string()))).unwrap();
-        let result = plan::run_atoms_native_over(&lowered, &db, "main", plan::Stats::empty(&lowered.program),
+        let result = plan::run_atoms_native_over(&lowered, &db, "main", plan::Stats::empty_of_lowered(&lowered).unwrap(),
             BTreeSet::new(), modes).unwrap();
-        assert_eq!(result.outputs["hit"], ["2", "3"], "outer groups lost in {modes:?}");
+        assert_eq!(result.shown()["hit"], [["2"], ["3"]], "outer groups lost in {modes:?}");
     }
+}
+
+/// A guard that reads a key only through a comparison (`byte(q, 92)` with `q = p - 1`) restricts the demand too: the
+/// demand of "the last byte before p that is not a backslash", asked where the byte before p is a backslash, is those
+/// positions, not every byte (the pairs below each, every pair of the text's bytes, were 17.9 M rows of a 6 KB text).
+#[test]
+fn a_guard_reached_through_a_comparison_restricts_the_demand() {
+    let mut p = rr::parse(
+        r#"
+.decl byte(i: number, v: number)
+.input byte
+.decl odd(p: number)
+.output odd
+odd(p) :- byte(p, _), q = @sub(p, 1), byte(q, 92), m = max j : { byte(j, v), v != 92, j < p }, @sub(p, m) = 3.
+"#,
+    )
+    .unwrap();
+    optimize(&mut p);
+    let demand = p.rules.iter().find(|r| r.head.rel.starts_with("rr_demand_agg")).unwrap_or_else(|| panic!("no demand: {p:?}"));
+    assert!(
+        demand.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel == "byte" && matches!(&a.args[1], front::Term::Int(92)))),
+        "the demand reads every byte: {demand}"
+    );
+    front::strata(&p).unwrap();
 }

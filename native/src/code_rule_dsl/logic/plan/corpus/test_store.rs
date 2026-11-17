@@ -29,6 +29,26 @@ fn copies() -> PathBuf {
 /// build), so they are many while one works.
 const STALE: std::time::Duration = std::time::Duration::from_secs(3600);
 
+thread_local! {
+    /// This thread fills the template (`make`): its runs take the switches without making it first.
+    static FILLING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether this thread fills the template (`make`). What its runs keep for the process (phase 0's graphs) the process's
+/// own runs would find made, and skip the work a test of them compares (`phase0::graphs`).
+pub(super) fn filling() -> bool {
+    FILLING.with(std::cell::Cell::get)
+}
+
+/// The template made, before a test's thread takes the switches (`switches::reading`, `switches::set`): no thread waits
+/// for it while it holds them, so its runs never wait behind a thread that waits for it. Off a test's thread (`own`:
+/// a pool's, or a process the tests start) nothing reads the template, so nothing makes it.
+pub(super) fn ready() {
+    if !FILLING.with(std::cell::Cell::get) && std::thread::current().name().is_some_and(|n| n.contains("::")) {
+        template();
+    }
+}
+
 /// The template for this build: made once, by whichever process gets there first.
 pub fn template() -> &'static Path {
     static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
@@ -62,7 +82,11 @@ fn make(path: &Path) {
     let filled = std::thread::Builder::new()
         .name("store template".into())
         // Test plumbing, not a run's SQL: the strict mode (`RERAIL_SQL_STRICT`) leaves it alone.
-        .spawn(move || crate::code_rule_dsl::logic::profile::behind(|| fill(&filling)))
+        .spawn(move || {
+            // Its runs skip `ready` (they fill the template), and take nothing the thread that waits on them holds.
+            FILLING.with(|f| f.set(true));
+            crate::code_rule_dsl::logic::profile::behind(|| fill(&filling))
+        })
         .expect("the template's thread")
         .join()
         .unwrap_or_else(|panic| Err(panic.downcast_ref::<String>().cloned().or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default()));
@@ -90,7 +114,7 @@ fn make(path: &Path) {
 fn fill(store: &Path) -> std::result::Result<(), String> {
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.to_owned()));
     let lib = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).map_err(|e| e.to_string())?;
-    let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rr".to_owned())] }];
+    let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rr".to_owned())], phases: Vec::new() }];
     let mut modules = Vec::new();
     rule_files(&lib, &mut modules);
     modules.sort();
@@ -181,9 +205,49 @@ thread_local! {
     static OWN: std::cell::OnceCell<Store> = const { std::cell::OnceCell::new() };
 }
 
-/// The store of the test on this thread, made on first use. Off a test's thread (one the harness did not name after a
-/// test: a pool's), `None`, said once per thread name.
+thread_local! {
+    /// The store of the test whose run a job on this thread works for (`carried`).
+    static HANDED: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Carries the test's store to a job on another thread (`run_state`): the job's runs use the store of the test that
+/// started it, not the process's.
+pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+    let named = std::thread::current().name().is_some_and(|n| n.contains("::"));
+    // The store this thread's runs use (`tape_cache_path`'s order): the one its test names (`TEST_TAPE_CACHE`), else
+    // the one it was handed, else the process's when it names one (`RERAIL_TAPE_CACHE`, `use_store`: the job's runs
+    // find it themselves), else its own. Handed its own over the process's, a job wrote a fresh copy where the test's
+    // runs read the named store.
+    let mine = super::TEST_TAPE_CACHE
+        .with(|p| p.borrow().clone())
+        .or_else(|| handed())
+        .or_else(|| (named && !super::names_its_store()).then(|| OWN.with(|own| own.get_or_init(copy).path.clone())));
+    c.part(&["OWN", "HANDED"], crate::code_rule_dsl::logic::run_state::Shared(mine, hand));
+}
+
+/// The store this thread was handed (`carried`), if any.
+pub(super) fn handed() -> Option<PathBuf> {
+    HANDED.with(|h| h.borrow().clone())
+}
+
+/// While the guard lives, this thread's runs use `store` (another thread's test's).
+fn hand(store: Option<PathBuf>) -> impl Drop {
+    struct Handed(Option<PathBuf>);
+    impl Drop for Handed {
+        fn drop(&mut self) {
+            HANDED.with(|h| h.replace(self.0.take()));
+        }
+    }
+    Handed(HANDED.with(|h| h.replace(store)))
+}
+
+/// The store of the test on this thread, made on first use; on a job's thread, the store of the test that started it
+/// (`carried`). Off a test's thread (one the harness did not name after a test: a pool's), `None`, said once per
+/// thread name.
 pub(super) fn own() -> Option<PathBuf> {
+    if let Some(handed) = HANDED.with(|h| h.borrow().clone()) {
+        return Some(handed);
+    }
     let thread = std::thread::current();
     let name = thread.name().unwrap_or("");
     if !name.contains("::") {

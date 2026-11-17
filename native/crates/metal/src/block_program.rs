@@ -226,6 +226,15 @@ pub fn run_batch(
     // A `back_fill` likewise: a backward pass over the groups' summaries, not generated yet. An
     // `early` too (decision 0330): a file's first lane shifted down, not generated yet.
     if programs.iter().any(|p| !p.groups.is_empty() || p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_))) || starts_late(p)) {
+        // Decision 0202's `metal-form` list: what the program needs that Metal lacks.
+        let reason = if programs.iter().any(|p| !p.groups.is_empty()) {
+            "a fixed point (rounds)"
+        } else if programs.iter().any(|p| p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_)))) {
+            "a back fill or a load"
+        } else {
+            "an early start (a file's first lane shifted down)"
+        };
+        rerail_accel::forms::missing("metal-form", "block program", "block program", reason, files.len() as u64);
         return Err(Error::UnsupportedBackend);
     }
     METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
@@ -323,7 +332,7 @@ pub fn run_batch(
     ];
     // The slabs, each bound as it is (no copy); unused bindings repeat the first.
     for (k, &at) in SLAB_BUFFERS.iter().enumerate() {
-        buffers.push((at, &slabs.get(k).unwrap_or(&slabs[0]).buffer.buffer, 0));
+        buffers.push((at, slabs.get(k).unwrap_or(&slabs[0]).buffer(), 0));
     }
     let interpreter;
     let pipeline = match executor {

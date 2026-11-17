@@ -12,7 +12,7 @@ impl CodeRuleSqlExecutor {
         let _scope = profiling::scope(&self.db, "compile");
         for name in &program.inputs {
             if let Some((arity, types)) = self.input_shapes.get(name)
-                && let Some(cols) = program.decls.get(name)
+                && let Some(cols) = program.decls.get(name.as_str())
             {
                 if program::logical_arity(&program, name) != *arity {
                     return Err(error(format!(
@@ -58,7 +58,7 @@ impl CodeRuleSqlExecutor {
             .collect();
         for name in unused {
             program.inputs.retain(|input| *input != name);
-            program.decls.remove(&name);
+            program.decls.remove(name.as_str());
             program.facts.remove(&name);
         }
         let mut lattice_operations = BTreeMap::new();
@@ -101,14 +101,16 @@ impl CodeRuleSqlExecutor {
         program::tops(&mut program, &tops)?;
         let dialect = crate::code_rule_dsl::language::dialect_by_label(dialect)
             .ok_or_else(|| error(format!("unknown dialect: {dialect}")))?;
-        let lowered = plan::lower::lower(&program, dialect, &mut |names| {
+        let lowered = plan::lower::lower_tree(&program, dialect, &mut |names| {
             self.store
                 .intern_atoms(names)
                 .map_err(|e| plan::Error::Plan(e.to_string()))
         })
         .map_err(error)?;
+        // The SQL emitter's program is the lowered tree `lower::lower_tree` gives (`emit::emit`), never a version's.
+        let tree = &lowered.program;
         let mut batch = HashMap::new();
-        let has_wave_stats: bool = if lowered.program.inputs.iter().all(|name| {
+        let has_wave_stats: bool = if tree.inputs.iter().all(|name| {
             self.inputs.contains_key(name)
                 || self.executions.iter().any(|e| e.counts.contains_key(name))
         }) {
@@ -124,7 +126,7 @@ impl CodeRuleSqlExecutor {
                 )
                 .map_err(error)?
         };
-        for name in &lowered.program.inputs {
+        for name in &tree.inputs {
             if !identifier(name) || reserved(name) {
                 return Err(error(format!("invalid input relation: {name}")));
             }
@@ -133,7 +135,7 @@ impl CodeRuleSqlExecutor {
                 .prepare(&format!("SELECT * FROM {}", quote(name)))
                 .map_err(error)?;
             let columns: Vec<&str> = statement.column_names().collect();
-            if columns.len() != lowered.program.decls[name].len() {
+            if columns.len() != tree.decls[name.as_str()].len() {
                 return Err(error(format!(
                     "{name}: input arity differs from its declaration"
                 )));

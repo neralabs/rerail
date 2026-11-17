@@ -27,7 +27,7 @@
 //! `write(dir)` writes `profile.txt` (the report: spans by CPU, statements by time with their query plans, native
 //! steps by work, the roofline, and warnings) and the tables `spans.tsv`, `sql.tsv` and `native.tsv`. Off, a span costs one load.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -36,8 +36,10 @@ use std::sync::{LazyLock, Mutex};
 pub mod analysis;
 pub mod analysis_report;
 pub mod kinds;
+pub mod life;
 pub mod memory;
 pub mod roofline;
+pub mod sources;
 // cratify: `watch` is rerail-logic's (it mounts it)
 pub use roofline::Unit;
 // cratify: `report` is rerail-logic's (it mounts it)
@@ -118,9 +120,15 @@ pub struct State {
     pub native: BTreeMap<(String, String), Vec<(u64, u64)>>,
     /// By (span path, plan text): the CPU seconds its probes ran, as the native engine timed them.
     pub native_cpu: BTreeMap<(String, String), f64>,
+    /// By (span path, plan text): per step, and last its head's rows made, the CPU seconds its walks spent there
+    /// (`setfix::step_cpu`), where the engine timed them.
+    pub native_step_cpu: BTreeMap<(String, String), Vec<f64>>,
     pub notes: BTreeMap<String, String>,
-    /// Run-level decisions by (topic, text): how many times made.
+    /// Run-level decisions by (topic, text): how many times made, or stated by a reused version that made them
+    /// (`reused`, decision 0269).
     pub decisions: BTreeMap<(String, String), u64>,
+    /// Of those, the ones a reused version stated, by where the run took the version from (`memory`, `store`).
+    pub kept: BTreeMap<(String, String), &'static str>,
     /// Strata in the order first run: key, engine, why, loops.
     strata: Vec<Stratum>,
     /// The strata that ran in SQLite (the SQL wave kernel), by key: the kind of literal the native engine declined.
@@ -142,6 +150,162 @@ pub struct State {
     pub blocked: BTreeMap<String, Blocked>,
 }
 
+fn add_steps(into: &mut Vec<(u64, u64)>, from: &[(u64, u64)]) {
+    if into.len() < from.len() {
+        into.resize(from.len(), (0, 0));
+    }
+    for (a, b) in into.iter_mut().zip(from) {
+        a.0 += b.0;
+        a.1 += b.1;
+    }
+}
+
+fn add_cpu(into: &mut Vec<f64>, from: &[f64]) {
+    if into.len() < from.len() {
+        into.resize(from.len(), 0.0);
+    }
+    for (a, b) in into.iter_mut().zip(from) {
+        *a += b;
+    }
+}
+
+impl State {
+    /// Adds a thread's records (`merged`) as its calls would have added them here: sums summed, the first note,
+    /// reason and refusal kept, a stratum's loops under its key (or its key with another engine, as `stratum` keeps).
+    fn absorb(&mut self, o: State) {
+        for (k, t) in o.spans {
+            let s = self.spans.entry(k).or_default();
+            s.calls += t.calls;
+            s.total += t.total;
+            s.own += t.own;
+            s.alloc += t.alloc;
+            s.own_alloc += t.own_alloc;
+            s.freed += t.freed;
+            s.rise += t.rise;
+            s.own_rise += t.own_rise;
+        }
+        for (k, t) in o.sql {
+            let s = self.sql.entry(k).or_default();
+            s.runs += t.runs;
+            s.ns += t.ns;
+            s.vm += t.vm;
+            s.scan += t.scan;
+            s.sort += t.sort;
+            s.autoindex += t.autoindex;
+        }
+        for (k, t) in o.native {
+            add_steps(self.native.entry(k).or_default(), &t);
+        }
+        for (k, t) in o.native_cpu {
+            *self.native_cpu.entry(k).or_default() += t;
+        }
+        for (k, t) in o.native_step_cpu {
+            add_cpu(self.native_step_cpu.entry(k).or_default(), &t);
+        }
+        for (k, t) in o.notes {
+            self.notes.entry(k).or_insert(t);
+        }
+        for (k, n) in o.decisions {
+            *self.decisions.entry(k).or_default() += n;
+        }
+        // Where a reused step's decisions came from (decision 0269), by decision.
+        for (k, from) in o.kept {
+            self.kept.insert(k, from);
+        }
+        for s in o.strata {
+            let other = format!("{} (chunk with {})", s.key, s.engine);
+            let key = match self.strata.iter().find(|t| t.key == s.key) {
+                Some(t) if t.engine != s.engine => other,
+                _ => s.key.clone(),
+            };
+            match self.strata.iter_mut().find(|t| t.key == key) {
+                Some(t) => t.loops += s.loops,
+                None => self.strata.push(Stratum { key, ..s }),
+            }
+        }
+        for (k, t) in o.fallbacks {
+            self.fallbacks.insert(k, t);
+        }
+        for (k, t) in o.plans {
+            let s = self.plans.entry(k).or_default();
+            s.rule = t.rule;
+            s.plan = t.plan;
+            s.loops += t.loops;
+            s.planning += t.planning;
+            s.replans += t.replans;
+            s.measured |= t.measured;
+            add_steps(&mut s.actual, &t.actual);
+            add_cpu(&mut s.cpu, &t.cpu);
+            if let Some(n) = t.produced {
+                *s.produced.get_or_insert(0) += n;
+            }
+        }
+        for (k, t) in o.devices {
+            let s = self.devices.entry(k).or_default();
+            s.runs += t.runs;
+            s.launches += t.launches;
+            s.gpu += t.gpu;
+            s.wall += t.wall;
+            s.cells += t.cells;
+            for (a, b) in s.phases.iter_mut().zip(t.phases) {
+                *a += b;
+            }
+            s.made += t.made;
+            s.reused += t.reused;
+        }
+        for (k, n) in o.work {
+            *self.work.entry(k).or_default() += n;
+        }
+        for (k, t) in o.waits {
+            let s = self.waits.entry(k).or_default();
+            s.count += t.count;
+            s.wall += t.wall;
+            s.cpu += t.cpu;
+        }
+        for (k, t) in o.placements {
+            let s = self.placements.entry(k).or_default();
+            s.runs += t.runs;
+            s.on_gpu += t.on_gpu;
+            s.gpu_cheaper += t.gpu_cheaper;
+            s.device |= t.device;
+            s.forms = t.forms;
+            s.missing = t.missing;
+            s.planned_work += t.planned_work;
+            s.planned_scanned += t.planned_scanned;
+            s.steps += t.steps;
+            s.work += t.work;
+            s.cpu_estimate += t.cpu_estimate;
+            s.gpu_estimate += t.gpu_estimate;
+            s.cpu += t.cpu;
+            s.gpu_cpu += t.gpu_cpu;
+            s.gpu_work += t.gpu_work;
+            for (a, b) in s.joins.iter_mut().zip(t.joins) {
+                a.0 += b.0;
+                a.1 += b.1;
+                a.2 += b.2;
+                a.3 += b.3;
+            }
+            s.gpu.add(&t.gpu);
+            if t.refused.is_some() {
+                s.refused = t.refused;
+            }
+        }
+        for (k, t) in o.hazards {
+            let s = self.hazards.entry(k).or_default();
+            s.0 += t.0;
+            s.1 += t.1;
+        }
+        for (k, t) in o.blocked {
+            let s = self.blocked.entry(k).or_default();
+            for (r, n) in t.ran {
+                *s.ran.entry(r).or_default() += n;
+            }
+            s.native.extend(t.native);
+            s.device.extend(t.device);
+        }
+    }
+}
+
 /// A stratum's executors: where it ran, the native engine's reason to decline it, what kept it off the device.
 #[derive(Default)]
 pub struct Blocked {
@@ -160,10 +324,16 @@ pub struct PlacedTotal {
     pub forms: Vec<&'static str>,
     pub missing: Vec<&'static str>,
     pub planned_work: f64,
+    /// Of the planned work, the rows its scans read (`Shape::scanned`), and its rules' steps, over its runs.
+    pub planned_scanned: f64,
+    pub steps: u64,
     pub work: u64,
     pub cpu_estimate: f64,
     pub gpu_estimate: f64,
     pub cpu: f64,
+    /// Of `cpu` and `work`, the runs that ran on the device: the rest ran on the CPU.
+    pub gpu_cpu: f64,
+    pub gpu_work: u64,
     /// Its join steps by the form placement chose (CPU index, GPU sort and probe, GPU tile): how many, their
     /// estimate on the CPU's index, and on the form chosen (of the steps estimated under `JOIN_ESTIMATE_CAP`), and
     /// how many were estimated over it.
@@ -191,7 +361,11 @@ pub struct GpuTotal {
     pub decode: f64,
     pub uploads: u64,
     pub upload_bytes: u64,
+    /// Uploads by what was read (`UPLOAD_KINDS`): bytes and the host's CPU.
+    pub upload_by: [(u64, f64); 4],
     pub resident: u64,
+    /// Relations read where they lie, in their block (decision 0325): nothing uploaded.
+    pub in_place: u64,
     pub sorts: u64,
     pub sort_hits: u64,
     pub rows: u64,
@@ -223,7 +397,12 @@ impl GpuTotal {
         self.decode += o.decode;
         self.uploads += o.uploads;
         self.upload_bytes += o.upload_bytes;
+        for (a, b) in self.upload_by.iter_mut().zip(&o.upload_by) {
+            a.0 += b.0;
+            a.1 += b.1;
+        }
         self.resident += o.resident;
+        self.in_place += o.in_place;
         self.sorts += o.sorts;
         self.sort_hits += o.sort_hits;
         self.rows += o.rows;
@@ -269,6 +448,33 @@ impl Activity {
 /// Runs `blocking` (a receive, a send on a full channel, a join), recorded as a wait of this thread's span on
 /// `awaited`, and on what it was doing when it began (`doing`, an `Activity` of the awaited thread or a fixed name). The wall
 /// time is the wait; the CPU spent meanwhile is reported with it. Not profiling, it only runs `blocking`.
+/// The process's instructions retired so far (macOS; 0 elsewhere), as `settings::process_counters` reads them: what a
+/// timeline line carries beside its clock.
+pub fn retired_instructions() -> u64 {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: a zeroed `rusage_info_v4` is a valid out-value, and the flavour matches it.
+        let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v4>() };
+        if unsafe { libc::proc_pid_rusage(std::process::id() as i32, libc::RUSAGE_INFO_V4, (&raw mut info).cast()) } == 0 {
+            return info.ri_instructions;
+        }
+    }
+    0
+}
+
+/// A timeline's mark (dev, `RERAIL_TIMELINE`): a point outside every span, with the process's instructions retired.
+pub fn timeline_mark(what: &str) {
+    if std::env::var_os("RERAIL_TIMELINE").is_some() {
+        eprintln!("RERAIL_TIMELINE {what}: @{:.3} i={:.3} mb={}/{}", timeline_clock(), retired_instructions() as f64 / 1e9, crate::code_rule_dsl::prof::footprint_mb(), crate::code_rule_dsl::prof::max_footprint_mb());
+    }
+}
+
+/// The wall clock a timeline line carries (`RERAIL_TIMELINE`): seconds since the epoch, so the lines of nested
+/// runs and threads read on one axis.
+pub fn timeline_clock() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64())
+}
+
 pub fn wait<T>(awaited: &str, doing: &Activity, blocking: impl FnOnce() -> T) -> T {
     if !on() {
         return blocking();
@@ -301,6 +507,9 @@ pub struct StepPlan {
     pub access: String,
     pub source: String,
     pub rows: f64,
+    /// Its rows when every row is walked: past the step that binds the head the walk keeps one witness (decision
+    /// 0229) and `rows` counts that; the device's stages make them all (decision 0277).
+    pub all: f64,
     pub passed: Vec<(String, f64, String)>,
     /// The rule the step's rows a binding were priced by (`plan_search`'s `atom_rows`): postings, observed,
     /// absence proof, membership, and the containment share applied, so a misprediction names its rule.
@@ -327,6 +536,8 @@ pub struct PlanTotal {
     pub planning: f64,
     replans: u64,
     pub actual: Vec<(u64, u64)>,
+    /// Per step, and last its head's rows made, the CPU seconds the walks spent there (`planned_cpu`).
+    pub cpu: Vec<f64>,
     pub measured: bool,
     produced: Option<u64>,
 }
@@ -356,29 +567,54 @@ pub const PHASES: [&str; 7] = [
     "wake (GPUEndTime to wait returning)",
 ];
 
+/// The profile's records, merged: every thread's shard (`SHARDS`) is added in when they are read (`merged`).
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
 
+/// One thread's records: what its spans, decisions, work and plans add, under a lock only its own thread takes
+/// while it records. One lock for every thread's records was a run's hottest lock: sixteen threads ending spans and
+/// stating decisions took turns at it (about a tenth of a full corpus run's yields and blocked waits, 2026-11-15).
+type Shard = std::sync::Arc<parking_lot::Mutex<State>>;
+
+/// Every thread's shard, an ended thread's too until its records are merged.
+static SHARDS: Mutex<Vec<Shard>> = Mutex::new(Vec::new());
+
 thread_local! {
-    /// Whether this thread holds the profile's state (`state`).
+    /// Whether this thread holds the profile's state (`state`, `merged`).
     static HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// This thread's shard, made and listed when it first records.
+    static SHARD: Shard = {
+        let s = Shard::default();
+        SHARDS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(s.clone());
+        s
+    };
 }
 
-/// The profile's state, held: the only way to it. Its lock is not reentrant, so a profile call made while this
-/// thread holds it (from a closure run under the lock: a decision's text that splits a program, which opens a span)
-/// would wait on itself forever. Every closure a profile function takes is run before the lock, and a call that would
-/// wait on itself panics here instead, naming the cause.
-pub struct Held(std::sync::MutexGuard<'static, State>);
+/// The profile's state, held: this thread's shard to record into (`state`), or every record merged to read
+/// (`merged`). Its locks are not reentrant, so a profile call made while this thread holds one (from a closure run
+/// under it: a decision's text that splits a program, which opens a span) would wait on itself forever. Every
+/// closure a profile function takes is run before the lock, and a call that would wait on itself panics here
+/// instead, naming the cause.
+pub enum Held {
+    Own(parking_lot::ArcMutexGuard<parking_lot::RawMutex, State>),
+    Merged(std::sync::MutexGuard<'static, State>),
+}
 
 impl std::ops::Deref for Held {
     type Target = State;
     fn deref(&self) -> &State {
-        &self.0
+        match self {
+            Held::Own(g) => g,
+            Held::Merged(g) => g,
+        }
     }
 }
 
 impl std::ops::DerefMut for Held {
     fn deref_mut(&mut self) -> &mut State {
-        &mut self.0
+        match self {
+            Held::Own(g) => &mut *g,
+            Held::Merged(g) => &mut *g,
+        }
     }
 }
 
@@ -388,9 +624,29 @@ impl Drop for Held {
     }
 }
 
-pub fn state() -> Held {
+fn hold() {
     assert!(!HELD.with(|h| h.replace(true)), "the profile's state was taken again on a thread holding it: a closure ran under its lock");
-    Held(STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+}
+
+/// This thread's records, to add to. What is read from them is this thread's alone: a reader of the run's takes
+/// `merged`.
+pub fn state() -> Held {
+    hold();
+    Held::Own(SHARD.with(|s| s.lock_arc()))
+}
+
+/// Every thread's records, merged: each shard's taken into the run's (an ended thread's shard then dropped).
+pub fn merged() -> Held {
+    hold();
+    let mut all = STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut shards = SHARDS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    for s in shards.iter() {
+        let taken = std::mem::take(&mut *s.lock());
+        all.absorb(taken);
+    }
+    // A shard held only here is an ended thread's: emptied, it is not kept.
+    shards.retain(|s| std::sync::Arc::strong_count(s) > 1);
+    Held::Merged(all)
 }
 
 pub struct Open {
@@ -403,6 +659,8 @@ pub struct Open {
     peak: u64,
     children_alloc: u64,
     children_rise: u64,
+    /// Its id in the heap sampler (`rerail_prof::heap::intern`; 0 off).
+    heap: u32,
 }
 
 /// A thread's open spans and the SQL statement it runs, where a dump on another thread can read them (`watch`).
@@ -414,6 +672,470 @@ pub struct Thread {
     opens: Vec<Open>,
     /// The statement SQLite is running for it, and since when (`strict_statement`).
     statement: Option<(String, std::time::Instant)>,
+    /// The CPU its outermost spans took: what of its CPU the spans account for (`threads`).
+    covered: f64,
+    /// The outermost span that closed last, and the thread's CPU then.
+    between: Option<(String, f64)>,
+    /// Its CPU outside every span, by the outermost spans around it: (closed before, opened after) (`gaps`).
+    gaps: HashMap<(String, String), f64>,
+    /// The run's thread only (`track_run_thread`, decision 0288): its time, charged to its innermost open span.
+    track: Option<Track>,
+}
+
+/// The run thread's time since its last span opened or closed, and what it was charged to (decision 0288). Each open
+/// and close charges the time since the last one to the span innermost then, so a span's own time is split exactly
+/// at its children's bounds, and a phase's is split where the phase ends (`run_thread_phase`).
+struct Track {
+    wall: std::time::Instant,
+    cpu: f64,
+    /// By the innermost span's path (`OUTSIDE` outside every span): wall, and the thread's CPU. A pool job the thread
+    /// runs while it waits opens spans of its own, so its CPU is charged to them.
+    by: HashMap<String, [f64; 2]>,
+}
+
+/// Where the run's thread was outside every span (`Track`).
+const OUTSIDE: &str = "(outside every span)";
+
+/// Charges the time since `track`'s last charge to the innermost of `opens`, with the thread's CPU now (`cpu`).
+fn charge(track: &mut Option<Track>, opens: &[Open], cpu: f64) {
+    let Some(t) = track.as_mut() else { return };
+    let now = std::time::Instant::now();
+    let at = opens.last().map_or(OUTSIDE, |o| o.path.as_str());
+    let d = [(now - t.wall).as_secs_f64(), cpu - t.cpu];
+    match t.by.get_mut(at) {
+        Some(e) => e.iter_mut().zip(d).for_each(|(a, b)| *a += b),
+        None => {
+            t.by.insert(at.to_owned(), d);
+        }
+    }
+    (t.wall, t.cpu) = (now, cpu);
+}
+
+/// Each phase of the run's thread (`run_thread_phase`): its name, and by span path the wall and CPU.
+type RunPhases = Vec<(&'static str, HashMap<String, [f64; 2]>)>;
+static RUN_PHASES: LazyLock<Mutex<RunPhases>> = LazyLock::new(Default::default);
+
+/// Starts charging this thread's time to its spans, phase by phase (decision 0288): the run's thread, once the run
+/// holds the profile. The phases kept so far are forgotten.
+pub fn track_run_thread() {
+    if !on() {
+        return;
+    }
+    RUN_PHASES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
+    STACK.with(|s| s.lock().track = Some(Track { wall: std::time::Instant::now(), cpu: cpu(), by: HashMap::new() }));
+}
+
+/// Ends phase `name` on the run's thread: its time since the phase before is kept under `name` (added to a phase of
+/// that name already kept, as `local` is per chunk). Nothing on a thread not tracked.
+pub fn run_thread_phase(name: &'static str) {
+    STACK.with(|s| {
+        let mut g = s.lock();
+        let s = &mut *g;
+        charge(&mut s.track, &s.opens, cpu());
+        let Some(t) = s.track.as_mut() else { return };
+        let by = std::mem::take(&mut t.by);
+        let mut all = RUN_PHASES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        match all.iter_mut().find(|p| p.0 == name) {
+            Some((_, kept)) => {
+                for (path, d) in by {
+                    let e = kept.entry(path).or_default();
+                    e.iter_mut().zip(d).for_each(|(a, b)| *a += b);
+                }
+            }
+            None => all.push((name, by)),
+        }
+    });
+}
+
+/// Stops charging this thread's time (the run's end).
+pub fn untrack_run_thread() {
+    STACK.with(|s| s.lock().track = None);
+}
+
+/// One phase of the run's thread, measured at its bounds (decision 0288), unprofiled as well: the phase's wall; the
+/// thread's own CPU in it, and the CPU of the pool's jobs it ran while it waited; the whole process's CPU in it; its
+/// threads' runnable time (macOS's `ri_runnable_time`: running, or ready with no core); and the process's involuntary
+/// context switches.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct PhaseClock {
+    pub wall: f64,
+    pub own: f64,
+    pub helped: f64,
+    pub process_cpu: f64,
+    pub runnable: f64,
+    pub involuntary: i64,
+}
+
+/// The clocks a `PhaseClock` is the difference of, read on the run's thread (`snapshot`).
+#[derive(Clone, Copy, Debug)]
+pub struct Snapshot {
+    at: std::time::Instant,
+    /// The thread's CPU, less the pool's jobs it ran while it waited (`rerail_accel::exec::helped`), and those.
+    own: f64,
+    helped: f64,
+    /// `process_clock`'s.
+    process: (f64, f64, i64),
+}
+
+/// This thread's clocks now, and the process's.
+pub fn snapshot() -> Snapshot {
+    let helped = rerail_accel::exec::helped();
+    Snapshot { at: std::time::Instant::now(), own: cpu() - helped, helped, process: process_clock() }
+}
+
+/// The command's start (`command_begins`) and its run's end (`run_ends`), for the time before and after its run.
+static COMMAND: Mutex<(Option<Snapshot>, Option<Snapshot>, f64)> = Mutex::new((None, None, 0.0));
+
+/// The command line's command begins (decision 0288): its clocks now, and the process's age (its start's time).
+/// Profiling, this thread's time is charged to its spans from here (`track_run_thread`): its run files what came
+/// before it as its phase `before`.
+pub fn command_begins() {
+    *COMMAND.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = (Some(snapshot()), None, process_age());
+    track_run_thread();
+}
+
+/// Whether this thread's time is charged to its spans (`track_run_thread`).
+pub fn tracked() -> bool {
+    STACK.with(|s| s.lock().track.is_some())
+}
+
+/// The command's start, taken by its first run that holds the profile or runs alone (`before`).
+pub fn take_command_start() -> Option<Snapshot> {
+    COMMAND.lock().unwrap_or_else(std::sync::PoisonError::into_inner).0.take()
+}
+
+/// The command's run ended with these clocks.
+pub fn run_ends(at: Snapshot) {
+    COMMAND.lock().unwrap_or_else(std::sync::PoisonError::into_inner).1 = Some(at);
+}
+
+/// The process's age when the command began, and the time since its run ended (`run_ends`), if it ran one.
+pub fn command_ends() -> (f64, Option<PhaseClock>) {
+    let mut c = COMMAND.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let age = c.2;
+    (age, c.1.take().map(|end| PhaseClock::between(&end, &snapshot())))
+}
+
+impl PhaseClock {
+    /// The clocks from `a` to `b`, both read on one thread.
+    pub fn between(a: &Snapshot, b: &Snapshot) -> PhaseClock {
+        PhaseClock {
+            wall: (b.at - a.at).as_secs_f64(),
+            own: b.own - a.own,
+            helped: b.helped - a.helped,
+            process_cpu: b.process.0 - a.process.0,
+            runnable: b.process.1 - a.process.1,
+            involuntary: b.process.2 - a.process.2,
+        }
+    }
+    /// The thread's wall off a core: blocked, or ready with no core.
+    pub fn off_core(&self) -> f64 {
+        (self.wall - self.own - self.helped).max(0.0)
+    }
+    /// The other threads' CPU meanwhile.
+    pub fn others(&self) -> f64 {
+        (self.process_cpu - self.own - self.helped).max(0.0)
+    }
+    /// The process's threads' time ready to run with no core: their runnable time less their CPU (the machine's load).
+    pub fn no_core(&self) -> f64 {
+        (self.runnable - self.process_cpu).max(0.0)
+    }
+    pub fn add(&mut self, o: &PhaseClock) {
+        self.wall += o.wall;
+        self.own += o.own;
+        self.helped += o.helped;
+        self.process_cpu += o.process_cpu;
+        self.runnable += o.runnable;
+        self.involuntary += o.involuntary;
+    }
+}
+
+/// The process's clocks now: its CPU (user + system), its threads' runnable seconds (macOS's `ri_runnable_time`, which
+/// counts a thread from when it is ready until it blocks, running or not; 0 elsewhere), and its involuntary context
+/// switches.
+pub fn process_clock() -> (f64, f64, i64) {
+    #[cfg(unix)]
+    let (cpu, involuntary) = {
+        let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
+        // SAFETY: fills a `rusage` for this process.
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+        let t = |v: libc::timeval| v.tv_sec as f64 + v.tv_usec as f64 / 1e6;
+        (t(usage.ru_utime) + t(usage.ru_stime), usage.ru_nivcsw as i64)
+    };
+    #[cfg(not(unix))]
+    let (cpu, involuntary) = (0.0, 0);
+    #[cfg(target_os = "macos")]
+    let runnable = {
+        // SAFETY: a zeroed `rusage_info_v4` is a valid out-value, and the flavour matches it.
+        let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v4>() };
+        if unsafe { libc::proc_pid_rusage(std::process::id() as i32, libc::RUSAGE_INFO_V4, (&raw mut info).cast()) } == 0 { info.ri_runnable_time as f64 * mach_tick() } else { 0.0 }
+    };
+    #[cfg(not(target_os = "macos"))]
+    let runnable = 0.0;
+    (cpu, runnable, involuntary)
+}
+
+/// Seconds since this process started (macOS, Linux; 0 elsewhere): the command's wall so far.
+pub fn process_age() -> f64 {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: a zeroed `proc_bsdinfo` is a valid out-value of the size passed.
+        let mut info = unsafe { std::mem::zeroed::<libc::proc_bsdinfo>() };
+        let size = std::mem::size_of::<libc::proc_bsdinfo>() as i32;
+        if unsafe { libc::proc_pidinfo(std::process::id() as i32, libc::PROC_PIDTBSDINFO, 0, (&raw mut info).cast(), size) } == size {
+            let start = info.pbi_start_tvsec as f64 + info.pbi_start_tvusec as f64 / 1e6;
+            return (timeline_clock() - start).max(0.0);
+        }
+        0.0
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        0.0
+    }
+}
+
+/// Seconds per Mach absolute-time tick, the unit of `rusage_info`'s times.
+#[cfg(target_os = "macos")]
+fn mach_tick() -> f64 {
+    #[repr(C)]
+    struct Timebase {
+        numer: u32,
+        denom: u32,
+    }
+    unsafe extern "C" {
+        fn mach_timebase_info(info: *mut Timebase) -> i32;
+    }
+    static TICK: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *TICK.get_or_init(|| {
+        let mut info = Timebase { numer: 0, denom: 0 };
+        // SAFETY: fills the struct.
+        unsafe { mach_timebase_info(&mut info) };
+        f64::from(info.numer) / f64::from(info.denom.max(1)) / 1e9
+    })
+}
+
+/// The run thread's phases (`PhaseClock`, measured by the run at each phase's end), with what the thread did in
+/// each when profiling (decision 0288): the spans its wall went to, innermost, most first.
+pub fn run_thread_report(clocks: &[(&'static str, PhaseClock)]) -> String {
+    let mut r = String::new();
+    let total = clocks.iter().fold(PhaseClock::default(), |mut a, (_, c)| {
+        a.add(c);
+        a
+    });
+    let _ = writeln!(r, "\n== The run's thread, phase by phase (decision 0288): its wall, its own CPU, its CPU in the pool's jobs it ran while it");
+    let _ = writeln!(r, "waited, and its wall off a core (blocked, or ready with no core); the other threads' CPU, the process's CPU over the wall");
+    let _ = writeln!(r, "(parallel), the process's threads' time ready with no core (the machine's load), and its involuntary switches");
+    let _ = writeln!(r, "{:<10} {:>7} {:>7} {:>7} {:>7} {:>7} {:>8} {:>8} {:>9}", "phase", "wall s", "own s", "help s", "off s", "others", "parallel", "no core", "switches");
+    for (name, c) in clocks.iter().chain(std::iter::once(&("all", total))) {
+        let _ = writeln!(r, "{name:<10} {:>7.3} {:>7.3} {:>7.3} {:>7.3} {:>7.3} {:>8.2} {:>8.3} {:>9}", c.wall, c.own, c.helped, c.off_core(), c.others(), c.process_cpu / c.wall.max(1e-9), c.no_core(), c.involuntary);
+    }
+    let phases = RUN_PHASES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if phases.is_empty() {
+        return r;
+    }
+    let _ = writeln!(r, "\nWhat the run's thread did in each phase: its wall by the span innermost when it passed, most first, with the thread's");
+    let _ = writeln!(r, "CPU (a pool job it ran while it waited is under the job's own spans) and its wall off a core. The profile's own work is");
+    let _ = writeln!(r, "in these; the table above, from a run without the profile, is the run's.");
+    for (name, by) in phases.iter() {
+        let mut rows: Vec<(&String, &[f64; 2])> = by.iter().collect();
+        rows.sort_by(|a, b| b.1[0].total_cmp(&a.1[0]));
+        let wall: f64 = rows.iter().map(|r| r.1[0]).sum();
+        let _ = writeln!(r, "-- {name}: {wall:.3} s over {} spans", rows.len());
+        let _ = writeln!(r, "{:>8} {:>8} {:>8}  span (innermost)", "wall s", "cpu s", "off s");
+        let shown = rows.iter().take_while(|r| r.1[0] >= 0.005).take(15).count().max(rows.len().min(3));
+        for (path, d) in &rows[..shown] {
+            let _ = writeln!(r, "{:>8.3} {:>8.3} {:>8.3}  {}", d[0], d[1], (d[0] - d[1]).max(0.0), tail(path, 110));
+        }
+        if rows.len() > shown {
+            let rest = rows[shown..].iter().fold([0.0; 2], |mut a, r| {
+                a.iter_mut().zip(r.1).for_each(|(x, y)| *x += y);
+                a
+            });
+            let _ = writeln!(r, "{:>8.3} {:>8.3} {:>8.3}  ({} other spans)", rest[0], rest[1], (rest[0] - rest[1]).max(0.0), rows.len() - shown);
+        }
+    }
+    r
+}
+
+/// The last `n` characters of `path`, cut at a `/`: a span's innermost parts.
+fn tail(path: &str, n: usize) -> String {
+    if path.chars().count() <= n {
+        return path.to_owned();
+    }
+    let skip = path.chars().count() - n;
+    let cut: String = path.chars().skip(skip).collect();
+    match cut.find('/') {
+        Some(k) => format!("…{}", &cut[k..]),
+        None => format!("…{cut}"),
+    }
+}
+
+/// Where a thread was outside every span before its first span opened, and after its last closed.
+const THREAD_START: &str = "(the thread's start)";
+const THREAD_END: &str = "(the thread's end, or now)";
+
+/// A thread that opened a span leaves its account when it ends (`threads`): its CPU and its spans' then.
+impl Drop for Thread {
+    fn drop(&mut self) {
+        if let Some(cpu) = thread_cpu(self.port) {
+            EXITED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((self.name.clone(), cpu, self.covered));
+            let mut gaps = std::mem::take(&mut self.gaps);
+            if let Some((after, at)) = self.between.take() {
+                *gaps.entry((after, THREAD_END.to_owned())).or_default() += (cpu - at).max(0.0);
+            }
+            let mut ended = EXITED_GAPS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            for (k, v) in gaps {
+                *ended.entry(k).or_default() += v;
+            }
+        }
+    }
+}
+
+/// The gaps of threads that have ended (`gaps`).
+static EXITED_GAPS: LazyLock<Mutex<HashMap<(String, String), f64>>> = LazyLock::new(Default::default);
+
+/// CPU a thread took outside every span, between the outermost span that closed before it (`after`) and the one that
+/// opened after it (`before`), summed over the threads.
+#[derive(Clone, Debug)]
+pub struct Gap {
+    pub after: String,
+    pub before: String,
+    pub cpu: f64,
+}
+
+/// Every thread's CPU outside its spans, by the spans around it, largest first: ended threads' and live ones' (their
+/// CPU since their last span closed counted as before their end).
+pub fn gaps() -> Vec<Gap> {
+    let mut all = EXITED_GAPS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    let live: Vec<_> = THREADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().filter_map(std::sync::Weak::upgrade).collect();
+    for t in live {
+        let t = t.lock();
+        for (k, v) in &t.gaps {
+            *all.entry(k.clone()).or_default() += v;
+        }
+        if t.opens.is_empty()
+            && let (Some((after, at)), Some(now)) = (&t.between, thread_cpu(t.port))
+        {
+            *all.entry((after.clone(), THREAD_END.to_owned())).or_default() += (now - at).max(0.0);
+        }
+    }
+    let mut out: Vec<Gap> = all.into_iter().map(|((after, before), cpu)| Gap { after, before, cpu }).collect();
+    out.sort_by(|a, b| b.cpu.total_cmp(&a.cpu));
+    out
+}
+
+/// The accounts of threads that opened spans and have ended: name, CPU, CPU under spans.
+static EXITED: LazyLock<Mutex<Vec<(String, f64, f64)>>> = LazyLock::new(Default::default);
+
+/// One thread's CPU, and what of it its spans took.
+#[derive(Clone, Debug)]
+pub struct ThreadCpu {
+    pub name: String,
+    pub cpu: f64,
+    pub covered: f64,
+}
+
+/// The process's CPU by thread (`threads`): every live thread, the ended ones that opened spans, and a row for the
+/// threads that ended without one (the process's CPU less all the others'), so the rows add up to `process`.
+#[derive(Clone, Debug, Default)]
+pub struct Threads {
+    pub process: f64,
+    pub rows: Vec<ThreadCpu>,
+}
+
+/// The process's CPU (user + system) so far.
+pub fn process_cpu() -> f64 {
+    #[cfg(unix)]
+    {
+        let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
+        // SAFETY: fills a `rusage` for this process.
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+        let t = |v: libc::timeval| v.tv_sec as f64 + v.tv_usec as f64 / 1e6;
+        t(usage.ru_utime) + t(usage.ru_stime)
+    }
+    #[cfg(not(unix))]
+    {
+        0.0
+    }
+}
+
+/// The live threads' Mach ports and names (macOS; none elsewhere).
+fn live_threads() -> Vec<(u32, String)> {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn mach_port_deallocate(task: libc::mach_port_t, name: libc::mach_port_t) -> libc::kern_return_t;
+            // The task's own port (`mach_task_self()` is a macro over it; libc's function is deprecated).
+            static mach_task_self_: libc::mach_port_t;
+        }
+        let mut list: libc::thread_act_array_t = std::ptr::null_mut();
+        let mut count: libc::mach_msg_type_number_t = 0;
+        // SAFETY: the task's own threads; the list and each port's right are given back below.
+        let task = unsafe { mach_task_self_ };
+        if unsafe { libc::task_threads(task, &mut list, &mut count) } != 0 {
+            return Vec::new();
+        }
+        let ports: Vec<u32> = (0..count as usize).map(|i| unsafe { *list.add(i) }).collect();
+        let named = ports
+            .iter()
+            .map(|&port| {
+                let mut name = [0 as libc::c_char; 64];
+                // SAFETY: a thread of this task; a thread that ended meanwhile gives a null pthread.
+                let thread = unsafe { libc::pthread_from_mach_thread_np(port) };
+                let name = if thread == 0 || unsafe { libc::pthread_getname_np(thread, name.as_mut_ptr(), name.len()) } != 0 {
+                    String::new()
+                } else {
+                    unsafe { std::ffi::CStr::from_ptr(name.as_ptr()) }.to_string_lossy().into_owned()
+                };
+                (port, if name.is_empty() { "unnamed".to_owned() } else { name })
+            })
+            .collect();
+        for &port in &ports {
+            unsafe { mach_port_deallocate(task, port) };
+        }
+        unsafe { libc::vm_deallocate(task, list as libc::vm_address_t, (count as usize * std::mem::size_of::<libc::thread_act_t>()) as libc::vm_size_t) };
+        named
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Vec::new()
+    }
+}
+
+/// The process's CPU now, by thread: each live thread's, with what its outermost spans took, and the ended ones'.
+/// A span's CPU is its own thread's, so work it hands to another thread (rayon's, a helper's) is under no span unless
+/// that thread opens one (`span_at`): this says where such CPU went.
+pub fn threads() -> Threads {
+    let process = process_cpu();
+    let registered: Vec<(u32, f64)> = THREADS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .filter_map(std::sync::Weak::upgrade)
+        .map(|t| {
+            let t = t.lock();
+            // Spans open now count what they have taken so far.
+            let open = t.opens.first().map_or(0.0, |o| thread_cpu(t.port).map_or(0.0, |now| now - o.start));
+            (t.port, t.covered + open)
+        })
+        .collect();
+    let mut rows: Vec<ThreadCpu> = live_threads()
+        .into_iter()
+        .filter_map(|(port, name)| {
+            let cpu = thread_cpu(port)?;
+            let covered = registered.iter().find(|(p, _)| *p == port).map_or(0.0, |(_, c)| *c);
+            Some(ThreadCpu { name, cpu, covered })
+        })
+        .collect();
+    let live: f64 = rows.iter().map(|t| t.cpu).sum();
+    let ended = EXITED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    let named: f64 = ended.iter().map(|(_, cpu, _)| cpu).sum();
+    rows.extend(ended.into_iter().map(|(name, cpu, covered)| ThreadCpu { name: format!("{name} (ended)"), cpu, covered }));
+    let unnamed = process - live - named;
+    if unnamed > 0.005 {
+        rows.push(ThreadCpu { name: "ended threads that opened no span".to_owned(), cpu: unnamed, covered: 0.0 });
+    }
+    Threads { process, rows }
 }
 
 /// Every thread that opened a span, while it lives.
@@ -431,6 +1153,10 @@ fn register() -> std::sync::Arc<parking_lot::Mutex<Thread>> {
         counters: memory::Counters::mine(),
         opens: Vec::new(),
         statement: None,
+        covered: 0.0,
+        between: None,
+        gaps: HashMap::new(),
+        track: None,
     }));
     let mut all = THREADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     all.retain(|t| t.strong_count() > 0);
@@ -461,6 +1187,17 @@ pub fn here() -> Option<String> {
     STACK.with(|s| s.lock().opens.last().map(|o| o.path.clone()))
 }
 
+/// `f` for a parallel iterator's items, each a sizeable piece of work (a file, a tape): on a thread with no span
+/// open (a pool thread that took the item), under `name` in the span open where `carried` was called; on a thread
+/// with one open (the caller's), as it is. Rayon's work taken by another thread is under no span of that thread's.
+pub fn carried<A, R>(name: &'static str, f: impl Fn(A) -> R + Sync + Send) -> impl Fn(A) -> R + Sync + Send {
+    let under = here();
+    move |a| {
+        let _span = (under.is_some() && STACK.with(|s| s.lock().opens.is_empty())).then(|| span_at(under.as_deref(), || name.to_owned()));
+        f(a)
+    }
+}
+
 /// Opens span `name` under `under`, a path another thread's `here` gave: a pool job's span (`crate::threads`), at
 /// that path whichever thread runs it. Without `under`, under this thread's open span, as `span` opens one.
 pub fn span_at(under: Option<&str>, name: impl FnOnce() -> String) -> Span {
@@ -474,9 +1211,20 @@ pub fn span_at(under: Option<&str>, name: impl FnOnce() -> String) -> Span {
 pub fn span(name: impl FnOnce() -> String) -> Span {
     if !on() {
         // A timeline (dev, `RERAIL_TIMELINE`): the main thread's spans as they open, nothing measured.
+        // `RERAIL_TIMELINE=all`: every thread's, named (a test runs on a thread of its own name).
         static TIMELINE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *TIMELINE.get_or_init(|| std::env::var_os("RERAIL_TIMELINE").is_some()) && std::thread::current().name() == Some("main") {
-            eprintln!("RERAIL_TIMELINE span {}", name());
+        static ALL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let on = *TIMELINE.get_or_init(|| std::env::var_os("RERAIL_TIMELINE").is_some());
+        let all = *ALL.get_or_init(|| std::env::var("RERAIL_TIMELINE").is_ok_and(|v| v == "all"));
+        // `RERAIL_TIMELINE=sections`: the runs' sections alone (`corpus::run_observed`), no span: a line per span
+        // costs as much as a small span's work, so a timeline of every span is not the run's instructions.
+        static SECTIONS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let sections = *SECTIONS.get_or_init(|| std::env::var("RERAIL_TIMELINE").is_ok_and(|v| v == "sections"));
+        if on && !sections && (all || std::thread::current().name() == Some("main")) {
+            // With the process's instructions retired so far (macOS): a gap between two spans is then its work, not
+            // only its wall time.
+            let retired = retired_instructions();
+            eprintln!("RERAIL_TIMELINE span {} @{:.3} [{}] i={:.3}", name(), timeline_clock(), std::thread::current().name().unwrap_or("-"), retired as f64 / 1e9);
         }
         return Span(false);
     }
@@ -495,9 +1243,29 @@ fn open(path: String) -> Span {
     }
     memory::sample();
     STACK.with(|s| {
-        let mut s = s.lock();
+        let mut g = s.lock();
+        let s = &mut *g;
         let alloc = s.counters.read();
-        s.opens.push(Open { path, start: cpu(), children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0 });
+        let start = cpu();
+        charge(&mut s.track, &s.opens, start);
+        if s.opens.is_empty() {
+            let (after, at) = s.between.take().unwrap_or_else(|| (THREAD_START.to_owned(), 0.0));
+            if start > at {
+                *s.gaps.entry((after, path.clone())).or_default() += start - at;
+            }
+        }
+        // The heap sampler charges this thread's allocations to the span now (`rerail_prof::heap`), and names the
+        // thread for what it allocates with none open.
+        let heap = if rerail_prof::heap::on() {
+            if s.opens.is_empty() {
+                rerail_prof::heap::name_thread(std::thread::current().name().unwrap_or("an unnamed thread"));
+            }
+            rerail_prof::heap::intern(&path)
+        } else {
+            0
+        };
+        rerail_prof::heap::set_span(heap);
+        s.opens.push(Open { path, start, children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0, heap });
     });
     Span(true)
 }
@@ -510,10 +1278,24 @@ impl Drop for Span {
         let now = cpu();
         let peak = memory::peak_sampled();
         STACK.with(|s| {
-            let mut s = s.lock();
+            let mut g = s.lock();
+            let s = &mut *g;
+            charge(&mut s.track, &s.opens, now);
             let (allocated, freed) = s.counters.read();
             let Some(open) = s.opens.pop() else { return };
+            // Its thread's outermost span closed: what it allocates until the next is charged to "between spans,
+            // after" it (as the CPU gaps are), not to no span at all.
+            let after = match s.opens.last() {
+                Some(o) => o.heap,
+                None if rerail_prof::heap::on() => rerail_prof::heap::intern(&format!("(between spans) after {}", open.path)),
+                None => 0,
+            };
+            rerail_prof::heap::set_span(after);
             let total = now - open.start;
+            if s.opens.is_empty() {
+                s.covered += total;
+                s.between = Some((open.path.clone(), now));
+            }
             let alloc = allocated.saturating_sub(open.alloc.0);
             let rise = peak.saturating_sub(open.peak);
             if let Some(parent) = s.opens.last_mut() {
@@ -594,16 +1376,54 @@ thread_local! {
 
 /// Waves are under way until dropped: from a run's first wave (its first chunk) to its last (the cross-file part's
 /// last stratum). SQL before and after is the run's beginning and end, where it may be; inside, it is a hazard.
-pub struct Waves(bool);
+/// With the stage this thread's run was at before (`STAGE`).
+pub struct Waves(bool, u8);
 
 pub fn waves() -> Waves {
     WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    Waves(true)
+    Waves(true, STAGE.with(|s| s.replace(INSIDE)))
+}
+
+/// Where this thread's run is (decision 0192), carried to its jobs (`run_state`): no run (`0`), a run before its
+/// first wave (`BEFORE`), or inside the waves (`INSIDE`). Runs on other threads may be in their waves meanwhile (a
+/// typing run beside phase 1): a run before its own may still read, and a thread of a run in its waves may not.
+/// A thread with no run's context (a parallel loop's item) goes by the process's count (`WAVES`).
+const BEFORE: u8 = 1;
+const INSIDE: u8 = 2;
+thread_local! {
+    /// Public so that the run's context can carry it (`logic::run_state`, a crate above this one).
+    pub static STAGE: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+}
+
+/// A run starts on this thread (`plan::corpus`): before its first wave, unless it is nested in a run inside its
+/// waves, until the guard drops.
+pub fn run_begins() -> impl Drop {
+    struct Begun(u8);
+    impl Drop for Begun {
+        fn drop(&mut self) {
+            STAGE.with(|s| s.set(self.0));
+        }
+    }
+    Begun(STAGE.with(|s| if s.get() == INSIDE { INSIDE } else { s.replace(BEFORE) }))
+}
+
+/// Whether a store may be asked here (decision 0104): not while waves are under way for this thread.
+pub fn may_read_store() -> bool {
+    !waves_here()
+}
+
+/// Whether waves are under way for this thread: its run's, or, with no run's context here, any run's.
+fn waves_here() -> bool {
+    match STAGE.with(std::cell::Cell::get) {
+        BEFORE => false,
+        INSIDE => true,
+        _ => WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0,
+    }
 }
 
 /// Whether a run's waves are under way (`waves`): what is not read before the first wave is not read from SQLite.
 pub fn inside_waves() -> bool {
-    WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0
+    waves_here()
 }
 
 
@@ -614,6 +1434,135 @@ pub fn inside_waves() -> bool {
 pub fn strict() -> bool {
     static STRICT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *STRICT.get_or_init(|| std::env::var("RERAIL_SQL_STRICT").is_ok_and(|v| !matches!(v.as_str(), "" | "0" | "off")))
+}
+
+/// `RERAIL_WARM`, a development check for a run that is truly warm: one over a store that already holds everything
+/// the run computes, under rules and inputs that have not changed since. Such a run should only read. Each of
+/// these is then a recomputation, and a fault:
+///
+/// - a write to SQLite: any transaction that commits a write, on any connection of the process (the store's, the
+///   run's, an in-memory one), the store writer's included;
+/// - a write queued for the store's writer (`ContentStore::write_back`): what a cache miss computed, kept;
+/// - the whole-run cutoff (`corpus::reuse`) asked for and not applying: a rule file, a document or a read changed,
+///   or no run left a record;
+/// - a maintained run's non-empty delta: an input's or a stratum's rows gone or new (`__minus`, `__plus`), or a
+///   maintained relation's overdeleted or inserted rows (`__del`, `__ins`, `__gone`).
+///
+/// `RERAIL_WARM=1` ends the process at the first fault, with its stack (`warm_fault`). `RERAIL_WARM=list` reports
+/// every fault and goes on, a line each as it happens (the first 60 with their stacks), and ends the process with
+/// status 3 if there was one, after its own exit. A switch of how a run is checked, not of what it outputs: the cutoff's key leaves it
+/// out (`reuse::NOT_OUTPUTS`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Warm {
+    Off,
+    Fail,
+    List,
+}
+
+pub fn warm_mode() -> Warm {
+    // The switch, read once as `strict` reads its own: 0 off, 1 fail, 2 list.
+    static WARM: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+    match *WARM.get_or_init(|| match std::env::var("RERAIL_WARM").as_deref() {
+        Err(_) | Ok("" | "0" | "off") => 0,
+        Ok("list") => 2,
+        Ok(_) => 1,
+    }) {
+        0 => Warm::Off,
+        2 => Warm::List,
+        _ => Warm::Fail,
+    }
+}
+
+/// Whether the warm check is on (`warm_mode`).
+pub fn warm() -> bool {
+    warm_mode() != Warm::Off
+}
+
+/// The writes a warm run may still make, by what the store's writer calls the job (`ContentStore::write_back`'s
+/// `what`), and why each is allowed: locks against another process's collection, the timestamps by which
+/// collection judges recency, and the cost statistics. Nothing else is exempt from the warm check.
+///
+/// Changing this list needs the user's approval (decision 0211). `scripts/check/check-warm-mode.py` holds a copy
+/// and refuses a commit that changes one without the other.
+pub const WARM_WRITES_ALLOWED: &[(&str, &str)] = &[
+    ("the run's hold on its plans", "a lock: a lease on the run's plans against a collection in another process (decision 0053)"),
+    ("the run's hold released", "a lock: the lease's release"),
+    ("a source's pin", "a lock: a lease on a source the run reads, until its manifest names it (O95)"),
+    ("the combined program's pins released", "a lock: the release of the combined program's leases"),
+    ("the run's manifest", "a timestamp, only for a manifest identical to one stored: its last run and time move, by which collection keeps a root's last two. A new manifest is a fault (`warm_fault`, in the job)"),
+    ("the journal's aged cursor", "a timestamp: a root's journal cursor, or a run record's (the cutoff's checks), stored again once it is a million events behind with nothing named since (`observe::CURSOR_AGE`), as a replay from far back is slow"),
+    ("the cost statistics", "the cost statistics' own file (`costs`): the samples, SQL plan reports and kernel forms a run measured, and the model trained on them; what a run costs is never a result it recomputes (approved 2026-11-15)"),
+];
+
+/// Whether the store's writer may run a job called `what` in a warm run (`WARM_WRITES_ALLOWED`).
+pub fn warm_write_allowed(what: &str) -> bool {
+    WARM_WRITES_ALLOWED.iter().any(|(w, _)| *w == what)
+}
+
+thread_local! {
+    /// On the store's writer: whether a transaction is open for listed jobs (`warm_scope`), and whether every job
+    /// it ran so far is listed (`warm_job`).
+    static WARM_SCOPE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// While it lives, the commits on this thread are a listed write's (`WARM_WRITES_ALLOWED`) if every job named to
+/// `warm_job` inside it is listed; they are not a fault then. The store's writer holds one around each transaction.
+pub struct WarmScope(Option<bool>);
+
+pub fn warm_scope() -> WarmScope {
+    WarmScope(WARM_SCOPE.with(|s| s.replace(Some(true))))
+}
+
+impl Drop for WarmScope {
+    fn drop(&mut self) {
+        WARM_SCOPE.with(|s| s.set(self.0));
+    }
+}
+
+/// The store's writer runs the job called `what` in the open `warm_scope`.
+pub fn warm_job(what: &str) {
+    if warm() && !warm_write_allowed(what) {
+        WARM_SCOPE.with(|s| s.set(s.get().map(|_| false)));
+    }
+}
+
+/// How many faults a `RERAIL_WARM=list` run has had so far: its exit status is 3 if any.
+static WARM_FAULTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A recomputation in a warm run (`warm_mode`): `kind` is what happened (a SQLite write, a queued write, ...),
+/// `detail` which one. Nothing without `RERAIL_WARM`. Safe inside SQLite's callbacks: it aborts, never unwinds.
+pub fn warm_fault(kind: &'static str, detail: impl FnOnce() -> String) {
+    let mode = warm_mode();
+    if mode == Warm::Off {
+        return;
+    }
+    let mut detail = detail();
+    if detail.len() > 600 {
+        detail.truncate(detail.floor_char_boundary(600));
+        detail.push('…');
+    }
+    let thread = std::thread::current().name().unwrap_or("unnamed").to_owned();
+    if mode == Warm::Fail {
+        eprintln!("rerail: RERAIL_WARM: {kind} in a warm run\n  {detail}\n  thread {thread}, span {}\n{}", current(), std::backtrace::Backtrace::force_capture());
+        std::process::abort();
+    }
+    // Each fault is a line as it happens (`sort | uniq -c` groups them), the first 60 with their stacks.
+    let n = WARM_FAULTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    #[cfg(not(windows))]
+    if n == 1 {
+        extern "C" fn report() {
+            eprintln!("rerail: RERAIL_WARM: {} recomputations in a warm run", WARM_FAULTS.load(std::sync::atomic::Ordering::Relaxed));
+            // SAFETY: ends the process with the warm check's status, after its other exit handlers ran.
+            unsafe { libc::_exit(3) };
+        }
+        // SAFETY: registers a function without arguments, run once as the process exits.
+        unsafe { libc::atexit(report) };
+    }
+    if n <= 60 {
+        eprintln!("rerail: RERAIL_WARM: {kind} in a warm run\n  {detail}\n  thread {thread}, span {}\n{}", current(), std::backtrace::Backtrace::force_capture());
+    } else {
+        eprintln!("rerail: RERAIL_WARM: {kind}: {detail} (thread {thread}, span {})", current());
+    }
 }
 
 /// Whether the store's connections trace their statements: for the profile, or the strict mode.
@@ -639,7 +1588,7 @@ pub fn strict_statement(conn: &'static str, text: &str) {
         return;
     }
     // A run reads before its first wave; a process's runs (phase 0's include graphs, then the run) each do.
-    let inside = WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0;
+    let inside = waves_here();
     if !inside && reads_only(text) {
         return;
     }
@@ -664,8 +1613,45 @@ fn violation(when: &str, what: &str) -> ! {
     std::process::abort();
 }
 
+/// A write transaction committing on connection `db`: a fault of the warm check (`warm_fault`), naming the database
+/// and the statement that commits it. SQLite calls a commit hook for a transaction that wrote (or took the write
+/// lock, `BEGIN IMMEDIATE`), never for a read.
+///
+/// # Safety
+/// `db` is an open connection, and this runs on its thread inside its commit hook.
+pub unsafe fn warm_commit(db: *mut rusqlite::ffi::sqlite3) {
+    use rusqlite::ffi;
+    if !warm() || WARM_SCOPE.with(|s| s.get() == Some(true)) {
+        return;
+    }
+    // SAFETY: the caller's connection.
+    let file = unsafe {
+        let file = ffi::sqlite3_db_filename(db, c"main".as_ptr());
+        if file.is_null() { String::new() } else { std::ffi::CStr::from_ptr(file).to_string_lossy().into_owned() }
+    };
+    let kind = if file.is_empty() { "a SQLite write committed in memory" } else { "a SQLite write committed to a file" };
+    warm_fault(kind, || {
+        // SAFETY: the caller's connection; its statements are listed under its mutex, which the hook holds.
+        unsafe {
+            let mut statement = String::new();
+            let mut s = ffi::sqlite3_next_stmt(db, std::ptr::null_mut());
+            while !s.is_null() {
+                if ffi::sqlite3_stmt_busy(s) != 0 {
+                    let sql = ffi::sqlite3_sql(s);
+                    if !sql.is_null() {
+                        statement = std::ffi::CStr::from_ptr(sql).to_string_lossy().split_whitespace().collect::<Vec<_>>().join(" ");
+                    }
+                }
+                s = ffi::sqlite3_next_stmt(db, s);
+            }
+            format!("{}: {statement}", if file.is_empty() { "(in memory)" } else { file.as_str() })
+        }
+    });
+}
+
 /// In the strict mode, every SQLite connection the process opens checks its statements (`strict_statement`): one that
-/// sets a trace of its own (the store's, the run's) checks them there.
+/// sets a trace of its own (the store's, the run's) checks them there. In the warm mode (`warm`), each checks its
+/// commits (`warm_commit`).
 pub fn strict_on_every_connection() {
     use rusqlite::ffi;
     unsafe extern "C" fn trace(event: u32, _: *mut std::ffi::c_void, p: *mut std::ffi::c_void, _: *mut std::ffi::c_void) -> std::ffi::c_int {
@@ -676,12 +1662,25 @@ pub fn strict_on_every_connection() {
         }
         0
     }
+    unsafe extern "C" fn committed(db: *mut std::ffi::c_void) -> std::ffi::c_int {
+        // SAFETY: the connection SQLite commits on, passed as the hook's argument, on its thread.
+        unsafe { warm_commit(db.cast()) };
+        0
+    }
     unsafe extern "C" fn opened(db: *mut ffi::sqlite3, _: *mut *mut std::ffi::c_char, _: *const ffi::sqlite3_api_routines) -> std::ffi::c_int {
         // SAFETY: SQLite calls this with a connection it has just opened.
-        unsafe { ffi::sqlite3_trace_v2(db, ffi::SQLITE_TRACE_STMT as u32, Some(trace), std::ptr::null_mut()) };
+        unsafe {
+            if strict() {
+                ffi::sqlite3_trace_v2(db, ffi::SQLITE_TRACE_STMT as u32, Some(trace), std::ptr::null_mut());
+            }
+            // A connection that sets a commit hook of its own (the store's, for its atoms) calls `warm_commit` there.
+            if warm() {
+                ffi::sqlite3_commit_hook(db, Some(committed), db.cast());
+            }
+        }
         ffi::SQLITE_OK
     }
-    if strict() {
+    if strict() || warm() {
         // SAFETY: registers a function with the signature SQLite calls; it outlives every connection.
         unsafe { ffi::sqlite3_auto_extension(Some(opened)) };
     }
@@ -691,6 +1690,7 @@ impl Drop for Waves {
     fn drop(&mut self) {
         if self.0 {
             WAVES.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            STAGE.with(|s| s.set(self.1));
         }
     }
 }
@@ -715,13 +1715,13 @@ pub fn is_behind() -> bool {
 }
 
 fn in_waves() -> bool {
-    on() && WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0 && !BEHIND.with(std::cell::Cell::get)
+    on() && waves_here() && !BEHIND.with(std::cell::Cell::get)
 }
 
 /// In the strict mode a wave's wait for the writer ends the process, as its SQL would (`strict_statement`); the run's last
 /// wait, for every queued write, is the end of the run.
 fn strict_wait(what: &str) {
-    if strict() && !BEHIND.with(std::cell::Cell::get) && WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+    if strict() && !BEHIND.with(std::cell::Cell::get) && waves_here() {
         violation("inside the waves", &format!("a wait for the store's writer: {what}"));
     }
 }
@@ -766,7 +1766,7 @@ pub fn sql_in_wave(conn: &'static str, text: &str, ns: u64) {
 /// SQL waits attributed to their connection and span, including the content store's separate connection.
 /// Each row is (span, connection and SQL text, executions, nanoseconds).
 pub fn sql_waits() -> Vec<(String, String, u64, u64)> {
-    state().hazards.iter().map(|((_, path, text), (runs, ns))|
+    merged().hazards.iter().map(|((_, path, text), (runs, ns))|
         (path.clone(), text.clone(), *runs, *ns)).collect()
 }
 
@@ -840,11 +1840,15 @@ pub fn plan_work(steps: &[(u64, u64)]) -> u64 {
     steps.iter().map(|(a, _)| a).sum::<u64>() + steps.last().map_or(0, |s| s.1)
 }
 
-/// Adds a native plan's rows in and out per step, and its probes' CPU seconds, to the current span.
-pub fn native(plan: String, steps: &[(u64, u64)], cpu_s: f64) {
+/// Adds a native plan's rows in and out per step, its probes' CPU seconds, and their CPU seconds per step and last
+/// its head's rows made (`step_cpu`, empty where not timed), to the current span.
+pub fn native(plan: String, steps: &[(u64, u64)], cpu_s: f64, step_cpu: &[f64]) {
     let path = current();
     let mut state = state();
     *state.native_cpu.entry((path.clone(), plan.clone())).or_default() += cpu_s;
+    if !step_cpu.is_empty() {
+        add_cpu(state.native_step_cpu.entry((path.clone(), plan.clone())).or_default(), step_cpu);
+    }
     let t = state.native.entry((path, plan)).or_default();
     if t.len() < steps.len() {
         t.resize(steps.len(), (0, 0));
@@ -901,27 +1905,101 @@ pub fn now() -> f64 {
     cpu()
 }
 
-/// A run-level decision or optimization under `topic` (counted when made again, as per chunk).
+/// A run-level decision or optimization under `topic` (counted when made again, as per chunk). Inside a step that
+/// keeps its decisions with what it produces (`Deciding`), it is made with profiling off too: the kept rows are a
+/// function of the step's inputs, not of whether the process that made them profiled.
 pub fn decision(topic: &str, text: impl FnOnce() -> String) {
-    if !on() {
+    let deciding = DECIDING.with(|d| !d.borrow().is_empty());
+    if !on() && !deciding {
         return;
     }
     // The text first: making it may profile too (a split's span), and the state's lock is not reentrant.
     let text = text();
-    *state().decisions.entry((topic.to_owned(), text)).or_default() += 1;
+    if deciding {
+        DECIDING.with(|d| {
+            for step in d.borrow_mut().iter_mut() {
+                *step.entry((topic.to_owned(), text.clone())).or_default() += 1;
+            }
+        });
+    }
+    if on() {
+        *state().decisions.entry((topic.to_owned(), text)).or_default() += 1;
+    }
 }
 
-/// The decisions made so far (none when profiling is off): `decisions_since` takes the ones made after.
+/// A decision (topic, text) and how often it was made.
+pub type Decided = ((String, String), u64);
+
+thread_local! {
+    /// The open steps' decisions on this thread (`Deciding`), outermost first: a decision is each one's.
+    static DECIDING: std::cell::RefCell<Vec<BTreeMap<(String, String), u64>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A step whose decisions are kept with what it produces (decision 0269): open from `open` to `close`, every
+/// decision made on this thread is the step's (and every enclosing step's). A step's passes decide on its thread; a
+/// pool job's decision is the profile's alone. Dropped without `close` (the step failed), it keeps nothing.
+pub struct Deciding {
+    depth: usize,
+}
+
+impl Deciding {
+    pub fn open() -> Self {
+        let depth = DECIDING.with(|d| {
+            let mut d = d.borrow_mut();
+            d.push(BTreeMap::new());
+            d.len()
+        });
+        Deciding { depth }
+    }
+
+    /// The step's decisions, in order.
+    pub fn close(self) -> Vec<Decided> {
+        let made = DECIDING.with(|d| {
+            let mut d = d.borrow_mut();
+            assert_eq!(d.len(), self.depth, "steps keeping their decisions close innermost first");
+            d.pop().expect("an open step")
+        });
+        std::mem::forget(self);
+        made.into_iter().collect()
+    }
+}
+
+impl Drop for Deciding {
+    fn drop(&mut self) {
+        DECIDING.with(|d| d.borrow_mut().truncate(self.depth - 1));
+    }
+}
+
+/// The decisions a version this run reused made when it was made (decision 0269), taken from `from` (`memory`,
+/// `store`): the run states them as its own, as a run that made the version would.
+pub fn reused(from: &'static str, made: &[Decided]) {
+    if !on() || made.is_empty() {
+        return;
+    }
+    let mut state = state();
+    for (k, n) in made {
+        *state.decisions.entry(k.clone()).or_default() += n;
+        state.kept.insert(k.clone(), from);
+    }
+}
+
+/// The decisions made so far (none when profiling is off).
 pub fn decisions() -> BTreeMap<(String, String), u64> {
     if !on() {
         return BTreeMap::new();
     }
-    state().decisions.clone()
+    merged().decisions.clone()
 }
 
-/// The decisions made since `before` (`decisions`), with how often: what a step decided.
-pub fn decisions_since(before: &BTreeMap<(String, String), u64>) -> Vec<((String, String), u64)> {
-    decisions().into_iter().filter_map(|(k, n)| n.checked_sub(before.get(&k).copied().unwrap_or(0)).filter(|d| *d > 0).map(|d| (k, d))).collect()
+/// The decisions made so far, taken: the next call returns those made after this one (a measurement's steps).
+pub fn take_decisions() -> BTreeMap<(String, String), u64> {
+    if !on() {
+        return BTreeMap::new();
+    }
+    // Every thread's (`merged`): a step's decisions made on the pool are its too.
+    let mut all = merged();
+    all.kept.clear();
+    std::mem::take(&mut all.decisions)
 }
 
 /// The strata the device ran (decision 0095, step 4): in all, then the costliest; and the strata placed there that it
@@ -936,22 +2014,29 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
     for (_, t) in &ran {
         sum.add(&t.gpu);
     }
-    let cpu: f64 = ran.iter().map(|(_, t)| t.cpu).sum();
+    let cpu: f64 = ran.iter().map(|(_, t)| t.gpu_cpu).sum();
+    let elsewhere: f64 = ran.iter().map(|(_, t)| t.cpu - t.gpu_cpu).sum();
+    let all_runs: u64 = ran.iter().map(|(_, t)| t.runs).sum();
     let ms = |s: f64| s * 1e3;
-    let _ = writeln!(r, "Strata run on the GPU: {} strata, {} runs, {} rules in {} stages; their CPU {:.2} s (the whole stratum: planning its replans, the store, the device's host part)",
-        ran.len(), sum.runs, sum.rules, sum.stages, cpu);
+    let _ = writeln!(r, "Strata run on the GPU: {} strata, {} runs, {} rules in {} stages; those runs' CPU {:.2} s (the whole run: planning its replans, the store, the device's host part); the same strata's other {} runs, on the CPU: {:.2} s",
+        ran.len(), sum.runs, sum.rules, sum.stages, cpu, all_runs - sum.runs, elsewhere);
     let _ = writeln!(r, "  GPU {:.1} ms (command buffers' timestamps) in {} submissions, {} dispatches ({} stages run again after an overflow, {} after the text arena filled); {} runs sent in their level's wave; {} stages' grids sized on the device",
         ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns, sum.arena_reruns, sum.waved, sum.sized);
     let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, uploads {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
         ms(sum.host()), ms(sum.encode), ms(sum.upload), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
-    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device); texts made {}",
-        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.resident, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.made);
+    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), read in place {}, found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device); texts made {}",
+        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.in_place, sum.resident, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.made);
+    let by: Vec<String> = UPLOAD_KINDS.iter().zip(&sum.upload_by).map(|(k, (b, c))| format!("{k} {:.1} MB in {:.1} ms", *b as f64 / 1e6, ms(*c))).collect();
+    let _ = writeln!(r, "  uploads by what they read: {}", by.join(", "));
     let mut top = ran.clone();
     top.sort_by(|a, b| b.1.cpu.total_cmp(&a.1.cpu));
-    let _ = writeln!(r, "{:>8} {:>8} {:>8} {:>8} {:>5} {:>6} {:>6} {:>10}  stratum (costliest 25 on the GPU)", "cpu ms", "host ms", "gpu ms", "est ms", "runs", "rules", "subm", "rows");
+    // A stratum runs once per chunk and may run some on each side: its GPU runs' CPU and work beside its CPU runs'.
+    let _ = writeln!(r, "{:>8} {:>8} {:>8} {:>8} {:>8} {:>9} {:>9} {:>6} {:>6} {:>10}  stratum (costliest 25 on the GPU; g = its GPU runs, c = its CPU runs)",
+        "g cpu ms", "host ms", "gpu ms", "c cpu ms", "est ms", "runs g/all", "work g/c", "rules", "subm", "rows");
     for (key, t) in top.iter().take(25) {
         let g = &t.gpu;
-        let _ = writeln!(r, "{:>8.2} {:>8.2} {:>8.3} {:>8.3} {:>5} {:>6} {:>6} {:>10}  {}", ms(t.cpu), ms(g.host()), ms(g.gpu), ms(t.gpu_estimate), g.runs, g.rules, g.submissions, g.rows, short(key, 60));
+        let _ = writeln!(r, "{:>8.2} {:>8.2} {:>8.3} {:>8.2} {:>8.3} {:>9} {:>9} {:>6} {:>6} {:>10}  {}", ms(t.gpu_cpu), ms(g.host()), ms(g.gpu), ms(t.cpu - t.gpu_cpu), ms(t.gpu_estimate),
+            format!("{}/{}", g.runs, t.runs), format!("{}/{}", si(t.gpu_work), si(t.work - t.gpu_work)), g.rules, g.submissions, g.rows, short(key, 60));
     }
     if !refused.is_empty() {
         let mut by: BTreeMap<&str, (u64, f64, Vec<(f64, &str)>)> = BTreeMap::new();
@@ -993,20 +2078,53 @@ pub fn fallback(key: &str, class: String) {
     state().fallbacks.insert(key.to_owned(), class);
 }
 
+/// The strata that fell back to SQLite so far, by key: the kind of literal declined (a test's check that a form runs
+/// natively).
+pub fn declined() -> BTreeMap<String, String> {
+    state().fallbacks.clone()
+}
+
+/// The strata a span path names as its last part: what follows each `stratum ` at the path's start or after a `/`
+/// (`local/stratum a/b` names `a/b`; `stratum p/engine run` names `p/engine run`, which no stratum is).
+fn stratum_tails(path: &str) -> impl Iterator<Item = &str> {
+    path.match_indices("stratum ").filter(|&(i, _)| i == 0 || path.as_bytes()[i - 1] == b'/').map(|(i, m)| &path[i + m.len()..])
+}
+
 /// The strata that fell back to SQLite, costliest first, and the same by the kind of literal declined: each one's
 /// CPU (its `stratum …` spans, wherever they ran) and SQLite's VM steps. What the native engine lacks, by its cost.
 pub fn fallbacks(r: &mut String, state: &State) {
     let roots: f64 = state.spans.iter().filter(|(p, _)| !p.contains('/')).map(|(_, t)| t.total).sum();
+    // One pass over the spans and one over the statements, not one each per stratum.
+    let mut spans: HashMap<&str, (f64, u64)> = HashMap::new();
+    for (path, t) in &state.spans {
+        for key in stratum_tails(path) {
+            let e = spans.entry(key).or_default();
+            e.0 += t.total;
+            e.1 += t.calls;
+        }
+    }
+    // A statement charges the stratum it ran in (a path's last part) and every stratum it ran under
+    // (`stratum <key>/…`): a tail and each of its prefixes ending before a `/`, each key once.
+    let mut vms: HashMap<&str, u64> = HashMap::new();
+    let mut keys: Vec<&str> = Vec::new();
+    for ((path, _), s) in &state.sql {
+        keys.clear();
+        for tail in stratum_tails(path) {
+            keys.push(tail);
+            keys.extend(tail.match_indices('/').map(|(j, _)| &tail[..j]));
+        }
+        keys.sort_unstable();
+        keys.dedup();
+        for key in &keys {
+            *vms.entry(key).or_default() += s.vm;
+        }
+    }
     let mut rows: Vec<(f64, u64, u64, &String, &String)> = state
         .fallbacks
         .iter()
         .map(|(key, class)| {
-            let name = format!("stratum {key}");
-            let at = |p: &String| p == &name || p.ends_with(&format!("/{name}"));
-            let cpu: f64 = state.spans.iter().filter(|(p, _)| at(p)).map(|(_, t)| t.total).sum();
-            let calls: u64 = state.spans.iter().filter(|(p, _)| at(p)).map(|(_, t)| t.calls).sum();
-            let vm: u64 = state.sql.iter().filter(|((p, _), _)| at(p) || p.contains(&format!("{name}/"))).map(|(_, s)| s.vm).sum();
-            (cpu, vm, calls, key, class)
+            let (cpu, calls) = spans.get(key.as_str()).copied().unwrap_or((0.0, 0));
+            (cpu, vms.get(key.as_str()).copied().unwrap_or(0), calls, key, class)
         })
         .collect();
     rows.sort_by(|a, b| b.0.total_cmp(&a.0));
@@ -1053,11 +2171,14 @@ pub fn executor(key: &str, ran: &'static str, native: Option<String>, device: Ve
 /// Every stratum's executors and hazards: by hazard, costliest first (a stratum counts under each of its hazards),
 /// then the strata. What to build next, on the device and in the native engine, by what it costs.
 pub fn executors(r: &mut String, state: &State) {
-    let cpu_of = |key: &str| -> f64 {
-        let name = format!("stratum {key}");
-        state.spans.iter().filter(|(p, _)| **p == name || p.ends_with(&format!("/{name}"))).map(|(_, t)| t.total).sum()
-    };
-    let rows: Vec<(f64, &String, &Blocked)> = state.blocked.iter().map(|(k, b)| (cpu_of(k), k, b)).collect();
+    // One pass over the spans, not one per stratum (thousands of strata over tens of thousands of spans).
+    let mut by_key: HashMap<&str, f64> = HashMap::new();
+    for (path, t) in &state.spans {
+        for key in stratum_tails(path) {
+            *by_key.entry(key).or_default() += t.total;
+        }
+    }
+    let rows: Vec<(f64, &String, &Blocked)> = state.blocked.iter().map(|(k, b)| (by_key.get(k.as_str()).copied().unwrap_or(0.0), k, b)).collect();
     let mut ran: BTreeMap<&str, u64> = BTreeMap::new();
     for (_, _, b) in &rows {
         for (e, n) in &b.ran {
@@ -1166,6 +2287,15 @@ pub fn planned(
     }
 }
 
+/// A plan's CPU seconds per step, and last its head's rows made, over the walks `planned`'s `actual` counted.
+pub fn planned_cpu(key: &str, kind: &str, plan: &RulePlan, cpu: &[f64]) {
+    if !on() || cpu.is_empty() {
+        return;
+    }
+    let text = plan.steps.iter().map(|s| s.literal.as_str()).collect::<Vec<_>>().join(" , ");
+    add_cpu(&mut state().plans.entry((key.to_owned(), kind.to_owned(), text)).or_default().cpu, cpu);
+}
+
 /// A device kernel's run in the current span: its launches, GPU seconds, the host's wall seconds waiting, its cells.
 pub fn device(kernel: &str, launches: u64, gpu: f64, wall: f64, cells: u64) {
     if !on() {
@@ -1218,12 +2348,12 @@ pub fn one_run_if_free() -> Option<std::sync::MutexGuard<'static, ()>> {
 
 /// Forgets everything recorded (a run's start).
 pub fn reset() {
-    *state() = State::default();
+    *merged() = State::default();
 }
 
 /// The statements recorded, by SQLite's time, most first: (span, text, totals).
 pub fn statements() -> Vec<(String, String, SqlTotal)> {
-    let state = state();
+    let state = merged();
     let mut all: Vec<_> = state.sql.iter().map(|((p, t), s)| (p.clone(), t.clone(), s.clone())).collect();
     all.sort_by_key(|(_, _, s)| std::cmp::Reverse(s.ns));
     all
@@ -1231,7 +2361,7 @@ pub fn statements() -> Vec<(String, String, SqlTotal)> {
 
 /// The spans recorded: path and totals.
 pub fn spans() -> BTreeMap<String, SpanTotal> {
-    state().spans.clone()
+    merged().spans.clone()
 }
 
 pub fn short(s: &str, n: usize) -> String {
@@ -1262,7 +2392,9 @@ pub fn explain(r: &mut String, state: &State) {
             let _ = writeln!(r, "{t}:");
             topic = t;
         }
-        let _ = writeln!(r, "  - {text}{}", if *n > 1 { format!("  (x{n})") } else { String::new() });
+        let times = if *n > 1 { format!("  (x{n})") } else { String::new() };
+        let kept = state.kept.get(&(t.clone(), text.clone())).map_or(String::new(), |from| format!("  (kept: {from})"));
+        let _ = writeln!(r, "  - {text}{times}{kept}");
     }
     let _ = writeln!(
         r,
@@ -1283,7 +2415,9 @@ pub fn explain(r: &mut String, state: &State) {
     }
     r.push('\n');
     for s in &state.strata {
-        let plans: Vec<(&(String, String, String), &PlanTotal)> = state.plans.iter().filter(|((k, _, _), _)| *k == s.key).collect();
+        // The stratum's plans, a range of the map (keyed by stratum first), not a scan of every plan per stratum.
+        let plans: Vec<(&(String, String, String), &PlanTotal)> =
+            state.plans.range((s.key.clone(), String::new(), String::new())..).take_while(|((k, _, _), _)| *k == s.key).collect();
         let planning: f64 = plans.iter().map(|(_, t)| t.planning).sum();
         let _ = writeln!(r, "Stratum {}  [engine: {}]  (loops={}, planning {planning:.3} s CPU)", short(&s.key, 120), s.engine, s.loops);
         if !s.why.is_empty() {
@@ -1311,11 +2445,21 @@ pub fn explain(r: &mut String, state: &State) {
                     String::new()
                 };
                 let basis = if st.basis.is_empty() { String::new() } else { format!("  [{}]", st.basis) };
-                let _ = writeln!(r, "       {:>2}. {:<44} {:<30} {:<20} est {:>11}  {actual}{basis}", i + 1, short(&st.literal, 44), short(&st.access, 30), short(&st.source, 20), rows(st.rows));
+                // Its CPU, and a row in's (Q36: a view's row can cost far more than a unit of work).
+                let cpu = match (t.cpu.get(i), t.actual.get(i)) {
+                    (Some(&c), Some(&(a, _))) if a > 0 => format!(" cpu {:.1} ms ({:.0} ns a row in)", c * 1e3, c * 1e9 / a as f64),
+                    (Some(&c), _) => format!(" cpu {:.1} ms", c * 1e3),
+                    _ => String::new(),
+                };
+                let _ = writeln!(r, "       {:>2}. {:<44} {:<30} {:<20} est {:>11}  {actual}{cpu}{basis}", i + 1, short(&st.literal, 44), short(&st.access, 30), short(&st.source, 20), rows(st.rows));
                 for (lit, per, why) in &st.passed {
                     let why = if why.is_empty() { String::new() } else { format!("  [{why}]") };
                     let _ = writeln!(r, "           passed over {:<44} {per:.1} rows a binding{why}", short(lit, 44));
                 }
+            }
+            // The head's rows made (each offered to its relation's new rows), after the last step's.
+            if t.cpu.len() == t.actual.len() + 1 && let Some(c) = t.cpu.last() {
+                let _ = writeln!(r, "           head's rows made: cpu {:.1} ms", c * 1e3);
             }
         }
     }
@@ -1412,7 +2556,7 @@ pub fn open_spans() -> String {
         }
         if let Some((text, since)) = &t.statement {
             let _ = writeln!(r, "  SQL running for {:.2} s (wall): {}", since.elapsed().as_secs_f64(), short(text, 600));
-            let plan = state().notes.get(&format!("plan:{}", normal(text))).cloned();
+            let plan = merged().notes.get(&format!("plan:{}", normal(text))).cloned();
             for line in plan.iter().flat_map(|p| p.lines()) {
                 let _ = writeln!(r, "      {line}");
             }
@@ -1433,6 +2577,123 @@ pub fn projection_plan(prog: &crate::code_rule_dsl::logic::front::Program, reads
 pub mod tests {
     use super::*;
 
+    /// Each stratum's CPU in the executors' report is its spans' (`stratum <key>`, alone or the last part of a path),
+    /// a key of several relations (`a/b`) among them, and no other span's.
+    #[test]
+    fn executors_charge_each_stratum_its_own_spans() {
+        let mut state = State::default();
+        let t = |total: f64| SpanTotal { calls: 1, total, ..Default::default() };
+        for (path, cpu) in [
+            ("stratum p", 1.0),
+            ("local/run/stratum p", 2.0),
+            ("cross/stratum a/b", 4.0),
+            ("stratum a/b", 8.0),
+            ("local/stratum pq", 16.0),
+            ("stratum p/engine run", 32.0),
+            ("other", 64.0),
+        ] {
+            state.spans.insert(path.into(), t(cpu));
+        }
+        for key in ["p", "a/b", "pq", "none"] {
+            state.blocked.entry(key.into()).or_default().ran.insert("native CPU", 1);
+        }
+        let mut r = String::new();
+        executors(&mut r, &state);
+        let cpu = |key: &str| r.lines().find(|l| l.trim_start().split_once("  ").is_some_and(|(_, rest)| rest.starts_with(&format!("{key}: ")))).map(|l| l.split_whitespace().next().unwrap().to_owned());
+        assert_eq!(cpu("p").as_deref(), Some("3.000"), "{r}");
+        assert_eq!(cpu("a/b").as_deref(), Some("12.000"), "{r}");
+        assert_eq!(cpu("pq").as_deref(), Some("16.000"), "{r}");
+        assert_eq!(cpu("none").as_deref(), Some("0.000"), "{r}");
+    }
+
+    /// A declined stratum's row in the SQLite fallbacks: its spans' CPU and runs (`stratum <key>`, alone or the last
+    /// part of a path), and the VM steps of SQL run there or under it (`stratum <key>/…`); a key of several relations
+    /// (`a/b`) beside one that is its prefix (`a`).
+    #[test]
+    fn fallbacks_charge_each_stratum_its_own_spans_and_sql() {
+        let mut state = State::default();
+        for (path, cpu) in [("stratum p", 1.0), ("local/stratum p", 2.0), ("stratum p/x", 4.0), ("stratum a/b", 8.0), ("other", 16.0)] {
+            state.spans.insert(path.into(), SpanTotal { calls: 1, total: cpu, ..Default::default() });
+        }
+        for (path, vm) in [("stratum p", 10), ("x/stratum p/q", 100), ("stratum p/x", 1000), ("stratum a/b/c", 10000), ("stratum a/b", 5), ("other", 7)] {
+            state.sql.insert((path.into(), "select 1".into()), SqlTotal { vm, ..Default::default() });
+        }
+        for key in ["p", "a/b", "a", "none"] {
+            state.fallbacks.insert(key.into(), "negation".into());
+        }
+        let mut r = String::new();
+        fallbacks(&mut r, &state);
+        let row = |key: &str| {
+            r.lines().find(|l| l.split_whitespace().nth(3) == Some(&format!("{key}:"))).map(|l| l.split_whitespace().take(3).collect::<Vec<_>>().join(" "))
+        };
+        assert_eq!(row("p").as_deref(), Some("3.000 2 1110"), "{r}");
+        assert_eq!(row("a/b").as_deref(), Some("8.000 1 10005"), "{r}");
+        assert_eq!(row("a").as_deref(), Some("0.000 0 10005"), "{r}");
+        assert_eq!(row("none").as_deref(), Some("0.000 0 0"), "{r}");
+    }
+
+    /// Decision 0269: a step keeps what it decides, with profiling off too, nested steps each theirs, a failed step
+    /// nothing (its enclosing step keeps what it decided); a run that reuses the step's output states them, kept.
+    #[test]
+    fn a_step_keeps_its_decisions_and_a_reuse_states_them() {
+        let _serial = one_run();
+        set(false);
+        let outer = Deciding::open();
+        decision("t", || "a".into());
+        let inner = Deciding::open();
+        decision("t", || "b".into());
+        let inner = inner.close();
+        {
+            let _failed = Deciding::open();
+            decision("t", || "c".into());
+        }
+        decision("t", || "a".into());
+        let outer = outer.close();
+        let d = |text: &str, n: u64| (("t".to_owned(), text.to_owned()), n);
+        assert_eq!(inner, vec![d("b", 1)]);
+        assert_eq!(outer, vec![d("a", 2), d("b", 1), d("c", 1)]);
+        set(true);
+        reset();
+        reused("store", &inner);
+        let mut r = String::new();
+        explain(&mut r, &state());
+        set(false);
+        assert!(r.contains("  - b  (kept: store)\n"), "{r}");
+    }
+
+    /// A thread records into its own shard: another thread holding its records does not hold it up (one lock for
+    /// every thread's records made sixteen threads take turns at it), and an ended thread's records are read with
+    /// the rest.
+    #[test]
+    fn a_thread_records_while_another_holds_its_records() {
+        let _serial = one_run();
+        set(true);
+        reset();
+        let held = state();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let tx = tx.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..10 {
+                        let _s = span(|| "xsharded".into());
+                        decision("xshard", || "on another thread".into());
+                    }
+                    let _ = tx.send(());
+                })
+            })
+            .collect();
+        let recorded = (0..8).all(|_| rx.recv_timeout(std::time::Duration::from_secs(5)).is_ok());
+        drop(held);
+        for t in threads {
+            t.join().unwrap();
+        }
+        let (d, s) = (decisions(), spans());
+        set(false);
+        assert!(recorded, "a thread waited for another's records to record its own");
+        assert_eq!(d.get(&("xshard".to_owned(), "on another thread".to_owned())), Some(&80));
+        assert_eq!(s.get("xsharded").map(|t| t.calls), Some(80));
+    }
 
     #[test]
     fn spans_nest_and_charge_their_own_cpu() {
@@ -1535,6 +2796,15 @@ pub mod tests {
 
 }
 
+/// What a device's uploads read (`Report::upload_by`): a flat relation's rows (the store's), a view's rows (a
+/// source's, a tape view's read row by row), and the names of symbols (text tests, `str_cmp`).
+pub const UPLOAD_KINDS: [&str; 4] = ["flat relations", "views", "names", "views made on the device"];
+pub const UPLOAD_FLAT: usize = 0;
+pub const UPLOAD_VIEW: usize = 1;
+pub const UPLOAD_NAMES: usize = 2;
+/// A view its batch's chunk block made on the device (decision 0289 §2): its bytes, and the host's CPU encoding it.
+pub const UPLOAD_MADE: usize = 3;
+
 /// What a stratum's device run did, for the profile.
 #[derive(Clone, Debug, Default)]
 pub struct Report {
@@ -1566,7 +2836,11 @@ pub struct Report {
     /// Relations uploaded (and their bytes), found resident; sorts made, found resident.
     pub uploads: u32,
     pub upload_bytes: u64,
+    /// The uploads by what they read (`UPLOAD_KINDS`, in order): bytes and this thread's CPU.
+    pub upload_by: [(u64, f64); 4],
     pub resident_hits: u32,
+    /// Relations read where they lie, in their block (decision 0325).
+    pub in_place: u32,
     pub sorts: u32,
     pub sort_hits: u32,
     /// Rows the heads made (before the store's set), and bindings the stages made.
@@ -1579,4 +2853,14 @@ pub struct Report {
     /// Why the device refused the stratum (at open, or at run time: a table past its budget), which then ran on the
     /// CPU; `None` when it ran here.
     pub refused: Option<String>,
+}
+
+/// A count in three significant figures, with k, M or G.
+fn si(n: u64) -> String {
+    match n {
+        0..1_000 => n.to_string(),
+        1_000..1_000_000 => format!("{:.3}k", n as f64 / 1e3),
+        1_000_000..1_000_000_000 => format!("{:.3}M", n as f64 / 1e6),
+        _ => format!("{:.3}G", n as f64 / 1e9),
+    }
 }

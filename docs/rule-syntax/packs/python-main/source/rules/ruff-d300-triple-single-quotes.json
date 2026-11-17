@@ -1,0 +1,82 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-d300-triple-single-quotes",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use triple double quotes for docstrings, or triple single quotes when the text itself contains triple double quotes.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "docstring": {
+            "kind": "string",
+            "regex": "^[rRuU]{0,2}['\"]",
+            "has": { "stopBy": "neighbor", "kind": "string_content", "regex": "\\S" },
+            "inside": {
+              "stopBy": { "not": { "kind": "parenthesized_expression" } },
+              "kind": "expression_statement",
+              "nthChild": { "position": 1, "ofRule": { "not": { "kind": "comment" } } },
+              "not": { "has": { "stopBy": "neighbor", "regex": "^,$" } },
+              "any": [
+                { "inside": { "stopBy": "neighbor", "kind": "module" } },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "inside": { "stopBy": "neighbor", "any": [{ "kind": "function_definition" }, { "kind": "class_definition" }] }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "use-triple-double-quotes",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              { "matches": "docstring" },
+              { "not": { "has": { "stopBy": "neighbor", "kind": "string_start", "regex": "\"\"\"$" } } },
+              { "not": { "has": { "stopBy": "neighbor", "kind": "string_content", "regex": "\"\"\"" } } }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "D300",
+        "message": "Rewrite this docstring with triple double quotes `\"\"\"`; if its text ends with a double quote, escape that quote or reword it.",
+        "suppress": { "noqa": { "codes": ["D300"] } }
+      }
+    },
+    {
+      "id": "use-triple-single-quotes",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              { "matches": "docstring" },
+              { "not": { "has": { "stopBy": "neighbor", "kind": "string_start", "regex": "'''$" } } },
+              { "has": { "stopBy": "neighbor", "kind": "string_content", "regex": "\"\"\"" } },
+              { "not": { "has": { "stopBy": "neighbor", "kind": "string_content", "regex": "'''" } } }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "D300",
+        "message": "Rewrite this docstring with triple single quotes `'''`, since its text contains `\"\"\"`; if its text ends with a single quote, escape that quote.",
+        "suppress": { "noqa": { "codes": ["D300"] } }
+      }
+    }
+  ]
+}

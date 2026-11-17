@@ -13,7 +13,7 @@ use std::fmt::Write;
 use super::SpanTotal;
 
 /// The class of a span's own CPU, from its path.
-pub(super) fn kind(path: &str) -> String {
+pub fn kind(path: &str) -> String {
     let top = path.split('/').next().unwrap_or(path);
     let has = |s: &str| path.contains(s);
     let part = match top {
@@ -46,6 +46,8 @@ pub(super) fn kind(path: &str) -> String {
         "measuring sources"
     } else if top == "stats" {
         "statistics phase (preparing, measuring, binding)"
+    } else if has("W's reference graph") {
+        "W's reference graph (a second parse, in Rust: no device form)"
     } else if has("tape") || has("parse") || has("tree-sitter") {
         "parsing"
     } else if top == "write" {
@@ -143,7 +145,7 @@ pub fn unexplained(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
 
 /// A native join plan's head relation: `seed r: …` and `join r(…) (delta at i): …` derive `r`. Lowering's copies
 /// count as the relation they copy.
-fn head(plan: &str) -> String {
+pub(super) fn head(plan: &str) -> String {
     let rest = plan.strip_prefix("seed ").or_else(|| plan.strip_prefix("join ")).unwrap_or(plan);
     let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
     let mut name = name.as_str();

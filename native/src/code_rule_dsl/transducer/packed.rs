@@ -95,67 +95,7 @@ pub mod compile_sets;
 pub mod compile_micro;
 pub use compile_micro::{Emit, Frames, Micro, RootRecord, steps as micro_steps};
 // cratify: `compile_matcher_tests` is rerail-engine's (it mounts it)
-// cratify: `metal_bulk_closure` is rerail-device-metal's (it mounts it)
-// cratify: `metal_bulk_closure_tests` is rerail-device-metal's (it mounts it)
-// cratify: `metal_candidate_batch` is rerail-device-metal's (it mounts it)
-// cratify: `metal_capture_arguments` is rerail-device-metal's (it mounts it)
-// cratify: `metal_capture_groups` is rerail-device-metal's (it mounts it)
-// cratify: `metal_capture_literals` is rerail-device-metal's (it mounts it)
-// cratify: `metal_capture_predicates` is rerail-device-metal's (it mounts it)
-pub mod metal_child_index;
-// cratify: `metal_closure_continuation` is rerail-device-metal's (it mounts it)
-// cratify: `metal_closure_prepare` is rerail-device-metal's (it mounts it)
-// cratify: `metal_closure_prepare_tests` is rerail-device-metal's (it mounts it)
-// cratify: `metal_constant_output` is rerail-device-metal's (it mounts it)
-// cratify: `metal_cutover_architecture` is rerail-device-metal's (it mounts it)
-// cratify: `metal_dynamic_execution` is rerail-device-metal's (it mounts it)
-// cratify: `metal_failure_records` is rerail-device-metal's (it mounts it)
-// cratify: `metal_frame_identity` is rerail-device-metal's (it mounts it)
-// cratify: `metal_frame_identity_tests` is rerail-device-metal's (it mounts it)
-// cratify: `metal_frontier_conformance` is rerail-device-metal's (it mounts it)
-// cratify: `metal_frontier_reduce` is rerail-device-metal's (it mounts it)
-// cratify: `metal_frontier_seed` is rerail-device-metal's (it mounts it)
-// cratify: `metal_frontier_seed_tests` is rerail-device-metal's (it mounts it)
-// cratify: `metal_frontier_validation` is rerail-device-metal's (it mounts it)
-pub mod metal_grid;
-// cratify: `metal_grid_contract` is rerail-device-metal's (it mounts it)
-// cratify: `metal_grid_executor` is rerail-device-metal's (it mounts it)
-// cratify: `metal_grid_plan` is rerail-device-metal's (it mounts it)
-// cratify: `metal_initial_prefix` is rerail-device-metal's (it mounts it)
-// cratify: `metal_initial_range_codegen` is rerail-device-metal's (it mounts it)
-// cratify: `metal_inline_predicates` is rerail-device-metal's (it mounts it)
-// cratify: `metal_named_order` is rerail-device-metal's (it mounts it)
-// cratify: `metal_output_contract` is rerail-device-metal's (it mounts it)
-// cratify: `metal_output_dispatch` is rerail-device-metal's (it mounts it)
-// cratify: `metal_output_mime` is rerail-device-metal's (it mounts it)
-// cratify: `metal_output_pages` is rerail-device-metal's (it mounts it)
-// cratify: `metal_output_selection` is rerail-device-metal's (it mounts it)
-// cratify: `metal_output_strip` is rerail-device-metal's (it mounts it)
-// cratify: `metal_position_order` is rerail-device-metal's (it mounts it)
-// cratify: `metal_grid_backend` is rerail-device-metal's (it mounts it)
-// cratify: `metal_ready_batch` is rerail-device-metal's (it mounts it)
-// cratify: `metal_ready_batch_tests` is rerail-device-metal's (it mounts it)
-// cratify: `metal_ready_proof` is rerail-device-metal's (it mounts it)
-// cratify: `metal_regex_code` is rerail-device-metal's (it mounts it)
-// cratify: `metal_regex_frontier` is rerail-device-metal's (it mounts it)
-// cratify: `metal_register_codegen` is rerail-device-metal's (it mounts it)
-// cratify: `metal_register_conformance` is rerail-device-metal's (it mounts it)
-// cratify: `metal_register_execution` is rerail-device-metal's (it mounts it)
-// cratify: `metal_semantic_columns` is rerail-device-metal's (it mounts it)
-// cratify: `metal_semantic_conformance` is rerail-device-metal's (it mounts it)
-// cratify: `metal_state_values` is rerail-device-metal's (it mounts it)
-// cratify: `metal_state_values_tests` is rerail-device-metal's (it mounts it)
-// cratify: `metal_successor` is rerail-device-metal's (it mounts it)
-// cratify: `metal_successor_branch_codegen` is rerail-device-metal's (it mounts it)
-// cratify: `metal_successor_codegen` is rerail-device-metal's (it mounts it)
-// cratify: `metal_successor_prepare` is rerail-device-metal's (it mounts it)
-// cratify: `metal_successor_repeat_codegen` is rerail-device-metal's (it mounts it)
-// cratify: `metal_successor_tests` is rerail-device-metal's (it mounts it)
-// cratify: `metal_terminal` is rerail-device-metal's (it mounts it)
-// cratify: `metal_terminal_capture_order` is rerail-device-metal's (it mounts it)
-// cratify: `metal_terminal_repeat` is rerail-device-metal's (it mounts it)
-// cratify: `metal_typed_output` is rerail-device-metal's (it mounts it)
-// cratify: `metal_unique_child_tests` is rerail-device-metal's (it mounts it)
+// cratify: `metal_semantic_conformance` is rerail-engine's (it mounts it: its fixtures parse documents)
 pub mod compilation;
 pub use compilation::PlanId;
 pub mod native_cpu;
@@ -169,6 +109,7 @@ pub mod native_cpu_output_transform;
 pub mod native_cpu_reduction;
 pub mod native_cpu_regex;
 pub mod native_cpu_scheduler;
+pub mod native_cpu_tape;
 pub mod native_cpu_value;
 // Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2), the compiler crate's.
 #[allow(unused_imports)]
@@ -180,7 +121,6 @@ pub mod output;
 pub mod packed_arena;
 pub mod packed_batch;
 pub use packed_batch::PackedExecution;
-// cratify: `metal_value_prefix_tests` is rerail-device-metal's (it mounts it)
 pub mod packed_workspace;
 pub mod scheduler;
 pub mod set_mode;
@@ -207,7 +147,6 @@ pub mod block_plan;
 #[cfg(test)]
 pub mod block_plan_tests;
 pub mod value_packing;
-pub mod value_prefix;
 
 // The transducer's word program and its opcodes, the compiler crate's (`rerail_compiler::program`).
 use rerail_compiler::program::*;
@@ -677,12 +616,6 @@ pub struct AstPatternCapture {
     pub multi: bool,
 }
 
-#[derive(Clone, Default)]
-struct PatternBindings {
-    values: BTreeMap<String, Vec<u32>>,
-    multi: BTreeSet<String>,
-}
-
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum PatternVerdict {
     Matched,
@@ -706,6 +639,8 @@ pub struct Program {
     pub ast_pattern: Option<PackedPattern>,
     /// `canonical_digest("", b"")`, once (`plain_digest`).
     pub digest: DigestMemo,
+    /// `ast_pattern` in slots, once (`slotted`).
+    slotted: SlotMemo,
 }
 
 impl std::ops::Deref for Program {
@@ -848,7 +783,6 @@ pub enum ExecutionBackend {
     MetalJit,
     /// Metal's compiled kernel once built in the background, its interpreter until then.
     MetalBackground,
-    Metal,
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
@@ -1315,54 +1249,168 @@ impl PackedPattern {
                 .zip(right)
                 .all(|(left, right)| Self::exact(tape, left, right))
     }
+}
 
-    fn bind_single(bindings: &mut PatternBindings, name: &str, node: u32, tape: &TapeDoc) -> bool {
-        match bindings.values.get(name) {
-            Some(bound) => bound.len() == 1 && Self::exact(tape, bound[0], node),
-            None => {
-                bindings.values.insert(name.to_owned(), vec![node]);
-                true
+/// A pattern as the matcher walks it: `PackedPattern`'s shape, each capture name a slot (its index in
+/// `SlottedPattern::names`), so binding a name allocates nothing.
+#[derive(Clone)]
+enum Slotted {
+    Terminal { text: String, named: bool, kind: u16 },
+    Single { slot: Option<u16>, named: bool },
+    Ellipsis(Option<u16>),
+    Internal { kind: u16, children: Vec<Slotted> },
+}
+
+/// A program's pattern in slots: the slots' names, by slot, and the slots in name order (the order
+/// `execute_ast_pattern` gives captures in).
+struct SlottedPattern {
+    root: Slotted,
+    names: Vec<String>,
+    order: Vec<u16>,
+}
+
+impl SlottedPattern {
+    fn of(pattern: &PackedPattern) -> Self {
+        fn slot(names: &mut Vec<String>, name: &Option<String>) -> Option<u16> {
+            let name = name.as_ref()?;
+            Some(match names.iter().position(|n| n == name) {
+                Some(i) => i as u16,
+                None => {
+                    names.push(name.clone());
+                    (names.len() - 1) as u16
+                }
+            })
+        }
+        fn lower(node: &PackedPattern, names: &mut Vec<String>) -> Slotted {
+            match node {
+                PackedPattern::Terminal { text, named, kind } => Slotted::Terminal { text: text.clone(), named: *named, kind: *kind },
+                PackedPattern::Single { name, named } => Slotted::Single { slot: slot(names, name), named: *named },
+                PackedPattern::Ellipsis(name) => Slotted::Ellipsis(slot(names, name)),
+                PackedPattern::Internal { kind, children } => {
+                    Slotted::Internal { kind: *kind, children: children.iter().map(|c| lower(c, names)).collect() }
+                }
             }
+        }
+        let mut names = Vec::new();
+        let root = lower(pattern, &mut names);
+        let mut order: Vec<u16> = (0..names.len() as u16).collect();
+        order.sort_by(|a, b| names[usize::from(*a)].cmp(&names[usize::from(*b)]));
+        Self { root, names, order }
+    }
+}
+
+/// A program's slotted pattern, made on first use; a clone starts empty, as `DigestMemo` does, so a
+/// clone whose pattern is then changed slots its own.
+#[derive(Default)]
+struct SlotMemo(std::sync::OnceLock<Option<Arc<SlottedPattern>>>);
+
+impl Clone for SlotMemo {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+/// What a capture name binds in a match: nothing, one node, or a multi-capture's nodes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Bound {
+    Unbound,
+    Single(u32),
+    Multi,
+}
+
+#[derive(Clone, Copy)]
+enum Binding {
+    Unbound,
+    Single(u32),
+    Multi { start: u32, len: u32 },
+}
+
+/// A match's bindings by slot, kept from one match to the next: the multi-captures' nodes in one
+/// buffer, and a log of the slots bound, so a probe is undone by truncating (`mark`, `undo`).
+#[derive(Default)]
+pub struct AstBindings {
+    slots: Vec<Binding>,
+    nodes: Vec<u32>,
+    log: Vec<u16>,
+}
+
+impl AstBindings {
+    fn reset(&mut self, slots: usize) {
+        self.slots.clear();
+        self.slots.resize(slots, Binding::Unbound);
+        self.nodes.clear();
+        self.log.clear();
+    }
+
+    fn mark(&self) -> (usize, usize) {
+        (self.log.len(), self.nodes.len())
+    }
+
+    fn undo(&mut self, (log, nodes): (usize, usize)) {
+        for slot in self.log.drain(log..) {
+            self.slots[usize::from(slot)] = Binding::Unbound;
+        }
+        self.nodes.truncate(nodes);
+    }
+
+    /// What slot `slot` binds (a multi-capture of no node binds nothing, as it gives no capture).
+    pub fn bound(&self, slot: usize) -> Bound {
+        match self.slots.get(slot) {
+            Some(Binding::Single(node)) => Bound::Single(*node),
+            Some(Binding::Multi { len, .. }) if *len > 0 => Bound::Multi,
+            _ => Bound::Unbound,
         }
     }
 
-    fn bind_multi(
-        bindings: &mut PatternBindings,
-        name: &str,
-        nodes: Vec<u32>,
-        tape: &TapeDoc,
-    ) -> bool {
-        match bindings.values.get(name) {
-            Some(bound) => {
-                let bound = bound
-                    .iter()
-                    .copied()
-                    .filter(|node| tape.transducer_flags(*node) & NAMED != 0)
-                    .collect::<Vec<_>>();
-                let candidate = nodes
-                    .iter()
-                    .copied()
-                    .filter(|node| tape.transducer_flags(*node) & NAMED != 0)
-                    .collect::<Vec<_>>();
-                bound.len() == candidate.len()
-                    && bound
-                        .into_iter()
-                        .zip(candidate)
-                        .all(|(left, right)| Self::exact(tape, left, right))
-            }
-            None => {
-                bindings.multi.insert(name.to_owned());
-                bindings.values.insert(name.to_owned(), nodes);
+    fn nodes_of(&self, slot: u16) -> &[u32] {
+        match &self.slots[usize::from(slot)] {
+            Binding::Unbound => &[],
+            Binding::Single(node) => std::slice::from_ref(node),
+            Binding::Multi { start, len } => &self.nodes[*start as usize..(*start + *len) as usize],
+        }
+    }
+
+    fn bind_single(&mut self, slot: u16, node: u32, tape: &TapeDoc) -> bool {
+        match self.nodes_of(slot) {
+            [] if matches!(self.slots[usize::from(slot)], Binding::Unbound) => {
+                self.slots[usize::from(slot)] = Binding::Single(node);
+                self.log.push(slot);
                 true
             }
+            [bound] => PackedPattern::exact(tape, *bound, node),
+            _ => false,
         }
+    }
+
+    fn bind_multi(&mut self, slot: u16, nodes: &[u32], tape: &TapeDoc) -> bool {
+        if matches!(self.slots[usize::from(slot)], Binding::Unbound) {
+            let start = self.nodes.len() as u32;
+            self.nodes.extend_from_slice(nodes);
+            self.slots[usize::from(slot)] = Binding::Multi { start, len: nodes.len() as u32 };
+            self.log.push(slot);
+            return true;
+        }
+        let named = |node: &&u32| tape.transducer_flags(**node) & NAMED != 0;
+        let bound = self.nodes_of(slot);
+        bound.iter().filter(named).count() == nodes.iter().filter(named).count()
+            && bound.iter().filter(named).zip(nodes.iter().filter(named)).all(|(left, right)| PackedPattern::exact(tape, *left, *right))
+    }
+}
+
+impl Slotted {
+    fn is_trivial(&self) -> bool {
+        matches!(self, Self::Terminal { named: false, .. })
+    }
+
+    fn is_children_end(&self) -> bool {
+        matches!(self, Self::Terminal { kind, .. } if *kind == ast_grep_core::matcher::kind_utils::CHILDREN_END)
     }
 
     fn one(
         &self,
         node: u32,
         tape: &TapeDoc,
-        bindings: &mut PatternBindings,
+        bindings: &mut AstBindings,
         root: bool,
     ) -> PatternVerdict {
         match self {
@@ -1381,7 +1429,7 @@ impl PackedPattern {
                     PatternVerdict::NoMatch
                 }
             }
-            Self::Single { name, named } => {
+            Self::Single { slot: name, named } => {
                 if !root && tape.transducer_flags(node) & EXTRA != 0 {
                     return PatternVerdict::SkipCandidate;
                 }
@@ -1389,8 +1437,7 @@ impl PackedPattern {
                     return PatternVerdict::NoMatch;
                 }
                 if name
-                    .as_ref()
-                    .is_none_or(|name| Self::bind_single(bindings, name, node, tape))
+                    .is_none_or(|name| bindings.bind_single(name, node, tape))
                 {
                     PatternVerdict::Matched
                 } else {
@@ -1399,8 +1446,7 @@ impl PackedPattern {
             }
             Self::Ellipsis(name) if root => {
                 if name
-                    .as_ref()
-                    .is_none_or(|name| Self::bind_multi(bindings, name, vec![node], tape))
+                    .is_none_or(|name| bindings.bind_multi(name, &[node], tape))
                 {
                     PatternVerdict::Matched
                 } else {
@@ -1429,23 +1475,23 @@ impl PackedPattern {
         goals: &[Self],
         candidates: &[u32],
         tape: &TapeDoc,
-        bindings: &mut PatternBindings,
+        bindings: &mut AstBindings,
     ) -> bool {
         if candidates.is_empty() {
             // A node with no children (its tokens all implied, RER-131): ellipses bind nothing.
             return goals.iter().all(|goal| match goal {
-                Self::Ellipsis(name) => name.as_ref().is_none_or(|name| Self::bind_multi(bindings, name, Vec::new(), tape)),
+                Self::Ellipsis(name) => name.is_none_or(|name| bindings.bind_multi(name, &[], tape)),
                 goal => goal.is_children_end(),
             });
         }
         let (mut goal, mut candidate) = (0_usize, 0_usize);
         while goal < goals.len() {
             if let Self::Ellipsis(name) = &goals[goal] {
-                let name = name.clone();
+                let name = *name;
                 goal += 1;
                 if goal == goals.len() {
-                    return name.as_ref().is_none_or(|name| {
-                        Self::bind_multi(bindings, name, candidates[candidate..].to_vec(), tape)
+                    return name.is_none_or(|name| {
+                        bindings.bind_multi(name, &candidates[candidate..], tape)
                     });
                 }
                 let mut skipped_anonymous = 0_usize;
@@ -1458,8 +1504,8 @@ impl PackedPattern {
                         .len()
                         .saturating_sub(skipped_anonymous)
                         .max(candidate);
-                    return name.as_ref().is_none_or(|name| {
-                        Self::bind_multi(bindings, name, candidates[candidate..end].to_vec(), tape)
+                    return name.is_none_or(|name| {
+                        bindings.bind_multi(name, &candidates[candidate..end], tape)
                     });
                 }
                 if matches!(goals[goal], Self::Ellipsis(_)) {
@@ -1471,9 +1517,7 @@ impl PackedPattern {
                     if candidate == candidates.len() {
                         return false;
                     }
-                    if name
-                        .as_ref()
-                        .is_some_and(|name| !Self::bind_multi(bindings, name, captured, tape))
+                    if name.is_some_and(|name| !bindings.bind_multi(name, &captured, tape))
                     {
                         return false;
                     }
@@ -1484,11 +1528,14 @@ impl PackedPattern {
                     let Some(&node) = candidates.get(candidate) else {
                         return false;
                     };
-                    let mut probe = bindings.clone();
-                    if goals[goal].one(node, tape, &mut probe, false) == PatternVerdict::Matched {
+                    // A probe: what it binds is undone, as a clone of the bindings would be dropped.
+                    let mark = bindings.mark();
+                    let probed = goals[goal].one(node, tape, bindings, false) == PatternVerdict::Matched;
+                    bindings.undo(mark);
+                    if probed {
                         let end = candidate.saturating_sub(skipped_anonymous).max(start);
-                        if name.as_ref().is_some_and(|name| {
-                            !Self::bind_multi(bindings, name, candidates[start..end].to_vec(), tape)
+                        if name.is_some_and(|name| {
+                            !bindings.bind_multi(name, &candidates[start..end], tape)
                         }) {
                             return false;
                         }
@@ -1700,31 +1747,39 @@ impl Program {
         tape: &TapeDoc,
         root: u32,
     ) -> Result<Option<Vec<AstPatternCapture>>, Error> {
-        let pattern = self.ast_pattern.as_ref().ok_or(Error::UnsupportedPattern)?;
+        let mut bindings = AstBindings::default();
+        if !self.matches_ast_pattern(tape, root, &mut bindings)? {
+            return Ok(None);
+        }
+        let slotted = self.slotted().ok_or(Error::UnsupportedPattern)?;
+        let mut captures = Vec::new();
+        for &slot in &slotted.order {
+            let multi = matches!(bindings.slots[usize::from(slot)], Binding::Multi { .. });
+            for (occurrence, &node) in bindings.nodes_of(slot).iter().enumerate() {
+                captures.push(AstPatternCapture { label: slotted.names[usize::from(slot)].clone(), occurrence, node, multi });
+            }
+        }
+        Ok(Some(captures))
+    }
+
+    /// Whether the pattern matches at `root`, its bindings left in `bindings` (`AstBindings::bound`,
+    /// by `ast_slot`): `execute_ast_pattern`'s verdict, with no capture made.
+    pub fn matches_ast_pattern(&self, tape: &TapeDoc, root: u32, bindings: &mut AstBindings) -> Result<bool, Error> {
+        let slotted = self.slotted().ok_or(Error::UnsupportedPattern)?;
         if root as usize >= tape.transducer_len() {
             return Err(Error::InvalidAnchor);
         }
-        let mut bindings = PatternBindings::default();
-        if pattern.one(root, tape, &mut bindings, true) != PatternVerdict::Matched {
-            return Ok(None);
-        }
-        let PatternBindings { values, multi } = bindings;
-        let captures = values
-            .into_iter()
-            .flat_map(|(name, nodes)| {
-                let multi = multi.contains(&name);
-                nodes
-                    .into_iter()
-                    .enumerate()
-                    .map(move |(occurrence, node)| AstPatternCapture {
-                        label: name.clone(),
-                        occurrence,
-                        node,
-                        multi,
-                    })
-            })
-            .collect();
-        Ok(Some(captures))
+        bindings.reset(slotted.names.len());
+        Ok(slotted.root.one(root, tape, bindings, true) == PatternVerdict::Matched)
+    }
+
+    /// The slot of capture name `name` in the pattern's bindings, if the pattern names it.
+    pub fn ast_slot(&self, name: &str) -> Option<usize> {
+        self.slotted()?.names.iter().position(|n| n == name)
+    }
+
+    fn slotted(&self) -> Option<&SlottedPattern> {
+        self.slotted.0.get_or_init(|| self.ast_pattern.as_ref().map(|p| Arc::new(SlottedPattern::of(p)))).as_deref()
     }
 
     pub fn new(
@@ -1765,6 +1820,7 @@ impl Program {
             },
             ast_pattern: None,
             digest: DigestMemo::default(),
+            slotted: SlotMemo::default(),
         };
         program.validate()?;
         Ok(program)
@@ -3832,7 +3888,7 @@ pub fn packed_workspace_fits(
     anchors: &[Vec<Vec<u32>>],
     result_limits: &[u32],
 ) -> Result<(), Error> {
-    let mut batch = packed_batch::PackedBatch::new(programs, files, anchors)?;
+    let mut batch = packed_batch::PackedBatch::new_in_place(programs, files, anchors)?;
     batch
         .assign_workspace_with_result_limits(programs, Some(result_limits))
         .map(|_| ())
@@ -3848,7 +3904,7 @@ pub fn packed_workspace_size(
     anchors: &[Vec<Vec<u32>>],
     result_limits: &[u32],
 ) -> Result<(u64, [u64; 15]), Error> {
-    let mut batch = packed_batch::PackedBatch::new(programs, files, anchors)?;
+    let mut batch = packed_batch::PackedBatch::new_in_place(programs, files, anchors)?;
     let totals = batch.assign_workspace_with_result_limits(programs, Some(result_limits))?;
     let bytes = batch.workspace_allocation_bytes(totals).ok_or(Error::BackendCapacity)?;
     Ok((bytes, batch.workspace_counts(totals)))
@@ -3860,7 +3916,7 @@ pub fn packed_program_counts(
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],
 ) -> Result<Vec<[u64; 15]>, Error> {
-    packed_batch::PackedBatch::new(programs, files, anchors)?.program_counts(programs)
+    packed_batch::PackedBatch::new_in_place(programs, files, anchors)?.program_counts(programs)
 }
 
 pub(in crate::code_rule_dsl) fn packed_workspace_bytes(
@@ -3869,7 +3925,7 @@ pub(in crate::code_rule_dsl) fn packed_workspace_bytes(
     anchors: &[Vec<Vec<u32>>],
     result_limits: &[u32],
 ) -> Result<u64, Error> {
-    let mut batch = packed_batch::PackedBatch::new(programs, files, anchors)?;
+    let mut batch = packed_batch::PackedBatch::new_in_place(programs, files, anchors)?;
     let totals = batch.assign_workspace_with_result_limits(programs, Some(result_limits))?;
     batch.workspace_allocation_bytes(totals).ok_or(Error::BackendCapacity)
 }
@@ -3915,7 +3971,7 @@ pub fn execute_planned(
         ExecutionBackend::MetalJit => {
             device::required()?.execute_packed(device::Engine::Jit, programs, files, anchors, result_limits)
         }
-        ExecutionBackend::Metal | ExecutionBackend::CpuBackground | ExecutionBackend::MetalBackground => {
+        ExecutionBackend::CpuBackground | ExecutionBackend::MetalBackground => {
             Err(Error::UnsupportedBackend)
         }
     }
@@ -3930,7 +3986,7 @@ pub fn execute_with_backend_outcomes(
     match compilation::resolve(backend, programs)? {
         ExecutionBackend::CpuInterpreter => execute_batch_outcomes(programs, files, anchors),
         ExecutionBackend::CpuJit => native_cpu::execute_batch_outcomes(programs, files, anchors),
-        backend @ (ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::Metal) => {
+        backend @ (ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit) => {
             device::required()?.execute_outcomes(backend, programs, files, anchors)
         }
         ExecutionBackend::CpuBackground | ExecutionBackend::MetalBackground => Err(Error::UnsupportedBackend),
@@ -4137,50 +4193,22 @@ pub(in crate::code_rule_dsl) fn warm_production_programs(programs: &[Program]) -
     Ok(())
 }
 
+/// The production corpus's programs over `files`, sharing its files' anchors: on the device's JIT when there is
+/// one (over the tape in the slabs), else the CPU's.
 pub fn execute_production_corpus(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Arc<[u32]>>],
     result_limits: &[u32],
 ) -> Result<packed_batch::PackedExecution, Error> {
+    let anchors = anchors
+        .iter()
+        .map(|file| file.iter().map(|roots| roots.to_vec()).collect())
+        .collect::<Vec<_>>();
     if let Some(device) = device::matcher() {
-        return device.execute_shared_corpus(programs, files, anchors, result_limits);
+        return device.execute_packed(device::Engine::Jit, programs, files, &anchors, Some(result_limits));
     }
-    {
-        let anchors = anchors
-            .iter()
-            .map(|file| file.iter().map(|roots| roots.to_vec()).collect())
-            .collect::<Vec<_>>();
-        execute_with_backend_packed_result_limits(
-            ExecutionBackend::CpuJit,
-            programs,
-            files,
-            &anchors,
-            Some(result_limits),
-        )
-    }
-}
-
-pub fn execute_production_corpus_pages(
-    programs: &[Program],
-    files: &[crate::code_rule_dsl::tape::TapeSource],
-    anchors: &[Vec<Arc<[u32]>>],
-    result_limits: &[u32],
-    consumer: &mut dyn FnMut(PackedExecution, usize) -> Result<(), Error>,
-) -> Result<(), Error> {
-    if let Some(device) = device::matcher() {
-        return device.execute_shared_corpus_pages(programs, files, anchors, result_limits, consumer);
-    }
-    {
-        let docs = files
-            .iter()
-            .map(|file| file.restore(&|| false).map_err(|_| Error::BackendFailure))
-            .collect::<Result<Vec<_>, _>>()?;
-        consumer(
-            execute_production_corpus(programs, &docs, anchors, result_limits)?,
-            files.len(),
-        )
-    }
+    execute_with_backend_packed_result_limits(ExecutionBackend::CpuJit, programs, files, &anchors, Some(result_limits))
 }
 
 pub const POSITIONAL_INDEX_VERSION: i64 = 5;

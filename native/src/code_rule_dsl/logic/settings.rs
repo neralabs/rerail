@@ -14,34 +14,53 @@ pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> 
         let (bytes, _) = observe(|o| o.read(path)).ok_or_else(|| format!("{}: cannot read the file", path.display()))?;
         String::from_utf8(bytes).map_err(|error| format!("{}: {error}", path.display()))
     };
-    let texts: Vec<String> = paths.iter().map(|p| read(p)).collect::<Result<_, _>>()?;
+    // A JSON policy (decision 0175) is its translation: a text whose `#include`s are library files, read as a text's.
+    let json: Vec<bool> = paths.iter().map(|p| crate::code_rule_dsl::logic::json_rules::is_policy_path(p)).collect();
+    let translator = json.iter().any(|j| *j).then(crate::code_rule_dsl::logic::json_rules::Translator::new);
+    let texts: Vec<String> = paths
+        .iter()
+        .zip(&json)
+        .map(|(p, j)| {
+            let text = read(p)?;
+            if !j {
+                return Ok(text);
+            }
+            let id = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+            translator.as_ref().expect("a translator").translate_text(&text, &id).map_err(|e| format!("{}: {e}", p.display()))
+        })
+        .collect::<Result<_, String>>()?;
     // A policy (`.policy`, `.language`) is read as `run-rr` reads it: its language's base relations are declared by
     // reading the file (O111), which a policy's text does not do itself.
     let policy = |text: &str| text.lines().map(str::trim_start).any(|l| l.starts_with(".policy") || l.starts_with(".language"));
     let includes = |text: &str| text.lines().any(|l| l.trim_start().starts_with("#include"));
     let mut seeds = Vec::new();
-    for (path, text) in paths.iter().zip(&texts) {
-        if includes(text) {
+    for ((path, text), j) in paths.iter().zip(&texts).zip(&json) {
+        if includes(text) && !j {
             seeds.push(phase0::Seed::File(path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?));
         }
     }
     let graphs = phase0::graphs(&seeds).map_err(|e| e.to_string())?;
+    crate::code_rule_dsl::logic::profile::timeline_mark("the program files' graphs");
     let mut graphs = graphs.into_iter();
+    // The library and the phase programs' directories, found once for every text: each was a search for the checkout
+    // (`source_tree::root`, 1.9 M instructions), 0.6 G of a 317-file pack's texts when asked per text.
+    let dirs = phase0::Dirs::here();
     let mut out = Vec::with_capacity(texts.len());
-    for (path, text) in paths.iter().zip(texts) {
-        if !includes(&text) {
-            out.push(if policy(&text) { format!("#include \"core.rr\"\n{text}") } else { text });
+    for ((path, text), j) in paths.iter().zip(texts).zip(json) {
+        if j || !includes(&text) {
+            out.push(if policy(&text) && !includes(&text) { format!("#include \"core.rr\"\n{text}") } else { text });
             continue;
         }
         let graph = graphs.next().expect("a graph per seed");
         // The program as modules (decision 0089): the library files it includes stay `#include`s, read once by a
         // run however many of its programs include them; a file beside it is written in. A policy reads `core.rr`.
         let canonical = path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?;
-        let own = module_text(&canonical, &text, &graph, &mut Vec::new(), &read)?;
+        let library = dirs.as_ref().map(|d| d.lib.as_path()).ok_or_else(|| "the rule library does not canonicalize".to_owned())?;
+        let own = module_text(&canonical, &text, &graph, library, &mut Vec::new(), &read)?;
         let own = if policy(&text) && !includes(&own) { format!("#include \"core.rr\"\n{own}") } else { own };
         // The text's own graph is the file's, cut to what the text includes: kept, so no second run derives it.
-        if let Ok(Some(seed)) = crate::code_rule_dsl::logic::rr::text_seed(&own) {
-            phase0::keep_text(&seed, &graph);
+        if let (Ok(Some(seed)), Some(dirs)) = (crate::code_rule_dsl::logic::rr::text_seed(&own), &dirs) {
+            phase0::keep_text(&seed, &graph, dirs);
         }
         out.push(own);
     }
@@ -64,24 +83,6 @@ pub fn settings(root: &std::path::Path, flags: &[String]) -> Result<Vec<(String,
     Ok(settings)
 }
 
-/// `program` with the run's settings as `env(key, value)` facts, for a program that declares `env`; any other
-/// program is returned as it is. The facts are part of the program's text, so the plan, and every memo keyed by
-/// it, is per setting.
-pub fn with_settings(program: &str, settings: &[(String, String)]) -> String {
-    let declares = program.lines().any(|l| {
-        let l = l.trim_start();
-        l.strip_prefix(".decl").is_some_and(|r| r.trim_start().strip_prefix("env").is_some_and(|r| r.trim_start().starts_with('(')))
-    });
-    // A text in module form (decision 0089) reads `core.rr`, which declares `env`.
-    let declares = declares || program.lines().any(|l| l.trim_start().starts_with("#include"));
-    if !declares || settings.is_empty() {
-        return program.to_owned();
-    }
-    let quote = crate::code_rule_dsl::logic::rr::quote;
-    let facts: String = settings.iter().map(|(k, v)| format!("env({}, {}).\n", quote(k), quote(v))).collect();
-    format!("{program}\n// The run's settings (--env, rerail.env).\n{facts}")
-}
-
 /// The process's retired instructions and cycles so far (macOS `proc_pid_rusage`).
 pub fn process_counters() -> Option<(u64, u64)> {
     #[cfg(target_os = "macos")]
@@ -101,10 +102,10 @@ fn module_text(
     path: &std::path::Path,
     text: &str,
     graph: &crate::code_rule_dsl::logic::plan::corpus::phase0::Graph,
+    library: &std::path::Path,
     seen: &mut Vec<std::path::PathBuf>,
     read: &dyn Fn(&std::path::Path) -> Result<String, String>,
 ) -> Result<String, String> {
-    let library = crate::code_rule_dsl::logic::rr::library().canonicalize().map_err(|e| e.to_string())?;
     let from = path.to_string_lossy().into_owned();
     let mut out = String::with_capacity(text.len());
     for line in text.lines() {
@@ -120,7 +121,7 @@ fn module_text(
                 } else if !seen.contains(&found) {
                     seen.push(found.clone());
                     let inner = read(&found)?;
-                    out.push_str(&module_text(&found, &inner, graph, seen, read)?);
+                    out.push_str(&module_text(&found, &inner, graph, library, seen, read)?);
                 }
             }
             None => out.push_str(line),

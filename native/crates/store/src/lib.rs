@@ -9,6 +9,9 @@
 pub mod content_store;
 #[path = "../../../src/git_workspace.rs"]
 pub mod git_workspace;
+/// The checkout the engine runs from, found as it runs (decision 0224).
+#[path = "../../../src/source_tree.rs"]
+pub mod source_tree;
 /// A regex's literal probe (the prefilter's; the store's vocabulary uses it too).
 #[path = "../../../src/code_rule_dsl/prefilter/probes.rs"]
 pub mod probes;

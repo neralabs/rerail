@@ -166,7 +166,7 @@ fn tables() -> StoreResult<Vec<(String, Vec<String>)>> {
         .inputs
         .iter()
         .filter(|input| !WAVE.iter().any(|(name, _, _)| name == input))
-        .map(|input| (input.clone(), program.decls[input].iter().map(|(column, _)| column.clone()).collect()))
+        .map(|input| (input.clone(), program.decls[input.as_str()].iter().map(|(column, _)| column.clone()).map(String::from).collect()))
         .collect())
 }
 

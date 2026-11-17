@@ -1,0 +1,52 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-e401-multiple-imports-on-one-line",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Give each module its own import statement instead of comma-separating several in one; from-imports may still list several names.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "multiple-imports-on-one-line",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "import_statement",
+            "count": {
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "dotted_name"
+                  },
+                  {
+                    "kind": "aliased_import"
+                  }
+                ]
+              },
+              "min": 2
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "E401",
+        "message": "Split this into one `import` statement per module, each on its own line (or separated by `;` on a line that already holds other statements).",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "E401"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

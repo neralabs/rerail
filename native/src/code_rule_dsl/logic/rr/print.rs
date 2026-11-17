@@ -24,6 +24,8 @@ fn term(t: &Term) -> Result<String, Error> {
         Term::Int(n) => n.to_string(),
         Term::Str(s) => quote(s),
         Term::Top => "top".to_owned(),
+        // A lowered program's atom (decision 0270) is the store's: a lowered program is kept as its image.
+        Term::Branded(b) => return Err(Error::Syntax(format!("the atom {b}: no .rr form"))),
         Term::Call(f, _) if is_test(f) || f == SET => return Err(Error::Syntax(format!("@{f} as a value: no .rr form"))),
         Term::Call(f, args) => format!("@{}({})", if f == "cat" { "dot" } else { f }, terms(args)?),
     })
@@ -192,6 +194,12 @@ fn native_rule(head: &Atom, native: &Native, prog: &Program) -> Result<String, E
             let (x, e, q) = (var("rr_x"), var("rr_e"), var("rr_q"));
             format!("{}({x}, {q}) :- {}({x}, {e}), {}({e}, {q}).", relation(&head.rel), relation(reach), relation(map))
         }
+        // The text test over its input's rows, as the rule it was made from (`strings::as_relations`).
+        Native::TextTest { input, column, op, patterns } => {
+            let s = head.args.get(*column).cloned().unwrap_or_else(|| Term::Var("rr_text0".into()));
+            let set = Term::Call(crate::code_rule_dsl::logic::strings::SET.into(), patterns.iter().map(|p| Term::Str(p.as_str().into())).collect::<Vec<_>>().into());
+            format!("{} :- {}({}), {}.", atom(head, prog)?, relation(input), terms(&head.args)?, test(op, &s, &set, false)?)
+        }
         Native::MatchAll { input, pattern, groups, positions } => {
             let s = (0..).map(|i| format!("rr_text{i}")).find(|v| !groups.contains(v)).expect("a free name");
             let coordinates: Vec<_> = (0..).map(|i| format!("rr_position{i}")).filter(|v| !groups.contains(v) && v != &s).take(if *positions { 3 } else { 0 }).map(|v| var(&v)).collect();
@@ -202,14 +210,24 @@ fn native_rule(head: &Atom, native: &Native, prog: &Program) -> Result<String, E
     })
 }
 
-/// The program's `.rr` text.
+/// The program's `.rr` text: as written, its node attributes inputs again where the lowering answered them on request
+/// (decision 0174, `lower::undo_on_request`), which reading the text makes again.
 pub fn print(prog: &Program) -> Result<String, Error> {
+    if super::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| prog.decls.contains_key(a.req)) {
+        let mut written = prog.clone();
+        super::lower::undo_on_request(&mut written);
+        return print_written(&written);
+    }
+    print_written(prog)
+}
+
+fn print_written(prog: &Program) -> Result<String, Error> {
     // Keep the public schema when printing frontend unit columns back to rule source.
     let mut logical;
     let prog = if prog.nullary.is_empty() { prog } else {
         logical=prog.clone();
         for name in &prog.nullary {
-            if let Some(cols)=logical.decls.get_mut(name){cols.clear();}
+            if let Some(cols)=logical.decls.get_mut(name.as_str()){cols.clear();}
             for row in logical.facts.get_mut(name).into_iter().flatten(){row.clear();}
         }
         let decode=|a:&mut Atom|{if prog.nullary.contains(a.rel.as_str()){a.args.clear();}};
@@ -228,7 +246,7 @@ pub fn print(prog: &Program) -> Result<String, Error> {
     }
     // A set that is no relation of the program (no rule reads it) is printed by its kinds; one that is stays a
     // relation, declared and stated below with the rest, once.
-    for (name, kinds) in prog.kindsets.iter().filter(|(name, _)| !prog.decls.contains_key(*name)) {
+    for (name, kinds) in prog.kindsets.iter().filter(|(name, _)| !prog.decls.contains_key(name.as_str())) {
         writeln!(out, ".decl {name}(kind: symbol)").expect("a string");
         writeln!(out, "{}", kinds.iter().map(|k| format!("{name}({}).", quote(k))).collect::<Vec<_>>().join(" ")).expect("a string");
     }
@@ -239,7 +257,7 @@ pub fn print(prog: &Program) -> Result<String, Error> {
         if made(name) {
             continue;
         }
-        let lattice = prog.lattice.get(name);
+        let lattice = prog.lattice.get(name.as_str());
         let mut printed = Vec::new();
         for (i, (c, t)) in cols.iter().enumerate() {
             match lattice {
@@ -257,7 +275,7 @@ pub fn print(prog: &Program) -> Result<String, Error> {
                 }
                 // `core.rr`'s `docof` over nodes and spans stays an input (`lower::projections`).
                 _ if i == 0 && name == "docof" && prog.inputs.iter().any(|r| r == "docof") => printed.push(format!("{c}: loc")),
-                _ if prog.tapes.get(name).is_some_and(|cols| cols.contains(&i)) => printed.push(format!("{c}: tape")),
+                _ if prog.tapes.get(name.as_str()).is_some_and(|cols| cols.contains(&i)) => printed.push(format!("{c}: tape")),
                 _ => printed.push(format!("{c}: {}", ty(t))),
             }
         }
@@ -282,10 +300,11 @@ pub fn print(prog: &Program) -> Result<String, Error> {
     for (rel, rows) in &prog.facts {
         for row in rows {
             let values = row.iter().map(|v| match v {
-                Value::Int(n) => n.to_string(),
-                Value::Str(s) => quote(s),
+                Value::Int(n) => Ok(n.to_string()),
+                Value::Str(s) => Ok(quote(s)),
+                Value::Branded(b) => Err(Error::Syntax(format!("the atom {b}: no .rr form"))),
             });
-            writeln!(out, "{}({}).", relation(rel), values.collect::<Vec<_>>().join(", ")).expect("a string");
+            writeln!(out, "{}({}).", relation(rel), values.collect::<Result<Vec<_>, _>>()?.join(", ")).expect("a string");
         }
     }
     for rule in &prog.rules {

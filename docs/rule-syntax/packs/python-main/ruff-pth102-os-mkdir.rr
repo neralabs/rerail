@@ -1,0 +1,45 @@
+.policy "ruff-pth102-os-mkdir" revision 1
+.guests off
+.description "Use Path.mkdir() instead of os.mkdir(); path objects read better than string-based os calls."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
+
+#include "python/names.rr"
+
+// PTH102(n): a finding at node n, from clause `os-mkdir`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PTH102(at: loc, f: node) "Use `Path(path).mkdir(mode=mode)` instead of `os.mkdir(path, mode)`; leave it where the path is bytes or `dir_fd` comes through `**kwargs`."
+    suppress noqa "PTH102"
+PTH102(F, n) :- kind(n, "call"), field(n, "function", c1), pth102_callee(c1, F),
+    count : { field(n, "arguments", c2), kind(c2, "argument_list"), child(c2, c3, _), kind(c3, "keyword_argument"), pth102_tok_has_1(c3), field(c3, "value", c12), !pth102_none_literal(c12) } = 0.
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl pth102_target(n: node)
+pth102_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "os.mkdir").
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth102_callee(n: node, f: loc)
+pth102_callee(n, F) :- pth102_target(n), node(_, n, _, _, _), F = n.
+pth102_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth102_callee(c1, F).
+
+// none_literal(n): the JSON util `none-literal`, used where the JSON says `matches: "none-literal"`
+.decl pth102_none_literal(n: node)
+pth102_none_literal(n) :- kind(n, "none").
+pth102_none_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pth102_none_literal(c1).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^dir_fd$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth102_tok_has_1(n: node)
+.stored pth102_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth102_tok_has_1(n) :- field(n, "name", c4), glob("dir_fd", c4).
+pth102_tok_has_1(n) :- op(n, t5), match("dir_fd", t5).
+pth102_tok_has_1(n) :- child(n, c11, _), structural_before(c11, g6),
+    match("(?s)^(?:(?:.*\\W)?(?:dir_fd)(?:\\W.*)?)$", g6).
+pth102_tok_has_1(n) :- child(n, c11, _), structural_after(c11, g6),
+    match("(?s)^(?:(?:.*\\W)?(?:dir_fd)(?:\\W.*)?)$", g6).
+pth102_tok_has_1(n) :- node_text(n, g6), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:dir_fd)(?:\\W.*)?)$", g6).

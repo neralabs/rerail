@@ -1,7 +1,7 @@
 //! Metal, as the engine's device (`rerail-device-metal`): the implementations of the logic's and the transducer's
 //! device interfaces (`logic::device::SolverDevice`, `transducer::packed::device::MatcherDevice`) over the Metal
 //! code, registered as the engine loads (`crate::install_devices`). macOS only; the core never names it.
-use crate::code_rule_dsl::logic::device::{JoinPlan, Refused, Report, SolverDevice, lattice, nearest};
+use crate::code_rule_dsl::logic::device::{ColumnStats, JoinPlan, Refused, Report, SolverDevice, StatColumn, lattice, nearest};
 use crate::code_rule_dsl::logic::native::setfix::{Fresh, Interner, JoinRule, Store, device as joins};
 use crate::code_rule_dsl::transducer::packed::{self, Error};
 
@@ -15,6 +15,8 @@ pub(crate) static METAL: Metal = Metal;
 pub fn register() {
     crate::code_rule_dsl::logic::device::register(&METAL);
     crate::code_rule_dsl::transducer::packed::device::register(&METAL);
+    // Kind-set axes solved on the device in a batch's chunk block (decision 0289 §2).
+    crate::code_rule_dsl::facts::nearest::install_chunk_axis(packed::metal_join::axis_in_chunk);
     crate::code_rule_dsl::prof::register_device_memory(|| (packed::metal_backend::reserved_mb(), packed::metal_backend::driver_mb()));
 }
 
@@ -54,8 +56,8 @@ impl SolverDevice for Metal {
         packed::metal_join::available()
     }
 
-    fn compile_join(&self, join: &JoinRule, spec: &str) -> Result<JoinPlan, String> {
-        joins::compile(join, spec).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
+    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)]) -> Result<JoinPlan, String> {
+        joins::own_texts(own_texts.to_vec(), || joins::compile(join, spec)).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
     }
 
     fn refuse(&self, why: String) {
@@ -105,16 +107,19 @@ impl SolverDevice for Metal {
     fn install_launch_guard(&self) {
         packed::metal_sort::install_guard();
     }
+
+    fn column_stats(&self, cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), Refused> {
+        joins::column_stats(cols, k).map_err(Refused::Failed)
+    }
 }
 
 pub mod matcher {
     use std::collections::BTreeSet;
-    use std::sync::Arc;
 
-    use crate::code_rule_dsl::tape::{TapeDoc, TapeSource};
-    use crate::code_rule_dsl::transducer::packed::device::{Engine, MatcherDevice, Outcome, PageConsumer, RootJobs};
+    use crate::code_rule_dsl::tape::TapeDoc;
+    use crate::code_rule_dsl::transducer::packed::device::{Engine, MatcherDevice, Outcome, RootJobs};
     use crate::code_rule_dsl::transducer::packed::{
-        BatchOutcome, Error, ExecutionBackend, LoweredMatcher, LoweredWave, PackedExecution, Program, matcher_metal, metal_grid_backend as grid,
+        BatchOutcome, Error, ExecutionBackend, LoweredMatcher, LoweredWave, PackedExecution, Program, matcher_metal,
         metal_program_backend as programs,
     };
 
@@ -143,7 +148,6 @@ pub mod matcher {
                     let engine = programs::compile_jit_cached(batch)?;
                     programs::execute_outcomes(&engine, batch, files, anchors)
                 }
-                ExecutionBackend::Metal => grid::execute_outcomes(batch, files, anchors),
                 _ => Err(Error::UnsupportedBackend),
             }
         }
@@ -163,14 +167,6 @@ pub mod matcher {
         fn compile_background(&self, batch: &[Program]) -> Result<(), Error> {
             programs::compile_sweep_cached()?;
             programs::compile_jit_cached(batch).map(|_| ())
-        }
-
-        fn execute_shared_corpus(&self, batch: &[Program], files: &[TapeDoc], anchors: &[Vec<Arc<[u32]>>], result_limits: &[u32]) -> Result<PackedExecution, Error> {
-            grid::execute_shared_corpus(batch, files, anchors, result_limits)
-        }
-
-        fn execute_shared_corpus_pages(&self, batch: &[Program], files: &[TapeSource], anchors: &[Vec<Arc<[u32]>>], result_limits: &[u32], consumer: &mut PageConsumer<'_>) -> Result<(), Error> {
-            grid::execute_shared_corpus_pages(batch, files, anchors, result_limits, consumer)
         }
 
         fn matcher_roots(&self, matcher: &LoweredMatcher, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, Outcome), Error> {

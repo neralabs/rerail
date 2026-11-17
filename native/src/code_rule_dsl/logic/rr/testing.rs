@@ -164,7 +164,7 @@ fn fixture(path: &Path, dir: &Path, line: usize, text: &str) -> Result<(String, 
     let spanned = syntax::tokens(text).map_err(|e| format!("{}:{line}: {e:?}", path.display()))?;
     let toks: Vec<&Tok> = spanned.iter().map(|(t, _, _)| t).collect();
     let name = match toks.as_slice() {
-        [Tok::Str(name), ..] => name.clone(),
+        [Tok::Str(name), ..] => name.to_string(),
         _ => return bad(path, line, "`.fixture \"<path>\"` then its text"),
     };
     if name.starts_with('/') || name.split('/').any(|part| part == "..") {
@@ -179,8 +179,8 @@ fn fixture(path: &Path, dir: &Path, line: usize, text: &str) -> Result<(String, 
             let n = raw.bytes().take_while(|&b| b == b'`').count();
             Ok((name, dedent(&raw[n..raw.len() - n]).into_bytes()))
         }
-        [_, Tok::Id(from), Tok::Str(file)] if from == "from" => {
-            std::fs::read(dir.join(file)).map(|bytes| (name, bytes)).map_err(|e| format!("{}:{line}: {file}: {e}", path.display()))
+        [_, Tok::Id(from), Tok::Str(file)] if *from == "from" => {
+            std::fs::read(dir.join(file.as_ref())).map(|bytes| (name, bytes)).map_err(|e| format!("{}:{line}: {file}: {e}", path.display()))
         }
         _ => bad(path, line, "`.fixture \"<path>\"` then a fenced text or `from \"<file>\"`"),
     }
@@ -214,7 +214,13 @@ pub fn dedent(body: &str) -> String {
 fn expect(path: &Path, line: usize, text: &str) -> Result<Expect, String> {
     let toks = syntax::tokens(text).map_err(|e| format!("{}:{line}: {e:?}", path.display()))?;
     let mut toks: &[&Tok] = &toks.iter().map(|(t, _, _)| t).collect::<Vec<_>>();
-    let word = |t: &Tok, w: &str| matches!(t, Tok::Id(s) if s == w);
+    let word = |t: &Tok, w: &str| matches!(t, Tok::Id(s) if *s == w);
+    // A name: a word or a string.
+    let named = |t: &Tok| match t {
+        Tok::Id(s) => Some((*s).to_owned()),
+        Tok::Str(s) => Some(s.to_string()),
+        _ => None,
+    };
     let negated = toks.first().is_some_and(|t| word(t, "no"));
     if negated {
         toks = &toks[1..];
@@ -224,24 +230,25 @@ fn expect(path: &Path, line: usize, text: &str) -> Result<Expect, String> {
         toks = &toks[1..];
     }
     let usage = "`.expect [no] <code or _> [at \"<path>\"[:<line>[:<column>]]]`, `.expect [no | only] <relation>(<value>, …)` or `.expect count <name> = <n>`";
-    if let [count, Tok::Id(name) | Tok::Str(name), Tok::P("="), Tok::Num(n)] = toks
+    if let [count, name, Tok::P("="), Tok::Num(n)] = toks
         && word(count, "count")
         && !negated
+        && let Some(name) = named(name)
     {
-        return Ok(Expect { line, negated, what: Expected::Count { name: name.clone(), n: *n as usize } });
+        return Ok(Expect { line, negated, what: Expected::Count { name, n: *n as usize } });
     }
     let (name, rest) = match toks {
-        [Tok::Id(name) | Tok::Str(name), rest @ ..] => (name.clone(), rest),
+        [first, rest @ ..] if let Some(name) = named(first) => (name, rest),
         _ => return bad(path, line, usage),
     };
     if let [Tok::P("("), inner @ .., Tok::P(")")] = rest {
         let mut values = Vec::new();
         for (k, t) in inner.iter().enumerate() {
             match (k % 2, t) {
-                (0, Tok::Str(s)) => values.push(Some((s.clone(), true))),
+                (0, Tok::Str(s)) => values.push(Some((s.to_string(), true))),
                 (0, Tok::Num(n)) => values.push(Some((n.to_string(), false))),
-                (0, Tok::Float(x)) => values.push(Some((x.clone(), false))),
-                (0, Tok::Id(w)) if w == "_" => values.push(None),
+                (0, Tok::Float(x)) => values.push(Some(((*x).to_owned(), false))),
+                (0, Tok::Id(w)) if *w == "_" => values.push(None),
                 (1, Tok::P(",")) => {}
                 _ => return bad(path, line, usage),
             }
@@ -255,7 +262,7 @@ fn expect(path: &Path, line: usize, text: &str) -> Result<Expect, String> {
     match rest {
         [] => {}
         [a, Tok::Str(p), more @ ..] if word(a, "at") => {
-            at = Some(p.clone());
+            at = Some(p.to_string());
             match more {
                 [] => {}
                 [Tok::P(":"), Tok::Num(l)] => row = Some(*l),
@@ -276,13 +283,15 @@ pub struct Outcome {
     pub findings: Vec<String>,
 }
 
+#[cfg(test)]
 impl Outcome {
+    #[cfg(test)]
     pub fn passed(&self) -> bool {
         self.failures.is_empty()
     }
 }
 
-/// A finding's key, from a row of `rr_diagnostic.csv`.
+/// A finding's key, from a row of `rr_diagnostic`.
 #[derive(Clone, Debug, PartialEq)]
 struct Finding {
     code: String,
@@ -309,8 +318,16 @@ fn matches(e: &Expected, f: &Finding) -> bool {
         && column.is_none_or(|c| f.column.is_none_or(|fc| fc == c))
 }
 
-fn row_matches(values: &[Value], row: &[String]) -> bool {
-    row.len() == values.len() && row.iter().zip(values).all(|(have, want)| want.as_ref().is_none_or(|(w, _)| w == have))
+/// Whether `row` is one `values` names: a text by its text, any other value as the run shows it.
+fn row_matches(values: &[Value], row: &crate::code_rule_dsl::logic::plan::output::Row<'_>) -> bool {
+    use crate::code_rule_dsl::logic::plan::output::Value as V;
+    row.len() == values.len()
+        && row.values().zip(values).all(|(have, want)| {
+            want.as_ref().is_none_or(|(w, _)| match have {
+                V::Text(t) => t == w,
+                v => v.to_string() == *w,
+            })
+        })
 }
 
 /// Runs `test` of the file at `path` in `work` (a directory of its own, made empty first): its fixture files under
@@ -351,7 +368,7 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
     statements.extend(test.rules.iter().cloned());
     let mut program = super::lower_files(path, modules).map_err(|e| format!("{id}: {e}"))?;
     // The relations the test's `.expect`s read are outputs of its run.
-    let declared: BTreeSet<String> = program.decls.keys().cloned().collect();
+    let declared: BTreeSet<String> = program.decls.keys().cloned().map(String::from).collect();
     for e in &test.expects {
         let relation = match &e.what {
             Expected::Row { relation, .. } => relation,
@@ -365,7 +382,7 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
             program.outputs.push(relation.clone());
         }
     }
-    let report = crate::code_rule_dsl::tools::run_program(path, program, &files, &root, &out, &serde_json::Value::Null).map_err(|e| format!("{id}: {e}"))?;
+    let report = crate::code_rule_dsl::tools::run_program(program, &files, &root, &out, &serde_json::Value::Null).map_err(|e| format!("{id}: {e}"))?;
     let findings: Vec<Finding> = report["diagnostics"]
         .as_array()
         .into_iter()
@@ -377,13 +394,9 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
             column: row["column"].as_i64(),
         })
         .collect();
-    let rows = |relation: &str| -> Result<Vec<Vec<String>>, String> {
-        match std::fs::read_to_string(out.join(format!("{relation}.csv"))) {
-            Ok(text) => Ok(text.lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-            Err(e) => Err(format!("{relation}.csv: {e}")),
-        }
-    };
+    // The run's outputs, read where they are.
+    let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let rows = |relation: &str| -> Result<Vec<crate::code_rule_dsl::logic::plan::output::Row<'_>>, String> { Ok(outputs.rows(relation)) };
     let mut outcome = Outcome { failures: Vec::new(), findings: findings.iter().map(ToString::to_string).collect() };
     let mut fail = |line: usize, what: String| outcome.failures.push(format!("line {line}: {what}"));
     for e in &test.expects {
@@ -425,7 +438,7 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
             Expected::Row { relation: r, values, only: true } if r == relation => Some(values),
             _ => None,
         }).collect();
-        let extra: Vec<Vec<String>> = rows(relation)?.into_iter().filter(|row| !named.iter().any(|v| row_matches(v, row))).collect();
+        let extra: Vec<crate::code_rule_dsl::logic::plan::output::Row<'_>> = rows(relation)?.into_iter().filter(|row| !named.iter().any(|v| row_matches(v, row))).collect();
         if !extra.is_empty() {
             fail(e.line, format!(".expect only {relation}: also {}{}", extra.len(), sample(&extra)));
         }
@@ -444,18 +457,23 @@ fn list(findings: &[Finding]) -> String {
     if all.len() > 5 { format!("{} and {} more", all[..5].join(", "), all.len() - 5) } else { all.join(", ") }
 }
 
-fn sample(rows: &[Vec<String>]) -> String {
+fn sample(rows: &[crate::code_rule_dsl::logic::plan::output::Row<'_>]) -> String {
     if rows.is_empty() {
         return String::new();
     }
-    let shown: Vec<String> = rows.iter().take(3).map(|r| format!("({})", r.join(", "))).collect();
+    // The first rows in the order their values show (a relation's rows hold no order of their own).
+    let mut shown: Vec<String> = rows.iter().map(|r| format!("({})", r.values().map(|v| v.to_string()).collect::<Vec<_>>().join(", "))).collect();
+    shown.sort_unstable();
+    shown.truncate(3);
     format!(": {}{}", shown.join(", "), if rows.len() > 3 { ", …" } else { "" })
 }
 
 // ---------------------------------------------------------------- printing
 
+#[cfg(test)]
 /// The text of each `.test` and `.fixtures` block of `src`, as written, in order: what a printer of the file's
 /// program (`flatten`) adds after it, so the file's tests go with it.
+#[cfg(test)]
 pub fn blocks(src: &str) -> Vec<String> {
     use super::tape::Kind;
     let mut parser = syntax::Parser::taped(src);

@@ -1,0 +1,209 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-fly002-static-join-to-f-string",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use an f-string or a single string literal instead of joining a fixed list of values with a literal separator; it reads more clearly.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "str": { "any": [{ "kind": "string" }, { "kind": "concatenated_string" }] },
+          "plain": {
+            "any": [
+              { "kind": "string", "regex": "^[rRuU]{0,2}['\"]" },
+              { "kind": "concatenated_string", "not": { "has": { "stopBy": "neighbor", "kind": "string", "not": { "regex": "^[rRuU]{0,2}['\"]" } } } },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "plain" } }
+            ]
+          },
+          "raw": {
+            "any": [
+              { "kind": "string", "regex": "^[uU]?[rR]" },
+              { "kind": "concatenated_string", "has": { "stopBy": "neighbor", "kind": "string", "regex": "^[uU]?[rR]", "not": { "follows": { "stopBy": "end", "kind": "string" } } } },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "raw" } }
+            ]
+          },
+          "punct": { "any": [{ "kind": "comment" }, { "regex": "^[\\[\\](),]$" }] },
+          "join-fn": {
+            "any": [
+              {
+                "kind": "attribute",
+                "all": [
+                  { "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^join$" } },
+                  { "has": { "stopBy": "neighbor", "matches": "plain" } }
+                ]
+              },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "join-fn" } }
+            ]
+          },
+          "callee": {
+            "any": [
+              { "kind": "identifier" },
+              { "kind": "attribute", "not": { "has": { "stopBy": "neighbor", "not": { "any": [{ "matches": "callee" }, { "kind": "comment" }, { "regex": "^\\.$" }] } } } },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "callee" } }
+            ]
+          },
+          "element": {
+            "any": [
+              { "matches": "plain" },
+              { "kind": "integer" },
+              { "kind": "float" },
+              { "kind": "true" },
+              { "kind": "false" },
+              { "kind": "identifier" },
+              { "kind": "attribute" },
+              {
+                "kind": "call",
+                "all": [
+                  { "has": { "stopBy": "neighbor", "kind": "argument_list", "not": { "has": { "stopBy": "neighbor", "not": { "matches": "punct" } } } } },
+                  { "not": { "has": { "stopBy": "neighbor", "not": { "any": [{ "kind": "argument_list" }, { "kind": "comment" }, { "matches": "callee" }] } } } }
+                ]
+              },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "element" } }
+            ]
+          },
+          "lit-seq": {
+            "any": [
+              {
+                "any": [{ "kind": "list" }, { "kind": "tuple" }],
+                "has": { "stopBy": "neighbor", "not": { "matches": "punct" } },
+                "not": { "has": { "stopBy": "neighbor", "not": { "any": [{ "matches": "punct" }, { "matches": "plain" }] } } }
+              },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "lit-seq" } }
+            ]
+          },
+          "seq": {
+            "any": [
+              {
+                "any": [{ "kind": "list" }, { "kind": "tuple" }],
+                "all": [
+                  { "has": { "stopBy": "neighbor", "not": { "any": [{ "matches": "punct" }, { "matches": "plain" }] } } },
+                  { "not": { "has": { "stopBy": "neighbor", "not": { "any": [{ "matches": "punct" }, { "matches": "element" }] } } } }
+                ]
+              },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "seq" } }
+            ]
+          },
+          "multi": {
+            "any": [
+              { "any": [{ "kind": "list" }, { "kind": "tuple" }], "all": [{ "count": { "has": { "stopBy": "neighbor", "not": { "matches": "punct" } }, "min": 2 } }] },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "multi" } }
+            ]
+          },
+          "raw-first": {
+            "any": [
+              { "any": [{ "kind": "list" }, { "kind": "tuple" }], "has": { "stopBy": "neighbor", "matches": "raw", "not": { "follows": { "stopBy": "end", "not": { "matches": "punct" } } } } },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "raw-first" } }
+            ]
+          },
+          "all3": {
+            "all": [
+              { "has": { "stopBy": "end", "matches": "str", "value": { "regex": "[\\n\\r]" } } },
+              { "has": { "stopBy": "end", "matches": "str", "value": { "regex": "'''" } } },
+              { "has": { "stopBy": "end", "matches": "str", "value": { "regex": "\"\"\"" } } }
+            ]
+          },
+          "join-call": {
+            "kind": "call",
+            "all": [
+              { "has": { "stopBy": "neighbor", "matches": "join-fn" } },
+              { "has": { "stopBy": "neighbor", "kind": "argument_list", "all": [{ "count": { "has": { "stopBy": "neighbor", "not": { "matches": "punct" } }, "min": 1, "max": 1 } }] } }
+            ]
+          },
+          "lit-join": {
+            "matches": "join-call",
+            "has": { "stopBy": "neighbor", "kind": "argument_list", "has": { "stopBy": "neighbor", "matches": "lit-seq" } },
+            "not": {
+              "all": [
+                { "has": { "stopBy": "neighbor", "kind": "argument_list", "has": { "stopBy": "neighbor", "matches": "raw-first" } } },
+                {
+                  "any": [
+                    { "has": { "stopBy": "neighbor", "kind": "argument_list", "matches": "all3" } },
+                    { "matches": "all3", "has": { "stopBy": "neighbor", "kind": "argument_list", "has": { "stopBy": "neighbor", "matches": "multi" } } }
+                  ]
+                }
+              ]
+            }
+          },
+          "q-fn": {
+            "any": [
+              { "kind": "attribute", "has": { "stopBy": "neighbor", "matches": "plain", "value": { "regex": "'" } } },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "q-fn" } }
+            ]
+          },
+          "qq-fn": {
+            "any": [
+              { "kind": "attribute", "has": { "stopBy": "neighbor", "matches": "plain", "value": { "regex": "\"" } } },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "qq-fn" } }
+            ]
+          },
+          "q-seq": {
+            "any": [
+              { "any": [{ "kind": "list" }, { "kind": "tuple" }], "has": { "stopBy": "neighbor", "matches": "plain", "value": { "regex": "'" } } },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "q-seq" } }
+            ]
+          },
+          "qq-seq": {
+            "any": [
+              { "any": [{ "kind": "list" }, { "kind": "tuple" }], "has": { "stopBy": "neighbor", "matches": "plain", "value": { "regex": "\"" } } },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "qq-seq" } }
+            ]
+          },
+          "fs-join": {
+            "matches": "join-call",
+            "has": { "stopBy": "neighbor", "kind": "argument_list", "has": { "stopBy": "neighbor", "matches": "seq" } },
+            "not": {
+              "all": [
+                { "any": [{ "has": { "stopBy": "neighbor", "matches": "q-fn" } }, { "has": { "stopBy": "neighbor", "kind": "argument_list", "has": { "stopBy": "neighbor", "matches": "q-seq" } } }] },
+                { "any": [{ "has": { "stopBy": "neighbor", "matches": "qq-fn" } }, { "has": { "stopBy": "neighbor", "kind": "argument_list", "has": { "stopBy": "neighbor", "matches": "qq-seq" } } }] }
+              ]
+            }
+          },
+          "lit-in-type": {
+            "matches": "str",
+            "parse": { "grammar": "annotation", "has": { "stopBy": "end", "any": [{ "matches": "lit-join", "capture": "C" }, { "matches": "lit-in-type" }] } }
+          },
+          "fs-in-type": {
+            "matches": "str",
+            "parse": { "grammar": "annotation", "has": { "stopBy": "end", "any": [{ "matches": "fs-join", "capture": "C" }, { "matches": "fs-in-type" }] } }
+          }
+        }
+      }
+    },
+    {
+      "id": "static-join-of-literals",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "any": [{ "matches": "lit-join", "pattern": "$C" }, { "matches": "lit-in-type" }] }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "each": "C",
+        "code": "FLY002",
+        "message": "Replace this `join` of string literals with the single string literal it produces.",
+        "suppress": { "noqa": { "codes": ["FLY002"] } }
+      }
+    },
+    {
+      "id": "static-join-to-f-string",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "any": [{ "matches": "fs-join", "pattern": "$C" }, { "matches": "fs-in-type" }] }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "each": "C",
+        "code": "FLY002",
+        "message": "Replace this `join` over a fixed list with an f-string such as `f\"{a}-{b}\"`; keep `join` if an element may be a non-`str` or a `str` subclass, which the f-string would format differently.",
+        "suppress": { "noqa": { "codes": ["FLY002"] } }
+      }
+    }
+  ]
+}

@@ -536,6 +536,8 @@ object_continue:
     case ',':
       gap(*next);
       v = buf + *next++;
+      // JSONC (`C`): a trailing comma, passed over as TypeScript reads it.
+      if (C && *v == '}') { goto scope_end; }
       if (simdjson_unlikely(*v != '"')) { return -int(TAPE_ERROR); }
       goto object_key;
     case '}': goto scope_end;
@@ -569,7 +571,16 @@ array_value:
 array_continue:
   gap(*next);
   switch (buf[*next++]) {
-    case ',': goto array_value;
+    case ',':
+      // JSONC (`C`): a trailing comma, passed over as TypeScript reads it.
+      if constexpr (C) {
+        gap(*next);
+        if (buf[*next] == ']') {
+          next++;
+          goto scope_end;
+        }
+      }
+      goto array_value;
     case ']': goto scope_end;
     default: return -int(TAPE_ERROR);
   }

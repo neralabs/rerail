@@ -11,7 +11,7 @@ use std::{
 pub struct Error(pub String);
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Request {
+pub struct Request {
     pub start: usize,
     pub end: usize,
     pub kind: String,

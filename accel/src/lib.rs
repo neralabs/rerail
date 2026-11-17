@@ -15,20 +15,24 @@
 //! threads), one submission a batch on each other lane. Every lane runs at the same time, and the [`score`] board
 //! counts every job. Every lane's output is the reference's, exactly: the tests compare them.
 
+pub mod budget;
 pub mod col;
 pub mod cost_model;
 pub mod cpu;
 pub mod exec;
+pub mod forms;
 pub mod kernel;
 pub mod lanes;
 pub mod price;
 pub mod rows;
 pub mod score;
+pub mod sharded;
 pub mod stream;
 pub mod sql;
 
 #[cfg(all(feature = "sme", target_os = "macos", target_arch = "aarch64"))]
 pub mod sme;
+pub mod upkeep;
 
 #[cfg(all(feature = "gpu", target_os = "macos"))]
 pub mod gpu;

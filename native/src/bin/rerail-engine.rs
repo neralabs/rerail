@@ -6,7 +6,11 @@
 //!   rerail-engine gc <store.sqlite> [--history-mb <n>]
 //!   rerail-engine sql <store.sqlite> <request.json>
 //!   rerail-engine flatten <program.rr>
+//!   rerail-engine csv <out dir> [<to dir>]   (a run's outputs, `outputs.rro`, as `.csv` files)
 //!   rerail-engine run-rr | run-policies | check-rr | convert-rr ... (`tools::cli`)
+//!
+//! Every command takes `--memory-mb <n>` (the overall memory budget, 1 GB by default) and `--metal-mb <n>` (the Metal
+//! budget, on top of it: half the overall budget by default); `RERAIL_MEMORY_MB` and `RERAIL_METAL_MB` set them too.
 use std::process::ExitCode;
 
 fn main() -> ExitCode {

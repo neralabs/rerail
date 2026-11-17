@@ -86,7 +86,7 @@ ss_import_k("import_statement"). ss_import_k("import_from_statement").
 .decl text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, field, child, text, op, line, value, strprefix
+.input doc, syntax_error, node, field, child, text, op, line, strprefix, value
 .output violation
 option_json("fateOverrides", "/0", "PostOpBehavior.EXCEPTION_ONLY=exception_only").
 option_json("fateOverrides", "/1", "PostOpBehavior.TERMINAL_ARRAY=keep_terminal").

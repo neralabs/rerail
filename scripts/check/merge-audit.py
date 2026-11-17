@@ -19,6 +19,7 @@ loss (restore it before committing). Exit status 1 when anything is reported.
 import collections
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -40,10 +41,21 @@ def keep(path):
 
 def blob(rev, path):
     """A file's lines at a revision; rev None is the working tree."""
+    data = raw(rev, path)
+    return None if data is None else data.decode('utf-8', 'replace').split('\n')
+
+
+def binary(data):
+    """Git's test: a NUL in the first 8000 bytes."""
+    return data is not None and b'\0' in data[:8000]
+
+
+def raw(rev, path):
+    """A file's bytes at a revision; rev None is the working tree."""
     if rev is None:
         try:
-            with open(path, encoding='utf-8', errors='replace') as f:
-                return f.read().split('\n')
+            with open(path, 'rb') as f:
+                return f.read()
         except (FileNotFoundError, IsADirectoryError):
             return None
     global _cat
@@ -56,7 +68,7 @@ def blob(rev, path):
         return None
     data = _cat.stdout.read(int(head[2]))
     _cat.stdout.read(1)
-    return data.decode('utf-8', 'replace').split('\n')
+    return data
 
 
 _cat = None
@@ -74,8 +86,15 @@ def anywhere(rev, lines):
     pat = os.path.join(git('rev-parse', '--git-dir').strip(), 'merge-audit-patterns')
     with open(pat, 'w') as f:
         f.write('\n'.join(lines) + '\n')
-    args = ['grep', '-h', '-F', '-f', pat] + ([rev] if rev else []) + ['--'] + TREES
-    found = {l.strip() for l in git(*args, ok=True).split('\n')}
+    # The working tree is searched with ripgrep where it is installed: `git grep -F -f` took 30 minutes over 226
+    # patterns where `rg` took 3 seconds (2026-11-15). A revision is read by `git grep`.
+    rg = shutil.which('rg')
+    if rev is None and rg:
+        r = subprocess.run([rg, '--no-filename', '--no-line-number', '-F', '-f', pat, '--'] + [t for t in TREES if os.path.exists(t)], capture_output=True, text=True)
+        out = r.stdout
+    else:
+        out = git(*(['grep', '-h', '-F', '-f', pat] + ([rev] if rev else []) + ['--'] + TREES), ok=True)
+    found = {l.strip() for l in out.split('\n')}
     os.remove(pat)
     return {t for t in lines if t in found}
 
@@ -104,6 +123,10 @@ def audit(result, p1, p2, title):
                 hint = by_name.get(os.path.basename(path), [])
                 report.append(f'{side}: added {path}, result lacks it' + (f' (same name at {hint[0]})' if hint else ''))
                 continue
+            if status.startswith('A') and binary(raw(sp, path)):
+                if raw(result, path) != raw(sp, path):
+                    report.append(f'{side}: added {path} (binary), the result has another version')
+                continue
             if status.startswith('D'):
                 if res is not None and blob(op, path) is None:
                     report.append(f'{side}: deleted {path}, result has it again')
@@ -111,6 +134,13 @@ def audit(result, p1, p2, title):
             if res is None:
                 if blob(op, path) is not None:
                     report.append(f'{side}: changed {path}, result lacks it')
+                continue
+            # A binary file (a dictionary, an image) has no lines: the result keeps this side's version or not.
+            mine, result_bytes = raw(sp, path), raw(result, path)
+            if binary(mine) or binary(result_bytes):
+                if result_bytes != mine:
+                    whose = "the other side's" if result_bytes == raw(op, path) else "neither side's"
+                    report.append(f'{side}: {path}: binary, the result is {whose} version, not this side\'s')
                 continue
             b = collections.Counter()
             for one in bases:

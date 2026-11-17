@@ -1,75 +1,46 @@
 //! Pre-pinned blocks (decision 0039): the device's scratch buffers, made once and reused.
 //!
 //! A device solve needs a few buffers for its inputs, its working arrays and its flags. Making
-//! them for each call costs a mapping, the first write of every page, a no-copy Metal buffer over
-//! it, and the device making the new pages resident before the kernel starts. On a 172K-node
-//! piece that is 0.4–0.6 ms a call against 1–2.5 ms of GPU work (`nearest_costs_by_solver`).
+//! them for each call costs a mapping, the first write of every page, a buffer over it, and the
+//! device making the new pages resident before the kernel starts. On a 172K-node piece that is
+//! 0.4–0.6 ms a call against 1–2.5 ms of GPU work (`nearest_costs_by_solver`).
 //!
-//! A block is the same kind of buffer as a residency slab (decision 0032): an anonymous mapping
-//! with one retained no-copy shared `MTLBuffer` over it. Here every page is written once when the
-//! block is made, so it is backed and the device has seen it, and the block goes back to a pool
-//! when its lease drops, for the next call of any size up to its own.
+//! A block is a lease of the one GPU buffer pool (`rerail_accel::gpu::shared`, 0266 §16): its size
+//! classes, its one budget with every other GPU buffer, and its one eviction order (idle buffers,
+//! the least recently returned first, then the residency's least recently used slabs). A block
+//! made for its lease has every page written once, so it is backed and the device has seen it; it
+//! goes back to the pool when its lease drops, for the next lease of its class, of any user.
 //!
-//! - **Sizes** are powers of two from `SMALLEST` bytes, so a lease wastes at most half a block
-//!   and a run of growing chunks makes few blocks.
-//! - **What is kept** is bounded by `SHARE` bytes of the Metal buffer budget. A block returned
-//!   past it is released. Idle blocks give way to any buffer the budget would refuse
-//!   (`give_way`), the largest first.
-//! - **Everything is dropped** with the residency slabs, two minutes after the last execution
+//! - **Refused** (`Error::BackendCapacity`) when the budget cannot make room for it: the caller
+//!   splits its batch.
+//! - **Everything idle is dropped** with the residency slabs, two minutes after the last execution
 //!   (the engine's `residency::slabs::drop_all`).
-//! - **One command queue** is kept for the solves that lease blocks (`queue`).
+//! - **One command queue** for the solves that lease blocks (`queue`): the process's.
 //!
 //! A lease's holder waits for every command that reads the block before dropping the lease.
 use crate::Error;
-use crate::runtime::MappedBuffer;
 use metal::Device;
+use rerail_accel::gpu::shared::{self, Pooled};
 use std::mem::size_of;
-
-
-/// The smallest block: one 16 KiB page.
-const SMALLEST: usize = 16 << 10;
-/// Bytes of idle blocks kept: up to the Metal buffer budget. A tier 1 run's slots take most of
-/// it (848 bytes a block of `.rr`), and a block made again at each run cost the host most of
-/// its time: a fresh mapping, every page faulted in and written. Idle blocks give way to a
-/// lease the budget would refuse (`lease_in`).
-const SHARE: usize = crate::runtime::METAL_BUFFER_LIMIT;
-
-struct Pool {
-    /// Idle blocks per size class (`SMALLEST << class`).
-    idle: Vec<Vec<MappedBuffer>>,
-    /// Bytes in `idle`.
-    held: usize,
-    queue: Option<metal::CommandQueue>,
-}
-
-type Shared = std::sync::Mutex<Pool>;
-
-static POOL: Shared = Shared::new(Pool { idle: Vec::new(), held: 0, queue: None });
-
-fn class(bytes: usize) -> usize {
-    (bytes.max(SMALLEST).next_power_of_two() / SMALLEST).trailing_zeros() as usize
-}
 
 /// A leased block: at least the bytes asked for. `made` says whether it was made for this lease
 /// (else it was reused).
 pub struct Block {
-    buffer: Option<MappedBuffer>,
-    pool: &'static Shared,
-    class: usize,
+    lease: Pooled,
     pub made: bool,
 }
 
 impl Block {
     pub fn buffer(&self) -> &metal::BufferRef {
-        &self.buffer.as_ref().expect("a leased block").buffer
+        self.lease.buffer()
     }
 
     pub fn host(&self) -> *mut u8 {
-        self.buffer.as_ref().expect("a leased block").host()
+        self.lease.host()
     }
 
     pub fn byte_length(&self) -> usize {
-        SMALLEST << self.class
+        self.lease.length() as usize
     }
 
     /// The first `count` values of type `T`.
@@ -80,83 +51,35 @@ impl Block {
     }
 }
 
-impl Drop for Block {
-    fn drop(&mut self) {
-        let Some(buffer) = self.buffer.take() else { return };
-        let bytes = self.byte_length();
-        let Ok(mut pool) = self.pool.lock() else { return };
-        if pool.held + bytes > SHARE {
-            if std::env::var("RERAIL_POOL_DEBUG").is_ok() {
-                eprintln!("pool: a block of {} MiB released ({} MiB idle)", bytes >> 20, pool.held >> 20);
-            }
-            return;
-        }
-        if pool.idle.len() <= self.class {
-            pool.idle.resize_with(self.class + 1, Vec::new);
-        }
-        pool.idle[self.class].push(buffer);
-        pool.held += bytes;
-    }
-}
-
 static MADE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static MADE_BYTES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// The blocks made so far, and their bytes: a warm run makes none (each is a fresh mapping, every
+/// The blocks made so far, and their bytes: a warm run makes none (each is a new buffer, every
 /// page faulted in by the host).
 pub fn made() -> (usize, usize) {
     use std::sync::atomic::Ordering::Relaxed;
     (MADE.load(Relaxed), MADE_BYTES.load(Relaxed))
 }
 
-/// Releases the device pool's idle blocks, the largest first, until `bytes` more fit the budget
-/// of `limit` bytes; whether any was released. None is when even all would not make room.
-pub(crate) fn give_way(bytes: usize, limit: usize) -> bool {
-    let Ok(mut pool) = POOL.lock() else { return false };
-    let used = || crate::runtime::reserved();
-    if used().saturating_sub(pool.held) + bytes > limit {
-        return false;
-    }
-    let mut released = false;
-    while used() + bytes > limit {
-        let Some(c) = (0..pool.idle.len()).rev().find(|&c| !pool.idle[c].is_empty()) else { break };
-        if std::env::var("RERAIL_POOL_DEBUG").is_ok() {
-            eprintln!("pool: an idle block of {} MiB gives way to {} MiB", (SMALLEST << c) >> 20, bytes >> 20);
-        }
-        // Dropping the buffer frees its reservation.
-        pool.idle[c].pop();
-        pool.held -= SMALLEST << c;
-        released = true;
-    }
-    released
-}
-
 /// A block of at least `bytes`, its contents whatever its last lease left.
 pub fn lease(bytes: usize) -> Result<Block, Error> {
-    lease_in(&POOL, bytes)
-}
-
-fn lease_in(shared: &'static Shared, bytes: usize) -> Result<Block, Error> {
-    let class = class(bytes);
-    {
-        let mut pool = shared.lock().map_err(|_| Error::BackendFailure)?;
-        // An idle block of the class, or of the one above: a batch a little smaller than the
-        // last takes the last's block, and the budget holds one large block, not two.
-        for c in [class, class + 1] {
-            if let Some(buffer) = pool.idle.get_mut(c).and_then(Vec::pop) {
-                pool.held -= SMALLEST << c;
-                return Ok(Block { buffer: Some(buffer), pool: shared, class: c, made: false });
-            }
+    let lease = shared::lease_within(bytes.max(1)).map_err(|refused| {
+        if std::env::var("RERAIL_POOL_DEBUG").is_ok() {
+            eprintln!("pool: {refused}");
         }
+        rerail_prof::count("capacity.metal_pool_ledger", 1);
+        Error::BackendCapacity
+    })?;
+    let made = lease.fresh();
+    if made {
+        let length = lease.length() as usize;
+        MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        MADE_BYTES.fetch_add(length, std::sync::atomic::Ordering::Relaxed);
+        // Every page written once: backed now, not on the device's first touch.
+        // SAFETY: `length` bytes of a new buffer, this lease's alone.
+        unsafe { std::ptr::write_bytes(lease.host(), 0, length) };
     }
-    let length = SMALLEST.checked_shl(class as u32).ok_or(Error::BackendCapacity)?;
-    let buffer = MappedBuffer::slab(length)?;
-    MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    MADE_BYTES.fetch_add(length, std::sync::atomic::Ordering::Relaxed);
-    // Every page written once: backed now, not on the device's first touch.
-    // SAFETY: `length` bytes of a fresh mapping.
-    unsafe { std::ptr::write_bytes(buffer.host(), 0, length) };
-    Ok(Block { buffer: Some(buffer), pool: shared, class, made: true })
+    Ok(Block { lease, made })
 }
 
 /// A block holding `values` (at least one byte long).
@@ -214,18 +137,9 @@ pub fn queue(_device: &Device) -> Result<metal::CommandQueue, Error> {
     crate::queue()
 }
 
-/// The bytes of idle blocks kept.
-pub fn held() -> usize {
-    POOL.lock().map(|p| p.held).unwrap_or(0)
-}
-
-/// Releases every idle block and the queue.
+/// Releases every idle buffer of the pool (the engine's drop: its blocks are the pool's).
 pub fn drop_all() {
-    if let Ok(mut pool) = POOL.lock() {
-        pool.idle.clear();
-        pool.held = 0;
-        pool.queue = None;
-    }
+    shared::drop_free();
 }
 
 #[cfg(test)]
@@ -233,45 +147,22 @@ mod tests {
     use super::*;
     use crate::METAL_DEVICE;
 
-    /// A returned block serves the next lease of its size class, written over in place; past the share, a
-    /// returned block is released.
+    /// A returned block serves the next lease of its size class, written over in place.
     #[test]
     fn blocks_are_reused_by_size_class() {
         if METAL_DEVICE.is_none() {
             return;
         }
-        static OWN: Shared = Shared::new(Pool { idle: Vec::new(), held: 0, queue: None });
-        let held = || OWN.lock().unwrap().held;
-        let a = fill(lease_in(&OWN, 12).unwrap(), &[1_u32, 2, 3]).unwrap();
-        assert!(a.made);
-        assert_eq!(a.byte_length(), SMALLEST);
-        assert_eq!(a.read::<u32>(3), [1, 2, 3]);
+        // 3 MiB + 1: a class (3.5 MiB) no other test leases.
+        let bytes: usize = (3 << 20) + 1;
+        let a = upload(&vec![7_u32; bytes.div_ceil(4)]).unwrap();
+        assert!(a.byte_length() >= bytes);
+        assert_eq!(a.read::<u32>(3), [7, 7, 7]);
         let first = a.buffer().gpu_address();
         drop(a);
-        assert_eq!(held(), SMALLEST);
-        let b = clear(lease_in(&OWN, 400).unwrap(), 400).unwrap();
-        assert!(!b.made);
+        let b = zeroed::<u8>(bytes).unwrap();
+        assert!(!b.made, "the returned block served the lease");
         assert_eq!(b.buffer().gpu_address(), first);
         assert_eq!(b.read::<u32>(3), [0, 0, 0]);
-        // A larger lease is another class.
-        let c = lease_in(&OWN, SMALLEST + 1).unwrap();
-        assert!(c.made && c.byte_length() == 2 * SMALLEST);
-        drop((b, c));
-        assert_eq!(held(), 3 * SMALLEST);
-    }
-
-    #[test]
-    fn idle_blocks_give_way_to_the_budget() {
-        if METAL_DEVICE.is_none() {
-            return;
-        }
-        // Idle, a block of most of the budget: a buffer as large is still made, and the idle
-        // block is what gave way.
-        let most = crate::runtime::METAL_BUFFER_LIMIT / 2 + SMALLEST;
-        drop(lease(most).unwrap());
-        assert!(held() >= most);
-        let other = MappedBuffer::slab(most).unwrap();
-        assert!(held() < most);
-        drop(other);
     }
 }

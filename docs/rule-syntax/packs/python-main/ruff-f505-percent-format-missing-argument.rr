@@ -1,0 +1,16 @@
+.policy "ruff-f505-percent-format-missing-argument" revision 1
+.guests off
+.description "Supply a value for every %(key) placeholder in a %-format string; a missing key raises KeyError at run time."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
+
+#include "python/format-args.rr"
+
+// F505(n): a finding at node n, from clause `percent-format-missing-argument`.
+// Each rule below is one way the JSON `rule` can match.
+.violation F505(at: node) "`%`-format string is missing argument(s) for placeholder(s)"
+    suppress noqa "F505"
+F505(n) :- n ~ `$S % $R`, fa_percent_tree(n, _, _), fa_percent_missing(n, f1),
+    kind(f1, "placeholder"), child(f1, c2, _), kind(c2, "mapping_key").

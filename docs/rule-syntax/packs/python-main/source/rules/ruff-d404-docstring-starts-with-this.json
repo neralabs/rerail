@@ -1,0 +1,154 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-d404-docstring-starts-with-this",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Start a docstring with an imperative verb rather than the word This; a summary phrased as a command reads consistently.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "docstring-starts-with-this",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "doc-stmt": {
+              "kind": "expression_statement",
+              "not": {
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  {
+                    "follows": {
+                      "stopBy": "end",
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                ]
+              },
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "module"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "class_definition"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "doc-holder": {
+              "any": [
+                {
+                  "matches": "doc-stmt"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "doc-holder"
+                  }
+                }
+              ]
+            },
+            "docstring": {
+              "kind": "string",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string_start",
+                  "regex": "[bBfFtT]"
+                }
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "matches": "doc-holder"
+              }
+            }
+          },
+          "rule": {
+            "matches": "docstring",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "string_content",
+              "pattern": "$DOC"
+            },
+            "compare": {
+              "left": "WORD",
+              "op": "eq",
+              "right": "THIS",
+              "text": "source"
+            }
+          },
+          "transform": {
+            "FIRST": {
+              "replace": {
+                "source": "$DOC",
+                "replace": "^\\s*([^ ]*)[\\s\\S]*$",
+                "by": "$1"
+              }
+            },
+            "LETTERS": {
+              "replace": {
+                "source": "$FIRST",
+                "replace": "[^\\p{Alphabetic}\\p{N}]",
+                "by": ""
+              }
+            },
+            "WORD": {
+              "convert": {
+                "source": "$LETTERS",
+                "toCase": "lowerCase"
+              }
+            },
+            "THIS": {
+              "replace": {
+                "source": "$DOC",
+                "replace": "^[\\s\\S]*$",
+                "by": "this"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "D404",
+        "anchor": "witness.span",
+        "message": "Reword this docstring's summary so it does not open with \"This\": start a function's with an imperative verb (`Return the total.`), a class's or module's with what it is.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "D404"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -82,6 +82,8 @@ fn stacks(out: &Path) -> String {
 /// Takes the stop signals on a thread of its own, and the deadline; see the module. Call it before any other
 /// thread starts, so they inherit the blocked signals. A no-op off Unix.
 pub fn watch() {
+    // The process's `main`: the profile's account of its life starts here (`life`).
+    super::life::entered();
     #[cfg(all(unix, not(target_family = "wasm")))]
     {
         let started = std::time::Instant::now();

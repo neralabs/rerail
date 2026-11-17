@@ -13,7 +13,7 @@ pub mod sql;
 pub const KIND_LIMIT: usize = 1024;
 const FIELD_LIMIT: usize = 64;
 pub const SENTINEL: u16 = u16::MAX;
-pub const CHECKPOINT_STRIDE: usize = 16;
+pub use rerail_tape_format::CHECKPOINT_STRIDE;
 pub const WIDTH: usize = 6;
 pub const ERROR_CODE: u16 = 0;
 const ERROR_SYMBOL: u16 = u16::MAX;

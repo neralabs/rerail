@@ -1,0 +1,65 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt009-pytest-unittest-assertion",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use plain assert statements instead of unittest-style assertion methods; pytest rewrites them to show detailed failure output.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unittest-assertion",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "kind": "call"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "attribute",
+            "has": {
+              "field": "attribute",
+              "kind": "identifier",
+              "regex": "^(?:assertAlmostEqual|assertAlmostEquals|assertCountEqual|assertDictContainsSubset|assertDictEqual|assertEqual|assertEquals|failIf|failIfAlmostEqual|failIfEqual|failUnless|failUnlessAlmostEqual|failUnlessEqual|assertFalse|assertGreater|assertGreaterEqual|assertIn|assertIs|assertIsInstance|assertIsNone|assertIsNot|assertIsNotNone|assertLess|assertLessEqual|assertListEqual|assertMultiLineEqual|assertNotAlmostEqual|assertNotAlmostEquals|assertNotEqual|assertNotEquals|assertNotIn|assertNotIsInstance|assertNotRegex|assertNotRegexpMatches|assertRegex|assertRegexpMatches|assertSequenceEqual|assertSetEqual|assertTrue|assertTupleEqual|assert_)$",
+              "pattern": "$NAME"
+            },
+            "matches": "callee"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PT009",
+        "message": "Use a plain `assert` (for example `assert a == b`) instead of `$NAME`; leave it if this is not a unittest assertion or the tests run under unittest only.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT009"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

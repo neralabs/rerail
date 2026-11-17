@@ -23,6 +23,9 @@ pub(super) enum CachedBacking {
         length: usize,
     },
     Heap(Box<[u8]>),
+    /// Bytes in a segment, read in place (decision 0295 step 5): never put in the cache, which holds what was
+    /// decompressed.
+    Mapped(super::SegmentBytes),
 }
 
 pub(super) struct MmapArena {
@@ -124,6 +127,11 @@ impl CachedBytes {
         }
     }
 
+    /// Bytes read where they are in a segment.
+    pub(super) fn mapped(bytes: super::SegmentBytes) -> Self {
+        Self { backing: CachedBacking::Mapped(bytes) }
+    }
+
     fn arena(arena: Arc<MmapArena>, offset: usize, length: usize) -> Self {
         Self {
             backing: CachedBacking::Arena {
@@ -145,6 +153,7 @@ impl Deref for CachedBytes {
                 length,
             } => arena.slice(*offset, *length),
             CachedBacking::Heap(bytes) => bytes,
+            CachedBacking::Mapped(bytes) => bytes.bytes(),
         }
     }
 }
@@ -168,7 +177,7 @@ pub(super) struct DecompressedReadCache {
     tail: Option<CacheKey>,
     entries: HashMap<CacheKey, DecompressedCacheEntry>,
     /// Entry-map probes made while unlinking and relinking LRU nodes.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     lru_link_probes: usize,
 }
 
@@ -185,24 +194,24 @@ impl DecompressedReadCache {
             head: None,
             tail: None,
             entries: HashMap::new(),
-            #[cfg(any(test, feature = "test-hooks"))]
+            #[cfg(test)]
             lru_link_probes: 0,
         }
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub(super) fn contains(&self, key: CacheKey) -> bool {
         self.entries.contains_key(&key)
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub(super) fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
     /// Counts one entry-map probe of LRU relinking; a no-op outside tests.
     fn count_link_probe(&mut self) {
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         {
             self.lru_link_probes += 1;
         }

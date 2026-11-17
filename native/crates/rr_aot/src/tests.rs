@@ -80,7 +80,7 @@ fn aot_tapes_are_the_jits() {
 fn the_word_multiplier_is_a_literal() {
     let c = rerail_rr_parser::compiled().expect("compiles");
     let t = c.parser.tier1.records.as_ref().expect("the record pass");
-    let src = include_str!("tier1_aot.rs");
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     assert!(!src.contains("kept("), "a barrier on a constant");
     assert!(src.contains(&format!("{}i64 as u64", t.table.mult as i64)), "the multiplier a literal");
     assert_eq!(t.rest, rerail_compiler::native_cpu_block::WordRest::Ninth, "rr's words are nine bytes at most");
@@ -95,7 +95,7 @@ fn the_word_multiplier_is_a_literal() {
 fn the_run_loop_calls_nothing() {
     let c = rerail_rr_parser::compiled().expect("compiles");
     let mult = c.parser.tier1.records.as_ref().expect("the record pass").table.mult as i64;
-    let src = include_str!("tier1_aot.rs");
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
     // The values that are the multiplier, then each hash's multiply by one.
     let vars: Vec<&str> = f0.match_indices(&format!(" = {mult}i64 as u64;")).map(|(at, _)| &f0[f0[..at].rfind(|c: char| !c.is_ascii_alphanumeric()).expect("its name") + 1..at]).collect();
@@ -127,7 +127,7 @@ fn the_run_loop_calls_nothing() {
 fn a_words_lookup_is_leans() {
     let c = rerail_rr_parser::compiled().expect("compiles");
     let mult = c.parser.tier1.records.as_ref().expect("the record pass").table.mult as i64;
-    let src = include_str!("tier1_aot.rs");
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
     let vars: Vec<&str> = f0.match_indices(&format!(" = {mult}i64 as u64;")).map(|(at, _)| &f0[f0[..at].rfind(|c: char| !c.is_ascii_alphanumeric()).expect("its name") + 1..at]).collect();
     let hashes: Vec<usize> = vars.iter().flat_map(|v| f0.match_indices(&format!(".wrapping_mul({v})")).map(|(at, _)| at).collect::<Vec<_>>()).collect();
@@ -159,7 +159,7 @@ fn a_words_lookup_is_leans() {
 /// a `select` between a pair's last and a run's.
 #[test]
 fn a_tokens_end_is_leans_max() {
-    let src = include_str!("tier1_aot.rs");
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
     // The run loop's end: the first unsigned `max` of two values (`vN.max(vM)`; a signed one
     // is `(vN as i64).max(..)`).
@@ -176,7 +176,7 @@ fn a_tokens_end_is_leans_max() {
 /// pairs), not the start at the token's head and the rest as they are made.
 #[test]
 fn a_tokens_record_is_written_once() {
-    let src = include_str!("tier1_aot.rs");
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
     // The run loop: the innermost loop around the token's end (`a_tokens_end_is_leans_max`), to
     // its `continue`.
@@ -195,7 +195,7 @@ fn a_tokens_record_is_written_once() {
 /// one table), and the pair's next bytes an `ext` of two loaded vectors, no load at `+1`.
 #[test]
 fn the_refill_is_leans_window() {
-    let src = include_str!("tier1_aot.rs");
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
     let from = f0.find("vld1q_u8(").expect("the refill's loads");
     let to = from + f0[from..].find("vextq_u8::<1>(").expect("the pair's next bytes by `ext`");
@@ -221,7 +221,7 @@ fn the_refill_is_leans_window() {
 /// anchor, `native_cpu_bytes::scalar`), no signed compare with the file's length.
 #[test]
 fn a_tests_next_byte_asks_no_bound() {
-    let src = include_str!("tier1_aot.rs");
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
     let at = f0.find("== ((45i64 as u64) as u64)").expect("the `-` test");
     let test = &f0[at..at + f0[at..].find("wrapping_shl(").expect("its hit placed")];
@@ -233,7 +233,7 @@ fn a_tests_next_byte_asks_no_bound() {
 /// the block's last token's end, the refill's loads after the token chain.
 #[test]
 fn a_cold_block_stays_a_branch() {
-    let src = include_str!("tier1_aot.rs");
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     let cold = src.matches("core::hint::cold_path();").count();
     assert!(cold > 0, "no cold block");
     assert_eq!(src.matches("core::hint::cold_path(); unsafe { core::arch::asm!(\"\", options(nomem, nostack, preserves_flags)) };").count(), cold, "a cold block rustc may fold");
@@ -244,7 +244,7 @@ fn a_cold_block_stays_a_branch() {
 /// five instructions, where it made each `vpaddq_u8(a, a)` three.
 #[test]
 fn a_bitmask_is_pairwise_adds() {
-    let src = include_str!("tier1_aot.rs");
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     let same = src.match_indices("vpaddq_u8(").filter(|(i, _)| {
         let rest = &src[i + "vpaddq_u8(".len()..];
         let args = &rest[..rest.find(')').unwrap_or(0)];
@@ -261,7 +261,7 @@ fn a_bitmask_is_pairwise_adds() {
 /// functions made is `clif_rust`'s `a_returned_call_is_the_return`.)
 #[test]
 fn a_short_tokens_arm_calls_only_its_whole() {
-    let src = include_str!("tier1_aot.rs");
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
     for b in ["34", "47"] {
         let arm = arm_of(f0, b);
@@ -276,7 +276,7 @@ fn a_short_tokens_arm_calls_only_its_whole() {
 /// registers, as a lexer's function returns its token, not four words through memory.
 #[test]
 fn a_rules_function_returns_two_words() {
-    let src = include_str!("tier1_aot.rs");
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     let six = "a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64)";
     assert!(src.contains(&format!("{six} -> (u64, u64) {{")), "no rule function of two words");
     assert!(!src.contains(&format!("{six} -> (u64, u64, u64, u64) {{")), "a rule function of four words");
@@ -560,7 +560,7 @@ fn arm_of<'s>(f0: &'s str, b: &str) -> &'s str {
 /// (`native_cpu_block::before_start`: no token ends with a `\` before a `"` the loop starts).
 #[test]
 fn a_strings_arm_reads_nothing_before_its_quote() {
-    let src = include_str!("tier1_aot.rs");
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
     let arm = arm_of(f0, "34");
     let window = arm.find("vld1q_u8").expect("the string's first window");
@@ -575,7 +575,7 @@ fn a_strings_arm_reads_nothing_before_its_quote() {
 fn a_slashs_arm_is_leans() {
     let c = rerail_rr_parser::compiled().expect("compiles");
     let mult = c.parser.tier1.records.as_ref().expect("the record pass").table.mult as i64;
-    let src = include_str!("tier1_aot.rs");
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
     let arm = arm_of(f0, "47");
     let mut called: Vec<&str> = arm.match_indices("(pin, ").map(|(at, _)| &arm[arm[..at].rfind(' ').expect("a callee") + 1..at]).collect();
@@ -593,7 +593,7 @@ fn a_slashs_arm_is_leans() {
 /// `end - pos < 19 || parse()`; its leading zero asked of whether the first `while` ran a turn.
 #[test]
 fn a_numbers_arm_is_leans_loop() {
-    let src = include_str!("tier1_aot.rs");
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
     let m = f0.find(" { 34 => {").expect("the rules' match");
     let body = &f0[m..];
@@ -641,7 +641,7 @@ fn a_numbers_arm_is_leans_loop() {
 /// (its byte, its table entry, its run), so short tokens ran one after another.
 #[test]
 fn the_next_start_is_the_blocks() {
-    let src = include_str!("tier1_aot.rs");
+    let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     let f0 = &src[src.find("unsafe fn f0(").expect("the file loop")..];
     let f0 = &f0[..f0[10..].find("\nunsafe fn ").map_or(f0.len(), |e| e + 10)];
     assert!(!f0.contains("(-64i64 as u64)"), "a start from a token's end's block");

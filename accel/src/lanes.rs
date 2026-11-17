@@ -36,6 +36,23 @@ impl Lane {
     }
 }
 
+thread_local! {
+    /// The device lanes' backends (the GPU's, the Neural Engine's) this thread has asked for.
+    static DEVICE_LANES_ASKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The device lanes' backends this thread has asked for ([`crate::gpu::backend`], [`crate::ane::backend`]): a
+/// binding without the device asks for none. Asking compiles the GPU's kernels, starts its pipelines' prewarm and
+/// builds the Neural Engine's lane, whether or not the backend is kept.
+pub fn device_lanes_asked() -> usize {
+    DEVICE_LANES_ASKED.with(|n| n.get())
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn ask_device_lane() {
+    DEVICE_LANES_ASKED.with(|n| n.set(n.get() + 1));
+}
+
 /// Which lanes this machine has: the CPU always; SME when the CPU reports SME2; the GPU when Metal has a device; the
 /// Neural Engine on Apple silicon running macOS (Core ML decides placement per model, and the `ane` lane checks it).
 pub fn present() -> [bool; Lane::COUNT] {

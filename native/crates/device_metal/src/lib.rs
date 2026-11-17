@@ -1,7 +1,12 @@
 //! Metal, as the logic's and the transducer's device (macOS only; registered by the engine).
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
-#![allow(dead_code, unused_imports)]
+// A mounted module re-exports its dependency's by glob, and its sources import the same items
+// under the same names: the glob's name and the private one are one item.
+#![allow(dead_code, unused_imports, hidden_glob_reexports)]
+// The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
+#[cfg(target_family = "wasm")]
+extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 pub use rerail_store::content_store;
 pub use rerail_store::git_workspace;
@@ -18,16 +23,14 @@ pub mod code_rule_dsl {
     pub mod device_metal;
     pub use rerail_lang::code_rule_dsl::embed;
     pub use rerail_w::code_rule_dsl::eval;
-    #[path = "facts"]
+    
     pub mod facts {
         pub use rerail_facts::code_rule_dsl::facts::*;
         pub use rerail_w::code_rule_dsl::facts::facts_a;
-        #[path = "vtab"]
         pub mod vtab {
             pub use rerail_facts::code_rule_dsl::facts::vtab::*;
             #[cfg(any(test, feature = "test-hooks"))]
             pub use rerail_w::code_rule_dsl::facts::vtab::p_table;
-            #[path = "syntax"]
             pub mod syntax {
                 pub use rerail_facts::code_rule_dsl::facts::vtab::syntax::*;
                 pub use rerail_logic::code_rule_dsl::facts::vtab::syntax::rr_core;
@@ -89,7 +92,6 @@ pub mod code_rule_dsl {
     pub use rerail_w::code_rule_dsl::hooks;
     pub use rerail_w::code_rule_dsl::identifier;
     pub use rerail_lang::code_rule_dsl::json;
-    #[path = "language"]
     pub mod language {
         pub use rerail_lang::code_rule_dsl::language::*;
         pub use rerail_w::code_rule_dsl::language::adapter;
@@ -116,7 +118,6 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use std::sync::LazyLock;
     }
-    #[path = "lines"]
     pub mod lines {
         pub use rerail_lang::code_rule_dsl::lines::*;
         #[allow(unused_imports)]
@@ -130,10 +131,8 @@ pub mod code_rule_dsl {
     #[path = "logic"]
     pub mod logic {
         pub use rerail_logic::code_rule_dsl::logic::*;
-        #[path = "front"]
         pub mod front {
             pub use rerail_rr::code_rule_dsl::logic::front::*;
-            #[path = "."]
             pub mod caches {
                 pub use rerail_rr::code_rule_dsl::logic::front::caches::*;
                 #[allow(unused_imports)]
@@ -141,7 +140,6 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use std::collections::BTreeSet;
             }
-            #[path = "yaml"]
             pub mod yaml {
                 pub use rerail_rr::code_rule_dsl::logic::front::yaml::*;
                 #[allow(unused_imports)]
@@ -160,7 +158,6 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS;
         }
-        #[path = "magic"]
         pub mod magic {
             pub use rerail_rr::code_rule_dsl::logic::magic::*;
             #[allow(unused_imports)]
@@ -245,10 +242,8 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use std::time::Instant;
         }
-        #[path = "plan"]
         pub mod plan {
             pub use rerail_logic::code_rule_dsl::logic::plan::*;
-            #[path = "corpus"]
             pub mod corpus {
                 pub use rerail_logic::code_rule_dsl::logic::plan::corpus::*;
                 #[allow(unused_imports)]
@@ -263,8 +258,6 @@ pub mod code_rule_dsl {
                 use crate::code_rule_dsl::logic::front;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::logic::rr::WORLD;
-                #[allow(unused_imports)]
-                use crate::code_rule_dsl::typing::cross_rounds;
                 #[allow(unused_imports)]
                 pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::plan::corpus::hiding::qualified;
                 #[allow(unused_imports)]
@@ -319,7 +312,6 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::sql::sql_ast::{SqlBinaryOperator as Op, SqlExpression as Expr, SqlUnaryOperator, SqlValue as Value_};
         }
-        #[path = "profile"]
         pub mod profile {
             pub use rerail_prof::code_rule_dsl::logic::profile::*;
             pub use rerail_logic::code_rule_dsl::logic::profile::report;
@@ -337,10 +329,8 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::profile::roofline::Unit;
         }
-        #[path = "rr"]
         pub mod rr {
             pub use rerail_logic::code_rule_dsl::logic::rr::*;
-            #[path = "aggregate_demand"]
             pub mod aggregate_demand {
                 pub use rerail_rr::code_rule_dsl::logic::rr::aggregate_demand::*;
                 #[allow(unused_imports)]
@@ -348,7 +338,6 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use std::collections::{BTreeMap, BTreeSet};
             }
-            #[path = "."]
             pub mod tape_type {
                 pub use rerail_rr::code_rule_dsl::logic::rr::tape_type::*;
                 #[allow(unused_imports)]
@@ -388,7 +377,6 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::facts::vtab::syntax::core_rr::single_metavars;
         }
-        #[path = "strings"]
         pub mod strings {
             pub use rerail_facts::code_rule_dsl::logic::strings::*;
             #[allow(unused_imports)]
@@ -435,7 +423,6 @@ pub mod code_rule_dsl {
     pub use rerail_facts::code_rule_dsl::sql_admission;
     pub use rerail_w::code_rule_dsl::stats;
     pub use rerail_w::code_rule_dsl::suppress;
-    #[path = "tape"]
     pub mod tape {
         pub use rerail_lang::code_rule_dsl::tape::*;
         #[allow(unused_imports)]
@@ -501,136 +488,15 @@ pub mod code_rule_dsl {
             #[cfg(target_os="macos")]
             pub mod metal_backend;
             #[cfg(target_os="macos")]
-            pub mod metal_bulk_closure;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_bulk_closure_tests;
-            #[cfg(target_os="macos")]
-            pub mod metal_candidate_batch;
-            #[cfg(target_os="macos")]
-            pub mod metal_capture_arguments;
-            #[cfg(target_os="macos")]
-            pub mod metal_capture_groups;
-            #[cfg(target_os="macos")]
-            pub mod metal_capture_literals;
-            #[cfg(target_os="macos")]
-            pub mod metal_capture_predicates;
-            #[cfg(target_os="macos")]
-            pub mod metal_closure_continuation;
-            #[cfg(target_os="macos")]
-            pub mod metal_closure_prepare;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_closure_prepare_tests;
-            #[cfg(target_os="macos")]
-            pub mod metal_constant_output;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            #[path = "metal_cutover_architecture.rs"]
-            pub mod metal_cutover_architecture;
-            #[cfg(target_os="macos")]
-            pub mod metal_dynamic_execution;
-            #[cfg(target_os="macos")]
-            pub mod metal_failure_records;
-            #[cfg(target_os="macos")]
-            pub mod metal_frame_identity;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_frame_identity_tests;
-            #[cfg(all(any(test, feature = "test-hooks"),target_os="macos",feature="metal-tests"))]
-            pub mod metal_frontier_conformance;
-            #[cfg(target_os="macos")]
-            pub mod metal_frontier_reduce;
-            #[cfg(target_os="macos")]
-            pub mod metal_frontier_seed;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_frontier_seed_tests;
-            #[cfg(target_os="macos")]
-            pub mod metal_frontier_validation;
-            #[cfg(target_os="macos")]
-            pub mod metal_grid_backend;
-            #[cfg(target_os="macos")]
-            pub mod metal_grid_contract;
-            #[cfg(target_os="macos")]
-            pub mod metal_grid_executor;
-            #[cfg(target_os="macos")]
-            pub mod metal_grid_plan;
-            #[cfg(target_os="macos")]
-            pub mod metal_initial_prefix;
-            #[cfg(target_os="macos")]
-            pub mod metal_initial_range_codegen;
-            #[cfg(target_os="macos")]
-            pub mod metal_inline_predicates;
-            #[cfg(target_os="macos")]
             pub mod metal_join;
-            #[cfg(target_os="macos")]
-            pub mod metal_named_order;
-            #[cfg(target_os="macos")]
-            pub mod metal_output_contract;
-            #[cfg(target_os="macos")]
-            pub mod metal_output_dispatch;
-            #[cfg(target_os="macos")]
-            pub mod metal_output_mime;
-            #[cfg(target_os="macos")]
-            pub mod metal_output_pages;
-            #[cfg(target_os="macos")]
-            pub mod metal_output_selection;
-            #[cfg(target_os="macos")]
-            pub mod metal_output_strip;
             #[cfg(target_os="macos")]
             pub mod metal_parallel;
             #[cfg(target_os="macos")]
-            pub mod metal_position_order;
-            #[cfg(target_os="macos")]
             pub mod metal_program_backend;
-            #[cfg(target_os="macos")]
-            pub mod metal_ready_batch;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_ready_batch_tests;
-            #[cfg(target_os="macos")]
-            pub mod metal_ready_proof;
-            #[cfg(target_os="macos")]
-            pub mod metal_regex_code;
-            #[cfg(target_os="macos")]
-            pub mod metal_regex_frontier;
-            #[cfg(target_os="macos")]
-            pub mod metal_register_codegen;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_register_conformance;
-            #[cfg(target_os="macos")]
-            pub mod metal_register_execution;
             #[cfg(target_os="macos")]
             pub mod metal_rows;
             #[cfg(target_os="macos")]
-            pub mod metal_semantic_columns;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_semantic_conformance;
-            #[cfg(target_os="macos")]
             pub mod metal_sort;
-            #[cfg(target_os="macos")]
-            pub mod metal_state_values;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_state_values_tests;
-            #[cfg(target_os="macos")]
-            pub mod metal_successor;
-            #[cfg(target_os="macos")]
-            pub mod metal_successor_branch_codegen;
-            #[cfg(target_os="macos")]
-            pub mod metal_successor_codegen;
-            #[cfg(target_os="macos")]
-            pub mod metal_successor_prepare;
-            #[cfg(target_os="macos")]
-            pub mod metal_successor_repeat_codegen;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_successor_tests;
-            #[cfg(target_os="macos")]
-            pub mod metal_terminal;
-            #[cfg(target_os="macos")]
-            pub mod metal_terminal_capture_order;
-            #[cfg(target_os="macos")]
-            pub mod metal_terminal_repeat;
-            #[cfg(target_os="macos")]
-            pub mod metal_typed_output;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_unique_child_tests;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_value_prefix_tests;
             #[cfg(all(any(test, feature = "test-hooks"),target_os="macos",target_arch="aarch64"))]
             pub mod regex_relocation_tests;
             #[allow(unused_imports)]
@@ -726,10 +592,10 @@ pub mod code_rule_dsl {
         use crate::code_rule_dsl::search_index::persist_search_index_batch;
     }
     pub use rerail_lang::code_rule_dsl::tree;
-    #[path = "typing"]
+    #[cfg_attr(any(test, feature = "test-hooks"), path = "typing")]
     pub mod typing {
         pub use rerail_logic::code_rule_dsl::typing::*;
-        #[path = "file_local"]
+        #[cfg_attr(any(test, feature = "test-hooks"), path = "file_local")]
         pub mod file_local {
             pub use rerail_logic::code_rule_dsl::typing::file_local::*;
             #[cfg(any(test, feature = "test-hooks"))]
@@ -750,7 +616,6 @@ pub mod code_rule_dsl {
     pub use rerail_w::code_rule_dsl::violations;
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_w::code_rule_dsl::walks;
-    #[path = "waves"]
     pub mod waves {
         pub use rerail_logic::code_rule_dsl::waves::owner;
         #[cfg(any(test, feature = "test-hooks"))]
@@ -788,3 +653,17 @@ pub use rerail_w::git_ignore;
 pub use rerail_w::panic_boundary;
 pub use rerail_logic::threads;
 // cratify: mounts end
+
+/// The language packs this crate's tests read through the load-time registry (`language::base`), registered once:
+/// the engine registers them as it loads (`install_languages`), and a test of this crate runs without it (work
+/// queue Q23). The first registration holds, so a test may call it at any point.
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) fn test_languages() {
+    use crate::code_rule_dsl::language::{self, Family, adapter::pack::{Pack, register}};
+    use rerail_lang_python::code_rule_dsl::language::adapter::python::Python;
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        register(Family::Python, &Pack::<Python>::NEW);
+        language::register_base(Family::Python, &Pack::<Python>::NEW);
+    });
+}

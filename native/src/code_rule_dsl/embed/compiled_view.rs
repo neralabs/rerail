@@ -3,18 +3,18 @@
 //! template's tape is (`tape::crate::code_rule_dsl::blade::tape::encode_blade`, `View::build`), with the template's syntax
 //! errors as Blade reads them; a tree-sitter tree never holds a compiled view.
 
+use super::host::HostNode;
 use super::{Embedder, Program};
 use crate::code_rule_dsl::scope::{BuildError, Builder};
 use crate::code_rule_dsl::tape::TapeDoc;
 use ast_grep_core::Node;
-use tree_sitter::Node as TsNode;
 
 /// The embedder of `Via::CompiledView`.
 pub struct CompiledView;
 
 impl Embedder for CompiledView {
-    /// No tree-sitter host compiles to a view: Blade's is built from its Forte tree.
-    fn build(&self, _: TsNode<'_>, _: &str) -> Option<Program> {
+    /// No host tape compiles to a view: Blade's is built from its Forte tree.
+    fn build(&self, _: HostNode<'_>, _: &str, _: &dyn Fn() -> bool) -> Option<Program> {
         None
     }
 }

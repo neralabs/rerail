@@ -30,7 +30,8 @@ use crate::code_rule_dsl::logic::strings::functions::{Kind, all as functions};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-/// The facts every probe reads: symbols, numbers, pairs and edges (with a cycle).
+/// The facts every probe reads: symbols, numbers, pairs, edges (with a cycle) and labelled edges (`l`: routes of one
+/// length that differ in their bytes, and a route of fewer characters but more bytes).
 const FACTS: &str = r#".decl s(a: symbol)
 s("alpha"). s("Beta"). s("a.b"). s("x_1"). s("12").
 .decl t(a: symbol)
@@ -45,6 +46,9 @@ p("alpha", 1). p("alpha", 4). p("Beta", 2). p("a.b", -1).
 q("alpha", "z"). q("alpha", "y"). q("Beta", "w").
 .decl e(a: number, b: number)
 e(1, 2). e(2, 5). e(5, 1). e(0, -3).
+.decl l(a: number, b: number, c: symbol)
+l(1, 2, "b"). l(1, 3, "a"). l(2, 4, "a"). l(3, 4, "b"). l(4, 1, "c"). l(1, 6, "é"). l(1, 7, "a"). l(7, 6, "a").
+.lattice shortlex_min<symbol> { Lub -> @shortlex_min }
 "#;
 
 /// One probe: what it checks (the ledger's key), the operations it uses (the census's names), and its rule, whose
@@ -206,7 +210,7 @@ fn probes() -> Vec<Probe> {
         let args: Vec<&str> = kinds.iter().enumerate().map(|(i, k)| arg(k, i)).collect();
         out.push(probe(format!("shipped functor @{name}/{arity}"), &[&format!("call {name}")], value(ret), format!("{{HEAD}}(v) :- {}, v = @{name}({}).", binds(&kinds), args.join(", "))));
     }
-    for (rr, engine) in crate::code_rule_dsl::logic::rr::RR_TESTS {
+    for (rr, engine) in crate::code_rule_dsl::logic::rr::lower::TESTS {
         let ops = [&format!("test {engine}")[..]];
         out.push(probe(format!("text test {rr}: a constant pattern"), &ops, "a: symbol", format!("{{HEAD}}(a) :- s(a), {rr}(\"a\", a).")));
         out.push(probe(format!("text test {rr}: negated"), &ops, "a: symbol", format!("{{HEAD}}(a) :- s(a), !{rr}(\"a\", a).")));
@@ -216,11 +220,35 @@ fn probes() -> Vec<Probe> {
     for op in [AggOp::Count, AggOp::Sum, AggOp::Min, AggOp::Max, AggOp::Product, AggOp::Join { by: Vec::new(), sep: String::new() }] {
         out.push(aggregate(&op));
     }
+    // `@concat` of more than two texts, as the data-layer programs write it: their concatenation, left to right.
+    out.push(probe("functor @concat of three texts", &["call concat"], "a: symbol", "{HEAD}(v) :- t(a), t(b), v = @concat(a, \"::\", b)."));
+    // `@printf` of a constant format, as the data-layer programs write it: `%d`, `%0Nd` (never truncated) and `%s`.
+    out.push(probe("functor @printf of %012d", &["call printf"], "a: symbol", "{HEAD}(v) :- n(x), v = @printf(\"%03d.\", x)."));
+    out.push(probe("functor @printf of %d and %s", &["call printf"], "a: symbol", "{HEAD}(v) :- p(a, x), v = @printf(\"%d:%s|%%\", x, a)."));
     out.push(probe("membership of a constant set", &["test equals"], "a: symbol", "{HEAD}(a) :- s(a), (a = \"alpha\" ; a = \"x_1\")."));
     out.push(probe("lattice relation (shortest)", &["lattice"], "a: number, d: min<>| widen 8", "{HEAD}(x, 0) :- n(x), x = 1.\n{HEAD}(y, d + 1) :- {HEAD}(x, d), e(x, y)."));
+    // A lattice relation holds one row a key: a key's rows fold by its join, and its readers see the folded value only.
+    out.push(probe("lattice relation (flat: a key's values differ)", &["lattice"], "a: symbol, v: flat<>", "{HEAD}(a, x) :- p(a, x)."));
+    out.push(probe("lattice relation (max over a key)", &["lattice"], "a: symbol, v: max<>| widen 8", "{HEAD}(a, x) :- p(a, x)."));
+    out.push(probe("lattice relation (shortlex_min over symbols)", &["lattice"], "a: number, r: shortlex_min<>| widen 8",
+        "{HEAD}(x, \"\") :- n(x), x = 1.\n{HEAD}(y, r) :- {HEAD}(x, r0), e(x, y), r = cat(r0, \"z\")."));
+    out.push(probe("lattice relation (shortlex_min: characters, then bytes)", &["lattice"], "a: number, r: shortlex_min<>| widen 8",
+        "{HEAD}(x, \"\") :- n(x), x = 1.\n{HEAD}(y, r) :- {HEAD}(x, r0), l(x, y, c), r = cat(r0, c)."));
+    // The shapes of the four shortest-route recursions (O62): hierarchy's numbered steps, the sinks' delimited ids
+    // (`@to_string` in place of `@id`, a node's function).
+    out.push(probe("lattice relation (shortlex_min of printf steps)", &["lattice", "printf"], "a: number, r: shortlex_min<>| widen 8",
+        "{HEAD}(x, \"\") :- n(x), x = 1.\n{HEAD}(y, r) :- {HEAD}(x, r0), e(x, y), r = @concat(r0, @printf(\"%03d.\", y))."));
+    out.push(probe("lattice relation (shortlex_min of a three-part concat)", &["lattice", "to_string"], "a: number, r: shortlex_min<>| widen 8",
+        "{HEAD}(x, \"|\") :- n(x), x = 1.\n{HEAD}(y, r) :- {HEAD}(x, r0), e(x, y), r = @concat(r0, @to_string(y), \"|\")."));
+    out.push(probe("lattice relation (a key improved after its first value)", &["lattice"], "a: number, d: min<>| widen 8",
+        "{HEAD}(x, 0) :- n(x), x = 1.\n{HEAD}(x, 10) :- n(x), x = 5.\n{HEAD}(y, d + 1) :- {HEAD}(x, d), e(x, y)."));
+    out.push(probe("lattice relation (max over a cycle, widened to its top)", &["lattice"], "a: number, d: max<>| widen 2",
+        "{HEAD}(x, 0) :- n(x), x = 1.\n{HEAD}(y, d + 1) :- {HEAD}(x, d), e(x, y)."));
+    out.push(probe("lattice relation read by a later stratum", &["lattice"], "a: number, d: number",
+        ".decl {HEAD}_l(a: number, d: min<>) widen 8\n{HEAD}_l(x, 0) :- n(x), x = 1.\n{HEAD}_l(y, d + 1) :- {HEAD}_l(x, d), e(x, y).\n{HEAD}(a, d) :- {HEAD}_l(a, d)."));
     out.push(probe("aggregate count = 0 (a negation)", &["agg count"], "a: symbol", "{HEAD}(a) :- s(a), count : { p(a, _) } = 0."));
     out.push(probe("aggregate over two atoms' bag", &["agg count"], "a: symbol, c: number", "{HEAD}(a, c) :- t(a), c = count : { q(a, _) }."));
-    let a = Atom { rel: "n".into(), args: Vec::new(), neg: false, gated: false };
+    let a = Atom { rel: "n".into(), args: Vec::new().into(), neg: false, gated: false };
     let t = Term::Wild;
     for l in [
         Literal::Atom(a.clone()),
@@ -242,7 +270,7 @@ struct Verdict {
 }
 
 fn fresh() -> (PathBuf, ContentStore, Connection) {
-    let path = crate::code_rule_dsl::prefilter::tests::temp();
+    let path = crate::code_rule_dsl::fixtures::temp();
     let store = ContentStore::open(&path).unwrap();
     let db = Connection::open(&path).unwrap();
     super::super::native::register(&db).unwrap();
@@ -250,7 +278,7 @@ fn fresh() -> (PathBuf, ContentStore, Connection) {
     (path, store, db)
 }
 
-fn sorted(mut v: Vec<String>) -> Vec<String> {
+fn sorted<T: Ord>(mut v: Vec<T>) -> Vec<T> {
     v.sort();
     v
 }
@@ -259,16 +287,18 @@ fn sorted(mut v: Vec<String>) -> Vec<String> {
 /// probe did not run at all.
 fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
     let p = parse(src).map_err(|e| format!("unparsed: {e}"))?;
-    let lower_run = |modes: &str, binding: placement::Binding| -> std::result::Result<(Vec<String>, bool, Vec<(String, placement::Ran)>), String> {
+    let lower_run = |modes: &str, binding: placement::Binding| -> std::result::Result<(Vec<Vec<String>>, bool, Vec<(String, placement::Ran)>), String> {
         let (_path, store, db) = fresh();
+        // `shortlex_min<>` orders the run's symbols by their text: the store's atoms, as a run declares it.
+        crate::code_rule_dsl::logic::native::declare("shortlex_min", std::sync::Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
         let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).map_err(|e| format!("unlowered: {e}"))?;
         let was = placement::set_binding(binding);
-        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), modes);
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).map_err(|e| format!("stats: {e}"))?, BTreeSet::new(), modes);
         placement::set_binding(was);
         let got = got.map_err(|e| format!("error: {e}"))?;
         let ran = placement::recorded(rel);
-        Ok((sorted(got.outputs.get(rel).cloned().unwrap_or_default()), got.native.iter().any(|k| k.split('/').any(|r| r == rel)), ran))
+        Ok((sorted(got.outputs.get(rel).map(|r| r.shown()).unwrap_or_default()), got.native.iter().any(|k| k.split('/').any(|r| r == rel)), ran))
     };
     let (want, _, _) = lower_run("", placement::Binding::Cpu).map_err(|e| format!("sqlite: {e}"))?;
     let native = match lower_run("program", placement::Binding::Cpu) {
@@ -381,7 +411,13 @@ fn every_operation_runs_on_every_executor() {
     let mut native_gaps = 0;
     let mut device_gaps = 0;
     let all = probes();
+    // `RERAIL_COVERAGE_ONLY=<text>`: the probes whose name has it, their verdicts printed whole, no ledger compared
+    // (a step being built, one probe at a time).
+    let only = std::env::var("RERAIL_COVERAGE_ONLY").ok();
     for (k, pr) in all.iter().enumerate() {
+        if only.as_deref().is_some_and(|o| !pr.name.contains(o)) {
+            continue;
+        }
         let rel = format!("cov_{k:03}_p");
         let rule = pr.rule.replace("{HEAD}", &rel);
         // `cols` may carry the declaration's tail after a `|` (a lattice's `widen k`).
@@ -398,12 +434,18 @@ fn every_operation_runs_on_every_executor() {
         device_gaps += usize::from(device != "device");
         // The rule as written with its head named `p`, and the cells without the probe's own name: a probe added
         // renumbers the others, and the ledger does not churn with it.
+        if only.is_some() {
+            eprintln!("{}:\n  native: {native}\n  device: {device}", pr.name);
+        }
         let shown = pr.rule.replace("{HEAD}", "p").replace('\n', " ");
         let unnamed = |c: &str| cell(c).replace(&rel, "p");
         let _ = writeln!(rows, "{}\t{}\t{}\t{shown}", pr.name, unnamed(&native), unnamed(&device));
     }
     eprintln!("{} probes: {native_gaps} not native, {device_gaps} not on the device", all.len());
     assert!(wrong.is_empty(), "an executor's rows differ from SQLite's:\n{}", wrong.join("\n"));
+    if only.is_some() {
+        return;
+    }
     let path = ledger();
     if std::env::var_os("RERAIL_BLESS_COVERAGE").is_some() {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -434,7 +476,7 @@ fn every_operation_runs_on_every_executor() {
 /// syntax (`rerail_rr_syntax`), as written, so no file needs its includes or a lowering to be counted.
 fn ops_of(items: &[rerail_rr_syntax::syntax::Statement], out: &mut BTreeMap<String, String>, file: &str) {
     use rerail_rr_syntax::syntax::{Item, Lit, Term as S};
-    let tests: BTreeMap<&str, &str> = crate::code_rule_dsl::logic::rr::RR_TESTS.into_iter().collect();
+    let tests: BTreeMap<&str, &str> = crate::code_rule_dsl::logic::rr::lower::TESTS.into_iter().collect();
     let mut add = |op: String| {
         out.entry(op).or_insert_with(|| file.to_owned());
     };

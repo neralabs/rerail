@@ -4,6 +4,7 @@
 //! port derives what the spike derived, not that it is right.
 
 use crate::code_rule_dsl::logic::plan::corpus;
+use crate::code_rule_dsl::logic::plan::output::{self, Outputs, Value};
 use crate::code_rule_dsl::typing::file_local::Binding;
 use serde_json::Value as Json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -71,26 +72,23 @@ fn answers(program: &str, project: &Path, sources: &BTreeMap<String, String>) ->
     if let Ok(rels) = std::env::var("RERAIL_PYTHON_CROSS_MEMO") {
         src.push_str(&format!("\n.pragma \"cross-memo\" \"{rels}\"\n"));
     }
-    let report = corpus::run(&src, project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    println!("cross-file rounds {:?}", report.rounds);
-    assert!(report.rounds.converged || report.rounds.pending, "unconverged with no pending round: {:?}", report.rounds);
-    let rows = |rel: &str| -> Vec<Vec<String>> {
-        std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
-    };
-    let at: BTreeMap<String, (usize, usize)> = rows("oracle_score_at").into_iter().map(|r| (r[0].clone(), (r[1].parse().unwrap(), r[2].parse().unwrap()))).collect();
-    let file = |node: &str| node.rsplit_once(':').unwrap().0.to_owned();
-    let key = |node: &str| {
-        let (s, e) = at[node];
-        (file(node), s, e)
-    };
+    corpus::run(&src, project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let outputs = Outputs::open(&out).unwrap();
+    // Each node's document and span, keyed by the node as shown.
+    let at: BTreeMap<String, (String, usize, usize)> = outputs
+        .rows("oracle_score_at")
+        .into_iter()
+        .map(|r| (r.get(0).to_string(), (r.get(0).path().unwrap().to_owned(), r.get(1).int().unwrap() as usize, r.get(2).int().unwrap() as usize)))
+        .collect();
+    let key = |node: Value<'_>| at[&node.to_string()].clone();
     let mut answers = BTreeMap::new();
-    for r in rows("call_open") {
-        answers.insert(key(&r[0]), Answer::Unknown);
+    for r in outputs.rows("call_open") {
+        answers.insert(key(r.get(0)), Answer::Unknown);
     }
-    for r in rows("call_target") {
-        let (f, (s, _)) = (file(&r[1]), at[&r[1]]);
+    for r in outputs.rows("call_target") {
+        let (f, s, _) = key(r.get(1));
         let def = (f.clone(), line(&sources[&f], s));
-        match answers.entry(key(&r[0])).or_insert_with(|| Answer::Reaches(BTreeSet::new())) {
+        match answers.entry(key(r.get(0))).or_insert_with(|| Answer::Reaches(BTreeSet::new())) {
             Answer::Reaches(defs) => {
                 defs.insert(def);
             }
@@ -98,6 +96,7 @@ fn answers(program: &str, project: &Path, sources: &BTreeMap<String, String>) ->
             Answer::Unknown => {}
         }
     }
+    drop(outputs);
     let _ = std::fs::remove_dir_all(&out);
     answers
 }
@@ -163,7 +162,7 @@ fn calls_name() -> String {
 #[test]
 fn the_combined_program_has_no_relation_twice_and_no_rule_twice() {
     let text = program("calls");
-    let mut prog = crate::code_rule_dsl::logic::plan::corpus::combine_texts(&[text.as_str()], "").unwrap();
+    let mut prog = crate::code_rule_dsl::logic::plan::corpus::combine_texts(&[text.as_str()]).unwrap();
     let same = crate::code_rule_dsl::logic::simplify::identical_classes(&prog);
     assert!(same.is_empty(), "{} classes of relations that are one, e.g. {:?}", same.len(), same.iter().take(4).collect::<Vec<_>>());
     let repeated = crate::code_rule_dsl::logic::plan::corpus::drop_repeated_rules(&mut prog);
@@ -244,25 +243,24 @@ pub(super) fn score_rust(program: &str) -> (usize, BTreeMap<String, Departure>) 
         .collect();
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("score-rust");
     corpus::run(&format!("{program}\n{RUST_SPANS}"), &root, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let rows = |rel: &str| -> Vec<Vec<String>> {
-        std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
-    };
-    let at = |node: &str, pos: &BTreeMap<String, usize>| -> (String, u64, u64) {
-        let file = node.rsplit_once(':').unwrap().0.to_owned();
-        let (l, c) = line_column(&sources[&file], pos[node]);
+    let outputs = Outputs::open(&out).unwrap();
+    let pos: BTreeMap<String, usize> = outputs.rows("rr_score_pos").into_iter().map(|r| (r.get(0).to_string(), r.get(1).int().unwrap() as usize)).collect();
+    let at = |node: Value<'_>| -> (String, u64, u64) {
+        let file = node.path().unwrap().to_owned();
+        let (l, c) = line_column(&sources[&file], pos[&node.to_string()]);
         (file, l, c)
     };
-    let pos: BTreeMap<String, usize> = rows("rr_score_pos").into_iter().map(|r| (r[0].clone(), r[1].parse().unwrap())).collect();
     let mut answers: BTreeMap<(String, u64, u64), Answer> = BTreeMap::new();
-    for r in rows("call_open") {
-        answers.insert(at(&r[0], &pos), Answer::Unknown);
+    for r in outputs.rows("call_open") {
+        answers.insert(at(r.get(0)), Answer::Unknown);
     }
-    for r in rows("call_target") {
-        let (f, l, _) = at(&r[1], &pos);
-        if let Answer::Reaches(defs) = answers.entry(at(&r[0], &pos)).or_insert_with(|| Answer::Reaches(BTreeSet::new())) {
+    for r in outputs.rows("call_target") {
+        let (f, l, _) = at(r.get(1));
+        if let Answer::Reaches(defs) = answers.entry(at(r.get(0))).or_insert_with(|| Answer::Reaches(BTreeSet::new())) {
             defs.insert((f, l));
         }
     }
+    drop(outputs);
     let _ = std::fs::remove_dir_all(&out);
     let (mut agree, mut departures) = (0, BTreeMap::new());
     for call in recording["calls"].as_array().unwrap() {
@@ -360,29 +358,30 @@ pub(super) fn score_python_types(program: &str) -> BTreeMap<String, TypeAnswer> 
     let sources = python_files(&project);
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("score-types");
     corpus::run(&format!("{program}\n{TYPE_SPANS}"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let rows = |rel: &str| -> Vec<Vec<String>> {
-        std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
-    };
-    let at: BTreeMap<String, (String, usize, usize)> = rows("oracle_type_at")
+    let outputs = Outputs::open(&out).unwrap();
+    let at: BTreeMap<String, (String, usize, usize)> = outputs
+        .rows("oracle_type_at")
         .into_iter()
-        .map(|r| (r[0].clone(), (r[0].rsplit_once(':').unwrap().0.to_owned(), r[1].parse().unwrap(), r[2].parse().unwrap())))
+        .map(|r| (r.get(0).to_string(), (r.get(0).path().unwrap().to_owned(), r.get(1).int().unwrap() as usize, r.get(2).int().unwrap() as usize)))
         .collect();
+    let at = |node: Value<'_>| at[&node.to_string()].clone();
     let mut typed: BTreeMap<(String, usize, usize), Typed> = BTreeMap::new();
-    for r in rows("type_of") {
-        typed.entry(at[&r[0]].clone()).or_default().of.insert(r[1].clone());
+    for r in outputs.rows("type_of") {
+        typed.entry(at(r.get(0))).or_default().of.insert(r.get(1).to_string());
     }
-    for r in rows("type_open") {
-        typed.entry(at[&r[0]].clone()).or_default().open = true;
+    for r in outputs.rows("type_open") {
+        typed.entry(at(r.get(0))).or_default().open = true;
     }
-    for r in rows("proven_type") {
-        typed.entry(at[&r[0]].clone()).or_default().proven.insert(r[1].clone());
+    for r in outputs.rows("proven_type") {
+        typed.entry(at(r.get(0))).or_default().proven.insert(r.get(1).to_string());
     }
-    for r in rows("possible_type") {
-        typed.entry(at[&r[0]].clone()).or_default().possible.insert(r[1].clone());
+    for r in outputs.rows("possible_type") {
+        typed.entry(at(r.get(0))).or_default().possible.insert(r.get(1).to_string());
     }
-    for r in rows("possible_open") {
-        typed.entry(at[&r[0]].clone()).or_default().possible_open = true;
+    for r in outputs.rows("possible_open") {
+        typed.entry(at(r.get(0))).or_default().possible_open = true;
     }
+    drop(outputs);
     let _ = std::fs::remove_dir_all(&out);
     let detail = std::env::var_os("RERAIL_SCORE_DETAIL").is_some();
     let mut answers = BTreeMap::new();
@@ -461,9 +460,7 @@ proven(np, ns, ne, t) :- proven_type(n, t), node(d, n, _, ns, ne), doc(d, np, _)
 unknown(cp, cs) :- call_open(c), node(d, c, _, cs, _), doc(d, cp, _).
 .output edge, proven, unknown
 ";
-    let rows = |out: &Path, rel: &str| -> BTreeSet<String> {
-        std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect()
-    };
+    let rows = |out: &Path, rel: &str| -> BTreeSet<Vec<String>> { output::shown(out, rel).unwrap().into_iter().collect() };
     let direct = crate::code_rule_dsl::fixtures::temp().with_extension("direct");
     corpus::run(&format!("{}\n{keyed}", program("calls")), &project, None, &direct, "program", Binding::Cpu, 1 << 18).unwrap();
     let rule_dir = crate::code_rule_dsl::fixtures::temp().with_extension("rule");
@@ -505,10 +502,9 @@ at(p, s, \"open\") :- call_open(c), node(d, c, _, s, _), doc(d, p, _).
     let out = rule_dir.join("out");
     corpus::run(&text, &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let mut got: BTreeSet<(String, u64)> = BTreeSet::new();
-    for l in std::fs::read_to_string(out.join("at.csv")).unwrap().lines() {
-        let r: Vec<&str> = l.split('\t').collect();
-        let src = std::fs::read_to_string(project.join(r[0])).unwrap();
-        got.insert((r[2].to_owned(), line(&src, r[1].parse().unwrap())));
+    for r in Outputs::open(&out).unwrap().rows("at") {
+        let src = std::fs::read_to_string(project.join(r.get(0).text().unwrap())).unwrap();
+        got.insert((r.get(2).text().unwrap().to_owned(), line(&src, r.get(1).int().unwrap() as usize)));
     }
     // pkg/use.py: n.label() (n: "Node"), make(), m.child() and m.child().label(): every call has its target and
     // none is open.
@@ -560,10 +556,10 @@ own(n) :- imp(n, _).
 "#;
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("world");
     corpus::run(rule, &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
-    assert_eq!(read("got"), "collections\tcollections\nos\tos\nos.path\tos\n");
+    let read = |rel: &str| output::shown(&out, rel).unwrap();
+    assert_eq!(read("got"), [["collections", "collections"], ["os", "os"], ["os.path", "os"]]);
     // The loaded documents' rows are not the corpus's: main.py's three imports only.
-    assert_eq!(read("own").lines().count(), 3, "{}", read("own"));
+    assert_eq!(read("own").len(), 3, "{:?}", read("own"));
     let _ = std::fs::remove_dir_all(&out);
 }
 
@@ -576,12 +572,14 @@ fn calls_into_the_standard_library_reach_its_stubs() {
     let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/world_load/ws");
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("stdlib");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let text = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
-    let rows: Vec<(&str, &str)> = text.lines().filter_map(|l| l.split_once('\t')).collect();
-    // Cells are `path:node`: the one call is main.py's, its target in the stub.
-    assert_eq!(rows.len(), 1, "{text}");
-    assert!(rows[0].0.starts_with("main.py:"), "{text}");
-    assert!(rows[0].1.rsplit_once(':').unwrap().0.ends_with("world_load/ts/stdlib/os/path.pyi"), "{text}");
+    let outputs = Outputs::open(&out).unwrap();
+    let rows = outputs.rows("call_target");
+    // Nodes of documents: the one call is main.py's, its target in the stub.
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].get(0).path(), Some("main.py"), "{rows:?}");
+    assert!(rows[0].get(1).path().unwrap().ends_with("world_load/ts/stdlib/os/path.pyi"), "{rows:?}");
+    drop(rows);
+    drop(outputs);
     let _ = std::fs::remove_dir_all(&out);
 }
 
@@ -597,12 +595,9 @@ fn imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order
     let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/world_site/ws");
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("site");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let text = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
-    let mut got: Vec<String> = text
-        .lines()
-        .filter_map(|l| l.split_once('\t'))
-        .map(|(_, t)| t.rsplit_once(':').unwrap().0.split("world_site/").nth(1).unwrap().to_owned())
-        .collect();
+    let outputs = Outputs::open(&out).unwrap();
+    let text = outputs.rows("call_target");
+    let mut got: Vec<String> = text.iter().map(|r| r.get(1).path().unwrap().split("world_site/").nth(1).unwrap().to_owned()).collect();
     got.sort();
     assert_eq!(
         got,
@@ -614,8 +609,10 @@ fn imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order
             "venv/lib/python3.13/site-packages/alpha-stubs/__init__.pyi",
             "venv/lib/python3.13/site-packages/beta/__init__.py",
         ],
-        "{text}"
+        "{text:?}"
     );
+    drop(text);
+    drop(outputs);
     let _ = std::fs::remove_dir_all(&out);
 }
 
@@ -628,15 +625,19 @@ fn declarations_and_installed_sources_type_calls_without_declared_ret_facts() {
     let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/world_decl/app");
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("decl");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let text = std::fs::read_to_string(out.join("type_of.csv")).unwrap();
-    let mut got: Vec<&str> = text.lines().filter_map(|l| l.split_once('\t')).map(|(_, t)| t).filter(|t| *t != "module").collect();
+    let text = output::shown(&out, "type_of").unwrap();
+    let mut got: Vec<&str> = text.iter().map(|r| r[1].as_str()).filter(|t| *t != "module").collect();
     got.sort();
     // version() and make(): str; other.thing(): bytes | None.
-    assert_eq!(got, ["None", "bytes", "str", "str"], "{text}");
-    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
-    assert!(targets.contains("world_decl/decls/vendor/core.pyi:"), "{targets}");
-    assert!(targets.contains("world_decl/decls/other.pyi:"), "{targets}");
-    assert!(targets.contains("site-packages/vendor/__init__.py:"), "{targets}");
+    assert_eq!(got, ["None", "bytes", "str", "str"], "{text:?}");
+    let outputs = Outputs::open(&out).unwrap();
+    let targets = outputs.rows("call_target");
+    let reaches = |file: &str| targets.iter().any(|r| r.get(1).path().is_some_and(|p| p.ends_with(file)));
+    assert!(reaches("world_decl/decls/vendor/core.pyi"), "{targets:?}");
+    assert!(reaches("world_decl/decls/other.pyi"), "{targets:?}");
+    assert!(reaches("site-packages/vendor/__init__.py"), "{targets:?}");
+    drop(targets);
+    drop(outputs);
     let _ = std::fs::remove_dir_all(&out);
 }
 
@@ -654,11 +655,11 @@ fn a_protocols_subclass_is_a_class_and_a_methods_self_annotation_declares_an_att
     .unwrap();
     let out = project.join("out");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
-    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap();
+    let targets = output::shown(&out, "call_target").unwrap();
+    let open = output::shown(&out, "call_open").unwrap();
     // c.size() and h.first().size() reach Concrete.size; h.first() reaches Holder.first.
-    assert_eq!(targets.lines().count(), 3, "{targets}");
-    assert_eq!(open, "", "{open}");
+    assert_eq!(targets.len(), 3, "{targets:?}");
+    assert!(open.is_empty(), "{open:?}");
     let _ = std::fs::remove_dir_all(&project);
 }
 
@@ -675,10 +676,10 @@ fn a_method_declared_to_return_its_class_parameter_returns_what_the_receivers_ge
     .unwrap();
     let out = project.join("out");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
+    let targets = output::shown(&out, "call_target").unwrap();
     // get, get, pick, and the three `.m()` calls.
-    assert_eq!(targets.lines().count(), 6, "{targets}");
-    assert_eq!(std::fs::read_to_string(out.join("call_open.csv")).unwrap(), "");
+    assert_eq!(targets.len(), 6, "{targets:?}");
+    assert!(output::shown(&out, "call_open").unwrap().is_empty());
     let _ = std::fs::remove_dir_all(&project);
 }
 
@@ -696,10 +697,10 @@ fn a_subscript_is_a_call_of_its_receivers_getitem() {
     .unwrap();
     let out = project.join("out");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
-    assert_eq!(targets.lines().count(), 2, "{targets}");
-    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap();
-    assert_eq!(open.lines().count(), 1, "{open}");
+    let targets = output::shown(&out, "call_target").unwrap();
+    assert_eq!(targets.len(), 2, "{targets:?}");
+    let open = output::shown(&out, "call_open").unwrap();
+    assert_eq!(open.len(), 1, "{open:?}");
     let _ = std::fs::remove_dir_all(&project);
 }
 
@@ -716,10 +717,10 @@ fn a_loop_target_is_its_iterators_next_value_and_a_with_alias_the_value_entered(
     .unwrap();
     let out = project.join("out");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
-    assert_eq!(targets.lines().count(), 2, "{targets}");
-    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap();
-    assert_eq!(open.lines().count(), 2, "{open}");
+    let targets = output::shown(&out, "call_target").unwrap();
+    assert_eq!(targets.len(), 2, "{targets:?}");
+    let open = output::shown(&out, "call_open").unwrap();
+    assert_eq!(open.len(), 2, "{open:?}");
     let _ = std::fs::remove_dir_all(&project);
 }
 
@@ -737,12 +738,12 @@ fn a_declared_generic_return_carries_the_receivers_binding() {
     .unwrap();
     let out = project.join("out");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
-    assert_eq!(targets.lines().count(), 2, "{targets}");
+    let targets = output::shown(&out, "call_target").unwrap();
+    assert_eq!(targets.len(), 2, "{targets:?}");
     // Both calls target one definition (V.run, not W.run).
-    let defs: BTreeSet<&str> = targets.lines().filter_map(|l| l.split('\t').nth(1)).collect();
-    assert_eq!(defs.len(), 1, "{targets}");
-    assert_eq!(std::fs::read_to_string(out.join("call_open.csv")).unwrap(), "");
+    let defs: BTreeSet<&str> = targets.iter().map(|r| r[1].as_str()).collect();
+    assert_eq!(defs.len(), 1, "{targets:?}");
+    assert!(output::shown(&out, "call_open").unwrap().is_empty());
     let _ = std::fs::remove_dir_all(&project);
 }
 
@@ -771,21 +772,20 @@ fn the_analysis_phase_binds_a_library_generics_type_variables_fits_overloads_and
     )
     .unwrap();
     let out = dir.join("out");
-    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let read = |rel: &str| output::shown(&out, rel).unwrap();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
     let starts: std::collections::HashMap<String, usize> =
-        read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
+        jedi_starts(&out);
     let at_line = |cell: &str| line(&src, starts[cell]);
     let targets = read("call_target");
-    let mut to_v: Vec<u64> = targets.lines().filter_map(|l| l.split_once('\t')).map(|(c, _)| at_line(c)).collect();
+    let mut to_v: Vec<u64> = targets.iter().map(|r| at_line(&r[0])).collect();
     to_v.sort();
-    assert_eq!(to_v, [5, 7], "V.run, through get()'s _T and the loop's __next__: {targets}");
-    let open: Vec<u64> = read("call_open").lines().map(|l| at_line(l.split('\t').next().unwrap())).collect();
-    assert_eq!(open, [8], "the method of an async call's coroutine: {}", read("call_open"));
+    assert_eq!(to_v, [5, 7], "V.run, through get()'s _T and the loop's __next__: {targets:?}");
+    let open: Vec<u64> = read("call_open").iter().map(|r| at_line(&r[0])).collect();
+    assert_eq!(open, [8], "the method of an async call's coroutine: {:?}", read("call_open"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -814,19 +814,18 @@ fn the_analysis_phase_fits_a_library_overload_by_its_keywords_and_its_literal_ar
     )
     .unwrap();
     let out = dir.join("out");
-    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     // The overloads each call fits (`lcfn`), by the call's line.
     let text = format!("{}\n{JEDI_SPANS}\n.decl t_fit(c: node, f: symbol)\nt_fit(c, f) :- lcfn(c, _, f), struct__flag(f, \"overload\").\n.output t_fit\n", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let read = |rel: &str| output::shown(&out, rel).unwrap();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
     let starts: std::collections::HashMap<String, usize> =
-        read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
-    let mut fits: Vec<(u64, String)> = read("t_fit").lines().filter_map(|l| l.split_once('\t')).map(|(c, f)| (line(&src, starts[c]), f.to_owned())).collect();
+        jedi_starts(&out);
+    let mut fits: Vec<(u64, String)> = read("t_fit").iter().map(|r| (line(&src, starts[&r[0]]), r[1].clone())).collect();
     fits.sort();
     let want: Vec<(u64, String)> = [(3, "box.Env.get#1"), (4, "box.conv"), (5, "box.conv#1"), (6, "box.wide")].iter().map(|(l, f)| (*l, (*f).to_owned())).collect();
-    assert_eq!(fits, want, "{}", read("t_fit"));
+    assert_eq!(fits, want, "{:?}", read("t_fit"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -855,20 +854,19 @@ fn the_analysis_phase_infers_a_library_constructors_type_variables_from_its_argu
     )
     .unwrap();
     let out = dir.join("out");
-    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+    let read = |rel: &str| output::shown(&out, rel).unwrap_or_default();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
     let starts: std::collections::HashMap<String, usize> =
-        read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
+        jedi_starts(&out);
     let at_line = |cell: &str| line(&src, starts[cell]);
     let targets = read("call_target");
-    let to: Vec<u64> = targets.lines().filter_map(|l| l.split_once('\t')).map(|(c, _)| at_line(c)).collect();
-    assert_eq!(to, [6], "V.run, through Set's _T bound by xs: {targets}");
-    let open: Vec<u64> = read("call_open").lines().map(|l| at_line(l.split('\t').next().unwrap())).collect();
-    assert!(!open.contains(&8), "s.upper() of a Set built from a Lst[str]: {}", read("call_open"));
+    let to: Vec<u64> = targets.iter().map(|r| at_line(&r[0])).collect();
+    assert_eq!(to, [6], "V.run, through Set's _T bound by xs: {targets:?}");
+    let open: Vec<u64> = read("call_open").iter().map(|r| at_line(&r[0])).collect();
+    assert!(!open.contains(&8), "s.upper() of a Set built from a Lst[str]: {:?}", read("call_open"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -902,18 +900,17 @@ fn the_analysis_phase_binds_a_library_context_managers_type_variable_from_the_wr
     )
     .unwrap();
     let out = dir.join("out");
-    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+    let read = |rel: &str| output::shown(&out, rel).unwrap_or_default();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
     let starts: std::collections::HashMap<String, usize> =
-        read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
+        jedi_starts(&out);
     let at_line = |cell: &str| line(&src, starts[cell]);
     let targets = read("call_target");
-    let to: Vec<u64> = targets.lines().filter_map(|l| l.split_once('\t')).map(|(c, _)| at_line(c)).collect();
-    assert!(to.contains(&9), "v.run() through Cm's _T bound by opened's It[V]: {targets}");
+    let to: Vec<u64> = targets.iter().map(|r| at_line(&r[0])).collect();
+    assert!(to.contains(&9), "v.run() through Cm's _T bound by opened's It[V]: {targets:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -945,16 +942,15 @@ fn the_analysis_phase_rules_out_an_overload_whose_none_parameter_is_given_a_lite
     )
     .unwrap();
     let out = dir.join("out");
-    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+    let read = |rel: &str| output::shown(&out, rel).unwrap_or_default();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
     let starts: std::collections::HashMap<String, usize> =
-        read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
-    let open: Vec<u64> = read("call_open").lines().map(|l| line(&src, starts[l.split('\t').next().unwrap()])).collect();
-    assert!(!open.contains(&4), "setdefault(k, []) runs the overload with a default, append is list's: {}", read("call_open"));
+        jedi_starts(&out);
+    let open: Vec<u64> = read("call_open").iter().map(|r| line(&src, starts[&r[0]])).collect();
+    assert!(!open.contains(&4), "setdefault(k, []) runs the overload with a default, append is list's: {:?}", read("call_open"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -982,13 +978,12 @@ fn the_analysis_phase_reads_a_library_generic_base_as_known() {
     )
     .unwrap();
     let out = dir.join("out");
-    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
-    assert_eq!(read("call_open"), "", "A() and A().go() of a class with a library generic base");
-    assert_eq!(read("call_target").lines().count(), 2, "{}", read("call_target"));
+    let read = |rel: &str| output::shown(&out, rel).unwrap_or_default();
+    assert!(read("call_open").is_empty(), "A() and A().go() of a class with a library generic base");
+    assert_eq!(read("call_target").len(), 2, "{:?}", read("call_target"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1010,20 +1005,19 @@ fn the_analysis_phase_gives_an_awaited_call_what_the_async_def_returns() {
     )
     .unwrap();
     let out = dir.join("out");
-    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+    let read = |rel: &str| output::shown(&out, rel).unwrap_or_default();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
     let starts: std::collections::HashMap<String, usize> =
-        read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
+        jedi_starts(&out);
     let at_line = |cell: &str| line(&src, starts[cell]);
     let targets = read("call_target");
-    let to: Vec<u64> = targets.lines().filter_map(|l| l.split_once('\t')).map(|(c, _)| at_line(c)).collect();
-    assert!(to.contains(&8) && to.contains(&10), "v.run() and w.run() through the awaited values: {targets}");
-    let open: Vec<u64> = read("call_open").lines().map(|l| at_line(l.split('\t').next().unwrap())).collect();
-    assert!(!open.contains(&8) && !open.contains(&10), "{}", read("call_open"));
+    let to: Vec<u64> = targets.iter().map(|r| at_line(&r[0])).collect();
+    assert!(to.contains(&8) && to.contains(&10), "v.run() and w.run() through the awaited values: {targets:?}");
+    let open: Vec<u64> = read("call_open").iter().map(|r| at_line(&r[0])).collect();
+    assert!(!open.contains(&8) && !open.contains(&10), "{:?}", read("call_open"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1048,20 +1042,19 @@ fn the_analysis_phase_awaits_an_async_loops_next_value_and_an_async_withs_entere
     )
     .unwrap();
     let out = dir.join("out");
-    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+    let read = |rel: &str| output::shown(&out, rel).unwrap_or_default();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
     let starts: std::collections::HashMap<String, usize> =
-        read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
+        jedi_starts(&out);
     let at_line = |cell: &str| line(&src, starts[cell]);
-    let to: Vec<u64> = read("call_target").lines().filter_map(|l| l.split_once('\t')).map(|(c, _)| at_line(c)).collect();
-    let open: Vec<u64> = read("call_open").lines().map(|l| at_line(l.split('\t').next().unwrap())).collect();
-    assert!(to.contains(&16) && to.contains(&18), "x.run() and z.run() through the awaited values: {}", read("call_target"));
+    let to: Vec<u64> = read("call_target").iter().map(|r| at_line(&r[0])).collect();
+    let open: Vec<u64> = read("call_open").iter().map(|r| at_line(&r[0])).collect();
+    assert!(to.contains(&16) && to.contains(&18), "x.run() and z.run() through the awaited values: {:?}", read("call_target"));
     assert!(!open.contains(&16) && !open.contains(&18) && !open.contains(&20), "open at lines {open:?}");
-    assert!(open.contains(&22), "y's `__anext__` returns no declared class: {}", read("call_open"));
+    assert!(open.contains(&22), "y's `__anext__` returns no declared class: {:?}", read("call_open"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1098,21 +1091,14 @@ rtype(f, a, d) :- types__rtype(f, a, d).
 .output binds, anc, attr, rtype
 "#;
     let out = dir.join("out");
-    let _one = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let run = || corpus::run_with_options(&[reader], &ws, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({})).unwrap();
-    let dump = || -> Vec<Vec<String>> {
-        ["binds", "anc", "attr", "rtype"].iter().map(|r| {
-            let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{r}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
-            v.sort();
-            v
-        }).collect()
-    };
+    let dump = || -> Vec<Vec<Vec<String>>> { ["binds", "anc", "attr", "rtype"].iter().map(|r| output::shown(&out, r).unwrap_or_default()).collect() };
     let types = |r: &corpus::Report| -> (Option<(usize, usize)>, (usize, usize, usize)) {
         let p = r.phase_runs.iter().find(|p| p.name == "types").expect("the typing phase ran");
         (p.report.cross_strata, p.report.cross_maintained)
     };
-    session::start(&dir.join("session")).unwrap();
+    let session = session::start(&dir.join("session")).unwrap();
     let cold = run();
     println!("P2 cold: {:?}", types(&cold));
     std::fs::write(ws.join("b.py"), "from a import A\nclass B(A):\n    def go(self) -> str: ...\nclass C(B): ...\n").unwrap();
@@ -1120,13 +1106,13 @@ rtype(f, a, d) :- types__rtype(f, a, d).
     let (strata, maintained) = types(&edited);
     println!("P2 edited: strata {strata:?}, maintained {maintained:?}");
     let kept = dump();
-    assert!(kept[1].iter().any(|l| l == "b.C\ta.A"), "C's ancestors through the edit: {:?}", kept[1]);
+    assert!(kept[1].iter().any(|l| l == &["b.C", "a.A"]), "C's ancestors through the edit: {:?}", kept[1]);
     // A second edit, then none: the phase's run keeps its relations as the session keeps any run's, so the
     // unchanged run derives no stratum again.
     std::fs::write(ws.join("a.py"), "class A:\n    def run(self) -> int: ...\nclass Z: ...\n").unwrap();
     let _ = run();
     let second = dump();
-    assert!(second[1].iter().any(|l| l == "b.C\ta.A") && second[0].iter().any(|l| l.starts_with("a\tZ\t")), "{second:?}");
+    assert!(second[1].iter().any(|l| l == &["b.C", "a.A"]) && second[0].iter().any(|l| l[..2] == ["a", "Z"]), "{second:?}");
     let unchanged = run();
     let how: Vec<String> = unchanged.phase_runs.iter().map(|p| format!("{} {:?} {:?}", p.name, p.report.cross_strata, p.report.phases.iter().map(|x| x.0).collect::<Vec<_>>())).collect();
     assert!(unchanged.phase_runs.iter().any(|p| p.name == "types" && p.report.cross_strata.is_none_or(|(ran, _)| ran == 0)), "the typing phase kept as it was: {how:?}");
@@ -1139,7 +1125,7 @@ rtype(f, a, d) :- types__rtype(f, a, d).
     assert!(run_ < all, "the edit runs the strata its delta reaches, {run_} of {all}");
     let types_local = edited.phase_runs.iter().find(|p| p.name == "types").unwrap().report.phases.iter().find(|p| p.0 == "local").map_or(0.0, |p| p.1 + p.2);
     assert!(types_local < 0.05, "a phase reading no document has no file-local part: {types_local:.2} s");
-    session::stop();
+    drop(session);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1156,10 +1142,10 @@ fn a_class_decorator_declared_type_t_to_type_t_keeps_the_class() {
     .unwrap();
     let out = project.join("out");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
-    assert_eq!(targets.lines().count(), 1, "{targets}");
-    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap();
-    assert_eq!(open.lines().count(), 1, "{open}");
+    let targets = output::shown(&out, "call_target").unwrap();
+    assert_eq!(targets.len(), 1, "{targets:?}");
+    let open = output::shown(&out, "call_open").unwrap();
+    assert_eq!(open.len(), 1, "{open:?}");
     let _ = std::fs::remove_dir_all(&project);
 }
 
@@ -1178,12 +1164,12 @@ fn a_paramspec_wrapper_call_holds_the_declared_class_bound_by_the_wrapped_return
     .unwrap();
     let out = project.join("out");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
-    assert_eq!(targets.lines().count(), 2, "{targets}");
-    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap_or_default();
-    assert_eq!(open.lines().count(), 0, "{open}");
-    let types = std::fs::read_to_string(out.join("type_of.csv")).unwrap();
-    assert_eq!(types.lines().filter(|l| l.ends_with("\tm.V")).count(), 2, "{types}");
+    let targets = output::shown(&out, "call_target").unwrap();
+    assert_eq!(targets.len(), 2, "{targets:?}");
+    let open = output::shown(&out, "call_open").unwrap_or_default();
+    assert_eq!(open.len(), 0, "{open:?}");
+    let types = output::shown(&out, "type_of").unwrap();
+    assert_eq!(types.iter().filter(|r| r.last().is_some_and(|t| t == "m.V")).count(), 2, "{types:?}");
     let _ = std::fs::remove_dir_all(&project);
 }
 
@@ -1201,11 +1187,11 @@ fn a_functions_own_type_variable_is_bound_by_its_arguments_generic() {
     .unwrap();
     let out = project.join("out");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
-    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap_or_default();
-    eprintln!("T {targets}\nO {open}");
-    assert_eq!(open.lines().count(), 0, "{open}");
-    assert_eq!(targets.lines().count(), 7, "{targets}");
+    let targets = output::shown(&out, "call_target").unwrap();
+    let open = output::shown(&out, "call_open").unwrap_or_default();
+    eprintln!("T {targets:?}\nO {open:?}");
+    assert_eq!(open.len(), 0, "{open:?}");
+    assert_eq!(targets.len(), 7, "{targets:?}");
     let _ = std::fs::remove_dir_all(&project);
 }
 
@@ -1222,10 +1208,10 @@ fn a_protocol_parameters_type_variable_is_what_the_arguments_method_returns() {
     .unwrap();
     let out = project.join("out");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let targets = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
-    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap_or_default();
-    assert_eq!(open.lines().count(), 0, "{open}");
-    assert_eq!(targets.lines().count(), 2, "{targets}");
+    let targets = output::shown(&out, "call_target").unwrap();
+    let open = output::shown(&out, "call_open").unwrap_or_default();
+    assert_eq!(open.len(), 0, "{open:?}");
+    assert_eq!(targets.len(), 2, "{targets:?}");
     let _ = std::fs::remove_dir_all(&project);
 }
 
@@ -1243,10 +1229,10 @@ fn a_call_is_typed_by_the_overloads_its_positional_arguments_fit() {
     .unwrap();
     let out = project.join("out");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let types = std::fs::read_to_string(out.join("type_of.csv")).unwrap();
-    let open = std::fs::read_to_string(out.join("call_open.csv")).unwrap_or_default();
-    assert_eq!(open.lines().count(), 0, "{open}");
-    assert_eq!(types.lines().filter(|l| l.ends_with("\tm.A") || l.ends_with("\tm.B")).count(), 4, "{types}");
+    let types = output::shown(&out, "type_of").unwrap();
+    let open = output::shown(&out, "call_open").unwrap_or_default();
+    assert_eq!(open.len(), 0, "{open:?}");
+    assert_eq!(types.iter().filter(|r| r.last().is_some_and(|t| t == "m.A" || t == "m.B")).count(), 4, "{types:?}");
     let _ = std::fs::remove_dir_all(&project);
 }
 
@@ -1275,10 +1261,10 @@ at(p, s, \"finding\") :- LEG_083_TYPED(f), node(d, f, _, s, _), doc(d, p, _).
     let report = corpus::run(&text, &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     assert_eq!(report.typing_runs.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), ["calls"]);
     let mut got: BTreeSet<(String, u64, String)> = BTreeSet::new();
-    for l in std::fs::read_to_string(out.join("at.csv")).unwrap().lines() {
-        let r: Vec<&str> = l.split('\t').collect();
-        let src = std::fs::read_to_string(project.join(r[0])).unwrap();
-        got.insert((r[2].to_owned(), line(&src, r[1].parse().unwrap()), r[0].to_owned()));
+    for r in Outputs::open(&out).unwrap().rows("at") {
+        let path = r.get(0).text().unwrap();
+        let src = std::fs::read_to_string(project.join(path)).unwrap();
+        got.insert((r.get(2).text().unwrap().to_owned(), line(&src, r.get(1).int().unwrap() as usize), path.to_owned()));
     }
     let want: BTreeSet<(String, u64, String)> = [
         ("finding", 6, "pkg/use.py"),  // eager: txn.select_one_lazy(1).resolve()
@@ -1339,10 +1325,6 @@ fn benchmark_python_calls_program_corpus() {
         Err(_) => program(&calls_name()),
     };
     let mut text = format!("{source}\n{JEDI_SPANS}");
-    // `RERAIL_PYTHON_ROUNDS`: the rounds' bound k, for measuring what more rounds decide.
-    if let Ok(k) = std::env::var("RERAIL_PYTHON_ROUNDS") {
-        text = text.replace(".pragma \"cross-rounds\" \"4\"", &format!(".pragma \"cross-rounds\" \"{k}\""));
-    }
     // `RERAIL_PYTHON_CROSS_MEMO`: relations memoised per import component (decision 0076), as `.pragma "cross-memo"`.
     if let Ok(rels) = std::env::var("RERAIL_PYTHON_CROSS_MEMO") {
         text.push_str(&format!("\n.pragma \"cross-memo\" \"{rels}\"\n"));
@@ -1351,14 +1333,20 @@ fn benchmark_python_calls_program_corpus() {
     let cpu: f64 = report.phases.iter().map(|p| p.1 + p.2).sum();
     println!("cross-file memo: {} components found, {} derived", report.cross.0, report.cross.1);
     println!("phase 0: {}; {}", report.files_observed, report.phases.first().map_or("", |p| p.0));
-    println!("calls.rr over {} files: rounds {:?}; {cpu:.1} s CPU (main thread), peak RSS {:.0} MB", report.files, report.rounds, report.phases.iter().map(|p| p.3).fold(0.0, f64::max));
+    println!("calls.rr over {} files: {cpu:.1} s CPU (main thread), peak RSS {:.0} MB", report.files, report.phases.iter().map(|p| p.3).fold(0.0, f64::max));
     // The comparison below is the benchmark's, not the run's: its own span, for the memory sampler's peaks.
     let compare = crate::code_rule_dsl::logic::profile::span(|| "benchmark: compare with Jedi".to_owned());
-    let rows = |rel: &str| -> Vec<Vec<String>> {
-        std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
-    };
-    let at: BTreeMap<String, (usize, usize)> = rows("oracle_jedi_at").into_iter().map(|r| (r[0].clone(), (r[1].parse().unwrap(), r[2].parse().unwrap()))).collect();
-    let file = |node: &str| node.rsplit_once(':').unwrap().0.to_owned();
+    let outputs = Outputs::open(&out).unwrap();
+    let rows = |rel: &str| -> Vec<Vec<String>> { outputs.get(rel).unwrap_or_else(|| panic!("no relation {rel}")).shown() };
+    let at: BTreeMap<String, (usize, usize)> =
+        outputs.rows("oracle_jedi_at").iter().map(|r| (r.get(0).to_string(), (r.get(1).int().unwrap() as usize, r.get(2).int().unwrap() as usize))).collect();
+    // Each node's document, by the node as shown.
+    let paths: BTreeMap<String, String> = ["oracle_jedi_at", "call_open", "call_lib", "call_target", "oracle_jedi_cls"]
+        .iter()
+        .flat_map(|rel| outputs.rows(rel))
+        .flat_map(|r| r.values().filter_map(|v| Some((v.to_string(), v.path()?.to_owned()))).collect::<Vec<_>>())
+        .collect();
+    let file = |node: &str| paths[node].clone();
     let mut sources: BTreeMap<String, String> = BTreeMap::new();
     let mut line_of = |f: &str, s: usize| -> u64 {
         let src = sources.entry(f.to_owned()).or_insert_with(|| std::fs::read_to_string(root.join(f)).unwrap_or_default());
@@ -1374,7 +1362,7 @@ fn benchmark_python_calls_program_corpus() {
     };
     let open: BTreeSet<(String, usize, usize)> = rows("call_open").iter().map(|r| key(&r[0])).collect();
     // The analysis phase (calls_p3) names no library node: a call that reaches a library's callable is `call_lib`.
-    let lib_calls: BTreeSet<(String, usize, usize)> = if out.join("call_lib.csv").exists() { rows("call_lib").iter().map(|r| key(&r[0])).collect() } else { BTreeSet::new() };
+    let lib_calls: BTreeSet<(String, usize, usize)> = if outputs.get("call_lib").is_some() { rows("call_lib").iter().map(|r| key(&r[0])).collect() } else { BTreeSet::new() };
     let mut named: BTreeMap<(String, usize, usize), BTreeSet<(String, u64)>> = BTreeMap::new();
     for r in rows("call_target") {
         let t = target(&r[1]);
@@ -1502,7 +1490,8 @@ fn probe_the_analysis_phase() {
     corpus::run(&text, &root, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let asked: Vec<String> = rules.lines().filter_map(|l| l.trim().strip_prefix(".output ")).flat_map(|l| l.split(',').map(|r| r.trim().to_owned())).collect();
     for rel in ["call_target", "call_open", "call_lib"].into_iter().map(str::to_owned).chain(asked) {
-        println!("== {rel}\n{}", std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default());
+        let rows = output::shown(&out, &rel).unwrap_or_default();
+        println!("== {rel}\n{}", rows.iter().map(|r| r.join("\t") + "\n").collect::<String>());
     }
     let _ = std::fs::remove_dir_all(&out);
 }
@@ -1526,7 +1515,7 @@ fn spike_liveness_of_the_calls_program() {
     let report = corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
     let cpu: f64 = report.phases.iter().map(|p| p.1 + p.2).sum();
     println!("{} files: {cpu:.1} s CPU (main thread), peak RSS {:.0} MB", report.files, report.phases.iter().map(|p| p.3).fold(0.0, f64::max));
-    let counts = liveness::read_counts(&std::fs::read_to_string(out.join(format!("{}.csv", liveness::COUNTS))).unwrap());
+    let counts = liveness::read_counts(&Outputs::open(&out).unwrap());
     let _ = std::fs::remove_dir_all(&out);
     let get = |m: &BTreeMap<String, u64>, w: &str| m.get(w).copied().unwrap_or(0);
     let mut rows: Vec<(&String, &BTreeMap<String, u64>)> = counts.iter().collect();
@@ -1592,7 +1581,7 @@ ats(s, p, l) :- struct__at(s, p, l).
 "#;
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
     let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings, "reuse": std::env::var("RERAIL_PYTHON_REUSE").is_ok_and(|v| v == "on") })).unwrap();
-    let count = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).map_or(0, |t| t.lines().count());
+    let count = |rel: &str| output::shown(&out, rel).map_or(0, |t| t.len());
     let show = |what: &str, r: &corpus::Report| {
         let p = &r.phase_runs[0];
         let cpu: f64 = p.report.phases.iter().map(|x| x.1 + x.2).sum();
@@ -1606,13 +1595,7 @@ ats(s, p, l) :- struct__at(s, p, l).
         println!("PHASE {what}: the reader's run (phase included): {:.2} s: {}", r.phases.iter().map(|x| x.1 + x.2).sum::<f64>(), outer.join(", "));
     };
     let outputs = ["units", "modules", "defs", "imports", "bindings", "bases", "members", "params", "rets", "ats"];
-    let dump = || -> BTreeMap<&str, Vec<String>> {
-        outputs.iter().map(|rel| {
-            let mut lines: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
-            lines.sort();
-            (*rel, lines)
-        }).collect()
-    };
+    let dump = || -> BTreeMap<&str, Vec<Vec<String>>> { outputs.iter().map(|rel| (*rel, output::shown(&out, rel).unwrap_or_default())).collect() };
     // The full run each maintained one is checked against: a store of its own, its phase store removed first.
     let kept_store = std::env::var("RERAIL_TAPE_CACHE").expect("RERAIL_TAPE_CACHE: the spike keeps phases in a store");
     let full_store = format!("{kept_store}.full");
@@ -1626,9 +1609,7 @@ ats(s, p, l) :- struct__at(s, p, l).
     };
     // `RERAIL_SPIKE_SESSION`: the runs are a session's (decision 0063), as the explorer's are; the full runs are not.
     let session = std::env::var_os("RERAIL_SPIKE_SESSION").is_some();
-    if session {
-        crate::code_rule_dsl::logic::plan::corpus::session::start(&out.with_extension("session")).unwrap();
-    }
+    let bound = session.then(|| crate::code_rule_dsl::logic::plan::corpus::session::start(&out.with_extension("session")).unwrap());
     show("cold", &run());
     show("unchanged", &run());
     let edits = std::env::var("RERAIL_SPIKE_EDITS").unwrap_or_else(|_| "E1,E2,E3".to_owned());
@@ -1655,7 +1636,7 @@ ats(s, p, l) :- struct__at(s, p, l).
         println!("PHASE {edit}: maintained vs full: {}", if differ.is_empty() { "the same".to_owned() } else { format!("differ: {}", differ.join(", ")) });
     }
     if session {
-        crate::code_rule_dsl::logic::plan::corpus::session::stop();
+        drop(bound);
         let _ = std::fs::remove_dir_all(out.with_extension("session"));
     }
     let _ = std::fs::remove_dir_all(&out);
@@ -1681,19 +1662,13 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
     let exports = crate::code_rule_dsl::logic::plan::corpus::phases::declared(&types).unwrap().exports;
     let mut reader = String::new();
     for e in &exports {
-        let cols = &types.decls[e];
+        let cols = &types.decls[e.as_str()];
         let decl = cols.iter().map(|(c, t)| format!("{c}: {t}")).collect::<Vec<_>>().join(", ");
         let vars = (0..cols.len()).map(|i| format!("v{i}")).collect::<Vec<_>>().join(", ");
         reader.push_str(&format!(".decl types__{e}({decl})\n.decl out_{e}({decl})\nout_{e}({vars}) :- types__{e}({vars}).\n.output out_{e}\n"));
     }
     let run = || corpus::run_with_options(&[&reader], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
-    let dump = || -> BTreeMap<String, Vec<String>> {
-        exports.iter().map(|e| {
-            let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("out_{e}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
-            v.sort();
-            (e.clone(), v)
-        }).collect()
-    };
+    let dump = || -> BTreeMap<String, Vec<Vec<String>>> { exports.iter().map(|e| (e.clone(), output::shown(&out, &format!("out_{e}")).unwrap_or_default())).collect() };
     let show = |what: &str, r: &corpus::Report| {
         for p in &r.phase_runs {
             let cpu: f64 = p.report.phases.iter().map(|x| x.1 + x.2).sum();
@@ -1707,9 +1682,7 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
     // `RERAIL_SPIKE_PROCESS`: no session; each run maintains from what the store kept, as a new process does
     // (t32 4.1; the process's own caches of programs and files stay warm).
     let in_session = std::env::var_os("RERAIL_SPIKE_PROCESS").is_none();
-    if in_session {
-        session::start(&base.join("session")).unwrap();
-    }
+    let bound = in_session.then(|| session::start(&base.join("session")).unwrap());
     // `RERAIL_PROFILE`: each run's profile in a directory of its own, named as its line is.
     let profile_as = |what: &str| {
         if let Some(d) = std::env::var_os("RERAIL_PROFILE") {
@@ -1757,9 +1730,7 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
         let differ: Vec<String> = exports.iter().filter(|e| kept[*e] != derived[*e]).map(|e| format!("{e} ({} kept, {} derived)", kept[e].len(), derived[e].len())).collect();
         println!("T28 {edit}: maintained vs full: {}", if differ.is_empty() { "the same".to_owned() } else { format!("differ: {}", differ.join(", ")) });
     }
-    if in_session {
-        session::stop();
-    }
+    drop(bound);
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -1777,24 +1748,16 @@ fn spike_o125_a_session_maintains_calls_rr() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("o125");
     let out = base.join("out");
     let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings, "reuse": std::env::var("RERAIL_PYTHON_REUSE").is_ok_and(|v| v == "on") })).unwrap();
-    let dump = || -> BTreeMap<String, Vec<String>> {
-        let mut all = BTreeMap::new();
-        for e in std::fs::read_dir(&out).unwrap().flatten() {
-            let p = e.path();
-            if p.extension().is_some_and(|x| x == "csv") {
-                let mut lines: Vec<String> = std::fs::read_to_string(&p).unwrap().lines().map(str::to_owned).collect();
-                lines.sort();
-                all.insert(p.file_name().unwrap().to_string_lossy().into_owned(), lines);
-            }
-        }
-        all
+    let dump = || -> BTreeMap<String, Vec<Vec<String>>> {
+        let outputs = Outputs::open(&out).unwrap();
+        outputs.names().into_iter().map(|rel| (rel.to_owned(), outputs.get(rel).expect("named").shown())).collect()
     };
     let cpu = |r: &corpus::Report, phase: Option<&str>| -> f64 { r.phases.iter().filter(|p| phase.is_none_or(|n| p.0 == n)).map(|p| p.1 + p.2).sum() };
     let rss = |r: &corpus::Report| r.phases.iter().map(|p| p.3).fold(0.0, f64::max);
     let show = |what: &str, r: &corpus::Report| {
         println!("O125 {what}: {:.1} s CPU (main thread), cross {:.1} s, peak RSS {:.0} MB; strata {:?}, maintained {:?}", cpu(r, None), cpu(r, Some("cross")), rss(r), r.cross_strata, r.cross_maintained);
     };
-    session::start(&base.join("session")).unwrap();
+    let session = session::start(&base.join("session")).unwrap();
     let primed = run();
     show("prime (session, cold cross part)", &primed);
     let again = run();
@@ -1824,14 +1787,14 @@ fn spike_o125_a_session_maintains_calls_rr() {
         let differ: Vec<&String> = derived.keys().filter(|k| kept.get(*k) != derived.get(*k)).collect();
         println!("O125 {edit}: outputs {}", if differ.is_empty() { "equal".to_owned() } else { format!("DIFFER in {differ:?}") });
         for k in &differ {
-            let a: BTreeSet<&String> = kept.get(*k).into_iter().flatten().collect();
-            let b: BTreeSet<&String> = derived.get(*k).into_iter().flatten().collect();
-            let only_kept: Vec<&&String> = a.difference(&b).collect();
-            let only_derived: Vec<&&String> = b.difference(&a).collect();
+            let a: BTreeSet<&Vec<String>> = kept.get(*k).into_iter().flatten().collect();
+            let b: BTreeSet<&Vec<String>> = derived.get(*k).into_iter().flatten().collect();
+            let only_kept: Vec<&&Vec<String>> = a.difference(&b).collect();
+            let only_derived: Vec<&&Vec<String>> = b.difference(&a).collect();
             println!("O125 {edit} {k}: {} rows, {} only maintained, {} only derived; e.g. {:?} / {:?}", b.len(), only_kept.len(), only_derived.len(), only_kept.iter().take(3).collect::<Vec<_>>(), only_derived.iter().take(3).collect::<Vec<_>>());
         }
     }
-    session::stop();
+    drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -1851,15 +1814,9 @@ fn spike_o125_session_maintains_calls() {
     let text = format!("{}\n{JEDI_SPANS}", program("calls"));
     let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": [] })).unwrap();
     let rels = ["call_target", "call_open", "type_of", "possible_type", "finding"];
-    let outputs = || -> Vec<Vec<String>> {
-        rels.iter().map(|r| {
-            let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{r}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
-            v.sort();
-            v
-        }).collect()
-    };
+    let outputs = || -> Vec<Vec<Vec<String>>> { rels.iter().map(|r| output::shown(&out, r).unwrap_or_default()).collect() };
     let cpu = |r: &corpus::Report| -> f64 { r.phases.iter().map(|p| p.1 + p.2).sum() };
-    session::start(&base.join("session")).unwrap();
+    let session = session::start(&base.join("session")).unwrap();
     let t = std::time::Instant::now();
     let first = run();
     println!("o125 cold session run: {:.1} s CPU (main), {:.1} s wall, strata {:?}", cpu(&first), t.elapsed().as_secs_f64(), first.cross_strata);
@@ -1909,7 +1866,7 @@ fn spike_o125_session_maintains_calls() {
         if !same {
             let want = outputs();
             for (i, rel) in rels.iter().enumerate() {
-                let (a, b): (BTreeSet<&String>, BTreeSet<&String>) = (got[i].iter().collect(), want[i].iter().collect());
+                let (a, b): (BTreeSet<&Vec<String>>, BTreeSet<&Vec<String>>) = (got[i].iter().collect(), want[i].iter().collect());
                 let (extra, missing) = (a.difference(&b).count(), b.difference(&a).count());
                 if extra + missing > 0 {
                     println!("  {rel}: {extra} extra, {missing} missing; e.g. {:?} / {:?}", a.difference(&b).next(), b.difference(&a).next());
@@ -1917,7 +1874,7 @@ fn spike_o125_session_maintains_calls() {
             }
         }
     }
-    session::stop();
+    drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -1965,13 +1922,7 @@ fn spike_o125_replay() {
     let text = format!("{}\n{JEDI_SPANS}", program("calls"));
     let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings, "reuse": std::env::var("RERAIL_PYTHON_REUSE").is_ok_and(|v| v == "on") })).unwrap();
     let rels = ["call_target", "call_open", "type_of", "possible_type"];
-    let outputs = || -> Vec<Vec<String>> {
-        rels.iter().map(|r| {
-            let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{r}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
-            v.sort();
-            v
-        }).collect()
-    };
+    let outputs = || -> Vec<Vec<Vec<String>>> { rels.iter().map(|r| output::shown(&out, r).unwrap_or_default()).collect() };
     let keep = |step: usize, what: &str| {
         if let Some(p) = &profile {
             let _ = std::fs::copy(p.join("native.tsv"), p.join(format!("native-{step:02}-{what}.tsv")));
@@ -1987,17 +1938,18 @@ fn spike_o125_replay() {
         crate::code_rule_dsl::logic::profile::set(true);
     }
     // `O125_DECISIONS=<topic text>`: each step's decisions under topics holding the text, with how often.
-    let decided = std::cell::RefCell::new(crate::code_rule_dsl::logic::profile::decisions());
+    // The profile's decisions are the process's; this measurement runs alone, so a step's are those made since the
+    // last step took them.
+    crate::code_rule_dsl::logic::profile::take_decisions();
     let show_spans = |step: usize| {
         if !spans_on {
             return;
         }
         if let Ok(topic) = std::env::var("O125_DECISIONS") {
-            let now = crate::code_rule_dsl::logic::profile::decisions_since(&decided.borrow());
+            let now = crate::code_rule_dsl::logic::profile::take_decisions();
             for ((t, text), n) in now.iter().filter(|((t, _), _)| t.contains(topic.as_str())) {
                 println!("o125d {step:02} {n:>7} {t}: {text}");
             }
-            *decided.borrow_mut() = crate::code_rule_dsl::logic::profile::decisions();
         }
         let spans = crate::code_rule_dsl::logic::profile::spans();
         // `O125_SPANS_TSV=<dir>`: the step's whole session tree, `<dir>/spans-<step>.tsv` (path, calls, CPU s).
@@ -2022,7 +1974,7 @@ fn spike_o125_replay() {
             println!("o125s {step:02}   {t:>7.3} s  (sum) {name}");
         }
     };
-    session::start(&base.join("session")).unwrap();
+    let session = session::start(&base.join("session")).unwrap();
     // `O125_DERIVATIONS=<dir>` (with `RERAIL_SPIKE_DERIVATIONS`): each run's rows derived and rows new, by relation,
     // `<dir>/<step>-<run>.tsv`: the derivations a counting scheme would keep a count of.
     let derivations = |step: usize, what: &str| {
@@ -2036,7 +1988,11 @@ fn spike_o125_replay() {
     let cold = run();
     derivations(a - 1, "cold");
     keep(a - 1, "cold");
-    println!("o125r cold at {:02}: {:.1} s CPU, cross {:.1} s; rows {:?}", a - 1, cpu(&cold), phase(&cold, "cross"), outputs().iter().map(Vec::len).collect::<Vec<_>>());
+    println!("o125r cold at {:02}: {:.1} s CPU, cross {:.1} s ({:.2} G instructions); rows {:?}", a - 1, cpu(&cold), phase(&cold, "cross"), cold.phase_instructions.iter().filter(|p| p.0 == "cross").map(|p| p.1).sum::<u64>() as f64 / 1e9, outputs().iter().map(Vec::len).collect::<Vec<_>>());
+    let (opened, made) = crate::code_rule_dsl::logic::native::setfix::orders_counted();
+    println!("o125r cold derived-input orders: {opened} opened, {made} made (first probed)");
+    if std::env::var_os("RERAIL_SPIKE_PRESORTED").is_some() { println!("o125r cold presorted: {}", crate::code_rule_dsl::logic::native::setfix::runs::presorted::report()); }
+    println!("o125r cold phases (G instructions): {}", cold.phase_instructions.iter().map(|(n, i)| format!("{n} {:.2}", *i as f64 / 1e9)).collect::<Vec<_>>().join(", "));
     // `O125_FULL_ONLY`: each step a full run alone (to profile it apart from the session's runs).
     let full_only = std::env::var_os("O125_FULL_ONLY").is_some();
     for step in a..=b {
@@ -2052,13 +2008,13 @@ fn spike_o125_replay() {
         keep(step, "session");
         let got = outputs();
         let mut line = format!(
-            "o125r {step:02} ({files} files): session {:.1} s CPU, cross {:.1} s, local {:.1} s; strata {:?}, maintained {:?}, again {:?}; rows over-deleted/inserted/held/input-deltas/truly-deleted/truly-inserted {:?}; inputs changed {}",
-            cpu(&r), phase(&r, "cross"), phase(&r, "local"), r.cross_strata, r.cross_maintained, r.cross_again, r.cross_delta_counts, r.cross_changed.len()
+            "o125r {step:02} ({files} files): session {:.1} s CPU, cross {:.1} s ({:.2} G instructions), local {:.1} s; strata {:?}, maintained {:?}, again {:?}; rows over-deleted/inserted/held/input-deltas/truly-deleted/truly-inserted {:?}; inputs changed {}",
+            cpu(&r), phase(&r, "cross"), r.phase_instructions.iter().filter(|p| p.0 == "cross").map(|p| p.1).sum::<u64>() as f64 / 1e9, phase(&r, "local"), r.cross_strata, r.cross_maintained, r.cross_again, r.cross_delta_counts, r.cross_changed.len()
         );
         // `O125_SAVE`: each step's outputs, `<dir>/NN.txt`, to compare two modes' runs without a full run each.
         if let Some(dir) = std::env::var_os("O125_SAVE").map(PathBuf::from) {
             std::fs::create_dir_all(&dir).unwrap();
-            std::fs::write(dir.join(format!("{step:02}.txt")), got.iter().map(|v| v.join("\n")).collect::<Vec<_>>().join("\n--\n")).unwrap();
+            std::fs::write(dir.join(format!("{step:02}.txt")), got.iter().map(|v| v.iter().map(|r| r.join("\t")).collect::<Vec<_>>().join("\n")).collect::<Vec<_>>().join("\n--\n")).unwrap();
         }
         if std::env::var_os("O125_NO_FULL").is_none() && (each || step == b) {
             let f = session::full(run);
@@ -2067,7 +2023,7 @@ fn spike_o125_replay() {
             let want = outputs();
             line += &format!("; full {:.1} s CPU, cross {:.1} s; same as full: {}", cpu(&f), phase(&f, "cross"), got == want);
             for (i, rel) in rels.iter().enumerate() {
-                let (x, y): (BTreeSet<&String>, BTreeSet<&String>) = (got[i].iter().collect(), want[i].iter().collect());
+                let (x, y): (BTreeSet<&Vec<String>>, BTreeSet<&Vec<String>>) = (got[i].iter().collect(), want[i].iter().collect());
                 let (extra, missing) = (x.difference(&y).count(), y.difference(&x).count());
                 if extra + missing > 0 {
                     line += &format!("\n  {rel}: {extra} extra, {missing} missing; e.g. {:?} / {:?}", x.difference(&y).next(), y.difference(&x).next());
@@ -2076,7 +2032,13 @@ fn spike_o125_replay() {
         }
         println!("{line}");
     }
-    session::stop();
+    if std::env::var_os("RERAIL_SPIKE_PRESORTED").is_some() { println!("o125r all presorted: {}", crate::code_rule_dsl::logic::native::setfix::runs::presorted::report()); }
+    // The process's whole count (every run above, cold, sessions and full): cycles show what instructions do not
+    // (a cache miss costs cycles, no instructions).
+    if let Some((instructions, cycles)) = crate::code_rule_dsl::logic::settings::process_counters() {
+        println!("o125r process: {:.2} G instructions, {:.2} G cycles", instructions as f64 / 1e9, cycles as f64 / 1e9);
+    }
+    drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -2087,4 +2049,9 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
         if p.is_dir() { out.extend(walk(&p)); } else if p.extension().is_some_and(|x| x == "py") { out.push(p); }
     }
     out
+}
+
+/// Each `oracle_jedi_at` node's start, by the node as shown.
+fn jedi_starts(out: &Path) -> std::collections::HashMap<String, usize> {
+    Outputs::open(out).unwrap().rows("oracle_jedi_at").iter().map(|r| (r.get(0).to_string(), r.get(1).int().unwrap() as usize)).collect()
 }

@@ -35,6 +35,7 @@ use rusqlite::Connection;
 use crate::code_rule_dsl::logic::front::ast::Value;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
+use cells::{Block, Cells};
 
 pub mod within;
 
@@ -52,6 +53,9 @@ pub mod normalized;
 use core_rr::Family;
 pub mod guests;
 pub mod granules;
+mod cells;
+#[cfg(target_os = "macos")]
+pub mod device_chunk;
 use guests::GuestRows;
 
 /// Which projection of the tree a batch serves.
@@ -79,6 +83,12 @@ pub struct Projection {
     /// Source/line spans whose complete text a rule reads, traced through copied relation columns.
     /// None is the unprojected test/export interface; AST subtree text keeps its independent bound.
     pub text_spans: Option<BTreeSet<crate::code_rule_dsl::logic::front::ast::SpanIn>>,
+    /// Whether a rule reads a token's text (`first_token(n, t), text(t, "(")`: a span of `first_token`, `last_token`,
+    /// `token_before` or `token_after`; `span_text_demand`). A token that is no node has text only where one does.
+    pub token_text: bool,
+    /// The kinds whose subtrees hold every node the program reads (`node_anchors`): a file's projection is its root
+    /// and those subtrees (`Projected::narrowed`). `None` is every node.
+    pub node_anchors: Option<BTreeSet<String>>,
     /// The node kinds whose text a rule reads (`text_kind_demand`): their nodes' `text` is made at any length. Any
     /// other node's is made up to `core_rr::TEXT_INLINE` bytes, unless it is token-like, or `long_text_any`: some rule
     /// reads the text of a node of any kind.
@@ -97,14 +107,78 @@ pub struct Projection {
     /// `docof` from `node`, `rr::lower::projections`; a program may name an output as a base relation is named). A
     /// bound table of that name would be the planner's to drop.
     pub derived: BTreeSet<String>,
+    /// `rx_spans` compiled, once for the run's projection, not again for every batch it binds.
+    pub compiled_rx: CompiledSpans,
+}
+
+/// A projection's `rx_span` patterns compiled: each one's regex and, over a document's source or lines, its block
+/// program (`span_prefilter`). Made on the first batch and shared by the projection's clones; kept with the patterns it
+/// was made from, so a clone whose patterns differ compiles its own. A run's library loads bind a batch a window of
+/// files, and each compiled every pattern again: 3% of a cold batch's main thread.
+#[derive(Clone, Default)]
+pub struct CompiledSpans(Arc<std::sync::OnceLock<(Vec<(crate::code_rule_dsl::logic::front::ast::SpanIn, String)>, Vec<CompiledSpan>)>>);
+
+/// One `rx_span` pattern, compiled: its regex and its block program, if it has one.
+type CompiledSpan = (regex::Regex, Option<Arc<dyn crate::code_rule_dsl::facts::span_prefilter::SpanEnds>>);
+
+impl std::fmt::Debug for CompiledSpans {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CompiledSpans({})", self.0.get().map_or(0, |(_, c)| c.len()))
+    }
+}
+
+impl CompiledSpans {
+    /// `patterns` compiled: the kept ones when they were made from these, else compiled now (and kept if none were).
+    fn of(&self, patterns: &[(crate::code_rule_dsl::logic::front::ast::SpanIn, String)]) -> StoreResult<Vec<CompiledSpan>> {
+        if let Some((from, compiled)) = self.0.get()
+            && from.as_slice() == patterns
+        {
+            return Ok(compiled.clone());
+        }
+        let compiled = compile_spans(patterns)?;
+        let _ = self.0.set((patterns.to_vec(), compiled.clone()));
+        Ok(compiled)
+    }
+}
+
+/// Compiles `rx_span`'s patterns, each on the pool's threads, a class of every character first written as any
+/// character (`unfolded`). Over a document's source or its lines, each with its block program (decision 0081 §3): the
+/// bytes a match can end after, chunk at a time, so the regex runs only where one can.
+fn compile_spans(patterns: &[(crate::code_rule_dsl::logic::front::ast::SpanIn, String)]) -> StoreResult<Vec<CompiledSpan>> {
+    use crate::code_rule_dsl::logic::front::ast::SpanIn;
+    use rayon::prelude::*;
+    let on = std::env::var("RERAIL_SPAN_PREFILTER").map_or(true, |v| v != "off");
+    patterns
+        .par_iter()
+        .map(|(within, re)| {
+            let compiled = crate::code_rule_dsl::facts::span_prefilter::unfolded(re);
+            let prefilter = match within {
+                SpanIn::Source | SpanIn::Line if on => crate::code_rule_dsl::facts::span_prefilter::compile(&compiled, *within == SpanIn::Line),
+                _ => None,
+            };
+            regex::Regex::new(&compiled).map(|r| (r, prefilter)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}")))
+        })
+        .collect()
 }
 
 impl Projection {
     pub fn core() -> Self {
-        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), ast_patterns: Vec::new(), text_spans: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: BTreeSet::new(), verdict: false, derived: BTreeSet::new() }
+        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), ast_patterns: Vec::new(), text_spans: None, token_text: true, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: BTreeSet::new(), verdict: false, derived: BTreeSet::new(), compiled_rx: CompiledSpans::default() }
     }
     fn wants(&self, rel: &str) -> bool {
         self.reads.as_ref().is_none_or(|r| r.contains(rel))
+    }
+    /// A digest of what the projection makes a base relation's rows of, beside the document: its shape, patterns,
+    /// text bounds, narrowed nodes and guest policy. Not which relations it makes (`reads`, `derived`): a relation
+    /// made has the same rows whichever others are. A memo entry's rows are a relation's under its identity only
+    /// with this in it (decision 0225 §2): two programs with the same rules over different projections, a broken
+    /// guest kept (`.on guest_error partial`) or withheld, read different rows of `parsed`.
+    pub fn rows_digest(&self) -> [u8; 32] {
+        use sha2::{Digest as _, Sha256};
+        let mut h = Sha256::new();
+        h.update(b"rerail.projection-rows/v1\0");
+        h.update(format!("{:?}\0{:?}\0{:?}\0{:?}\0{}\0{:?}\0{:?}\0{}\0{:?}\0{:?}\0{}", self.shape, self.rx_spans, self.ast_patterns, self.text_spans, self.token_text, self.node_anchors, self.long_text, self.long_text_any, self.text_nodes, self.partial, self.verdict).as_bytes());
+        h.finalize().into()
     }
     /// Whether a guest of `grammar` that does not parse keeps its partial tree.
     fn keeps_partial(&self, grammar: &str) -> bool {
@@ -113,9 +187,11 @@ impl Projection {
     /// `core.rr`'s shape for a program that includes `core.rr` (declares every relation it declares as an input),
     /// T's for one that declares its base relations itself (T's programs, the converter's, O74).
     pub fn of(program: &crate::code_rule_dsl::logic::front::ast::Program, reads: BTreeSet<String>) -> Self {
+        let (spans, token_text) = span_text_demand(program);
+        crate::code_rule_dsl::logic::profile::decision("text of tokens", || if token_text { "made (a rule reads a token's text)".into() } else { "none (no rule reads a token's text)".into() });
         crate::code_rule_dsl::logic::profile::projection_plan(program, &reads);
         let core = crate::code_rule_dsl::facts::core::core_names();
-        let shape = if !core.is_empty() && core.iter().all(|r| program.decls.contains_key(r)) { Shape::Core } else { Shape::T };
+        let shape = if !core.is_empty() && core.iter().all(|r| program.decls.contains_key(r.as_str())) { Shape::Core } else { Shape::T };
         let partial = program.facts.get(GUEST_POLICY).into_iter().flatten().filter_map(|row| match row.as_slice() {
             [Value::Str(k), Value::Str(v)] if v == "partial" => k.strip_prefix("errors").map(|g| g.strip_prefix(':').unwrap_or("*").to_owned()),
             _ => None,
@@ -123,7 +199,7 @@ impl Projection {
         let verdict = shape == Shape::T && program.decls.get("syntax_error").is_some_and(|cols| cols.len() == 3);
         let derived: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.to_string()).collect();
         let reads = reads.into_iter().filter(|r| !derived.contains(r)).collect();
-        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect(), text_spans: Some(span_text_demand(program)), long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: partial.collect(), verdict, derived }
+        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect(), text_spans: Some(spans), token_text, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: partial.collect(), verdict, derived, compiled_rx: CompiledSpans::default() }
     }
 
     /// This projection, with `text` made at any length for the node kinds whose text the program's rules read
@@ -137,11 +213,20 @@ impl Projection {
         });
         crate::code_rule_dsl::logic::profile::decision("nodes with text", || match &read {
             None => format!("every node ({} reads the text of a node it does not narrow)", wide.as_deref().unwrap_or("a rule")),
-            Some(TextNodes { kinds, fields }) => format!("{} kinds ({}), and the nodes in {} fields ({})", kinds.len(), kinds.iter().take(8).cloned().collect::<Vec<_>>().join(", "), fields.len(), fields.iter().take(8).cloned().collect::<Vec<_>>().join(", ")),
+            Some(TextNodes { kinds, fields, parents, parent_fields, values }) => {
+                let some = |s: &BTreeSet<String>| s.iter().take(8).cloned().collect::<Vec<_>>().join(", ");
+                format!("{} kinds ({}), the nodes in {} fields ({}), the children of {} kinds ({}) and of the nodes in {} fields ({}), and those whose text is one of {} constants ({})", kinds.len(), some(kinds), fields.len(), some(fields), parents.len(), some(parents), parent_fields.len(), some(parent_fields), values.len(), some(values))
+            }
         });
         if !std::env::var("RERAIL_TEXT_NODES").is_ok_and(|v| v == "all") {
             self.text_nodes = read;
         }
+        let anchors = if std::env::var("RERAIL_NODE_ANCHORS").is_ok_and(|v| v == "off") { Err("RERAIL_NODE_ANCHORS=off".into()) } else { node_anchors(program, matchers) };
+        crate::code_rule_dsl::logic::profile::decision("nodes projected", || match &anchors {
+            Ok(kinds) => format!("the root and the subtrees of {} kinds: {}", kinds.len(), kinds.iter().cloned().collect::<Vec<_>>().join(", ")),
+            Err(why) => format!("every node ({why})"),
+        });
+        self.node_anchors = anchors.ok();
         self
     }
 
@@ -164,11 +249,34 @@ impl Projection {
     }
 }
 
-/// The nodes whose text a rule reads: those of `kinds`, and those in a field of `fields` of their parent.
+/// The nodes whose text a rule reads: those of `kinds`, those in a field of `fields` of their parent, the children of a
+/// node of `parents`' kinds or in one of `parent_fields`, and those whose text is one of `values`: a rule that only compares the text of a node it
+/// does not narrow with a constant (`text(v, "Literal")`) needs no other node's text, nor one that reads a child of a
+/// node it narrows (`kind(n, "dotted_name"), child(n, c, 0), text(c, t)`) any but those children's. Other texts are
+/// then not made, nor interned: every statement's, comment's and docstring's was half a file's atoms.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TextNodes {
     pub kinds: BTreeSet<String>,
     pub fields: BTreeSet<String>,
+    pub parents: BTreeSet<String>,
+    pub parent_fields: BTreeSet<String>,
+    pub values: BTreeSet<String>,
+}
+
+impl TextNodes {
+    /// Whether node `id` of `f` is one of these: of a kind read, in a field read, a child of a kind read or of a node in
+    /// a field read, or with a text a rule compares it with.
+    pub(crate) fn reads(&self, p: &Projected, local: u32, dialect: &Dialect) -> bool {
+        let (f, id) = (&*p.facts, p.core[local as usize]);
+        self.kinds.contains(dialect.name(f, id))
+            || dialect.catalog.field_name(f.field(id)).is_some_and(|name| self.fields.contains(name))
+            || !(self.parents.is_empty() && self.parent_fields.is_empty())
+                && p.parent_node(local as usize).is_some_and(|q| {
+                    self.parents.contains(dialect.name(f, q))
+                        || dialect.catalog.field_name(f.field(q)).is_some_and(|name| self.parent_fields.contains(name))
+                })
+            || !self.values.is_empty() && self.values.contains(f.text(id))
+    }
 }
 
 /// What the rules read of `text` (`text_kind_demand`).
@@ -202,7 +310,7 @@ fn short_constant(text: &crate::code_rule_dsl::logic::front::ast::Atom) -> bool 
 /// Rules reading `text(v, t)` of a node `v` whose kind no body fixes see `text` within its bound only
 /// (`core_rr::TEXT_INLINE`): making every node's text at any length costs a run 40% more work (decision 0109). Each
 /// such rule gets twins, one per non-empty set of those atoms, reading `t = @rr_node_text(v)` in their place: the
-/// text of the nodes the rule binds, when past the bound (`long_node_text`). The rule and its twins together read every
+/// text of the nodes the rule binds, when past the bound (`LongTexts::long_text`). The rule and its twins together read every
 /// text, each once. More than `MAX` such atoms in one rule keep the any-kind projection instead. Returns the twins made.
 pub fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::ast::Program, matchers: &[(String, String, Vec<String>)]) -> usize {
     use crate::code_rule_dsl::logic::front::ast::{Atom, Literal, Term};
@@ -230,22 +338,22 @@ pub fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::ast::Pr
                 let Literal::Atom(text) = &twin.body[i] else { continue };
                 let v = text.args[0].clone();
                 let t = match &text.args[1] {
-                    Term::Var(t) if t != "_" => Term::Var(t.clone()),
+                    Term::Var(t) if t != "_" => Term::Var(t.clone().into()),
                     _ => {
                         fresh += 1;
-                        Term::Var(format!("rr_long_text{fresh}_{bit}"))
+                        Term::Var(format!("rr_long_text{fresh}_{bit}").into())
                     }
                 };
-                twin.body[i] = Literal::Cmp { l: t, op: "=", r: Term::Call("rr_node_text".into(), vec![v.clone()]) };
+                twin.body.make_mut()[i] = Literal::Cmp { l: t, op: "=", r: Term::Call("rr_node_text".into(), [v.clone()].into()) };
                 // Expose the sparse domain to the join planner before evaluating the text functor.
-                twin.body.push(Literal::Atom(Atom { rel: "rr_long_text_node".into(), args: vec![v], neg: false, gated: false }));
+                twin.body.push(Literal::Atom(Atom { rel: "rr_long_text_node".into(), args: [v].into(), neg: false, gated: false }));
             }
             twins.entry(r).or_default().push(twin);
         }
     }
     let made = twins.values().map(Vec::len).sum();
     if made > 0 {
-        program.decls.insert("rr_long_text_node".into(), vec![("n".into(), "node".into())]);
+        program.decls.insert("rr_long_text_node".into(), [("n".into(), "node".into())].into());
         if !program.inputs.iter().any(|r| r == "rr_long_text_node") {
             program.inputs.push("rr_long_text_node".into());
         }
@@ -258,34 +366,161 @@ pub fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::ast::Pr
     made
 }
 
-/// The batches whose documents' texts `long_node_text` reads, by document key: the latest batch to hold each
-/// document, weakly (a chunk's batch is dropped when its run is done; its entries then read nothing).
-static TEXTS: std::sync::LazyLock<std::sync::RwLock<HashMap<u32, (std::sync::Weak<Batch>, usize)>>> = std::sync::LazyLock::new(Default::default);
+/// `rr_long_text_node(n)`: the batch's nodes whose text is past `text`'s inline bound, with the batch that holds
+/// their documents. A node's text or value (`@rr_node_text`, and decision 0174's answers `@rr_node_text_any` and
+/// `@rr_node_value`) is read through the run's own binding of this relation (`functions::node_read`): the native
+/// engine's `func` step and SQL's functions find it on the run's connection, so a text is read from the batch the run
+/// reads, never from a process-wide or per-thread table of batches by document key.
+pub struct LongTexts {
+    nodes: Relation,
+    batch: Arc<Batch>,
+    /// Each document key's place in `batch.docs`.
+    docs: HashMap<u32, usize>,
+}
 
-/// Hold `batch`'s documents for `long_node_text`.
-fn hold_texts(batch: &Arc<Batch>) {
-    let mut texts = TEXTS.write().unwrap_or_else(|p| p.into_inner());
-    // Entries of dropped batches go once they are as many as the live ones.
-    if texts.len() > 4096 && texts.len() > 2 * batch.docs.len() {
-        texts.retain(|_, (b, _)| b.strong_count() > 0);
+impl LongTexts {
+    fn new(nodes: Relation, batch: &Arc<Batch>) -> Self {
+        let docs = batch.docs.iter().enumerate().map(|(i, p)| (p.key, i)).collect();
+        Self { nodes, batch: Arc::clone(batch), docs }
     }
-    for (i, p) in batch.docs.iter().enumerate() {
-        texts.insert(p.key, (Arc::downgrade(batch), i));
+
+    /// Node `n`'s text when it is past `text`'s inline bound (`core_rr::TEXT_INLINE`); none for a shorter node
+    /// (whose text `text` holds), a span, or a node of a document not in the batch. Only the nodes a rule binds are
+    /// read and interned (decision 0108 §1).
+    pub fn long_text(&self, n: i64) -> Option<String> {
+        let (key, low) = ((n >> 32) as u32, n as u32);
+        let p = &self.batch.docs[*self.docs.get(&key)?];
+        let local = p.local_of(low)?;
+        let core = *p.core.get(local as usize)?;
+        let text = p.facts.text(core);
+        (text.len() > core_rr::TEXT_INLINE).then(|| text.to_owned())
+    }
+
+    /// Node `n`'s exact source text at any length, or a comment span's (a comment no node is: `Extra`'s `node_text`
+    /// rows); none for another span or a node of a document not in the batch. It answers `node_text`'s requests
+    /// (decision 0174): only the nodes a rule asks for are read and interned.
+    pub fn text_any(&self, n: i64) -> Option<String> {
+        let (key, low) = ((n >> 32) as u32, n as u32);
+        let p = &self.batch.docs[*self.docs.get(&key)?];
+        let f = &p.facts;
+        if let Some(k) = granules::comment_of(low) {
+            // The k-th comment kind's node not inside another that no node is, as `Extra::nodes` numbers them.
+            use crate::code_rule_dsl::language::is_comment_kind;
+            let dialect = self.batch.dialects.get(p.tag)?;
+            let mut j = 0;
+            for (id, up) in f.with_parents(0, f.len() as u32) {
+                if !f.named(id) || !is_comment_kind(dialect.name(f, id)) || up.is_some_and(|q| is_comment_kind(dialect.name(f, q))) {
+                    continue;
+                }
+                if p.local[id as usize] == NONE {
+                    j += 1;
+                    if j == k {
+                        return Some(f.text(id).to_owned());
+                    }
+                }
+            }
+            return None;
+        }
+        let core = *p.core.get(p.local_of(low)? as usize)?;
+        Some(f.text(core).to_owned())
+    }
+
+    /// Node `n`'s value as W reads it (`value(n, v)`, the plain reading), read off its document's tape: the
+    /// document's values are read at its first request, and only those asked for are interned. None for a node with no
+    /// value, a document of a language W reads no values of (its literals are `rr_value_lit`'s), or one not in the
+    /// batch. It answers `value`'s requests (decision 0174).
+    pub fn value_any(&self, n: i64) -> Option<String> {
+        let (key, low) = ((n >> 32) as u32, n as u32);
+        let i = *self.docs.get(&key)?;
+        let p = &self.batch.docs[i];
+        let valued = self.batch.valued.get(i)?.as_ref()?;
+        let local = p.local_of(low)?;
+        let values = valued.values.get_or_init(|| {
+            let mut values = HashMap::new();
+            if let Some(reader) = crate::code_rule_dsl::facts::core::value_reader() {
+                reader.values(&valued.tape, valued.file.as_ref(), true, false, &mut |followed, ordinal, v, _| {
+                    let local = p.local[ordinal as usize];
+                    if !followed && local != NONE && let Some(v) = v {
+                        values.insert(local, v);
+                    }
+                });
+            }
+            values
+        });
+        values.get(&local).cloned()
+    }
+
+    /// Node `n`'s text or value as function `name` reads it (`NODE_READS`) through `source`, a binding of
+    /// `rr_long_text_node`; none for another source or function.
+    pub fn of(source: &dyn Source, name: &str, n: i64) -> Option<String> {
+        let texts = source.as_any()?.downcast_ref::<Self>()?;
+        match name {
+            "rr_node_text" => texts.long_text(n),
+            "rr_node_text_any" => texts.text_any(n),
+            "rr_node_value" => texts.value_any(n),
+            _ => None,
+        }
     }
 }
 
-/// Node `n`'s text when it is past `text`'s inline bound (`core_rr::TEXT_INLINE`), read from its document in the
-/// batch that holds it; none for a shorter node (whose text `text` holds), a span, or a document no batch holds.
-/// Only the nodes a rule binds are read and interned (decision 0108 §1).
-pub(crate) fn long_node_text(n: i64) -> Option<String> {
-    let (key, low) = ((n >> 32) as u32, n as u32);
-    let (batch, i) = TEXTS.read().unwrap_or_else(|p| p.into_inner()).get(&key).cloned()?;
-    let batch = batch.upgrade()?;
-    let p = &batch.docs[i];
-    let local = p.local_of(low)?;
-    let core = *p.core.get(local as usize)?;
-    let text = p.facts.text(core);
-    (text.len() > core_rr::TEXT_INLINE).then(|| text.to_owned())
+impl Source for LongTexts {
+    fn python_batch(&self) -> Option<Arc<Batch>> {
+        Some(Arc::clone(&self.batch))
+    }
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+    fn revision(&self) -> Option<u64> {
+        self.nodes.revision()
+    }
+    fn columns(&self) -> Vec<String> {
+        self.nodes.columns()
+    }
+    fn len(&self) -> usize {
+        self.nodes.len()
+    }
+    fn estimated_matches(&self, column: usize, batch: bool) -> usize {
+        self.nodes.estimated_matches(column, batch)
+    }
+    fn indexed(&self, column: usize) -> bool {
+        self.nodes.indexed(column)
+    }
+    fn range_indexed(&self, column: usize) -> bool {
+        self.nodes.range_indexed(column)
+    }
+    fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<Vec<usize>> {
+        self.nodes.range_lookup(column, lower, upper)
+    }
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+        self.nodes.lookup(column, values)
+    }
+    fn value(&self, row: usize, column: usize) -> i64 {
+        self.nodes.value(row, column)
+    }
+}
+
+/// The batch's relation `name` as a source: `rr_long_text_node` with the batch (`LongTexts`), any other as rows.
+fn as_source(name: &str, rows: Relation, batch: &Arc<Batch>) -> Arc<dyn Source> {
+    if name == LONG_TEXT_NODES { Arc::new(LongTexts::new(rows, batch)) } else { Arc::new(rows) }
+}
+
+/// The relation of the nodes whose text `@rr_node_text` reads, bound with the batch every node read goes through
+/// (`LongTexts`).
+pub const LONG_TEXT_NODES: &str = "rr_long_text_node";
+
+/// The functions that read a node's text or value from the run's batch (`LongTexts::of`): their values are the run's,
+/// so `functions::eval` gives none.
+pub const NODE_READS: [&str; 3] = ["rr_node_text", "rr_node_text_any", "rr_node_value"];
+
+/// The request relation of `value` (decision 0174): a batch keeps its documents' tapes for W's values where a program
+/// derives it.
+pub const VALUE_REQ: &str = "rr_value_req";
+
+/// A document's tape and the values W reads off it (`ValueReader`), read at the first request.
+pub(crate) struct Valued {
+    tape: crate::code_rule_dsl::tape::TapeDoc,
+    file: Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>,
+    values: OnceLock<HashMap<u32, String>>,
 }
 
 /// The node kinds whose text a rule reads, and whether some rule reads the text of a node of any kind. A node's kinds
@@ -307,62 +542,142 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
         }
         rule.get("all")?.as_array()?.iter().find_map(|r| r.get("kind").and_then(|k| k.as_str()).map(str::to_owned))
     };
+    // A node's kinds to a fixpoint, on numbers: each kind name interned (`kind_ids`), a set of kinds a sorted vector of
+    // them, each derived relation's columns a vector by its number, and each rule head variable's constraints found
+    // once (`fixers`). Looked up by an owned `(String, usize)` key and cloned as sets of names at every step of every
+    // round, the fixpoint was most of this function.
     // `None` is any kind.
-    type Kinds = Option<BTreeSet<String>>;
-    let roots: HashMap<&str, Kinds> = matchers.iter().map(|(rel, text, _)| (rel.as_str(), root_kind(text).map(|k| BTreeSet::from([bare(&k)])))).collect();
-    let derived: BTreeSet<&str> = program.rules.iter().map(|r| r.head.rel.as_str()).collect();
-    let mut columns: HashMap<(String, usize), Kinds> = HashMap::new();
-    let column = |columns: &HashMap<(String, usize), Kinds>, rel: &str, c: usize| -> Kinds {
-        if derived.contains(rel) {
-            columns.get(&(rel.to_owned(), c)).cloned().unwrap_or(Some(BTreeSet::new()))
-        } else if c == 0 && let Some(root) = roots.get(rel) {
-            root.clone()
-        } else {
-            None
+    type Kinds = Option<Vec<u32>>;
+    let kind_table: std::cell::RefCell<(HashMap<String, u32>, Vec<String>)> = Default::default();
+    let intern = |k: String| -> u32 {
+        let mut t = kind_table.borrow_mut();
+        if let Some(&n) = t.0.get(&k) {
+            return n;
         }
+        let n = t.1.len() as u32;
+        t.1.push(k.clone());
+        t.0.insert(k, n);
+        n
     };
-    let of_var = |columns: &HashMap<(String, usize), Kinds>, body: &[Literal], v: &str| -> Kinds {
-        let mut kinds: Kinds = None;
+    let roots: HashMap<&str, Kinds> = matchers.iter().map(|(rel, text, _)| (rel.as_str(), root_kind(text).map(|k| vec![intern(bare(&k))]))).collect();
+    let derived: Vec<&str> = {
+        let mut d: Vec<&str> = program.rules.iter().map(|r| r.head.rel.as_str()).collect();
+        d.sort_unstable();
+        d.dedup();
+        d
+    };
+    let derived_id: HashMap<&str, u32> = derived.iter().enumerate().map(|(i, r)| (*r, i as u32)).collect();
+    // A base relation's name the program gives rules of its own: a relation like any other there, which narrows
+    // nothing by the base relation's meaning. `kind(n, k) :- node(_, n, k, _, _)` (the lowering's projection,
+    // `rr::lower` `projections`, and the data-layer prelude's) is `kind` itself, not a rule of the program's.
+    let projection = |r: &crate::code_rule_dsl::logic::front::ast::Rule| {
+        r.head.rel == "kind"
+            && matches!((r.head.args.as_ref(), r.body.as_ref()),
+                ([Term::Var(n), Term::Var(k)], [Literal::Atom(a)])
+                    if !a.neg && a.rel == "node" && matches!(a.args.as_ref(), [_, Term::Var(an), Term::Var(ak), _, _] if an == n && ak == k))
+    };
+    let redefined: BTreeSet<&str> = program.rules.iter().filter(|r| !projection(r)).map(|r| r.head.rel.as_str()).filter(|r| ["kind", "node", "field", "child"].contains(r)).collect();
+    /// What fixes a variable's kinds where an atom reads it.
+    enum Fix {
+        /// A derived relation's column.
+        Column(u32, usize),
+        /// Kinds known whatever the round (`kind(v, "K")`, a matcher's root), or any (`None`).
+        Known(Option<Vec<u32>>),
+    }
+    let fixers = |body: &[Literal], v: &str| -> Vec<Fix> {
+        let mut out = Vec::new();
         for a in body.iter().filter_map(Literal::atom).filter(|a| !a.neg) {
             for (c, t) in a.args.iter().enumerate() {
                 if !matches!(t, Term::Var(x) if x == v) {
                     continue;
                 }
-                let fixed = match (a.rel.as_str(), c, a.args.get(1)) {
-                    ("kind", 0, Some(Term::Str(k))) => Some(BTreeSet::from([bare(k)])),
-                    ("kind", _, _) => None,
-                    (rel, c, _) => column(columns, rel, c),
-                };
-                kinds = match (kinds, fixed) {
-                    (None, k) => k,
-                    (k, None) => k,
-                    (Some(a), Some(b)) => Some(a.intersection(&b).cloned().collect()),
-                };
+                // The base relations narrow by their meaning only where the program gives no rules of its own to
+                // one of that name (`redefined`): there it is a relation like any other (its columns).
+                out.push(match (a.rel.as_str(), c, a.args.get(1)) {
+                    ("kind", 0, Some(Term::Str(k))) if !redefined.contains("kind") => Fix::Known(Some(vec![intern(bare(k))])),
+                    ("kind", _, _) if !redefined.contains("kind") => Fix::Known(None),
+                    // T's base `node(d, n, kind, …)` (a program that declares its base relations itself): `n` of `kind`.
+                    ("node", 1, _) if !redefined.contains("node") => Fix::Known(match a.args.get(2) {
+                        Some(Term::Str(k)) => Some(vec![intern(bare(k))]),
+                        _ => None,
+                    }),
+                    ("node", _, _) if !redefined.contains("node") => Fix::Known(None),
+                    (rel, c, _) => match derived_id.get(rel) {
+                        Some(&d) => Fix::Column(d, c),
+                        None if c == 0 && let Some(root) = roots.get(rel) => Fix::Known(root.clone()),
+                        None => Fix::Known(None),
+                    },
+                });
             }
         }
-        kinds
+        out
     };
+    fn intersect(a: &[u32], b: &[u32]) -> Vec<u32> {
+        a.iter().copied().filter(|k| b.binary_search(k).is_ok()).collect()
+    }
+    fn union(a: &[u32], b: &[u32]) -> Vec<u32> {
+        let mut u: Vec<u32> = a.iter().chain(b).copied().collect();
+        u.sort_unstable();
+        u.dedup();
+        u
+    }
+    // A variable's kinds under `columns`: the intersection of what fixes it (any, when nothing does).
+    fn fold(columns: &[Vec<Kinds>], fixes: &[Fix]) -> Kinds {
+        let mut kinds: Kinds = None;
+        for f in fixes {
+            let fixed: Option<&[u32]> = match f {
+                Fix::Column(d, c) => match columns[*d as usize].get(*c) {
+                    Some(k) => k.as_deref(),
+                    None => Some(&[]),
+                },
+                Fix::Known(k) => k.as_deref(),
+            };
+            kinds = match (kinds, fixed) {
+                (None, k) => k.map(<[u32]>::to_vec),
+                (k, None) => k,
+                (Some(a), Some(b)) => Some(intersect(&a, b)),
+            };
+        }
+        kinds
+    }
+    // Each derived relation's columns, as wide as its widest head; each rule head variable's fixers.
+    let mut columns: Vec<Vec<Kinds>> = vec![Vec::new(); derived.len()];
+    let mut heads: Vec<(u32, usize, Vec<Fix>)> = Vec::new();
+    for rule in &program.rules {
+        let h = derived_id[rule.head.rel.as_str()];
+        let width = &mut columns[h as usize];
+        if width.len() < rule.head.args.len() {
+            width.resize(rule.head.args.len(), Some(Vec::new()));
+        }
+        for (c, t) in rule.head.args.iter().enumerate() {
+            let Term::Var(v) = t else { continue };
+            heads.push((h, c, fixers(&rule.body, v)));
+        }
+    }
     loop {
         let mut changed = false;
-        for rule in &program.rules {
-            for (c, t) in rule.head.args.iter().enumerate() {
-                let Term::Var(v) = t else { continue };
-                let kinds = of_var(&columns, &rule.body, v);
-                let entry = columns.entry((rule.head.rel.to_string(), c)).or_insert(Some(BTreeSet::new()));
-                let joined = match (&*entry, kinds) {
-                    (None, _) | (_, None) => None,
-                    (Some(a), Some(b)) => Some(a.union(&b).cloned().collect()),
-                };
-                if *entry != joined {
-                    *entry = joined;
-                    changed = true;
-                }
+        for (h, c, fixes) in &heads {
+            let kinds = fold(&columns, fixes);
+            let entry = &mut columns[*h as usize][*c];
+            let joined = match (&*entry, kinds) {
+                (None, _) | (_, None) => None,
+                (Some(a), Some(b)) => Some(union(a, &b)),
+            };
+            if *entry != joined {
+                *entry = joined;
+                changed = true;
             }
         }
         if !changed {
             break;
         }
     }
+    // A text atom's variable's kinds, by name.
+    let of_var = |body: &[Literal], v: &str| -> Option<BTreeSet<String>> {
+        let fixes = fixers(body, v);
+        let names = kind_table.borrow();
+        fold(&columns, &fixes).map(|ks| ks.into_iter().map(|k| names.1[k as usize].clone()).collect())
+    };
     // A rule (by head relation) that reads `v`'s long text by `@rr_node_text(v)`: its twin (`long_text_twins`).
     // Found in one pass: each (head, variable) a rule reads so.
     let twins: HashSet<(&str, &str)> = program
@@ -454,10 +769,34 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
     };
     // The fields `v` is a node in (`field(_, "F", v)`).
     let fields_of = |body: &[Literal], v: &str| -> BTreeSet<String> {
-        body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel == "field").filter_map(|a| match (a.args.get(1), a.args.get(2)) {
+        body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel == "field" && !redefined.contains("field")).filter_map(|a| match (a.args.get(1), a.args.get(2)) {
             (Some(Term::Str(f)), Some(Term::Var(x))) if x == v => Some(f.clone()),
             _ => None,
-        }).collect()
+        }).map(String::from).collect()
+    };
+    // What narrows the nodes `v` is a child of (`child(p, v, _)`): each such parent's kinds, or the fields it is in;
+    // `None` when one is not narrowed, or `v` is no child.
+    let parents_of = |body: &[Literal], v: &str| -> Option<(BTreeSet<String>, BTreeSet<String>)> {
+        let (mut kinds, mut fields) = (BTreeSet::new(), BTreeSet::new());
+        let mut any = false;
+        for a in body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel == "child" && !redefined.contains("child")) {
+            if let (Some(Term::Var(p)), Some(Term::Var(x))) = (a.args.first(), a.args.get(1))
+                && x == v
+            {
+                any = true;
+                // Its kinds, its fields, or a matcher capture's (a rewritten `kind`/`field` body, `rr_ast_…(i, mn)`).
+                match (of_var(body, p), fields_of(body, p)) {
+                    (Some(k), _) => kinds.extend(k.iter().map(|k| bare(k))),
+                    (None, f) if !f.is_empty() => fields.extend(f),
+                    (None, _) => match captured(body, p) {
+                        (k, _) if !k.is_empty() => kinds.extend(k),
+                        (_, f) if !f.is_empty() => fields.extend(f),
+                        _ => return None,
+                    },
+                }
+            }
+        }
+        any.then_some((kinds, fields))
     };
     let (mut kinds, mut any) = (BTreeSet::new(), Vec::new());
     let mut read = Some(TextNodes::default());
@@ -473,7 +812,7 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
                 wide.get_or_insert_with(|| rule.head.rel.to_string());
                 continue;
             };
-            let fixed = of_var(&columns, &rule.body, v);
+            let fixed = of_var(&rule.body, v);
             if let Some(nodes) = &mut read {
                 match &fixed {
                     Some(k) => nodes.kinds.extend(k.iter().cloned()),
@@ -482,6 +821,17 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
                         (f, _) if !f.is_empty() => nodes.fields.extend(f),
                         (_, (k, _)) if !k.is_empty() => nodes.kinds.extend(k),
                         (_, (_, f)) if !f.is_empty() => nodes.fields.extend(f),
+                        // Compared with a constant within the bound: only a node whose text is that constant.
+                        _ if short_constant(text) => {
+                            if let Some(Term::Str(c)) = text.args.get(1) {
+                                nodes.values.insert(c.to_string());
+                            }
+                        }
+                        // A child of a node of known kinds: only such children.
+                        _ if let Some((kinds, fields)) = parents_of(&rule.body, v) => {
+                            nodes.parents.extend(kinds);
+                            nodes.parent_fields.extend(fields);
+                        }
                         _ => {
                             wide = Some(format!("{}, reading text({v}, …)", rule.head.rel).into());
                             read = None
@@ -491,7 +841,7 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
             }
             match fixed {
                 Some(k) => kinds.extend(k),
-                None if leaf_field(&rule.body, v) || short_constant(text) || twinned(&rule.head.rel, v) => {}
+                None if !redefined.contains("field") && leaf_field(&rule.body, v) || short_constant(text) || twinned(&rule.head.rel, v) => {}
                 None => any.push((r, i)),
             }
         }
@@ -501,9 +851,214 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
 
 /// Plan-time provenance, not a per-file scan. Only copying a span (including variable equality)
 /// carries its origin. Regex captures have their own bounded ranges and do not demand the container text.
-fn span_text_demand(program: &crate::code_rule_dsl::logic::front::ast::Program) -> BTreeSet<crate::code_rule_dsl::logic::front::ast::SpanIn> {
+/// The node kinds whose subtrees hold every node a phase's exports depend on (`Projection::node_anchors`), or why
+/// every node is projected. Only a phase (`.phase`) whose exports hold no node qualifies: its node ids never leave it,
+/// so a projection of fewer nodes may number them its own way.
+///
+/// Each rule the exports reach is checked. A variable a node column binds must be proven to lie in an anchor's
+/// subtree: by `kind(v, "K")` (`K` an anchor), as a child of a proven node (`child(p, v, _)`, `field(p, _, v)`), as a
+/// matcher's root or capture (`rr_ast_*`, a matcher with no `inside`, `follows` or `precedes`), or by a column of a
+/// relation whose every rule proves it. Of a proven node a rule may read only what the node itself holds (its kind,
+/// text, literals, place in the source, document), and its children: no parent, ancestor, sibling or neighbouring
+/// token, which a narrowed projection would not have, or would have otherwise. In `sources.rr` (phase 1): import
+/// statements' subtrees.
+pub fn node_anchors(program: &crate::code_rule_dsl::logic::front::ast::Program, matchers: &[(String, String, Vec<String>)]) -> Result<BTreeSet<String>, String> {
+    use crate::code_rule_dsl::logic::front::ast::{Literal, Term};
+    let setting = |key: &str| program.settings.iter().filter(|(k, _)| k == key).map(|(_, v)| v.trim().to_owned()).collect::<Vec<_>>();
+    if setting("phase").is_empty() {
+        return Err("not a phase".into());
+    }
+    let exports: Vec<String> = setting("export").iter().flat_map(|v| v.split(',').map(|e| e.trim().trim_end_matches('.').to_owned()).collect::<Vec<_>>()).filter(|e| !e.is_empty()).collect();
+    let is_node = |t: &str| t == "node" || t == "loc";
+    let ast = crate::code_rule_dsl::facts::core::ast_matches::PREFIX;
+    for e in &exports {
+        match program.decls.get(e.as_str()) {
+            Some(types) if !types.iter().any(|(_, t)| is_node(t)) => {}
+            Some(_) => return Err(format!("export {e} holds a node")),
+            None => return Err(format!("export {e} is not declared")),
+        }
+    }
+    if exports.is_empty() {
+        return Err("no exports".into());
+    }
+    let node_col = |rel: &str, c: usize| rel.starts_with(ast) || program.decls.get(rel).and_then(|ts| ts.get(c)).is_some_and(|(_, t)| is_node(t));
+    // What a node holds itself; `child` and `field` go down from their first column. `rr_long_text_node(n)` is a
+    // long-text twin's (`long_text_twins`): that `n`'s text is past the inline bound, made from the projected nodes.
+    const LOCAL: &[&str] = &["kind", "node", "text", "name", "str", "strprefix", "value", "static_value", "docof", "line", "col", "end_line", "intval", "op", "op_at", "comment", "rr_long_text_node"];
+    let down = |rel: &str| match rel { "child" => Some(1), "field" => Some(2), _ => None };
+    let tree = |rel: &str| LOCAL.contains(&rel) || down(rel).is_some();
+    let bare = |k: &str| k.rsplit(':').next().unwrap_or(k).to_owned();
+    // A matcher's root kind, where it reaches only below its root.
+    let roots: HashMap<&str, Option<String>> = matchers.iter().map(|(rel, text, _)| {
+        let below = !["\"inside\"", "\"follows\"", "\"precedes\""].iter().any(|k| text.contains(k));
+        let rule = serde_json::from_str::<serde_json::Value>(text).ok().and_then(|v| v.get("rule").cloned());
+        let kind = rule.and_then(|r| r.get("kind").and_then(|k| k.as_str()).map(str::to_owned)
+            .or_else(|| r.get("all")?.as_array()?.iter().find_map(|x| x.get("kind").and_then(|k| k.as_str()).map(str::to_owned))));
+        (rel.as_str(), kind.filter(|_| below).map(|k| bare(&k)))
+    }).collect();
+    // The rules the exports reach, tree views left as the base relations they stand for.
+    let mut by_head: HashMap<&str, Vec<&crate::code_rule_dsl::logic::front::ast::Rule>> = HashMap::new();
+    for r in &program.rules {
+        by_head.entry(r.head.rel.as_str()).or_default().push(r);
+    }
+    let mut reached: BTreeSet<&str> = BTreeSet::new();
+    let mut stack: Vec<&str> = exports.iter().map(String::as_str).collect();
+    while let Some(rel) = stack.pop() {
+        if tree(rel) || !reached.insert(rel) {
+            continue;
+        }
+        for r in by_head.get(rel).into_iter().flatten() {
+            for l in &r.body {
+                match l {
+                    Literal::Nearest { .. } => return Err(format!("{rel} reads a nearest ancestor")),
+                    Literal::Ast { .. } => return Err(format!("{rel} reads an ast matcher in place")),
+                    _ => {}
+                }
+                stack.extend(l.atom().map(|a| a.rel.as_str()));
+            }
+        }
+    }
+    let rules: Vec<&crate::code_rule_dsl::logic::front::ast::Rule> = reached.iter().flat_map(|r| by_head.get(r).into_iter().flatten().copied()).collect();
+    let derived = |rel: &str| !tree(rel) && by_head.contains_key(rel);
+    // Every read of a node column is of a node-local relation, a child below a named parent, a matcher, or a relation
+    // the program derives.
+    for r in &rules {
+        for a in r.body.iter().filter_map(Literal::atom) {
+            let rel = a.rel.as_str();
+            for (c, t) in a.args.iter().enumerate() {
+                if !node_col(rel, c) || matches!(t, Term::Wild) && down(rel) != Some(c) {
+                    continue;
+                }
+                let ok = LOCAL.contains(&rel) || rel.starts_with(ast) || derived(rel)
+                    || down(rel).is_some_and(|child| c == 0 || c == child && matches!(a.args.first(), Some(Term::Var(_))));
+                if !ok {
+                    return Err(format!("{} reads {rel}", r.head.rel.as_str()));
+                }
+            }
+        }
+    }
+    // The derived columns proven to hold anchored nodes: every node column at first, dropped where a rule cannot prove
+    // its head's (the greatest such set: by induction on derivations, every row's node is in an anchor's subtree).
+    let mut proven_cols: BTreeSet<(String, usize)> = rules.iter().flat_map(|r| {
+        let rel = r.head.rel.as_str();
+        (0..r.head.args.len()).filter(move |&c| node_col(rel, c)).map(move |c| (rel.to_owned(), c))
+    }).collect();
+    // A rule's proven variables, and the variables a kind or a matcher anchors that nothing above them reaches.
+    let prove = |r: &crate::code_rule_dsl::logic::front::ast::Rule, cols: &BTreeSet<(String, usize)>| -> (BTreeSet<String>, BTreeSet<String>, Vec<(String, String)>) {
+        let var = |t: Option<&Term>| match t { Some(Term::Var(v)) => Some(v.clone()), _ => None };
+        // Down edges (parent, child) and each variable's own grounds: a kind constant or matcher root, or a column.
+        let mut edges: Vec<(String, String)> = Vec::new();
+        let mut kinds: Vec<(String, String)> = Vec::new();
+        let mut grounded: BTreeSet<String> = BTreeSet::new();
+        for l in &r.body {
+            match l {
+                Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } => {
+                    edges.push((a.to_string(), b.to_string()));
+                    edges.push((b.to_string(), a.to_string()));
+                }
+                _ => {}
+            }
+            let Some(a) = l.atom().filter(|a| !a.neg) else { continue };
+            let rel = a.rel.as_str();
+            match rel {
+                "kind" => {
+                    if let (Some(v), Some(Term::Str(k))) = (var(a.args.first()), a.args.get(1)) {
+                        kinds.push((v.to_string(), bare(k)));
+                    }
+                }
+                "child" | "field" => {
+                    if let (Some(p), Some(c)) = (var(a.args.first()), var(a.args.get(down(rel).unwrap_or(1)))) {
+                        edges.push((p.to_string(), c.to_string()));
+                    }
+                }
+                _ if rel.starts_with(ast) => {
+                    if let Some(root) = var(a.args.first()) {
+                        if let Some(Some(k)) = roots.get(rel) {
+                            kinds.push((root.to_string(), k.clone()));
+                        }
+                        for c in a.args.iter().skip(1).filter_map(|t| var(Some(t))) {
+                            edges.push((root.to_string(), c.to_string()));
+                        }
+                    }
+                }
+                _ if derived(rel) => {
+                    for (c, t) in a.args.iter().enumerate() {
+                        if let Some(v) = var(Some(t)).filter(|_| cols.contains(&(rel.to_owned(), c))) {
+                            grounded.insert(v.to_string());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        let closure = |from: &BTreeSet<String>| {
+            let mut out = from.clone();
+            loop {
+                let before = out.len();
+                for (p, c) in &edges {
+                    if out.contains(p) {
+                        out.insert(c.clone());
+                    }
+                }
+                if out.len() == before {
+                    return out;
+                }
+            }
+        };
+        // A kind's variable is an anchor where nothing proven, nor another such variable, reaches it from above (one of
+        // a cycle, where they reach each other).
+        let mut anchors: BTreeSet<String> = BTreeSet::new();
+        loop {
+            let proven = closure(&grounded.iter().cloned().chain(anchors.iter().cloned()).collect());
+            let open: Vec<&String> = kinds.iter().map(|(v, _)| v).filter(|v| !proven.contains(*v)).collect();
+            let Some(first) = open.first() else { return (proven, anchors, kinds) };
+            let tops: Vec<String> = open.iter().filter(|v| !open.iter().any(|w| w != *v && closure(&BTreeSet::from([(*w).clone()])).contains(**v))).map(|v| (*v).clone()).collect();
+            if tops.is_empty() {
+                anchors.insert((*first).clone());
+            } else {
+                anchors.extend(tops);
+            }
+        }
+    };
+    loop {
+        let mut changed = false;
+        for r in &rules {
+            let (proven, _, _) = prove(r, &proven_cols);
+            let rel = r.head.rel.as_str();
+            for (c, t) in r.head.args.iter().enumerate() {
+                let key = (rel.to_owned(), c);
+                if proven_cols.contains(&key) && !matches!(t, Term::Var(v) if proven.contains(v.as_str())) {
+                    proven_cols.remove(&key);
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let mut kinds_out = BTreeSet::new();
+    for r in &rules {
+        let (proven, anchors, kinds) = prove(r, &proven_cols);
+        for a in r.body.iter().filter_map(Literal::atom) {
+            for (c, t) in a.args.iter().enumerate() {
+                if let Term::Var(v) = t && node_col(a.rel.as_str(), c) && !proven.contains(v.as_str()) {
+                    return Err(format!("{}'s ${v} is in no anchor's subtree", r.head.rel.as_str()));
+                }
+            }
+        }
+        kinds_out.extend(kinds.into_iter().filter(|(v, _)| anchors.contains(v)).map(|(_, k)| k));
+    }
+    Ok(kinds_out)
+}
+
+fn span_text_demand(program: &crate::code_rule_dsl::logic::front::ast::Program) -> (BTreeSet<crate::code_rule_dsl::logic::front::ast::SpanIn>, bool) {
     use crate::code_rule_dsl::logic::front::ast::{Literal, SpanIn, Term};
-    let mut columns: HashMap<(String, usize), u8> = [( ("source".to_owned(), 1), 1), (("src_line".to_owned(), 2), 2)].into();
+    // Bit 1 the source, 2 a line, 4 a token (the second column of the four token relations).
+    let mut columns: HashMap<(String, usize), u8> = [( ("source".to_owned(), 1), 1), (("src_line".to_owned(), 2), 2)]
+        .into_iter()
+        .chain(["first_token", "last_token", "token_before", "token_after"].map(|rel| ((rel.to_owned(), 1), 4)))
+        .collect();
     let mut requested = 0;
     loop {
         let mut changed = false;
@@ -512,7 +1067,7 @@ fn span_text_demand(program: &crate::code_rule_dsl::logic::front::ast::Program) 
             for atom in rule.body.iter().filter_map(Literal::atom).filter(|atom| !atom.neg) {
                 for (column, term) in atom.args.iter().enumerate() {
                     if let Term::Var(value) = term {
-                        *vars.entry(value.clone()).or_default() |= columns.get(&(atom.rel.to_string(), column)).copied().unwrap_or(0);
+                        *vars.entry(value.to_string()).or_default() |= columns.get(&(atom.rel.to_string(), column)).copied().unwrap_or(0);
                     }
                 }
             }
@@ -520,9 +1075,9 @@ fn span_text_demand(program: &crate::code_rule_dsl::logic::front::ast::Program) 
                 let mut aliases_changed = false;
                 for literal in &rule.body {
                     if let Literal::Cmp { l: Term::Var(left), op: "=", r: Term::Var(right) } = literal {
-                        let mask = vars.get(left).copied().unwrap_or(0) | vars.get(right).copied().unwrap_or(0);
+                        let mask = vars.get(left.as_str()).copied().unwrap_or(0) | vars.get(right.as_str()).copied().unwrap_or(0);
                         for value in [left, right] {
-                            let entry = vars.entry(value.clone()).or_default();
+                            let entry = vars.entry(value.to_string()).or_default();
                             aliases_changed |= *entry != (*entry | mask);
                             *entry |= mask;
                         }
@@ -532,7 +1087,7 @@ fn span_text_demand(program: &crate::code_rule_dsl::logic::front::ast::Program) 
             }
             for (column, term) in rule.head.args.iter().enumerate() {
                 if let Term::Var(value) = term {
-                    let mask = vars.get(value).copied().unwrap_or(0);
+                    let mask = vars.get(value.as_str()).copied().unwrap_or(0);
                     if mask != 0 {
                         let entry = columns.entry((rule.head.rel.to_string(), column)).or_default();
                         changed |= *entry != (*entry | mask);
@@ -542,23 +1097,26 @@ fn span_text_demand(program: &crate::code_rule_dsl::logic::front::ast::Program) 
             }
             for atom in rule.body.iter().filter_map(Literal::atom).filter(|atom| atom.rel == "text") {
                 if let Some(Term::Var(value)) = atom.args.first() {
-                    requested |= vars.get(value).copied().unwrap_or(0);
+                    requested |= vars.get(value.as_str()).copied().unwrap_or(0);
                 }
             }
         }
         if !changed { break; }
     }
-    [(SpanIn::Source, 1), (SpanIn::Line, 2)].into_iter().filter_map(|(span, bit)| (requested & bit != 0).then_some(span)).collect()
+    ([(SpanIn::Source, 1), (SpanIn::Line, 2)].into_iter().filter_map(|(span, bit)| (requested & bit != 0).then_some(span)).collect(), requested & 4 != 0)
 }
 
 /// The relation a program's guest settings are facts of (`.guests`, `.on guest_error`; decision 0055):
 /// `guest_policy("library", "on" | "off")`, `guest_policy("errors" | "errors:GRAMMAR", "skip" | "partial")`.
 pub const GUEST_POLICY: &str = "guest_policy";
 
-/// The first guest document's key: files take `1..GUEST_KEYS` (`corpus::memo::doc_keys`), guests in the run's
-/// language `GUEST_KEYS..HIDDEN_KEYS`, and every other document (a guest in another grammar, a value) `HIDDEN_KEYS..2^31`
-/// (decision 0058 §1: what a rule sees is a bound on these keys).
+/// The first guest document's key: files take `1..GUEST_KEYS` (`corpus::memo::doc_keys`), code guests in the run's
+/// language `GUEST_KEYS..ANNOTATION_KEYS`, annotations (type expressions, Python's in a Python run)
+/// `ANNOTATION_KEYS..HIDDEN_KEYS`, and every other document (a guest in another grammar, a value) `HIDDEN_KEYS..2^31`
+/// (decision 0058 §1: what a rule sees is a bound on these keys). A rule that does not name a guest sees files and code
+/// guests; a relation an annotation's rows reach (`corpus::hiding::fold_own`) sees annotations too.
 pub const GUEST_KEYS: u32 = 1 << 30;
+pub const ANNOTATION_KEYS: u32 = (1 << 30) + (1 << 28);
 pub const HIDDEN_KEYS: u32 = (1 << 30) + (1 << 29);
 
 /// A guest document's place (decision 0055): the host document and the node or span it stands at, its grammar and
@@ -620,10 +1178,15 @@ pub enum Placement {
     Mapped { pieces: Arc<[normalized::Piece]>, within: [u32; 2] },
     /// A decoded value with no map: every node stands at the host bytes `at`.
     At([u32; 2]),
+    /// A program an embedder wrote (`embed::Embedder`: a Vue component's view, a Blade view's PHP): copied stretches
+    /// and written tokens, each standing for the host bytes its segment names, in any order (`SegmentMap`, decision
+    /// 0222). A node is placed where its first segment stands (`FileRanges::primary`, as main reports one) and lies
+    /// in the host inside the least range holding all it stands for (`SegmentMap::bounds`, which `host_node` reads).
+    Segments(Arc<crate::code_rule_dsl::embed::segments::SegmentMap>),
 }
 
 impl Placement {
-    pub(crate) fn host(&self, [a, b]: [u32; 2]) -> [u32; 2] {
+    pub fn host(&self, [a, b]: [u32; 2]) -> [u32; 2] {
         let clamp = |x: i64, [lo, hi]: [u32; 2]| x.clamp(i64::from(lo), i64::from(hi)) as u32;
         match self {
             Placement::Copied { delta, within } => [clamp(i64::from(a) + delta, *within), clamp(i64::from(b) + delta, *within)],
@@ -632,6 +1195,23 @@ impl Placement {
                 if b <= a { [start, start] } else { [start, clamp(mapped_end(pieces, b), *within).max(start)] }
             }
             Placement::At(at) => *at,
+            Placement::Segments(map) => {
+                let r = map.file_ranges(a as usize..b.max(a) as usize).primary();
+                [r.start as u32, r.end as u32]
+            }
+        }
+    }
+
+    /// The least host range holding every byte the guest bytes `[a, b]` stand for: where a node lies in its host
+    /// (`host_node`). The bytes `host` gives, but for an embedder's program, whose node may stand for host ranges
+    /// apart (a `v-for` arrow: its element and its alias).
+    pub(crate) fn bounds(&self, [a, b]: [u32; 2]) -> [u32; 2] {
+        match self {
+            Placement::Segments(map) => {
+                let r = map.bounds(a as usize..b.max(a) as usize);
+                [r.start as u32, r.end as u32]
+            }
+            _ => self.host([a, b]),
         }
     }
 
@@ -640,7 +1220,7 @@ impl Placement {
         match self {
             Placement::Copied { delta, .. } => Some(vec![normalized::Piece { d: 0, s: *delta, escape: false }]),
             Placement::Mapped { pieces, .. } => Some(pieces.to_vec()),
-            Placement::At(_) => None,
+            Placement::At(_) | Placement::Segments(_) => None,
         }
     }
 
@@ -649,6 +1229,13 @@ impl Placement {
         match (self, &inner) {
             (Placement::At(at), _) => Placement::At(*at),
             (_, Placement::At(at)) => Placement::At(self.host(*at)),
+            // A document inside an embedder's program, or a program inside a guest, stands at the bytes it lies in
+            // as a whole: segments do not compose with a string's map (open in decision 0222).
+            (Placement::Segments(_), Placement::Copied { within, .. } | Placement::Mapped { within, .. }) => Placement::At(self.host(*within)),
+            (_, Placement::Segments(map)) => {
+                let r = map.bounds(0..u32::MAX as usize);
+                Placement::At(self.host([r.start as u32, r.end as u32]))
+            }
             (Placement::Copied { delta, .. }, Placement::Copied { delta: d, within }) => Placement::Copied { delta: delta + d, within: self.host(*within) },
             _ => {
                 let (Some(outer), Some(pieces), Placement::Copied { within, .. } | Placement::Mapped { within, .. }) = (self.pieces(), inner.pieces(), &inner) else {
@@ -726,7 +1313,7 @@ pub struct Document {
 
 /// W's values (`Extra`) and the AST patterns' matches (`ast_match`, matched over the tape), which a batch reads off
 /// its documents' tapes.
-const VALUES_TAPED: [&str; 5] = ["value", "static_value", "value_type_of", "value_type", "ast_match"];
+const VALUES_TAPED: [&str; 6] = ["value", "static_value", "value_type_of", "value_type", "ast_match", VALUE_REQ];
 
 /// Whether `rel` is read off a document's tape, for which a batch's documents keep their tapes (`Document::tape`):
 /// W's values (`Extra`), the AST patterns' matches, and a registered producer's (`Producer::taped`: Python's f-string trees and string
@@ -825,7 +1412,13 @@ pub fn numbering(doc: &Document, shape: Shape) -> StoreResult<Numbering> {
     let nodes = p.core.iter().map(|&id| (id, dialect.name(&doc.facts, id))).collect();
     // The ids the projection gives (`Projected::id`): per definition where it numbered the document so. A unit's own
     // nodes are numbered before its tokens, so the nodes' ids need no tokens.
-    Ok(Numbering { nodes, back: p.defs.map(|d| d.back) })
+    Ok(Numbering { nodes, back: p.defs.as_ref().map(|d| d.back().to_vec()) })
+}
+
+/// Node `id`'s kind name in its facts' grammar (`""` where the facts' tag names no dialect).
+pub fn kind_name(f: &Facts, id: u32) -> &'static str {
+    let tag = crate::code_rule_dsl::facts::core::facts_tag(f);
+    Dialect::kept(tag).map_or("", |d| d.name(f, id))
 }
 
 /// A path's module: `a/b.py` is `a.b`, `a/__init__.py` is `a`; a Rust file's is its path from
@@ -894,6 +1487,39 @@ impl Class {
     }
 }
 
+/// A batch's dialects by tape tag: a table the tag indexes, since a row's `kind` reads its document's dialect per
+/// row (a hash map's probe was a third of that read).
+#[derive(Default)]
+pub struct Dialects(Vec<Option<Dialect>>);
+
+impl Dialects {
+    pub fn get(&self, tag: u8) -> Option<&Dialect> {
+        self.0.get(usize::from(tag)).and_then(Option::as_ref)
+    }
+    /// Tag `tag`'s dialect, made on first use.
+    fn get_or_new(&mut self, tag: u8) -> StoreResult<&Dialect> {
+        let at = usize::from(tag);
+        if self.0.len() <= at {
+            self.0.resize_with(at + 1, || None);
+        }
+        if self.0[at].is_none() {
+            self.0[at] = Some(Dialect::new(tag)?);
+        }
+        Ok(self.0[at].as_ref().expect("just made"))
+    }
+    /// Each dialect with its tag, in tag order.
+    pub fn iter(&self) -> impl Iterator<Item = (u8, &Dialect)> {
+        self.0.iter().filter_map(Option::as_ref).map(|d| (d.tag, d))
+    }
+}
+
+impl std::ops::Index<u8> for Dialects {
+    type Output = Dialect;
+    fn index(&self, tag: u8) -> &Dialect {
+        self.get(tag).expect("a document's dialect")
+    }
+}
+
 /// A dialect's kinds as T's exporter reads them. T's kinds were names, and a grammar gives some names several codes
 /// (aliases): the `kind` column holds each name's canonical code (`KindCatalog::kind_id`, what a program's constant
 /// lowers to), and a lookup reads the postings of every code of that name.
@@ -902,6 +1528,8 @@ pub struct Dialect {
     family: Family,
     pub catalog: KindCatalog,
     classes: Vec<Class>,
+    /// Each kind code's `granules::kind_flags`.
+    granule_kinds: Vec<u8>,
     operator: Option<u16>,
     /// The `operators` field: a comparison's operator tokens (`a < b <= c`).
     operators: Option<u16>,
@@ -935,6 +1563,7 @@ impl Dialect {
         let catalog = dialect.kinds();
         let values = crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(dialect)).reads_values();
         let classes = (0..catalog.kind_count()).map(|k| catalog.kind_name(k as u16).map_or(Class::Other, Class::of)).collect();
+        let granule_kinds = (0..catalog.kind_count()).map(|k| catalog.kind_name(k as u16).map_or(0, granules::kind_flags)).collect();
         let canonical: Vec<u16> = (0..catalog.kind_count() as u16)
             .map(|k| match catalog.kind_name(k) {
                 Some(name) if catalog.kind_is_named(k) => Some(catalog.kind_id(name)).filter(|&c| c != 0).unwrap_or(k),
@@ -947,11 +1576,15 @@ impl Dialect {
         }
         let family = Family::of(from_tape_tag(tag).and_then(crate::code_rule_dsl::language::label));
         let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(dialect);
-        Ok(Self { tag, family, catalog, classes, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, codes, values, grammar })
+        Ok(Self { tag, family, catalog, classes, granule_kinds, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, codes, values, grammar })
+    }
+    /// What kind code `code` is to the granules (`granules::kind_flags`); ERROR and an unknown code are nothing.
+    pub fn granule_kind(&self, code: u16) -> u8 {
+        self.granule_kinds.get(usize::from(code)).copied().unwrap_or(0)
     }
     /// Node `id`'s kind code (ERROR's is `u16::MAX`).
-    fn code(&self, f: &Facts, id: u32) -> u16 {
-        kind_code(f.kind[id as usize])
+    pub(super) fn code(&self, f: &Facts, id: u32) -> u16 {
+        kind_code(f.kind(id))
     }
     fn class(&self, f: &Facts, id: u32) -> Class {
         self.classes.get(usize::from(self.code(f, id))).copied().unwrap_or(Class::Other)
@@ -971,7 +1604,7 @@ impl Dialect {
     /// The child of `id` in field `field`.
     fn field_child(&self, f: &Facts, id: u32, field: &str) -> Option<u32> {
         let field = self.catalog.field_id(field)?;
-        f.children(id).iter().copied().find(|&c| f.field[c as usize] == field)
+        f.children(id).iter().copied().find(|&c| f.field(c) == field)
     }
     /// A name's dotted text: an identifier's, or an attribute's object's and attribute's joined by a dot (`a.b.c`),
     /// whatever spaces the source has between them. `None` where the object has no name (a call, a subscript).
@@ -1008,15 +1641,19 @@ pub struct Projected {
     pub key: u32,
     pub tag: u8,
     pub facts: Arc<Facts>,
+    /// The projection's arrays are in its batch's block (decision 0289 §3), which the device reads them in.
     /// The core id of each node.
-    pub core: Vec<u32>,
+    pub core: Cells<u32>,
     /// The node of each core id, `NONE` for one left out.
-    pub local: Vec<u32>,
-    pub idx: OnceLock<Vec<u32>>,
+    pub local: Cells<u32>,
+    /// The parent of each core id, as a core id (`parent`), found in the walk that numbers them: the tape stores no
+    /// parent, and format 15's is a search back. In the block too: the device's climbs read it (0289 §3).
+    up: Cells<u32>,
+    pub idx: OnceLock<Cells<u32>>,
     pub size: OnceLock<Vec<u32>>,
     pub depth: OnceLock<Vec<u32>>,
     /// The nodes hanging from their parent under a field, ascending.
-    pub fielded: OnceLock<Vec<u32>>,
+    pub fielded: OnceLock<Cells<u32>>,
     /// `core.rr`'s lines and spans; `None` in T's shape.
     pub extra: Option<Box<Locs>>,
     /// Node ids numbered per definition (`DefIds`), when the run asks for them; else a node's id is its preorder.
@@ -1029,10 +1666,10 @@ pub struct Projected {
 /// in the slots below them (`granules::ExtraSpan`), so a node by definition is never read as one of those spans, nor
 /// one of them as a node.
 struct DefIds {
-    /// The low 32 bits of each node's and token's id, by local id.
-    low: Vec<u32>,
-    /// `(low, local)`, ascending: the way back.
-    back: Vec<(u32, u32)>,
+    /// The low 32 bits of each node's and token's id, by local id, in the batch's block.
+    low: Cells<u32>,
+    /// `(low, local)`, ascending: the way back, made on first use (`back`): most runs never look a node up by id.
+    back: OnceLock<Vec<(u32, u32)>>,
     /// Each node's order key, by local id (`granules::order`): `node_order`'s low 32 bits.
     order: Vec<u32>,
 }
@@ -1060,10 +1697,34 @@ pub fn shown_local(low: i64) -> String {
 impl DefIds {
     /// The ids of `p`'s nodes, and of `tokens` (each token's node, in order), by definition.
     fn new(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> Self {
-        let (low, order) = granules::number(p, dialect, tokens);
-        let mut back: Vec<(u32, u32)> = low.iter().enumerate().map(|(l, &g)| (g, l as u32)).collect();
-        back.sort_unstable();
-        DefIds { low, back, order }
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "granules".into());
+        let mut order = Vec::new();
+        let low = Cells::build(p.core.block(), p.core.len() + tokens.len(), |low| {
+            order = granules::number(p, dialect, tokens, low);
+            low.len()
+        })
+        .expect("a batch's block holds its projection");
+        DefIds { low, back: OnceLock::new(), order }
+    }
+
+    /// `(low, local)`, ascending.
+    fn back(&self) -> &[(u32, u32)] {
+        self.back.get_or_init(|| {
+            let _span = crate::code_rule_dsl::logic::profile::span(|| "definition ids' way back".into());
+            // A slot is one granule's, and `granules::place` gives its indexes in order: each run of one slot is
+            // ascending, and a slot's runs come in order, so the runs stably sorted by slot are the ids ascending.
+            let mut runs: Vec<(u32, usize, usize)> = Vec::new();
+            for (l, &g) in self.low.iter().enumerate() {
+                match runs.last_mut() {
+                    Some(run) if run.0 == g >> INDEX_BITS => run.2 = l + 1,
+                    _ => runs.push((g >> INDEX_BITS, l, l + 1)),
+                }
+            }
+            runs.sort_by_key(|run| run.0);
+            let back: Vec<(u32, u32)> = runs.iter().flat_map(|&(_, a, b)| (a..b).map(|l| (self.low[l], l as u32))).collect();
+            debug_assert!(back.windows(2).all(|w| w[0].0 < w[1].0));
+            back
+        })
     }
 }
 
@@ -1074,6 +1735,9 @@ pub struct Locs {
     lines: Arc<core_rr::Lines>,
     pub token_spans: OnceLock<Vec<[u32; 2]>>,
     pub tokens: u32,
+    /// Each node's end point (`end_point`, where a program reads it): a zero-width span at its end offset, after the
+    /// lines, one per node in local order. 0 where no program reads them.
+    pub ends: u32,
     /// The whole source and its lines follow the tokens, implicit (`Projected::span`): a guest has none of its own.
     own_text: bool,
     /// A guest's host lines and placement: its places are the host's (decision 0055). A guest has no source-text
@@ -1083,7 +1747,9 @@ pub struct Locs {
 
 impl Locs {
     /// The document's spans past its nodes: its tokens, then (its own text) the whole source and each line.
-    fn positions(&self) -> u32 { self.tokens + if self.own_text { 1 + self.lines.count() as u32 } else { 0 } }
+    fn positions(&self) -> u32 { self.ends_from() + self.ends }
+    /// The first end point's position: past the tokens, the whole source and the lines.
+    fn ends_from(&self) -> u32 { self.tokens + if self.own_text { 1 + self.lines.count() as u32 } else { 0 } }
     /// A span's first line, last line and start column, in its file.
     fn place(&self, span: [u32; 2]) -> (u32, u32, u32) {
         match &self.host {
@@ -1107,15 +1773,113 @@ impl Projected {
     /// Document `key`'s projection in `shape`; `dialect` is its facts' (`None` for a text-only document, which has no
     /// node). A `withheld` document (`core.rr`: one that does not parse) has no nodes and no spans: no facts. A guest's
     /// nodes are its root's subtree, placed in its host's lines (`host`).
+    /// Its arrays are in a block of its own; a batch's documents' are in the batch's (`narrowed`).
     pub fn new(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>) -> Self {
+        let block = cells::block(Self::bytes(&facts));
+        Self::narrowed(key, facts, dialect, shape, withheld, guest, None, &block)
+    }
+
+    /// What a projection's arrays can take in a block: `core`, `local`, `up`, `low`, the ordinals and the fielded
+    /// nodes, none longer than the tape, with room for alignment.
+    pub fn bytes(facts: &Facts) -> usize {
+        6 * 4 * facts.len() + 6 * 16
+    }
+
+    /// As `new`, but with `anchors` (`Projection::node_anchors`) a file's nodes are its root and the subtrees of the
+    /// nodes of those kinds, found by the kind postings: no other node is walked. An anchor below no other is its
+    /// root's child here; the program reads no node outside the subtrees, nor an anchor's parent or place among its
+    /// siblings, and its node ids stay inside its phase.
+    #[allow(clippy::too_many_arguments)]
+    pub fn narrowed(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>, anchors: Option<&BTreeSet<String>>, block: &Arc<Block>) -> Self {
         let identity_span = crate::code_rule_dsl::logic::profile::span(|| "identity maps".into());
         let f = &*facts;
+        let mut tokens = 0;
+        let (first, last) = match guest {
+            Some((g, _)) => (g.root, if (g.root as usize) < f.len() { f.subtree_end(g.root) } else { g.root + 1 }.max(g.root + 1)),
+            None => (0, f.len() as u32),
+        };
+        let end = if withheld { first } else { last.min(f.len() as u32) };
+        // The id ranges walked: the document's, or (`anchors`) its root's and each outermost anchor's subtree.
+        let ranges: Vec<(u32, u32)> = match (anchors, dialect) {
+            (Some(kinds), Some(dialect)) if guest.is_none() && first < end => {
+                let mut starts: Vec<u32> = f.kinds().into_iter().filter(|&k| kinds.contains(dialect.atom_name(k))).flat_map(|k| f.of_kind(k)).collect();
+                starts.sort_unstable();
+                let mut out = vec![(first, first + 1)];
+                for a in starts {
+                    let b = if (a as usize) < f.len() { f.subtree_end(a) } else { a + 1 }.max(a + 1).min(end);
+                    match out.last_mut() {
+                        Some(last) if a < last.1 => last.1 = last.1.max(b),
+                        _ => out.push((a, b)),
+                    }
+                }
+                out
+            }
+            _ => vec![(first, end)],
+        };
+        // At most the nodes the walk below keeps.
+        let count = if withheld {
+            0
+        } else {
+            ranges.iter().flat_map(|&(a, b)| a..b).filter(|&id| f.named(id) && dialect.is_some_and(|d| shape != Shape::T || d.class(f, id) != Class::Comment)).count()
+        };
+        // Walked by anchors, the root's own range is the root alone: its tokens between the anchored subtrees (a `;`
+        // between two statements) are in no range, yet are tokens of an included node, as `Projected::span` reads
+        // them. Counted here, so the tokens' ids are the spans'.
+        if ranges.len() > 1 && !withheld && shape == Shape::Core && dialect.is_some() && f.named(first) {
+            let outside = |c: u32| !ranges.iter().any(|&(a, b)| a <= c && c < b);
+            tokens += f.children(first).iter().filter(|&&c| !f.named(c) && f.end(c) > f.start(c) && outside(c)).count() as u32;
+        }
+        // The walk: `local` filled as `core` and `up` grow, all in the block. `up` is the last made, so its unused
+        // tail is given back; `core`'s stays (the nodes under a left-out parent, which `count` counts).
+        let (mut core, mut up) = (None, None);
+        let local = Cells::build(block, f.len(), |local| {
+            local.fill(NONE);
+            core = Some(Cells::build(block, count, |core| {
+                let mut n = 0usize;
+                up = Some(Cells::build(block, count, |ups| {
+                    for (id, above) in ranges.iter().flat_map(|&(a, b)| f.with_parents(a, b)) {
+                        if !f.named(id) {
+                            // A token (`Facts::tokens`) of an included node: its span is made on first read (`Projected::span`).
+                            if shape == Shape::Core && dialect.is_some() && f.end(id) > f.start(id)
+                                && above.is_some_and(|q| local[q as usize] != NONE) { tokens += 1; }
+                            continue;
+                        }
+                        if dialect.is_none_or(|dialect| shape == Shape::T && dialect.class(f, id) == Class::Comment) {
+                            continue;
+                        }
+                        // T walks named children from the root: a node under one left out is not reached.
+                        let parent = match above {
+                            _ if id == first => NONE,
+                            None => NONE,
+                            Some(q) if local[q as usize] != NONE => local[q as usize],
+                            // An outermost anchor's parent is left out: it hangs from the root.
+                            Some(_) if ranges.len() > 1 && ranges.iter().any(|&(a, _)| a == id) => 0,
+                            Some(_) => continue,
+                        };
+                        if parent == NONE && n != 0 {
+                            continue;
+                        }
+                        local[id as usize] = n as u32;
+                        core[n] = id;
+                        ups[n] = above.map_or(NONE, |q| local[q as usize]);
+                        n += 1;
+                    }
+                    n
+                }));
+                n
+            }));
+            local.len()
+        });
+        let (Some(local), Some(Some(core)), Some(Some(up))) = (local, core, up) else {
+            panic!("a batch's block holds its projection");
+        };
         let mut p = Projected {
-            module:None,
+            module: None,
             key,
             tag: f.tag,
-            core: Vec::new(),
-            local: vec![NONE; f.len()],
+            core,
+            local,
+            up,
             idx: OnceLock::new(),
             size: OnceLock::new(),
             depth: OnceLock::new(),
@@ -1124,51 +1888,21 @@ impl Projected {
             defs: None,
             facts: Arc::clone(&facts),
         };
-        let mut tokens = 0;
-        let (first, last) = match guest {
-            Some((g, _)) => (g.root, f.subtree_end.get(g.root as usize).copied().unwrap_or(g.root + 1).max(g.root + 1)),
-            None => (0, f.len() as u32),
-        };
-        if !withheld {
-            let count = (first..last.min(f.len() as u32)).filter(|&id| f.named(id) && dialect.is_some_and(|d| shape != Shape::T || d.class(f, id) != Class::Comment)).count();
-            p.core.reserve_exact(count);
-        }
-        for id in first..if withheld { first } else { last.min(f.len() as u32) } {
-            if !f.named(id) {
-                // A token (`Facts::tokens`) of an included node: its span is made on first read (`Projected::span`).
-                if shape == Shape::Core && dialect.is_some() && f.end[id as usize] > f.start[id as usize]
-                    && f.parent(id).is_some_and(|q| p.local[q as usize] != NONE) { tokens += 1; }
-                continue;
-            }
-            if dialect.is_none_or(|dialect| shape == Shape::T && dialect.class(f, id) == Class::Comment) {
-                continue;
-            }
-            // T walks named children from the root: a node under one left out is not reached.
-            let parent = match f.parent(id) {
-                _ if id == first => NONE,
-                None => NONE,
-                Some(q) if p.local[q as usize] != NONE => p.local[q as usize],
-                Some(_) => continue,
-            };
-            if parent == NONE && !p.core.is_empty() {
-                continue;
-            }
-            let local = p.core.len() as u32;
-            p.local[id as usize] = local;
-            p.core.push(id);
-        }
         drop(identity_span);
         if shape == Shape::Core {
+            let lines_span = crate::code_rule_dsl::logic::profile::span(|| "line index".into());
             let lines = Arc::new(core_rr::Lines::shared(Arc::clone(&f.source), dialect.is_some_and(|d| d.family == Family::Python)));
+            drop(lines_span);
+            let _ids_span = crate::code_rule_dsl::logic::profile::span(|| "definition ids".into());
             if definition_ids() && let Some(dialect) = dialect {
                 let mut owners = Vec::with_capacity(tokens as usize);
-                owners.extend(p.core.iter().enumerate().flat_map(|(l, &id)| f.children(id).iter().filter(|&&c| !f.named(c) && f.end[c as usize] > f.start[c as usize]).map(move |_| l as u32)));
+                owners.extend(p.core.iter().enumerate().flat_map(|(l, &id)| f.children(id).into_iter().filter(|&c| !f.named(c) && f.end(c) > f.start(c)).map(move |_| l as u32)));
                 p.defs = Some(DefIds::new(&p, dialect, &owners));
             }
             // Raw file text remains valid when its tree is withheld. Guests have no own text spans.
             let own_text = guest.is_none();
             let host = guest.filter(|(g, _)| g.made == Made::Host).map(|(g, lines)| (lines, g.in_file.clone()));
-            p.extra = Some(Box::new(Locs { lines, tokens, token_spans: OnceLock::new(), own_text, host }));
+            p.extra = Some(Box::new(Locs { lines, tokens, ends: 0, token_spans: OnceLock::new(), own_text, host }));
         } else if definition_ids() && let Some(dialect) = dialect {
             // T's shape has no token spans: its nodes alone are numbered per definition.
             p.defs = Some(DefIds::new(&p, dialect, &[]));
@@ -1176,22 +1910,45 @@ impl Projected {
         p
     }
     #[inline]
+    #[cfg_attr(feature = "tape-reads", track_caller)]
     pub fn parent(&self, local: usize) -> u32 {
-        self.facts.parent(self.core[local]).map_or(NONE, |p| self.local[p as usize])
+        // Only an anchor of a narrowed projection (`narrowed`) has no parent in it but the root: it hangs from the root.
+        match self.up[local] {
+            NONE if local != 0 => 0,
+            p => p,
+        }
+    }
+    /// What `parent` answers without `up`: the parent read off the tape, mapped to its core id. For the measurement
+    /// of `up` (native/examples/kept_parents.rs).
+    pub fn parent_off_tape(&self, local: usize) -> u32 {
+        match self.facts.parent(self.core[local]).map_or(NONE, |p| self.local[p as usize]) {
+            NONE if local != 0 => 0,
+            p => p,
+        }
+    }
+    /// The node above core id `local`, as a node id: the parent the walk found, or read off the tape where the
+    /// projection leaves it out (an anchor's, a guest's root's).
+    pub fn parent_node(&self, local: usize) -> Option<u32> {
+        match self.up[local] {
+            NONE => self.facts.parent(self.core[local]),
+            q => Some(self.core[q as usize]),
+        }
     }
     #[inline]
     pub fn idx(&self, local: usize) -> u32 { self.ordinals()[local] }
     #[inline]
-    fn ordinals(&self) -> &[u32] {
+    fn ordinals(&self) -> &Cells<u32> {
         self.idx.get_or_init(|| {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "projection ordinals".into());
             let mut next = vec![0; self.core.len()];
-            let mut out = vec![0; self.core.len()];
-            for (l, slot) in out.iter_mut().enumerate().skip(1) {
-                let p = self.parent(l) as usize;
-                *slot = next[p]; next[p] += 1;
-            }
-            out
+            Cells::build(self.core.block(), self.core.len(), |out| {
+                for (l, slot) in out.iter_mut().enumerate().skip(1) {
+                    let p = self.parent(l) as usize;
+                    *slot = next[p]; next[p] += 1;
+                }
+                out.len()
+            })
+            .expect("a batch's block holds its projection")
         })
     }
     #[inline]
@@ -1216,13 +1973,17 @@ impl Projected {
             out
         })
     }
-    fn fielded(&self) -> &[u32] {
+    fn fielded(&self) -> &Cells<u32> {
         self.fielded.get_or_init(|| {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "projection fields".into());
-            let count = self.core.iter().skip(1).filter(|&&id| self.facts.field[id as usize] != 0).count();
-            let mut out = Vec::with_capacity(count);
-            out.extend(self.core.iter().enumerate().skip(1).filter_map(|(l, &id)| (self.facts.field[id as usize] != 0).then_some(l as u32)));
-            out
+            let count = self.core.iter().skip(1).filter(|&&id| self.facts.field(id) != 0).count();
+            Cells::build(self.core.block(), count, |out| {
+                for (slot, l) in out.iter_mut().zip(self.core.iter().enumerate().skip(1).filter_map(|(l, &id)| (self.facts.field(id) != 0).then_some(l as u32))) {
+                    *slot = l;
+                }
+                count
+            })
+            .expect("a batch's block holds its projection")
         })
     }
     /// Nodes and spans: the ids `text`, `line` and `docof` take.
@@ -1234,7 +1995,7 @@ impl Projected {
         match local.checked_sub(self.len()) {
             None => {
                 let id = self.core[local as usize] as usize;
-                [self.facts.start[id], self.facts.end[id]]
+                [self.facts.start(id as u32), self.facts.end(id as u32)]
             }
             Some(i) => self.extra.as_ref().map_or([0, 0], |x| {
                 if i < x.tokens {
@@ -1242,10 +2003,10 @@ impl Projected {
                         let _span = crate::code_rule_dsl::logic::profile::span(|| "token spans".into());
                         let f = &self.facts;
                         let mut spans = Vec::with_capacity(x.tokens as usize);
-                        for &id in &self.core {
-                            for &c in f.children(id) {
-                                if !f.named(c) && f.end[c as usize] > f.start[c as usize] {
-                                    spans.push([f.start[c as usize], f.end[c as usize]]);
+                        for &id in self.core.iter() {
+                            for c in f.children(id) {
+                                if !f.named(c) && f.end(c) > f.start(c) {
+                                    spans.push([f.start(c), f.end(c)]);
                                 }
                             }
                         }
@@ -1253,6 +2014,9 @@ impl Projected {
                         spans
                     });
                     spans[i as usize]
+                } else if i >= x.ends_from() {
+                    let id = self.core[(i - x.ends_from()) as usize] as usize;
+                    [self.facts.end(id as u32), self.facts.end(id as u32)]
                 } else if i == x.tokens {
                     [0, self.facts.source.len() as u32]
                 } else {
@@ -1290,20 +2054,32 @@ impl Projected {
     pub fn local_of(&self, low: u32) -> Option<u32> {
         match &self.defs {
             Some(d) if granules::span_of(low).is_some() => granules::span_of(low).map(|i| d.low.len() as u32 + i),
-            Some(d) => d.back.binary_search_by_key(&low, |&(g, _)| g).ok().map(|i| d.back[i].1),
+            Some(d) => d.back().binary_search_by_key(&low, |&(g, _)| g).ok().map(|i| d.back()[i].1),
             None => Some(low),
         }
     }
     /// The included children of `local`, in order.
     pub fn children(&self, local: u32) -> impl Iterator<Item = u32> + '_ {
-        self.facts.children(self.core[local as usize]).iter().map(|&c| self.local[c as usize]).filter(|&c| c != NONE)
+        self.facts.children(self.core[local as usize]).into_iter().map(move |c| self.local[c as usize]).filter(|&c| c != NONE)
+    }
+    /// `children`, each handed to `f`: a parent's probe makes no list of them.
+    pub fn each_child(&self, local: u32, mut f: impl FnMut(u32)) {
+        self.facts.each_child(self.core[local as usize], |c| {
+            let c = self.local[c as usize];
+            if c != NONE {
+                f(c);
+            }
+        });
     }
 }
 
 /// One wave's documents, sorted by key, and the row offsets of the views.
 pub struct Batch {
     pub docs: Vec<Projected>,
-    pub dialects: HashMap<u8, Dialect>,
+    /// Each document's tape, for W's values answered on request (`LongTexts::value_any`, decision 0174), and its values,
+    /// read off it at the first request; empty where no program asks for values.
+    valued: Vec<Option<Valued>>,
+    pub dialects: Dialects,
     pub nodes: Vec<usize>,
     children: Vec<usize>,
     fields: Vec<usize>,
@@ -1316,6 +2092,12 @@ pub struct Batch {
     /// The relations made as rows for what the program reads (`Extra` and those beside it), bound in place of a view
     /// of the same name (`line`, `end_line`, `col`, `docof`: their spans have places too).
     made: BTreeSet<&'static str>,
+    /// The batch's block (decision 0289 §3): its documents' projections are made in it, and its chunk
+    /// (`device_chunk`) is nested in it, so the device reads the projections where the host does.
+    block: Arc<Block>,
+    /// The batch's chunk (decision 0289): its views' arrays, made on the device's first read of a view.
+    #[cfg(target_os = "macos")]
+    chunk: OnceLock<device_chunk::Chunk>,
 }
 
 /// A span's id (core.rr's `span`: a piece of a document's text): `d << 32 | granules::extra_low(kind, i)`, in slots of
@@ -1507,7 +2289,7 @@ pub enum View {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Place {
+pub enum Place {
     Line,
     EndLine,
     Col,
@@ -1576,6 +2358,9 @@ struct Extra {
     node_text: bool,
     docof: bool,
     value: bool,
+    /// `rr_value_lit`: the literal values of documents W reads no values of, where `value` is answered on request
+    /// (decision 0174): kept eager, as they are few.
+    value_lit: bool,
     static_value: bool,
     value_type_of: bool,
     value_type: bool,
@@ -1591,6 +2376,7 @@ struct Extra {
     node_texts: Vec<[i64; 2]>,
     docofs: Vec<[i64; 2]>,
     values: Vec<[i64; 2]>,
+    value_lits: Vec<[i64; 2]>,
     static_values: Vec<[i64; 2]>,
     value_types_of: Vec<[i64; 2]>,
     value_types: BTreeSet<[i64; 2]>,
@@ -1639,6 +2425,7 @@ impl Extra {
             node_text: read("node_text"),
             docof: read("docof"),
             value: read("value"),
+            value_lit: read("rr_value_lit"),
             static_value: read("static_value"),
             value_type_of: read("value_type_of"),
             value_type: read("value_type"),
@@ -1697,11 +2484,12 @@ impl Extra {
     fn nodes(&mut self, p: &Projected, string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
         let tokens = p.extra.as_ref().map_or(0, |x| x.tokens);
+        let ends = p.extra.as_ref().map_or(0..0, |x| p.len() + x.ends_from()..p.len() + x.ends_from() + x.ends);
         let guest = p.extra.as_deref().filter(|x| x.host.is_some());
         if self.line_rows() || self.end_line || self.col || self.node_text {
             for (local, &id) in p.core.iter().enumerate() {
                 let n = p.global(local as u32);
-                let (start, end) = (f.start[id as usize] as usize, f.end[id as usize] as usize);
+                let (start, end) = (f.start(id) as usize, f.end(id) as usize);
                 if self.node_text {
                     self.node_texts.push([n, string(f.text(id)) as i64]);
                 }
@@ -1741,10 +2529,34 @@ impl Extra {
                     self.cols.push([n, (start - f.lines.start(f.lines.line(start))) as i64]);
                 }
             }
+            // Each node's end point (`end_point`, where a program reads it): placed where the node ends.
+            for local in ends.clone() {
+                let n = p.global(local);
+                let at = p.span(local)[0];
+                let (line, col) = match guest {
+                    Some(x) => {
+                        let (first, _, col) = x.place([at, at]);
+                        (i64::from(first), i64::from(col))
+                    }
+                    None => {
+                        let l = f.lines.line(at as usize);
+                        (l as i64 + 1, (at as usize - f.lines.start(l)) as i64)
+                    }
+                };
+                if self.line_rows() {
+                    self.lines.push([n, line]);
+                }
+                if self.end_line {
+                    self.end_lines.push([n, line]);
+                }
+                if self.col {
+                    self.cols.push([n, col]);
+                }
+            }
         }
         if self.docof {
             let key = i64::from(p.key);
-            self.docofs.extend((0..p.len() + tokens).map(|local| [p.global(local), key]));
+            self.docofs.extend((0..p.len() + tokens).chain(ends).map(|local| [p.global(local), key]));
         }
     }
 
@@ -1755,6 +2567,9 @@ impl Extra {
             if self.value {
                 self.values.push([n, v]);
             }
+            if self.value_lit {
+                self.value_lits.push([n, v]);
+            }
             if self.static_value {
                 self.static_values.push([n, v]);
             }
@@ -1764,12 +2579,9 @@ impl Extra {
         }
     }
 
-    /// Document `p`'s rows (its `Document` `d`, its grammar's kinds `dialect`, none for a text-only document);
-    /// `splitlines`: its lines split as Python's `str.splitlines()` does; `rx`: `rx_span`'s patterns, the spans each
-    /// runs over and its block program, and `ends` (by pattern) the bytes of the document's source a match can end
-    /// after, where the batch ran the pattern's block program (decision 0081 §3).
-    #[allow(clippy::too_many_arguments)]
-    fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, splitlines: bool, rx: &[core_rr::SpanPattern<'_>], ends: &[Option<Vec<u64>>], text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
+    /// Document `p`'s W values, read off its tape (`Document::tape`): a file's, or an embedded program's that keeps
+    /// one (a Vue view, decision 0222).
+    fn values(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
         let f = &*p.facts;
         let plain = self.value || self.value_type_of || self.value_type;
         // A text-only document has no node, so no value; a document of a family W reads no values of has none of W's
@@ -1812,6 +2624,17 @@ impl Extra {
                 }
             });
         }
+        Ok(())
+    }
+
+    /// Document `p`'s rows (its `Document` `d`, its grammar's kinds `dialect`, none for a text-only document);
+    /// `splitlines`: its lines split as Python's `str.splitlines()` does; `rx`: `rx_span`'s patterns, the spans each
+    /// runs over and its block program, and `ends` (by pattern) the bytes of the document's source a match can end
+    /// after, where the batch ran the pattern's block program (decision 0081 §3).
+    #[allow(clippy::too_many_arguments)]
+    fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, splitlines: bool, rx: &[core_rr::SpanPattern<'_>], ends: &[Option<Vec<u64>>], text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
+        let f = &*p.facts;
+        self.values(p, d, dialect, string)?;
         self.nodes(p, string);
         let key = i64::from(p.key);
         use granules::ExtraSpan;
@@ -1820,9 +2643,9 @@ impl Extra {
         if self.comment && let Some(dialect) = dialect {
             use crate::code_rule_dsl::language::is_comment_kind;
             let mut k = 0;
-            for id in 0..f.len() as u32 {
+            for (id, up) in f.with_parents(0, f.len() as u32) {
                 // A comment kind's node, not inside another (Rust's doc comment parts are not comments).
-                if !f.named(id) || !is_comment_kind(dialect.name(f, id)) || f.parent(id).is_some_and(|q| is_comment_kind(dialect.name(f, q))) {
+                if !f.named(id) || !is_comment_kind(dialect.name(f, id)) || up.is_some_and(|q| is_comment_kind(dialect.name(f, q))) {
                     continue;
                 }
                 let whole = f.text(id);
@@ -1830,7 +2653,7 @@ impl Extra {
                     NONE => {
                         k += 1;
                         let c = span(ExtraSpan::Comment, k)?;
-                        let (start, end) = (f.start[id as usize] as usize, f.end[id as usize] as usize);
+                        let (start, end) = (f.start(id) as usize, f.end(id) as usize);
                         let col = start - f.lines.start(f.lines.line(start));
                         self.span(c, f.start_line(id) as usize, f.lines.line(end) + 1, col, whole, true, text, string);
                         if self.node_text {
@@ -1945,6 +2768,22 @@ impl Extra {
                 None => Vec::new(),
             }
         };
+        // The children of the nodes of one kind (`SpanIn::ChildOf`).
+        let children_of = |kind: &str| -> Vec<Container> {
+            match dialect {
+                Some(dialect) => (1..p.len())
+                    .filter(|&l| {
+                        let parent = p.parent(l as usize);
+                        parent != NONE && dialect.name(f, p.core[parent as usize]) == kind
+                    })
+                    .map(|l| {
+                        let [a, b] = p.span(l);
+                        (p.global(l), a as usize..b as usize, None)
+                    })
+                    .collect(),
+                None => Vec::new(),
+            }
+        };
         // Spans each (pattern, group) captured in this document: the containers of a `SpanIn::Capture`. A capture's
         // container is made by an earlier pattern: patterns run once theirs has; patterns whose containers wait on each
         // other (a cycle of captures) run in order, with what is made by then.
@@ -1976,6 +2815,7 @@ impl Extra {
                     SpanIn::Line => (made[lines_at.clone()].iter().map(line_of).collect(), true),
                     SpanIn::Comment => (nodes_of(&core_rr::is_comment), true),
                     SpanIn::Kind(k) => (nodes_of(&|name| name == k.as_str()), true),
+                    SpanIn::ChildOf(k) => (children_of(k.as_str()), true),
                     SpanIn::Capture(from, g) => (captured.get(&(from.as_str(), g.as_str())).cloned().unwrap_or_default(), true),
                 };
                 let pat = string(pattern) as i64;
@@ -2069,6 +2909,9 @@ impl Extra {
         if self.value {
             out.push(("value", relation(&["n", "v"], &mut self.values.iter().map(|&[n, v]| vec![n, atom(v)]))));
         }
+        if self.value_lit {
+            out.push(("rr_value_lit", relation(&["n", "v"], &mut self.value_lits.iter().map(|&[n, v]| vec![n, atom(v)]))));
+        }
         if self.static_value {
             out.push(("static_value", relation(&["n", "v"], &mut self.static_values.iter().map(|&[n, v]| vec![n, atom(v)]))));
         }
@@ -2147,7 +2990,7 @@ impl NodeRows {
                 }
                 Class::Operator => {
                     let operator = dialect.operator.filter(|&o| o != 0);
-                    if let Some(&o) = f.children(id).iter().find(|&&c| operator == Some(f.field[c as usize])) {
+                    if let Some(&o) = f.children(id).iter().find(|&&c| operator == Some(f.field(c))) {
                         self.op.push([n, string(dialect.name(f, o)) as i64]);
                     }
                 }
@@ -2202,7 +3045,7 @@ impl Batch {
         if documents.windows(2).any(|w| w[0].key == w[1].key) {
             return Err(StoreError::Invalid("a batch holds a document key twice".into()));
         }
-        let mut dialects: HashMap<u8, Dialect> = HashMap::new();
+        let mut dialects = Dialects::default();
         let mut strings: Vec<String> = Vec::new();
         // Every string of every node passes here: Fx, not SipHash (a third of the projection's time with SipHash).
         let mut at: rustc_hash::FxHashMap<String, usize> = rustc_hash::FxHashMap::default();
@@ -2223,6 +3066,8 @@ impl Batch {
         // `syntax_error(d)`: the documents whose parse has an error (`Facts::syntax_errors`); `core.rr`'s
         // `syntax_error(d, l, msg)` (`core_rr`): the first error's line and message.
         let mut errors = Vec::new();
+        // The nodes visited for their scalar rows (`NodeRows::document`'s, `core_rr::CoreRows::node`'s).
+        let mut visited = 0usize;
         let span_text = [crate::code_rule_dsl::logic::front::ast::SpanIn::Source, crate::code_rule_dsl::logic::front::ast::SpanIn::Line].map(|within| !core || projection.wants_span_text(within));
         let mut extra = Extra::new(reads, matches, shape, span_text);
         let mut tree = tree::Tree::new(reads);
@@ -2241,7 +3086,10 @@ impl Batch {
             comment: !projection.wants("comment"),
             spread: !projection.wants("spread"),
             name: !projection.wants("name"),
-            literal: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "text"]),
+            literal: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "rr_value_lit", "text"]),
+            str: !projection.wants("str"),
+            literal_value: !wants_any(&["value", "static_value", "value_type", "rr_value_lit"]),
+            literal_rows: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "rr_value_lit"]),
             structural: !wants_any(&["structural_before", "structural_after"]),
         };
         let core_nodes = core && (scalar_nodes || !c.skip.structural);
@@ -2249,7 +3097,7 @@ impl Batch {
         let mut long_text_nodes = Vec::new();
         c.long_text = projection.long_text.clone();
         c.long_text_any = projection.long_text_any;
-        c.text_nodes = projection.text_nodes.as_ref().map(|t| (t.kinds.clone(), t.fields.clone()));
+        c.text_nodes = projection.text_nodes.clone();
         let wants_text = core && projection.wants("text");
         let wants_source_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::ast::SpanIn::Source);
         let wants_line_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::ast::SpanIn::Line);
@@ -2262,23 +3110,10 @@ impl Batch {
         let wants_trees = core && projection.reads.as_ref().is_some_and(|r| r.contains("tree_digest"));
         let wants_units = core && projection.reads.as_ref().is_some_and(|r| r.contains("def_digest"));
         let wants_digests = wants_trees || wants_units;
-        // `rx_span`'s regexes, compiled once for the batch.
-        // Over a document's source or its lines, each with its block program (decision 0081 §3): the bytes a match can
-        // end after, chunk at a time, so the regex runs only where one can.
+        // `rx_span`'s regexes, compiled once for the run's projection (`CompiledSpans`).
         let rx_spans: Vec<core_rr::SpanPattern> = if core {
-            projection
-                .rx_spans
-                .iter()
-                .map(|(within, re)| {
-                    use crate::code_rule_dsl::logic::front::ast::SpanIn;
-                    let on = std::env::var("RERAIL_SPAN_PREFILTER").map_or(true, |v| v != "off");
-                    let prefilter = match within {
-                        SpanIn::Source | SpanIn::Line if on => crate::code_rule_dsl::facts::span_prefilter::compile(re, *within == SpanIn::Line),
-                        _ => None,
-                    };
-                    regex::Regex::new(re).map(|r| (within.clone(), re.as_str(), r, prefilter)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}")))
-                })
-                .collect::<StoreResult<_>>()?
+            let compiled = projection.compiled_rx.of(&projection.rx_spans)?;
+            projection.rx_spans.iter().zip(compiled).map(|((within, re), (r, prefilter))| (within.clone(), re.as_str(), r, prefilter)).collect()
         } else {
             Vec::new()
         };
@@ -2316,6 +3151,10 @@ impl Batch {
             out
         };
         let mut docs: Vec<Projected> = Vec::with_capacity(documents.len());
+        // The batch's block: what the projections can take, the chunk's copies of the facts' arrays (4 bytes a node for
+        // each of `parent`, `start`, `end`, `kind`, `core.rr`'s places; `field`'s 2), its tables, and the axes' pairs
+        // read whole (`put_pairs`, up to 1 GB). The block reserves address space, not memory.
+        let block = cells::block((documents.iter().map(|d| Projected::bytes(&d.facts) + 22 * d.facts.len() + 4096).sum::<usize>() + (1 << 20) + (1 << 30)).next_power_of_two());
         // Decision 0055: each document's role, root and tape; each guest's place, and its nodes' host nodes. A guest's
         // key is past every file's (`corpus::guests`), so its host is projected first and its lines are known.
         let mut g = GuestRows::default();
@@ -2341,10 +3180,7 @@ impl Batch {
             let dialect = if tag == TEXT {
                 None
             } else {
-                if let std::collections::hash_map::Entry::Vacant(e) = dialects.entry(tag) {
-                    e.insert(Dialect::new(tag)?);
-                }
-                Some(&dialects[&tag])
+                Some(dialects.get_or_new(tag)?)
             };
             // `core.rr`: a document that does not parse is withheld from the policy (no facts) but its `doc`, path
             // and `syntax_error` rows; its outcome is Unknown(parse). T's shape keeps every document.
@@ -2360,8 +3196,14 @@ impl Batch {
             let python_lines = dialect.is_some_and(|d| d.family == Family::Python);
             let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::shared(Arc::clone(&d.facts.source), python_lines)))));
             let new_span = crate::code_rule_dsl::logic::profile::span(|| "projected".into());
-            let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed);
+            let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, projection.node_anchors.as_ref().filter(|_| core), &block);
             drop(new_span);
+            // A program that reads `end_point` has each node's end point among the positions, after the lines.
+            if core && projection.wants("end_point")
+                && let Some(x) = p.extra.as_mut()
+            {
+                x.ends = p.core.len() as u32;
+            }
             p.module = crate::code_rule_dsl::module_path::ModulePath::dotted(d.module.as_deref().unwrap_or(&module(&d.path)));
             // Its positions (tokens, text, lines) in the top slots (`granules::span_low`): past them ids would clash.
             if p.defs.is_some() && u64::from(p.locs() - p.len()) > granules::POSITIONS {
@@ -2375,7 +3217,7 @@ impl Batch {
                     projection
                         .ast_patterns
                         .iter()
-                        .filter_map(|t| crate::code_rule_dsl::language::rule_pattern(crate::code_rule_dsl::language::PatternSource::Plain(t), lang).ok().map(|p| (t.as_str(), p)))
+                        .filter_map(|t| crate::code_rule_dsl::language::rule_pattern(crate::code_rule_dsl::language::pattern_source(t), lang).ok().map(|p| (t.as_str(), p)))
                         .collect()
                 });
                 c.patterns(&p, d.tape.as_ref().map(|(t, _)| t), dialect, lang, compiled, &mut string);
@@ -2416,23 +3258,27 @@ impl Batch {
                     path_part.push([key, string(part) as i64]);
                 }
             }
-            if d.facts.syntax_errors {
+            if d.facts.syntax_errors() {
                 errors.push(key);
             }
             let nodes_span = crate::code_rule_dsl::logic::profile::span(|| "node rows".into());
             if let Some(dialect) = dialect {
-                if scalar_nodes {
+                // In core.rr's shape `NodeRows` makes only `intval` and T's `op` (`op_t`).
+                if scalar_nodes && (!core || projection.wants("intval") || projection.wants("op_t")) {
+                    visited += p.len() as usize;
                     rows.document(&p, dialect, core, &mut string);
                 }
                 if core_nodes || wants_long_text_nodes {
+                    let visits = c.visits(wants_text, wants_parts, wants_part_starts, wants_words);
                     for local in 0..p.len() {
                         if wants_long_text_nodes {
                             let id = p.core[local as usize] as usize;
-                            if (p.facts.end[id] - p.facts.start[id]) as usize > core_rr::TEXT_INLINE {
+                            if (p.facts.end(id as u32) - p.facts.start(id as u32)) as usize > core_rr::TEXT_INLINE {
                                 long_text_nodes.push(p.global(local));
                             }
                         }
-                        if core_nodes {
+                        if core_nodes && c.visited(visits, &p, dialect, local) {
+                            visited += 1;
                             c.node(&p, dialect, local, &mut string, wants_text, wants_parts, wants_part_starts, wants_words);
                         }
                     }
@@ -2462,8 +3308,14 @@ impl Batch {
                 tree.document(&p, dialect, python == Some(tag), &mut string);
             } else {
                 // A guest's nodes have their places in its file (`Locs::place`); W's values, f-string trees and CPython's
-                // verdicts are a file's, read off its tape.
+                // verdicts are a file's, read off its tape; an embedded program keeps its own (decision 0222).
+                if d.tape.is_some() {
+                    extra.values(&p, d, dialect, &mut string)?;
+                }
                 extra.nodes(&p, &mut string);
+                if let Some(dialect) = dialect {
+                    tree.operators(&p, dialect, &mut string);
+                }
             }
             // A guest's are read only by a producer of guests' rows (string annotations); the others' are its file's.
             for (own, run) in &mut produced {
@@ -2484,16 +3336,16 @@ impl Batch {
             .iter()
             .map(|f| {
                 crate::code_rule_dsl::language::tape_tag(f.dialect())
-                    .filter(|tag| dialects.contains_key(tag))
+                    .filter(|&tag| dialects.get(tag).is_some())
                     .map(|tag| (tag, f.strings().iter().map(|name| string(name) as i64).collect()))
             })
             .collect();
         crate::code_rule_dsl::logic::profile::decision("input payload", || {
-            let identities: usize = docs.iter().map(|p| (p.core.capacity() + p.local.capacity() + [&p.idx, &p.size, &p.depth, &p.fielded].iter().map(|v| v.get().map_or(0, |v| v.capacity())).sum::<usize>()) * 4).sum();
+            let identities: usize = docs.iter().map(|p| (p.core.len() + p.local.len() + [&p.idx, &p.fielded].iter().map(|v| v.get().map_or(0, |v| v.len())).sum::<usize>() + [&p.size, &p.depth].iter().map(|v| v.get().map_or(0, |v| v.capacity())).sum::<usize>()) * 4).sum();
             let extras: usize = docs.iter().filter_map(|p| p.extra.as_ref()).map(|x| x.token_spans.get().map_or(0, |v| v.capacity()) * 8).sum();
             serde_json::json!({"documents": docs.len(), "coreColumnBytes": docs.iter().map(|p| p.facts.bytes()).sum::<usize>(), "identityCapacityBytes": identities, "extraSpanCapacityBytes": extras}).to_string()
         });
-        crate::code_rule_dsl::logic::profile::decision("projection demand",||serde_json::json!({"coreNodes":if core_nodes {docs.iter().map(|p|p.core.len()).sum::<usize>()}else{0},"scalarNodes":if scalar_nodes {docs.iter().map(|p|p.core.len()).sum::<usize>()}else{0},"nodes":docs.iter().map(|p|p.core.len()).sum::<usize>(),"strings":strings.len(),"reads":projection.reads}).to_string());
+        crate::code_rule_dsl::logic::profile::decision("projection demand",||serde_json::json!({"coreNodes":if core_nodes {docs.iter().map(|p|p.core.len()).sum::<usize>()}else{0},"scalarNodes":visited,"nodes":docs.iter().map(|p|p.core.len()).sum::<usize>(),"strings":strings.len(),"reads":projection.reads}).to_string());
         let intern = crate::code_rule_dsl::logic::profile::span(|| "intern atoms".into());
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, strings.len() as u64);
         let atoms = store.intern_atoms(&strings.iter().map(String::as_str).collect::<Vec<_>>())?;
@@ -2502,7 +3354,7 @@ impl Batch {
         let bound: Vec<Option<Box<dyn BoundFamilies>>> = families()
             .iter()
             .zip(vocabulary)
-            .map(|(f, v)| v.map(|(tag, strings)| f.bind(tag, &dialects[&tag].catalog, &strings.into_iter().map(atom).collect::<Vec<_>>(), docs.len())))
+            .map(|(f, v)| v.map(|(tag, strings)| f.bind(tag, &dialects[tag].catalog, &strings.into_iter().map(atom).collect::<Vec<_>>(), docs.len())))
             .collect();
         let _relations_span = crate::code_rule_dsl::logic::profile::span(|| "relations".into());
         let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
@@ -2514,7 +3366,7 @@ impl Batch {
             relation(columns, &mut rows.iter().map(|&[a, b]| vec![if sym[0] { atom(a) } else { a }, if sym[1] { atom(b) } else { b }]))
         };
         let mut relations = vec![
-            ("rr_long_text_node", relation(&["n"], &mut long_text_nodes.iter().map(|&n| vec![n]))),
+            (LONG_TEXT_NODES, relation(&["n"], &mut long_text_nodes.iter().map(|&n| vec![n]))),
             ("doc", relation(&["d", "path", "module"], &mut doc.iter().map(|&[d, p, m]| vec![d, atom(p), atom(m)]))),
             ("pkg", pairs(&["d", "p"], &pkg, [false, true])),
             ("path_part", pairs(&["d", "s"], &path_part, [false, true])),
@@ -2566,13 +3418,41 @@ impl Batch {
         let children = offsets(&|p| p.core.len().saturating_sub(1));
         let fields = offsets(&|p| if projection.wants("field") { p.fielded().len() } else { 0 });
         let locs = OnceLock::new();
-        let batch = Arc::new(Batch { docs, dialects, nodes, children, fields, locs, shape, families: bound, made });
-        hold_texts(&batch);
+        // W's values on request (decision 0174): the tapes of the documents W reads values of.
+        let valued: Vec<Option<Valued>> = if projection.derived.contains(VALUE_REQ) {
+            documents
+                .iter()
+                .zip(&docs)
+                .map(|(d, p)| d.tape.clone().filter(|_| dialects.get(p.tag).is_some_and(|x| x.values)).map(|(tape, file)| Valued { tape, file, values: OnceLock::new() }))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let batch = Arc::new(Batch {
+            docs,
+            valued,
+            dialects,
+            nodes,
+            children,
+            fields,
+            locs,
+            shape,
+            families: bound,
+            made,
+            block,
+            #[cfg(target_os = "macos")]
+            chunk: OnceLock::new(),
+        });
         #[cfg(any(test, feature = "test-hooks"))]
         BATCHES.lock().push((batch.docs.iter().map(|p| p.key).collect(), Arc::downgrade(&batch)));
         Ok((batch, relations, matched, (strings, atoms)))
     }
 
+    /// The batch's chunk block (decision 0289), made on first use.
+    #[cfg(target_os = "macos")]
+    pub fn chunk(&self) -> &device_chunk::Chunk {
+        self.chunk.get_or_init(|| device_chunk::build(self))
+    }
     fn offsets(&self, view: View) -> &[usize] {
         match view {
             View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order => &self.nodes,
@@ -2707,11 +3587,31 @@ impl Viewed {
 }
 impl Source for Viewed {
     fn python_batch(&self)->Option<Arc<Batch>> {Some(Arc::clone(&self.batch))}
+    #[cfg(target_os = "macos")]
+    fn device_view(&self) -> Option<crate::code_rule_dsl::facts::vtab::DeviceView<'_>> {
+        let view = device_chunk::device_view(self.view)?;
+        let chunk = self.batch.chunk();
+        if matches!(self.view, View::Loc(_)) && !device_chunk::fill_locs(&self.batch, chunk) {
+            return None;
+        }
+        Some(crate::code_rule_dsl::facts::vtab::DeviceView { block: &chunk.block, root: chunk.root, view, rows: self.len(), pairs: 0 })
+    }
     fn columns(&self) -> Vec<String> {
         Self::columns(self.view).iter().map(|c| (*c).to_owned()).collect()
     }
     fn len(&self) -> usize {
         *self.batch.offsets(self.view).last().unwrap()
+    }
+    /// A node's document or column found from its id (`docof`, `col`: 4 and 3.5 derived lookups), a parent's
+    /// children listed (`child` 2, `field` 1.7): decision 0312. The rest about one.
+    fn lookup_cost(&self, column: usize) -> f64 {
+        match (self.view, column) {
+            (View::Loc(Place::Docof), 0) => 4.0,
+            (View::Loc(Place::Col), 0) => 3.5,
+            (View::Child, 0) => 2.0,
+            (View::Field, 0) => 1.7,
+            _ => 1.0,
+        }
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         let per = if column == self.own() {
@@ -2757,6 +3657,25 @@ impl Source for Viewed {
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         self.lookup_docs(column, values, None)
     }
+    /// A field's children by parent and field (`field($a, #f, $t)`, `$a` bound): each child's field read off the
+    /// tape as the children are walked, not its row's values found again.
+    fn lookup_eq(&self, column: usize, value: i64, eqs: &[(usize, i64)]) -> Option<Vec<usize>> {
+        let &[(1, f)] = eqs else { return None };
+        if !matches!(self.view, View::Field) || column != 0 {
+            return None;
+        }
+        let b = &*self.batch;
+        let mut rows = Vec::new();
+        if let Some((doc, local)) = b.node(value) {
+            let p = &b.docs[doc];
+            p.each_child(local, |c| {
+                if i64::from(field_atom(p.tag, p.facts.field(p.core[c as usize]))) == f {
+                    rows.extend(b.row(View::Field, doc, c));
+                }
+            });
+        }
+        Some(rows)
+    }
     fn doc_column(&self) -> Option<usize> {
         matches!(self.view, View::Node | View::Core).then_some(0)
     }
@@ -2775,6 +3694,21 @@ impl Source for Viewed {
     }
     fn value(&self, row: usize, column: usize) -> i64 {
         self.row_value(row, column)
+    }
+    /// Document by document, with no search for each row's document. (A merge had left this in `impl Viewed`,
+    /// where the trait's per-row scan, a document search for each row, shadowed it.)
+    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
+        let offsets = self.batch.offsets(self.view);
+        let mut out = Vec::new();
+        for (doc, p) in self.batch.docs.iter().enumerate() {
+            let base = offsets[doc];
+            for i in 0..offsets[doc + 1] - base {
+                if eqs.iter().all(|&(c, v)| self.value_at(p, i, c) == v) {
+                    out.push((base + i) as u32);
+                }
+            }
+        }
+        out
     }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
         let (p, i) = self.batch.locate(self.view, row);
@@ -2798,7 +3732,7 @@ impl Viewed {
                 if v == -1 && matches!(self.view, View::Tape) {
                     rows.extend((0..b.docs.len()).filter(|&doc| b.docs[doc].len() > 0).map(|doc| b.nodes[doc]));
                 } else if let Some((doc, local)) = b.node(v) {
-                    rows.extend(b.docs[doc].children(local).filter_map(|c| b.row(self.view, doc, c)));
+                    b.docs[doc].each_child(local, |c| rows.extend(b.row(self.view, doc, c)));
                 }
             } else if matches!(self.view, View::Order) && column == 1 {
                 // An order key: its document, and the node with that key (`Projected::local_of_order`).
@@ -2818,7 +3752,7 @@ impl Viewed {
                 let (Ok(tag), Ok(code)) = (u8::try_from(v / i64::from(KIND_STRIDE)), u16::try_from(v % i64::from(KIND_STRIDE))) else {
                     continue;
                 };
-                let Some(dialect) = b.dialects.get(&tag).filter(|_| v >= 0) else { continue };
+                let Some(dialect) = b.dialects.get(tag).filter(|_| v >= 0) else { continue };
                 let atoms: Vec<u32> = dialect.codes.get(&code).map_or(&[][..], Vec::as_slice).iter().map(|&c| kind_atom(tag, c)).collect();
                 for (doc, p) in b.docs.iter().enumerate().filter(|(doc, p)| p.tag == tag && kept(doc)) {
                     for &kind in &atoms {
@@ -2834,20 +3768,6 @@ impl Viewed {
     fn row_value(&self, row: usize, column: usize) -> i64 {
         let (p, i) = self.batch.locate(self.view, row);
         self.value_at(p, i, column)
-    }
-    /// Document by document, with no search for each row's document.
-    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
-        let offsets = self.batch.offsets(self.view);
-        let mut out = Vec::new();
-        for (doc, p) in self.batch.docs.iter().enumerate() {
-            let base = offsets[doc];
-            for i in 0..offsets[doc + 1] - base {
-                if eqs.iter().all(|&(c, v)| self.value_at(p, i, c) == v) {
-                    out.push((base + i) as u32);
-                }
-            }
-        }
-        out
     }
 }
 
@@ -2875,17 +3795,20 @@ impl Viewed {
         };
         let l = local as usize;
         let id = p.core[l] as usize;
-        let parent = || if p.parent(l) == NONE { -1 } else { p.global(p.parent(l)) };
+        let parent = || match p.parent(l) {
+            NONE => -1,
+            q => p.global(q),
+        };
         match (self.view, column) {
             (View::Node | View::Core, 0) => i64::from(p.key),
             (View::Core, 1) => id as i64,
-            (View::Node, 2) => self.batch.dialects[&p.tag].kind(&p.facts, id as u32),
-            (View::Node, 3) => i64::from(p.facts.start[id]),
-            (View::Node, 4) => i64::from(p.facts.end[id]),
+            (View::Node, 2) => self.batch.dialects[p.tag].kind(&p.facts, id as u32),
+            (View::Node, 3) => i64::from(p.facts.start(id as u32)),
+            (View::Node, 4) => i64::from(p.facts.end(id as u32)),
             (View::Line, 1) => i64::from(p.facts.start_line(id as u32)),
             (View::Child | View::Field, 0) | (View::Tape, 1) => parent(),
             (View::Child, 2) => i64::from(p.idx(l)),
-            (View::Field, 1) => i64::from(field_atom(p.tag, p.facts.field[id])),
+            (View::Field, 1) => i64::from(field_atom(p.tag, p.facts.field(id as u32))),
             (View::Tape, 2) => i64::from(p.size(l)),
             (View::Tape, 3) => i64::from(p.depth(l)),
             (View::Depth, 1) => i64::from(p.depth(l)),
@@ -2909,7 +3832,7 @@ pub fn definitions(key: u32, facts: &Arc<Facts>) -> StoreResult<HashMap<(u32, u3
         .iter()
         .enumerate()
         .filter(|(_, id)| matches!(dialect.name(facts, **id), "function_definition" | "class_definition"))
-        .map(|(local, &id)| ((facts.start[id as usize], facts.end[id as usize]), p.global(local as u32)))
+        .map(|(local, &id)| ((facts.start(id), facts.end(id)), p.global(local as u32)))
         .collect())
 }
 
@@ -2922,7 +3845,7 @@ pub fn sources(store: &ContentStore, documents: Vec<Document>) -> StoreResult<Ve
 pub fn shaped(store: &ContentStore, documents: Vec<Document>, projection: &Projection) -> StoreResult<Vec<(&'static str, Arc<dyn Source>)>> {
     let (batch, relations, _, _) = Batch::build(store, documents, projection, &[], &[], false)?;
     let mut out: Vec<(&'static str, Arc<dyn Source>)> =
-        relations.into_iter().map(|(name, r)| (name, Arc::new(r) as Arc<dyn Source>)).collect();
+        relations.into_iter().map(|(name, r)| (name, as_source(name, r, &batch))).collect();
     out.extend(views(&batch));
     Ok(out)
 }
@@ -3061,7 +3984,7 @@ pub fn with_matchers(
     drop(built);
     // The batch's relations and views, but none the program derives (`Projection::derived`).
     let mut out: Vec<(String, Arc<dyn Source>)> =
-        relations.into_iter().filter(|(name, _)| !projection.derived.contains(*name)).map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>)).collect();
+        relations.into_iter().filter(|(name, _)| !projection.derived.contains(*name)).map(|(name, r)| (name.to_owned(), as_source(name, r, &batch))).collect();
     // The `match_all` relations (`logic::strings::as_relations`): each regex's matches in the batch's spans.
     out.extend(match_all.into_iter().map(|(name, r)| (name, Arc::new(r) as Arc<dyn Source>)));
     if !matchers.is_empty() {

@@ -27,9 +27,9 @@ unsigned_sig("UNSIGNED"). unsigned_sig("NEEDS_SIGNING"). unsigned_sig("").
 // sorted by codepoint, which is how `join … by e` orders symbols; @json_str escapes as json.dumps does
 // (ensure_ascii: non-ASCII as \uXXXX).
 // allow_entry("file_length", "impl/a.py:2400"): one entry of list "file_length", exactly as signed.
-.decl allow_entry(list: symbol, e: symbol)
+.decl allow_entry(list: symbol, e: symbol) extensible
 // allow_sig("file_length", "lint_file_length", "6U8R…"): the list's linter name and its base64 signature.
-.decl allow_sig(list: symbol, linter: symbol, sig: symbol)
+.decl allow_sig(list: symbol, linter: symbol, sig: symbol) extensible
 
 .decl allow_message(list: symbol, msg: symbol)
 allow_message(l, msg) :- allow_sig(l, linter, _),
@@ -65,10 +65,10 @@ multi_status(l, v) :- multi_sig(l, linter, s), !unsigned_sig(s),
 // ratchet.py _compute_signature_message. The file is .ratchet-baselines/<name>.json:
 // {"counts": {…}, "_metadata": {"signature": "…", …}}; only counts and the name are signed.
 // ratchet_count("lint_noqa_sec_ratchet", "noqa_sec_annotations", 0): one baseline count.
-.decl ratchet_count(name: symbol, k: symbol, n: number)
+.decl ratchet_count(name: symbol, k: symbol, n: number) extensible
 // ratchet_sig(name, sig): the baseline's _metadata.signature. A baseline without one has sig "UNSIGNED" (the
 // script's default), so the check gives that row itself when the key is absent.
-.decl ratchet_sig(name: symbol, sig: symbol)
+.decl ratchet_sig(name: symbol, sig: symbol) extensible
 
 .decl ratchet_status(name: symbol, status: symbol)
 ratchet_status(r, "unsigned") :- ratchet_sig(r, s), unsigned_sig(s).

@@ -278,9 +278,9 @@ fn wanted(name: &str, imports: &BTreeSet<String>) -> bool {
 impl Imports {
     pub fn from_core(f: &crate::code_rule_dsl::facts::core::Facts, catalog: &crate::code_rule_dsl::language::KindCatalog, module: Option<&ModulePath>) -> Self {
         use crate::code_rule_dsl::facts::core::{kind_atom, kind_code, facts_tag};
-        let kind = |n: u32| catalog.kind_name(kind_code(f.kind[n as usize])).unwrap_or("");
-        let named = |n: u32| f.flags[n as usize] & 1 != 0 && !matches!(kind(n), "comment" | "line_continuation");
-        let field = |n: u32, name: &str| catalog.field_id(name).and_then(|id| f.children(n).iter().copied().find(|&c| f.field[c as usize] == id));
+        let kind = |n: u32| catalog.kind_name(kind_code(f.kind(n))).unwrap_or("");
+        let named = |n: u32| f.flags(n) & 1 != 0 && !matches!(kind(n), "comment" | "line_continuation");
+        let field = |n: u32, name: &str| catalog.field_id(name).and_then(|id| f.children(n).into_iter().find(|&c| f.field(c) == id));
         let ident = |n: u32| (kind(n)=="identifier").then(|| crate::code_rule_dsl::identifier::python_name(f.text(n).into()).into_owned());
         let dotted = |n: u32| -> Option<String> {
             if kind(n)!="dotted_name" { return None; }
@@ -295,10 +295,10 @@ impl Imports {
             }
         };
         let mut out=Self::default();
-        out.opaque=f.syntax_errors;
+        out.opaque=f.syntax_errors();
         for name in ["import_statement","import_from_statement","future_import_statement"] {
             let code=catalog.kind_id(name); if code==0 {continue;}
-            for &n in f.of_kind(kind_atom(facts_tag(f),code)) {
+            for n in f.of_kind(kind_atom(facts_tag(f),code)) {
                 if name=="import_statement" {
                     for c in f.children(n).iter().copied().filter(|&c|named(c)) {
                         match kind(c) {

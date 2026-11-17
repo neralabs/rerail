@@ -4,23 +4,22 @@
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
-// The self dev-dependency owns the production allocator. Keep it linked even
-// when split-crate tests no longer reference one of its exported types.
-#[cfg(test)]
-extern crate rerail_engine as _;
 /// `build.rs` compiles this file too; the library builds it only for tests, so `cargo test`
 /// checks the identities the build script computes.
 #[cfg(test)]
 mod build_identity;
 /// `build.rs` generates the language tables with this file; the library builds it only for tests,
-/// so `cargo test` checks how the build validates the language registry.
+/// so `cargo test` checks how the build validates the language registry. The rest is the build script's.
 #[cfg(test)]
+#[allow(dead_code)]
 mod build_languages;
 // Each test's time limit, enforced inside the test binary (`RERAIL_TEST_TIMEOUT`).
 #[cfg(test)]
 mod test_watchdog;
 #[cfg(test)]
 mod executors_guard_tests;
+#[cfg(test)]
+mod text_readers_guard_tests;
 mod code_rule_dsl;
 /// The engine's tools without Node (`rerail-engine dump` / `asm`).
 pub use code_rule_dsl::tools;
@@ -29,6 +28,7 @@ pub(crate) use code_rule_dsl::prof::purge_allocator_pages;
 pub use rerail_store::content_store;
 pub use rerail_w::git_ignore;
 pub use rerail_store::git_workspace;
+pub use rerail_store::source_tree;
 mod main_instance;
 mod model;
 pub use rerail_w::panic_boundary;
@@ -45,12 +45,48 @@ use napi_derive::napi;
 use rules::{CompileSummary, ModelEncoder, NativeMatch, NativeRuleInput, NativeSample, RuleSet};
 use std::path::Path;
 
-// jemalloc does not build for MSVC targets; Windows keeps the system allocator. A test build links the engine
-// again as its own dev-dependency (`test-hooks`), whose copy declares the allocator (kept linked by the
-// `extern crate rerail_engine as _` above; `rust_allocations_reach_the_profile_allocator` checks it).
-#[cfg(not(any(test, windows, target_family = "wasm", feature = "system-allocator")))]
+// jemalloc does not build for MSVC targets; Windows keeps the system allocator. The test build declares it too
+// (`rust_allocations_reach_the_profile_allocator` checks it).
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
 #[global_allocator]
-static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+static GLOBAL: Sampled = Sampled;
+
+/// jemalloc, with the heap sampler around it (`rerail_prof::heap`, `RERAIL_HEAP_SAMPLE`): off, one load more an
+/// allocation. Tree-sitter's allocations go to jemalloc directly and are not sampled.
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+struct Sampled;
+
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+unsafe impl std::alloc::GlobalAlloc for Sampled {
+    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+        let p = unsafe { tikv_jemallocator::Jemalloc.alloc(layout) };
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::alloc(p as usize, layout.size());
+        }
+        p
+    }
+    unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
+        let p = unsafe { tikv_jemallocator::Jemalloc.alloc_zeroed(layout) };
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::alloc(p as usize, layout.size());
+        }
+        p
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::free(ptr as usize);
+        }
+        unsafe { tikv_jemallocator::Jemalloc.dealloc(ptr, layout) }
+    }
+    unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
+        let q = unsafe { tikv_jemallocator::Jemalloc.realloc(ptr, layout, new_size) };
+        if rerail_prof::heap::on() && !q.is_null() {
+            rerail_prof::heap::free(ptr as usize);
+            rerail_prof::heap::alloc(q as usize, new_size);
+        }
+        q
+    }
+}
 
 #[cfg(not(any(test, windows, target_family = "wasm")))]
 union JemallocConf {
@@ -73,25 +109,22 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 });
 
 /// The engine's SQL functions, for every connection the store opens (its crate, `rerail-store`): the text tests'
-/// and the prefilter's tapes. Set as the library loads, before any store is opened.
-fn install_store_functions() {
-    code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), env!("RERAIL_GRAMMAR_BUILD_ID"));
-    code_rule_dsl::install_devices();
-    code_rule_dsl::install_languages();
-    content_store::set_language_tags(code_rule_dsl::stored_tape_tag, code_rule_dsl::path_tape_tag);
-    content_store::set_connection_functions(|db| {
-        code_rule_dsl::text::install(db)?;
-        code_rule_dsl::prefilter::tapes::install(db)
+/// and the prefilter's tapes; with the build's identities, devices and languages. Once a process, before any store is
+/// opened: as the library loads (the allocator's hook; Windows' module init), and where neither runs (the browser's
+/// build) at the first command (`tools::cli_in`).
+pub(crate) fn install_store_functions() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), env!("RERAIL_GRAMMAR_BUILD_ID"));
+        code_rule_dsl::install_devices();
+        code_rule_dsl::install_languages();
+        content_store::set_language_tags(code_rule_dsl::stored_tape_tag, code_rule_dsl::path_tape_tag);
+        content_store::set_connection_functions(|db| {
+            code_rule_dsl::text::install(db)?;
+            code_rule_dsl::prefilter::tapes::install(db)
+        });
+        code_rule_dsl::sql_hazards::strict_on_every_connection();
     });
-    // And where its SQL hazards go: the engine's profile (decision 0104).
-    content_store::hazards::set(content_store::hazards::Hazards {
-        on: code_rule_dsl::sql_hazards::on,
-        sql_in_wave: code_rule_dsl::sql_hazards::sql_in_wave,
-        wait_in_wave: code_rule_dsl::sql_hazards::wait_in_wave,
-        behind_the_run: code_rule_dsl::sql_hazards::behind_the_run,
-        statement: code_rule_dsl::sql_hazards::strict_statement,
-    });
-    code_rule_dsl::sql_hazards::strict_on_every_connection();
 }
 
 /// Windows has no jemalloc hook (below): the store's functions alone, as the library loads.
@@ -108,10 +141,14 @@ fn install_store_functions_on_load() {
 #[napi_derive::module_init]
 fn install_tree_sitter_allocator() {
     // Library callers and the test runner can park their main thread. Their pool needs
-    // actual workers, including with RERAIL_THREADS=1. The headless CLI registers its
-    // own main thread explicitly, before its first job.
+    // actual workers, including with RERAIL_THREADS=1. The CLI registers its own main thread
+    // explicitly, before its first job (`threads::configure(true)`), headless or not: a
+    // constructor that made the pool first left the CLI's main thread out of it, so every
+    // parallel loop it ran queued its work and slept, and its waits ran no jobs.
     #[cfg(not(feature = "headless"))]
-    threads::configure(false);
+    if !std::env::current_exe().is_ok_and(|e| e.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("rerail-engine"))) {
+        threads::configure(false);
+    }
     install_store_functions();
     use std::ffi::c_void;
     unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
@@ -127,15 +164,25 @@ fn install_tree_sitter_allocator() {
     }
     unsafe extern "C" fn realloc(pointer: *mut c_void, size: usize) -> *mut c_void {
         // SAFETY: Tree-sitter passes null or a pointer these functions returned.
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::free(pointer as usize);
+        }
         allocated(unsafe { tikv_jemalloc_sys::realloc(pointer, size) }, size)
     }
     unsafe extern "C" fn free(pointer: *mut c_void) {
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::free(pointer as usize);
+        }
         // SAFETY: Tree-sitter passes null or a pointer these functions returned.
         unsafe { tikv_jemalloc_sys::free(pointer) }
     }
+    // The heap sampler sees Tree-sitter's allocations too (`rerail_prof::heap`).
     fn allocated(pointer: *mut c_void, size: usize) -> *mut c_void {
         if pointer.is_null() && size > 0 {
             std::process::abort();
+        }
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::alloc_by(pointer as usize, size, rerail_prof::heap::TREE_SITTER);
         }
         pointer
     }
@@ -479,6 +526,21 @@ impl ConversationEngine {
 }
 
 pub(crate) use code_rule_dsl::prof::lower_hex;
+
+#[cfg(test)]
+mod executor_tests {
+    /// The run's executors are installed as the library loads (`install_store_functions`), and the facts' lookup of a
+    /// binding's executor is the run's (2026-11-15). Its fallback, an executor of every lane, was made on every
+    /// lookup (`map_or`'s default is evaluated first): every CPU run compiled the GPU's kernels, prewarmed its sorts
+    /// and built the Neural Engine's lane.
+    #[test]
+    fn the_facts_executor_of_the_cpu_binding_is_the_runs_and_asks_for_no_device_lane() {
+        let before = rerail_accel::lanes::device_lanes_asked();
+        let ex = rerail_facts::code_rule_dsl::facts::core::executor_for(false);
+        assert_eq!(rerail_accel::lanes::device_lanes_asked(), before, "the lookup asked for a device lane");
+        assert!(std::ptr::eq(ex, crate::code_rule_dsl::logic::lanes::executor_for(false)), "not the run's executor");
+    }
+}
 
 #[cfg(all(test, not(windows)))]
 mod tests {

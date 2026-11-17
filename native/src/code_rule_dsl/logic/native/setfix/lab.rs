@@ -97,7 +97,7 @@ fn rows_of(rel: &InRel) -> impl Iterator<Item = Vec<i64>> + '_ {
 
 /// The rows of the run's table `table` (columns `c0…`, `types`), from the engine where it holds them, else SQL.
 fn table_rows(conn: &Connection, table: &str, types: &[u8], syms: &mut Interner) -> super::Result<Vec<Vec<i64>>> {
-    if let Some(rel) = DERIVED.lock().unwrap().get(&(scope(conn), table.to_owned())).cloned() {
+    if let Some(rel) = DERIVED.lock(scope(conn)).get(&(scope(conn), table.to_owned())).cloned() {
         return Ok(rows_of(&rel).collect());
     }
     let cols: Vec<String> = (0..types.len()).map(|c| format!("c{c}")).collect();
@@ -132,7 +132,7 @@ fn with_sources(join: &JoinSpec, f: &mut dyn FnMut(&Source) -> Source) -> JoinSp
             item
         })
         .collect();
-    JoinSpec { items }
+    JoinSpec { items, from: join.from.clone(), plan_steps: join.plan_steps }
 }
 
 fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) -> Result<Capture, String> {
@@ -147,7 +147,7 @@ fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) ->
         match line {
             // The run held its rows in memory, not in tables; the replay writes them, to compare them.
             // Where the run put it (`Device`): the replay runs every capture on the CPU, and again on the device.
-            Line::NoWrite | Line::Device | Line::Leveled(_) | Line::Stats(_) | Line::KeptOld | Line::Seed { .. } | Line::Join { .. } => {}
+            Line::NoWrite | Line::Device | Line::Leveled(_) | Line::Stats(_) | Line::KeptOld | Line::Lattice { .. } | Line::Seed { .. } | Line::Join { .. } => {}
             Line::Rel { name, types, start } => {
                 let empty = match start {
                     Start::Rows => false,
@@ -157,6 +157,7 @@ fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) ->
                 rels.push((name.clone(), format!("r{}", rels.len()), types.as_bytes().to_vec(), empty));
             }
             Line::Request(_) => return Err("a `request` line".to_owned()),
+            Line::Unplanned { .. } => return Err("a probe not planned yet".to_owned()),
             Line::Produced(_) => return Err("a `produced` line".to_owned()),
             Line::Probe { .. } => return Err("a `probe` line".to_owned()),
             Line::Gate { .. } => return Err("a `gate` line".to_owned()),
@@ -182,7 +183,7 @@ fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) ->
     let mut bytes = 0u64;
     for (k, src) in sources.iter().enumerate() {
         let (rel, base): (Arc<InRel>, bool) = match src {
-            Source::Native(table) => (DERIVED.lock().unwrap().get(&(scope(conn), table.clone())).cloned().ok_or_else(|| format!("no native relation {table}"))?, false),
+            Source::Native(table) => (DERIVED.lock(scope(conn)).get(&(scope(conn), table.clone())).cloned().ok_or_else(|| format!("no native relation {table}"))?, false),
             Source::Input(key) => (input_of(conn, key, &mut syms).map_err(|e| e.to_string())?, key.base),
             _ => unreachable!("only a native relation or an input is a source"),
         };

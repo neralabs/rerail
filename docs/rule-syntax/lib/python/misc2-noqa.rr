@@ -24,9 +24,9 @@
 //   f()  # type: ignore               type_ignore_blanket(c)
 //   f()  # type: ignore[misc]         no row
 
-// noqa_after(c, r): r is the text after the first `# noqa` of comment c.
+// noqa_after(c, r): r is the text after the first `# noqa` of comment c (the capture is a span, read as text).
 .decl noqa_after(c: node, r: symbol)
-noqa_after(c, R) :- kind(c, "comment"), match(".*?#\\s*[nN][oO][qQ][aA](?<R>.*)", c).
+noqa_after(c, R) :- kind(c, "comment"), match(".*?#\\s*[nN][oO][qQ][aA](?<Rs>.*)", c), text(Rs, R).
 .decl noqa_blanket(c: node, colon: symbol)
 noqa_blanket(c, "none") :- noqa_after(c, R), noqa_all_tail(R), !match("\\s+[\\s,]*[A-Z]+[0-9]+.*", R).
 noqa_blanket(c, "missing") :- noqa_after(c, R), noqa_all_tail(R), match("\\s+[\\s,]*[A-Z]+[0-9]+.*", R).
@@ -36,7 +36,7 @@ noqa_all_tail(R) :- noqa_after(_, R), (R = "" ; prefix("#", R) ; match("\\s+(?:[
 
 .decl noqa_file_after(c: node, r: symbol)
 noqa_file_after(c, R) :- kind(c, "comment"), own_line_comment(c),
-    match(".*?#\\s*(?:ruff|flake8)\\s*:\\s*[nN][oO][qQ][aA](?<R>.*)", c).
+    match(".*?#\\s*(?:ruff|flake8)\\s*:\\s*[nN][oO][qQ][aA](?<Rs>.*)", c), text(Rs, R).
 .decl noqa_file_blanket(c: node)
 noqa_file_blanket(c) :- noqa_file_after(c, R), (R = "" ; prefix("#", R) ; match("\\s+(?:[^\\s:].*)?", R)).
 .decl noqa_file_exempts(d: number, code: symbol)
@@ -44,8 +44,10 @@ noqa_file_exempts(d, "PGH004") :- noqa_file_after(c, R), docof(c, d),
     match("\\s*:[\\s,]*(?:[A-Z]+[0-9]+[\\s,]+)*PGH004(?:[\\s,#].*)?", R).
 
 .decl own_line_comment(c: node)
-own_line_comment(c) :- kind(c, "comment"), !token_before(c, _).
-own_line_comment(c) :- kind(c, "comment"), token_before(c, t), line(t, lt), line(c, l), lt < l.
+// Its line holds only whitespace before it. The token before it is no test: the tape leaves out tokens the grammar
+// implies (the `)` of `(a\n.b()\n)  # c`), so the last stored token may stand on an earlier line.
+own_line_comment(c) :- kind(c, "comment"), docof(c, d), line(c, l), col(c, k), tape_line(d, l, sp), text(sp, s),
+    match("[ \t\f]*", @slice(s, 0, k)).
 
 // Ruff (blanket_type_ignore.rs): at any `#`, whitespace, `type` or `pyright`, a colon right away, whitespace,
 // `ignore`; then nothing, or another comment, is a blanket. `ignore[...]` names codes (an empty `[]` too).

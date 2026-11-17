@@ -52,6 +52,11 @@ pub(in crate::code_rule_dsl) fn part_space(root: &Path, part: &str) -> [u8; 32] 
     h.finalize().into()
 }
 
+/// `root`'s cross part's space (`part_space(root, "cross")`).
+pub(in crate::code_rule_dsl) fn cross_space(root: &Path) -> [u8; 32] {
+    part_space(root, "cross")
+}
+
 /// Metadata and payload may be admitted separately. Accept only the exact metadata snapshot used by the cut.
 pub(super) fn admission_matches<'a, K: Eq + std::hash::Hash>(
     keys: &[K],
@@ -78,6 +83,11 @@ pub(in crate::code_rule_dsl) struct Kept<'s> {
     inputs: HashMap<String, Arc<dyn Source>>,
     pub(in crate::code_rule_dsl) loaded: Rc<RefCell<HashMap<String, Arc<dyn Source>>>>,
     digests: HashMap<String, u64>,
+    /// Each input's column types (`retain::types_of`): its digest is of its content (`Cells`, decision 0212). And each
+    /// relation's as its frame keeps them (`typed`, by the columns' domains), as `load` reads them back: without, the
+    /// engine's declared types, a kind's or a field's `sym` column typed `s`, which `load` refuses as kept under other
+    /// types, and a forked process's writer maps as atoms.
+    types: HashMap<String, Vec<u8>>,
     puts: Vec<FramePut>,
     values: usize,
     gone: Vec<(FrameRel, i64)>,
@@ -87,7 +97,7 @@ pub(in crate::code_rule_dsl) struct Kept<'s> {
 }
 
 impl<'s> Kept<'s> {
-    pub(in crate::code_rule_dsl) fn new(store: &'s ContentStore, space: [u8; 32], program: [u8; 32], inputs: &[(String, Arc<dyn Source>)]) -> Self {
+    pub(in crate::code_rule_dsl) fn new(store: &'s ContentStore, space: [u8; 32], program: [u8; 32], inputs: &[(String, Arc<dyn Source>)], types: HashMap<String, Vec<u8>>) -> Self {
         Kept {
             store,
             space,
@@ -98,6 +108,7 @@ impl<'s> Kept<'s> {
             inputs: inputs.iter().map(|(r, s)| (r.clone(), Arc::clone(s))).collect(),
             loaded: Default::default(),
             digests: HashMap::new(),
+            types,
             puts: Vec::new(),
             values: 0,
             gone: Vec::new(),
@@ -106,10 +117,22 @@ impl<'s> Kept<'s> {
         }
     }
 
+    /// Kept under `prog`'s frame types (`retain::types_of`), as `load` reads them: a kind or field column is no atom.
+    /// An input's types given to `new` stand.
+    pub(in crate::code_rule_dsl) fn typed(mut self, prog: &crate::code_rule_dsl::logic::plan::body::Placed, domains: &super::lower::Domains) -> Self {
+        let Ok(fields) = prog.fields() else { return self };
+        for (rel, _) in fields.decls_by_name() {
+            self.types.entry(rel.to_owned()).or_insert_with(|| super::retain::types_of(prog, domains, rel));
+        }
+        self
+    }
+
     fn flush(&mut self, used: Option<Vec<FrameRel>>) {
         let (puts, gone) = (std::mem::take(&mut self.puts), std::mem::take(&mut self.gone));
         self.values = 0;
-        if !puts.is_empty() || !gone.is_empty() || used.is_some() {
+        // Nothing put or forgotten: nothing written (decision 0227). A program's use of its relations is not marked
+        // a run: collection keeps them while a kept manifest names the program (`collect_unreachable_frames`).
+        if !puts.is_empty() || !gone.is_empty() {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "keep the strata's frames, queued".into());
             self.store.queue_frames(self.space, puts, gone, used.map(|u| (u, super::run_token(), self.program)));
         }
@@ -156,7 +179,10 @@ impl KeptStrata for Kept<'_> {
             return Some(*d);
         }
         let source = self.inputs.get(rel).cloned().or_else(|| self.loaded.borrow().get(rel).cloned())?;
-        let d = super::retain::digest(source.as_ref());
+        let atoms = self.store.atoms_handle();
+        let width = source.columns().len();
+        let cells = self.types.get(rel).filter(|t| t.len() == width).map_or(crate::code_rule_dsl::logic::plan::Cells::plain(width), |t| crate::code_rule_dsl::logic::plan::Cells::new(&atoms, t));
+        let d = super::retain::digest(source.as_ref(), &cells);
         self.digests.insert(rel.to_owned(), d);
         Some(d)
     }
@@ -188,6 +214,7 @@ impl KeptStrata for Kept<'_> {
                 if self.was.get(rel).is_some_and(|w| w.digest == digest && w.reads == reads) {
                     return;
                 }
+                let types = self.types.get(rel).filter(|t| t.len() == types.len()).cloned().unwrap_or(types);
                 self.values += rows.len();
                 self.written_rows += n;
                 self.puts.push(FramePut { rel: frame, part: 0, digest, reads, rows: FrameRows { types, rows, n } });
@@ -224,6 +251,9 @@ pub(in crate::code_rule_dsl) struct Part {
     frames: HashMap<String, (FrameRel, Option<FrameStored>)>,
     /// Each derived relation's inputs (`cone`).
     cones: HashMap<String, std::collections::BTreeSet<String>>,
+    /// Each input's and relation's column types as its frame keeps them, from its declaration: `s` a symbol, which
+    /// the store's writer maps to the store's atoms (decision 0170), else `i`.
+    types: HashMap<String, Vec<u8>>,
 }
 
 /// Whether a new process maintains its cross-file part from the store (`RERAIL_KEPT_PART=off`: the per-stratum
@@ -233,16 +263,13 @@ pub(in crate::code_rule_dsl) fn part_wanted() -> bool {
 }
 
 /// Each derived relation of `prog` and the inputs (of `inputs`) it is derived from, through the strata it reads.
-fn cones(prog: &crate::code_rule_dsl::logic::front::Program, sccs: &[std::collections::BTreeSet<String>], inputs: &std::collections::HashSet<&str>) -> HashMap<String, std::collections::BTreeSet<String>> {
+fn cones(prog: &crate::code_rule_dsl::logic::plan::body::Placed, sccs: &[std::collections::BTreeSet<String>], inputs: &std::collections::HashSet<&str>) -> super::Result<HashMap<String, std::collections::BTreeSet<String>>> {
     let mut out: HashMap<String, std::collections::BTreeSet<String>> = HashMap::new();
-    let by_stratum = crate::code_rule_dsl::logic::front::rules_by_stratum(prog, sccs);
-    for (scc, rules) in sccs.iter().zip(&by_stratum) {
+    // What each stratum reads: its rules' body atoms, its natives' reads, and the tree a `nearest` climbs.
+    let reads = super::retain::Reads::of(prog)?;
+    for scc in sccs {
         let mut cone = std::collections::BTreeSet::new();
-        let reads = rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom().map(|a| a.rel.to_string()));
-        let natives = scc.iter().filter_map(|r| prog.natives.get(r)).flat_map(|n| n.reads().into_iter().map(str::to_owned).collect::<Vec<_>>());
-        let tree = rules.iter().any(|r| r.body.iter().any(|l| matches!(l, crate::code_rule_dsl::logic::front::Literal::Nearest { .. })));
-        let tree = tree.then(|| super::retain::TREE.iter().map(|r| (*r).to_owned()).collect::<Vec<_>>()).unwrap_or_default();
-        for r in reads.chain(natives).chain(tree) {
+        for r in reads.of_scc(scc) {
             if scc.contains(&r) {
                 continue;
             }
@@ -256,17 +283,19 @@ fn cones(prog: &crate::code_rule_dsl::logic::front::Program, sccs: &[std::collec
             out.insert(rel.clone(), cone.clone());
         }
     }
-    out
+    Ok(out)
 }
 
-/// What the store keeps of program `prog` (of `key`, `retain::key`) at `root`, as a `Retained`; `inputs` the run's,
+/// What the store keeps of program `prog` (of `key` and `binds`, `retain::keys`) at `root`, as a `Retained`; `inputs` the run's,
 /// whose columns an input's kept rows are read under; `sccs` its strata, computed once by the caller.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::code_rule_dsl) fn load(
     store: &ContentStore,
     root: &Path,
     key: [u8; 32],
-    prog: &crate::code_rule_dsl::logic::front::Program,
+    binds: [u8; 32],
+    prog: &crate::code_rule_dsl::logic::plan::body::Placed,
+    domains: &super::lower::Domains,
     sccs: &[std::collections::BTreeSet<String>],
     inputs: &[(String, Arc<dyn Source>)],
     now: &HashMap<String, u64>,
@@ -274,21 +303,24 @@ pub(in crate::code_rule_dsl) fn load(
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the cross-file part kept, from the store".into());
     // The fact space of the corpus at `root` that a maintained cross-file part is kept in.
     let space = part_space(root, "cross-maintained");
-    let by_stratum: Vec<Vec<&crate::code_rule_dsl::logic::front::Rule>> = crate::code_rule_dsl::logic::front::rules_by_stratum(prog, &sccs);
     let input_names: std::collections::HashSet<&str> = inputs.iter().map(|(r, _)| r.as_str()).collect();
-    let cones = cones(prog, &sccs, &input_names);
-    let mut frames: HashMap<String, (FrameRel, Option<FrameStored>)> = crate::code_rule_dsl::logic::plan::identities(prog, &sccs, &by_stratum)
+    let cones = cones(prog, sccs, &input_names)?;
+    // The program's version, for its identities and its inputs' leaves.
+    let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed(prog.clone());
+    let mut frames: HashMap<String, (FrameRel, Option<FrameStored>)> = leaves.identities_by_heads(sccs)?
         .into_iter()
         .filter(|(name, _)| name != "finding" && !input_names.contains(name.as_str()))
         .map(|(name, ident)| (name.clone(), (FrameRel { name, ident }, None)))
         .collect();
     // An input's rows are its program's: programs over the same root bind inputs of the same name to other rows
-    // (P3's cross part and its loading cone, a phase), so its frame is under the program's key too.
+    // (P3's cross part and its loading cone, a phase), so its frame is under the program's key too: the key of
+    // the part's program alone (`binds`, `retain::keys`), which an edit of a file-local rule leaves.
     for (rel, _) in inputs {
+        let leaf = leaves.identity(rel).ok_or_else(|| super::Error::Plan("the program has no image: its leaves are read from its version".into()))?;
         let mut h = Sha256::new();
         h.update(b"rerail.kept-input/v1\0");
-        h.update(key);
-        h.update(crate::code_rule_dsl::logic::plan::leaf_identity(prog, rel));
+        h.update(binds);
+        h.update(leaf);
         frames.insert(rel.clone(), (FrameRel { name: rel.clone(), ident: h.finalize().into() }, None));
     }
     let asked: Vec<FrameRel> = frames.values().map(|(f, _)| f.clone()).collect();
@@ -298,7 +330,8 @@ pub(in crate::code_rule_dsl) fn load(
             e.1 = Some(s);
         }
     }
-    load_from_snapshot(store, key, inputs, now, Part { space, key, frames, cones })
+    let types = frames.keys().map(|rel| (rel.clone(), super::retain::types_of(prog, domains, rel))).collect();
+    load_from_snapshot(store, key, inputs, now, Part { space, key, frames, cones, types })
 }
 
 fn load_from_snapshot(
@@ -329,7 +362,8 @@ fn restore(
         let rows = admitted.get(f)?.rows().ok()?;
         let names = source.columns();
         let w = rows.types.len();
-        if names.len() != w { return None; }
+        // Kept under other column types (untyped, before decision 0170): its symbols may be another numbering's.
+        if names.len() != w || part.types.get(rel).is_none_or(|t| *t != rows.types) { return None; }
         let values = (0..w).map(|c| Some((0..rows.n).map(|i| rows.rows[i * w + c]).collect())).collect();
         kept_inputs.push((rel.clone(), was.digest, crate::code_rule_dsl::logic::native::component::columns_source(names, values)));
     }
@@ -355,7 +389,9 @@ fn restore(
     let mut rels = Vec::new();
     for rel in &asked {
         let rows = admitted.get(rel)?.rows().ok()?;
-        rels.push((rel.name.clone(), rows.types.len(), crate::code_rule_dsl::logic::native::component::InRel::kept(rows.types, rows.rows, rows.n)));
+        // Kept under other column types (untyped, before decision 0170): its symbols may be another numbering's.
+        if part.types.get(&rel.name).is_none_or(|t| *t != rows.types) { return None; }
+        rels.push((rel.name.clone(), rows.types.len(), crate::code_rule_dsl::logic::native::component::InRel::kept(super::retain::engine_types(rows.types), rows.rows, rows.n)));
     }
     crate::code_rule_dsl::logic::profile::decision("cross-file part kept across processes (t32 4.1)", || {
         format!("{} relations and {} inputs admitted in batches, {} rows; {stale} kept of other inputs, not read", rels.len(), kept_inputs.len(), rels.iter().map(|(_, _, r)| r.rows()).sum::<usize>())
@@ -377,13 +413,15 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
             continue;
         }
         let w = source.columns().len();
+        // Its symbols typed, so the writer maps them; an input of no declared width is not kept.
+        let Some(types) = part.types.get(rel).filter(|t| t.len() == w).cloned() else { continue };
         let n = source.len();
         let mut rows = Vec::with_capacity(n * w);
         for i in 0..n {
             rows.extend((0..w).map(|c| source.value(i, c)));
         }
         written += n;
-        puts.push(FramePut { rel: f.clone(), part: 0, digest, reads: Vec::new(), rows: FrameRows { types: vec![0; w], rows, n } });
+        puts.push(FramePut { rel: f.clone(), part: 0, digest, reads: Vec::new(), rows: FrameRows { types, rows, n } });
     }
     for (rel, width, held) in rels {
         let Some((f, was)) = part.frames.get(rel) else { continue };
@@ -391,14 +429,23 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         let Some(reads) = part.cones.get(rel).map(|c| c.iter().map(|i| Some((i.clone(), *digests.get(i.as_str())?))).collect::<Option<Vec<(String, u64)>>>()).flatten() else { continue };
         let Some(rows) = held.live_rows() else { continue };
         let n = held.rows();
-        let digest = crate::code_rule_dsl::logic::plan::rows_digest(width, &rows, n);
+        // Its symbols typed as declared (the engine holds them as integers), so the writer maps them; its digest of
+        // its content (decision 0212).
+        let Some(types) = part.types.get(rel).filter(|t| t.len() == width).cloned() else { continue };
+        let digest = crate::code_rule_dsl::logic::plan::rows_digest(&crate::code_rule_dsl::logic::plan::Cells::new(&store.atoms_handle(), &types), &rows, n);
         if was.as_ref().is_some_and(|w| w.digest == digest && w.reads == reads) {
             continue;
         }
         written += n;
-        puts.push(FramePut { rel: f.clone(), part: 0, digest, reads, rows: FrameRows { types: held.types().to_vec(), rows, n } });
+        puts.push(FramePut { rel: f.clone(), part: 0, digest, reads, rows: FrameRows { types, rows, n } });
     }
     crate::code_rule_dsl::logic::profile::decision("cross-file part kept across processes (t32 4.1)", || format!("{} frames, {written} rows, written to the store", puts.len()));
     let used: Vec<FrameRel> = part.frames.into_values().map(|(f, _)| f).collect();
+    // Nothing changed: nothing written (decision 0211). A program that reuses an earlier one's frames (an edit,
+    // decision 0302) holds them, once.
+    if puts.is_empty() {
+        store.hold_frames(part.space, used, super::run_token(), part.key);
+        return;
+    }
     store.queue_frames(part.space, puts, Vec::new(), Some((used, super::run_token(), part.key)));
 }

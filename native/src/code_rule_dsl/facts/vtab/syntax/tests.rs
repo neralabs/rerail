@@ -199,6 +199,60 @@ fn lookups_agree_with_scans() {
     }
 }
 
+/// A view's filter scan, document by document, holds the rows a per-row read finds: over several documents, for
+/// filters on each column of `node`, `child`, `field` and `tape`, and on two at once. It is the view's own scan (a
+/// merge had left it outside the `Source` impl, where the trait's per-row scan shadowed it).
+#[test]
+fn a_views_filter_scan_holds_the_rows_a_per_row_read_finds() {
+    let store = ContentStore::open(&temp("filter-eq")).unwrap();
+    let python: GrammarDialect = dialect_by_label("python").unwrap();
+    let call = core::kind_atom(tape_tag(python).unwrap(), python.kinds().kind_id("call"));
+    let mut tried = 0;
+    for (name, source) in sources(&store, documents().into_iter().take(4).collect()).unwrap() {
+        if !["node", "child", "field", "tape"].iter().any(|&v| name == v) {
+            continue;
+        }
+        let width = source.columns().len();
+        let n = source.len();
+        assert!(n > 0, "{name}: no rows");
+        for (c, eqs) in (0..width).flat_map(|c| {
+            let (a, b) = (source.value(n / 3, c), source.value(n - 1, c));
+            let pair = if width > 1 { vec![(c, a), ((c + 1) % width, source.value(n / 3, (c + 1) % width))] } else { vec![(c, a)] };
+            [(c, vec![(c, a)]), (c, vec![(c, b)]), (c, pair)]
+        }).chain([(2, vec![(2, i64::from(call))])].into_iter().filter(|_| name == "node")) {
+            let per_row: Vec<u32> = (0..n).filter(|&r| eqs.iter().all(|&(c, v)| source.value(r, c) == v)).map(|r| r as u32).collect();
+            assert!(!per_row.is_empty(), "{name} column {c}: a value read from a row matches it");
+            assert_eq!(source.filter_eq(&eqs), per_row, "{name} {eqs:?}");
+            tried += 1;
+        }
+    }
+    assert!(tried >= 4 * 3, "the four views were tried");
+}
+
+/// A field's children by parent and field (`lookup_eq`, a join's `field($a, #f, $t)` with `$a` bound) are the rows a
+/// lookup by parent finds and a filter on the field keeps, in the same order: for every parent and each of its
+/// fields, and for a field it lacks.
+#[test]
+fn a_fields_lookup_by_parent_and_field_holds_what_a_filter_keeps() {
+    let store = ContentStore::open(&temp("lookup-eq")).unwrap();
+    let (_, field) = sources(&store, documents().into_iter().take(4).collect()).unwrap().into_iter().find(|(name, _)| *name == "field").unwrap();
+    let parents: BTreeSet<i64> = (0..field.len()).map(|r| field.value(r, 0)).collect();
+    let fields: BTreeSet<i64> = (0..field.len()).map(|r| field.value(r, 1)).collect();
+    assert!(parents.len() > 10 && fields.len() > 3, "the documents have fields");
+    let mut found = 0;
+    for &p in &parents {
+        for f in fields.iter().copied().take(6).chain([-7]) {
+            let filtered: Vec<usize> = field.lookup(0, &[p]).unwrap().into_iter().filter(|&r| field.value(r, 1) == f).collect();
+            assert_eq!(field.lookup_eq(0, p, &[(1, f)]), Some(filtered.clone()), "parent {p}, field {f}");
+            found += filtered.len();
+        }
+    }
+    assert!(found > 0, "some parent holds one of the fields tried");
+    // Any other probe is the lookup and filter's.
+    assert_eq!(field.lookup_eq(2, 1, &[(1, 1)]), None);
+    assert_eq!(field.lookup_eq(0, 1, &[(2, 1)]), None);
+}
+
 /// Two cursors on one table, joined on a column the inner one does not index, pair children by position.
 #[test]
 fn self_joins_pair_children_by_position() {
@@ -425,11 +479,11 @@ said(s) :- comment(_, s).
     let out = dir.join("out");
     let options = serde_json::json!({"name": "ÀB", "list": ["x", "y"]});
     corpus::run_with_options(&[program.as_str()], &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
-    assert_eq!(read("dotted"), "a.b\nb\n");
-    assert_eq!(read("low"), "àb\n");
-    assert_eq!(read("item"), "0\tx\n1\ty\n");
-    assert_eq!(read("said"), "hello\n");
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    assert_eq!(read("dotted"), [["a.b"], ["b"]]);
+    assert_eq!(read("low"), [["àb"]]);
+    assert_eq!(read("item"), [["0", "x"], ["1", "y"]]);
+    assert_eq!(read("said"), [["hello"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -452,19 +506,25 @@ fn within_holds_exactly_the_contained_pairs() {
     // out of the exhaustive reference loop; that loop checks the relation, not setup cost.
     let axes: Vec<(&[u32], &[u32])> = batch.docs.iter().map(|p| (p.sizes(), p.depths())).collect();
     // (document, local, size, depth, start, end) of node row r.
-    let at = |r: usize| {
-        let doc = batch.nodes.partition_point(|&o| o <= r) - 1;
-        let (p, local) = (&batch.docs[doc], r - batch.nodes[doc]);
-        let core = p.core[local] as usize;
-        (p.key, local, axes[doc].0[local] as usize, axes[doc].1[local] as usize, p.facts.start[core], p.facts.end[core])
-    };
+    // Read once: the reference loop below visits every pair.
+    let rows: Vec<_> = (0..nodes)
+        .map(|r| {
+            let doc = batch.nodes.partition_point(|&o| o <= r) - 1;
+            let (p, local) = (&batch.docs[doc], r - batch.nodes[doc]);
+            let (start, end) = p.facts.span(p.core[local]);
+            (p.key, local, axes[doc].0[local] as usize, axes[doc].1[local] as usize, start, end)
+        })
+        .collect();
+    let at = |r: usize| rows[r];
     let zero = (0..nodes).filter(|&r| at(r).4 == at(r).5).count();
     assert!(zero > 0, "the broken documents have nodes of zero width");
     let cpu = || { let (u, s) = crate::code_rule_dsl::prof::thread_usage(); u + s };
     let (mut reference_cpu, mut relation_cpu) = (0.0, 0.0);
+    // The tree's containment reads the documents' tapes (decision 0293), in every format; spans read the facts.
+    use crate::code_rule_dsl::tape::formats::Format;
+    assert!(batch.docs.iter().all(|p| p.facts.tape.is_some()), "every document holds its tape");
     for mode in [within::Mode::Tree, within::Mode::Span] {
         let before_reference = cpu();
-        let within = within::Within::new(Arc::clone(&batch), mode);
         let mut expected = BTreeSet::new();
         for a in 0..nodes {
             for b in 0..nodes {
@@ -481,23 +541,38 @@ fn within_holds_exactly_the_contained_pairs() {
             }
         }
         reference_cpu += cpu() - before_reference;
-        let before_relation = cpu();
-        let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (within.value(r, 0), within.value(r, 1))).collect() };
-        let ids: Vec<i64> = (0..nodes).map(id).collect();
-        // By outer first (half the nodes), then by inner, then the scan: rows made by one lookup serve the others.
-        let half: BTreeSet<i64> = ids[..nodes / 2].iter().copied().collect();
-        assert_eq!(rows(within.lookup(1, &ids[..nodes / 2]).unwrap()), expected.iter().filter(|(_, b)| half.contains(b)).copied().collect());
-        assert_eq!(rows(within.lookup(0, &ids).unwrap()), expected);
-        assert_eq!(rows(within.lookup(1, &ids).unwrap()), expected);
-        assert_eq!(rows((0..within.len()).collect()), expected);
-        // Each node's containers are made once: the inner side's rows are exactly the pairs.
-        assert_eq!(within.lookup(0, &ids).unwrap().len(), expected.len());
-        let own = usize::from(mode == within::Mode::Span);
-        assert_eq!(within.estimated_len(), (0..nodes).map(|r| at(r).3 + own).sum::<usize>());
-        if mode == within::Mode::Tree {
-            assert_eq!(within.len(), expected.len(), "the tree's rows are its estimate");
+        let formats: &[Format] = if mode == within::Mode::Tree { &Format::ALL } else { &[Format::F15] };
+        for &format in formats {
+            let within = within::Within::new(Arc::clone(&batch), mode).reading(format);
+            let before_relation = cpu();
+            let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (within.value(r, 0), within.value(r, 1))).collect() };
+            let ids: Vec<i64> = (0..nodes).map(id).collect();
+            // By outer first (half the nodes), then by inner, then the scan: rows made by one lookup serve the others.
+            let half: BTreeSet<i64> = ids[..nodes / 2].iter().copied().collect();
+            assert_eq!(rows(within.lookup(1, &ids[..nodes / 2]).unwrap()), expected.iter().filter(|(_, b)| half.contains(b)).copied().collect());
+            assert_eq!(rows(within.lookup(0, &ids).unwrap()), expected);
+            assert_eq!(rows(within.lookup(1, &ids).unwrap()), expected);
+            assert_eq!(rows((0..within.len()).collect()), expected);
+            // Each node's containers are made once: the inner side's rows are exactly the pairs.
+            assert_eq!(within.lookup(0, &ids).unwrap().len(), expected.len());
+            let own = usize::from(mode == within::Mode::Span);
+            assert_eq!(within.estimated_len(), (0..nodes).map(|r| at(r).3 + own).sum::<usize>());
+            if mode == within::Mode::Tree {
+                assert_eq!(within.len(), expected.len(), "the tree's rows are its estimate");
+            }
+            // Read whole first (the device's keyed read, decision 0277): the tree by the batch's solve, every pair once,
+            // and the lookups after it read the same rows; spans have no solve.
+            let whole = within::Within::new(Arc::clone(&batch), mode).reading(format);
+            assert_eq!(whole.complete_rows(), mode == within::Mode::Tree, "containment is solved for the batch, spans are not");
+            if mode == within::Mode::Tree {
+                let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (whole.value(r, 0), whole.value(r, 1))).collect() };
+                assert_eq!(whole.len(), expected.len());
+                assert_eq!(rows((0..whole.len()).collect()), expected);
+                assert_eq!(rows(whole.lookup(0, &ids).unwrap()), expected);
+                assert_eq!(rows(whole.lookup(1, &ids).unwrap()), expected);
+            }
+            relation_cpu += cpu() - before_relation;
         }
-        relation_cpu += cpu() - before_relation;
     }
     eprintln!("CONTAINMENT CHECK: {nodes} nodes, reference {reference_cpu:.6} CPU s, relation and comparisons {relation_cpu:.6} CPU s");
 }
@@ -508,7 +583,13 @@ fn within_holds_exactly_the_contained_pairs() {
 fn the_kind_set_axes_hold_exactly_their_pairs() {
     use crate::code_rule_dsl::facts::core::kind_atom;
     let store = ContentStore::open(&temp("axes")).unwrap();
-    let docs: Vec<Document> = documents().into_iter().take(4).collect();
+    let mut docs: Vec<Document> = documents().into_iter().take(4).collect();
+    // A document with ERROR nodes: an ERROR node's kind is ERROR's atom (`Facts::kind`, slot 0), whatever kind its tape
+    // entry holds: a member of a set that names ERROR, on the host, the device and the tape's code set alike (0289).
+    let source = "def f(:\n    return [1, 2\nclass C:\n    x = (\ny = f(1) + g(2)\n";
+    let broken = facts("broken.py", source);
+    assert!(broken.errors().iter().any(|&id| broken.flags(id) & 8 != 0), "broken.py has ERROR nodes");
+    docs.push(Document { key: 4, core: "/w#core:broken.py".into(), digest: core::digest(&broken), path: "broken.py".into(), facts: broken, tape: None, guest: None, module: None });
     let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
     let nodes = *batch.nodes.last().unwrap();
     let id = |r: usize| batch.id(r);
@@ -519,14 +600,22 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     };
     let kind = |r: usize| {
         let (p, local) = batch.locate(View::Node, r);
-        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind[p.core[local] as usize]);
-        i64::from(kind_atom(p.tag, batch.dialects[&p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.core[local]));
+        i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
     };
-    // Nested kinds: the root's, and two from inside the documents.
-    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    // Nested kinds: the root's, and two from inside the documents; and every kind of broken.py's nodes, ERROR's
+    // among them.
+    let mut set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    set.extend((batch.nodes[4]..nodes).map(kind));
+    set.sort_unstable();
+    set.dedup();
     // Each row's place and membership read once: the brute force below is quadratic in the rows.
     let place: Vec<(u32, usize, usize)> = (0..nodes).map(at).collect();
-    let member: Vec<bool> = (0..nodes).map(|r| set.contains(&kind(r))).collect();
+    // An ERROR node (its atom's slot 0) is a member, since the set names ERROR (`Within::member`).
+    let error = |k: i64| k % i64::from(crate::code_rule_dsl::facts::core::KIND_STRIDE) == 0;
+    assert!(set.iter().any(|&k| error(k)), "the set names ERROR");
+    let member: Vec<bool> = (0..nodes).map(|r| kind(r)).map(|k| set.contains(&k)).collect();
+    assert!((0..nodes).any(|r| error(kind(r)) && member[r]), "an ERROR node is a member");
     let below = |n: usize, a: usize| {
         let ((dn, ln, _), (da, la, za)) = (place[n], place[a]);
         dn == da && la < ln && ln <= la + za
@@ -559,13 +648,17 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
         expected
     };
     use crate::code_rule_dsl::typing::file_local::Binding;
-    // Each axis made per looked-up node, and with the batch's solve chosen (decision 0143) on the CPU and on Metal.
+    // Each axis made per looked-up node, and with the batch's solve chosen (decision 0143) on the CPU and on Metal;
+    // each read off the documents' tapes in every format (decision 0293).
+    use crate::code_rule_dsl::tape::formats::Format;
+    assert!(batch.docs.iter().all(|p| p.facts.tape.is_some()), "the axes read every document's tape");
     let ways = [(Binding::Cpu, false), (Binding::Cpu, true), (Binding::Metal, true)];
     let axes = [within::Axis::Nearest, within::Axis::Inside, within::Axis::Has];
     let expected_by: Vec<BTreeSet<(i64, i64)>> = axes.iter().map(|&a| expected_of(a)).collect();
-    for ((axis, expected), (binding, solve)) in axes.into_iter().zip(&expected_by).flat_map(|a| ways.map(|w| (a, w))) {
+    let cases = axes.into_iter().zip(&expected_by).flat_map(|a| ways.map(|w| (a, w))).flat_map(|c| Format::ALL.map(|f| (c, f)));
+    for (((axis, expected), (binding, solve)), format) in cases {
         let expected = expected.clone();
-        let source = within::Within::axis(Arc::clone(&batch), axis, &set, binding);
+        let source = within::Within::axis(Arc::clone(&batch), axis, &set, binding).reading(format);
         if solve {
             source.expect_lookups(0, 1e12);
         }
@@ -573,10 +666,11 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
         let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (source.value(r, 0), source.value(r, 1))).collect() };
         let ids: Vec<i64> = (0..nodes).map(id).collect();
         let half: BTreeSet<i64> = ids[..nodes / 2].iter().copied().collect();
-        assert_eq!(rows(source.lookup(1, &ids[..nodes / 2]).unwrap()), expected.iter().filter(|(_, a)| half.contains(a)).copied().collect());
-        assert_eq!(rows(source.lookup(0, &ids).unwrap()), expected);
-        assert_eq!(rows(source.lookup(1, &ids).unwrap()), expected);
-        assert_eq!(rows((0..source.len()).collect()), expected);
+        let case = format!("{axis:?} on {binding:?}, solved {solve}, format {format:?}");
+        assert_eq!(rows(source.lookup(1, &ids[..nodes / 2]).unwrap()), expected.iter().filter(|(_, a)| half.contains(a)).copied().collect(), "{case}");
+        assert_eq!(rows(source.lookup(0, &ids).unwrap()), expected, "{case}");
+        assert_eq!(rows(source.lookup(1, &ids).unwrap()), expected, "{case}");
+        assert_eq!(rows((0..source.len()).collect()), expected, "{case}");
         assert_eq!(source.len(), expected.len());
         assert_eq!(source.estimated_len(), expected.len(), "an axis's rows are counted from the tree");
         let stats = source.statistics().unwrap();
@@ -729,14 +823,15 @@ fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
     let f = facts("a.py", "f(a + 1)\ng(b)\n");
     let dialect = Dialect::new(tape_tag(GrammarDialect::Python).unwrap()).unwrap();
     let p = Projected::new(7, Arc::clone(&f), Some(&dialect), Shape::Core, false, None);
-    assert_eq!(p.core.capacity(),p.core.len());
+    // `core` is exactly its nodes: the walk's spare room was given back to the block (`Cells::build`).
+    assert_eq!(p.core.len(), p.local.iter().filter(|&&l| l != NONE).count());
     assert!(p.idx.get().is_none() && p.size.get().is_none() && p.depth.get().is_none() && p.fielded.get().is_none());
     assert!(p.extra.as_ref().unwrap().token_spans.get().is_none());
     // Independent eager reference: tokens grouped by the named parent's preorder, then source and lines.
     let mut expected = Vec::new();
-    for &id in &p.core {
-        for &c in f.children(id) {
-            if !f.named(c) && f.end[c as usize] > f.start[c as usize] { expected.push([f.start[c as usize], f.end[c as usize]]); }
+    for &id in p.core.iter() {
+        for c in f.children(id) {
+            if !f.named(c) && f.end(c) > f.start(c) { expected.push([f.start(c), f.end(c)]); }
         }
     }
     let tokens = expected.len();
@@ -759,7 +854,7 @@ fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
         let mut depth=0;let mut up=parent;
         while up!=NONE { depth+=1;up=p.parent(up as usize); }
         assert_eq!(p.depth(l),depth);
-        let subtree_end=f.subtree_end[p.core[l] as usize];
+        let subtree_end=f.subtree_end(p.core[l]);
         assert_eq!(p.size(l),p.core[l+1..].iter().filter(|&&id|id<subtree_end).count() as u32);
     }
     assert!(p.fielded.get().is_none(),"reading other axes must not build field rows");
@@ -1039,9 +1134,9 @@ fn definition_ids_census() {
                         let p = Projected::new(1, Arc::clone(&facts), Some(&dialect), Shape::Core, false, None);
                         row.parse += cpu_now() - t_parse;
                         let f = &*facts;
-                        let tokens: Vec<u32> = p.core.iter().enumerate().flat_map(|(l, &id)| f.children(id).iter().filter(|&&c| !f.named(c) && f.end[c as usize] > f.start[c as usize]).map(move |_| l as u32)).collect();
+                        let tokens: Vec<u32> = p.core.iter().enumerate().flat_map(|(l, &id)| f.children(id).into_iter().filter(|&c| !f.named(c) && f.end(c) > f.start(c)).map(move |_| l as u32)).collect();
                         let t0 = cpu_now();
-                        let _ = granules::number(&p, &dialect, &tokens).0;
+                        let _ = granules::number(&p, &dialect, &tokens, &mut vec![0; p.core.len() + tokens.len()]);
                         row.cpu += cpu_now() - t0;
                         let (g, cont, biggest, fold) = granules::census(&p, &dialect, &tokens);
                         row.nodes += p.core.len() + tokens.len();
@@ -1129,11 +1224,20 @@ fn long_text_twins_where_no_body_fixes_the_kind() {
 fn text_only_for_the_nodes_read() {
     let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
     let fun = |rule: &str| format!(r#"{{"language": "python", "syntax": "valid", "rule": {rule}}}"#);
-    let some = |kinds: &[&str], fields: &[&str]| Some(TextNodes { kinds: kinds.iter().map(|k| k.to_string()).collect(), fields: fields.iter().map(|k| k.to_string()).collect() });
+    let some = |kinds: &[&str], fields: &[&str]| Some(TextNodes { kinds: kinds.iter().map(|k| k.to_string()).collect(), fields: fields.iter().map(|k| k.to_string()).collect(), ..TextNodes::default() });
+    let valued = |values: &[&str]| Some(TextNodes { values: values.iter().map(|k| k.to_string()).collect(), ..TextNodes::default() });
     for (body, read) in [
         ("out(t) :- kind(n, \"call\"), text(n, t).".to_owned(), some(&["call"], &[])),
         ("out(t) :- field(_, \"name\", n), text(n, t).".to_owned(), some(&[], &["name"])),
         ("out(t) :- node(_, n, _, _, _), text(n, t).".to_owned(), None),
+        // Only compared with a constant: the nodes whose text it is (names.rr's `literal_str`).
+        ("out(l) :- kind(l, \"generic_type\"), child(l, v, 0), text(v, \"Literal\").".to_owned(), valued(&["Literal"])),
+        // A child of a node of a fixed kind: those children (imports.rr's `ribind`).
+        ("out(t) :- kind(n, \"dotted_name\"), child(n, c, 0), text(c, t).".to_owned(), Some(TextNodes { parents: BTreeSet::from(["dotted_name".to_owned()]), ..TextNodes::default() })),
+        // A child of a node in a field: the children of the nodes in it (imports.rr's `impmod`).
+        ("out(m) :- field(_, \"module_name\", mn), child(mn, dn, 1), text(dn, m).".to_owned(), Some(TextNodes { parent_fields: BTreeSet::from(["module_name".to_owned()]), ..TextNodes::default() })),
+        // A child of a node nothing narrows: every node.
+        ("out(t) :- child(n, c, 0), text(c, t).".to_owned(), None),
         (format!("out(t) :- ast(d, f, {}, NAME: n), text(n, t).", fun(r#"{"all": [{"kind": "function_definition"}, {"has": {"pattern": "$NAME", "field": "name"}}]}"#)), some(&[], &["name"])),
         (format!("out(t) :- ast(d, f, {}, N: n), text(n, t).", fun(r#"{"all": [{"kind": "call"}, {"has": {"all": [{"kind": "identifier"}, {"pattern": "$N"}]}}]}"#)), some(&["identifier"], &[])),
         (format!("out(t) :- ast(d, f, {}, N: n), text(n, t).", fun(r#"{"all": [{"kind": "call"}, {"inside": {"pattern": "$N", "field": "body"}}]}"#)), None),
@@ -1142,6 +1246,85 @@ fn text_only_for_the_nodes_read() {
         let matchers = crate::code_rule_dsl::logic::plan::corpus::matchers::lower(&mut program);
         assert_eq!(text_kind_demand(&program, &matchers).read, read, "{body}");
     }
+}
+
+/// A base relation's name (`kind`, `field`, `child`) the program gives rules of its own is a relation like any
+/// other: it narrows the nodes whose text is read only by what its rules give. Here they give nothing narrower than
+/// `edge`, so every node's text is read. `node`'s projection `kind(n, k) :- node(_, n, k, _, _)` is `kind` itself.
+#[test]
+fn a_derived_base_name_narrows_no_text() {
+    let decls = ".decl edge(a: node, b: node)\n.decl text(n: node, t: symbol)\n.decl node(d: node, n: node, k: symbol, s: number, e: number)\n.input edge, text, node\n\
+                 .decl kind(n: node, k: symbol)\n.decl field(p: node, f: symbol, c: node)\n.decl child(p: node, c: node, i: number)\n\
+                 .decl out(t: symbol)\n.output out\n";
+    for (derives, body) in [
+        ("kind(n, \"call\") :- edge(n, _).", "out(t) :- kind(n, \"call\"), text(n, t)."),
+        ("field(p, \"name\", c) :- edge(p, c).", "out(t) :- field(_, \"name\", n), text(n, t)."),
+        ("field(p, \"attribute\", c) :- edge(p, c).", "out(t) :- field(_, \"attribute\", n), text(n, t)."),
+        ("child(p, c, 0) :- edge(p, c).\nkind(n, \"dotted_name\") :- edge(n, _).", "out(t) :- kind(n, \"dotted_name\"), child(n, c, 0), text(c, t)."),
+        // `child` alone derived, `kind` the base relation: only the `child` guard keeps `parents_of` from narrowing
+        // the child's text to the children of `dotted_name` nodes.
+        ("child(p, c, 0) :- edge(p, c).", "out(t) :- kind(n, \"dotted_name\"), child(n, c, 0), text(c, t)."),
+        // `node`'s projection and a rule of the program's own: `kind` is the program's.
+        ("kind(n, k) :- node(_, n, k, _, _).\nkind(n, \"call\") :- edge(n, _).", "out(t) :- kind(n, \"call\"), text(n, t)."),
+    ] {
+        let program = crate::code_rule_dsl::logic::rr::parse(&format!("{decls}{derives}\n{body}\n")).unwrap();
+        let demand = text_kind_demand(&program, &[]);
+        assert_eq!(demand.read, None, "{derives} / {body}: every node's text");
+        assert!(!demand.any.is_empty(), "{derives} / {body}: a text of a node of any kind");
+    }
+    // `node`'s projection alone (the lowering's, `rr::lower` `projections`) is `kind` itself: it narrows.
+    let program = crate::code_rule_dsl::logic::rr::parse(&format!("{decls}kind(n, k) :- node(_, n, k, _, _).\nout(t) :- kind(n, \"call\"), text(n, t).\n")).unwrap();
+    assert_eq!(text_kind_demand(&program, &[]).read, Some(TextNodes { kinds: BTreeSet::from(["call".to_owned()]), ..TextNodes::default() }));
+}
+
+/// `node_text` (a node's exact text, at any length) is answered on request (decision 0174): each reader asks for the
+/// nodes its other literals bind, less those that read the text; a relation that reads `node_text` is read through
+/// its widened copy; a negation asks for the nodes it tests. A reader that binds its node by nothing else keeps it an
+/// input, for every node.
+/// Made for every node, a module's text, each class's in it and each function's in those were all interned (390 MB of
+/// atoms from 69 MB of source).
+#[test]
+fn node_text_answered_on_request() {
+    let decls = ".decl node(d: number, n: node, k: symbol, a: number, b: number)\n.decl child(p: node, c: node, i: number)\n.decl field(p: node, f: symbol, c: node)\n.decl node_text(n: node, s: symbol)\n.input node, child, field, node_text\n.decl out(s: symbol)\n.output out\n.decl named(n: node, s: symbol)\n";
+    let requests = |body: &str| -> Option<Vec<String>> {
+        let program = crate::code_rule_dsl::logic::rr::parse(&format!("{decls}{body}\n")).unwrap();
+        if program.inputs.iter().any(|i| i == "node_text") {
+            return None;
+        }
+        let mut out: Vec<String> = program.rules.iter().filter(|r| r.head.rel.starts_with("rr_node_text_req") || r.head.rel.starts_with("rr_wide_")).map(|r| format!("{}.", r.to_string().replace('$', ""))).collect();
+        out.sort();
+        Some(out)
+    };
+    let one = |body: &str, want: &[&str]| assert_eq!(requests(body), Some(want.iter().map(|s| s.to_string()).collect()), "{body}");
+    one("out(s) :- node(_, m, \"module\", _, _), node_text(m, s).", &["rr_node_text_req(m) :- node(_, m, \"module\", _, _)."]);
+    one("out(s) :- field(_, \"type\", y), node_text(y, s).", &["rr_node_text_req(y) :- field(_, \"type\", y)."]);
+    // A literal that reads the text is left out; the rest that binds the node is the request, a variable read once a
+    // wildcard (decision 0291).
+    one("out(s) :- field(p, \"name\", y), node_text(y, s), node(_, q, \"call\", _, _), field(q, \"function\", f), node_text(f, s), child(p, x, 0).", &[
+        "rr_node_text_req(f) :- node(_, q, \"call\", _, _), field(q, \"function\", f).",
+        "rr_node_text_req(y) :- field(p, \"name\", y), child(p, _, 0).",
+    ]);
+    // Decision 0291. A reader that pairs nodes by kind, read only with its first node bound: the request for that node
+    // also joins what its reader binds it by (`rr_node_text_req_by_pair_0`). The request for the other loses the
+    // witness `v` and the atoms the rest already holds (`node(_, _, k, _, _)` beside `node(_, e, k, _, _)`): it was
+    // every same-kind pair.
+    one(".decl pair(v: node, e: node)\npair(v, e) :- node(_, e, \"string\", _, _), node(_, v, k, _, _), node(_, e, k, _, _), node_text(v, s), node_text(e, s).\nout(t) :- field(_, \"right\", v), pair(v, _), t = \"x\".", &[
+        "rr_node_text_req(e) :- node(_, e, \"string\", _, _).",
+        "rr_node_text_req(v) :- node(_, e, \"string\", _, _), node(_, v, k, _, _), node(_, e, k, _, _), rr_node_text_req_by_pair_0(v).",
+        "rr_node_text_req_by_pair_0(rr_dn) :- field(_, \"right\", rr_dn).",
+    ]);
+    // A node bound by a relation that reads node_text: through its widened copy, on the columns it binds without it.
+    // `named`'s own request is narrowed by its one reader's ask (decision 0291).
+    one("named(n, s) :- node(_, n, \"identifier\", _, _), node_text(n, s).\nout(t) :- named(n, \"x\"), field(n, \"name\", m), node_text(m, t).", &[
+        "rr_node_text_req(m) :- rr_wide_node_text_named(n), field(n, \"name\", m).",
+        "rr_node_text_req(n) :- node(_, n, \"identifier\", _, _), rr_node_text_req_by_named_0(n).",
+        "rr_node_text_req_by_named_0(rr_dn) :- field(rr_dn, \"name\", _).",
+        "rr_wide_node_text_named(n) :- node(_, n, \"identifier\", _, _).",
+    ]);
+    // A negation asks for the nodes it tests.
+    one("out(s) :- node(_, n, \"call\", _, _), !node_text(n, \"x\"), s = \"y\".", &["rr_node_text_req(n) :- node(_, n, \"call\", _, _)."]);
+    // Every node: eager, as before.
+    assert_eq!(requests("out(s) :- node_text(_, s)."), None);
 }
 
 /// What an edit changes of `node_order` (measured for the stable order keys): over `ORDER_PAIRS` (lines `step\told
@@ -1194,5 +1377,103 @@ fn node_order_keys_census() {
     }
     for (s, t) in total.iter().enumerate() {
         println!("step {}: preorder {}  runs {}  floor {}", ["06", "07", "08"][s], t[0], t[1], t[2]);
+    }
+}
+
+/// A phase whose exports hold no node projects only the subtrees of the kinds its rules start from (`node_anchors`):
+/// a kind reached below another is no anchor of its own; a parent, an ancestor, a child's place among unnamed
+/// siblings, a node no kind or descent proves, or an export holding a node, keeps every node.
+#[test]
+fn a_phase_projects_the_subtrees_its_rules_start_from() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
+    let kinds = |ks: &[&str]| Ok(ks.iter().map(|k| k.to_string()).collect::<BTreeSet<String>>());
+    let phase = |body: &str, out: &str| format!("{prelude}\n.phase p\n.export out\n.decl out({out})\n{body}\n.output out\n");
+    for (src, want) in [
+        (phase("out(t) :- kind(i, \"import_statement\"), field(i, \"name\", n), kind(n, \"dotted_name\"), text(n, t).", "t: symbol"), kinds(&["import_statement"])),
+        (phase(".decl imp(i: node, q: symbol)\nimp(i, q) :- kind(i, \"import_statement\"), child(i, n, 0), text(n, q).\nout(q) :- imp(i, q), kind(i, \"import_statement\"), docof(i, _).", "q: symbol"), kinds(&["import_statement"])),
+        (phase("out(t) :- kind(i, \"import_statement\"), !child(i, _, 1), text(i, t).", "t: symbol"), kinds(&["import_statement"])),
+        (phase("out(t) :- kind(i, \"import_statement\"), child(p, i, _), text(p, t).", "t: symbol"), Err(String::new())),
+        (phase("out(t) :- kind(i, \"import_statement\"), within(i, f), text(f, t).", "t: symbol"), Err(String::new())),
+        (phase("out(t) :- kind(i, \"import_statement\"), child(_, i, k), k = 0, text(i, t).", "t: symbol"), Err(String::new())),
+        (phase("out(t) :- node(_, n, _, _, _), text(n, t).", "t: symbol"), Err(String::new())),
+        (phase("out(i) :- kind(i, \"import_statement\").", "i: node"), Err(String::new())),
+        (format!("{prelude}\n.decl out(t: symbol)\nout(t) :- kind(i, \"import_statement\"), text(i, t).\n.output out\n"), Err(String::new())),
+    ] {
+        let mut program = crate::code_rule_dsl::logic::rr::parse(&src).unwrap();
+        let matchers = crate::code_rule_dsl::logic::plan::corpus::matchers::lower(&mut program);
+        let got = node_anchors(&program, &matchers);
+        let body = src.rsplit(".decl out").next().unwrap_or("");
+        match &want {
+            Ok(k) => assert_eq!(got.as_ref().ok(), Some(k), "{body}: {got:?}"),
+            Err(_) => assert!(got.is_err(), "{body}: {got:?}"),
+        }
+    }
+}
+
+/// A rule reading the text of a node no kind fixes gets twins reading `rr_long_text_node(n)` (`long_text_twins`): a
+/// node's own fact, as `text` is, so the phase still projects only the subtrees its rules start from. Read as a
+/// relation of nodes from anywhere, it kept every node: PostHog's `py_from_name` visited all 41 M nodes.
+#[test]
+fn a_long_text_twin_keeps_its_phases_anchors() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
+    let src = format!("{prelude}\n.phase p\n.export out\n.decl out(t: symbol)\nout(t) :- kind(i, \"import_from_statement\"), field(i, \"name\", n), text(n, t).\n.output out\n");
+    let mut program = crate::code_rule_dsl::logic::rr::parse(&src).unwrap();
+    let matchers = crate::code_rule_dsl::logic::plan::corpus::matchers::lower(&mut program);
+    assert!(long_text_twins(&mut program, &matchers) > 0, "the rule reads the text of a node no kind fixes");
+    let got = node_anchors(&program, &matchers);
+    assert_eq!(got, Ok(["import_from_statement".to_owned()].into_iter().collect::<BTreeSet<String>>()));
+}
+
+/// The definition ids of every node, token and span of a set of files, pinned (decision 0094 §2): a change to how
+/// they are computed (which nodes start a granule, their keys, their slots) must leave every id as it was, or the
+/// ids kept across edits and runs move.
+#[test]
+fn definition_ids_are_pinned() {
+    if !definition_ids() {
+        return;
+    }
+    use sha2::{Digest, Sha256};
+    let ruff = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python/upstream/ruff/fixtures");
+    let mut files: Vec<(&str, String, String)> = [
+        ("python", "a.py", "import os\nLIMIT = 3\n\ndef f(a):\n    return a + 1\n\n@dataclass\nclass C:\n    size: int = 0\n    def m(self, x):\n        return [x, x * 2]\n"),
+        ("tsx", "a.tsx", "import React from 'react';\ntype Props = { title: string };\nexport const Header = ({ title }: Props) => <h1>{title}</h1>;\nexport function Footer() {\n  return <footer>ft</footer>;\n}\n"),
+        ("typescript", "a.ts", "class Store {\n  items: number[] = [];\n  add(n: number) { this.items.push(n); }\n}\nfunction helper() { return 'hp'; }\n"),
+        ("sql", "a.sql", "CREATE TABLE users (id INT, name TEXT);\nCREATE VIEW active AS SELECT id FROM users WHERE id > 7;\n"),
+        ("php", "a.php", "<?php\nclass A {\n  public $v = 1;\n  function one() { return 'po'; }\n}\nfunction free() { return 'pf'; }\n"),
+        ("rust", "a.rs", "struct S { n: u32 }\nimpl S {\n    fn get(&self) -> u32 { self.n }\n}\nfn main() { let s = S { n: 5 }; }\n"),
+    ].into_iter().map(|(l, p, s)| (l, p.to_owned(), s.to_owned())).collect();
+    for f in ["pyflakes/F601.py", "pyflakes/F632.py", "flake8_simplify/SIM905.py", "flake8_bugbear/B031.py", "flake8_bugbear/B006_B008.py"] {
+        let source = std::fs::read_to_string(ruff.join(f)).unwrap_or_else(|e| panic!("{f}: {e}"));
+        files.push(("python", f.to_owned(), source));
+    }
+    let mut h = Sha256::new();
+    for (label, path, source) in &files {
+        let (_, p) = leaf_ids(label, path, source);
+        for l in 0..p.locs() {
+            h.update(p.global(l).to_le_bytes());
+            assert_eq!(p.local_of((p.global(l) & 0xffff_ffff) as u32), Some(l), "{path}: id of {l} does not map back");
+        }
+    }
+    let got: String = h.finalize()[..16].iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(got, "f280acef04fbe4f44e98f401f7f7d4f8", "the definition ids moved");
+}
+
+/// What a kind is to the granules (a definition, a wrapper, a body, a container's owner) is a table by kind code,
+/// made once per grammar from the kind names (`Dialect::granule_kind`), not names matched for each node: in every
+/// grammar the table says what the names say.
+#[test]
+fn granule_kinds_are_a_table_by_kind_code() {
+    for (label, path, source) in [("python", "a.py", "x = 1\n"), ("javascript", "a.js", "x;\n"), ("typescript", "a.ts", "x;\n"), ("tsx", "a.tsx", "x;\n"),
+        ("php", "a.php", "<?php\nx();\n"), ("rust", "a.rs", "fn f() {}\n"), ("sql", "a.sql", "SELECT 1;\n")] {
+        let d = document(7, path, label, source);
+        let dialect = Dialect::new(core::facts_tag(&d.facts)).unwrap();
+        let mut seen = 0;
+        for code in 0..dialect.catalog.kind_count() {
+            let name = dialect.catalog.kind_name(code as u16).unwrap_or("");
+            let want = granules::kind_flags(name);
+            seen += usize::from(want != 0);
+            assert_eq!(dialect.granule_kind(code as u16), want, "{label}: {name}");
+        }
+        assert!(seen > 0, "{label}: no kind starts or holds a granule");
     }
 }
