@@ -1,0 +1,321 @@
+{
+ "area": "windows",
+ "machines": [
+  {
+   "id": "win-measure",
+   "what": "virtual machine on a desktop with an AMD Ryzen 9 7950X, NVMe disks, Microsoft Defender on",
+   "system": "Windows 11 Enterprise, build 26300",
+   "cores": "8 virtual CPUs",
+   "memory": "16 GB",
+   "role": "measuring machine: alone for each comparison"
+  },
+  {
+   "id": "win-check",
+   "what": "a second virtual machine on the same desktop, its CPUs on cores of its own, Microsoft Defender on",
+   "system": "Windows 11 Enterprise, build 26300",
+   "cores": "8 virtual CPUs",
+   "memory": "16 GB",
+   "role": "behaviour checks and the slowed machine; shares the desktop with the measuring machine"
+  }
+ ],
+ "runs": [
+  {
+   "id": "w-engine-build-n",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "what": "the release engine of the new version built for Windows x64 (npm run build:native, Rust 1.95.0, MSVC), with a cargo target folder that already held 0.1.5's dependencies: it builds and loads",
+   "state": "warm dependencies, not alone (another narrow run on the machine)",
+   "metric": "build time",
+   "unit": "s",
+   "n": 1,
+   "median": 1184,
+   "worst": 1184,
+   "values": [
+    1184
+   ],
+   "command": "npm run build:native (in a fresh checkout at aad1dd6ef; npm ci 71 s before it)",
+   "at": "2026-11-17T16:04:13Z"
+  },
+  {
+   "id": "w-engine-size",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "what": "size of the Windows engine (rerail_engine.win32-x64-msvc.node) as npm run build:native makes it, against 0.1.5 and main + six fixes built the same way",
+   "state": "release build",
+   "metric": "engine file size",
+   "unit": "bytes",
+   "n": 1,
+   "median": 122270208,
+   "worst": 122270208,
+   "values": [
+    122270208
+   ],
+   "compare": {
+    "P": {
+     "commit": "9cad73564",
+     "bytes": 42263040
+    },
+    "B": {
+     "commit": "58a435201",
+     "bytes": 42268672
+    }
+   },
+   "ratio_N_P": 2.89,
+   "command": "npm run build:native; size of native/rerail_engine.win32-x64-msvc.node",
+   "at": "2026-11-17T16:07:16Z"
+  },
+  {
+   "id": "w-engine-windows-tests",
+   "system": "Windows 11",
+   "machine": "win-check",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "what": "the engine tests only Windows compiles (process starts, Windows import roots, the tree watch, the .rr library path), the step Engine Windows tests of the CI Windows unit shard 2, same command and settings: 46 tests, all pass",
+   "state": "cold debug build, 4 build jobs, beside other test runs (not alone)",
+   "metric": "tests passed",
+   "unit": "tests",
+   "n": 1,
+   "median": 46,
+   "worst": 46,
+   "values": [
+    46
+   ],
+   "failed": 0,
+   "command": "CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=4 cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-lang-ecma --lib -- process:: code_rule_dsl::import_target:: tree_watch:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it",
+   "at": "2026-11-17T16:52:59Z"
+  },
+  {
+   "id": "w-engine-windows-tests-time",
+   "system": "Windows 11",
+   "machine": "win-check",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "what": "time of that step from a cold target folder: the debug test build, then the tests",
+   "state": "cold, 4 build jobs, beside 8 test runs of other work on the same machine (not alone: the times are an upper reading, not a measurement of a CI runner)",
+   "metric": "build and test time",
+   "unit": "s",
+   "n": 1,
+   "median": 3154,
+   "worst": 3154,
+   "values": [
+    3154
+   ],
+   "tests_s": 121,
+   "command": "cargo test ... --no-run (build), then the filtered cargo test (tests)",
+   "at": "2026-11-17T16:52:59Z"
+  },
+  {
+   "id": "w-ts-findings",
+   "system": "Windows 11",
+   "machine": "win-check",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "what": "findings of the typescript pack (65 rules) over this repository's own src and test at 53f5b92a1 (602 files, the bar's rerail-typescript corpus), through the product's evaluation path (scripts/ship/product-run.ts); three runs of the new version (map off, map on, warm) and one of 0.1.5",
+   "state": "cold and warm, beside other runs (counts, not times)",
+   "metric": "findings",
+   "unit": "findings",
+   "n": 3,
+   "median": 12578,
+   "worst": 12578,
+   "values": [
+    12578,
+    12578,
+    12578
+   ],
+   "compare": {
+    "P": {
+     "commit": "9cad73564",
+     "findings": 12584,
+     "failures": {
+      "source-incomplete": 120,
+      "source-partial": 41
+     }
+    },
+    "N": {
+     "failures": {
+      "source-incomplete": 121,
+      "source-partial": 41,
+      "budget-exceeded": 5
+     }
+    }
+   },
+   "command": "node --import tsx scripts/ship/product-run.ts <checkout> <corpus> <out.json> <checkout>/packs/typescript/rules (in each checkout)",
+   "at": "2026-11-17T17:03:42Z"
+  },
+  {
+   "id": "w-hook-procs-n",
+   "system": "Windows 11",
+   "machine": "win-check",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "what": "processes a hook starts at the new version, the daemon answering: one PreToolUse hook in a started, a stopped, a never set up and a non-Git folder, the registered Node first on PATH; each Node of the hook records what it starts (a counting pass, not timed)",
+   "state": "daemon answers",
+   "metric": "processes per hook",
+   "unit": "processes",
+   "n": 4,
+   "median": 1,
+   "worst": 1,
+   "values": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "command": "hook-cost harness, phase PC",
+   "at": "2026-11-17T17:23:03Z"
+  },
+  {
+   "id": "w-upgrade-smoke",
+   "system": "Windows 11",
+   "machine": "win-check",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "what": "an upgrade on one home, behaviour check: 0.1.5 sets up a 300-file repository and runs hooks, its daemon stops, then the new version starts on the same home. the new version's rerail daemon start exits 1 (\"Rerail daemon did not become ready within 15s\") after 16.2 s; the daemon answers 26.3 s after that; its first PreToolUse hook takes 9.8 s, the next ones 0.5 to 2.3 s. 0.1.5 on the same home before: daemon start 4.3 s, first hook 4.0 s, then 0.6 s. One run, beside other work: a reading to confirm alone, not a measurement",
+   "state": "first start after the upgrade, not alone",
+   "metric": "daemon start to first answer",
+   "unit": "ms",
+   "n": 1,
+   "median": 42536,
+   "worst": 42536,
+   "values": [
+    42536
+   ],
+   "compare": {
+    "P": {
+     "commit": "9cad73564",
+     "daemon_start_ms": 4304,
+     "first_hook_ms": 3969
+    }
+   },
+   "command": "hook-cost harness, phase UP:P:N (hcs.mjs upgrade)",
+   "at": "2026-11-17T17:23:03Z"
+  },
+  {
+   "id": "w-daemon-after-setup",
+   "system": "Windows 11",
+   "machine": "win-check",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "what": "the daemon's memory right after it set up a 3,000-file repository (4 packs, 382 rules), before any check reads the content store; map at its default and off; 0.1.5 the same way",
+   "state": "after set-up, beside other runs (memory, not times)",
+   "metric": "committed memory now / at the peak",
+   "unit": "MB",
+   "n": 2,
+   "median": 90,
+   "worst": 90,
+   "values": [
+    90,
+    89
+   ],
+   "peak_committed": [
+    258,
+    260
+   ],
+   "working_set": [
+    94,
+    94
+   ],
+   "compare": {
+    "P": {
+     "commit": "9cad73564",
+     "committed": [
+      86,
+      87
+     ],
+     "peak_committed": [
+      258,
+      259
+     ],
+     "working_set": [
+      91,
+      91
+     ]
+    }
+   },
+   "command": "hook-cost harness, phase ST (rerail daemon start; rerail start in the repository; Get-Process on the daemon)",
+   "at": "2026-11-17T17:48:23Z"
+  },
+  {
+   "id": "w-bar-corpus-lfs",
+   "system": "Windows 11",
+   "machine": "win-check",
+   "subject": "N",
+   "commit": "53f5b92a1",
+   "what": "the bar's rerail-native corpus (native/src at 53f5b92a1) as the bar makes it with git archive, hashed as the bar hashes it: with Git LFS files it is the pinned corpus (385 files, df111caf...); with Git LFS downloads skipped, names.bin is a 131-byte pointer and the hash is bb80e5e4..., which the bar refuses before it measures anything",
+   "state": "behaviour",
+   "metric": "corpus matches corpora.json",
+   "unit": "yes/no",
+   "n": 2,
+   "median": 1,
+   "worst": 0,
+   "values": [
+    1,
+    0
+   ],
+   "command": "git archive 53f5b92a1 -- native/src | tar -x; node hash-tree.mjs (the bar's hashTree), with and without GIT_LFS_SKIP_SMUDGE=1",
+   "at": "2026-11-17T18:11:08Z"
+  }
+ ],
+ "findings": [
+  {
+   "title": "The test the description names no longer waits 10 s",
+   "what": "The description says the audit-cli scan test waits 10 s for a scan that takes 11.8 s on Windows, left so the test keeps showing the slowdown. At aad1dd6ef the test (test/cli/audit-cli.test.ts:271) waits for the scan through the daemon API for up to 60 s (#711, merged into both 0.1.5 and the branch), so it passes either way and no longer shows the slowdown; the scan's own duration still does, and is measured here.",
+   "evidence": [
+    "code: test/cli/audit-cli.test.ts:271-301 at aad1dd6ef and at 9cad73564, commit 919e55d87"
+   ],
+   "severity": "low: the description is out of date"
+  },
+  {
+   "title": "The new version ends five rule runs at their work budget that 0.1.5 finishes, and reports six findings fewer",
+   "what": "On this repository's own TypeScript (602 files) the typescript pack gives 12,578 findings at the new version against 12,584 at 0.1.5, the same in each of the new version's three runs. N reports 5 budget-exceeded failures (a rule stopped on a file when it spent its allowance of work) that 0.1.5 does not, and one more source-incomplete. A person sees fewer findings and, in rerail status or the audit, files a rule could not finish. The budget is a count of work, not of time, so it is not the Windows machine's speed.",
+   "evidence": [
+    "w-ts-findings",
+    "code: the budget-exceeded failures are counts of work (native/src/code_rule_dsl/workspace/evaluate.rs:757 match budget, :997 visited nodes against limits.visits_for, at aad1dd6ef)"
+   ],
+   "severity": "medium: findings lost on real code; the bar does not gate findings on real code"
+  }
+ ],
+ "not_measured": [
+  {
+   "what": "the shippability bar on the fixtures corpora of every pack, and on the sample corpora of blade, next, php, python, react, sql and vue",
+   "why": "both come from the pack data archives, which need read access to the project's pack data storage; no machine of ours has it (an unsigned request is refused, 403)",
+   "would_take": "the same Windows run with the pack data pulled: npm run fixtures:pull on a machine signed in to the storage, then npm run bench:ship -- run --corpus all"
+  },
+  {
+   "what": "the bar's user waits (W1 to W8: hooks, CLI and daemon through each build) on Windows",
+   "why": "shipbar.ts refuses them off Linux by design: \"waits measure on Linux only (taskset, the page cache drop)\" (scripts/ship/shipbar.ts, main())",
+   "would_take": "a Windows way to pin and to empty the file cache in waits.ts; the hook and CLI waits on Windows will be measured with the hook-cost harness instead"
+  },
+  {
+   "what": "the shippability bar on Windows, the new version against 0.1.5: wall time cold and warm, CPU, peak memory and findings on the six packs whose real-code corpus is a commit of the repository, both of the new version's ways to run rules (its packs through the product path, and the .rr rewrites on the new engine)",
+   "why": "it needs the measuring machine alone, which only a start from the workstation that schedules our measuring machines can claim; the run started at 18:04 UTC and its results come in a later commit",
+   "would_take": "one alone run of about one to two hours on the Windows measuring machine"
+  },
+  {
+   "what": "the product under a 20-minute load with about 190 worktrees on Windows, the new version, 0.1.5 and main + six fixes: the daemon's CPU, heap growth, working set and committed memory at the peak, hook p95 against its floor, failed hooks, probes answered",
+   "why": "a load run needs the measuring machine alone, started from the workstation that schedules our measuring machines",
+   "would_take": "four alone runs of about 25 minutes each (the new version, 0.1.5, main + six fixes, the new version again)"
+  },
+  {
+   "what": "a hook's cost per daemon state on the slowed Windows machine for the new version, 0.1.5 and main + six fixes, processes per hook for 0.1.5 and main + six fixes, the upgrade wait measured alone, and a fresh daemon's first event in a repository of 153 worktrees",
+   "why": "the slowed machine saturates its CPUs, a run only the workstation that schedules our measuring machines can start; the harness was checked at the new version here, not alone",
+   "would_take": "one alone run of several hours on the second Windows machine"
+  },
+  {
+   "what": "the Windows unit test set's time at the new version against 0.1.5, for the CI shards' 60 and 90 minute limits",
+   "why": "a whole unit set holds a Windows machine for about an hour per build; the check machines were full all afternoon, and our machines are not the CI runner",
+   "would_take": "the unit set at the new version and at 0.1.5 alone on the measuring machine; vitest.log gives each file's time"
+  }
+ ],
+ "notes": [
+  {
+   "what": "0.1.5 on npm",
+   "text": "When the measuring started (15:50 UTC on 17 November) the npm registry listed @neralabs/rerail up to 0.1.4; 0.1.5 was published at 15:57 UTC. 0.1.5 is built here from tag v0.1.5 (9cad73564) the same way as the new version (release engine from npm run build:native, npm ci); its release-form Linux engine (41.3 MB) matches the published package's to 0.2%."
+  }
+ ],
+ "updated": "2026-11-17T18:11:08Z"
+}
