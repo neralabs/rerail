@@ -1437,6 +1437,19 @@ product runs, 79 of 115 pass, 18 fail on Q49's work limit, and 18 fail in the wa
 - **Keep**: the fixtures' CPU results as the oracle.
 - **Done when**: each fixture passes on the packed JIT, or its difference is shown to be the CPU's error.
 
+### Q69. The `.rr` ladder's field ids lose 64 in the interpreters and the compiled parser
+
+Found 2026-11-17 (0366, running `rr_tests::rr_steps_parse_as_the_reference_and_the_engine`). 33 steps
+differ from the reference. In every one the nodes are the same but for a field: the interpreters
+(`stream::run`) and the compiled parser give the reference's field id less 64 (65 → 1, 75 → 11, 128 → 0,
+137 → 9), from `04-clauses` on. Both sides agree with each other, so the fault is in the program they share
+(a field operand narrowed to 6 bits where the words are lowered or encoded), not in tier 1 or tier 2's
+code. 0366's change is tier 1's alone and leaves both sides' trees as they were.
+
+- **Where to start**: `stream.rs`'s `NODE_FIELD` (lines 721–722) reads the operand, so look at where
+  the word's operand is packed; `native_cpu_tape.rs:82` masks a field with `0x3f`.
+- **Done when**: the test passes (it takes about 90 s here, so run it alone).
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives

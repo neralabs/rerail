@@ -576,12 +576,12 @@ fn json_gated_regions_equal_the_interpreter() {
     ];
     for name in ["14-json", "15-jsonc"] {
         let c = form(name);
-        // Each region behind its branch in both full bodies, none computed in place.
-        // A region with a test before its gate's has two branches.
+        // Each region behind its branch in the full body (one: the ASCII test is a branch in it,
+        // 0364), none computed in place. A region with a test before its gate's has two.
         let plan = native_cpu_block::State::of(&c.native.block_programs[0]).plan;
         assert!(!plan.regions.is_empty(), "{name}: no gated region");
         let tests: usize = plan.regions.iter().map(|r| 1 + usize::from(r.pre.is_some())).sum();
-        assert_eq!(c.parser.tier1.gate_branches, tests * (1 + usize::from(c.parser.tier1.ascii_branch)), "{name}: a region without its branch");
+        assert_eq!(c.parser.tier1.gate_branches, tests, "{name}: a region without its branch, or made twice");
         let block = &c.program.block_programs[0];
         let mut files: Vec<Vec<u8>> = Vec::new();
         for t in tokens {

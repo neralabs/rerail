@@ -4,7 +4,7 @@
 
 /// The CLIF blocks of the hot loop, each with its instruction lines: the full body (`block2`) and
 /// the blocks it reaches before it leaves for the head (`block4`) or loops back to itself, which
-/// are its extracts' flattening.
+/// are its extracts' flattening. None where the pass has no block loop.
 pub fn hot_loop(clif: &str) -> Vec<(String, Vec<String>)> {
     let mut blocks: Vec<(String, Vec<String>)> = Vec::new();
     for line in clif.lines() {
@@ -26,6 +26,10 @@ pub fn hot_loop(clif: &str) -> Vec<(String, Vec<String>)> {
             .flat_map(|l| l.split(|c: char| !c.is_alphanumeric()).filter(|w| w.starts_with("block")).map(str::to_owned).collect::<Vec<_>>())
             .collect()
     };
+    // A pass with no block loop (`bodiless_body`): its body's blocks were cut, and it has none.
+    if !blocks.iter().any(|(n, _)| n == "block2") {
+        return Vec::new();
+    }
     let (mut seen, mut work, mut out) = (vec!["block2".to_owned()], vec!["block2".to_owned()], Vec::new());
     while let Some(name) = work.pop() {
         let (_, lines) = blocks.iter().find(|(n, _)| *n == name).expect("a block of the function");

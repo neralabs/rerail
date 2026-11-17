@@ -48,7 +48,7 @@ pub struct Plan {
     pub ascii: Vec<Option<bool>>,
     /// Some value reads the 16 bytes before the block.
     pub before: bool,
-    /// The full-block body has an ASCII twin: some value is known on ASCII windows.
+    /// Some value is known on ASCII windows: the full body tests for one (`native_cpu_block::ascii_split`).
     pub ascii_branch: bool,
     /// Each value's word in a full block, when it is the same in every one: made of constants
     /// and `within` only (all ones there), `prev`s of such values included.
@@ -782,8 +782,6 @@ impl Lane {
 pub struct Lanes<'a> {
     native: &'a BlockNative,
     plan: &'a Plan,
-    /// The ASCII body: values known on ASCII windows are folded.
-    ascii: bool,
     /// The first stream position of chunk 1 and the stream's length outside a full block's
     /// body (`None` there): for `within`, and for a `prev`'s cut before the stream.
     position: Option<(Value, Value)>,
@@ -814,7 +812,7 @@ pub struct Lanes<'a> {
 impl<'a> Lanes<'a> {
     /// `bytes`: the block's chunks at lag 0 (index 0: the 16 bytes before it), when already
     /// loaded. `general`: the body may run on a file's first or last block.
-    pub fn new(f: &mut FunctionBuilder<'_>, native: &'a BlockNative, plan: &'a Plan, base: Value, i: Value, len: Value, general: bool, ascii: bool, bytes: Option<[Option<Value>; 5]>, nibble: Value) -> Self {
+    pub fn new(f: &mut FunctionBuilder<'_>, native: &'a BlockNative, plan: &'a Plan, base: Value, i: Value, len: Value, general: bool, bytes: Option<[Option<Value>; 5]>, nibble: Value) -> Self {
         let c = f.ins().iconst(types::I8, 0);
         let zero16 = f.ins().splat(types::I8X16, c);
         let mut loaded = HashMap::new();
@@ -826,7 +824,6 @@ impl<'a> Lanes<'a> {
         Lanes {
             native,
             plan,
-            ascii,
             position: general.then(|| (f.ins().ishl_imm(i, 6), len)),
             bytes: loaded,
             base,
@@ -855,7 +852,6 @@ impl<'a> Lanes<'a> {
         Lanes {
             native,
             plan,
-            ascii: false,
             position: Some((start, len)),
             bytes: HashMap::new(),
             base,
@@ -1103,10 +1099,7 @@ impl<'a> Lanes<'a> {
         if let Some(&l) = self.memo.get(&(at, c, lag)) {
             return l;
         }
-        let lane = match self.plan.ascii[at] {
-            Some(b) if self.ascii => Lane::Known(b),
-            _ => self.make(f, at, c, lag),
-        };
+        let lane = self.make(f, at, c, lag);
         self.memo.insert((at, c, lag), lane);
         lane
     }
