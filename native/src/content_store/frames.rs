@@ -2149,13 +2149,14 @@ mod tests {
     /// A store's file copied without its packs (a test's store, cloned from its template's file alone) has rows naming
     /// a pack that is not there. Its writer began that pack again from its start, so those rows named the new entries'
     /// bytes, and a reader of one read another entry's ("a corpus memo entry does not decompress: Unknown frame
-    /// descriptor", seen as the tests' processes shared a box). A writer and a reader at once on the copy: a copied
-    /// row misses, and every entry read is the one put under its part.
+    /// descriptor", seen as the tests' processes shared a box). With the entries in segments (0295 step 5), each
+    /// batch is a new segment numbered past every recorded one, so none is begun again. A writer and a reader at once
+    /// on the copy: a copied row misses, and every entry read is the one put under its part.
     #[test]
     fn a_store_copied_without_its_packs_reads_no_other_entrys_bytes() {
         let dir = tempfile::tempdir().unwrap();
         let space = local_space(&[6u8; 32]);
-        let put = |part: i64, byte: u8| MemoPut { part, path: format!("{part}.py"), digest: [part as u8; 32], key: 1, bytes: vec![byte; 100], raw: 100, over: false };
+        let put = |part: i64, byte: u8| MemoPut { part, path: format!("{part}.py"), digest: [part as u8; 32], key: 1, bytes: vec![byte; 100], over: false };
         let copied = dir.path().join("copy.sqlite");
         {
             let original = ContentStore::open(&dir.path().join("original.sqlite")).unwrap();
@@ -2176,7 +2177,7 @@ mod tests {
             s.spawn(|| {
                 for _ in 0..200 {
                     for (part, blob) in store.memo_entries(&space, &copied_parts, true).unwrap() {
-                        assert!(blob.bytes.iter().all(|&b| b == 1), "copied part {part} read bytes another entry was put with");
+                        assert!(blob.bytes.bytes().iter().all(|&b| b == 1), "copied part {part} read bytes another entry was put with");
                     }
                 }
             });
@@ -2185,7 +2186,7 @@ mod tests {
         let all: Vec<i64> = (0..20).flat_map(written).collect();
         let read = store.memo_entries(&space, &all, true).unwrap();
         assert_eq!(read.len(), all.len());
-        assert!(read.values().all(|b| b.bytes.iter().all(|&x| x == 2)), "each entry put on the copy reads back as put");
+        assert!(read.values().all(|b| b.bytes.bytes().iter().all(|&x| x == 2)), "each entry put on the copy reads back as put");
     }
 
     /// Q19: a new process reads before its run's first wave, of its cross part's space, the frames of the identities
