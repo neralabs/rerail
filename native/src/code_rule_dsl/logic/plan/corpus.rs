@@ -1427,6 +1427,16 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
             format!("{} distinct requests of {asking} asking programs{}; copies per relation: {}", keys.len(), if per_program { " (RERAIL_REQUESTS=copied)" } else { "" }, most.join(", "))
         });
     }
+    // Programs combined have their node attributes answered on request over the combined program (below), each
+    // part's own requests undone first: before hiding, which copies a relation's rules into its grammar-scoped copies
+    // (`rr_in_<g>_token`). Undone after it, the copies kept the answer's rules, reading the request's inputs
+    // (`rr_token_anon`) that the undo no longer declared, and the combined program had nothing to answer them (Q67,
+    // the data-layer pack).
+    if parsed.len() > 1 {
+        for p in parsed.iter_mut() {
+            crate::code_rule_dsl::logic::rr::lower::undo_on_request(p);
+        }
+    }
     // A run that makes guests bounds each program's rules to the documents it shows (decision 0058 §1); a run that
     // makes none is left as written. With the libraries once, the combined program is bounded once (below).
     if makes_guests && !shared {
@@ -1462,9 +1472,7 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
     if let Some(l) = library.as_mut() {
         crate::code_rule_dsl::logic::rr::lower::undo_on_request(l);
     }
-    for p in parsed.iter_mut() {
-        crate::code_rule_dsl::logic::rr::lower::undo_on_request(p);
-    }
+    // Each part's own requests were undone before hiding (above).
     // The library, when held once, is the first part: its names are the run's (decision 0089 §2).
     let units = library.into_iter().map(|l| (None, l)).chain(parsed.into_iter().enumerate().map(|(i, p)| (Some(i), p)));
     for (unit, mut prog) in units {
@@ -1638,6 +1646,8 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
 /// The requests `sources_on_request` made, narrowed where the split finds them cross-file to the asked node's own
 /// document (`file_local::requests_file_local`): a node's attribute is its document's, answered in its chunk while
 /// the chunk's batch holds the text (O-cross-file-answers). Run on the program that runs, once its requests are made.
+
+
 fn requests_file_local(prog: &mut crate::code_rule_dsl::logic::front::ast::Program) {
     if std::env::var("RERAIL_NODE_SOURCES").is_ok_and(|v| v == "eager") {
         return;

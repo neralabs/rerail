@@ -1324,6 +1324,26 @@ fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
     assert!(findings.contains("PYI062") && findings.contains("PYI059"), "both rules' findings: {findings}");
 }
 
+/// Programs combined that make guests are each hidden alone; each part's on-request rewrite (decision 0174) is undone
+/// before that, not after: hiding copied `token`'s answer rules into its grammar-scoped copy (`rr_in_<g>_token`),
+/// the undo then dropped the inputs they read (`rr_token_anon`, `rr_token_named`), and the combined run failed on an
+/// undeclared relation (Q67: these three of the data-layer pack, on any file).
+#[test]
+fn programs_hidden_alone_keep_their_attribute_copies_declared() {
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("token-copies");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/a.py"), "def f(x: int) -> int:\n    if x is not None:\n        return 1\n    return 0\n").unwrap();
+    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/packs/data-layer/candidates/datalog/authored");
+    let programs: Vec<String> = ["data-layer-schema-bootstrap-contracts.rr", "data-layer-unresolved-forward-refs.rr", "data-layer-versioned-merged-identity.rr"]
+        .iter()
+        .map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap())
+        .collect();
+    let ran = super::run_all(&programs.iter().map(String::as_str).collect::<Vec<_>>(), &dir.join("src"), &dir.join("out"), "program", Binding::Cpu, 1 << 18);
+    let _ = std::fs::remove_dir_all(&dir);
+    ran.unwrap();
+}
+
 /// A text test over `node_text` that a cross-file relation reads (`passes` reads `uses`, which joins two files) gives
 /// a run's outputs with an empty store after each edit, and no cross-file stratum made natively is derived again.
 /// The request for the text is narrowed to the node's own document (0286), so the text is answered, and tested, in
