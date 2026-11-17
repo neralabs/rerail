@@ -580,6 +580,13 @@ step 3 replaces what is under the writer.
      edited policy's rules out, its new ones in). The preparation pipeline runs `again` from its stored run. Each
      pass reruns on the delta, or maintains what it reads, or runs whole where it must. ep2 is measured once, at the
      end.
+     *Done (2026-11-17, decision 0333):* a pipeline's run, its versions and its step inputs' analyses are stored
+     facts; the next process opens them through the root's newest manifest, rebases its input onto the last one's
+     (`manager::rebase`), and runs `again`. `preparation::front` and `preparation::run` do. ep2's edit: preparation
+     2.24 s, the run 10.3 s CPU (0333's Measured section). A rerun is an edit of the last run only up to its first
+     program pass, which runs whole and breaks the chain: the gain waits on the program passes writing onto the last
+     run's outputs. Two version passes found differing from the tree's on the 317 rules, and fixed (the split over
+     an undeclared axis; hide's copy of a negated rows read).
    - **7b–7c**: `rr::lower`'s per-clause half as rule passes, the loader writing versions; `front::Program` deleted.
    - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
