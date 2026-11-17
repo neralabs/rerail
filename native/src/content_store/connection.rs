@@ -484,14 +484,10 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     // Reads through a map of the file (the OS's page cache, shared by every connection and not the process's own
     // memory), not `pread` into the 1 MB cache: with the map off, a one-file edit spent 0.5 s in `pread`, the writer's
     // index descents reading the same pages again. `RERAIL_STORE_MMAP_MB` sets the map's bound (0: off).
-    static MMAP: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
-    let mmap = *MMAP.get_or_init(|| {
-        std::env::var("RERAIL_STORE_MMAP_MB")
-            .ok()
-            .and_then(|v| v.parse::<i64>().ok())
-            .unwrap_or(4096)
-            << 20
+    static MMAP: std::sync::LazyLock<i64> = std::sync::LazyLock::new(|| {
+        mmap_bytes(std::env::var("RERAIL_STORE_MMAP_MB").ok().as_deref())
     });
+    let mmap = *MMAP;
     connection.pragma_update(None, "mmap_size", mmap)?;
     connection.pragma_update(None, "journal_size_limit", 16_777_216_i64)?;
     // Temporary B-trees (a statement's materialized CTEs and sorts, the prefilter's stages) stay
@@ -508,6 +504,18 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     // committed rows (decision 0049).
     super::atoms::Atoms::install(connection)?;
     Ok(())
+}
+
+/// The store map's bound in MB when `RERAIL_STORE_MMAP_MB` does not set it: 4 GB, and none on Windows, which keeps
+/// the map off as every platform had it before.
+const DEFAULT_MMAP_MB: i64 = if cfg!(windows) { 0 } else { 4096 };
+
+/// The store map's bound in bytes for a `RERAIL_STORE_MMAP_MB` setting: the MB it names, or `DEFAULT_MMAP_MB`.
+fn mmap_bytes(setting: Option<&str>) -> i64 {
+    setting
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(DEFAULT_MMAP_MB)
+        << 20
 }
 
 /// SQLite's memory from jemalloc, the process's allocator, once and before SQLite initializes (it
@@ -912,5 +920,28 @@ impl Cached for Connection {
 
     fn execute_cached<P: rusqlite::Params>(&self, sql: &str, params: P) -> rusqlite::Result<usize> {
         self.prepare_cached(sql)?.execute(params)
+    }
+}
+
+#[cfg(test)]
+mod mmap_tests {
+    use super::mmap_bytes;
+
+    #[cfg(not(windows))]
+    #[test]
+    fn the_store_is_mapped_up_to_4_gb_by_default() {
+        assert_eq!(mmap_bytes(None), 4096 << 20);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_store_is_not_mapped_by_default_on_windows() {
+        assert_eq!(mmap_bytes(None), 0);
+    }
+
+    #[test]
+    fn rerail_store_mmap_mb_sets_the_bound_on_every_platform() {
+        assert_eq!(mmap_bytes(Some("64")), 64 << 20);
+        assert_eq!(mmap_bytes(Some("0")), 0);
     }
 }
