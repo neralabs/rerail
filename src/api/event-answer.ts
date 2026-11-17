@@ -5,6 +5,7 @@
 import type { AdapterDelivery, AdapterEvent, AdapterSession, EventAnswerFacts, SessionNoteRules } from "../engine/adapter-contract.js";
 import { checkoutRealpath } from "../engine/catalog/checkout-control.js";
 import type { ApiCaller } from "../engine/catalog/repository-model.js";
+import { LOOPBACK_HOSTNAMES } from "./http.js";
 import { invokeOperation, type RerailApiStores } from "./operation.js";
 import { operations } from "./operations.js";
 import { presentationReadSchema, rulesDashboardUrl, type PresentedSession, type RulesDashboardScope } from "./presentation-contracts.js";
@@ -13,16 +14,13 @@ import { resolveTarget } from "./repository-operations.js";
 /** The hook's reads come through `/api`, whose callers are people. */
 const PERSON: ApiCaller = { kind: "person" };
 
-/** The hosts a link may send a browser to, as the hook rules for the daemon.json URL it reads (`verifyDaemon`). */
-const LOOPBACK_HOSTS = new Set(["127.0.0.1", "[::1]", "localhost"]);
-
 /**
- * The origin of the dashboard at the daemon's own `url` (`http(s)://<host>:<port>/`) that a hook may link to, or null
- * where it listens on a host a browser should not be sent to (`0.0.0.0`).
+ * The origin of the daemon's dashboard that a hook may link to, or null where it listens on a host a browser should not
+ * be sent to (`0.0.0.0`), as the hook rules for the daemon.json URL it reads (`verifyDaemon`).
  */
-export function linkableDashboardOrigin(url: string): URL | null {
-  const origin = new URL(url);
-  return LOOPBACK_HOSTS.has(origin.hostname) ? origin : null;
+function linkableOrigin(stores: RerailApiStores): URL | null {
+  const origin = new URL(stores.dashboardOrigin());
+  return LOOPBACK_HOSTNAMES.has(origin.hostname) ? origin : null;
 }
 
 /** The repository and checkout `/api/repository?checkout=` names for `cwd`; null where Rerail does not know it. */
@@ -65,29 +63,30 @@ function sessionRuleCount(answered: PresentedSession | null | undefined, { host,
 
 /**
  * The dashboard of the answer to `event` where the hook links something of it (the session-start note, a rule or a
- * conflict): null where the daemon has none to open (`origin`). Nothing for an answer with nothing to link.
+ * conflict): null where the daemon has none a browser may open. Nothing for an answer with nothing to link.
  */
 function answerDashboard(
-  stores: RerailApiStores, origin: URL | null, event: AdapterEvent & { session: AdapterSession }, deliveries: readonly AdapterDelivery[],
+  stores: RerailApiStores, event: AdapterEvent & { session: AdapterSession }, deliveries: readonly AdapterDelivery[],
 ): EventAnswerFacts {
   const links = event.kind === "session-start" || deliveries.some(delivery => delivery.rules.length > 0 || delivery.conflict !== undefined);
   if (!links) return {};
+  const origin = linkableOrigin(stores);
   return { dashboard: origin === null ? null : checkoutDashboard(stores, origin, event.session.cwd) };
 }
 
 /**
- * The facts of the answer to `event`: the dashboard where the hook links something (`origin` null where the daemon
- * has none to open), and at a session's start what its note says of its rules. Empty for an event that names no
- * session, and undefined where a read fails: the hook then reads as it did before the answer carried them.
+ * The facts of the answer to `event`: the dashboard where the hook links something, and at a session's start what its
+ * note says of its rules. Empty for an event that names no session, and undefined where a read fails: the hook then
+ * reads as it did before the answer carried them.
  */
 export async function eventAnswerFacts(
-  stores: RerailApiStores, origin: URL | null, event: AdapterEvent, deliveries: readonly AdapterDelivery[],
+  stores: RerailApiStores, event: AdapterEvent, deliveries: readonly AdapterDelivery[],
 ): Promise<EventAnswerFacts | undefined> {
   const session = event.session;
   if (session === undefined) return {};
   try {
     return {
-      ...answerDashboard(stores, origin, { ...event, session }, deliveries),
+      ...answerDashboard(stores, { ...event, session }, deliveries),
       ...(event.kind === "session-start" ? { sessionNote: await sessionNoteRules(stores, session) } : {}),
     };
   } catch {
