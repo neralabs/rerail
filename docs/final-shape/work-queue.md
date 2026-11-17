@@ -1172,6 +1172,35 @@ pass.
     copy had; base inputs' views are unchanged. Each view also takes its input's column statistics
     (`Run::view_stats`). After: 6.19–6.27 s against 5.96–6.10 s. What is left is the same work at 20–50% more CPU per
     unit in a few strata (`ruff_safe_operand`, `type_bare`): rows read through the source, not flat.
+  - Then held as flat rows, not in place (user: the view must be a net speed improvement). Read in place, every
+    reader's row went through the source (its document located, a kind's dialect looked up), and the readers read
+    more rows than the relation holds. `hold_view` now reads the input's columns once, document by document
+    (`Source::rows_of`), into flat rows the readers read as the copy's: no stratum, component, join, set or index
+    is made for it. The 64-row index rule above is dropped with it (held views are flat; the reach index's source
+    views are as before). Kept part: such a relation is `viewed`, never kept. fixtures/python cold, two rounds on
+    m1max (load about 8): 5.68 and 5.94 s of strata CPU against the copies' 6.09 and 6.03 s; user 13.05 and 13.34
+    s against 13.44 and 13.47 s. Outputs equal as sets (660), the warm run writes nothing.
+  - **Correction** (a profile per stratum, then the 300-file corpus `bench/step-vs-main/corpus0`). On
+    fixtures/python the copy of `kind` was 0.05 s of 6.8 s (52,657 rows): the 2–7% above was the host's load, not
+    the change. On corpus0 `kind` held flat costs 0.03 s against the copy's 0.35 s (its stratum and `kind__sup0`),
+    every round, and reading every view's rows 0.10 s (316 views) — but the whole run was slower, 49.1 s of strata
+    CPU against 46.8 s, its plans moved (`node_text` 0.07 → 0.64 s). The cause: a copy's readers plan with its live
+    statistics (`live_stats`: each column's sketch and, for a column of few values, every value's exact count, the
+    complete `kind` histogram `kind_frequency` holds authoritative). The view was given the input's column
+    statistics instead (`Run::view_stats`), with `node`'s postings, which hold no constant the program tests on
+    `kind` (`kind(x, "call")`): such a probe was priced as the average kind.
+  - Now `hold_view` sketches the view's columns as a stratum's relation does its rows (`indexed_to_n`: a job a
+    column over `SPANNED_ROWS`) and the planner takes them through `live_stats`, so a view's statistics are its
+    copy's by construction; `Run::view_stats` is gone. `a_views_statistics_are_its_copys` pushes the same rows
+    into a relation as a stratum would and compares its live statistics, both sizes. corpus0, two rounds a side
+    (load 8–24): 43.5 and 48.0 s of strata CPU against 49.7 and 47.3 s; planned work 440.7 and 442.0 M against
+    443.9 and 443.6 M (the copy's own 2.3 M gone). Two copy runs differ by 2.4 s and 5% of work between
+    themselves, so the totals cannot show the 0.3 s; the per-stratum costs and equal statistics are the evidence.
+    Outputs equal as sets (660), the warm run writes nothing. `retain`'s gated-reuse test now expects the views'
+    rules (`docof`, `kind`) left in a reused program, as 6fe55cb12 made them; it had failed since then.
+  - Not done: hogql (3.5 M rows of `kind`) is not in this worktree. Lookups on the flat rows build their own
+    orders, where `node`'s source answers by node and by kind already; rows are one per source row, so the
+    source's row numbers are the view's, and its lookups could serve the view's probes.
 
 ### Q38. (Q32 on Native-and-GPU-strata at e75b66095) A kind-set axis's tape code set counted ERROR nodes as members
 
@@ -1591,6 +1620,19 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
   - `transformed_candidate_rejection_precedes_accepted_witness_limits`
   - `typed_output_preserves_late_operand_failures_without_publishing_failed_evaluations`
 
+### Q57. The warm run after a cold one asks the observer's store inside the waves (the hub, 8e4b6b68e)
+
+- **Found** (2026-11-16, django-bugs after merging the hub at 8e4b6b68e, and 8e4b6b68e alone, both on the m3):
+  `the_run_after_a_cold_one_writes_nothing` fails. Its warm child run exits 3 with "the observer's store not asked
+  inside the waves in a warm run (…/src: its answers unknown, read again)", twice. The backtrace:
+  `observe::load_under` <- `ensure` <- `watch` (observe.rs) <- `World::new` (corpus/world.rs, `o.watch(&watched)`)
+  <- the requests answered inside the fixpoint (corpus.rs, `world::World::new(root, &prog)`). So the corpus root's
+  part of the store was not read before the waves in the warm run, and the requests' world watches it inside them.
+  The hub's record of the test passing (b40d89145) is before the merges of d5cc33981 (a stat-known file's digest from
+  its text, not SQL in the waves), 05e2bbf6a and 17417fb8f (Q45: racy answers settled at a run's end), the
+  candidates for what stopped reading the root first.
+- **Done when**: the warm child run exits 0. Either the root's part is read before the waves wherever the requests'
+  world will watch it, or the world watches it before they start.
 ### Q51. (Q47 at 8bfa12af6) W's reference graph parses every file a second time (39% of internal_dead_code's CPU)
 
 - **Found** (2026-11-16, t41 §2): `references::add_file` parses again with tree-sitter and runs W's
@@ -1873,3 +1915,122 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   tree; the other four are small.
 - **Done when**: each check reads the version (an analysis, or a check over its rules and header), a debug build
   checks it refuses what the tree's refuses, and `link_seeded_version` decodes no tree.
+
+### Q58. 0325's FACTS blocks raise a CPU run's footprint, and the memory line cuts a third more chunks
+
+- **Status** (2026-11-17): done, both parts (decision 0325, "A chunk's blocks, and a CPU run's"): chunks
+  2,797 and 2,982, user CPU 205.5 and 217.8 s, median footprint 1,189 and 1,194 MB; about 35 MB left (bump-allocated
+  blocks keep a dropped relation's pages until the chunk ends).
+
+- **Found** (2026-11-17, after merging Native-and-GPU-strata a3f9c49f2 at 49dad1939): PostHog cold on the M3, CPU
+  binding, profiled, alternated with the engine just before the merge (ec3a74a87): user CPU 210.8 and 204.1 s before,
+  224.6 and 224.6 s after, at the same instructions (2,810 and 2,691 G against 2,837 and 2,648 G). Findings the same.
+- **Cause**: the run evaluates 3,409 chunks against 2,563, every stratum and guest round once a chunk. Both builds
+  cut nearly every chunk to `MIN_CHUNK_NODES` once the footprint passes `RUN_MB` (1 GB), but the merged build gets
+  there sooner: its median footprint is 1,306–1,382 MB against 1,155–1,161. Its jemalloc heap is ~80 MB smaller;
+  the rise is the relations' FACTS blocks (`setfix::rows::lease`, 64 MB each, leased from the GPU pool's spare room as
+  pinned no-copy buffers): Metal driver memory 256–320 MB median (512 at most), relational leases 192–256 MB median
+  (688 at most), 64 MB idle. A block lives while any relation in it does, so a chunk's survivors keep blocks that
+  later chunks' rows left mostly empty, and the run's footprint counts them whole.
+- **Checked**: with the memory line lifted (`RERAIL_RUN_MB=8000`) both builds cut ~170 chunks, and the merged one is
+  cheaper: 196.7 s and 2,382 G against 208.6 s and 2,696 G (0325's in-place reads), at a peak of 2,917 MB against
+  2,297.
+- **Done when**: a CPU run's footprint is no higher than before 0325 at the same chunking, and the cold run's chunk
+  count is back to about 2,560. The shape the decisions already name: a chunk is a block (0289), so a chunk's
+  relations go in its own block, released with the chunk, and only what outlives it (exports, kept rows) is frozen
+  into a long-lived block; and a CPU-only run takes anonymous blocks, not pinned device buffers, which the memory
+  line can then count by what is touched.
+
+### Q59. A demanded relation's rule sometimes keeps a plan that reads its demand last: +600 G a run
+
+- **Found** (2026-11-17, M3, PostHog cold, the memory line lifted, alternated runs): the 0325 engine retired
+  2,407–2,552 G in five runs; the current one 2,428–2,620 G in five, and 3,115 and 3,156 G in two. In the outlier
+  (against a normal run of the same build) all the extra is in the chunks' evaluation (+635 G, +60 s CPU), in three
+  strata: `xk_fz2220395310_fl3512803032_violation_3` 0.16 → 19.0 s, `xk_fz3398261162_…_rr_diagnostic_…_2` 0.12 →
+  16.2 s, `fzk2220395310_fl3512803032_violation` 1.3 → 15.6 s, at the same calls.
+- **Cause**: the demand split (decision 0048) is the same in both runs, and the demanded rule's body starts from its
+  demand (`overlaid`), but nothing keeps it there: the planner reordered it. Normal: `demand_xk…($v), node, line,
+  col, fzk…` (170 rows in, 33,629 between steps, summed over the chunks). Outlier: `col, node, fzk…, line,
+  demand_xk…($v)` (29.2M rows between steps). The plan cache (decision 0038) re-prices a kept order per chunk and
+  searches again only when its work per node grows over 4x; a bad first order costs the same per node in every
+  chunk, so it is kept the whole run.
+- **Not yet known**: why the first chunk's search chose it (which sizes it saw for the demand relation).
+- **Fixed** (2026-11-17): the demand atom is the driver of a demanded relation's rule (`Body::demand_first`), and
+  a kept plan not led by it is searched again (`valid_live_driver`); decision 0048's last section. Test
+  `a_demanded_rule_is_driven_by_its_demand`. Two PostHog runs: every demanded plan led by its demand (the outlier
+  run: 19 of 24 not), 2,531 and 2,509 G, findings the same.
+
+### Q92. (Q60 on django-bugs) A run's plans depend on which concurrent chunk planned first
+
+- **Found** (2026-11-17, from Q59): the run's kept plans (`PLANS`, decision 0301) are shared by the chunks that run at
+  once (15 on PostHog). A job plans with its own chunk's statistics, keeps the order in its own map
+  (`OWN_PLANS`) and publishes it as it ends; a job that finds a published order re-prices it and keeps it unless its
+  work per node grew over 4x. Which job publishes first is thread timing, so the orders a run uses, and its cost,
+  differ run to run (Q59: +600 G in 2 of 7 runs). Findings do not. `plans_learnt` (a kept plan's price and work) is
+  last writer wins as well.
+- **Wanted**: what a chunk plans with is a function of the run's inputs, never of timing.
+
+### Q93. (Q61 on django-bugs) The fast path's peak, by holder (PostHog cold, the memory line lifted)
+
+- **Done** (5920ecb84): a kind-set axis's batch solve (every node's chain of member ancestors, as pairs) was made
+  only for the guest rounds' input digest (`len`) and their new documents' rows (`owners_delta`): 780 MB, then 348
+  MB of the live heap at the peak. The chunks' peak 2,330–2,518 MB → 2,075 MB; page faults 2.42 M → 1.67 M.
+- **Now the peak** (2,263–2,304 MB in every run, before and after): the cross part's last second, while
+  `retain`'s "the kept part's changes, to the frames" encodes each kept relation's frame (two jobs at once): the
+  footprint 1,816 → 2,304 MB, and 800 MB freed but still resident half a second after. Live as the cross part
+  starts: 1,140 MB, of which at the peak `export to cross/hold the export` 288 MB, the store writer's atoms held 138
+  MB, `an input's frames` 109 MB, `cross` 105 MB, `text tests` (a chunk's projection) 57 MB, `record stats` 42 MB.
+  Host blocks 287 MB.
+- **Done** (1a54c6354, 4dd9bba9e): every frame `write_frames` makes is read from its relation or input a window at a
+  time and encoded straight into the write's segments (`FramePlacer`); an input's granules are grouped by row id;
+  `columns_source` trims its columns. The cross part's peak 2,263–2,304 → 1,830 MB; the frame jobs raise the
+  high-water mark by 0 MB; a warm run reads the frames back, findings the same.
+- **Left in the cross part** (`RERAIL_HEAP_AT=cross/session`, 1,329 MB live at 1,830 MB footprint): the exports
+  198 MB (its input, trimmed); the store writer's atoms held as stored 138 MB (+35 MB SQLite); the cross part's
+  statistics from the chunks' totals 118 MB (per-value frequency maps, held for the whole part: a cap to the most
+  common values is a statistics decision); `cross` 106 MB; the text tests' memo 50 MB (a `HashMap<u32, Box<[u64]>>`,
+  one box per distinct string, most passing no test); `record stats` 44 MB; atoms interned 36 MB.
+- **The run's peak** is the chunks' again: 2,159–2,227 MB (was 2,330–2,518).
+- Scripts: `working-data/m3/{peak,phases,timeline}.py`.
+- **Done: the totals keep per value only what the planner reads** (2026-11-17). The 118 MB of per-value counts and
+  `cross`'s 106 MB were one thing: every distinct value of every export column, counted (`Totals::vals`), applied into
+  `Stats::memo` (about 80 B a value in its `HashMap<(String, Constant), i64>`), and copied again into each input's
+  kept statistics (`input_stats`, by `of_relation`/`of_columns`). The planner reads per-value counts only by a
+  program's constant (`binding_domains`, `memo.get(&(col, k))`) and whole value sets of columns of 64 values or
+  fewer (`small_values`): `Totals::apply` now keeps those two and no others (`SMALL_NDV`); each column's moments are
+  still of all its values. Test: `the_totals_keep_per_value_counts_only_for_what_the_planner_reads`.
+  M3, PostHog cold, the memory line lifted, at load 32–44 (others' builds; CPU and instructions not comparable): the
+  cross part's live heap 1,344 → 1,138 MB, its most footprint 1,826 → 1,658 MB; both holders gone from the list.
+  Findings 29,747, the same hash. The cross strata's plans: the same steps and scanned rows; their planned and done
+  work differ from the run before exactly as two runs of the old code differ (Q92's timing: `P__sup0` 32/33, a few
+  rows of work).
+- **Done: the totals' value columns sketched** (user: HyperLogLog, 2026-11-17; decision 0096's last section): exact
+  to 64 values and for tested ones, else HyperLogLog and AMS. The totals held 0.3 MB through the chunk phase (was
+  68 MB); findings and the cross plans the same.
+- **The exports' encoding, measured** (2026-11-17, `RERAIL_EXPORT_ENCODINGS=1`, PostHog cold): held as `Vec<i64>`
+  columns, 8 B a value, 220 MB (9.5 M rows of 17 exports; plus, during the chunks, the set that keeps rows distinct).
+  Packed by `rerail_blocks::col` (MLDB's `RawMappedIntTable` choices, the blocks crate's port):
+
+  | form | MB |
+  |---|---|
+  | held | 219.8 |
+  | packed, rows as held, best of whole and ranges of 4,096 | 117.1 |
+  | rows in canonical order, ranges of 4,096; a node column split at the granule | 53.0 |
+
+  - Node columns: 85.8 → 30.4 MB (2.8 B a value). A node id is `document << 32 | slot << 18 | index`
+    (`syntax::DefIds`, by definition, not preorder): a document's nodes spread over 2^14 slots, so a split at 32
+    bits saves little (4.1 B); at 18 bits, sorted, the granule is runs and the index small.
+  - Value columns (symbols, atoms, ints): 134.0 → 22.7 MB (1.35 B a value); columns a row's node determines go to
+    ~0.1 B sorted.
+  - Unsorted, ranges barely help: rows are appended chunk by chunk, so each range spans the whole id space.
+  - Of MLDB's other forms: factored packing (at most a third at some widths) and per-range predictor clusters with
+    selectors (`MappedIntTable`) find no linear structure in ids or symbols here; not worth it for exports.
+- **Next for the exports (proposed):** freeze each export at `source()` into a packed relation
+  (`rerail_blocks::packed`: canonical order, a column an `IntCol`), with two additions to the blocks crate's
+  columns, shared with the sibling workstreams that use them: an `IntCol` per range of 4,096 rows with a range
+  directory (MLDB's ranges; a read is a shift to the range, then the extract), and a node column stored as two
+  columns split at the granule (0095 §6's stratified ids). Rows deduplicated by the freeze's sort instead of the
+  hash set kept through the chunks. 220 → about 55 MB held through the cross part, read in place.
+- **Found, not mine:** `corpus::tests::a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test` (4 files
+  held open after it) and `the_run_after_a_cold_one_writes_nothing` (a warm run records a manifest and commits a
+  write) fail at 2fd15f524 too, on the M3 farm host.

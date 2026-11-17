@@ -1764,7 +1764,8 @@ pub(in crate::code_rule_dsl) fn general_of(atoms: &Arc<Version>, v0: &Placed, id
 /// waves by leave (`profile::read_in_waves`, the user's call, 2026-11-16: a reached stratum's key is known only once
 /// the run reaches it), and written, with the pins of what it read, behind the run.
 pub(in crate::code_rule_dsl) struct StoredForms<'s> {
-    store: &'s crate::content_store::ContentStore,
+    /// None for a run that keeps no forms (a chunk's guest rounds, decision 0331): each reached stratum's form is made.
+    store: Option<&'s crate::content_store::ContentStore>,
     /// The run's version's atoms and relations alone (`Builder::under`), which every form is an overlay of: a form is
     /// stored as its own layers over them, so it holds its own names alone, not the part's, and is opened over them.
     atoms: std::cell::OnceCell<Arc<Version>>,
@@ -1810,7 +1811,11 @@ fn apply_form(cx: &crate::content_store::record::Apply<'_>, body: crate::content
 
 impl<'s> StoredForms<'s> {
     pub(in crate::code_rule_dsl) fn new(store: &'s crate::content_store::ContentStore) -> StoredForms<'s> {
-        StoredForms { store, atoms: Default::default(), identity: Default::default(), held: Default::default(), found: Default::default(), writing: Default::default() }
+        StoredForms { store: Some(store), atoms: Default::default(), identity: Default::default(), held: Default::default(), found: Default::default(), writing: Default::default() }
+    }
+    /// Forms neither read nor kept: each is made where it is reached.
+    pub(in crate::code_rule_dsl) fn unstored() -> StoredForms<'s> {
+        StoredForms { store: None, atoms: Default::default(), identity: Default::default(), held: Default::default(), found: Default::default(), writing: Default::default() }
     }
     /// The part `v0` whose forms the run reads, and the atoms they are overlays of (`Builder::under(v0)`, made once by
     /// the run: the first set is every form's): the forms' identity, their keys' start.
@@ -1861,8 +1866,8 @@ impl<'s> StoredForms<'s> {
 impl Drop for StoredForms<'_> {
     fn drop(&mut self) {
         let held = std::mem::take(self.held.get_mut());
-        if !held.is_empty() {
-            self.store.record("the general forms read", Vec::new(), &held, None, apply_read);
+        if let (false, Some(store)) = (held.is_empty(), self.store) {
+            store.record("the general forms read", Vec::new(), &held, None, apply_read);
         }
     }
 }
@@ -1871,7 +1876,7 @@ impl Steps for StoredForms<'_> {
     /// The form stored under `key`, read and opened at once (its source is one read); the record names the opened
     /// form by its key (`open`).
     fn find(&self, key: &StepKey) -> std::result::Result<Option<StepRecord>, String> {
-        let store = self.store;
+        let Some(store) = self.store else { return Ok(None) };
         let found = crate::code_rule_dsl::logic::profile::read_in_waves(|| -> std::result::Result<_, crate::content_store::StoreError> {
             let Some(id) = store.source_by_alias(form_alias(key))? else { return Ok(None) };
             Ok(Some((store.get_source(id)?, id)))
@@ -1890,9 +1895,10 @@ impl Steps for StoredForms<'_> {
     /// Its record and layers (`source`), queued for the store's writer (decision 0102): no wave waits for it.
     fn keep(&self, key: &StepKey, _: &StepRecord, output: &Version) -> std::result::Result<(), String> {
         let record = self.writing.borrow_mut().take().ok_or("a general form kept without its record")?;
+        let Some(store) = self.store else { return Ok(()) };
         let bytes = self.source(&record, output)?;
         // In the run's record (decision 0306): stored once under its alias, and named so collection keeps it.
-        self.store.record("a general form", Vec::new(), &key.as_slice().to_vec(), Some(bytes), apply_form);
+        store.record("a general form", Vec::new(), &key.as_slice().to_vec(), Some(bytes), apply_form);
         Ok(())
     }
 }

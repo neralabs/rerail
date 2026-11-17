@@ -884,18 +884,29 @@ impl ContentStore {
 
     /// `queue_frames_retagged` of frames encoded as they were made (`Put::encoded`); its deltas are encoded here.
     pub fn queue_encoded_retagged(&self, space: [u8; 32], frames: Vec<Encoded>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
-        self.queue_encoded_as(space, frames, retags, deltas, gone, used, super::write_back::Syms::Mapped)
+        self.queue_encoded_as(space, frames, retags, deltas, gone, used, super::write_back::Syms::Mapped, None)
+    }
+
+    /// A placer for a write of about `entries` frames, about `estimate` bytes (`queue_placed_retagged`).
+    pub fn frame_placer(&self, entries: usize, estimate: usize) -> FramePlacer {
+        FramePlacer { w: std::sync::Mutex::new(super::segments::SegmentWriter::new(&frame_dir(&self.database_path), entries.max(1), rerail_blocks::journal::reserve_for(entries.max(1), std::iter::once(estimate), super::segments::ALIGN))) }
+    }
+
+    /// `queue_encoded_retagged` of frames some of which `placer` holds placed (`Put::placed_as`): the others are
+    /// placed in its segments after them.
+    pub fn queue_placed_retagged(&self, space: [u8; 32], frames: Vec<Encoded>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, used: Option<Used>, placer: FramePlacer) {
+        self.queue_encoded_as(space, frames, retags, deltas, gone, used, super::write_back::Syms::Mapped, Some(placer))
     }
 
     /// `queue_encoded_retagged` for frames keyed by this process's numbering of symbols: rows whose untyped columns,
     /// parts or digests are of atoms (the retained part's documents and granules). The store can map a typed value,
     /// not a key: after a fork (decision 0170) they are not written, and the next run derives them again.
     pub fn queue_encoded_keyed_by_symbols(&self, space: [u8; 32], frames: Vec<Encoded>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
-        self.queue_encoded_as(space, frames, retags, deltas, gone, used, super::write_back::Syms::Unmapped)
+        self.queue_encoded_as(space, frames, retags, deltas, gone, used, super::write_back::Syms::Unmapped, None)
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn queue_encoded_as(&self, space: [u8; 32], frames: Vec<Encoded>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, used: Option<Used>, syms: super::write_back::Syms) {
+    fn queue_encoded_as(&self, space: [u8; 32], frames: Vec<Encoded>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, used: Option<Used>, syms: super::write_back::Syms, placer: Option<FramePlacer>) {
         // Each delta after its relation's frame as it is now (in memory, queued or stored).
         let mut delta_frames: Vec<Encoded> = Vec::new();
         let mut heads: Vec<(Rel, u64, Vec<(String, u64)>)> = Vec::new();
@@ -932,7 +943,7 @@ impl ContentStore {
         let bytes: usize = frames.iter().chain(&delta_frames).map(|e| e.frame.encoded_bytes()).sum();
         // The frames' bytes in segments of their own (decision 0295 §1): placed here, by the run, so the snapshot,
         // the queue's readers and the writer share them mapped, the OS's pages, not the run's memory.
-        let (frames, delta_frames, segments) = self.place_frames(frames, delta_frames, bytes);
+        let (frames, delta_frames, segments) = self.place_frames(frames, delta_frames, bytes, placer);
         let composed: Vec<(Rel, Arc<Admitted>)> =
             chained.into_iter().zip(&delta_frames).map(|((rel, now, head, ng, na), delta)| (rel, Arc::new(now.with_delta(head, Arc::clone(&delta.frame), ng, na)))).collect();
         // What a large write of frames holds, by relation (profiling only): what makes the store's writes large.
@@ -1088,19 +1099,30 @@ impl ContentStore {
     /// `frames` and `deltas` with their bytes placed in new segments of the store's frame directory, each frame then
     /// reading them there (`Bytes::Mapped`), and the segments, sealed, for the writer. Frames without bytes, or a
     /// write whose segments cannot be made (no room on disk: the frames stay in memory, written inline), are left.
-    fn place_frames(&self, frames: Vec<Encoded>, deltas: Vec<Encoded>, bytes: usize) -> (Vec<Encoded>, Vec<Encoded>, Option<super::segments::SealedSegments>) {
-        let encoded = |e: &Encoded| matches!(e.frame.data, Data::Encoded { store: None, .. });
+    /// With `placer`, the frames it placed already (`Put::placed_as`) are its entries, and the others are placed after
+    /// them in its segments; one no segment takes stays on the heap, written from there.
+    fn place_frames(&self, frames: Vec<Encoded>, deltas: Vec<Encoded>, bytes: usize, placer: Option<FramePlacer>) -> (Vec<Encoded>, Vec<Encoded>, Option<super::segments::SealedSegments>) {
+        let encoded = |e: &Encoded| e.place.is_none() && matches!(e.frame.data, Data::Encoded { store: None, .. });
         let n = frames.iter().chain(&deltas).filter(|e| encoded(e)).count();
-        if n == 0 {
+        let mut w = match placer {
+            Some(p) => p.w.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner),
+            None if n == 0 => return (frames, deltas, None),
+            None => super::segments::SegmentWriter::new(&frame_dir(&self.database_path), n, rerail_blocks::journal::reserve_for(n, std::iter::once(bytes), super::segments::ALIGN)),
+        };
+        if n == 0 && w.len() == 0 {
             return (frames, deltas, None);
         }
-        let mut w = super::segments::SegmentWriter::new(&frame_dir(&self.database_path), n, rerail_blocks::journal::reserve_for(n, std::iter::once(bytes), super::segments::ALIGN));
-        let mut at = 0;
+        let mut at = w.len();
+        let mut room = true;
         let mut placed = Vec::with_capacity(frames.len() + deltas.len());
         for e in frames.iter().chain(&deltas) {
-            if let Data::Encoded { bytes, store: None, .. } = &e.frame.data {
+            if e.place.is_some() {
+                placed.push(e.place);
+            } else if room && let Data::Encoded { bytes, store: None, .. } = &e.frame.data {
                 if w.put(bytes.len(), e.part, &[0; 32], |out| out.copy_from_slice(bytes)).is_err() {
-                    return (frames, deltas, None);
+                    room = false;
+                    placed.push(None);
+                    continue;
                 }
                 placed.push(Some(at));
                 at += 1;
@@ -1524,9 +1546,54 @@ impl Put {
     pub fn encode_rows(rows: &Rows) -> Vec<u8> {
         super::cross_rows::encode(rows.types.len(), &rows.rows)
     }
+    /// A frame whose bytes a write's placer holds already (`FramePlacer::place_rows`): queued with that placer
+    /// (`queue_placed_retagged`), its bytes are read where they were written.
+    pub fn placed_as(rel: Rel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, n: usize, placed: Placed) -> Encoded {
+        let data = Data::Encoded { types, n, bytes: Bytes::Heap(Arc::new(Vec::new())), store: None };
+        Encoded { rel, part, frame: Arc::new(Admitted { stored: Stored { digest, reads }, data }), place: Some(placed.at) }
+    }
     /// A frame of rows already encoded (`encode_rows`).
     pub fn encoded_as(rel: Rel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, n: usize, bytes: Vec<u8>) -> Encoded {
         Encoded { rel, part, frame: Arc::new(Admitted { stored: Stored { digest, reads }, data: Data::Encoded { types, n, bytes: Bytes::Heap(Arc::new(bytes)), store: None } }), place: None }
+    }
+}
+
+/// A write's frames encoded where they are stored (decision 0295 §1, Q93): its segments' writer, shared by the jobs
+/// that make the frames, each frame's bytes written into its entry as its rows are read. Made whole on the heap
+/// first, every frame of a write was held at once until it was queued: the cross part's frames, the peak of a cold
+/// PostHog run.
+pub struct FramePlacer {
+    w: std::sync::Mutex<super::segments::SegmentWriter>,
+}
+
+/// A frame's place in its write's segments (`FramePlacer::place_rows`).
+pub struct Placed {
+    at: usize,
+}
+
+impl FramePlacer {
+    /// Encodes rows of `width` columns, given a window at a time (`each`, called twice), into the next entry, as
+    /// `encode_rows` encodes them: counted outside the lock, written under it. `None` where no segment takes it
+    /// (the caller encodes it on the heap as before).
+    pub fn place_rows(&self, width: usize, part: i64, each: &dyn Fn(&mut dyn FnMut(&[i64]))) -> Option<Placed> {
+        if width == 0 {
+            return None;
+        }
+        let mut at = None;
+        super::cross_rows::encode_windows(width, each, |len, fill| {
+            let mut w = self.w.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            w.put(len, part, &[0; 32], |out| fill(out))?;
+            at = Some(w.len() - 1);
+            Ok::<(), super::StoreError>(())
+        })
+        .ok()?;
+        Some(Placed { at: at? })
+    }
+
+    /// Tests: a placed frame's bytes, before its write.
+    #[cfg(test)]
+    pub fn placed_bytes(&self, p: &Placed) -> Option<Vec<u8>> {
+        self.w.lock().unwrap().entry_bytes(p.at)
     }
 }
 
@@ -1728,6 +1795,48 @@ mod tests {
         for p in puts.iter().step_by(64) { assert_eq!(got[&p.rel].rows().unwrap(), p.rows); }
         assert!(work.load(Ordering::Relaxed) < 100_000,
             "128 demands must use full-key probes, not scan 8192 stored frames: {} VM instructions", work.load(Ordering::Relaxed));
+    }
+
+    /// A frame encoded straight into the write's segments as its rows come (Q93), a window at a time: its bytes are
+    /// `encode`'s, and it reads back as a frame queued whole does, queued and stored, beside one queued as before.
+    #[test]
+    fn a_frame_placed_as_it_is_encoded_reads_back_as_one_queued_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.sqlite");
+        let (r, s) = (rel("r", 2), rel("s", 1));
+        let width = 3;
+        let values: Vec<i64> = (0..70_000i64).flat_map(|i| [i, -7 * i, (i % 13) << 40]).collect();
+        let n = values.len() / width;
+        let each = |f: &mut dyn FnMut(&[i64])| {
+            for w in values.chunks(1000 * width) {
+                f(w);
+            }
+        };
+        let sorted = |mut x: Vec<i64>, w: usize| -> Vec<Vec<i64>> {
+            let mut rows: Vec<Vec<i64>> = x.chunks_mut(w).map(|c| c.to_vec()).collect();
+            rows.sort();
+            rows
+        };
+        let want = sorted(values.clone(), width);
+        {
+            let store = ContentStore::open(&path).unwrap();
+            let placer = store.frame_placer(2, 1 << 16);
+            let placed = placer.place_rows(width, 0, &each).expect("placed");
+            assert_eq!(placer.placed_bytes(&placed).as_deref(), Some(&super::super::cross_rows::encode(width, &values)[..]), "encode's bytes");
+            let frames = vec![
+                Put::placed_as(r.clone(), 0, 7, vec![("a".into(), 1)], vec![b'i'; width], n, placed),
+                Put { rel: s.clone(), part: 0, digest: 8, reads: vec![], rows: Rows { types: vec![b'i'; 2], rows: vec![1, 2, 3, 4], n: 2 } }.encoded(),
+            ];
+            store.queue_placed_retagged([1; 32], frames, vec![], vec![], vec![], None, placer);
+            let now = store.admit_frames(&[1; 32], &[r.clone(), s.clone()], 0).unwrap();
+            assert_eq!(now[&r].stored, Stored { digest: 7, reads: vec![("a".into(), 1)] });
+            assert_eq!(sorted(now[&r].rows().unwrap().rows, width), want, "queued, in memory");
+            assert_eq!(sorted(now[&s].rows().unwrap().rows, 2), vec![vec![1, 2], vec![3, 4]]);
+        }
+        let store = ContentStore::open(&path).unwrap();
+        let got = store.admit_frames(&[1; 32], &[r.clone(), s.clone()], 0).unwrap();
+        assert_eq!(sorted(got[&r].rows().unwrap().rows, width), want, "stored");
+        assert_eq!(sorted(got[&s].rows().unwrap().rows, 2), vec![vec![1, 2], vec![3, 4]]);
     }
 
     #[test]

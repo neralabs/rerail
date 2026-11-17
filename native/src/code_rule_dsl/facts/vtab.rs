@@ -97,8 +97,24 @@ pub trait Source: Send + Sync {
             *o = self.value(row, c);
         }
     }
+    /// Every row's values of `columns`, row after row, appended to `out`: `row_at` a row at a time by default; a
+    /// view of a batch's documents reads each document's rows in turn, finding no row's place.
+    fn rows_of(&self, columns: &[usize], out: &mut Vec<i64>) {
+        let k = columns.len();
+        out.reserve(self.len() * k);
+        for row in 0..self.len() {
+            let at = out.len();
+            out.resize(at + k, 0);
+            self.row_at(row, columns, &mut out[at..]);
+        }
+    }
     fn estimated_len(&self) -> usize {
         self.len()
+    }
+    /// The rows whose column `g` holds a node `owned` names, where the source finds them without reading every row
+    /// (a view over a batch's documents, by its nodes): `None` when it cannot, and the caller reads them all.
+    fn rows_owned(&self, _g: usize, _owned: &dyn Fn(i64) -> bool) -> Option<Vec<usize>> {
+        None
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize;
     /// A lookup on `column`'s CPU, as a multiple of a derived relation's (placement's `CPU_PER_PROBE` a row in and
@@ -1227,6 +1243,9 @@ pub struct Relation {
     indexes: Box<[OnceLock<ColumnIndex>]>,
     /// Per column, its distinct values while its values have come in nondecreasing order, else `None`.
     ordered: Box<[Option<usize>]>,
+    /// Every row's id in order, made when a column pushed in order is first probed for a slice of its rows
+    /// (`sorted_rows`): such a column's rows of one value are consecutive, and need no index of their own.
+    identity: OnceLock<Vec<u32>>,
 }
 struct ColumnIndex {
     rows: Vec<u32>,
@@ -1245,6 +1264,7 @@ impl Relation {
             cells: Vec::new(),
             indexes: columns.iter().map(|_| OnceLock::new()).collect(),
             ordered: columns.iter().map(|_| Some(0)).collect(),
+            identity: OnceLock::new(),
         }
     }
     pub fn push(&mut self, row: &[i64]) {
@@ -1262,6 +1282,7 @@ impl Relation {
         }
         self.cells.extend_from_slice(row);
         self.indexes.iter_mut().for_each(|i| *i = OnceLock::new());
+        self.identity = OnceLock::new();
     }
     fn index(&self, column: usize) -> &ColumnIndex {
         self.indexes[column].get_or_init(|| {
@@ -1362,6 +1383,19 @@ impl Source for Relation {
         }
         let rows = &self.index(column).rows;
         Some(values.iter().flat_map(|&v| rows[self.between(column, v, v)].iter().map(|&r| r as usize)).collect())
+    }
+    /// A slice of the column's sorted index, or for a column pushed in order of the rows' ids: a probe makes no list.
+    /// Through `lookup`, each probe of a relation built for a chunk (the scopes' `rr_nearest_*`, the texts)
+    /// collected its rows into a list, and the join copied it into another: 6,400 samples of a cold PostHog run.
+    fn sorted_rows(&self, column: usize, value: i64) -> Option<&[u32]> {
+        if self.ordered[column].is_some() {
+            let ids = self.identity.get_or_init(|| (0..self.len() as u32).collect());
+            return Some(&ids[self.ordered_between(column, value, value)]);
+        }
+        Some(&self.index(column).rows[self.between(column, value, value)])
+    }
+    fn sorts_rows(&self, _column: usize) -> bool {
+        true
     }
     fn value(&self, row: usize, column: usize) -> i64 {
         self.cells[row * self.columns.len() + column]

@@ -1304,7 +1304,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                 // entry holds every column, each at its own place.
                 if let Some(b) = rel.in_block().filter(|_| ids.is_none() && !matches!(owner, Owner::Src(_))) {
                     let device = rerail_accel::gpu::join::device()?;
-                    let held = rerail_accel::gpu::join::Held::kept(b.facts.block.gpu_buffer(device), Box::new(b.facts.clone()));
+                    let held = rerail_accel::gpu::join::Held::kept(b.facts.block.gpu_buffer(device), Box::new((b.facts.clone(), b.part.clone())));
                     let dev = mj::DevRel::in_block(held, b.at, n, rel.k);
                     rep.in_place += 1;
                     let bytes = old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());

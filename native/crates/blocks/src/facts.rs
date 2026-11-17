@@ -96,7 +96,7 @@ impl Facts {
         if let Some(b) = &base {
             assert!(b.base.is_none(), "a delta names a full block, never another delta");
         }
-        let block = Block::anon(kind, reserve);
+        let block = crate::alloc::host(kind, reserve);
         let root: *mut FactsRoot = block.alloc_t(1);
         let rels: *mut Ptr<Relation> = block.alloc_t(schema.rels.len());
         let strata: *mut crate::facts::Range = block.alloc_t(schema.nstrata);

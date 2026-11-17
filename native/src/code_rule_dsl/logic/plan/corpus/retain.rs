@@ -267,17 +267,82 @@ pub(in crate::code_rule_dsl) fn document_delta(rel: &str, old: &dyn Source, was:
         out
     };
     let (gone, made) = (rows_of(old, &mut row), rows_of(new, &mut row));
-    let relation = |suffix: &str, rows: &mut dyn Iterator<Item = &Vec<i64>>| {
-        let names: Vec<String> = (0..width).map(|c| crate::code_rule_dsl::logic::plan::sql_col(&format!("{rel}__{suffix}"), c)).collect();
-        let mut rel = crate::code_rule_dsl::facts::vtab::Relation::new(&names.iter().map(String::as_str).collect::<Vec<_>>());
-        let mut rows: Vec<&Vec<i64>> = rows.collect();
-        rows.sort_unstable();
-        for r in rows {
-            rel.push(r);
-        }
-        Arc::new(rel) as Arc<dyn Source>
+    Some(((delta_relation(rel, "plus", width, &mut made.difference(&gone)), delta_relation(rel, "minus", width, &mut gone.difference(&made))), Arc::new(now)))
+}
+
+/// A delta of `rel` (`suffix` "plus" or "minus") holding `rows`, sorted, its columns named as the planner reads its
+/// statistics (`sql_col` of `rel__plus`, `rel__minus`).
+fn delta_relation<'r>(rel: &str, suffix: &str, width: usize, rows: &mut dyn Iterator<Item = &'r Vec<i64>>) -> Arc<dyn Source> {
+    let names: Vec<String> = (0..width).map(|c| crate::code_rule_dsl::logic::plan::sql_col(&format!("{rel}__{suffix}"), c)).collect();
+    let mut out = crate::code_rule_dsl::facts::vtab::Relation::new(&names.iter().map(String::as_str).collect::<Vec<_>>());
+    let mut rows: Vec<&Vec<i64>> = rows.collect();
+    rows.sort_unstable();
+    for r in rows {
+        out.push(r);
+    }
+    Arc::new(out) as Arc<dyn Source>
+}
+
+/// An input's delta when its rows only grew (`maintained::Delta`; the guests' rounds, decision 0331): a later round's
+/// batch is the round before's with new documents, so a base relation holds the rows it held and the new documents'.
+/// When the old rows are the new ones' first rows, in order (the batch builds documents in order, and a round's
+/// documents come last), its new rows are the rest: one pass over the old rows' values, no row hashed. Otherwise the
+/// two are compared as sets of rows, which is exact whatever moved. `None` when the two hold other columns.
+pub(in crate::code_rule_dsl) fn grown_delta(rel: &str, old: &dyn Source, new: &dyn Source) -> Option<(Arc<dyn Source>, Arc<dyn Source>)> {
+    use rustc_hash::FxHashSet;
+    let width = new.columns().len();
+    if old.columns().len() != width {
+        return None;
+    }
+    let all: Vec<usize> = (0..width).collect();
+    let (mut a, mut b) = (vec![0i64; width], vec![0i64; width]);
+    let prefix = old.len() <= new.len()
+        && (0..old.len()).all(|r| {
+            old.row_at(r, &all, &mut a);
+            new.row_at(r, &all, &mut b);
+            a == b
+        });
+    let rows = |s: &dyn Source, range: std::ops::Range<usize>| -> Vec<Vec<i64>> {
+        range
+            .map(|r| {
+                let mut row = vec![0i64; width];
+                s.row_at(r, &all, &mut row);
+                row
+            })
+            .collect()
     };
-    Some(((relation("plus", &mut made.difference(&gone)), relation("minus", &mut gone.difference(&made))), Arc::new(now)))
+    if prefix {
+        let made = rows(new, old.len()..new.len());
+        return Some((delta_relation(rel, "plus", width, &mut made.iter()), delta_relation(rel, "minus", width, &mut std::iter::empty())));
+    }
+    let was: FxHashSet<Vec<i64>> = rows(old, 0..old.len()).into_iter().collect();
+    let now: FxHashSet<Vec<i64>> = rows(new, 0..new.len()).into_iter().collect();
+    Some((delta_relation(rel, "plus", width, &mut now.difference(&was)), delta_relation(rel, "minus", width, &mut was.difference(&now))))
+}
+
+/// An input's delta when the rows it gained are all of new documents and it lost none (the guests' rounds, decision
+/// 0322): the rows whose node column `g` is of a document `is_new` names, with nothing gone. One pass over that
+/// column, against `grown_delta`'s hashing of every row old and new. `None` unless the rows add up: the old less
+/// none, with those, are the rows now.
+pub(in crate::code_rule_dsl) fn owners_delta(rel: &str, old: &dyn Source, new: &dyn Source, g: usize, is_new: &dyn Fn(i64) -> bool) -> Option<(Arc<dyn Source>, Arc<dyn Source>)> {
+    let width = new.columns().len();
+    if old.columns().len() != width || g >= width {
+        return None;
+    }
+    let all: Vec<usize> = (0..width).collect();
+    // A view over the batch's documents finds the new documents' rows itself (`Source::rows_owned`): a scan of every
+    // row made a kind-set axis's whole solve, 348 MB of a PostHog run's peak, for a round's few new documents.
+    let new_owned = |n: i64| is_new(super::memo::document_of(n));
+    let owned = new.rows_owned(g, &new_owned).unwrap_or_else(|| (0..new.len()).filter(|&r| new_owned(new.value(r, g))).collect());
+    let made: Vec<Vec<i64>> = owned
+        .into_iter()
+        .map(|r| {
+            let mut row = vec![0i64; width];
+            new.row_at(r, &all, &mut row);
+            row
+        })
+        .collect();
+    (old.len() + made.len() == new.len()).then(|| (delta_relation(rel, "plus", width, &mut made.iter()), delta_relation(rel, "minus", width, &mut std::iter::empty())))
 }
 
 /// Which strata a run evaluates: those not `clean`.
@@ -489,7 +554,7 @@ pub(in crate::code_rule_dsl) fn after(
         // An index's relation (the reach index, decision 0119), or a view of an input's columns (Q37), is made again
         // in less than reading it back costs: not kept, so it never takes the budget from the relations whose rows
         // are work.
-        if held.view.is_some() {
+        if held.view.is_some() || held.viewed {
             continue;
         }
         let k = Kept { rel: held, width, output: outputs.get(&rel).cloned() };
@@ -974,6 +1039,9 @@ impl Source for Renamed {
     fn complete_rows(&self) -> bool {
         self.0.complete_rows()
     }
+    fn rows_owned(&self, g: usize, owned: &dyn Fn(i64) -> bool) -> Option<Vec<usize>> {
+        self.0.rows_owned(g, owned)
+    }
     fn expect_lookups(&self, column: usize, keys: f64) {
         self.0.expect_lookups(column, keys);
     }
@@ -1229,7 +1297,12 @@ pub mod tests {
         let lowered=lower::Lowered {version:v,maint:None,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
         let reused=result.program(&lowered).unwrap();
         let placed=reused.placed().unwrap();
-        assert!(placed.v.size()==0 && placed.fields().unwrap().gates().is_empty());
+        // A view of an input's columns (Q37: `kind(n, k) :- node(_, n, k, _, _).`) is never kept: its rule stays, to
+        // hold it again. Nothing else runs.
+        let left:BTreeSet<&str>=placed.v.rules().map(|r| placed.v.rel_name(r.head().rel())).collect();
+        assert_eq!(left,BTreeSet::from(["docof","kind"]));
+        assert!(placed.v.rules().all(|r| { let mut b=r.body(); matches!((b.next().and_then(|l| l.atom()), b.next()), (Some(a), None) if p.inputs.iter().any(|i| *i == placed.v.rel_name(a.rel()))) }));
+        assert!(placed.fields().unwrap().gates().is_empty());
         let mut changed=inputs.clone();
         *changed.values_mut().next().unwrap()=8;
         for (candidate,rows) in [(key,changed),([2;32],inputs.clone())] {
@@ -1661,6 +1734,9 @@ impl Source for Lazy {
     fn complete_rows(&self) -> bool {
         self.inner().complete_rows()
     }
+    fn rows_owned(&self, g: usize, owned: &dyn Fn(i64) -> bool) -> Option<Vec<usize>> {
+        self.inner().rows_owned(g, owned)
+    }
     fn expect_lookups(&self, column: usize, keys: f64) {
         self.inner().expect_lookups(column, keys)
     }
@@ -1836,6 +1912,9 @@ impl Source for Traced {
     }
     fn complete_rows(&self) -> bool {
         self.inner.complete_rows()
+    }
+    fn rows_owned(&self, g: usize, owned: &dyn Fn(i64) -> bool) -> Option<Vec<usize>> {
+        self.inner.rows_owned(g, owned)
     }
     fn expect_lookups(&self, column: usize, keys: f64) {
         self.inner.expect_lookups(column, keys)
@@ -2308,6 +2387,13 @@ impl Retained {
         let phase = super::phases::current();
         let input_docs = &self.input_docs;
         let atoms_ref = &atoms;
+        // Each frame is encoded straight into the write's segments as its rows are read (Q93): neither a copy of the
+        // rows nor the frame's bytes are made on the heap. Copied and encoded on the heap, the frames were held whole
+        // until queued, and the cross part's were a cold PostHog run's peak (1.8 → 2.3 GB in its last second).
+        let derived_n: usize = sccs.iter().flatten().filter_map(|rel| self.framed(rel)).map(|k| k.rel.rows() * k.width * 2).sum();
+        let inputs_n: usize = inputs.iter().map(|(_, s)| s.len() * s.columns().len() * 2).sum();
+        let placer = store.frame_placer(sccs.iter().map(BTreeSet::len).sum::<usize>() + inputs.len() * 4 + 16, derived_n + inputs_n);
+        let placer_ref = &placer;
         let one_input = |rel: &String, source: &Arc<dyn Source>| -> Option<(u64, Vec<EncodedFrame>, usize)> {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "an input's frames (job)".into());
             let atoms: &crate::content_store::atoms::Atoms = atoms_ref;
@@ -2354,31 +2440,65 @@ impl Retained {
             // Each changed granule's rows, grouped by owner, owners ascending (`kept_inputs` reads each owner's
             // rows as one range). A maintained input (`Layered`) gives each owner's rows from its ranges; another
             // is read through once.
-            let mut by: BTreeMap<i64, BTreeMap<i64, Vec<i64>>> = changed.iter().map(|g| (*g, BTreeMap::new())).collect();
-            match source.as_any().and_then(|a| a.downcast_ref::<Layered>()) {
-                Some(l) => {
+            // The rows are grouped by row id (four bytes a row, not a copy of it), and each granule's frame is read
+            // from the source a window at a time into its place (`FramePlacer::place_rows`). A maintained input
+            // (`Layered`) gives each owner's rows from its ranges.
+            let layered = source.as_any().and_then(|a| a.downcast_ref::<Layered>());
+            let all: Vec<usize> = (0..width).collect();
+            let mut ids: BTreeMap<i64, BTreeMap<i64, Vec<u32>>> = BTreeMap::new();
+            let mut owners_of: BTreeMap<i64, Vec<i64>> = changed.iter().map(|g| (*g, Vec::new())).collect();
+            match layered {
+                Some(_) => {
                     for owner in docs.keys().filter(|d| changed.contains(&granule(**d))) {
-                        by.get_mut(&granule(*owner)).expect("a changed granule").insert(*owner, l.owner_rows(*owner));
+                        owners_of.get_mut(&granule(*owner)).expect("a changed granule").push(*owner);
                     }
                 }
                 None => {
-                    let all: Vec<usize> = (0..width).collect();
                     let mut row = vec![0i64; width];
                     for r in 0..source.len() {
                         source.row_at(r, &all[g..=g], &mut row[g..=g]);
                         let owner = super::memo::document_of(row[g]);
-                        if let Some(out) = by.get_mut(&granule(owner)) {
-                            source.row_at(r, &all, &mut row);
-                            out.entry(owner).or_default().extend_from_slice(&row);
+                        let gr = granule(owner);
+                        if changed.contains(&gr) {
+                            ids.entry(gr).or_default().entry(owner).or_default().push(r as u32);
                         }
                     }
                 }
             }
-            for (g, owners) in by {
-                let rows: Vec<i64> = owners.into_values().flatten().collect();
-                let n = rows.len() / width;
+            for gr in changed.iter().copied() {
+                let by_id = ids.remove(&gr).unwrap_or_default();
+                let owners = owners_of.remove(&gr).unwrap_or_default();
+                let n: usize = match layered {
+                    Some(l) => owners.iter().map(|o| l.owner_rows(*o).len() / width).sum(),
+                    None => by_id.values().map(Vec::len).sum(),
+                };
+                let each = |f: &mut dyn FnMut(&[i64])| match layered {
+                    Some(l) => owners.iter().for_each(|o| f(&l.owner_rows(*o))),
+                    None => {
+                        let mut buf: Vec<i64> = Vec::with_capacity(4096 * width);
+                        for r in by_id.values().flatten() {
+                            let at = buf.len();
+                            buf.resize(at + width, 0);
+                            source.row_at(*r as usize, &all, &mut buf[at..]);
+                            if buf.len() == 4096 * width {
+                                f(&buf);
+                                buf.clear();
+                            }
+                        }
+                        if !buf.is_empty() {
+                            f(&buf);
+                        }
+                    }
+                };
                 written += n;
-                puts.push(FramePut { rel: name.clone(), part: g, digest: 0, reads: Vec::new(), rows: FrameRows { types: types.clone(), rows, n } }.encoded());
+                puts.push(match placer_ref.place_rows(width, gr, &each) {
+                    Some(p) => FramePut::placed_as(name.clone(), gr, 0, Vec::new(), types.clone(), n, p),
+                    None => {
+                        let mut rows: Vec<i64> = Vec::with_capacity(n * width);
+                        each(&mut |w: &[i64]| rows.extend_from_slice(w));
+                        FramePut { rel: name.clone(), part: gr, digest: 0, reads: Vec::new(), rows: FrameRows { types: types.clone(), rows, n } }.encoded()
+                    }
+                });
             }
             let mut table: Vec<(i64, (u64, u64))> = docs.iter().map(|(d, v)| (*d, *v)).collect();
             table.sort_unstable();
@@ -2420,18 +2540,29 @@ impl Retained {
         // The copy of a relation's rows lives only in its job: kept for every relation until the loop below, the
         // copies were the run's peak (460 MB of 3.3 GB at 300 files, beside the relations and their bytes). A
         // relation whose rows are the stored ones and whose reads changed copies its rows again there.
+        // Each relation's rows are read where they lie, a window at a time, to digest them and, when its frame is
+        // written, to encode it straight into the write's segments (`placer`, above).
         let made: HashMap<&String, Whole> = {
             use rayon::prelude::*;
             let atoms = &atoms;
+            let placer = &placer;
             // Under the span open here, on whichever thread runs it: rayon's loops open none of their own.
             let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
             whole.into_par_iter().filter_map(|(rel, k)| {
                 let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || "a relation's frame, digested and encoded".into());
-                let rows = k.rel.live_rows()?;
+                if k.rel.levels_shape().2 {
+                    return None;
+                }
+                let each = |f: &mut dyn FnMut(&[i64])| {
+                    k.rel.each_live_window(f);
+                };
                 let n = k.rel.rows();
                 let types = frame_types(prog, domains, rel, k.rel.types());
-                let d = crate::code_rule_dsl::logic::plan::rows_digest(&Cells::new(atoms, &types), &rows, n);
-                let bytes = was.derived.get(rel).is_none_or(|s| s.digest != d).then(|| FramePut::encode_rows(&FrameRows { types, rows, n }));
+                let d = crate::code_rule_dsl::logic::plan::rows_digest_windows(&Cells::new(atoms, &types), n, &each);
+                let bytes = was.derived.get(rel).is_none_or(|s| s.digest != d).then(|| match placer.place_rows(types.len(), DOCS_PART, &each) {
+                    Some(p) => WholeBytes::Placed(p),
+                    None => WholeBytes::Heap(FramePut::encode_rows(&FrameRows { rows: k.rel.live_rows().unwrap_or_default(), types, n })),
+                });
                 Some((rel, Whole { d, bytes }))
             }).collect()
         };
@@ -2527,7 +2658,8 @@ impl Retained {
                 }
                 let types = frame_types(prog, domains, rel, k.rel.types());
                 puts.push(match (bytes, rows) {
-                    (Some(bytes), _) => FramePut::encoded_as(name.clone(), DOCS_PART, d, read_digests, types, n, bytes),
+                    (Some(WholeBytes::Heap(bytes)), _) => FramePut::encoded_as(name.clone(), DOCS_PART, d, read_digests, types, n, bytes),
+                    (Some(WholeBytes::Placed(p)), _) => FramePut::placed_as(name.clone(), DOCS_PART, d, read_digests, types, n, p),
                     (None, Some(rows)) => FramePut { rel: name.clone(), part: DOCS_PART, digest: d, reads: read_digests, rows: FrameRows { types, rows, n } }.encoded(),
                     (None, None) => return Err(Error::Plan(format!("{rel}: its rows are not held, and its frame is to be written"))),
                 });
@@ -2552,7 +2684,7 @@ impl Retained {
         // documents' table), its digests and granules are of content, so a forked process's frames are written as the
         // store numbers them, and read back as the reader does. Keyed by this process's numbering, they were dropped
         // after a fork, and every next run derived the cross part again.
-        crate::code_rule_dsl::logic::profile::behind(|| store.queue_encoded_retagged(was.space, puts, retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token(), self.key))));
+        crate::code_rule_dsl::logic::profile::behind(|| store.queue_placed_retagged(was.space, puts, retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token(), self.key)), placer));
         Ok(written)
     }
 }
@@ -2560,7 +2692,13 @@ impl Retained {
 /// A relation written whole (`write_frames`): its digest, and its rows' bytes when its rows are not the stored ones.
 struct Whole {
     d: u64,
-    bytes: Option<Vec<u8>>,
+    bytes: Option<WholeBytes>,
+}
+
+/// A frame's bytes made in its job: placed in the write's segments, or (no segment took them) on the heap.
+enum WholeBytes {
+    Placed(crate::content_store::PlacedFrame),
+    Heap(Vec<u8>),
 }
 
 impl Retained {
