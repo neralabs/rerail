@@ -220,6 +220,14 @@ impl Version {
             Version::Overlay { depth, .. } => *depth,
         }
     }
+    /// An overlay's own layer, its delta's bytes, and its parent; `None` for a base or a view. A version stored as
+    /// layers over a parent the reader holds (a general form's, decision 0298 §4) is opened again with `over`.
+    pub fn layer(&self) -> Option<(&[u8], &Arc<Version>)> {
+        match self {
+            Version::Overlay { parent, delta, .. } => Some((delta.bytes(), parent)),
+            _ => None,
+        }
+    }
     /// A base's image bytes, as they are stored (`program_text::store_version`); `None` for a view or an overlay.
     pub fn base_bytes(&self) -> Option<&[u8]> {
         match self {

@@ -841,7 +841,12 @@ impl<'s> Pipeline<'s> {
     /// image. A step that runs stores its output under its key. A pass that is skipped so has not run: what it
     /// returns in itself, beside its output and decisions, is not there (`ran`).
     pub fn keyed(name: &'static str, v: Arc<Version>, steps: &'s dyn Steps) -> Pipeline<'s> {
-        let chain = chain_start(name, &v);
+        let id = identity(&v);
+        Pipeline::keyed_by(name, v, id, steps)
+    }
+    /// `keyed`, with the input's `identity` given: a caller keying many pipelines over one input reads its rules once.
+    pub fn keyed_by(name: &'static str, v: Arc<Version>, identity: [u8; 32], steps: &'s dyn Steps) -> Pipeline<'s> {
+        let chain = chain_next(&identity, &[b"pipeline", name.as_bytes(), crate::code_rule_dsl::build_ids::engine().as_bytes()]);
         Pipeline { keyed: Some(Keyed { steps, chain, pending: None }), ..Pipeline::new(name, v) }
     }
     /// Adds a part to the key of each later step (a keyed pipeline's, 0281 §6): a value the passes read that is not in
@@ -1020,6 +1025,30 @@ impl<'s> Pipeline<'s> {
         self.record(P::NAME, out, Ran::Whole, form, visited, &v, None)
     }
 
+    /// A step whose output `make` writes from the input by a writer of its own, not through `ProgramW` (a stratum's
+    /// general form, decision 0298): keyed and stored as any step, its decisions those `make` returns. Its output is
+    /// not an edit of its input, so no analysis is carried to it and no delta is compared.
+    pub fn made(&mut self, pass: &'static str, version: u32, settings: &[u8], make: impl FnOnce(&Arc<Version>) -> Result<(Arc<Version>, Vec<Decided>)>) -> &mut Self {
+        if self.failed.is_some() {
+            return self;
+        }
+        let _span = crate::code_rule_dsl::logic::profile::span(|| format!("pass {}: {pass}", self.name));
+        let r = match self.stored(pass, version, settings) {
+            Ok(Some(key)) => self.load().and_then(|()| {
+                self.keep_step(key, pass, version, |p| {
+                    let (out, decided) = make(&p.v)?;
+                    p.decided.borrow_mut().extend(decided);
+                    p.stages.push(Stage { pass, ran: Ran::Whole, form: Form::Derived, visited: 0, input: (p.v.size(), p.v.digest()), output: (out.size(), out.digest()), delta: out.size(), touched: Reads::ALL });
+                    p.v = out;
+                    Ok(())
+                })
+            }),
+            Ok(None) => Ok(()),
+            Err(e) => Err(e),
+        };
+        self.fail(pass, r)
+    }
+
     /// A keyed pipeline's next step (0281 §6): its key, chained; `Ok(None)` when the store holds it (the step is
     /// recorded as stored, its decisions read back, its output opened later by `load`), else `Ok(Some(key))` (always
     /// `Some` for a pipeline not keyed, whose key is never read).
@@ -1155,10 +1184,6 @@ pub fn identity(v: &Version) -> [u8; 32] {
         h.update(r.hash().to_le_bytes());
     }
     h.finalize().into()
-}
-
-fn chain_start(name: &str, v: &Version) -> StepKey {
-    chain_next(&identity(v), &[b"pipeline", name.as_bytes(), crate::code_rule_dsl::build_ids::engine().as_bytes()])
 }
 
 /// The chain `prev` extended by `parts`, each length-prefixed.

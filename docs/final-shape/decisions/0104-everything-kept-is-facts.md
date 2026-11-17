@@ -102,6 +102,11 @@ holds it.
 The profile reports every statement that a wave's thread runs, and every wait for the writer, under
 "Forces SQL waits (hazards)". Each is a hazard to remove.
 
+One exception, the user's call (2026-11-16, decision 0298 §5): a reached stratum's stored general form is read
+inside the waves, since its key names what the run knows only as it reaches the stratum. The read is
+`profile::read_in_waves`, run as work behind the run (which the strict mode lets through); it reads alone, and
+what it pins goes to the writer.
+
 ## The tapes are facts
 
 A document's syntax is two ordinary rules too. They are phase 1's (`typing/programs/sources.rr`):
