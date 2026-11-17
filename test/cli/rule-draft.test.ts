@@ -764,17 +764,20 @@ describe("rerail rules test on a .rr file", () => {
     expect(text.stdout).toContain("1 passed, 1 failed");
   });
 
-  it("says the .rr library is missing, as in an installed package, instead of running the tests without it", async () => {
+  it("says it needs a Rerail checkout, as from an installed package, instead of running the tests without one", async () => {
     const repo = await repository();
     const file = join(repo, "no-print.rr");
     writeFileSync(file, RR_WITH_TESTS);
-    const library = process.env.RERAIL_RR_LIB;
-    process.env.RERAIL_RR_LIB = join(repo, "no-library");
+    // A source root that is no Rerail checkout: what an installed package finds.
+    const root = process.env.RERAIL_SOURCE_ROOT;
+    process.env.RERAIL_SOURCE_ROOT = repo;
     try {
-      await expect(run("test", [file])).rejects.toThrow(`the .rr rule library, which is not at ${join(repo, "no-library")}`);
+      await expect(run("test", [file])).rejects.toThrow(
+        "a .rr file's tests read the engine's .rr programs and rule library from a Rerail checkout",
+      );
     } finally {
-      if (library === undefined) delete process.env.RERAIL_RR_LIB;
-      else process.env.RERAIL_RR_LIB = library;
+      if (root === undefined) delete process.env.RERAIL_SOURCE_ROOT;
+      else process.env.RERAIL_SOURCE_ROOT = root;
     }
   });
 });
