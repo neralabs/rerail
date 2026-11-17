@@ -21,6 +21,11 @@ The hot body makes its constants at its head, each block (`body_consts`): one `m
 nibble mask, and the weights' word made and duplicated (`movz`, three `movk`, `dup`). They live
 within the block, where they are used. The general body and the token loop keep theirs.
 
+Only where the loop has a token loop. Without one no call crosses the loop, the entry's
+constants stay in registers, and making them each block would cost 6 instructions for nothing:
+`json_loop_keeps_values_in_registers` (parser_tests' JSON program, no token loop) went from 704
+to 706 that way, past its budget, until this condition.
+
 A Cranelift rule that rematerializes `vconst` and `splat` (as an `iconst` is) was tried first.
 It can't apply: rules of the mid-end run only with the optimizer on.
 
@@ -57,3 +62,7 @@ instructions a block. With the token loop's refill, about 300; simdjson's stage 
 `jsons_tier2_split_is_tier1s`, `json_split_stores_only_what_rows_are_read_for`,
 `rrs_records_are_rows_on_the_cpu`, `the_loop_reads_no_record_back`,
 `json_loop_against_step_14` (129 the same, 216 refused by both, none differ).
+`parser_tests`: `json_loop_keeps_values_in_registers` (704 instructions, 10 stack loads or
+stores: its budget), `stage1_loop_keeps_values_in_registers`, `json_state_is_bits`,
+`json_tier1_vectors_equal_the_interpreter`, `json_gated_regions_equal_the_interpreter`,
+`json_stream_equals_the_evaluator_on_every_executor`, `stage1_equals_simdjson_on_every_executor`.

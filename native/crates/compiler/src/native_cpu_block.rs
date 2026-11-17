@@ -7616,7 +7616,8 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         // The body's constants, made at its head each block (decision 0350): made once at the
         // function's entry they live across the token loop's calls, and were spilled there and
         // reloaded at each use (about 20 loads a block, against a `movi` and a `dup` here).
-        let body_consts = Consts::make(&mut f);
+        // Without a token loop, the entry's stay in registers: no call crosses the loop.
+        let body_consts = if tokened { Consts::make(&mut f) } else { Consts { nibble: consts.nibble, weights: consts.weights, even: consts.even } };
         let again;
         (again, gate_branches, round_branches) = step(&mut f, &lp, &body_consts, &p[..params], len, true, scratch, Some(&calls), &mut heads);
         let again: Vec<BlockArg> = again.into_iter().map(BlockArg::from).collect();
