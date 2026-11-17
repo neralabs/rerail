@@ -19,6 +19,8 @@
 
 pub mod tape;
 pub mod f16;
+/// The tape's reads as Rust, written from their CLIF (decision 0310; `rerail_clif::reads::rust_source`).
+mod generated_reads;
 
 pub const MAGIC: &[u8; 8] = b"TMPTAP9N";
 /// 10: supertype memberships folded into the codes; 11: columns aligned (`COLUMN_ALIGN`); 12:
@@ -1242,7 +1244,7 @@ mod tests {
         };
         let image = make().finish(&src).unwrap();
         let (columns, table) = f15_columns(&image).unwrap();
-        let f15 = F15::new(columns, &table).unwrap();
+        let f15 = F15::new(&image, columns, &table).unwrap();
         let lang = f16::Lang::new(table.clone(), [1, 1, 1], 1).unwrap();
         for z in [false, true] {
             let mut w = make();

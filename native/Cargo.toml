@@ -101,6 +101,8 @@ cranelift-codegen = "=0.125.4"
 rerail-compiler = { path = "crates/compiler" }
 rerail-rr-syntax = { path = "crates/rr_syntax" }
 rerail-tape-format = { path = "crates/tape_format" }
+# The tape's reads written once in CLIF, and the JIT's inlining pass over them (decision 0310).
+rerail-clif = { path = "crates/clif" }
 # The .rr parser: its grammar compiled, the engine's tape from it (`packed::rr_parser`).
 rerail-rr-parser = { path = "crates/rr_parser" }
 rerail-prof = { path = "crates/prof" }

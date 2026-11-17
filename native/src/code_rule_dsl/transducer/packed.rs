@@ -169,6 +169,7 @@ pub mod native_cpu_output_transform;
 pub mod native_cpu_reduction;
 pub mod native_cpu_regex;
 pub mod native_cpu_scheduler;
+pub mod native_cpu_tape;
 pub mod native_cpu_value;
 // Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2), the compiler crate's.
 #[allow(unused_imports)]
@@ -3950,7 +3951,7 @@ pub fn packed_workspace_fits(
     anchors: &[Vec<Vec<u32>>],
     result_limits: &[u32],
 ) -> Result<(), Error> {
-    let mut batch = packed_batch::PackedBatch::new(programs, files, anchors)?;
+    let mut batch = packed_batch::PackedBatch::new_in_place(programs, files, anchors)?;
     batch
         .assign_workspace_with_result_limits(programs, Some(result_limits))
         .map(|_| ())
@@ -3966,7 +3967,7 @@ pub fn packed_workspace_size(
     anchors: &[Vec<Vec<u32>>],
     result_limits: &[u32],
 ) -> Result<(u64, [u64; 15]), Error> {
-    let mut batch = packed_batch::PackedBatch::new(programs, files, anchors)?;
+    let mut batch = packed_batch::PackedBatch::new_in_place(programs, files, anchors)?;
     let totals = batch.assign_workspace_with_result_limits(programs, Some(result_limits))?;
     let bytes = batch.workspace_allocation_bytes(totals).ok_or(Error::BackendCapacity)?;
     Ok((bytes, batch.workspace_counts(totals)))
@@ -3978,7 +3979,7 @@ pub fn packed_program_counts(
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],
 ) -> Result<Vec<[u64; 15]>, Error> {
-    packed_batch::PackedBatch::new(programs, files, anchors)?.program_counts(programs)
+    packed_batch::PackedBatch::new_in_place(programs, files, anchors)?.program_counts(programs)
 }
 
 pub(in crate::code_rule_dsl) fn packed_workspace_bytes(
@@ -3987,7 +3988,7 @@ pub(in crate::code_rule_dsl) fn packed_workspace_bytes(
     anchors: &[Vec<Vec<u32>>],
     result_limits: &[u32],
 ) -> Result<u64, Error> {
-    let mut batch = packed_batch::PackedBatch::new(programs, files, anchors)?;
+    let mut batch = packed_batch::PackedBatch::new_in_place(programs, files, anchors)?;
     let totals = batch.assign_workspace_with_result_limits(programs, Some(result_limits))?;
     batch.workspace_allocation_bytes(totals).ok_or(Error::BackendCapacity)
 }
