@@ -167,6 +167,20 @@ unchanged.
 On this machine (an M5, often at loads of 30 to 100) the lexer's instruction counts moved by up
 to 5% between runs, the fixed cost of a run most of all. Only the farm's figures are taken.
 
+### Then: strings and comments, and the other lean parsers' scans
+
+- **A string's quote** has its own class in `LEAD`: the run calls `string_end` at once, not
+  `decimal`, `token_at` and `token_rare` first. A C string token: 230 → 142 instructions.
+- **A gap with a comment** (`skip`) passes its blanks and line ends by the block's run, as the run
+  does. Go's last line end keeps its rule: no comment closes inside a run, so the run's last line
+  end is taken before a comment has closed, and its first after one where none is set. A C line
+  comment: 152 → 128 instructions, 64 → 43 cycles.
+- **The other twelve lean parsers** (C#, CSS, ECMAScript, HTML, Java, Markdown and its inline
+  grammar, PHP, Python, Rust, SQL, Vue) each kept a copy of the mask scan. Their `Blocks` now
+  holds `rerail_simd8::blocks::Masks` and scans by it (one definition, its loads unchecked). Eight
+  dropped the text they held only for its length. Their own tests and the engine's 31 lean-parser
+  tests pass unchanged.
+
 ### Measured and dropped
 
 - **One path for every token** (page 31's run in full): the starts a block at a time, a
@@ -190,11 +204,12 @@ to 5% between runs, the fixed cost of a run most of all. Only the farm's figures
   branches: the per-token choice between table, name, number and the rest depends on the data.
   simdjson's stage 2 branches a token too; a table of the start byte's class (one indirect jump)
   is the next form to measure.
-- **Strings and comments** (234 and 152 instructions) are read by the micro-lexers. Page 36's region
-  walk would take them off the masks, but that needs stage 1's stop masks back.
+- **Strings and comments** (142 and 128 instructions) are read by the micro-lexers. Page 36's region
+  walk would take them off the masks, but that needs stage 1's stop masks back for every block,
+  for 3% of the tokens.
 - **Names** (115). Every identifier's code is read (`is_name` asks `reserved(t.word)`), so a code
   made only where the parser asks would save nothing. What remains is the run's end, the check of
   the byte after it (a `\` or a byte past ASCII), the length mask and the probe.
-- **The other lean parsers.** Java, Rust, C# and PHP each keep their own copy of `Blocks::next`.
-  `rerail_simd8::blocks` replaces it, and `run`'s form applies to each, behind each one's digests
-  and oracles.
+- **The other lean parsers** scan by `rerail_simd8::blocks` now (above). `run`'s form (a batch
+  of tokens, `LEAD`, the gap's run, the micro-lexers in place of stop masks) applies to each,
+  behind each one's digests and oracles; it is not built for them yet.

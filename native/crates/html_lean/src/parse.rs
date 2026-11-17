@@ -31,7 +31,7 @@ struct Open {
 
 struct P<'a> {
     src: &'a [u8],
-    b: &'a Blocks<'a>,
+    b: &'a Blocks,
     w: Writer<Widths>,
     open: Vec<Open>,
     /// The open tags' size as the scanner serializes them (`tags::serialized_size`).
