@@ -9,7 +9,7 @@ description = "The language registry and what every crate reads of a language: t
 build = "build.rs"
 
 [features]
-default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache"]
+default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache", "rerail-clif/default"]
 all-languages = ["lang-blade", "lang-c", "lang-cpp", "lang-csharp", "lang-css", "lang-go", "lang-html", "lang-java", "lang-javascript", "lang-json", "lang-markdown", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue"]
 lang-blade = []
 lang-csharp = ["ast-grep-language/tree-sitter-c-sharp"]
@@ -39,7 +39,10 @@ system-allocator = []
 code-rule-profile = []
 p-anchor-corpus = []
 metal-tests = []
-test-hooks = ["rerail-store/test-hooks", "rerail-compiler/test-hooks", "dep:tempfile", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-rr-parser/test-hooks"]
+# The test-only dialects (`grammar_dialect!` in `language.rs`) are in `GrammarDialect::ALL` with the hooks on, so
+# their ast-grep grammars are too: without them a build with the hooks and no dev-dependencies (the CLI's
+# `--features test-hooks`) panicked loading the grammars.
+test-hooks = ["rerail-store/test-hooks", "rerail-compiler/test-hooks", "dep:tempfile", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-rr-parser/test-hooks", "ast-grep-language/tree-sitter-bash", "ast-grep-language/tree-sitter-c", "ast-grep-language/tree-sitter-cpp", "ast-grep-language/tree-sitter-go", "ast-grep-language/tree-sitter-html", "ast-grep-language/tree-sitter-kotlin", "ast-grep-language/tree-sitter-lua", "ast-grep-language/tree-sitter-ruby", "ast-grep-language/tree-sitter-rust", "ast-grep-language/tree-sitter-scala", "ast-grep-language/tree-sitter-swift"]
 
 [dependencies]
 base64 = "=0.22.1"

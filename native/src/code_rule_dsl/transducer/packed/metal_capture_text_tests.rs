@@ -2,7 +2,7 @@
 use super::*;
 
 #[test]
-#[ignore = "Q55: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
+#[ignore = "Q49: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
 fn query_text_quantifiers_preserve_empty_groups_duplicate_captures_and_transform_order() {
     let mut programs = Vec::new();
     for prefix in [false, true] {
@@ -154,7 +154,7 @@ fn query_text_quantifiers_preserve_empty_groups_duplicate_captures_and_transform
 }
 
 #[test]
-#[ignore = "Q55: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
+#[ignore = "Q49: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
 fn shared_query_capture_text_batches_programs_and_files_without_output_directives() {
     let language = SupportLang::Python.get_ts_language();
     let programs = [

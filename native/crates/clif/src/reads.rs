@@ -22,9 +22,33 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 /// No node.
 pub const NONE: i64 = u32::MAX as i64;
 
-/// A read: its name, its parameters after the tape and its view, its result, whether the JIT's pass
+/// A family of reads: what a read's first parameters are (decision 0325). Each is a pointer its loads count from;
+/// a family's reads call only each other, passing the same pointers on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Family {
+    /// The tape's (`tape_*`, decision 0310): the tape's base (the bytes the view's offsets count from) and its view
+    /// (`view::TapeView`, whose loads are aligned: its fields).
+    Tape,
+    /// A relation's (`rows_*`, `rel_*`; `crate::relation`): the descriptor's address (a `rerail_blocks`
+    /// `Relation`, or its `Rows`), every load an offset from it through the block's self-relative references, and
+    /// aligned (the block's own words: the Rust backend checks none against a length).
+    Relation,
+}
+
+impl Family {
+    /// The pointers a read of this family takes before its own parameters.
+    pub fn pointers(self) -> usize {
+        match self {
+            Family::Tape => 2,
+            Family::Relation => 1,
+        }
+    }
+}
+
+/// A read: its family, its name, its parameters after its family's pointers, its result, whether the JIT's pass
 /// inlines it (a search, or the rare case of a read, is cold: it stays a call), and its body.
 pub struct Read {
+    pub family: Family,
     pub name: &'static str,
     pub params: &'static [ir::Type],
     pub ret: ir::Type,
@@ -34,21 +58,31 @@ pub struct Read {
 
 /// Every read.
 pub const READS: &[Read] = &[
-    Read { name: "tape_f16_side", params: &[I32, I32], ret: I64, hot: false, body: f16_side },
-    Read { name: "tape_size", params: &[I32], ret: I32, hot: true, body: size },
-    Read { name: "tape_number", params: &[I32], ret: I32, hot: true, body: number },
-    Read { name: "tape_start", params: &[I32], ret: I32, hot: true, body: start },
-    Read { name: "tape_end", params: &[I32], ret: I32, hot: true, body: end },
-    Read { name: "tape_parent", params: &[I32], ret: I32, hot: false, body: parent },
-    Read { name: "tape_end_of", params: &[I32], ret: I32, hot: true, body: end_of },
-    Read { name: "tape_next_in", params: &[I32, I32], ret: I32, hot: true, body: next_in },
-    Read { name: "tape_next", params: &[I32], ret: I32, hot: true, body: next },
-    Read { name: "tape_first_child", params: &[I32], ret: I32, hot: true, body: first_child },
-    Read { name: "tape_child_count", params: &[I32], ret: I32, hot: true, body: child_count },
-    Read { name: "tape_child", params: &[I32, I32], ret: I32, hot: true, body: child },
-    Read { name: "tape_length", params: &[I32], ret: I32, hot: true, body: length },
-    Read { name: "tape_start_next", params: &[I32, I32], ret: I32, hot: true, body: start_next },
-    Read { name: "tape_slot", params: &[I32], ret: I64, hot: true, body: slot },
+    Read { family: Family::Tape, name: "tape_f16_side", params: &[I32, I32], ret: I64, hot: false, body: f16_side },
+    Read { family: Family::Tape, name: "tape_size", params: &[I32], ret: I32, hot: true, body: size },
+    Read { family: Family::Tape, name: "tape_number", params: &[I32], ret: I32, hot: true, body: number },
+    Read { family: Family::Tape, name: "tape_start", params: &[I32], ret: I32, hot: true, body: start },
+    Read { family: Family::Tape, name: "tape_end", params: &[I32], ret: I32, hot: true, body: end },
+    Read { family: Family::Tape, name: "tape_parent", params: &[I32], ret: I32, hot: false, body: parent },
+    Read { family: Family::Tape, name: "tape_end_of", params: &[I32], ret: I32, hot: true, body: end_of },
+    Read { family: Family::Tape, name: "tape_next_in", params: &[I32, I32], ret: I32, hot: true, body: next_in },
+    Read { family: Family::Tape, name: "tape_next", params: &[I32], ret: I32, hot: true, body: next },
+    Read { family: Family::Tape, name: "tape_first_child", params: &[I32], ret: I32, hot: true, body: first_child },
+    Read { family: Family::Tape, name: "tape_child_count", params: &[I32], ret: I32, hot: true, body: child_count },
+    Read { family: Family::Tape, name: "tape_child", params: &[I32, I32], ret: I32, hot: true, body: child },
+    Read { family: Family::Tape, name: "tape_length", params: &[I32], ret: I32, hot: true, body: length },
+    Read { family: Family::Tape, name: "tape_start_next", params: &[I32, I32], ret: I32, hot: true, body: start_next },
+    Read { family: Family::Tape, name: "tape_slot", params: &[I32], ret: I64, hot: true, body: slot },
+    Read { family: Family::Relation, name: "rows_col", params: &[I32], ret: I64, hot: true, body: crate::relation::rows_col },
+    Read { family: Family::Relation, name: "col_at", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::col_at },
+    Read { family: Family::Relation, name: "col_get", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::col_get },
+    Read { family: Family::Relation, name: "rows_at", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::rows_at },
+    Read { family: Family::Relation, name: "rows_width", params: &[I32], ret: I32, hot: true, body: crate::relation::rows_width },
+    Read { family: Family::Relation, name: "rows_get", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::rows_get },
+    Read { family: Family::Relation, name: "rel_get", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::rel_get },
+    Read { family: Family::Relation, name: "rel_dead", params: &[I32], ret: I32, hot: true, body: crate::relation::rel_dead },
+    Read { family: Family::Relation, name: "rel_group", params: &[I32, I64], ret: I64, hot: true, body: crate::relation::rel_group },
+    Read { family: Family::Relation, name: "rel_group_row", params: &[I32, I32], ret: I32, hot: true, body: crate::relation::rel_group_row },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by
@@ -66,10 +100,11 @@ pub fn read(name: &str) -> Option<&'static Read> {
     READS.iter().find(|read| read.name == name)
 }
 
-/// A read's signature: the tape's base and its view (pointers), then its own parameters.
+/// A read's signature: its family's pointers (the tape's base and its view; a relation's descriptor), then its own
+/// parameters.
 pub fn signature(read: &Read, call_conv: CallConv) -> Signature {
     let mut signature = Signature::new(call_conv);
-    signature.params.extend([AbiParam::new(I64), AbiParam::new(I64)]);
+    signature.params.extend((0..read.family.pointers()).map(|_| AbiParam::new(I64)));
     signature.params.extend(read.params.iter().map(|&ty| AbiParam::new(ty)));
     signature.returns.push(AbiParam::new(read.ret));
     signature
@@ -96,7 +131,8 @@ pub fn build_for(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &
     f.append_block_params_for_function_params(entry);
     f.switch_to_block(entry);
     let params = f.block_params(entry).to_vec();
-    let mut b = B { f, tape: params[0], view: params[1], args: params[2..].to_vec(), call_conv, callee, format };
+    let pointers = read.family.pointers();
+    let mut b = B { f, tape: params[0], view: (pointers > 1).then(|| params[1]), args: params[pointers..].to_vec(), call_conv, callee, format };
     let value = (read.body)(&mut b);
     b.f.ins().return_(&[value]);
     b.f.seal_all_blocks();
@@ -109,16 +145,6 @@ pub fn build_for(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &
 /// JIT's pass inlines it; the source ends with its fingerprint. The tape crate holds it, made again by its
 /// test (`the_tape_crates_reads_are_these`).
 pub fn rust_source() -> Result<String, String> {
-    /// A read's calls of the others: by their place in `READS`, as the translator names functions.
-    struct ByIndex;
-    impl Callee for ByIndex {
-        fn func_ref(&mut self, name: &str, signature: &Signature, func: &mut Function) -> ir::FuncRef {
-            let index = READS.iter().position(|read| read.name == name).expect("a read") as u32;
-            let name = func.declare_imported_user_function(ir::UserExternalName::new(0, index));
-            let signature = func.import_signature(signature.clone());
-            func.import_function(ir::ExtFuncData { name: ir::ExternalName::User(name), signature, colocated: true })
-        }
-    }
     let mut out = String::from(
         "// Generated by rerail_clif::reads::rust_source from the tape's reads in CLIF (decision 0310). Do not edit:\n\
          // `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_tape_crates_reads_are_these` writes it again.\n\
@@ -126,11 +152,16 @@ pub fn rust_source() -> Result<String, String> {
     );
     for (module, format) in [("f16", 16), ("f15", 15)] {
         // Format 15 has no side lists.
-        let reads: Vec<(u32, &Read)> = READS.iter().enumerate().filter(|(_, read)| format == 16 || !F16_ONLY.contains(&read.name)).map(|(k, read)| (k as u32, read)).collect();
+        let reads: Vec<(u32, &Read)> = READS
+            .iter()
+            .enumerate()
+            .filter(|(_, read)| read.family == Family::Tape && (format == 16 || !F16_ONLY.contains(&read.name)))
+            .map(|(k, read)| (k as u32, read))
+            .collect();
         let funcs: Vec<(u32, Function, bool)> =
             reads.iter().map(|&(k, read)| (k, build_for(read, CallConv::SystemV, UserFuncName::user(0, k), &mut ByIndex, Some(format)), read.hot)).collect();
         let entries: Vec<(u32, &str)> = reads.iter().filter(|(_, read)| public(read.name)).map(|&(k, read)| (k, read.name)).collect();
-        let body = crate::rust::translate_reads(&funcs, &entries).map_err(|e| format!("format {format}: {e}"))?;
+        let body = crate::rust::translate_reads(&funcs, &entries, Family::Tape).map_err(|e| format!("format {format}: {e}"))?;
         out.push_str(&format!("\n/// The reads of a format {format} tape.\npub mod {module} {{\n"));
         for line in body.lines() {
             if line.is_empty() {
@@ -150,26 +181,97 @@ pub fn rust_source() -> Result<String, String> {
 /// holds documents of both), `clif_` before its name, for `metal_tape.metal`'s readers to call. Made again by
 /// `the_kernels_reads_are_these`.
 pub fn msl_source() -> Result<String, String> {
-    struct ByIndex;
-    impl Callee for ByIndex {
-        fn func_ref(&mut self, name: &str, signature: &Signature, func: &mut Function) -> ir::FuncRef {
-            let index = READS.iter().position(|read| read.name == name).expect("a read") as u32;
-            let name = func.declare_imported_user_function(ir::UserExternalName::new(0, index));
-            let signature = func.import_signature(signature.clone());
-            func.import_function(ir::ExtFuncData { name: ir::ExternalName::User(name), signature, colocated: true })
-        }
-    }
     let funcs: Vec<(u32, Function, &str)> =
-        READS.iter().enumerate().map(|(k, read)| (k as u32, build(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex), read.name)).collect();
-    let body = crate::msl::translate_reads(&funcs, "clif_")?;
+        READS
+            .iter()
+            .enumerate()
+            .filter(|(_, read)| read.family == Family::Tape)
+            .map(|(k, read)| (k as u32, build(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex), read.name))
+            .collect();
+    let body = crate::msl::translate_reads(&funcs, "clif_", Family::Tape)?;
     Ok(format!(
         "// Generated by rerail_clif::reads::msl_source from the tape's reads in CLIF (decision 0310). Do not edit:\n\
          // `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_kernels_reads_are_these` writes it again.\n{body}"
     ))
 }
 
+/// Where a read's calls of other reads go when it is translated: by its place in `READS`, as the translators name
+/// functions.
+struct ByIndex;
+impl Callee for ByIndex {
+    fn func_ref(&mut self, name: &str, signature: &Signature, func: &mut Function) -> ir::FuncRef {
+        let index = READS.iter().position(|read| read.name == name).expect("a read") as u32;
+        let name = func.declare_imported_user_function(ir::UserExternalName::new(0, index));
+        let signature = func.import_signature(signature.clone());
+        func.import_function(ir::ExtFuncData { name: ir::ExternalName::User(name), signature, colocated: true })
+    }
+}
+
+/// The relation's reads (decision 0325), each built and named by its place in `READS`, with whether it is hot.
+fn relation_funcs() -> Vec<(u32, Function, &'static Read)> {
+    READS
+        .iter()
+        .enumerate()
+        .filter(|(_, read)| read.family == Family::Relation)
+        .map(|(k, read)| (k as u32, build(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex), read))
+        .collect()
+}
+
+/// A relation's reads as Rust (decision 0325): `rerail_blocks`' `generated_reads.rs`, which its `Rows` and
+/// `Relation` read through, made again by `the_blocks_reads_are_these`.
+pub fn relation_rust_source() -> Result<String, String> {
+    let funcs = relation_funcs();
+    let entries: Vec<(u32, &str)> = funcs.iter().map(|(k, _, read)| (*k, read.name)).collect();
+    let funcs: Vec<(u32, Function, bool)> = funcs.into_iter().map(|(k, f, read)| (k, f, read.hot)).collect();
+    let body = crate::rust::translate_reads(&funcs, &entries, Family::Relation)?;
+    let mut out = String::from(
+        "// Generated by rerail_clif::reads::relation_rust_source from a relation's reads in CLIF (decision 0325). Do not\n\
+         // edit: `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_reads_are_these` writes it again.\n\
+         #![allow(dead_code, unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_parens, clippy::all)]\n\n",
+    );
+    out.push_str(&body);
+    let h = crate::rust::fingerprint(&out);
+    out.push_str(&format!("\n/// This source's fingerprint (`rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};\n"));
+    Ok(out)
+}
+
+/// A relation's reads as MSL (decision 0325): `rerail_blocks`' `relation_reads.metal`, which every kernel that
+/// reads a relation in place includes, made again by `the_blocks_kernels_reads_are_these`.
+pub fn relation_msl_source() -> Result<String, String> {
+    let funcs: Vec<(u32, Function, &str)> = relation_funcs().into_iter().map(|(k, f, read)| (k, f, read.name)).collect();
+    let body = crate::msl::translate_reads(&funcs, "clif_", Family::Relation)?;
+    Ok(format!(
+        "// Generated by rerail_clif::reads::relation_msl_source from a relation's reads in CLIF (decision 0325). Do not\n\
+         // edit: `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_kernels_reads_are_these` writes it again.\n{body}"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
+    /// The blocks crate's reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_blocks_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../blocks/src/generated_reads.rs");
+        let source = super::relation_rust_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_reads_are_these");
+    }
+
+    /// The blocks crate's kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_blocks_kernels_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../blocks/src/relation_reads.metal");
+        let source = super::relation_msl_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_kernels_reads_are_these");
+    }
+
     /// The kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_kernels_reads_are_these() {
@@ -197,9 +299,11 @@ mod tests {
 
 /// A body being built: the builder, the tape's base and view, the read's own parameters.
 pub struct B<'a, 'c> {
-    f: FunctionBuilder<'a>,
-    tape: Value,
-    view: Value,
+    pub(crate) f: FunctionBuilder<'a>,
+    /// The first pointer: the tape's base, or a relation's descriptor.
+    pub(crate) tape: Value,
+    /// The tape's view (the tape's family alone).
+    view: Option<Value>,
     args: Vec<Value>,
     call_conv: CallConv,
     callee: &'c mut dyn Callee,
@@ -214,29 +318,30 @@ fn memory() -> MemFlags {
 
 /// A load of the view's fields: aligned, which tells the Rust backend it is no load of the tape (whose loads it
 /// checks against the tape's bytes).
-fn fields() -> MemFlags {
+pub(crate) fn fields() -> MemFlags {
     memory().with_aligned()
 }
 
 impl B<'_, '_> {
-    fn arg(&self, k: usize) -> Value {
+    pub(crate) fn arg(&self, k: usize) -> Value {
         self.args[k]
     }
-    fn c32(&mut self, value: i64) -> Value {
+    pub(crate) fn c32(&mut self, value: i64) -> Value {
         self.f.ins().iconst(I32, value)
     }
-    fn c64(&mut self, value: i64) -> Value {
+    pub(crate) fn c64(&mut self, value: i64) -> Value {
         self.f.ins().iconst(I64, value)
     }
     /// The view's u32 at byte `offset`.
     fn view(&mut self, offset: i32) -> Value {
-        self.f.ins().load(I32, fields(), self.view, offset)
+        let view = self.view.expect("a read of the tape's family");
+        self.f.ins().load(I32, fields(), view, offset)
     }
     /// The view's `k`-th u32 of the array at byte `offset`.
     fn view_at(&mut self, offset: i32, k: Value) -> Value {
         let k = self.f.ins().uextend(I64, k);
         let k = self.f.ins().ishl_imm(k, 2);
-        let p = self.f.ins().iadd(self.view, k);
+        let p = self.f.ins().iadd(self.view.expect("a read of the tape's family"), k);
         self.f.ins().load(I32, fields(), p, offset)
     }
     /// The tape's address `base + offset` (both u32s).
@@ -297,7 +402,7 @@ impl B<'_, '_> {
         }
     }
     /// `then` where `cond`, else `otherwise`: a value of type `ty`.
-    fn either(&mut self, ty: ir::Type, cond: Value, then: impl FnOnce(&mut Self) -> Value, otherwise: impl FnOnce(&mut Self) -> Value) -> Value {
+    pub(crate) fn either(&mut self, ty: ir::Type, cond: Value, then: impl FnOnce(&mut Self) -> Value, otherwise: impl FnOnce(&mut Self) -> Value) -> Value {
         let (yes, no, done) = (self.f.create_block(), self.f.create_block(), self.f.create_block());
         self.f.append_block_param(done, ty);
         self.f.ins().brif(cond, yes, &[], no, &[]);
@@ -311,11 +416,12 @@ impl B<'_, '_> {
         self.f.block_params(done)[0]
     }
     /// The read `name` called with `args` after the tape and view.
-    fn call(&mut self, name: &str, args: &[Value]) -> Value {
+    pub(crate) fn call(&mut self, name: &str, args: &[Value]) -> Value {
         let read = read(name).expect("a read");
         let signature = signature(read, self.call_conv);
         let callee = self.callee.func_ref(name, &signature, self.f.func);
-        let mut all = vec![self.tape, self.view];
+        let mut all = vec![self.tape];
+        all.extend(self.view);
         all.extend_from_slice(args);
         let call = self.f.ins().call(callee, &all);
         self.f.inst_results(call)[0]

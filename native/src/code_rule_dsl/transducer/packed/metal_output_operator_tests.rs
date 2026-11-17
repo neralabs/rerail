@@ -248,7 +248,7 @@ fn adjacent_capture_selection_preserves_properties_and_mime_snapshots_in_directi
 }
 
 #[test]
-#[ignore = "Q55: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
+#[ignore = "Q49: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
 fn mime_properties_use_source_snapshots_and_reject_missing_captures_before_witness_limits() {
     let base = Program::new(
         vec![word(CAPTURE, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],

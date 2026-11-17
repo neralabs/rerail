@@ -207,7 +207,7 @@ This record is steps 2, 3 and 4, and the API they need.
    on all 491 clauses (41 waves over 24 of the pack's files, from 236fc98d2~1), in the three formats (the spill
    test's floor of 1,000 roots needs the packs' full test data: those files give 621); with `metal-tests`, the device's roots equal the
    CPU's on every clause the resident interpreter takes alone, in the three formats, but for one clause past its
-   work limit, as at 6afcddb0a before this (work queue Q55, Q19 at f51cab698); the CLI's device run (`logic --metal`, the Vue rules
+   work limit, as at 6afcddb0a before this (work queue Q49, Q19 on oscar); the CLI's device run (`logic --metal`, the Vue rules
    over the mixed files) gives the same findings in the three formats, cold and warm.
 
 10. **A pass's roots are a rule, not a list** (built, 2026-11-16, the user: "yes, please do that. It's a better
@@ -229,7 +229,7 @@ This record is steps 2, 3 and 4, and the API they need.
 
     Checked (2026-11-16, on the build farm's M3 and M1 Max, 15, 16 and 16z): on the matcher's fixtures the
     device's roots equal the CPU's on all 491 clauses, the resident interpreter's on 114 of 122 with the D416
-    clause past its work limit as before (Q55); in 15 and 16, with the pack's files restored (618, from
+    clause past its work limit as before (Q49, Q19 on oscar); in 15 and 16, with the pack's files restored (618, from
     236fc98d2~1), the micro walks, the combined graph, the widened-walk catch, the device conformance test and the
     `waves::matches` tests pass, and with every walk spilling the device's roots equal the CPU's on all 491 clauses (the spill
     test's floor of 1,000 roots still wants the full test data). The two per-clause tests over all 618 files run

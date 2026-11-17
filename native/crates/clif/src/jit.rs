@@ -1,9 +1,9 @@
-//! A test's JIT of every read (decision 0310).
+//! A test's JIT of every read, of every family (decisions 0310, 0325).
 
 use crate::view::TapeView;
 use cranelift_module::Module;
 
-/// The tape's reads written once in CLIF (decision 0310), compiled by the JIT through its inlining pass, each
+/// The reads written once in CLIF (decisions 0310, 0325), compiled by the JIT through its inlining pass, each
 /// called through an exported function of its own (a hot read inlined into it, a cold one a call): what a test runs
 /// against a hand-written reader. Building it checks the pass: every hot read inlined, every cold one a call.
 pub struct Reads {
@@ -49,6 +49,12 @@ impl Reads {
         module.finalize_definitions().unwrap();
         let fns = ids.into_iter().map(|(name, id)| (name, module.get_finalized_function(id))).collect();
         Self { _module: module, fns }
+    }
+
+    /// The compiled read `name`, for a caller that types it by its signature (a relation's reads: its
+    /// descriptor's address, then its own parameters).
+    pub fn function(&self, name: &str) -> *const u8 {
+        self.fns[name]
     }
 
     pub fn one(&self, name: &str, tape: &[u8], view: &TapeView, i: usize) -> u32 {

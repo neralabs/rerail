@@ -17,5 +17,5 @@ lz4-sys = "=1.11.1"
 sha2 = { version = "0.10", features = ["asm"] }
 
 [dev-dependencies]
-# The reads in Cranelift's IR, run against this crate's readers (decision 0310).
-rerail-clif = { path = "../clif", features = ["jit"] }
+# The reads in Cranelift's IR, JIT-compiled and run against this crate's readers (decision 0310).
+rerail-clif = { path = "../clif" }

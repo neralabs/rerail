@@ -480,3 +480,119 @@ pub fn load_image(store: &ContentStore, digest: &[u8; 32], lists: &crate::code_r
     Ok(version.ok().map(|v| (v, sources)))
 }
 
+
+/// A keyed pipeline's steps (decision 0281 §6), kept in `store` as facts beside the program images they name. A
+/// step is two relations in 0103's form, its key and the step it names: `pipeline_step_key(key, pass, version)` (the
+/// pass's version is the tag) and `pipeline_step(key, image, size, digest)`, with its decisions
+/// (`pipeline_step_decision(key, k, pass, what, detail)`, 0269). They are one source under its key's alias, and the
+/// output is an image as a prepared program's is (`store_image`), so a step whose output another step or program
+/// stored already shares its image. A run's collection lease keeps what it reads and writes (decision 0306 step 4), and
+/// a step is written by the store's writer, an item of the run's record (0306 step 2).
+pub struct StoredSteps<'s>(pub &'s ContentStore);
+
+/// The alias a step's facts are kept under: its key, with the image format, so another format's step is not found.
+fn step_alias(key: &[u8; 32]) -> HashKey {
+    let format = crate::code_rule_dsl::logic::program_image::FORMAT;
+    HashKey::sha256(&[format!("rerail pipeline step {format}\0").as_bytes(), key.as_slice()].concat())
+}
+
+fn hex32(bytes: &[u8; 32]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn unhex32(text: &str) -> Option<[u8; 32]> {
+    let mut out = [0u8; 32];
+    if text.len() != 64 {
+        return None;
+    }
+    for (i, o) in out.iter_mut().enumerate() {
+        *o = u8::from_str_radix(text.get(2 * i..2 * i + 2)?, 16).ok()?;
+    }
+    Some(out)
+}
+
+impl crate::code_rule_dsl::logic::program_image::manager::Steps for StoredSteps<'_> {
+    fn find(&self, key: &[u8; 32]) -> Result<Option<crate::code_rule_dsl::logic::program_image::manager::StepRecord>, String> {
+        use crate::code_rule_dsl::logic::program_image::manager::{Decided, StepRecord};
+        let e = |e: crate::content_store::StoreError| e.to_string();
+        let Some(id) = self.0.source_by_alias(step_alias(key)).map_err(e)? else { return Ok(None) };
+        let facts = program_facts::decode(&self.0.get_source(id).map_err(e)?)?;
+        let k = hex32(key);
+        let rows = |rel: &str| facts.get(rel).into_iter().flatten().filter(|r| matches!(r.first(), Some(Value::Str(s)) if **s == *k));
+        let int = |v: &Value| match v {
+            Value::Int(n) => Ok(*n),
+            _ => Err(bad("a step's number is not one")),
+        };
+        let text = |v: &Value| match v {
+            Value::Str(s) => Ok(s.to_string()),
+            _ => Err(bad("a step's text is not one")),
+        };
+        let Some(head) = rows("pipeline_step_key").next() else { return Ok(None) };
+        let Some(out) = rows("pipeline_step").next() else { return Ok(None) };
+        let (pass, version) = (text(&head[1])?, int(&head[2])? as u32);
+        let image = unhex32(&text(&out[1])?).ok_or_else(|| bad("a step's image is not a digest"))?;
+        // A step whose image the store lost is not found: the step runs again.
+        if self.0.source_by_alias(image_key(&image)).map_err(e)?.is_none() {
+            return Ok(None);
+        }
+        let mut decided: Vec<(i64, Decided)> = Vec::new();
+        for r in rows("pipeline_step_decision") {
+            decided.push((int(&r[1])?, Decided { pass: text(&r[2])?.into(), what: text(&r[3])?.into(), detail: text(&r[4])? }));
+        }
+        decided.sort_by_key(|(k, _)| *k);
+        Ok(Some(StepRecord { pass, version, image, output: (int(&out[2])? as usize, int(&out[3])? as u64), decided: decided.into_iter().map(|(_, d)| d).collect() }))
+    }
+
+    fn open(&self, image: &[u8; 32]) -> Result<Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>, String> {
+        let e = |e: crate::content_store::StoreError| e.to_string();
+        let Some(id) = self.0.source_by_alias(image_key(image)).map_err(e)? else { return Ok(None) };
+        crate::code_rule_dsl::logic::program_image::Version::open(&self.0.get_source(id).map_err(e)?).map(Some)
+    }
+
+    fn keep(&self, key: &[u8; 32], record: &crate::code_rule_dsl::logic::program_image::manager::StepRecord, output: &crate::code_rule_dsl::logic::program_image::Version) -> Result<(), String> {
+        let folded;
+        let bytes = match output.base_bytes() {
+            Some(b) => b,
+            None => {
+                folded = output.fold()?;
+                folded.base_bytes().ok_or("a folded version is a base")?
+            }
+        };
+        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
+        let image: [u8; 32] = Sha256::digest(bytes).into();
+        // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`, decision 0264) ships it.
+        crate::code_rule_dsl::logic::rr::images::export(image_key(&image), bytes);
+        let k = Value::Str(hex32(key).into());
+        let mut facts = Facts::new();
+        facts.entry("pipeline_step_key".into()).or_default().push([k.clone(), str_value(&record.pass), Value::Int(i64::from(record.version))].into());
+        facts.entry("pipeline_step".into()).or_default().push([k.clone(), Value::Str(hex32(&image).into()), Value::Int(record.output.0 as i64), Value::Int(record.output.1 as i64)].into());
+        for (i, d) in record.decided.iter().enumerate() {
+            facts.entry("pipeline_step_decision".into()).or_default().push([k.clone(), Value::Int(i as i64), str_value(&d.pass), str_value(&d.what), str_value(&d.detail)].into());
+        }
+        // An item of the run's record (decision 0306): the image's bytes, then the step's facts, in its byte area;
+        // each stored by the writer unless the store holds it already (an image another step or program stored).
+        fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
+            let (key, image, at): ([u8; 32], [u8; 32], usize) = crate::content_store::record::codec::from_body(STEP, body)?;
+            let (image_bytes, facts) = cx.bytes.split_at_checked(at).ok_or_else(|| crate::content_store::StoreError::Invalid("a step's record: past its bytes".into()))?;
+            if cx.store.source_by_alias(image_key(&image))?.is_none() {
+                cx.store.put_source(image_bytes, &[image_key(&image)])?;
+            }
+            let alias = step_alias(&key);
+            if cx.store.source_by_alias(alias)?.is_none() {
+                cx.store.put_source(facts, &[alias])?;
+            }
+            Ok(())
+        }
+        let mut area = bytes.to_vec();
+        area.extend_from_slice(&program_facts::encode(&facts));
+        self.0.record(STEP, Vec::new(), &(*key, image, bytes.len()), Some(area), apply);
+        Ok(())
+    }
+}
+
+/// A pipeline step's item of the run's record (`StoredSteps::keep`).
+const STEP: &str = "a pipeline step";
+
+fn str_value(s: &str) -> Value {
+    Value::Str(s.to_owned().into())
+}

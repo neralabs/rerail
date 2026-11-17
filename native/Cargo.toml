@@ -216,8 +216,6 @@ rerail-metal = { path = "crates/metal", features = ["test-hooks"] }
 rerail-device-metal = { path = "crates/device_metal", default-features = false, features = ["test-hooks"] }
 
 [dev-dependencies]
-# The tape's reads JIT-compiled whole, run against the documents' own reads (`tape::tests`, decision 0310).
-rerail-clif = { path = "crates/clif", features = ["jit"] }
 # JSON's parser, measured directly (`tape::tests::json_parse_costs`).
 rerail-simdjson = { path = "crates/simdjson" }
 # Python's lean parser, measured directly (`tape::tests::python_parse_costs`).

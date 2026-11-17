@@ -16,8 +16,9 @@
 //! - **A resident document** is keyed by its tape's SHA-256 (the store's canonical hash, which
 //!   covers the format version). It holds, in one slab: the v9np image byte-identical to its
 //!   frame's content (columns at 16-byte offsets, format 11), the source's UTF-8 bytes, and what a
-//!   reader derives from them once per admission (decision 0026): each node's parent, the image's
-//!   codes at a fixed width (`tape::resident::DeviceCode`) and the source's line starts.
+//!   reader derives from them once per admission (decision 0026): the codes at a fixed width
+//!   (`tape::resident::DeviceCode`) and the source's line starts. Nothing per node is derived
+//!   beside the tape (decision 0293 §9).
 //! - **Admission** reads the misses' frames in one store read (`ContentStore::resident_frames`),
 //!   decompresses each straight into its slab and checks the bytes against the tape's and the
 //!   source's SHA-256 and the image's header against the source, once. A failed check is an
@@ -56,18 +57,48 @@ pub fn aligned(length: usize) -> usize {
     length.div_ceil(ALIGN) * ALIGN
 }
 
-/// A document as the device reads it: its first byte in the batch's chunk block (`at`, decision 0289 §4), and its
-/// parts as byte offsets from there, so a copy into another block changes `at` alone. It is the view the reads
-/// written once take (`rerail_clif::view::TapeView`, decision 0310), one definition for the device, the JIT and the
-/// tape crate, and its MSL is written from it (`msl`), with every field's offset asserted. `node_base` is the
-/// document's first node in a batch's numbering, set by the batch's document table (`DocTable`). The tape is read
-/// where it lies, format 15's columns or format 16's arrays (decision 0293): nothing per node is derived beside it.
-pub use rerail_clif::view::TapeView as DocView;
-const _: () = assert!(std::mem::size_of::<DocView>() == 116);
+use rerail_blocks::structure;
+/// The view an entry holds past its `at` (the reads' one definition, decision 0310).
+pub use rerail_clif::view::TapeView;
+rerail_clif::tape_view_fields!(structure, [
+    /// A document as the device reads it (decisions 0289 §4, 0293, 0310): its first byte in the batch's chunk block
+    /// (`at`), then its view (`rerail_clif::view::TapeView`'s fields, from the one list): every offset of the view
+    /// counts from `at`, so a copy into another block changes `at` alone. The tape is read where it lies, format
+    /// 15's columns or format 16's arrays, by the reads written once (`metal_tape_reads.metal`, which take
+    /// `chunk + at` and the view): nothing per node is derived beside it. `node_base`, `source_base` and
+    /// `line_base` are the document's place in a batch's numbering, set by the batch's document table
+    /// (`DocTable`). Its MSL is generated (`msl`), with layout assertions. It is `Copy`, unlike a block's own
+    /// structures: it holds no span, so a copy reads the same.
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    pub struct ChunkTape
+], [
+    /// The document's first byte in its block: every offset of its view counts from it.
+    pub at: u32,
+]);
+const _: () = assert!(std::mem::size_of::<ChunkTape>() == 4 + std::mem::size_of::<rerail_clif::view::TapeView>());
 
-/// The MSL of `DocView`, for the kernels that read documents in place (`metal_tape.metal`).
+impl ChunkTape {
+    /// The entry of a document at `at` whose view is `view`.
+    pub fn new(at: u32, view: &rerail_clif::view::TapeView) -> ChunkTape {
+        let mut entry = ChunkTape { at, ..ChunkTape::default() };
+        *entry.view_mut() = *view;
+        entry
+    }
+    /// Its view: the fields after `at`, laid out as `TapeView` (both are made of the one list, in order).
+    pub fn view(&self) -> &rerail_clif::view::TapeView {
+        // SAFETY: `ChunkTape` is `repr(C)`, `at` (a u32) then `TapeView`'s fields of the same types in the same
+        // order (`tape_view_fields!`), so they lie at `TapeView`'s offsets past 4 bytes, at u32 alignment.
+        unsafe { &*(&raw const self.nodes).cast::<rerail_clif::view::TapeView>() }
+    }
+    pub fn view_mut(&mut self) -> &mut rerail_clif::view::TapeView {
+        // SAFETY: as `view`.
+        unsafe { &mut *(&raw mut self.nodes).cast::<rerail_clif::view::TapeView>() }
+    }
+}
+
+/// The MSL of `ChunkTape`, for the kernels that read documents in place (`metal_tape.metal`).
 pub fn msl() -> String {
-    rerail_clif::view::msl()
+    rerail_blocks::msl_of::<ChunkTape>()
 }
 
 /// A slab: a chunk block over a lease of the pool, and its identity. Its rooms are the block's
@@ -113,7 +144,7 @@ pub struct Resident {
     pub digest: [u8; 32],
     pub slab: Arc<Slab>,
     /// Its view, `at` its range's start in `slab`, `node_base` 0.
-    pub view: DocView,
+    pub view: ChunkTape,
     /// Its range in the slab, every part inside it: what `gather` copies.
     pub at: usize,
     pub len: usize,
@@ -130,7 +161,7 @@ impl Resident {
         // SAFETY: `to..to + len` is a room of `slab` given to this copy alone; the source range is
         // this document's, written at admission and never again.
         unsafe { std::ptr::copy_nonoverlapping(self.slab.host().add(self.at), slab.host().add(to), self.len) };
-        let view = DocView { at: to as u32, ..self.view };
+        let view = ChunkTape { at: to as u32, ..self.view };
         Resident { digest: self.digest, slab: Arc::clone(slab), view, at: to, len: self.len, bytes: self.bytes, tape_length: self.tape_length }
     }
 
@@ -189,7 +220,7 @@ pub fn source_slabs(sources: &[Arc<ResidentSource>]) -> Option<(Vec<Arc<Slab>>, 
 /// A batch's document table (`batch.doctable`): each document's view with its first node in the
 /// batch's numbering, and the one block they are in (decision 0289 §4), `None` for no documents.
 pub struct DocTable {
-    pub views: Vec<DocView>,
+    pub views: Vec<ChunkTape>,
     pub block: Option<Arc<Slab>>,
     pub nodes: usize,
     /// The documents, held for the batch's life.
@@ -223,7 +254,7 @@ impl DocTable {
         let mut nodes = 0usize;
         let (mut source, mut lines) = (0usize, 0usize);
         for document in &documents {
-            views.push(DocView {
+            views.push(ChunkTape {
                 node_base: u32::try_from(nodes).ok()?,
                 source_base: u32::try_from(source).ok()?,
                 line_base: u32::try_from(lines).ok()?,

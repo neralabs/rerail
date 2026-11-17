@@ -64,7 +64,23 @@ pub(crate) fn sources() -> Vec<PathBuf> {
     out
 }
 
-/// A file's lines outside its `#[cfg(test)]` modules (a module's lines end at its closing brace at its own indent).
+/// Whether a raw string (`r#"`, closed by `"#`) is still open after `line`, given whether it was open before it.
+fn raw_after(line: &str, mut raw: bool) -> bool {
+    let mut rest = line;
+    loop {
+        let next = if raw { "\"#" } else { "r#\"" };
+        match rest.find(next) {
+            Some(at) => {
+                rest = &rest[at + next.len()..];
+                raw = !raw;
+            }
+            None => return raw,
+        }
+    }
+}
+
+/// A file's lines outside its `#[cfg(test)]` modules (a module's lines end at its closing brace at its own indent,
+/// outside a raw string).
 pub(crate) fn product_lines(text: &str) -> Vec<(usize, &str)> {
     let lines: Vec<&str> = text.lines().collect();
     let mut out = Vec::new();
@@ -81,8 +97,11 @@ pub(crate) fn product_lines(text: &str) -> Vec<(usize, &str)> {
                 let item = lines[j];
                 let indent = item.len() - item.trim_start().len();
                 if item.trim_end().ends_with('{') {
+                    // A raw string's lines are not the module's: a kernel's source closes its own braces at column 0.
+                    let mut raw = false;
                     let mut k = j + 1;
-                    while k < lines.len() && !(lines[k].len() - lines[k].trim_start().len() == indent && lines[k].trim_start().starts_with('}')) {
+                    while k < lines.len() && (raw || !(lines[k].len() - lines[k].trim_start().len() == indent && lines[k].trim_start().starts_with('}'))) {
+                        raw = raw_after(lines[k], raw);
                         k += 1;
                     }
                     i = k + 1;
@@ -124,4 +143,13 @@ fn executors_are_shared() {
         }
     }
     assert!(bad.is_empty(), "made outside the one executor (decision 0100 §2, §12): use `rerail_metal::queue()`/`device()`, `rerail_accel::exec::service`/`scoped`/`drop_beside`, or the pool:\n{}", bad.join("\n"));
+}
+
+/// A test module's raw string that closes a brace at column 0 (a kernel's source) does not end the module: the lines
+/// after it, up to the module's own brace, are still test code, and the product's lines after the module are read.
+#[test]
+fn a_test_modules_raw_string_does_not_end_it() {
+    let text = "fn product() {}\n#[cfg(test)]\nmod tests {\n    const K: &str = r#\"\nkernel void k() {\n}\n\"#;\n    fn t() { make_queue(); }\n}\nfn after() {}\n";
+    let lines: Vec<&str> = product_lines(text).into_iter().map(|(_, l)| l).collect();
+    assert_eq!(lines, ["fn product() {}", "fn after() {}"]);
 }

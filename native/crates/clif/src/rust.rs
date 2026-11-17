@@ -69,7 +69,7 @@ fn read_style(id: u32) -> Option<&'static str> {
 /// tape's bytes, as the slices a hand-written reader indexes: a corrupt tape panics where it is read. Each
 /// function takes the bytes' length first, where the parser's take the pinned register. No addresses, no
 /// vectors: plain Rust for every target.
-pub fn translate_reads(funcs: &[(u32, ir::Function, bool)], entries: &[(u32, &str)]) -> Result<String, String> {
+pub fn translate_reads(funcs: &[(u32, ir::Function, bool)], entries: &[(u32, &str)], family: crate::reads::Family) -> Result<String, String> {
     READS.with(|r| *r.borrow_mut() = Some(funcs.iter().map(|(id, _, hot)| (*id, *hot)).collect()));
     ADDRESSES.with(|a| a.borrow_mut().clear());
     let result = (|| {
@@ -96,6 +96,26 @@ pub fn translate_reads(funcs: &[(u32, ir::Function, bool)], entries: &[(u32, &st
         for &(entry, n) in entries {
             let f = &funcs.iter().find(|(id, ..)| *id == entry).ok_or("no entry")?.1;
             let types: Vec<&str> = f.signature.params.iter().map(|p| ty(p.value_type).map(|t| t.0)).collect::<Result<_, _>>()?;
+            if family == crate::reads::Family::Relation {
+                // A relation's read: its descriptor's address, every load an aligned word of its block (`ld`'s
+                // check is the tape's alone).
+                if types.first() != Some(&"u64") {
+                    return Err(format!("{n}: a relation's read takes its descriptor first"));
+                }
+                let params: Vec<String> = types.iter().enumerate().skip(1).map(|(i, t)| format!("a{i}: {t}")).collect();
+                let args: Vec<String> = (1..types.len()).map(|i| format!(", a{i}")).collect();
+                let [ret] = f.signature.returns.as_slice() else { return Err(format!("{n}: a read returns one value")) };
+                let ret = ty(ret.value_type)?.0;
+                writeln!(
+                    out,
+                    "/// The read `{n}` of the relation (or rows) whose descriptor is at `desc`.\n///\n/// # Safety\n/// `desc` is a live descriptor of its kind in a block, and the read's arguments are in its bounds.\n#[inline(always)]\npub unsafe fn {n}(desc: *const u8{}{}) -> {ret} {{\n    // SAFETY: the caller's.\n    unsafe {{ f{entry}(u64::MAX, desc as u64{}) }}\n}}\n",
+                    if params.is_empty() { "" } else { ", " },
+                    params.join(", "),
+                    args.concat()
+                )
+                .unwrap();
+                continue;
+            }
             if types.get(..2) != Some(&["u64", "u64"][..]) {
                 return Err(format!("{n}: a read takes the tape and its view first"));
             }

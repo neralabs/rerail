@@ -1,12 +1,18 @@
 //! CLIF as Metal Shading Language (decision 0310's third backend): the tape's reads for the kernels, in place of
 //! `metal_tape.metal`'s hand port.
 //!
-//! A read's function takes the tape (`device const uchar* t`, where the view's offsets count from: the slab the
-//! document lies in) and its view as u32s (`thread const uint* v`, the device's `DocView`), then its own
+//! A read's function takes the tape (`device const uchar* t`, where the view's offsets count from: the
+//! document's first byte in its batch's block) and its view as u32s (`thread const uint* v`, the device's `ChunkTape` past its `at`), then its own
 //! parameters. In the body the tape and the view are byte offsets from those pointers, 0 where they come in, so
 //! an address the read computes is an offset: a load of the view (marked aligned: its fields) reads `v`, a load of
 //! the tape reads `t`, at any alignment (two aligned words shifted together where it is not aligned to its size;
 //! a slab lays the document's source after its tape, so the second word lies in it).
+//!
+//! A relation's read (decision 0325) takes a base (`device const uchar* t`, a block's first byte, or any pointer
+//! before the descriptor in its buffer) and the descriptor's offset from it (`ulong a0`), then its own parameters:
+//! every address it computes is an offset from `t`, through the block's self-relative references, so an address a
+//! read returns (`rows_at`) and a descriptor a read calls another of are offsets from the same `t`. Its loads are
+//! aligned, and read as their type.
 //!
 //! MSL has no `goto` and no labelled `break`, so a body is written structured (`Shape`): a branch as `if`/`else`
 //! with its merge after it, a loop as `while(true)` with `continue` and `break`, a block reached on two paths that
@@ -18,9 +24,11 @@
 //! A GPU computes in 32 bits; a 64-bit add or shift is several instructions. Every offset a read computes from the
 //! tape or the view is below 4 GiB on the device (a document's parts are offsets from its first byte, u32 in its
 //! view), so a 64-bit value whose every use reads only its low 32 bits (`low_words`: an address, a modular step to
-//! another such value) is computed as a `uint`, with the same low bits, and a 64-bit load of it reads 32 bits.
+//! another such value) is computed as a `uint`, with the same low bits, and a 64-bit load of it reads 32 bits. A
+//! relation's offsets are a block's, not bounded so: its reads keep 64 bits.
 
 use cranelift_codegen::ir::{self, InstructionData, Opcode, condcodes::IntCC, types};
+use crate::reads::Family;
 use std::fmt::Write;
 
 /// MSL's unsigned type for a Cranelift integer type, and its signed one.
@@ -35,11 +43,14 @@ fn ty(t: ir::Type) -> Result<(&'static str, &'static str), String> {
 }
 
 /// The loads every read's body uses: of the tape at any alignment, and of the view (`clif_view`, which a
-/// kernel source may define before the reads, as the label passes' does to make the format a constant).
+/// kernel source may define before the reads, as the label passes' does to make the format a constant). Guarded,
+/// so a kernel may include the reads of several families.
 pub const HELPERS: &str = "\
 #ifndef clif_view
 #define clif_view(v,a) (v)[(a)/4u]
 #endif
+#ifndef CLIF_HELPERS
+#define CLIF_HELPERS 1
 inline ulong clif_word(device const uchar* t,ulong a){device const ulong* w=(device const ulong*)(t+(a&~7ul));uint s=uint(a&7ul)*8u;return s==0u?w[0]:(w[0]>>s)|(w[1]<<(64u-s));}
 inline uchar clif_u8(device const uchar* t,ulong a){return t[a];}
 inline ushort clif_u16(device const uchar* t,ulong a){return (a&1ul)==0ul?*(device const ushort*)(t+a):ushort(clif_word(t,a));}
@@ -51,19 +62,20 @@ inline uchar clif_u8(device const uchar* t,uint a){return t[a];}
 inline ushort clif_u16(device const uchar* t,uint a){return (a&1u)==0u?*(device const ushort*)(t+a):ushort(clif_word(t,a));}
 inline uint clif_u32(device const uchar* t,uint a){return clif_lo(t,a);}
 inline ulong clif_u64(device const uchar* t,uint a){return clif_word(t,a);}
+#endif
 ";
 
-/// The reads `funcs` (by their user name's index, each with its name) as MSL functions, `prefix` before each
-/// name: declarations first, so a read may call one defined after it.
-pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str) -> Result<String, String> {
+/// The reads `funcs` of `family` (by their user name's index, each with its name) as MSL functions, `prefix` before
+/// each name: declarations first, so a read may call one defined after it.
+pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str, family: Family) -> Result<String, String> {
     let named = |id: u32| funcs.iter().find(|(f, ..)| *f == id).map(|(.., n)| format!("{prefix}{n}")).ok_or(format!("a call of u0:{id}, no read"));
     let mut out = String::from(HELPERS);
     let mut bodies = String::new();
     for (id, f, n) in funcs {
-        let signature = signature(f, &format!("{prefix}{n}"))?;
+        let signature = signature(f, &format!("{prefix}{n}"), family)?;
         writeln!(out, "{signature};").unwrap();
         writeln!(bodies, "{signature}{{").unwrap();
-        body(&mut bodies, f, &named).map_err(|e| format!("{n} (u0:{id}): {e}"))?;
+        body(&mut bodies, f, &named, family).map_err(|e| format!("{n} (u0:{id}): {e}"))?;
         bodies.push_str("}\n");
     }
     out.push_str(&bodies);
@@ -75,9 +87,12 @@ pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str) -> Res
 /// a shift's amount, a reduction's operand, a select's arm that is one, a branch's argument to a block parameter that
 /// is one, a call's tape and view (passed on as pointers). A comparison, a right shift, a division, a minimum, a
 /// call's own argument or a return reads the whole value.
-fn low_words(f: &ir::Function) -> std::collections::HashSet<ir::Value> {
+fn low_words(f: &ir::Function, family: Family) -> std::collections::HashSet<ir::Value> {
     let dfg = &f.dfg;
     let mut low: std::collections::HashSet<ir::Value> = std::collections::HashSet::new();
+    if family == Family::Relation {
+        return low;
+    }
     for b in f.layout.blocks() {
         for &v in dfg.block_params(b).iter().chain(f.layout.block_insts(b).flat_map(|i| dfg.inst_results(i))) {
             if dfg.value_type(v) == types::I64 {
@@ -136,18 +151,27 @@ fn low_words(f: &ir::Function) -> std::collections::HashSet<ir::Value> {
     }
 }
 
-fn signature(f: &ir::Function, name: &str) -> Result<String, String> {
-    let [ret] = f.signature.returns.as_slice() else { return Err(format!("{name}: a read returns one value")) };
-    let params: Vec<String> = f.signature.params.iter().enumerate().skip(2).map(|(i, p)| Ok(format!("{} a{i}", ty(p.value_type)?.0))).collect::<Result<_, String>>()?;
-    let more = if params.is_empty() { String::new() } else { format!(",{}", params.join(",")) };
-    Ok(format!("inline {} {name}(device const uchar* t,thread const uint* v{more})", ty(ret.value_type)?.0))
+/// The pointers a read of `family` takes, as MSL's parameters and as a call passes them on.
+fn pointers(family: Family) -> (&'static str, &'static str) {
+    match family {
+        Family::Tape => ("device const uchar* t,thread const uint* v", "t,v"),
+        Family::Relation => ("device const uchar* t,ulong a0", "t"),
+    }
 }
 
-fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String, String>) -> Result<(), String> {
+fn signature(f: &ir::Function, name: &str, family: Family) -> Result<String, String> {
+    let [ret] = f.signature.returns.as_slice() else { return Err(format!("{name}: a read returns one value")) };
+    let params: Vec<String> =
+        f.signature.params.iter().enumerate().skip(family.pointers()).map(|(i, p)| Ok(format!("{} a{i}", ty(p.value_type)?.0))).collect::<Result<_, String>>()?;
+    let more = if params.is_empty() { String::new() } else { format!(",{}", params.join(",")) };
+    Ok(format!("inline {} {name}({}{more})", ty(ret.value_type)?.0, pointers(family).0))
+}
+
+fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String, String>, family: Family) -> Result<(), String> {
     let dfg = &f.dfg;
     let name = |v: ir::Value| format!("v{}", dfg.resolve_aliases(v).as_u32());
     let entry = f.layout.entry_block().ok_or("no entry block")?;
-    let low = low_words(f);
+    let low = low_words(f, family);
     // A value set and read in one block only is declared where it is set, in that block's case: its life ends there,
     // which a local of the whole body (live round the loop, as far as the compiler sees) does not show. Block
     // parameters and values read in another block are the body's.
@@ -183,11 +207,15 @@ fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String
     for (v, t) in &declared {
         writeln!(out, " {t} v{v}=0;").unwrap();
     }
-    // The tape and the view are offsets from `t` and `v`; the read's own parameters are its arguments.
+    // The family's pointers are offsets from `t` (and `v`): a relation's descriptor is its offset from `t`. The
+    // read's own parameters are its arguments.
     for (k, &p) in dfg.block_params(entry).iter().enumerate() {
-        match k {
-            0 | 1 => writeln!(out, " {}=0;", name(p)).unwrap(),
-            _ => writeln!(out, " {}=a{k};", name(p)).unwrap(),
+        if family == Family::Relation && k == 0 {
+            writeln!(out, " {}=a0;", name(p)).unwrap();
+        } else if k < family.pointers() {
+            writeln!(out, " {}=0;", name(p)).unwrap();
+        } else {
+            writeln!(out, " {}=a{k};", name(p)).unwrap();
         }
     }
     // A block's instructions but its branch, each value declared where it is set when only its block reads it.
@@ -196,7 +224,7 @@ fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String
             if dfg.insts[inst].opcode().is_terminator() {
                 continue;
             }
-            let line = instruction(f, inst, &name, named, &low)?;
+            let line = instruction(f, inst, &name, named, &low, family)?;
             match dfg.inst_results(inst).first() {
                 Some(&r) if scoped.contains(&r) => {
                     let t = if low.contains(&r) { "uint" } else { ty(dfg.value_type(r))?.0 };
@@ -222,7 +250,7 @@ fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String
         writeln!(out, " case {}u:{{", block.as_u32()).unwrap();
         straight(out, block, "  ")?;
         let last = f.layout.last_inst(block).ok_or("an empty block")?;
-        writeln!(out, "  {}", instruction(f, last, &name, named, &low)?).unwrap();
+        writeln!(out, "  {}", instruction(f, last, &name, named, &low, family)?).unwrap();
         out.push_str(" }\n");
     }
     out.push_str(" default:return 0;\n }}\n");
@@ -543,7 +571,7 @@ fn cond(cc: IntCC, a: &str, b: &str, u: &str, s: &str) -> String {
     format!("uchar(({t})({a}){op}({t})({b}))")
 }
 
-fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> String, named: &dyn Fn(u32) -> Result<String, String>, low: &std::collections::HashSet<ir::Value>) -> Result<String, String> {
+fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> String, named: &dyn Fn(u32) -> Result<String, String>, low: &std::collections::HashSet<ir::Value>, family: Family) -> Result<String, String> {
     let dfg = &f.dfg;
     let data = &dfg.insts[inst];
     let op = data.opcode();
@@ -642,6 +670,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         }
         Opcode::UshrImm => set(shift(&args[0], &(imm()? as u64 & 63).to_string(), ">>", false)),
         Opcode::SshrImm => set(shift(&args[0], &(imm()? as u64 & 63).to_string(), ">>", true)),
+        Opcode::Clz => set(format!("{u}(clz({}))", args[0])),
         Opcode::Umin => set(format!("min({},{})", args[0], args[1])),
         Opcode::Umax => set(format!("max({},{})", args[0], args[1])),
         Opcode::Icmp | Opcode::IcmpImm => {
@@ -663,7 +692,16 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
                 Opcode::Uload32 => 32,
                 _ => bits,
             };
-            if aligned {
+            if aligned && family == Family::Relation {
+                // The block's own words, at their alignment.
+                let t = match size {
+                    8 => "uchar",
+                    16 => "ushort",
+                    32 => "uint",
+                    _ => "ulong",
+                };
+                set(format!("{u}(*(device const {t}*)(t+{}))", addr(&args[0])))
+            } else if aligned {
                 // The view: its u32 fields.
                 if size != 32 {
                     return Err(format!("a load of the view of {size} bits"));
@@ -682,9 +720,14 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
                 ir::ExternalName::User(n) => f.params.user_named_funcs()[*n].index,
                 n => return Err(format!("a call of {n:?}")),
             };
-            // A read's call passes its tape and view on: the callee's offsets count from the same pointers.
-            let more: Vec<&String> = args.iter().skip(2).collect();
-            let call = format!("{}(t,v{}{})", named(callee)?, if more.is_empty() { "" } else { "," }, more.iter().map(|a| a.as_str()).collect::<Vec<_>>().join(","));
+            // A read's call passes its pointers on: the callee's offsets count from the same ones. (A relation's read
+            // passes `t` and the callee's descriptor, an offset from it.)
+            let more: Vec<&String> = args.iter().skip(family.pointers()).collect();
+            let pointers = match family {
+                Family::Relation => format!("t,{}", args[0]),
+                Family::Tape => pointers(family).1.to_owned(),
+            };
+            let call = format!("{}({pointers}{}{})", named(callee)?, if more.is_empty() { "" } else { "," }, more.iter().map(|a| a.as_str()).collect::<Vec<_>>().join(","));
             match results.len() {
                 0 => format!("{call};"),
                 1 => set(call),

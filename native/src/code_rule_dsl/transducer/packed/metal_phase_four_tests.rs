@@ -202,7 +202,7 @@ fn transformed_text_snapshots_and_utf8_offsets_preserve_directive_order() {
 }
 
 #[test]
-#[ignore = "Q55: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
+#[ignore = "Q49: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
 fn typed_output_preserves_late_operand_failures_without_publishing_failed_evaluations() {
     let good = Program::new(
         vec![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
@@ -363,7 +363,7 @@ fn typed_properties_offsets_and_text_preserve_duplicate_captures_across_executio
 }
 
 #[test]
-#[ignore = "Q55: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
+#[ignore = "Q49: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
 fn transformed_candidate_rejection_precedes_accepted_witness_limits() {
     let program = Program::new(
         vec![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
@@ -465,7 +465,7 @@ fn prior_phase_optional_query_completes_structural_work_before_output_stages() {
 }
 
 #[test]
-#[ignore = "Q55: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
+#[ignore = "Q49: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
 fn accepted_witness_limits_follow_shared_predicates_and_preserve_duplicate_captures() {
     let programs = [
         TextPredicate::Equal(0),
@@ -551,7 +551,7 @@ fn accepted_witness_limits_follow_shared_predicates_and_preserve_duplicate_captu
 }
 
 #[test]
-#[ignore = "Q55: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
+#[ignore = "Q49: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
 fn late_failures_invalidate_only_their_evaluation_even_after_the_witness_limit() {
     let good = Program::new(
         vec![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
@@ -609,7 +609,7 @@ fn late_failures_invalidate_only_their_evaluation_even_after_the_witness_limit()
 }
 
 #[test]
-#[ignore = "Q55: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
+#[ignore = "Q49: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
 fn operand_failures_follow_logical_paths_and_source_root_order_instead_of_arrival_or_pc_order() {
     let good = Program::new(
         vec![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],

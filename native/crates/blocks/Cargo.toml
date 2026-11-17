@@ -11,7 +11,6 @@ rayon = "=1.12.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 metal = "0.33.0"
-rerail-forest = { path = "../../../forest" }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # The deallocator of a no-copy Metal buffer (examples/deferrable).

@@ -188,9 +188,9 @@ mod shape;
 mod on_version;
 pub use on_version::FileLocal;
 mod passes;
-pub use passes::Locate;
+pub use passes::{FactorizeExports, Locate, MoveCrossFile, PushLocalJoins};
 pub mod export_demand;
-pub use export_demand::demand_exports;
+pub use export_demand::{DemandExports, demand_exports};
 pub use split_memo::forget as forget_splits;
 // cratify: `tests` is rerail-device-metal's (it mounts it)
 
@@ -1188,6 +1188,33 @@ pub(crate) fn factorize_on(options: &serde_json::Value) -> bool {
     std::env::var("RERAIL_FACTORIZE").map_or(true, |v| v != "off") && options.get("factorize").and_then(|v| v.as_str()) != Some("off")
 }
 
+/// A helper relation's name from its content (decision 0281's path, step 5): `<prefix><h>_<rel>`, `h` a stable hash of
+/// the text of the rule that makes it (its head's relation and interface, its body as the tree writes it), so an
+/// edit renames only the helpers of the rules it changes, where a counter renumbered every helper after them. The
+/// digits keep the shape the profile's and the run's readers parse (`fl<digits>_<head>`). A name the program already
+/// declares (`existing`), or one this round gave other content (`used`), is hashed again with a salt.
+pub(crate) fn helper_name(prefix: &str, rel: &str, content: &str, existing: impl Fn(&str) -> bool, used: &mut std::collections::HashMap<String, String>) -> String {
+    let mut salt = 0u32;
+    loop {
+        // FNV-1a over the salt and the text: the same in every process and build.
+        let mut h: u32 = 0x811c_9dc5;
+        for b in salt.to_le_bytes().iter().chain(content.as_bytes()) {
+            h ^= u32::from(*b);
+            h = h.wrapping_mul(0x0100_0193);
+        }
+        let name = format!("{prefix}{h}_{rel}");
+        let free = match used.get(&name) {
+            Some(c) => c == content,
+            None => !existing(&name),
+        };
+        if free {
+            used.insert(name.clone(), content.to_owned());
+            return name;
+        }
+        salt += 1;
+    }
+}
+
 /// At most this many rules of a relation stored factorized, and reader copies made of its reads.
 const FACTOR_RULES: usize = 4;
 const FACTOR_COPIES: usize = 8;
@@ -1307,6 +1334,7 @@ pub fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program)
         if chosen.is_empty() {
             return Vec::new();
         }
+        let mut used = std::collections::HashMap::new();
         let mut next = prog.clone();
         let mut lines = Vec::new();
         let mut made: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -1341,9 +1369,10 @@ pub fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program)
                         ok = false;
                         break;
                     };
-                    let name = format!("fz{}_{rel}", next.decls.len());
+                    let content = format!("{rel}({}) :- {}", iface.join(", "), part.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "));
+                    let name = helper_name("fz", rel, &content, |n| prog.decls.contains_key(n), &mut used);
                     next.decls.insert(name.clone().into(), cols.clone().into());
-                    let kname = format!("fzk{}_{rel}", next.decls.len());
+                    let kname = format!("fzk{}", &name["fz".len()..]);
                     next.decls.insert(kname.clone().into(), [cols.last().cloned().expect("the key")].into());
                     // A part's key reduces the other parts as a semijoin, stored so it holds each key once. Inlined,
                     // its readers join the part's body again, every row per key: the product the parts replace
@@ -1378,14 +1407,16 @@ pub fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program)
         }
         // The relation's rules go; each read becomes the parts of each of its rules, the key and the variables the
         // read leaves open named apart.
-        let mut fresh = 0usize;
+        // A copy's open variables are named by how many reads it has had replaced (`fz<depth>_v`): apart from each
+        // other within the copy, and the same whatever other rules read, where a counter over the program renamed
+        // every later reader's.
         let mut rules = Vec::with_capacity(next.rules.len());
         for rule in std::mem::take(&mut next.rules) {
             if stands.contains_key(rule.head.rel.as_str()) {
                 continue;
             }
-            let mut work = vec![rule];
-            while let Some(rule) = work.pop() {
+            let mut work = vec![(rule, 0usize)];
+            while let Some((rule, depth)) = work.pop() {
                 let at = rule.body.iter().position(|l| matches!(l, Literal::Atom(a) if !a.neg && stands.contains_key(a.rel.as_str())));
                 let Some(at) = at else {
                     rules.push(rule);
@@ -1393,17 +1424,16 @@ pub fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program)
                 };
                 let Literal::Atom(read) = &rule.body[at] else { unreachable!() };
                 for (head, atoms) in &stands[read.rel.as_str()] {
-                    fresh += 1;
                     let to = |v: &str| -> Term {
                         match head.iter().position(|h| h == v) {
                             Some(i) => read.args[i].clone(),
-                            None => Term::Var(format!("fz{fresh}_{v}").into()),
+                            None => Term::Var(format!("fz{}_{v}", depth + 1).into()),
                         }
                     };
                     let parts = atoms.iter().map(|a| Literal::Atom(Atom { rel: a.rel.clone(), args: a.args.iter().map(|t| if let Term::Var(v) = t { to(v) } else { t.clone() }).collect(), neg: false, gated: false }));
                     let mut copy = rule.clone();
                     copy.body.splice(at..=at, parts);
-                    work.push(copy);
+                    work.push((copy, depth + 1));
                 }
             }
         }
@@ -1781,12 +1811,10 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
     let mut level: BTreeMap<usize, u8> = BTreeMap::new();
     // The program is changed only when a round succeeds, so its split is found once.
     let local = split(prog);
-    // Each helper's name, by its rule and component, kept from round to round: a round that retries a few rules
-    // changes only their helpers, so the next split computes again only what they reach (`split_memo`). Numbered
-    // from a counter, a retried rule's helpers renamed every helper after it, and each round split half the program.
-    let mut names: BTreeMap<(usize, usize), String> = BTreeMap::new();
-    let mut number = prog.decls.len();
+    // Each helper is named from its content (`helper_name`): a round that retries a few rules changes only their
+    // helpers, so the next split computes again only what they reach, and an edit of a rule renames only its own.
     loop {
+        let mut used = std::collections::HashMap::new();
         let mut next = prog.clone();
         let mut made: Vec<(usize, String)> = Vec::new();
         let mut helpers: Vec<Rule> = Vec::new();
@@ -1818,7 +1846,7 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
             let mut body = rule.body.clone();
             let mut taken: BTreeSet<usize> = BTreeSet::new();
             let mut replaced: Vec<(usize, Literal)> = Vec::new();
-            for (component, (mut lits, mut vars)) in comps.into_iter().enumerate() {
+            for (mut lits, mut vars) in comps {
                 let atoms: Vec<&Atom> = lits.iter().filter_map(|&j| rule.body[j].atom()).collect();
                 // A node's text or value read of a node this component binds (`t = @rr_node_text(v)`, a long-text
                 // twin's, decision 0109) goes with it: only the chunk's batch holds the node's text, so the read is
@@ -1931,16 +1959,8 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                     })
                     .collect();
                 let Some(typed) = typed else { continue };
-                let name = names
-                    .entry((i, component))
-                    .or_insert_with(|| loop {
-                        let name = format!("fl{number}_{}", rule.head.rel);
-                        number += 1;
-                        if !prog.decls.contains_key(name.as_str()) {
-                            break name;
-                        }
-                    })
-                    .clone();
+                let content = format!("{}({}) :- {}", rule.head.rel, iface.join(", "), lits.iter().map(|&j| rule.body[j].to_string()).collect::<Vec<_>>().join(", "));
+                let name = helper_name("fl", rule.head.rel.as_str(), &content, |n| prog.decls.contains_key(n), &mut used);
                 next.decls.insert(name.clone().into(), typed.iter().map(|(c, t)| (c.into(), t.into())).collect());
                 let head = Atom { rel: name.clone().into(), args: iface.iter().map(|v| Term::Var(v.clone().into())).collect(), neg: false, gated: false };
                 helpers.push(Rule { head: head.clone(), body: lits.iter().map(|&j| rule.body[j].clone()).collect() });
