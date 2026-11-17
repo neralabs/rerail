@@ -6310,7 +6310,12 @@ fn run_observed(
                     let (Some(columns), Some((_, texts))) = (super::super::sql::select::input_columns(rel), crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(r, _)| r == rel)) else { continue };
                     let have = source.columns();
                     let at = |name: &str| have.iter().position(|h| h == name);
-                    let Some(owner) = columns.first().and_then(|c| at(c)) else { continue };
+                    // Only a relation whose rows are a node's or a document's names the files holding a string: a
+                    // string-keyed one's owner column is a string (`value_type(v, t)`), which read as a document
+                    // made each value its own file, and a value no file's text holds was then dropped as another
+                    // chunk's, not kept as a made one (Q27).
+                    let memo::Owner::Node(o) = memo::owner(rel) else { continue };
+                    let Some(owner) = columns.get(o).and_then(|c| at(c)) else { continue };
                     let texts: Vec<usize> = texts.iter().filter_map(|&c| columns.get(c).and_then(|c| at(c))).collect();
                     for r in 0..source.len() {
                         for &c in &texts {
