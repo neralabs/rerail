@@ -419,20 +419,25 @@ pub fn run_policies(
     Ok(serde_json::json!({"diagnostics": diagnostics, "runs": runs}))
 }
 
-/// Policies of a batch that run as one pack: one language, the same dialects with files in scope, each with its own
-/// policy id (its findings are told apart by it) and findings declared. `members` index the batch's paths; `metadata`
-/// is each one's; `dialects` the runs a policy alone makes (`corpus::run_dialects`: none for a language of one dialect).
+/// Policies of a batch that run as one pack: one language, the same dialects with files in scope, the same guest
+/// requests (`rr::GuestAsks`), each with its own policy id (its findings are told apart by it) and findings declared.
+/// `members` index the batch's paths; `metadata` is each one's; `dialects` the runs a policy alone makes
+/// (`corpus::run_dialects`: none for a language of one dialect).
 struct PolicyGroup {
     members: Vec<usize>,
     ids: Vec<String>,
     metadata: Vec<serde_json::Value>,
     dialects: Vec<&'static str>,
+    asks: super::logic::rr::GuestAsks,
 }
 
 /// The batch's policies (`texts`, as `program_texts` reads them) grouped by the grammar each run reads (decision
-/// 0168, `corpus::run_language`: its `.language`'s, else the tree's) and the dialects its language's runs read
-/// (`corpus::run_dialects`), each read for its header only (`rr::Text::header`: its directives and declarations, no
-/// clause), which is all a group needs before its run. The corpus is listed once for all of them.
+/// 0168, `corpus::run_language`: its `.language`'s, else the tree's), the dialects its language's runs read
+/// (`corpus::run_dialects`) and the guests it asks for (`rr::guest_asks`), each read for its header only
+/// (`rr::Text::header`: its directives and declarations, no clause) and its clauses' guest reads, which is all a
+/// group needs before its run. A pack makes one set of guests for all its programs, and a rule that reaches a guest
+/// reads all of them: programs that ask for different guests would each read the others'. A policy whose own clauses
+/// ask for guests runs in a group of its own. The corpus is listed once for all of them.
 /// Findings are told apart by their policy's `.policy` id, so a group holds each id once (one policy of none). A
 /// policy whose header does not read, has an id another of its grammar has, or declares no findings runs as `run_rr`
 /// runs it (and fails there with its own error).
@@ -459,14 +464,15 @@ fn policy_groups(texts: &[String], root: &std::path::Path, options: &serde_json:
             let id = own.settings.iter().find(|(k, _)| k == "policy").and_then(|(_, t)| t.split('"').nth(1)).unwrap_or_default().to_owned();
             let findings = own.outputs.iter().any(|o| rr::is_diagnostic(o));
             let metadata = rr::metadata(&own).ok()?;
-            findings.then_some((language, dialects, id, metadata))
+            let asks = rr::guest_asks(text).ok()?;
+            findings.then_some((language, dialects, id, metadata, asks))
         });
         match joined {
-            Some((language, dialects, id, metadata)) if !groups.iter().any(|(_, g)| g.ids.contains(&id)) => {
-                let at = match groups.iter().position(|(l, g)| *l == language && g.dialects == dialects) {
+            Some((language, dialects, id, metadata, asks)) if !groups.iter().any(|(_, g)| g.ids.contains(&id)) => {
+                let at = match groups.iter().position(|(l, g)| *l == language && g.dialects == dialects && g.asks == asks && !asks.own) {
                     Some(at) => at,
                     None => {
-                        groups.push((language, PolicyGroup { members: Vec::new(), ids: Vec::new(), metadata: Vec::new(), dialects }));
+                        groups.push((language, PolicyGroup { members: Vec::new(), ids: Vec::new(), metadata: Vec::new(), dialects, asks }));
                         groups.len() - 1
                     }
                 };

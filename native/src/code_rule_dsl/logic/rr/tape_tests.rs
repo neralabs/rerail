@@ -427,6 +427,49 @@ fn a_batchs_policies_of_several_dialects_run_as_one_pack_a_dialect() {
     assert!(written.iter().all(|w| w.contains("\"call\"")), "{written:?}");
 }
 
+/// A pack's programs make one set of guests (decision 0055), and a rule that reaches a guest reads every one the run
+/// made: `ruff-classes.rr`'s `ann_input` asks for the annotation in `Literal["dict({})"]`, and C408, which reads
+/// string annotations, found a `dict({})` call there once a policy that only includes that file ran beside it. A
+/// policy that asks for other guests runs in its own pack (`rr::guest_asks`): C408 finds what it finds alone, and a
+/// policy that asks the same as C408 still shares its pack.
+#[test]
+fn a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrguestpack");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("c.py"),
+        "from typing import List, Literal, cast\n\na: \"dict({})\" = 1\nb: \"dict(\" \"{})\" = 1\nc: List[\"dict({1: 2})\"] = []\nd: Literal[\"dict({})\"] = 1\ne = cast(\"(dict)({ })\", None)\n",
+    )
+    .unwrap();
+    let c408 = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-c408-unnecessary-collection-call.rr");
+    let text = std::fs::read_to_string(&c408).unwrap();
+    let twin = dir.join("twin.rr");
+    std::fs::write(&twin, text.replace("\"ruff-c408-unnecessary-collection-call\"", "\"t:c408-twin\"")).unwrap();
+    let classes = dir.join("classes.rr");
+    std::fs::write(
+        &classes,
+        ".policy \"t:classes\" revision 1\n.language python\n.scope include \"**/*\"\n#include \"python/ruff-classes.rr\"\n\
+         .violation W(at: node) code \"W\" \"w\"\nW(n) :- kind(n, \"zzz_none\").\n",
+    )
+    .unwrap();
+    let paths = [c408.clone(), classes.clone(), twin.clone()];
+    let batch = crate::code_rule_dsl::tools::run_policies(&paths, &dir, &dir.join("out"), &serde_json::Value::Null).unwrap();
+    let alone = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&c408), &dir, &dir.join("alone"), &serde_json::Value::Null).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let lines = |report: &serde_json::Value, policy: &str| -> Vec<u64> {
+        let mut lines: Vec<u64> = report["diagnostics"].as_array().unwrap().iter().filter(|d| d["policy"] == policy).map(|d| d["line"].as_u64().unwrap_or(0)).collect();
+        lines.sort_unstable();
+        lines
+    };
+    let own = lines(&alone, "ruff-c408-unnecessary-collection-call");
+    assert!(!own.is_empty() && !own.contains(&6), "C408 alone finds the string annotations, not the `Literal`'s text: {alone:#}");
+    assert_eq!(lines(&batch, "ruff-c408-unnecessary-collection-call"), own, "{batch:#}");
+    assert_eq!(lines(&batch, "t:c408-twin"), own, "{batch:#}");
+    // C408 and its twin ask the same and run as one pack; the policy that includes `ruff-classes.rr` runs alone.
+    let together: Vec<u64> = batch["runs"].as_array().unwrap().iter().map(|r| r["together"].as_u64().unwrap_or(0)).collect();
+    assert_eq!(together, [2, 1, 2], "{batch:#}");
+}
+
 /// O-pha000-kept-part: a reader whose body is only a negation of a demanded relation (`PHA000 :- !allow_status(
 /// "plan_helpers", "valid")`) demands nothing, so the relation is built whole: computed only for its other readers'
 /// keys, it held no row for this one, and the constant finding was reported though the status is valid. The run
