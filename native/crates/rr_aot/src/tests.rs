@@ -203,6 +203,11 @@ fn the_refill_is_leans_window() {
     tables.sort_unstable();
     tables.dedup();
     assert_eq!(tables.len(), 2, "the classes' lookups, one table's halves: {tables:?}\n{window}");
+    // The table's bits where it has room, not compares of the bytes: lean's window has one, the
+    // bytes past 0xbf (`cmhi`), on each of its four vectors; a range is three instructions a
+    // vector (`class_pack::pack`), a bit none.
+    let compares = window.matches("vcleq_u8(").count() + window.matches("vceqq_u8(").count();
+    assert!(compares <= 4, "{compares} compares of the bytes, lean's 4:\n{window}");
     let odd = f0.lines().filter(|l| l.contains("vld1q_u8(") && [1, 17, 33, 49].iter().any(|off| l.contains(&format!("wrapping_add({off}isize as usize)"))));
     assert_eq!(odd.count(), 0, "a vector load at a block's byte after");
 }

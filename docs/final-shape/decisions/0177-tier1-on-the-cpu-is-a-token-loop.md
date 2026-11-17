@@ -3619,3 +3619,78 @@ leads were checked and are not the difference:
   reloads a pair the same way.
 - **The first byte's entry.** It is two instructions and a load after
   the token's bytes, as lean's.
+
+## The refill takes bits, not compares
+
+This settles the base loop. On lines of words neither lexer looks up,
+the two loops cost the same a token once a block holds 8 tokens or more
+(about 5 cycles each). The gap was a fixed cost a block: about 6–8
+cycles, 33 instructions.
+
+How it was found:
+
+- **The measure.** Lines of 3-letter words at 1, 2, 4, 8 and 16 a
+  block. The line used before (`aghknqru…`) had `n` and `u` words, which
+  ours looks up (`null`, `uses`); lean's was off. Instructions a block:
+  ours 288 + 38 a token, lean 256 + 51.
+- **The paths.** lldb stepped one steady block of each, every pc logged.
+  A block's way from token to token is 314 instructions for ours, 294
+  for lean. The extra is in the vector work: `add`/`cmhi` and `orn`
+  that lean does not have.
+- **The cause.** Three of the refill's sets were a table bit **or a
+  range** of the bytes: `b == ' '`, the digits (`b - 48 <= 9`), and
+  `(`..`.` (`b - 40 <= 6`). A range is a `sub`, a compare and an `orr`
+  on each of the four vectors. Lean's digits are a bit (`C_DIGIT`). With
+  the ranges taken out (an experiment, wrong results), ours matched
+  lean: 12.3 against 12.2 cycles at 8 a block, 8.8 against 8.8 at 16.
+
+Ruled out on the way, each by a measurement:
+
+- the arms' branches (`-`, punctuation, wordy, marks): 0.2–0.4 cycles;
+- latency from the masks to a block's first token (7 cycles more on
+  that chain cost nothing), so the masks' `ldp` reload is not it either;
+- reading the token's bytes from the file rather than a stack copy:
+  lean reading from the file is 0.2 cycles slower.
+
+`class_pack::pack` chose by `(tables, products, ranges)`: it saved a
+product before a range. But a product is free while its table has
+room, since a set is one `vtst` however many bits it has. A range costs
+three instructions a vector. `plan` took a range wherever it saved a
+product, so no plan without ranges was ever tried. Now `plan` takes the
+needs that may have a range (`ranged_ok`). In each of its four orders,
+`pack` starts with ranges open to every need. It then closes them one
+need at a time, keeping each closure that adds no table. That is
+O(n²) plans at worst; trying every subset doubled the module's test
+time. It keeps the fewest range instructions in the fewest tables. A
+single byte is one compare (`cmeq`), a run a subtract and a compare;
+counting ranges alone, the greedy search kept a run where a byte would
+do:
+
+```rust
+let key = |p: &Packing| (p.tables.len(), p.tests.iter().filter_map(|t| t.range).map(|(_, span)| if span == 0 { 1 } else { 2 }).sum(), p.products());
+```
+
+The refill's three sets are one table and one compare now, as lean's
+window.
+
+Measured, as information (cycles a token, lean in brackets). Lines of
+words neither looks up, lean's lookup off, each lexer's fastest of six
+runs:
+
+| Tokens a block | Before | After |
+|---|---|---|
+| 1 | 49.7 (67.0) | 41.9 (67.0) |
+| 4 | 14.4 (18.4) | 13.4 (18.4) |
+| 8 | 13.2 (12.2) | 12.2 (12.2) |
+| 16 | 9.3 (8.8) | 8.7 (8.9) |
+
+By kind: words 17.2 → 16.6 (lean 16.0), punctuation 8.9 → 8.7, mixed
+9.0 → 8.9. Instructions a token: strings 224 → 205, comments 180 → 168,
+words 82.5 → 78.9.
+
+What is left of the words gap is the lookup's: ours 2.6 cycles a word
+(16.1 − 13.5), lean's about 2.1.
+
+Tests: `class_pack`'s `a_lexers_sets_are_one_table` (one compare at
+most, the word's bytes bits) and `a_lexers_classes_are_one_lookup`; AOT
+`the_refill_is_leans_window` (4 compares of the bytes at most, lean's).
