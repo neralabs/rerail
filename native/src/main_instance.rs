@@ -158,7 +158,7 @@ fn wait_for_lock(file: File, wait: Duration) -> std::io::Result<Option<File>> {
     std::thread::Builder::new()
         .name("rerail-lock-flock".to_owned())
         .spawn(move || {
-            let taken = file.lock().map(|()| file);
+            let taken = lock_blocking(&file).map(|()| file);
             if let Some(sender) = helper_slot.lock().take() {
                 let _ = sender.send(taken);
             }
@@ -170,6 +170,18 @@ fn wait_for_lock(file: File, wait: Duration) -> std::io::Result<Option<File>> {
     receiver
         .try_recv()
         .map_or(Ok(None), |taken| taken.map(Some))
+}
+
+/// `flock(LOCK_EX)`, asked again when a signal interrupts it: a handler installed without
+/// `SA_RESTART` would otherwise end the wait with an error while the holder still holds the lock.
+#[cfg(unix)]
+fn lock_blocking(file: &File) -> std::io::Result<()> {
+    loop {
+        match file.lock() {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            done => return done,
+        }
+    }
 }
 
 /// A manual-reset event, closed when dropped.
@@ -368,6 +380,48 @@ mod tests {
             "a wait given up must leave the lock free once its holder lets go"
         );
         drop(next);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// A signal whose handler does not restart system calls lands on the thread blocked in `flock`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_signal_during_the_wait_does_not_end_it() {
+        extern "C" fn on_signal(_: libc::c_int) {}
+        // SAFETY: a handler that does nothing, installed without SA_RESTART.
+        unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = on_signal as usize;
+            libc::sigaction(libc::SIGUSR1, &action, std::ptr::null_mut());
+        }
+        let (directory, path) = lock_path("signal");
+        let held = try_lock_exclusive(path.clone()).unwrap().unwrap();
+        let file = open_waiting_lock_file(&path).unwrap();
+        let (ids, waiter_ids) = mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            // SAFETY: plain thread ids of the calling thread.
+            ids.send(unsafe { (libc::pthread_self(), libc::syscall(libc::SYS_gettid)) })
+                .unwrap();
+            lock_blocking(&file)
+        });
+        let (thread, tid) = waiter_ids.recv().unwrap();
+        // The kernel names the system call a thread is blocked in: the signal goes once it is flock.
+        let blocked = format!("{} ", libc::SYS_flock);
+        let syscall = format!("/proc/self/task/{tid}/syscall");
+        while !waiter.is_finished()
+            && !std::fs::read_to_string(&syscall).is_ok_and(|text| text.starts_with(&blocked))
+        {
+            std::thread::yield_now();
+        }
+        // SAFETY: the thread is alive until it is joined below.
+        unsafe { libc::pthread_kill(thread, libc::SIGUSR1) };
+        held.release();
+
+        let locked = waiter.join().unwrap();
+        assert!(
+            locked.is_ok(),
+            "an interrupted flock must be asked again: {locked:?}"
+        );
         std::fs::remove_dir_all(directory).unwrap();
     }
 
