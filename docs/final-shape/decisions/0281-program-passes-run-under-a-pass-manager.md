@@ -646,9 +646,13 @@ step 3 replaces what is under the writer.
      `lowering_tail::GrammarNames` and `BuiltinsOut { rewritten }`. Tests: `grammar_names_and_builtins_are_checked_on_the_version`
      (fails without `GrammarNames`), and `builtins_out_on_a_version_is_the_trees` on its own, since on a modular
      text's path the unseeding hides it (the library declares every built-in); each fails with its pass left out.
-     ep2's 317 policies: 0 rows. Next: the span patterns, projections, the core's declarations, findings and
-     three-valued relations, each a function of the program and the lowerer state it reads, that state the pass's
-     settings.
+     ep2's 317 policies: 0 rows. Then the span patterns: `lower::span_patterns` is one analysis over a borrowed view
+     (`SpanProgram`: rules as atoms of names, variables and strings; the declared arities, inputs, natives and
+     outputs), which the tree (`SpanProgram::of_tree`) and the version (`lowering_tail::SpanPatterns`, reading the
+     image's rules and header) each build, so the analysis stays one definition. Test:
+     `span_patterns_are_found_on_the_version` (fails with the pass left out); ep2's 317 policies: 0 rows. Next:
+     projections, the core's declarations, findings and three-valued relations, each a function of the program and
+     the lowerer state it reads, that state the pass's settings.
    - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.

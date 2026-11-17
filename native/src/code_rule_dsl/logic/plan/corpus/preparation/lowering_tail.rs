@@ -1261,6 +1261,52 @@ impl ProgramPass for BuiltinsOut {
     }
 }
 
+/// `lower::span_patterns` on the version: the same analysis, read off the image's rules and header, the rx spans and
+/// AST patterns it finds added to the header.
+pub struct SpanPatterns;
+
+impl ProgramPass for SpanPatterns {
+    const NAME: &'static str = "span patterns";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::logic::rr::lower::{SpanAtom, SpanProgram, SpanRule, SpanTerm, span_patterns};
+        let v = cx.v();
+        let was = v.header(&Default::default())?;
+        let term = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, t: TermRef<'_>| match t {
+            TermRef::Var(x) => SpanTerm::Var(v.text(r.var(x))),
+            TermRef::Str(x) => SpanTerm::Str(v.text(x)),
+            _ => SpanTerm::Other,
+        };
+        let program = SpanProgram {
+            rules: v
+                .rules()
+                .map(|r| SpanRule {
+                    head: SpanAtom { rel: v.rel_name(r.head().rel()), args: r.head().args().map(|t| term(r, t)).collect(), neg: false },
+                    body: r
+                        .body()
+                        .filter_map(|l| match l.view() {
+                            L::Atom(a) | L::Agg { atom: a, .. } => Some(SpanAtom { rel: v.rel_name(a.rel()), args: a.args().map(|t| term(r, t)).collect(), neg: a.neg() }),
+                            _ => None,
+                        })
+                        .collect(),
+                })
+                .collect(),
+            decls: was.decls.iter().map(|(r, c)| (r.as_str(), c.len())).collect(),
+            inputs: was.inputs.iter().map(String::as_str).collect(),
+            natives: was.natives.keys().map(String::as_str).collect(),
+            outputs: was.outputs.iter().map(String::as_str).collect(),
+        };
+        let found = span_patterns(&program).map_err(|e| e.to_string())?;
+        let mut head = was.clone();
+        head.rx_spans.extend(found.0);
+        head.ast_patterns.extend(found.1);
+        if head.rx_spans == was.rx_spans && head.ast_patterns == was.ast_patterns {
+            return Ok(());
+        }
+        w.on()?.set_header(&was, &head);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::code_rule_dsl::logic::program_image::{build::Builder, manager::Pipeline};

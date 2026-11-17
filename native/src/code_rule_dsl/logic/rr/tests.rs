@@ -4086,3 +4086,24 @@ fn grammar_names_and_builtins_are_checked_on_the_version() {
     let head = v.header(&Default::default()).unwrap();
     assert!(!["nearest", "earlier", "split_dot", "unset"].iter().any(|b| head.decls.contains_key(*b)), "{:?}", head.decls.keys().collect::<Vec<_>>());
 }
+
+/// The span patterns are read off a modular text's version (decision 0281's path, step 7b): a `match` over a line
+/// (`src_line`) and one over a comment give the program its rx spans, as the tree's
+/// `lower::span_patterns` finds them; a debug build checks the image against the tree's.
+#[test]
+fn span_patterns_are_found_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl r(l: node)\n.decl c(n: node)\n.output r, c\n",
+        "r(l) :- src_line(_, _, l), match(\"TODO.*\", l).\n",
+        "c(n) :- kind(n, \"comment\"), match(\"#.*fixme\", n).\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let head = v.header(&Default::default()).unwrap();
+    use crate::code_rule_dsl::logic::front::SpanIn;
+    assert!(head.rx_spans.iter().any(|(w, p)| *w == SpanIn::Line && p.contains("TODO")), "{:?}", head.rx_spans);
+    assert!(head.rx_spans.iter().any(|(w, p)| *w == SpanIn::Comment && p.contains("fixme")), "{:?}", head.rx_spans);
+}

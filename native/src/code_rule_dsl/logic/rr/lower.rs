@@ -966,7 +966,7 @@ pub fn unseed(program: &mut Program, seeds: &Seeds, core: &BTreeSet<String>) {
     program.qualifiers.retain(|r, _| !(seeded.qualifiers.contains(r) && gone(r)));
 }
 
-/// `link_seeded` up to `grammar_names`, `builtins_out`, `kind_sets`, `unit`, `whole_back`, `front::finish` and `whole()`'s tail (aggregate demand, `unit`, `sets`,
+/// `link_seeded` up to `span_patterns`, `grammar_names`, `builtins_out`, `kind_sets`, `unit`, `whole_back`, `front::finish` and `whole()`'s tail (aggregate demand, `unit`, `sets`,
 /// `widen_cyclic_contexts`): the program `rr::link_seeded_version`
 /// makes a version of, with what the lowerer knows of it; `declared` checked. `builtins_out` takes out declarations
 /// of relations no rule reads (the built-ins are written out), but `within`, which it declares where read. `kind_sets` takes out only sets no rule
@@ -988,6 +988,7 @@ pub fn link_seeded_front(m: Module, seeds: &Seeds) -> Result<Lowered, Error> {
 /// The lowering's whole-program half (decision 0246 §1), over the modules appended into `l`.
 fn whole(l: Lowerer) -> Result<Program, Error> {
     let Lowered { mut program, sets: named, rewritten } = whole_front(l)?;
+    span_patterns_into(&mut program)?;
     grammar_names(&program)?;
     builtins_out(&mut program, &rewritten);
     kind_sets(&mut program, named)?;
@@ -1052,8 +1053,8 @@ pub fn sets(program: &mut Program) {
     }
 }
 
-/// `whole` up to the lowerer's analyses before its grammar names, with what the lowerer knows of the program
-/// (`Lowered`): what `grammar_names`, `builtins_out`, `kind_sets`,
+/// `whole` up to the lowerer's analyses before its span patterns, with what the lowerer knows of the program
+/// (`Lowered`): what `span_patterns`, `grammar_names`, `builtins_out`, `kind_sets`,
 /// `unit`, `whole_back`, `front::finish` and the tail (aggregate demand, `unit`,
 /// `sets`, `widen_cyclic_contexts`) make of it `rr::link_seeded_version` makes on the version.
 fn whole_front(mut l: Lowerer) -> Result<Lowered, Error> {
@@ -1062,7 +1063,6 @@ fn whole_front(mut l: Lowerer) -> Result<Lowered, Error> {
     l.findings()?;
     l.declare_core()?;
     l.projections();
-    l.span_patterns()?;
     let rewritten: Vec<String> = self::core::REWRITTEN.into_iter().filter(|r| l.rewritten(r)).map(str::to_owned).collect();
     drop(analyses);
     Ok(Lowered { program: l.prog, sets: l.sets, rewritten })
@@ -1092,6 +1092,277 @@ pub fn grammar_names(prog: &Program) -> Result<(), Error> {
         }
     }
     Ok(())
+}
+
+/// `Program::rx_spans`: each `rx_span(p, c, …)` a rule reads, its pattern p a constant and its span c bound in
+/// the same body by `source`, `src_line`, `kind(c, K)` (a comment, or a node of kind K) or another `rx_span`'s
+/// group (a capture; decision 0081). Read off the rules, so a printed program (`rr::print`) has them too.
+/// A derived relation's column holds the spans its rules bind it to: each rule binds it so, directly or through
+/// another such column (a fixpoint); rules that bind it differently give it each (string contents and comments).
+pub fn span_patterns(p: &SpanProgram<'_>) -> Result<SpanPatterns, Error> {
+    use SpanTerm as Term;
+    // The relations by number, and each column's spans a vector per relation.
+    let mut id: rustc_hash::FxHashMap<&str, u32> = Default::default();
+    {
+        let mut number = |rel| {
+            let n = id.len() as u32;
+            id.entry(rel).or_insert(n);
+        };
+        for r in &p.rules {
+            number(r.head.rel);
+            r.body.iter().for_each(|a| number(a.rel));
+        }
+        p.decls.iter().for_each(|(r, _)| number(r));
+    }
+    let rels = id.len();
+    let of = |rel: &str| id.get(rel).copied();
+    /// Each relation's columns' span sets, by number.
+    struct Cols(Vec<Vec<Option<BTreeSet<SpanIn>>>>);
+    impl Cols {
+        fn get(&self, rel: Option<u32>, c: usize) -> Option<&BTreeSet<SpanIn>> {
+            self.0.get(rel? as usize)?.get(c)?.as_ref()
+        }
+        fn has(&self, rel: u32, c: usize) -> bool {
+            self.get(Some(rel), c).is_some()
+        }
+        fn insert(&mut self, rel: u32, c: usize, set: BTreeSet<SpanIn>) {
+            let cols = &mut self.0[rel as usize];
+            if cols.len() <= c {
+                cols.resize(c + 1, None);
+            }
+            cols[c] = Some(set);
+        }
+    }
+    let mut columns = Cols(vec![Vec::new(); rels]);
+    let mut rounds = 0;
+    let binder = |body: &[SpanAtom<'_>], x: &str, columns: &Cols| -> Option<BTreeSet<SpanIn>> {
+        body.iter().filter(|b| !b.neg).find_map(|b| match (b.rel, b.args.as_slice()) {
+            ("source", [_, Term::Var(y)]) if *y == x => Some([SpanIn::Source].into()),
+            ("src_line", [_, _, Term::Var(y)]) if *y == x => Some([SpanIn::Line].into()),
+            ("kind", [Term::Var(y), Term::Str(k)]) if *y == x && *k == "comment" => Some([SpanIn::Comment].into()),
+            ("kind", [Term::Var(y), Term::Str(k)]) if *y == x => Some([SpanIn::Kind(k.to_string())].into()),
+            ("rx_span", [Term::Str(p), _, _, Term::Str(g), Term::Var(y)]) if *y == x => Some([SpanIn::Capture(p.to_string(), g.to_string())].into()),
+            // A child of a node whose kinds the body gives (a `kind` atom, or a column of nodes of known kinds):
+            // the children of nodes of those kinds.
+            ("child", [Term::Var(par), Term::Var(y), _]) if *y == x && *par != x => {
+                let atoms: BTreeSet<SpanIn> = body.iter().filter(|a| !a.neg && a.rel == "kind").filter_map(|a| match a.args.as_slice() {
+                    [Term::Var(z), Term::Str(k)] if z == par => Some(SpanIn::ChildOf(k.to_string())),
+                    _ => None,
+                }).collect();
+                if !atoms.is_empty() {
+                    return Some(atoms);
+                }
+                body.iter().filter(|a| !a.neg && a.rel != "child").find_map(|a| {
+                    a.args.iter().enumerate().find_map(|(i, t)| matches!(t, Term::Var(z) if z == par).then(|| columns.get(of(a.rel), i)).flatten())
+                }).and_then(|set| set.iter().map(|s| match s { SpanIn::Kind(k) => Some(SpanIn::ChildOf(k.to_string())), _ => None }).collect::<Option<BTreeSet<_>>>())
+            }
+            _ => b.args.iter().enumerate().find_map(|(i, t)| matches!(t, Term::Var(y) if *y == x).then(|| columns.get(of(b.rel), i).cloned()).flatten()),
+        })
+    };
+    // A declared relation no rule derives, and that is not read in, has no rows: its columns hold no nodes, and a
+    // scan over them is empty. A library a pack's rules include (`…confusables.rr`) is loaded on its own too.
+    {
+        let heads: rustc_hash::FxHashSet<&str> = p.rules.iter().map(|r| r.head.rel).collect();
+        let inputs: rustc_hash::FxHashSet<&str> = p.inputs.iter().copied().collect();
+        for &(rel, cols) in &p.decls {
+            if !heads.contains(rel) && !inputs.contains(rel) && !p.natives.contains(rel) {
+                let r = of(rel).expect("a declared relation's number");
+                for i in 0..cols {
+                    columns.insert(r, i, BTreeSet::new());
+                }
+            }
+        }
+    }
+    // Each derived relation's rules, in order: one pass, not one over every rule per relation.
+    let mut by_head: Vec<Vec<&SpanRule<'_>>> = vec![Vec::new(); rels];
+    let mut heads: Vec<u32> = Vec::new();
+    for r in &p.rules {
+        let h = of(r.head.rel).expect("a head's number");
+        if by_head[h as usize].is_empty() {
+            heads.push(h);
+        }
+        by_head[h as usize].push(r);
+    }
+    // The relations whose rules read each relation (positive atoms, what `binder` reads): a round derives again
+    // only the readers of the columns the round before changed, the rest being what they were.
+    let mut readers: Vec<Vec<u32>> = vec![Vec::new(); rels];
+    for r in &p.rules {
+        let h = of(r.head.rel).expect("a head's number");
+        for a in r.body.iter().filter(|a| !a.neg) {
+            readers[of(a.rel).expect("a read's number") as usize].push(h);
+        }
+    }
+    for rs in &mut readers {
+        rs.sort_unstable();
+        rs.dedup();
+    }
+    let mut dirty: Vec<u32> = heads.clone();
+    loop {
+        let mut found: Vec<(u32, usize, BTreeSet<SpanIn>)> = Vec::new();
+        for &rel in &dirty {
+            let rules = &by_head[rel as usize];
+            for i in 0..rules[0].head.args.len() {
+                let each: Option<Vec<BTreeSet<SpanIn>>> = rules.iter().map(|r| match r.head.args.get(i) {
+                    Some(Term::Var(x)) => binder(&r.body, x, &columns),
+                    _ => None,
+                }).collect();
+                if let Some(each) = each {
+                    let all: BTreeSet<SpanIn> = each.into_iter().flatten().collect();
+                    if columns.get(Some(rel), i) != Some(&all) {
+                        found.push((rel, i, all));
+                    }
+                }
+            }
+        }
+        rounds += 1;
+        // Sets only grow, and are bounded by the program's patterns and kinds; the bound is a guard.
+        if found.is_empty() || rounds > 64 {
+            break;
+        }
+        let mut next: Vec<u32> = found.iter().flat_map(|(r, _, _)| readers[*r as usize].iter().copied()).collect();
+        next.sort_unstable();
+        next.dedup();
+        dirty = next;
+        for (r, i, set) in found {
+            columns.insert(r, i, set);
+        }
+    }
+    // Top-down: a helper's column its own rules do not bind to spans, where every rule that reads the helper binds
+    // that argument so (`binder`, or through its own head's such column), holds those spans. The helper derives
+    // rows for other nodes too, but none of its readers joins them, so testing only the spans its readers bind
+    // gives every reader the same rows. Not for a column the run outputs, which no reader bounds.
+    let mut demand = Cols(vec![Vec::new(); rels]);
+    let outputs: rustc_hash::FxHashSet<&str> = p.outputs.iter().copied().collect();
+    let mut helpers: Vec<u32> = heads.iter().copied().filter(|&h| !outputs.contains(by_head[h as usize][0].head.rel)).collect();
+    helpers.sort_unstable();
+    // Each relation's reading atoms with their rules, in the rules' and bodies' order: a column's readers, not a
+    // scan of every rule for each column and round.
+    let mut sites_of: Vec<Vec<(&SpanRule<'_>, &SpanAtom<'_>)>> = vec![Vec::new(); rels];
+    for r in &p.rules {
+        for a in &r.body {
+            sites_of[of(a.rel).expect("a read's number") as usize].push((r, a));
+        }
+    }
+    let mut rounds = 0;
+    loop {
+        let mut found: Vec<(u32, usize, BTreeSet<SpanIn>)> = Vec::new();
+        for &rel in &helpers {
+            for i in 0..by_head[rel as usize][0].head.args.len() {
+                if columns.has(rel, i) {
+                    continue;
+                }
+                let mut all = BTreeSet::new();
+                let mut sites = 0;
+                let mut bound = true;
+                for &(r, a) in &sites_of[rel as usize] {
+                    sites += 1;
+                    let got = match a.args.get(i) {
+                        Some(Term::Var(y)) => binder(&r.body, y, &columns).or_else(|| {
+                            r.head.args.iter().position(|t| matches!(t, Term::Var(h) if h == y)).and_then(|j| demand.get(of(r.head.rel), j).cloned())
+                        }),
+                        _ => None,
+                    };
+                    match got {
+                        Some(s) => all.extend(s),
+                        None => bound = false,
+                    }
+                }
+                if bound && sites > 0 && demand.get(Some(rel), i) != Some(&all) {
+                    found.push((rel, i, all));
+                }
+            }
+        }
+        rounds += 1;
+        if found.is_empty() || rounds > 64 {
+            break;
+        }
+        for (r, i, set) in found {
+            demand.insert(r, i, set);
+        }
+    }
+    let mut out = SpanPatterns::default();
+    for rule in &p.rules {
+        for a in rule.body.iter().filter(|a| a.rel == "rx_span") {
+            let (Some(Term::Str(p)), Some(Term::Var(c))) = (a.args.first(), a.args.get(1)) else {
+                return Err(Error::Syntax(format!("{}: rx_span reads a constant pattern over a span variable", rule.head.rel)));
+            };
+            let from_readers = || rule.head.args.iter().position(|t| matches!(t, Term::Var(h) if h == c)).and_then(|j| demand.get(of(rule.head.rel), j).cloned());
+            let Some(within) = binder(&rule.body, c, &columns).or_else(from_readers) else {
+                                    return not_yet(format!("{}: match_all over ${c}, a node or span not bound by `source`, `src_line`, `kind` or a capture", rule.head.rel));
+            };
+            for w in within {
+                out.0.insert((w, p.to_string()));
+            }
+        }
+        // The AST patterns, read off the rules too.
+        for a in rule.body.iter().filter(|a| a.rel == "ast_match") {
+            if let Some(Term::Str(p)) = a.args.first() {
+                out.1.insert(p.to_string());
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// `span_patterns` on a program, what it finds added to it.
+pub fn span_patterns_into(prog: &mut Program) -> Result<(), Error> {
+    let SpanPatterns(rx, ast) = span_patterns(&SpanProgram::of_tree(prog))?;
+    prog.rx_spans.extend(rx);
+    prog.ast_patterns.extend(ast);
+    Ok(())
+}
+
+/// What `span_patterns` finds: the rx spans and the AST patterns.
+#[derive(Default)]
+pub struct SpanPatterns(pub BTreeSet<(SpanIn, String)>, pub BTreeSet<String>);
+
+/// A term as `span_patterns` reads it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SpanTerm<'a> {
+    Var(&'a str),
+    Str(&'a str),
+    Other,
+}
+
+/// An atom as `span_patterns` reads it.
+pub struct SpanAtom<'a> {
+    pub rel: &'a str,
+    pub args: Vec<SpanTerm<'a>>,
+    pub neg: bool,
+}
+
+/// A rule as `span_patterns` reads it: its head, and its body's atoms (an aggregate's among them).
+pub struct SpanRule<'a> {
+    pub head: SpanAtom<'a>,
+    pub body: Vec<SpanAtom<'a>>,
+}
+
+/// A program as `span_patterns` reads it, from the tree (`of_tree`) or a version.
+pub struct SpanProgram<'a> {
+    pub rules: Vec<SpanRule<'a>>,
+    /// Each declared relation's name and arity.
+    pub decls: Vec<(&'a str, usize)>,
+    pub inputs: Vec<&'a str>,
+    pub natives: BTreeSet<&'a str>,
+    pub outputs: Vec<&'a str>,
+}
+
+impl<'a> SpanProgram<'a> {
+    pub fn of_tree(prog: &'a Program) -> Self {
+        let term = |t: &'a Term| match t {
+            Term::Var(x) => SpanTerm::Var(x.as_str()),
+            Term::Str(s) => SpanTerm::Str(s.as_str()),
+            _ => SpanTerm::Other,
+        };
+        let atom = |a: &'a Atom| SpanAtom { rel: a.rel.as_str(), args: a.args.iter().map(term).collect(), neg: a.neg };
+        SpanProgram {
+            rules: prog.rules.iter().map(|r| SpanRule { head: atom(&r.head), body: r.body.iter().filter_map(Literal::atom).map(atom).collect() }).collect(),
+            decls: prog.decls.iter().map(|(r, c)| (r.as_str(), c.len())).collect(),
+            inputs: prog.inputs.iter().map(String::as_str).collect(),
+            natives: prog.natives.keys().map(String::as_str).collect(),
+            outputs: prog.outputs.iter().map(String::as_str).collect(),
+        }
+    }
 }
 
 /// The column of a relation that names a grammar (`grammar_names`).
@@ -2751,215 +3022,6 @@ impl Lowerer {
         let mut out = vec![atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(String::new().into()), m])];
         out.extend(groups(re).into_iter().map(|g| atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(g.clone().into()), Term::Var(g.into())])));
         Ok(vec![out])
-    }
-
-    /// `Program::rx_spans`: each `rx_span(p, c, …)` a rule reads, its pattern p a constant and its span c bound in
-    /// the same body by `source`, `src_line`, `kind(c, K)` (a comment, or a node of kind K) or another `rx_span`'s
-    /// group (a capture; decision 0081). Read off the rules, so a printed program (`rr::print`) has them too.
-    /// A derived relation's column holds the spans its rules bind it to: each rule binds it so, directly or through
-    /// another such column (a fixpoint); rules that bind it differently give it each (string contents and comments).
-    fn span_patterns(&mut self) -> Result<(), Error> {
-        // The relations by number, found by their name's address (a `Name` is interned: one name, one address), and
-        // each column's spans a vector per relation: a lookup made no key and compared no text.
-        let mut id: rustc_hash::FxHashMap<usize, u32> = Default::default();
-        {
-            let mut number = |rel: &str| {
-                let n = id.len() as u32;
-                id.entry(rel.as_ptr() as usize).or_insert(n);
-            };
-            for r in &self.prog.rules {
-                number(r.head.rel.as_str());
-                r.body.iter().filter_map(Literal::atom).for_each(|a| number(a.rel.as_str()));
-            }
-            self.prog.decls.keys().for_each(|r| number(r.as_str()));
-        }
-        let rels = id.len();
-        let of = |rel: &str| id.get(&(rel.as_ptr() as usize)).copied();
-        /// Each relation's columns' span sets, by number.
-        struct Cols(Vec<Vec<Option<BTreeSet<SpanIn>>>>);
-        impl Cols {
-            fn get(&self, rel: Option<u32>, c: usize) -> Option<&BTreeSet<SpanIn>> {
-                self.0.get(rel? as usize)?.get(c)?.as_ref()
-            }
-            fn has(&self, rel: u32, c: usize) -> bool {
-                self.get(Some(rel), c).is_some()
-            }
-            fn insert(&mut self, rel: u32, c: usize, set: BTreeSet<SpanIn>) {
-                let cols = &mut self.0[rel as usize];
-                if cols.len() <= c {
-                    cols.resize(c + 1, None);
-                }
-                cols[c] = Some(set);
-            }
-        }
-        let mut columns = Cols(vec![Vec::new(); rels]);
-        let mut rounds = 0;
-        let binder = |body: &[Literal], x: &str, columns: &Cols| -> Option<BTreeSet<SpanIn>> {
-            body.iter().filter_map(Literal::atom).filter(|b| !b.neg).find_map(|b| match (b.rel.as_str(), b.args.as_slice()) {
-                ("source", [_, Term::Var(y)]) if y == x => Some([SpanIn::Source].into()),
-                ("src_line", [_, _, Term::Var(y)]) if y == x => Some([SpanIn::Line].into()),
-                ("kind", [Term::Var(y), Term::Str(k)]) if y == x && k == "comment" => Some([SpanIn::Comment].into()),
-                ("kind", [Term::Var(y), Term::Str(k)]) if y == x => Some([SpanIn::Kind(k.to_string())].into()),
-                ("rx_span", [Term::Str(p), _, _, Term::Str(g), Term::Var(y)]) if y == x => Some([SpanIn::Capture(p.to_string(), g.to_string())].into()),
-                // A child of a node whose kinds the body gives (a `kind` atom, or a column of nodes of known kinds):
-                // the children of nodes of those kinds.
-                ("child", [Term::Var(par), Term::Var(y), _]) if y == x && par != x => {
-                    let atoms: BTreeSet<SpanIn> = body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel == "kind").filter_map(|a| match a.args.as_slice() {
-                        [Term::Var(z), Term::Str(k)] if z == par => Some(SpanIn::ChildOf(k.to_string())),
-                        _ => None,
-                    }).collect();
-                    if !atoms.is_empty() {
-                        return Some(atoms);
-                    }
-                    body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel != "child").find_map(|a| {
-                        a.args.iter().enumerate().find_map(|(i, t)| matches!(t, Term::Var(z) if z == par).then(|| columns.get(of(&a.rel), i)).flatten())
-                    }).and_then(|set| set.iter().map(|s| match s { SpanIn::Kind(k) => Some(SpanIn::ChildOf(k.to_string())), _ => None }).collect::<Option<BTreeSet<_>>>())
-                }
-                _ => b.args.iter().enumerate().find_map(|(i, t)| matches!(t, Term::Var(y) if y == x).then(|| columns.get(of(&b.rel), i).cloned()).flatten()),
-            })
-        };
-        // A declared relation no rule derives, and that is not read in, has no rows: its columns hold no nodes, and a
-        // scan over them is empty. A library a pack's rules include (`…confusables.rr`) is loaded on its own too.
-        {
-            let heads: rustc_hash::FxHashSet<&str> = self.prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
-            let inputs: rustc_hash::FxHashSet<&str> = self.prog.inputs.iter().map(String::as_str).collect();
-            for (rel, cols) in &self.prog.decls {
-                if !heads.contains(rel.as_str()) && !inputs.contains(rel.as_str()) && !self.prog.natives.contains_key(rel.as_str()) {
-                    let r = of(rel).expect("a declared relation's number");
-                    for i in 0..cols.len() {
-                        columns.insert(r, i, BTreeSet::new());
-                    }
-                }
-            }
-        }
-        // Each derived relation's rules, in order: one pass, not one over every rule per relation.
-        let mut by_head: Vec<Vec<&Rule>> = vec![Vec::new(); rels];
-        let mut heads: Vec<u32> = Vec::new();
-        for r in &self.prog.rules {
-            let h = of(&r.head.rel).expect("a head's number");
-            if by_head[h as usize].is_empty() {
-                heads.push(h);
-            }
-            by_head[h as usize].push(r);
-        }
-        // The relations whose rules read each relation (positive atoms, what `binder` reads): a round derives again
-        // only the readers of the columns the round before changed, the rest being what they were.
-        let mut readers: Vec<Vec<u32>> = vec![Vec::new(); rels];
-        for r in &self.prog.rules {
-            let h = of(&r.head.rel).expect("a head's number");
-            for a in r.body.iter().filter_map(Literal::atom).filter(|a| !a.neg) {
-                readers[of(&a.rel).expect("a read's number") as usize].push(h);
-            }
-        }
-        for rs in &mut readers {
-            rs.sort_unstable();
-            rs.dedup();
-        }
-        let mut dirty: Vec<u32> = heads.clone();
-        loop {
-            let mut found: Vec<(u32, usize, BTreeSet<SpanIn>)> = Vec::new();
-            for &rel in &dirty {
-                let rules = &by_head[rel as usize];
-                for i in 0..rules[0].head.args.len() {
-                    let each: Option<Vec<BTreeSet<SpanIn>>> = rules.iter().map(|r| match r.head.args.get(i) {
-                        Some(Term::Var(x)) => binder(&r.body, x, &columns),
-                        _ => None,
-                    }).collect();
-                    if let Some(each) = each {
-                        let all: BTreeSet<SpanIn> = each.into_iter().flatten().collect();
-                        if columns.get(Some(rel), i) != Some(&all) {
-                            found.push((rel, i, all));
-                        }
-                    }
-                }
-            }
-            rounds += 1;
-            // Sets only grow, and are bounded by the program's patterns and kinds; the bound is a guard.
-            if found.is_empty() || rounds > 64 {
-                break;
-            }
-            let mut next: Vec<u32> = found.iter().flat_map(|(r, _, _)| readers[*r as usize].iter().copied()).collect();
-            next.sort_unstable();
-            next.dedup();
-            dirty = next;
-            for (r, i, set) in found {
-                columns.insert(r, i, set);
-            }
-        }
-        // Top-down: a helper's column its own rules do not bind to spans, where every rule that reads the helper binds
-        // that argument so (`binder`, or through its own head's such column), holds those spans. The helper derives
-        // rows for other nodes too, but none of its readers joins them, so testing only the spans its readers bind
-        // gives every reader the same rows. Not for a column the run outputs, which no reader bounds.
-        let mut demand = Cols(vec![Vec::new(); rels]);
-        let outputs: rustc_hash::FxHashSet<&str> = self.prog.outputs.iter().map(String::as_str).collect();
-        let mut helpers: Vec<u32> = heads.iter().copied().filter(|&h| !outputs.contains(by_head[h as usize][0].head.rel.as_str())).collect();
-        helpers.sort_unstable();
-        // Each relation's reading atoms with their rules, in the rules' and bodies' order: a column's readers, not a
-        // scan of every rule for each column and round.
-        let mut sites_of: Vec<Vec<(&Rule, &Atom)>> = vec![Vec::new(); rels];
-        for r in &self.prog.rules {
-            for a in r.body.iter().filter_map(Literal::atom) {
-                sites_of[of(&a.rel).expect("a read's number") as usize].push((r, a));
-            }
-        }
-        let mut rounds = 0;
-        loop {
-            let mut found: Vec<(u32, usize, BTreeSet<SpanIn>)> = Vec::new();
-            for &rel in &helpers {
-                for i in 0..by_head[rel as usize][0].head.args.len() {
-                    if columns.has(rel, i) {
-                        continue;
-                    }
-                    let mut all = BTreeSet::new();
-                    let mut sites = 0;
-                    let mut bound = true;
-                    for &(r, a) in &sites_of[rel as usize] {
-                        sites += 1;
-                        let got = match a.args.get(i) {
-                            Some(Term::Var(y)) => binder(&r.body, y, &columns).or_else(|| {
-                                r.head.args.iter().position(|t| matches!(t, Term::Var(h) if h == y)).and_then(|j| demand.get(of(&r.head.rel), j).cloned())
-                            }),
-                            _ => None,
-                        };
-                        match got {
-                            Some(s) => all.extend(s),
-                            None => bound = false,
-                        }
-                    }
-                    if bound && sites > 0 && demand.get(Some(rel), i) != Some(&all) {
-                        found.push((rel, i, all));
-                    }
-                }
-            }
-            rounds += 1;
-            if found.is_empty() || rounds > 64 {
-                break;
-            }
-            for (r, i, set) in found {
-                demand.insert(r, i, set);
-            }
-        }
-        for rule in &self.prog.rules {
-            for a in rule.body.iter().filter_map(Literal::atom).filter(|a| a.rel == "rx_span") {
-                let (Some(Term::Str(p)), Some(Term::Var(c))) = (a.args.first(), a.args.get(1)) else {
-                    return Err(Error::Syntax(format!("{}: rx_span reads a constant pattern over a span variable", rule.head.rel)));
-                };
-                let from_readers = || rule.head.args.iter().position(|t| matches!(t, Term::Var(h) if h == c)).and_then(|j| demand.get(of(&rule.head.rel), j).cloned());
-                let Some(within) = binder(&rule.body, c, &columns).or_else(from_readers) else {
-                                        return not_yet(format!("{}: match_all over ${c}, a node or span not bound by `source`, `src_line`, `kind` or a capture", rule.head.rel));
-                };
-                for w in within {
-                    self.prog.rx_spans.insert((w, p.to_string()));
-                }
-            }
-            // The AST patterns, read off the rules too.
-            for a in rule.body.iter().filter_map(Literal::atom).filter(|a| a.rel == "ast_match") {
-                if let Some(Term::Str(p)) = a.args.first() {
-                    self.prog.ast_patterns.insert(p.to_string());
-                }
-            }
-        }
-        Ok(())
     }
 
     /// A text test (`match`, `glob`, `contains`, …) on node or span `v`: a test of its text. `match` over a `source`
