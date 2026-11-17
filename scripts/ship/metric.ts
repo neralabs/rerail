@@ -1,3 +1,4 @@
+import { engineJson } from "./engine-json.js";
 // What a cell's time is made of, beside the gross figures the 1.10× bar judges (reported, never a status):
 //
 //   fixed    each side's start-up, T0: the product path with an empty rule set over the same corpus, cold and warm;
@@ -135,7 +136,7 @@ function countNodes(engine: string, corpus: string, family: string): number | nu
     const env = { ...process.env, RERAIL_TAPE_CACHE: join(scratch, "store.sqlite"), TMPDIR: join(scratch, "tmp") };
     const r = spawnSync(engine, ["run-rr", rule, corpus, join(scratch, "out")], { env, encoding: "utf8", maxBuffer: 1 << 30 });
     if (r.status !== 0) return null;
-    const result: unknown = JSON.parse(r.stdout);
+    const result = engineJson(r.stdout);
     return result !== null && typeof result === "object" && "nodes" in result && typeof result.nodes === "number" ? result.nodes : null;
   } finally {
     rmSync(scratch, { recursive: true, force: true });

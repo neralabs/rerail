@@ -67,6 +67,7 @@ import { hostname } from "node:os";
 import { dirname, join, matchesGlob, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { engineJson } from "./engine-json.js";
 import { cachedWorkload, type CellCost, cellCost, engineBinary, type Phases, readPhases, readWorkload, ruleSet } from "./metric.js";
 import { busiest, cpuList, LINUX_METHOD, type MachineInfo, methodCounts, openPlatform, parseProcStat, type Platform, type RunMethod } from "./platform.js";
 import { buildReport, type RunMeta } from "./report-model.js";
@@ -494,7 +495,7 @@ function rrRules(candidate: string, engine: string, mainRules: readonly string[]
     const checked = run(engine, ["check-rr", ...present.map((rule) => rules[rule]!.path!)], { cwd: candidate });
     let rows: { path: string; status: string; error?: string }[] = [];
     try {
-      rows = JSON.parse(checked.stdout);
+      rows = engineJson<typeof rows>(checked.stdout);
     } catch {
       fail(`check-rr gave no report for ${pack}: ${lastLine(checked.stderr)}`);
     }
@@ -644,7 +645,8 @@ function measure(settings: Settings, cell: string, p: Process, pack: string, cor
   let phases: Phases | null = null;
   if (completed) {
     try {
-      const output = readJson<{ evaluateMs?: number; loadMs?: number; compileMs?: number }>(result);
+      // The `.rr` side's result is the engine's stdout: its JSON, then its timing lines (engine-json.ts).
+      const output = engineJson<{ evaluateMs?: number; loadMs?: number; compileMs?: number }>(readFileSync(result, "utf8"));
       if (side !== "rr" && typeof output.evaluateMs === "number") evaluateMs = Math.round(output.evaluateMs);
       if (side !== "rr") phases = readPhases(output);
     } catch {
@@ -918,7 +920,7 @@ function sideFindings(cell: string, side: Side, rr: RrRules | undefined): Set<st
   const keys = new Set<string>();
   if (side === "rr") {
     const policyToRule = new Map(Object.entries(rr?.rules ?? {}).filter(([, rule]) => rule.policy !== undefined).map(([id, rule]) => [rule.policy!, id]));
-    for (const d of readJson<{ diagnostics: { policy: string; path: string; line: number; code: string }[] }>(path).diagnostics) {
+    for (const d of engineJson<{ diagnostics: { policy: string; path: string; line: number; code: string }[] }>(readFileSync(path, "utf8")).diagnostics) {
       keys.add(findingKey(policyToRule.get(d.policy) ?? d.policy, d.path, d.line, d.code));
     }
   } else {
