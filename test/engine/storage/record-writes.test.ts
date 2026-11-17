@@ -171,6 +171,23 @@ describe("record writes while another process holds the write lock", () => {
     expect(stderr).toHaveBeenCalledWith(expect.stringContaining("1 records not written"));
   }, 30_000);
 
+  it("take no write lock for a rule coverage that has not changed, so it never waits behind the holder", async () => {
+    const { path, sessions } = await stores();
+    sessions.openSession(session, 1_000);
+    const coverage = { repositoryId: "repo", ownerCheckoutPaths: ["/work"], activeRuleCount: 3, ruleSignature: "s1" };
+    sessions.recordRuleCoverage(session, coverage);
+    const holder = await lockHolder(path);
+    await holder.hold();
+    const { openRecordWriter } = await import("../../../src/engine/storage/record-writes.js");
+    const writer = openRecordWriter(path);
+    closers.push(() => writer.close());
+
+    sessions.recordRuleCoverage(session, coverage);
+
+    expect(writer.waiting()).toBe(false);
+    await holder.release();
+  }, 30_000);
+
   it("throw at once a failure that is not the lock, as a write made at once did before", async () => {
     const { sessions } = await stores();
     expect(() => sessions.append({ sessionId: "no-such-session", eventId: "orphan", kind: "call", payload: {} })).toThrow(/FOREIGN KEY/u);

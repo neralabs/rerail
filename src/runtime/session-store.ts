@@ -346,16 +346,15 @@ export class SqliteSessionStore {
   }
 
   recordRuleCoverage(session: AdapterSession, coverage: RuleCoverage): void {
+    // Streaming ingestion checks coverage often; persist transitions, not identical copies, read first so an unchanged
+    // coverage takes no write lock. Looking in SQLite rather than an in-memory cache also recovers after a reset. While
+    // a write waits for the lock the read goes into the write, so a coverage still waiting counts as the latest.
+    const payloadJson = stableJsonText(coverage);
+    if (!this.#records.waiting() && latestCoverage(this.#database, session.sessionId) === payloadJson) return;
     const row = eventRow({ sessionId: session.sessionId, kind: "rule-coverage", payload: coverage });
     const restore = this.#sessionRestore(session);
-    // Read in the write, so a coverage still waiting for the lock counts as the latest.
     this.#records.write(database => {
-      const latest = database.select({ payloadJson: events.payloadJson }).from(events)
-        .where(and(eq(events.sessionId, session.sessionId), eq(events.kind, "rule-coverage")))
-        .orderBy(desc(events.sequence)).limit(1).get();
-      // Streaming ingestion checks coverage often; persist transitions, not identical copies.
-      // Looking in SQLite rather than an in-memory cache also recovers after a reset.
-      if (latest?.payloadJson !== row.payloadJson) insertEvent(database, row, restore);
+      if (latestCoverage(database, session.sessionId) !== payloadJson) insertEvent(database, row, restore);
     }, rowBytes(row));
   }
 
@@ -430,6 +429,13 @@ function eventRow(event: SessionEvent): EventRow {
     payloadJson: stableJsonText(event.payload) ?? JSON.stringify({ encoding: "node:v8" }),
     payloadV8: serialize(event.payload),
   };
+}
+
+/** The payload of the session's latest rule coverage event, as stored. */
+function latestCoverage(database: RerailDatabase, sessionId: string): string | undefined {
+  return database.select({ payloadJson: events.payloadJson }).from(events)
+    .where(and(eq(events.sessionId, sessionId), eq(events.kind, "rule-coverage")))
+    .orderBy(desc(events.sequence)).limit(1).get()?.payloadJson;
 }
 
 function rowBytes(row: EventRow): number {
