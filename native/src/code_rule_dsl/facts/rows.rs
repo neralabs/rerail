@@ -173,6 +173,9 @@ pub struct Part {
     /// The relation's claim on its block, shared by every copy of the part: the last copy's drop gives its chunks'
     /// pages back (`Owned`).
     own: Arc<Owned>,
+    /// Its rows are the relation's first `cap` (`u32::MAX`: all of them): a segment shared with the tail it was
+    /// taken from (`Rows::clone`, `shared`), whose writer goes on past it. A capped part is never written.
+    cap: u32,
 }
 
 // SAFETY: the relation lies in `facts`' block, which the part keeps; its writer is the one `Rows` holding it.
@@ -249,7 +252,7 @@ impl Part {
                 let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
                 let rel = std::ptr::from_ref(rel);
                 let own = Arc::new(Owned { facts: facts.clone(), rel });
-                return Ok(Part { facts, life, rel, cols, own });
+                return Ok(Part { facts, life, rel, cols, own, cap: u32::MAX });
             }
         }
         unreachable!("a new block of {} bytes holds a relation of {need}", 2 * need + MARGIN)
@@ -294,7 +297,17 @@ impl Part {
 
     #[inline]
     pub fn len(&self) -> u32 {
-        self.rel().rows.len()
+        self.rel().rows.len().min(self.cap)
+    }
+
+    /// This part's rows as they are now, as a segment: shared, not copied, and blind to rows its writer adds later.
+    fn prefix(&self) -> Part {
+        Part { cap: self.len(), ..self.clone() }
+    }
+
+    /// Whether it is a prefix of its relation (`prefix`), which a reader of the relation itself would read past.
+    fn capped(&self) -> bool {
+        self.cap != u32::MAX
     }
 
     /// Its row `i`'s value in column `c`, where it lies.
@@ -335,6 +348,7 @@ impl Part {
     /// Appends a row of `k` values, room made first: a full block moves the relation to another.
     #[inline]
     fn push(&mut self, row: &[i64]) {
+        debug_assert!(!self.capped(), "a write to a shared prefix");
         let i = self.len();
         if self.rel().rows.reserved() <= i {
             self.grow(u64::from(i) + 1);
@@ -351,6 +365,7 @@ impl Part {
 
     /// Room for `n` rows: chunks in its block, or the relation moved to a block with room for twice as many.
     fn grow(&mut self, n: u64) {
+        debug_assert!(!self.capped(), "a write to a shared prefix");
         if self.rel().rows.try_reserve(&self.facts.block, n) {
             return;
         }
@@ -419,14 +434,16 @@ pub struct InBlock {
 }
 
 impl Clone for Rows {
-    /// The segments shared; the tail copied (it is written by one `Rows`).
+    /// The segments shared, and the tail too, not copied: as a segment of the rows it holds now (`Part::prefix`). Its
+    /// writer, the one `Rows` holding it, goes on past them; the copy's next row starts a tail of its own.
     fn clone(&self) -> Rows {
-        let tail = self.tail.as_ref().map(|t| {
-            let mut c = Part::new(self.life, self.k, t.len() as usize);
-            c.copy_from(t, 0, t.len());
-            c
-        });
-        Rows { segs: self.segs.clone(), from: self.from, tail, k: self.k, hint: self.hint, life: self.life, merged: Default::default(), kills: Default::default() }
+        let mut segs = self.segs.clone();
+        let mut from = self.from;
+        if let Some(t) = self.tail.as_ref().filter(|t| t.len() > 0) {
+            segs.push((from, t.prefix()));
+            from += t.len();
+        }
+        Rows { segs, from, tail: None, k: self.k, hint: self.hint, life: self.life, merged: Default::default(), kills: Default::default() }
     }
 }
 
@@ -533,14 +550,13 @@ impl Rows {
         self
     }
 
-    /// The `n` rows of a frozen relation, shared: its segments taken (and its tail copied, if it has one), with an
-    /// empty tail from `n` on, for a relation that starts as them.
+    /// The `n` rows of a frozen relation, shared: its segments taken (and its tail, if it has one, as the rows it holds
+    /// now: `Part::prefix`, not copied), with an empty tail from `n` on, for a relation that starts as them.
     pub fn shared(&self, n: usize) -> Rows {
         let mut segs = self.segs.clone();
+        // The tail shared as it is now, not copied (`Part::prefix`).
         if let Some(t) = self.tail.as_ref().filter(|t| t.len() > 0) {
-            let mut c = Part::new(self.life, self.k, t.len() as usize);
-            c.copy_from(t, 0, t.len());
-            segs.push((self.from, c));
+            segs.push((self.from, t.prefix()));
         }
         Rows { segs, from: n as u32, tail: None, k: self.k, hint: 0, life: self.life, merged: Default::default(), kills: Default::default() }
     }
@@ -569,7 +585,8 @@ impl Rows {
         Some(match (&self.segs[..], &self.tail) {
             ([], None) => return None,
             ([], Some(t)) if self.from == 0 => t,
-            ([(0, p)], None) => p,
+            // A shared prefix is not its relation: a reader that binds the relation would read past it.
+            ([(0, p)], None) if !p.capped() => p,
             (segs, tail) => self.merged.get_or_init(|| {
                 let parts: Vec<&Part> = segs.iter().map(|(_, p)| p).chain(tail.iter()).collect();
                 let mut one = Part::new(self.life, self.k, parts.iter().map(|p| p.len() as usize).sum());
@@ -787,6 +804,29 @@ mod tests {
         assert_eq!(*rows.row(12, k), [1000, 2000]);
         assert_eq!(*rows.row(31, k), [1019, 2019]);
         assert_eq!(rows.len(), n * k);
+    }
+
+    /// A copy of rows still being written shares their tail, not a copy of it: it reads the rows the tail held when
+    /// it was made, the writer's later rows are not among them, and its own pushes start a tail of its own.
+    #[test]
+    fn a_copy_shares_the_tail_and_sees_only_its_rows() {
+        let k = 2;
+        let mut rows = Rows::new(k);
+        rows.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
+        let mut copy = rows.clone();
+        assert!(std::ptr::eq(copy.segs.last().expect("the tail, shared").1.rel, rows.tail.as_ref().expect("a tail").rel), "the tail was copied");
+        rows.extend_from_slice(&[7, 8]);
+        assert_eq!((rows.rows(), copy.rows()), (4, 3));
+        assert_eq!(copy.to_vec(0, 3, k), [1, 2, 3, 4, 5, 6]);
+        copy.extend_from_slice(&[9, 10]);
+        assert_eq!(*copy.row(3, k), [9, 10]);
+        assert_eq!(*rows.row(3, k), [7, 8]);
+        // `shared` takes the tail as it is now, as `clone` does.
+        let next = rows.shared(4);
+        assert_eq!((next.rows(), next.to_vec(0, 4, k)), (4, vec![1, 2, 3, 4, 5, 6, 7, 8]));
+        // A shared prefix is not bound as its relation: one relation of its rows is made for a reader that binds one.
+        let one = copy.in_block().expect("rows");
+        assert_eq!(one.rows, 4);
     }
 
     /// A relation kept with no rows and started again (the cross-file part maintained from its frames in a new

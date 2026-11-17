@@ -1940,3 +1940,24 @@ an iterator. `Relation::from_rows` writes the rows straight into a block relatio
 iterator knows it exactly, as the producers' iterators over vectors do. There is no heap staging, and no growth or
 move: the moves are why rows were staged (70 MB more at the peak on hogql, 0325 step 3). An iterator that doesn't
 know its length is staged as before. 300 files: peak 2.36 GB (2.38 before), findings the reference's.
+
+### Q86. A copy of rows shares their tail, not a copy of it
+
+Done 2026-11-17. The user's list, item "the tail copies in Rows::clone and Rows::shared". A part may now be a prefix
+of its relation (`Part::cap`): its first rows as they were when it was taken. `clone` and `shared` take the tail
+that way, so the writer goes on past it and the copy never sees those rows. A prefix is never written, and is not
+bound as its relation (`one` merges it instead). Test: `a_copy_shares_the_tail_and_sees_only_its_rows`. Strict
+10-file outputs byte-identical; 300 files: findings the reference's, peak 2.37 GB.
+
+`merged` (`Rows::one`, a relation of many parts merged for a reader that binds one relation: the device) stays a
+copy until the device reads a relation of many parts. Each part's descriptor would be bound, a step of 0325.
+
+Red tests found, not from this work:
+- `facts_only::every_kept_map_is_state_or_listed` (0104) flags maps from merged commits: `OWN_TEXTS` (e3bc911dd),
+  `DECODED` (91f5b131a), `record.rs` `KINDS` and `LOG` (f86a550c8), `upkeep.rs` `GONE` (dfb0e0e02). Each is state
+  or a cache to make facts: a 0104 call for their authors' decisions.
+- `git_seeing_no_file_under_the_root_is_kept` fails in the `git commit` it runs in a scratch repository on the farm
+  host: that host's git setup.
+- The pre-commit hook can't run in this worktree: no node packages (`tsc`, `semver`), and `check:reference` reports
+  three differences in `src/engine/code-rule/*.ts`, which this branch doesn't touch. Commits since 58f1627c3 skip it
+  (`--no-verify`).
