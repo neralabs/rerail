@@ -1,0 +1,1 @@
+Claude Code replies that hold a blank line, or end on a newline, are recorded whole. Rerail dropped each such batch with "Claude hook omitted delta", so the reply never finished in the session's history and conversation rules never checked it as a whole message.

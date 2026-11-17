@@ -1509,6 +1509,12 @@ export interface CodeRuleAuditor {
   openWorkspace(sessionId: string): Promise<void>;
   /** Refresh live rules before filtering paths for a tool's preimages; `acceptsPath` reflects them on return. */
   refreshCodeRules?(): void;
+  /**
+   * Before a tool call's files are filtered, at its start and at its result: `paths` (as for `acceptsPath`) are found
+   * again in the checkout that owns them now, where a folder above one became a checkout after a lookup passed it.
+   * Absent: a file's checkout does not change while a session runs.
+   */
+  refreshOwners?(paths: readonly string[]): void;
   /** Activates defaults at the next event boundary; work already queued keeps its snapshot. */
   updateSettings?(settings: Required<AuditSettings>): void;
   /** `path` is relative to the session folder and may lead out of it (`../`) into another checkout. */
@@ -1545,6 +1551,7 @@ export interface CodeRuleAuditor {
   auditGeneratedEdits(sessionId: string, batch: CodeRuleEditBatch): Promise<CodeRuleResponse>;
   /** Wait until every accepted generated edit has completed, without waiting for unrelated audits. */
   settleGeneratedEdits?(): Promise<void>;
+  /** An audit someone asked for, whose runs are recorded as scans (`AuditOrigin`), not as the session's own. */
   audit?(sessionId: string, input: {
     scope: "repository" | "touched-files";
     mode: AuditMode;

@@ -8,6 +8,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runRemoteCommand, type RemoteCliOptions } from "../../src/cli/remote-cli.js";
 import { removeFolderSync } from "../support/platform/remove-folder.js";
+import { withExperiments } from "../support/environment/experiments.js";
+
+withExperiments("REMOTE_SINK");
 
 let home: string;
 let output: string;

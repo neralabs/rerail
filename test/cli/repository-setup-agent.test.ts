@@ -46,7 +46,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
 
     const recommended = agentIo();
     expect(await runSetup(recommended, request(setup, environment, { answer: "yes", repo: setup.repo }))).toEqual({ status: "waiting" });
-    expect(recommended.text()).toContain("Scanned acme-api. 1 rule pack fits:");
+    expect(recommended.text()).toContain("Scanned acme-api. 1 rule pack suggested for what it’s built with:");
     expect(recommended.text()).toContain("Will connect to: Claude Code, Cursor");
     expectUntouched(setup);
     expect(existsSync(setup.databasePath)).toBe(false);
@@ -183,7 +183,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: docs });
     const asked = agentIo();
     await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "yes", repo: docs }));
-    expect(asked.text()).toContain("Scanned docs. None of Rerail’s rule packs fit it.");
+    expect(asked.text()).toContain("Scanned docs. No rule pack matches what it’s built with.");
     expect(asked.text()).toContain("Start Rerail in docs with no rule packs on?");
 
     await runSetup(agentIo(), request(setup, fakeSetupEnvironment(), { answer: "start", repo: docs }));

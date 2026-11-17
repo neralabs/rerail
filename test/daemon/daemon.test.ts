@@ -24,10 +24,13 @@ import {
   SESSION_EVENT_PAGE_LIMIT,
 } from "../../src/runtime/index.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
-import { openRerailDatabase, SqliteAuditStore, SqliteAuditControlStore } from "../../src/engine/index.js";
+import { openRerailDatabase, RepositoryWorktreeWalks, SqliteAuditStore, SqliteAuditControlStore } from "../../src/engine/index.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
 import { linkFolder } from "../support/platform/links.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+import { withExperiments } from "../support/environment/experiments.js";
+
+withExperiments("REPOSITORY_SCAN", "CONVERSATION_RULES", "SEMANTIC_TOOLS", "BLOCK_MODE", "MERGE_ASSIST");
 
 const healthyNative = () => ({ ok: true, kernelVersion: "1" });
 
@@ -181,6 +184,37 @@ describe("Rerail daemon", () => {
     expect((await request({ ...close, operation: "cosine", input: { action: "list" } }, { authorization })).status).toBe(200);
     expect((await request(close, { authorization })).status).toBe(200);
     expect((await getJson(daemon, "/healthz")).body).not.toHaveProperty("nativeToken");
+  });
+
+  it("walks its native sessions' other worktrees with the walks of its hook sessions, and lets go of them once both servers closed", async () => {
+    root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));
+    process.env.RERAIL_HOME = join(root, "home");
+    startTestRepository(root, join(root, "rerail.sqlite"));
+    const of = vi.spyOn(RepositoryWorktreeWalks.prototype, "of");
+    const close = vi.spyOn(RepositoryWorktreeWalks.prototype, "close");
+    const nativeClose = vi.spyOn(NativeSessionServer.prototype, "close");
+    try {
+      const daemon = await start();
+      const session = { workspaceRoot: root, sessionId: "native", host: "omp" };
+      const send = (body: object): Promise<Response> => fetch(new URL("/native/session", daemon.url), {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${daemon.state().nativeToken!}` },
+        body: JSON.stringify({ ...session, ...body }),
+      });
+      expect((await send({ operation: "initialize", entries: [] })).status).toBe(200);
+      expect((await send({ operation: "await-code-rules" })).status).toBe(200);
+      // The session looks its repository's walk up at its first walk, which a prompt's boundary asks for.
+      expect((await send({ operation: "ingest", event: { kind: "user-prompt", sessionId: "native", eventId: "p", text: "hi" } })).status).toBe(200);
+      await vi.waitFor(() => expect(of).toHaveBeenCalledTimes(1), { timeout: 10_000 });
+      await daemon.close();
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(close.mock.contexts[0]).toBe(of.mock.contexts[0]);
+      expect(close.mock.invocationCallOrder[0]).toBeGreaterThan(nativeClose.mock.invocationCallOrder[0]!);
+    } finally {
+      of.mockRestore();
+      close.mockRestore();
+      nativeClose.mockRestore();
+    }
   });
 
   it("stops on a shutdown request that carries the native token, the stop Windows has no signal for", async () => {
@@ -337,7 +371,10 @@ describe("Rerail daemon", () => {
     const response = await fetch(new URL(`/api/presentation?${query}`, daemon.url));
     const text = await response.text();
     expect(response.status).toBe(200);
-    expect(Buffer.byteLength(text)).toBeLessThan(1024);
+    // The answer names the test's folder, whose length depends on where the temp folder is, not on Rerail. So the answer
+    // is measured as if that folder were /tmp/rerail-daemon-XXXXXX (25 characters), made straight in Linux's /tmp.
+    const measured = text.replaceAll(JSON.stringify(root).slice(1, -1), "/tmp/rerail-daemon-XXXXXX");
+    expect(Buffer.byteLength(measured)).toBeLessThan(1024);
     const compact = presentationResponseSchema.parse(JSON.parse(text));
     expect(compact.context?.daemon).toEqual({
       pid: process.pid, database: { path, exists: true }, native: { ok: true }, workspaceRoot: root,

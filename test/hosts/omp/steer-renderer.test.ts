@@ -112,6 +112,27 @@ describe("OMP steer renderer", () => {
     expect(registered({ Container, Text }, true)({ ...message, details: { rules: [{ id: 1 }] } }, { expanded: false }, theme as Theme)).toBeUndefined();
   });
 
+  it("draws a Merge Assist note as its conflict's line, open linking its card, and the note under it expanded", () => {
+    const url = `${DASHBOARD}#merge?conflict=conflict:a`;
+    const content = "This note comes from Rerail, not the user.\nYour edit to src/retry.ts overlaps open work.";
+    const details = { rules: [], conflict: { id: "conflict:a", text: "your edit overlaps jbarnes-1 (Tim\u001b[2J): retry.ts", url } };
+    const render = registered({ Container, Text }, true);
+    const lines = (expanded: boolean) => (render({ customType: RULE_MESSAGE_TYPE, content, details }, { expanded }, theme as Theme) as Container).render(WIDTH);
+    const line = ` <accent>◆</accent> ${MARK}<dim> · </dim>your edit overlaps jbarnes-1 (Tim[2J): retry.ts<dim>  ·  </dim>\u001b]8;;${url}\u0007<mdLink>open</mdLink>\u001b]8;;\u0007`;
+    expect(lines(false)).toEqual([line]);
+    expect(lines(true)).toEqual([
+      line,
+      `    <dim>open</dim> \u001b]8;;${url}\u0007<mdLink>${url}</mdLink>\u001b]8;;\u0007`,
+      "    <dim>This note comes from Rerail, not the user.</dim>",
+      "    <dim>Your edit to src/retry.ts overlaps open work.</dim>",
+    ]);
+    expect(formatOmpSteer(content, [], { expanded: false, hyperlinks: false, mark: MARK }, theme, details.conflict).map(row => row.text)).toEqual([
+      `<accent>◆</accent> ${MARK}<dim> · </dim>your edit overlaps jbarnes-1 (Tim[2J): retry.ts<dim>  ·  </dim><mdLink>open</mdLink><dim> → </dim><mdLinkUrl>${url}</mdLinkUrl>`,
+    ]);
+    // A note whose conflict is not one shows OMP's default card.
+    expect(render({ customType: RULE_MESSAGE_TYPE, content, details: { rules: [], conflict: { id: 1 } } }, { expanded: false }, theme as Theme)).toBeUndefined();
+  });
+
   it("draws text content blocks as OMP stores them", () => {
     const { content: text, details } = codeRuleSteer(NO_EXPLICIT_ANY);
     const content = [{ type: "text", text }];

@@ -32,67 +32,80 @@ function turnEndEvent(input: ClaudeHookInput, hook: "Stop" | "StopFailure", desc
   };
 }
 
+/**
+ * `MessageDisplay`'s `delta`, the lines completed since the batch before: any text, blank included. A batch can be one
+ * blank line, and the last batch of a reply that ends on a newline is empty, since `final` marks the end.
+ */
+function batchDelta(input: ClaudeHookInput): string {
+  const { delta } = input;
+  if (delta === undefined) throw new Error("Claude hook omitted delta");
+  if (typeof delta !== "string") throw new Error(`Claude hook delta must be text, not ${delta === null ? "null" : typeof delta}`);
+  return delta;
+}
+
 export function claudeHookEvents(input: ClaudeHookInput): readonly AdapterEvent[] {
   const hook = requiredText(input, "hook_event_name");
   const descriptor = session(input);
   const sessionId = descriptor.sessionId;
-  if (hook === "SessionStart") {
-    return [{ kind: "session-start", eventId: `${sessionId}:SessionStart`, session: descriptor }];
+  switch (hook) {
+    case "SessionStart":
+      return [{ kind: "session-start", eventId: `${sessionId}:SessionStart`, session: descriptor }];
+    case "SessionEnd":
+      return [{ kind: "session-end", eventId: `${sessionId}:SessionEnd`, sessionId, session: descriptor }];
+    case "UserPromptSubmit":
+      return [{
+        kind: "user-prompt",
+        eventId: `${sessionId}:prompt:${requiredText(input, "prompt_id")}`,
+        sessionId,
+        session: descriptor,
+        text: requiredText(input, "prompt"),
+      }];
+    case "MessageDisplay":
+      return [{
+        kind: "assistant-delta",
+        eventId: `${sessionId}:message:${requiredText(input, "message_id")}:${requiredKey(input, "index")}`,
+        sessionId,
+        session: descriptor,
+        messageId: requiredText(input, "message_id"),
+        delta: batchDelta(input),
+        final: input.final === true || input.final === "true",
+      }];
+    case "PreToolUse": {
+      const toolUseId = requiredText(input, "tool_use_id");
+      // A subagent's hooks come under its parent's session id, with its own agent_id.
+      const agentId = optionalText(input, "agent_id");
+      return [{
+        kind: "call",
+        eventId: `${sessionId}:tool-call:${toolUseId}`,
+        toolCallId: toolUseId,
+        sessionId,
+        session: descriptor,
+        toolName: requiredText(input, "tool_name"),
+        input: input.tool_input,
+        ...(agentId === undefined ? {} : { agentId }),
+      }];
+    }
+    case "PostToolUse":
+    case "PostToolUseFailure": {
+      const toolUseId = requiredText(input, "tool_use_id");
+      const failed = hook === "PostToolUseFailure";
+      return [{
+        kind: "result",
+        eventId: `${sessionId}:tool-result:${toolUseId}`,
+        toolCallId: toolUseId,
+        sessionId,
+        session: descriptor,
+        toolName: requiredText(input, "tool_name"),
+        output: failed ? input.error : input.tool_response,
+        failed,
+      }];
+    }
+    case "Stop":
+    case "StopFailure":
+      return [turnEndEvent(input, hook, descriptor)];
+    default:
+      throw new Error(`Unsupported Claude hook event: ${hook}`);
   }
-  if (hook === "SessionEnd") {
-    return [{ kind: "session-end", eventId: `${sessionId}:SessionEnd`, sessionId, session: descriptor }];
-  }
-  if (hook === "UserPromptSubmit") {
-    return [{
-      kind: "user-prompt",
-      eventId: `${sessionId}:prompt:${requiredText(input, "prompt_id")}`,
-      sessionId,
-      session: descriptor,
-      text: requiredText(input, "prompt"),
-    }];
-  }
-  if (hook === "MessageDisplay") {
-    return [{
-      kind: "assistant-delta",
-      eventId: `${sessionId}:message:${requiredText(input, "message_id")}:${requiredKey(input, "index")}`,
-      sessionId,
-      session: descriptor,
-      messageId: requiredText(input, "message_id"),
-      delta: requiredText(input, "delta"),
-      final: input.final === true || input.final === "true",
-    }];
-  }
-  if (hook === "PreToolUse") {
-    const toolUseId = requiredText(input, "tool_use_id");
-    // A subagent's hooks come under its parent's session id, with its own agent_id.
-    const agentId = optionalText(input, "agent_id");
-    return [{
-      kind: "call",
-      eventId: `${sessionId}:tool-call:${toolUseId}`,
-      toolCallId: toolUseId,
-      sessionId,
-      session: descriptor,
-      toolName: requiredText(input, "tool_name"),
-      input: input.tool_input,
-      ...(agentId === undefined ? {} : { agentId }),
-    }];
-  }
-  if (hook === "PostToolUse" || hook === "PostToolUseFailure") {
-    const toolUseId = requiredText(input, "tool_use_id");
-    const failed = hook === "PostToolUseFailure";
-    return [{
-      kind: "result",
-      eventId: `${sessionId}:tool-result:${toolUseId}`,
-      toolCallId: toolUseId,
-      sessionId,
-      session: descriptor,
-      toolName: requiredText(input, "tool_name"),
-      output: failed ? input.error : input.tool_response,
-      failed,
-    }];
-  }
-  if (hook === "Stop" || hook === "StopFailure") return [turnEndEvent(input, hook, descriptor)];
-  throw new Error(`Unsupported Claude hook event: ${hook}`);
 }
 
 export function createClaudeEventHandler(eventLoop: RerailEventLoop) {

@@ -4,7 +4,8 @@ Rerail runs on your machine. Each claim below names the file in this repository 
 
 ## What Rerail never does
 
-Rerail sends nothing about you or your work unless you add a remote, and calls no hosted model.
+Rerail sends nothing about you or your work unless you add a remote or turn the experimental Merge Assist on, and calls
+no hosted model.
 
 - **No telemetry**, analytics, crash reporting or usage metrics.
 - **No sending your work** except to a [remote](remote-sink.md) you add.
@@ -17,6 +18,9 @@ Rerail sends nothing about you or your work unless you add a remote, and calls n
 - **No telemetry**, analytics, crash reporting or usage metrics, and no dependency providing them (`package.json`).
 - **No sending your work.** Code, prompts, agent transcripts, rules and findings go only to a [remote](remote-sink.md)
   you add (in internal testing; none by default). Rerail's other network traffic, listed below, carries none of them.
+- **No credentials of its own.** Rerail makes no network request with credentials of its own. Where it runs a tool
+  that reaches the network for you (`npm`, and with Merge Assist on, `gh`), that tool uses your own configuration and
+  sign-in, and Rerail never reads or stores a token.
 - **No hosted model or LLM API.** Semantic matching uses a bundled embedding model (`model/`,
   `minishlab/potion-base-8M`), run in-process after a SHA-256 manifest check. The engine has no HTTP or socket code
   (`native/Cargo.toml`, `native/src/model.rs`).
@@ -30,7 +34,8 @@ Rerail sends nothing about you or your work unless you add a remote, and calls n
 
 ## What goes over the network
 
-Only `npm` traffic to your configured registry, carrying package names and versions; rule evaluation needs no network.
+Apart from Merge Assist (below), only `npm` traffic to your configured registry, carrying package names and versions;
+rule evaluation needs no network.
 
 npm runs for updates, setup, listing and adding packs, and SQLite rebuilds (`src/runtime/npm.ts`).
 
@@ -47,19 +52,35 @@ npm runs for updates, setup, listing and adding packs, and SQLite rebuilds (`src
 
 </details>
 
-Two internal-testing features also send to endpoints **you** supply.
+Two internal-testing features also send to endpoints **you** supply. Both are experimental and off by default
+(`RERAIL_EXPERIMENTAL_REMOTE_SINK`, `RERAIL_EXPERIMENTAL_ACTIVATION_PROFILES`; [Internal testing](internal-testing.md)).
 
 <details>
 <summary>Remote sink and signed customer profiles</summary>
 
 - **Remote sink:** `rerail remote add` targets get sessions, events (payloads unless `--no-content`), audits,
-  violations, their rules and headless scans, minus excluded repositories. With no remote, it sends nothing. See
+  violations, their rules and headless scans, minus excluded repositories. With no remote, or with the remote sink off
+  in the daemon, it sends nothing. See
   [Remote sink](remote-sink.md) for what it sends and where its token is kept (`src/runtime/remote-outbox.ts`).
 - **Signed customer profiles:** `rerail activate --code` sends the code, a device public key, platform, architecture
   and Rerail version to the activation URL **you** supply. `rerail activate --file` is offline
   (`src/activation/customer-profile.ts`).
 
 </details>
+
+Merge Assist, which is experimental and in internal testing, runs only with `RERAIL_EXPERIMENTAL_MERGE_ASSIST=1` set
+for the Rerail daemon ([Internal testing](internal-testing.md#merge-assist)), and then only in a repository you turned
+it on for. It adds read-only requests to GitHub through **`gh`**, with your own `gh` sign-in
+(`src/runtime/merge-assist/github.ts`). Without the variable, or while it is off for a repository, Rerail runs no `gh`
+for it:
+
+| When | What `gh` reads |
+| --- | --- |
+| Merge Assist reads its readiness (at most every five minutes, every minute while `gh` cannot tell, and at each scan) | Your sign-in state and login |
+| A Merge Assist scan (at session start and on demand), and detection after your agent's edits (at most every five minutes) | The 200 newest open pull requests of the repository: number, title, URL, author, draft state, last update, head and base branch, head repository owner and whether it is a fork, and head commit |
+
+Rerail runs only `gh auth status`, `gh pr list` and `gh api` with `GET`; it never writes to GitHub. A repository whose
+remote is not on GitHub is not read at all; its recently committed remote-tracking branches stand in for pull requests.
 
 ## Your coding agent's provider
 
@@ -68,6 +89,10 @@ Steers reach your agent's model provider through your agent, never through Rerai
 Rerail steers by adding messages to the agent's session. The agent's next request sends that session to its provider,
 under the provider's terms. Steers can hold paths, line numbers, rule messages quoting matched code, suggested fixes
 and your rules' text.
+
+With Merge Assist on, its notes about in-flight conflicts reach your agent's provider the same way. They can hold the
+other side's label, author and one-line summary (a commit subject or pull request title), the contested file names,
+and what your conflict hook command answered.
 
 ## What Rerail keeps on your machine
 
@@ -79,7 +104,7 @@ repository's `.rerail/sessions/`.
 
 | Where | What |
 | --- | --- |
-| `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits, findings, steer feedback, and all agent events (prompts, replies, tool inputs and outputs). Also daemon state and log, consent answer, rule packs, managed installs |
+| `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits, findings, steer feedback, and all agent events (prompts, replies, tool inputs and outputs). With Merge Assist on, also its in-flight conflicts (both sides' summaries and contested hunks; a dismissed one keeps everything but its hunks and evidence: its title, files, each side's branch or pull request, commit, author, link, summary and location, who dismissed it, and the hook command's last answer: its note (up to 600 characters), status line and any error (up to 300 characters of the command's output)), its last scan, your `gh` sign-in state and login, which notes each session was handed, and your Merge Assist settings; turning Merge Assist off clears the conflicts, scans and `gh` sign-in state, and `rerail reset` clears the notes of the sessions it removes. Also daemon state and log, consent answer, rule packs, managed installs |
 | `~/.cache/rerail/` (Windows: `%USERPROFILE%\AppData\Local\rerail`) | `content-v1.sqlite`: compressed source files Rerail read, with syntax trees and check results |
 | `<your repository>/.rerail/sessions/` | One ledger per session: events and pre-edit file text. Its `.gitignore` of `*` keeps it out of Git |
 
@@ -215,7 +240,7 @@ Three commands remove data, each reaching further.
 
 - **`rerail reset`** deletes the current repository's history.
 - **`rerail install --remove`** uninstalls Rerail and **moves** the database to a backup.
-- **`rerail install --remove --delete-data`** deletes the databases, backups, cache and recorded ledgers.
+- **`rerail install --remove --delete-data`** deletes the databases, backups, cache, recorded ledgers and Rerail home.
 
 <details>
 <summary>Exactly what each command removes</summary>
@@ -225,9 +250,12 @@ Three commands remove data, each reaching further.
   writes zero freed space (`secure_delete`).
 - **`rerail install --remove`** disconnects agents, stops the daemon, removes Rerail from `PATH`, and **moves** the
   database to `~/.rerail-clean-YYYYMMDD`.
-- **`rerail install --remove --delete-data`** deletes the databases, every `~/.rerail-clean-*` backup, the content cache
-  and recorded checkouts' `.rerail/sessions/`. `--dry-run` previews. Unrecorded checkouts and a custom
-  `RERAIL_STORAGE_ROOT` are not reached.
+- **`rerail install --remove --delete-data`** deletes the databases, every `~/.rerail-clean-*` backup, the content cache,
+  recorded checkouts' `.rerail/sessions/`, the device secrets of `rerail activate` profiles, and everything else Rerail
+  wrote in its home, then the home. `--dry-run` previews. Unrecorded checkouts, a custom `RERAIL_STORAGE_ROOT` and the
+  `<file>.<timestamp>.bak` copies of agent configs are not deleted; the output names each with the command that does.
+
+What each leaves behind: [Removing Rerail in detail](how-setup-works.md#what-each-removal-leaves-behind).
 
 </details>
 
