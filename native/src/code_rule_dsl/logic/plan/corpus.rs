@@ -3750,10 +3750,57 @@ fn run_observed(
             // closure the demand put in a cycle of other relations rows again; the `ast` atoms as the matchers'
             // relations, text tests as the vocabulary's (step 6c).
             let preparing = crate::code_rule_dsl::logic::profile::span(|| "prune, simplify, reach, demand, text".into());
-            let (version, preparation::Front { reaches: (reaches, throughs), demanded, demand, undone, matchers, vocabulary }, front_run) = preparation::front(version, dialect, last_run(preparation::FRONT), &mut check).map_err(Error::Plan)?;
+            // By parts (decision 0345, `RERAIL_PREPARE=parts`): each part prepared alone against its interface, kept
+            // under its own key, and the parts linked; no pipeline run is kept (0333's P is the other answer to Q18).
+            let by_parts = preparation::parts::on();
+            let (version, preparation::Front { reaches: (reaches, throughs), demanded, demand, undone, matchers, vocabulary }, front_run) = if by_parts {
+                let (v, f, kept) = preparation::parts::front(version, dialect, store, durable.is_some(), &lists).map_err(Error::Plan)?;
+                program_sources.extend(kept);
+                (v, f, None)
+            } else {
+                let (v, f, run) = preparation::front(version, dialect, last_run(preparation::FRONT), &mut check).map_err(Error::Plan)?;
+                (v, f, Some(run))
+            };
             drop(preparing);
+            // A measurement aid: `RERAIL_FRONT_DUMP=<dir>` writes the program as the passes before lowering leave it,
+            // one file per phase and mode (`<phase>.whole`, `<phase>.parts`), to compare the two (decision 0345).
+            if let Some(dir) = std::env::var_os("RERAIL_FRONT_DUMP") {
+                let name = format!("{}.{}", phases::current().unwrap_or_else(|| if phase0::active() { "phase0".into() } else { "main".into() }), if by_parts { "parts" } else { "whole" });
+                let mut rules: Vec<String> = version.rules().map(|r| format!("{}\n", version.show_rule(r))).collect();
+                rules.sort();
+                let sorted = |l: &[String]| {
+                    let mut l = l.to_vec();
+                    l.sort();
+                    l.join(" ")
+                };
+                if let Ok(h) = version.header(&lists) {
+                    let mut decls: Vec<String> = h.decls.iter().map(|(r, d)| format!("{r} {d:?}")).collect();
+                    decls.sort();
+                    rules.push(format!("~inputs {}\n~outputs {}\n~decls {}\n", sorted(&h.inputs), sorted(&h.outputs), decls.join(" | ")));
+                }
+                let mut matched: Vec<String> = matchers.iter().map(|m| format!("{m:?}")).collect();
+                matched.sort();
+                let demand_shown = demand.as_ref().map(|(l, o)| (sorted(l), o.as_ref().map(|t| (t.magic_rules, sorted(&t.full), t.adornments.len()))));
+                rules.push(format!("~reaches {reaches} {throughs}\n~demanded {}\n~undone {}\n~matchers {}\n~demand {demand_shown:?}\n", sorted(&demanded), sorted(&undone), matched.join(" | ")));
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::fs::write(std::path::Path::new(&dir).join(name), rules.concat());
+            }
             #[cfg_attr(not(debug_assertions), allow(dropping_copy_types))]
             drop(check);
+            // A debug build checks what follows against the tree of the parts' linked program: the whole program's tree
+            // passes are not the parts'.
+            #[cfg(debug_assertions)]
+            if by_parts {
+                prog = version.program(&lists).map_err(Error::Plan)?;
+                tree_reaches = Some((reaches, throughs));
+                tree_demanded = Some(demanded.clone());
+                tree_demand = Some(demand.as_ref().and_then(|(_, o)| o.as_ref().ok().map(|t| (t.adornments.clone(), t.full_for_negation.clone(), t.magic_rules, t.full.clone()))));
+                if demand.is_none() {
+                    tree_demand = None;
+                }
+                tree_undone = Some(undone.clone());
+                tree_text = Some((matchers.clone(), vocabulary.again()));
+            }
             if reaches + throughs > 0 {
                 crate::code_rule_dsl::logic::profile::decision("reach index (decision 0119)", || format!("{reaches} closures and {throughs} relations through them held as bitmaps"));
             }
@@ -3805,9 +3852,11 @@ fn run_observed(
                 (std::mem::take(&mut given.program), sets)
             };
             let _step = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's passes".into());
-            let (version, found, prepared_run) = preparation::run(version, factorizing, last_run(preparation::PREPARATION), bound).map_err(Error::Plan)?;
+            let (version, found, prepared_run) = preparation::run(version, factorizing, if by_parts { None } else { last_run(preparation::PREPARATION) }, bound).map_err(Error::Plan)?;
             // Both runs kept behind the run, under one digest of this one's, which its manifest names (decision 0333).
-            if durable.is_some() {
+            if durable.is_some()
+                && let Some(front_run) = front_run
+            {
                 let named = preparation::runs_digest(&front_run);
                 kept_runs.lock().expect("the kept runs").push(named);
                 // Encoded here, written by the store's writer as data (decision 0306).
@@ -11304,7 +11353,8 @@ fn cone_of(cross: &super::body::Placed, exports: &[String], base: &[String], pro
         .filter(|r| (exports.contains(r) || base.contains(r)) && !crate::code_rule_dsl::typing::file_local::run_constant(prog, r))
         .collect();
     if let Some(base) = per_file.iter().find(|r| base.contains(*r)) {
-        return Err(Error::Plan(format!("the cone of requests reads base relation {base}: a load answers exports only (decision 0065 §2a)")));
+        let rule = cross.rules().find(|r| cone.contains(v.rel_name(r.head().rel())) && r.reads().any(|a| v.rel_name(a.rel()) == base.as_str())).map(|r| v.show_rule(r)).unwrap_or_default();
+        return Err(Error::Plan(format!("the cone of requests reads base relation {base}: a load answers exports only (decision 0065 §2a); in `{rule}`")));
     }
     if let Some(produced) = answers.get_mut(world::LOAD) {
         produced.extend(per_file);

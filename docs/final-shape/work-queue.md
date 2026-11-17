@@ -552,6 +552,35 @@ pass.
   - written per edit: 12 MB, from 71 MB.
   - Left over 743c3de74's 32.7 G: `prepare` is 18.5 G against 9.8 G. Push is 0.18 s, the export cut and the
     factorizing 0.06 s each.
+- **The second answer, decision 0345's stage 1, measured beside 0333** (2026-11-17): each part (the library,
+  each program's `p<i>_`, each request's `q<k>_`) is prepared alone against its interface, kept under its own key,
+  and the parts linked before lowering; `RERAIL_PREPARE=parts` selects it. ep2 on the m3, the same seed and edits,
+  a fresh state, load 14–43:
+
+  | | A: whole + P (0333) | B: parts (0345) |
+  |---|---|---|
+  | cold run | 980 G | 942 G |
+  | an edit (e2) | 40.7 G, 3.31 s CPU | 50.8 G, 4.16 s CPU |
+  | `prepare` | 18.5 G | 30.7 G |
+  | before lowering | P's last run 0.085 s + the projection 0.06 s | link 0.79 s, parts and keys 0.55 s, parts read 0.23 s |
+  | written per edit | 12 MB | 2.3 MB |
+  | rows against h1 | 0 differ | 0 differ |
+
+  B misses one part of 318 on the edit (the edited policy's); the other 317 are read from the store. Its rows,
+  and phase 0's and the sources phase's prepared programs, are the whole program's exactly; the main phase differs
+  only where no optimization crosses parts. What B costs over A is whole-program work it still does on every edit:
+  building each part's program to key it, reading every part back, and linking 10,000 rules. A reruns the delta.
+  B's next levers, in order: key a part from its rules' digests without building it; keep the link (the linked
+  version under the vector of the parts' keys, relinking only the missed part's rules); then 0345's stages 2–3.
+- **0345: a part keyed without building it** (2026-11-17): the key is the part's header (its own relations' fields,
+  and a digest of the fields every part shares, made once a run) and its rules' hashes (a rule's hash is its
+  text's); the link takes each part's header, so only a missed part is built. Same ep2 sequence, load 42–64: an
+  edit 43.9 G and 4.50 s CPU, from 50.8 G (A: 40.7 G); `prepare` 23.8 G, from 30.7 G; the front's own CPU 0.16 s,
+  from 0.55 s. The cold run 965 G. Rows h1's; phase 0 and the sources phase still the whole's exactly. Left: the
+  link 0.74 s CPU and reading 317 parts 0.27 s, the next lever (a kept link).
+  Getting it working took four fixes in the link, each a name read for its meaning: `strtest_<k>`,
+  `rr_ast_<k>_<m>` (its capture count), the requests a runner answers (never inputs), and a part's header (the
+  whole program's 3,000 declarations per part made the link quadratic and every part's key the whole's).
 
 ### Q19. A new process reads every kept frame of the cross part, its own or not
 
