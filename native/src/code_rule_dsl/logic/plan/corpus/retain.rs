@@ -1486,7 +1486,8 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
             at += n;
         }
         let names: Vec<String> = prog.fields()?.columns(rel).unwrap_or_default().into_iter().map(|(n, _)| n.to_owned()).collect();
-        let source: Arc<dyn Source> = Arc::new(Lazy { rel: rel.clone(), names, width, g, n: at, granules, made: std::sync::OnceLock::new() });
+        let starts: Vec<usize> = granules.iter().scan(0usize, |at, (_, owners)| { let s = *at; *at += owners.iter().map(|o| o.1 as usize).sum::<usize>(); Some(s) }).collect();
+        let source: Arc<dyn Source> = Arc::new(Lazy { rel: rel.clone(), names, width, g, n: at, granules, starts, parts: Default::default(), made: std::sync::OnceLock::new() });
         let source: Arc<dyn Source> = match std::env::var_os("RERAIL_KEPT_READS") {
             Some(_) => {
                 // Each granule's first row, in the order the rows were laid out.
@@ -1516,10 +1517,49 @@ struct Lazy {
     n: usize,
     /// Each granule's frame with its owners and their rows' counts, owners ascending.
     granules: Vec<(Arc<crate::content_store::AdmittedFrame>, Vec<(i64, u32)>)>,
+    /// Each granule's first row.
+    starts: Vec<usize>,
+    /// The granules decoded for rows read one at a time (`row_at`, `value`) before the input is read whole: an edit
+    /// reads its evaluated owners' kept rows (`patch_owners`), a few owners' ranges of an input (Q51: 8,987 rows of
+    /// 13 inputs decoded whole, 312 MB, on 300 files). Each granule's rows flat, by row; let go once `made` is.
+    parts: parking_lot::Mutex<HashMap<usize, Arc<Vec<i64>>>>,
     /// Its rows, once read; with why not, read as none.
     made: std::sync::OnceLock<(Arc<dyn Source>, Option<String>)>,
 }
 impl Lazy {
+    /// Granule `k`'s rows, flat, checked at each owner's range ends as `decode` checks them; `None` when they do not
+    /// decode or are not by owner (read whole, `made` tells why).
+    fn part(&self, k: usize) -> Option<Arc<Vec<i64>>> {
+        if let Some(p) = self.parts.lock().get(&k) {
+            return Some(Arc::clone(p));
+        }
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "a kept input's granule, decoded where read".into());
+        let (part, owners) = &self.granules[k];
+        let width = self.width;
+        let got = part.rows().ok()?;
+        if got.types.len() != width || got.rows.len() != got.n * width {
+            return None;
+        }
+        let mut start = 0usize;
+        for &(owner, n) in owners {
+            let n = n as usize;
+            if width > 0 && n > 0 && [start, start + n - 1].iter().any(|r| owner_of(&got.rows[r * width..(r + 1) * width], self.g) != owner) {
+                return None;
+            }
+            start += n;
+        }
+        let rows = Arc::new(got.rows);
+        self.parts.lock().insert(k, Arc::clone(&rows));
+        Some(rows)
+    }
+    /// Row `row`'s granule and its rows, while the input is not read whole.
+    fn row_part(&self, row: usize) -> Option<(Arc<Vec<i64>>, usize)> {
+        if self.made.get().is_some() || self.width == 0 {
+            return None;
+        }
+        let k = self.starts.partition_point(|s| *s <= row).checked_sub(1)?;
+        Some((self.part(k)?, row - self.starts[k]))
+    }
     fn decode(&self) -> std::result::Result<Arc<dyn Source>, String> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "a kept input, decoded where read".into());
         let (rel, width) = (&self.rel, self.width);
@@ -1547,10 +1587,14 @@ impl Lazy {
         Ok(crate::code_rule_dsl::logic::native::component::columns_source(self.names.clone(), columns.into_iter().map(Some).collect()))
     }
     fn made(&self) -> &(Arc<dyn Source>, Option<String>) {
-        self.made.get_or_init(|| match self.decode() {
+        let made = self.made.get_or_init(|| match self.decode() {
             Ok(s) => (s, None),
             Err(why) => (crate::code_rule_dsl::logic::native::component::columns_source(self.names.clone(), vec![Some(Vec::new()); self.width]), Some(why)),
-        })
+        });
+        if !self.parts.lock().is_empty() {
+            self.parts.lock().clear();
+        }
+        made
     }
     fn inner(&self) -> &dyn Source {
         self.made().0.as_ref()
@@ -1601,7 +1645,14 @@ impl Source for Lazy {
         self.inner().text_column(column)
     }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
-        self.inner().row_at(row, columns, out)
+        match self.row_part(row) {
+            Some((rows, r)) => {
+                for (o, &c) in out.iter_mut().zip(columns) {
+                    *o = rows[r * self.width + c];
+                }
+            }
+            None => self.inner().row_at(row, columns, out),
+        }
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         self.inner().estimated_matches(column, batch)
@@ -1658,7 +1709,10 @@ impl Source for Lazy {
         self.inner().lookup(column, values)
     }
     fn value(&self, row: usize, column: usize) -> i64 {
-        self.inner().value(row, column)
+        match self.row_part(row) {
+            Some((rows, r)) => rows[r * self.width + column],
+            None => self.inner().value(row, column),
+        }
     }
     fn sorted_rows(&self, column: usize, value: i64) -> Option<&[u32]> {
         self.inner().sorted_rows(column, value)

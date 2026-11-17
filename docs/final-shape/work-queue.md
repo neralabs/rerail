@@ -1297,6 +1297,19 @@ pass.
   before. Outputs: the 300-file edit's 660 outputs (30,449 rows) equal a cold run's over the same corpus as row
   sets; strict 10-file cold, warm and edit byte-identical; frame, partial and kept-input tests 10/10.
 
+### Q51. A kept input's first row read decodes it whole
+
+- **Found** (2026-11-16, after Q50, t34 item 10): live at the edit's peak, 312 MB under "a kept input, decoded where
+  read", inside "the evaluated owners, patched". The patch read 8,987 kept rows (523 owners) of 13 inputs; `Lazy`
+  decoded each input whole at its first `row_at`.
+- **Fix**: `Lazy` answers `row_at` and `value` from the row's granule alone (each decoded once, checked at its
+  owners' range ends as the whole decode checks) until something reads the input whole, which lets them go.
+- **Record**: done (2026-11-16). Peak 1.24 GB profiled (was 1.38), 1.28–1.30 GB unprofiled (was 1.37); outputs
+  equal a cold run's (660 outputs); strict 10-file runs byte-identical; kept-input tests 8/8, the decode test
+  extended to read a granule before the whole.
+- **Open**: a new build's first two edits replay every hit whole (2.12 and 1.79 GB unprofiled): the keeper fails
+  on the edited file's entry in the old build's memo space, then counts every file in.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
