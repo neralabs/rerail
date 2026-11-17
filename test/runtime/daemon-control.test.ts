@@ -1123,6 +1123,20 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(signals).toEqual([]);
   });
 
+  // A daemon of a release before the home's lock answers its health probe as itself and holds none: its stop ends it
+  // while its pid runs. Windows sends it the signal too when the record holds no token for a shutdown request.
+  it.each(["linux", "win32"] as const)("ends a daemon that answers as itself and holds no lock of the home (%s)", async platform => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const signals: Array<string | number | undefined> = [];
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "ok", pid: LIVE_PID })));
+    await writeFile(stateFile, JSON.stringify(state(platform)));
+    const machine: DaemonMachine = { ...machineWith(platform, signals, () => false), capabilityProof: async () => "proved" };
+    expect(await lookupDaemon(home, machine)).toMatchObject({ status: "running" });
+    expect(await stopDaemon(home, machine)).toBe("stopped");
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(existsSync(stateFile)).toBe(false);
+  });
+
   /** The home's lock as held for the first `asks` times it is asked, and free after: a daemon that ends meanwhile. */
   const heldFor = (asks: number): (() => boolean) => {
     let asked = 0;
