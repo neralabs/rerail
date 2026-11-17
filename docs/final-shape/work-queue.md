@@ -789,7 +789,7 @@ pass.
   - **`col`'s lookup in `fzk287`**: 790 rows over 17 chunks in 52 ms, 65 µs a row against `col`'s 694 ns over the
     run. Not the line index (built in projection, about 10 µs a file). It looks fixed per chunk. Next: a sample of
     that step.
-- **The estimates fixed, and placement leans to the GPU** (2026-11-16, decisions 0314 and 0315): the plan's record
+- **The estimates fixed, and placement leans to the GPU** (2026-11-16, decisions 0320 and 0321): the plan's record
   prices filters as its search does, and the tree's counts know which kinds a field joins, so `attr_of`'s seed is
   estimated at 4,400 rows a loop for 5,200 made (was 5). The steps' rows-weighted miss went from 8.2× to 2.0×. The GPU
   is now chosen while priced under twice the CPU's. About 310 runs of 2,200 go to the GPU, against about 50, and the
@@ -865,7 +865,7 @@ pass.
   work is priced at a tenth of its CPU.
 - **Whose**: the planner's statistics: the containment of a lookup after a `nearest` relation, and a lookup on two
   derived columns (0299's line of work).
-- **Progress** (2026-11-16, decision 0314): the plan's record no longer halves each filter, and a kind or field after a
+- **Progress** (2026-11-16, decision 0320): the plan's record no longer halves each filter, and a kind or field after a
   field is priced by the tree's fielded counts. The steps that make 100+ rows miss by 2.0× on average, weighted by
   rows (was 8.2×), 84% within 2×. Still open: `qn`'s `walk` by `(x, s)` (about 170× under), the `ask_*` stratum's
   deltas of 1, and the kind memberships after a derived or `nearest` relation (`in_first_iter`, `tp_list`), which

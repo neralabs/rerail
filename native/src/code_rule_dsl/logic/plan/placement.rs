@@ -166,7 +166,7 @@ const DEVICE_SORT: f64 = 45e-6;
 /// in its work too: 75 ns, measured on PostHog's `posthog/hogql` (437 files, 2026-11-14: 24 ns read back, about 50 ns
 /// inserted, over the strata whose every run was on the GPU). At the 40 ns measured before (the read alone), a pure
 /// copy (`kind(n, k) :- node(_, n, k, _, _)`) priced as cheaper on the GPU and cost the same there. Refitted to 105 ns
-/// from that copy's 63 runs on the GPU (decision 0315, 2026-11-16): 443 ms of the host's CPU, 76 ms of it its
+/// from that copy's 63 runs on the GPU (decision 0321, 2026-11-16): 443 ms of the host's CPU, 76 ms of it its
 /// submissions and uploads, for 3.52 M rows. The CPU's run of it took 437 ms.
 const DEVICE_ROW_BACK: f64 = 105e-9;
 /// A value of a relation the device reads, per column an atom reads (decision 0277), in the host's CPU: 2.2 ns,
@@ -193,9 +193,9 @@ const CPU_PER_ROW_OUT: f64 = 72e-9;
 /// GPU: seconds per unit of planned work, and per submission (assumed; see the module's comment).
 const GPU_PER_WORK: f64 = 2e-9;
 const GPU_PER_SUBMISSION: f64 = 0.15e-3;
-/// The GPU is chosen while its price is under this many times the CPU's (decision 0315): it is the wider of the two,
+/// The GPU is chosen while its price is under this many times the CPU's (decision 0321): it is the wider of the two,
 /// with the more memory bandwidth, so the work it takes leaves the CPU's cores to the strata only they run. Before,
-/// the GPU had to be twice the cheaper (`MARGIN`, 2), against estimates 8 times off (decision 0314).
+/// the GPU had to be twice the cheaper (`MARGIN`, 2), against estimates 8 times off (decision 0320).
 pub(in crate::code_rule_dsl) const GPU_BIAS: f64 = 2.0;
 
 /// Where a thread's run may place strata: the CPU only, the device where it is the cheaper (the Metal binding), or
@@ -699,7 +699,7 @@ pub(in crate::code_rule_dsl) fn place(shape: &Shape) -> Placement {
     let missing: Vec<Form> = shape.forms.iter().copied().filter(|f| !DEVICE_FORMS.contains(f)).collect();
     let binding = DEVICE.with(Cell::get);
     let device = binding != Binding::Cpu;
-    // The GPU while its price is under `GPU_BIAS` times the CPU's (decision 0315).
+    // The GPU while its price is under `GPU_BIAS` times the CPU's (decision 0321).
     let gpu_cheaper = device_s < cpu_work_s * GPU_BIAS;
     let gpu = missing.is_empty() && (binding == Binding::Always || device && gpu_cheaper);
     Placement { gpu, gpu_cheaper, missing, cpu_s, gpu_s, device, joins, lacking: shape.lacking() }
@@ -798,7 +798,7 @@ pub mod tests {
         assert!(p1.joins[0].index_s > p0.joins[0].index_s);
         // A copy of an input (one scan, every row out) costs the same on either: the device saves no join, and the host
         // pays the upload and the rows back (decision 0277), at par with the CPU's scan. A run of `kind` on PostHog's
-        // `posthog/hogql` (decision 0315): 3.52 M rows over 66 runs, 437 ms of CPU, 443 ms of the host's on the device.
+        // `posthog/hogql` (decision 0321): 3.52 M rows over 66 runs, 437 ms of CPU, 443 ms of the host's on the device.
         // A join whose rows the device would make past the bound head, where the CPU's walk keeps one witness
         // (decision 0229), is priced with every row on the device.
         let was = set_device(true);
@@ -806,7 +806,7 @@ pub mod tests {
         copy.reads = vec![("node".into(), 50_000.0, 2)];
         let p = place(&copy);
         assert!((p.gpu_s / p.cpu_s - 1.0).abs() < 0.1, "a copy is priced level: {p:?}");
-        // The bias (decision 0315): a stratum the GPU's price puts at 1.5 times the CPU's is the GPU's; at 2.5 times,
+        // The bias (decision 0321): a stratum the GPU's price puts at 1.5 times the CPU's is the GPU's; at 2.5 times,
         // the CPU's.
         let joined = |work: f64| Shape { work, rules: 1, steps: 1, joins: vec![JoinEst { rel: "a".into(), input: 1e6, relation: 1e6, output: 1e6, walked: (1e6, 1e6), keys: 1, range: false, cost: 1.0 }], ..Shape::default() };
         let device_s = place(&joined(2e6)).gpu_s - CPU_PER_STRATUM;

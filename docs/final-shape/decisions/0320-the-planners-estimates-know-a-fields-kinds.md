@@ -1,8 +1,9 @@
-# 0314: The planner's estimates know a field's kinds, and its record prices filters as its search does
+# 0320: The planner's estimates know a field's kinds, and its record prices filters as its search does
 
 Status: built (2026-11-16). Follows 0299 (the planner's statistics) and 0312. `logic/plan.rs`: `Fielded`,
 `Stats::fielded`, the `kind` and `field` estimates, `plan_search`'s record; `logic/plan/corpus.rs`: `Own::fields`.
 Work queue Q44, Q36.
+Numbered 0314 on this branch until the number was found taken in another worktree.
 
 ## Intro
 

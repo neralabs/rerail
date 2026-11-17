@@ -99,7 +99,7 @@ pub(in crate::code_rule_dsl) fn placements(r: &mut String, state: &State) {
     );
     {
         use crate::code_rule_dsl::logic::plan::placement::{CPU_PER_STRATUM, CPU_PER_WORK, GPU_BIAS};
-        let _ = writeln!(r, "Prices: CPU measured ({:.0} ns a unit of planned work, {:.2} ms a stratum); GPU: each join step on its device form (the relational lab's measures), each stage and submission at the host's measured cost; the GPU taken while under {GPU_BIAS} times the CPU's price (decision 0315).", CPU_PER_WORK * 1e9, CPU_PER_STRATUM * 1e3);
+        let _ = writeln!(r, "Prices: CPU measured ({:.0} ns a unit of planned work, {:.2} ms a stratum); GPU: each join step on its device form (the relational lab's measures), each stage and submission at the host's measured cost; the GPU taken while under {GPU_BIAS} times the CPU's price (decision 0321).", CPU_PER_WORK * 1e9, CPU_PER_STRATUM * 1e3);
     }
     device_strata(r, all);
     // The strata whose GPU price was within its bias in at least one run, and that did not run there.

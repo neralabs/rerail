@@ -1,12 +1,13 @@
-# 0315: Placement leans to the GPU
+# 0321: Placement leans to the GPU
 
 Status: built (2026-11-16). Replaces 0095's margin as 0304 kept it. `logic/plan/placement.rs`: `GPU_BIAS`,
 `DEVICE_ROW_BACK`; `logic/profile/report.rs`. Work queue Q36.
+Numbered 0315 on this branch until the number was found taken in another worktree.
 
 ## Intro
 
 Placement chooses the CPU or the GPU for each stratum from a price on each. Until now the GPU had to be priced at
-half the CPU's or less (`MARGIN`, 2), since the estimates were rough. They were 8 times off (0314).
+half the CPU's or less (`MARGIN`, 2), since the estimates were rough. They were 8 times off (0320).
 
 The GPU is the wider of the two, with the more memory bandwidth. Work it takes leaves the CPU's cores to the strata
 only they can run: those with a computed term, and the many small ones. So the choice now leans the other way.
@@ -34,11 +35,11 @@ before. Its wall time was the worst of the three, at load 70.
 
 ## Results
 
-PostHog's `posthog/hogql`, the light run, cold, `RERAIL_SQL_STRICT=1`, profiled, with 0314's estimates.
+PostHog's `posthog/hogql`, the light run, cold, `RERAIL_SQL_STRICT=1`, profiled, with 0320's estimates.
 
-The bias against the margin, with 0314's estimates in both, alternated at load 50–55: runs on the GPU went from
+The bias against the margin, with 0320's estimates in both, alternated at load 50–55: runs on the GPU went from
 43–55 to 301–322 of about 2,200, and the strata's CPU fell from 2.96–3.38 s to 2.42 s. Against the build before
-0314 and 0315, alternated at load 45–50, it was a wash: wall 1.84–2.70 s against 1.64–2.33 s, strata CPU 2.53–2.90 s
+0320 and 0321, alternated at load 45–50, it was a wash: wall 1.84–2.70 s against 1.64–2.33 s, strata CPU 2.53–2.90 s
 against 2.52–2.89 s, instructions 75.8–80.1 G against 79.5–80.2 G. Findings are 1,629 in every run.
 
 The same build's plans under each binding show what the GPU's strata do. In one Metal run, 37 strata ran on the GPU

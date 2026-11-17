@@ -2498,7 +2498,7 @@ fn a_kind_bound_by_counted_values_reads_their_nodes() {
     assert!((work - (2.0 + 2.0 * 20.0)).abs() < 1e-6, "work {work}");
 }
 
-/// Decision 0314: a node bound by a field is of a kind as often as the field's children are, and a field read by a
+/// Decision 0320: a node bound by a field is of a kind as often as the field's children are, and a field read by a
 /// node of a kind yields that kind's children by it. Every child by field 7 is of kind 5 here, a hundredth of the
 /// nodes: the kind's share of the nodes passed one row in a hundred, where every row passes.
 #[test]
