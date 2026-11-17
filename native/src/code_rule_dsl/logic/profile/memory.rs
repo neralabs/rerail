@@ -159,6 +159,16 @@ pub(super) struct Sampled {
     /// footprint it was taken at.
     pub(super) heap: Vec<(u32, u64)>,
     pub(super) heap_at: u64,
+    /// `RERAIL_HEAP_AT=<text>`: the live heap by allocating span at the most footprint seen while a thread had a
+    /// span open whose path holds the text (a phase that is not the peak's), and that footprint.
+    pub(super) heap_in: Vec<(u32, u64)>,
+    pub(super) heap_in_at: u64,
+}
+
+/// `RERAIL_HEAP_AT`'s text, read once.
+fn heap_at_text() -> Option<&'static str> {
+    static AT: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| std::env::var("RERAIL_HEAP_AT").ok().filter(|t| !t.is_empty()));
+    AT.as_deref()
 }
 
 pub(super) static SAMPLED: std::sync::LazyLock<std::sync::Mutex<Sampled>> = std::sync::LazyLock::new(Default::default);
@@ -220,6 +230,17 @@ pub(super) fn sample() {
                         s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                         s.heap = heap;
                     }
+                }
+                if let Some(text) = heap_at_text()
+                    && rerail_prof::heap::on()
+                    && now >= s.heap_in_at + (16 << 20)
+                    && sample.open.iter().any(|p| p.contains(text))
+                {
+                    s.heap_in_at = now;
+                    drop(s);
+                    let heap = rerail_prof::heap::snapshot();
+                    s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    s.heap_in = heap;
                 }
                 if keep {
                     s.rows.push(sample);
@@ -294,6 +315,15 @@ pub(super) fn sampled_report(r: &mut String) {
         let _ = writeln!(r, "Live heap (and device leases) by the span that allocated it, near the peak (at {} MB footprint; sampled 1 in {} KB, all of 64 KB and more; {} MB in all, {} samples dropped):",
             mb(s.heap_at as f64), rerail_prof::heap::INTERVAL >> 10, mb(total as f64), rerail_prof::heap::DROPPED.load(std::sync::atomic::Ordering::Relaxed));
         for (id, bytes) in s.heap.iter().take(30) {
+            let _ = writeln!(r, "{:>10} MB  {}", mb(*bytes as f64), super::short(&rerail_prof::heap::name(*id), 150));
+        }
+    }
+    if let Some(text) = heap_at_text()
+        && !s.heap_in.is_empty()
+    {
+        let total: u64 = s.heap_in.iter().map(|h| h.1).sum();
+        let _ = writeln!(r, "Live heap by the span that allocated it, at the most footprint while \"{text}\" was open (at {} MB footprint; {} MB in all):", mb(s.heap_in_at as f64), mb(total as f64));
+        for (id, bytes) in s.heap_in.iter().take(30) {
             let _ = writeln!(r, "{:>10} MB  {}", mb(*bytes as f64), super::short(&rerail_prof::heap::name(*id), 150));
         }
     }
