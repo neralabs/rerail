@@ -19,6 +19,7 @@ import type { SteerMetadata } from "../../../src/engine/code-rule/code-rule.js";
 import { AUDIT_MAX_SOURCE_BYTES, MAX_SOURCE_BYTES, modulePath, NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { SOURCE_LANGUAGES } from "../../../src/engine/code-rule/code-rule-languages.js";
 import { bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-rule-compile.js";
+import { evaluationSlot } from "../../../src/engine/native/evaluation-slot.js";
 import { type CodeRule, codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import type { RuleMode } from "../../../src/engine/catalog/rule-mode.js";
 import type {
@@ -1688,6 +1689,197 @@ describe("mechanical code rule regressions", () => {
     } finally {
       binding.mockRestore();
       await enforcer.close();
+    }
+  });
+});
+
+/** Every workspace the binding makes runs its repository index chunks through `onChunk`; the rest is the engine's own. */
+function aroundIndexChunks(onChunk: (chunk: () => Promise<string>) => Promise<string>) {
+  const real = native.loadNativeBinding();
+  class Workspace {
+    constructor() {
+      const inner = new real.CodeRuleDslWorkspace();
+      return new Proxy(inner, {
+        get(target, key) {
+          const value: unknown = Reflect.get(target, key, target);
+          if (typeof value !== "function") return value;
+          if (key === "indexRepositoryAsync")
+            return (options: NativeRepositoryIndexOptions) => onChunk(() => target.indexRepositoryAsync(options));
+          return value.bind(target);
+        },
+      });
+    }
+  }
+  return vi
+    .spyOn(native, "loadNativeBinding")
+    .mockReturnValue(Object.assign(Object.create(real) as NativeBinding, { CodeRuleDslWorkspace: Workspace }));
+}
+
+/**
+ * A Git checkout whose repository index takes `chunks` chunks: the engine reads 32 files a chunk. Its sources start
+ * with `label`, so no earlier test's scan left results the store would restore in place of reading them.
+ */
+async function chunkedCheckout(root: string, chunks: number, label: string): Promise<void> {
+  await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\n");
+  const source = `# ${label}\n${"def step(value):\n    return value + 1\n\n".repeat(200)}`;
+  for (let file = 0; file < chunks * 32; file += 1) await writeFile(join(root, "api", `module_${file}.py`), source);
+  execFileSync("git", ["init", "--quiet"], { cwd: root });
+  execFileSync("git", ["add", "."], { cwd: root });
+  execFileSync("git", gitCommit, { cwd: root });
+}
+
+const neededEdit = { revision: 1, checkpoints: ["edit" as const], edits: [{ path: "api/a.py", language: "python" as const, generatedText: "NEEDLE\n" }] };
+
+describe("the engine's evaluation slot", () => {
+  it("runs each edit check of another session after the repository scan chunk in progress, not after the whole scan", async () => {
+    let chunks = 0;
+    let onSecondChunk: (() => void) | undefined;
+    const binding = aroundIndexChunks(async chunk => {
+      const pending = chunk();
+      if (chunks === 1) onSecondChunk?.();
+      const result = await pending;
+      chunks += 1;
+      return result;
+    });
+    const { recorder, audits } = recordingAudits();
+    const scanner = await fixture({ audits: recorder });
+    const checker = await fixture();
+    let scanning = true;
+    let asked = 0;
+    let checkFailure: unknown;
+    // For each check, whether the scan still ran when it asked, and how many chunks ended before its steer.
+    const checks: { duringScan: boolean; chunksWaited: number }[] = [];
+    const checked = Promise.withResolvers<void>();
+    const check = (revision: number) => {
+      asked = chunks;
+      const edit = { path: `api/edit_${revision}.py`, language: "python" as const, generatedText: "NEEDLE\n" };
+      checker.enforcer.auditGeneratedEdits("editing-session", { revision, checkpoints: ["edit"], edits: [edit] }).catch((error: unknown) => {
+        checkFailure = error;
+        checked.resolve();
+      });
+      checks.push({ duringScan: scanning, chunksWaited: -1 });
+    };
+    checker.requestSteer.mockImplementation(async () => {
+      const last = checks.at(-1);
+      if (last !== undefined) last.chunksWaited = chunks - asked;
+      if (checks.length < 3) check(checks.length + 1);
+      else checked.resolve();
+      return undefined;
+    });
+    try {
+      await chunkedCheckout(scanner.root, 24, "three checks");
+      await scanner.enforcer.openWorkspace("scanning-session");
+      await checker.enforcer.openWorkspace("editing-session");
+      onSecondChunk = () => {
+        onSecondChunk = undefined;
+        check(1);
+      };
+      const [auditId] = await scanner.enforcer.audit("scanning-session", { scope: "repository", mode: "log" });
+      scanning = false;
+      await checked.promise;
+      expect(checkFailure).toBeUndefined();
+      expect(audits.get(auditId!)?.result?.status).toBe("completed");
+      // Each check waits for the chunk in progress when it asked, and at most one more that reached the engine before
+      // it did; a check that waited for the whole scan (22 chunks or more here) would show, and leave the later checks
+      // to an idle engine.
+      expect(checks).toHaveLength(3);
+      expect(checks.filter(({ duringScan, chunksWaited }) => !duringScan || chunksWaited < 0 || chunksWaited > 2)).toEqual([]);
+    } finally {
+      binding.mockRestore();
+      await checker.enforcer.close();
+      await scanner.enforcer.close();
+    }
+  });
+
+  it("runs another session's edit check at once while a scan plans its index, as with no scan", async () => {
+    const planned = Promise.withResolvers<void>();
+    const released = Promise.withResolvers<void>();
+    let calls = 0;
+    // The first chunk plans the index without the engine's slot; it is held open here until the check has steered.
+    const binding = aroundIndexChunks(async chunk => {
+      calls += 1;
+      const result = await chunk();
+      if (calls !== 1) return result;
+      planned.resolve();
+      await released.promise;
+      return result;
+    });
+    const { recorder, audits } = recordingAudits();
+    const scanner = await fixture({ audits: recorder });
+    const checker = await fixture();
+    const steered = Promise.withResolvers<void>();
+    checker.requestSteer.mockImplementation(async () => {
+      steered.resolve();
+      return undefined;
+    });
+    try {
+      await chunkedCheckout(scanner.root, 2, "planning");
+      await scanner.enforcer.openWorkspace("planning-scan");
+      await checker.enforcer.openWorkspace("checking-session");
+      const scan = scanner.enforcer.audit("planning-scan", { scope: "repository", mode: "log" });
+      await planned.promise;
+      await checker.enforcer.auditGeneratedEdits("checking-session", neededEdit);
+      // A check that waited for the planning chunk would never steer here, since that chunk is held until it does.
+      await steered.promise;
+      released.resolve();
+      const [auditId] = await scan;
+      expect(audits.get(auditId!)?.result?.status).toBe("completed");
+      expect(evaluationSlot.idle).toBe(true);
+    } finally {
+      released.resolve();
+      binding.mockRestore();
+      await checker.enforcer.close();
+      await scanner.enforcer.close();
+    }
+  });
+
+  it("lets a session that closes leave the line at once, while another session's scan still holds the slot", async () => {
+    const held = Promise.withResolvers<void>();
+    const chunkHeld = Promise.withResolvers<void>();
+    let calls = 0;
+    // The second chunk: the first plans the index beside the line.
+    const binding = aroundIndexChunks(async chunk => {
+      calls += 1;
+      const result = await chunk();
+      if (calls !== 2) return result;
+      chunkHeld.resolve();
+      await held.promise;
+      return result;
+    });
+    const waiting = Promise.withResolvers<void>();
+    const run = evaluationSlot.run.bind(evaluationSlot);
+    let checking = false;
+    const line = vi.spyOn(evaluationSlot, "run").mockImplementation((task, signal) => {
+      if (checking) waiting.resolve();
+      return run(task, signal);
+    });
+    const { recorder, audits } = recordingAudits();
+    const scanner = await fixture({ audits: recorder });
+    const checker = await fixture();
+    try {
+      await chunkedCheckout(scanner.root, 2, "closing");
+      await scanner.enforcer.openWorkspace("held-scan");
+      await checker.enforcer.openWorkspace("closing-session");
+      const scan = scanner.enforcer.audit("held-scan", { scope: "repository", mode: "log" });
+      await chunkHeld.promise;
+      checking = true;
+      // Too large to apply inline, so it waits in the line, where the held chunk is ahead of it.
+      const generatedText = `NEEDLE\n${"# padding\n".repeat(500)}`;
+      await checker.enforcer.auditGeneratedEdits("closing-session", { revision: 1, checkpoints: ["edit"], edits: [{ path: "api/a.py", language: "python", generatedText }] });
+      await waiting.promise;
+      // The scan's chunk still holds the slot here: a close that waited for its turn would never end.
+      await checker.enforcer.close();
+      expect(checker.requestSteer).not.toHaveBeenCalled();
+      held.resolve();
+      const [auditId] = await scan;
+      expect(audits.get(auditId!)?.result?.status).toBe("completed");
+      expect(evaluationSlot.idle).toBe(true);
+    } finally {
+      held.resolve();
+      line.mockRestore();
+      binding.mockRestore();
+      await checker.enforcer.close();
+      await scanner.enforcer.close();
     }
   });
 });
