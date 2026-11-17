@@ -26,13 +26,28 @@ impl Ended {
     }
 }
 
-pub(super) fn run(program: &str, args: &[String], env: &[String], timeout_ms: Option<u32>, max_buffer: u32) -> io::Result<GitRun> {
+pub(super) fn run(
+    program: &str,
+    args: &[String],
+    env: &[String],
+    timeout_ms: Option<u32>,
+    max_buffer: u32,
+) -> io::Result<GitRun> {
     let (pid, mut ours) = spawn_child(program, args, env, true)?;
     // No input: the child reads the end of it at once, as with spawnSync and no `input`.
     let stderr = ours.pop();
     let stdout = ours.pop();
     drop(ours);
-    let mut outputs = [Output { fd: stdout, bytes: Vec::new() }, Output { fd: stderr, bytes: Vec::new() }];
+    let mut outputs = [
+        Output {
+            fd: stdout,
+            bytes: Vec::new(),
+        },
+        Output {
+            fd: stderr,
+            bytes: Vec::new(),
+        },
+    ];
     let deadline = timeout_ms.map(|ms| Instant::now() + Duration::from_millis(u64::from(ms)));
     let ended = collect(pid, &mut outputs, deadline, max_buffer as usize);
     let (code, signal) = wait(pid);
@@ -49,7 +64,12 @@ pub(super) fn run(program: &str, args: &[String], env: &[String], timeout_ms: Op
 
 /// Reads both outputs to their ends. Past `deadline`, or once they hold more than `max_buffer` bytes together, the
 /// child gets `SIGTERM` once and the reads go on to the end, as spawnSync's do.
-fn collect(pid: libc::pid_t, outputs: &mut [Output; 2], deadline: Option<Instant>, max_buffer: usize) -> Ended {
+fn collect(
+    pid: libc::pid_t,
+    outputs: &mut [Output; 2],
+    deadline: Option<Instant>,
+    max_buffer: usize,
+) -> Ended {
     let mut ended = Ended::default();
     while outputs.iter().any(|output| output.fd.is_some()) {
         let wait = if ended.killed() { None } else { deadline };
@@ -58,7 +78,13 @@ fn collect(pid: libc::pid_t, outputs: &mut [Output; 2], deadline: Option<Instant
             terminate(pid);
             continue;
         }
-        if !ended.killed() && outputs.iter().map(|output| output.bytes.len()).sum::<usize>() > max_buffer {
+        if !ended.killed()
+            && outputs
+                .iter()
+                .map(|output| output.bytes.len())
+                .sum::<usize>()
+                > max_buffer
+        {
             ended.past_max_buffer = true;
             terminate(pid);
         }
@@ -76,11 +102,21 @@ fn terminate(pid: libc::pid_t) {
 fn read_ready(outputs: &mut [Output; 2], deadline: Option<Instant>) -> bool {
     let mut polled: Vec<libc::pollfd> = outputs
         .iter()
-        .map(|output| libc::pollfd { fd: output.fd.as_ref().map_or(-1, AsRawFd::as_raw_fd), events: libc::POLLIN, revents: 0 })
+        .map(|output| libc::pollfd {
+            fd: output.fd.as_ref().map_or(-1, AsRawFd::as_raw_fd),
+            events: libc::POLLIN,
+            revents: 0,
+        })
         .collect();
     let ready = loop {
         // SAFETY: `polled` holds one pollfd per output for its whole length.
-        let ready = unsafe { libc::poll(polled.as_mut_ptr(), polled.len() as libc::nfds_t, remaining(deadline)) };
+        let ready = unsafe {
+            libc::poll(
+                polled.as_mut_ptr(),
+                polled.len() as libc::nfds_t,
+                remaining(deadline),
+            )
+        };
         if ready >= 0 || io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
             break ready;
         }
@@ -98,7 +134,11 @@ fn read_ready(outputs: &mut [Output; 2], deadline: Option<Instant>) -> bool {
 
 /// Milliseconds to `deadline` for poll, -1 for none.
 fn remaining(deadline: Option<Instant>) -> libc::c_int {
-    deadline.map_or(-1, |at| at.saturating_duration_since(Instant::now()).as_millis().min(i32::MAX as u128) as libc::c_int)
+    deadline.map_or(-1, |at| {
+        at.saturating_duration_since(Instant::now())
+            .as_millis()
+            .min(i32::MAX as u128) as libc::c_int
+    })
 }
 
 /// One read of what `output` has; its end, or an error other than an interruption, closes it.
@@ -130,7 +170,10 @@ fn wait(pid: libc::pid_t) -> (Option<i32>, Option<i32>) {
     if libc::WIFEXITED(status) {
         return (Some(libc::WEXITSTATUS(status)), None);
     }
-    (None, libc::WIFSIGNALED(status).then(|| libc::WTERMSIG(status)))
+    (
+        None,
+        libc::WIFSIGNALED(status).then(|| libc::WTERMSIG(status)),
+    )
 }
 
 #[cfg(test)]
@@ -138,20 +181,60 @@ mod tests {
     use super::run;
 
     fn sh(script: &str, timeout_ms: Option<u32>, max_buffer: u32) -> super::GitRun {
-        run("/bin/sh", &["-c".into(), script.into()], &["PATH=/usr/bin:/bin".into()], timeout_ms, max_buffer).expect("run")
+        run(
+            "/bin/sh",
+            &["-c".into(), script.into()],
+            &["PATH=/usr/bin:/bin".into()],
+            timeout_ms,
+            max_buffer,
+        )
+        .expect("run")
     }
 
     #[test]
     fn a_run_reads_both_outputs_to_their_ends_and_its_exit_code() {
-        let ran = sh("head -c 200000 /dev/zero; echo warned >&2; read nothing || exit 4", Some(10_000), 1 << 20);
-        assert_eq!((ran.stdout.len(), &ran.stderr[..], ran.status, ran.signal, ran.timed_out), (200_000, &b"warned\n"[..], Some(4), None, false));
+        let ran = sh(
+            "head -c 200000 /dev/zero; echo warned >&2; read nothing || exit 4",
+            Some(10_000),
+            1 << 20,
+        );
+        assert_eq!(
+            (
+                ran.stdout.len(),
+                &ran.stderr[..],
+                ran.status,
+                ran.signal,
+                ran.timed_out
+            ),
+            (200_000, &b"warned\n"[..], Some(4), None, false)
+        );
     }
 
     #[test]
     fn a_run_past_its_time_limit_or_its_output_limit_ends_with_sigterm() {
         let late = sh("exec sleep 5", Some(100), 1 << 20);
-        let long = sh("head -c 3000000 /dev/zero; exec sleep 5", Some(10_000), 1 << 20);
-        assert_eq!((late.timed_out, late.past_max_buffer, late.status, late.signal), (true, false, None, Some(libc::SIGTERM)));
-        assert_eq!((long.timed_out, long.past_max_buffer, long.status, long.signal), (false, true, None, Some(libc::SIGTERM)));
+        let long = sh(
+            "head -c 3000000 /dev/zero; exec sleep 5",
+            Some(10_000),
+            1 << 20,
+        );
+        assert_eq!(
+            (
+                late.timed_out,
+                late.past_max_buffer,
+                late.status,
+                late.signal
+            ),
+            (true, false, None, Some(libc::SIGTERM))
+        );
+        assert_eq!(
+            (
+                long.timed_out,
+                long.past_max_buffer,
+                long.status,
+                long.signal
+            ),
+            (false, true, None, Some(libc::SIGTERM))
+        );
     }
 }

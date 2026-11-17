@@ -11,22 +11,38 @@ use std::sync::mpsc;
 const STDIO_BUFFER: libc::c_int = 64 * 1024;
 
 fn check(result: libc::c_int) -> io::Result<()> {
-    if result == 0 { Ok(()) } else { Err(io::Error::from_raw_os_error(result)) }
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::from_raw_os_error(result))
+    }
 }
 
 fn last(result: libc::c_int) -> io::Result<libc::c_int> {
-    if result < 0 { Err(io::Error::last_os_error()) } else { Ok(result) }
+    if result < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(result)
+    }
 }
 
 fn c_string(text: &str) -> io::Result<CString> {
-    CString::new(text).map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "a string holds a NUL byte"))
+    CString::new(text)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "a string holds a NUL byte"))
 }
 
 /// A connected pair: this process's end first, the child's second, both close-on-exec, each with libuv's buffers.
 fn socket_pair() -> io::Result<(OwnedFd, OwnedFd)> {
     let mut fds: [RawFd; 2] = [-1; 2];
     // SAFETY: `fds` has room for the two descriptors socketpair writes.
-    last(unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0, fds.as_mut_ptr()) })?;
+    last(unsafe {
+        libc::socketpair(
+            libc::AF_UNIX,
+            libc::SOCK_STREAM | libc::SOCK_CLOEXEC,
+            0,
+            fds.as_mut_ptr(),
+        )
+    })?;
     // SAFETY: socketpair succeeded, so both descriptors are open and owned here alone.
     let pair = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
     for fd in [pair.0.as_raw_fd(), pair.1.as_raw_fd()] {
@@ -87,10 +103,19 @@ impl Spawn {
             for signal in (1..32).filter(|&s| s != libc::SIGKILL && s != libc::SIGSTOP) {
                 libc::sigaddset(&mut defaults, signal);
             }
-            check(libc::posix_spawnattr_setsigdefault(&mut self.attributes, &defaults))?;
-            check(libc::posix_spawnattr_setsigmask(&mut self.attributes, &mask))?;
+            check(libc::posix_spawnattr_setsigdefault(
+                &mut self.attributes,
+                &defaults,
+            ))?;
+            check(libc::posix_spawnattr_setsigmask(
+                &mut self.attributes,
+                &mask,
+            ))?;
             let flags = libc::POSIX_SPAWN_SETSIGDEF | libc::POSIX_SPAWN_SETSIGMASK;
-            check(libc::posix_spawnattr_setflags(&mut self.attributes, flags as libc::c_short))
+            check(libc::posix_spawnattr_setflags(
+                &mut self.attributes,
+                flags as libc::c_short,
+            ))
         }
     }
 
@@ -98,13 +123,23 @@ impl Spawn {
     /// descriptor without close-on-exec.
     fn give(&mut self, fd: &OwnedFd, target: RawFd) -> io::Result<()> {
         // SAFETY: the actions were initialised in `new`; `fd` stays open until after the spawn.
-        check(unsafe { libc::posix_spawn_file_actions_adddup2(&mut self.actions, fd.as_raw_fd(), target) })
+        check(unsafe {
+            libc::posix_spawn_file_actions_adddup2(&mut self.actions, fd.as_raw_fd(), target)
+        })
     }
 
     fn null_stderr(&mut self) -> io::Result<()> {
         let null_device = c_string("/dev/null")?;
         // SAFETY: the actions copy the path; the actions were initialised in `new`.
-        check(unsafe { libc::posix_spawn_file_actions_addopen(&mut self.actions, 2, null_device.as_ptr(), libc::O_RDWR, 0) })
+        check(unsafe {
+            libc::posix_spawn_file_actions_addopen(
+                &mut self.actions,
+                2,
+                null_device.as_ptr(),
+                libc::O_RDWR,
+                0,
+            )
+        })
     }
 }
 
@@ -121,7 +156,11 @@ fn above_stdio(fd: OwnedFd) -> io::Result<OwnedFd> {
 
 /// argv or envp: the strings, and a NULL-ended array of pointers into them.
 fn c_array(items: &[CString]) -> Vec<*mut libc::c_char> {
-    items.iter().map(|item| item.as_ptr().cast_mut()).chain(Some(null_mut())).collect()
+    items
+        .iter()
+        .map(|item| item.as_ptr().cast_mut())
+        .chain(Some(null_mut()))
+        .collect()
 }
 
 /// The child's ends of its stdio, given to it as 0, 1 and 2; this process's ends, returned.
@@ -145,12 +184,15 @@ fn stdio(spawn: &mut Spawn, pipe_stderr: bool) -> io::Result<(Vec<OwnedFd>, Vec<
 /// the exit pipe. Started before the child, so a thread that cannot start leaves no child behind.
 fn exit_watch(write: OwnedFd) -> io::Result<mpsc::Sender<libc::pid_t>> {
     let (send, receive) = mpsc::channel::<libc::pid_t>();
-    std::thread::Builder::new().name("rerail-git-exit".into()).stack_size(64 * 1024).spawn(move || {
-        if let Ok(pid) = receive.recv() {
-            wait_unreaped(pid);
-        }
-        drop(write);
-    })?;
+    std::thread::Builder::new()
+        .name("rerail-git-exit".into())
+        .stack_size(64 * 1024)
+        .spawn(move || {
+            if let Ok(pid) = receive.recv() {
+                wait_unreaped(pid);
+            }
+            drop(write);
+        })?;
     Ok(send)
 }
 
@@ -159,7 +201,14 @@ fn wait_unreaped(pid: libc::pid_t) {
     let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
     loop {
         // SAFETY: waits on one child of this process without reaping it.
-        let result = unsafe { libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, libc::WEXITED | libc::WNOWAIT) };
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOWAIT,
+            )
+        };
         if result == 0 || io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
             return;
         }
@@ -168,9 +217,20 @@ fn wait_unreaped(pid: libc::pid_t) {
 
 /// `program` started with `args` and `env`, its stdin and stdout (and stderr when `pipe_stderr`) on socket pairs:
 /// its pid and this process's ends, in that order. The child's ends are closed here once it has them.
-pub(super) fn spawn_child(program: &str, args: &[String], env: &[String], pipe_stderr: bool) -> io::Result<(libc::pid_t, Vec<OwnedFd>)> {
-    let argv: Vec<CString> = std::iter::once(program).chain(args.iter().map(String::as_str)).map(c_string).collect::<io::Result<_>>()?;
-    let envp: Vec<CString> = env.iter().map(|entry| c_string(entry)).collect::<io::Result<_>>()?;
+pub(super) fn spawn_child(
+    program: &str,
+    args: &[String],
+    env: &[String],
+    pipe_stderr: bool,
+) -> io::Result<(libc::pid_t, Vec<OwnedFd>)> {
+    let argv: Vec<CString> = std::iter::once(program)
+        .chain(args.iter().map(String::as_str))
+        .map(c_string)
+        .collect::<io::Result<_>>()?;
+    let envp: Vec<CString> = env
+        .iter()
+        .map(|entry| c_string(entry))
+        .collect::<io::Result<_>>()?;
     let path = c_string(program)?;
     let mut spawn = Spawn::new()?;
     let (ours, theirs) = stdio(&mut spawn, pipe_stderr)?;
@@ -178,14 +238,26 @@ pub(super) fn spawn_child(program: &str, args: &[String], env: &[String], pipe_s
     // SAFETY: every pointer is valid for the call: the path, NULL-ended argv and envp over live CStrings, and the
     // initialised actions and attributes.
     let result = unsafe {
-        libc::posix_spawn(&mut pid, path.as_ptr(), &spawn.actions, &spawn.attributes, c_array(&argv).as_ptr(), c_array(&envp).as_ptr())
+        libc::posix_spawn(
+            &mut pid,
+            path.as_ptr(),
+            &spawn.actions,
+            &spawn.attributes,
+            c_array(&argv).as_ptr(),
+            c_array(&envp).as_ptr(),
+        )
     };
     drop(theirs);
     check(result)?;
     Ok((pid, ours))
 }
 
-pub(super) fn start(program: &str, args: &[String], env: &[String], pipe_stderr: bool) -> io::Result<StartedGit> {
+pub(super) fn start(
+    program: &str,
+    args: &[String],
+    env: &[String],
+    pipe_stderr: bool,
+) -> io::Result<StartedGit> {
     let (exited, write) = exit_pipe()?;
     let watch = exit_watch(write)?;
     let (pid, ours) = spawn_child(program, args, env, pipe_stderr)?;
@@ -205,12 +277,21 @@ pub(super) fn reap(pid: i32) -> GitExit {
     // SAFETY: reaps one child of this process, without blocking.
     let reaped = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
     if reaped != pid {
-        return GitExit { code: None, signal: None };
+        return GitExit {
+            code: None,
+            signal: None,
+        };
     }
     if libc::WIFEXITED(status) {
-        return GitExit { code: Some(libc::WEXITSTATUS(status)), signal: None };
+        return GitExit {
+            code: Some(libc::WEXITSTATUS(status)),
+            signal: None,
+        };
     }
-    GitExit { code: None, signal: libc::WIFSIGNALED(status).then(|| libc::WTERMSIG(status)) }
+    GitExit {
+        code: None,
+        signal: libc::WIFSIGNALED(status).then(|| libc::WTERMSIG(status)),
+    }
 }
 
 #[cfg(test)]
@@ -222,10 +303,20 @@ mod tests {
 
     #[test]
     fn a_child_reads_its_input_writes_its_output_and_is_reaped_after_the_exit_pipe_closes() {
-        let started = start("/bin/sh", &["-c".into(), "read line; echo \"got $line\"; exit 3".into()], &["PATH=/usr/bin:/bin".into()], false).expect("start");
+        let started = start(
+            "/bin/sh",
+            &["-c".into(), "read line; echo \"got $line\"; exit 3".into()],
+            &["PATH=/usr/bin:/bin".into()],
+            false,
+        )
+        .expect("start");
         // SAFETY: each descriptor start returned is open and ours to own.
         let (mut stdin, mut stdout, mut exited) = unsafe {
-            (UnixStream::from_raw_fd(started.stdin), UnixStream::from_raw_fd(started.stdout), std::fs::File::from_raw_fd(started.exited))
+            (
+                UnixStream::from_raw_fd(started.stdin),
+                UnixStream::from_raw_fd(started.stdout),
+                std::fs::File::from_raw_fd(started.exited),
+            )
         };
         stdin.write_all(b"one\n").expect("write");
         drop(stdin);
@@ -234,6 +325,9 @@ mod tests {
         let mut nothing = Vec::new();
         exited.read_to_end(&mut nothing).expect("exit pipe");
         let exit = super::reap(started.pid);
-        assert_eq!((out.as_str(), exit.code, exit.signal, started.stderr), ("got one\n", Some(3), None, -1));
+        assert_eq!(
+            (out.as_str(), exit.code, exit.signal, started.stderr),
+            ("got one\n", Some(3), None, -1)
+        );
     }
 }

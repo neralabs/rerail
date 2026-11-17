@@ -3,8 +3,8 @@
 //! Node's `child_process` starts every child through libuv, which on Linux calls `fork()`: the kernel copies the
 //! caller's page tables, marks every written page copy-on-write, and the child tears that copy down again when it
 //! runs `exec`. libuv waits for the `exec` on the calling thread, so in the daemon each Git start holds its event loop
-//! for a time that grows with its resident memory (about 30 ms per GB measured), and every page the daemon writes
-//! afterwards takes a fault. glibc's `posix_spawn` starts the child with `clone(CLONE_VM | CLONE_VFORK)`: the child
+//! for a time that grows with its resident memory (14 to 30 ms per GB on the machines measured), and every page it
+//! writes afterwards takes a fault. glibc's `posix_spawn` starts the child with `clone(CLONE_VM | CLONE_VFORK)`: the child
 //! runs in the caller's memory until `exec`, so nothing is copied, whatever the caller's size.
 //!
 //! `start_git` starts a child for a reader that does not block, and `run_git` runs one to its end as `spawnSync` does.
@@ -55,22 +55,37 @@ pub struct GitRun {
 /// ended, as Node's `spawnSync` does: `SIGTERM` once `timeout_ms` has passed, or once stdout and stderr hold more than
 /// `max_buffer` bytes together.
 #[napi]
-pub fn run_git(program: String, args: Vec<String>, env: Vec<String>, timeout_ms: Option<u32>, max_buffer: u32) -> Result<GitRun> {
+pub fn run_git(
+    program: String,
+    args: Vec<String>,
+    env: Vec<String>,
+    timeout_ms: Option<u32>,
+    max_buffer: u32,
+) -> Result<GitRun> {
     #[cfg(target_os = "linux")]
     {
-        run::run(&program, &args, &env, timeout_ms, max_buffer).map_err(|error| failed("runGit", &error))
+        run::run(&program, &args, &env, timeout_ms, max_buffer)
+            .map_err(|error| failed("runGit", &error))
     }
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (program, args, env, timeout_ms, max_buffer);
-        Err(Error::new(Status::GenericFailure, "runGit is only needed on Linux; child_process runs Git elsewhere"))
+        Err(Error::new(
+            Status::GenericFailure,
+            "runGit is only needed on Linux; child_process runs Git elsewhere",
+        ))
     }
 }
 
 /// Starts `program` (an absolute path) with `args` (argv from its second entry) and `env` (`NAME=value` entries),
 /// stdin and stdout on socket pairs, and stderr on one when `pipe_stderr`, else on the null device.
 #[napi]
-pub fn start_git(program: String, args: Vec<String>, env: Vec<String>, pipe_stderr: bool) -> Result<StartedGit> {
+pub fn start_git(
+    program: String,
+    args: Vec<String>,
+    env: Vec<String>,
+    pipe_stderr: bool,
+) -> Result<StartedGit> {
     #[cfg(target_os = "linux")]
     {
         spawn::start(&program, &args, &env, pipe_stderr).map_err(|error| failed("startGit", &error))
@@ -78,7 +93,10 @@ pub fn start_git(program: String, args: Vec<String>, env: Vec<String>, pipe_stde
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (program, args, env, pipe_stderr);
-        Err(Error::new(Status::GenericFailure, "startGit is only needed on Linux; child_process starts Git elsewhere"))
+        Err(Error::new(
+            Status::GenericFailure,
+            "startGit is only needed on Linux; child_process starts Git elsewhere",
+        ))
     }
 }
 
@@ -92,7 +110,10 @@ pub fn reap_git(pid: i32) -> GitExit {
     #[cfg(not(target_os = "linux"))]
     {
         let _ = pid;
-        GitExit { code: None, signal: None }
+        GitExit {
+            code: None,
+            signal: None,
+        }
     }
 }
 
