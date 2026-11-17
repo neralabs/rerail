@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { renameWithRetrySync } from "../engine/file-replace.js";
 import { LOCKS_DIR } from "../engine/native/file-lock.js";
@@ -207,8 +207,12 @@ function unrecordedSince(first: HookFailure, count: number, { total, keptSince }
  * later than `since`. A `.1` that cannot be read holds nothing, and the count starts where the live log began.
  */
 export function readHookFailures(home: string, since: number): HookFailureLog {
-  const live = readPart(join(home, HOOK_FAILURES_FILE));
+  const livePath = join(home, HOOK_FAILURES_FILE);
+  let live = readPart(livePath);
   const movedAside = readPart(join(home, MOVED_ASIDE_FILE));
+  // A hook moved the live log to `.1` between the two reads, so `.1` is the file just read as live: read the live name
+  // again, which now holds the next part, rather than count the moved one twice.
+  if (live !== undefined && live.id !== undefined && live.id === movedAside?.id) live = readPart(livePath);
   const start = movedAside === undefined ? live?.startedAt : movedAside.startedAt ?? oldestOf(movedAside) ?? live?.startedAt;
   const keptSince = start !== undefined && start > since ? start : null;
   const from = keptSince ?? since;
@@ -219,19 +223,32 @@ export function readHookFailures(home: string, since: number): HookFailureLog {
 
 /** What a part of the log holds: its failures, and when it began where a hook that moved the log aside wrote that. */
 interface LogPart {
+  /** The file's volume and inode, which a rename keeps; undefined where the file system gives no inode. */
+  id: string | undefined;
   failures: HookFailure[];
   startedAt: number | undefined;
 }
 
 /** The part of the log at `path`; undefined when it is missing or cannot be read. */
 function readPart(path: string): LogPart | undefined {
-  let text: string;
+  let descriptor: number;
   try {
-    text = readFileSync(path, "utf8");
+    descriptor = openSync(path, "r");
   } catch {
     return undefined;
   }
-  const part: LogPart = { failures: [], startedAt: undefined };
+  let id: string | undefined;
+  let text: string;
+  try {
+    const { dev, ino } = fstatSync(descriptor, { bigint: true });
+    id = ino === 0n ? undefined : `${dev}:${ino}`;
+    text = readFileSync(descriptor, "utf8");
+  } catch {
+    return undefined;
+  } finally {
+    closeSync(descriptor);
+  }
+  const part: LogPart = { id, failures: [], startedAt: undefined };
   for (const line of text.split("\n")) {
     const value = parseLine(line);
     if (value === null) continue;
