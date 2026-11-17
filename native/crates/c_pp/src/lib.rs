@@ -8,5 +8,11 @@
 //! Both read a file with the shared lexer's preprocessing mode (`rerail_c_lean::pp`).
 
 pub mod directives;
+pub mod expr;
+pub mod files;
+pub mod macros;
+pub mod sink;
+pub mod stream;
 
 pub use rerail_c_lean::pp::Options;
+pub use stream::{Config, Pp};

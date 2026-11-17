@@ -504,6 +504,23 @@ impl<'t> PpLexer<'t> {
         t.kind == P::Eof || t.flags & BOL != 0
     }
 
+    /// The next token where it is on the current line; `None` (nothing read) where the line or the
+    /// text ends first.
+    pub fn next_on_line(&mut self) -> Option<PpTok> {
+        let save = (self.pos, self.bol);
+        let t = self.next();
+        if t.kind == P::Eof || t.flags & BOL != 0 {
+            (self.pos, self.bol) = save;
+            return None;
+        }
+        Some(t)
+    }
+
+    /// Where the lexer is: its position, and whether no token was read yet on its line (`seek`'s).
+    pub fn state(&self) -> (usize, bool) {
+        (self.pos, self.bol)
+    }
+
     /// Reads from `at`, as the first token of a line when `bol`.
     pub fn seek(&mut self, at: usize, bol: bool) {
         self.pos = at;

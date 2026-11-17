@@ -101,6 +101,15 @@ rerail_simd8::keyword_switch!(
 );
 
 impl Kind {
+    /// The kind a directive's name `word` names (`Unknown`: none).
+    #[inline]
+    pub fn of(word: &[u8]) -> Kind {
+        match DIRECTIVE_WORDS.find(word, 0, word.len()) {
+            0 => Kind::Unknown,
+            c => KINDS[c as usize - 1],
+        }
+    }
+
     /// Whether the kind opens, continues or closes a conditional.
     pub fn is_cond(self) -> bool {
         matches!(self, Kind::If | Kind::Ifdef | Kind::Ifndef | Kind::Elif | Kind::Elifdef | Kind::Elifndef | Kind::Else | Kind::Endif)
