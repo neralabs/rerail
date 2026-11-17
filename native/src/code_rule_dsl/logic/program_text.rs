@@ -37,6 +37,7 @@ const ABOUT: &str = "a";
 pub mod from_tape;
 
 use from_tape::{Parts, REL_WORDS, VAR_WORDS};
+use crate::code_rule_dsl::logic::program_image::manager::VersionAnalyses as _;
 
 fn bad(what: impl std::fmt::Display) -> String {
     format!("program text: {what}")

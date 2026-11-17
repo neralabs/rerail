@@ -374,7 +374,18 @@ fn agrees_as<A: Analysis>(v: &Value, cx: &Cx<'_>) -> Result<bool> {
     Ok(v.downcast_ref::<A>().is_some_and(|a| A::compute(cx).is_ok_and(|fresh| fresh == *a)))
 }
 
-/// A version's analyses (`Version::analyses`), held by the version beside its indexes and dropped with it: not a
+/// A version's analyses, from its slot (`Version::held`), where the first ask puts an empty store.
+pub trait VersionAnalyses {
+    fn analyses(&self) -> &Store;
+}
+
+impl VersionAnalyses for Version {
+    fn analyses(&self) -> &Store {
+        self.held().0.get_or_init(|| Box::new(Store::default())).downcast_ref::<Store>().expect("a version's slot holds the manager's store")
+    }
+}
+
+/// A version's analyses (`VersionAnalyses`), held by the version beside its indexes and dropped with it: not a
 /// process cache (0103), and never keyed by anything but the version that holds it. A pipeline carries them from a
 /// pass's input to its output (`carry`).
 #[derive(Default)]

@@ -233,6 +233,7 @@ pub fn atomized_statistics(t: &Connection, db: &Connection, store: &ContentStore
 }
 
 pub use crate::code_rule_dsl::prof::thread_usage;
+use crate::code_rule_dsl::logic::program_image::passes::Parts as _;
 
 pub fn usage() -> (f64, f64, f64) {
     // wasm32: the one thread's time as user CPU, and no resident-set counter.

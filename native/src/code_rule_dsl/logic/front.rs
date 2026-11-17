@@ -38,7 +38,7 @@ enum Tok {
     Eof,
 }
 
-const PUNCT: [&str; 22] = [":-", "!=", "<=", ">=", "(", ")", ",", ".", ";", ":", "=", "<", ">", "!", "{", "}", "|", "@", "*", "[", "]", "-"];
+use ast::PUNCT;
 
 /// T's `TOKEN` regex: whitespace and `//` comments skipped, then `$var`, `"string"`, `-?digits`, punctuation or an
 /// identifier. T had no `*`, so its `.demand *` could not be written; it is a token here (and `[`, `]`, `-` for
@@ -98,10 +98,7 @@ fn tokens(src: &str) -> Result<Vec<(Tok, usize)>, Error> {
     }
 }
 
-/// The parser's own spelling of the operator `op`, if it is one (a comparison read back from facts or the store).
-pub fn operator(op: &str) -> Option<&'static str> {
-    PUNCT.iter().copied().find(|p| *p == op)
-}
+pub use ast::operator;
 
 fn near(src: &str, pos: usize) -> &str {
     let end = (pos..=src.len().min(pos + 40)).rev().find(|&i| src.is_char_boundary(i)).unwrap_or(pos);

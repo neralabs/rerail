@@ -1860,3 +1860,14 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   tree; the other four are small.
 - **Done when**: each check reads the version (an analysis, or a check over its rules and header), a debug build
   checks it refuses what the tree's refuses, and `link_seeded_version` decodes no tree.
+
+### Q91. A cut of a gated program keeps `node`'s projections: retain's test expects an empty part
+
+- **Found** (2026-11-17, while making 0365's cuts): `retain::tests::unchanged_gated_programs_reuse_only_complete_retained_results`
+  fails: the cut of an unchanged gated program (`Cut::program`) holds two rules, `kind($n, $k) :- node(_, $n, $k, _, _)`
+  and `docof($n, $d) :- node($d, $n, _, _, _)`, where the test asserts none. Since `6fe55cb12` (Q37, 2026-11-16) a copy
+  of an input's columns is a view of it, not a stratum, so `cut` never counts the projections clean, and the part
+  keeps every rule whose head is not clean. Not 0365's: the part is made by the same passes (`Retain`, `PartOf`), now
+  through `passes::Parts`, and the rules kept are those `clean` leaves.
+- **Done when**: either the cut counts a view of an input's columns clean with the input (the part then has no rules,
+  as the test says), or the test asserts the part holds only such views; the planner's owner of Q37 decides which.
