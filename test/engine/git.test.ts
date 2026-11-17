@@ -814,10 +814,10 @@ describe("gitStartEnvironment", () => {
 
   it("puts no folder on PATH that Windows finds from the folder Git runs in, the repository, whatever the home variables hold", () => {
     // An empty, relative or drive-relative home, with no profile to fall back on: no home's bin, and HOME as it was.
-    // An empty variable is unset: PLINK_PROTOCOL gets the launcher's default.
+    // An empty PLINK_PROTOCOL is kept, as the launcher keeps it: only the home and PATH are held to the folder rule.
     for (const HOME of ["", "home", win32.join("\\", "people", "me"), "D:home"]) {
       const env = { Path: person.Path, HOME, USERPROFILE: "", PLINK_PROTOCOL: "" };
-      expect(gitStartEnvironment(ucrt, env, install(ucrt)), HOME).toEqual({ ...env, MSYSTEM: "UCRT64", PLINK_PROTOCOL: "ssh", Path: [...first("ucrt64"), person.Path].join(";") });
+      expect(gitStartEnvironment(ucrt, env, install(ucrt)), HOME).toEqual({ ...env, MSYSTEM: "UCRT64", Path: [...first("ucrt64"), person.Path].join(";") });
     }
     // An empty HOME or HOMEPATH is unset, as gitHome reads them: HOMEDRIVE alone names the current folder of its drive.
     for (const empty of [{ HOME: "" }, { HOMEPATH: "" }]) {

@@ -324,7 +324,7 @@ function launcherEnvironment({ root, build }: GitForWindowsBuild, env: NodeJS.Pr
   const first = [win32.join(root, build), win32.join(root, "usr"), ...fullyQualified(home)].map(folder => win32.join(folder, "bin"));
   return withVariables(env, {
     MSYSTEM: build.toUpperCase(),
-    PLINK_PROTOCOL: setVariable(env, "PLINK_PROTOCOL") ?? "ssh",
+    PLINK_PROTOCOL: variable(env, "PLINK_PROTOCOL") ?? "ssh",
     ...(home === undefined ? {} : { HOME: home }),
     PATH: [...first, ...listed(setVariable(env, "PATH"))].join(";"),
   });
@@ -332,8 +332,9 @@ function launcherEnvironment({ root, build }: GitForWindowsBuild, env: NodeJS.Pr
 
 /**
  * The `HOME` Git for Windows' launcher gives Git: `HOME` when set, else `HOMEDRIVE` followed by `HOMEPATH` when that
- * folder exists, else `USERPROFILE`; undefined when none is set. An empty variable counts as unset, as {@link gitHome},
- * the same rule as Git reads it, counts an empty `HOME` or `HOMEPATH`.
+ * folder exists, else `USERPROFILE`; undefined when none is set. An empty `HOME`, `HOMEPATH` or `USERPROFILE` counts as
+ * unset, as {@link gitHome}, the same rule as Git reads it, counts an empty `HOME` or `HOMEPATH`; the launcher takes an
+ * empty `HOME` as set and puts `\bin`, a folder at the root of the drive Git runs on, on `PATH`.
  */
 function launcherHome(env: NodeJS.ProcessEnv, probe: GitProbe): string | undefined {
   const home = setVariable(env, "HOME");
