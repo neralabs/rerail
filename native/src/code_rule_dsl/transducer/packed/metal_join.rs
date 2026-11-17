@@ -178,6 +178,12 @@ pub(in crate::code_rule_dsl) const RHS_PARAM: u32 = 0x8000_0000;
 pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) key_const: [i64; MAX_KEYS],
     pub(in crate::code_rule_dsl) par_const: [i64; MAX_PARAMS],
+    /// The probed relation's descriptor's offset in its block (a `rerail_blocks` `Relation`, its ids from 0), read
+    /// where it lies through the generated reads (decision 0325); 0 for a relation in a buffer of its own,
+    /// column-major (a block's header is at 0).
+    pub(in crate::code_rule_dsl) r_at: u64,
+    /// Keeps `ops` at 16 bytes (MSL's `uint4`).
+    pub(in crate::code_rule_dsl) r_pad: u64,
     pub(in crate::code_rule_dsl) ops: [[u32; 4]; MAX_OPS],
     pub(in crate::code_rule_dsl) mode: u32,
     pub(in crate::code_rule_dsl) nslots: u32,
@@ -220,7 +226,7 @@ pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) arith: [[u32; 4]; MAX_ARITH],
 }
 
-const _: () = assert!(std::mem::size_of::<Stage>() == 2288 && std::mem::size_of::<Stage>() % 16 == 0);
+const _: () = assert!(std::mem::size_of::<Stage>() == 2304 && std::mem::size_of::<Stage>() % 16 == 0);
 
 impl Default for Stage {
     fn default() -> Self {
@@ -449,12 +455,18 @@ kernel void axis_write(device const char* B [[buffer(0)]], device const uint* st
 }
 "#;
 
-const SOURCE: &str = r#"#include <metal_stdlib>
+/// Every join kernel's source: `SOURCE_MAIN` with the relation's reads written once (`rerail_blocks::RELATION_READS`,
+/// decision 0325), which a stage reads a relation in its block with.
+static SOURCE: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| SOURCE_MAIN.replacen("using namespace metal;\n", &format!("using namespace metal;\n{}", rerail_blocks::RELATION_READS), 1));
+
+const SOURCE_MAIN: &str = r#"#include <metal_stdlib>
 using namespace metal;
 
 struct Stage {
     long key_const[8];
     long par_const[16];
+    ulong r_at, r_pad;
     uint4 ops[64];
     uint mode, nslots, cap_in, cap_out, in_slot, out_slot, nr, nkeys, mask, ntests, nops, nparams, nbinds, npassed, last, counter;
     uint key_kind[8]; uint key_slot[8]; uint key_rcol[8];
@@ -479,8 +491,14 @@ static inline long lane_of(long v, uint w) {
     return w == 16 ? long(short(v)) : (w == 32 ? long(int(v)) : v);
 }
 
+// A value of the probed relation: row `r`'s in column `col`, read in its block through the generated reads (`r_at`,
+// decision 0325), or column-major in a buffer of its own.
+static inline long rget(constant Stage& s, device const long* R, uint r, uint col) {
+    return s.r_at == 0ul ? R[ulong(col) * s.nr + r] : long(clif_rel_get((device const uchar*)R, s.r_at, r, col));
+}
+
 static inline long colval(constant Stage& s, uint k, device const long* L, uint t, device const long* R, uint r) {
-    long v = s.col_kind[k] == 0 ? R[ulong(s.col_idx[k]) * s.nr + r] : L[ulong(s.col_idx[k]) * s.cap_in + t];
+    long v = s.col_kind[k] == 0 ? rget(s, R, r, s.col_idx[k]) : L[ulong(s.col_idx[k]) * s.cap_in + t];
     return s.col_doc[k] != 0 ? (v >> 32) : v;
 }
 
@@ -586,8 +604,8 @@ static inline void candidates(constant Stage& s, device const long* L, uint t, d
 
 // Whether candidate place q (row r) matches the binding's keys and the relation's column tests.
 static inline bool matches(constant Stage& s, device const long* R, uint r, thread const long* kv) {
-    for (uint i = 0; i < s.nkeys && i < 8; i++) if (R[ulong(s.key_rcol[i]) * s.nr + r] != kv[i]) return false;
-    for (uint i = 0; i < s.ntests && i < 8; i++) if (R[ulong(s.test_a[i]) * s.nr + r] != R[ulong(s.test_b[i]) * s.nr + r]) return false;
+    for (uint i = 0; i < s.nkeys && i < 8; i++) if (rget(s, R, r, s.key_rcol[i]) != kv[i]) return false;
+    for (uint i = 0; i < s.ntests && i < 8; i++) if (rget(s, R, r, s.test_a[i]) != rget(s, R, r, s.test_b[i])) return false;
     return true;
 }
 
@@ -604,7 +622,7 @@ static inline uint aggregate(constant Stage& s, device const long* L, uint t, de
         if (!matches(s, R, r, kv)) continue;
         cnt++;
         if (s.agg[1] == NONE) continue;
-        long x = R[ulong(s.agg[1]) * s.nr + r];
+        long x = rget(s, R, r, s.agg[1]);
         long y = as_type<long>(as_type<ulong>(sum) + as_type<ulong>(x));
         if ((sum < 0) == (x < 0) && (y < 0) != (sum < 0)) over = true;
         sum = y;
@@ -843,7 +861,7 @@ static inline void write_row(constant Stage& s, device const long* L, uint t, de
         uint kind = s.bind_kind[b];
         long v = 0;
         if (kind == 3) arith(s, s.bind_idx[b], L, t, R, r, v);
-        else v = kind == 0 ? colval(s, s.bind_idx[b], L, t, R, r) : (kind == 1 ? parval(s, s.bind_idx[b], L, t) : R[ulong(s.bind_idx[b]) * s.nr + r]);
+        else v = kind == 0 ? colval(s, s.bind_idx[b], L, t, R, r) : (kind == 1 ? parval(s, s.bind_idx[b], L, t) : rget(s, R, r, s.bind_idx[b]));
         O[ulong(s.bind_slot[b]) * s.cap_out + at] = v;
     }
 }
@@ -902,13 +920,13 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
 
 // A witness's probe (decision 0277): whether relation R has a row of `b`'s keys (a binding's slots, constants or the
 // candidate's columns) and column tests; an anti-join's, whether it has none. One loop over the keys' run.
-static inline bool witness_probe(constant Stage& b, device const long* L, uint t, uint cap_in, device const long* RA, uint nra, uint ra,
+static inline bool witness_probe(constant Stage& b, device const long* L, uint t, uint cap_in, constant Stage& a, device const long* RA, uint ra,
                                  device const long* R, device const uint* perm, device const uint* starts, device const uint* rkeys,
                                  device const uint* nruns) {
     long kv[8];
     for (uint i = 0; i < b.nkeys && i < 8; i++) {
         uint k = b.key_kind[i];
-        kv[i] = k == 1 ? L[ulong(b.key_slot[i]) * cap_in + t] : (k == 2 ? RA[ulong(b.key_slot[i]) * nra + ra] : b.key_const[i]);
+        kv[i] = k == 1 ? L[ulong(b.key_slot[i]) * cap_in + t] : (k == 2 ? rget(a, RA, ra, b.key_slot[i]) : b.key_const[i]);
     }
     uint lo = 0, hi = b.nr;
     if (b.nkeys > 0) {
@@ -954,9 +972,9 @@ kernel void witness_count(device const long* L [[buffer(0)]], device const long*
         uint r = keyed ? perm[q] : q;
         if (!matches(s, R, r, kv)) continue;
         bool all = true;
-        if (nb > 0) all = witness_probe(bs[0], L, t, s.cap_in, R, s.nr, r, R0, p0, s0, k0, n0);
-        if (all && nb > 1) all = witness_probe(bs[1], L, t, s.cap_in, R, s.nr, r, R1, p1, s1, k1, n1);
-        if (all && nb > 2) all = witness_probe(bs[2], L, t, s.cap_in, R, s.nr, r, R2, p2, s2, k2, n2);
+        if (nb > 0) all = witness_probe(bs[0], L, t, s.cap_in, s, R, r, R0, p0, s0, k0, n0);
+        if (all && nb > 1) all = witness_probe(bs[1], L, t, s.cap_in, s, R, r, R1, p1, s1, k1, n1);
+        if (all && nb > 2) all = witness_probe(bs[2], L, t, s.cap_in, s, R, r, R2, p2, s2, k2, n2);
         if (all) { found = 1; break; }
     }
     counts[t] = found;
@@ -1558,8 +1576,13 @@ kernel void rel_hash(device const long* R [[buffer(0)]], device uint* out [[buff
                      uint t [[thread_position_in_grid]]) {
     uint nr = p[0];
     if (t >= nr) return;
+    // The relation's descriptor's offset in its block (`p[3]`, `p[4]`: low, high), or 0 for one column-major.
+    ulong at = ulong(p[3]) | (ulong(p[4]) << 32);
     long kv[8];
-    for (uint i = 0; i < p[1] && i < 8; i++) kv[i] = R[ulong(p[3 + i]) * nr + t];
+    for (uint i = 0; i < p[1] && i < 8; i++) {
+        uint c = p[5 + i];
+        kv[i] = at == 0ul ? R[ulong(c) * nr + t] : long(clif_rel_get((device const uchar*)R, at, t, c));
+    }
     out[t] = hash_keys(kv, p[1], p[2]);
 }
 
@@ -1864,6 +1887,9 @@ pub(in crate::code_rule_dsl) struct DevRel {
     buffer: Held,
     pub(in crate::code_rule_dsl) rows: usize,
     pub(in crate::code_rule_dsl) cols: usize,
+    /// Its descriptor's offset in the block `buffer` binds, for a relation read where it lies (`in_block`, decision
+    /// 0325); 0 for one in a buffer of its own, column-major.
+    pub(in crate::code_rule_dsl) at: u64,
 }
 
 impl DevRel {
@@ -1874,11 +1900,19 @@ impl DevRel {
         // SAFETY: the buffer holds at least `cols * rows` values, and nothing else refers to it yet.
         let values = unsafe { std::slice::from_raw_parts_mut(buffer.buffer.contents().cast::<i64>(), cols * rows) };
         fill(values);
-        Ok(DevRel { buffer, rows, cols })
+        Ok(DevRel { buffer, rows, cols, at: 0 })
     }
 
+    /// A relation the device reads where it lies (decision 0325): the relation of `rows` rows and `cols` columns
+    /// whose descriptor is `at` bytes into the block `buffer` binds. Nothing is copied.
+    pub(in crate::code_rule_dsl) fn in_block(buffer: Held, at: usize, rows: usize, cols: usize) -> DevRel {
+        assert!(at > 0, "a descriptor past the block's header");
+        DevRel { buffer, rows, cols, at: at as u64 }
+    }
+
+    /// The device memory it holds of its own: none for a relation read in its block.
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
-        8 * self.cols * self.rows
+        if self.at != 0 { 0 } else { 8 * self.cols * self.rows }
     }
 
     /// The buffer: `cols` columns of `rows` 64-bit values, column-major.
@@ -1888,11 +1922,12 @@ impl DevRel {
 
     /// A relation of `cols` columns and `rows` rows that the device fills (`Batch::copy_rows`).
     pub(in crate::code_rule_dsl) fn empty(cols: usize, rows: usize) -> Result<DevRel, Error> {
-        Ok(DevRel { buffer: Held::new((8 * cols * rows).max(8))?, rows, cols })
+        Ok(DevRel { buffer: Held::new((8 * cols * rows).max(8))?, rows, cols, at: 0 })
     }
 
     /// Column `c`'s values, once the command buffer that wrote them completed.
     pub(in crate::code_rule_dsl) fn column(&self, c: usize) -> &[i64] {
+        assert_eq!(self.at, 0, "a relation read in its block has no columns of its own");
         // SAFETY: the buffer holds `rows` values per column; the writer completed.
         unsafe { std::slice::from_raw_parts(self.buffer.buffer.contents().cast::<i64>().add(c * self.rows), self.rows) }
     }
@@ -1945,7 +1980,7 @@ impl DevText {
         let longest = offs.windows(2).map(|w| (w[1] - w[0]) as usize).max().unwrap_or(0);
         let sep = chars.contains(&0x1f);
         let nchars = chars.len();
-        Ok(DevText { packed: std::rc::Rc::new(DevRel { buffer: held, rows, cols: 1 }), terms: n, span, longest, sep, chars: nchars })
+        Ok(DevText { packed: std::rc::Rc::new(DevRel { buffer: held, rows, cols: 1, at: 0 }), terms: n, span, longest, sep, chars: nchars })
     }
 
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
@@ -1982,7 +2017,10 @@ impl Rows<'_> {
     fn of(&self) -> (&BufferRef, usize) {
         match self {
             Rows::Table(t) => (&t.buffer.buffer, t.cap),
-            Rows::Rel(r) => (&r.buffer.buffer, r.rows.max(1)),
+            Rows::Rel(r) => {
+                assert_eq!(r.at, 0, "a copy of a relation read in its block: a copy reads and writes relations of their own");
+                (&r.buffer.buffer, r.rows.max(1))
+            }
         }
     }
 }
@@ -2304,7 +2342,7 @@ impl Batch {
         // A sort is at most 4 passes of three dispatches and two scans' levels, and a few more.
         let pass = self.pass(48)?;
         let words = Held::new((4 * n).max(4))?;
-        let mut p = vec![n as u32, cols.len() as u32, mask];
+        let mut p = vec![n as u32, cols.len() as u32, mask, rel.at as u32, (rel.at >> 32) as u32];
         p.extend(cols.iter().map(|&c| c as u32));
         if n > 0 {
             pass.run(&hash, &[&rel.buffer.buffer, &words.buffer], &p, &[], groups(n));
@@ -2345,6 +2383,7 @@ impl Batch {
         let (rbuf, perm, starts, rkeys, nruns) = match right {
             Some((rel, index)) => {
                 stage.nr = rel.rows as u32;
+                stage.r_at = rel.at;
                 match index {
                     Some(ix) => {
                         stage.mask = ix.mask;
@@ -2417,6 +2456,7 @@ impl Batch {
         stage.counter = NONE;
         stage.nslots = left.slots as u32;
         stage.nr = right.0.rows as u32;
+        stage.r_at = right.0.at;
         stage.agg[0] = rest.len() as u32;
         let dummy: metal::Buffer = self.dummy.buffer.to_owned();
         let parts = |rel: &DevRel, ix: Option<&DevIndex>| -> [metal::Buffer; 5] {
@@ -2434,6 +2474,7 @@ impl Batch {
         for (k, (b, rel, ix)) in rest.iter().enumerate() {
             let mut b = *b;
             b.nr = rel.rows as u32;
+            b.r_at = rel.at;
             b.cap_in = left.cap as u32;
             if let Some(ix) = ix {
                 b.mask = ix.mask;

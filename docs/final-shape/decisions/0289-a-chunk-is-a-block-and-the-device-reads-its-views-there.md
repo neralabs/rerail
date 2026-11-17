@@ -298,6 +298,13 @@ lane gave the label passes fewer documents again, and fewer of them hits:
 
 Per document it is higher because more of them were misses. What is left of an admission is as in step A.
 
+**With 0293 step 5 (merged 2026-11-16).** 0293 §9 and §10 (the device reads the tape in place; a pass's roots a
+rule) were built against `DocView` and the four slab slots. In the merge they read through this step's entry:
+`ChunkTape` holds 0293's fields (`format`, `widths`, `columns`, `side`, `parts`, `cut`, `per`, `tape`), each an
+offset from `at`, and the readers' base is the document's start (`tape_doc`). What this section nested for the
+interim (the parent column, child lists and nodes by code) is gone, as 0293 §9 says. The entry's layout is
+`rerail_clif::view::TapeView`'s (0310), asserted field for field in `rerail_metal::slabs`.
+
 Then the image is serialized once. A document whose digest is not known yet (parsed in this run, not restored from
 the store) serialized its image to hash it and again to copy it. `TapeDoc::tape_digest_and_image` now returns the
 bytes it hashed, and admission copies those (`resident_parts` takes them). The hits' bytes are dropped unread.

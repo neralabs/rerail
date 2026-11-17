@@ -81,6 +81,8 @@ struct Shape<'v> {
 enum Const {
     Int(i64),
     Str(AtomId),
+    /// A branded atom (decision 0270), a constant as the tree's `Term::Branded` is.
+    Branded(crate::code_rule_dsl::logic::front::Branded),
 }
 
 /// A reader's filter on an export (`export_demand::Filter`): a file-local atom's column (its constants kept), or a
@@ -393,6 +395,8 @@ fn key_name(v: &Version, rel: &str, at: usize, consts: &[(usize, Const)]) -> Str
         .map(|(j, c)| match c {
             Const::Int(n) => format!("{j}=Int({n})"),
             Const::Str(a) => format!("{j}=Str({:?})", v.text(*a)),
+            // As the tree's `{t:?}` of a `Term::Branded`.
+            Const::Branded(b) => format!("{j}=Branded({b:?})"),
         })
         .collect();
     if constants.is_empty() {
@@ -465,6 +469,7 @@ fn write(b: &mut Builder<'_>, input: &Version, plan: &Plan<'_>, onto: bool) -> R
                         _ if j == *at => T::Var("v"),
                         Some((_, Const::Int(n))) => T::Int(*n),
                         Some((_, Const::Str(a))) => T::StrAtom(*a),
+                        Some((_, Const::Branded(b))) => T::Branded(*b),
                         None => T::Wild,
                     })
                     .collect();
@@ -573,6 +578,7 @@ impl ProgramPass for DemandExports {
                                     .filter_map(|(k, t)| match t {
                                         TermRef::Int(n) if k != j => Some((k, Const::Int(n))),
                                         TermRef::Str(x) if k != j => Some((k, Const::Str(x))),
+                                        TermRef::Branded(b) if k != j => Some((k, Const::Branded(b))),
                                         _ => None,
                                     })
                                     .collect();

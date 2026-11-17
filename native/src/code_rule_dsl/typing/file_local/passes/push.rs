@@ -7,7 +7,7 @@ use super::super::{FileLocal, close_under, var_equalities_in};
 use super::{BodyItem, Made, NOwned, Round, lit_vars, name, term_vars, write};
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
 use crate::code_rule_dsl::logic::program_image::manager::{self, Cx, ProgramPass, ProgramW};
-use crate::code_rule_dsl::logic::program_image::{AtomRef, Builder, Lit as L, LitRef, RuleRef, TermRef, Version};
+use crate::code_rule_dsl::logic::program_image::{AtomRef, Builder, CmpOp, Lit as L, LitRef, RuleRef, TermRef, Version};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::Arc;
 
@@ -107,6 +107,21 @@ struct Pushed<'v> {
     candidate: Arc<Version>,
 }
 
+/// A node's text or value read, `x = @rr_node_text(v)` (either side, `syntax::NODE_READS`): `(x, v)`.
+fn node_read(v: &Version, rule: RuleRef<'_>, l: LitRef<'_>) -> Option<(String, String)> {
+    let L::Cmp { l, op: CmpOp::Eq, r } = l.view() else { return None };
+    let read = |x: TermRef<'_>, c: TermRef<'_>| match (x, c) {
+        (TermRef::Var(x), TermRef::Call(f, mut args)) if crate::code_rule_dsl::facts::vtab::syntax::NODE_READS.contains(&v.text(f)) => {
+            match (args.next(), args.next()) {
+                (Some(TermRef::Var(n)), None) => Some((name(v, rule, x), name(v, rule, n))),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    read(l, r).or_else(|| read(r, l))
+}
+
 /// `file_local::push_with` on the version: `None` where it makes nothing.
 fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, keep_unrestricted: bool) -> Result<Option<Pushed<'v>>, String> {
     let rules: Vec<RuleRef<'v>> = v.rules().collect();
@@ -146,10 +161,17 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
             }
             let mut taken: BTreeSet<usize> = BTreeSet::new();
             let mut replaced: Vec<(usize, BodyItem<'v>)> = Vec::new();
-            for (mut lits, vars) in comps {
+            for (mut lits, mut vars) in comps {
                 let atoms: Vec<AtomRef<'v>> = lits.iter().filter_map(|&j| body[j].atom()).collect();
                 let rel = |a: &AtomRef<'_>| v.rel_name(a.rel());
-                if !atoms.iter().any(|a| base(rel(a))) && atoms.len() < 2 {
+                // A node's text or value read of a node this component binds (`t = @rr_node_text(v)`, a long-text
+                // twin's, decision 0109) goes with it: only the chunk's batch holds the node's text, so the read is
+                // answered there and its value handed on. Such a component is pushed whatever else would leave it
+                // (decision 0292 §3, as the tree's `push_with`).
+                let node_reads: Vec<String> = body.iter().filter_map(|l| node_read(v, rule, *l)).filter(|(_, n)| vars.contains(n)).map(|(x, _)| x).collect();
+                vars.extend(node_reads.iter().cloned());
+                let must = !node_reads.is_empty();
+                if !must && !atoms.iter().any(|a| base(rel(a))) && atoms.len() < 2 {
                     continue;
                 }
                 if independent_node_groups(v, f, rule, &atoms, &equal) > 1 {
@@ -158,6 +180,7 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 let attribute = |a: &AtomRef<'_>| ATTRIBUTES.contains(&rel(a)) && plain(v, rule, *a);
                 let rest: Vec<&AtomRef<'v>> = atoms.iter().filter(|a| !attribute(a)).collect();
                 if let [a] = rest[..]
+                    && !must
                     && plain(v, rule, *a)
                 {
                     let own: BTreeSet<String> = a.args().filter_map(|t| t.var()).map(|s| name(v, rule, s)).collect();
@@ -170,11 +193,12 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                     }
                 }
                 if let [a] = atoms[..]
+                    && !must
                     && plain(v, rule, a)
                 {
                     continue;
                 }
-                if keep_unrestricted && (unrestricted(v, f, rule, &atoms) || descends(v, rule, &atoms)) {
+                if !must && keep_unrestricted && (unrestricted(v, f, rule, &atoms) || descends(v, rule, &atoms)) {
                     continue;
                 }
                 for (j, l) in body.iter().enumerate() {
@@ -212,12 +236,16 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                         && matches!(l.view(), L::Atom(a) if !a.neg() && !f.lattice(rel(&a)) && !candidate(*l)
                             && iface.iter().all(|x| has_var(v, rule, a, x)))
                 });
-                if joined_away && filtered {
+                if !must && joined_away && filtered {
                     continue;
                 }
                 let typed: Option<Vec<(String, String)>> = iface
                     .iter()
                     .map(|x| {
+                        // A node read's value is text.
+                        if node_reads.contains(x) {
+                            return Some((x.clone(), "sym".to_owned()));
+                        }
                         atoms.iter().find_map(|a| {
                             let c = a.args().position(|t| matches!(t, TermRef::Var(s) if name(v, rule, s) == *x))?;
                             f.column_type(rel(a), c).map(|t| (x.clone(), t.to_owned()))

@@ -46,6 +46,23 @@ impl Locate {
     }
 }
 
+/// `file_local::locate`'s move on the version: the relations a round of `Locate` left, their rows naming no document,
+/// qualified `CROSS_FILE` (decision 0290). The split then holds them cross-file, with their file-local readers, and the
+/// program is located again (`preparation::run`).
+pub struct MoveCrossFile(pub Vec<String>);
+
+impl ProgramPass for MoveCrossFile {
+    const NAME: &'static str = "move the relations naming no document to the cross-file part";
+    fn settings(&self) -> Vec<u8> {
+        self.0.join("\n").into_bytes()
+    }
+    fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        let words: Vec<(&str, &str)> = self.0.iter().map(|r| (r.as_str(), super::CROSS_FILE)).collect();
+        w.on()?.add_qualifiers(&words);
+        Ok(())
+    }
+}
+
 /// How a located rule names its document.
 #[derive(Clone, Copy)]
 enum Doc {

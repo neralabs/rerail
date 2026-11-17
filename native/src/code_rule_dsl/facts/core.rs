@@ -396,7 +396,7 @@ pub fn from_image(source: Arc<String>, grammar: &Arc<crate::code_rule_dsl::tape:
     let check = crate::code_rule_dsl::logic::profile::span(|| "tape check".into());
     crate::code_rule_dsl::tape::validated::visit(&source, grammar, &image, &|| false, |_, _| {})?;
     drop(check);
-    Ok(holding(Arc::new(crate::code_rule_dsl::tape::formats::DocTape::new(Arc::new(image))), source, grammar, tag, lines))
+    Ok(holding(Arc::new(crate::code_rule_dsl::tape::formats::DocTape::new(Arc::new(image), Arc::clone(&source))), source, grammar, tag, lines))
 }
 
 /// The facts of `tape` (checked), of `source` in `grammar`'s dialect.

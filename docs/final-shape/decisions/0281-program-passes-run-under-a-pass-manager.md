@@ -648,6 +648,10 @@ step 3 replaces what is under the writer.
 - **0275:** a step's key decides whether it is rederived.
 - **0276:** `ProgramW` and `Placed`.
 - **0103:** no caches beside rules; the analysis store lives as long as one pipeline.
+- **0290, 0292 §3:** the tree's passes gained these after the version passes were ported; the version passes carry
+  them too. A round of `Locate` that leaves a relation is followed by `MoveCrossFile` and another round, as
+  `file_local::locate` loops, and `PushLocalJoins` takes a node read with the component that binds its node. The
+  debug checks of the version against the tree hold the two to one result.
 
 It departs from LLVM's manual "preserves" set: invalidation comes from the recorded delta, so a pass cannot claim
 a preservation it did not keep.
