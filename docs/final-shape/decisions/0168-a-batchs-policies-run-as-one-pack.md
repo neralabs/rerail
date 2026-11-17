@@ -41,7 +41,8 @@ rerail-engine run-policies dl1 out a.rr b.rr c.rr ...
   because its combined program comes from the store (decision 0094 §6).
 - **The group key is the grammar the run reads** (`corpus::run_language`): the policy's `.language`, or, without
   one, the grammar the tree's files give (`corpus_language`). `leg-083-typed.rr` names no language and reads
-  Python, so it joins the Python pack.
+  Python, so it joins the Python pack. The key also holds the guests the policy asks for (see "A pack's programs ask
+  for the same guests" below).
 - **Each finding is told apart by its policy's id** (`.policy "id"`): every `rr_diagnostic` row names it. A group
   holds each id once, and holds at most one policy without an id.
 - **These policies run alone, as before:**
@@ -158,6 +159,36 @@ Two changes were built, checked and dropped, because neither pays on optimized c
 The patch of the first is kept outside the tree. What lowering costs is each program's own rules and the analyses
 over them, about 2 ms a program (O-pack-passes).
 
+## A pack's programs ask for the same guests
+
+Added 2026-11-16. A pack makes one set of guests (decision 0055) for all its programs, and a rule that reaches a
+guest reads every guest the run made. Hiding (decision 0058 §1) bounds a location by its document's key, and a
+relation folded over the run's annotations (`fold_own`) holds all of them. So a program read the guests that another
+program's library asked for. `ruff-classes.rr`'s `ann_input` asks for the annotation in `Literal["dict({})"]`, and
+C408 found a `dict({})` call there in a pack, which it does not find alone.
+
+- **The group key holds what a policy asks for** (`rr::guest_asks`, read from its statements and its includes'):
+  - its `.guests` settings, since `guest_policy`'s facts are shared by a pack's programs;
+  - when a rule its clauses reach reads a guest (`guests::READS`), the library files whose clauses ask for one. An
+    included file's asking clauses are kept whatever reads them (`reached_statements`), so equal files make equal
+    requests.
+- **A policy that reads no guest** makes none alone. It joins the other policies that make none.
+- **A policy whose own clauses ask for a guest** runs alone.
+- **Not taken: each program's guests told apart inside one pack.** A guest's key says what the guest is, not who
+  asked for it, and a program's bound is one comparison on that key. Keeping each program to its own guests needs a
+  join on every bounded atom, or keys made per asker by the runner.
+
+Measured on the Python fixtures (536 rules; release build, nera-port-4, idle, two runs each):
+
+| | packs | wall | CPU | peak RSS |
+|---|---|---|---|---|
+| one pack | 1 × 536 | 54.7 s | 170 s | 6.4 GB |
+| by guests asked | 224, 177, 66, 39, 13, 10, and 7 alone | 64.5–65.3 s | 252–253 s | 4.8 GB |
+
+The pack's findings now differ from the union of its rules' runs alone only where the run alone is wrong. Alone,
+PYI025 (5) and B032 (1) give findings `expected.json` does not list. Alone, RUF060 misses 2 findings `expected.json`
+lists, which the pack finds. The 8 wrong findings the pack gave (C408 6, TC010 1, RUF060 1) are gone.
+
 ## Tests
 
 `rr::tape_tests::a_batchs_policies_of_one_language_run_as_one_pack` runs four policies over one tree:
@@ -172,3 +203,8 @@ It checks:
 - each policy's metadata is its run alone's, less `.global library`.
 
 Under `RERAIL_BATCH_PACK=off` the test fails on `together`.
+
+`rr::tape_tests::a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone` runs C408, a twin of it under another
+id, and a policy that only includes `ruff-classes.rr`, over a file with `Literal["dict({})"]`. It checks that C408
+and its twin find in the pack what C408 finds alone, and that the twins share a pack (`together` 2) while the other
+policy runs alone. Grouped by grammar alone, the pack's C408 also found line 6, the `Literal`, and the test failed.
