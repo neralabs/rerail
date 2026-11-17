@@ -4300,7 +4300,15 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                         _ => None,
                     };
                     let (x, base) = match whole {
-                        Some((_, (b, file))) => (b.word(f, &file, a.closer, from, heads), from),
+                        Some((_, (b, file))) => {
+                            // The escapes' carry in after an opener none of whose bytes is an
+                            // escape's (`apart`): none, no test of the byte before the window and
+                            // no branch (0357), as `words_gated`'s and the lean lexer's reader.
+                            let zero = f.ins().iconst(types::I64, 0);
+                            let cins: Vec<(usize, Value)> = b.carried_runs(&[a.closer]).into_iter().filter(|&r| b.apart(a.opener, r)).map(|r| (r, zero)).collect();
+                            let (ws, _) = b.words_carried(f, &file, &[a.closer], from, &cins, heads);
+                            (ws[0], from)
+                        }
                         None => {
                             let x = word_at(f, q, a.closer, heads);
                             let fb = f.ins().band_imm(from, 63);
