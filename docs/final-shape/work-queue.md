@@ -1520,6 +1520,8 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   and the `libcranelift_codegen-0c39364acc0c618e` in `target/` has another. The vendored crates' file names
   (`-C extra-filename`) don't change with their sources, so both builds of `cranelift_codegen` have one
   name, and the cache gave back a `cranelift_frontend` compiled against the other.
+- **Seen again** (2026-11-17, 0353): a new edit with no revert, `cmtst` added to the vendored
+  aarch64 backend. So any edit to a vendored crate can bring it, not only one taken back.
 - **Way round**: move `target/debug/deps/*cranelift_frontend-07f6…*` and its `.fingerprint` directory out,
   then build once with `SCCACHE_RECACHE=1 RERAIL_FARM_LOCAL=1`. Moving it out alone isn't enough: the
   cache returns the same file.
