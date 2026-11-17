@@ -29,15 +29,18 @@ test-installs it on each platform before publishing.
 
 ### Release pull request
 
-`.github/workflows/release-pr.yml` refreshes the **Release** pull request on every push to `main`. It also carries the
-rule pack bumps ([docs/pack-format.md](pack-format.md#release)).
+`.github/workflows/release-pr.yml` refreshes the **Release** pull request on every push to `main`, unless the release
+is frozen ([Freezing a release](#freezing-a-release)). It also carries the rule pack bumps
+([docs/pack-format.md](pack-format.md#release)).
 
 - **Bump:** if anything core ships changed since the last `v<version>` tag, it bumps to the next patch (`0.1.0` →
   `0.1.1`) and writes its `CHANGELOG.md` section.
 - **Core ranges:** a pack it releases that an older core cannot load, because it holds a rule off or ships a rule in
   a language added since, has its core range raised to leave those cores out, once core is at the release that first
   loads it. The description lists each.
-- **Merge:** tags the merge commit `v<version>`, which starts `release.yml`.
+- **Merge:** tags the released commit `v<version>`, which starts `release.yml`, and `release-<commit>`, which starts
+  the packs' release. The released commit is the pull request's head, or the candidate when the release is frozen;
+  never the merge commit on `main`, which can hold later work.
 
 <details>
 <summary>Exact bump and tag details</summary>
@@ -51,7 +54,9 @@ rule pack bumps ([docs/pack-format.md](pack-format.md#release)).
   raised by hand, and one that is not released is named in the same warning.
 - A pack released while core stays older than the release that first loads it, because core is left out of the pull
   request, is named in a warning not to merge: published so, no released Rerail could load it.
-- The tag is pushed with the `neralabs-ci` app's token.
+- The tags are pushed with the `neralabs-ci` app's token, by the run the merge starts
+  (`scripts/release/release-tag.mjs`). It reads the last merged Release pull request, so a run cancelled by a newer
+  push loses nothing: the next one tags the same commit.
 - **Anything core ships:** every path except packs, documentation, CI, changesets and pending changelog entries, tests,
   fixtures, corpora, benchmarks, development and release scripts, and repository files npm does not pack.
   `package-lock.json` counts only when more than its pack entries moved (`NOT_SHIPPED` in
@@ -63,12 +68,16 @@ rule pack bumps ([docs/pack-format.md](pack-format.md#release)).
 
 The Release pull request's description ends with a checklist. Whoever merges it ticks each box first:
 
-- **End-user testing.** One hour using the staged release the way a user does.
-  - **Core:** `gh workflow run release.yml --ref changeset-release/main` builds it from the release branch as the
-    `rerail-package` run artifact, unpublished ([Manual runs and put-back](#manual-runs-and-put-back)).
-  - **Packs:** the pull request's **Release packs** run uploads the tarballs it would publish as the `rule-packs`
-    artifact; `rerail packs add <tarball>` installs one. A pack from a tarball counts as unpublished, so its rules run
-    in Log until approved ([rule packs](rule-packs.md)).
+- **End-user testing.** One hour using the staged release the way a user does. Freeze the release first
+  ([Freezing a release](#freezing-a-release)), so merges to `main` neither change what you test nor clear the boxes.
+  - **Core:** frozen, the **Release** run on `changeset-release/candidate` holds it as the `rerail-package` run
+    artifact, unpublished. Not frozen, `gh workflow run release.yml --ref changeset-release/main` builds it
+    ([Manual runs and put-back](#manual-runs-and-put-back)).
+  - **Packs:** the **Release packs** run, on `changeset-release/candidate` when frozen and on the pull request
+    otherwise (frozen, the pull request's own run uploads none), uploads the tarballs it would publish as the
+    `rule-packs` artifact; `rerail packs add <tarball>`
+    installs one. A pack from a tarball counts as unpublished, so its rules run in Log until approved
+    ([rule packs](rule-packs.md)).
 - **Release notes.** Accurate, complete, and written for the person upgrading ([Release notes](#release-notes)).
 - **Documentation.** `README.md` and `docs/` are accurate for what the release ships.
 - **`context7.json`.** Its folders, exclusions and rules match the docs and commands, so AI tools pull current Rerail
@@ -84,9 +93,70 @@ The Release pull request's description ends with a checklist. Whoever merges it 
 Each pull request's author confirms the same of their own change
 ([CONTRIBUTING.md](../CONTRIBUTING.md#before-you-open-a-pull-request)); this is the check of the release as a whole.
 
-A push to `main` rewrites the description and clears the boxes, because what was checked is no longer what merging
-releases. Nothing in CI reads them: the checklist is the merger's word (`BEFORE_MERGING` in
-`scripts/release/release-version.mjs`).
+Whatever changes what merging releases rewrites the description and clears the boxes: a push to `main`, or, for a
+frozen release, a cherry-pick, freezing a different commit or unfreezing. Nothing in CI reads them: the checklist is
+the merger's word (`BEFORE_MERGING` in `scripts/release/release-version.mjs`).
+
+### Freezing a release
+
+Freezing holds the release at one commit while `main` stays open: a release candidate pinned to a commit, with no
+release branch to maintain. Run the actions from the terminal, or from Actions → Release pull request → Run workflow.
+
+1. **Freeze.** `gh workflow run release-pr.yml -f action=freeze` holds the release at `main`'s tip; add
+   `-f commit=<commit>` for an earlier commit on `main`. CI, the core build and the pack build start on the candidate.
+2. **Test.** Use the candidate's builds ([Before merging](#before-merging)). Merges to `main` change nothing.
+3. **Fix.** Merge the fix to `main` as any pull request, then add it to the release:
+   `gh workflow run release-pr.yml -f action=cherry-pick -f commit=<commit or pull request number>`.
+4. **Release.** Tick the checklist and merge the Release pull request. It releases the candidate, and brings `main` the
+   versions and changelogs.
+
+`gh workflow run release-pr.yml -f action=unfreeze` follows `main` again. Each action comments on the pull request
+with what the release now is.
+
+To ship a fix on top of the latest release without the rest of `main`, freeze that release's tag with the fix:
+`gh workflow run release-pr.yml -f action=freeze -f commit=v<version> -f fixes="<commit or pull request number> ..."`.
+
+<details>
+<summary>What is guarded</summary>
+
+Every action changes the release in one push or refuses, and a refusal says what to run instead.
+
+- **Only tested commits merge.** The pull request's **Release candidate** check, part of the required **CI result**,
+  passes once CI has passed on the candidate itself. Each cherry-pick makes a new candidate and runs CI on it again.
+- **Fixes reach `main` first.** A cherry-pick takes only a commit on `main`, so `main` never lacks a fix a release has.
+- **Nothing untested rides along.** Freezing takes a commit on `main` or the latest release's tag, and nothing else.
+  Freezing a different commit keeps the fixes it does not hold.
+- **The branch can't be changed by hand.** A head that `release-pr.yml` did not build, such as one from GitHub's
+  **Update branch**, fails the check: it would release all of `main`.
+- **A fix that doesn't apply changes nothing.** One that builds on later work is refused, naming it: cherry-pick what
+  it builds on first, or freeze a newer commit.
+- **Old commits are refused.** A tag's run uses the tagged commit's own workflows, so a commit from before this flow
+  can't be frozen.
+- **Nothing publishes early.** A candidate's builds are unpublished. Packs publish only on a `release-*` tag's push,
+  core only on a `v*` tag's, and both wait for the `release` environment's approval.
+
+</details>
+
+<details>
+<summary>How a frozen release is built</summary>
+
+- **Two commits.** The candidate (`changeset-release/candidate`) is the frozen commit, the cherry-picks in `main`'s
+  order, and the Release commit. It is what is built, tested, tagged and published. The pull request's branch holds
+  the same Release commit on `main`'s tip, so merging stays a clean squash; merging the candidate itself would conflict
+  on every release note `main` reworded since.
+- **Pushes to `main`** leave both alone, so nothing reruns and the checklist stands. Only if `main` changes a file the
+  Release commit changes is that commit applied to `main`'s tip again; the candidate is the same.
+- **A release note `main` changed after the freeze** ships as it was frozen unless its commit is cherry-picked; the
+  pull request gets a comment naming it. If `main` changes any other line the Release commit rewrites, such as the
+  lead in `CHANGELOG.md`, the pull request can't merge until that commit is cherry-picked or the release is unfrozen;
+  a comment names the files and the command.
+- **Entries added to `main` after the freeze** stay pending for the next release. A cherry-picked fix's entry ships in
+  this one and leaves `main` with the merge.
+- **State** is the pull request's head commit, which names the candidate; the candidate's message names its base and
+  cherry-picks (`scripts/release/candidate/candidate.mjs`).
+- **After the merge**, the tags hold the released commit and the candidate's branch is removed.
+
+</details>
 
 ### Installer plugins
 
@@ -168,6 +238,9 @@ workflow and its actions, the shrinkwrap step, `.gitattributes` and `CHANGELOG.m
 If the fix changes what ships, it takes the next version: the Release pull request offers one as soon as the fix is on
 `main`. Say in that version's lead that the failed version was never published, since its notes won't reach anyone
 updating past it.
+
+A retry builds `main`, so it is also refused when `main` gained shipped changes while the release was frozen. Release
+the next version then, frozen at a commit you have tested.
 
 </details>
 

@@ -65,8 +65,8 @@ const commit = ({ git }, message) => {
  */
 const NPM_RUNS = process.platform !== "win32";
 
-function releaseVersion({ root }) {
-  execFileSync("node", ["scripts/release/release-version.mjs", join(root, "body.md")], { cwd: root, stdio: "pipe" });
+function releaseVersion({ root }, env = {}) {
+  execFileSync("node", ["scripts/release/release-version.mjs", join(root, "body.md")], { cwd: root, stdio: "pipe", env: { ...process.env, RELEASE_FROZEN: "", ...env } });
 }
 
 describe.runIf(NPM_RUNS)("release-version.mjs, the pull request's description", () => {
@@ -82,6 +82,37 @@ describe.runIf(NPM_RUNS)("release-version.mjs, the pull request's description", 
     for (const item of ["End-user testing", "Release notes", "Documentation", "`context7.json`", "`docs/internal-testing.md`", "Scrub", "npm package pages"]) {
       expect(checklist).toContain(`- [ ] **${item}.**`);
     }
+  });
+});
+
+describe.runIf(NPM_RUNS)("release-version.mjs, a frozen release's description", () => {
+  const base = "a".repeat(40);
+  const fix = "b".repeat(40);
+
+  it("opens with what is frozen and the commands that change it, and keeps the checklist while frozen", () => {
+    const repo = repository();
+    writePack(repo, "fresh", ["fresh-one"]);
+    commit(repo, "the pack");
+    releaseVersion(repo, { RELEASE_FROZEN: JSON.stringify({ base, baseSubject: "The base commit", picks: [{ commit: fix, subject: "The fix" }] }) });
+    const body = readFileSync(join(repo.root, "body.md"), "utf8");
+    expect(body.startsWith("> [!IMPORTANT]\n> **Frozen at `aaaaaaaaa` The base commit.** Merging this pull request releases that commit and the fixes below")).toBe(true);
+    expect(body).toContain("> - `bbbbbbbbb` The fix");
+    for (const action of ["cherry-pick -f commit=", "freeze -f commit=", "unfreeze"]) expect(body).toContain(`gh workflow run release-pr.yml -f action=${action}`);
+    expect(body).toContain("the Release run on `changeset-release/candidate`");
+    expect(body).toContain("They stay ticked while the release is frozen");
+    expect(body).not.toContain("rewritten from `main` on every push");
+    expect(body.match(/^- \[ \] \*\*.+$/gmu)).toHaveLength(7);
+  });
+
+  it("following main, says how to freeze it", () => {
+    const repo = repository();
+    writePack(repo, "fresh", ["fresh-one"]);
+    commit(repo, "the pack");
+    releaseVersion(repo);
+    const body = readFileSync(join(repo.root, "body.md"), "utf8");
+    expect(body).not.toContain("Frozen at");
+    expect(body).toContain("`gh workflow run release.yml --ref changeset-release/main`");
+    expect(body).toContain("freeze it: `gh workflow run release-pr.yml -f action=freeze`");
   });
 });
 
@@ -111,6 +142,24 @@ describe.runIf(NPM_RUNS)("release-version.mjs, each released pack's rules", () =
     const changelog = readFileSync(join(repo.root, "packs/tagged/CHANGELOG.md"), "utf8");
     expect(changelog).toContain("- `tagged-new` (starts in Steer): What tagged-new wants.");
     expect(changelog).not.toContain("`tagged-old`");
+  });
+});
+
+describe.runIf(NPM_RUNS)("release-version.mjs, a pack released from a frozen commit", () => {
+  it("compares its rules with the tagged commit, not the commit that brought its version to main", () => {
+    const repo = repository();
+    // The frozen commit that was released and tagged, off main.
+    writePack(repo, "frozen", ["frozen-old"]);
+    commit(repo, "the released commit");
+    repo.git("tag", `${packName("frozen")}@0.1.0`);
+    // Main's commit with that version also holds a rule merged after the freeze, which was not released.
+    writePack(repo, "frozen", ["frozen-old", "frozen-since"]);
+    repo.git("add", "-A");
+    repo.git("commit", "-q", "--amend", "-m", "the release, merged to main");
+    releaseVersion(repo);
+    const changelog = readFileSync(join(repo.root, "packs/frozen/CHANGELOG.md"), "utf8");
+    expect(changelog).toContain("- `frozen-since` (starts in Steer): What frozen-since wants.");
+    expect(changelog).not.toContain("`frozen-old`");
   });
 });
 

@@ -6,14 +6,15 @@ name: Release
 #
 # A `v*` tag publishes that tarball to npmjs under the dist-tag derived from the tag: `v1.2.3` -> latest,
 # `v1.2.3-beta.N` -> beta, `v1.2.3-next.N` -> next. The tag must equal package.json's version, and a preview must not
-# be older than core's `latest`. Merging the Release pull request makes the tag: release-pr.yml tags the version it set
-# (docs/distribution-model.md, "Release channels"). A version published under `latest` moves `next` up to it too,
+# be older than core's `latest`. Merging the Release pull request makes the tag: release-pr.yml tags the commit the
+# pull request released, a frozen candidate or main's tip with the Release commit, never main's merge commit
+# (docs/release.md, "Freezing a release"; docs/distribution-model.md, "Release channels"). A version published under `latest` moves `next` up to it too,
 # unless `next` is already at a newer preview, so `next` never trails `latest`. After publishing, the dist-tags job
 # lists core's dist-tags in the run summary and fails if the channel's dist-tag is not the version just published, or,
 # for a `latest` or `next` release, `next` is older than `latest`.
 #
 # `workflow_dispatch` with no inputs builds and uploads the tarball as a run artifact without publishing, so a build
-# can be installed and checked by hand. With `latest`, it builds nothing and points core's `latest` dist-tag at that
+# can be installed and checked by hand; release-pr.yml starts one on a frozen release's candidate. With `latest`, it builds nothing and points core's `latest` dist-tag at that
 # released version, to put core back (raising `next` to it as well, should `next` be older), behind the same `release`
 # environment approval and with trusted publishing, so no npm login is needed. With `publish`, run from main, it retries
 # a release that failed before publishing: it builds main, checks and publishes it as that version behind the same

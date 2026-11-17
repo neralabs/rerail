@@ -19,7 +19,10 @@
 //     while core stays older than the release that first loads it (core left out of this pull request, say) is named
 //     in a warning not to merge: published so, no Rerail could load it.
 // The description ends with the checklist whoever merges it ticks first (BEFORE_MERGING; docs/release.md, "Before
-// merging"). It is written unticked each time, so a push to main clears it.
+// merging"). It is written unticked each time, so whatever changes what merging releases clears it: a push to main, or,
+// for a frozen release, freezing again, a cherry-pick or unfreezing. release-candidate.mjs runs this at the candidate
+// and, frozen, sets $RELEASE_FROZEN to `{ base, baseSubject, picks: [{ commit, subject }] }` as JSON: the description
+// then opens with what is frozen and the commands that change it (frozenNotice in candidate.mjs).
 // Writes `releasable` (true when anything changed) to $GITHUB_OUTPUT when it is set. Needs the `v*` tags and the
 // packs' release tags fetched, with the history back to each pack's last release.
 //
@@ -27,6 +30,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, posix } from "node:path";
+import { CANDIDATE_BRANCH, frozenNotice, RELEASE_BRANCH } from "./candidate/candidate.mjs";
 import { admitsRefusingCore, changelogEntryTypeRefusal, changelogLead, changelogSection, CORE_NAME, coreBeforeFloor, coreFloor, coreTag, coreTagRefusal, heldOffRules, isOpenRange, nextCoreVersion, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages } from "./core.mjs";
 import { coreChanges } from "./core-paths.mjs";
 import { packRuleChanges, packRuleNotes, packRules, releasedPackChangelog } from "./pack-changelog.mjs";
@@ -40,13 +44,20 @@ import { changesetNotes, changesetTypeRefusal, listPacks, readChangesets, ROOT }
 const QUOTED_NOTES = 58_000;
 /** How many of the core paths that changed the description lists. */
 const LISTED_CHANGES = 20;
+/** The frozen release this runs at, from release-candidate.mjs, or null when the release follows main. */
+const frozen = (process.env.RELEASE_FROZEN ?? "") === "" ? null : JSON.parse(process.env.RELEASE_FROZEN);
+/** Where the staged release's builds are: frozen, the runs release-pr.yml started on the candidate's branch. */
+const STAGED_BUILDS =
+  frozen === null
+    ? `Core: \`gh workflow run release.yml --ref ${RELEASE_BRANCH}\` builds it from this branch as the \`rerail-package\` run artifact, unpublished. Packs: this pull request's Release packs run uploads their tarballs as \`rule-packs\``
+    : `Core: the Release run on \`${CANDIDATE_BRANCH}\`, started when the release was frozen, holds it as the \`rerail-package\` artifact, unpublished. Packs: the Release packs run on that branch holds their tarballs as \`rule-packs\``;
 /**
  * What whoever merges the Release pull request confirms first, each a box to tick in its description. A pull request's
  * author confirms the same of their own change (.github/pull_request_template.md); this is the check of the release
  * as a whole.
  */
 const BEFORE_MERGING = [
-  "**End-user testing.** One hour using the staged release the way a user does. Core: `gh workflow run release.yml --ref changeset-release/main` builds it from this branch as the `rerail-package` run artifact, unpublished. Packs: this pull request's Release packs run uploads their tarballs as `rule-packs`, and `rerail packs add <tarball>` installs one (docs/release.md, \"Before merging\").",
+  `**End-user testing.** One hour using the staged release the way a user does. ${STAGED_BUILDS}, and \`rerail packs add <tarball>\` installs one (docs/release.md, "Before merging").`,
   "**Release notes.** The notes above are accurate and complete, and each says what changed for the person upgrading.",
   "**Documentation.** `README.md` and `docs/` are accurate for what this releases: nothing merged since the last release left them behind.",
   "**`context7.json`.** Its folders, exclusions and rules match the docs and commands as they are now, so AI tools pull current Rerail docs.",
@@ -83,12 +94,16 @@ function readObjects(objects) {
 }
 
 /**
- * The commit that released `pack`'s previous version (`from`): the last to set its package.json's version to it,
- * whether or not its release tag exists yet (its publish may wait for approval). Null for a pack never released, which
+ * The commit that released `pack`'s previous version (`from`): the one its release tag names, or, before that tag
+ * exists (its release run may not have started), the last to set its package.json's version to it. Null for a pack never released, which
  * has no release tag at all, and for one new to the checkout.
  */
 function releasedCommit(pack) {
   if (pack.from === null || git(["tag", "--list", `${pack.name}@*`]) === "") return null;
+  // Its release tag names the commit that was released. A frozen release is tagged off main, and the commit that
+  // brought its version to main also holds whatever main's packs gained since the freeze, which was not released.
+  const tag = `${pack.name}@${pack.from}`;
+  if (git(["tag", "--list", tag]) !== "") return git(["rev-parse", `refs/tags/${tag}^{commit}`]);
   const version = `"version": "${pack.from.replaceAll(".", "\\.")}"`;
   const commit = git(["log", "-1", "--format=%H", "-G", version, "--", `packs/${pack.id}/package.json`]);
   if (commit === "") throw new Error(`no commit sets ${pack.name}'s version to ${pack.from}: fetch the full history`);
@@ -272,7 +287,7 @@ const rows = [
   ...(core === null ? [] : [{ name: CORE_NAME, from: core.from, version: core.version, how: `\`${coreTag(core.version)}\` tag, then release.yml` }]),
   ...packs.map((pack) => ({ name: pack.name, from: pack.from ?? "new", version: pack.version, how: "release-packs.yml" })),
 ];
-const lines = [];
+const lines = frozen === null || rows.length === 0 ? [] : frozenNotice(frozen);
 if (coreRefusal !== null) {
   lines.push("> [!WARNING]", `> Core is not released by this pull request: ${coreRefusal}.`, "");
 }
@@ -318,12 +333,14 @@ if (rows.length === 0) {
     "",
     "## Before merging",
     "",
-    "Whoever merges this ticks each box first. A push to `main` rewrites this description and clears them, because what you checked is no longer what merging releases: check again.",
+    frozen === null
+      ? "Whoever merges this ticks each box first. A push to `main` rewrites this description and clears them, because what you checked is no longer what merging releases: check again. To hold the release still while you test, freeze it: `gh workflow run release-pr.yml -f action=freeze`."
+      : "Whoever merges this ticks each box first. They stay ticked while the release is frozen; a cherry-pick, freezing a different commit or unfreezing clears them, because what you checked is no longer what merging releases.",
     "",
     ...BEFORE_MERGING.map((item) => `- [ ] ${item}`),
   );
 }
-lines.push("", "This pull request is rewritten from `main` on every push to it (.github/workflows/release-pr.yml).");
+lines.push("", frozen === null ? "This pull request is rewritten from `main` on every push to it, until it is frozen (.github/workflows/release-pr.yml)." : "This pull request is frozen: only the freeze, cherry-pick and unfreeze actions of .github/workflows/release-pr.yml change it.");
 writeFileSync(bodyPath, `${lines.join("\n")}\n`);
 
 if (process.env.GITHUB_OUTPUT !== undefined) appendFileSync(process.env.GITHUB_OUTPUT, `releasable=${rows.length > 0}\n`);

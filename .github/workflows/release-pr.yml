@@ -1,40 +1,76 @@
 name: Release pull request
 
-# On every push to main: releases core if main's package.json names a version not released yet, then opens or updates
-# the "Release" pull request with everything releasable (scripts/release/release-version.mjs):
+# The "Release" pull request holds everything releasable (scripts/release/release-version.mjs):
 #   - packs: with changesets pending, `npm run version:packs` for each pack's version, and each CHANGELOG.md's section
 #     for it, written from pack.json and the changesets (docs/pack-format.md, "Release");
 #   - core: when anything core ships has changed since its last `v*` tag, the next patch version in package.json and
 #     package-lock.json, and CHANGELOG.md's section for that version, its unreleased lead and the entries pending in
 #     .changelog/ by change type, whose files it deletes (docs/release.md, "Release notes").
-# Merging it is the release: release-packs.yml publishes the packs, and this workflow's tag job tags core's version
-# `v<version>`, whose push starts release.yml, which builds and publishes core. With nothing releasable, an open
-# Release pull request is closed.
+# Merging it is the release: the next run's tag job tags the released commit, `v<version>` for core, whose push starts
+# release.yml, and `release-<commit>`, whose push starts release-packs.yml. With nothing releasable, an open Release
+# pull request is closed.
 #
-# Its own workflow, so it never waits behind a publish run, and only the latest push to main matters: each run
-# rewrites the whole pull request from main, so a newer push cancels an older run. A cancelled tag job loses nothing:
-# the next run tags the same commit.
+# What merging releases (scripts/release/candidate/candidate.mjs; docs/release.md, "Freezing a release"):
+#   - following main (the default): main's tip. Every push to main rebuilds the pull request and clears its checklist.
+#   - frozen: one commit, with the fixes cherry-picked onto it, whatever merges to main meanwhile. The candidate lives
+#     on changeset-release/candidate and is what gets built, tested, tagged and published; the pull request's branch
+#     holds the same Release commit on main's tip, so merging it stays a clean squash that brings main the versions
+#     and changelogs. Pushes to main leave both alone.
+# Run this workflow by hand, from main, to change that:
+#   gh workflow run release-pr.yml -f action=freeze [-f commit=<commit on main | v<latest release>>] [-f fixes="<commit|PR number> ..."]
+#   gh workflow run release-pr.yml -f action=cherry-pick -f commit=<commit on main | merged PR number>
+#   gh workflow run release-pr.yml -f action=unfreeze
+# Each one changes the release in one push or refuses, saying what to run instead, and comments on the pull request.
+# Freezing and cherry-picking start CI, the core build and the pack build on the candidate; the pull request's
+# "Release candidate" check (ci.yml) passes only once CI has passed on that exact commit.
+#
+# Pushes to main share one group and the latest wins: each run rebuilds the whole pull request from main, so a newer
+# push cancels an older run, and a cancelled tag job loses nothing, since the next run tags the same commit. The
+# actions run by hand have their own group and are never cancelled; a push's run that loses the race to one leaves the
+# frozen release as it is (the lease in candidate.mjs).
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      action:
+        description: freeze holds the release at one commit; cherry-pick adds a fix from main to a frozen release; unfreeze follows main again
+        required: true
+        type: choice
+        options:
+          - freeze
+          - cherry-pick
+          - unfreeze
+      commit:
+        description: "freeze: the commit on main to hold the release at (main's tip when empty), or v<latest release> to ship fixes on top of it. cherry-pick: the fix's commit on main, or its merged pull request's number"
+        required: false
+        default: ""
+        type: string
+      fixes:
+        description: "freeze only: fixes to cherry-pick in the same step, as commits on main or merged pull request numbers, space-separated"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-pr
-  cancel-in-progress: true
+  group: release-pr-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 env:
   RELEASE_BRANCH: changeset-release/main
+  CANDIDATE_BRANCH: changeset-release/candidate
 
 jobs:
-  # The tag is created with the neralabs-ci app's token, not GITHUB_TOKEN: a tag GITHUB_TOKEN pushes starts no
-  # workflow, and release.yml must start on it.
-  tag-core:
-    name: Tag core's release
+  # The tags are created with the neralabs-ci app's token, not GITHUB_TOKEN: a tag GITHUB_TOKEN pushes starts no
+  # workflow, and release.yml and release-packs.yml must start on them.
+  tag:
+    name: Tag the release
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -45,31 +81,40 @@ jobs:
           client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
+          permission-pull-requests: read
 
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           persist-credentials: false
 
       - uses: ./.github/actions/node-deps
 
-      - name: Tag core's version if it is not released
+      - name: Tag what the merged Release pull request released
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
-        run: node scripts/release/core-tag.mjs
+        run: node scripts/release/release-tag.mjs
 
-  # After tag-core, so a version it just tagged counts as released and core is bumped only for later changes. The
-  # pull request is opened with the app's token, not GITHUB_TOKEN, so CI runs on it. It runs even when tag-core fails, so
-  # a core tag that can't be created never stops the packs' releases: an untagged core version is left alone.
+  # After the tag job, so a version it just tagged counts as released and core is bumped only for later changes. The
+  # pull request is opened with the app's token, not GITHUB_TOKEN, so CI runs on it. It runs even when the tag job
+  # fails, so a core tag that can't be created never stops the packs' releases: an untagged core version is left alone.
   pull-request:
     name: Release pull request
-    needs: tag-core
+    needs: tag
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
+      # The actions read and write the release as main holds it, with main's scripts.
+      - name: Run the actions from main
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Run this workflow from main, not ${GITHUB_REF_NAME}: gh workflow run release-pr.yml --ref main -f action=..."
+          exit 1
+
+      # actions: write, to start CI and the builds on a frozen candidate.
       - id: app-token
         name: Get the neralabs-ci app token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -78,6 +123,7 @@ jobs:
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
+          permission-actions: write
 
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -87,32 +133,42 @@ jobs:
 
       - uses: ./.github/actions/node-deps
 
-      # tag-core's tag was created after the checkout.
-      - name: Fetch the release tags
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: git fetch --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" 'refs/tags/v*:refs/tags/v*'
-
-      - id: version
-        name: Version every releasable package
-        run: node scripts/release/release-version.mjs "$RUNNER_TEMP/release-pr.md"
-
-      # The commit is the app's bot user's, as GitHub attributes it.
-      - name: Open or update the Release pull request
-        if: steps.version.outputs.releasable == 'true'
+      # Builds the candidate and the pull request's commit in the checkout and pushes them, in one push or not at all.
+      # The commits are the app's bot user's, as GitHub attributes them. The inputs reach the script through the
+      # environment, never the command line.
+      - id: release
+        name: ${{ github.event_name == 'push' && 'Update the release from main' || format('Release {0}', inputs.action) }}
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           BOT: ${{ steps.app-token.outputs.app-slug }}[bot]
+          ACTION: ${{ github.event_name == 'push' && 'update' || inputs.action }}
+          TARGET: ${{ inputs.commit }}
+          FIXES: ${{ inputs.fixes }}
         run: |
           set -euo pipefail
           git config user.name "$BOT"
           id="$(gh api "/users/${BOT}" --jq .id)"
           git config user.email "${id}+${BOT}@users.noreply.github.com"
-          git switch --force-create "$RELEASE_BRANCH"
-          git add --all
-          git commit --quiet --message "Release"
-          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${RELEASE_BRANCH}"
+          export RELEASE_REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          node scripts/release/candidate/release-candidate.mjs "$ACTION" "$RUNNER_TEMP/release-pr.md" "$RUNNER_TEMP/release-comment.md"
+
+      # Only when what merging releases changed: rewriting the description clears its checklist. A frozen release's
+      # description is left alone by pushes to main.
+      - name: Open or update the Release pull request
+        if: steps.release.outputs.releasable == 'true' && steps.release.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          FROZEN: ${{ steps.release.outputs.frozen }}
+        run: |
+          set -euo pipefail
+          # A push's run that an action run by hand overtook since it pushed must not write its description over the
+          # frozen one.
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$(gh api "repos/{owner}/{repo}/git/ref/heads/${RELEASE_BRANCH}" --jq .object.sha)" != "$(git rev-parse HEAD)" ]; then
+            echo "::notice::The Release pull request changed while this run was building: its description is left as it is."
+            exit 0
+          fi
           number="$(gh pr list --head "$RELEASE_BRANCH" --base main --state open --json number --jq '.[0].number // empty')"
           if [ -n "$number" ]; then
             gh pr edit "$number" --title "Release" --body-file "$RUNNER_TEMP/release-pr.md"
@@ -121,7 +177,7 @@ jobs:
           fi
 
       - name: Close the Release pull request, with nothing to release
-        if: steps.version.outputs.releasable != 'true'
+        if: steps.release.outputs.releasable == 'false'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
@@ -131,3 +187,37 @@ jobs:
           if [ -n "$number" ]; then
             gh pr close "$number" --delete-branch --comment "Nothing on main is releasable any more."
           fi
+
+      - name: Say on the pull request what changed
+        if: steps.release.outputs.comment == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cat "$RUNNER_TEMP/release-comment.md" >> "$GITHUB_STEP_SUMMARY"
+          number="$(gh pr list --head "$RELEASE_BRANCH" --base main --state open --json number --jq '.[0].number // empty')"
+          if [ -z "$number" ]; then
+            exit 0
+          fi
+          # A comment a push to main causes opens with a marker naming what it is about: it is said once, not again on
+          # every later push that finds the same thing.
+          marker="$(head -n 1 "$RUNNER_TEMP/release-comment.md")"
+          if [ "${marker#<!--}" != "$marker" ] && gh pr view "$number" --json comments --jq '.comments[].body' | grep --quiet --fixed-strings -- "$marker"; then
+            echo "Already said on pull request ${number}."
+            exit 0
+          fi
+          gh pr comment "$number" --body-file "$RUNNER_TEMP/release-comment.md"
+
+      # A new candidate is built and tested as it is frozen: CI, whose result the pull request's "Release candidate"
+      # check waits for, and release.yml's unpublished build of core, the tarball to test. The push of the candidate's
+      # branch itself starts release-packs.yml's dry run, which holds the packs' tarballs.
+      - name: Start CI and the core build on the candidate
+        if: steps.release.outputs.frozen == 'true' && steps.release.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh workflow run ci.yml --ref "$CANDIDATE_BRANCH"
+          gh workflow run release.yml --ref "$CANDIDATE_BRANCH"

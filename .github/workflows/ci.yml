@@ -51,9 +51,12 @@ concurrency:
 # pull request: the unit tests read nearly the whole tree, docs included.
 #
 # The Release pull request (changeset-release/main, from release-pr.yml) changes only versions (the packs', and
-# core's in package.json), changelogs and package-lock.json, and is rewritten on every push to main. It runs the
-# licence and lint jobs only: release-packs.yml validates and packs every pack on it, main runs everything once it is
-# merged, and release.yml builds and smokes core again on its tag.
+# core's in package.json), changelogs and package-lock.json, and is rewritten on every push to main unless the release
+# is frozen. It runs the licence and lint jobs only: release-packs.yml validates and packs every pack on it, main runs
+# everything once it is merged, and release.yml builds and smokes core again on its tag. It alone also runs the
+# release-candidate job, its merge guard: merging tags the commit its head names, so the head must be the one
+# release-pr.yml built, and a frozen release's candidate, which is not main's tip, must have passed this workflow run
+# on itself, which release-pr.yml starts (docs/release.md, "Freezing a release").
 # The changes job decides that once (`release-pr`); every job that skips it reads that output.
 
 jobs:
@@ -127,6 +130,36 @@ jobs:
           npm run check
           npm run check:ui-tokens
           npm run check:reference
+
+  # The Release pull request's merge guard (scripts/release/candidate/candidate-check.mjs), on that pull request alone. It fails
+  # a head that release-pr.yml did not build, such as one GitHub's "Update branch" made, which would release all of
+  # main. For a frozen release it waits for the CI run release-pr.yml started on the candidate and passes only when
+  # that passed, so what merges is what was tested. It needs the history, to place the head and the candidate on main.
+  release-candidate:
+    name: Release candidate
+    needs: changes
+    if: needs.changes.outputs.release-pr == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      checks: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Check the release this pull request merges
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/release/candidate/candidate-check.mjs
 
   # Known vulnerabilities in the dependencies the package ships: npm's advisories for the root package's production
   # dependencies (moderate and up; development dependencies are Dependabot alerts' to report, not a gate), and RustSec's
@@ -1344,6 +1377,7 @@ jobs:
     needs:
       - licenses
       - lint
+      - release-candidate
       - audit
       - changes
       - test-data

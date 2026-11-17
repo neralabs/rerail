@@ -5,18 +5,23 @@ name: Release packs
 # tags; this workflow never touches core.
 #
 # The "Release" pull request (each pack's version and CHANGELOG.md, from its changesets, beside core's bump) is
-# opened by release-pr.yml; merging it is the release. On a push to main this workflow releases:
+# opened by release-pr.yml; merging it is the release. release-pr.yml then tags the released commit `release-<commit>`
+# (scripts/release/release-tag.mjs): the frozen candidate, or main's tip with the Release commit when the release
+# followed main (docs/release.md, "Freezing a release"). Never main's merge commit, which holds whatever merged
+# after a freeze. On that tag's push, and on nothing else, this workflow releases, from the tagged commit:
 #   Every pack whose package.json version has no `<name>@<version>` git tag is validated (the whole pack
 #   validation of test/engine/catalog/packs.test.ts), packed, checked to hold only what its `files` allows, and
 #   tagged. The release never waits on npm: the tag comes first, then the version's GitHub Release and its publish
 #   under `latest` with trusted publishing, side by side; its `next` is moved up to that version too, unless `next` is
 #   already at a newer one, so `next` never trails `latest`. A pack held at an older `latest` (put back on purpose) is
 #   published under `next` instead, so the hold stays. A version tagged but not on npm (a failed or unapproved
-#   publish) is planned again by every later run, so re-running the run or the next push publishes it. The dist-tags
+#   publish) is planned again by every later run, so re-running the run or the next release publishes it. The dist-tags
 #   job then lists each published pack's dist-tags in the run summary and fails if one is not
 #   where it was published, or one's `next` is older than its `latest`. A pack never published at all needs its first
 #   publish by hand; the run reports it and fails after publishing the others.
-# A pull request touching packs runs the validation and packing as a dry run and publishes nothing, and fails if it
+# A push of the frozen candidate's branch (changeset-release/candidate, from release-pr.yml) runs the validation and
+# packing as a dry run and publishes nothing: its `rule-packs` artifact holds the tarballs the release would publish,
+# to test. So does a pull request touching packs, which also fails if it
 # changes what a published pack publishes without a changeset naming that pack, or if a changeset names a private pack
 # (the Release pull request is not checked). Its
 # paths see only the git diff, not the packs' test data: a change to that data is a change to a tool-pack's
@@ -32,8 +37,10 @@ name: Release packs
 
 on:
   push:
+    tags:
+      - "release-*"
     branches:
-      - main
+      - changeset-release/candidate
   pull_request:
     paths:
       - "packs/**"
@@ -65,6 +72,11 @@ permissions:
 concurrency:
   group: ${{ github.event_name == 'workflow_dispatch' && 'release-packs-promote' || format('release-packs-{0}', github.event.pull_request.number || github.ref) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Publishing is one condition, the same on every job and step that tags, publishes or reads npm for a release:
+#   github.event_name == 'push' && github.ref_type == 'tag'
+# A push of the candidate's branch is a push too and must never publish, so `github.event_name == 'push'` alone is not
+# it (test/scripts/release-workflows.test.mjs holds every such job to the whole condition).
 
 jobs:
   # A change to what a pack publishes is released only through a changeset (docs/pack-format.md, "Versioning and
@@ -110,11 +122,11 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # On a push, the plan reads from npm whether each tagged version is published and each pack's dist-tags (is it
+      # On a release tag's push, the plan reads from npm whether each tagged version is published and each pack's dist-tags (is it
       # held?), with the read-only NPM_PACKS_READ_TOKEN, as the promote-plan job does. A pack it cannot read fails the
       # plan, so a version npm lacks is never taken as released. The file names the variable, not the token.
       - name: Authenticate npm to read the packs
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
         run: |
@@ -129,8 +141,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          NODE_AUTH_TOKEN: ${{ github.event_name == 'push' && secrets.NPM_PACKS_READ_TOKEN || '' }}
-        run: node scripts/release/packs-plan.mjs ${{ github.event_name == 'pull_request' && '--all' || '' }}
+          NODE_AUTH_TOKEN: ${{ github.event_name == 'push' && github.ref_type == 'tag' && secrets.NPM_PACKS_READ_TOKEN || '' }}
+        run: node scripts/release/packs-plan.mjs ${{ !(github.event_name == 'push' && github.ref_type == 'tag') && '--all' || '' }}
 
   # Fills the Actions cache with every pack's test data for the pack job (.github/actions/pack-test-data,
   # `fetch: "true"`): from S3 under an OIDC token on a miss, which GitHub gives no fork's or Dependabot's pull request
@@ -243,7 +255,25 @@ jobs:
           read -ra packs <<< "$PACKS"
           node --import tsx scripts/release/packs-pack.ts --out "$RUNNER_TEMP/rule-packs" "${packs[@]}"
 
+      # While a release is frozen, the tarballs to test are the candidate's, from this workflow's run on its branch.
+      # The Release pull request's own run packs main's tip with the Release commit, which is not what merging
+      # releases, so it uploads nothing a tester could take for the candidate's.
+      - id: staged
+        name: Whether these tarballs are the staged release's
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [ "$HEAD_REF" = "changeset-release/main" ] && gh api "repos/{owner}/{repo}/git/ref/heads/changeset-release/candidate" --silent 2> /dev/null; then
+            echo "::notice::The release is frozen: the pack tarballs to test are in the Release packs run on changeset-release/candidate, so this run uploads none."
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "upload=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload the pack tarballs
+        if: steps.staged.outputs.upload == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rule-packs
@@ -257,7 +287,7 @@ jobs:
   tag:
     name: Tag each release
     needs: [plan, pack]
-    if: github.event_name == 'push' && needs.plan.outputs.publish != ''
+    if: github.event_name == 'push' && github.ref_type == 'tag' && needs.plan.outputs.publish != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -324,11 +354,11 @@ jobs:
   # that npm cannot attach a provenance attestation to fails to publish instead of going out without one. It publishes
   # the tagged versions and waits on nothing npm does after a publish. Should it fail, the tags and Releases stand:
   # every later plan publishes again a version tagged but not on npm, so re-running the run (all jobs or failed jobs)
-  # or the next push recovers it, and a version npm already has counts as published.
+  # or the next release recovers it, and a version npm already has counts as published.
   publish:
     name: Publish to npmjs
     needs: [plan, pack, tag]
-    if: github.event_name == 'push' && needs.plan.outputs.publish != ''
+    if: github.event_name == 'push' && github.ref_type == 'tag' && needs.plan.outputs.publish != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: release
@@ -397,7 +427,7 @@ jobs:
   first-publish:
     name: First publish needed
     needs: [plan, publish]
-    if: always() && github.event_name == 'push' && needs.plan.outputs.first != ''
+    if: always() && github.event_name == 'push' && github.ref_type == 'tag' && needs.plan.outputs.first != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

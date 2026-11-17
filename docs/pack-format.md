@@ -851,9 +851,10 @@ because changesets pile up between releases and each counts against the `main` i
 `.github/workflows/release-pr.yml` versions the packs, with core; `.github/workflows/release-packs.yml` releases them.
 Core's `v*` release (`release.yml`) is separate.
 
-1. **Version.** Each push to `main` with anything releasable opens or updates the **Release** pull request. Merging it
-   is the release.
-2. **Publish.** On each push to `main`, every published pack (not private) whose `package.json` version has no git tag
+1. **Version.** Each push to `main` with anything releasable opens or updates the **Release** pull request, unless the
+   release is frozen at a commit ([release.md](release.md#freezing-a-release)). Merging it is the release.
+2. **Publish.** The merge tags the released commit `release-<commit>`: the pull request's head, or the frozen
+   candidate. On that tag's push, every published pack (not private) whose `package.json` version there has no git tag
    `@neralabs/rerail-pack-<id>@<version>` passes the publish gate and is published.
 3. **Put back.** Run the workflow from `main` (Actions → Release packs → Run workflow) with the pack's id and an older
    released version, to point `latest` back at it.
@@ -877,7 +878,7 @@ Core's `v*` release (`release.yml`) is separate.
 - Its description lists every package and version it releases, with changelog entries, then the checklist to tick
   before merging ([release.md](release.md#before-merging)). Review it like any pull request.
 - A newer push cancels an older run; with nothing releasable, an open Release pull request is closed.
-- CI runs only licence and lint jobs on it: `release-packs.yml` validates and packs every published pack on it, and
+- CI runs only the licence and lint jobs and the **Release candidate** merge guard on it: `release-packs.yml` validates and packs every published pack on it, and
   `main` runs everything after merge.
 
 </details>
@@ -901,7 +902,7 @@ channel gets the release. A pack held at an older `latest` (step 3) is published
 
 Packs publish one by one, and a failed publish leaves its tags and Releases standing. A version is released once it is
 tagged and on npm: every run's plan reads npm for each tagged version and publishes again one npm doesn't have, with a
-warning naming it. So re-running the run (all jobs or only the failed ones) or the next push to `main` finishes it,
+warning naming it. So re-running the run (all jobs or only the failed ones) or the next release finishes it,
 with no time limit, and a run whose plan can't read npm fails rather than call the version released. One the registry
 already has counts as published, and has `next` moved up. A version older than the pack's `latest` (an old run re-run
 after a newer one shipped) is never published, since that would move `latest` back; the run fails naming it. The

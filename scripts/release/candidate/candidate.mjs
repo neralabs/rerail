@@ -1,0 +1,508 @@
+// The release candidate: the commit a release is built, tested, tagged and published from, and the Release pull
+// request that merging releases it (docs/release.md, "Freezing a release").
+//
+// Two commits, because they answer different questions:
+//   - the candidate: a base commit, the commits cherry-picked onto it, and the Release commit release-version.mjs
+//     writes (versions, changelogs, the consumed .changelog/ and .changeset/ entries). It is what gets tagged.
+//   - the Release pull request's head: the same Release commit applied to main's tip, so merging it is always a clean
+//     squash that brings main the versions and changelogs. Merging the candidate itself would conflict on every entry
+//     main reworded after the freeze, cherry-picked or not.
+// Not frozen, the release follows main: the base is main's tip, so the two are one commit, rebuilt on every push.
+// Frozen, the base and the cherry-picks stay put until someone freezes again, cherry-picks or unfreezes.
+//
+// The state is read from one place, the Release pull request's head commit: its message names the candidate
+// (`Release-Candidate`), whose own message names the base and the cherry-picks. release-candidate.mjs is the command.
+import { execFileSync } from "node:child_process";
+import semver from "semver";
+
+/** The Release pull request's branch. */
+export const RELEASE_BRANCH = "changeset-release/main";
+/** The frozen candidate's branch: it exists only while a release is frozen. */
+export const CANDIDATE_BRANCH = "changeset-release/candidate";
+/** The file whose presence at a commit says the commit's own workflows can release a candidate. */
+export const FLOW_MARKER = "scripts/release/candidate/candidate.mjs";
+
+const SUBJECT = "Release";
+const BASE = "Release-Base";
+const PICK = "Release-Cherry-Pick";
+const CANDIDATE = "Release-Candidate";
+/** Where the remote's main, release branches and tags are fetched to, so a stale local branch is never read. */
+const REFS = "refs/release";
+const MAIN_REF = `${REFS}/main`;
+const RELEASE_REF = `${REFS}/${RELEASE_BRANCH}`;
+const CANDIDATE_REF = `${REFS}/${CANDIDATE_BRANCH}`;
+/** The entries a Release commit consumes: one main changed after the freeze is dropped, not a conflict. */
+const CONSUMED = [".changelog/", ".changeset/"];
+
+export const short = (sha) => sha.slice(0, 9);
+
+/** The tag that starts the packs' release at released commit `sha` (release-packs.yml): one per release. */
+export const releaseTrainTag = (sha) => `release-${sha.slice(0, 12)}`;
+
+/** A candidate's Release commit message: where it was cut and what was cherry-picked onto that. */
+export const candidateMessage = ({ base, picks = [] }) => [SUBJECT, "", `${BASE}: ${base}`, ...picks.map((pick) => `${PICK}: ${pick}`), ""].join("\n");
+
+/** The message of a frozen Release pull request's head: the candidate that merging it releases. */
+export const pullRequestMessage = (candidate) => [SUBJECT, "", `${CANDIDATE}: ${candidate}`, ""].join("\n");
+
+/**
+ * What a Release commit's message says: `{ candidate }` for a frozen Release pull request's head, `{ base, picks }`
+ * for a candidate. Null for any other commit, such as one made by hand or by GitHub's "Update branch".
+ */
+export function readReleaseMessage(message) {
+  const lines = message.split("\n").map((line) => line.trim());
+  if (lines[0] !== SUBJECT) return null;
+  const values = (key) => lines.map((line) => new RegExp(`^${key}: ([0-9a-f]{40})$`, "u").exec(line)?.[1]).filter((value) => value !== undefined);
+  const [candidate] = values(CANDIDATE);
+  if (candidate !== undefined) return { candidate };
+  const [base] = values(BASE);
+  return base === undefined ? null : { base, picks: values(PICK) };
+}
+
+/**
+ * What the `commit` input of release-pr.yml names: `{ pull }` for a pull request number, `{ rev }` for a commit or a
+ * release tag, null when it is empty. Anything else throws, so a typo never becomes a branch name git resolves.
+ */
+export function parseTarget(text = "") {
+  const value = text.trim();
+  if (value === "") return null;
+  const pull = /^#?(\d{1,6})$/u.exec(value)?.[1];
+  if (pull !== undefined) return { pull: Number(pull) };
+  if (/^[0-9a-f]{7,40}$/iu.test(value) || /^v\d+\.\d+\.\d+$/u.test(value)) return { rev: value.toLowerCase() };
+  throw new Error(`"${value}" is not a commit (7 to 40 hex characters), a release tag (v1.2.3) or a pull request number`);
+}
+
+/** Why `commit` can't be frozen as the release's base, or null. */
+export function freezeRefusal({ commit, onMain, latestRelease, hasFlow }) {
+  if (!onMain && !latestRelease) return `${short(commit)} is not on main and is not the latest release. Freeze a commit that is on main, or the latest release's tag to ship a fix on top of it.`;
+  if (!hasFlow) return `${short(commit)} is older than the freeze workflow, so the workflows at that commit cannot release it. Freeze a newer commit.`;
+  return null;
+}
+
+/** Why `commit` can't be cherry-picked onto the frozen candidate, or null. */
+export function cherryPickRefusal({ commit, frozen, onMain, included }) {
+  if (!frozen) return "No release is frozen. Run the freeze action first, then cherry-pick.";
+  if (!onMain) return `${short(commit)} is not on main. Merge the fix to main first, then cherry-pick its commit, so main never lacks a fix the release has.`;
+  if (included) return `${short(commit)} is already in the frozen release.`;
+  return null;
+}
+
+/**
+ * The verdict on a candidate's own CI, from the "CI result" check runs on its commit, newest first: `passed`,
+ * `failed`, or `pending` while none has finished.
+ */
+export function candidateCiVerdict(checkRuns) {
+  const [latest] = [...checkRuns].sort((a, b) => String(b.started_at ?? "").localeCompare(String(a.started_at ?? "")));
+  if (latest === undefined || latest.status !== "completed") return "pending";
+  return latest.conclusion === "success" ? "passed" : "failed";
+}
+
+/**
+ * The commit that merging the Release pull request released, given its head commit and that commit's message: the
+ * candidate a frozen head names, else the head itself, which followed main. Null for a head this workflow did not
+ * make, such as one from before it or one changed by hand, which is never tagged.
+ */
+export function releasedCommit(head, message) {
+  const named = readReleaseMessage(message);
+  if (named === null) return null;
+  return named.candidate ?? head;
+}
+
+const REBUILD = "Rebuild it with `gh workflow run release-pr.yml -f action=freeze` (or `-f action=unfreeze` to follow main again).";
+
+/**
+ * Why the Release pull request's head can't be merged, or null: merging tags the commit its message names, so the head
+ * must be the one release-pr.yml built. `head` is `{ named, parents, parentOnMain, version }` (its message as
+ * readReleaseMessage reads it, its parent commits, whether its one parent is on main, its package.json version); frozen,
+ * `candidate` is `{ tip, named, commits, version }`: the candidate branch's tip, its message, how many commits it holds
+ * past its base, and its package.json version.
+ */
+export function pullRequestHeadRefusal({ head, candidate }) {
+  if (head.named === null) return `This branch's head is not a commit release-pr.yml made: it was pushed to by hand or with "Update branch". ${REBUILD}`;
+  if (head.parents.length !== 1 || !head.parentOnMain) return `This branch's head does not sit on a commit of main. ${REBUILD}`;
+  return head.named.candidate === undefined ? followingHeadRefusal(head) : frozenHeadRefusal(head, candidate);
+}
+
+/** A head that follows main sits on the commit it names as its base. */
+function followingHeadRefusal(head) {
+  const [parent] = head.parents;
+  return head.named.base === parent ? null : `This branch's head names ${short(head.named.base)} as its base but sits on ${short(parent)}. ${REBUILD}`;
+}
+
+/** Whether a candidate is its base, one commit for each cherry-pick, and the Release commit. */
+const candidateIsBuilt = (candidate) => candidate.named?.base !== undefined && candidate.commits === candidate.named.picks.length + 1;
+
+/** A frozen head names the candidate branch's tip, which release-pr.yml built at the version the head sets. */
+function frozenHeadRefusal(head, candidate) {
+  const named = short(head.named.candidate);
+  const found = candidate.tip === null ? "is gone" : `is at ${short(candidate.tip)}`;
+  const refusals = [
+    [candidate.tip !== head.named.candidate, `This pull request releases candidate ${named}, but ${CANDIDATE_BRANCH} ${found}.`],
+    [!candidateIsBuilt(candidate), `Candidate ${named} is not a base, its cherry-picks and one Release commit: it was pushed to by hand.`],
+    [candidate.version !== head.version, `Candidate ${named} is version ${candidate.version}, but this pull request sets ${head.version}.`],
+  ];
+  const refusal = refusals.find(([refused]) => refused)?.[1];
+  return refusal === undefined ? null : `${refusal} ${REBUILD}`;
+}
+
+const code = (text) => `\`${text}\``;
+const commitLine = ({ commit, subject }) => `${code(short(commit))} ${subject}`;
+
+/**
+ * The lines that open a frozen Release pull request's description: what merging it releases, and the three commands
+ * that change that. `frozen` is `{ base, baseSubject, picks: [{ commit, subject }] }`.
+ */
+export function frozenNotice({ base, baseSubject, picks }) {
+  const fixes = picks.length === 0 ? [] : ["> ", `> Cherry-picked onto it (${picks.length}):`, ...picks.map((pick) => `> - ${commitLine(pick)}`)];
+  return [
+    "> [!IMPORTANT]",
+    `> **Frozen at ${commitLine({ commit: base, subject: baseSubject })}.** Merging this pull request releases that commit${picks.length === 0 ? "" : " and the fixes below"}, and nothing merged to \`main\` since. Pushes to \`main\` do not change it or clear the checklist.`,
+    ...fixes,
+    "> ",
+    "> - **Add a fix:** merge it to `main`, then `gh workflow run release-pr.yml -f action=cherry-pick -f commit=<commit or pull request number>`.",
+    "> - **Freeze a different commit:** `gh workflow run release-pr.yml -f action=freeze -f commit=<commit>`. Fixes it does not hold are kept.",
+    "> - **Follow `main` again:** `gh workflow run release-pr.yml -f action=unfreeze`.",
+    "> ",
+    `> The **Release candidate** check passes once CI passes on the candidate (\`${CANDIDATE_BRANCH}\`), so only a tested commit can be merged.`,
+    "",
+  ];
+}
+
+/**
+ * The comment release-pr.yml leaves on the Release pull request after an action, or null when it has nothing to say:
+ * what the release now is, where its builds are, and any consumed entry main changed that ships as frozen.
+ */
+export function actionComment({ action, actor, repository, result }) {
+  if (action === "update") return updateComment(result);
+  if (!result.changed) return null;
+  if (!result.frozen) return `Unfrozen by @${actor}: this pull request follows \`main\` again, and every push to it rewrites the release.`;
+  const runs = (workflow) => `https://github.com/${repository}/actions/workflows/${workflow}?query=branch%3A${encodeURIComponent(CANDIDATE_BRANCH)}`;
+  const fixes = result.picks.length === 0 ? "" : ` plus ${result.picks.map((pick) => code(short(pick))).join(", ")}`;
+  return [
+    `${action === "freeze" ? "Frozen" : "Fix cherry-picked"} by @${actor}. The release is now candidate ${code(short(result.candidate))}: base ${code(short(result.base))}${fixes}.`,
+    "",
+    `Started on the candidate: [CI](${runs("ci.yml")}), the [core build](${runs("release.yml")}) (its \`rerail-package\` artifact is the tarball to test) and the [pack build](${runs("release-packs.yml")}) (\`rule-packs\`). The checklist was cleared, because what merging releases changed.`,
+    ...droppedWarning(result),
+  ].join("\n");
+}
+
+const pathList = (paths) => paths.map((path) => `- ${code(path)}`);
+
+/** The warning for consumed entries main changed after the freeze, which the release ships as frozen; none, no lines. */
+function droppedWarning({ dropped = [] }) {
+  if (dropped.length === 0) return [];
+  return ["", "`main` changed these entries after the freeze and the change was not cherry-picked, so the release ships them as frozen. Cherry-pick the commit that changed them if the release should have it:", "", ...pathList(dropped)];
+}
+
+/**
+ * What a push to main has to say on a frozen Release pull request: nothing, unless main changed what the release
+ * rewrites. It opens with a marker naming the candidate and the files, so release-pr.yml says it once, not on every
+ * later push.
+ */
+function updateComment(result) {
+  const { conflicts = [], dropped = [] } = result;
+  if (conflicts.length > 0) {
+    return [
+      `<!-- release-conflict ${result.candidate} ${conflicts.join(" ")} -->`,
+      "**This pull request can't be merged until this is settled.** `main` changed these files after the freeze, and the frozen release changes the same lines:",
+      "",
+      ...pathList(conflicts),
+      "",
+      "If the release should have that change, cherry-pick its commit: `gh workflow run release-pr.yml -f action=cherry-pick -f commit=<commit or pull request number>`. If it is for the next release, revert it on `main` until this one is merged, or unfreeze. The frozen release itself is unchanged.",
+    ].join("\n");
+  }
+  if (dropped.length === 0) return null;
+  return [`<!-- release-dropped ${result.candidate} ${dropped.join(" ")} -->`, "The frozen release is unchanged.", ...droppedWarning(result)].join("\n");
+}
+
+/**
+ * Thrown when the Release commit can't be applied to main's tip: `paths` are the files both changed, and `advice` is
+ * what to run, which depends on the action that met it.
+ */
+export class ReleaseConflict extends Error {
+  constructor(paths, advice = "Cherry-pick the commit that changed them into the release (action: cherry-pick), or unfreeze.") {
+    super(`main changed ${paths.map((path) => `\`${path}\``).join(", ")} after the frozen commit, and the release changes the same lines. ${advice} Nothing was changed.`);
+    this.paths = paths;
+  }
+}
+
+/** A git runner for the checkout at `cwd`: `git(args)` returns stdout trimmed, and throws with git's own message. */
+export function gitIn(cwd) {
+  return (args, options = {}) => execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 1 << 28, stdio: ["ignore", "pipe", "pipe"], ...options }).trim();
+}
+
+const succeeds = (git, args) => {
+  try {
+    git(args);
+    return true;
+  } catch {
+    return false;
+  }
+};
+const revParse = (git, rev) => (succeeds(git, ["rev-parse", "--verify", "--quiet", `${rev}^{commit}`]) ? git(["rev-parse", "--verify", "--quiet", `${rev}^{commit}`]) : null);
+const isAncestor = (git, ancestor, of) => succeeds(git, ["merge-base", "--is-ancestor", ancestor, of]);
+/**
+ * Whether `base` holds `commit`: as an ancestor, or cherry-picked by an earlier release, whose `-x` line names it. A
+ * fix shipped on top of a release is on main and in that release's tag, which main's history does not reach.
+ */
+const holdsCommit = (git, commit, base) => isAncestor(git, commit, base) || git(["log", "-1", "--format=%H", "--fixed-strings", `--grep=(cherry picked from commit ${commit})`, base]) !== "";
+const messageOf = (git, commit) => git(["log", "-1", "--format=%B", commit]);
+const subjectOf = (git, commit) => git(["log", "-1", "--format=%s", commit]);
+
+/** Fetches main, the release branches and the release tags from `remote`, replacing what an earlier fetch left. */
+function fetchRelease(git, remote) {
+  git(["fetch", "--quiet", "--prune", "--force", remote, `+refs/heads/main:${MAIN_REF}`, `+refs/heads/changeset-release/*:${REFS}/changeset-release/*`, "+refs/tags/v*:refs/tags/v*", "+refs/tags/@neralabs/*:refs/tags/@neralabs/*"]);
+}
+
+/** A frozen release's candidate, base and cherry-picks, or `broken`: why they can't be read. */
+function readFrozen(git, candidate) {
+  const tip = revParse(git, CANDIDATE_REF);
+  const cut = tip === candidate ? readReleaseMessage(messageOf(git, tip)) : null;
+  if (cut?.base !== undefined) return { candidate: tip, base: cut.base, picks: cut.picks };
+  const found = tip === null ? "is gone" : `is at ${short(tip)}`;
+  return { broken: `the Release pull request names candidate ${short(candidate)}, but ${CANDIDATE_BRANCH} ${found}. Run the freeze action again, or unfreeze.` };
+}
+
+/**
+ * The release as the remote holds it: main's tip, the Release pull request's head (null without one), and, frozen,
+ * the candidate with its base and cherry-picks. `broken` says why a frozen release can't be read, for the actions that
+ * need it; freezing again or unfreezing repairs it.
+ */
+export function readState(git) {
+  const main = revParse(git, MAIN_REF);
+  if (main === null) throw new Error("the remote has no main branch");
+  const head = revParse(git, RELEASE_REF);
+  const candidate = head === null ? undefined : readReleaseMessage(messageOf(git, head))?.candidate;
+  if (candidate === undefined) return { main, head, frozen: false };
+  return { main, head, frozen: true, ...readFrozen(git, candidate) };
+}
+
+/** The commit of the latest stable core release's tag, or null before the first. */
+function latestReleaseCommit(git) {
+  const versions = git(["tag", "--list", "v*"]).split("\n").map((tag) => tag.slice(1)).filter((version) => semver.valid(version) === version && semver.prerelease(version) === null);
+  const [latest] = versions.sort(semver.rcompare);
+  return latest === undefined ? null : revParse(git, `refs/tags/v${latest}`);
+}
+
+/** `picks` in the order main merged them: main's history is linear, so a later commit has more ancestors. */
+const inMainOrder = (git, picks) => [...new Set(picks)].map((pick) => ({ pick, at: Number(git(["rev-list", "--count", pick])) })).sort((a, b) => a.at - b.at).map(({ pick }) => pick);
+
+/**
+ * Builds the candidate in the checkout: `base`, each of `picks` cherry-picked onto it in main's order, then the
+ * Release commit `version()` writes. Returns the candidate's commit, or null when nothing there is releasable.
+ */
+function buildCandidate({ git, base, picks, version, frozen }) {
+  git(["checkout", "--quiet", "--force", "--detach", base]);
+  for (const pick of picks) {
+    try {
+      git(["cherry-pick", "-x", "--allow-empty", pick]);
+    } catch {
+      git(["cherry-pick", "--abort"]);
+      throw new Error(
+        `${short(pick)} ("${subjectOf(git, pick)}") does not apply to the frozen release: it builds on changes main made after ${short(base)}. ` +
+          "Cherry-pick the commits it builds on first, or freeze again at a newer commit. Nothing was changed.",
+      );
+    }
+  }
+  version(frozen ? { base, picks: picks.map((pick) => ({ commit: pick, subject: subjectOf(git, pick) })) } : null);
+  git(["add", "--all"]);
+  if (succeeds(git, ["diff", "--cached", "--quiet"])) return null;
+  git(["commit", "--quiet", "--message", candidateMessage({ base, picks })]);
+  return git(["rev-parse", "HEAD"]);
+}
+
+/**
+ * Applies `candidate`'s Release commit to `onto` (main's tip) for the Release pull request. A consumed entry main
+ * changed since the freeze without it being cherry-picked is dropped, as the release ships it as frozen; any other
+ * file both changed throws ReleaseConflict, leaving the checkout clean. Returns `{ commit, dropped }`.
+ */
+function buildPullRequestCommit({ git, candidate, onto, advice }) {
+  git(["checkout", "--quiet", "--force", "--detach", onto]);
+  let dropped = [];
+  try {
+    git(["cherry-pick", "--no-commit", candidate]);
+  } catch {
+    dropped = dropChangedEntries({ git, candidate, onto, advice });
+  }
+  git(["commit", "--quiet", "--message", pullRequestMessage(candidate)]);
+  return { commit: git(["rev-parse", "HEAD"]), dropped };
+}
+
+/**
+ * Settles a Release commit that did not apply cleanly: removes the consumed entries main changed, and returns them.
+ * Any other file both changed throws ReleaseConflict, after putting the checkout back at `onto`.
+ */
+function dropChangedEntries({ git, candidate, onto, advice }) {
+  const unmerged = git(["diff", "--name-only", "--diff-filter=U"]).split("\n").filter((path) => path !== "");
+  const consumed = (path) => CONSUMED.some((folder) => path.startsWith(folder)) && !succeeds(git, ["cat-file", "-e", `${candidate}:${path}`]);
+  const conflicts = unmerged.filter((path) => !consumed(path));
+  if (unmerged.length > 0 && conflicts.length === 0) {
+    for (const path of unmerged) git(["rm", "--quiet", "--force", "--", path]);
+    return unmerged;
+  }
+  git(["reset", "--quiet", "--hard", onto]);
+  if (unmerged.length === 0) throw new Error(`the Release commit ${short(candidate)} could not be applied to main. Nothing was changed.`);
+  throw new ReleaseConflict(conflicts, advice);
+}
+
+/** Whether `head` squash-merges into `main` without a conflict. */
+const mergesCleanly = (git, main, head) => succeeds(git, ["merge-tree", "--write-tree", main, head]);
+
+/** `refs/heads/<branch>` on the remote must still be at `expected` (must not exist, for null) for the push to land. */
+const lease = (branch, expected) => `--force-with-lease=refs/heads/${branch}:${expected ?? ""}`;
+
+/** The commit `text` names (parseTarget), or null for none. */
+function resolveCommit({ git, resolvePull }, text) {
+  const named = parseTarget(text);
+  if (named === null) return null;
+  const rev = named.pull === undefined ? named.rev : resolvePull(named.pull);
+  const commit = revParse(git, rev);
+  if (commit === null) throw new Error(`${rev} is not a commit this checkout has: name a commit on main`);
+  return commit;
+}
+
+/** The commit the action's target names, or null when none was given. */
+const resolveTarget = (context) => resolveCommit(context, context.target);
+
+/** The commits `fixes` names (commits on main or merged pull request numbers), each one `base` lacks. */
+function resolveFixes(context, base) {
+  const { git, state, fixes } = context;
+  return fixes.split(/[\s,]+/u).filter((text) => text !== "").map((text) => {
+    const commit = resolveCommit(context, text);
+    const refusal = cherryPickRefusal({ commit, frozen: true, onMain: isAncestor(git, commit, state.main), included: holdsCommit(git, commit, base) });
+    if (refusal !== null) throw new Error(refusal);
+    return commit;
+  });
+}
+
+/** Fails with why a frozen release can't be read. */
+function assertReadable(state) {
+  if (state.broken !== undefined) throw new Error(state.broken);
+}
+
+/** What an action returns for a frozen release: `changed` says whether what merging releases changed. */
+const frozenResult = ({ candidate, base, picks }, changed, dropped) => ({ releasable: true, changed, frozen: true, candidate, base, picks, dropped });
+
+/** Builds the frozen candidate and its pull request commit, and pushes both in one push. */
+function freezeAt(context, base, picks) {
+  const { git, state, push, version } = context;
+  const ordered = inMainOrder(git, picks);
+  const candidate = buildCandidate({ git, base, picks: ordered, version, frozen: true });
+  if (candidate === null) throw new Error(`nothing is releasable at ${short(base)}: no pack has a changeset and nothing core ships changed since its last release. To ship a fix on top of a release, name the fix in the freeze action's fixes input. Nothing was changed.`);
+  // Nothing is frozen yet when a first freeze meets a conflict, so there is nothing to cherry-pick onto.
+  const advice = state.frozen ? undefined : "Name the commit that changed them in the freeze action's fixes input, or freeze a newer commit.";
+  const { commit, dropped } = buildPullRequestCommit({ git, candidate, onto: state.main, advice });
+  try {
+    push(["--atomic", "--force", `${candidate}:refs/heads/${CANDIDATE_BRANCH}`, `${commit}:refs/heads/${RELEASE_BRANCH}`]);
+  } catch (error) {
+    throw workflowPushRefusal(error) ?? error;
+  }
+  return frozenResult({ candidate, base, picks: ordered }, true, dropped);
+}
+
+/**
+ * GitHub refuses a push that adds a commit changing a workflow file unless the token may write workflows, which
+ * release-pr.yml's does not ask for. The base's commits are on GitHub already, so only a cherry-pick can be refused so.
+ */
+function workflowPushRefusal(error) {
+  if (!/workflows?` permission|without `?workflows?/iu.test(String(error.stderr ?? error.message))) return null;
+  return new Error("GitHub refused the push: a cherry-picked commit changes a file under .github/workflows/, which this workflow's token may not push. Freeze a newer commit on main that holds that change instead. Nothing was changed.");
+}
+
+/** The cherry-picks a release frozen again at `base` keeps: those `base` does not hold, so moving it loses no fix. */
+function keptPicks({ git, state }, base) {
+  if (!state.frozen || state.broken !== undefined) return [];
+  return state.picks.filter((pick) => !holdsCommit(git, pick, base));
+}
+
+function freeze(context) {
+  const { git, state } = context;
+  const base = resolveTarget(context) ?? state.main;
+  const refusal = freezeRefusal({ commit: base, onMain: isAncestor(git, base, state.main), latestRelease: base === latestReleaseCommit(git), hasFlow: succeeds(git, ["cat-file", "-e", `${base}:${FLOW_MARKER}`]) });
+  if (refusal !== null) throw new Error(refusal);
+  return freezeAt(context, base, [...keptPicks(context, base), ...resolveFixes(context, base)]);
+}
+
+/** Whether the frozen release already holds `commit`, in its base or as a cherry-pick. */
+const holds = ({ git, state }, commit) => state.frozen && (holdsCommit(git, commit, state.base) || state.picks.includes(commit));
+
+function cherryPick(context) {
+  const { git, state } = context;
+  assertReadable(state);
+  const commit = resolveTarget(context);
+  if (commit === null) throw new Error("cherry-pick needs the commit on main, or the merged pull request's number, to add");
+  const refusal = cherryPickRefusal({ commit, frozen: state.frozen, onMain: isAncestor(git, commit, state.main), included: holds(context, commit) });
+  if (refusal !== null) throw new Error(refusal);
+  return freezeAt(context, state.base, [...state.picks, commit]);
+}
+
+function unfreeze({ git, state, push, version }) {
+  if (!state.frozen) return { releasable: state.head !== null, changed: false, frozen: false, notice: "No release is frozen: the Release pull request already follows main." };
+  const candidate = buildCandidate({ git, base: state.main, picks: [], version, frozen: false });
+  const gone = revParse(git, CANDIDATE_REF) === null ? [] : [`:refs/heads/${CANDIDATE_BRANCH}`];
+  // Nothing releasable on main: the Release pull request's branch goes too, and the workflow closes the pull request.
+  push(["--atomic", "--force", ...gone, `${candidate ?? ""}:refs/heads/${RELEASE_BRANCH}`]);
+  return { releasable: candidate !== null, changed: true, frozen: false };
+}
+
+/**
+ * A push to main while frozen. The release is left alone, so the push neither reruns its checks nor clears its
+ * checklist. Only when main has since changed a file the Release commit changes is that commit applied to main's tip
+ * again, so the pull request stays mergeable; the candidate is the same, so the checklist stands.
+ */
+function updateFrozen({ git, state, push }) {
+  assertReadable(state);
+  if (mergesCleanly(git, state.main, state.head)) return frozenResult(state, false, []);
+  let built;
+  try {
+    built = buildPullRequestCommit({ git, candidate: state.candidate, onto: state.main });
+  } catch (error) {
+    // Not the pusher's to fix, and the frozen release is whole: GitHub shows the pull request as conflicting, which
+    // blocks the merge, and release-pr.yml says on it which files and what to run.
+    if (!(error instanceof ReleaseConflict)) throw error;
+    return { ...frozenResult(state, false, []), conflicts: error.paths };
+  }
+  push([lease(RELEASE_BRANCH, state.head), `${built.commit}:refs/heads/${RELEASE_BRANCH}`]);
+  return frozenResult(state, false, built.dropped);
+}
+
+/** A push to main while the release follows main: the Release commit is rebuilt on main's tip. */
+function updateFollowing({ git, state, push, version }) {
+  const candidate = buildCandidate({ git, base: state.main, picks: [], version, frozen: false });
+  if (candidate === null) return { releasable: false, changed: false, frozen: false };
+  try {
+    push([lease(RELEASE_BRANCH, state.head), `${candidate}:refs/heads/${RELEASE_BRANCH}`]);
+  } catch (error) {
+    // The branch moved since it was read: an action run by hand or a newer push's run landed meanwhile, and it wins.
+    if (!/stale info|rejected/u.test(String(error.stderr ?? error.message))) throw error;
+    return { releasable: true, changed: false, frozen: false, notice: "The Release pull request changed while this run was building: left as it is." };
+  }
+  return { releasable: true, changed: true, frozen: false };
+}
+
+const ACTIONS = { freeze, "cherry-pick": cherryPick, unfreeze, update: (context) => (context.state.frozen ? updateFrozen(context) : updateFollowing(context)) };
+
+/**
+ * Runs one action of release-pr.yml against `remote` from the clean checkout `git` runs in, and returns what the
+ * workflow does next:
+ *   - `releasable`: false when nothing is releasable, so the Release pull request is closed;
+ *   - `changed`: whether what merging releases changed, so the description is rewritten and its checklist cleared;
+ *   - `frozen`, and frozen: `candidate`, `base`, `picks`;
+ *   - `dropped`: consumed entries main changed after the freeze, released as frozen;
+ *   - `notice`: a line for the run summary when the action had nothing to do.
+ * Every action changes the remote in one push or not at all, and an action that can't run throws saying what to run.
+ *
+ * `action` is `update` (a push to main), `freeze`, `cherry-pick` or `unfreeze`; `target` is a commit, release tag or
+ * pull request number (parseTarget): the commit to freeze (main's tip when empty) or to cherry-pick. `fixes`, for
+ * freeze alone, lists commits to cherry-pick in the same step, which is how a fix ships on top of the latest release:
+ * that release alone has nothing to release. `version(frozen)` writes the Release commit's changes into the checkout
+ * (release-version.mjs), given `{ base, picks: [{ commit, subject }] }` for a frozen candidate and null otherwise;
+ * `resolvePull(number)` gives a merged pull request's commit on main.
+ */
+export function runReleaseAction({ action, target = "", fixes = "", git, remote, version, resolvePull }) {
+  const run = Object.hasOwn(ACTIONS, action) ? ACTIONS[action] : undefined;
+  if (run === undefined) throw new Error(`unknown action "${action}": freeze, cherry-pick or unfreeze`);
+  if (git(["status", "--porcelain"]) !== "") throw new Error("the checkout has changes: run this from a clean checkout, as release-pr.yml does");
+  fetchRelease(git, remote);
+  return run({ git, target, fixes, version, resolvePull, state: readState(git), push: (args) => git(["push", "--quiet", remote, ...args]) });
+}

@@ -42,7 +42,9 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   ECMA rename variants (`rename/`), and the writer of each tool's `provenance.json` and `LICENSES.md` the generators
   call last (`provenance.mjs`); a maintainer's sandbox and the bump workflow run it, never pull request CI.
 - `release/`: the release. The Release pull request (`.github/workflows/release-pr.yml`): every package's version,
-  core's when what it ships changed, and core's tag on merge. The rule packs' release
+  core's when what it ships changed; the release candidate it merges, following `main` or frozen at a commit with fixes
+  cherry-picked onto it, and the check that guards its merge; and the tags of the released commit on merge. The rule
+  packs' release
   (`.github/workflows/release-packs.yml`): which packs to release, the publish gate and packing, tagging each
   release before it is published, publishing under `latest`, putting a pack back, and the lockfile sync after
   `changeset version`. The dist-tag check after a publish,
