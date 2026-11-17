@@ -1006,7 +1006,7 @@ function keptAt(folder: string, at: number): void {
 function wholeKeptAnswer(text: string): boolean {
   try {
     const kept = JSON.parse(text) as Record<string, unknown>;
-    return kept.v === 3 && ["repository", "cloneId", "folder", "checkout", "git", "database", "wal", "walIndex"].every(field => typeof kept[field] === "string")
+    return kept.v === 4 && ["repository", "cloneId", "folder", "checkout", "git", "database", "wal", "walIndex", "mark"].every(field => typeof kept[field] === "string")
       && typeof kept.depth === "number" && typeof kept.at === "number";
   } catch {
     return false;
@@ -2557,6 +2557,8 @@ describe("the hook start check", () => {
     writeFileSync(join(target, "canary.txt"), "canary");
     const link = at(process.env.RERAIL_HOME!);
     mkdirSync(dirname(link), { recursive: true });
+    // The start and the stop that stopped the checkout made the folder of kept answers for the start mark.
+    if (existsSync(link)) removeFolderSync(link);
     folderLink(target, link);
     const host = await startCheckHost();
     const daemon = await countingDaemon(process.env.RERAIL_HOME!, "stopped");
@@ -2588,7 +2590,7 @@ describe("the hook start check", () => {
     try {
       host.proofs.nextCheck();
       expect({
-        kept: existsSync(join(process.env.RERAIL_HOME!, "stopped-answers")), started: await host.hookRerailStarted("claude-code", share),
+        kept: existsSync(join(process.env.RERAIL_HOME!, "stopped-answers", `${process.pid}-1`)), started: await host.hookRerailStarted("claude-code", share),
         checked: host.proofs.found.at(-1), asked: [...prompt.asked, ...late.asked].map(folder => (folder.startsWith("\\\\") ? "the share" : folder)),
       }).toEqual({ kept: false, started: true, checked: false, asked: ["the share", "the share"] });
     } finally {
