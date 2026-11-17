@@ -293,8 +293,17 @@ fn objects_are_the_lean_parsers() {
     ]);
 }
 
+/// Step 19: type arguments where the lean parser reads them.
 #[test]
-fn what_step_18_does_not_read_is_refused() {
+fn type_arguments_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n    val d = a.b<T>(x)\n    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {}\n    val e = listOf<Map<String, Int>>()\n    g<A> { }\n    val n = x < y\n    val m = i < n && j > (k)\n}\nclass C<T>(val t: T) : D<T>() {\n    val l: List<T>? = null\n}\n",
+        "fun f() {\n    if (a<b.c) d\n}\n",
+    ]);
+}
+
+#[test]
+fn what_step_19_does_not_read_is_refused() {
     refused(&[
         "val a = b to f<T>()\n",
         "val a = x + f<T>(1)\n",
@@ -327,7 +336,6 @@ fn what_step_18_does_not_read_is_refused() {
         "val s = \"a $field b\"\n",
         "abstract class A {\n    fun f() {}\n    /* c */\n    abstract fun g()\n}\n",
         "fun f() {\n    a()\n    /* c */\n    // d\n    b()\n}\n",
-        "fun f() {\n    if (a<b.c) d\n}\n",
         "class A\n@Inject constructor(x: Int)\n",
         "fun f() {\n    a\n    /* c */ .b()\n}\n",
     ]);

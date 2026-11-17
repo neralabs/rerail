@@ -463,6 +463,33 @@ while here `d {` is a call with a trailing lambda.
 
 Corpus: 221 the same, 270 refused, 0 differ.
 
+## Kotlin, step 19 (`19-type-arguments.bitlex`)
+
+`<` opens type arguments where the lean parser's lookahead does (`type_args_end`):
+
+- they close at a `>`;
+- that `>` is followed by `(`, `{`, `.`, `?.` or `::`.
+
+The `generic` mark was a token mark that guessed from the first tokens after a name. It took
+`Build.VERSION.SDK_INT < Build.VERSION_CODES.O` for type arguments, and had no way in for
+`a.b<T>()`. It is now a mask mark at the `<` itself. It holds where the bytes from the `<` are a
+type's (words, blanks, `, . ? * @ : < > [ ] & -`) up to such a `>`, and where the `<` touches the
+name before it.
+
+A level's postfix loop takes `generic` and then a call's type arguments (`postfix_level`), after
+a name or a navigation alike. A tighter operator's operand does not take it (`postfix_op`): there
+tree-sitter's GLR parse puts the call over the whole operation, which is refused. In a type, type
+arguments and type parameters take the mark where it holds.
+
+Not the lean parser's, and refused: a spaced `f <T>()`, where the mask needs the `<` to touch the
+name; and `<(A) -> B>`, where a `(` is no type byte.
+
+Also refused: a comment on a line that starts with `@`. The annotation takes the line's
+semicolon, so the comment would be the annotation's, while the lean parser keeps it the
+declaration's.
+
+Corpus: 267 the same, 224 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
