@@ -227,7 +227,7 @@ impl ProgramPass for FactsOnce {
     }
 }
 
-/// `Lowerer::unit`'s rule over the program (`lower::unit`): each rule that reads no relation reads `rr_unit(0)`
+/// `lower::unit` on the version: each rule that reads no relation reads `rr_unit(0)`
 /// first, and `rr_unit` is declared with its one fact. A matcher atom or a walk reads the tree itself; an aggregate
 /// reads its atom.
 pub struct Unit;
@@ -990,6 +990,211 @@ impl ProgramPass for ScopeGlobs {
         }
         if head.text_globs != was.text_globs || head.doc_scopes != was.doc_scopes {
             w.on()?.set_header(&was, &head);
+        }
+        Ok(())
+    }
+}
+
+/// `lower::kind_sets` on the version (see there), over the sets the clauses named (the lowerer's `sets`): each set
+/// whose kinds are known now a kind set of the header; a set no rule reads taken out (to a fixed point); and the axes
+/// over sets that rules derive written as rules (`derived_axes`), after the program's.
+pub struct KindSets {
+    pub sets: BTreeSet<String>,
+}
+
+/// `lower::kinds_of` on the version, rules gone by head left out.
+fn kinds_of(v: &Version, head: &crate::code_rule_dsl::logic::front::Program, gone: &BTreeSet<String>, set: &str, seen: &mut BTreeSet<String>) -> Option<Vec<String>> {
+    use crate::code_rule_dsl::logic::front::Value;
+    if !seen.insert(set.to_owned()) || head.inputs.iter().any(|i| i == set) || head.decls.get(set).is_some_and(|c| c.len() != 1) {
+        return None;
+    }
+    let mut kinds: Vec<String> = Vec::new();
+    for row in head.facts.get(set).into_iter().flatten() {
+        let [Value::Str(k)] = row.as_slice() else { return None };
+        kinds.push(k.to_string());
+    }
+    for r in v.rel(set).into_iter().flat_map(|rel| v.heads(rel)).filter(|_| !gone.contains(set)) {
+        let mut args = r.head().args();
+        let (Some(TermRef::Var(k)), None) = (args.next(), args.next()) else { return None };
+        let mut body = r.body();
+        let (Some(l), None) = (body.next(), body.next()) else { return None };
+        let L::Atom(a) = l.view() else { return None };
+        let mut aargs = a.args();
+        if a.neg() || !matches!((aargs.next(), aargs.next()), (Some(TermRef::Var(x)), None) if x == k) {
+            return None;
+        }
+        kinds.extend(kinds_of(v, head, gone, v.rel_name(a.rel()), seen)?);
+    }
+    let mut once = BTreeSet::new();
+    kinds.retain(|k| once.insert(k.clone()));
+    Some(kinds)
+}
+
+/// An axis literal over a derived set, rewritten (`derived_axes`): `rr_<helper>_<set>(args)`, its arguments a
+/// nearest's two variables, or the axis atom's arguments at `args`.
+struct AxisLit {
+    node: u32,
+    rel: String,
+    nearest: Option<(Slot, Slot)>,
+    args: Vec<usize>,
+    neg: bool,
+}
+
+impl ProgramPass for KindSets {
+    const NAME: &'static str = "kind sets";
+    fn settings(&self) -> Vec<u8> {
+        self.sets.iter().cloned().collect::<Vec<_>>().join("\n").into_bytes()
+    }
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::logic::front::{Error, axis};
+        let v = cx.v();
+        let was = v.header(&Default::default())?;
+        let mut head = was.clone();
+        let mut gone: BTreeSet<String> = BTreeSet::new();
+        let mut derived: BTreeSet<String> = BTreeSet::new();
+        for set in std::mem::take(&mut self.sets) {
+            if head.kindsets.contains_key(&set) {
+                continue;
+            }
+            // `members`.
+            match kinds_of(v, &head, &gone, &set, &mut BTreeSet::new()) {
+                Some(kinds) => drop(head.kindsets.insert(set, kinds)),
+                None if matches!(head.decls.get(set.as_str()).map(|c| c.as_slice()), Some([(_, t)]) if t == "sym") => drop(derived.insert(set)),
+                None => return Err(Error::Syntax(format!("the kind set {set} is not a relation of kinds (one column of facts, or rules `{set}(k) :- s(k)` over such sets)")).to_string()),
+            }
+        }
+        // A set no rule reads is no relation of the program, to a fixed point.
+        let heads_of = |gone: &BTreeSet<String>, set: &str| v.rel(set).is_some_and(|rel| v.heads(rel).next().is_some()) && !gone.contains(set);
+        loop {
+            let unread: Vec<String> = head
+                .kindsets
+                .keys()
+                .filter(|set| head.decls.contains_key(set.as_str()) || head.facts.contains_key(*set) || heads_of(&gone, set))
+                .filter(|set| {
+                    !v.rules().filter(|r| !gone.contains(v.rel_name(r.head().rel())) && v.rel_name(r.head().rel()) != set.as_str()).any(|r| {
+                        r.body().any(|l| matches!(l.view(), L::Atom(a) | L::Agg { atom: a, .. } if v.rel_name(a.rel()) == set.as_str()))
+                    })
+                })
+                .cloned()
+                .collect();
+            if unread.is_empty() {
+                break;
+            }
+            for set in unread {
+                head.facts.remove(&set);
+                head.decls.remove(set.as_str());
+                gone.insert(set);
+            }
+        }
+        // `derived_axes`: each axis over a derived set read through a helper.
+        let mut axes: BTreeMap<RuleId, Vec<AxisLit>> = BTreeMap::new();
+        let mut need: BTreeSet<(String, &'static str)> = BTreeSet::new();
+        if !derived.is_empty() {
+            for r in v.rules().filter(|r| !gone.contains(v.rel_name(r.head().rel()))) {
+                for l in r.body() {
+                    let (set, helper, nearest, args, neg) = match l.view() {
+                        L::Nearest { n, a, kindset } if derived.contains(v.text(kindset)) => (v.text(kindset).to_owned(), "near", Some((n, a)), vec![], false),
+                        L::Atom(x) => match axis(v.rel_name(x.rel())) {
+                            Some((set, has)) if derived.contains(set) => {
+                                let xs: Vec<TermRef<'_>> = x.args().collect();
+                                let all: Vec<usize> = (0..xs.len()).collect();
+                                let (helper, args) = match (has, xs.as_slice()) {
+                                    (false, [_, TermRef::Wild]) => ("near", all),
+                                    (false, _) => ("anc", all),
+                                    (true, [TermRef::Wild, _]) => ("above", vec![1]),
+                                    (true, _) => ("desc", all),
+                                };
+                                (set.to_owned(), helper, None, args, x.neg())
+                            }
+                            _ => continue,
+                        },
+                        _ => continue,
+                    };
+                    if helper == "anc" {
+                        need.insert((set.clone(), "near"));
+                    }
+                    need.insert((set.clone(), helper));
+                    axes.entry(r.id()).or_default().push(AxisLit { node: l.node(), rel: format!("rr_{helper}_{set}"), nearest, args, neg });
+                }
+            }
+        }
+        // `base_relation` for `child` and `node`, the rules gone left out.
+        if !need.is_empty() {
+            for (rel, cols) in [("child", &[("p", "node"), ("c", "node"), ("i", "int")][..]), ("node", &[("d", "int"), ("n", "node"), ("kind", "sym"), ("start", "int"), ("end", "int")][..])] {
+                head.decls.entry(rel.to_owned().into()).or_insert_with(|| cols.iter().map(|(c, t)| ((*c).into(), (*t).into())).collect());
+                if !head.inputs.iter().any(|i| i == rel) && !heads_of(&gone, rel) {
+                    head.inputs.push(rel.to_owned());
+                }
+            }
+        }
+        // The helpers' rules, as `derived_axes` pushes them: a set's members once, then each helper's rules.
+        type Body = Vec<(String, Vec<&'static str>, bool)>;
+        let mut made: Vec<(String, Vec<&'static str>, Body)> = Vec::new();
+        for (set, helper) in &need {
+            let member = format!("rr_in_{set}");
+            if !head.decls.contains_key(member.as_str()) {
+                head.decls.insert(member.clone().into(), [("x".into(), "node".into())].into());
+                made.push((member.clone(), vec!["x"], vec![("node".to_owned(), vec!["_", "x", "k", "_", "_"], false), (set.clone(), vec!["k"], false)]));
+            }
+            let rel = format!("rr_{helper}_{set}");
+            let is = |x: &'static str, neg: bool| (member.clone(), vec![x], neg);
+            let child = |p: &'static str, c: &'static str| ("child".to_owned(), vec![p, c, "_"], false);
+            let me = |args: Vec<&'static str>| (rel.clone(), args, false);
+            let near = format!("rr_near_{set}");
+            let (cols, bodies): (Vec<&'static str>, Vec<Body>) = match *helper {
+                "near" => (vec!["n", "a"], vec![vec![child("a", "n"), is("a", false)], vec![child("p", "n"), is("p", true), me(vec!["p", "a"])]]),
+                "anc" => (vec!["n", "a"], vec![vec![(near.clone(), vec!["n", "a"], false)], vec![(near.clone(), vec!["n", "b"], false), me(vec!["b", "a"])]]),
+                "desc" => (vec!["n", "a"], vec![vec![is("n", false), child("a", "n")], vec![me(vec!["n", "p"]), child("a", "p")]]),
+                _ => (vec!["a"], vec![vec![is("n", false), child("a", "n")], vec![me(vec!["p"]), child("a", "p")]]),
+            };
+            head.decls.insert(rel.clone().into(), cols.iter().map(|c| ((*c).into(), "node".into())).collect());
+            for body in bodies {
+                made.push((rel.clone(), cols.clone(), body));
+            }
+        }
+        if gone.is_empty() && axes.is_empty() && made.is_empty() && head.kindsets == was.kindsets && head.decls == was.decls && head.inputs == was.inputs {
+            return Ok(());
+        }
+        let input = std::sync::Arc::clone(w.input());
+        let b = w.derive()?;
+        b.set_header(&was, &head);
+        use crate::code_rule_dsl::logic::program_image::build::t_of;
+        for r in input.rules() {
+            if gone.contains(input.rel_name(r.head().rel())) {
+                continue;
+            }
+            let Some(lits) = axes.get(&r.id()) else {
+                b.keep(&input, r);
+                continue;
+            };
+            let mut rb = b.rule().source(r.id()).head_from(&input, r, r.head());
+            for l in r.body() {
+                rb = match lits.iter().find(|x| x.node == l.node()) {
+                    None => rb.lit(&input, r, l),
+                    Some(x) => {
+                        let args: Vec<T<'_>> = match (x.nearest, l.view()) {
+                            (Some((n, a)), _) => vec![T::VarAtom(r.var(n)), T::VarAtom(r.var(a))],
+                            (None, L::Atom(a)) => {
+                                let xs: Vec<TermRef<'_>> = a.args().collect();
+                                x.args.iter().map(|&k| t_of(&input, r, xs[k])).collect()
+                            }
+                            _ => return Err("an axis atom".into()),
+                        };
+                        rb.atom_with(x.rel.as_str(), &args, x.neg, false)
+                    }
+                };
+            }
+            rb.finish()?;
+        }
+        let term = |a: &'static str| if a == "_" { T::Wild } else { T::Var(a) };
+        for (rel, cols, body) in &made {
+            let args: Vec<T<'_>> = cols.iter().map(|c| term(c)).collect();
+            let mut rb = b.rule().head(rel.as_str(), &args);
+            for (r, xs, neg) in body {
+                let args: Vec<T<'_>> = xs.iter().map(|c| term(c)).collect();
+                rb = rb.atom_with(r.as_str(), &args, *neg, false);
+            }
+            rb.finish()?;
         }
         Ok(())
     }

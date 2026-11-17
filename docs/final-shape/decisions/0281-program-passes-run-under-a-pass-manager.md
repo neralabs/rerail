@@ -635,9 +635,14 @@ step 3 replaces what is under the writer.
      (`lower::whole_back` on the tree): `lowering_tail::BooleanRelations` (a nullary relation's unit column, through
      a `Rewrite`'s `prefix`), `ScopeGlobs`, and `on_request::SourcesOnRequest` per round, so the version is made
      right after the lowerer's analyses (`Lowerer::unit`). Test: `nullary_relations_and_the_scope_are_made_on_the_version`
-     (each of the three left out fails it); ep2's 317 policies: 0 rows, every check passes. Next: the lowerer's
-     analyses (`kind_sets`, the grammar names, the span patterns, projections, the core's declarations, findings,
-     three-valued relations), which read and write the lowerer's state beside its program.
+     (each of the three left out fails it); ep2's 317 policies: 0 rows, every check passes. Then the kind sets and
+     `unit`: `lower::kind_sets` (with `members`, `kinds_of`, `derived_axes`) is a function of the program and the
+     sets the clauses named, no longer a lowerer method; on the version `lowering_tail::KindSets { sets }` (the
+     lowerer's sets as the pass's settings) and `Unit`. `whole_front` hands on its program with those sets. Test:
+     `kind_sets_are_made_on_the_version` (a set of facts, a derived set read through its axes; fails with the pass
+     left out); ep2's 317 policies: 0 rows, every check passes. Next: the lowerer's analyses before them (the
+     grammar names, the span patterns, projections, the core's declarations, findings, three-valued relations), each
+     a function of the program and the lowerer state it reads, that state the pass's settings.
    - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.

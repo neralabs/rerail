@@ -4042,3 +4042,27 @@ fn nullary_relations_and_the_scope_are_made_on_the_version() {
     // `value` is answered on request (decision 0174): its reader asks.
     assert!(rules.iter().any(|x| x.starts_with("rr_value_req")), "{rules:#?}");
 }
+
+/// The kind sets are made on a modular text's version (decision 0281's path, step 7b): a set of kinds given as facts
+/// is a kind set of the program, and a set rules derive is read through helper rules over `child`
+/// (`rr_anc_<set>`, `rr_near_<set>`, `rr_in_<set>`), as the tree's `lower::kind_sets` makes them; a debug build
+/// checks the image against the tree's (`link_seeded_version`).
+#[test]
+fn kind_sets_are_made_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl calls(k: symbol)\ncalls(\"call\").\n",
+        ".decl code(k: symbol)\ncode(k) :- kind(_, k), k != \"comment\".\n",
+        ".decl r(n: node, a: node)\n.decl s(n: node, a: node)\n.output r, s\n",
+        "r(n, a) :- kind(n, \"name\"), nearest(n, a, calls).\n",
+        "s(n, a) :- kind(n, \"name\"), inside(n, a, code).\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let head = v.header(&Default::default()).unwrap();
+    assert!(head.kindsets.get("calls").is_some_and(|k| k == &["call"]), "{:?}", head.kindsets);
+    let heads: BTreeSet<&str> = v.rules().map(|x| v.rel_name(x.head().rel())).collect();
+    assert!(["rr_anc_code", "rr_near_code", "rr_in_code"].iter().all(|h| heads.contains(h)), "{heads:?}");
+}

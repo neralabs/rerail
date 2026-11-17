@@ -966,26 +966,29 @@ pub fn unseed(program: &mut Program, seeds: &Seeds, core: &BTreeSet<String>) {
     program.qualifiers.retain(|r, _| !(seeded.qualifiers.contains(r) && gone(r)));
 }
 
-/// `link_seeded` up to `whole_back`, `front::finish` and `whole()`'s tail (aggregate demand, `unit`, `sets`,
+/// `link_seeded` up to `kind_sets`, `unit`, `whole_back`, `front::finish` and `whole()`'s tail (aggregate demand, `unit`, `sets`,
 /// `widen_cyclic_contexts`): the program `rr::link_seeded_version`
-/// makes a version of, `declared` checked. `whole_back` adds a column to nullary relations, in their declarations
+/// makes a version of, with the sets its clauses named; `declared` checked. `kind_sets` takes out only sets no rule
+/// reads, and declares the axes' helpers it writes. `whole_back` adds a column to nullary relations, in their declarations
 /// and reads alike, and the requests' relations it declares. `finish` declares only the axes (transduced, which `declared` passes)
 /// and `node_order` with the helpers it reads. Aggregate demand adds only relations it declares. The tail drops repeats (a literal or rule another copy keeps), a rule
 /// whose body is its own head, and literals of relations the program derives, and adds `node` only where it is
 /// declared: the check before it refuses what the check after it does, but for a relation read only by its own
 /// copy-rule, which the lowering does not declare apart.
-pub fn link_seeded_front(m: Module, seeds: &Seeds) -> Result<Program, Error> {
+pub fn link_seeded_front(m: Module, seeds: &Seeds) -> Result<(Program, BTreeSet<String>), Error> {
     let mut l = seeds.l.clone();
     l.violations.clear();
     l.append(m);
-    let program = whole_front(l)?;
+    let (program, sets) = whole_front(l)?;
     crate::code_rule_dsl::logic::front::declared(&program)?;
-    Ok(program)
+    Ok((program, sets))
 }
 
 /// The lowering's whole-program half (decision 0246 §1), over the modules appended into `l`.
 fn whole(l: Lowerer) -> Result<Program, Error> {
-    let mut program = whole_front(l)?;
+    let (mut program, named) = whole_front(l)?;
+    kind_sets(&mut program, named)?;
+    unit(&mut program);
     whole_back(&mut program);
     let mut program = crate::code_rule_dsl::logic::front::finish(program)?;
     let demand = crate::code_rule_dsl::logic::profile::span(|| "aggregate demand and sets".to_owned());
@@ -1046,9 +1049,10 @@ pub fn sets(program: &mut Program) {
     }
 }
 
-/// `whole` up to the lowerer's analyses: what `whole_back`, `front::finish` and the tail (aggregate demand, `unit`,
+/// `whole` up to the lowerer's analyses before its kind sets, with the sets its clauses named: what `kind_sets`,
+/// `unit`, `whole_back`, `front::finish` and the tail (aggregate demand, `unit`,
 /// `sets`, `widen_cyclic_contexts`) make of it `rr::link_seeded_version` makes on the version.
-fn whole_front(mut l: Lowerer) -> Result<Program, Error> {
+fn whole_front(mut l: Lowerer) -> Result<(Program, BTreeSet<String>), Error> {
     let analyses = crate::code_rule_dsl::logic::profile::span(|| "the program's analyses (findings, spans, kinds)".to_owned());
     l.three_valued();
     l.findings()?;
@@ -1074,10 +1078,8 @@ fn whole_front(mut l: Lowerer) -> Result<Program, Error> {
             l.prog.inputs.push(WITHIN.to_owned());
         }
     }
-    l.kind_sets()?;
-    l.unit();
     drop(analyses);
-    Ok(l.prog)
+    Ok((l.prog, l.sets))
 }
 
 /// `whole()` after the lowerer's analyses, before `front::finish`: nullary relations as sets of the unit, the
@@ -1174,7 +1176,11 @@ pub fn widen_cyclic_contexts(program: &mut Program) {
     }
 }
 
-/// [`Lowerer::unit`]'s rule over a program: each rule that reads no relation reads `rr_unit(0)`.
+/// A rule that reads no relation (an aggregate's helper of comparisons only, `{ e = "a", q = @json_str(e) }`)
+/// holds once, as in Soufflé: it reads `rr_unit(0)`, one row, since the planner starts every body from an atom.
+/// A body with an aggregate (`ok(v) :- m = join …, v = @f(m).`) needs none: the planner runs a body of filters and
+/// aggregates over the relational unit, and the SQL executor maintains it as a scalar rule over its aggregates'
+/// inputs (a unit atom would hide them from its retained support).
 pub fn unit(prog: &mut Program) {
     const UNIT: &str = "rr_unit";
     let mut used = false;
@@ -4153,127 +4159,8 @@ impl Lowerer {
         })
     }
 
-    /// Kind sets: the relations of facts given to `nearest`, `inside` and `has`. One read nowhere else is only a set.
-    /// A set of kinds that rules derive is no kind set: its axes are rules (`derived_axes`). (A set of nodes is read
-    /// as climbs where it is given, `node_axis`.)
-    fn kind_sets(&mut self) -> Result<(), Error> {
-        let mut derived = BTreeSet::new();
-        for set in std::mem::take(&mut self.sets) {
-            if self.prog.kindsets.contains_key(&set) {
-                continue;
-            }
-            let kinds = match self.members(&set)? {
-                Members::Kinds(kinds) => kinds,
-                Members::Derived => {
-                    derived.insert(set);
-                    continue;
-                }
-            };
-            self.prog.kindsets.insert(set, kinds);
-        }
-        // A set no rule reads is no relation of the program; one that rules read (`lfscope(k) :- fscope(k)`) stays
-        // one as well, until those rules go with their own set: to a fixed point, in whatever order the sets come.
-        loop {
-            let unread: Vec<String> = self
-                .prog
-                .kindsets
-                .keys()
-                .filter(|set| self.prog.decls.contains_key(set.as_str()) || self.prog.facts.contains_key(*set) || self.prog.rules.iter().any(|r| r.head.rel == set.as_str()))
-                .filter(|set| !self.prog.rules.iter().filter(|r| r.head.rel != set.as_str()).any(|r| r.body.iter().filter_map(Literal::atom).any(|a| a.rel == set.as_str())))
-                .cloned()
-                .collect();
-            if unread.is_empty() {
-                break;
-            }
-            for set in unread {
-                self.prog.facts.remove(&set);
-                self.prog.decls.remove(set.as_str());
-                self.prog.rules.retain(|r| r.head.rel != set);
-            }
-        }
-        self.derived_axes(&derived);
-        Ok(())
-    }
 
-    /// What a set holds: its kinds when they are known now (a kind set), else kinds its rules (or an input) give.
-    fn members(&self, set: &str) -> Result<Members, Error> {
-        if let Some(kinds) = self.kinds_of(set, &mut BTreeSet::new()) {
-            return Ok(Members::Kinds(kinds));
-        }
-        if matches!(self.prog.decls.get(set).map(|c| c.as_slice()), Some([(_, t)]) if t == "sym") {
-            return Ok(Members::Derived);
-        }
-        Err(Error::Syntax(format!("the kind set {set} is not a relation of kinds (one column of facts, or rules `{set}(k) :- s(k)` over such sets)")))
-    }
 
-    /// The axes over sets of kinds rules derive, which the transducer cannot read from a node's kind: rules over
-    /// `child`, in which each node's membership (`rr_in_<s>(x) :- node(_, x, k, _, _), s(k)`) is read once. A helper
-    /// reads its set negated, so the set is complete before it (a lower stratum; a set that depends on its own axis
-    /// is refused by the strata).
-    /// - `rr_near_<s>(n, a)`, a is n's nearest strict ancestor in s (`nearest`, and `inside(n, _, s)`): down from each
-    ///   member to the next, a row per node below one;
-    /// - `rr_anc_<s>(n, a)`, every strict ancestor a of n in s (`inside`): the chain of nearest ones;
-    /// - `rr_desc_<s>(n, a)`, n in s and a any strict ancestor of it (`has`): up from each member;
-    /// - `rr_above_<s>(a)`, a has a member strictly below it (`has(a, _, s)`).
-    fn derived_axes(&mut self, derived: &BTreeSet<String>) {
-        let mut need = BTreeSet::new();
-        for rule in &mut self.prog.rules {
-            for l in &mut rule.body {
-                let (set, helper, args, neg) = match l {
-                    Literal::Nearest { n, a, kindset } if derived.contains(kindset) => (kindset.clone(), "near", [Term::Var(n.clone().into()), Term::Var(a.clone().into())].into(), false),
-                    Literal::Atom(x) => match axis(&x.rel) {
-                        Some((set, has)) if derived.contains(set) => {
-                            let (helper, args) = match (has, x.args.as_slice()) {
-                                (false, [_, Term::Wild]) => ("near", x.args.clone()),
-                                (false, _) => ("anc", x.args.clone()),
-                                (true, [Term::Wild, a]) => ("above", [a.clone()].into()),
-                                (true, _) => ("desc", x.args.clone()),
-                            };
-                            (set.to_owned(), helper, args, x.neg)
-                        }
-                        _ => continue,
-                    },
-                    _ => continue,
-                };
-                *l = Literal::Atom(Atom { rel: format!("rr_{helper}_{set}").into(), args: args.into(), neg, gated: false });
-                if helper == "anc" {
-                    need.insert((set.clone(), "near"));
-                }
-                need.insert((set, helper));
-            }
-        }
-        if need.is_empty() {
-            return;
-        }
-        for rel in ["child", "node"] {
-            self.base(rel);
-        }
-        let v = |s: &str| Term::Var(s.to_owned().into());
-        let atom = |rel: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: rel.to_owned().into(), args: args.into(), neg, gated: false });
-        let child = |p: &str, c: &str| atom("child", vec![v(p), v(c), Term::Wild], false);
-        for (set, helper) in need {
-            let member = format!("rr_in_{set}");
-            if !self.prog.decls.contains_key(member.as_str()) {
-                self.prog.decls.insert(member.clone().into(), [("x".into(), "node".into())].into());
-                let body = vec![atom("node", vec![Term::Wild, v("x"), v("k"), Term::Wild, Term::Wild], false), atom(&set, vec![v("k")], false)];
-                self.prog.rules.push(Rule { head: Atom { rel: member.clone().into(), args: [v("x")].into(), neg: false, gated: false }, body: body.into() });
-            }
-            let is = |x: &str, neg: bool| atom(&member, vec![v(x)], neg);
-            let rel = format!("rr_{helper}_{set}");
-            let me = |args: &[&str]| atom(&rel, args.iter().map(|a| v(a)).collect(), false);
-            let (cols, bodies): (&[&str], Vec<Vec<Literal>>) = match helper {
-                "near" => (&["n", "a"], vec![vec![child("a", "n"), is("a", false)], vec![child("p", "n"), is("p", true), me(&["p", "a"])]]),
-                "anc" => (&["n", "a"], vec![vec![atom(&format!("rr_near_{set}"), vec![v("n"), v("a")], false)], vec![atom(&format!("rr_near_{set}"), vec![v("n"), v("b")], false), me(&["b", "a"])]]),
-                "desc" => (&["n", "a"], vec![vec![is("n", false), child("a", "n")], vec![me(&["n", "p"]), child("a", "p")]]),
-                _ => (&["a"], vec![vec![is("n", false), child("a", "n")], vec![me(&["p"]), child("a", "p")]]),
-            };
-            self.prog.decls.insert(rel.clone().into(), cols.iter().map(|c| ((*c).to_owned(), "node".to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
-            let head = Atom { rel: rel.clone().into(), args: cols.iter().map(|c| v(c)).collect(), neg: false, gated: false };
-            for body in bodies {
-                self.prog.rules.push(Rule { head: head.clone(), body: body.into() });
-            }
-        }
-    }
 
     /// A base relation lowering reads (`child`, `node`), declared, and an input, when the program has not.
     fn base(&mut self, rel: &str) {
@@ -4314,37 +4201,6 @@ impl Lowerer {
         Ok(vec![out])
     }
 
-    /// A rule that reads no relation (an aggregate's helper of comparisons only, `{ e = "a", q = @json_str(e) }`)
-    /// holds once, as in Soufflé: it reads `rr_unit(0)`, one row, since the planner starts every body from an atom.
-    /// A body with an aggregate (`ok(v) :- m = join …, v = @f(m).`) needs none: the planner runs a body of filters and
-    /// aggregates over the relational unit, and the SQL executor maintains it as a scalar rule over its aggregates'
-    /// inputs (a unit atom would hide them from its retained support).
-    fn unit(&mut self) {
-        unit(&mut self.prog);
-    }
-
-    /// The kinds of a unary relation of kinds: its facts, and the kinds of `s` for each rule `set(k) :- s(k)`.
-    fn kinds_of(&self, set: &str, seen: &mut BTreeSet<String>) -> Option<Vec<String>> {
-        if !seen.insert(set.to_owned()) || self.prog.inputs.iter().any(|i| i == set) || self.prog.decls.get(set).is_some_and(|c| c.len() != 1) {
-            return None;
-        }
-        let mut kinds: Vec<String> = Vec::new();
-        for row in self.prog.facts.get(set).into_iter().flatten() {
-            let [Value::Str(k)] = row.as_slice() else { return None };
-            kinds.push(k.to_string());
-        }
-        for r in self.prog.rules.iter().filter(|r| r.head.rel == set) {
-            let ([Term::Var(k)], [Literal::Atom(a)]) = (r.head.args.as_slice(), r.body.as_slice()) else { return None };
-            if a.neg || !matches!(a.args.as_slice(), [Term::Var(v)] if v == k) {
-                return None;
-            }
-            kinds.extend(self.kinds_of(&a.rel, seen)?);
-        }
-        // In the order written, each once.
-        let mut once = BTreeSet::new();
-        kinds.retain(|k| once.insert(k.clone()));
-        Some(kinds)
-    }
 }
 
 /// Whether a term is a float: a decimal number, `to_float(…)`, or arithmetic on one. (A variable's type is not
@@ -5355,6 +5211,150 @@ fn printf_pieces(format: &str, args: &[Term]) -> Option<Term> {
     let mut pieces = pieces.into_iter();
     let first = pieces.next()?;
     Some(pieces.fold(first, |acc, p| Term::Call("concat".into(), [acc, p].into())))
+}
+
+/// Kind sets: the relations of facts given to `nearest`, `inside` and `has`. One read nowhere else is only a set.
+/// A set of kinds that rules derive is no kind set: its axes are rules (`derived_axes`). (A set of nodes is read
+/// as climbs where it is given, `node_axis`.)
+pub fn kind_sets(prog: &mut Program, sets: BTreeSet<String>) -> Result<(), Error> {
+    let mut derived = BTreeSet::new();
+    for set in sets {
+        if prog.kindsets.contains_key(&set) {
+            continue;
+        }
+        let kinds = match members(prog, &set)? {
+            Members::Kinds(kinds) => kinds,
+            Members::Derived => {
+                derived.insert(set);
+                continue;
+            }
+        };
+        prog.kindsets.insert(set, kinds);
+    }
+    // A set no rule reads is no relation of the program; one that rules read (`lfscope(k) :- fscope(k)`) stays
+    // one as well, until those rules go with their own set: to a fixed point, in whatever order the sets come.
+    loop {
+        let unread: Vec<String> = prog
+            .kindsets
+            .keys()
+            .filter(|set| prog.decls.contains_key(set.as_str()) || prog.facts.contains_key(*set) || prog.rules.iter().any(|r| r.head.rel == set.as_str()))
+            .filter(|set| !prog.rules.iter().filter(|r| r.head.rel != set.as_str()).any(|r| r.body.iter().filter_map(Literal::atom).any(|a| a.rel == set.as_str())))
+            .cloned()
+            .collect();
+        if unread.is_empty() {
+            break;
+        }
+        for set in unread {
+            prog.facts.remove(&set);
+            prog.decls.remove(set.as_str());
+            prog.rules.retain(|r| r.head.rel != set);
+        }
+    }
+    derived_axes(prog, &derived);
+    Ok(())
+}
+
+/// What a set holds: its kinds when they are known now (a kind set), else kinds its rules (or an input) give.
+fn members(prog: &Program, set: &str) -> Result<Members, Error> {
+    if let Some(kinds) = kinds_of(prog, set, &mut BTreeSet::new()) {
+        return Ok(Members::Kinds(kinds));
+    }
+    if matches!(prog.decls.get(set).map(|c| c.as_slice()), Some([(_, t)]) if t == "sym") {
+        return Ok(Members::Derived);
+    }
+    Err(Error::Syntax(format!("the kind set {set} is not a relation of kinds (one column of facts, or rules `{set}(k) :- s(k)` over such sets)")))
+}
+
+/// The axes over sets of kinds rules derive, which the transducer cannot read from a node's kind: rules over
+/// `child`, in which each node's membership (`rr_in_<s>(x) :- node(_, x, k, _, _), s(k)`) is read once. A helper
+/// reads its set negated, so the set is complete before it (a lower stratum; a set that depends on its own axis
+/// is refused by the strata).
+/// - `rr_near_<s>(n, a)`, a is n's nearest strict ancestor in s (`nearest`, and `inside(n, _, s)`): down from each
+///   member to the next, a row per node below one;
+/// - `rr_anc_<s>(n, a)`, every strict ancestor a of n in s (`inside`): the chain of nearest ones;
+/// - `rr_desc_<s>(n, a)`, n in s and a any strict ancestor of it (`has`): up from each member;
+/// - `rr_above_<s>(a)`, a has a member strictly below it (`has(a, _, s)`).
+fn derived_axes(prog: &mut Program, derived: &BTreeSet<String>) {
+    let mut need = BTreeSet::new();
+    for rule in &mut prog.rules {
+        for l in &mut rule.body {
+            let (set, helper, args, neg) = match l {
+                Literal::Nearest { n, a, kindset } if derived.contains(kindset) => (kindset.clone(), "near", [Term::Var(n.clone().into()), Term::Var(a.clone().into())].into(), false),
+                Literal::Atom(x) => match axis(&x.rel) {
+                    Some((set, has)) if derived.contains(set) => {
+                        let (helper, args) = match (has, x.args.as_slice()) {
+                            (false, [_, Term::Wild]) => ("near", x.args.clone()),
+                            (false, _) => ("anc", x.args.clone()),
+                            (true, [Term::Wild, a]) => ("above", [a.clone()].into()),
+                            (true, _) => ("desc", x.args.clone()),
+                        };
+                        (set.to_owned(), helper, args, x.neg)
+                    }
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            *l = Literal::Atom(Atom { rel: format!("rr_{helper}_{set}").into(), args: args.into(), neg, gated: false });
+            if helper == "anc" {
+                need.insert((set.clone(), "near"));
+            }
+            need.insert((set, helper));
+        }
+    }
+    if need.is_empty() {
+        return;
+    }
+    for rel in ["child", "node"] {
+        base_relation(prog, rel);
+    }
+    let v = |s: &str| Term::Var(s.to_owned().into());
+    let atom = |rel: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: rel.to_owned().into(), args: args.into(), neg, gated: false });
+    let child = |p: &str, c: &str| atom("child", vec![v(p), v(c), Term::Wild], false);
+    for (set, helper) in need {
+        let member = format!("rr_in_{set}");
+        if !prog.decls.contains_key(member.as_str()) {
+            prog.decls.insert(member.clone().into(), [("x".into(), "node".into())].into());
+            let body = vec![atom("node", vec![Term::Wild, v("x"), v("k"), Term::Wild, Term::Wild], false), atom(&set, vec![v("k")], false)];
+            prog.rules.push(Rule { head: Atom { rel: member.clone().into(), args: [v("x")].into(), neg: false, gated: false }, body: body.into() });
+        }
+        let is = |x: &str, neg: bool| atom(&member, vec![v(x)], neg);
+        let rel = format!("rr_{helper}_{set}");
+        let me = |args: &[&str]| atom(&rel, args.iter().map(|a| v(a)).collect(), false);
+        let (cols, bodies): (&[&str], Vec<Vec<Literal>>) = match helper {
+            "near" => (&["n", "a"], vec![vec![child("a", "n"), is("a", false)], vec![child("p", "n"), is("p", true), me(&["p", "a"])]]),
+            "anc" => (&["n", "a"], vec![vec![atom(&format!("rr_near_{set}"), vec![v("n"), v("a")], false)], vec![atom(&format!("rr_near_{set}"), vec![v("n"), v("b")], false), me(&["b", "a"])]]),
+            "desc" => (&["n", "a"], vec![vec![is("n", false), child("a", "n")], vec![me(&["n", "p"]), child("a", "p")]]),
+            _ => (&["a"], vec![vec![is("n", false), child("a", "n")], vec![me(&["p"]), child("a", "p")]]),
+        };
+        prog.decls.insert(rel.clone().into(), cols.iter().map(|c| ((*c).to_owned(), "node".to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
+        let head = Atom { rel: rel.clone().into(), args: cols.iter().map(|c| v(c)).collect(), neg: false, gated: false };
+        for body in bodies {
+            prog.rules.push(Rule { head: head.clone(), body: body.into() });
+        }
+    }
+}
+
+/// The kinds of a unary relation of kinds: its facts, and the kinds of `s` for each rule `set(k) :- s(k)`.
+fn kinds_of(prog: &Program, set: &str, seen: &mut BTreeSet<String>) -> Option<Vec<String>> {
+    if !seen.insert(set.to_owned()) || prog.inputs.iter().any(|i| i == set) || prog.decls.get(set).is_some_and(|c| c.len() != 1) {
+        return None;
+    }
+    let mut kinds: Vec<String> = Vec::new();
+    for row in prog.facts.get(set).into_iter().flatten() {
+        let [Value::Str(k)] = row.as_slice() else { return None };
+        kinds.push(k.to_string());
+    }
+    for r in prog.rules.iter().filter(|r| r.head.rel == set) {
+        let ([Term::Var(k)], [Literal::Atom(a)]) = (r.head.args.as_slice(), r.body.as_slice()) else { return None };
+        if a.neg || !matches!(a.args.as_slice(), [Term::Var(v)] if v == k) {
+            return None;
+        }
+        kinds.extend(kinds_of(prog, &a.rel, seen)?);
+    }
+    // In the order written, each once.
+    let mut once = BTreeSet::new();
+    kinds.retain(|k| once.insert(k.clone()));
+    Some(kinds)
 }
 
 /// `prog` reading the base relation `rel` (`child`, `node`): declared as the engine declares it, and an input unless a
