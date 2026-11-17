@@ -8,7 +8,7 @@ The 100-execution budget remains unmet. Statement reuse is a separate, documente
 
 The implementation is on `jeremy/async-family-integration-comparison`.
 Read the [design](aggregate-demand-design.md) and [work journal](async-family-integration-journal.md).
-The [evidence](../../packs/data-layer/upstream/benchmarks/authored/async-family-integration/demand-repair/comparison.json) and [provenance](../../packs/data-layer/upstream/benchmarks/authored/async-family-integration/demand-repair/manifest.json) accompany this report.
+The evidence (`packs/data-layer/upstream/benchmarks/authored/async-family-integration/demand-repair/comparison.json`) and provenance (`packs/data-layer/upstream/benchmarks/authored/async-family-integration/demand-repair/manifest.json`) accompany this report.
 
 ## Complete job comparison
 
@@ -43,7 +43,7 @@ It is separate from the unprofiled comparison above.
 The two former binding-existence plans each emitted 1,342,302,187 join outputs.
 Their repaired plans each emit **one** matching witness.
 Across the entire job, each plan reads 19,820 demanded keys and reaches only 54 ancestor candidates before probing bindings.
-The [raw before/after plans](../../packs/data-layer/upstream/benchmarks/authored/async-family-integration/demand-repair/outer-binding-plans.txt) preserve these counters.
+The raw before/after plans (`packs/data-layer/upstream/benchmarks/authored/async-family-integration/demand-repair/outer-binding-plans.txt`) preserve these counters.
 
 The resulting order is:
 

@@ -675,7 +675,7 @@ The cache counters include 5,725 corpus tapes and two rule-program tapes. All ar
 Identity projection still constructs 12,535,139 node identities. These are measured costs, not proven savings from a cache.
 Both runs execute 81 statements. Current VM instructions remain 785,573.
 
-[The checked-in reports](../../packs/data-layer/upstream/benchmarks/authored/async-family-integration/analysis/current-analysis.txt) include the current findings.
+The checked-in reports (`packs/data-layer/upstream/benchmarks/authored/async-family-integration/analysis/current-analysis.txt`) include the current findings.
 The sibling files contain the failing-shape report, raw profiles, test logs, command environments, and source hashes.
 Normal `RERAIL_PROFILE=<directory>` runs produce the analysis automatically. No separate analysis script or experimental engine path is required.
 

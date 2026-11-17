@@ -140,7 +140,7 @@ Whole-job CPU is dominated by syntax batch preparation, so further SQL changes m
 
 ## Evidence
 
-[Recorded profiles, tests, and timings](../../packs/data-layer/upstream/benchmarks/authored/async-family-integration/retained-demands/)
+Recorded profiles, tests, and timings (`packs/data-layer/upstream/benchmarks/authored/async-family-integration/retained-demands`)
 include the failed merged baseline gate and the passing final gate.
 The provenance file records both merged tips, the baseline commit, source hashes, and binary hashes.
 The journal records the merge conflict, compatibility repair, fixture failures, and final measurements.

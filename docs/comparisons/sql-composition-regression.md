@@ -154,7 +154,7 @@ The async workload uses an unbound suffix, and its generated SQL is unchanged by
 The nine composition tests and four retained-demand tests pass.
 The new prefix test checks ordinary text, Unicode, prefixes longer than 4,096 characters, and a mismatching already-bound suffix.
 
-Evidence is in [`shape-regression`](../../packs/data-layer/upstream/benchmarks/authored/async-family-integration/shape-regression/README.md).
+Evidence is in `shape-regression` (`packs/data-layer/upstream/benchmarks/authored/async-family-integration/shape-regression/README.md`).
 
 ## Reproduction
 

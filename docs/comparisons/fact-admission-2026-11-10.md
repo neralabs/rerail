@@ -109,7 +109,7 @@ The store also retains legacy caches listed by the architecture guard. Its allow
 ## Evidence and reproduction
 
 The runner, measurement manifests, SQL plans, and validation logs are in
-[`packs/data-layer/upstream/benchmarks/authored/async-family-integration/fact-admission`](../../packs/data-layer/upstream/benchmarks/authored/async-family-integration/fact-admission/).
+`packs/data-layer/upstream/benchmarks/authored/async-family-integration/fact-admission`.
 The baseline includes only a test-helper compatibility correction over integration `013068e01`.
 The saved native oracle now uses integration's maintained helper instead of a stale copy.
 

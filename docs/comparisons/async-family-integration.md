@@ -239,4 +239,4 @@ The next implementation should have this bounded acceptance sequence:
 The 12-request and 1,886-VM results are diagnostic targets for this corpus, not universal language limits.
 A general compiler may use different operators. It must demonstrate comparable demanded work and preserve the agreed semantics.
 
-See the [journal](async-family-integration-journal.md) and [reproduction package](../../packs/data-layer/upstream/benchmarks/authored/async-family-integration/README.md) for commands, raw results, and provenance.
+See the [journal](async-family-integration-journal.md) and reproduction package (`packs/data-layer/upstream/benchmarks/authored/async-family-integration/README.md`) for commands, raw results, and provenance.
