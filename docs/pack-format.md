@@ -285,7 +285,7 @@ It records the language families, the engine capabilities, the pinned tools and,
 It records:
 
 - the language family, or the families for a pack whose ports span languages (complexity's
-  `["python", "ecma", "php", "blade", "rust", "vue"]`);
+  `["python", "ecma", "php", "blade", "rust", "vue", "java"]`);
 - the engine capabilities the pack declares, with exemptions and their evidence;
 - the pinned tools;
 - per ported rule: the upstream tool and rule it reproduces, how findings compare (`line` or `line+column`), and the

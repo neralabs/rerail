@@ -91,6 +91,8 @@ A CI runner starts with an empty Rerail home. Install packs, approve **from the 
 change under review), then scan the change:
 
 ```sh
+# rerail scan without --session refuses unless this is set (internal testing).
+export RERAIL_EXPERIMENTAL_HEADLESS_SCAN=1
 # Rerail's own packs from npm: no approval needed.
 rerail packs add typescript complexity
 # A pack kept in the repository: install it from the base branch's checkout, then approve that version.
