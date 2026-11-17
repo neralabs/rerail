@@ -30,6 +30,7 @@ mod block;
 mod kinds;
 mod lex;
 mod parse;
+pub mod pp;
 
 #[cfg(test)]
 mod oracle;

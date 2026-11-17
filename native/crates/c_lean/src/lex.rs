@@ -211,7 +211,7 @@ pub fn word(src: &[u8], i: usize, end: usize) -> u8 {
 
 
 /// The character at `at` (a UTF-8 lead byte at or past 0x80) and its length.
-fn decode(src: &[u8], at: usize) -> Option<(char, usize)> {
+pub(crate) fn decode(src: &[u8], at: usize) -> Option<(char, usize)> {
     let s = std::str::from_utf8(&src[at..(at + 4).min(src.len())]).or_else(|e| std::str::from_utf8(&src[at..at + e.valid_up_to()])).ok()?;
     let c = s.chars().next()?;
     Some((c, c.len_utf8()))
@@ -636,6 +636,18 @@ impl<'s> Lexer<'s> {
         Ok((kind, s + len, 0))
     }
 
+    /// The punctuator at `s` (the preprocessor's reading): its kind and end, `None` where none
+    /// starts there. `#`, digraphs and a `.` before a digit are the caller's.
+    pub(crate) fn punct(&self, s: usize) -> Option<(T, usize)> {
+        if s >= self.src.len() || !b"()[]{};,~?:.=!+-*/%^&|<>".contains(&self.src[s]) {
+            return None;
+        }
+        match self.token_at(s) {
+            Ok((k, e, _)) if !matches!(k, T::Number | T::Eof) => Some((k, e)),
+            _ => None,
+        }
+    }
+
     /// `token_at`'s tokens that are no punctuator: names, numbers, literals, directives (and a
     /// refusal), outlined so that punctuation is read with no frame to save.
     #[inline(never)]
@@ -727,7 +739,7 @@ impl<'s> Lexer<'s> {
     }
 
     /// The end of a raw string whose `"` ends at `i`: `d(` … `)d"`.
-    fn raw_end(&self, i: usize) -> Option<usize> {
+    pub(crate) fn raw_end(&self, i: usize) -> Option<usize> {
         let mut k = i;
         while k < self.src.len() && !matches!(self.src[k], b'(' | b')' | b'\\' | b' ' | b'\t' | b'\n' | b'"') && k - i <= 16 {
             k += 1;
