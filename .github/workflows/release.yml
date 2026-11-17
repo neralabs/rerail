@@ -28,6 +28,9 @@ name: Release
 # Release, with the version's CHANGELOG.md section as its notes, beside the npm publish rather than after it: the
 # Release is this repository's, and npm being slow to publish or to serve the version can neither hold it back nor skip
 # it. After a put-back, the same job makes the version put back the repository's latest release.
+#
+# After a `latest` release or a put-back, the reviewer-rerail job opens a pull request moving the automated reviewer's
+# Rerail module to that version (docs/release.md, "The reviewer's Rerail").
 
 on:
   workflow_dispatch:
@@ -420,3 +423,99 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASED: ${{ inputs.latest && format('@neralabs/rerail@{0}:latest', inputs.latest) || format('@neralabs/rerail@{0}:{1}', needs.metadata.outputs.version, needs.metadata.outputs.channel) }}
         run: node scripts/release/github-release.mjs
+
+  # Opens a pull request that moves the automated reviewer's Rerail module to the version `latest` now names: after a
+  # `latest` release npm reads back, and after a put-back. A person approves it, so a release whose scan the reviewer
+  # can't run never reaches it unseen. It changes `.github/workflows/reviewer.yml`, which only a token with `workflows`
+  # write may push, so this job mints the neralabs-ci app's token with it (the app's installation must grant
+  # Workflows: write) and runs nothing from the repository's packages: a checkout of main, one `sed`, and a check that
+  # the diff is that one line. One branch, auto/bump-reviewer-rerail, which the ruleset protecting auto/bump-* lets only
+  # the app push: a later release force-pushes it and rewrites the open pull request rather than opening another.
+  reviewer-rerail:
+    name: Reviewer's Rerail pull request
+    needs: [metadata, dist-tags, put-back]
+    if: >-
+      ${{
+        !cancelled() && (
+          needs.put-back.result == 'success' ||
+          (needs.metadata.outputs.channel == 'latest' && needs.dist-tags.result == 'success')
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - id: app-token
+        name: Get the neralabs-ci app token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+
+      - id: pin
+        name: Move rerail_package to the release
+        env:
+          VERSION: ${{ inputs.latest || needs.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/reviewer.yml
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::${VERSION} is not a stable version"
+            exit 1
+          fi
+          line='^ +rerail_package: "@neralabs/rerail@[^"]+"$'
+          if [ "$(grep -cE "$line" "$workflow")" != 1 ]; then
+            echo "::error::${workflow} has no single rerail_package line naming @neralabs/rerail@<version>"
+            exit 1
+          fi
+          sed -E -i "s|^( +rerail_package: \"@neralabs/rerail@)[^\"]+(\")$|\1${VERSION}\2|" "$workflow"
+          if git diff --quiet; then
+            echo "The reviewer already installs Rerail ${VERSION}."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$(git diff --numstat)" != "$(printf '1\t1\t%s' "$workflow")" ]; then
+            git diff
+            echo "::error::moving rerail_package changed more than its one line"
+            exit 1
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      # The commit is the app's bot user's, as GitHub attributes it.
+      - name: Open or update the pull request
+        if: steps.pin.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          BOT: ${{ steps.app-token.outputs.app-slug }}[bot]
+          VERSION: ${{ inputs.latest || needs.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          branch=auto/bump-reviewer-rerail
+          git config user.name "$BOT"
+          id="$(gh api "/users/${BOT}" --jq .id)"
+          git config user.email "${id}+${BOT}@users.noreply.github.com"
+          git switch --force-create "$branch"
+          git commit --quiet --all --message "Reviewer: the Rerail module installs Rerail ${VERSION}"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${branch}"
+          body="$RUNNER_TEMP/reviewer-rerail.md"
+          cat > "$body" <<BODY
+          \`latest\` now names \`@neralabs/rerail@${VERSION}\`, so the automated reviewer's Rerail module moves to it (\`rerail_package\` in \`.github/workflows/reviewer.yml\`). Opened by ${GITHUB_WORKFLOW} [run ${GITHUB_RUN_ID}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}).
+
+          The reviewer runs from main, so merging this moves every later review onto ${VERSION}. Before approving, check the release's notes for a change to how the reviewer's module installs Rerail or runs its scan (\`rerail scan\`, \`rerail packs add\`, \`rerail rules approve\`). If there is one, first move the reviewer's own pin (\`uses:\` and \`reviewer_ref\`) to a release that handles it, in a pull request of its own: only the app pushes this branch.
+          BODY
+          number="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$number" ]; then
+            gh pr edit "$number" --title "Reviewer: the Rerail module installs Rerail ${VERSION}" --body-file "$body"
+          else
+            gh pr create --head "$branch" --base main --title "Reviewer: the Rerail module installs Rerail ${VERSION}" --body-file "$body"
+          fi

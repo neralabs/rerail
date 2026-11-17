@@ -7,10 +7,10 @@
 //     no type fails the run, naming it: one `changeset version` bumps every pack, so no pack can wait for its rename.
 //   - Core: when core's version is released (its `v<version>` tag exists) and anything core ships has changed since
 //     that tag (coreChanges in core-paths.mjs), the next version (nextCoreVersion) in package.json and package-lock.json's
-//     root entries, the installer plugins' pins of it (PLUGIN_PINS), the reviewer's Rerail when the version is
-//     stable (REVIEWER_PIN), and the root CHANGELOG.md's section for it, dated today: the lead under the unreleased
-//     heading and the entries pending in .changelog/ by change type, whose files it deletes. A version not tagged
-//     yet is a release under way (release-pr.yml tags it before this runs), so core is left alone.
+//     root entries, the installer plugins' pins of it (PLUGIN_PINS), and the root CHANGELOG.md's section for it, dated
+//     today: the lead under the unreleased heading and the entries pending in .changelog/ by change type, whose files it
+//     deletes. A version not tagged yet is a release under way (release-pr.yml tags it before this runs), so core is
+//     left alone.
 //   - Core ranges: a pack this run releases that an older core cannot load (core.mjs: a rule held off, a rule in a
 //     language added since) has its core range raised to leave those cores out, in its package.json and in
 //     package-lock.json, once core is at the release that first loads it. The description lists each; a pack that needs
@@ -27,7 +27,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, posix } from "node:path";
-import { admitsRefusingCore, changelogEntryTypeRefusal, changelogLead, changelogSection, CORE_NAME, coreBeforeFloor, coreFloor, coreTag, coreTagRefusal, heldOffRules, isOpenRange, nextCoreVersion, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, REVIEWER_PIN, setLockVersion, setPackageVersion, setPluginVersion, setReviewerRerailVersion, shippedLanguages } from "./core.mjs";
+import { admitsRefusingCore, changelogEntryTypeRefusal, changelogLead, changelogSection, CORE_NAME, coreBeforeFloor, coreFloor, coreTag, coreTagRefusal, heldOffRules, isOpenRange, nextCoreVersion, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages } from "./core.mjs";
 import { coreChanges } from "./core-paths.mjs";
 import { packRuleChanges, packRuleNotes, packRules, releasedPackChangelog } from "./pack-changelog.mjs";
 import { changesetNotes, changesetTypeRefusal, listPacks, readChangesets, ROOT } from "./packs.mjs";
@@ -166,7 +166,6 @@ function versionCore() {
   writeFileSync(join(ROOT, "package.json"), setPackageVersion(readText("package.json"), version));
   writeFileSync(join(ROOT, "package-lock.json"), `${JSON.stringify(setLockVersion(JSON.parse(readText("package-lock.json")), version), null, 2)}\n`);
   for (const path of PLUGIN_PINS) writeFileSync(join(ROOT, path), setPluginVersion(readText(path), version));
-  writeFileSync(join(ROOT, REVIEWER_PIN), setReviewerRerailVersion(readText(REVIEWER_PIN), version));
   writeFileSync(join(ROOT, "CHANGELOG.md"), changelog.text);
   for (const { path } of pending) rmSync(join(ROOT, path));
   console.log(`core ${current} -> ${version}: ${changes.length} shipped path(s) changed since ${tag}`);

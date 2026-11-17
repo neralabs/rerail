@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import semver from "semver";
 import { afterEach, describe, expect, it } from "vitest";
 import { changesPackage, coreChanges, lockChangesCore, matrixChanges, publishRetryRefusal, retrySummary, shipsWithCore } from "../../scripts/release/core-paths.mjs";
-import { admitsRefusingCore, CHANGE_TYPES, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreBeforeFloor, coreFloor, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, HELD_OFF_SINCE, heldOffRules, isOpenRange, LANGUAGE_SINCE, newChangelogEntries, nextCoreVersion, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, REVIEWER_PIN, reviewerRerailVersion, setLockVersion, setPackageVersion, setPluginVersion, setReviewerRerailVersion, shippedLanguages, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
+import { admitsRefusingCore, CHANGE_TYPES, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreBeforeFloor, coreFloor, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, HELD_OFF_SINCE, heldOffRules, isOpenRange, LANGUAGE_SINCE, newChangelogEntries, nextCoreVersion, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
 import { RELEASE_NOTE_WORDS, releaseNoteRefusal } from "../../scripts/release/release-notes.mjs";
 import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, previewRefusal, raiseNext } from "../../scripts/release/dist-tags.mjs";
 import { linkFolder } from "../support/platform/links.ts";
@@ -408,24 +408,6 @@ describe("the installer plugins' pins of core", () => {
     expect(setPluginVersion(manifest, "0.1.1")).toBe(manifest.replace('"0.1.0"', '"0.1.1"'));
     const skill = "Run `npx @neralabs/rerail@0.1.0 setup`, then:\n\nnpx --yes @neralabs/rerail@0.1.0 setup --relay\n\nnot @neralabs/rerail-pack-sql@0.1.4";
     expect(setPluginVersion(skill, "0.2.0")).toBe(skill.replaceAll("rerail@0.1.0", "rerail@0.2.0"));
-  });
-});
-
-describe("the reviewer's pin of core", () => {
-  it("is the newest stable core: package.json's version, or below a preview it names", () => {
-    const { version } = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
-    const pinned = reviewerRerailVersion(readFileSync(join(ROOT, REVIEWER_PIN), "utf8"));
-    expect(pinned, `${REVIEWER_PIN}'s rerail_package`).toBeDefined();
-    expect(semver.prerelease(pinned), pinned).toBeNull();
-    if (semver.prerelease(version) === null) expect(pinned).toBe(version);
-    else expect(semver.lt(pinned, version), `${pinned} < ${version}`).toBe(true);
-  });
-
-  it("moves rerail_package to a stable version, not to a preview, and leaves the rest alone", () => {
-    const workflow = '      # Rerail is @neralabs/rerail@0.1.0 here\n      modules: rerail\n      rerail_package: "@neralabs/rerail@0.1.0"\n      rerail_packs: complexity\n';
-    expect(setReviewerRerailVersion(workflow, "0.1.1")).toBe(workflow.replace('rerail@0.1.0"', 'rerail@0.1.1"'));
-    expect(setReviewerRerailVersion(workflow, "0.2.0-next.1")).toBe(workflow);
-    expect(reviewerRerailVersion(setReviewerRerailVersion(workflow, "0.1.1"))).toBe("0.1.1");
   });
 });
 

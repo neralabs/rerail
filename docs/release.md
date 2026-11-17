@@ -90,10 +90,12 @@ releases. Nothing in CI reads them: the checklist is the merger's word (`BEFORE_
 
 ### The reviewer's Rerail
 
-The same bump moves the version the automated reviewer's Rerail module installs (`rerail_package` in
-`.github/workflows/reviewer.yml`, `REVIEWER_PIN` in `scripts/release/core.mjs`), so it scans with the newest stable
-release. A preview (`-next.N`) leaves it where it is. Until the release is on npm, the module's install fails and
-the review goes on without the scan.
+Once a version is published under `latest` (or put back there), `release.yml` opens a pull request that moves the
+automated reviewer's Rerail module to it: `rerail_package` in `.github/workflows/reviewer.yml`, on the branch
+`auto/bump-reviewer-rerail`. A later release rewrites that pull request rather than opening another. Approve it once
+the release's notes show nothing that changes how the reviewer installs Rerail or runs its scan. The pull request
+changes a workflow, so the job pushes with the neralabs-ci app's token with `workflows` write, and the app's installation
+must grant Workflows: write.
 
 ### Installer plugins
 
