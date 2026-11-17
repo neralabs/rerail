@@ -715,6 +715,40 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     expect(closed).toHaveBeenCalledTimes(3);
   });
 
+  it("holds at most four workspaces of other worktrees at once while it audits a Log batch across six, and records each", async () => {
+    const { databasePath, session, worktree, root } = await repositoryWithWorktree(outside);
+    const worktrees = [worktree];
+    for (let i = 1; i < 6; i += 1) {
+      git(session, "worktree", "add", "--quiet", "-b", `more-${i}`, join(root, "elsewhere", `more-${i}`));
+      worktrees.push(await realpath(join(root, "elsewhere", `more-${i}`)));
+    }
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+    // Each workspace the lanes prepare names its root once, and closes once it goes.
+    const native = loadNativeBinding().CodeRuleDslWorkspace.prototype;
+    const { setRoot, close } = native;
+    const open = new Set<object>();
+    let most = 0;
+    const named = vi.spyOn(native, "setRoot").mockImplementation(function (this: typeof native, ...args: unknown[]) {
+      open.add(this);
+      most = Math.max(most, open.size);
+      setRoot.call(this, String(args[0]));
+    });
+    const closed = vi.spyOn(native, "close").mockImplementation(function (this: typeof native) {
+      open.delete(this);
+      close.call(this);
+    });
+    cleanups.push(async () => { named.mockRestore(); closed.mockRestore(); });
+    await auditor.openWorkspace("turns");
+    const edits = worktrees.map(path => ({ path: join(path, "api", "x.py"), language: "python" as const, generatedText: "NEEDLE\n" }));
+
+    await auditor.auditGeneratedEdits("turns", { revision: 1, checkpoints: ["edit"], mode: "log", edits });
+    await auditor.settleGeneratedEdits();
+    expect(violations(audits).map(found => found.checkout).toSorted()).toEqual(worktrees.toSorted());
+    // The session's own lane and four of the others': a workspace holds its checkout's index.
+    expect(most).toBeLessThanOrEqual(5);
+  });
+
   it("keeps the workspace of a worktree's lane that the session's own edit reached", async () => {
     const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
     const { recorder, audits } = recordingAudits();
