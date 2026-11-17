@@ -540,6 +540,28 @@ thread_local! {pub static KEEP_NODE_COMPARISONS: std::cell::Cell<bool> = const {
 /// The relation of each node's preorder key (`syntax`'s `node_order(n, k)`).
 const NODE_ORDER: &str = "node_order";
 
+/// Whether node comparisons are made by `node_order` (`order_nodes`, and its version form): under node ids per
+/// definition, unless a test keeps them as written, or a measurement compares the ids themselves.
+pub fn orders_nodes() -> bool {
+    if !crate::code_rule_dsl::facts::vtab::syntax::definition_ids() {
+        return false;
+    }
+    #[cfg(any(test, feature = "test-hooks"))]
+    if KEEP_NODE_COMPARISONS.get() {
+        return false;
+    }
+    // A measurement, never a mode to run in: comparisons of the node ids themselves, which an edit leaves alone outside
+    // the granules it touches but which are not in preorder. What a stable order key could save at most.
+    if std::env::var_os("RERAIL_ORDER_RAW").is_some() {
+        crate::code_rule_dsl::logic::profile::decision("node comparisons (RERAIL_ORDER_RAW)", || "node ids compared as they are, not by node_order: a measurement only".into());
+        return false;
+    }
+    true
+}
+
+/// The relation of each node's preorder key, as `order_nodes` reads it.
+pub const NODE_ORDER_REL: &str = NODE_ORDER;
+
 /// Rules that order nodes, under node ids per definition (decision 0094 §2). An id follows preorder only inside its
 /// granule, so a comparison of two nodes (`b < n`: a binding before a use) and a `min`/`max` over nodes read the
 /// nodes' preorder keys instead (`node_order`): the order preorder ids gave, so the rule means what it did.
@@ -549,17 +571,7 @@ const NODE_ORDER: &str = "node_order";
 ///
 /// A variable is a node when a column it fills is declared `node`: in the head or any atom of the body.
 fn order_nodes(prog: &mut Program) {
-    if !crate::code_rule_dsl::facts::vtab::syntax::definition_ids() {
-        return;
-    }
-    #[cfg(any(test, feature = "test-hooks"))]
-    if KEEP_NODE_COMPARISONS.get() {
-        return;
-    }
-    // A measurement, never a mode to run in: comparisons of the node ids themselves, which an edit leaves alone outside
-    // the granules it touches but which are not in preorder. What a stable order key could save at most.
-    if std::env::var_os("RERAIL_ORDER_RAW").is_some() {
-        crate::code_rule_dsl::logic::profile::decision("node comparisons (RERAIL_ORDER_RAW)", || "node ids compared as they are, not by node_order: a measurement only".into());
+    if !orders_nodes() {
         return;
     }
     let decls = prog.decls.clone();
@@ -665,8 +677,28 @@ fn order_nodes(prog: &mut Program) {
 
 /// The checks and additions every program gets once parsed, whatever its syntax (this one or `.rr`, `logic::rr`):
 /// no computed term in a body atom, bounded lattices, the tree axes' input relations, bounded value cycles.
-pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Error> {
+pub fn finish(mut prog: Program) -> Result<Program, Error> {
     order_nodes(&mut prog);
+    declare_axes(&mut prog);
+    finish_checks(&prog)?;
+    Ok(prog)
+}
+
+/// The tree axes' relations a rule reads and the program does not declare, declared as inputs: the transducer makes
+/// them (`finish`).
+pub fn declare_axes(prog: &mut Program) {
+    let axes: Vec<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.to_string()).filter(|r| is_axis(r)).collect();
+    for rel in axes {
+        if !prog.decls.contains_key(rel.as_str()) {
+            prog.decls.insert(rel.clone().into(), [("n".into(), "node".into()), ("a".into(), "node".into())].into());
+            prog.inputs.push(rel);
+        }
+    }
+}
+
+/// `finish`'s checks, of the program its rewrites made: no computed term in a body atom, bounded lattices, every
+/// input declared, bounded value cycles, the caches' form.
+pub fn finish_checks(prog: &Program) -> Result<(), Error> {
     for rule in &prog.rules {
         // A computed term is a value, not a pattern: an atom never matches on one (the backends would drop it).
         if let Some(a) = rule.body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None })
@@ -683,24 +715,16 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
             return Err(Error::UnboundedLattice { relation: relation.clone() });
         }
     }
-    // The tree axes' relations are inputs, made by the transducer.
-    let axes: Vec<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.to_string()).filter(|r| is_axis(r)).collect();
-    for rel in axes {
-        if !prog.decls.contains_key(rel.as_str()) {
-            prog.decls.insert(rel.clone().into(), [("n".into(), "node".into()), ("a".into(), "node".into())].into());
-            prog.inputs.push(rel);
-        }
-    }
     // An input's columns are its declaration's: the planner reads them.
     if let Some(relation) = prog.inputs.iter().find(|rel| !prog.decls.contains_key(rel.as_str())) {
         return Err(Error::UndeclaredInput { relation: relation.clone() });
     }
     let checking = crate::code_rule_dsl::logic::profile::span(|| "check the program's cycles and caches".to_owned());
-    cycles::check(&prog)?;
+    cycles::check(prog)?;
     // A cache is two rules (decision 0103): a broken form refuses the program.
-    caches::caches(&prog)?;
+    caches::caches(prog)?;
     drop(checking);
-    Ok(prog)
+    Ok(())
 }
 
 /// A program to run reads only relations it declares or the transducer makes: else an error, as in Soufflé, not a

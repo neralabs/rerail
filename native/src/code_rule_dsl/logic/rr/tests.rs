@@ -3986,3 +3986,33 @@ fn aggregate_demand_is_placed_on_the_version() {
     let s: Vec<&String> = rules.iter().filter(|x| x.starts_with("s(")).collect();
     assert!(s.iter().all(|x| x.contains("!") && !x.contains("count")), "a count of zero is an anti-join: {s:?}");
 }
+
+/// `front::finish`'s rewrites run on a modular text's version (decision 0281's path, step 7b): two nodes compared
+/// by their preorder keys (`node_order`), a `max` over nodes taken through a helper (`rr_ordered0`), as the tree's
+/// `order_nodes` makes them, and a tree axis read declared an input (`declare_axes`); a debug build checks the
+/// image against the tree's (`link_seeded_version`).
+#[test]
+fn finishs_rewrites_run_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl xs(n: node)\n.decl before(a: node, b: node)\n.decl last(n: node)\n.decl owner(n: node, a: node)\n",
+        ".output before, last, owner\n",
+        "xs(n) :- kind(n, \"identifier\").\n",
+        "before(a, b) :- xs(a), xs(b), a < b.\n",
+        "last(m) :- m = max k : { xs(k) }.\n",
+        "owner(n, a) :- xs(n), inside(n, a, \"module\").\n",
+    );
+    assert!(crate::code_rule_dsl::logic::front::orders_nodes(), "node ids per definition");
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
+    let before = rules.iter().find(|x| x.starts_with("before(")).expect("before's rule");
+    assert!(before.contains("node_order("), "{before}");
+    assert!(rules.iter().any(|x| x.starts_with("rr_ordered0(")), "the max's helper: {rules:#?}");
+    let head = v.header(&Default::default()).unwrap();
+    let owner = rules.iter().find(|x| x.starts_with("owner(")).expect("owner's rule");
+    let axis = owner.split(|c: char| !(c.is_alphanumeric() || c == '_')).find(|w| w.starts_with("rr_inside_")).unwrap_or_else(|| panic!("an axis read: {owner}"));
+    assert!(head.inputs.iter().any(|i| i == axis) && head.decls.contains_key(axis), "the axis {axis} an input: {:?}", head.inputs);
+}

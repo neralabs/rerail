@@ -948,8 +948,8 @@ pub fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<Stri
 
 /// A lowered program's image (decision 0173): its rules, declarations, facts and `.about` rows.
 /// `program` as a version, opened from the image the store keeps of it (`encode_program`).
-/// `lower::link_seeded` as a version (decision 0281's path, step 7b): the program made a version before `whole()`'s
-/// tail (`lower::link_seeded_front`), the tail run on it as program passes (`preparation::lowering_tail` and
+/// `lower::link_seeded` as a version (decision 0281's path, step 7b): the program made a version before `front::finish`
+/// and `whole()`'s tail (`lower::link_seeded_front`), the tail run on it as program passes (`preparation::lowering_tail` and
 /// `DropRepeated`: aggregate demand, `unit`, the sets, then the widened contexts), then the
 /// scope's declarations taken out of its header (`lower::unseed`). A debug build runs the tree's tail beside it and
 /// checks the two images agree.
@@ -958,6 +958,13 @@ fn link_seeded_version(m: lower::Module, seeds: &lower::Seeds, core: &BTreeSet<S
     let program = lower::link_seeded_front(m, seeds)?;
     let v = version_of(&program)?;
     let mut p = Pipeline::new("the lowering's tail", v);
+    {
+        use super::plan::corpus::preparation::lowering_tail;
+        p.program(&mut lowering_tail::OrderNodes).program(&mut lowering_tail::DeclareAxes);
+        // `finish`'s checks, through the tree (work queue Q83): `cycles::check` reads a tree.
+        let finished = p.current().map_err(Error::Syntax)?.program(&Default::default()).map_err(Error::Syntax)?;
+        super::front::finish_checks(&finished)?;
+    }
     {
         use super::plan::corpus::preparation::{DropRepeated, lowering_tail};
         let _demand = crate::code_rule_dsl::logic::profile::span(|| "aggregate demand and sets".to_owned());
@@ -980,7 +987,7 @@ fn link_seeded_version(m: lower::Module, seeds: &lower::Seeds, core: &BTreeSet<S
     let (v, _) = b.finish().map_err(Error::Syntax)?;
     #[cfg(debug_assertions)]
     {
-        let mut tree = program;
+        let mut tree = super::front::finish(program)?;
         super::rr::aggregate_demand::optimize(&mut tree);
         lower::unit(&mut tree);
         lower::sets(&mut tree);

@@ -626,7 +626,12 @@ step 3 replaces what is under the writer.
      and taken out where refused; the helpers' rules gain their demand where they stand and the demand rules follow,
      the tree's order; then a count of zero read once an anti-join). `whole()`'s tail is all on the version, which is
      made right after `front::finish`. Test: `aggregate_demand_is_placed_on_the_version` (fails with placement off);
-     ep2's 317 policies, 60 of them aggregating: 0 rows, every check passes. Next: `front::finish`.
+     ep2's 317 policies, 60 of them aggregating: 0 rows, every check passes. Then `front::finish`: its rewrites on
+     the version (`lowering_tail::OrderNodes`, nodes compared by `node_order` and a `min`/`max` over nodes through a
+     helper, with `RuleBuilder::agg` to write the helper's aggregate; `DeclareAxes`), its checks through a decoded
+     tree for now (`front::finish_checks`; work queue Q83: `cycles::check` reads a tree). A text's version is made
+     from the lowerer's program as `whole()` leaves it. Test: `finishs_rewrites_run_on_the_version` (each pass left
+     out fails it); ep2's 317 policies: 0 rows, every check passes. Next: the rest of `whole()`.
    - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.

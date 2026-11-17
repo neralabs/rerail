@@ -1,6 +1,6 @@
-//! The lowering's whole-program tail on the version (decision 0281's path, step 7b): the passes `whole()` runs once
-//! the program is finished, each one for one with its tree form in `rr::lower`, which a debug build runs beside it
-//! (`rr::link_seeded_version`).
+//! The lowering's whole-program tail on the version (decision 0281's path, step 7b): `front::finish`'s rewrites and
+//! the passes `whole()` runs once the program is finished, each one for one with its tree form in `front` and
+//! `rr::lower`, which a debug build runs beside it (`rr::link_seeded_version`).
 
 use crate::code_rule_dsl::logic::plan::body::{Body, VarSet, lit_vars};
 use crate::code_rule_dsl::logic::program_image::build::T;
@@ -695,4 +695,224 @@ fn placed_version(input: &std::sync::Arc<Version>, was: &crate::code_rule_dsl::l
         write_demand(&mut b, input, p, d)?;
     }
     b.finish_overlay()
+}
+
+/// `front::order_nodes` on the version (see there): under node ids per definition, two nodes compared by their
+/// preorder keys (`node_order`), and a `min`/`max` over nodes taken over the keys through a helper
+/// (`rr_ordered<k>`, written after the program's rules, as the tree pushes it). Fresh variables are numbered over
+/// the program in rule order, as the tree's are.
+pub struct OrderNodes;
+
+/// What a literal of a rule becomes.
+enum Ordered {
+    Keep(u32),
+    /// `x op y` over nodes: `node_order(x, kx), node_order(y, ky), kx op ky`.
+    Cmp { x: Slot, y: Slot, op: crate::code_rule_dsl::logic::program_image::CmpOp, k: usize },
+    /// `var = op o : { atom }` over a node `o`: `kv = op k : { helper(args, k) }, node_order(var, kv)`.
+    Agg { lit: u32, var: Slot, o: Slot, op: crate::code_rule_dsl::logic::front::AggOp, k: usize, helper: usize, args: Vec<Slot> },
+}
+
+impl ProgramPass for OrderNodes {
+    const NAME: &'static str = "order the nodes compared";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::logic::front::AggOp;
+        use crate::code_rule_dsl::logic::program_image::{AggRef, AtomRef, CmpOp};
+        if !crate::code_rule_dsl::logic::front::orders_nodes() {
+            return Ok(());
+        }
+        let v = cx.v();
+        let was = v.header(&Default::default())?;
+        let typed = |a: AtomRef<'_>, nodes: &mut BTreeSet<Slot>| {
+            let cols = was.decls.get(v.rel_name(a.rel())).map_or(&[][..], |c| c.as_slice());
+            for (t, (_, ty)) in a.args().zip(cols) {
+                if let TermRef::Var(s) = t
+                    && ty == "node"
+                {
+                    nodes.insert(s);
+                }
+            }
+        };
+        let op_of = |op: AggRef<'_>| match op {
+            AggRef::Min => Some(AggOp::Min),
+            AggRef::Max => Some(AggOp::Max),
+            _ => None,
+        };
+        let mut fresh = 0usize;
+        let mut helpers = 0usize;
+        let mut plans: BTreeMap<RuleId, Vec<Ordered>> = BTreeMap::new();
+        for r in v.rules() {
+            let mut nodes = BTreeSet::new();
+            typed(r.head(), &mut nodes);
+            for l in r.body() {
+                match l.view() {
+                    L::Atom(a) => typed(a, &mut nodes),
+                    L::Agg { atom, .. } => typed(atom, &mut nodes),
+                    L::Nearest { n, a, .. } => {
+                        nodes.insert(n);
+                        nodes.insert(a);
+                    }
+                    _ => {}
+                }
+            }
+            // A min or max over nodes is a node.
+            for l in r.body() {
+                if let L::Agg { var, op, over: Some(o), atom } = l.view()
+                    && op_of(op).is_some()
+                {
+                    let mut inner = BTreeSet::new();
+                    typed(atom, &mut inner);
+                    if inner.contains(&o) {
+                        nodes.insert(var);
+                    }
+                }
+            }
+            if nodes.is_empty() {
+                continue;
+            }
+            let mut plan = Vec::new();
+            let mut changed = false;
+            for l in r.body() {
+                match l.view() {
+                    L::Cmp { l: TermRef::Var(x), op, r: TermRef::Var(y) } if matches!(op, CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge) && nodes.contains(&x) && nodes.contains(&y) => {
+                        plan.push(Ordered::Cmp { x, y, op, k: fresh });
+                        fresh += 2;
+                        changed = true;
+                    }
+                    L::Agg { var, op, over: Some(o), atom } if op_of(op).is_some() && {
+                        let mut inner = BTreeSet::new();
+                        typed(atom, &mut inner);
+                        inner.contains(&o)
+                    } =>
+                    {
+                        // The rows aggregated, each with its node's key: the atom's variables once each, but the node.
+                        let mut args: Vec<Slot> = Vec::new();
+                        for t in atom.args() {
+                            if let TermRef::Var(s) = t
+                                && s != o
+                                && !args.contains(&s)
+                            {
+                                args.push(s);
+                            }
+                        }
+                        plan.push(Ordered::Agg { lit: l.node(), var, o, op: op_of(op).expect("min or max"), k: fresh, helper: helpers, args });
+                        fresh += 2;
+                        helpers += 1;
+                        changed = true;
+                    }
+                    _ => plan.push(Ordered::Keep(l.node())),
+                }
+            }
+            if changed {
+                plans.insert(r.id(), plan);
+            }
+        }
+        if plans.is_empty() {
+            return Ok(());
+        }
+        let node_order = crate::code_rule_dsl::logic::front::NODE_ORDER_REL;
+        let ord = |k: usize| format!("rr_ord{k}");
+        let mut head = was.clone();
+        let input = std::sync::Arc::clone(w.input());
+        // The helpers' declarations, in the order they are made.
+        let mut made: Vec<(RuleId, u32, usize, Vec<Slot>, usize)> = Vec::new();
+        for (id, plan) in &plans {
+            for o in plan {
+                if let Ordered::Agg { lit, k, helper, args, .. } = o {
+                    made.push((*id, *lit, *helper, args.clone(), *k));
+                }
+            }
+        }
+        made.sort_by_key(|m| m.2);
+        for (id, lit, helper, _, _) in &made {
+            let L::Agg { atom, over: Some(o), .. } = lit_at(&input, *id, *lit).view() else { return Err("an ordered aggregate".into()) };
+            let cols = was.decls.get(input.rel_name(atom.rel())).cloned().unwrap_or_default();
+            let mut seen: Vec<Slot> = Vec::new();
+            let mut decl: Vec<(String, String)> = Vec::new();
+            for (i, t) in atom.args().enumerate() {
+                if let TermRef::Var(s) = t
+                    && s != o
+                    && !seen.contains(&s)
+                {
+                    seen.push(s);
+                    decl.push((format!("c{i}"), cols.get(i).map_or_else(|| "int".to_owned(), |(_, ty)| ty.to_string())));
+                }
+            }
+            decl.push(("k".to_owned(), "int".to_owned()));
+            head.decls.insert(format!("rr_ordered{helper}").into(), decl.iter().map(|(c, t)| (c.as_str().into(), t.as_str().into())).collect());
+        }
+        head.decls.entry(node_order.to_owned().into()).or_insert_with(|| [("n".into(), "node".into()), ("k".into(), "int".into())].into());
+        if !head.inputs.iter().any(|i| i == node_order) {
+            head.inputs.push(node_order.to_owned());
+        }
+        let names: Vec<String> = (0..helpers).map(|h| format!("rr_ordered{h}")).collect();
+        let b = w.derive()?;
+        b.set_header(&was, &head);
+        use crate::code_rule_dsl::logic::program_image::build::t_of;
+        for r in input.rules() {
+            let Some(plan) = plans.get(&r.id()) else {
+                b.keep(&input, r);
+                continue;
+            };
+            let mut rb = b.rule().source(r.id()).head_from(&input, r, r.head());
+            for o in plan {
+                rb = match o {
+                    Ordered::Keep(n) => rb.lit(&input, r, lit_at(&input, r.id(), *n)),
+                    Ordered::Cmp { x, y, op, k } => {
+                        let (kx, ky) = (ord(*k), ord(k + 1));
+                        rb.atom(node_order, &[T::VarAtom(r.var(*x)), T::Var(&kx)]).atom(node_order, &[T::VarAtom(r.var(*y)), T::Var(&ky)]).cmp(T::Var(&kx), *op, T::Var(&ky))
+                    }
+                    Ordered::Agg { var, op, k, helper, args, .. } => {
+                        let (kk, kv) = (ord(*k), ord(k + 1));
+                        let mut agg_args: Vec<T<'_>> = args.iter().map(|s| T::VarAtom(r.var(*s))).collect();
+                        agg_args.push(T::Var(&kk));
+                        rb.agg(T::Var(&kv), op, Some(T::Var(&kk)), names[*helper].as_str(), &agg_args).atom(node_order, &[T::VarAtom(r.var(*var)), T::Var(&kv)])
+                    }
+                };
+            }
+            rb.finish()?;
+        }
+        // The helpers, after the program's rules: `rr_ordered<k>(args, k) :- atom, node_order(o, k)`.
+        for (id, lit, helper, args, k) in &made {
+            let r = input.rule(*id).expect("a rule of the input");
+            let L::Agg { atom, over: Some(o), .. } = lit_at(&input, *id, *lit).view() else { return Err("an ordered aggregate".into()) };
+            let kk = ord(*k);
+            let mut head_args: Vec<T<'_>> = args.iter().map(|s| T::VarAtom(r.var(*s))).collect();
+            head_args.push(T::Var(&kk));
+            let atom_args: Vec<T<'_>> = atom.args().map(|t| t_of(&input, r, t)).collect();
+            b.rule()
+                .source(*id)
+                .head(names[*helper].as_str(), &head_args)
+                .atom_with(input.rel_name(atom.rel()), &atom_args, false, atom.gated())
+                .atom(node_order, &[T::VarAtom(r.var(o)), T::Var(&kk)])
+                .finish()?;
+        }
+        Ok(())
+    }
+}
+
+/// `front::declare_axes` on the version: each tree axis a rule reads (an aggregate's atom included) that the program
+/// does not declare, declared `(n: node, a: node)` and an input, in the order the rules first read them.
+pub struct DeclareAxes;
+
+impl ProgramPass for DeclareAxes {
+    const NAME: &'static str = "declare the tree axes read";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        let v = cx.v();
+        let was = v.header(&Default::default())?;
+        let mut head = was.clone();
+        for r in v.rules() {
+            for l in r.body() {
+                let (L::Atom(a) | L::Agg { atom: a, .. }) = l.view() else { continue };
+                let rel = v.rel_name(a.rel());
+                if crate::code_rule_dsl::logic::front::is_axis(rel) && !head.decls.contains_key(rel) {
+                    head.decls.insert(rel.to_owned().into(), [("n".into(), "node".into()), ("a".into(), "node".into())].into());
+                    head.inputs.push(rel.to_owned());
+                }
+            }
+        }
+        if head.decls.len() != was.decls.len() {
+            w.on()?.set_header(&was, &head);
+        }
+        Ok(())
+    }
 }

@@ -1850,3 +1850,13 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   read: the observer vouches for the old answer (the journal's `trusted`, a root asked since the flush, or the
   racy window's settling, Q45).
 - **Done when**: the cause is named in the observer and fixed there; the test passes.
+
+### Q83. `front::finish`'s checks read a tree on a text's version path
+
+- **Found** (2026-11-17, 0281 step 7b): a text's version is now made before `front::finish`. Its rewrites run on the
+  version (`lowering_tail::OrderNodes`, `DeclareAxes`), but its checks (`front::finish_checks`: no computed term in
+  a body atom, bounded lattices, every input declared, `cycles::check`'s bounded value cycles, `caches::caches`)
+  read a tree: `rr::link_seeded_version` decodes the version once for them. `cycles::check` is 1,100 lines over the
+  tree; the other four are small.
+- **Done when**: each check reads the version (an analysis, or a check over its rules and header), a debug build
+  checks it refuses what the tree's refuses, and `link_seeded_version` decodes no tree.
