@@ -151,7 +151,8 @@ Every action changes the release in one push or refuses, and a refusal says what
   core only on a `v*` tag's, and both wait for the `release` environment's approval.
 - **A release tag pushed by hand releases nothing.** `release-packs.yml` holds a `release-*` tag to its own commit's
   name and to a commit a merged Release pull request released. That stops a mistake; a tag's run uses the tagged
-  commit's own workflow, so who may create `release-*` and `v*` tags is the tag ruleset's to limit.
+  commit's own workflow, so the "Release tags" ruleset must limit who may create `release-*` and `v*` tags: the release
+  app, and the maintainers who tag previews by hand ([Tags and channels](#tags-and-channels)).
 
 </details>
 
