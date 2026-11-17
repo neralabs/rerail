@@ -1280,6 +1280,23 @@ pass.
   observe, racy and manifest tests (84/84); strict 10-file cold, warm and edit runs, outputs byte-identical, the
   warm run writing nothing.
 
+### Q50. No edit of a phased run takes the kept inputs (decision 0117 step 1)
+
+- **Found** (2026-11-16, measuring the edit's peak, t34 item 10): on 300 files × 317 rules every edit decodes the
+  299 unchanged files' memo entries whole (348.5 MB of values, 454 MB live at the peak). The profile's decision:
+  "not taken (alias_value: no frame of its documents (0 of 989 inputs have one))", on every edit, though the
+  store holds that frame under the same space and identity the check asks.
+- **Cause**: `kept_inputs_stored` runs before the first wave, but after an earlier run of the process (phase 0's,
+  the sources phase's) installed the store's frames snapshot. The snapshot leaves every root's cross space out until
+  the run's own `preload_frames_live`, which comes after the check, and `frames` answers from the snapshot alone.
+- **Fix**: the check reads past the snapshot (`ContentStore::frames_stored`, as `admit_parts_stored` does for a
+  memo's entries looked up outside the waves). Test: `the_kept_inputs_are_found_past_an_earlier_runs_snapshot`.
+- **Record**: done (2026-11-16). Steady state (an edit after one that counted every file in): 299 hits read for
+  their outputs alone, 51 of 989 inputs changed; memo replay 8.5 MB of values (was 348.5); peak footprint 1.38 GB
+  (was 1.70), profiled. The first edit after a new build counts every file in again (its memo space is new), as
+  before. Outputs: the 300-file edit's 660 outputs (30,449 rows) equal a cold run's over the same corpus as row
+  sets; strict 10-file cold, warm and edit byte-identical; frame, partial and kept-input tests 10/10.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives

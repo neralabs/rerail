@@ -221,6 +221,22 @@ fn the_kept_inputs_are_known_before_the_waves_with_why_not() {
     kept_inputs_stored(&store, SPACE, KEY, &pl(&prog), &["input0".to_owned()]).unwrap().expect("the frames of its documents are stored");
 }
 
+/// Q50 (2026-11-16): the check runs before the run's own cross space is read (`preload_frames_live`), in a process
+/// whose snapshot an earlier run installed (phase 0's, the sources phase's), which leaves every root's cross space
+/// out. Through the snapshot no input had a frame, and every edit of a phased run decoded its memo hits whole.
+#[test]
+fn the_kept_inputs_are_found_past_an_earlier_runs_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
+    let (prog, _, frames) = fixture(&store, 1);
+    store.written().unwrap();
+    // An earlier run's preload: this root's cross space left out, as another run's.
+    let earlier = crate::content_store::FramesCrossSpace { space: SPACE, own: false, rels: None, cross_of: |_| [0; 32] };
+    store.preload_frames_live(Some(earlier)).unwrap();
+    assert!(store.frames(&SPACE, &[frames.names["input0"].clone()], DOCS_PART).unwrap().is_empty(), "the snapshot holds no frame of the space");
+    kept_inputs_stored(&store, SPACE, KEY, &pl(&prog), &["input0".to_owned()]).unwrap().expect("found in the store past the snapshot");
+}
+
 /// Q20: a kept input is decoded where a run first reads it, not before the cross part runs: of 1208 inputs an edit
 /// read 26. Its row count is known from its documents' table; a granule whose rows are not its owners' is found when
 /// the input is read, and told through `failure`.

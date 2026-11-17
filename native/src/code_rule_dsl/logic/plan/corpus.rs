@@ -5920,6 +5920,8 @@ fn run_observed(
                             own_totals.add_rows(&entry.rows);
                             if keeper.borrow().is_some() { own_seen.add_rows(&entry.rows); }
                         }
+                        // What each part holds at the peak, apart (the heap sampler charges a span's allocations to it).
+                        let base_span = crate::code_rule_dsl::logic::profile::span(|| "base rows held".into());
                         for (rel, names) in stored.iter().filter(|_| !counted) {
                             let Some((width, values)) = entry.rows.get(&memo::base_key(rel)) else { continue };
                             let all = super::super::sql::select::input_columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
@@ -5932,7 +5934,9 @@ fn run_observed(
                             // Measured with the evaluated files' rows once the chunks are done ("measure the base rows
                             // held"). They were also kept whole and measured again, so a memo hit's rows counted twice.
                         }
+                        drop(base_span);
                         // Gathered by relation across the batch's hits: one statement per relation below, not one per row.
+                        let _gather = crate::code_rule_dsl::logic::profile::span(|| "export rows gathered".into());
                         own_docs.push(entry.key);
                         for (rel, (width, values)) in entry.rows {
                             if counted || values.is_empty() || !exported.contains(rel.as_str()) {
@@ -5952,6 +5956,7 @@ fn run_observed(
                             node_columns.insert(rel, columns);
                         }
                     }
+                    let _append = crate::code_rule_dsl::logic::profile::span(|| "exports appended".into());
                     for (rel, (width, at, own_cols, cols)) in batch {
                         if let Some(at) = at {
                             exports.borrow_mut().append_own(&rel, width, at, own_cols, own_docs.iter().copied());

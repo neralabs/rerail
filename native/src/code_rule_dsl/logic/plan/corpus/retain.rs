@@ -1413,7 +1413,10 @@ pub(in crate::code_rule_dsl) type Ranges = rustc_hash::FxHashMap<i64, (u32, u32)
 /// of the store (decision 0104), and a hit read for its outputs alone has nothing else to take its rows from.
 pub(in crate::code_rule_dsl) fn kept_inputs_stored(store: &ContentStore, space: [u8; 32], binds: [u8; 32], prog: &Placed, rels: &[String]) -> Result<std::result::Result<(), String>> {
     let all: Vec<FrameRel> = rels.iter().map(|rel| FrameRel { name: rel.clone(), ident: input_ident(rel, prog, &binds) }).collect();
-    let stored = store.frames(&space, &all, DOCS_PART).map_err(|e| Error::Plan(e.to_string()))?;
+    // Past the snapshot: an earlier run of the process (phase 0's, the sources phase's) installed it without this
+    // root's cross space, which is read after this check (`preload_frames_live`). Through it, no input had a frame,
+    // and every edit decoded its memo hits whole (Q50).
+    let stored = store.frames_stored(&space, &all, DOCS_PART).map_err(|e| Error::Plan(e.to_string()))?;
     Ok(match all.iter().find(|f| !stored.contains_key(f)) {
         Some(f) => Err(format!("{}: no frame of its documents ({} of {} inputs have one)", f.name, stored.len(), all.len())),
         None => Ok(()),
