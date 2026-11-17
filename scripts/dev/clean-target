@@ -2,10 +2,13 @@
 """Removes what this checkout's cargo builds can no longer use from its target directory, and nothing
 they still use: never a full `cargo clean` (a rebuild of everything takes 15 minutes and more).
 
-    scripts/dev/clean-target [--dry-run] [--wait] [--keep-hours H] [--relax-keep-hours H] [TARGET_DIR]
+    scripts/dev/clean-target [--dry-run] [--wait] [--keep-hours H] [--relax-keep-hours H]
+                             [--relax-home DIR]... [TARGET_DIR]
 
 The farm's wrapper runs it on its own (`--wait`, at most once every 15 minutes per target directory, after
-the build that started it ends): scripts/build/farm/README.md, "Old builds"
+the build that started it ends): scripts/build/farm/README.md, "Old builds". On a farm host the farm's
+agent runs it on a command's target directory once the command ends, with the farm's own Relax home
+as the only `--relax-home`.
 
 TARGET_DIR is cargo's target directory for this checkout (`cargo metadata`, so CARGO_TARGET_DIR
 counts) unless given. Each profile directory (`debug`, `release`, `<triple>/debug`, ...) is
@@ -33,7 +36,8 @@ What goes, per profile directory:
 - **Idle Relax run dirs.** Relax caps the stores of the run dir a run uses, and only that one. A
   run dir no run uses any more is removed whole once idle for `--relax-keep-hours` (default 6):
   this target's own `relax` (its runs share one under `RELAX_SHARE` now) and every
-  `<relax home>/target/<key>` but the most recently used one. Never one a Relax process runs in
+  `<relax home>/target/<key>` but the most recently used one (the homes: `--relax-home`, each
+  given, else RELAX_HOME and ~/.relax; `--relax-home ''` names none). Never one a Relax process runs in
   (it holds a lock in `cache/live`). scripts/dev/relax/README.md, "How the caches stay bounded".
 
 It prints what it removes and the space freed (blocks on disk: APFS shares cloned files' blocks).
@@ -49,7 +53,8 @@ import subprocess
 import sys
 import time
 
-CHECKOUT = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../.."))
+# (A farm host runs this as `python3 -c`, without a __file__, always with TARGET_DIR.)
+CHECKOUT = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(globals().get("__file__", "."))), "../.."))
 # A deps file: [lib]<crate>-<16 hex>[.ext...] (libraries, test binaries, dep-info, objects, .dSYM).
 ARTIFACT = re.compile(r"^(?:lib)?(?P<crate>[A-Za-z0-9_]+)-(?P<hash>[0-9a-f]{16})(?P<rest>(?:\..*)?)$")
 # A fingerprint or build-script directory: <package>-<16 hex>.
@@ -293,10 +298,15 @@ INCREMENTAL_KEEP_HOURS = 2.0
 RELAX_KEY = re.compile(r"^[0-9a-f]{8}$")
 
 
+# `--relax-home`: the only Relax homes to clean, when given.
+ONLY_HOMES = None
+
+
 def relax_homes():
-    """Relax's homes: RELAX_HOME when set, and the default ~/.relax."""
+    """Relax's homes: those `--relax-home` names, else RELAX_HOME when set and the default ~/.relax."""
     out = []
-    for h in (os.environ.get("RELAX_HOME"), os.path.expanduser("~/.relax")):
+    homes = ONLY_HOMES if ONLY_HOMES is not None else (os.environ.get("RELAX_HOME"), os.path.expanduser("~/.relax"))
+    for h in homes:
         if h and os.path.isdir(h) and os.path.realpath(h) not in out:
             out.append(os.path.realpath(h))
     return out
@@ -446,6 +456,9 @@ def main(argv):
             keep_hours = float(argv.pop(0))
         elif a == "--relax-keep-hours" and argv:
             relax_hours = float(argv.pop(0))
+        elif a == "--relax-home" and argv:
+            global ONLY_HOMES
+            ONLY_HOMES = (ONLY_HOMES or []) + [h for h in [argv.pop(0)] if h]
         elif a.startswith("-"):
             sys.exit(f"clean-target: unknown option {a} (--help)")
         else:

@@ -670,3 +670,9 @@ Still to do:
    - a slow-test timeout.
 5. **The farm for every worktree (§4), and the gates on the idle machines.**
 
+### No benchmark leases (2026-11-16)
+
+`quiet-run`'s leases (farm 9) are removed in farm 20. Its turns, drains, 10-minute cap and
+fairness refusals made agents wait for an idle machine rather than work; with several test slots per
+host (farm 19) the hosts are used for everything instead. `quiet-run` runs its command at once
+through `test-remote`; a benchmark reports the load it ran under.

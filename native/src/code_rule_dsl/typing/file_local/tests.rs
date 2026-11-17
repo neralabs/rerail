@@ -546,3 +546,38 @@ fn rows_are_located_on_a_version_as_on_the_tree() {
     let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
     assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
 }
+
+/// A located rule keeps its branded atoms (decision 0270, a lowered program's atoms): `named`'s `node(_, n,
+/// "function", _, _)`, its kind branded as lowering brands it, is the atom whose unnamed document column the located
+/// rule names, its other terms copied (`passes::t_of`): the kind stays the same branded atom. The same program as the
+/// tree's `locate`.
+#[test]
+fn a_located_rule_keeps_its_branded_atoms() {
+    use crate::code_rule_dsl::logic::front::{Branded, Class, Literal, Term};
+    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+    let text = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl text(n: node, s: symbol)\n.input node, text\n\
+                .decl named(s: symbol)\nnamed(s) :- node(_, n, \"function\", _, _), text(n, s).\n\
+                .decl all(s: symbol)\nall(s) :- named(s).\n.output all\n";
+    let kind = Branded { class: Class::Kind, atom: 7 };
+    let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    for r in &mut tree.rules {
+        for l in &mut r.body {
+            if let Literal::Atom(a) = l {
+                a.args.iter_mut().filter(|t| matches!(t, Term::Str(_))).for_each(|t| *t = Term::Branded(kind));
+            }
+        }
+    }
+    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    assert!(!v.show().contains("\"function\""), "branded: {}", v.show());
+    let mut pass = Locate::default();
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut pass);
+    let (out, _) = p.finish().unwrap();
+    let want = locate(&mut tree);
+    assert_eq!(want, Ok(vec!["named".to_owned()]));
+    assert_eq!(pass.result(), want);
+    let keeps = |l: &Literal| matches!(l, Literal::Atom(a) if a.rel.as_str() == "node" && a.args.iter().any(|t| *t == Term::Branded(kind)));
+    assert!(tree.rules.iter().any(|r| r.head.rel.as_str() == "named_at" && r.body.iter().any(keeps)), "the tree's located rule keeps it");
+    let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
+}
