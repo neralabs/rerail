@@ -1,0 +1,1 @@
+`rerail daemon stop` now ends a process only while it is this home's daemon. When `daemon.json` still names a daemon that was killed, and the system has given its process id to another program, the stop ends nothing and removes the record, and `rerail status` and `rerail daemon start` treat the daemon as not running.
