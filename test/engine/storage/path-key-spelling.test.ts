@@ -1340,15 +1340,15 @@ describe("path keys an earlier build stored under another spelling", () => {
     const { databasePath } = await checkoutFolder();
     const database = openRerailDatabase(databasePath);
     try {
-      let statements = 0;
       const failing = new Proxy(database, {
         get(target, property, receiver) {
-          // The read's first query fails, and every statement after the BEGIN fails as an ended transaction does.
+          // The read's first query fails, and so does a COMMIT, as when SQLite has already ended the transaction.
           if (property === "all") return () => { throw new Error("the read's own error"); };
           if (property === "run") {
             return (query: Parameters<RerailDatabase["run"]>[0]) => {
-              statements += 1;
-              if (statements > 1) throw new Error("cannot commit - no transaction is active");
+              if (JSON.stringify((query as { queryChunks?: unknown }).queryChunks ?? []).includes("COMMIT")) {
+                throw new Error("cannot commit - no transaction is active");
+              }
               return target.run(query);
             };
           }
@@ -1356,6 +1356,8 @@ describe("path keys an earlier build stored under another spelling", () => {
         },
       });
       expect(() => lookUpPathKeys(failing, path => path)).toThrow("the read's own error");
+      // The read transaction is ended all the same: the connection holds none after.
+      expect(database.$client.inTransaction).toBe(false);
     } finally {
       database.$client.close();
     }
