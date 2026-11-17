@@ -61,6 +61,7 @@ pub const OPCODES: &[(u8, &str)] = &[
     (FLAG, "FLAG"),
     (COUNT, "COUNT"),
     (CHECK, "CHECK"),
+    (SETTLE, "SETTLE"),
 ];
 
 /// How an opcode's operand prints.

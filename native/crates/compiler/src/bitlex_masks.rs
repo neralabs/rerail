@@ -226,6 +226,9 @@ pub struct Lowering {
     pub unless: HashMap<usize, Vec<Vec<u8>>>,
     /// The marks with an `else escape`, by their index in `marks` (`Records::unplaced`).
     pub unplaced: Vec<usize>,
+    /// The marks that settle the extras before their bit (`, settles`), by their index in
+    /// `marks` (`program::SETTLE`).
+    pub settles: Vec<usize>,
     /// Each token test (`Stmt::TokenEscape`): its kind, whether a count, its mask and count
     /// (`Records::checks`).
     pub token_escapes: Vec<(String, bool, Val, u32, crate::records::CheckThen)>,
@@ -332,6 +335,7 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         token_marks: HashMap::new(),
         unless: HashMap::new(),
         unplaced: Vec::new(),
+        settles: Vec::new(),
         token_escapes: Vec::new(),
         tested_only: Vec::new(),
         mark_tests: Vec::new(),
@@ -690,7 +694,10 @@ impl Lowering {
                 Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
                 Stmt::Extra(kinds) => self.extra.extend(kinds.iter().cloned()),
                 Stmt::Hidden(kinds) => self.hidden.extend(kinds.iter().cloned()),
-                Stmt::Mark { kind, at, end, unless, unplaced, checks } => {
+                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles } => {
+                    if *settles {
+                        self.settles.push(self.marks.len());
+                    }
                     // Its token tests (decision 0177): the token loop's, each a bit of the mark.
                     let k = self.marks.len();
                     for c in checks {
@@ -2112,7 +2119,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         (st, ar, wh, rules)
     };
     low.shape = if by_rules { Shape::Rules } else { Shape::Machine };
-    grammar::without_mark_leaves(&mut arms, &mark_kinds)?;
+    let settling: Vec<u16> = low.settles.iter().map(|&k| mark_kinds[k]).collect();
+    grammar::without_mark_leaves(&mut arms, &mark_kinds, &settling)?;
     // A node a reading drops has no supertype: tier 2 places the supertypes by their nodes.
     let gone: Vec<u16> = readings.maps.iter().flat_map(|r| r.kinds.iter().filter(|x| x.1 == crate::stream_ir::GONE).map(|x| x.0)).collect();
     for a in &arms {
@@ -2237,6 +2245,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     let looped = (!low.token_rules.is_empty() || !low.token_reads.is_empty()) && low.skip.is_some();
     let mut gaps = 0u32;
     let mut alone = vec![false; low.marks.len()];
+    let mut settle_masks: Vec<(usize, Val)> = Vec::new();
     for (k, (kind, m, end)) in low.marks.clone().into_iter().enumerate() {
         let gs = grammar_starts.ok_or("marks with no grammar token")?;
         // A token mark: its bit at every grammar token (its first element's word's, where it is
@@ -2268,7 +2277,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 [TokenElem::Word(w)] => Some(w.clone()),
                 _ => None,
             };
-            marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: Some((before, seq)), unless: vec![] });
+            marks.push(bitlex_tier2::Mark { settle: None, kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: Some((before, seq)), unless: vec![] });
             continue;
         }
         let mut expr = low.mark_exprs[k].clone();
@@ -2462,7 +2471,12 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             }
         }
         let unless = low.unless.get(&k).cloned().unwrap_or_default();
-        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: None, unless });
+        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: None, unless, settle: None });
+        if low.settles.contains(&k) {
+            // From each bit up to the next grammar token's start: an extra that starts there is
+            // after the mark's bit. Its mask after the marks' (below).
+            settle_masks.push((k, low.fill(m, gs)?));
+        }
     }
     // Any mark at a token: the marks' masks joined, after them. Marks hold at few tokens (0.8%
     // of the tests of `.rr`'s corpus), so `TOKEN` reads this once and the marks are live only
@@ -2480,6 +2494,10 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         }
         None => None,
     };
+    for (k, v) in settle_masks {
+        mark_masks.push(v);
+        marks[k].settle = Some(mark_masks.len() as u16 - 1);
+    }
     let row_masks = mark_masks.len() as u16;
     // The rows each state can meet, by the modes its tokens are read in (`row_modes`): tier 2
     // tells apart by their start masks (`ROW`) only the rows a state can meet that begin

@@ -96,6 +96,11 @@ pub const COUNT: u8 = 0x65;
 /// the check holds at a bit of its mask among the token's bytes, as the lean lexer checks a
 /// string's `\u` escapes where it notes one.
 pub const CHECK: u8 = 0x66;
+/// The pending extras that start where mask `operand` (`Words::block_programs`' masks) does not
+/// hold, from the first on, are no longer pending: the nodes closed next keep them, as a leaf
+/// taken after them would. A settling mark's arm (`mark … , settles`): the extras before its
+/// line break are the statement's.
+pub const SETTLE: u8 = 0x67;
 
 pub const NAMED: u8 = 1;
 pub const GREEDY: u8 = 1;

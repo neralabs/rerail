@@ -701,6 +701,21 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
         self.nodes = n + 1;
     }
 
+    /// `SETTLE`: the pending extras, from the first, while output `o` does not hold at their
+    /// starts, settled: the nodes closed next keep them.
+    #[inline(always)]
+    fn settle_before(&mut self, o: usize) {
+        let first = self.nodes - self.pending;
+        let mut i = first;
+        while i < self.nodes && !self.bit(o, unsafe { (*self.row(i)).start }) {
+            i += 1;
+        }
+        if i > first {
+            self.keep = unsafe { (*self.row(i - 1)).end };
+            self.pending = self.nodes - i;
+        }
+    }
+
     /// `CLOSE`: its end, size and tail; the pending extras after it are its parent's. A node
     /// closed at the top level: the nodes before it are final, their codes committed.
     #[inline(always)]
@@ -1576,6 +1591,7 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
             format!("s.leaf::<{deferred}, {extra}>({k}, {end});\n{}", jump(0)?)
         }
         Op::Settle { .. } => format!("s.pending = 0;\n{}", jump(0)?),
+        Op::SettleBefore { mask } => format!("s.settle_before({});\n{}", mask_output(n, mask)?, jump(0)?),
         Op::Mark { mask, order, end, keep, word: mark_word, pattern } => {
             let k = u32::from(order);
             let here = if (k as usize) < x.in_code {

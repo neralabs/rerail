@@ -42,10 +42,8 @@ A file with a quote, apostrophe or backtick in code, a byte above 0x7f, or a nes
 is handed over. A file's first string opener is always in code, so the comment regions are exact
 for every file that is not handed over.
 
-What step 1 does not do yet:
-
-- A comment on a header's own line belongs to the header in tree-sitter's tree. Step 1 places it
-  after the header (work queue Q30, an ignored test).
+A comment on a header's own line belongs to the header in tree-sitter's tree, because the
+scanner's semicolon is the line break after it. The `line` mark `settles` (below).
 
 ## The compiler's additions
 
@@ -67,18 +65,32 @@ What step 1 does not do yet:
      they need nothing.
    - `Reader::tags()` and `Reader::tag()` replace the reads of `Reader::retag` alone.
 
+3. **A mark that settles (`mark … , settles`, tier 2's `SETTLE`).** A mark is placed at the
+   next grammar token, so the comments before it are pending when its arm closes the
+   statement, and `CLOSE` leaves pending extras out (24 §2.3).
+   - The compiler gives a settling mark a mask: from each of its bits up to the next grammar
+     token's start, `fill(m, starts)`.
+   - The mark's leaf in its arm becomes `SETTLE mask`. It sits after the closes of the levels
+     that end before the mark, and before the closes of the levels the mark ends.
+   - `SETTLE` keeps in place the pending extras, from the first, that start where the mask does
+     not hold: the comments before the break. The rest stay pending.
+   - The interpreter, Cranelift (a loop over the pending rows, `Step::Node`) and `rust_stream`
+     have it. The reference evaluator (`tools/bitlex`) parses the option and does not model it
+     yet; no ladder it checks uses it.
+
 Single-extra grammars compile as before: rr's tests and the compiler's targeted tests pass.
 
 ## Found on the way
 
 - Q31: the ladder test `07-textes` was already red at the merged Parser-generators commit. It is
   theirs to fix.
+- Q30: done in this decision (the settling mark).
 - Q32: a token with no end rule ends at different bytes in the CPU tier 1 and in the interpreter.
   The grammar gives its punctuation a `pair` rule, as rr's does.
 
 ## Next
 
-Kotlin's ladder goes on. Next: Q30's settling mark, then declarations, then expressions (in
+Kotlin's ladder goes on. Next: declarations, then expressions (in
 precedence order, as `wrap`s), then strings with templates (regions read in parts), then
 Kotlin's semicolon rules. Swift and Scala start the same way, in their own crates: their step 1 is
 imports and comments, with Scala's comment kinds `comment` and `block_comment`.

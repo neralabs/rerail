@@ -426,7 +426,7 @@ impl<'a> Ev<'a> {
             Stmt::Remember(names) => self.tree.get_or_insert_with(TreeDecl::default).remember.extend(names.iter().cloned()),
             // Applied by the parser (`A as IMPLIED` in the rule's body).
             Stmt::Implied { .. } => {}
-            Stmt::Mark { kind, at, end, unless, unplaced, checks } => {
+            Stmt::Mark { kind, at, end, unless, unplaced, checks, .. } => {
                 let m = self.mask(at)?;
                 for c in checks {
                     let x = self.mask(&c.expr)?;

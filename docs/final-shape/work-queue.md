@@ -793,6 +793,8 @@ pass.
   comes after the header. Every Kotlin statement ends the same way, so the steps after step 1 need it too.
 - **Done when**: a taken mark can settle the pending extras that start before its own byte (here, the line break),
   as an implied token's `settle` does. The ignored `a_comment_on_a_headers_line_is_the_headers` then passes.
+- **Done** (2026-11-17, decision 0332): `mark … , settles` and tier 2's `SETTLE` word; the test passes on the
+  interpreter and Cranelift.
 
 ### Q31. `every_step_parses_as_the_reference` is red at Parser-generators-final-shape 90aa222b0
 

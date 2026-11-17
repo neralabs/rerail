@@ -140,6 +140,9 @@ pub struct Mark {
     /// `unless after`: the words of the grammar token before that make it none
     /// (`records::Records::unless`); the records' words name them.
     pub unless: Vec<Vec<u8>>,
+    /// `, settles`: its mask from each bit to the next grammar token's start, which its arms
+    /// settle the pending extras before (`SETTLE`).
+    pub settle: Option<u16>,
 }
 
 struct Emit<'a> {
@@ -400,6 +403,12 @@ impl Emit<'_> {
                 // Mode 3: a token the grammar implies, no node.
                 Act::Settle => {
                     self.push("LEAF", 3, Arg::Kind(token));
+                    continue;
+                }
+                // A settling mark's place: the pending extras before its bit settled.
+                Act::SettleMark => {
+                    let m = self.marks.iter().find(|m| m.kind == token).and_then(|m| m.settle).expect("a settling mark's mask");
+                    self.push("SETTLE", 0, Arg::Num(m));
                     continue;
                 }
                 Act::ExtraNow => {

@@ -69,7 +69,7 @@ pub fn compile_text(grammar: &str) -> Result<Compiled, String> {
     };
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
     let compiled = bitlex_compile::compile_shaped(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules)?;
-    let program = rir::assemble(&compiled.text())?;
+    let program = rir::assemble(&compiled.text()).map_err(|e| format!("{e}\n{}", compiled.words))?;
     let mut native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
     native.tag = TAG;
     for b in &mut native.block_programs {

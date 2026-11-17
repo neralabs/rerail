@@ -2563,7 +2563,7 @@ pub struct SharedRuns {
 fn plain(op: &Op) -> bool {
     matches!(
         op,
-        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::Settle { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. } | Op::Remember { .. } | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. } | Op::Count { .. } | Op::Check { .. }
+        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::Settle { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. } | Op::Remember { .. } | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. } | Op::Count { .. } | Op::Check { .. } | Op::SettleBefore { .. }
     )
 }
 
@@ -3953,6 +3953,50 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     mset(&mut f, Mem::Pending, zero);
                     f.ins().jump(fall, &[]);
                 }
+                Op::SettleBefore { mask } => {
+                    // The pending extras, from the first, while the mask does not hold at their
+                    // starts: settled. A few rows at most (the comments on one line).
+                    let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()).ok_or(Error::UnsupportedBackend)?;
+                    let (nodes, pending) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Pending));
+                    let first = f.ins().isub(nodes, pending);
+                    let off = f.ins().imul_imm(output_stride, output as i64);
+                    let base = f.ins().iadd(outputs_p, off);
+                    let start_c = NodeCol::of(rows_here, AT_START);
+                    let (head, test, done) = (f.create_block(), f.create_block(), f.create_block());
+                    f.append_block_param(head, types::I64);
+                    f.append_block_param(test, types::I64);
+                    f.append_block_param(done, types::I64);
+                    f.ins().jump(head, &[first.into()]);
+                    heads.push((head, Step::Node));
+                    f.switch_to_block(head);
+                    let i = f.block_params(head)[0];
+                    let more = f.ins().icmp(IntCC::UnsignedLessThan, i, nodes);
+                    f.ins().brif(more, test, &[i.into()], done, &[i.into()]);
+                    f.switch_to_block(test);
+                    let i = f.block_params(test)[0];
+                    let s = start_c.get(&mut f, i);
+                    let w = f.ins().ushr_imm(s, 6);
+                    let word = mask_word(&mut f, base, lasts_stride, w);
+                    let sh = f.ins().band_imm(s, 63);
+                    let bit = f.ins().ushr(word, sh);
+                    let bit = f.ins().band_imm(bit, 1);
+                    let i1 = f.ins().iadd_imm(i, 1);
+                    f.ins().brif(bit, done, &[i.into()], head, &[i1.into()]);
+                    f.switch_to_block(done);
+                    let stop = f.block_params(done)[0];
+                    let settled = f.ins().isub(stop, first);
+                    let (some, after) = (f.create_block(), f.create_block());
+                    f.ins().brif(settled, some, &[], after, &[]);
+                    f.switch_to_block(some);
+                    let last = f.ins().iadd_imm(stop, -1);
+                    let e = end_c.get(&mut f, last);
+                    mset(&mut f, Mem::Keep, e);
+                    let left = f.ins().isub(nodes, stop);
+                    mset(&mut f, Mem::Pending, left);
+                    f.ins().jump(after, &[]);
+                    f.switch_to_block(after);
+                    f.ins().jump(fall, &[]);
+                }
                 // A keyword's: its token's word's kind (`WORD_KIND`), in a word of its own.
                 Op::Remember { kind: WORD_KIND } => {
                     let word_kinds = &native.word_kinds;
@@ -5181,6 +5225,7 @@ fn ctx_reads(op: &Op, wrapping: bool) -> Vec<i32> {
         Op::Token { .. } => vec![STARTS, NSTARTS, LASTS, CODES, ROOM_NODES, ROOM_SUPERS, ROOM_PUSHES, OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE],
         Op::Switch { .. } => vec![BYTES],
         Op::Mark { .. } | Op::Row { .. } => vec![OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE],
+        Op::SettleBefore { .. } => vec![OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE, ROWS],
         Op::Open { .. } => vec![ROWS, OPEN],
         Op::Close { .. } => vec![OPEN, ROWS],
         Op::Leaf { .. } => vec![ROWS],

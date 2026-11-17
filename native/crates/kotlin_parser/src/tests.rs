@@ -11,6 +11,11 @@ fn same(texts: &[&str]) {
         let image = c.parser.image(text.as_bytes()).unwrap_or_else(|why| panic!("the grammar refuses {text:?}: {why:?}\n{}\n{}", c.explain(text), c.words));
         let got = image_text(&image).expect("a tape image");
         assert_eq!(got, want, "{text:?}");
+        // The interpreter's, over the interpreter's tier 1: the same tape.
+        let run = c.program.block_programs[0].run(text.as_bytes());
+        let nodes = rerail_compiler::stream::run(&c.program, text.as_bytes(), &run).unwrap_or_else(|why| panic!("the interpreter refuses {text:?}: {why:?}"));
+        let interp = rerail_compiler::stream::image(&nodes, &c.program.readings.extras, TAG, text.as_bytes());
+        assert_eq!(image_text(&interp).expect("a tape image"), want, "the interpreter, {text:?}");
     }
 }
 
@@ -35,12 +40,16 @@ fn headers_are_the_lean_parsers() {
 }
 
 /// A comment after a header on its line is the header's in tree-sitter's tree: the scanner's
-/// semicolon is the line break after it. The `line` mark closes the header at the next token,
-/// with the comment pending, so it is placed after the header. Work queue Q30.
+/// semicolon is the line break after it (`mark line …, settles`). One on the next line is not.
 #[test]
-#[ignore = "a mark that settles the extras before its line break: work queue Q30"]
 fn a_comment_on_a_headers_line_is_the_headers() {
-    same(&["package a // after\nimport c.D\n"]);
+    same(&[
+        "package a // after\nimport c.D\n",
+        "package a /* x */ // y\n// z\nimport c.D /* w */\n",
+        "import c.D // at the end",
+        "import c.D\n// after the last\n",
+        "package a /* spans\nlines */\nimport c.D\n",
+    ]);
 }
 
 #[test]

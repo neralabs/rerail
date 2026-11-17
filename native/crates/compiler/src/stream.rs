@@ -13,7 +13,7 @@ pub use crate::stream_ir::{ByteSwitch, DEAD, GONE, KEEP, REFUSE, REMEMBERED, Rea
 
 /// Whether a word is one of tier 2's.
 pub fn is_stream(opcode: u8) -> bool {
-    (TOKEN..=CHECK).contains(&opcode)
+    (TOKEN..=SETTLE).contains(&opcode)
 }
 
 /// The operand rules of tier 2's words, and of the words a tier-2 program may hold besides
@@ -69,6 +69,7 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         FLAG => mode <= 2 && operand < 16,
         COUNT => mode <= 1 && usize::from(operand) < program.counts.len(),
         CHECK => mode == 0 && usize::from(operand) < program.local_checks.len(),
+        SETTLE => mode == 0 && usize::from(operand) < masks,
         CLOSE => mode <= 1 && operand == 0,
         // `m`: the flag the call runs with (`push_flag`), of 16.
         PUSH => mode <= 32 && usize::from(operand) < words,
@@ -508,6 +509,14 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             ROW => {
                 if !mask_bit(operand, start) {
                     pc += 1;
+                }
+            }
+            SETTLE => {
+                let first = nodes.len() - pending;
+                let settled = (first..nodes.len()).take_while(|&i| !mask_bit(operand, nodes[i].start)).count();
+                if settled > 0 {
+                    keep = nodes[first + settled - 1].end;
+                    pending -= settled;
                 }
             }
             RETAG if mode == 1 => {
