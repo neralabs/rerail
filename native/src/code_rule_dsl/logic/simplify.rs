@@ -65,6 +65,8 @@ pub struct Report {
     pub(in crate::code_rule_dsl) keyed: usize,
     /// Relations nothing kept reads, dropped.
     pub(in crate::code_rule_dsl) unread: Vec<String>,
+    /// Request rules another of their relation's subsumes, dropped (`front::subsume_requests`).
+    pub(in crate::code_rule_dsl) subsumed: usize,
     /// Parts of bodies that meet the rest only at a document, made relations of documents (`exists_k`).
     pub(in crate::code_rule_dsl) existentials: Vec<String>,
     /// Span comparisons of two nodes of one document, made `span_within(inner, outer)` (decision 0050).
@@ -139,6 +141,9 @@ pub fn simplify(prog: &mut Program) -> Report {
     }
     report.existentials = project_existentials(prog);
     report.climbs = climbs_as_axes(prog);
+    // A request rule another of its relation subsumes (decision 0291's whole request beside its narrowed one), before
+    // relations merge: a request and its widened copy are compared with what is left.
+    report.subsumed = super::front::subsume_requests(prog);
     if merge(prog, &mut report) {
         // A merge can leave a literal twice (`!m1($n), !m2($n)` became `!m1($n), !m1($n)`).
         report.implied += prog.rules.iter_mut().map(drop_implied).sum::<usize>();
@@ -1678,6 +1683,12 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
         .collect();
     let fixed = |r: &str| fixed_set.contains(r) || prog.natives.contains_key(r) || prog.lattice.contains_key(r) || prog.qualifiers.contains_key(r) || request(r);
     debug_assert!(prog.rules.iter().map(|r| r.head.rel.as_str()).all(|r| fixed(r) == self::fixed(prog, r)));
+    // A request (read by name by the fact layer) is a candidate only to take in its own widened copies
+    // (`rr_wide_<attr>_<req>`, decision 0174), which then read it: it names that class (below), so it is never renamed.
+    let own_copy = |q: &str, c: &str| super::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| c == format!("rr_wide_{}_{q}", a.rel));
+    let copied_request = |r: &str| {
+        request(r) && !fixed_set.contains(r) && !prog.natives.contains_key(r) && !prog.lattice.contains_key(r) && !prog.qualifiers.contains_key(r) && prog.decls.keys().any(|c| own_copy(r, c.as_str()))
+    };
     // A relation nothing reads (`unread`) is read by name if at all (`env`'s settings, `unconverged`, a guest
     // policy, a library's `function_kind` passed to `nearest`): it joins only a class with a widened copy of itself
     // (below), and keeps its name there (`merge`).
@@ -1688,7 +1699,7 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
         .chain(prog.facts.iter().filter(|(_, f)| !f.is_empty()).map(|(r, _)| r.as_str()))
         .collect::<BTreeSet<&str>>()
         .into_iter()
-        .filter(|r| !fixed(r))
+        .filter(|r| !fixed(r) || copied_request(r))
         .collect();
     // The candidates by number, in `cands`' order; every other relation a rule names numbered after them, each a
     // label of its own in every round.
@@ -1877,11 +1888,15 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
         .into_values()
         .filter_map(|g| {
             let (mut kept, unread): (Vec<String>, Vec<String>) = g.into_iter().partition(|r| read.contains(r.as_str()));
-            let copies = |u: &str| {
-                super::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| kept.iter().any(|k| *k == format!("rr_wide_{}_{u}", a.rel)))
-            };
+            let copies = |u: &str| kept.iter().any(|k| own_copy(u, k));
             let own = unread.into_iter().find(|u| copies(u));
             kept.extend(own);
+            // A request stays only with a copy of its own, and alone among requests: it names the class.
+            let requests: Vec<String> = kept.iter().filter(|r| request(r)).cloned().collect();
+            let with_copy: Vec<&String> = requests.iter().filter(|q| kept.iter().any(|k| own_copy(q, k))).collect();
+            if with_copy.len() != 1 || requests.len() != 1 {
+                kept.retain(|r| !request(r));
+            }
             kept.sort();
             (kept.len() > 1).then_some(kept)
         })
@@ -2090,8 +2105,9 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
         let spaces: BTreeSet<Option<&str>> = g.iter().map(|r| namespace(r).map(|(p, _)| p)).collect();
         let is_output = |r: &str| prog.outputs.iter().any(|o| o == r);
         let unread = g.iter().find(|r| !read.contains(r.as_str()));
-        // A relation nothing reads is read by name if at all: it names its class (`congruence` gives it one).
-        let to = if let Some(u) = unread { u.clone() } else { match (suffixes.iter().next(), suffixes.len(), spaces.len()) {
+        // A relation nothing reads is read by name if at all: it names its class (`congruence` gives it one), as a
+        // request does (the class of its own widened copies).
+        let to = if let Some(u) = unread.or_else(|| g.iter().find(|r| request(r))) { u.clone() } else { match (suffixes.iter().next(), suffixes.len(), spaces.len()) {
             (Some(Some(s)), 1, n) if n > 1 => {
                 let mut name = format!("s_{s}");
                 let mut k = 1;
@@ -2162,6 +2178,13 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
         }
         if let Some(rows) = prog.facts.remove(from) {
             prog.facts.entry(t.clone()).or_insert(rows);
+        }
+        // A request rule's gate (`Program::asked_by`) goes with its rules: kept where the class keeps this member's
+        // (its first, under a new name), else dropped with them.
+        if let Some(by) = prog.asked_by.remove(from.as_str())
+            && firsts.contains(from.as_str())
+        {
+            prog.asked_by.entry(t.clone()).or_insert(by);
         }
         report.merged.push((t.clone(), from.clone()));
     }

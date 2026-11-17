@@ -177,7 +177,7 @@ into notes once the queue is done).
   `dropping_unreached_clauses_prunes_to_the_same_program` comparing programs as they are.
 - **Done when**: lowering whole then pruning yields no `rr_wide_*` relation whose rules are its relation's own; the
   test's widened-copy collapse (rr/tests.rs, f2653a913) is removed and the 8 dropping tests pass.
-- **Record**: built, pending review. The copy that stayed is a copy of a request relation (eslint-yoda's
+- **Record**: done (2026-11-16, review 6). The copy that stayed is a copy of a request relation (eslint-yoda's
   `rr_wide_node_text_rr_token_req`): `rr_token_req` has a rule that reads `node_text` for a reader that is never
   reached, so its copy is made. Gated `prune` drops that rule with its reader, and the copy is left with
   `rr_token_req`'s own rules. Only `prune` can see this, so lowering records each copy and its relation
@@ -245,6 +245,20 @@ into notes once the queue is done).
     compares as `congruence` does, `simplify::canonical_rule` (the engine's own canonical form). The exact copy
     name and the new test hold: under the suffix rule `same_q` would name the class and `out` read it, which the
     test refuses. Verified live under Relax (9/9) and under cargo.
+  - *Review 6* (2026-11-16, by me against the brief, on the head): the review-5 comparison holds
+    (`template::canonical` labels heads, atoms and aggregates' atoms, numbers variables in every position). But the
+    slow tier showed 6 of the 7 dropping tests red: decision 0291 (f015b1360, merged at cb86d2d64 after Q3 was
+    green; no merge ran the slow tier) broke the property. (1) an ask's variables were named after its reader's
+    index in the whole program; (2) an unreached reader's ask kept narrowing; (3) an unreached reader that asks for
+    all kept the request whole; (4) then a request's widened copy, equal once both were narrowed alike, could not
+    merge (0291 made requests fixed). Fixed (0291 item 4): asks named from their reader alone and gated by it; a
+    site asking for all adds the whole request gated by its reader, and `simplify` drops a request rule another of
+    its relation's subsumes (`front::subsume_requests`); a request takes in its own widened copies and names the
+    class; `merge` moves or drops a merged relation's gate; `undo_round` removes the demand relations. The test's
+    helper mask covers a helper number before the ask's suffix (`rr_text20_rr_d`). Verified: the 7 dropping tests
+    (slow tier), lowering_is_idempotent, the rr, simplify, program_image, program_facts, vtab syntax and base
+    tests (210/211: Q27's), rerail-logic's (50), and strict 10-file cold, warm and edit runs (same rows,
+    byte-identical outputs). **Done.**
 
 ### Q4. The `.rdl` comparison checks the on-request step independently
 
