@@ -169,19 +169,20 @@ impl Drop for Store {
     }
 }
 
-/// How many of this process's open files are under `dir` (macOS: `F_GETPATH`).
+/// This process's open files under `dir` (macOS: `F_GETPATH`).
 #[cfg(target_vendor = "apple")]
-pub fn open_under(dir: &Path) -> usize {
+pub fn open_under(dir: &Path) -> Vec<String> {
     let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_owned());
     let prefix = format!("{}/", dir.display());
     (0..8192)
-        .filter(|&fd| {
+        .filter_map(|fd| {
             let mut buf = [0u8; libc::PATH_MAX as usize];
             // SAFETY: F_GETPATH writes at most PATH_MAX bytes into `buf`.
             let named = unsafe { libc::fcntl(fd, libc::F_GETPATH, buf.as_mut_ptr()) } == 0;
-            named && std::ffi::CStr::from_bytes_until_nul(&buf).is_ok_and(|p| p.to_string_lossy().starts_with(&prefix))
+            let path = std::ffi::CStr::from_bytes_until_nul(&buf).ok()?.to_string_lossy().into_owned();
+            (named && path.starts_with(&prefix)).then_some(path)
         })
-        .count()
+        .collect()
 }
 
 /// A copy of the template, in a directory of its own: a clone, which becomes a store of its own (its identity) at its

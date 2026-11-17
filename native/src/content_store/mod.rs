@@ -708,6 +708,7 @@ impl ContentStore {
     /// own): what it read of it to hold in memory (its frames, decision 0104) and its identity. Held past the store's
     /// life, each is memory no run reads again.
     pub fn forget(path: &Path) {
+        upkeep::forget(path);
         frames::forget_snapshot(&path.to_string_lossy());
         atoms::forget_identity(&path.to_string_lossy());
     }
