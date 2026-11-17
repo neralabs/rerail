@@ -2,11 +2,11 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { loadNativeBinding } from "../../../src/engine/native/native.js";
 import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES } from "../../../src/engine/path-boundary.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
+import { queryContentStore } from "../../support/content-store-query.js";
 
 const capabilities = JSON.stringify({
   format: "rerail.policy-capabilities/v1",
@@ -45,17 +45,13 @@ describe("content store admission", () => {
       };
       expect(applied.evaluation.violations.map(violation => violation.path).sort()).toEqual([".aws/settings.py", "config/secrets.py", "src/a.py"]);
 
-      const store = new Database(storePath, { readonly: true });
-      try {
-        const paths = store.prepare(
-          "SELECT strings.value AS path FROM workspace_overlay JOIN paths USING (path_id) JOIN strings ON strings.string_id = paths.string_id",
-        ).all() as Array<{ path: string }>;
-        expect(paths.map(row => row.path)).toEqual(["src/a.py"]);
-        const sources = store.prepare("SELECT raw_length AS bytes FROM source_objects").all() as Array<{ bytes: number }>;
-        expect(sources.map(row => row.bytes)).toEqual([Buffer.byteLength(source)]);
-      } finally {
-        store.close();
-      }
+      const paths = queryContentStore(
+        storePath,
+        "SELECT strings.value AS path FROM workspace_overlay JOIN paths USING (path_id) JOIN strings ON strings.string_id = paths.string_id",
+      );
+      expect(paths.map(row => row.path)).toEqual(["src/a.py"]);
+      const sources = queryContentStore(storePath, "SELECT raw_length AS bytes FROM source_objects");
+      expect(sources.map(row => row.bytes)).toEqual([Buffer.byteLength(source)]);
     } finally {
       workspace.close();
       removeFolderSync(root);
