@@ -79,8 +79,15 @@ unchanged: it already leaves inputs and outputs as they are (`kept`).
      same-document columns. The part's split treats a qualified input as a derived relation out of its scope, read
      from those qualifiers as a scoped split reads an earlier one (`split(scope, prev)`); its own relations are its
      scope. Its classification is part of its key.
-   - **The export cut is per part, and conservative across parts.** An export another part reads is a part output,
-     and outputs are never cut: the cut across parts is lost, as projection across parts is lost before lowering.
+   - **A part's outputs name their readers elsewhere.** An output only another part reads is qualified
+     `part:out` (kept, never located for being an output); one a cross-file rule elsewhere reads, `part:cross-read`
+     (an export here); one a file-local rule elsewhere reads, `part:local-read` (never located).
+   - **The push's mode is the run's.** A part's cross-file part reading a base relation after the first push puts
+     the whole run in the second mode. Each part keeps its share as a fact, read before its image; a part that
+     pushed in the other mode is prepared again in the run's, under a key naming it (`part:push-decided`).
+   - **The export cut and the factorizing are per part, and conservative across parts.** An export another part
+     reads is a part output, and outputs are neither cut nor factorized: these are lost across parts, as projection
+     across parts is lost before lowering.
    - **What stays global:** lowering (0.03 s), the merges of identical relations and repeated rules (helpers two
      parts pushed alike are one relation, named by content), and the split into file-local and cross-file
      programs. These are linear passes over the linked program; the keyed work is the rewriting.
@@ -108,3 +115,6 @@ parts (0.27 s).
 Then a kept part holds its own header only (same day): the fields every part shares are the link's, and a part
 keeps only those its passes changed. The link was quadratic in them, not in the rules. An edit is 35.5 G against
 0333's 40.7 G; before lowering is about 0.4 s CPU, and the passes after lowering (stage 2) are now the larger cost.
+
+Stage 2 built (same day): rows h1's; an edit is 36.3 G (stage 1 35.5 G, 0333 40.7 G), and no part's passes after
+lowering run on it. The cold run is 1,169 G against the whole's 980 G.

@@ -377,16 +377,31 @@ fn split(s: &str) -> Vec<String> {
 }
 
 /// The part kept under `key`, with the sources its image is kept as.
-fn lookup(store: &ContentStore, key: &[u8; 32], lists: &front::Lists) -> StoreResult<Option<(Prepared, Vec<SourceId>)>> {
+/// The version and facts kept under `key` (`keep`), and the sources they were read from.
+fn kept(store: &ContentStore, key: &[u8; 32], lists: &front::Lists) -> StoreResult<Option<(Arc<Version>, Facts, Vec<SourceId>)>> {
+    let Some((facts, digest, source)) = kept_facts(store, key)? else { return Ok(None) };
+    let Some((version, mut sources)) = kept_image(store, &digest, lists)? else { return Ok(None) };
+    sources.push(source);
+    Ok(Some((version, facts, sources)))
+}
+
+/// The facts kept under `key`, its image's digest and the entry's source: the image not read.
+fn kept_facts(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<(Facts, [u8; 32], SourceId)>> {
     let Some(source) = store.source_by_hash(HashKey::sha256(source_text(key).as_bytes()))? else { return Ok(None) };
     let set = plan();
     let Some(result) = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?.results.remove(&set.plans[0]) else { return Ok(None) };
     let Ok(facts) = program_facts::decode(&result.entry) else { return Ok(None) };
     let Some(digest) = rows_of(&facts, "part_program").next().and_then(|r| r.first().and_then(|d| unhex(d))) else { return Ok(None) };
-    let s_image = crate::code_rule_dsl::logic::profile::span(|| "a part, from the store: its image".into());
-    let Some((version, mut sources)) = program_text::load_image(store, &digest, lists)? else { return Ok(None) };
-    drop(s_image);
-    sources.push(source);
+    Ok(Some((facts, digest, source)))
+}
+
+fn kept_image(store: &ContentStore, digest: &[u8; 32], lists: &front::Lists) -> StoreResult<Option<(Arc<Version>, Vec<SourceId>)>> {
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "a part, from the store: its image".into());
+    program_text::load_image(store, digest, lists)
+}
+
+fn lookup(store: &ContentStore, key: &[u8; 32], lists: &front::Lists) -> StoreResult<Option<(Prepared, Vec<SourceId>)>> {
+    let Some((version, facts, sources)) = kept(store, key, lists)? else { return Ok(None) };
     let num = |s: &str| s.parse::<usize>().unwrap_or(0);
     let reach = rows_of(&facts, "part_reach").next().unwrap_or_default();
     let tests = ordered(&facts, "part_test");
@@ -420,8 +435,13 @@ fn lookup(store: &ContentStore, key: &[u8; 32], lists: &front::Lists) -> StoreRe
 /// Keeps the part under `key`, as an item of the run's record (decision 0306): its image and its entry, written by the
 /// store's writer, their sources named by the run.
 fn record(store: &ContentStore, key: &[u8; 32], p: &Prepared) {
-    let Some(encoded) = program_text::encode_version(&p.version) else { return };
-    let entry = program_facts::encode(&facts_of(p, &encoded.digest));
+    keep(store, key, &p.version, |digest| facts_of(p, digest));
+}
+
+/// Keeps `version` and the facts `facts` makes of its image's digest under `key` (either stage's part).
+fn keep(store: &ContentStore, key: &[u8; 32], version: &Arc<Version>, facts: impl FnOnce(&[u8; 32]) -> Facts) {
+    let Some(encoded) = program_text::encode_version(version) else { return };
+    let entry = program_facts::encode(&facts(&encoded.digest));
     let (packed, bytes) = program_text::pack(vec![encoded], entry);
     fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
         let (key, packed): ([u8; 32], program_text::Packed) = crate::content_store::record::codec::from_body("a prepared part", body)?;
@@ -762,4 +782,311 @@ fn link(version: &Version, header: &front::Program, parts: &[Part], prepared: Ve
     vocabulary.matches = matches.iter().map(|m| regex::Regex::new(m).map(Arc::new).map_err(|e| e.to_string())).collect::<Result<_>>()?;
     vocabulary.markers = markers;
     Ok((linked, Front { reaches, demanded, demand, undone, matchers, vocabulary }))
+}
+
+// -- Stage 2: the passes after lowering, per part (decision 0345 stage 2) --
+
+/// What a part's passes after lowering made and found.
+struct After {
+    version: Arc<Version>,
+    /// Whether its cross-file part reads a base relation after the first push: its share of the run's push mode.
+    reads_base: bool,
+    pushed: Vec<String>,
+    factorized: Vec<String>,
+    demand: Vec<String>,
+    located: std::result::Result<Vec<String>, Vec<String>>,
+}
+
+fn after_facts(a: &After, digest: &[u8; 32]) -> Facts {
+    let mut f = Facts::new();
+    let mut put = |rel: &str, rows: Vec<Vec<String>>| {
+        f.insert(rel.to_owned(), rows.into_iter().map(|r| r.iter().map(|c| str(c)).collect::<Vec<_>>().into()).collect());
+    };
+    let listed = |l: &[String]| l.iter().enumerate().map(|(i, x)| vec![i.to_string(), x.clone()]).collect::<Vec<_>>();
+    put("part_program", vec![vec![hex(digest)]]);
+    put("part_reads_base", vec![vec![u8::from(a.reads_base).to_string()]]);
+    put("part_pushed", listed(&a.pushed));
+    put("part_factorized", listed(&a.factorized));
+    put("part_export_demand", listed(&a.demand));
+    let (ok, located) = match &a.located {
+        Ok(l) => ("ok", l),
+        Err(l) => ("blocked", l),
+    };
+    put("part_located_outcome", vec![vec![ok.to_owned()]]);
+    put("part_located", listed(located));
+    f
+}
+
+fn after_of(version: Arc<Version>, facts: &Facts) -> After {
+    let listed = |rel: &str| ordered(facts, rel).into_iter().map(|r| r[1].clone()).collect::<Vec<_>>();
+    let located = listed("part_located");
+    After {
+        version,
+        reads_base: rows_of(facts, "part_reads_base").next().is_some_and(|r| r.first().map(String::as_str) == Some("1")),
+        pushed: listed("part_pushed"),
+        factorized: listed("part_factorized"),
+        demand: listed("part_export_demand"),
+        located: if rows_of(facts, "part_located_outcome").next().is_some_and(|r| r.first().map(String::as_str) == Some("ok")) { Ok(located) } else { Err(located) },
+    }
+}
+
+/// The switches the passes after lowering read.
+const AFTER_SWITCHES: &[&str] = &["RERAIL_EXPORT_DEMAND"];
+
+/// A part's key after lowering: its key before (its header, now with its interface's split, and its rules), the
+/// stage, whether exports are factorized, and the switches those passes read.
+fn after_key(before: [u8; 32], factorize: bool) -> [u8; 32] {
+    use sha2::Digest as _;
+    let mut h = sha2::Sha256::new();
+    h.update(b"rerail/part-after/v1\0");
+    h.update(before);
+    h.update([u8::from(factorize)]);
+    for s in AFTER_SWITCHES {
+        h.update(format!("{s}={}\0", std::env::var(s).unwrap_or_default()).as_bytes());
+    }
+    h.finalize().into()
+}
+
+/// The passes after lowering, by part (decision 0345 stage 2): `preparation::run`'s passes, with what reads the whole
+/// program (the nearest sets, the bound check, the split, the push's mode, the merges) run over the whole, and the
+/// rewriting (push, factorize, the export cut, locate) run per part against its interface, kept under its key.
+pub fn run(version: Arc<Version>, factorize: bool, dialect: crate::code_rule_dsl::language::GrammarDialect, store: &ContentStore, keep_parts: bool, lists: &front::Lists, bound: impl FnMut(&Version) -> Result<()>) -> Result<(Arc<Version>, super::Found, Vec<SourceId>)> {
+    use crate::code_rule_dsl::logic::plan::fields::{GIVEN, PART_CROSS_READ, PART_LOCAL_READ, PART_OUT, PART_WHOLE, PUSH_BASE, PUSH_DECIDED};
+    use crate::code_rule_dsl::logic::program_image::manager::Pipeline;
+    use crate::code_rule_dsl::typing::file_local::FileLocal;
+    // The whole: the nearest sets, the bound check, and the split every part's interface is read from.
+    let mut p = Pipeline::new("before the parts' passes", version);
+    let mut nearest = super::Nearest::default();
+    p.rules(&mut nearest);
+    p.program(&mut super::Check(bound));
+    let v1 = p.current()?.clone();
+    let split = p.get::<FileLocal>()?;
+    drop(p);
+    let header = v1.header(lists)?;
+    let parts = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "the parts and their interfaces (decision 0345 stage 2)".into());
+        parts_of(&v1)
+    };
+    let rules: Vec<_> = v1.rules().collect();
+    let mut part_of_rule = vec![0usize; rules.len()];
+    for (j, part) in parts.iter().enumerate() {
+        for &k in &part.rules {
+            part_of_rule[k] = j;
+        }
+    }
+    // Who reads each relation: the part, and whether from a file-local rule.
+    let local_head = |k: usize| {
+        let h = v1.rel_name(rules[k].head().rel());
+        split.local.contains(h) || split.constants.contains(h)
+    };
+    let mut readers: HashMap<&str, Vec<(usize, bool)>> = HashMap::new();
+    for (k, r) in rules.iter().enumerate() {
+        for a in r.reads() {
+            readers.entry(v1.rel_name(a.rel())).or_default().push((part_of_rule[k], local_head(k)));
+        }
+    }
+    let made_by_parts: BTreeSet<&str> = parts.iter().flat_map(|p| p.made.iter().map(String::as_str)).collect();
+    let (common, common_digest) = common_of(&header);
+    let shared = shared_of(&header, &made_by_parts);
+    // Each part's own header, with its interface: what it is given of the split, and how its outputs are read.
+    let heads: Vec<front::Program> = parts
+        .iter()
+        .enumerate()
+        .map(|(j, part)| {
+            let elsewhere = |r: &str| readers.get(r).into_iter().flatten().filter(move |(o, _)| *o != j);
+            let read_elsewhere: BTreeSet<String> = part.made.iter().filter(|r| elsewhere(r).next().is_some()).cloned().collect();
+            let mut head = part_header(&header, part, &read_elsewhere, &made_by_parts, &shared);
+            let mut word = |r: &str, w: String| {
+                head.qualifiers.entry(r.to_owned()).or_default().insert(w);
+            };
+            for r in part.read.iter().filter(|r| !part.made.contains(*r) && made_by_parts.contains(r.as_str())) {
+                word(r, GIVEN.to_owned());
+                for (set, w) in [(&split.local, "part:local"), (&split.constants, "part:constant"), (&split.filters, "part:filter")] {
+                    if set.contains(r) {
+                        word(r, w.to_owned());
+                    }
+                }
+                if let Some(cols) = split.locations.get(r) {
+                    word(r, format!("part:loc={}", cols.iter().map(usize::to_string).collect::<Vec<_>>().join(",")));
+                }
+            }
+            for r in &read_elsewhere {
+                if !header.outputs.contains(r) {
+                    word(r, PART_OUT.to_owned());
+                }
+                if elsewhere(r).any(|(_, local)| !*local) {
+                    word(r, PART_CROSS_READ.to_owned());
+                }
+                if elsewhere(r).any(|(_, local)| *local) {
+                    word(r, PART_LOCAL_READ.to_owned());
+                }
+            }
+            head
+        })
+        .collect();
+    let mut sources = Vec::new();
+    let (mut found, mut made) = (0usize, 0usize);
+    // A part's passes, kept under its key: `decided` the run's push mode, where the run has decided it.
+    // A part found is its facts until the run's mode is decided: only the image of the mode it runs in is read.
+    enum Slot {
+        Kept(Facts, [u8; 32]),
+        Made(After),
+    }
+    let reads_base = |s: &Slot| match s {
+        Slot::Kept(facts, _) => rows_of(facts, "part_reads_base").next().is_some_and(|r| r.first().map(String::as_str) == Some("1")),
+        Slot::Made(a) => a.reads_base,
+    };
+    let mut prepare = |j: usize, decided: Option<bool>, sources: &mut Vec<SourceId>| -> Result<Slot> {
+        let mut head = heads[j].clone();
+        if let Some(base) = decided {
+            let words = head.qualifiers.entry(PART_WHOLE.to_owned()).or_default();
+            words.insert(PUSH_DECIDED.to_owned());
+            if base {
+                words.insert(PUSH_BASE.to_owned());
+            }
+        }
+        let key = after_key(key_of(&head, &common_digest, &rules, &parts[j], dialect), factorize);
+        let kept_part = {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "a part after lowering, from the store".into());
+            kept_facts(store, &key).map_err(|e| e.to_string())?
+        };
+        if let Some((facts, digest, source)) = kept_part {
+            found += 1;
+            sources.push(source);
+            return Ok(Slot::Kept(facts, digest));
+        }
+        made += 1;
+        let _s = crate::code_rule_dsl::logic::profile::span(|| format!("prepare part {} after lowering ({} rules)", parts[j].name, parts[j].rules.len()));
+        let input = program_of(&v1, &rules, &head, &common, &parts[j])?;
+        let mut p = Pipeline::new("a part's passes after lowering", input);
+        let mut pushed = crate::code_rule_dsl::typing::file_local::PushLocalJoins::default();
+        let mut factorized = crate::code_rule_dsl::typing::file_local::FactorizeExports::new(factorize);
+        let mut demand = crate::code_rule_dsl::typing::file_local::DemandExports::default();
+        let mut locate = crate::code_rule_dsl::typing::file_local::Locate::default();
+        crate::code_rule_dsl::logic::profile::quiet(|| {
+            p.program(&mut pushed);
+            p.program(&mut factorized);
+            p.program(&mut demand);
+            p.program(&mut locate);
+        });
+        let v = stripped(p.current()?, &common, lists)?;
+        let a = After { version: v, reads_base: pushed.reads_base, pushed: pushed.made, factorized: factorized.lines, demand: demand.lines, located: locate.result() };
+        if keep_parts {
+            keep(store, &key, &a.version, |digest| after_facts(&a, digest));
+        }
+        Ok(Slot::Made(a))
+    };
+    // First each part in its own mode; then, where any part's cross-file part reads a base relation, the run's mode
+    // is that one, and a part that pushed otherwise pushes again in it.
+    let mut slots: Vec<Slot> = (0..parts.len()).map(|j| prepare(j, None, &mut sources)).collect::<Result<_>>()?;
+    let base = slots.iter().any(reads_base);
+    if base {
+        for j in 0..parts.len() {
+            if !reads_base(&slots[j]) {
+                slots[j] = prepare(j, Some(true), &mut sources)?;
+            }
+        }
+    }
+    let mut afters: Vec<After> = Vec::with_capacity(slots.len());
+    for slot in slots {
+        afters.push(match slot {
+            Slot::Made(a) => a,
+            Slot::Kept(facts, digest) => {
+                let (v, s) = kept_image(store, &digest, lists).map_err(|e| e.to_string())?.ok_or_else(|| "a kept part's image is missing".to_owned())?;
+                sources.extend(s);
+                after_of(v, &facts)
+            }
+        });
+    }
+    crate::code_rule_dsl::logic::profile::decision("parts after lowering (decision 0345 stage 2)", || format!("{} parts: {found} read from the store, {made} prepared; push mode {}", parts.len(), if base { "base" } else { "local" }));
+    let linked = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "link the parts after lowering (decision 0345 stage 2)".into());
+        link_after(&v1, &header, &parts, &heads, &afters, lists)?
+    };
+    // The whole again: the merges (helpers two parts pushed alike are one), the inputs read, the rule order.
+    let mut p = Pipeline::new("after the parts' passes", linked);
+    let mut merge = super::MergeIdentical::default();
+    let mut repeats = super::DropRepeated::default();
+    if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
+        p.program(&mut merge);
+    } else {
+        p.program(&mut repeats);
+        p.program(&mut merge);
+        p.program(&mut repeats);
+    }
+    p.program(&mut super::InputsRead);
+    if let Ok(order) = std::env::var("RERAIL_RULE_ORDER") {
+        p.program(&mut super::RuleOrder(order));
+    }
+    let out = p.current()?.clone();
+    let out = match out.base_bytes() {
+        Some(_) => out,
+        None => out.fold()?,
+    };
+    let mut located: std::result::Result<Vec<String>, Vec<String>> = Ok(Vec::new());
+    for a in &afters {
+        located = match (located, &a.located) {
+            (Ok(mut l), Ok(m)) => {
+                l.extend(m.iter().cloned());
+                Ok(l)
+            }
+            (Ok(_), Err(b)) => Err(b.clone()),
+            (Err(mut l), Err(b)) => {
+                l.extend(b.iter().cloned());
+                Err(l)
+            }
+            (Err(l), Ok(_)) => Err(l),
+        };
+    }
+    let cat = |f: fn(&After) -> &Vec<String>| afters.iter().flat_map(|a| f(a).iter().cloned()).collect::<Vec<_>>();
+    let found = super::Found {
+        sets: nearest.sets,
+        pushed: cat(|a| &a.pushed),
+        factorized: cat(|a| &a.factorized),
+        demand: cat(|a| &a.demand),
+        located,
+        merged: merge.merged,
+        shared: merge.shared,
+        repeated: repeats.0,
+    };
+    Ok((out, found, sources))
+}
+
+/// The parts after lowering linked: their rules, and what each part's passes changed of its header, over the
+/// whole's header; the interface's words (`part:`) dropped. A relation two parts' passes made alike (a library
+/// relation's located form) is one relation, its rules the parts'.
+fn link_after(v1: &Version, header: &front::Program, parts: &[Part], heads: &[front::Program], afters: &[After], lists: &front::Lists) -> Result<Arc<Version>> {
+    let mut makers: HashMap<&str, usize> = HashMap::new();
+    for p in parts {
+        for r in &p.made {
+            *makers.entry(r.as_str()).or_default() += 1;
+        }
+    }
+    let mut all = header.clone();
+    all.rules.clear();
+    let mut added: BTreeSet<String> = BTreeSet::new();
+    for ((part, before), a) in parts.iter().zip(heads).zip(afters) {
+        let after = a.version.header(lists)?;
+        let owned = |r: &str| makers.get(r) == Some(&1) && part.made.contains(r) && !header.outputs.iter().any(|o| o == r);
+        merge_header(&mut all, before, &after, &owned, &|r: &str| r.to_owned());
+        added.extend(after.inputs.iter().filter(|r| !before.inputs.contains(*r)).cloned());
+    }
+    for words in all.qualifiers.values_mut() {
+        words.retain(|w| !w.starts_with("part:"));
+    }
+    all.qualifiers.retain(|r, words| !words.is_empty() && !r.starts_with("part:"));
+    let derived: BTreeSet<&str> = afters.iter().flat_map(|a| a.version.rules().map(|r| a.version.rel_name(r.head().rel()))).collect();
+    let mut inputs: Vec<String> = header.inputs.clone();
+    inputs.extend(added.into_iter().filter(|r| !inputs.contains(r)).collect::<Vec<_>>());
+    inputs.retain(|r| !derived.contains(r.as_str()));
+    all.inputs = inputs;
+    all.outputs = header.outputs.clone();
+    let _ = v1;
+    let mut b = Builder::of_program(&all)?;
+    for a in afters {
+        for r in a.version.rules() {
+            b.copy(&a.version, r);
+        }
+    }
+    Ok(b.finish()?.0)
 }

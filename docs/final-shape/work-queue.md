@@ -587,6 +587,16 @@ pass.
   and sources the whole's exactly. Before lowering is now about 0.4 s CPU (keys 0.14 s, the 317 images 0.11 s, the
   parts' names 0.09 s), and the passes after lowering are the larger cost (push 0.21 s): 0345 stage 2. A kept link
   would save at most the 0.2 s of names and images, and writes a linked program per edit.
+- **0345 stage 2: the passes after lowering per part** (2026-11-17): the nearest sets, the bound check and the
+  split run over the whole; each part's push, factorizing, export cut and locate run against its interface (its
+  inputs' place in the split given, its outputs' readers elsewhere named) and are kept under its key; the push's
+  mode is the run's (any part whose cross-file part reads a base relation), a part's share of it read from its
+  facts before any image; the merges run over the linked whole. Same ep2 sequence, load 39–44: rows h1's on the
+  cold run and every edit; an edit **36.3 G**, 2.88 s CPU (stage 1: 35.5 G; A: 40.7 G, 3.31 s); the cold run
+  1,169 G (stage 1: 957 G: every part's passes, twice where the mode is the base one). On the edit no part's
+  passes after lowering ran (0 of 589 prepared); what is left is whole: the link after lowering 0.14 s, the 317
+  images 0.07 s, the merges 0.03 s. The parts are conservative at the interface: an export another part reads is
+  neither factorized nor cut.
   Getting it working took four fixes in the link, each a name read for its meaning: `strtest_<k>`,
   `rr_ast_<k>_<m>` (its capture count), the requests a runner answers (never inputs), and a part's header (the
   whole program's 3,000 declarations per part made the link quadratic and every part's key the whole's).

@@ -3852,10 +3852,19 @@ fn run_observed(
                 (std::mem::take(&mut given.program), sets)
             };
             let _step = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's passes".into());
-            let (version, found, prepared_run) = preparation::run(version, factorizing, if by_parts { None } else { last_run(preparation::PREPARATION) }, bound).map_err(Error::Plan)?;
+            // By parts (decision 0345 stage 2): the rewriting passes per part against its interface, kept per part.
+            let (version, found, prepared_run) = if by_parts {
+                let (v, f, kept) = preparation::parts::run(version, factorizing, dialect, store, durable.is_some(), &lists, bound).map_err(Error::Plan)?;
+                program_sources.extend(kept);
+                (v, f, None)
+            } else {
+                let (v, f, run) = preparation::run(version, factorizing, last_run(preparation::PREPARATION), bound).map_err(Error::Plan)?;
+                (v, f, Some(run))
+            };
             // Both runs kept behind the run, under one digest of this one's, which its manifest names (decision 0333).
             if durable.is_some()
                 && let Some(front_run) = front_run
+                && let Some(prepared_run) = prepared_run
             {
                 let named = preparation::runs_digest(&front_run);
                 kept_runs.lock().expect("the kept runs").push(named);
@@ -3879,8 +3888,9 @@ fn run_observed(
             let split = crate::code_rule_dsl::typing::file_local::programs_of(version.clone()).map_err(Error::Plan)?;
             // While passes before the image edit the tree, a debug build checks the version's split and domains are
             // the tree's (the tree's inputs pruned as `preparation::InputsRead` prunes the version's).
+            // By parts, the rewriting passes are the parts' (decision 0345 stage 2), not the tree's.
             #[cfg(debug_assertions)]
-            if std::env::var_os("RERAIL_RULE_ORDER").is_none() {
+            if std::env::var_os("RERAIL_RULE_ORDER").is_none() && !by_parts {
                 // As sets: a rule pass's written rules follow the rules it kept (an overlay's order), so the version's
                 // rules, and what is found per rule, may come in another order than the tree's.
                 let sorted = |mut v: Vec<String>| {

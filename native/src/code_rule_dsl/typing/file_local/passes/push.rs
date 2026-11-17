@@ -15,6 +15,9 @@ use std::sync::Arc;
 #[derive(Default)]
 pub struct PushLocalJoins {
     pub made: Vec<String>,
+    /// Whether the cross-file part reads a base relation after the first push: the program's mode (a part's, its
+    /// share of the run's, decision 0345 stage 2).
+    pub reads_base: bool,
 }
 
 const ATTRIBUTES: [&str; 8] = ["docof", "line", "end_line", "col", "visit_index", "node_order", "node", "doc"];
@@ -284,7 +287,11 @@ impl ProgramPass for PushLocalJoins {
             Some(p) => cross_reads_base(&p.candidate, &inputs, &p.local),
             None => cross_reads_base(v, &inputs, &split.local),
         };
-        let pushed = if reads_base { push_with(v, f, &split.local, true)? } else { first };
+        self.reads_base = reads_base;
+        // A part pushes in the run's mode (decision 0345 stage 2): every part's reads together decide it.
+        use crate::code_rule_dsl::logic::plan::fields::{PART_WHOLE, PUSH_BASE, PUSH_DECIDED};
+        let mode = if f.qualified(PART_WHOLE, PUSH_DECIDED) { f.qualified(PART_WHOLE, PUSH_BASE) } else { reads_base };
+        let pushed = if mode { push_with(v, f, &split.local, true)? } else { first };
         if let Some(p) = pushed {
             self.made = p.made;
             write(w.derive()?, v, &p.round)?;

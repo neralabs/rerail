@@ -69,7 +69,11 @@ impl Analysis for FileLocal {
         let d = cx.get::<FieldsData>()?;
         let p = Program::of(cx.v(), Fields::over(cx.v(), &d));
         let _span = crate::code_rule_dsl::logic::profile::span(|| format!("split: all {} relations", p.rels.derived_count));
-        Ok(p.split(None, None))
+        // A part's split (decision 0345 stage 2): its own relations, the ones another part derives read as given.
+        match p.given_split() {
+            Some((scope, given)) => Ok(p.split(Some(&scope), Some(&given))),
+            None => Ok(p.split(None, None)),
+        }
     }
     /// Its fields as rows, each tagged by its field (decision 0333 §4): `(0, rel)` file-local, `(1, rel)` constant,
     /// `(2, rel, columns)` locations, `(3, rel)` filters, `(4, rel, cause)`, `(5, rel, columns)` same-document,
@@ -203,6 +207,43 @@ impl<'v> Program<'v> {
 
     fn name(&self, r: u32) -> &'v str {
         self.v.rel_name(RelId(r))
+    }
+
+    /// A part's own relations (those its rules derive), and the places its relations another part derives were
+    /// given (`fields::GIVEN`, and the words of `given_words`): `None` for a program that is no part.
+    fn given_split(&self) -> Option<(BTreeSet<u32>, FileLocal)> {
+        let mut given = FileLocal::default();
+        let mut any = false;
+        for (r, _) in self.rels.derived.iter().enumerate().filter(|(_, d)| **d) {
+            let rel = self.name(r as u32);
+            if !self.f.given(rel) {
+                continue;
+            }
+            any = true;
+            for w in self.f.qualifiers_of(rel) {
+                let cols = |c: &str| c.split(',').filter(|x| !x.is_empty()).filter_map(|x| x.parse().ok()).collect::<Vec<usize>>();
+                match w.split_once('=') {
+                    Some(("part:loc", c)) => drop(given.locations.insert(rel.to_owned(), cols(c))),
+                    Some(("part:same", c)) => drop(given.same_doc.insert(rel.to_owned(), cols(c))),
+                    _ => match w {
+                        "part:local" => {
+                            given.local.insert(rel.to_owned());
+                        }
+                        "part:constant" => {
+                            given.constants.insert(rel.to_owned());
+                        }
+                        "part:filter" => {
+                            given.filters.insert(rel.to_owned());
+                        }
+                        _ => {}
+                    },
+                }
+            }
+            if !given.local.contains(rel) {
+                given.causes.insert(rel.to_owned(), "cross-file where it is derived, another part".to_owned());
+            }
+        }
+        any.then(|| ((0..self.rels.n as u32).filter(|&r| !self.rels.rules[r as usize].is_empty()).collect(), given))
     }
 
     /// Whether `rel` has an entry of stated facts (`Program::facts`), not an `.about` row.
@@ -553,10 +594,13 @@ pub(super) fn crossing(v: &Version, f: Fields<'_>, local: &BTreeSet<String>) -> 
                 }
             })
     };
-    let projected: BTreeSet<String> = cross_reads.iter().filter(|r| is_local(r) && projection(r)).cloned().collect();
+    // A part's relation a cross-file rule of another part reads (decision 0345 stage 2) is read cross-file here too.
+    let elsewhere = |rel: &str| f.qualified(rel, crate::code_rule_dsl::logic::plan::fields::PART_CROSS_READ);
+    let projected: BTreeSet<String> = cross_reads.iter().map(String::as_str).chain(local.iter().map(String::as_str).filter(|r| elsewhere(r))).filter(|r| is_local(r) && projection(r)).map(str::to_owned).collect();
     let in_cross = |rel: &str| !is_local(rel) || projected.contains(rel);
     let mut cross_reads = read(&|h| in_cross(h));
     cross_reads.extend(f.natives().iter().filter(|n| in_cross(v.rel_name(n.rel))).flat_map(|n| n.reads.iter()).map(|&r| v.rel_name(r).to_owned()));
+    cross_reads.extend(local.iter().filter(|r| elsewhere(r)).cloned());
     let exports: Vec<String> = cross_reads.iter().filter(|r| is_local(r) && !projected.contains(*r)).cloned().collect();
     let base_read: Vec<String> = f.inputs().filter(|i| cross_reads.contains(*i)).map(str::to_owned).collect();
     let mut base = base_read.clone();
@@ -611,6 +655,12 @@ impl<'v> Rels<'v> {
         }
         let p = Program { v, f, rules: Vec::new(), rels: Rels::empty() };
         let name = |r: usize| v.rel_name(RelId(r as u32));
+        // A part's relation another part derives is derived (`fields::GIVEN`), by no rule here.
+        for (r, d) in derived.iter_mut().enumerate() {
+            if !*d && read[r] && f.given(name(r)) {
+                *d = true;
+            }
+        }
         let base = |r: usize| !derived[r] && read[r];
         let test = |r: &str| r.starts_with(crate::code_rule_dsl::logic::strings::RELATION);
         Rels {
