@@ -446,6 +446,13 @@ impl Version {
         super::Tree::new(self, lists).program()
     }
 
+    /// The program's fields besides its rules (its declarations, facts, inputs, outputs, settings, policies and the
+    /// rest of its `.about` rows), as a tree without rules: what a run reads of a program other than its rules, with no
+    /// rule decoded (decision 0281's path, step R).
+    pub fn header(&self, lists: &Lists) -> Result<Program, String> {
+        super::Tree::new(self, lists).program_of(std::iter::empty())
+    }
+
     /// A new base of this version's program, keeping its atom and relation ids (rule ids are renumbered from 0).
     pub fn fold(&self) -> Result<Arc<Version>, String> {
         super::Builder::folding(self).finish().map(|(v, _)| v)

@@ -2082,6 +2082,11 @@ pub fn projection_plan(prog: &crate::code_rule_dsl::logic::front::Program, reads
     if on() { analysis_report::projection(prog, reads); }
 }
 
+/// `projection_plan` from the relations' readers and the outputs (`analysis_report::projection_of`).
+pub fn projection_plan_of(users: impl FnOnce() -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>>, outputs: &std::collections::BTreeSet<String>, reads: &std::collections::BTreeSet<String>) {
+    if on() { analysis_report::projection_of(&users(), outputs, reads); }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;

@@ -56,8 +56,11 @@
         let read = |p: &crate::code_rule_dsl::logic::front::Program| crate::code_rule_dsl::logic::program_text::read(&text(p).unwrap()).unwrap();
         // The lowered program's version, read back from its image's bytes, as the loader opens it.
         let lowered_image = |p: &super::Prepared| crate::code_rule_dsl::logic::program_image::Version::open(p.lowered.version.base_bytes().expect("a prepared program's version is a base")).unwrap();
+        // The source's version, read back the same way.
+        let source_image = |p: &super::Prepared| crate::code_rule_dsl::logic::program_image::Version::open(p.source.base_bytes().expect("the source is a base")).unwrap();
+        let lists = crate::code_rule_dsl::logic::front::Lists::default();
         let digest = |l: &crate::code_rule_dsl::logic::plan::lower::Lowered| l.placed().unwrap().digest();
-        let back = super::prepared_of(&facts, read(&prepared.prog), lowered_image(&prepared), dialect).unwrap();
+        let back = super::prepared_of(&facts, read(&prepared.prog), source_image(&prepared), lowered_image(&prepared), dialect, &lists).unwrap();
         // Program has no PartialEq: its Debug form is the comparison, field by field; versions compare by digest.
         assert_eq!(format!("{:?}", back.prog), format!("{:?}", prepared.prog), "the front program");
         assert_eq!(digest(&back.lowered), digest(&prepared.lowered), "the lowered program");
@@ -73,14 +76,14 @@
         // tests that run beside this one.
         let all: Vec<std::sync::Arc<super::Prepared>> = super::super::with_prepared(|kept| kept.values().flatten().cloned().collect());
         for p in &all {
-            let b = super::prepared_of(&super::facts_of(p), read(&p.prog), lowered_image(p), p.lowered.dialect).unwrap();
+            let b = super::prepared_of(&super::facts_of(p), read(&p.prog), source_image(p), lowered_image(p), p.lowered.dialect, &lists).unwrap();
             assert_eq!((&b.split.exports, &b.split.base, &b.split.locations, &b.split.same_doc), (&p.split.exports, &p.split.base, &p.split.locations, &p.split.same_doc));
             assert_eq!(b.split.versions.cross.digest(), p.split.versions.cross.digest());
         }
         // And one stored without its split (an earlier entry's facts) makes it again, the same.
         let mut unsplit = facts.clone();
         unsplit.remove("prepared_split");
-        let again = super::prepared_of(&unsplit, read(&prepared.prog), lowered_image(&prepared), dialect).unwrap();
+        let again = super::prepared_of(&unsplit, read(&prepared.prog), source_image(&prepared), lowered_image(&prepared), dialect, &lists).unwrap();
         assert_eq!(again.split.versions.cross.digest(), prepared.split.versions.cross.digest(), "the split, made again");
         // No program is in the facts: no row per node (decision 0155).
         assert!(["program", "rule", "atom", "term"].iter().all(|r| !facts.contains_key(*r)), "{:?}", facts.keys().collect::<Vec<_>>());
