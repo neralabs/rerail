@@ -1819,7 +1819,7 @@ impl Drop for KeepPlans {
         let published = PUBLISHED.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect::<Vec<_>>();
         let folds = keeps::FOLDS.swap(0, std::sync::atomic::Ordering::Relaxed);
         let deferred = super::native::setfix::DEFERRED_WALKS.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect::<Vec<_>>();
-        super::profile::decision("a walk's new texts interned at once (decision 0306)", || format!("{} walks in one piece interned {} new texts, one write of the arena each", deferred[0], deferred[1]));
+        super::profile::decision("a walk's new texts interned at once (decision 0314)", || format!("{} walks in one piece interned {} new texts, one write of the arena each", deferred[0], deferred[1]));
         super::profile::decision("kept plans shared by RCU (decision 0301)", || format!("{} publications of {} new plans or orders; observed sums folded {folds} times", published[0], published[1]));
         if let (Some(g), Some(plans)) = (self.0, plans) {
             // Every job that entered them has ended: the run's thread holds the last handle, or a copy is taken.

@@ -1,6 +1,6 @@
 # 0308. The store writer's page cache holds a wave, and its checkpoints wait for 64 MB of WAL
 
-Status: decided (2026-11-16). Follows 0306's measurements: after the arena's lock, the store's I/O was the largest
+Status: decided (2026-11-16). Follows 0314's measurements: after the arena's lock, the store's I/O was the largest
 kernel cost of a cold PostHog run (`pwrite`, `fsync`, `pread`: about 24 thread-s). Builds on 0102 (write-back) and
 the writer's checkpointer (`write_back::start_writer`).
 

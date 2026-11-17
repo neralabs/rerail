@@ -6496,7 +6496,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     /// A walk in one piece. One that may make atoms defers its new texts, as a morsel does (`Deferred`), and interns
     /// them at its end with one `intern_all` (`settle_deferred`). Interned row by row, each new text took the arena's
     /// write lock, and every thread reading a text (`cat_held`, `with_str`) waited behind it: over PostHog, the run's
-    /// most-waited lock once the planner's were gone (decision 0306). The walk's head rows go to a `Fresh` of its own
+    /// most-waited lock once the planner's were gone (decision 0314). The walk's head rows go to a `Fresh` of its own
     /// (its rows hold deferred values until settled), absorbed into the stratum's as a morsel's are.
     fn whole(cx: &mut Ctx<'_, '_>, slots: &mut [i64]) {
         if !makes_atoms(cx.j) || cx.syms.deferred.is_some() {

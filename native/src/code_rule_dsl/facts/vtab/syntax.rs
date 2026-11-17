@@ -1343,6 +1343,8 @@ pub trait ProducerRun {
     fn reads_guests(&self) -> bool {
         false
     }
+    /// Its name, for the profile's spans.
+    fn name(&self) -> &'static str;
 }
 
 static PRODUCERS: std::sync::OnceLock<Vec<&'static dyn Producer>> = std::sync::OnceLock::new();
@@ -1491,6 +1493,9 @@ pub struct Dialect {
     tag: u8,
     family: Family,
     pub catalog: KindCatalog,
+    /// Each kind code's name: the grammar's C string, read once (`name` was a `strlen` and a UTF-8 check per node,
+    /// 0.9 s of a cold PostHog run in string annotations' host scan alone).
+    names: Vec<&'static str>,
     classes: Vec<Class>,
     /// Each kind code's `granules::kind_flags`.
     granule_kinds: Vec<u8>,
@@ -1526,6 +1531,7 @@ impl Dialect {
         let dialect = from_tape_tag(tag).ok_or_else(|| StoreError::Invalid(format!("no dialect has tape tag {tag}")))?;
         let catalog = dialect.kinds();
         let values = crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(dialect)).reads_values();
+        let names: Vec<&'static str> = (0..catalog.kind_count()).map(|k| catalog.kind_name(k as u16).unwrap_or("")).collect();
         let classes = (0..catalog.kind_count()).map(|k| catalog.kind_name(k as u16).map_or(Class::Other, Class::of)).collect();
         let granule_kinds = (0..catalog.kind_count()).map(|k| catalog.kind_name(k as u16).map_or(0, granules::kind_flags)).collect();
         let canonical: Vec<u16> = (0..catalog.kind_count() as u16)
@@ -1540,7 +1546,7 @@ impl Dialect {
         }
         let family = Family::of(from_tape_tag(tag).and_then(crate::code_rule_dsl::language::label));
         let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(dialect);
-        Ok(Self { tag, family, catalog, classes, granule_kinds, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, codes, values, grammar })
+        Ok(Self { tag, family, catalog, names, classes, granule_kinds, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, codes, values, grammar })
     }
     /// What kind code `code` is to the granules (`granules::kind_flags`); ERROR and an unknown code are nothing.
     pub fn granule_kind(&self, code: u16) -> u8 {
@@ -1554,7 +1560,11 @@ impl Dialect {
         self.classes.get(usize::from(self.code(f, id))).copied().unwrap_or(Class::Other)
     }
     pub fn name(&self, f: &Facts, id: u32) -> &'static str {
-        self.catalog.kind_name(self.code(f, id)).unwrap_or("")
+        self.code_name(self.code(f, id))
+    }
+    /// Kind code `code`'s name; one past the grammar's kinds (ERROR's) is the catalog's.
+    fn code_name(&self, code: u16) -> &'static str {
+        self.names.get(usize::from(code)).copied().unwrap_or_else(|| self.catalog.kind_name(code).unwrap_or(""))
     }
     /// Node `id`'s kind atom as the `kind` column holds it: its name's canonical code's.
     fn kind(&self, f: &Facts, id: u32) -> i64 {
@@ -1563,7 +1573,7 @@ impl Dialect {
     }
     /// A kind atom's name (a token's, `Facts::tokens`).
     pub fn atom_name(&self, atom: u32) -> &'static str {
-        self.catalog.kind_name(crate::code_rule_dsl::facts::core::kind_code(atom)).unwrap_or("")
+        self.code_name(crate::code_rule_dsl::facts::core::kind_code(atom))
     }
     /// The child of `id` in field `field`.
     fn field_child(&self, f: &Facts, id: u32, field: &str) -> Option<u32> {
@@ -3184,11 +3194,14 @@ impl Batch {
             let document_span = crate::code_rule_dsl::logic::profile::span(|| "document rows".into());
             // A text-only document has core.rr's text rows too (its lines, `split_line`), and no tokens.
             if core && (!withheld || guest.is_none()) {
+                let s = crate::code_rule_dsl::logic::profile::span(|| "core document rows".into());
                 c.document(&p, dialect, &mut string, wants_text, wants_tokens && !withheld, wants_split_lines, wants_lf_lines, wants_source_text, wants_line_text, guest.is_none(), projection);
+                drop(s);
                 if let Some(dialect) = dialect
                     && wants_digests
                     && !withheld
                 {
+                    let _s = crate::code_rule_dsl::logic::profile::span(|| "digests".into());
                     c.digests(&p, dialect, &mut string, wants_trees, wants_units);
                 }
             }
@@ -3196,7 +3209,11 @@ impl Batch {
                 // A text document's lines split as W's `lines` regexes split any file's. A withheld document has no
                 // `rx_span` matches.
                 let rx = if withheld { &[][..] } else { &rx_spans[..] };
-                extra.document(&p, d, dialect, python == Some(tag) || tag == TEXT, rx, &span_ends[j], &mut rows.text, &mut string)?;
+                {
+                    let _s = crate::code_rule_dsl::logic::profile::span(|| "extra document rows".into());
+                    extra.document(&p, d, dialect, python == Some(tag) || tag == TEXT, rx, &span_ends[j], &mut rows.text, &mut string)?;
+                }
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "tree document rows".into());
                 tree.document(&p, dialect, python == Some(tag), &mut string);
             } else {
                 // A guest's nodes have their places in its file (`Locs::place`); W's values, f-string trees and CPython's
@@ -3212,6 +3229,7 @@ impl Batch {
             // A guest's are read only by a producer of guests' rows (string annotations); the others' are its file's.
             for (own, run) in &mut produced {
                 if d.guest.is_none() || run.reads_guests() {
+                    let _s = crate::code_rule_dsl::logic::profile::span(|| format!("produced rows: {}", run.name()));
                     run.document(&p, d, dialect, *own == Some(tag), &mut string)?;
                 }
             }
