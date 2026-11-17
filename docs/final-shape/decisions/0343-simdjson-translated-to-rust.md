@@ -105,6 +105,43 @@ The rounds use the general registers, which are otherwise idle in stage 1; the m
 needs two moves between the register files. The translation keeps the rounds, as simdjson.
 Whether tier 1 keeps `clmul` (0341's fork) is open, and is the user's decision.
 
+## Measured: the rounds against the multiply
+
+`tests::prefix_xor_forms` runs stage 1 with each form of `prefix_xor` (`index::<PMULL>`; the
+two indexes are checked equal in `stage1_is_simdjsons`). It also runs the form alone: its
+latency (each mask a function of the one before) and its throughput (none dependent). Each
+figure is the least of 61 rounds, three runs each, on an M5 Max at load 9–18 and an M3 Max at
+load 22–27.
+
+In stage 1 the quote mask is made in the general registers (`quote & !escaped`). So the
+multiply is `fmov d, x`, `pmull`, `fmov x, d`: two moves between the register files, as
+simdjson's comment says. The rounds are six `eor x, x, x, lsl #k`.
+
+**Stage 1, instructions / cycles a byte, rounds against `vmull_p64`:**
+
+| Input | M5 Max | M3 Max |
+|---|---|---|
+| `jsonexamples` | 3.11 / 0.55 against 3.06 / 0.59 | 3.11 / 0.57 against 3.06 / 0.58 |
+| long ASCII strings | 2.17 / 0.40 against 2.13 / 0.41 | 2.17 / 0.40 against 2.13 / 0.41 |
+| numbers, short strings | 4.50 / 0.90 against 4.45 / 0.86 | 4.50 / 0.98 against 4.45 / 0.93 |
+
+**The form alone, cycles a mask, rounds against `vmull_p64`:**
+
+| | M5 Max | M3 Max | M1 (Firestorm), from Dougall Johnson's tables |
+|---|---|---|---|
+| latency | 13.0 against 13.5 | 13.0 against 13.5 | 12 against `fmov` + 3 + `fmov` (each move "≤10") |
+| throughput | 1.67 against 0.70 | 1.64 against 0.53 | 2.0 against 0.5 |
+
+On the M1, a shifted `eor` has latency 2 and throughput 0.333, and `pmull` (1Q) has latency 3
+and throughput 0.25. A move from the vector registers to the general ones has throughput 0.5.
+
+So on every Apple core measured, the multiply's latency is the rounds'. Its throughput is two
+and a half to three times theirs. In stage 1 neither form is on the loop's carried path
+(`prev_in_string` is), and the difference is within ±6%. The multiply is ahead where the
+blocks are regular (numbers and short strings, 4–5%) and behind on the M5's corpus (7%).
+Simdjson's arm64 choice (the rounds) costs about nothing on Apple cores. The 3-cycle `pmull`
+does not show "slow"; simdjson's comment names the moves on Neoverse N1 and Cortex-A72.
+
 ## Toolchain: `addp` needs rustc 1.99.1
 
 simdjson's `to_bitmask` is `and` with the bit weights, then four `vpaddq_u8`.

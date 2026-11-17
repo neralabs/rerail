@@ -109,7 +109,19 @@ impl Parser {
         self.padded(src);
         self.ready(src.len());
         // SAFETY: the buffer holds `src` and its padding; the index, the room `index` needs.
-        match unsafe { stage1::index(self.buffer.as_ptr(), src.len(), self.indexes.as_mut_ptr()) } {
+        match unsafe { stage1::index::<false>(self.buffer.as_ptr(), src.len(), self.indexes.as_mut_ptr()) } {
+            Ok(n) => i64::from(n),
+            Err(e) => -(e as i64),
+        }
+    }
+
+    /// `stage1` with `prefix_xor` as the carry-less multiply simdjson left out (`vmull_p64`): the
+    /// measure of the two forms.
+    pub fn stage1_pmull(&mut self, src: &[u8]) -> i64 {
+        self.padded(src);
+        self.ready(src.len());
+        // SAFETY: as `stage1`.
+        match unsafe { stage1::index::<true>(self.buffer.as_ptr(), src.len(), self.indexes.as_mut_ptr()) } {
             Ok(n) => i64::from(n),
             Err(e) => -(e as i64),
         }
@@ -164,7 +176,7 @@ impl Parser {
         self.ready(body);
         // SAFETY: the buffer holds `src` and its padding; the index, the room `index` needs.
         let buf = unsafe { self.buffer.as_ptr().add(shift as usize) };
-        let count = match unsafe { stage1::index(buf, body, self.indexes.as_mut_ptr()) } {
+        let count = match unsafe { stage1::index::<false>(buf, body, self.indexes.as_mut_ptr()) } {
             Ok(n) => n,
             Err(e) => return e as i32,
         };

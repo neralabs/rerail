@@ -74,9 +74,14 @@ impl Simd8x64 {
 // simdjson/arm64/bitmanipulation.h and bitmask.h.
 
 /// `prefix_xor`: arm64's is six shift-XOR rounds (simdjson leaves `vmull_p64` out: "We could do
-/// this with PMULL, but it is apparently slow").
+/// this with PMULL, but it is apparently slow"). `PMULL` makes it the multiply simdjson left out,
+/// `vmull_p64(-1, bitmask)`, to measure the two against each other (`tests::prefix_xor_forms`).
 #[inline(always)]
-fn prefix_xor(mut bitmask: u64) -> u64 {
+pub(crate) fn prefix_xor<const PMULL: bool>(mut bitmask: u64) -> u64 {
+    if PMULL {
+        // SAFETY: the caller checked `pmull` (`stage1_pmull`); every Apple core has it.
+        return unsafe { vmull_p64(u64::MAX, bitmask) } as u64;
+    }
     bitmask ^= bitmask << 1;
     bitmask ^= bitmask << 2;
     bitmask ^= bitmask << 4;
@@ -393,11 +398,11 @@ struct JsonStringScanner {
 
 impl JsonStringScanner {
     #[inline(always)]
-    fn next(&mut self, input: &Simd8x64) -> JsonStringBlock {
+    fn next<const PMULL: bool>(&mut self, input: &Simd8x64) -> JsonStringBlock {
         let backslash = input.eq(b'\\');
         let escaped = self.escape_scanner.next(backslash);
         let quote = input.eq(b'"') & !escaped;
-        let in_string = prefix_xor(quote) ^ self.prev_in_string;
+        let in_string = prefix_xor::<PMULL>(quote) ^ self.prev_in_string;
         self.prev_in_string = ((in_string as i64) >> 63) as u64;
         JsonStringBlock { quote, in_string }
     }
@@ -456,8 +461,8 @@ impl JsonScanner {
 
     /// `next`.
     #[inline(always)]
-    pub(crate) fn next(&mut self, input: &Simd8x64) -> JsonBlock {
-        let strings = self.string_scanner.next(input);
+    pub(crate) fn next<const PMULL: bool>(&mut self, input: &Simd8x64) -> JsonBlock {
+        let strings = self.string_scanner.next::<PMULL>(input);
         let characters = JsonCharacterBlock::classify(input);
         let nonquote_scalar = characters.scalar() & !strings.quote;
         let follows_nonquote_scalar = follows(nonquote_scalar, &mut self.prev_scalar);
@@ -545,7 +550,7 @@ impl BitIndexer {
 /// # Safety
 /// `buf` has `len + 64` bytes; `indexes` has the room above.
 #[inline(never)]
-pub(crate) unsafe fn index(buf: *const u8, len: usize, indexes: *mut u32) -> Result<u32, Code> {
+pub(crate) unsafe fn index<const PMULL: bool>(buf: *const u8, len: usize, indexes: *mut u32) -> Result<u32, Code> {
     if len == 0 {
         return Err(Code::Empty);
     }
@@ -563,7 +568,7 @@ pub(crate) unsafe fn index(buf: *const u8, len: usize, indexes: *mut u32) -> Res
         ($block:expr) => {{
             // SAFETY: a full block, or the remainder's copy: 64 bytes.
             let in_1 = unsafe { Simd8x64::load($block) };
-            let block_1 = scanner.next(&in_1);
+            let block_1 = scanner.next::<PMULL>(&in_1);
             let unescaped = in_1.lteq(0x1F);
             checker.check_next_input(&in_1);
             // Output *last* iteration's structurals to the parser.

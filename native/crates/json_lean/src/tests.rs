@@ -68,13 +68,22 @@ fn stage1_is_simdjsons() {
     let kernel = Kernel::Arm64;
     let mut p = Parser::new();
     let files = files();
+    let pmull = std::arch::is_aarch64_feature_detected!("pmull");
     for f in &files {
         let ours = p.stage1(f);
         let theirs = kernel.stage1(f, false);
         assert_eq!(ours, theirs, "stage 1 of {:?}", String::from_utf8_lossy(&f[..f.len().min(200)]));
+        let index = if ours > 0 { p.indexes(ours as usize).to_vec() } else { Vec::new() };
+        if pmull {
+            let multiplied = p.stage1_pmull(f);
+            assert_eq!(multiplied, ours, "stage 1 (`vmull_p64`) of {:?}", String::from_utf8_lossy(&f[..f.len().min(200)]));
+            if ours > 0 {
+                assert_eq!(p.indexes(ours as usize), index, "the index (`vmull_p64`) of {:?}", String::from_utf8_lossy(&f[..f.len().min(200)]));
+            }
+        }
         // simdjson's parser strips a byte order mark before its stage 1; `stage1_only` does not.
         if ours > 0 && !f.starts_with(b"\xef\xbb\xbf") {
-            let ours = p.indexes(ours as usize).to_vec();
+            let ours = index;
             if let Ok(theirs) = rerail_simdjson_native::structurals(f, <[u32]>::to_vec) {
                 assert_eq!(ours, theirs, "the index of {:?}", String::from_utf8_lossy(&f[..f.len().min(200)]));
             }
@@ -113,6 +122,27 @@ fn retired() -> (u64, u64) {
     (info.ri_instructions, info.ri_cycles)
 }
 
+/// The benchmarks' inputs: JSON's corpus (`RERAIL_JSON_CORPUS`, the files simdjson accepts) and
+/// inputs that part the masks from the tokens (those of `rr_parser`'s `json_tier1_by_pass`).
+fn inputs(kernel: Kernel) -> Vec<(&'static str, Vec<Vec<u8>>)> {
+    let mut corpus = Vec::new();
+    if let Ok(dir) = std::env::var("RERAIL_JSON_CORPUS") {
+        let mut paths: Vec<_> = std::fs::read_dir(&dir).expect("the directory").flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+        paths.sort();
+        corpus.extend(paths.iter().map(|p| std::fs::read(p).expect("reads")).filter(|b| b.len() < 1 << 20 && rerail_simdjson::tape_with(kernel, b, &KINDS).is_ok()));
+    }
+    let n = 60_000;
+    let one = |v: Vec<u8>| (0..16).map(|_| v.clone()).collect::<Vec<_>>();
+    vec![
+        ("corpus", corpus),
+        ("long ASCII strings", one([b"[".as_slice(), &format!("\"{}\",", "a".repeat(5_000)).repeat(n / 5_000).into_bytes(), b"0]"].concat())),
+        ("long UTF-8 strings", one([b"[".as_slice(), &format!("\"{}\",", "\u{e9}".repeat(2_500)).repeat(n / 5_000).into_bytes(), b"0]"].concat())),
+        ("white space", one([b"[".as_slice(), &vec![b' '; n], b"]"].concat())),
+        ("numbers", one([b"[".as_slice(), &"1234,".repeat(n / 5).into_bytes(), b"0]"].concat())),
+        ("short strings", one([b"[".as_slice(), &"\"ab\",".repeat(n / 5).into_bytes(), b"0]"].concat())),
+    ]
+}
+
 /// The translation against simdjson, instructions and cycles a byte, each the least of
 /// `RR_ROUNDS` rounds: stage 1 (simdjson's own, `stage1_only`) and the tape (the kernel, its
 /// source not hashed), over JSON's corpus (`RERAIL_JSON_CORPUS`) and inputs that part the masks
@@ -122,22 +152,7 @@ fn retired() -> (u64, u64) {
 fn against_simdjson() {
     let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(9);
     let kernel = Kernel::Arm64Sha;
-    let mut corpus = Vec::new();
-    if let Ok(dir) = std::env::var("RERAIL_JSON_CORPUS") {
-        let mut paths: Vec<_> = std::fs::read_dir(&dir).expect("the directory").flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
-        paths.sort();
-        corpus.extend(paths.iter().map(|p| std::fs::read(p).expect("reads")).filter(|b| b.len() < 1 << 20 && rerail_simdjson::tape_with(kernel, b, &KINDS).is_ok()));
-    }
-    let n = 60_000;
-    let one = |v: Vec<u8>| (0..16).map(|_| v.clone()).collect::<Vec<_>>();
-    let inputs: Vec<(&str, Vec<Vec<u8>>)> = vec![
-        ("corpus", corpus),
-        ("long ASCII strings", one([b"[".as_slice(), &format!("\"{}\",", "a".repeat(5_000)).repeat(n / 5_000).into_bytes(), b"0]"].concat())),
-        ("long UTF-8 strings", one([b"[".as_slice(), &format!("\"{}\",", "\u{e9}".repeat(2_500)).repeat(n / 5_000).into_bytes(), b"0]"].concat())),
-        ("white space", one([b"[".as_slice(), &vec![b' '; n], b"]"].concat())),
-        ("numbers", one([b"[".as_slice(), &"1234,".repeat(n / 5).into_bytes(), b"0]"].concat())),
-        ("short strings", one([b"[".as_slice(), &"\"ab\",".repeat(n / 5).into_bytes(), b"0]"].concat())),
-    ];
+    let inputs = inputs(kernel);
     let mut p = Parser::new();
     let least = |run: &mut dyn FnMut() -> usize| {
         let mut best = (u64::MAX, u64::MAX);
@@ -162,5 +177,57 @@ fn against_simdjson() {
         let t_rs = least(&mut || files.iter().map(|f| p.tape(f, &KINDS).unwrap().node_count()).sum());
         let per = |(i, c): (u64, u64)| format!("{:6.2} / {:5.2}", i as f64 / bytes as f64, c as f64 / bytes as f64);
         eprintln!("{name:>20}  {} {}   {} {}", per(s_cpp), per(s_rs), per(t_cpp), per(t_rs));
+    }
+}
+
+/// `prefix_xor` as simdjson's arm64 has it (six shift-XOR rounds) against the carry-less multiply
+/// it leaves out (`vmull_p64`): stage 1 over the benchmarks' inputs, and the form alone, its
+/// latency (each a function of the one before) and its throughput (none dependent), the least of
+/// `RR_ROUNDS` rounds.
+#[test]
+#[ignore = "a benchmark: run by hand"]
+fn prefix_xor_forms() {
+    assert!(std::arch::is_aarch64_feature_detected!("pmull"));
+    let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(9);
+    let least = |run: &mut dyn FnMut() -> u64| {
+        let mut best = (u64::MAX, u64::MAX);
+        for _ in 0..rounds {
+            let (i0, c0) = retired();
+            std::hint::black_box(run());
+            let (i1, c1) = retired();
+            best = (best.0.min(i1 - i0), best.1.min(c1 - c0));
+        }
+        best
+    };
+    let mut p = Parser::new();
+    eprintln!("least of {rounds} rounds; instructions / cycles a byte");
+    eprintln!("{:>20}  {:>15} {:>15}", "stage 1", "rounds", "vmull_p64");
+    for (name, files) in &inputs(Kernel::Arm64Sha) {
+        if files.is_empty() {
+            continue;
+        }
+        let bytes = files.iter().map(Vec::len).sum::<usize>() as f64;
+        let r = least(&mut || files.iter().map(|f| p.stage1(f) as u64).sum());
+        let m = least(&mut || files.iter().map(|f| p.stage1_pmull(f) as u64).sum());
+        eprintln!("{name:>20}  {:6.2} / {:5.2}  {:6.2} / {:5.2}", r.0 as f64 / bytes, r.1 as f64 / bytes, m.0 as f64 / bytes, m.1 as f64 / bytes);
+    }
+    // The form alone, over masks no compiler can know.
+    let mut x = 0x9e37_79b9_7f4a_7c15u64;
+    let masks: Vec<u64> = (0..1 << 16)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        })
+        .collect();
+    let n = masks.len() as f64;
+    let latency_r = least(&mut || masks.iter().fold(0, |a, &m| stage1::prefix_xor::<false>(a ^ m)));
+    let latency_m = least(&mut || masks.iter().fold(0, |a, &m| stage1::prefix_xor::<true>(a ^ m)));
+    let through_r = least(&mut || masks.iter().fold(0, |a, &m| a.wrapping_add(stage1::prefix_xor::<false>(m))));
+    let through_m = least(&mut || masks.iter().fold(0, |a, &m| a.wrapping_add(stage1::prefix_xor::<true>(m))));
+    eprintln!("{:>20}  {:>15} {:>15}", "the form alone", "rounds", "vmull_p64");
+    for (what, r, m) in [("latency", latency_r, latency_m), ("throughput", through_r, through_m)] {
+        eprintln!("{what:>20}  {:6.2} / {:5.2}  {:6.2} / {:5.2}   instructions / cycles a mask", r.0 as f64 / n, r.1 as f64 / n, m.0 as f64 / n, m.1 as f64 / n);
     }
 }
