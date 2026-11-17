@@ -14,8 +14,8 @@ const EARLY = "early steer";
 
 /**
  * A Claude Code session whose turn's edit checks, at its stop, steer `early` when given, then end only once the test
- * opens `checks`, and steer `LATE`. Each event's hook request is the one `stop` gives it: none stands for a hook that
- * waits for its answer.
+ * opens `checks`, and steer `LATE`. The stop's answer is waited for until the test aborts its signal, as the engine
+ * service's does when the hook gives up; an event sent with no signal stands for a hook that waits for its answer.
  */
 async function heldStopSession(early?: string) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-stop-gave-up-")));
@@ -25,7 +25,6 @@ async function heldStopSession(early?: string) {
   const settling = Promise.withResolvers<void>();
   const checks = Promise.withResolvers<void>();
   const steered = Promise.withResolvers<void>();
-  const requests = new WeakMap<AdapterEvent, AbortSignal>();
   let steers = 0;
   const runtime = new RerailRuntime({
     autostart: false,
@@ -33,7 +32,6 @@ async function heldStopSession(early?: string) {
     storageRoot: join(root, "sessions"),
     databasePath: join(root, "rerail.sqlite"),
     embedder: testEmbedder,
-    hookRequest: event => requests.get(event),
     createAuditor: ({ steerDelivery }) => ({
       openWorkspace: async () => undefined,
       acceptsPath: () => true,
@@ -57,13 +55,12 @@ async function heldStopSession(early?: string) {
   const session = { host: "claude-code" as const, sessionId: "stop-gave-up", cwd: root };
   await runtime.ingest({ kind: "session-start", eventId: "start", session });
   await runtime.codeRulesOpened(session.sessionId);
-  /** Sends the turn's end with a hook request the test aborts as the hook gives up; `answer` is what the stop answered. */
+  /** Sends the turn's end with a signal the test aborts as the hook gives up; `answer` is what the stop answered. */
   const stop = () => {
     const hook = new AbortController();
     const event: AdapterEvent = { kind: "turn-end", eventId: "stop", sessionId: session.sessionId, session, text: "" };
-    requests.set(event, hook.signal);
     const answered: { answer?: readonly AdapterDelivery[] } = {};
-    const answering = runtime.ingest(event).then((deliveries) => {
+    const answering = runtime.ingest(event, { signal: hook.signal }).then((deliveries) => {
       answered.answer = deliveries;
     });
     return { giveUp: () => hook.abort(), answered, answering };

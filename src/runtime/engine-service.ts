@@ -240,11 +240,6 @@ interface EngineRoutingState {
   lastEventAt: Map<string, number>;
   lanes: SessionLanes;
   pending: Set<Promise<readonly AdapterDelivery[]>>;
-  /**
-   * The request of the hook waiting for each event's answer (`hookRequestSignal`), which every runtime reads
-   * (`RerailRuntimeOptions.hookRequest`): an event whose hook gave up stops waiting and hands over no steer.
-   */
-  hookRequests: WeakMap<AdapterEvent, AbortSignal>;
   /** The runtimes no session uses, each with the timer that closes it. */
   idle: Map<string, NodeJS.Timeout>;
   /** How long a runtime no session uses stays open: `idleRuntimeMs`, or `IDLE_RUNTIME_MS`. */
@@ -380,14 +375,15 @@ async function routeEngineEvent(
 ): Promise<readonly AdapterDelivery[]> {
   const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
   const { runtimeKey, runtimeOptions } = resolveRuntimeRoute(event, configuration, options, state);
-  if (runtimeOptions !== undefined) runtimeOptions.hookRequest = routed => state.hookRequests.get(routed);
+  // Aborts once the hook that sent the event stops waiting for its answer (`watchHookRequests`); none outside a request.
+  const signal = handledHookRequest.getStore();
   const lane = laneOf(runtimeKey, sessionId);
   keepRuntime(state, runtimeKey);
   const execution = state.lanes.run(lane, () => {
     const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
     // Every event, not only a start: a session whose start was lost still uses this runtime until it ends.
     if (event.kind !== "session-end") noteSessionUse(state, sessionId, runtimeKey, (options.now ?? Date.now)());
-    return runtime.ingest(event);
+    return runtime.ingest(event, { signal });
   });
   track(state, execution);
   try {
@@ -919,26 +915,22 @@ function hookRequestSignal(response: ServerResponse): AbortSignal {
   return request.signal;
 }
 
-/** The hook request the engine socket is handling (`watchHookRequests`), through the awaits of its handling. */
+/**
+ * The hook request the engine socket is handling (`watchHookRequests`), through the awaits of its handling; none for an
+ * event ingested outside a request (`EngineService.ingest` called directly).
+ */
 const handledHookRequest = new AsyncLocalStorage<AbortSignal>();
 
 /**
  * Gives each request `server` handles its `hookRequestSignal`, watched from before its body is read, so a close at any
  * point before the answer is written counts. The listener runs just ahead of the server's handler, in the same
- * synchronous emit, so the handling and every await of it see that request's signal; the event the handling ingests
- * is tied to it (`withHookRequest`).
+ * synchronous emit, so the handling and every await of it see that request's signal, which `routeEngineEvent` passes
+ * to the runtime with the event (`IngestOptions.signal`).
  */
 function watchHookRequests(server: Server): void {
   server.prependListener("request", (_incoming: IncomingMessage, response: ServerResponse) => {
     handledHookRequest.enterWith(hookRequestSignal(response));
   });
-}
-
-/** `event`, tied in `state` to the hook request it arrived on, when it came through the engine socket. */
-function withHookRequest(state: EngineRoutingState, event: AdapterEvent): AdapterEvent {
-  const request = handledHookRequest.getStore();
-  if (request !== undefined) state.hookRequests.set(event, request);
-  return event;
 }
 
 /** What listening beside a held pipe needs; tests pass their own. */
@@ -1034,7 +1026,6 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     lastEventAt: new Map(),
     lanes: new SessionLanes(),
     pending: new Set(),
-    hookRequests: new WeakMap(),
     idle: new Map(),
     idleRuntimeMs: options.idleRuntimeMs ?? IDLE_RUNTIME_MS,
     runtimeOptions: new Map(),
@@ -1087,7 +1078,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     get socketPath() {
       return socketPath;
     },
-    ingest: (event, configuration) => routeEngineEvent(withHookRequest(routing, event), configuration, options, routing),
+    ingest: (event, configuration) => routeEngineEvent(event, configuration, options, routing),
     openRuntimes: () => routing.runtimes.size,
     closeIdleSessions: sweepIdleSessions,
     resumeSession: sessionId => resumeSuspended(routing, sessionId, options.now ?? Date.now),
