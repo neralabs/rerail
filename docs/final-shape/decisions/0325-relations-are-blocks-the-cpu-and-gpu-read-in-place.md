@@ -158,3 +158,64 @@ Step by step, each leaving the engine working (see the commits that name this de
     still upload: they are not blocks.
   - Still copied: a relation with dead rows (its bits are setfix's, not the block's), the views, and the rows
     back (step 4).
+- **Step 3, sources** (2026-11-17): the vtab's `Relation` (line, col, docof, node text and the producers' compact
+  relations) keeps its rows in blocks too, and the device reads a whole view of it in place.
+  - Of the 84 MB of views still read on the host for an upload on hogql, 51 MB were these relations and 36 MB
+    chunk views with no device form (`View::Line`).
+  - The rows' storage moved from setfix to `facts::rows` (`Facts`, `Part`, `Rows`, `Row`, `InBlock`); setfix
+    re-exports it and keeps `RowData`. `Relation`'s cells are a `Rows`.
+  - A `Relation` stages its pushed rows and writes them into their block whole, exactly sized, at the first
+    read. Built a row at a time in a block, its tail's growth and moves held about 70 MB more at the peak.
+  - The rows have a `Life` that picks their blocks: a batch's sources (`Life::Source`, 16 MB blocks) do not
+    share blocks with a run's relations (`Life::Run`, 64 MB). Shared, they kept every block leased alive.
+  - `Source::in_block` gives a source's rows as one relation in a block. `resident` binds a whole view of such a
+    source in place, every source column at its own place (the owner's numbering, `owner_col`).
+  - The hot reads keep their cost across the crate boundary: `Rows::get`, `row` and `part_of` are
+    `#[inline(always)]`, as the generated reads are, and a part resolves its columns once (`ColRead`). Not
+    inlined, `Rows::get` was a call taking 5% of the CPU binding's samples.
+  - `Relation`'s column index is built from (value, row) pairs, each value read once. Its sort read two values
+    through the rows at every comparison.
+  - FACTS blocks lease pool room only while half the Metal budget stays free for the device's own buffers
+    (`lease_block_spare`'s `keep`). Taking the last room left the device's joins 6–48 MB, and `resident` dropped
+    every relation it held 28 times a run (once now). An entry in place trims the dropped relations' entries,
+    since it holds its block.
+  - On posthog/hogql (load 40–50, three runs each, against step 3 in the same window): the CPU binding retires a
+    median 91.9 B instructions against 90.3 B, and Metal 83.1 B against 80.2 B (step 3's runs spread 79–87 B).
+    Findings 1,629. Read in place 610–737 relations a run (519 before). Views read on the host for an upload
+    33–41 MB (84 MB before).
+  - The peak resident size is higher: 590 MB against 565 MB on the CPU binding, and 718 MB against 668 MB on
+    Metal. That is the sources' blocks' room, whose granularity the 16 MB blocks bound.
+  - Left in step 3: the line views (`View::Line`, no device form), relations with dead rows, and the views the
+    device makes from the chunk (111–170 MB a run), which are copies made on the device.
+- **Step 3, the chunk's views** (2026-11-17): every view of a syntax batch is made on the device from its chunk.
+  None is read on the host for an upload.
+  - A batch with a guest (decision 0055) had its `Loc` views (`line`, `end_line`, `col`) read on the host: 28 MB
+    on hogql. `fill_locs` refused the whole batch, because a guest's places are its host's lines through its
+    placement. Now `fill_locs` puts a guest's places in the chunk (`ChunkDoc::placed`: first line, last line and
+    start column per local, by `Locs::place`, as the chunk holds start, end and kind). The kernel reads them for a
+    guest, and finds the others' places in their lines as before.
+  - T's `line` view (`View::Line`) gets a device form (`VIEW_LINE`): `fill_lines` puts the facts' line starts in
+    the chunk (`ChunkDoc::flines`), and the kernel counts those at or before a node's start (`start_line`).
+  - On hogql, views read on the host for an upload are 5.4 MB in 6.5 ms (84 MB in 115 ms at step 3). What is left
+    is the native reach closure (`Closed`), its own index structure, for step 7. Instructions and peak resident
+    size are level with the sources' commit (Metal a median 87.4 B against 85.9 B in a 81–87 B spread; CPU
+    binding 92.4 B against 93.2 B).
+  - Tests: `views_made_on_the_device_are_the_hosts_rows` covers `line` and a guest placed in its host's second
+    line, whose places are that line.
+- **Step 3, dead rows** (2026-11-17): a relation with dead rows (a maintained relation's kills of the kept rows it
+  shares) is read in place too, its dead rows skipped by their bits.
+  - The bits are a blocks delta's: `Relation::try_kills` makes a delta of the relation's one relation in its
+    block, with no rows of its own, whose dead span holds setfix's bits (`Rows::in_block_dead`). It is made once
+    and kept as `merged` is. That is 0266's "a maintained run is a delta of the kept block", for its kills.
+  - `InBlock::dead`, `DevRel::dead` and `Stage::r_dead` (the old `r_pad`, so the size is unchanged) carry the
+    delta's offset. `row_live` reads it through the generated `clif_rel_dead`. `matches` skips a dead row, and
+    so does mode 3 (every row, untested). Every loop over the probed relation's rows goes through one of them,
+    and a probe's index holds the dead rows, which a probe skips.
+  - The column statistics read only relations whose rows are all live in place; one with dead rows is gathered.
+  - Test: `stages_skip_the_dead_rows_of_relations_in_their_blocks` covers a scan, a keyed join through the
+    device's index of the relation, and an anti-join whose dead rows hold no binding back, against the nested
+    loops over the live rows.
+  - On hogql nothing has dead rows (one run from scratch): its numbers are unchanged, findings 1,629.
+  - What step 3 leaves copied: the native reach closure's relation (`Closed`, 5.6 MB), and the chunk's views,
+    which the device makes itself from the chunk block (164 MB on the device, no upload). `DevRel::upload` stays
+    for those, for a view filtered by constants (`ids`), and for a block that cannot hold a dead rows' delta.

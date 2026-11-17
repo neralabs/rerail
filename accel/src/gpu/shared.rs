@@ -280,14 +280,16 @@ pub fn lease_block_within(kind: u32, bytes: usize) -> Result<rerail_blocks::Bloc
     Ok(rerail_blocks::Block::over(kind, Box::new(slab)))
 }
 
-/// `lease_block`, only when the Metal budget holds it with no more than idle buffers released: nothing the evictor
-/// holds (the tape residency's slabs) is retired for it. For a block that has a home without the pool (anonymous
-/// memory, which the device reads through a no-copy wrap): the FACTS blocks of a run's relations (decision 0325),
-/// whose leases retiring the residency's tapes made a run admit them again (20-35 s runs on posthog/hogql).
-pub fn lease_block_spare(kind: u32, bytes: usize) -> Result<rerail_blocks::Block, String> {
+/// `lease_block`, only when the Metal budget holds it with no more than idle buffers released and `keep` bytes of it
+/// still free after: nothing the evictor holds (the tape residency's slabs) is retired for it, and the device's own
+/// buffers keep their room. For a block that has a home without the pool (anonymous memory, which the device reads
+/// through a no-copy wrap): the FACTS blocks of a run's relations (decision 0325). Their leases retiring the
+/// residency's tapes made a run admit them again (20-35 s runs on posthog/hogql); taking the budget's last room
+/// left the device's joins 6-48 MB, and its resident relations were dropped 28 times a run.
+pub fn lease_block_spare(kind: u32, bytes: usize, keep: usize) -> Result<rerail_blocks::Block, String> {
     let need = class(bytes.max(SLAB_MIN));
     pool().lock().expect("the pool").trim(need);
-    if other() + LIVE.load(std::sync::atomic::Ordering::Relaxed) + need > crate::budget::metal() {
+    if other() + LIVE.load(std::sync::atomic::Ordering::Relaxed) + need + keep > crate::budget::metal() {
         return Err(format!("device budget: no spare room for a block of {} MB", need >> 20));
     }
     let slab = lease(bytes.max(SLAB_MIN))?;

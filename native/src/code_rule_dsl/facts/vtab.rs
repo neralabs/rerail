@@ -148,6 +148,12 @@ pub trait Source: Send + Sync {
     fn device_view(&self) -> Option<DeviceView<'_>> {
         None
     }
+    /// Its rows as one relation of `rerail_blocks` in one block, every source column at its own place, which the
+    /// device reads where they lie (decision 0325 step 3). `None`: the device copies them (`device_view`, `row_at`).
+    #[cfg(target_os = "macos")]
+    fn in_block(&self) -> Option<super::rows::InBlock> {
+        None
+    }
     /// Rows are made per looked-up value, so reading them all (a scan, a hash index of every row)
     /// makes every one: a join probes such a source through `lookup`, whatever its match estimate.
     fn made_on_lookup(&self) -> bool {
@@ -1217,13 +1223,19 @@ unsafe impl VTabCursor for Cursor {
     }
 }
 
-/// Row-major integer cells with every column indexed: each column's rows sorted by value, built on
-/// first use. Producers' compact relations (S `relation.rs`) and small derived relations.
+/// Integer cells with every column indexed: each column's rows sorted by value, built on first use. Producers'
+/// compact relations (S `relation.rs`) and small derived relations. The cells are rows in a block the CPU and GPU
+/// read in place (`facts::rows`, decision 0325): a device stage binds them where they lie (`Source::in_block`).
+/// Rows pushed are staged and written into their block whole at the first read, exactly sized: built a row at a time
+/// in a block shared with others, a relation's growth and moves held 70 MB more at the peak on posthog/hogql.
 /// A column whose values were pushed in order (a document's lines, columns and texts, by node) is its own index:
 /// searched in the cells, with no sort and no row list. Its distinct values are counted as it is pushed.
 pub struct Relation {
     columns: Vec<String>,
-    cells: Vec<i64>,
+    /// Rows pushed and not yet read, row-major: the first read moves them into `cells`.
+    staged: std::sync::Mutex<Vec<i64>>,
+    rows: usize,
+    cells: OnceLock<super::rows::Rows>,
     indexes: Box<[OnceLock<ColumnIndex>]>,
     /// Per column, its distinct values while its values have come in nondecreasing order, else `None`.
     ordered: Box<[Option<usize>]>,
@@ -1242,7 +1254,9 @@ impl Relation {
         assert!(!columns.is_empty());
         Self {
             columns: columns.iter().map(|c| (*c).to_owned()).collect(),
-            cells: Vec::new(),
+            staged: Default::default(),
+            rows: 0,
+            cells: OnceLock::new(),
             indexes: columns.iter().map(|_| OnceLock::new()).collect(),
             ordered: columns.iter().map(|_| Some(0)).collect(),
         }
@@ -1251,8 +1265,12 @@ impl Relation {
         assert_eq!(row.len(), self.columns.len());
         assert!(self.len() < u32::MAX as usize);
         let last = self.len().checked_sub(1);
+        let k = row.len();
+        // The last row read where it is: staged, or (pushed after a read) in the block.
+        let staged = self.staged.get_mut().unwrap_or_else(|e| e.into_inner());
+        let cells = self.cells.get();
         for (c, o) in self.ordered.iter_mut().enumerate() {
-            let prev = last.map(|l| self.cells[l * row.len() + c]);
+            let prev = last.map(|l| cells.map_or_else(|| staged[l * k + c], |r| r.get(l as u32, c)));
             *o = match (*o, prev) {
                 (Some(d), None) => Some(d + 1),
                 (Some(d), Some(p)) if row[c] > p => Some(d + 1),
@@ -1260,15 +1278,33 @@ impl Relation {
                 _ => None,
             };
         }
-        self.cells.extend_from_slice(row);
+        match self.cells.get_mut() {
+            Some(cells) => cells.extend_from_slice(row),
+            None => staged.extend_from_slice(row),
+        }
+        self.rows += 1;
         self.indexes.iter_mut().for_each(|i| *i = OnceLock::new());
+    }
+    /// The rows in their block: the staged ones written there at the first read, in one relation of their size.
+    #[inline]
+    fn cells(&self) -> &super::rows::Rows {
+        self.cells.get_or_init(|| {
+            let staged = std::mem::take(&mut *self.staged.lock().unwrap_or_else(|e| e.into_inner()));
+            let mut cells = super::rows::Rows::living(self.columns.len(), super::rows::Life::Source);
+            cells.reserve(staged.len());
+            cells.extend_from_slice(&staged);
+            cells
+        })
     }
     fn index(&self, column: usize) -> &ColumnIndex {
         self.indexes[column].get_or_init(|| {
-            let mut rows: Vec<u32> = (0..self.len() as u32).collect();
-            rows.sort_by_key(|&r| self.value(r as usize, column));
-            let distinct = 1 + rows.windows(2).filter(|w| self.value(w[0] as usize, column) != self.value(w[1] as usize, column)).count();
-            let fence = rows.iter().step_by(FENCE).map(|&r| self.value(r as usize, column)).collect();
+            // Each value read once, and the pairs sorted (ties by row, as a stable sort by value): a sort reading the
+            // rows' values at every comparison read each of them about 2 log n times.
+            let mut pairs: Vec<(i64, u32)> = (0..self.len()).map(|r| (self.value(r, column), r as u32)).collect();
+            pairs.sort_unstable();
+            let distinct = 1 + pairs.windows(2).filter(|w| w[0].0 != w[1].0).count();
+            let fence = pairs.iter().step_by(FENCE).map(|p| p.0).collect();
+            let rows = pairs.into_iter().map(|p| p.1).collect();
             ColumnIndex { rows, distinct, fence }
         })
     }
@@ -1322,7 +1358,11 @@ impl Source for Relation {
         self.columns.clone()
     }
     fn len(&self) -> usize {
-        self.cells.len() / self.columns.len()
+        self.rows
+    }
+    #[cfg(target_os = "macos")]
+    fn in_block(&self) -> Option<super::rows::InBlock> {
+        self.cells().in_block()
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         let distinct = self.ordered[column].unwrap_or_else(|| self.index(column).distinct);
@@ -1364,7 +1404,7 @@ impl Source for Relation {
         Some(values.iter().flat_map(|&v| rows[self.between(column, v, v)].iter().map(|&r| r as usize)).collect())
     }
     fn value(&self, row: usize, column: usize) -> i64 {
-        self.cells[row * self.columns.len() + column]
+        self.cells().get(row as u32, column)
     }
 }
 

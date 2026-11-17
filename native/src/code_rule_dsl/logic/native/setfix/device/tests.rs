@@ -554,6 +554,44 @@
         }
     }
 
+    /// Decision 0325 step 3: a whole view of a source whose rows are in a block (the vtab's `Relation`) is bound
+    /// where they lie, nothing uploaded, every source column at its own place; the device's reads of it (its column
+    /// statistics, through the generated `clif_rel_get`) are the host's values.
+    #[test]
+    fn a_sources_rows_in_their_block_are_read_in_place() {
+        use crate::code_rule_dsl::facts::vtab::{Relation, Source};
+        use crate::code_rule_dsl::logic::device::StatColumn;
+        use crate::code_rule_dsl::logic::native::setfix::InRel;
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let mut x = 0x0325_u64;
+        let mut next = |m: u64| { x ^= x << 13; x ^= x >> 7; x ^= x << 17; (x % m) as i64 };
+        // Three columns, past several chunks of the block's relation; the view reads its first two.
+        let n = 5_000;
+        let mut r = Relation::new(&["a", "b", "c"]);
+        for i in 0..n {
+            r.push(&[i as i64, next(97) - 40, (next(1 << 20) << 20) | i as i64]);
+        }
+        let src: std::sync::Arc<dyn Source> = std::sync::Arc::new(r);
+        assert!(src.in_block().is_some_and(|b| b.rows as usize == n), "the source's rows are one relation in a block");
+        let rel = InRel::over_source(std::sync::Arc::clone(&src), vec![b'i'; 3]);
+        let mut batch = crate::code_rule_dsl::transducer::packed::metal_join::Batch::new().expect("the device");
+        let mut rep = super::Report::default();
+        let (dev, _, place) = super::resident(&rel, &[1, 2], &[], &mut batch, &mut rep).expect("resident");
+        assert_eq!((rep.in_place, rep.uploads, rep.upload_bytes), (1, 0, 0), "read in place: {rep:?}");
+        assert_eq!((dev.rows, dev.cols), (n, 3));
+        assert_eq!(place, [0, 1, 2], "each column at its own place");
+        let cols = [StatColumn::Rel(&rel, 1), StatColumn::Rel(&rel, 2)];
+        let (read, in_place) = super::column_stats(&cols, 8).expect("the device");
+        assert_eq!(in_place, 2);
+        for (c, got) in [1, 2].into_iter().zip(&read) {
+            let values: Vec<i64> = (0..n).map(|i| src.value(i, c)).collect();
+            let (host, _) = super::column_stats(&[StatColumn::Values(&values)], 8).expect("the device");
+            assert_eq!(*got, host[0], "column {c}");
+        }
+    }
+
     /// Decision 0261: the device's column statistics read a relation it holds in place (its resident upload), and
     /// are the same as over the values gathered on the host; a relation it does not hold is gathered.
     #[test]
@@ -737,8 +775,9 @@
         let all = sources(&store, docs).unwrap();
         let device = rerail_accel::gpu::join::device().expect("the device");
         let mut seen = 0;
-        for name in ["node", "child", "field", "core_node"] {
-            let src = &all.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
+        // `line` (`View::Line`, decision 0325 step 3): the view, not a relation of that name.
+        for name in ["node", "child", "field", "core_node", "line"] {
+            let src = &all.iter().find(|(n, s)| *n == name && s.python_batch().is_some()).unwrap_or_else(|| panic!("{name}")).1;
             let d = src.device_view().unwrap_or_else(|| panic!("{name}: made on the device"));
             let (n, k) = (src.len(), src.columns().len());
             assert_eq!(d.rows, n, "{name}");
@@ -756,11 +795,29 @@
                 seen += 1;
             }
         }
-        assert_eq!(seen, 8);
+        assert_eq!(seen, 10);
         // core.rr's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
         {
-            use crate::code_rule_dsl::facts::vtab::syntax::{Projection, shaped};
-            let core_views = shaped(&store, make(), &Projection::core()).unwrap();
+            use crate::code_rule_dsl::facts::vtab::syntax::{Guest, Made, Placement, Projection, shaped};
+            // With a guest (decision 0055): its places are its host's lines, through its placement, found on the
+            // host and put in the chunk (`ChunkDoc::placed`).
+            let mut docs = make();
+            let text = "y = [2,\n  3]\n";
+            let file = FileInput::new("d0.py".to_owned(), "python".to_owned(), Arc::new(text.to_owned()), None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("the guest") };
+            // At the host's second line (byte 10 of "import os\nx = f(1, y=2)\n"): the guest's two lines are the
+            // host's line 2.
+            let place = Placement::Copied { delta: 10, within: [10, 24] };
+            let guest = Guest { host: 7, at: 7 << 32, grammar: "python".to_owned(), role: "program".to_owned(), root: 0, place: place.clone(), in_file: place, made: Made::Host };
+            docs.push(Document { key: 100, core: "/w#core:d0.py#guest:python:0".to_owned(), digest: core::digest(&facts), path: "d0.py".to_owned(), facts, tape: None, guest: Some(Arc::new(guest)), module: None });
+            let core_views = shaped(&store, docs, &Projection::core()).unwrap();
+            {
+                let view = |name: &str| core_views.iter().find(|(n, _)| *n == name).unwrap().1.clone();
+                let (docof, line) = (view("docof"), view("line"));
+                let guest: Vec<usize> = (0..docof.len()).filter(|&r| docof.value(r, 1) == 100).collect();
+                assert!(!guest.is_empty(), "the guest's places are rows");
+                assert!(guest.iter().all(|&r| line.value(r, 1) == 2), "the guest's places are its host's lines");
+            }
             for name in ["line", "end_line", "col", "docof"] {
                 let src = &core_views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
                 let d = src.device_view().unwrap_or_else(|| panic!("{name}: made on the device"));

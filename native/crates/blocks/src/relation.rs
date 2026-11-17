@@ -113,6 +113,20 @@ impl Relation {
         }
     }
 
+    /// A delta of `base` with no rows of its own whose dead bits are `words` (row `id` dead when bit `id` of them is
+    /// set): a relation's kills of the rows it shares, read beside them where they lie (decision 0325: the device
+    /// skips a dead row by its bit, `rel_dead`). `None` when the block cannot hold it.
+    pub fn try_kills<'b>(block: &'b Block, spec: &Spec, base: &Relation, words: &[u64]) -> Option<&'b Relation> {
+        let rel = Relation::try_create(block, spec, Some(base))?;
+        let w: *mut u64 = block.try_alloc_t(words.len().max(1))?;
+        // SAFETY: `w` holds `words.len()` words, just allocated in `block`, as `rel` is.
+        unsafe {
+            std::ptr::copy_nonoverlapping(words.as_ptr(), w, words.len());
+            Span::set(&rel.dead, w, words.len());
+        }
+        Some(rel)
+    }
+
     #[inline]
     pub fn is_frozen(&self) -> bool {
         self.flags.load(Acquire) & FROZEN != 0
