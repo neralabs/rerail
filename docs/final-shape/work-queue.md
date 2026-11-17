@@ -908,6 +908,23 @@ pass.
   estimate. A rule whose body is one view atom, binding distinct variables, is that view's columns.
 - **Whose**: lowering (a request and what its readers read, 0291), where cost-classifier works now. Not taken here.
 - **Done when**: such a rule is bound as a view of its source, and no stratum copies it.
+- **Record** (2026-11-16, this branch). The planner's views of one-atom projections (`plan_views`, read in place by
+  native joins through `view_src`) are made only in a SQL run: a native run over atoms made none (decision 0104: a
+  view is SQL), so every such rule was a stratum that copied its input. Now `native_stratum_` holds a rule of that
+  shape over an input bound in place as a view of the input's columns (`setfix::hold_view`, `InRel`'s in-place
+  `View`, which `hold_source` already was for every column), and opens no component. The shape
+  (`plan::input_view_shape`): one positive atom of an input, variables each once and wildcards, the head distinct
+  variables keeping the input's key (`node`'s node, `doc`'s and `tape`'s first column) or every column, so its rows
+  are the input's, one each. `RERAIL_COPY_VIEWS` derives them as before.
+  - A view is never kept (made again for nothing): the kept part skips it (`retain`), a session's cut counts it
+    neither run nor clean (as `RERAIL_SESSION_VIEWS`' views), and the run's kept strata hold it again, clean as its
+    input is, its digest its reads' with what it views. A program left with views alone has no planning choice to
+    keep (decision 0250's rule for an empty one: otherwise the run after a cold one wrote one).
+  - `held_source` hands out a view's source only where its columns are the source's, in order.
+  - 317 rules over fixtures/python, strict: 219 strata held as views in the cold run; the warm run writes nothing;
+    the 660 output relations are equal as sets to a cold run with `RERAIL_COPY_VIEWS=1`. Tests:
+    `a_copy_of_an_inputs_columns_is_a_view_of_it`, with the planner's, corpus, session, maintain, choices and
+    setfix tests (147). Not measured on hogql.
 
 ### Q38. (Q32 on Native-and-GPU-strata at e75b66095) A kind-set axis's tape code set counted ERROR nodes as members
 

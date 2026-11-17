@@ -3392,9 +3392,17 @@ pub fn retain(conn: impl Scoped, table: &str, mut rows: Vec<Vec<i64>>, types: Ve
 /// Holds `table` in `conn`'s run as `src`'s rows, read in place (a view of every row): a relation an index holds
 /// (the reach index, decision 0119) is probed through the source's own lookups, never copied into rows.
 pub fn hold_source(conn: impl Scoped, table: &str, src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, types: Vec<u8>) {
+    let cols = (0..types.len()).collect();
+    hold_view(conn, table, src, cols, types);
+}
+
+/// Holds `table` in `conn`'s run as `src`'s columns `cols`, every row, read in place: a rule that copies a bound
+/// input's columns (`kind(n, k) :- node(_, n, k, _, _)`, Q37) is this view, not a copy.
+pub fn hold_view(conn: impl Scoped, table: &str, src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vec<usize>, types: Vec<u8>) {
     let conn = conn.db();
     let k = types.len();
-    let view = View { src, cols: (0..k).collect(), ids: None, eqs: Vec::new() };
+    debug_assert_eq!(cols.len(), k);
+    let view = View { src, cols, ids: None, eqs: Vec::new() };
     let rel = Arc::new(InRel { k, n: 0, rows: Rows::default(), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
@@ -4422,9 +4430,14 @@ impl InRel {
             Some(_) => { let r = self.at(id); std::borrow::Cow::Owned((0..self.k).map(|c| r.at(c)).collect()) }
         }
     }
-    /// The source a derived relation is read from in place, every row (`hold_source`); `None` for rows held flat.
+    /// The source a derived relation is read from in place, every row and column in order (`hold_source`); `None`
+    /// for rows held flat, and for a view of some of its source's columns (`hold_view`), whose column numbers are
+    /// not the source's.
     pub fn held_source(&self) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
-        self.view.as_ref().filter(|v| !self.base && v.ids.is_none() && v.eqs.is_empty()).map(|v| Arc::clone(&v.src))
+        self.view
+            .as_ref()
+            .filter(|v| !self.base && v.ids.is_none() && v.eqs.is_empty() && v.cols.iter().enumerate().all(|(i, &c)| i == c) && v.src.columns().len() == v.cols.len())
+            .map(|v| Arc::clone(&v.src))
     }
     #[inline]
     pub fn at(&self, id: usize) -> RowRef<'_> {
