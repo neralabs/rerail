@@ -510,9 +510,23 @@ impl<'a> Bytewise<'a> {
     /// read at stream position `p + i + d`, as an output of delay `d` is. A run's split
     /// (`run_split`) so reads its byte term in the window its tests share.
     pub fn short_terms(&self, f: &mut FunctionBuilder<'_>, at: &File, terms: &[(usize, i64)], p: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Vec<Value> {
+        self.short_terms_carried(f, at, terms, p, &[], heads)
+    }
+
+    /// `short_words` with the escapes' carries in given (`cins`, as `words_carried`'s): a
+    /// reader's closer after an opener apart from its escapes (0358), and the bits a lane
+    /// (`short_stride`).
+    pub fn short_words_carried(&self, f: &mut FunctionBuilder<'_>, at: &File, os: &[u16], p: Value, cins: &[(usize, Value)], heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Vec<Value>, u32) {
+        let terms: Vec<(usize, i64)> = os.iter().map(|&o| (usize::from(self.native.outputs[usize::from(o)]), i64::from(self.native.output_delays[usize::from(o)]))).collect();
+        let xs: Vec<usize> = terms.iter().map(|t| t.0).collect();
+        (self.short_terms_carried(f, at, &terms, p, cins, heads), self.short_stride_x(&xs))
+    }
+
+    /// `short_terms` with the escapes' carries in given.
+    fn short_terms_carried(&self, f: &mut FunctionBuilder<'_>, at: &File, terms: &[(usize, i64)], p: Value, cins: &[(usize, Value)], heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Vec<Value> {
         let xs: Vec<usize> = terms.iter().map(|t| t.0).collect();
         let stride = self.short_stride_x(&xs);
-        let mut carry = Carry { short: true, stride, pack: Some(self.pack_for(&xs, &[])), ..Carry::default() };
+        let mut carry = Carry { short: true, stride, ins: cins.to_vec(), pack: Some(self.pack_for(&xs, &[])), ..Carry::default() };
         let mut windows: HashMap<i64, Lanes<'_>> = HashMap::new();
         let mut memo = HashMap::new();
         let Some((&(x0, d0), rest)) = terms.split_first() else { return Vec::new() };

@@ -4306,6 +4306,18 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                             // no branch (0357), as `words_gated`'s and the lean lexer's reader.
                             let zero = f.ins().iconst(types::I64, 0);
                             let cins: Vec<(usize, Value)> = b.carried_runs(&[a.closer]).into_iter().filter(|&r| b.apart(a.opener, r)).map(|r| (r, zero)).collect();
+                            // The 16 bytes after the opener first, one vector, as the number's run
+                            // (`short_word`) and a lexer's short string (0358): a closer there is
+                            // found; else the 64 from the opener's next byte.
+                            let (sw, stride) = b.short_words_carried(f, &file, &[a.closer], from, &cins, heads);
+                            let (near, far) = (f.create_block(), f.create_block());
+                            f.ins().brif(sw[0], near, &[], far, &[]);
+                            f.switch_to_block(near);
+                            let tz = f.ins().ctz(sw[0]);
+                            let tz = if stride > 1 { f.ins().ushr_imm(tz, i64::from(stride.trailing_zeros())) } else { tz };
+                            let at = f.ins().iadd(from, tz);
+                            f.ins().jump(found, &[at.into()]);
+                            f.switch_to_block(far);
                             let (ws, _) = b.words_carried(f, &file, &[a.closer], from, &cins, heads);
                             (ws[0], from)
                         }
