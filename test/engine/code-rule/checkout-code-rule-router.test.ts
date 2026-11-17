@@ -800,6 +800,9 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     expect(violations(audits).map(found => found.checkout).toSorted()).toEqual(worktrees.toSorted());
     // The session's own lane and four of the others': a workspace holds its checkout's index.
     expect(most).toBeLessThanOrEqual(5);
+    // A batch across more worktrees than the session holds workspaces for takes its lanes through the turns, so one kept
+    // after it would only be taken back by the next: each gives its workspace back once it settles.
+    expect(open.size).toBe(1);
     // Each audit starts as its lane picks the edit up, in the batch's order, as open lanes' do: before any finishes.
     expect(audits.map(audit => audit.workspaceRoot)).toEqual(worktrees);
     expect(steps.slice(0, worktrees.length)).toEqual(worktrees.map(() => "start"));
