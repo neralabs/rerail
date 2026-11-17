@@ -627,7 +627,7 @@ pub const HELD_IN_RULES: [u32; 0] = [];
 /// case goes to the default. A switch that expects one kind is one compare, as `expect(kind)`.
 /// Cases of at most three targets within 64 values are bit tests, as LLVM's: one shift, then a
 /// mask a target.
-fn dispatch(f: &mut FunctionBuilder<'_>, x: Value, runs: &[(u32, Block)], end: u64) {
+pub(crate) fn dispatch(f: &mut FunctionBuilder<'_>, x: Value, runs: &[(u32, Block)], end: u64) {
     let ends: Vec<u64> = runs.iter().skip(1).map(|r| u64::from(r.0)).chain([end]).collect();
     let spans: Vec<(u64, u64, Block)> = runs.iter().zip(&ends).enumerate().map(|(i, (r, &e))| (if i == 0 { 0 } else { u64::from(r.0) }, e, r.1)).filter(|&(a, b, _)| a < b).collect();
     // The default: the target with the most runs (the first such).

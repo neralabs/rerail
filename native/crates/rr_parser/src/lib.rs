@@ -1763,6 +1763,19 @@ pub mod tests {
         }
     }
 
+    /// The JIT's dispatches are compare trees, as rustc lowers a `match`
+    /// (`native_cpu_codegen::switch_trees`), not Cranelift's `br_table`, whose `csdb` barrier
+    /// held each rare token (a number, a string, a comment) until its entry's load: 75 cycles
+    /// a number against the AOT's 17. The IR keeps its tables (the AOT's `match`).
+    #[test]
+    fn the_jits_dispatches_are_trees() {
+        let c = crate::compiled().expect("compiles");
+        assert!(c.parser.tier1.clif.contains(" br_table "), "the IR keeps the rules' table");
+        for (name, code) in [("tier 1", &c.parser.tier1.disassembly), ("tier 2", &c.parser.tier2.disassembly)] {
+            assert!(!code.contains("csdb"), "{name}: a table's barrier");
+        }
+    }
+
     /// The records' layout the compiler chose (`records::RecordLayout`): rr's token loop writes
     /// each token's start, last and code, its only extracts, so on the CPU they are rows, the
     /// lean lexer's `Tok`; tier 2 reads them a row a token and its tapes are the columns'.

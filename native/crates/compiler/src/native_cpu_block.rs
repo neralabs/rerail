@@ -3277,7 +3277,8 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         f.switch_to_block(table);
     }
     // The rule by a jump table, as the lean lexer's `match` on the first byte; none, the byte
-    // alone (`records::NO_RULE`, past the table).
+    // alone (`records::NO_RULE`, past the table). The JIT lowers it as rustc lowers the
+    // `match` (`native_cpu_codegen::switch_trees`).
     // Rule `k` alone: its block, and the rules it goes on to.
     let needed: Vec<usize> = match (only, side) {
         (Some(k), _) => {
