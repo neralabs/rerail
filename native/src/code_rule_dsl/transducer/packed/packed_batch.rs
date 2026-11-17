@@ -1060,8 +1060,8 @@ impl PackedBatch {
     }
 
     /// A resident label batch's evaluations (decision 0033): one per `spec` {program, file, its
-    /// rule's segment header, its first root's index in the rule, its roots}, whose tasks are
-    /// those roots, with no task records (the device takes each from its evaluation). Each
+    /// roots' rule, 0, its file's groups of 64 nodes}, whose tasks are those groups, with no task
+    /// records (the device finds each group's roots from the rule, `root_mask`). Each
     /// evaluation is sized by a stand-in task whose root spans its file's source (a bound on any
     /// root's) and whose work estimate is the most, so its states are the state cap: the lanes'
     /// workspace is lanes times that, whatever the roots.
@@ -1094,8 +1094,8 @@ impl PackedBatch {
             evaluation.task_count = spec[4];
             evaluation.program = spec[0];
             evaluation.file = spec[1];
-            evaluation.root_segment = spec[2];
-            evaluation.root_base = spec[3];
+            evaluation.root_rule = spec[2];
+            evaluation.root_reserved = spec[3];
             // The work per node of a task's subtree (`resident_work` on the device).
             evaluation.workspace_work_estimate =
                 checked_u32(program.words.len().saturating_mul(4_096).min(0x7fff_ffff))? | u32::from(repeats) << 31;

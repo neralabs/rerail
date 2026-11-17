@@ -3190,6 +3190,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-clif"
+version = "0.1.0"
+dependencies = [
+ "cranelift-codegen",
+ "cranelift-frontend",
+ "cranelift-module",
+]
+
+[[package]]
 name = "rerail-compiler"
 version = "0.1.0"
 dependencies = [

@@ -12,6 +12,8 @@ test-hooks = ["rerail-compiler/test-hooks", "rerail-prof/test-hooks"]
 [dependencies]
 rerail-accel = { path = "../../../accel" }
 rerail-blocks = { path = "../blocks" }
+# The view the tape's reads take (`TapeView`, decision 0310): `ChunkTape` has its layout. The view alone, no IR.
+rerail-clif = { path = "../clif", default-features = false }
 rerail-compiler = { path = "../compiler" }
 rerail-prof = { path = "../prof" }
 libc = "0.2.189"

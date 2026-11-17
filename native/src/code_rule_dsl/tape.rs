@@ -2677,6 +2677,19 @@ impl TapeDoc {
     }
 
     /// The abstract grammar classes (supertypes) each node belongs to, as `(node, kind)` sorted.
+    /// The nodes whose code passes `admits` (its kind, as `transducer_kind`, and its classes), in order, onto `out`:
+    /// the codes tested once each, the nodes found from the tape's code bytes 64 at a time (`Tape::match_groups`).
+    pub fn transducer_nodes_where(&self, admits: impl Fn(u16, &[u16]) -> bool, out: &mut Vec<u32>) {
+        let t = self.t();
+        let set = t.table().set(|e| admits(kind_of(e), &e.classes));
+        t.match_groups(&set, |base, mut m| {
+            while m != 0 {
+                out.push((base + m.trailing_zeros() as usize) as u32);
+                m &= m - 1;
+            }
+        });
+    }
+
     pub fn transducer_supertypes(&self) -> impl Iterator<Item = (u32, u16)> + '_ {
         (0..self.transducer_len() as u32).flat_map(move |node| {
             read!("classes", self.entry(node).classes.len());
