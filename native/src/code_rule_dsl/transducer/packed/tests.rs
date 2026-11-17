@@ -4,7 +4,7 @@
     #[test]
     fn metal_backend_rejects_execution_without_platform_support() {
         assert!(matches!(
-            execute_with_backend_packed_result_limits(ExecutionBackend::Metal, &[], &[], &[], None),
+            execute_with_backend_packed_result_limits(ExecutionBackend::MetalJit, &[], &[], &[], None),
             Err(Error::UnsupportedBackend)
         ));
     }
@@ -29,7 +29,7 @@
     fn grid<T>(result: Result<T, Error>) -> Option<T> {
         match result {
             Err(Error::BackendLaunchLimit) => {
-                eprintln!("O33: the grid executor refused the launch bound; its parity is not checked here");
+                eprintln!("Metal refused the launch bound; its parity is not checked here");
                 None
             }
             result => Some(result.unwrap()),
@@ -205,7 +205,7 @@
         }
         #[cfg(target_os = "macos")]
         {
-            let backend = ExecutionBackend::Metal;
+            let backend = ExecutionBackend::MetalJit;
             if let Some(actual) = grid(execute_with_backend(backend, programs, tapes, &anchors))
                 && actual != expected
             {
@@ -245,7 +245,7 @@
             })
             .collect::<Vec<_>>();
         let expected = execute_batch(programs, tapes, Some(&anchors)).unwrap();
-        if let Some(actual) = grid(metal_grid_backend::execute(programs, tapes, &anchors)) {
+        if let Some(actual) = grid(execute_with_backend(ExecutionBackend::MetalJit, programs, tapes, &anchors)) {
             assert_eq!(actual, expected);
         }
     }
@@ -610,7 +610,7 @@
         let jit_elapsed = jit_started.elapsed();
         assert_eq!(jit_output[0][0], plain_output);
         #[cfg(target_os = "macos")]
-        if let Some(actual) = grid(metal_grid_backend::execute(&jit_programs, &jit_tapes, &jit_anchors)) {
+        if let Some(actual) = grid(execute_with_backend(ExecutionBackend::MetalJit, &jit_programs, &jit_tapes, &jit_anchors)) {
             assert_eq!(actual[0][0], plain_output);
         }
         if let Some(iterations) = std::env::var("TEMPO_QUANTIFIER_PROFILE_ITERATIONS")
@@ -922,7 +922,8 @@
             assert_eq!(actual, expected);
             #[cfg(target_os = "macos")]
             {
-                let actual = metal_grid_backend::execute(
+                let actual = execute_with_backend(
+                    ExecutionBackend::MetalJit,
                     std::slice::from_ref(&program),
                     std::slice::from_ref(&python_tape),
                     &[vec![vec![0]]],
@@ -2802,21 +2803,6 @@
             json!({"programs":programs,"signatures":groups.len(),"groups":groups})
         );
         assert_eq!(programs, 335);
-        let grid_shapes = metal_grid::compile_program_shapes(&compiled_programs);
-        let grid_signatures = grid_shapes
-            .iter()
-            .map(|shape| shape.signature)
-            .collect::<BTreeSet<_>>();
-        let grid_routes = grid_shapes
-            .iter()
-            .map(|shape| shape.route)
-            .collect::<BTreeSet<_>>();
-        let route_counts = grid_shapes
-            .iter()
-            .fold(BTreeMap::new(), |mut counts, shape| {
-                *counts.entry(shape.route).or_insert(0_usize) += 1;
-                counts
-            });
         let structural_maxima = compiled_programs.iter().fold(
             execution_shape::ProgramRequirements::default(),
             |mut maxima, program| {
@@ -2831,35 +2817,10 @@
                 maxima
             },
         );
-        println!("TEMPO_PYTHON_EXECUTION_ROUTES {route_counts:?}");
         println!("TEMPO_PYTHON_STRUCTURAL_MAXIMA {structural_maxima:?}");
         // The spike counted opcode shapes. Resource classes can split those
         // shapes, but must never merge different opcode/ABI contracts.
         assert_eq!(groups.len(), 106);
-        let mut contracts = BTreeMap::new();
-        for (program, shape) in compiled_programs.iter().zip(&grid_shapes) {
-            let contract = (
-                program
-                    .words
-                    .iter()
-                    .map(|word| split(*word).0)
-                    .collect::<Vec<_>>(),
-                program.value_programs.len(),
-                program.capture_programs.len(),
-                program.output_program.instructions.len(),
-                shape.class,
-                shape.route,
-            );
-            if let Some(previous) = contracts.insert(shape.signature, contract.clone()) {
-                assert_eq!(previous, contract, "signature={}", shape.signature);
-            }
-        }
-        println!(
-            "TEMPO_PYTHON_GRID_SIGNATURES opcodeShapes={} resourceShapes={}",
-            groups.len(),
-            grid_signatures.len()
-        );
-        assert!(grid_routes.len() <= 10);
     }
 
 #[test]

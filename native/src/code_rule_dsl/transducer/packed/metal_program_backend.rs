@@ -649,11 +649,7 @@ pub(super) fn jit_cache_key(programs: &[Program]) -> Result<String, Error> {
 }
 
 pub(super) fn program_buffer_key(programs: &[Program]) -> Result<ProgramBufferKey, Error> {
-    Ok(ProgramBufferKey::from(&PackedBatch::new(
-        programs,
-        &[],
-        &[],
-    )?))
+    Ok(ProgramBufferKey::from(&PackedBatch::new_in_place(programs, &[], &[])?))
 }
 
 /// The interpreter, compiled once per process: a lowered matcher dispatches it once per pass.
@@ -792,7 +788,7 @@ pub fn execute_packed_with_result_limits(
     let file_buffer = MappedBuffer::from_slice(device, &table.views)?;
     let slab = |slot: usize| &table.slabs.get(slot).or(table.slabs.last()).expect("a batch with tasks has a document").buffer;
     // The derived classes alone (`has_supertype`): the classes are the codes', read on the tape.
-    let (supertypes, _) = batch.metal_supertypes();
+    let supertypes = batch.metal_supertypes();
     let supertype_buffer = MappedBuffer::from_slice(device, &supertypes)?;
     let pending_buffer = &workspace.pending;
     let capture_buffer = &workspace.captures;

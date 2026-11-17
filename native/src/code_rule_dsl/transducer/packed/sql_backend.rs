@@ -75,7 +75,7 @@ impl MatchBatch {
                 let backend = match self.backend {
                     TerminalBackend::Cpu => ExecutionBackend::CpuJit,
                     #[cfg(target_os = "macos")]
-                    TerminalBackend::Metal => ExecutionBackend::Metal,
+                    TerminalBackend::Metal => ExecutionBackend::MetalJit,
                 };
                 let result = execute_with_backend(backend, &self.programs, &self.files, &anchors);
                 match result {
