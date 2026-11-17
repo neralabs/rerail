@@ -49,6 +49,7 @@ import {
   dashboardLink,
   daemonNotRunningMessage,
   lookupDaemon,
+  NOT_HOME_DAEMON_NOTE,
   openInBrowser,
   openDashboard,
   startDaemon,
@@ -61,6 +62,7 @@ import {
   type DaemonState,
   type PageOpening,
   type RunningDaemon,
+  type StopDaemonResult,
 } from "../runtime/daemon-control.js";
 import { deviceSecretStore } from "../activation/device-keystore.js";
 import { runRerailMcpBridge } from "../api/mcp-bridge.js";
@@ -467,6 +469,7 @@ function hookHealthLines(home: string): string[] {
 /** What `rerail status` says of the daemon, and the exit code that goes with it. */
 function printDaemonStatus(lookup: DaemonLookup): number {
   if (lookup.status === "absent") {
+    if (lookup.notDaemon !== undefined) process.stdout.write(`${NOT_HOME_DAEMON_NOTE}\n`);
     process.stdout.write(`${daemonNotRunningMessage()}\n`);
     return 3;
   }
@@ -666,13 +669,20 @@ async function runSessionCommand(rawArgs: readonly string[]): Promise<number> {
   return 0;
 }
 
+/** What `rerail daemon stop` says of each outcome. */
+const STOP_ANSWERS: Readonly<Record<StopDaemonResult, string>> = {
+  stopped: "Rerail daemon stopped.\n",
+  "not-running": "The Rerail daemon is not running.\n",
+  "not-daemon": `${NOT_HOME_DAEMON_NOTE}\nThe Rerail daemon is not running.\n`,
+};
+
 /** The daemon commands need only the launcher home; they never load an activation policy. */
 async function runDaemonCommand(command: string, args: readonly string[], home: string): Promise<number | undefined> {
   if (command === "daemon") {
     const [verb, ...rest] = args;
     if (verb === "start") return await runDaemonStartCommand(rest, home);
     if (verb === "stop" && rest.length === 0) {
-      process.stdout.write(await stopDaemon(home) === "stopped" ? "Rerail daemon stopped.\n" : "The Rerail daemon is not running.\n");
+      process.stdout.write(STOP_ANSWERS[await stopDaemon(home)]);
       return 0;
     }
     throw new Error(`Usage: rerail daemon start [options] | rerail daemon stop\n\n${usage()}`);

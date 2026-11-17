@@ -57,6 +57,12 @@ import { removeFolder, runningIn } from "../support/platform/remove-folder.js";
 
 const originalRerailHome = process.env.RERAIL_HOME;
 
+/** The home lock's holder record naming `pid`, as a daemon that took the lock of `home` writes it. */
+async function holdHome(home: string, pid: number): Promise<void> {
+  await mkdir(join(home, LOCKS_DIR), { recursive: true });
+  await writeFile(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid }));
+}
+
 function stateFor(overrides: Partial<DaemonState>): DaemonState {
   return {
     pid: DEAD_PID,
@@ -170,21 +176,23 @@ describe("Rerail daemon control", () => {
     }
   });
 
-  it("keeps the state file when a live pid stops answering, and refuses to start over it", async () => {
-    // A closed port with a live pid: this process is alive, nothing listens on the recorded URL.
+  it("keeps the state file when the home's daemon stops answering, and refuses to start over it", async () => {
+    // A closed port with a live pid that holds the home: this process is alive, nothing listens on the recorded URL.
     const stateFile = join(home, DAEMON_STATE_FILE);
     const state = stateFor({ pid: process.pid, url: "http://127.0.0.1:1/" });
     await writeFile(stateFile, JSON.stringify(state));
-    expect(await lookupDaemon(home, posix)).toEqual({ status: "unresponsive", state });
+    await holdHome(home, process.pid);
+    const holding = { ...posix, homeDaemonLockHeld: () => true };
+    expect(await lookupDaemon(home, holding)).toEqual({ status: "unresponsive", state });
     expect(existsSync(stateFile)).toBe(true);
-    expect(await findRunningDaemon(home, posix)).toBeUndefined();
+    expect(await findRunningDaemon(home, holding)).toBeUndefined();
     expect(existsSync(stateFile)).toBe(true);
-    await expect(startDaemon({ home, packageRoot: "/nowhere/rerail" }, { dev: true }, posix))
+    await expect(startDaemon({ home, packageRoot: "/nowhere/rerail" }, { dev: true }, holding))
       .rejects.toThrow(/alive but not answering/);
     expect(await withStartLock(home, async () => "the start lock is free")).toBe("the start lock is free");
   });
 
-  it("stops an unresponsive live daemon pid and clears its state file", async () => {
+  it("stops an unresponsive daemon that holds the home and clears its state file", async () => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     let daemonPid: number | undefined;
     try {
@@ -208,8 +216,10 @@ describe("Rerail daemon control", () => {
       daemonPid = Number(pidOutput.toString());
       if (!Number.isInteger(daemonPid)) throw new Error("test daemon did not receive a pid");
       await writeFile(stateFile, JSON.stringify(stateFor({ pid: daemonPid, url: "http://127.0.0.1:1/" })));
+      await holdHome(home, daemonPid);
+      const pid = daemonPid;
 
-      expect(await stopDaemon(home, posix)).toBe("stopped");
+      expect(await stopDaemon(home, { ...posix, homeDaemonLockHeld: () => processAlive(pid) })).toBe("stopped");
       expect(processAlive(daemonPid)).toBe(false);
       expect(existsSync(stateFile)).toBe(false);
     } finally {
@@ -767,6 +777,7 @@ describe("a state file Windows left behind", () => {
     const waits: number[] = [];
     const signals: Array<string | number | undefined> = [];
     let running = true;
+    await holdHome(home, DEAD_PID);
     // Elevated or not, a daemon whose one event loop is in an audit answers no proof within the wait.
     for (const kill of [denied, () => true]) {
       await writeFile(stateFile, JSON.stringify(state));
@@ -774,6 +785,7 @@ describe("a state file Windows left behind", () => {
       const busy: DaemonMachine = {
         ...windows([PIPE_NAME]),
         env: { RERAIL_HOME: home },
+        homeDaemonLockHeld: () => true,
         kill,
         capabilityProof: async (_socketPath, _accessToken, timeoutMs) => {
           waits.push(timeoutMs);
@@ -792,6 +804,7 @@ describe("a state file Windows left behind", () => {
     // Stopping it sends no shutdown request with the capability: the process is ended instead.
     const silent: DaemonMachine = {
       ...windows([PIPE_NAME]),
+      homeDaemonLockHeld: () => running,
       kill: (_pid, signal) => {
         signals.push(signal);
         if (signal === "SIGTERM") running = false;
@@ -817,12 +830,14 @@ describe("a state file Windows left behind", () => {
     expect(probe).not.toHaveBeenCalled();
     expect(existsSync(stateFile)).toBe(false);
 
-    // A daemon whose pipe is there but which does not answer is still the daemon, and start refuses to go over it.
+    // A daemon that holds the home, whose pipe is there but which does not answer, is still the daemon, and start
+    // refuses to go over it.
     vi.stubGlobal("fetch", vi.fn(async () => {
       throw new Error("connect ECONNREFUSED 127.0.0.1:1");
     }));
     await writeFile(stateFile, JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE })));
-    expect(await lookupDaemon(home, windows([PIPE_NAME]))).toMatchObject({ status: "unresponsive" });
+    await holdHome(home, DEAD_PID);
+    expect(await lookupDaemon(home, { ...windows([PIPE_NAME]), homeDaemonLockHeld: () => true })).toMatchObject({ status: "unresponsive" });
   });
 
   it("finds the engine pipe whatever its case, and leaves a daemon whose pipes cannot be listed to the health probe", async () => {
@@ -831,9 +846,12 @@ describe("a state file Windows left behind", () => {
       throw new Error("connect ECONNREFUSED 127.0.0.1:1");
     }));
     await writeFile(stateFile, JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE })));
-    expect(await lookupDaemon(home, windows(["other", PIPE_NAME.toUpperCase()]))).toMatchObject({ status: "unresponsive" });
+    await holdHome(home, DEAD_PID);
+    const holding = { homeDaemonLockHeld: (): boolean => true };
+    expect(await lookupDaemon(home, { ...windows(["other", PIPE_NAME.toUpperCase()]), ...holding })).toMatchObject({ status: "unresponsive" });
     const unlisted = {
       ...windows([]),
+      ...holding,
       pipes: (): readonly string[] => {
         throw Object.assign(new Error("EACCES"), { code: "EACCES" });
       },
@@ -945,6 +963,99 @@ describe("a state file Windows left behind", () => {
   });
 });
 
+describe("a record whose live pid is not the home's daemon", () => {
+  const PIPE = enginePipeName(String.raw`C:\Users\me\.rerail\rerail.sqlite`);
+  const LIVE_PID = 4242;
+  let home: string;
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), "rerail-not-daemon-"));
+    // Nothing answers on the recorded URL: a daemon killed without its cleanup took its listener with it.
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("connect ECONNREFUSED 127.0.0.1:1");
+    }));
+  });
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    await removeFolder(home);
+  });
+
+  /**
+   * A machine on `platform` where `LIVE_PID` runs until a SIGTERM or SIGKILL reaches it, the home's lock is held while
+   * `lockHeld` says so, every signal goes to `signals`, and on Windows the engine pipe is there and silent to the proof.
+   */
+  function machineWith(platform: NodeJS.Platform, signals: Array<string | number | undefined>, lockHeld: () => boolean): DaemonMachine {
+    let running = true;
+    return fakeMachine(platform, {
+      env: { RERAIL_HOME: home },
+      kill: (pid, signal) => {
+        if (signal !== 0) signals.push(signal);
+        if (signal === "SIGTERM" || signal === "SIGKILL") running = false;
+        if (pid !== LIVE_PID || !running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+        return true;
+      },
+      pipes: () => [pipeNameOf(PIPE)],
+      capabilityProof: async () => "silent",
+      homeDaemonLockHeld: () => lockHeld(),
+    });
+  }
+
+  const state = (platform: NodeJS.Platform): DaemonState => stateFor({
+    pid: LIVE_PID,
+    kernelSocketPath: platform === "win32" ? PIPE : "/nowhere/engine.sock",
+    accessToken: "capability",
+  });
+
+  it.each(["linux", "win32"] as const)("ends nothing and removes the record when the pid it names holds no lock of the home (%s)", async platform => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const signals: Array<string | number | undefined> = [];
+    // The daemon was killed: both its records still name its pid, which another process has now, and its lock is free.
+    await holdHome(home, LIVE_PID);
+    await writeFile(stateFile, JSON.stringify(state(platform)));
+    expect(await lookupDaemon(home, machineWith(platform, signals, () => false))).toEqual({ status: "absent", notDaemon: LIVE_PID });
+    expect(existsSync(stateFile)).toBe(false);
+    await writeFile(stateFile, JSON.stringify(state(platform)));
+    expect(await stopDaemon(home, machineWith(platform, signals, () => false))).toBe("not-daemon");
+    expect(signals).toEqual([]);
+    expect(existsSync(stateFile)).toBe(false);
+    // Another daemon holds the home and recorded itself: the pid daemon.json names is still not it.
+    await holdHome(home, LIVE_PID + 1);
+    await writeFile(stateFile, JSON.stringify(state(platform)));
+    expect(await lookupDaemon(home, machineWith(platform, signals, () => true))).toEqual({ status: "absent", notDaemon: LIVE_PID });
+    expect(signals).toEqual([]);
+  });
+
+  it.each(["linux", "win32"] as const)("keeps and stops a daemon that holds the home's lock and is not answering (%s)", async platform => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const signals: Array<string | number | undefined> = [];
+    await holdHome(home, LIVE_PID);
+    await writeFile(stateFile, JSON.stringify(state(platform)));
+    expect(await lookupDaemon(home, machineWith(platform, signals, () => true))).toEqual({ status: "unresponsive", state: state(platform) });
+    expect(existsSync(stateFile)).toBe(true);
+    expect(await stopDaemon(home, machineWith(platform, signals, () => true))).toBe("stopped");
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(existsSync(stateFile)).toBe(false);
+  });
+
+  it("stops waiting, and sends no SIGKILL, once the daemon it stopped lets go of the home, whoever has its pid", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const signals: Array<string | number | undefined> = [];
+    await holdHome(home, LIVE_PID);
+    await writeFile(stateFile, JSON.stringify(state("linux")));
+    // The daemon ends at its SIGTERM and lets go of its lock, and another process takes its pid at once.
+    const machine: DaemonMachine = {
+      ...machineWith("linux", signals, () => !signals.includes("SIGTERM")),
+      kill: (_pid, signal) => {
+        if (signal !== 0) signals.push(signal);
+        return true;
+      },
+    };
+    const found = await lookupDaemon(home, machine);
+    if (found.status === "absent") throw new Error("the daemon that holds the home was not found");
+    expect(await stopFoundDaemon(home, found, machine)).toBe("stopped");
+    expect(signals).toEqual(["SIGTERM"]);
+  });
+});
+
 describe("the engine proof a lookup asks for", () => {
   // A busy daemon's engine is silent, not refusing: a lookup that read silence as a refusal dropped a daemon that runs.
   it("tells a listener that says nothing in time from one that hangs up or is not there", async () => {
@@ -995,8 +1106,9 @@ describe("the engine endpoint of a busy daemon", () => {
       probes.push(String(url));
       throw new Error("connect ECONNREFUSED 127.0.0.1:4791");
     }));
-    // A Linux daemon whose pid is alive and whose every health probe fails.
-    const machine = fakeMachine("linux", { env: { RERAIL_HOME: home, RERAIL_AUTOSTART: autostart }, kill: () => true });
+    // A Linux daemon whose pid is alive and holds the home, and whose every health probe fails.
+    await holdHome(home, DEAD_PID);
+    const machine = fakeMachine("linux", { env: { RERAIL_HOME: home, RERAIL_AUTOSTART: autostart }, kill: () => true, homeDaemonLockHeld: () => true });
     await expect(daemonEngineEndpoint(true, undefined, machine)).rejects.toThrow(/alive but not answering/u);
     // The first probe and the busy wait's: against a daemon that answers late they wait up to 2 s and 10 s, and a
     // third probe would wait 10 s more.
@@ -1014,7 +1126,8 @@ describe("the engine endpoint of a busy daemon", () => {
       return Response.json({ status: "ok", pid: DEAD_PID });
     }));
     const env = autostart === undefined ? { RERAIL_HOME: home } : { RERAIL_HOME: home, RERAIL_AUTOSTART: autostart };
-    const machine = fakeMachine("linux", { env, kill: () => true });
+    await holdHome(home, DEAD_PID);
+    const machine = fakeMachine("linux", { env, kill: () => true, homeDaemonLockHeld: () => true });
     await expect(daemonEngineEndpoint(true, undefined, machine)).rejects.toThrow(
       new Error("the running Rerail daemon is from another Rerail package; run rerail daemon stop, then rerail daemon start"),
     );
