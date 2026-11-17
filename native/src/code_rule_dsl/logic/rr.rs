@@ -295,7 +295,7 @@ impl Text {
         closed_program(&files, &own)?;
         let own: Vec<syntax::Statement> = own.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect();
         let m = lower::lower_module_seeded(own, &scoped.seeds)?;
-        let mut program = lower::link_seeded(m, &scoped.seeds, core_names(), Some(&library.program))?;
+        let mut program = lower::link_seeded(m, &scoped.seeds, core_names(), Some((&library.program, &library.spans)))?;
         // A text that adds to library relations asks of the library (decision 0089 §3): its request's cone, the library
         // relations that read what it adds, and the helpers they read, are copied from the linked library, made once
         // (decision 0246 §2: a cone is made at link time). The run's `own_part` then holds them as the request. A fact
@@ -385,6 +385,8 @@ pub struct Library {
     /// Each module's key in the store (`module_key`).
     pub keys: Vec<crate::content_store::HashKey>,
     pub program: Program,
+    /// Its columns' spans (`lower::span_columns`), which a program lowered in its scope reads (`Text::lower_in`).
+    pub spans: std::sync::Arc<lower::SpanColumns>,
 }
 
 impl Text {
@@ -452,7 +454,8 @@ pub(in crate::code_rule_dsl) fn lower_library(paths: &[PathBuf], store: Option<&
     }
     check_names(&files, false)?;
     let library = if std::env::var("RERAIL_LIBRARY_LOWERING").is_ok_and(|v| v == "whole") {
-        Library { modules: Vec::new(), files: Vec::new(), keys: Vec::new(), program: lower::lower(files.into_iter().flat_map(|(_, statements): (PathBuf, Vec<syntax::Statement>)| statements).collect())? }
+        let (program, spans) = lower::span_columns(lower::lower(files.into_iter().flat_map(|(_, statements): (PathBuf, Vec<syntax::Statement>)| statements).collect())?);
+        Library { modules: Vec::new(), files: Vec::new(), keys: Vec::new(), program, spans: Arc::new(spans) }
     } else {
         let (modules, members, keys) = library_modules_with_files(paths, files, store)?;
         // The linked library is an image too (decision 0246 §2, §6), under its modules' keys: a store that holds it
@@ -480,7 +483,8 @@ pub(in crate::code_rule_dsl) fn lower_library(paths: &[PathBuf], store: Option<&
         };
         // Its declared kind sets are relations its includers may read (an image kept before this was without them).
         lower::keep_declared_kind_sets(&mut program, &modules);
-        Library { modules, files: members, keys, program }
+        let (program, spans) = lower::span_columns(program);
+        Library { modules, files: members, keys, program, spans: Arc::new(spans) }
     };
     let library = Arc::new(library);
     let mut kept = cache.lock().expect("the lowered libraries");

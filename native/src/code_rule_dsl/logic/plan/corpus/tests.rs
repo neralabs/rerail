@@ -957,19 +957,7 @@ fn a_programs_nearest_over_a_library_kind_set_finds_in_a_pack_what_it_finds_alon
                 top(x) :- kind(f, \"function_definition\"), field(f, \"name\", c), text(c, x), nearest(f, s, scope), kind(s, \"module\").\n.output top\n";
     let other = ".language python\n#include \"python/names.rr\"\nrotgt(s, \"zz\") :- kind(s, \"module\").\n\
                  .decl bound(x: symbol)\nbound(x) :- bound_in(_, x).\n.output bound\n";
-    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("library-kind-set");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("a.py"), "def f():\n    def g():\n        pass\nclass C:\n    def m(self):\n        pass\n").unwrap();
-    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
-    let run = |programs: &[&str], out: &str| {
-        let out = dir.join(out);
-        super::run_all(programs, &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
-        let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
-        let rows = read("p0_top");
-        if rows.is_empty() { read("top") } else { rows }
-    };
-    let alone = run(&[near], "alone");
-    let together = run(&[near, other], "together");
+    let (alone, together) = alone_and_together("library-kind-set", ("a.py", "def f():\n    def g():\n        pass\nclass C:\n    def m(self):\n        pass\n"), near, other, "top");
     // Every set a rule climbs to, the library's, a request's copy of its rules (`rotgt`'s readers) and the
     // programs', is a set of the combined program, with its kinds.
     let prog = super::combine_texts(&[near, other]).unwrap_or_else(|e| panic!("{e}"));
@@ -980,8 +968,61 @@ fn a_programs_nearest_over_a_library_kind_set_finds_in_a_pack_what_it_finds_alon
             }
         }
     }
-    let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(alone, [["f"]], "f's nearest scope is the module; g's is f, m's is C");
+    assert_eq!(together, alone);
+}
+
+/// A library relation of kinds that no library rule climbs to (eslint-a-control.rr's `breakable_kind(k) :-
+/// loop_kind(k)`), and a program's own set over one (no-unsafe-finally's `fn_stop(k) :- function_kind(k)`), hold the
+/// library's kinds where a program climbs to them in a pack, as alone: the program held them empty or without the
+/// library's, and eslint's no-extra-label found nothing in a pack, no-unsafe-finally climbed past functions.
+#[test]
+fn a_programs_nearest_over_a_library_relation_of_kinds_finds_in_a_pack_what_it_finds_alone() {
+    let near = ".language typescript\n#include \"tsx/eslint-a-control.rr\"\n.decl left(k: symbol)\n\
+                left(k) :- kind(j, \"break_statement\"), nearest(j, s, breakable_kind), kind(s, k).\n.output left\n\
+                .decl stop(k: symbol)\nstop(\"program\").\nstop(k) :- function_kind(k).\n\
+                .decl stopped(k: symbol)\nstopped(k) :- kind(j, \"return_statement\"), nearest(j, s, stop), kind(s, k).\n.output stopped\n";
+    let other = ".language typescript\n#include \"tsx/eslint-a-control.rr\"\n.decl j(n: node)\nj(n) :- jump(n, _).\n.output j\n";
+    let ts = "function f() { for (;;) { if (a) { break; } return 1; } }\nswitch (b) { case 1: break; }\n";
+    let (alone, together) = alone_and_together("library-kind-relation", ("a.ts", ts), near, other, "left");
+    assert_eq!(alone, [["for_statement"], ["switch_statement"]]);
+    assert_eq!(together, alone);
+    let (alone, together) = alone_and_together("library-kind-relation-own", ("a.ts", ts), near, other, "stopped");
+    assert_eq!(alone, [["function_declaration"]]);
+    assert_eq!(together, alone);
+}
+
+/// `first`'s `rel` over the one file `file` (its name and text): run alone, and in a pack with `other`.
+fn alone_and_together(name: &str, file: (&str, &str), first: &str, other: &str, rel: &str) -> (Vec<Vec<String>>, Vec<Vec<String>>) {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(file.0), file.1).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let run = |programs: &[&str], out: &str| {
+        let out = dir.join(out);
+        super::run_all(programs, &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+        let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
+        let rows = read(&format!("p0_{rel}"));
+        if rows.is_empty() { read(rel) } else { rows }
+    };
+    let alone = run(&[first], "alone");
+    let together = run(&[first, other], "together");
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    (alone, together)
+}
+
+/// A `match_all` over a library relation's node (FAST003's over `route_path`'s `s`, a string by `plain_str`) scans
+/// the spans the library's rules bind it to in a pack, as alone. Lowered in its library's scope, the program held the
+/// library relation declared and not derived, so `span_patterns` took its column for an empty one: the program ran no
+/// pattern, and ruff-fast003 and typescript-eslint's prefer-namespace-keyword found nothing in a pack.
+#[test]
+fn a_match_over_a_library_relations_node_finds_in_a_pack_what_it_finds_alone() {
+    let words = ".language python\n#include \"python/ast.rr\"\n.decl word(k: symbol)\n\
+                 word(k) :- plain_str(s, _), match_all(\"(?<K>[a-z]+)\", s), text(K, k).\n.output word\n";
+    let other = ".language python\n#include \"python/ast.rr\"\n.decl inner(e: node)\ninner(m) :- unparen(_, m).\n.output inner\n";
+    let (alone, together) = alone_and_together("library-span", ("a.py", "x = \"ab cd\"\n"), words, other, "word");
+    assert_eq!(alone, [["ab"], ["cd"]]);
     assert_eq!(together, alone);
 }
 
