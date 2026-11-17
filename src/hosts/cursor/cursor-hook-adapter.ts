@@ -18,8 +18,8 @@ import {
   type HookOutput,
   type SessionLock,
 } from "../../harness/hook-adapter.js";
-import { headlineText, sessionStartNote, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
-import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules } from "../../presentation/session-presentation.js";
+import { headlineText, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
+import { linkDeliveries, presentedSessionStartNote } from "../../presentation/session-presentation.js";
 import { steers } from "../../engine/catalog/rule-mode.js";
 
 export type CursorHookInput = HookInput;
@@ -260,6 +260,6 @@ async function cursorAnswer(
     ...(missedSteerDigestEnabled() && loopCountSchema.parse(input.loop_count) < CURSOR_FOLLOWUP_LOOP_LIMIT ? { stop: true } : {}),
   });
   // The runtime records no links; the rules point at this checkout's dashboard only here.
-  const note = hook === "sessionStart" ? sessionStartNote(await dashboardOrigin(descriptor.cwd, answered), "cursor", descriptor.sessionId, await presentedSessionNoteRules(descriptor, answered)) : undefined;
+  const note = hook === "sessionStart" ? await presentedSessionStartNote(descriptor, answered) : undefined;
   return cursorHookOutput(hook, await linkDeliveries(available, descriptor.cwd, answered), note);
 }

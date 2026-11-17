@@ -19,7 +19,7 @@ import {
 } from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { PresentationPresence } from "../engine/storage/presentation-presence.js";
-import { cappedLine, ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
+import { cappedLine, ruleUrl, sessionPageUrl, sessionStartNote, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
 import { conflictUrl } from "../engine/merge-assist/conflict-note.js";
 import { colourDepth, RERAIL_MARK_TEXT, rerailMark, stateMark, type TerminalEnv } from "./rerail-mark.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -251,11 +251,20 @@ function onPresentation(
  * The dashboard the session-start note links into for `cwd`: the Rerail home daemon's recorded URL when it is
  * loopback, scoped to `cwd`'s repository and checkout (`?repository=&checkout=`) when the daemon names them, so the
  * session page opens in that repository rather than on the picker. Undefined when there is none, or the daemon is
- * bound somewhere a browser should not be sent (`0.0.0.0`). Passive: never starts anything. The daemon's answer to the
- * event (`answered`) gives it where it carries it.
+ * bound somewhere a browser should not be sent (`0.0.0.0`). Passive: never starts anything.
  */
-export async function dashboardOrigin(cwd: string, answered: EventAnswerFacts = {}): Promise<string | undefined> {
-  return steerDashboard(cwd, answered);
+export async function dashboardOrigin(cwd: string): Promise<string | undefined> {
+  return steerDashboard(cwd);
+}
+
+/**
+ * The session-start note of `session` for a hook (Claude Code, Codex, Cursor): its dashboard link and what it says of
+ * the rules come from the daemon's answer to the session's start (`answered`), and are read from the daemon after that
+ * answer only where it carried none (a daemon older than those facts).
+ */
+export async function presentedSessionStartNote(session: AdapterSession, answered: EventAnswerFacts): Promise<string> {
+  const dashboard = await steerDashboard(session.cwd, answered);
+  return sessionStartNote(dashboard, session.host, session.sessionId, await presentedSessionNoteRules(session, answered));
 }
 
 /**

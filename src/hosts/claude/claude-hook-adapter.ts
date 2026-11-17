@@ -16,8 +16,8 @@ import {
   type HookOutput,
   type SteerLines,
 } from "../../harness/hook-adapter.js";
-import { conflictLine, headlineText, sessionStartNote, steerHeadlines, type HeadlineLinkStyle } from "../../engine/code-rule/rerail-steer.js";
-import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules } from "../../presentation/session-presentation.js";
+import { conflictLine, headlineText, steerHeadlines, type HeadlineLinkStyle } from "../../engine/code-rule/rerail-steer.js";
+import { linkDeliveries, presentedSessionStartNote } from "../../presentation/session-presentation.js";
 import { terminalDrawsHyperlinks } from "../../presentation/terminal-hyperlinks.js";
 import { colourDepth, rerailMark } from "../../presentation/rerail-mark.js";
 
@@ -94,7 +94,7 @@ export function claudeHookOutput(hook: string, deliveries: readonly HeldDelivery
  */
 async function sessionNote(hook: string, session: AdapterSession, answered: EventAnswerFacts): Promise<string | undefined> {
   if (hook !== "SessionStart") return undefined;
-  return sessionStartNote(await dashboardOrigin(session.cwd, answered), session.host, session.sessionId, await presentedSessionNoteRules(session, answered));
+  return await presentedSessionStartNote(session, answered);
 }
 
 export async function handleClaudeEvent(
