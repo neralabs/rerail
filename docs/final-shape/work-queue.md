@@ -1918,3 +1918,17 @@ segments, in `Life::Kept` blocks (`keptrows` spec line), with duplicates marked 
 heap copies gone at 300 files, peak unchanged. Next on the list: the base rows for the cross part (191 MB),
 the memo's rows, `Relation::push` staging, `Rows::clone`/`shared` tails and `merged`, the fixpoint's host indexes,
 and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q82, 0361 step 7).
+
+### Q84. Base rows for the cross part: no flattened copy, rows moved into entries
+
+Done 2026-11-17. The user's list, item "the copies of base rows for the cross part and the memo". A memoised
+chunk used to read each base row into its files' rows, flatten them all into a full-width copy (`canonical`), copy
+that into the cross part's columns, and copy the files' rows into their entries. Now:
+
+- the columns the cross part reads are written as each row is read (once for each file that holds it, as before);
+- a file's rows are moved into its entry, which starts empty;
+- a chunk the memo cannot attribute, and a cone, cut the columns back to their lengths before the chunk.
+
+The columns themselves stay: they are the only copy of rows whose batch is gone, and they hold only the columns
+read. Their accumulated size, about 160–190 MB at 300 files, is data, not a copy. "base rows for the memo" plus
+"for the cross part" took 0.96 s; they take 0.73 s now.
