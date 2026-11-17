@@ -141,7 +141,23 @@ pub fn tape_jsonc_with(kernel: Kernel, src: &[u8], kinds: &Kinds) -> Result<Tape
     run(kernel, src, kinds, true)
 }
 
+/// `src`'s tape by `kernel`, the source not hashed (`digest` is `None`): for a measurement, against
+/// a reader that does not hash (`rerail-json-lean`).
+pub fn tape_unhashed_with(kernel: Kernel, src: &[u8], kinds: &Kinds) -> Result<Tape, Refusal> {
+    let mut t = run_as(kernel, src, kinds, Read::Unhashed)?;
+    t.digest = None;
+    Ok(t)
+}
+#[derive(Clone, Copy, PartialEq)]
+enum Read {
+    Strict,
+    Jsonc,
+    Unhashed,
+}
 fn run(kernel: Kernel, src: &[u8], kinds: &Kinds, jsonc: bool) -> Result<Tape, Refusal> {
+    run_as(kernel, src, kinds, if jsonc { Read::Jsonc } else { Read::Strict })
+}
+fn run_as(kernel: Kernel, src: &[u8], kinds: &Kinds, read: Read) -> Result<Tape, Refusal> {
     if src.len() >= u32::MAX as usize / 2 {
         return Err(Refusal::TooLarge);
     }
@@ -165,7 +181,13 @@ fn run(kernel: Kernel, src: &[u8], kinds: &Kinds, jsonc: bool) -> Result<Tape, R
     };
     // SAFETY: the sink's buffers are `columns`, which `grow` grows; the shim writes them only within
     // what `grow` gave.
-    let code = unsafe { if jsonc { kernel.tape_jsonc(src, &mut sink) } else { kernel.tape(src, &mut sink) } };
+    let code = unsafe {
+        match read {
+            Read::Strict => kernel.tape(src, &mut sink),
+            Read::Jsonc => kernel.tape_jsonc(src, &mut sink),
+            Read::Unhashed => kernel.tape_unhashed(src, &mut sink),
+        }
+    };
     if src.len() > KEEP {
         release_above(KEEP);
     }

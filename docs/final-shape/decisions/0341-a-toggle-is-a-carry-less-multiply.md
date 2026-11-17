@@ -2,6 +2,10 @@
 
 Status: decided (2026-11-17); landed on the CPU (the JIT, and the AOT's Rust). Follows 0338.
 
+**Corrected by 0343.** The premise below is wrong: simdjson 5.0.5's arm64 `prefix_xor` is the
+six shift-XOR rounds. Its `vmull_p64` line is commented out ("apparently slow"). Whether tier 1
+keeps `clmul` is open.
+
 ## Intro
 
 **The problem.** A toggle `t = toggle(x)` holds between flips: bit `i` of `t` is the XOR of

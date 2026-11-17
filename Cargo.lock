@@ -3412,6 +3412,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-json-lean"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "rerail-simdjson",
+ "rerail-simdjson-native",
+]
+
+[[package]]
 name = "rerail-lang"
 version = "0.1.0"
 dependencies = [
