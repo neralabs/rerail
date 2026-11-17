@@ -20,7 +20,6 @@ import { fileStamp } from "../file-stamp.js";
 import {
   gitBranchTips,
   gitCommitsBetween,
-  gitCrlfPaths,
   gitModifiedOrUntrackedListing,
   gitModifiedOrUntrackedPaths,
   GitReads,
@@ -31,6 +30,7 @@ import {
   type ChangedPathsListing,
   type CrlfRule,
 } from "../git.js";
+import { readGitCrlfPaths } from "../git-crlf-reader.js";
 import { readGitHead } from "../git-head-reader.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
@@ -213,7 +213,7 @@ async function readGitView(discovery: SourceDiscovery, checkout: string, paths: 
   const [blobs, crlf] = await Promise.all([
     // A blob larger than a source could never match its digest: it is skipped, never read into memory.
     git.run(signal => readGitBlobs(checkout, paths.flatMap(path => gitRevisions(path, before)), { maxBlobBytes: MAX_SOURCE_BYTES, signal })),
-    git.run(signal => gitCrlfPaths(checkout, paths, { signal })),
+    git.run(signal => readGitCrlfPaths(checkout, paths, { signal })),
   ]);
   return { blobs, head, moved, committed, before, crlf, ...unmerged };
 }
@@ -977,7 +977,7 @@ async function recoverFromGit(
   const [blobs, crlf] = await Promise.all([
     // A blob larger than a source could never match its digest: it is skipped, never read into memory.
     discovery.git.run(signal => readGitBlobs(checkout, revisions, { maxBlobBytes: MAX_SOURCE_BYTES, signal })),
-    discovery.git.run(signal => gitCrlfPaths(checkout, named.map(({ inCheckout }) => inCheckout), { signal })),
+    discovery.git.run(signal => readGitCrlfPaths(checkout, named.map(({ inCheckout }) => inCheckout), { signal })),
   ]);
   for (const { path, inCheckout } of named) {
     const digest = uncaptured.get(path);

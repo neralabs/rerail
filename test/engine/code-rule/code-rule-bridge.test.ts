@@ -2661,6 +2661,23 @@ describe("CodeRuleBridge and Git's own writes", () => {
     expect(await gitReads(() => bridge.checkpoint("turn"))).toEqual({ heads: 1, entries: 0 });
   });
 
+  it("asks Git for a change's line endings only at the first pass that finds it, while no attributes or settings file changes", async () => {
+    const root = await twoBranches();
+    await writeFile(join(root, ".gitattributes"), "*.py text\n");
+    commitAll(root);
+    // A file is taken by its stamp only once it is the reader's settle time (2 s) old.
+    await new Promise(wake => setTimeout(wake, 2_100));
+    const { bridge } = await opened(root);
+    const lineEndings = (args: readonly string[]): boolean => args.includes("check-attr") || args.includes("core.autocrlf") || args.includes("core.eol");
+    const asked: number[] = [];
+    for (const round of [1, 2, 3]) {
+      asyncGitCalls.args.length = 0;
+      await shell(bridge, () => writeFile(join(root, "src", "a.py"), `old\n${round}\n`));
+      asked.push(asyncGitCalls.args.filter(lineEndings).length);
+    }
+    expect(asked.slice(1)).toEqual([0, 0]);
+  }, 30_000);
+
   it("reads one checkout each pass for a session opened in a subfolder of it, once a walk has found a change there too", async () => {
     const root = await twoBranches();
     const { bridge, auditGeneratedEdits } = await opened(join(root, "src"), { sourceRoot: () => root });
