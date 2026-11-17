@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -1180,6 +1180,45 @@ describe("path keys an earlier build stored under another spelling", () => {
     release();
     expect((await ask()).status).toBe(200);
     expect(heldFor(databasePath, folder)).toEqual(HELD);
+  }, 60_000);
+
+  // A reader's copy of waiting keys that failed for any reason read as keys that wait, a fault in this build included,
+  // and the reader went on as if another writer held the lock.
+  it("fail a reader's copy of waiting keys on a fault in this build, as a writable open fails, and leave the keys waiting", async () => {
+    await onWindows();
+    const { folder, databasePath } = await checkoutFolder();
+    vi.stubEnv("SystemDrive", "Q:");
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
+    openRerailDatabase(databasePath).$client.close();
+    // The fault, where the copy's step reads before its lock.
+    vi.mocked(withDriveBudget).mockImplementation(() => {
+      throw new TypeError("a fault in this build");
+    });
+
+    expect(() => workspaceStartState(folder, databasePath)).toThrow("a fault in this build");
+    expect(spellings(databasePath)).toEqual([{ stored, current: null }]);
+  });
+
+  // A hook's own start check, with no daemon to answer it, dropped the line that said why the keys still wait.
+  it("say why a hook's own start check left keys waiting in the hook failure log, which `rerail status` reads", async () => {
+    await onWindows();
+    const { folder, databasePath } = await checkoutFolder();
+    vi.stubEnv("SystemDrive", "Q:");
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
+    openRerailDatabase(databasePath).$client.close();
+    holdWriteLock(databasePath);
+
+    await hookRerailStarted("claude-code", folder, databasePath);
+    const failures = join(dirname(databasePath), "hook-failures.jsonl");
+    const recorded = existsSync(failures) ? readFileSync(failures, "utf8").trim().split("\n").map(line => JSON.parse(line) as Record<string, unknown>) : [];
+    expect(recorded.map(({ host, event, reason }) => ({ host, event, reason }))).toEqual([{
+      host: "claude-code", event: "start check", reason: `the keys an earlier build stored on ${win32.parse(folder).root} wait: database is locked`,
+    }]);
+    expect(spellings(databasePath)).toEqual([{ stored, current: null }]);
   }, 60_000);
 
   // The daemon copied for the folder a request named before the handler checked that a coding agent may read there, so

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import type { z } from "zod";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
-import { copyKeysWaitingIn, databaseInstalledAt, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
+import { copyKeysWaitingIn, databaseInstalledAt, openRerailDatabase, sayKeysWait, type RerailDatabase } from "../engine/storage/database.js";
 import { pathKeysCanMove, rootOf, rootsKeysWaitOn } from "../engine/storage/path-key-spelling.js";
 import { SqliteAuditReader } from "../engine/audit/audit-store.js";
 import { SqlitePresentationPreferenceStore } from "../runtime/presentation-preference-store.js";
@@ -140,8 +140,10 @@ export class DatabaseApiStores implements RerailApiStores {
     if (!pathKeysCanMove()) return;
     this.#waitingRoots ??= existsSync(this.#path) ? rootsKeysWaitOn(this.database()) : undefined;
     if (this.#waitingRoots?.has(rootOf(workspace)) !== true) return;
-    // The daemon's thread waits on no other writer; a copy that cannot run now leaves the keys for a later request.
-    logFailure(copyKeysWaitingIn(this.#path, workspace));
+    // The daemon's thread waits on no other writer; a copy that cannot run now leaves the keys for a later request and
+    // says why in the daemon's log.
+    const waits = copyKeysWaitingIn(this.#path, workspace);
+    if (waits !== undefined) sayKeysWait(waits);
     this.#waitingRoots = rootsKeysWaitOn(this.database());
   }
 
@@ -162,9 +164,4 @@ export class DatabaseApiStores implements RerailApiStores {
     this.#preferences?.close();
     this.#database?.$client.close();
   }
-}
-
-/** Says in the daemon's log why a copy of waiting keys did not run (`copyKeysWaitingIn`); the request goes on. */
-function logFailure(failure: string | undefined): void {
-  if (failure !== undefined) process.stderr.write(`rerail: ${failure}\n`);
 }

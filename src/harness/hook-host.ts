@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import type { AdapterEvent, AdapterSession, RerailEventLoop, RerailHost } from "../engine/adapter-contract.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { readRepositoryState } from "../presentation/session-presentation.js";
@@ -59,15 +60,21 @@ function recordLocalReceipt(session: AdapterSession, databasePath: string): (rec
 /**
  * The check one-shot hooks make. A running daemon answers first, from its own environment and open
  * database; without one, the hook reads the database itself, which never starts a daemon. An
- * explicit database path (tests, embedded hosts) is always read directly.
+ * explicit database path (tests, embedded hosts) is always read directly. When that read finds keys an earlier version
+ * stored waiting on the folder's drive and cannot copy them now, it says why in the hook failure log beside the
+ * database (`hook-failures.ts`), which `rerail status` reads: the coding agent keeps a hook's stderr out of the session.
  */
 export async function hookRerailStarted(host: RerailHost, workspace: string, databasePath?: string): Promise<boolean> {
   if (databasePath === undefined) {
     const answered = await readRepositoryState(workspace, host);
     if (answered !== null) return rerailRunsIn(answered);
   }
-  return isRerailStarted(workspace, databasePath);
+  const home = databasePath === undefined ? {} : { home: dirname(databasePath) };
+  return isRerailStarted(workspace, databasePath, reason => recordHookFailure({ host, event: START_CHECK, reason }, home));
 }
+
+/** The event name a hook's own start check records a failure under: it runs before the hook reads the agent's event. */
+const START_CHECK = "start check";
 
 export interface HookOptions {
   storageRoot?: string;

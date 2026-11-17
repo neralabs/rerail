@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { and, asc, eq, getTableName, inArray, sql } from "drizzle-orm";
-import { defaultRerailDatabasePath, openRerailDatabase, openRerailDatabaseIn, type RerailDatabase } from "../engine/storage/database.js";
+import { defaultRerailDatabasePath, openRerailDatabase, openRerailDatabaseIn, type RerailDatabase, type SayKeysWait } from "../engine/storage/database.js";
 import { rerailRunsIn, type CheckoutContext, type EffectiveRule, type RepositoryKey, type RepositoryStartState, type RepositoryStatus } from "../engine/catalog/repository-model.js";
 import { repositoryFolderName, repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
 import {
@@ -53,12 +53,13 @@ function hasStartTables(database: Pick<RerailDatabase, "$client">): boolean {
  * `workspace`'s start state. It creates no identity file, database, or schema and records nothing, with one exception
  * on Windows: where keys an earlier build stored wait for `workspace`'s drive, a writable open looks them up and copies
  * their rows first (`openRerailDatabaseIn`), so a checkout on another disk, a mapped drive or a share keeps its start
- * state and settings; it waits on no other writer, and when it cannot run the state is read as the file holds it. A
- * database another process is still creating has recorded nothing yet, so it reads stopped.
+ * state and settings; it waits on no other writer, and when it cannot run now the state is read as the file holds it
+ * and `say` gets why (this process's standard error when none is given). A database another process is still creating
+ * has recorded nothing yet, so it reads stopped.
  */
-export function workspaceStartState(workspace: string, databasePath = defaultRerailDatabasePath()): RepositoryStartState {
+export function workspaceStartState(workspace: string, databasePath = defaultRerailDatabasePath(), say?: SayKeysWait): RepositoryStartState {
   if (!existsSync(databasePath)) return stateOf(STOPPED);
-  const database = openRerailDatabaseIn(databasePath, workspace);
+  const database = openRerailDatabaseIn(databasePath, workspace, say === undefined ? {} : { say });
   try {
     if (!hasStartTables(database)) return stateOf(STOPPED);
     return stateOf(checkoutStatus(database, lookupCheckout(database, workspace)));
@@ -162,10 +163,11 @@ export class RepositoryStartWatch {
  * The check a host that reads the database itself makes before doing anything in a checkout (Pi, OMP under Node), and
  * a hook no daemon answers. A hook a running daemon answers takes the daemon's answer, which it reads from its own
  * stores (`DatabaseApiStores.repositoryState`). A started repository that is not set up yet counts: its sessions are
- * recorded, though no rule runs there until it is set up.
+ * recorded, though no rule runs there until it is set up. `say` gets why keys waiting on the folder's drive were not
+ * copied, as for `workspaceStartState`.
  */
-export function isRerailStarted(workspace: string, databasePath = defaultRerailDatabasePath()): boolean {
-  return rerailRunsIn(workspaceStartState(workspace, databasePath));
+export function isRerailStarted(workspace: string, databasePath = defaultRerailDatabasePath(), say?: SayKeysWait): boolean {
+  return rerailRunsIn(workspaceStartState(workspace, databasePath, say));
 }
 
 /** How start and stop name what they changed: the repository, or a worktree of it. */

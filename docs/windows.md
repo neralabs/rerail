@@ -275,9 +275,11 @@ there (`workspaceStartState`); and `rerail start`, `rerail stop`, `rerail status
 another disk or a mapped drive keeps its start state and settings from the first coding agent event or the first of
 these commands there. A reader that never writes the database (the status line while no daemon runs) reads the folder
 as it is until one of them has run there. The copy a hook, a runtime's check or the daemon makes takes
-the write lock only when no other writer holds it, so none of them waits on a writer for it: while one does, or when
-the copy fails, the folder reads as the database holds it and the next of them copies (the daemon says why in its
-log). The daemon reads where keys wait once, so a request from a folder on any other drive reads nothing for them, and
+the write lock only when no other writer holds it, so none of them waits on a writer for it: while one does, while this
+process may not write the database, or when the disk refuses the write, the folder reads as the database holds it and
+the next of them copies. The daemon says why in its log, a command on its standard error, and a hook that reads the
+database itself in the hook failure log that `rerail status` reads. A copy that fails for any other reason fails the
+read, as any open that writes the database does. The daemon reads where keys wait once, so a request from a folder on any other drive reads nothing for them, and
 once a drive's keys are copied no request from it does. A hook or
 a status line names its folder to the daemon as the session spells it, not by its realpath: through a drive mapped to a
 share, or made with `subst`, the realpath names what the letter stands for, and the daemon would not see the letter the

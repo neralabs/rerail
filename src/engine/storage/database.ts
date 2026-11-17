@@ -213,6 +213,9 @@ export function openRerailDatabase(path: string, options: OpenRerailDatabaseOpti
   return openChecked(path, true, migrations, supported);
 }
 
+/** Where an open made from a folder says why the keys waiting on its drive were not copied ({@link openRerailDatabaseIn}). */
+export type SayKeysWait = (line: string) => void;
+
 /**
  * An open for a caller that works in `workspace` (a hook's session folder, a command's checkout, the folder a request to
  * the daemon names). On Windows, the folder keys an earlier build stored that wait on that folder's drive or share
@@ -220,23 +223,33 @@ export function openRerailDatabase(path: string, options: OpenRerailDatabaseOpti
  * looked up and their rows copied before the caller reads, by a writable open whose steps read that drive too
  * (`openedIn`): it answered as the caller came to it. A writable open (`readonly: false`) is that open itself. A
  * read-only one makes it only where keys wait there ({@link copyKeysWaitingIn}); elsewhere, and once none waits there,
- * it is the read-only open alone, with one read of an empty table. When the copy cannot run now (another writer holds
- * the lock, the file is not this process's to write), the reader reads the file as it is, the keys still waiting.
+ * it is the read-only open alone, with one read of an empty table. When the copy cannot run now for a reason that
+ * passes (another writer holds the lock, the file is not this process's to write, the disk refused the write), the
+ * reader reads the file as it is, the keys still waiting, and `say` gets the line that says why: by default this
+ * process's standard error, which is the daemon's log for the daemon and the terminal for a command. A copy that fails
+ * otherwise fails the open, as any writable open does.
  */
-export function openRerailDatabaseIn(path: string, workspace: string, { readonly = true } = {}): RerailDatabase {
+export function openRerailDatabaseIn(
+  path: string,
+  workspace: string,
+  { readonly = true, say = sayKeysWait }: { readonly?: boolean; say?: SayKeysWait } = {},
+): RerailDatabase {
   const migrations = openedIn(RERAIL_MIGRATIONS, workspace);
   if (!readonly) return openRerailDatabase(path, { migrations });
   const database = openRerailDatabase(path, { readonly: true, migrations });
   if (!keysWaitHere(database, workspace)) return database;
-  copyKeysWaitingIn(path, workspace);
+  const waits = copyKeysWaitingIn(path, workspace);
+  if (waits !== undefined) say(waits);
   return openRerailDatabase(path, { readonly: true, migrations });
 }
 
 /**
  * Copies the rows of the keys an earlier build stored that wait on `workspace`'s drive or share (`openRerailDatabaseIn`)
  * through a writable open that takes the write lock only when no other writer holds it: its caller, a reader, never
- * waits on a writer, as a read-only open does not. Gives why the copy could not run (the lock held, a file this
- * process may not write), or undefined once it ran; the keys then wait for a later open from that drive.
+ * waits on a writer, as a read-only open does not. Gives undefined once it ran, or the line that says why it could not
+ * run now, when the reason passes by itself ({@link copyCanWait}); the keys then wait for a later open from that drive.
+ * Any other failure (a fault in this build, a damaged file) is thrown, as at every writable open, so it is not taken
+ * for keys that wait.
  */
 export function copyKeysWaitingIn(path: string, workspace: string): string | undefined {
   const migrations = openedIn(RERAIL_MIGRATIONS, workspace);
@@ -250,16 +263,37 @@ export function copyKeysWaitingIn(path: string, workspace: string): string | und
     return undefined;
   } catch (error) {
     if (database !== undefined) rollbackQuietly(database);
-    return `the keys an earlier build stored on ${win32.parse(workspace).root} wait: ${sqliteReason(error)}`;
+    const cause = sqliteCause(error);
+    if (!copyCanWait(cause)) throw error;
+    return `the keys an earlier build stored on ${win32.parse(workspace).root} wait: ${cause instanceof Error ? cause.message : String(cause)}`;
   } finally {
     database?.$client.close();
   }
 }
 
-/** Why `error` happened: Drizzle wraps SQLite's error ("Failed to run the query ..."), whose cause says why. */
-function sqliteReason(error: unknown): string {
-  const why = error instanceof Error && error.cause instanceof Error ? error.cause : error;
-  return why instanceof Error ? why.message : String(why);
+/** Drizzle wraps SQLite's error ("Failed to run the query ..."): its cause says why. */
+function sqliteCause(error: unknown): unknown {
+  return error instanceof Error && error.cause instanceof Error ? error.cause : error;
+}
+
+/**
+ * SQLite's codes for a write that a later open can make: another connection holds a lock this one needs, or the disk
+ * refused the write (full, or an I/O error), each with its kinds (`SQLITE_BUSY_SNAPSHOT`, `SQLITE_IOERR_WRITE`).
+ */
+const PASSING_SQLITE_CODES = ["SQLITE_BUSY", "SQLITE_LOCKED", "SQLITE_FULL", "SQLITE_IOERR"];
+
+/**
+ * Whether a copy of waiting keys that failed with `error` can wait for a later open from the drive: the lock or the disk
+ * ({@link PASSING_SQLITE_CODES}), or a file this process may not write, which a process that may (the daemon) copies.
+ */
+function copyCanWait(error: unknown): boolean {
+  const code = (error as { code?: unknown } | undefined)?.code;
+  return cannotWrite(error) || (typeof code === "string" && PASSING_SQLITE_CODES.some(passing => code.startsWith(passing)));
+}
+
+/** Says on this process's standard error why the keys waiting on a drive were not copied ({@link copyKeysWaitingIn}). */
+export function sayKeysWait(line: string): void {
+  process.stderr.write(`rerail: ${line}\n`);
 }
 
 /**
