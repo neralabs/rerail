@@ -666,3 +666,22 @@ fn split_do_while_as_names() {
 "###,
     );
 }
+
+/// Long chains of wraps over long operands (`x.a { … }.b { … }`, `a + { … } + { … }`): the writer's
+/// chains (`Tw`'s, from a long tail on) give the tape an insert a wrap gives.
+#[test]
+fn chains_are_inserts_each() {
+    let body: String = (0..8).map(|i| format!("        val v{i} = f({i}) + g(h{i}) * {i}\n")).collect();
+    let steps: String = (0..12).map(|j| format!(".step{j} {{\n{body}    }}")).collect();
+    let sums: String = (0..12).map(|j| format!(" + w{j}(\n{body:?}.length)")).collect();
+    let src = format!("val a = x{steps}\nval b = y{sums}\n");
+    let tape = |chains: bool| {
+        crate::tw::CHAINS.set((chains, 0));
+        let t = crate::tape(src.as_bytes()).map(|t| crate::tape_text(&t));
+        (t, crate::tw::CHAINS.get().1)
+    };
+    let (with, opened) = tape(true);
+    let (without, _) = tape(false);
+    assert!(with.is_ok() && opened > 0, "{opened} chains");
+    assert_eq!(with, without);
+}

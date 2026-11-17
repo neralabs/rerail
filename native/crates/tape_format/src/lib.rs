@@ -559,6 +559,11 @@ impl<L: Layout> Writer<L> {
             self.held.push(Held { key, start, nodes: 0, end: 0 });
             return;
         }
+        self.insert_node(at, key, start);
+    }
+
+    /// `insert` on the tape, a chain at `at` or not (a leaf: a chain's wraps go before it).
+    fn insert_node(&mut self, at: usize, key: u32, start: u32) {
         if at == self.n {
             self.push(key, start);
             return;
@@ -611,6 +616,16 @@ impl<L: Layout> Writer<L> {
             self.chain_at = self.chains.last().map_or(usize::MAX, |c| c.0);
             self.put_held(at, base);
         }
+    }
+
+    /// Where the innermost chain holds a wrap at `node`: the end of the last held one's subtree
+    /// on the tape (its children's; the tape's end while it is open).
+    #[inline]
+    pub fn held_end(&self, node: usize) -> Option<usize> {
+        if node != self.chain_at {
+            return None;
+        }
+        self.held_last().map(|h| if h.nodes != 0 { h.nodes as usize } else { self.n })
     }
 
     #[inline]
@@ -696,7 +711,7 @@ impl<L: Layout> Writer<L> {
     /// place is known before its parent knows whether the tape stores it (a held token, written at
     /// its parent's close). The nodes before `at` that are closed do not contain it.
     pub fn insert_leaf(&mut self, at: usize, key: u32, start: u32, end: u32) {
-        self.insert(at, key, start);
+        self.insert_node(at, key, start);
         let ws = self.layout.widths();
         // A leaf is its own last descendant: its tail is from its start either way.
         let tail = end.wrapping_sub(start);
@@ -722,7 +737,7 @@ impl<L: Layout> Writer<L> {
             _ => {}
         }
         debug_assert!(leaves.windows(2).all(|w| w[0].at <= w[1].at));
-        debug_assert!(leaves.iter().all(|l| l.at as usize != self.chain_at && l.at as usize <= self.n));
+        debug_assert!(leaves.iter().all(|l| l.at as usize <= self.n));
         while self.n + k > self.cap {
             self.grow();
         }
