@@ -1,0 +1,1 @@
+A rule pack made for a newer Rerail is left out saying so (`it needs a newer Rerail … than this one`), not with the schema's refusal of what this Rerail could not read. Set-up keeps offering the version you have installed when the newest does not load.
