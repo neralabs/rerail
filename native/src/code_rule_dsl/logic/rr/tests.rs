@@ -3964,3 +3964,25 @@ fn a_rule_left_reading_no_relation_reads_the_unit_on_the_version() {
     let r: Vec<String> = v.rules().filter(|x| v.rel_name(x.head().rel()) == "r").map(|x| v.show_rule(x)).collect();
     assert!(r.iter().all(|x| x.contains("rr_unit(0)")), "{r:?}");
 }
+
+/// Aggregate demand runs on a modular text's version (decision 0281's path, step 7b): the aggregate's helper is
+/// restricted to the keys its consumer asks (`rr_demand_agg_…`, read first by the helper's rules), and a count of
+/// zero becomes an anti-join, as the tree's `aggregate_demand::optimize` makes them; a debug build checks the image
+/// against the tree's (`link_seeded_version`).
+#[test]
+fn aggregate_demand_is_placed_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl a(x: number)\n.decl b(x: number, y: number)\n.input a, b\n.decl r(x: number)\n.decl s(x: number)\n.output r, s\n",
+        "r(x) :- a(x), n = count : { b(x, y), y > x }, n > 1.\n",
+        "s(x) :- a(x), count : { b(x, y), y > x } = 0.\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
+    assert!(rules.iter().any(|x| x.starts_with("rr_demand_agg_")), "a demand is placed: {rules:#?}");
+    let s: Vec<&String> = rules.iter().filter(|x| x.starts_with("s(")).collect();
+    assert!(s.iter().all(|x| x.contains("!") && !x.contains("count")), "a count of zero is an anti-join: {s:?}");
+}

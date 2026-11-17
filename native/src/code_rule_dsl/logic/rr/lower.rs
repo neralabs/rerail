@@ -966,8 +966,8 @@ pub fn unseed(program: &mut Program, seeds: &Seeds, core: &BTreeSet<String>) {
     program.qualifiers.retain(|r, _| !(seeded.qualifiers.contains(r) && gone(r)));
 }
 
-/// `link_seeded` up to `whole()`'s tail (`unit`, `sets`, `widen_cyclic_contexts`): the program `rr::link_seeded_version`
-/// makes a version of, `declared` checked. The tail drops repeats (a literal or rule another copy keeps), a rule
+/// `link_seeded` up to `whole()`'s tail (aggregate demand, `unit`, `sets`, `widen_cyclic_contexts`): the program `rr::link_seeded_version`
+/// makes a version of, `declared` checked. Aggregate demand adds only relations it declares. The tail drops repeats (a literal or rule another copy keeps), a rule
 /// whose body is its own head, and literals of relations the program derives, and adds `node` only where it is
 /// declared: the check before it refuses what the check after it does, but for a relation read only by its own
 /// copy-rule, which the lowering does not declare apart.
@@ -983,9 +983,12 @@ pub fn link_seeded_front(m: Module, seeds: &Seeds) -> Result<Program, Error> {
 /// The lowering's whole-program half (decision 0246 §1), over the modules appended into `l`.
 fn whole(l: Lowerer) -> Result<Program, Error> {
     let mut program = whole_front(l)?;
+    let demand = crate::code_rule_dsl::logic::profile::span(|| "aggregate demand and sets".to_owned());
+    super::aggregate_demand::optimize(&mut program);
     // The demand's rules, and the rules whose aggregate it made an existence test, read no relation either.
     unit(&mut program);
     sets(&mut program);
+    drop(demand);
     widen_cyclic_contexts(&mut program);
     Ok(program)
 }
@@ -1038,8 +1041,8 @@ pub fn sets(program: &mut Program) {
     }
 }
 
-/// `whole` up to its tail (`unit`, `sets`, `widen_cyclic_contexts`), which `rr::link_seeded_version` runs on the
-/// version.
+/// `whole` up to its tail (aggregate demand, `unit`, `sets`, `widen_cyclic_contexts`), which `rr::link_seeded_version`
+/// runs on the version: the program `front::finish` makes.
 fn whole_front(mut l: Lowerer) -> Result<Program, Error> {
     let analyses = crate::code_rule_dsl::logic::profile::span(|| "the program's analyses (findings, spans, kinds)".to_owned());
     l.three_valued();
@@ -1079,11 +1082,7 @@ fn whole_front(mut l: Lowerer) -> Result<Program, Error> {
         sources_on_request(&mut l.prog, round);
     }
     drop(analyses);
-    let mut program = crate::code_rule_dsl::logic::front::finish(l.prog)?;
-    let demand = crate::code_rule_dsl::logic::profile::span(|| "aggregate demand and sets".to_owned());
-    super::aggregate_demand::optimize(&mut program);
-    drop(demand);
-    Ok(program)
+    crate::code_rule_dsl::logic::front::finish(l.prog)
 }
 
 /// A context relation (`Lowerer::context`'s `rr_ctx<k>`) narrows where a helper is computed to the values its rule

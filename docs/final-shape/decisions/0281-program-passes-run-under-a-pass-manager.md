@@ -621,7 +621,12 @@ step 3 replaces what is under the writer.
      `the_lowerings_sets_are_made_on_the_version` (each of the three new passes left out fails it). ep2's 317 policies
      again: 0 rows, every check passes. Then `unit` (`lowering_tail::Unit`), so the version is made after aggregate
      demand. Test: `a_rule_left_reading_no_relation_reads_the_unit_on_the_version` (fails with the pass left out).
-     Next: aggregate demand.
+     Then aggregate demand (`lowering_tail::AggregateDemand`, `aggregate_demand::optimize` one for one: helpers
+     placed in name order, each candidate that may close a cycle stratified on an overlay of what is placed so far
+     and taken out where refused; the helpers' rules gain their demand where they stand and the demand rules follow,
+     the tree's order; then a count of zero read once an anti-join). `whole()`'s tail is all on the version, which is
+     made right after `front::finish`. Test: `aggregate_demand_is_placed_on_the_version` (fails with placement off);
+     ep2's 317 policies, 60 of them aggregating: 0 rows, every check passes. Next: `front::finish`.
    - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.
