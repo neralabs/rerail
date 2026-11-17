@@ -912,7 +912,6 @@ async function ownEngineAnswers(socketPath: string, accessToken: string | undefi
   return accessToken === undefined || await engineHoldsCapability(socketPath, accessToken);
 }
 
-/** Answers a challenge sent to {@link ENGINE_PROOF_PATH} with the proof that this engine holds `accessToken`. */
 /**
  * The capability a request for the engine's proof (`POST ENGINE_PROOF_PATH`) is answered with: the service's own;
  * undefined for any other request, and for a service that holds none.
@@ -945,6 +944,7 @@ async function readEngineRequest(incoming: IncomingMessage): Promise<EngineReque
   return parseEngineRequest(JSON.parse(Buffer.concat(chunks).toString("utf8")));
 }
 
+/** Answers a challenge sent to {@link ENGINE_PROOF_PATH} with the proof that this engine holds `accessToken`. */
 function answerEngineChallenge(challenge: unknown, accessToken: string, response: ServerResponse): void {
   if (!isEngineChallenge(challenge)) {
     response.writeHead(400).end(JSON.stringify({ error: "engine-challenge-required" }));
