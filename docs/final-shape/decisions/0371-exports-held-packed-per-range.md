@@ -1,6 +1,6 @@
-# 0365. The exports are held packed: canonical order, each column per range, node ids split at the granule
+# 0371. The exports are held packed: canonical order, each column per range, node ids split at the granule
 
-Date: 2026-11-17. Status: decided (user, 2026-11-17); built.
+Numbered 0365 where it was written (0365 is also two other records). Date: 2026-11-17. Status: decided (user, 2026-11-17); built.
 
 ## Intro
 
