@@ -95,67 +95,7 @@ pub mod compile_sets;
 pub mod compile_micro;
 pub use compile_micro::{Emit, Frames, Micro, RootRecord, steps as micro_steps};
 // cratify: `compile_matcher_tests` is rerail-engine's (it mounts it)
-// cratify: `metal_bulk_closure` is rerail-device-metal's (it mounts it)
-// cratify: `metal_bulk_closure_tests` is rerail-device-metal's (it mounts it)
-// cratify: `metal_candidate_batch` is rerail-device-metal's (it mounts it)
-// cratify: `metal_capture_arguments` is rerail-device-metal's (it mounts it)
-// cratify: `metal_capture_groups` is rerail-device-metal's (it mounts it)
-// cratify: `metal_capture_literals` is rerail-device-metal's (it mounts it)
-// cratify: `metal_capture_predicates` is rerail-device-metal's (it mounts it)
-pub mod metal_child_index;
-// cratify: `metal_closure_continuation` is rerail-device-metal's (it mounts it)
-// cratify: `metal_closure_prepare` is rerail-device-metal's (it mounts it)
-// cratify: `metal_closure_prepare_tests` is rerail-device-metal's (it mounts it)
-// cratify: `metal_constant_output` is rerail-device-metal's (it mounts it)
-// cratify: `metal_cutover_architecture` is rerail-device-metal's (it mounts it)
-// cratify: `metal_dynamic_execution` is rerail-device-metal's (it mounts it)
-// cratify: `metal_failure_records` is rerail-device-metal's (it mounts it)
-// cratify: `metal_frame_identity` is rerail-device-metal's (it mounts it)
-// cratify: `metal_frame_identity_tests` is rerail-device-metal's (it mounts it)
-// cratify: `metal_frontier_conformance` is rerail-device-metal's (it mounts it)
-// cratify: `metal_frontier_reduce` is rerail-device-metal's (it mounts it)
-// cratify: `metal_frontier_seed` is rerail-device-metal's (it mounts it)
-// cratify: `metal_frontier_seed_tests` is rerail-device-metal's (it mounts it)
-// cratify: `metal_frontier_validation` is rerail-device-metal's (it mounts it)
-pub mod metal_grid;
-// cratify: `metal_grid_contract` is rerail-device-metal's (it mounts it)
-// cratify: `metal_grid_executor` is rerail-device-metal's (it mounts it)
-// cratify: `metal_grid_plan` is rerail-device-metal's (it mounts it)
-// cratify: `metal_initial_prefix` is rerail-device-metal's (it mounts it)
-// cratify: `metal_initial_range_codegen` is rerail-device-metal's (it mounts it)
-// cratify: `metal_inline_predicates` is rerail-device-metal's (it mounts it)
-// cratify: `metal_named_order` is rerail-device-metal's (it mounts it)
-// cratify: `metal_output_contract` is rerail-device-metal's (it mounts it)
-// cratify: `metal_output_dispatch` is rerail-device-metal's (it mounts it)
-// cratify: `metal_output_mime` is rerail-device-metal's (it mounts it)
-// cratify: `metal_output_pages` is rerail-device-metal's (it mounts it)
-// cratify: `metal_output_selection` is rerail-device-metal's (it mounts it)
-// cratify: `metal_output_strip` is rerail-device-metal's (it mounts it)
-// cratify: `metal_position_order` is rerail-device-metal's (it mounts it)
-// cratify: `metal_grid_backend` is rerail-device-metal's (it mounts it)
-// cratify: `metal_ready_batch` is rerail-device-metal's (it mounts it)
-// cratify: `metal_ready_batch_tests` is rerail-device-metal's (it mounts it)
-// cratify: `metal_ready_proof` is rerail-device-metal's (it mounts it)
-// cratify: `metal_regex_code` is rerail-device-metal's (it mounts it)
-// cratify: `metal_regex_frontier` is rerail-device-metal's (it mounts it)
-// cratify: `metal_register_codegen` is rerail-device-metal's (it mounts it)
-// cratify: `metal_register_conformance` is rerail-device-metal's (it mounts it)
-// cratify: `metal_register_execution` is rerail-device-metal's (it mounts it)
-// cratify: `metal_semantic_columns` is rerail-device-metal's (it mounts it)
-// cratify: `metal_semantic_conformance` is rerail-device-metal's (it mounts it)
-// cratify: `metal_state_values` is rerail-device-metal's (it mounts it)
-// cratify: `metal_state_values_tests` is rerail-device-metal's (it mounts it)
-// cratify: `metal_successor` is rerail-device-metal's (it mounts it)
-// cratify: `metal_successor_branch_codegen` is rerail-device-metal's (it mounts it)
-// cratify: `metal_successor_codegen` is rerail-device-metal's (it mounts it)
-// cratify: `metal_successor_prepare` is rerail-device-metal's (it mounts it)
-// cratify: `metal_successor_repeat_codegen` is rerail-device-metal's (it mounts it)
-// cratify: `metal_successor_tests` is rerail-device-metal's (it mounts it)
-// cratify: `metal_terminal` is rerail-device-metal's (it mounts it)
-// cratify: `metal_terminal_capture_order` is rerail-device-metal's (it mounts it)
-// cratify: `metal_terminal_repeat` is rerail-device-metal's (it mounts it)
-// cratify: `metal_typed_output` is rerail-device-metal's (it mounts it)
-// cratify: `metal_unique_child_tests` is rerail-device-metal's (it mounts it)
+// cratify: `metal_semantic_conformance` is rerail-engine's (it mounts it: its fixtures parse documents)
 pub mod compilation;
 pub use compilation::PlanId;
 pub mod native_cpu;
@@ -181,7 +121,6 @@ pub mod output;
 pub mod packed_arena;
 pub mod packed_batch;
 pub use packed_batch::PackedExecution;
-// cratify: `metal_value_prefix_tests` is rerail-device-metal's (it mounts it)
 pub mod packed_workspace;
 pub mod scheduler;
 pub mod set_mode;
@@ -208,7 +147,6 @@ pub mod block_plan;
 #[cfg(test)]
 pub mod block_plan_tests;
 pub mod value_packing;
-pub mod value_prefix;
 
 // The transducer's word program and its opcodes, the compiler crate's (`rerail_compiler::program`).
 use rerail_compiler::program::*;
@@ -845,7 +783,6 @@ pub enum ExecutionBackend {
     MetalJit,
     /// Metal's compiled kernel once built in the background, its interpreter until then.
     MetalBackground,
-    Metal,
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
@@ -4034,7 +3971,7 @@ pub fn execute_planned(
         ExecutionBackend::MetalJit => {
             device::required()?.execute_packed(device::Engine::Jit, programs, files, anchors, result_limits)
         }
-        ExecutionBackend::Metal | ExecutionBackend::CpuBackground | ExecutionBackend::MetalBackground => {
+        ExecutionBackend::CpuBackground | ExecutionBackend::MetalBackground => {
             Err(Error::UnsupportedBackend)
         }
     }
@@ -4049,7 +3986,7 @@ pub fn execute_with_backend_outcomes(
     match compilation::resolve(backend, programs)? {
         ExecutionBackend::CpuInterpreter => execute_batch_outcomes(programs, files, anchors),
         ExecutionBackend::CpuJit => native_cpu::execute_batch_outcomes(programs, files, anchors),
-        backend @ (ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::Metal) => {
+        backend @ (ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit) => {
             device::required()?.execute_outcomes(backend, programs, files, anchors)
         }
         ExecutionBackend::CpuBackground | ExecutionBackend::MetalBackground => Err(Error::UnsupportedBackend),
@@ -4256,50 +4193,22 @@ pub(in crate::code_rule_dsl) fn warm_production_programs(programs: &[Program]) -
     Ok(())
 }
 
+/// The production corpus's programs over `files`, sharing its files' anchors: on the device's JIT when there is
+/// one (over the tape in the slabs), else the CPU's.
 pub fn execute_production_corpus(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Arc<[u32]>>],
     result_limits: &[u32],
 ) -> Result<packed_batch::PackedExecution, Error> {
+    let anchors = anchors
+        .iter()
+        .map(|file| file.iter().map(|roots| roots.to_vec()).collect())
+        .collect::<Vec<_>>();
     if let Some(device) = device::matcher() {
-        return device.execute_shared_corpus(programs, files, anchors, result_limits);
+        return device.execute_packed(device::Engine::Jit, programs, files, &anchors, Some(result_limits));
     }
-    {
-        let anchors = anchors
-            .iter()
-            .map(|file| file.iter().map(|roots| roots.to_vec()).collect())
-            .collect::<Vec<_>>();
-        execute_with_backend_packed_result_limits(
-            ExecutionBackend::CpuJit,
-            programs,
-            files,
-            &anchors,
-            Some(result_limits),
-        )
-    }
-}
-
-pub fn execute_production_corpus_pages(
-    programs: &[Program],
-    files: &[crate::code_rule_dsl::tape::TapeSource],
-    anchors: &[Vec<Arc<[u32]>>],
-    result_limits: &[u32],
-    consumer: &mut dyn FnMut(PackedExecution, usize) -> Result<(), Error>,
-) -> Result<(), Error> {
-    if let Some(device) = device::matcher() {
-        return device.execute_shared_corpus_pages(programs, files, anchors, result_limits, consumer);
-    }
-    {
-        let docs = files
-            .iter()
-            .map(|file| file.restore(&|| false).map_err(|_| Error::BackendFailure))
-            .collect::<Result<Vec<_>, _>>()?;
-        consumer(
-            execute_production_corpus(programs, &docs, anchors, result_limits)?,
-            files.len(),
-        )
-    }
+    execute_with_backend_packed_result_limits(ExecutionBackend::CpuJit, programs, files, &anchors, Some(result_limits))
 }
 
 pub const POSITIONAL_INDEX_VERSION: i64 = 5;

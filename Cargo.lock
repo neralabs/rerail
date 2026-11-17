@@ -3178,6 +3178,7 @@ dependencies = [
  "libc",
  "metal",
  "rayon",
+ "rerail-forest",
 ]
 
 [[package]]
