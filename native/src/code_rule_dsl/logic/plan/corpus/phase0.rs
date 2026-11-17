@@ -57,7 +57,8 @@ pub struct Graph {
     /// digest, which keys the program, leaves them out.
     pub(in crate::code_rule_dsl) rules: BTreeMap<PathBuf, [u8; 32]>,
     /// The plans the run of `bootstrap.rr` that derived it used (`Report::plans`): the run that reads the graph
-    /// names them in its record, so they stay live. Not part of the graph's digest.
+    /// names them in its record, so they stay live; none for a graph kept as an image, which later runs read instead
+    /// (`graphs`). Not part of the graph's digest.
     pub(in crate::code_rule_dsl) plans: Vec<[u8; 32]>,
 }
 
@@ -223,10 +224,24 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
             eprintln!("rerail: phase 0 derives {} seeds (images {})", wanted.len(), if Images::here().is_some() { "on" } else { "off" });
         }
         let whole = derive(&wanted).map_err(|e| Error::Syntax(format!("phase 0: {e}")))?;
-        let made: HashMap<Seed, Arc<Graph>> = wanted.iter().enumerate().map(|(k, seed)| (seed.clone(), Arc::new(whole.of(seed, k)))).collect();
+        let images = Images::here();
+        // A graph kept as an image names no plans: every later run reads the image, which used none (`Images`), and
+        // names none. Named by this run alone, the bootstrap run's plans made its record differ from the next run's,
+        // which then recorded one of its own (decision 0250). The bootstrap run's own record keeps them live.
+        let made: HashMap<Seed, Arc<Graph>> = wanted
+            .iter()
+            .enumerate()
+            .map(|(k, seed)| {
+                let mut g = whole.of(seed, k);
+                if images.is_some() {
+                    g.plans.clear();
+                }
+                (seed.clone(), Arc::new(g))
+            })
+            .collect();
         // Kept as images (decision 0246) whichever process derived them: an image is the engine build's, not the
         // process's.
-        if let Some(images) = Images::here() {
+        if let Some(images) = images {
             for (seed, g) in &made {
                 crate::code_rule_dsl::logic::rr::keep_graph_image(images.store.as_deref(), images.key(seed), images.encode(g));
             }
