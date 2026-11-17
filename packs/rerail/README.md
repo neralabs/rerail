@@ -164,19 +164,27 @@ Misses reordered lists; matches inside comments and strings. UI host maps and Ru
 
 Flags a Git spawn whose environment does not turn lazy fetch off (`GIT_NO_LAZY_FETCH`), any Git started outside the
 engine's Git module, `src/engine/git.ts` (`runGit`), including bare `"git"`, a hand-built Git path and shell command
-strings, and a `git diff` or `git status` argument list (`["diff", …]`, after any leading options) without
-`"--no-renames"`: with lazy fetch off, rename detection fails in a partial clone that lacks the source's blob. It runs
-on `src/**/*.ts`, leaving out tests and declaration files.
+strings, and a `git diff` or `git status` argument list without `"--no-renames"`: with lazy fetch off, rename
+detection fails in a partial clone that lacks the source's blob. An argument list is an array opening with `"diff"` or
+`"status"`, after any leading options, that is passed straight to a Git helper (`runGit`, `gitText`, `gitReadAsync`, a
+local `git` or `gitPaths` wrapper) or that holds only strings, one of them an option (`const STATUS_ARGS = ["status",
+"-z"]`). It runs on `src/**/*.ts`, leaving out tests and declaration files.
 
 History: Built on #152's first draft, whose `readGitBlobs` spawned `cat-file --batch` without the variable, and on #1's
 four Git spawns outside any owner that #23 gathered; it caught #152's draft (3 → 4) and was quiet on its fix, its merge
 and 20 recent merged PRs. The rename clause came from #373's review: `headless-scan.ts`'s `git diff` failed in a sparse
-partial clone on an edited rename, and #373 fixed it (1 → 0).
+partial clone on an edited rename, and #373 fixed it (1 → 0). The clause first read any array opening with `diff` or
+`status`, so it flagged a `[filter, column]` table (`["status", audits.status]`) on #704 and two command-name lists on
+`main` (`["status", "remove"].includes(…)`, merge assist's `ACTIONS`); it now reads only argument lists (2 → 0), and
+still catches every Git `diff` and `status` list on `main` with its `"--no-renames"` taken out.
 
 Gaps: Misses a local function returning a Git path, an aliased `gitExecutable` import, `Bun.spawnSync(["git", …])`, an
 execa tagged template, and an env passed as a value. Rust's `Command::new("git")` is not covered. The rename clause
 reads only array literals that start with `diff` or `status`: an argument list built another way, `git log` or
 `git show` with `--name-status`, `--stat` or `--follow`, and `-c diff.renames=false` instead of the flag are not seen.
+Nor are a list that holds a variable and is kept in a constant before the call, one passed to a helper whose name has
+no `git` or `Git` in it, one passed to `spawn` inside `src/engine/git.ts`, and an all-string list with no option
+(`["diff", "HEAD"]`).
 
 ### `rerail-home-file-names`
 

@@ -15,6 +15,7 @@ export {
   type RerailEventLoop,
   type RerailHost,
   RULE_MESSAGE_TYPE,
+  sendNativeDeliveries,
   STEER_LINE_MESSAGE_TYPE,
   STEER_STRATEGIES,
   type SteerRule,
@@ -31,6 +32,7 @@ export { approve, currentSubject, isApproved, packSubject, ruleSubject } from ".
 export { RULE_PACK_LIST } from "./catalog/pack-list.generated.js";
 export { ConversationRuleRegistry } from "./catalog/registry.js";
 export { repositoryIdentityLocation, resolveCloneId } from "./catalog/repository-identity.js";
+export { parseXml, xmlChildren, type XmlElement } from "./catalog/lint-config/formats/xml-format.js";
 export {
   type RuleCatalog,
   CALLER_CWD_HEADER,
@@ -40,6 +42,7 @@ export {
   type RepositoryKey,
   type RepositoryStartState,
   type RepositoryStatus,
+  type RuleSetting,
 } from "./catalog/repository-model.js";
 export { adoptRemote, checkoutStatus, listRepositories, lookupCheckout, recordCheckout } from "./catalog/repository-registry.js";
 export { exportRulesDump, importRulesDump, RULES_DUMP_FILE, type RulesDump } from "./catalog/rule-bootstrap.js";
@@ -68,13 +71,15 @@ export { type ConversationRule, parseConversationRule } from "./catalog/rule-sch
 export { engineRegexIssues, type RegexIssue } from "./catalog/rule-regexes.js";
 export { type RuleDocument, SqliteRuleStore } from "./catalog/rule-store.js";
 export { CodeRuleBridge } from "./code-rule/code-rule-bridge.js";
+export { RepositoryWorktreeWalks } from "./code-rule/worktree-walks.js";
 export {
   bundledCodeRuleDslDirectory,
   CheckoutCatalogs,
   CheckoutCodeRuleCatalog,
   loadCodeRuleCapabilities,
 } from "./code-rule/code-rule-dsl-catalog.js";
-export { IGNORED_DIRECTORIES, languageFor, NativeCodeRuleEnforcer } from "./code-rule/code-rule-enforcer.js";
+export { languageFor, NativeCodeRuleEnforcer } from "./code-rule/code-rule-enforcer.js";
+export { IGNORED_DIRECTORIES } from "./code-rule/ignored-directories.js";
 export { languageNotSupportedOf } from "./code-rule/code-rule-language-support.js";
 export {
   CODE_RULE_AST_LANGUAGES,
@@ -87,7 +92,8 @@ export {
 export { CODE_RULE_FORMAT, type CodeRule, codeRuleSchema, type CodeRuleScope } from "./code-rule/code-rule-schema.js";
 export { type CodeRuleAuditor, type CodeRuleSourceLanguage, type CodeRuleViolation, renderSteer, type RuleSteerDelivery } from "./code-rule/code-rule.js";
 export {
-  asLateSteer, headlineText, messageSteer, SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, steerBlock, steerHeadlines, steerRules, type SteerFinding, type SteerTrigger,
+  asLateSteer, headlineText, messageSteer, SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, steerBlock, steerHeadlines,
+  steerRules, type SteerFinding, type SteerTrigger,
 } from "./code-rule/rerail-steer.js";
 export { steerOrigin } from "./code-rule/steer-origin.js";
 export { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
@@ -124,6 +130,7 @@ export {
   auditRequests,
   auditResultPages,
   auditRuleProvenances,
+  auditRuleProvenanceStep,
   auditRuleSetRules,
   auditRuleSets,
   auditRuleSetUses,
@@ -135,6 +142,7 @@ export {
   checkouts,
   events,
   libraryRules,
+  mergeAssistState,
   policySessionOwners,
   presentationPreferences,
   repositories,
@@ -154,3 +162,24 @@ export {
 export { bundledModelPath, ENTRY_POINTS, PACKAGE_ROOT, REQUIRED_NODE_MAJOR } from "./package-root.js";
 export { RERAIL_HOSTS, type CodingAgentState } from "./adapter-contract.js";
 export { type ApiCaller } from "./catalog/repository-model.js";
+export {
+  DEFAULT_MERGE_ASSIST_SETTINGS,
+  mergeAssistSettingsSchema,
+  mergeAssistStatusSchema,
+  type Conflict,
+  type ConflictSide,
+  type GithubReadiness,
+  type MergeAssistSettings,
+  type MergeAssistStatus,
+} from "./merge-assist/model.js";
+export { conflictNote } from "./merge-assist/conflict-note.js";
+export {
+  EXPERIMENTAL_ALL,
+  EXPERIMENTAL_FEATURES,
+  enabledExperiments,
+  experimentEnabled,
+  experimentOffMessage,
+  experimentVariable,
+  ExperimentOffError,
+  type ExperimentalFeature,
+} from "./experimental-features.js";

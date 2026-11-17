@@ -46,7 +46,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
 
     const recommended = agentIo();
     expect(await runSetup(recommended, request(setup, environment, { answer: "yes", repo: setup.repo }))).toEqual({ status: "waiting" });
-    expect(recommended.text()).toContain("Scanned acme-api. 1 rule pack fits:");
+    expect(recommended.text()).toContain("Scanned acme-api. 1 rule pack suggested for what it’s built with:");
     expect(recommended.text()).toContain("Will connect to: Claude Code, Cursor");
     expectUntouched(setup);
     expect(existsSync(setup.databasePath)).toBe(false);
@@ -183,7 +183,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: docs });
     const asked = agentIo();
     await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "yes", repo: docs }));
-    expect(asked.text()).toContain("Scanned docs. None of Rerail’s rule packs fit it.");
+    expect(asked.text()).toContain("Scanned docs. No rule pack matches what it’s built with.");
     expect(asked.text()).toContain("Start Rerail in docs with no rule packs on?");
 
     await runSetup(agentIo(), request(setup, fakeSetupEnvironment(), { answer: "start", repo: docs }));
@@ -202,6 +202,24 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     await runSetup(later, request(setup, environment));
     expect(environment.connections).toHaveLength(1);
     expect(later.text()).toContain("Rerail is on in acme-api");
+  });
+
+  it("names an agent found since whose hook fails only as not connected, and tries it again on the next run", async () => {
+    const setup = await fixture();
+    const first = fakeSetupEnvironment({ found: ["cursor"] });
+    await runSetup(agentIo(), request(setup, first, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
+
+    // Claude Code installed since; its hooks are written, and the one set-up runs fails.
+    const later = fakeSetupEnvironment({ found: ["claude-code", "cursor"], seen: first.agentsSeen(), hookFails: ["claude-code"] });
+    const io = agentIo();
+    expect(await runSetup(io, request(setup, later))).toMatchObject({ status: "started" });
+    expect(later.connections).toEqual([{ agents: ["claude-code"], repoRoot: setup.repo }]);
+    expect(io.text()).not.toContain("Now also connected");
+    expect(io.text()).toContain([
+      "Couldn’t connect Claude Code: Claude Code's Rerail hook exited 3: boom",
+      "    Rerail’s hooks are written, but they fail. Fix that, then run rerail setup again to connect Claude Code.",
+    ].join("\n"));
+    expect(later.agentsSeen()).toEqual(["cursor"]);
   });
 
   it("connects on a later plain run only the coding agents found since, never one an earlier run saw", async () => {

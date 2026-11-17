@@ -11,10 +11,10 @@ export interface LentBytes {
   text(): string;
 }
 
-/** A buffer and how many of its bytes a read filled. */
+/** A buffer and how many of its bytes a read filled; a read that fills the buffer moves to a larger one (`fill`). */
 interface FilledBuffer {
-  readonly buffer: Buffer;
-  readonly length: number;
+  buffer: Buffer;
+  length: number;
 }
 
 /**
@@ -35,31 +35,19 @@ export class WalkReadBuffers {
 
   /**
    * `use` with the bytes of the file at `absolute`, read to its end or the limit. `size`, the size its stamp gave, sizes
-   * the buffer, so a file that still holds it takes one read. The file is closed before `use` runs.
+   * the buffer, so a file that still holds it takes one read. The file is closed before `use` runs. The buffer the read
+   * ends in, grown or not, goes back for the next read however it ends: a read or close that fails (`EISDIR` once the
+   * file is a folder, `EIO`), or `use`. So the next read does not allocate or grow one again.
    */
   async lend<T>(absolute: string, size: number, use: (read: LentBytes) => Promise<T>): Promise<T> {
-    const { buffer, length } = await this.#read(absolute, size);
+    const handle = await open(absolute);
+    const filled: FilledBuffer = { buffer: this.#take(Math.min(size + 1, this.#limit)), length: 0 };
     try {
+      await readAndClose(handle, filled, size, this.#limit);
+      const { buffer, length } = filled;
       return await use({ bytes: buffer.subarray(0, length), text: () => buffer.toString("utf8", 0, length) });
     } finally {
-      this.#free.push(buffer);
-    }
-  }
-
-  /**
-   * Reads the file at `absolute` into a buffer of its own. A read that fails (`EISDIR` once the file is a folder, `EIO`)
-   * gives back the buffer it took, so the next read does not allocate one again.
-   */
-  async #read(absolute: string, size: number): Promise<FilledBuffer> {
-    const handle = await open(absolute);
-    const start = this.#take(Math.min(size + 1, this.#limit));
-    try {
-      return await fill(handle, start, size, this.#limit);
-    } catch (error) {
-      this.#free.push(start);
-      throw error;
-    } finally {
-      await handle.close();
+      this.#free.push(filled.buffer);
     }
   }
 
@@ -70,20 +58,28 @@ export class WalkReadBuffers {
   }
 }
 
+/** `fill`, then closes `handle` whether the read ended or failed. */
+async function readAndClose(handle: FileHandle, filled: FilledBuffer, size: number, limit: number): Promise<void> {
+  try {
+    await fill(handle, filled, size, limit);
+  } finally {
+    await handle.close();
+  }
+}
+
 /**
- * Reads `handle` into `start` to the file's end, or to `limit` bytes, moving to a larger buffer when it fills first. A
- * read that stops short once the file holds `size` bytes is its end, as `readFile` takes the size it finds for the end;
- * a shorter file is read on until a read finds nothing.
+ * Reads `handle` into `filled` to the file's end, or to `limit` bytes, moving `filled` to a larger buffer when it fills
+ * first, so `filled` holds the buffer the read is in at every step, a failed one included. A read that stops short once
+ * the file holds `size` bytes is its end, as `readFile` takes the size it finds for the end; a shorter file is read on
+ * until a read finds nothing.
  */
-async function fill(handle: FileHandle, start: Buffer, size: number, limit: number): Promise<FilledBuffer> {
-  let buffer = start;
-  let length = 0;
+async function fill(handle: FileHandle, filled: FilledBuffer, size: number, limit: number): Promise<void> {
   for (;;) {
-    if (length === buffer.length) buffer = grown(buffer, length, limit);
-    const wanted = Math.min(buffer.length, limit) - length;
-    const { bytesRead } = await handle.read(buffer, length, wanted, length);
-    length += bytesRead;
-    if (bytesRead === 0 || (bytesRead < wanted && length >= size)) return { buffer, length };
+    if (filled.length === filled.buffer.length) filled.buffer = grown(filled.buffer, filled.length, limit);
+    const wanted = Math.min(filled.buffer.length, limit) - filled.length;
+    const { bytesRead } = await handle.read(filled.buffer, filled.length, wanted, filled.length);
+    filled.length += bytesRead;
+    if (bytesRead === 0 || (bytesRead < wanted && filled.length >= size)) return;
   }
 }
 

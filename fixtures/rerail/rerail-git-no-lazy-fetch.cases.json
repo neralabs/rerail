@@ -71,6 +71,14 @@
     {
       "path": "src/cli/status.ts",
       "content": "import { runGit } from \"../engine/git.js\";\n\nconst STATUS_ARGS = [\"status\", \"--porcelain=v1\", \"-z\"];\n\nexport const dirty = (root: string): boolean => runGit(root, STATUS_ARGS).stdout !== \"\";\n"
+    },
+    {
+      "path": "src/engine/audit/audit-control.ts",
+      "content": "import { gitText } from \"../git.js\";\n\nfunction gitPaths(root: string, args: readonly string[]): string[] {\n  return (gitText(root, args) ?? \"\").split(\"\\0\").filter(Boolean);\n}\n\nexport const unstaged = (root: string, base: string) => gitPaths(root, [\"diff\", \"--name-only\", \"-z\", base, \"--\"]);\n"
+    },
+    {
+      "path": "src/engine/merge-assist/overlap.ts",
+      "content": "import { gitReadAsync } from \"../git.js\";\n\nconst DIFF_ARGS = [\"diff\", \"--no-color\", \"--no-ext-diff\", \"--inter-hunk-context=0\"] as const;\n\nexport const hunks = (root: string, range: string) => gitReadAsync(root, [...DIFF_ARGS, range]);\n"
     }
   ],
   "passed": [
@@ -141,6 +149,18 @@
     {
       "path": "src/engine/catalog/repository-registry.ts",
       "content": "import { runGit } from \"../engine/git.js\";\n\nexport const head = (root: string) => runGit(root, [\"log\", \"-1\", \"--format=%H\"]).stdout.trim();\nexport const files = (root: string) => runGit(root, [\"ls-files\", \"-z\", \"--\", \"diff\"]).stdout;\nexport const ACTIONS = [\"setup\", \"status\", \"diff\"] as const;\n"
+    },
+    {
+      "path": "src/engine/audit/audit-store.ts",
+      "content": "import { audits } from \"../storage/schema.js\";\n\nconst EXACT_FILTERS = [\n  [\"status\", audits.status],\n  [\"mode\", audits.mode],\n  [\"diff\", audits.diffBase],\n] as const;\n\nexport const exactFilters = new Map(EXACT_FILTERS);\n"
+    },
+    {
+      "path": "src/cli/cli.ts",
+      "content": "const ACTIONS = [\"status\", \"on\", \"off\", \"scan\"] as const;\nconst LABEL = [\"status\", \"Status\"];\n\nexport function readsOnly(command: string, args: readonly string[]): boolean {\n  return command === \"profile\" && ![\"status\", \"remove\"].includes(args[0] ?? \"status\");\n}\n"
+    },
+    {
+      "path": "src/cli/report.ts",
+      "content": "export const columns = (width: number) => format([\"diff\", \"--stat\", String(width)]);\n"
     }
   ]
 }

@@ -50,6 +50,7 @@ import {
 } from "../engine/catalog/rule-library.js";
 import { configureBundledCodeRule } from "../engine/catalog/rule-config.js";
 import { BLOCK_STEERS_NOTE, type RuleMode } from "../engine/catalog/rule-mode.js";
+import { blockModeEnabled, conversationRulesEnabled, experimentOffMessage, type ExperimentalFeature } from "../engine/experimental-features.js";
 import { cachedRecommendRulePacks } from "../engine/catalog/rule-packs.js";
 import { worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { approve, currentSubject, ruleSubject } from "../engine/catalog/rule-approval.js";
@@ -88,12 +89,31 @@ interface TargetInput {
   readonly folder?: string | undefined;
 }
 
+/** The mode a write sets, beside the one stored where it writes (undefined or null where none is). */
+interface ModeWrite {
+  readonly mode: RuleMode | null | undefined;
+  readonly stored: RuleMode | null | undefined;
+}
+
+/**
+ * Internal testing: refuses a write that puts a rule on `block` while Block mode is off, or stores a conversation rule
+ * while conversation rules are off, in the daemon (`400 experimental-off`). A rule already on Block keeps it: writing
+ * `block` where `block` is stored, as an edit of that rule or setting does, is not refused.
+ */
+function refuseExperimentsOff(writes: readonly ModeWrite[], kind?: "code" | "conversation"): void {
+  const off = (feature: ExperimentalFeature, more = ""): ApiError => new ApiError(400, "experimental-off", `${experimentOffMessage(feature, "start the Rerail daemon with")}${more}`);
+  if (kind === "conversation" && !conversationRulesEnabled()) throw off("CONVERSATION_RULES");
+  if (writes.some(write => write.mode === "block" && write.stored !== "block") && !blockModeEnabled()) {
+    throw off("BLOCK_MODE", ` ${BLOCK_STEERS_NOTE} Save it on steer.`);
+  }
+}
+
 /** `{ note }` when a write puts a rule on `block`, which steers until block enforcement lands; else nothing. */
 function blockNote(modes: ReadonlyArray<RuleMode | null | undefined>): { note?: string } {
   return modes.includes("block") ? { note: BLOCK_STEERS_NOTE } : {};
 }
 
-interface Target {
+export interface Target {
   readonly repository: RepositoryListing;
   readonly checkout: CheckoutContext | undefined;
   /** The folder the target names: `folder`, else the folder `checkout` points into, else the agent's folder. */
@@ -181,7 +201,7 @@ export function checkoutRuleCatalog(stores: RerailApiStores, checkout: CheckoutC
  * reaches only the repository it works in, whatever it names: another's rules, settings and checkouts are not its
  * business, and its paths are the person's.
  */
-function resolveTarget(stores: RerailApiStores, input: TargetInput, caller: ApiCaller, write: boolean): Target {
+export function resolveTarget(stores: RerailApiStores, input: TargetInput, caller: ApiCaller, write: boolean): Target {
   const db = stores.database();
   const located = input.checkout !== undefined
     ? checkoutAt(stores, input.checkout, write)
@@ -382,9 +402,9 @@ function notSetUp(db: Pick<RerailDatabase, "select">, repositoryKey: string): bo
     .where(eq(repositories.repositoryKey, repositoryKey)).get()?.configuredAt === null;
 }
 
-/** The setting `change` asks for: an omitted field keeps the stored value. */
-function mergedSetting(db: Pick<RerailDatabase, "select">, owner: RuleSetting["owner"], change: SettingChange): RuleSetting {
-  const stored = db.select({ on: ruleSettings.on, mode: ruleSettings.mode, suppressions: ruleSettings.suppressions, config: ruleSettings.config })
+/** The setting `owner` stores for `change`'s folder and target, if any. */
+function storedSetting(db: Pick<RerailDatabase, "select">, owner: RuleSetting["owner"], change: SettingChange) {
+  return db.select({ on: ruleSettings.on, mode: ruleSettings.mode, suppressions: ruleSettings.suppressions, config: ruleSettings.config })
     .from(ruleSettings).where(and(
       eq(ruleSettings.ownerKind, owner.kind),
       eq(ruleSettings.ownerId, owner.kind === "repository" ? owner.repositoryKey : owner.checkoutPath),
@@ -392,6 +412,16 @@ function mergedSetting(db: Pick<RerailDatabase, "select">, owner: RuleSetting["o
       eq(ruleSettings.targetKind, change.targetKind),
       eq(ruleSettings.targetId, change.targetId),
     )).get();
+}
+
+/** The mode `change` writes to `owner`'s setting, beside the mode stored there. */
+function settingModeWrite(db: Pick<RerailDatabase, "select">, owner: RuleSetting["owner"], change: SettingChange): ModeWrite {
+  return { mode: change.mode, stored: storedSetting(db, owner, change)?.mode };
+}
+
+/** The setting `change` asks for: an omitted field keeps the stored value. */
+function mergedSetting(db: Pick<RerailDatabase, "select">, owner: RuleSetting["owner"], change: SettingChange): RuleSetting {
+  const stored = storedSetting(db, owner, change);
   return {
     owner,
     folder: change.folder,
@@ -425,7 +455,7 @@ function attachmentsOf(db: RerailDatabase, repositoryKey: string): z.infer<typeo
 }
 
 /** A checkout of the repository that is on disk to scan: the target's, else the main checkout, else the most recently seen. */
-function checkoutOnDisk(target: Target): string {
+export function checkoutOnDisk(target: Target): string {
   if (target.checkout !== undefined && existsSync(target.checkout.checkoutPath)) return target.checkout.checkoutPath;
   const present = target.repository.checkouts.filter(checkout => existsSync(checkout.checkoutPath));
   const main = present.find(checkout => repositoryIdentityLocation(checkout.checkoutPath).main);
@@ -552,6 +582,7 @@ export const repositoryOperations: readonly Operation[] = [
         folder: target.folder, targetKind: change.kind, targetId: change.id,
         on: input.on, mode: input.mode, suppressions: input.suppressions, config: input.config,
       }));
+      refuseExperimentsOff(changes.map(change => settingModeWrite(db, owner, change)));
       const catalog = checkoutRuleCatalog(stores, target.checkout);
       for (const change of changes) checkConfig(stores, catalog, change);
       const settings = changes.map(change => mergedSetting(db, owner, change));
@@ -577,6 +608,7 @@ export const repositoryOperations: readonly Operation[] = [
       if (missing !== undefined) throw new ApiError(404, "rule-source-not-found", `${missing.sourceKind} ${missing.sourceId} does not exist`);
       const owner = { kind: "repository" as const, repositoryKey };
       const changes = foldedChanges((input.settings ?? []).map(change => ({ ...change, folder: folderOf(change.folder ?? "") })));
+      refuseExperimentsOff(changes.map(change => settingModeWrite(db, owner, change)));
       const catalog = checkoutRuleCatalog(stores, target.checkout);
       for (const change of changes) checkConfig(stores, catalog, change);
       // The attachments and the settings that go with them are one change: nobody sees a pack before its settings.
@@ -748,6 +780,7 @@ export const repositoryOperations: readonly Operation[] = [
     handler: (stores, input, caller) => {
       if (input.rule.id !== input.id) throw new ApiError(400, "rule-id-mismatch", `path id ${input.id} does not match rule.id ${input.rule.id}`);
       const db = stores.database();
+      refuseExperimentsOff([{ mode: input.rule.mode, stored: getLibraryRule(db, input.id)?.document.rule.mode }], input.kind);
       const ruleCatalog = stores.ruleCatalog();
       const existing = db.select({ copiedFrom: libraryRules.copiedFromRuleId }).from(libraryRules).where(eq(libraryRules.ruleId, input.id)).get();
       // A library rule a later release bundled the id of wins over the By Rerail rule, so writing it edits it.

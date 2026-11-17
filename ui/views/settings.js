@@ -104,7 +104,7 @@ function agents() {
 function uninstall() {
   return h("section", null, h("div.ghead", null, h("h2", null, "Uninstall")),
     h("div.list", null, row("Remove Rerail from this computer",
-      ["Run ", h("code", null, UNINSTALL_COMMAND), " in a terminal. Rules and history are kept in a backup."],
+      ["Run ", h("code", null, UNINSTALL_COMMAND), " in a terminal. Rules and history are kept in a backup; add ", h("code", null, "--delete-data"), " to delete them and everything else Rerail kept."],
       copyButton(UNINSTALL_COMMAND, "Copy uninstall command"))));
 }
 
