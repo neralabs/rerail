@@ -2624,7 +2624,7 @@ pub fn execute_batch_packed_with_work_limit(
     work_limit: u32,
 ) -> Result<PackedExecution, Error> {
     let stage = crate::code_rule_dsl::prof::Stage::start("jit.batch");
-    let mut batch = PackedBatch::new(programs, files, anchors)?;
+    let mut batch = PackedBatch::new_in_place(programs, files, anchors)?;
     drop(stage);
     crate::code_rule_dsl::prof::count("jit.tasks", batch.tasks.len());
     if batch.tasks.is_empty() {
