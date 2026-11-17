@@ -202,3 +202,20 @@ Step by step, each leaving the engine working (see the commits that name this de
     binding 92.4 B against 93.2 B).
   - Tests: `views_made_on_the_device_are_the_hosts_rows` covers `line` and a guest placed in its host's second
     line, whose places are that line.
+- **Step 3, dead rows** (2026-11-17): a relation with dead rows (a maintained relation's kills of the kept rows it
+  shares) is read in place too, its dead rows skipped by their bits.
+  - The bits are a blocks delta's: `Relation::try_kills` makes a delta of the relation's one relation in its
+    block, with no rows of its own, whose dead span holds setfix's bits (`Rows::in_block_dead`). It is made once
+    and kept as `merged` is. That is 0266's "a maintained run is a delta of the kept block", for its kills.
+  - `InBlock::dead`, `DevRel::dead` and `Stage::r_dead` (the old `r_pad`, so the size is unchanged) carry the
+    delta's offset. `row_live` reads it through the generated `clif_rel_dead`. `matches` skips a dead row, and
+    so does mode 3 (every row, untested). Every loop over the probed relation's rows goes through one of them,
+    and a probe's index holds the dead rows, which a probe skips.
+  - The column statistics read only relations whose rows are all live in place; one with dead rows is gathered.
+  - Test: `stages_skip_the_dead_rows_of_relations_in_their_blocks` covers a scan, a keyed join through the
+    device's index of the relation, and an anti-join whose dead rows hold no binding back, against the nested
+    loops over the live rows.
+  - On hogql nothing has dead rows (one run from scratch): its numbers are unchanged, findings 1,629.
+  - What step 3 leaves copied: the native reach closure's relation (`Closed`, 5.6 MB), and the chunk's views,
+    which the device makes itself from the chunk block (164 MB on the device, no upload). `DevRel::upload` stays
+    for those, for a view filtered by constants (`ids`), and for a block that cannot hold a dead rows' delta.

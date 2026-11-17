@@ -4498,10 +4498,11 @@ impl InRel {
         Arc::new(InRel { k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None })
     }
     pub fn in_block(&self) -> Option<InBlock> {
-        if self.view.is_some() || self.ndead > 0 || self.k == 0 {
+        if self.view.is_some() || self.k == 0 {
             return None;
         }
-        self.rows.in_block().filter(|b| b.rows as usize == self.n)
+        let b = if self.ndead > 0 { self.rows.in_block_dead(&self.dead) } else { self.rows.in_block() };
+        b.filter(|b| b.rows as usize == self.n)
     }
     /// A flat relation's row `id`'s value in column `c`, read where it lies.
     pub fn value(&self, id: usize, c: usize) -> i64 { self.rows.value(id as u32, self.k, c) }

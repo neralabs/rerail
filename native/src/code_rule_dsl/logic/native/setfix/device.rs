@@ -1306,14 +1306,16 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                 let placed = match (&owner, &rel.view) {
                     (Owner::Src(_), Some(view)) => view.src.in_block().filter(|b| ids.is_none() && b.rows as usize == n).map(|b| (b, view.src.columns().len())),
                     (Owner::Src(_), None) => None,
-                    (Owner::Rel(_), _) => rel.in_block().filter(|_| ids.is_none()).map(|b| (b, rel.k)),
+                    // Dead rows stay, marked by the relation's dead rows' delta (`InBlock::dead`), which the
+                    // kernels skip.
+                    (Owner::Rel(_), _) => rel.in_block().map(|b| (b, rel.k)),
                 };
                 if let Some((b, ncols)) = placed {
                     // Entries of relations the engine dropped go now: an entry in place holds its block (`Held::kept`).
                     res.trim(0);
                     let device = rerail_accel::gpu::join::device()?;
                     let held = rerail_accel::gpu::join::Held::kept(b.facts.block.gpu_buffer(device), Box::new(b.facts.clone()));
-                    let dev = mj::DevRel::in_block(held, b.at, n, ncols);
+                    let dev = mj::DevRel::in_block(held, b.at, b.dead, b.rows as usize, ncols);
                     rep.in_place += 1;
                     let bytes = old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
                     let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));

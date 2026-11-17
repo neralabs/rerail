@@ -78,6 +78,11 @@ fn lease(bytes: usize, life: Life) -> Block {
     Block::anon(kind::FACTS, bytes)
 }
 
+/// A relation of `k` values a row, 8 bytes each, read in their order.
+fn spec(k: usize) -> Spec {
+    Spec { widths: vec![8; k], order: Vec::new(), indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG }
+}
+
 /// One relation of a block: a segment or a tail.
 #[derive(Clone)]
 pub struct Part {
@@ -96,7 +101,7 @@ unsafe impl Sync for Part {}
 impl Part {
     /// An empty relation of `k` columns with room for `rows` rows, in the open block or a new one.
     fn new(life: Life, k: usize, rows: usize) -> Part {
-        let spec = Spec { widths: vec![8; k], order: Vec::new(), indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG };
+        let spec = spec(k);
         let need = rows * k * 8 + k * size_of::<rerail_blocks::rows::ColDir>() + 4096;
         let mut open = OPEN[life as usize].lock().unwrap_or_else(|e| e.into_inner());
         for fresh in [false, true] {
@@ -203,6 +208,9 @@ pub struct Rows {
     life: Life,
     /// Every part merged into one, made once for a reader that binds one relation (`in_block`).
     merged: std::sync::OnceLock<Part>,
+    /// The dead rows' delta of that one relation (`in_block_dead`), its descriptor's offset; `None` when its block
+    /// could not hold it.
+    kills: std::sync::OnceLock<Option<usize>>,
 }
 
 /// Where a relation's rows lie for a reader that binds its block (the device, decision 0325): the block, kept while
@@ -211,6 +219,8 @@ pub struct InBlock {
     pub facts: Arc<Facts>,
     pub at: usize,
     pub rows: u32,
+    /// The offset of a delta of it whose dead bits mark its dead rows (`Relation::try_kills`); 0 when none is.
+    pub dead: usize,
 }
 
 impl Clone for Rows {
@@ -221,7 +231,7 @@ impl Clone for Rows {
             c.copy_from(t, 0, t.len());
             c
         });
-        Rows { segs: self.segs.clone(), from: self.from, tail, k: self.k, hint: self.hint, life: self.life, merged: Default::default() }
+        Rows { segs: self.segs.clone(), from: self.from, tail, k: self.k, hint: self.hint, life: self.life, merged: Default::default(), kills: Default::default() }
     }
 }
 
@@ -288,6 +298,7 @@ impl Rows {
         debug_assert_eq!(rows.len() % self.k, 0, "rows of {} values", self.k);
         // The rows merged for a reader that binds one relation (`in_block`) are these no longer.
         self.merged.take();
+        self.kills.take();
         let n = rows.len() / self.k;
         let tail = self.tail.get_or_insert_with(|| Part::new(self.life, self.k, self.hint.max(n).max(16)));
         if n > 1 {
@@ -335,13 +346,31 @@ impl Rows {
             c.copy_from(t, 0, t.len());
             segs.push((self.from, c));
         }
-        Rows { segs, from: n as u32, tail: None, k: self.k, hint: 0, life: self.life, merged: Default::default() }
+        Rows { segs, from: n as u32, tail: None, k: self.k, hint: 0, life: self.life, merged: Default::default(), kills: Default::default() }
     }
 
     /// The rows as one relation in one block, ids from 0: the one part, or every part merged into one (made once,
     /// and kept while these rows are). `None` for no rows.
     pub fn in_block(&self) -> Option<InBlock> {
-        let one = match (&self.segs[..], &self.tail) {
+        let one = self.one()?;
+        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: 0 })
+    }
+
+    /// `in_block`, with the rows `dead` marks (bit `id`, as setfix keeps them) dead in it: a delta of the one
+    /// relation in its block, no rows of its own, whose dead bits are these (made once, and kept while these rows
+    /// are). `None` for no rows, or when the block cannot hold the delta.
+    pub fn in_block_dead(&self, dead: &[u64]) -> Option<InBlock> {
+        let one = self.one()?;
+        let at = (*self.kills.get_or_init(|| {
+            let block = &one.facts.block;
+            Relation::try_kills(block, &spec(self.k), one.rel(), dead).map(|r| block.offset_of(r))
+        }))?;
+        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: at })
+    }
+
+    /// The rows as one relation: the one part, or every part merged into one (made once and kept).
+    fn one(&self) -> Option<&Part> {
+        Some(match (&self.segs[..], &self.tail) {
             ([], None) => return None,
             ([], Some(t)) if self.from == 0 => t,
             ([(0, p)], None) => p,
@@ -353,8 +382,7 @@ impl Rows {
                 }
                 one
             }),
-        };
-        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len() })
+        })
     }
 
     /// Whether these rows share a frozen segment with `other` (a relation started from it).
