@@ -812,6 +812,22 @@ describe("gitStartEnvironment", () => {
     expect(gitStartEnvironment(ucrt, bare, install(ucrt))).toEqual({ ...bare, MSYSTEM: "UCRT64", PLINK_PROTOCOL: "ssh", Path: [...first("ucrt64"), bare.Path].join(";") });
   });
 
+  it("puts no folder on PATH that Windows finds from the folder Git runs in, the repository, whatever the home variables hold", () => {
+    // An empty, relative or drive-relative home, with no profile to fall back on: no home's bin, and HOME as it was.
+    // An empty variable is unset: PLINK_PROTOCOL gets the launcher's default.
+    for (const HOME of ["", "home", win32.join("\\", "people", "me"), "D:home"]) {
+      const env = { Path: person.Path, HOME, USERPROFILE: "", PLINK_PROTOCOL: "" };
+      expect(gitStartEnvironment(ucrt, env, install(ucrt)), HOME).toEqual({ ...env, MSYSTEM: "UCRT64", PLINK_PROTOCOL: "ssh", Path: [...first("ucrt64"), person.Path].join(";") });
+    }
+    // An empty HOMEPATH is unset, as gitHome reads it: HOMEDRIVE alone names the current folder of its drive.
+    const noShare = gitStartEnvironment(ucrt, { ...person, HOMEPATH: "" }, install(ucrt, "H:"));
+    expect([noShare.HOME, noShare.Path]).toEqual([person.USERPROFILE, [...first("ucrt64", person.USERPROFILE), person.Path].join(";")]);
+    // No PATH, or an empty one: nothing after Git's folders, where an empty entry would be the current folder.
+    for (const Path of [undefined, ""]) {
+      expect(gitStartEnvironment(ucrt, { HOME: person.USERPROFILE, Path }, install(ucrt)).Path).toBe(first("ucrt64", person.USERPROFILE).join(";"));
+    }
+  });
+
   it("gives any other Git the environment as it is: the launchers, a git.exe in no build folder or outside a Git for Windows install, a Git elsewhere", () => {
     const env = { ...person, MSYSTEM: "MINGW64" };
     const others = [win32.join(git, "cmd", "git.exe"), win32.join(git, "bin", "git.exe"), win32.join(git, "usr", "bin", "git.exe"), win32.join("C:\\msys64", "ucrt64", "bin", "git.exe"), "/usr/bin/git"];

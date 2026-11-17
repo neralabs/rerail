@@ -167,10 +167,12 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
   On an install that holds `ucrt64` and one of the other folders, Rerail runs that folder's `git.exe`.
 - Rerail starts that `git.exe` with the environment the launcher gives it (`gitStartEnvironment`): `MSYSTEM` named
   for the build, `PATH` led by the build's `bin`, `<Git>\usr\bin` and the home's `bin`, and `HOME` and
-  `PLINK_PROTOCOL` when unset. Git finds `sh.exe` on that `PATH` for every command it runs through its shell (a
-  filter such as Git LFS's, a textconv, an alias with arguments), and the programs those commands name. Started bare
-  with `MSYSTEM` set, as an MSYS2 set-up leaves it, and no `sh.exe` on `PATH`, the `git.exe` of 2.55 and of 2.56
-  crashes there; with `MSYSTEM` unset it puts the home's `bin` before its own folders.
+  `PLINK_PROTOCOL` when unset. Where the launcher would put a folder that Windows finds from the repository Git runs
+  in, Rerail puts none: the home's `bin` only for a fully qualified home, never an empty, relative or drive-relative
+  one, and no empty entry when `PATH` is empty. Git finds `sh.exe` on that `PATH` for every command it runs through
+  its shell (a filter such as Git LFS's, a textconv, an alias with arguments), and the programs those commands name.
+  Started bare with `MSYSTEM` set, as an MSYS2 set-up leaves it, and no `sh.exe` on `PATH`, the `git.exe` of 2.55 and
+  of 2.56 crashes there; with `MSYSTEM` unset it puts the home's `bin` before its own folders.
 - A Rerail process keeps the `git.exe` it finds (`ProcessGit` in `src/engine/git.ts`) and looks for Git again only
   when a start of it finds no program there (`ENOENT`). An upgrade from Git for Windows 2.55 to 2.56 removes the
   `mingw64\bin\git.exe` a daemon started on 2.55 runs; without the second look, every Git call of that daemon failed

@@ -308,6 +308,10 @@ function gitForWindowsBuild(path: string, probe: GitProbe): GitForWindowsBuild |
  * its shell (a filter, a textconv, an alias, a credential helper), then the programs that command names. Started
  * without it, git.exe with `MSYSTEM` set and no `sh.exe` on `PATH` crashes there, and with `MSYSTEM` unset puts the
  * home's `bin` before its own folders, so a program of the person's of the same name runs in place of Git's.
+ *
+ * Where the launcher would put a folder on `PATH` that Windows finds from the folder Git runs in, the repository, Rerail
+ * puts none: the home's `bin` goes first only for a fully qualified home (`C:\Users\me`, `\\server\share\me`), never
+ * an empty, relative or drive-relative one, and an empty or unset `PATH` adds no empty entry after Git's folders.
  */
 export function gitStartEnvironment(path: string, env: NodeJS.ProcessEnv = process.env, probe: GitProbe = machine): NodeJS.ProcessEnv {
   const install = gitForWindowsBuild(path, probe);
@@ -317,30 +321,47 @@ export function gitStartEnvironment(path: string, env: NodeJS.ProcessEnv = proce
 /** {@link gitStartEnvironment}'s environment for `install`. */
 function launcherEnvironment({ root, build }: GitForWindowsBuild, env: NodeJS.ProcessEnv, probe: GitProbe): NodeJS.ProcessEnv {
   const home = launcherHome(env, probe);
-  const first = [win32.join(root, build), win32.join(root, "usr"), ...(home === undefined ? [] : [home])].map(folder => win32.join(folder, "bin"));
-  const plink = variable(env, "PLINK_PROTOCOL");
+  const first = [win32.join(root, build), win32.join(root, "usr"), ...fullyQualified(home)].map(folder => win32.join(folder, "bin"));
   return withVariables(env, {
     MSYSTEM: build.toUpperCase(),
-    PLINK_PROTOCOL: plink === undefined || plink === "" ? "ssh" : plink,
+    PLINK_PROTOCOL: setVariable(env, "PLINK_PROTOCOL") ?? "ssh",
     ...(home === undefined ? {} : { HOME: home }),
-    PATH: [...first, variable(env, "PATH") ?? ""].join(";"),
+    PATH: [...first, ...listed(setVariable(env, "PATH"))].join(";"),
   });
 }
 
 /**
  * The `HOME` Git for Windows' launcher gives Git: `HOME` when set, else `HOMEDRIVE` followed by `HOMEPATH` when that
- * folder exists, else `USERPROFILE`; undefined when none is set. {@link gitHome} is the same rule as Git reads it.
+ * folder exists, else `USERPROFILE`; undefined when none is set. An empty variable counts as unset, as {@link gitHome},
+ * the same rule as Git reads it, counts an empty `HOME` or `HOMEPATH`.
  */
 function launcherHome(env: NodeJS.ProcessEnv, probe: GitProbe): string | undefined {
-  const home = variable(env, "HOME");
-  if (home !== undefined && home !== "") return home;
-  const share = variable(env, "HOMEPATH") === undefined ? undefined : `${variable(env, "HOMEDRIVE") ?? ""}${variable(env, "HOMEPATH")}`;
-  return share !== undefined && probe.exists(share) ? share : variable(env, "USERPROFILE");
+  const home = setVariable(env, "HOME");
+  if (home !== undefined) return home;
+  const homePath = setVariable(env, "HOMEPATH");
+  const share = homePath === undefined ? undefined : `${variable(env, "HOMEDRIVE") ?? ""}${homePath}`;
+  return share !== undefined && probe.exists(share) ? share : setVariable(env, "USERPROFILE");
+}
+
+/** `[folder]` when it is a fully qualified Windows path, a drive's root or a share and what is under it; else `[]`. */
+function fullyQualified(folder: string | undefined): string[] {
+  return folder !== undefined && /^(?:[A-Za-z]:[\\/]|\\\\)/.test(folder) ? [folder] : [];
+}
+
+/** `[value]`, or `[]` when it is undefined. */
+function listed(value: string | undefined): string[] {
+  return value === undefined ? [] : [value];
 }
 
 /** The value of `name` in `env`, whatever case `env` spells it in, as Windows reads it. */
 function variable(env: NodeJS.ProcessEnv, name: string): string | undefined {
   return Object.entries(env).find(([key]) => key.toUpperCase() === name)?.[1];
+}
+
+/** {@link variable}, undefined when it is empty. */
+function setVariable(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const value = variable(env, name);
+  return value === "" ? undefined : value;
 }
 
 /** `env` with each of `values` set, under the spelling `env` already has for it (Windows keeps `Path` as `Path`). */
