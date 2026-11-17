@@ -576,6 +576,38 @@ async function ownEngineAnswers(socketPath: string, accessToken: string | undefi
 }
 
 /** Answers a challenge sent to {@link ENGINE_PROOF_PATH} with the proof that this engine holds `accessToken`. */
+/**
+ * The capability a request for the engine's proof (`POST ENGINE_PROOF_PATH`) is answered with: the service's own;
+ * undefined for any other request, and for a service that holds none.
+ */
+function proofToken(incoming: IncomingMessage, accessToken: string | undefined): string | undefined {
+  return incoming.method === "POST" && incoming.url === ENGINE_PROOF_PATH ? accessToken : undefined;
+}
+
+/** Whether `incoming` is a hook's event: `POST /events`. */
+function isEventRequest(incoming: IncomingMessage): boolean {
+  return incoming.method === "POST" && incoming.url === "/events";
+}
+
+/** Whether `incoming` lacks the capability `accessToken` the service requires; a service that requires none refuses nothing. */
+function refusesAccess(incoming: IncomingMessage, accessToken: string | undefined): boolean {
+  const presented = incoming.headers[DAEMON_ACCESS_HEADER];
+  return accessToken !== undefined && !sameSecret(typeof presented === "string" ? presented : undefined, accessToken);
+}
+
+/** The event and configuration `incoming` carries, read whole; a body past the frame limit throws as it arrives. */
+async function readEngineRequest(incoming: IncomingMessage): Promise<EngineRequest> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of incoming) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += bytes.length;
+    if (size > RERAIL_EVENT_MAX_FRAME_BYTES) throw new RangeError("Kernel event exceeds frame limit");
+    chunks.push(bytes);
+  }
+  return parseEngineRequest(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+}
+
 function answerEngineChallenge(challenge: unknown, accessToken: string, response: ServerResponse): void {
   if (!isEngineChallenge(challenge)) {
     response.writeHead(400).end(JSON.stringify({ error: "engine-challenge-required" }));
@@ -683,31 +715,23 @@ export async function startEngineService(options: EngineServiceOptions): Promise
   const sweepIdleSessions = (): Promise<void> => closeIdleSessions(routing, options.idleSessionMs ?? IDLE_SESSION_MS, options.now ?? Date.now);
   const server = createServer(async (incoming, response) => {
     response.setHeader("Content-Type", "application/json");
-    if (incoming.method === "POST" && incoming.url === ENGINE_PROOF_PATH && options.accessToken !== undefined) {
-      answerEngineChallenge(incoming.headers[ENGINE_CHALLENGE_HEADER], options.accessToken, response);
+    const token = proofToken(incoming, options.accessToken);
+    if (token !== undefined) {
+      answerEngineChallenge(incoming.headers[ENGINE_CHALLENGE_HEADER], token, response);
       incoming.resume();
       return;
     }
-    if (incoming.method !== "POST" || incoming.url !== "/events") {
+    if (!isEventRequest(incoming)) {
       response.writeHead(404).end();
       return;
     }
-    const presented = incoming.headers[DAEMON_ACCESS_HEADER];
-    if (options.accessToken !== undefined && !sameSecret(typeof presented === "string" ? presented : undefined, options.accessToken)) {
+    if (refusesAccess(incoming, options.accessToken)) {
       // Refused before the body is read: nothing of the request reaches a runtime.
       response.writeHead(401).end(JSON.stringify({ error: "engine-access-required" }));
       return;
     }
     try {
-      const chunks: Buffer[] = [];
-      let size = 0;
-      for await (const chunk of incoming) {
-        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        size += bytes.length;
-        if (size > RERAIL_EVENT_MAX_FRAME_BYTES) throw new RangeError("Kernel event exceeds frame limit");
-        chunks.push(bytes);
-      }
-      const { event, configuration } = parseEngineRequest(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      const { event, configuration } = await readEngineRequest(incoming);
       const deliveries = await engineService.ingest(event, configuration);
       response.end(encodeRerailEventResult(await eventAnswer(incoming, event, deliveries, options)));
     } catch (error) {
