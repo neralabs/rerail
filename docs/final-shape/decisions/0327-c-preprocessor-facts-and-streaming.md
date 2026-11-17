@@ -320,6 +320,30 @@ must not become a per-token one (history index, lesson 6).
   the highest in any worktree (0339 on 2026-11-17: the "0328" first planned is another
   branch's). On Metal, a unit is one thread's work over a bounded work queue.
 
+### Mode (a) compiled, built: step 1 (`01-lines.bitlex`)
+
+Each directive's kind and bytes, the rows of `c_directive` but its line and group. The grammar
+finds a directive's `#` as the first byte of a logical line that is no blank (comments, splices
+and a byte order mark are blanks), gives each directive line's tokens, skips the rest of the
+file, and makes a node a directive, retagged by its word (`null`, `line_marker`, `unknown`
+otherwise). The tape's rows are read in place (`rerail_c_directives::rows`).
+
+- **Corpus** (3,135 C and C++ files): 3,016 the same as the lean scan, 119 refused, 0 differ; the
+  interpreter's rows and Metal's (tier 1 on the device, tier 2 over its buffers) are Cranelift's on
+  every file. Refused: carriage returns, raw strings, digit separators, `'` or `"` a line break
+  closes (`#error don't`), trigraphs and `%:`.
+- **Metal takes a token's last from its rule's mask over the whole file.** A `run` over a class,
+  or a `read` of a region, gave a last wherever the class or the region was, the code between
+  directives too, so the device's tier 1 sent the file to its fallback. A directive line's tokens
+  run over masks of the line (`d_word`, `s_bytes`).
+- **A tape past 2-byte columns** (a file's last directive far from its end: a root tail past
+  64 KiB) is read by a second tier 2 at 4 bytes (`Compiled::wide`); the compiler's `Parser` has
+  no wider parse yet (work queue Q31). Found with it and fixed: an offset was flagged wide at any
+  width (`native_cpu_tape::blocks_from`, `rust_stream`).
+- Next steps: the operands (a `#define`'s name, parameters and body; an `#include`'s form and
+  spelling; `#if`'s expression), then the conditionals' chains and groups as nesting, then the
+  refusals above.
+
 ### Prior art in the other worktrees (surveyed 2026-11-17)
 
 | Where | What | For mode (a) compiled |

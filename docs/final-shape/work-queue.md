@@ -791,6 +791,19 @@ pass.
   - `packs/rust/clippy-double-parens.rr`: `rr_token_req_by_sole_group_0`'s rules differ.
 - **Done when**: the 8 tests pass, each remaining difference fixed in the lowering or explained.
 
+### Q31. A tape past 2-byte columns is parsed again at 4 in the compiler's `Parser`
+
+- **Keep**: decision 0140's guess (2-byte columns, written once for nearly every file); page 37's
+  "parsed again at wider ones", which no caller builds: `native_cpu_stream::Parser` compiles tier 2
+  at `Narrow::WIDTHS` only, so a file whose tape needs 4 bytes (a tail past 64 KiB) is refused by
+  every compiled grammar and goes to its fallback. `rerail-c-directives` keeps a second parser at
+  4 bytes (`Compiled::wide`) and reads such a file (`a_file_past_64_kib_is_read_at_wide_columns`).
+- **Done when**: `Parser` holds the wide tier 2 (compiled when first needed) and `image` and
+  `tier2_on::image_on` retry with it, for every language; `rr_parser`, `kotlin_parser` and
+  `c_directives` read it there, and the crate's own copy goes.
+- **Found with it, fixed**: `native_cpu_tape::blocks_from` and `rust_stream`'s `blocks` flagged an
+  offset past 0xffff as wide at any width, so a 4-byte table refused too.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives

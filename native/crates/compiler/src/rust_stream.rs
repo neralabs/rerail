@@ -587,7 +587,8 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
                 for i in from..to {
                     let o = (*self.row(i)).start.wrapping_sub(m);
                     *self.off_c.add(i as usize) = o as OffT;
-                    wide |= u32::from(o > 0xffff) * WIDE_OFF;
+                    // Past its width (`OffT`'s): at 4 bytes an offset always fits.
+                    wide |= u32::from(o > OffT::MAX as u32) * WIDE_OFF;
                 }
                 last = m;
                 k += 1;

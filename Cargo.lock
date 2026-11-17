@@ -3180,6 +3180,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-c-directives"
+version = "0.1.0"
+dependencies = [
+ "bitlex",
+ "rerail-c-lean",
+ "rerail-c-pp",
+ "rerail-compiler",
+ "rerail-metal",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-c-lean"
 version = "0.1.0"
 dependencies = [

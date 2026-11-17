@@ -1,0 +1,19 @@
+[package]
+name = "rerail-c-directives"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "C's and C++'s directives as a Bitlex grammar (decision 0327, mode (a) compiled): the directive tape, held to the lean scan's rows."
+
+[dependencies]
+rerail-compiler = { path = "../compiler" }
+rerail-tape-format = { path = "../tape_format" }
+bitlex = { path = "../../../tools/bitlex", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+rerail-metal = { path = "../metal" }
+
+[dev-dependencies]
+# The reference: the lean scan's rows (`rerail_c_pp::directives`).
+rerail-c-pp = { path = "../c_pp" }
+rerail-c-lean = { path = "../c_lean" }
