@@ -900,6 +900,17 @@ pass.
   view at 30 ns, measured then on a stored copy).
 - **Done when**: placement's CPU estimate is within 2× of the measured CPU for the costliest strata of this run, and
   the strata the GPU then runs cheaper move there.
+- **Record, the planner's half** (2026-11-16, this branch). On fixtures/python cold (317 rules), the worst
+  underestimates were lines whose first step is a `field` lookup by a field name: `field($l, "left", $t)` priced at
+  1.00 row, 1,159 read (`p293_read_elsewhere`: 8 planned, 196,060 done; `rr_token_req` 174 for 427,709). A field's
+  name in a rule is a branded atom (decision 0270), and the corpus run's postings of the program's constants
+  (`Own::constants_of`) read integers alone, so no posting was counted, and `const_freq` read the measured column's
+  missing value as 0 rows (then 1). Now branded constants are counted as their atom's value
+  (`branded_constants_have_their_postings_counted`). The worst ratio of done to planned work (strata over 50 k
+  done) went from 24,507× to 78×. Outputs are equal as sets (660 relations).
+  - Left, the next misses: `pre_1022`/`pre_1023`/`pre_2515` (6 k planned, 0.5 M done), `rr_agg286` (9 k, 0.67 M),
+    `rr_ctx282` (31 k, 1.3 M), all among decision 0203's slow joins. Overestimates are the larger share of the
+    total (150 M planned, 55 M done). Not yet measured on hogql's pre_120.
 
 ### Q37. (Q28, then Q31, on Native-and-GPU-strata) A rule that copies a view's columns is a stratum
 
