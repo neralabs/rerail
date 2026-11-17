@@ -39,7 +39,22 @@ over that plain TCP connection, which costs no encryption and no ssh flow contro
 the lifeline: when it ends, the agent ends. If the connection cannot be made, it replies
 {"op": "tcp-failed", "why"} on ssh and stays there.
 """
-import ctypes, json, os, re, socket, struct, subprocess, sys, threading, time
+import ctypes, json, os, re, socket, struct, subprocess, sys, threading, time, traceback
+
+
+def leave(kind, value, tb):
+    """An uncaught exception (the daemon's connection reset, a broken pipe) ends the agent at once,
+    as the stream's end does: a normal exit finalizes the interpreter while another thread holds
+    stdin's lock, and Python aborts ("Fatal Python error: _enter_buffered_busy"), which macOS reports
+    as a crash on the host (5 in half an hour, 2026-11-17)."""
+    try:
+        traceback.print_exception(kind, value, tb)
+        sys.stderr.flush()
+    finally:
+        os._exit(1)
+
+
+sys.excepthook = leave
 
 ROOT = os.path.join(os.path.expanduser("~"), "Library/Caches/rerail-farm/root.noindex")
 XATTR = b"org.rerail.farm.sent"
@@ -140,12 +155,16 @@ def put(header, payload):
     tmp = f"{kept}.farm-{os.getpid()}-{threading.get_ident()}"
     with open(tmp, "wb") as f:
         f.write(payload)
-    os.chmod(tmp, header.get("mode", 0o644) & 0o7777)
     written = os.stat(tmp).st_mtime_ns
     tag = f"{header['mtime_ns']} {len(payload)} {written}".encode()
+    # The attribute before the mode: macOS refuses it on a read-only file (EACCES), and a tree's
+    # git objects are read-only: every one failed, and the daemon dropped this agent each time
+    # (2026-11-17).
     if libc.setxattr(tmp.encode(), XATTR, tag, len(tag), 0, 0) != 0:
+        e = ctypes.get_errno()
         os.unlink(tmp)
-        raise OSError(ctypes.get_errno(), "setxattr failed", kept)
+        raise OSError(e, "setxattr failed", kept)
+    os.chmod(tmp, header.get("mode", 0o644) & 0o7777)
     os.replace(tmp, kept)
 
 
