@@ -559,11 +559,15 @@ impl Contract {
 }
 
 /// Whether tier 1 on the CPU (`cpu`) keeps the contract with its interpreter's run (`interp`).
+/// A file whose totals send it to the fallback owes tier 2 nothing but them: tier 2's first
+/// words are its `EMPTY`s (`bitlex_tier2`), which refuse it before any record is read, and the
+/// token loop stops where it refuses, its codes from there not made.
 pub fn tier1_agrees(contract: &Contract, cpu: &crate::block::BlockRun, interp: &crate::block::BlockRun) -> bool {
+    let falls = interp.totals.iter().any(|&t| t != 0);
     cpu.positions == interp.positions
         && cpu.totals == interp.totals
         && cpu.codes.len() == interp.codes.len()
-        && cpu.codes.iter().zip(&interp.codes).all(|(&c, &i)| c == i & !contract.lazy)
+        && (falls || cpu.codes.iter().zip(&interp.codes).all(|(&c, &i)| c == i & !contract.lazy))
         && cpu.outputs.len() == interp.outputs.len()
         && cpu.outputs.iter().zip(&interp.outputs).zip(&contract.unmade).all(|((c, i), &unmade)| unmade || c == i)
 }
