@@ -6,7 +6,7 @@
  * page names (`setNeeds`: the open view's, the sidebar's and an open sheet's, from `views/index.js`). Long lists
  * are paged with a cursor: a poll refreshes their first page and keeps the further pages the person loaded.
  */
-import { get, send } from "./api.js";
+import { ACCESS_KEY, get, send } from "./api.js";
 import { data, ui, sinceFor, setScope, pagedList, panelRuleId } from "./state.js";
 import { toStoredRules } from "./derive.js";
 import { historyRuleId } from "./history-model.js";
@@ -707,7 +707,9 @@ async function poll() {
     data.missing = !data.accessRequired && /^\/api\/repository(\/rules)?\?.* answered 404$/u.test(error.message);
     data.disconnected = !data.missing && !data.accessRequired;
     data.loaded = data.missing;
-    backoff = data.missing ? INTERVAL : Math.min(MAX_BACKOFF, backoff * 2);
+    // Only a daemon that did not answer is asked less often. One that refused this browser is asked at the usual pace,
+    // so the page that asks to connect it continues soon after `rerail manage` does.
+    backoff = data.disconnected ? Math.min(MAX_BACKOFF, backoff * 2) : INTERVAL;
     if (!data.missing) console.warn("poll failed", error);
     onChange(data.missing);
   }
@@ -737,6 +739,8 @@ export function startPolling(listener) {
   onChange = listener;
   refresh().then(schedule);
   document.addEventListener("visibilitychange", () => { if (hidden()) clearTimeout(timer); else refreshNow(); });
+  // Another tab of this origin stored the capability (the link `rerail manage` opens): read with it now.
+  window.addEventListener("storage", event => { if (event.key === ACCESS_KEY && !hidden()) refreshNow(); });
 }
 
 /** A user action that changes what to fetch (view, range, selected session) wants data now. */

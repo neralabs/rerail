@@ -246,6 +246,8 @@ declare module "*/ui/routes.js" {
 declare module "*/ui/views/index.js" {
   /** The need names a poll loads for the page now: the sidebar's, the open view's and an open sheet's. */
   export function currentNeeds(): string[];
+  /** What `#content` shows: a view's name, or the page in its place ("access", "no-repo", "missing", "not-set-up"). */
+  export function pageKey(): string;
 }
 
 declare module "*/ui/history-model.js" {

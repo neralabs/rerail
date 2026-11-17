@@ -43,7 +43,7 @@ afterEach(() => {
 // Overview's zero tiles, a pack page's "Loading…" that never ended. The poll's reads are refused together; one left
 // unhandled fails this file's run (vitest reports unhandled rejections), as it logged an error in the browser.
 describe("a browser without the dashboard's access capability", () => {
-  it.each(["overview", "pack", "created", "packs", "create", "history", "sessions", "settings"])("shows the access page in place of %s", async view => {
+  it.each(["overview", "pack", "created", "packs", "create", "history", "sessions", "settings", "merge"])("shows the access page in place of %s", async view => {
     ui.view = view;
 
     await refresh();
