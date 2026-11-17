@@ -12,6 +12,7 @@
 //! class the one its first and last characters give (`op_class`, SLS 6.12.3).
 
 use crate::block::{Blocks, Lexed};
+use rerail_simd8::swar::{self, Class};
 
 /// Why the parser left a file to tree-sitter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -182,6 +183,11 @@ pub mod op {
 pub fn word(src: &[u8], i: usize, end: usize) -> u8 {
     WORDS.find(src, i, end) as u8
 }
+
+/// Digit classes (`swar::class_end`, 8 bytes a step).
+static DEC: Class = swar::class_of(b"0123456789");
+static HEX: Class = swar::class_of(b"0123456789abcdefABCDEF");
+static BIN_: Class = swar::class_of(b"01_");
 
 /// Bytes that start a name (`[A-Za-z_]`; `$` and one past ASCII go the long way).
 static NAME_START: [bool; 256] = {
@@ -571,7 +577,7 @@ impl<'s> Lexer<'s> {
             b'"' => (Str, 0, self.string_end(s, 0)?),
             b'\'' => self.quote(s)?,
             b'`' => {
-                let e = self.src[s + 1..].iter().position(|&b| b == b'`' || b == b'\n').map(|i| s + 1 + i);
+                let e = Some(swar::first_of2(self.src, s + 1, self.src.len(), b'`', b'\n')).filter(|&e| e < self.src.len());
                 match e {
                     Some(e) if self.src[e] == b'`' && e > s + 1 => (BackId, 0, e + 1),
                     _ => return Err(Refusal::Lex(s as u32)),
@@ -695,17 +701,26 @@ impl<'s> Lexer<'s> {
     fn number(&self, s: usize) -> R<usize> {
         let src = self.src;
         let digits = |mut i: usize| -> usize {
-            // `\d(_?\d)*`
-            while i < src.len() && (src[i].is_ascii_digit() || src[i] == b'_' && i + 1 < src.len() && src[i + 1].is_ascii_digit() && i > 0 && src[i - 1].is_ascii_digit()) {
-                i += 1;
+            // `\d(_?\d)*`: runs of digits 8 bytes a step, a `_` between two digits.
+            loop {
+                i = swar::class_end(src, i, &DEC);
+                if i > 0 && src[i - 1].is_ascii_digit() && self.at(i) == b'_' && self.at(i + 1).is_ascii_digit() {
+                    i += 1;
+                    continue;
+                }
+                return i;
             }
-            i
         };
         let mut i = s;
         if self.at(i) == b'0' && matches!(self.at(i + 1), b'x' | b'X') {
             i += 2;
-            while self.at(i).is_ascii_hexdigit() || self.at(i) == b'_' && self.at(i + 1).is_ascii_hexdigit() {
-                i += 1;
+            loop {
+                i = swar::class_end(src, i, &HEX);
+                if self.at(i) == b'_' && self.at(i + 1).is_ascii_hexdigit() {
+                    i += 1;
+                    continue;
+                }
+                break;
             }
             if matches!(self.at(i), b'l' | b'L') {
                 i += 1;
@@ -714,9 +729,7 @@ impl<'s> Lexer<'s> {
         }
         if self.at(i) == b'0' && matches!(self.at(i + 1), b'b' | b'B') && matches!(self.at(i + 2), b'0' | b'1') {
             i += 2;
-            while matches!(self.at(i), b'0' | b'1' | b'_') {
-                i += 1;
-            }
+            i = swar::class_end(src, i, &BIN_);
             if matches!(self.at(i), b'l' | b'L') {
                 i += 1;
             }

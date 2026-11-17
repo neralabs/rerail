@@ -13,6 +13,7 @@
 //! reads a token.
 
 use crate::block::{self, Blocks, Lexed};
+use rerail_simd8::swar::{self, Class};
 
 /// Why the parser left a file to tree-sitter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -191,6 +192,19 @@ fn letter(c: char) -> Option<bool> {
         None
     }
 }
+
+/// Digit classes (`swar::class_end`, 8 bytes a step) and a quoted name's body (any byte but
+/// `` ` `` and a line end).
+static DEC: Class = swar::class_of(b"0123456789");
+static HEX: Class = swar::class_of(b"0123456789abcdefABCDEF");
+static BIN: Class = swar::class_of(b"01");
+static TICK_BODY: Class = {
+    let mut t = [true; 256];
+    t[b'`' as usize] = false;
+    t[b'\n' as usize] = false;
+    t[b'\r' as usize] = false;
+    t
+};
 
 /// Bytes that start a name (`[A-Za-z_]`; one past ASCII goes the long way).
 static NAME_START: [bool; 256] = {
@@ -479,10 +493,7 @@ impl<'s> Lexer<'s> {
                 return Ok((Name, end, code, tick));
             }
             b'`' => {
-                let mut i = s + 1;
-                while i < self.src.len() && !matches!(self.src[i], b'`' | b'\n' | b'\r') {
-                    i += 1;
-                }
+                let i = swar::class_end(self.src, s + 1, &TICK_BODY);
                 if i == s + 1 || self.at(i) != b'`' {
                     return refuse;
                 }
@@ -635,19 +646,14 @@ impl<'s> Lexer<'s> {
 
     /// `DEC_DIGITS` from `i` (`[0-9]+` runs with runs of `_` between them): its end, `None` where no
     /// digit starts it.
-    fn digits(&self, mut i: usize, digit: impl Fn(u8) -> bool) -> Option<usize> {
-        if !digit(self.at(i)) {
+    fn digits(&self, mut i: usize, digit: &Class) -> Option<usize> {
+        if !digit[self.at(i) as usize] {
             return None;
         }
         loop {
-            while digit(self.at(i)) {
-                i += 1;
-            }
-            let mut k = i;
-            while self.at(k) == b'_' {
-                k += 1;
-            }
-            if k > i && digit(self.at(k)) {
+            i = swar::class_end(self.src, i, digit);
+            let k = swar::run_end(self.src, i, b'_');
+            if k > i && digit[self.at(k) as usize] {
                 i = k;
                 continue;
             }
@@ -661,26 +667,25 @@ impl<'s> Lexer<'s> {
             return None;
         }
         let k = if matches!(self.at(i + 1), b'+' | b'-') { i + 2 } else { i + 1 };
-        self.digits(k, |c| c.is_ascii_digit())
+        self.digits(k, &DEC)
     }
 
     /// A number at `s` (a digit, or a `.` before one): the longest of the grammar's literals. A
     /// `long_literal`'s `L` and an `unsigned_literal`'s suffix are tokens of their own.
     fn number(&self, s: usize) -> R<(T, usize, u8, bool)> {
-        let dec = |c: u8| c.is_ascii_digit();
         let (c0, c1) = (self.at(s), self.at(s + 1));
         if c0 == b'0' && matches!(c1, b'x' | b'X') {
-            if let Some(e) = self.digits(s + 2, |c| c.is_ascii_hexdigit()) {
+            if let Some(e) = self.digits(s + 2, &HEX) {
                 return Ok((T::Hex, e, 0, false));
             }
         }
         if c0 == b'0' && matches!(c1, b'b' | b'B') {
-            if let Some(e) = self.digits(s + 2, |c| c == b'0' || c == b'1') {
+            if let Some(e) = self.digits(s + 2, &BIN) {
                 return Ok((T::Bin, e, 0, false));
             }
         }
         let mut best = (T::Int, s);
-        let int = if c0 == b'.' { None } else { self.digits(s, dec) };
+        let int = if c0 == b'.' { None } else { self.digits(s, &DEC) };
         if let Some(e) = int {
             best = (T::Int, e);
             if let Some(x) = self.exponent(e) {
@@ -693,7 +698,7 @@ impl<'s> Lexer<'s> {
         // `DEC_DIGITS? '.' DEC_DIGITS REAL_EXPONENT? [fF]?`.
         let dot = int.unwrap_or(s);
         if self.at(dot) == b'.' {
-            if let Some(f) = self.digits(dot + 1, dec) {
+            if let Some(f) = self.digits(dot + 1, &DEC) {
                 let x = self.exponent(f).unwrap_or(f);
                 let x = if matches!(self.at(x), b'f' | b'F') { x + 1 } else { x };
                 if x > best.1 {
