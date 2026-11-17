@@ -1253,6 +1253,34 @@ pass.
   rows (was 8.2×), 84% within 2×. Still open: `qn`'s `walk` by `(x, s)` (about 170× under), the `ask_*` stratum's
   deltas of 1, and the kind memberships after a derived or `nearest` relation (`in_first_iter`, `tp_list`), which
   the tree's counts do not see.
+- **Measured again** (2026-11-17, this branch after the hub's 52a579d59, hogql cold, profiled, 317 rules, m3 at load
+  18-69; `placement.tsv`'s planned work against work done, strata with 100 K units of work or more):
+  - The named strata now: `qn` 0.24 M planned against 0.43 M done (within 2×, done); `qualname` 0.5-1.2 M against
+    4.2 M (3.5-8× under); `exports/resolve_export` 0.5-0.6 M against 0.15 M (3.6× over); the `ask_*` stratum
+    1,385 against 120,569 (87× under, 0.06 s of CPU).
+  - The largest misses had moved to overestimates: 18 G planned against 1.3 G done over the run, most of it three
+    recursive strata. `negate/number` 12.9 G against 0.18 M, `p188_parsed_within` 2.6 G against 0.69 M, `up_fn_of`
+    1.2-62 G against 2.1 M (it varies with the chunk that plans it). Placement prices `up_fn_of` at 2,337 s of CPU
+    for 0.31 s run, and finds the GPU cheaper in every run of it.
+- **Fixed** (2026-11-17): a lookup of a relation of the component being solved, whose columns no statistics have
+  measured yet, was priced as if each column held one value: the whole relation a key (`ndv_or_1`). In
+  `p188_parsed_within`'s self-join by `$p` that was 4,877 rows a binding, and none were made. Such a column now takes
+  PostgreSQL's prior, 200 distinct values at most the relation's rows (`Model::ndv_or_default`). Same build, two
+  runs each, alternated: rows-weighted miss 2.44× and 2.41× before, 2.12× and 2.20× after; work within 2× 68% and
+  66% before, 75% and 73% after; total work unchanged (1.41-1.44 G before, 1.35-1.40 G after). `negate/number`
+  0.75 M planned (was 12.9 G), `p188_parsed_within` 17-53 M (was 2.6-3.8 G). Test:
+  `plan::tests::a_lookup_of_a_relation_being_solved_is_priced_by_the_distinct_prior`.
+  - Tried and dropped: the same prior for every unmeasured column. What is kept or inlined (`keeps`) reads these
+    estimates; it inlined kept `pre_` relations, and `rr_ctx282` went from 0.8 M units to 39 M.
+  - Tried and dropped: pricing a probe's steps before its delta once a round, not once a row gained
+    (`Shape::close_rounds`). Right in principle, but every recursive probe on hogql has its delta first; nothing
+    changed.
+- **Open, `up_fn_of`**: its probe `up_fn_of($s, $f), run_scope($n, $s, $k)` is priced at `run_scope`'s mean
+  postings a scope (698), where most of the delta's `$s` are no scope at all: it makes nothing (its line counts 0
+  rows). The containment share (`hit`, decision 0299) would scale it, but it needs the binding's distinct values,
+  which a relation still being solved has none of. Next: give a probe's delta its live distinct counts (the
+  relation's sketches, as a copy's live statistics are, Q37) when the probe is planned after the seeds ran.
+- **Open, `qualname`** (3.5-8× under) and **`resolve_export`** (3.6× over), the `ask_*` stratum's deltas of 1.
 - **Done when**: these strata's planned work is within 2× of their work.
 
 ### Q48. (Q46 at 1adc44eff) Under load, a Metal run loses findings (Native-and-GPU-strata's) — done

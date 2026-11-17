@@ -2067,7 +2067,7 @@ impl Model {
     pub fn unknown_constant_rows(&self, rel:&str, column:usize)->f64 {
         // A literal key is not sampled from this relation's rows. sq / rows
         // overweights hot keys; the value-uniform prior is rows / distinct.
-        self.card(rel)/self.ndv_or_1(rel,column)
+        self.card(rel)/self.ndv_or_default(rel,column)
     }
 
     /// Column `c` of `rel`'s heavy values (decision 0209 §4), where they were made over its rows as they are now
@@ -2078,8 +2078,18 @@ impl Model {
         ((h.rows - card).abs() <= 0.1 * card.max(1.0)).then_some(&**h)
     }
 
-    fn ndv_or_1(&self, rel: &str, c: usize) -> f64 {
-        (self.ndv.at(&rel, c).copied().unwrap_or(1.0) * skew(rel, c, 0)).max(1.0)
+    /// Column `c` of `rel`'s distinct values: measured, else one; for a relation of the component being solved,
+    /// which no statistics have seen yet, PostgreSQL's prior for a column it has not analyzed
+    /// (`DEFAULT_NUM_DISTINCT`, 200 values, at most the relation's rows). Taken as one value, a lookup of such a
+    /// relation by a column was priced at the whole relation a key: `p188_parsed_within`'s self-join by `$p` on
+    /// hogql, 4,877 rows a key planned and none made, its stratum planned at 2.6 G units for 0.7 M done (Q44). Other
+    /// relations keep one: what is kept or inlined (`keeps`) is chosen on these estimates, and the prior there
+    /// inlined kept `pre_` relations (`rr_ctx282` read one at 0.8 M units, and inlined did 39 M).
+    fn ndv_or_default(&self, rel: &str, c: usize) -> f64 {
+        const DEFAULT_NUM_DISTINCT: f64 = 200.0;
+        let unseen = || if self.stats.solving.contains(rel) { DEFAULT_NUM_DISTINCT.min(self.card(rel)) } else { 1.0 };
+        let ndv = self.ndv.at(&rel, c).copied().unwrap_or_else(unseen);
+        (ndv * skew(rel, c, 0)).max(1.0)
     }
 
     /// Bound a binding's distinct values by measured rows surviving its constant filters. The full column's
@@ -3210,7 +3220,7 @@ impl Model {
                     // The relation's number, once an atom (decision 0209 §3): its columns are array slots.
                     let id = self.id;
                     let ndv = id.and_then(|r| m.ndv.at_rel(r, c)).copied();
-                    let ndv1 = m.ndv_or_1(rel, c);
+                    let ndv1 = m.ndv_or_default(rel, c);
                     let fan = id.and_then(|r| stats.fan.at_rel(r, c)).map(|f| (f * skew(rel, c, 1)).max(1.0)).unwrap_or_else(|| card / ndv1);
                     let (mut konst, mut counted) = (None, None);
                     if let Some(k) = b.constant(b.args(i)[c]) {
@@ -3541,7 +3551,7 @@ impl Model {
                     let domain = (0..b.len())
                         .filter_map(|j| match b.plain_atom(j) {
                             Some(o) if !o.neg() && b.rel(o) != rel && self.is_input(pf, b.rel(o)) => {
-                                b.args(j).iter().position(|t| matches!(t, TermRef::Var(x) if *x == v)).map(|c| self.ndv_or_1(b.rel(o), c))
+                                b.args(j).iter().position(|t| matches!(t, TermRef::Var(x) if *x == v)).map(|c| self.ndv_or_default(b.rel(o), c))
                             }
                             _ => None,
                         })
@@ -3581,7 +3591,7 @@ impl Model {
                 let mut floor = stats.nodes;
                 for (c, t) in args.iter().enumerate() {
                     if b.constant(*t).is_some() {
-                        floor /= self.ndv_or_1(rel, c);
+                        floor /= self.ndv_or_default(rel, c);
                     }
                 }
                 if floor > rows { rows = floor; basis.set("scan of the component"); }
