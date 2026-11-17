@@ -172,8 +172,10 @@ each form held every kind set of the program (`kindset_kind`'s rows, 57% of a la
 | Sources, aliases, pins | 2 each | 1 each |
 
 0281 §6's facts format stays as Typing-support's for their steps; a general form keeps its own (`StoredForms`).
-With the kind sets gone, a one-file edit on a warmed store costs 49.9–51.0 G (77.4–77.7 G before), a cold run 261 G
-on the same build. The five steps again hold the oracle's rows.
+A cold run costs 261 G on the same build. The five steps again hold the oracle's rows. An edit's cost did not move:
+73.7–80.8 G (77.4–77.7 G before). A first reading of 49.9–51.0 G was wrong: those edits appended a comment the
+store had seen in an earlier edit, so the run reused its results for that file (an edit with the same text, run on
+its own: 26.9 G). Decision 0328 asks whether forms should exist at all.
 
 What is left of a layer is the program image's (0173): its header is 976 B whatever the layer holds (16 + 24 × 40
 regions), 18% of the stored bytes, and the string buckets 10%; the rest is the rules' node trees (about 256 nodes a
