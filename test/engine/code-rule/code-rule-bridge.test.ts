@@ -2032,7 +2032,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
     await shellInWorktree(bridge, () => writeFile(path, "gone\nours\nmine\n"));
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
-      [[{ path: relative(root, path), language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\nmine\n" }], "log"],
+      [[{ path: repositoryPath(root, path), language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\nmine\n" }], "log"],
     ]);
   });
 
@@ -2056,7 +2056,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
       git(nested, "commit", "--quiet", "-am", "mine");
     });
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
-      [[{ path: relative(root, path), language: "python", previousText: "theirs\n2\n3\n4\n5\n6\n7\n", generatedText: "theirs\n2\n3\n4\n5\n6\n7\nmine\n" }], "log"],
+      [[{ path: repositoryPath(root, path), language: "python", previousText: "theirs\n2\n3\n4\n5\n6\n7\n", generatedText: "theirs\n2\n3\n4\n5\n6\n7\nmine\n" }], "log"],
     ]);
   });
 
