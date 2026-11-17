@@ -110,6 +110,17 @@ pub struct Tok {
     pub nl: u32,
 }
 
+/// The token a refusal is read as where the parser comes to it: an `Eof` with word `u8::MAX`, at the
+/// refused byte (at 0 for a text too large).
+#[cold]
+pub fn refused(r: Refusal) -> Tok {
+    let at = match r {
+        Refusal::Lex(at) | Refusal::Parse(at) => at,
+        Refusal::TooLarge => 0,
+    };
+    Tok { kind: T::Eof, word: u8::MAX, start: at, end: at, nl: NO_NL }
+}
+
 /// A comment (the only extra).
 #[derive(Clone, Copy, Debug)]
 pub struct Extra {
@@ -226,9 +237,25 @@ static FIRST: [u8; 256] = {
     t
 };
 
+/// The punctuators of one byte that start no longer one, by their byte (`T::Eof`: none).
+static ONE: [T; 256] = {
+    let mut t = [T::Eof; 256];
+    t[b'(' as usize] = T::LParen;
+    t[b')' as usize] = T::RParen;
+    t[b'[' as usize] = T::LBracket;
+    t[b']' as usize] = T::RBracket;
+    t[b'{' as usize] = T::LBrace;
+    t[b'}' as usize] = T::RBrace;
+    t[b';' as usize] = T::Semi;
+    t[b',' as usize] = T::Comma;
+    t[b'~' as usize] = T::Tilde;
+    t[b'?' as usize] = T::Question;
+    t
+};
+
 pub struct Lexer<'s> {
     pub src: &'s [u8],
-    pub blocks: Blocks<'s>,
+    pub blocks: Blocks,
     /// C++'s lexer (raw strings, `::`, `.*`, `->*`, `<=>`).
     pub cpp: bool,
 }
@@ -342,60 +369,103 @@ impl<'s> Lexer<'s> {
         Ok(Tok { kind, word, start: s as u32, end: end as u32, nl })
     }
 
-    /// The token at `s` (no white space before it): its kind, end and word code.
+    /// Up to `n` tokens from `at` pushed onto `out`, comments onto `extras`: where the next is
+    /// lexed. A run ends early after `Eof`, or after a refusal, written as `refused` writes it.
+    ///
+    /// simdjson's stage 2 in page 31's form: each token's start is the next one of stage 1's start
+    /// masks (`Blocks::next_start`), the line end before it a scan of the gap, and an ASCII name's
+    /// end its word run, all from the masks. A token that is not a name is read by `token_at` from
+    /// its start; a comment or a `\` in the gap sends the token to `token` from the gap's start.
+    #[inline(always)]
+    pub fn run(&self, mut at: usize, extras: &mut Vec<Extra>, out: &mut Vec<Tok>, n: usize) -> usize {
+        let len = self.src.len();
+        let mut cur = rerail_simd8::blocks::Cursor::default();
+        out.reserve(n);
+        let base = out.len();
+        // simdjson's tape writer: tokens written into the room reserved, the length set once.
+        let w = out.spare_capacity_mut().as_mut_ptr();
+        let mut k = 0;
+        while k < n {
+            let c0 = self.at(at);
+            let (s, nl) = if FIRST[usize::from(c0)] & GAP == 0 {
+                // No gap: a token right here, though it need be no start (after a number like
+                // C++'s `0x`, a name goes on inside a word run).
+                (at, NO_NL)
+            } else if matches!(c0, b'/' | b'\\') {
+                (usize::MAX, NO_NL)
+            } else if matches!(c0, b' ' | b'\t') && FIRST[usize::from(self.at(at + 1))] & GAP == 0 {
+                // One blank, the most common gap: no walk and no line end to look for.
+                (at + 1, NO_NL)
+            } else {
+                // A gap of blanks and line ends: the next start ends it.
+                let s = self.blocks.next_start(&mut cur, at);
+                (s, self.blocks.eol_in(at, s).map_or(NO_NL, |e| e as u32))
+            };
+            let c = if s < len { self.src[s] } else { 0 };
+            let one = ONE[usize::from(c)];
+            let t = if s >= len || matches!(c, b'/' | b'\\') {
+                self.token(at, extras).unwrap_or_else(refused)
+            } else if one != T::Eof {
+                Tok { kind: one, word: 0, start: s as u32, end: s as u32 + 1, nl }
+            } else if FIRST[usize::from(c)] & NAME == 0 {
+                let end = self.blocks.word_end(s + 1);
+                let d = self.at(end);
+                if d != b'\\' && d < 0x80 {
+                    Tok { kind: T::Name, word: word(self.src, s, end), start: s as u32, end: end as u32, nl }
+                } else {
+                    self.token(at, extras).unwrap_or_else(refused)
+                }
+            } else if let Some(end) = self.decimal(s) {
+                Tok { kind: T::Number, word: 0, start: s as u32, end: end as u32, nl }
+            } else {
+                match self.token_at(s) {
+                    Ok((kind, end, word)) => Tok { kind, word, start: s as u32, end: end as u32, nl },
+                    Err(r) => refused(r),
+                }
+            };
+            // SAFETY: `k < n`, and `n` tokens' room is reserved past `base`.
+            unsafe { (*w.add(k)).write(t) };
+            k += 1;
+            at = t.end as usize;
+            if t.kind == T::Eof {
+                break;
+            }
+        }
+        // SAFETY: the first `k` tokens past `base` are written.
+        unsafe { out.set_len(base + k) };
+        at
+    }
+
+    /// A decimal integer of up to 8 digits at `s` with no suffix, fraction, exponent or `'`, no
+    /// character past ASCII after it (C refuses one), and no leading `0` (C++'s `0x` and `0b` take a suffix's place): its end, from its word run and
+    /// one test of its 8 bytes. `number` reads every other number.
+    #[inline(always)]
+    fn decimal(&self, s: usize) -> Option<usize> {
+        let c = self.src[s];
+        if !(b'1'..=b'9').contains(&c) {
+            return None;
+        }
+        let end = self.blocks.word_end(s + 1);
+        let n = end - s;
+        let d = self.at(end);
+        if n > 8 || d == b'.' || d == b'\'' || d >= 0x80 || !rerail_simd8::swar::digits(rerail_simd8::swar::load8(self.src, s), n) {
+            return None;
+        }
+        Some(end)
+    }
+
+    /// The token at `s` (no white space before it): its kind, end and word code. Punctuation is
+    /// read here, inlined where the token is taken; the rest, `token_rare`'s, is called.
+    #[inline(always)]
     fn token_at(&self, s: usize) -> R<(T, usize, u8)> {
         use T::*;
         if s >= self.src.len() {
             return Ok((Eof, s, 0));
         }
         let c = self.src[s];
-        let refuse = Err(Refusal::Lex(s as u32));
         let next = self.at(s + 1);
-        // An ASCII name that is no literal's prefix (`L"…"`, `u8'…'`, `R"(…)"`): its end is where its
-        // word bytes stop, unless a `\u` escape or a character past ASCII goes on there.
-        if FIRST[usize::from(c)] & NAME == 0 {
-            let end = self.blocks.word_end(s + 1);
-            let d = self.at(end);
-            if d != b'\\' && d < 0x80 {
-                return Ok((Name, end, word(self.src, s, end)));
-            }
-            let end = self.name_end(s)?;
-            return Ok((Name, end, word(self.src, s, end)));
-        }
         let (kind, len) = match c {
-            b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' => {
-                // A literal's prefix: `L`, `u`, `U`, `u8`, and C++'s `R`, `LR`, `uR`, `UR`, `u8R`.
-                if matches!(c, b'L' | b'u' | b'U' | b'R') {
-                    if let Some(t) = self.prefixed(s) {
-                        return t;
-                    }
-                }
-                let end = self.name_end(s)?;
-                return Ok((Name, end, word(self.src, s, end)));
-            }
-            b'0'..=b'9' => return self.number(s),
-            b'.' if next.is_ascii_digit() => return self.number(s),
-            b'"' => {
-                return match self.string_end(s + 1) {
-                    Some(end) => Ok((Str, end, 0)),
-                    None => refuse,
-                };
-            }
-            b'\'' => match self.char_end(s + 1) {
-                Some(end) => return Ok((Char, end, 0)),
-                None => return refuse,
-            },
-            b'#' => {
-                let mut k = s + 1;
-                while matches!(self.at(k), b' ' | b'\t') {
-                    k += 1;
-                }
-                let e = self.blocks.word_end(k);
-                if e == k {
-                    return Ok((Directive, s + 1, 0));
-                }
-                return Ok((Directive, e, word(self.src, k, e)));
-            }
+            b'.' if next.is_ascii_digit() => return self.token_rare(s),
             b'(' => (LParen, 1),
             b')' => (RParen, 1),
             b'[' => (LBracket, 1),
@@ -478,16 +548,72 @@ impl<'s> Lexer<'s> {
                 (b'=', _) => (Ge, 2),
                 _ => (Gt, 1),
             },
+            _ => return self.token_rare(s),
+        };
+        Ok((kind, s + len, 0))
+    }
+
+    /// `token_at`'s tokens that are no punctuator: names, numbers, literals, directives (and a
+    /// refusal), outlined so that punctuation is read with no frame to save.
+    #[inline(never)]
+    fn token_rare(&self, s: usize) -> R<(T, usize, u8)> {
+        use T::*;
+        let c = self.src[s];
+        let refuse = Err(Refusal::Lex(s as u32));
+        // An ASCII name that is no literal's prefix (`L"…"`, `u8'…'`, `R"(…)"`): its end is where its
+        // word bytes stop, unless a `\u` escape or a character past ASCII goes on there.
+        if FIRST[usize::from(c)] & NAME == 0 {
+            let end = self.blocks.word_end(s + 1);
+            let d = self.at(end);
+            if d != b'\\' && d < 0x80 {
+                return Ok((Name, end, word(self.src, s, end)));
+            }
+            let end = self.name_end(s)?;
+            return Ok((Name, end, word(self.src, s, end)));
+        }
+        match c {
+            b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' => {
+                // A literal's prefix: `L`, `u`, `U`, `u8`, and C++'s `R`, `LR`, `uR`, `UR`, `u8R`.
+                if matches!(c, b'L' | b'u' | b'U' | b'R') {
+                    if let Some(t) = self.prefixed(s) {
+                        return t;
+                    }
+                }
+                let end = self.name_end(s)?;
+                return Ok((Name, end, word(self.src, s, end)));
+            }
+            b'0'..=b'9' => return self.number(s),
+            b'.' => self.number(s),
+            b'"' => {
+                return match self.string_end(s + 1) {
+                    Some(end) => Ok((Str, end, 0)),
+                    None => refuse,
+                };
+            }
+            b'\'' => match self.char_end(s + 1) {
+                Some(end) => return Ok((Char, end, 0)),
+                None => return refuse,
+            },
+            b'#' => {
+                let mut k = s + 1;
+                while matches!(self.at(k), b' ' | b'\t') {
+                    k += 1;
+                }
+                let e = self.blocks.word_end(k);
+                if e == k {
+                    return Ok((Directive, s + 1, 0));
+                }
+                return Ok((Directive, e, word(self.src, k, e)));
+            }
             c if c >= 0x80 => {
                 let end = self.name_end(s)?;
                 if end == s {
                     return refuse;
                 }
-                return Ok((Name, end, 0));
+                Ok((Name, end, 0))
             }
-            _ => return refuse,
-        };
-        Ok((kind, s + len, 0))
+            _ => refuse,
+        }
     }
 
     /// A string, character or raw string literal at `s` whose prefix is a name's start: its token,
@@ -753,6 +879,69 @@ impl<'s> Lexer<'s> {
                 b'\n' => return None,
                 _ if i >= self.src.len() => return None,
                 _ => i += 1,
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The tokens of `src` one `token` at a time (the scalar lexer), and the comments.
+    fn by_token(lx: &Lexer, mut at: usize) -> (Vec<(T, u8, u32, u32, u32)>, Vec<(u32, u32)>) {
+        let (mut out, mut extras) = (Vec::new(), Vec::new());
+        loop {
+            let t = lx.token(at, &mut extras).unwrap_or_else(refused);
+            out.push((t.kind, t.word, t.start, t.end, t.nl));
+            if t.kind == T::Eof {
+                break;
+            }
+            at = t.end as usize;
+        }
+        (out, extras.iter().map(|x| (x.start, x.end)).collect())
+    }
+
+    /// The same by `run`, in batches of `n`.
+    fn by_run(lx: &Lexer, mut at: usize, n: usize) -> (Vec<(T, u8, u32, u32, u32)>, Vec<(u32, u32)>) {
+        let (mut toks, mut extras) = (Vec::new(), Vec::new());
+        loop {
+            at = lx.run(at, &mut extras, &mut toks, n);
+            if toks.last().is_some_and(|t| t.kind == T::Eof) {
+                break;
+            }
+        }
+        (toks.iter().map(|t| (t.kind, t.word, t.start, t.end, t.nl)).collect(), extras.iter().map(|x| (x.start, x.end)).collect())
+    }
+
+    /// `run` reads what `token` reads: every token, comment and refusal, over random texts of
+    /// C's pieces (and from every position of a few, as a relex starts anywhere).
+    #[test]
+    fn run_reads_as_token_does() {
+        const PIECES: &[&str] = &[
+            "a", "int", "x1", "_y", "L", "u8", "R", "0x", "0", "7", "42", "12345678", "123456789", "1.5", "1e5", "3'4",
+            "10u", " ", "  ", "\t", "\n", "\r\n", "\\\n", "\\", "/", "//c\n", "/*c*/", "/*\n*/", "(", ")", "{", ";", ",",
+            "?", "~", ":", "::", ".", "...", "->", "->*", "<", "<<=", "<=>", ">>", "=", "==", "!", "&&", "|", "^=", "%",
+            "\"s\"", "\"a\\\"b\"", "'c'", "'\\n'", "L\"w\"", "R\"(r)\"", "#", "# include", "#define", "é", "\u{ff}",
+        ];
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        for cpp in [false, true] {
+            for round in 0..1500 {
+                let mut src = String::new();
+                for _ in 0..(round % 90) {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    src += PIECES[(x >> 20) as usize % PIECES.len()];
+                }
+                let lx = Lexer::new(src.as_bytes(), cpp);
+                let starts: Vec<usize> = if round % 50 == 0 { (0..=src.len()).collect() } else { vec![0] };
+                for at in starts {
+                    let want = by_token(&lx, at);
+                    for n in [1, 3, 16] {
+                        assert_eq!(by_run(&lx, at, n), want, "{src:?} from {at}, cpp {cpp}, batches of {n}");
+                    }
+                }
             }
         }
     }
