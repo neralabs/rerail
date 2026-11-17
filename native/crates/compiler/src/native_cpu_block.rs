@@ -1852,9 +1852,9 @@ impl RecordTables {
         // (`read_in_parts`) writes each part's kind and word, as `records::pass` gives them. Not
         // yet: more than one such reader, one of more than one region, marks or retags (which a
         // part's code would need), a test of its rule, or words past sixteen bytes.
-        let parted: Vec<&crate::records::Reader> = r.readers.iter().filter(|rd| !rd.parts.is_empty()).collect();
+        let parted: Vec<&crate::records::Reader> = r.readers.iter().filter(|rd| rd.parts_in_tier1()).collect();
         if !parted.is_empty() {
-            let tested = r.rules.iter().enumerate().any(|(k, e)| matches!(e, crate::records::EndRule::Read(i) if !r.readers[usize::from(*i)].parts.is_empty()) && r.checks.iter().any(|c| usize::from(c.rule) == k));
+            let tested = r.rules.iter().enumerate().any(|(k, e)| matches!(e, crate::records::EndRule::Read(i) if r.readers[usize::from(*i)].parts_in_tier1()) && r.checks.iter().any(|c| usize::from(c.rule) == k));
             if parted.len() > 1 || parted[0].arms.len() != 1 || !r.marks.is_empty() || !r.retags.is_empty() || r.gaps != 0 || tested {
                 return Err(Error::UnsupportedFeature("a region read in parts, on the CPU, with this grammar's marks or tests"));
             }
@@ -2221,18 +2221,18 @@ fn write_record(f: &mut FunctionBuilder<'_>, c: &FileCols, stores: MemFlags, cur
 /// the key, the length and (`WordRest`) the bytes past eight compared, each field a load, as the
 /// lean lexer's `word_code`. A hit on a word past eight bytes (`WordRest::Tails`) is checked by
 /// the caller.
-fn word_hit(f: &mut FunctionBuilder<'_>, t: &RecordTables, c: &FileCols, raw: Value, len: Value, from: Value) -> (Value, Value) {
+pub(crate) fn word_hit(f: &mut FunctionBuilder<'_>, t: &RecordTables, (mult, slots): (Value, Value), raw: Value, len: Value, from: Value) -> (Value, Value) {
     let ro = MemFlags::trusted().with_readonly();
     let fl = MemFlags::trusted();
     let key = cut_to(f, raw, len);
     let h1 = f.ins().bxor(key, len);
-    let h1 = f.ins().imul(h1, c.mult);
+    let h1 = f.ins().imul(h1, mult);
     let slot = f.ins().ushr_imm(h1, i64::from(64 - t.table.bits));
     // The slot's key, then each field of its meta a load of its own (`META_TOP`, `META_CODE`),
     // as lean's `ldr` and `ldrb`s: a field cut from a wider load is an instruction more on the
     // way to the hit and the record.
     let off = f.ins().ishl_imm(slot, if t.rest == WordRest::Second { 5 } else { 4 });
-    let sa = f.ins().iadd(c.slots, off);
+    let sa = f.ins().iadd(slots, off);
     let kk = f.ins().load(types::I64, ro, sa, 0);
     let same_key = f.ins().icmp(IntCC::Equal, kk, key);
     let mlen = f.ins().uload8(types::I64, ro, sa, 8);
@@ -2265,6 +2265,24 @@ fn word_hit(f: &mut FunctionBuilder<'_>, t: &RecordTables, c: &FileCols, raw: Va
         hit = f.ins().band(hit, same);
     }
     (hit, sa)
+}
+
+/// A token's code as `records::pass` gives one with no marks and no retag: its first byte's kind
+/// (the tables' first 256 bytes) and its word's bits on a hit (`word_hit`). `(tables, mult,
+/// slots)`: the tables' constants (`tables_consts`); `bytes`: the file's. A region's part's
+/// (decision 0323), by tier 1's walk (`read_in_parts`) and tier 2's fetch alike.
+pub(crate) fn plain_code(f: &mut FunctionBuilder<'_>, t: &RecordTables, (tables, mult, slots): (Value, Value, Value), bytes: Value, at: Value, len: Value) -> Value {
+    let ro = MemFlags::trusted().with_readonly();
+    let from = f.ins().iadd(bytes, at);
+    let raw = f.ins().load(types::I64, MemFlags::trusted(), from, 0);
+    let b = f.ins().band_imm(raw, 0xff);
+    let ka = f.ins().iadd(tables, b);
+    let kind = f.ins().uload8(types::I64, ro, ka, 0);
+    let (hit, sa) = word_hit(f, t, (mult, slots), raw, len, from);
+    let w = f.ins().uload32(ro, sa, 8 + META_CODE);
+    let zero = f.ins().iconst(types::I64, 0);
+    let bits = f.ins().select(hit, w, zero);
+    f.ins().bor(kind, bits)
 }
 
 /// The signature of a file's record function (`record_fn`).
@@ -3033,7 +3051,7 @@ fn file_cols(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
 
 /// The record pass's tables' address, its word table's multiplier and its slots' address, as
 /// constants (`clif_rust` names addresses inside the tables `TABLES`).
-fn tables_consts(f: &mut FunctionBuilder<'_>, t: &RecordTables) -> (Value, Value, Value) {
+pub(crate) fn tables_consts(f: &mut FunctionBuilder<'_>, t: &RecordTables) -> (Value, Value, Value) {
     let tables = f.ins().iconst(types::I64, t.words.as_ptr() as i64);
     let mult = f.ins().iconst(types::I64, t.table.mult as i64);
     let slots = f.ins().iconst(types::I64, t.words.as_ptr() as i64 + t.slots as i64);
@@ -3167,7 +3185,7 @@ impl Reads<'_> {
 /// one is (`RecordTables::new` refuses more than one).
 fn parted_rule(r: &crate::records::Records) -> Option<(usize, &crate::records::Reader)> {
     r.rules.iter().enumerate().find_map(|(k, e)| match e {
-        crate::records::EndRule::Read(i) => Some((k, &r.readers[usize::from(*i)])).filter(|(_, rd)| !rd.parts.is_empty()),
+        crate::records::EndRule::Read(i) => Some((k, &r.readers[usize::from(*i)])).filter(|(_, rd)| rd.parts_in_tier1()),
         _ => None,
     })
 }
@@ -3185,8 +3203,6 @@ fn parted_rule(r: &crate::records::Records) -> Option<(usize, &crate::records::R
 /// to `finish` with `refused` (its cursor, its marks' bits, its gap's start).
 #[allow(clippy::too_many_arguments)]
 fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, rd: &Reads<'_>, c: &FileCols, (k, reader): (usize, &crate::records::Reader), s: Value, raw: Value, (cur, next): (Value, Value), known: bool, limit: Option<Limit>, (finish, refused): (cranelift_codegen::ir::Block, [Value; 3]), heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Value, Value) {
-    let ro = MemFlags::trusted().with_readonly();
-    let fl = MemFlags::trusted();
     let stores = MemFlags::new().with_notrap();
     let a = &reader.arms[0];
     // The parts by their lengths: at one byte, the shortest part's, as `read_parts`' `min`.
@@ -3223,20 +3239,8 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     };
     f.ins().brif(gate, walk, &[], join, &[cur.into(), next.into()]);
     f.switch_to_block(walk);
-    // A token's code, as `records::pass`: its first byte's kind (the tables' first 256 bytes),
-    // and its word's bits on a hit (`word_hit`).
-    let code_at = |f: &mut FunctionBuilder<'_>, at: Value, len: Value| {
-        let from = f.ins().iadd(c.bytes, at);
-        let raw = f.ins().load(types::I64, fl, from, 0);
-        let b = f.ins().band_imm(raw, 0xff);
-        let ka = f.ins().iadd(c.tables, b);
-        let kind = f.ins().uload8(types::I64, ro, ka, 0);
-        let (hit, sa) = word_hit(f, t, c, raw, len, from);
-        let w = f.ins().uload32(ro, sa, 8 + META_CODE);
-        let zero = f.ins().iconst(types::I64, 0);
-        let bits = f.ins().select(hit, w, zero);
-        f.ins().bor(kind, bits)
-    };
+    // A token's code, as `records::pass` (`plain_code`).
+    let code_at = |f: &mut FunctionBuilder<'_>, at: Value, len: Value| plain_code(f, t, (c.tables, c.mult, c.slots), c.bytes, at, len);
     // The region's tokens, one a turn: the cursor and the byte the next starts at.
     let (tok, scan, look, hit, after, content, none) = (f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block());
     for _ in 0..2 {
@@ -4031,7 +4035,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                     f.switch_to_block(arm);
                     // A region read in parts (decision 0323): its token here is its opener's byte;
                     // the loop's tail walks its parts and its closer (`read_in_parts`).
-                    if !reader.parts.is_empty() {
+                    if reader.parts_in_tier1() {
                         f.ins().jump(ended, &[s.into(), tag.into(), nohits.into()]);
                         f.switch_to_block(not);
                         continue;
@@ -6207,7 +6211,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let wordy = f.ins().band_imm(entry, 1 << TOKEN_WORDY);
     f.ins().brif(wordy, looked, &[], coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), kind.into(), hits.into()]);
     f.switch_to_block(looked);
-    let (hit, sa) = word_hit(f, t, c, raw, len, from);
+    let (hit, sa) = word_hit(f, t, (c.mult, c.slots), raw, len, from);
     // The word's code bits (its word and the marks of it alone, `RecordTables`), on a hit.
     let w = f.ins().uload32(ro, sa, 8 + META_CODE);
     let bits = f.ins().select(hit, w, zero);

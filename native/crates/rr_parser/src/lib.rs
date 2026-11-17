@@ -3197,6 +3197,137 @@ mod json_probe {
         out
     }
 
+    /// JSON's parser with tier 2 a function a grammar rule, as rr's (`by_rules`, optimized).
+    fn json_parser(n: &rerail_compiler::native_ir::Structure) -> rerail_compiler::native_cpu_stream::Parser {
+        let cut = rerail_compiler::native_cpu_clusters::Cut { near: true, unsigned: true, speed: true, ..rerail_compiler::native_cpu_clusters::by_rules(n) };
+        rerail_compiler::native_cpu_stream::Parser::with_cut(n, &cut).expect("JSON's parser")
+    }
+
+    /// Lowering A against B (decision 0323): tier 1 and tier 2 over JSON's corpus
+    /// (`RERAIL_JSON_CORPUS`), each the least of `RR_ROUNDS` rounds, instructions and cycles.
+    #[test]
+    #[ignore = "a benchmark: run by hand"]
+    fn json_a_against_b() {
+        use rerail_compiler::records::Split;
+        let retired = rerail_compiler::native_cpu_codegen::retired;
+        let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(7);
+        let lower = |at: Split| {
+            let mut n = rerail_compiler::native_ir::lower(&json_split(at), 0, 0).expect("lowers");
+            for p in &mut n.block_programs {
+                p.pad = rerail_compiler::native_cpu_block::BACK as u16;
+            }
+            n
+        };
+        let (pa, pb) = (json_parser(&lower(Split::Tier1)), json_parser(&lower(Split::Tier2)));
+        let files: Vec<Vec<u8>> = json_files().into_iter().filter(|f| pa.image(f).is_ok()).collect();
+        let bytes: usize = files.iter().map(Vec::len).sum();
+        let mut rows = Vec::new();
+        for (name, p) in [("A (tier 1 splits)", &pa), ("B (tier 2 splits)", &pb)] {
+            let mut batches: Vec<_> = files.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_slice()])).collect();
+            for b in &mut batches {
+                b.call(&p.tier1);
+            }
+            let mut tapes: Vec<_> = batches.iter().map(|b| p.tape(b)).collect();
+            let mut best = [(u64::MAX, u64::MAX); 2];
+            for _ in 0..rounds {
+                let (i0, c0) = retired();
+                for b in &mut batches {
+                    b.call(&p.tier1);
+                }
+                let (i1, c1) = retired();
+                for (b, t) in batches.iter().zip(&mut tapes) {
+                    let _ = p.words(b, t);
+                }
+                let (i2, c2) = retired();
+                best[0] = (best[0].0.min(i1 - i0), best[0].1.min(c1 - c0));
+                best[1] = (best[1].0.min(i2 - i1), best[1].1.min(c2 - c1));
+            }
+            rows.push((name, best));
+        }
+        eprintln!("{} files, {bytes} bytes; least of {rounds} rounds", files.len());
+        for (name, [t1, t2]) in rows {
+            let per = |x: u64| x as f64 / bytes as f64;
+            eprintln!("{name:>18}: tier 1 {:.3} instructions {:.3} cycles a byte; tier 2 {:.3} / {:.3}; both {:.3} cycles a byte ({:.2}M cycles)", per(t1.0), per(t1.1), per(t2.0), per(t2.1), per(t1.1 + t2.1), (t1.1 + t2.1) as f64 / 1e6);
+        }
+    }
+
+    /// JSON's program with its strings split where `at` says (decision 0323).
+    fn json_split(at: rerail_compiler::records::Split) -> rerail_compiler::program::Words {
+        let mut w = program(include_str!("../../json_parser/json.bitlex")).unwrap_or_else(|e| panic!("json.bitlex: {e}"));
+        w.block_programs[0].records.as_mut().expect("records").split_parts_in(at);
+        w
+    }
+
+    /// Lowering B (decision 0323): tier 1 reads a string whole and tier 2's `TOKEN` splits it.
+    /// The nodes are A's: by the interpreter both ways, and by Cranelift's tier 2 over the CPU's
+    /// tier 1 under B, and over A's records (split already, as Metal's masks give them).
+    #[test]
+    fn jsons_tier2_split_is_tier1s() {
+        use rerail_compiler::records::Split;
+        let (a, b) = (json_split(Split::Tier1), json_split(Split::Tier2));
+        let lower = |w: &rerail_compiler::program::Words| {
+            let mut n = rerail_compiler::native_ir::lower(w, 0, 0).expect("lowers");
+            for p in &mut n.block_programs {
+                p.pad = rerail_compiler::native_cpu_block::BACK as u16;
+            }
+            n
+        };
+        let (na, nb) = (lower(&a), lower(&b));
+        let (t1a, t1b) = (rerail_compiler::native_cpu_block::compile(&na.block_programs[0]).expect("A's tier 1"), rerail_compiler::native_cpu_block::compile(&nb.block_programs[0]).expect("B's tier 1"));
+        let t2b = rerail_compiler::native_cpu_stream::compile(&nb).expect("B's tier 2");
+        let t2a = rerail_compiler::native_cpu_stream::compile(&na).expect("A's tier 2");
+        // And tier 2 a function a grammar rule (`by_rules`, rr's), its `TOKEN` a function of
+        // its own (`take_token`): the tapes, A's and B's.
+        let (pa, pb) = (json_parser(&na), json_parser(&nb));
+        let mut inputs: Vec<Vec<u8>> = vec![
+            br#"{"a": [1, -2.5e3, true, null], "b\n": {"c": "dAx"}}"#.to_vec(),
+            br#"["", "\\", "a\"b", "\\\"", "x", "\n\t", "true"]"#.to_vec(),
+            br#""open"#.to_vec(),
+            br#"["\q"]"#.to_vec(),
+        ];
+        for pad in [0usize, 1, 61, 62, 63, 64, 65, 127] {
+            for n in [0usize, 1, 62, 63, 64, 130] {
+                inputs.push(format!("{}[\"{}\\n{}\", \"\\\\\\\"{}\"]", " ".repeat(pad), "s".repeat(n), "t".repeat(n), "u".repeat(n)).into_bytes());
+            }
+        }
+        inputs.extend(json_files());
+        let nodes = |r: Result<Vec<rerail_compiler::stream::Node>, rerail_compiler::stream::Refused>| r.ok().map(|n| n.iter().map(|x| (x.kind, x.start, x.end, x.size)).collect::<Vec<_>>());
+        let (mut parsed, mut strings, mut wide) = (0usize, 0usize, 0usize);
+        let se = usize::from(a.block_programs[0].records.as_ref().expect("records").starts);
+        for (k, f) in inputs.iter().enumerate() {
+            let want = nodes(rerail_compiler::stream::run(&a, f, &a.block_programs[0].run(f)));
+            let by_b = nodes(rerail_compiler::stream::run(&b, f, &b.block_programs[0].run(f)));
+            let show = || String::from_utf8_lossy(&f[..f.len().min(100)]).into_owned();
+            assert_eq!(by_b, want, "file {k} ({:?}): the interpreter under B", show());
+            let (ra, rb) = (t1a.run_files(&[f])[0].clone(), t1b.run_files(&[f])[0].clone());
+            let refused = |t: &[u64]| t.iter().any(|&x| x != 0);
+            assert_eq!(refused(&rb.totals), refused(&ra.totals), "file {k}: B's tier 1 refusal");
+            if refused(&ra.totals) {
+                continue;
+            }
+            assert!(rb.positions[se].len() <= ra.positions[se].len(), "file {k}: B's tier 1 has a record a string");
+            strings += ra.positions[se].len() - rb.positions[se].len();
+            let why = |r: &Result<Vec<rerail_compiler::stream::Node>, rerail_compiler::stream::Refused>| r.as_ref().err().map(|e| (e.pc, e.why));
+            let (gb, ga) = (t2b.run(f, &rb), t2b.run(f, &ra));
+            // A's own tier 2 refuses what its tape's widths cannot hold (a size past 16 bits):
+            // B's then refuses it too.
+            let gaa = t2a.run(f, &ra);
+            if gaa.is_ok() {
+                assert_eq!(nodes(gaa.clone()), want, "file {k} ({:?}): A's Cranelift tier 2 over A's records", show());
+            } else if want.is_some() {
+                wide += 1;
+                let most = want.iter().flatten().map(|n| n.3).max().unwrap_or(0);
+                assert!(most > 0xffff || f.len() > 0xffff, "file {k} ({:?}, {} bytes): A's Cranelift tier 2 refuses ({:?}), its tape's widths would hold it", show(), f.len(), why(&gaa));
+            }
+            let want = if gaa.is_ok() { want } else { None };
+            assert_eq!(pb.image(f).ok(), pa.image(f).ok(), "file {k} ({:?}): the tapes by rules, B's and A's", show());
+            assert_eq!(nodes(gb.clone()), want, "file {k} ({:?}): Cranelift's tier 2 over B's tier 1 ({:?}; over A's records {:?})", show(), why(&gb), why(&ga));
+            assert_eq!(nodes(ga.clone()), want, "file {k} ({:?}): Cranelift's tier 2 over A's records ({:?})", show(), why(&ga));
+            parsed += 1;
+        }
+        eprintln!("{} files, {parsed} parsed by both tier 1s ({wide} past the tape's widths); B's tier 1 wrote {strings} records fewer", inputs.len());
+    }
+
     /// A region read in parts on the CPU (decision 0323, lowering A): tier 1's token loop
     /// writes a string's quote, contents, escapes and closer as the interpreter's records
     /// (`records::read_parts`), with their codes, on strings with escapes at every offset of a

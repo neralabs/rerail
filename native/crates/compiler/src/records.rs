@@ -264,6 +264,37 @@ pub struct Reader {
     /// and bytes. Its tokens are the opener's byte, each part, each run of the bytes between,
     /// and the closer (`read_parts`). None: the region is one token.
     pub parts: Vec<ReadPart>,
+    /// Where its parts are split (decision 0323): by tier 1's token loop (`Split::Tier1`, its
+    /// records the parts'), or by tier 2's token fetch (`Split::Tier2`, tier 1's record the
+    /// whole region, as a reader without parts gives it).
+    pub split: Split,
+}
+
+/// Where a region read in parts is split into its tokens (`Reader::split`, decision 0323).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Split {
+    /// Tier 1's records are the parts (lowering A).
+    #[default]
+    Tier1,
+    /// Tier 1's record is the region; tier 2's token fetch splits it (lowering B).
+    Tier2,
+}
+
+impl Records {
+    /// Every region read in parts split where `at` says (decision 0323): a compile option, the
+    /// grammar the same either way.
+    pub fn split_parts_in(&mut self, at: Split) {
+        for rd in self.readers.iter_mut().filter(|rd| !rd.parts.is_empty()) {
+            rd.split = at;
+        }
+    }
+}
+
+impl Reader {
+    /// Whether tier 1 splits its region into parts (`Split::Tier1`).
+    pub fn parts_in_tier1(&self) -> bool {
+        !self.parts.is_empty() && self.split == Split::Tier1
+    }
 }
 
 /// A part of a region read in parts (`Reader::parts`): at a bit of output `start`, `bytes`
@@ -474,7 +505,7 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
         if let Some(&EndRule::Read(i)) = records.rules.get(usize::from(k)) {
             let reader = &records.readers[usize::from(i)];
             let opens = reader.arms.first().is_some_and(|a| outputs.get(usize::from(a.opener)).and_then(|w| w.get(s / 64)).is_some_and(|w| w >> (s % 64) & 1 == 1));
-            if !reader.parts.is_empty() && opens {
+            if reader.parts_in_tier1() && opens {
                 match read_parts(reader, s, outputs) {
                     Ok(tokens) => {
                         let l = tokens.last().map_or(s, |t| t.1);

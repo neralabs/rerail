@@ -1,9 +1,11 @@
 # 0323: A region read in parts
 
 Status: decided (2026-11-16). The grammar form, its meaning as masks and the
-reference token loop have landed, and lowering A (tier 1's token loop) on the
-CPU. Lowering B (tier 2's token fetch) is being built to compare. Metal keeps
-the masks (option C) for now. Part of 0177's token loop.
+reference token loop have landed. Both CPU lowerings have landed: A in tier
+1's token loop, and B in tier 2's token fetch. Either is a compile option of
+the same grammar (`Records::split_parts_in`). B took 18% fewer cycles over
+JSON's corpus. Metal keeps the masks (option C) for now. Part of 0177's
+token loop.
 
 ## Intro
 
@@ -104,6 +106,67 @@ tests the opener's bit. Where a tail is shared by several rules
 
 JSON has none of these.
 
+### B, as built
+
+The choice is on the reader (`Reader::split`, `Split::Tier1` or
+`Split::Tier2`), in the program's text (`recsplit K tier2`), so the digest
+covers it. Under B, tier 1 reads the region as one token, as a reader
+without parts does: its record runs from the opener to the closer.
+
+Tier 2's `TOKEN` splits a record that is a whole region: one at its
+opener's bit and longer than that byte. Its token is the opener's byte, and
+its parts are pending in two state fields, `PartAt` (where the next part
+starts) and `PartEnd` (the closer's last byte). Each `TOKEN` then takes the
+next part before the next record (`split_next`):
+- at the closer's byte, the closer, and the region is done;
+- else the nearest part bit before the closer, a word at a time;
+- a part there takes its bytes;
+- else the bytes up to it, or up to the closer, are content.
+
+Codes are `plain_code`'s, the same function as A's walk. Tier 2 reads the
+masks as tier 1 left them. Where tier 1 makes an output from the bytes
+(`native_cpu_bytes`), the CPU stores none of it, so tier 2 makes it from the
+bytes too (`output_word`), as tier 2's checks do.
+
+A record already split is a token as it is: tier 1's under A, and Metal's
+records from the masks. So B's tier 2 is right over either.
+
+A file gives more tokens than records under B. So the tape's room is sized
+by `CompiledStream::tokens`: the records plus the file's bytes, since each
+part is at least one byte.
+
+Under B, tier 2 refuses:
+- marks, retags or gap marks;
+- words past 16 bytes;
+- two such readers;
+- a `TOKEN` whose taking is flagged;
+- tier 2 ahead of time (`rust_stream`), which is not built yet.
+
+The interpreter's `TOKEN` (`stream::run`) splits the same way, with
+`records::read_parts` and `records::pass`.
+
+## A against B
+
+JSON's corpus files under 1 MB that tier 2's tape holds: 12 files, 1,345,779
+bytes. `rr_parser`'s `json_a_against_b`, the least of 15 rounds. The machine
+was loaded (load average 32 to 39), so the cycles vary by about 10% between
+runs. The instruction counts are stable.
+
+| | Tier 1 | Tier 2 | Both |
+|---|---|---|---|
+| A, instructions a byte | 62.3 | 23.0 | 85.3 |
+| B, instructions a byte | 43.1 | 34.3 | 77.5 |
+| A, cycles a byte | 11.3 to 12.5 | 3.6 to 4.2 | 14.9 to 16.7 |
+| B, cycles a byte | 7.5 to 8.3 | 4.7 to 5.5 | 12.2 to 13.7 |
+
+B writes and reads 353,244 fewer records over JSONTestSuite and the corpus
+together, and splits each string where tier 2 consumes it. A's walk writes
+a record a part that tier 2 then reads back. B is also the lowering that
+keeps Metal's tier 1 as it is.
+
+Both tiers are far from simdjson's: 43 to 62 instructions a byte in tier 1
+alone. That is the next measure, by pass.
+
 ## Checked
 
 `json_parser/json.bitlex` is step 14 with its tokens in the rule forms.
@@ -118,3 +181,13 @@ compares the token loop's starts, lasts, codes and totals with the
 interpreter's. Its inputs are strings with escapes at each offset around a
 block's edge, strings over blocks, strings open at the file's end, and
 JSON's files: 759 files, 1,165,206 records, all the same.
+
+Under B, `jsons_tier2_split_is_tier1s` checks three things:
+- the interpreter's nodes equal A's on every input;
+- Cranelift's tier 2 under B equals A's interpreter over the CPU's tier 1
+  under B, and over A's records;
+- the whole tapes by rules (rr's cut, `take_token` outlined) are the same
+  bytes under A and under B.
+
+That is 386 files, 288 that both tier 1s accept. Four of them are past the
+tape's 16-bit widths: A's tier 2 refuses those too.

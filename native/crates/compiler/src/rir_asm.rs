@@ -633,7 +633,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     Ok(w) if w == "retag" => Some((line.number("")?, line.number("")?)),
                     _ => None,
                 };
-                r.readers.push(crate::records::Reader { arms: Vec::new(), other, retag, parts: Vec::new() });
+                r.readers.push(crate::records::Reader { arms: Vec::new(), other, retag, parts: Vec::new(), split: crate::records::Split::Tier1 });
             } else if first == "recretag" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recretag before its records"))?;
                 let (o, kind, marks): (u16, u8, u32) = (line.number("")?, line.number("")?, line.number("")?);
@@ -657,6 +657,16 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let (start, bytes): (u16, u8) = (line.number("")?, line.number("")?);
                 let rd = r.readers.get_mut(k).ok_or(format!("block {at} recpart {k}: no such reader"))?;
                 rd.parts.push(crate::records::ReadPart { start, bytes });
+            } else if first == "recsplit" {
+                // `recsplit K tier2`: reader K's parts split by tier 2's token fetch.
+                let r = program.records.as_mut().ok_or(format!("block {at} recsplit before its records"))?;
+                let k: usize = line.number("")?;
+                let rd = r.readers.get_mut(k).ok_or(format!("block {at} recsplit {k}: no such reader"))?;
+                rd.split = match line.word()?.as_str() {
+                    "tier1" => crate::records::Split::Tier1,
+                    "tier2" => crate::records::Split::Tier2,
+                    w => return Err(format!("block {at} recsplit: `tier1` or `tier2`, not {w}")),
+                };
             } else if first == "recuntaken" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recuntaken before its records"))?;
                 r.untaken.push(line.number("")?);

@@ -2827,7 +2827,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     Some(ps) => ps.into_iter().map(|(v, bytes)| crate::records::ReadPart { start: mask_of(low, v, &mut mark_masks), bytes }).collect(),
                     None => Vec::new(),
                 };
-                let reader = crate::records::Reader { arms, other, retag, parts };
+                let reader = crate::records::Reader { arms, other, retag, parts, split: crate::records::Split::Tier1 };
                 let at = match readers.iter().position(|x| *x == reader) {
                     Some(at) => at,
                     None => {

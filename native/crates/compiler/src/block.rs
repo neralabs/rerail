@@ -1757,6 +1757,9 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                 for p in &rd.parts {
                     let _ = writeln!(out, "  block {at} recpart {k} {} {}", p.start, p.bytes);
                 }
+                if rd.split == crate::records::Split::Tier2 {
+                    let _ = writeln!(out, "  block {at} recsplit {k} tier2");
+                }
             }
         }
         // `block N recretag O KIND MARKS`: a reader's kind and marks by its start mask.

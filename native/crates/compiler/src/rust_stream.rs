@@ -80,6 +80,9 @@ pub fn rust_source_at(native: &Structure, widths: rerail_tape_format::Widths, ta
     if native.extras.len() > 1 {
         return Err("more than one kind of extra".into());
     }
+    if native.block_programs.iter().filter_map(|b| b.records.as_ref()).any(|r| r.readers.iter().any(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2)) {
+        return Err("a region tier 2 splits (decision 0323): not yet ahead of time".into());
+    }
     if native.structural.iter().any(|b| matches!(b.operation, Op::NodeSuper { .. })) {
         return Err("supertype classes in the tape's codes: not yet ahead of time".into());
     }
