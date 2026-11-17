@@ -554,6 +554,44 @@
         }
     }
 
+    /// Decision 0325 step 3: a whole view of a source whose rows are in a block (the vtab's `Relation`) is bound
+    /// where they lie, nothing uploaded, every source column at its own place; the device's reads of it (its column
+    /// statistics, through the generated `clif_rel_get`) are the host's values.
+    #[test]
+    fn a_sources_rows_in_their_block_are_read_in_place() {
+        use crate::code_rule_dsl::facts::vtab::{Relation, Source};
+        use crate::code_rule_dsl::logic::device::StatColumn;
+        use crate::code_rule_dsl::logic::native::setfix::InRel;
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let mut x = 0x0325_u64;
+        let mut next = |m: u64| { x ^= x << 13; x ^= x >> 7; x ^= x << 17; (x % m) as i64 };
+        // Three columns, past several chunks of the block's relation; the view reads its first two.
+        let n = 5_000;
+        let mut r = Relation::new(&["a", "b", "c"]);
+        for i in 0..n {
+            r.push(&[i as i64, next(97) - 40, (next(1 << 20) << 20) | i as i64]);
+        }
+        let src: std::sync::Arc<dyn Source> = std::sync::Arc::new(r);
+        assert!(src.in_block().is_some_and(|b| b.rows as usize == n), "the source's rows are one relation in a block");
+        let rel = InRel::over_source(std::sync::Arc::clone(&src), vec![b'i'; 3]);
+        let mut batch = crate::code_rule_dsl::transducer::packed::metal_join::Batch::new().expect("the device");
+        let mut rep = super::Report::default();
+        let (dev, _, place) = super::resident(&rel, &[1, 2], &[], &mut batch, &mut rep).expect("resident");
+        assert_eq!((rep.in_place, rep.uploads, rep.upload_bytes), (1, 0, 0), "read in place: {rep:?}");
+        assert_eq!((dev.rows, dev.cols), (n, 3));
+        assert_eq!(place, [0, 1, 2], "each column at its own place");
+        let cols = [StatColumn::Rel(&rel, 1), StatColumn::Rel(&rel, 2)];
+        let (read, in_place) = super::column_stats(&cols, 8).expect("the device");
+        assert_eq!(in_place, 2);
+        for (c, got) in [1, 2].into_iter().zip(&read) {
+            let values: Vec<i64> = (0..n).map(|i| src.value(i, c)).collect();
+            let (host, _) = super::column_stats(&[StatColumn::Values(&values)], 8).expect("the device");
+            assert_eq!(*got, host[0], "column {c}");
+        }
+    }
+
     /// Decision 0261: the device's column statistics read a relation it holds in place (its resident upload), and
     /// are the same as over the values gathered on the host; a relation it does not hold is gathered.
     #[test]

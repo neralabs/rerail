@@ -1300,16 +1300,24 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                 let n_all = rel.len();
                 let ids: Option<Vec<usize>> = (rel.ndead > 0).then(|| (0..n_all).filter(|&id| !is_dead(&rel.dead, id as u32)).collect());
                 let n = ids.as_ref().map_or(n_all, Vec::len);
-                // A flat relation in its block is read where it lies (decision 0325 step 3): nothing uploaded, and the
-                // entry holds every column, each at its own place.
-                if let Some(b) = rel.in_block().filter(|_| ids.is_none() && !matches!(owner, Owner::Src(_))) {
+                // Rows in a block are read where they lie (decision 0325 step 3): a flat relation's, or a whole
+                // view's source's (the vtab's `Relation`). Nothing uploaded, and the entry holds every column (the
+                // owner's), each at its own place.
+                let placed = match (&owner, &rel.view) {
+                    (Owner::Src(_), Some(view)) => view.src.in_block().filter(|b| ids.is_none() && b.rows as usize == n).map(|b| (b, view.src.columns().len())),
+                    (Owner::Src(_), None) => None,
+                    (Owner::Rel(_), _) => rel.in_block().filter(|_| ids.is_none()).map(|b| (b, rel.k)),
+                };
+                if let Some((b, ncols)) = placed {
+                    // Entries of relations the engine dropped go now: an entry in place holds its block (`Held::kept`).
+                    res.trim(0);
                     let device = rerail_accel::gpu::join::device()?;
                     let held = rerail_accel::gpu::join::Held::kept(b.facts.block.gpu_buffer(device), Box::new(b.facts.clone()));
-                    let dev = mj::DevRel::in_block(held, b.at, n, rel.k);
+                    let dev = mj::DevRel::in_block(held, b.at, n, ncols);
                     rep.in_place += 1;
                     let bytes = old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
                     let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
-                    res.entries.push(Entry { owner, cols: (0..rel.k).collect(), dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
+                    res.entries.push(Entry { owner, cols: (0..ncols).collect(), dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
                     res.bytes = res.bytes();
                     res.entries.len() - 1
                 } else {

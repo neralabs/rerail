@@ -83,7 +83,7 @@ pub struct ColRead {
 
 impl ColRead {
     /// Row `i`'s value: the read written once (`col_get`, decision 0325), the kernels' and the JIT's too.
-    #[inline]
+    #[inline(always)]
     pub fn get(&self, i: u32) -> i64 {
         // SAFETY: the directory is its relation's, which outlives the reader; row `i` was claimed and reserved.
         unsafe { crate::generated_reads::col_get(self.dir.cast(), self.min_log, i) as i64 }

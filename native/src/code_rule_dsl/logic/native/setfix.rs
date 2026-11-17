@@ -3469,9 +3469,7 @@ pub fn retain(conn: impl Scoped, table: &str, mut rows: Vec<Vec<i64>>, types: Ve
 /// (the reach index, decision 0119) is probed through the source's own lookups, never copied into rows.
 pub fn hold_source(conn: impl Scoped, table: &str, src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, types: Vec<u8>) {
     let conn = conn.db();
-    let k = types.len();
-    let view = View { src, cols: (0..k).collect(), ids: None, eqs: Vec::new() };
-    let rel = Arc::new(InRel { k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
+    let rel = InRel::over_source(src, types);
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
     DERIVED.lock(conn.at()).insert((conn.at(), table.to_owned()), rel);
@@ -4493,6 +4491,12 @@ impl InRel {
     pub fn row(&self, id: usize) -> Row { self.rows.row(id as u32, self.k) }
     /// A flat relation's rows in one block, for a reader that binds its block (the device, decision 0325): none for
     /// a view, a relation with dead rows (a reader skips no rows yet) or no columns.
+    /// A relation read in place from every row of `src`, its columns in order (`hold_source`).
+    pub fn over_source(src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, types: Vec<u8>) -> Arc<InRel> {
+        let k = types.len();
+        let view = View { src, cols: (0..k).collect(), ids: None, eqs: Vec::new() };
+        Arc::new(InRel { k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None })
+    }
     pub fn in_block(&self) -> Option<InBlock> {
         if self.view.is_some() || self.ndead > 0 || self.k == 0 {
             return None;
