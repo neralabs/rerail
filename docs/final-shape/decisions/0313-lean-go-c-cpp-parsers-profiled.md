@@ -41,7 +41,7 @@ At the start (C++; C and Go alike):
 
 | where | share | what |
 |---|---:|---|
-| the lexer (`token_at`, `lex_batch`, `name_end`, `number`, stage 1) | about 45% | 247 instructions a token alone (C) |
+| the lexer (`token_at`, `lex_batch`, `name_end`, `number`, stage 1) | about 45% | 185 instructions a token alone (C) |
 | the token buffer's look (`fill`, `tok`, `peek_at`) | about 10% | a length check and a batch call on every look |
 | `Writer::insert` and its `memmove`s | 5 to 8% | four library calls a wrap |
 | the parser's look-ahead scans (C++: `scope_ahead`, `class_name_end`, `ctor_ahead`, `declaration_ahead`, `angle_scan`) | about 7% | |
@@ -137,18 +137,77 @@ The oracles are unchanged:
 | Block lexer: every token start of a block from stage 1's masks, tokens written a run at a time (page 31) | **open**: see below |
 | Micro-lexers: a stop mask built where a string or comment starts (page 31) | **open**: would drop 3 of stage 1's 7 masks |
 
+## simdjson, the gold standard
+
+simdjson 5.0.5 is vendored (`native/vendor/simdjson-5.0.5`). The engine reads JSON with it (0134):
+its stage 1 costs 28 instructions a node there, and its DOM stage 2 34.
+
+**What its lexer does.**
+- **Stage 1, per 64-byte block** (two blocks a step, for the core's parallelism):
+  - `json_character_block::classify`: operators by one table lookup and a compare, whitespace by
+    another; each mask packed by NEON pairwise adds.
+  - `json_string_scanner`: escaped bytes by its carried odd-run formula; then the in-string mask is
+    `prefix_xor(quote)`, one carry-less multiply, carried to the next block by a sign shift.
+  - `json_scanner`: a scalar's first byte is a scalar byte not after one (`follows`, a shift and a
+    carried bit).
+  - `structural_start = (op | scalar_start) & ~in_string`.
+- **The index.** `bit_indexer::write` flattens the starts into positions: a popcount, then four
+  positions a step, unrolled to 24, written behind into a buffer with room to spare, the tail
+  bumped by the count. The last block's starts are written while the next block is classified.
+- **Stage 2** walks the positions with no bounds check: the index ends in sentinels (the length,
+  twice, then 0), and the text has 64 bytes of padding. It is a state machine of `goto`s on each
+  token's first byte, and the tape writer appends with no capacity check.
+
+**What this parser has of it.** Stage 1's primitives are simdjson's: the same nibble tables and the
+same NEON packing (`rerail_simd8`). What it lacks is the rest of the shape. It writes no index.
+Each token is found by itself: a mask scan for a blank run or a name's end, a `match` on its first
+byte, a `Result` and a push into the buffer.
+
+**The floor, measured** (`c_lean/examples/stage1_floor.rs`, C's 829 files, 150 passes, the fixed
+costs taken off). It is simdjson's stage 1 in C's classes: word and gap masks, a start at every
+byte that is neither a gap nor a word byte after a word byte, flattened by simdjson's indexer. It
+hides no strings or comments and joins no two-byte punctuators. Its 1.415 M starts a pass stand
+against the lexer's 1.354 M tokens and 21 K comments.
+
+| | instructions a token | cycles a token | cycles a byte |
+|---|---:|---:|---:|
+| simdjson's shape, C's classes: stage 1 and the index | 15 | 4.0 | 0.63 |
+| the lexer now | 146 | 48 | 7.6 |
+| the whole parse | 476 | 113 | 17.8 |
+
+The lexer is 43% of the parse's cycles. Its shape, not its primitives, is twelve times the floor.
+
+**What C needs beyond the floor, and what it costs.**
+- **Regions: strings, character literals, comments, raw strings.** JSON's `prefix_xor` does not
+  apply, as a quote may sit in a comment or a character literal and `//` in a string. Page 36's
+  region walk does: in a block with an opener, the openers left to right, each closed by the first
+  closer after it (a trailing-zero count of the closer's mask), carried across blocks. A block with
+  no opener (most) pays one test.
+- **Punctuators of two and three bytes**: a pair mask by nibble product (page 31), and its second
+  bytes taken out of the starts; `<<=`, `>>=`, `...`, `->*`, `<=>` by a third-byte test in stage 2.
+- **A token's end**: a name's from the word mask's run, a punctuator's from its length; stage 2
+  reads them as it takes the token.
+- **Directives.** A directive's argument (`preproc_arg`) and `#include <…>` are read from the bytes.
+  The relex (`relex_over`) becomes a seek in the index to the first start past the piece: no
+  tokens lexed again.
+- **Kinds and words**: the kind by a table on the first byte; a word code only for a name, as now.
+
+Page 31 measured this shape for `.rr` at 85 instructions and 21 cycles a token. For C that would
+take the lexer from 48 cycles a token to about 20: about a quarter of the parse's cycles.
+
 ## Open
 
-- **The lexer is still the largest part**: about 39% of C++'s time, 217 instructions a token for C
-  alone, against about 85 for `.rr`'s block lexer (page 31). The block lexer's shape fits C's
+- **The lexer is still the largest part**: about 39% of C++'s time, 146 instructions and 48 cycles a
+  token for C alone, against about 85 instructions for `.rr`'s block lexer (page 31) and 15 for
+  simdjson's shape (below). The block lexer's shape fits C's
   tokens better than ECMAScript's:
   - C has one lexical mode outside directives (0181 found ECMAScript's modes rule it out there).
   - Directives' arguments, `#include <…>`, raw strings and character literals would be the rare
     starts that break a run.
 
-  On `.rr`, page 31 measured that shape at parity with a byte lexer in cycles. The gain here would
-  come from the run loop: no `match` a token, no gap scan, a word code only for words. Build it in
-  `rerail-c-lean` first, behind the same digest and oracles.
+  On `.rr`, page 31 measured that shape at parity with a byte lexer in cycles, but that byte lexer
+  was already at 21 cycles a token; this one is at 48. The design is in "simdjson, the gold
+  standard" above. Build it in `rerail-c-lean` first, behind the same digest and oracles, then Go.
 - **Stage 1's lazy masks**: the stop masks of strings, block comments and directive arguments
   (`STOP`, `STAR`, `ARG`) made where one starts (page 31's micro-lexers), not for every block.
   Stage 1 is about 3% of C++'s time.
