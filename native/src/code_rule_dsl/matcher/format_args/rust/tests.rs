@@ -246,9 +246,9 @@ fn format_call_matches_rustc_on_every_case() {
     ))
     .expect("oracle JSON");
     let cases = oracle["cases"].as_array().expect("cases");
-    let originals: serde_json::Value = serde_json::from_str(crate::code_rule_dsl::fixtures::oracle!(
-        "rust/matcher/format_args/rust.cases.json"
-    ))
+    let originals: serde_json::Value = serde_json::from_str(
+        crate::code_rule_dsl::fixtures::oracle!("rust/matcher/format_args/rust.cases.json"),
+    )
     .expect("cases JSON");
     let items_of: BTreeMap<&str, &str> = originals["cases"]
         .as_array()
