@@ -1792,8 +1792,8 @@ describe("CodeRuleBridge and a call it takes up only after its tool wrote the fi
     ]);
   });
 
-  // Claude Code's line diff shows each tab of a line's leading indentation as two spaces: the file's own lines are
-  // matched through that, and a line only the diff holds gets its tabs back where the hunk's lines in the file have them.
+  // Claude Code's line diff shows each tab of the run a line starts with as two spaces: the file's own lines are matched
+  // through that, and a line only the diff holds gets its tabs back where the hunk's lines in the file have them.
   it.each([
     {
       indents: "one tab",
@@ -1804,6 +1804,11 @@ describe("CodeRuleBridge and a call it takes up only after its tool wrote the fi
       indents: "two tabs, under a line with one",
       before: "class A:\n\tdef f(self):\n\t\treturn 1\n\t# note\n", after: "class A:\n\tdef f(self):\n\t\treturn 2\n\t# note\n",
       lines: ["   def f(self):", "-    return 1", "+    return 2", "   # note"], newStart: 2,
+    },
+    {
+      indents: "one tab, beside a line indented tab, space, tab, which the diff shows as three spaces and a tab",
+      before: "if a:\n\t \t# note\n\tone\n\ttwo\n", after: "if a:\n\t \t# note\n\tone\n\tTWO\n",
+      lines: [" if a:", "    \t# note", "   one", "-  two", "+  TWO"], newStart: 1,
     },
   ])("rebuilds a file indented with tabs ($indents) from a line diff that shows them as spaces", async ({ before, after, lines, newStart }) => {
     const output = (path: string) => ({

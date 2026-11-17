@@ -248,8 +248,8 @@ function lineEnding(text: string): string {
 
 /**
  * How the file writes a line only the diff holds: with its line `ending`, and with tabs where the diff shows each tab of
- * a line's leading indentation as two spaces, as Claude Code's line diff does, when the hunk's lines in the file indent
- * with tabs (`tabs`).
+ * the run a line starts with as two spaces (`shownIndentation`), when the hunk's lines in the file indent with tabs
+ * (`tabs`).
  */
 interface FileForm {
   readonly ending: string;
@@ -266,9 +266,12 @@ function indentsWithTabs(lines: readonly string[]): boolean {
   return lines.some((line) => line.startsWith("\t"));
 }
 
-/** `line` as Claude Code's line diff shows it: each tab of its leading indentation as two spaces. */
+/**
+ * `line` as Claude Code's line diff shows it: each tab of the run of tabs it starts with as two spaces. A tab after the
+ * first space stays a tab, so a line indented tab, space, tab shows as three spaces and a tab.
+ */
 function shownIndentation(line: string): string {
-  return line.replace(/^[ \t]+/u, (indentation) => indentation.replaceAll("\t", "  "));
+  return line.replace(/^\t+/u, (tabs) => "  ".repeat(tabs.length));
 }
 
 /** `text` with each pair of spaces of its leading indentation as a tab, as a file that indents with tabs writes it. */
@@ -334,8 +337,8 @@ function heldLine(mark: string, held: string | undefined, text: string, ends: bo
 }
 
 /**
- * Whether the file's line `held` is the diff's line `text`, as it is or with its leading tabs shown as two spaces each
- * (`shownIndentation`), ending in a line feed (with or without a carriage return) when `ends`.
+ * Whether the file's line `held` is the diff's line `text`, as it is or with the tabs it starts with shown as two spaces
+ * each (`shownIndentation`), ending in a line feed (with or without a carriage return) when `ends`.
  */
 function sameLine(held: string, text: string, ends: boolean): boolean {
   return sameText(held, text, ends) || sameText(shownIndentation(held), text, ends);
