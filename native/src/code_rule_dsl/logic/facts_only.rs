@@ -388,6 +388,11 @@ const STATE: &[(&str, &str)] = &[
     // The record kinds (decision 0306): each kind's apply, registered once a process, a registry of code; and a
     // test's log of the records it applied.
     ("content_store/record.rs", "KINDS"),
+    // The lattices a run declared (`native::declare`, its `shortlex_min<>` over its store's atoms): the run's own
+    // functions, as LATTICES holds the process's; no result kept.
+    ("code_rule_dsl/logic/native.rs", "OWN_LATTICES"),
+    // The block new relations are placed in while it has room (decision 0325): where rows go, not a result kept.
+    ("code_rule_dsl/logic/native/setfix/rows.rs", "OPEN"),
     ("content_store/record.rs", "LOG"),
     // The component's own columns whose values are arena texts (decision 0307), set while its plans compile: state
     // of the compilation, not a result kept.
