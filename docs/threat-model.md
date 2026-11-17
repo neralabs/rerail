@@ -303,7 +303,7 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
   the answer (on Linux, only files the daemon held open then). It also repeats one only while the start mark
   (`stopped-answers/start-mark`, `src/engine/storage/start-mark.ts`), which each change to where Rerail runs renews once
   it commits, is the file it found before it asked the daemon for that answer, by device, file id, change time and write
-  time, no `start-mark-stuck` is beside it, and this user may add files to its folder. So a copy written over the live
+  time, no `start-mark-stuck` is beside it, and, on Linux and macOS, this user may add files to its folder. So a copy written over the live
   database file in place after a start this release recorded, which the daemon may answer past from what it read,
   brings no answer of stopped back; `docs/reference.md` names the starts that leave such a copy unseen. A mark planted,
   replaced or linked at that name, or held open so that a renewal cannot replace it, reads as another mark or as stuck,
