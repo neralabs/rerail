@@ -3197,6 +3197,7 @@ dependencies = [
  "cranelift-frontend",
  "cranelift-jit",
  "cranelift-module",
+ "rerail-blocks",
 ]
 
 [[package]]

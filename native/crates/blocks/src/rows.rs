@@ -82,15 +82,11 @@ pub struct ColRead {
 }
 
 impl ColRead {
+    /// Row `i`'s value: the read written once (`col_get`, decision 0325), the kernels' and the JIT's too.
     #[inline]
     pub fn get(&self, i: u32) -> i64 {
-        let (k, l) = chunk_of(i, self.min_log);
-        // SAFETY: the directory is its relation's, which outlives the reader; chunk `k` holds row `i`.
-        unsafe {
-            let d = &*self.dir;
-            let p = (self.dir as *const u8).offset(d.chunk[k].load(Relaxed) as isize);
-            if self.width == 4 { *(p as *const u32).add(l) as i64 } else { *(p as *const i64).add(l) }
-        }
+        // SAFETY: the directory is its relation's, which outlives the reader; row `i` was claimed and reserved.
+        unsafe { crate::generated_reads::col_get(self.dir.cast(), self.min_log, i) as i64 }
     }
 }
 
@@ -138,18 +134,21 @@ impl Rows {
         &self.cols.as_slice()[c]
     }
 
+    /// Where row `i`'s value in column `c` lies, and the column's width: the reads written once (`rows_at`,
+    /// `rows_width`; decision 0325).
     #[inline]
     fn at(&self, i: u32, c: usize) -> (*mut u8, u32) {
-        let (k, l) = chunk_of(i, self.min_log);
-        let d = self.col(c);
-        let p = unsafe { (d as *const ColDir as *const u8).offset(d.chunk[k].load(Relaxed) as isize) as *mut u8 };
-        (unsafe { p.add(l * d.width as usize) }, d.width)
+        let desc = std::ptr::from_ref(self).cast::<u8>();
+        // SAFETY: a live descriptor of this block; column `c` is one of its columns (the callers' row reserved).
+        unsafe { (crate::generated_reads::rows_at(desc, i, c as u32) as usize as *mut u8, crate::generated_reads::rows_width(desc, c as u32)) }
     }
 
+    /// Row `i`'s value in column `c`: the read written once (`rows_get`, decision 0325), the kernels' and the JIT's
+    /// too.
     #[inline]
     pub fn get(&self, i: u32, c: usize) -> i64 {
-        let (p, w) = self.at(i, c);
-        unsafe { if w == 4 { *(p as *const u32) as i64 } else { *(p as *const i64) } }
+        // SAFETY: a live descriptor; row `i` was claimed and reserved, column `c` is one of its columns.
+        unsafe { crate::generated_reads::rows_get(std::ptr::from_ref(self).cast(), i, c as u32) as i64 }
     }
 
     /// # Safety

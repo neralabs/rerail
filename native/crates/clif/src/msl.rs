@@ -8,10 +8,17 @@
 //! the tape reads `t`, at any alignment (two aligned words shifted together where it is not aligned to its size;
 //! a slab lays the document's source after its tape, so the second word lies in it).
 //!
+//! A relation's read (decision 0325) takes a base (`device const uchar* t`, a block's first byte, or any pointer
+//! before the descriptor in its buffer) and the descriptor's offset from it (`ulong a0`), then its own parameters:
+//! every address it computes is an offset from `t`, through the block's self-relative references, so an address a
+//! read returns (`rows_at`) and a descriptor a read calls another of are offsets from the same `t`. Its loads are
+//! aligned, and read as their type.
+//!
 //! MSL has no `goto` and no labelled `break`: a body is a loop over a `switch` on its block, which the Metal
 //! compiler makes branches again. Each value is a local, set where a branch passes it to a block.
 
 use cranelift_codegen::ir::{self, InstructionData, Opcode, condcodes::IntCC, types};
+use crate::reads::Family;
 use std::fmt::Write;
 
 /// MSL's unsigned type for a Cranelift integer type, and its signed one.
@@ -25,40 +32,53 @@ fn ty(t: ir::Type) -> Result<(&'static str, &'static str), String> {
     })
 }
 
-/// The loads every read's body uses: of the tape at any alignment.
+/// The loads every read's body uses: of the tape at any alignment. Guarded, so a kernel may include the reads of
+/// several families.
 pub const HELPERS: &str = "\
+#ifndef CLIF_HELPERS
+#define CLIF_HELPERS 1
 inline ulong clif_word(device const uchar* t,ulong a){device const ulong* w=(device const ulong*)(t+(a&~7ul));uint s=uint(a&7ul)*8u;return s==0u?w[0]:(w[0]>>s)|(w[1]<<(64u-s));}
 inline uchar clif_u8(device const uchar* t,ulong a){return t[a];}
 inline ushort clif_u16(device const uchar* t,ulong a){return (a&1ul)==0ul?*(device const ushort*)(t+a):ushort(clif_word(t,a));}
 inline uint clif_u32(device const uchar* t,ulong a){return (a&3ul)==0ul?*(device const uint*)(t+a):uint(clif_word(t,a));}
 inline ulong clif_u64(device const uchar* t,ulong a){return clif_word(t,a);}
+#endif
 ";
 
-/// The reads `funcs` (by their user name's index, each with its name) as MSL functions, `prefix` before each
-/// name: declarations first, so a read may call one defined after it.
-pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str) -> Result<String, String> {
+/// The reads `funcs` of `family` (by their user name's index, each with its name) as MSL functions, `prefix` before
+/// each name: declarations first, so a read may call one defined after it.
+pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str, family: Family) -> Result<String, String> {
     let named = |id: u32| funcs.iter().find(|(f, ..)| *f == id).map(|(.., n)| format!("{prefix}{n}")).ok_or(format!("a call of u0:{id}, no read"));
     let mut out = String::from(HELPERS);
     let mut bodies = String::new();
     for (id, f, n) in funcs {
-        let signature = signature(f, &format!("{prefix}{n}"))?;
+        let signature = signature(f, &format!("{prefix}{n}"), family)?;
         writeln!(out, "{signature};").unwrap();
         writeln!(bodies, "{signature}{{").unwrap();
-        body(&mut bodies, f, &named).map_err(|e| format!("{n} (u0:{id}): {e}"))?;
+        body(&mut bodies, f, &named, family).map_err(|e| format!("{n} (u0:{id}): {e}"))?;
         bodies.push_str("}\n");
     }
     out.push_str(&bodies);
     Ok(out)
 }
 
-fn signature(f: &ir::Function, name: &str) -> Result<String, String> {
-    let [ret] = f.signature.returns.as_slice() else { return Err(format!("{name}: a read returns one value")) };
-    let params: Vec<String> = f.signature.params.iter().enumerate().skip(2).map(|(i, p)| Ok(format!("{} a{i}", ty(p.value_type)?.0))).collect::<Result<_, String>>()?;
-    let more = if params.is_empty() { String::new() } else { format!(",{}", params.join(",")) };
-    Ok(format!("inline {} {name}(device const uchar* t,thread const uint* v{more})", ty(ret.value_type)?.0))
+/// The pointers a read of `family` takes, as MSL's parameters and as a call passes them on.
+fn pointers(family: Family) -> (&'static str, &'static str) {
+    match family {
+        Family::Tape => ("device const uchar* t,thread const uint* v", "t,v"),
+        Family::Relation => ("device const uchar* t,ulong a0", "t"),
+    }
 }
 
-fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String, String>) -> Result<(), String> {
+fn signature(f: &ir::Function, name: &str, family: Family) -> Result<String, String> {
+    let [ret] = f.signature.returns.as_slice() else { return Err(format!("{name}: a read returns one value")) };
+    let params: Vec<String> =
+        f.signature.params.iter().enumerate().skip(family.pointers()).map(|(i, p)| Ok(format!("{} a{i}", ty(p.value_type)?.0))).collect::<Result<_, String>>()?;
+    let more = if params.is_empty() { String::new() } else { format!(",{}", params.join(",")) };
+    Ok(format!("inline {} {name}({}{more})", ty(ret.value_type)?.0, pointers(family).0))
+}
+
+fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String, String>, family: Family) -> Result<(), String> {
     let dfg = &f.dfg;
     let name = |v: ir::Value| format!("v{}", dfg.resolve_aliases(v).as_u32());
     let entry = f.layout.entry_block().ok_or("no entry block")?;
@@ -71,18 +91,22 @@ fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String
     for (v, t) in &declared {
         writeln!(out, " {t} v{v}=0;").unwrap();
     }
-    // The tape and the view are offsets from `t` and `v`; the read's own parameters are its arguments.
+    // The family's pointers are offsets from `t` (and `v`); the read's own parameters are its arguments.
     for (k, &p) in dfg.block_params(entry).iter().enumerate() {
-        match k {
-            0 | 1 => writeln!(out, " {}=0ul;", name(p)).unwrap(),
-            _ => writeln!(out, " {}=a{k};", name(p)).unwrap(),
+        if family == Family::Relation && k == 0 {
+            // The descriptor: its offset from `t`.
+            writeln!(out, " {}=a0;", name(p)).unwrap();
+        } else if k < family.pointers() {
+            writeln!(out, " {}=0ul;", name(p)).unwrap();
+        } else {
+            writeln!(out, " {}=a{k};", name(p)).unwrap();
         }
     }
     writeln!(out, " uint b={};\n while(true){{switch(b){{", entry.as_u32()).unwrap();
     for block in f.layout.blocks() {
         writeln!(out, " case {}u:{{", block.as_u32()).unwrap();
         for inst in f.layout.block_insts(block) {
-            writeln!(out, "  {}", instruction(f, inst, &name, named)?).unwrap();
+            writeln!(out, "  {}", instruction(f, inst, &name, named, family)?).unwrap();
         }
         out.push_str(" }\n");
     }
@@ -130,7 +154,13 @@ fn cond(cc: IntCC, a: &str, b: &str, u: &str, s: &str) -> String {
     format!("uchar(({t})({a}){op}({t})({b}))")
 }
 
-fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> String, named: &dyn Fn(u32) -> Result<String, String>) -> Result<String, String> {
+fn instruction(
+    f: &ir::Function,
+    inst: ir::Inst,
+    name: &dyn Fn(ir::Value) -> String,
+    named: &dyn Fn(u32) -> Result<String, String>,
+    family: Family,
+) -> Result<String, String> {
     let dfg = &f.dfg;
     let data = &dfg.insts[inst];
     let op = data.opcode();
@@ -182,6 +212,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::IshlImm => set(shift(&args[0], &(imm()? as u64 & 63).to_string(), "<<", false)),
         Opcode::UshrImm => set(shift(&args[0], &(imm()? as u64 & 63).to_string(), ">>", false)),
         Opcode::SshrImm => set(shift(&args[0], &(imm()? as u64 & 63).to_string(), ">>", true)),
+        Opcode::Clz => set(format!("{u}(clz({}))", args[0])),
         Opcode::Umin => set(format!("min({},{})", args[0], args[1])),
         Opcode::Umax => set(format!("max({},{})", args[0], args[1])),
         Opcode::Icmp | Opcode::IcmpImm => {
@@ -203,7 +234,16 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
                 Opcode::Uload32 => 32,
                 _ => bits,
             };
-            if aligned {
+            if aligned && family == Family::Relation {
+                // The block's own words, at their alignment.
+                let t = match size {
+                    8 => "uchar",
+                    16 => "ushort",
+                    32 => "uint",
+                    _ => "ulong",
+                };
+                set(format!("{u}(*(device const {t}*)(t+{}))", addr(&args[0])))
+            } else if aligned {
                 // The view: its u32 fields.
                 if size != 32 {
                     return Err(format!("a load of the view of {size} bits"));
@@ -219,9 +259,14 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
                 ir::ExternalName::User(n) => f.params.user_named_funcs()[*n].index,
                 n => return Err(format!("a call of {n:?}")),
             };
-            // A read's call passes its tape and view on: the callee's offsets count from the same pointers.
-            let more: Vec<&String> = args.iter().skip(2).collect();
-            let call = format!("{}(t,v{}{})", named(callee)?, if more.is_empty() { "" } else { "," }, more.iter().map(|a| a.as_str()).collect::<Vec<_>>().join(","));
+            // A read's call passes its pointers on: the callee's offsets count from the same ones. (A relation's read
+            // passes `t` and the callee's descriptor, an offset from it.)
+            let more: Vec<&String> = args.iter().skip(family.pointers()).collect();
+            let pointers = match family {
+                Family::Relation => format!("t,{}", args[0]),
+                Family::Tape => pointers(family).1.to_owned(),
+            };
+            let call = format!("{}({pointers}{}{})", named(callee)?, if more.is_empty() { "" } else { "," }, more.iter().map(|a| a.as_str()).collect::<Vec<_>>().join(","));
             match results.len() {
                 0 => format!("{call};"),
                 1 => set(call),

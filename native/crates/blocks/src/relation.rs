@@ -126,11 +126,11 @@ impl Relation {
         self.rows.get(id - self.base_rows, c)
     }
 
+    /// Whether the dead bits mark row `id`: the read written once (`rel_dead`, decision 0325).
     #[inline]
     pub fn dead_bit(&self, id: u32) -> bool {
-        let w = (id >> 6) as usize;
-        let d = self.dead.as_slice();
-        w < d.len() && (d[w] >> (id & 63)) & 1 == 1
+        // SAFETY: a live descriptor; the read checks `id` against the bits' length.
+        unsafe { crate::generated_reads::rel_dead(std::ptr::from_ref(self).cast(), id) != 0 }
     }
 
     #[inline]
@@ -138,16 +138,17 @@ impl Relation {
         &self.indexes.as_slice()[i]
     }
 
-    /// One relation's rows for a key of hash `h` on index `i`, before liveness and key equality: its bucket.
+    /// One relation's rows for a key of hash `h` on index `i`, before liveness and key equality: its bucket, found
+    /// by the read written once (`rel_group`, decision 0325).
     #[inline]
     pub fn group(&self, i: usize, h: u64) -> &[u32] {
-        let ix = self.index(i);
-        let o = ix.offs.as_slice();
-        if o.is_empty() {
+        // SAFETY: a live descriptor; index `i` is one of its indexes.
+        let g = unsafe { crate::generated_reads::rel_group(std::ptr::from_ref(self).cast(), i as u32, h) };
+        let (start, len) = ((g >> 32) as usize, (g & 0xffff_ffff) as usize);
+        if len == 0 {
             return &[];
         }
-        let b = (h & ix.mask) as usize;
-        &ix.rows.as_slice()[o[b] as usize..o[b + 1] as usize]
+        &self.index(i).rows.as_slice()[start..start + len]
     }
 
     /// `held_bytes` by part: values written, chunk room unwritten, order, index buckets, index rows, dead bits,
