@@ -28,7 +28,6 @@ import {
   renderTips,
   renderUnsupportedPlatform,
   renderWslNote,
-  shellQuote,
   type AgentsConnection,
   type CodingAgent,
   type DashboardLink,
@@ -161,14 +160,20 @@ describe("T2b may Rerail read sessions", () => {
   it("says what it sees and why, and its yes carries the folder the run was named", () => {
     const form = sessionsQuestion({ carriedArgs: ["--repo", "/Users/me/code/acme-web"] });
     const text = renderQuestion(form, "agent");
-    expect(text).toContain("Can Rerail see your coding agent sessions?");
-    expect(text).toContain("Rerail sees what you ask your agent, what it does, and the files it edits,\nso it can check the work against your rules.");
+    expect(text).toContain("OK for Rerail to read your coding agent sessions?");
+    expect(text).toContain("Rerail checks your coding agent’s work, not you. It reads what you ask\nthe agent, what the agent does, and the files it edits.");
     expect(text).toContain("  ✓ Stays on this computer. Nothing is sent anywhere.");
-    expect(text).toContain("  ✓ You’re asked once, for every repo you start Rerail in.");
-    expect(text).toContain("1. Yes, allow\n");
-    expect(text).toMatch(/2\. No, cancel set-up +nothing is connected or started/);
+    expect(text).toContain("  ✓ You’re asked once, for every repo you start Rerail in.\n  ✓ Stop Rerail in a repo anytime: run rerail stop in its folder.");
+    expect(text).toContain("1. Yes, that’s OK\n");
+    expect(text).toMatch(/2\. Not now, cancel set-up +nothing is connected or started/);
     expect(text).toContain("1. rerail setup --answer allow --repo /Users/me/code/acme-web");
     expect(text).toContain("2. rerail setup --answer decline");
+  });
+
+  // Relayed by a coding agent, the person reads the question in a session; most agents read only sessions started after set-up.
+  it("asked in a coding agent session, asks about sessions like that one", () => {
+    expect(renderQuestion(sessionsQuestion({ carriedArgs: [], inSession: true }), "agent")).toContain("OK for Rerail to read coding agent sessions like this one?");
+    expect(renderQuestion(sessionsQuestion({ carriedArgs: [] }), "terminal")).toContain("OK for Rerail to read your coding agent sessions?");
   });
 
   // Set-up installed Rerail before asking, so "No" does not leave the machine as it was: the screen says so.
@@ -224,9 +229,15 @@ describe("T3 / C3 ask before reading", () => {
   it.each(LANES)("names the repo, says what scanning does, and offers three answers (%s)", lane => {
     const text = stripAnsi(renderReadRepoQuestion(input, lane));
     expect(text).toContain("Find rule packs for acme-web?");
-    expect(text).toContain("Rule packs are ready-made sets of rules your coding agent must follow.");
-    expect(text).toContain("Rerail can scan this repo’s files and suggest packs that fit.");
-    expect(text).toContain("  ✓ Scanning only reads files. Your code stays on this computer.");
+    expect(text).toContain("Rule packs are ready-made rules, mostly the same ones linters use\n(ESLint, Ruff, Clippy…).\n");
+    expect(text).toContain("Rerail checks while your coding agent writes it, so the agent\nfixes problems in the same turn, before review or CI.");
+    expect(text).toContain([
+      "  ✓ Your linter and CI stay as they are. Rerail doesn’t change them.",
+      "  ✓ Scanning looks at file types and dependencies to suggest packs, not at",
+      "    how your code is written. Your code stays on this computer.",
+      "  ✓ It also reads the ESLint, oxlint or Ruff config at the repo’s root:",
+      "    rules that config turns off start off in Rerail too.",
+    ].join("\n"));
     expect(text).toContain("  ✓ Nothing is installed or turned on until you say yes.");
     expect(text).toContain("1. Yes, scan acme-web");
     expect(text).toMatch(/2\. Scan a different repo… +e\.g\. ~\/code\/landing-page/);
@@ -249,14 +260,41 @@ describe("T3 / C3 ask before reading", () => {
   });
 
   it("quotes a repo path the shell would split, and uses the given set-up command", () => {
-    const text = renderReadRepoQuestion({ repoName: "it's mine", repoPath: "/tmp/it's mine", setupCommand: "npx rerail setup" }, "agent");
+    const setupCommand = { shell: "posix", words: ["npx", "rerail", "setup"] } as const;
+    const text = renderReadRepoQuestion({ repoName: "it's mine", repoPath: "/tmp/it's mine", setupCommand }, "agent");
     expect(text).toContain("1. npx rerail setup --answer yes --repo '/tmp/it'\\''s mine'");
   });
+});
 
-  it("quotes a Windows path with double quotes, as cmd.exe runs it, and leaves a plain word alone", () => {
-    expect(shellQuote(String.raw`C:\Users\Alice O'Neil\.rerail\bin\rerail.cmd`, "win32")).toBe(String.raw`"C:\Users\Alice O'Neil\.rerail\bin\rerail.cmd"`);
-    expect(shellQuote("--answer", "win32")).toBe("--answer");
-    expect(shellQuote(String.raw`C:\Users\Alice O'Neil\.rerail\bin\rerail.cmd`, "linux")).toBe(String.raw`'C:\Users\Alice O'\''Neil\.rerail\bin\rerail.cmd'`);
+describe("answer commands for PowerShell", () => {
+  // Node and the CLI, as set-up writes a PowerShell answer (`setupAnswerCommand`).
+  const words = [String.raw`C:\Program Files\nodejs\node.exe`, String.raw`C:\Users\Alice O'Neil\.rerail\current\dist\cli\cli.js`];
+  const setupCommand = { shell: "powershell", words: [...words, "setup", "--relay", "--powershell"] } as const;
+  const launcher = String.raw`& 'C:\Program Files\nodejs\node.exe' 'C:\Users\Alice O''Neil\.rerail\current\dist\cli\cli.js' setup --relay --powershell`;
+
+  it("quotes every answer's values for PowerShell, which would split two packs at their comma", () => {
+    const text = renderRecommendedPacks({ ...PACKS, repoPath: String.raw`C:\code\acme $web`, setupCommand }, "agent");
+    expect(text).toContain(`1. ${launcher} --answer start --repo 'C:\\code\\acme $web' --packs 'typescript@0.1.1,acme-api@1.2.0'\n`);
+    expect(text).toContain(`3. ${launcher} --answer not-now\n`);
+  });
+
+  it("puts the value the agent writes in single quotes, so the packs it names stay one argument", () => {
+    const text = renderRecommendedPacks({ ...PACKS, setupCommand }, "agent");
+    expect(text).toContain(`2. To choose the rule packs: ${launcher} --answer choose --repo /Users/me/code/acme-web --packs '<packs>', with`);
+    const read = renderReadRepoQuestion({ repoName: "acme-web", repoPath: "/Users/me/code/acme-web", setupCommand }, "agent");
+    expect(read).toContain(`2. ${launcher} --repo '<the folder they name>'`);
+  });
+
+  // PowerShell ends a single-quoted value at any of the five quote characters, so `--repo 'C:\code\O'Neil'` is a parse
+  // error and nothing runs; each written twice stays in the value.
+  it("tells the agent to write each of PowerShell's five quotes twice in the folder it writes in", () => {
+    const twice = "with each ' \u2018 \u2019 \u201A \u201B in <the folder they name> written twice";
+    const read = renderReadRepoQuestion({ repoName: "acme-web", repoPath: "/Users/me/code/acme-web", setupCommand }, "agent");
+    expect(read).toContain(`2. ${launcher} --repo '<the folder they name>', ${twice}\n`);
+    expect(renderNoRepoQuestion({ setupCommand }, "agent")).toContain(`1. ${launcher} --repo '<the folder they name>', ${twice}\n`);
+    // A pack name holds no quote; a POSIX shell's agent quotes the folder as it needs.
+    expect(renderRecommendedPacks({ ...PACKS, setupCommand }, "agent")).not.toContain("written twice");
+    expect(renderNoRepoQuestion({}, "agent")).not.toContain("written twice");
   });
 });
 
@@ -267,10 +305,10 @@ describe("T4 / C4 recommended rule packs", () => {
     expect(renderQuestion(sessionsQuestion({ carriedArgs: [] }), "json")).not.toMatch(/^\n/u);
   });
 
-  it.each(LANES)("lists each rule pack first, then its rule count, then why it fits, then what a yes connects (%s)", lane => {
+  it.each(LANES)("lists each rule pack first, then its rule count, then why it is suggested, then what a yes connects (%s)", lane => {
     const text = stripAnsi(renderRecommendedPacks(PACKS, lane));
-    expect(text).toContain("Scanned acme-web. 2 rule packs fit:");
-    expect(text).toMatch(/Rule pack\s+Rules\s+Why it fits/);
+    expect(text).toContain("Scanned acme-web. 2 rule packs suggested for what it’s built with:");
+    expect(text).toMatch(/Rule pack\s+Rules\s+Why suggested/);
     expect(text).toMatch(/TypeScript\s+74\s+matches the typescript dependency in package\.json and \*\.ts files/);
     expect(text).toMatch(/acme-api\s+92\s+matches the acme_api package/);
     expect(text).not.toContain("Installs from npm");
@@ -322,39 +360,77 @@ describe("T4 / C4 recommended rule packs", () => {
     const header = text.split("\n").find(line => line.includes("Rule pack")) ?? "";
     const row = text.split("\n").find(line => line.includes("A very long")) ?? "";
     expect(row.indexOf("12")).toBe(header.indexOf("Rules"));
-    expect(row.indexOf("the reason")).toBe(header.indexOf("Why it fits"));
+    expect(row.indexOf("the reason")).toBe(header.indexOf("Why suggested"));
   });
 
-  it("lists what the lint config did not read, then the rules it starts off or configures, counting past eight lines", () => {
-    const settings = Array.from({ length: 8 }, (_, index) => ({ ruleId: `eslint-rule-${index}`, folder: index === 0 ? "tests" : "", on: false as const, config: null, because: `.eslintrc.json: "rule-${index}": "off"` }));
+  it("lists what the lint config did not read, then the rules it starts on, off or configures, counting past eight lines", () => {
+    const settings = Array.from({ length: 8 }, (_, index) => ({ ruleId: `eslint-rule-${index}`, folder: index === 0 ? "tests" : "", on: false as const, config: null, explicit: true, because: `.eslintrc.json: "rule-${index}": "off"` }));
     const text = renderRecommendedPacks({
       ...PACKS,
       lintConfig: {
-        settings: [{ ruleId: "typescript-eslint-consistent-type-definitions", folder: "", on: null, config: { option: "type" }, because: ".eslintrc.json: \"x\": [\"error\",\"type\"]" }, ...settings],
+        settings: [
+          { ruleId: "typescript-eslint-consistent-type-definitions", folder: "", on: null, config: { option: "type" }, explicit: true, because: ".eslintrc.json: \"x\": [\"error\",\"type\"]" },
+          { ruleId: "eslint-no-debugger", folder: "", on: true, config: null, explicit: true, because: ".eslintrc.json: \"no-debugger\": \"error\"" },
+          ...settings,
+        ],
         notes: ["eslint.config.ts is not read: Rerail never runs your config."],
       },
     }, "agent");
-    expect(text).toContain("  From your lint config (read as data, never run):\n    eslint.config.ts is not read: Rerail never runs your config.\n    typescript-eslint-consistent-type-definitions starts with option = \"type\"  .eslintrc.json: \"x\": [\"error\",\"type\"]\n    eslint-rule-0 starts off in tests/  .eslintrc.json: \"rule-0\": \"off\"\n    eslint-rule-1 starts off  .eslintrc.json: \"rule-1\": \"off\"");
-    expect(text).toContain("    eslint-rule-4 starts off");
-    expect(text).not.toContain("eslint-rule-5");
-    expect(text).toContain("    …and 3 more.");
+    expect(text).toContain([
+      "  From your lint config (read as data, never run):",
+      "    eslint.config.ts is not read: Rerail never runs your config.",
+      "    typescript-eslint-consistent-type-definitions starts with option = \"type\"  .eslintrc.json: \"x\": [\"error\",\"type\"]",
+      "    eslint-no-debugger starts on  .eslintrc.json: \"no-debugger\": \"error\"",
+      "    eslint-rule-0 starts off in tests/  .eslintrc.json: \"rule-0\": \"off\"",
+      "    eslint-rule-1 starts off  .eslintrc.json: \"rule-1\": \"off\"",
+    ].join("\n"));
+    expect(text).toContain("    eslint-rule-3 starts off");
+    expect(text).not.toContain("eslint-rule-4");
+    expect(text).toContain("    …and 4 more.");
     expect(renderRecommendedPacks({ ...PACKS, lintConfig: { settings: [], notes: [] } }, "agent")).not.toContain("lint config");
   });
 
+  it("counts the rules a linter's defaults or a preset decide, one row per reason, within the eight lines", () => {
+    const implicit = (index: number, on: boolean, because: string) => ({ ruleId: `eslint-rule-${index}`, folder: "", on, config: null, explicit: false, because });
+    const text = renderRecommendedPacks({
+      ...PACKS,
+      lintConfig: {
+        settings: [
+          ...Array.from({ length: 87 }, (_, index) => implicit(index, false, "eslint.config.js does not turn it on")),
+          implicit(100, true, "eslint.config.js: js.configs.recommended"),
+          { ruleId: "eslint-no-console", folder: "", on: true, config: { allow: ["warn"] }, explicit: false, because: "eslint.config.js: js.configs.recommended" },
+          ...Array.from({ length: 6 }, (_, index) => ({ ruleId: `eslint-off-${index}`, folder: "", on: false, config: null, explicit: true, because: `eslint.config.js: "off-${index}": "off"` })),
+        ],
+        notes: [],
+      },
+    }, "agent");
+    expect(text).toContain([
+      "  From your lint config (read as data, never run):",
+      "    87 rules start off  eslint.config.js does not turn it on",
+      "    1 rule starts on  eslint.config.js: js.configs.recommended",
+      "    eslint-no-console starts on with allow = [\"warn\"]  eslint.config.js: js.configs.recommended",
+      "    eslint-off-0 starts off  eslint.config.js: \"off-0\": \"off\"",
+    ].join("\n"));
+    expect(text).not.toContain("eslint-rule-");
+    expect(text).toContain("    eslint-off-3 starts off");
+    expect(text).not.toContain("eslint-off-4");
+    expect(text).toContain("    …and 2 more.");
+  });
+
   it("marks the scan with a bullet in the terminal only", () => {
-    expect(stripAnsi(renderRecommendedPacks(PACKS, "terminal"))).toContain("● Scanned acme-web. 2 rule packs fit:");
+    expect(stripAnsi(renderRecommendedPacks(PACKS, "terminal"))).toContain("● Scanned acme-web. 2 rule packs suggested for what it’s built with:");
     expect(renderRecommendedPacks(PACKS, "agent")).not.toContain("● Scanned");
   });
 
   it("speaks of one rule pack in the singular", () => {
     const text = renderRecommendedPacks({ ...PACKS, packs: PACKS.packs.slice(0, 1) }, "agent");
-    expect(text).toContain("Scanned acme-web. 1 rule pack fits:");
+    expect(text).toContain("Scanned acme-web. 1 rule pack suggested for what it’s built with:");
     expect(text).toContain("Start Rerail in acme-web with this rule pack?");
   });
 
   it("says plainly when no rule pack fits, and when no coding agent was found", () => {
     const text = renderRecommendedPacks({ ...PACKS, packs: [], agentsFound: [] }, "agent");
-    expect(text).toContain("Scanned acme-web. None of Rerail’s rule packs fit it.");
+    expect(text).toContain("Scanned acme-web. No rule pack matches what it’s built with.");
     expect(text).not.toContain("Packs look for");
     expect(text).not.toContain("Rule pack ");
     expect(text).toContain("Start Rerail in acme-web with no rule packs on?");
@@ -381,7 +457,7 @@ describe("T4 / C4 recommended rule packs", () => {
 
   it("says why no rule pack fits: what the scan found and skipped, the pack that came closest, and what each pack looks for", () => {
     const block = [
-      "Scanned acme-web. None of Rerail’s rule packs fit it.",
+      "Scanned acme-web. No rule pack matches what it’s built with.",
       "",
       "  Found           .py 9 · .md 4",
       "                  from Git’s list of files, which leaves out what Git ignores",
@@ -553,6 +629,16 @@ describe("T6 / C6 summary", () => {
     expect(text).not.toContain("/hooks");
   });
 
+  it.each(LANES)("says the hooks of a coding agent whose hook failed are written, not that its config was left (%s)", lane => {
+    const failed = [{ agent: CLAUDE, message: "Claude Code's Rerail hook did not answer within 30 s", registered: true as const }];
+    const text = stripAnsi(renderSummary({ ...SUMMARY, agents: { ...CONNECTED, connected: [CLAUDE, CURSOR], failed } }, lane));
+    expect(text).toContain([
+      "  △ Couldn’t connect Claude Code: Claude Code's Rerail hook did not answer within 30 s",
+      "    Rerail’s hooks are written, but they fail. Fix that, then run rerail setup again to connect Claude Code.",
+    ].join("\n"));
+    expect(text).not.toContain("left its config");
+  });
+
   it.each(LANES)("names a coding agent it could not connect, with the file, why, and what to do (%s)", lane => {
     const failed = [{ agent: CLAUDE, message: "Expected property name or '}' in JSON at position 4", file: "/Users/me/.claude/settings.json" }];
     const text = stripAnsi(renderSummary({ ...SUMMARY, agents: { ...CONNECTED, connected: [CURSOR], failed } }, lane));
@@ -655,7 +741,7 @@ describe("E5 skip for now", () => {
   it.each(LANES)("says Rerail is on in no repo and how to start it later, as the summary is laid out (%s)", lane => {
     const text = stripAnsi(renderSkipped(CONNECTED, lane));
     expect(text).toContain("● Rerail is installed · not on in any repo yet\n\n");
-    expect(text).toContain("  Start     Open a session in one of your repos and type /rerail-start.\n            Rerail asks, suggests rule packs that fit, and starts there.");
+    expect(text).toContain("  Start     Open a session in one of your repos and type /rerail-start.\n            Rerail asks, suggests rule packs, and starts there.");
     expect(text).toContain("  Type /rerail in any session for help and every command.");
     expect(text).not.toMatch(/Connected|Next:/);
   });

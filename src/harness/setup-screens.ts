@@ -1,4 +1,5 @@
 import { ADAPTER_CAPABILITIES, type CommandSigil, type RerailHost } from "../engine/adapter-contract.js";
+import { commandLine, placeholderWord, textPlaceholder, type Shell } from "../engine/command-line.js";
 import type { NoFitExplanation } from "../engine/catalog/rule-packs.js";
 import type { SetupOption, SetupOptionInput, SetupQuestion, SetupQuestionId } from "./setup-step.js";
 import { RERAIL_BRAND_FOREGROUND } from "../presentation/terminal-brand.generated.js";
@@ -58,18 +59,28 @@ export interface DashboardLink {
   readonly browserOpened: boolean;
   /** Why no browser opened, e.g. "this looks like a remote session". */
   readonly noBrowserReason?: string;
-  /** Set-up did not try to open a browser (an earlier run did): the link alone, with no E6 line. */
+  /** Set-up did not try to open a browser (an earlier run did, or a coding agent runs it): the link alone, with no E6 line. */
   readonly linkOnly?: boolean;
 }
 
-/** The command a coding agent runs to answer a question; set-up's own invocation. */
-export const SETUP_COMMAND = "rerail setup";
+/**
+ * How a coding agent runs set-up again to answer a question: the words before an answer's own (the launcher, `setup`
+ * and what the run carries), unquoted, and the shell the agent runs them in, which they are quoted for.
+ */
+export interface SetupCommand {
+  readonly words: readonly string[];
+  readonly shell: Shell;
+}
+
+/** The set-up command an answer runs when the run names none: `rerail setup` in a POSIX shell. */
+const SETUP_COMMAND: SetupCommand = { words: ["rerail", "setup"], shell: "posix" };
 
 /**
  * The flags the agent lane's answer commands use; set-up's argument parser reads the same ones. `relay` picks the
  * agent lane even when a coding agent runs commands in a terminal: `/rerail-start` and every answer pass it.
+ * `powershell` says the coding agent runs them in PowerShell (Codex and Cursor on Windows), so they are written for it.
  */
-export const SETUP_FLAGS = { answer: "--answer", repo: "--repo", agents: "--agents", packs: "--packs", relay: "--relay" } as const;
+export const SETUP_FLAGS = { answer: "--answer", repo: "--repo", agents: "--agents", packs: "--packs", relay: "--relay", powershell: "--powershell" } as const;
 
 /** Answer keys in the order each question numbers its answers (answer 1 is index 0). */
 export const READ_REPO_ANSWERS = ["yes", "other-folder", "pick-myself"] as const;
@@ -139,22 +150,13 @@ function agentNames(agents: readonly CodingAgent[]): string[] {
   return agents.map(agent => clean(agent.name));
 }
 
-const SHELL_SAFE = /^[\w@%+=:,./~-]+$/;
-/**
- * One shell word; set-up quotes the launcher path it hands the coding agent with it too. POSIX shells get single
- * quotes. Windows gets double quotes, as cmd.exe (and Git Bash) take a quoted path, like every command Rerail writes
- * for Windows (`harness-registration.ts`); a Windows path cannot contain `"`.
- */
-export function shellQuote(value: string, platform: NodeJS.Platform = process.platform): string {
-  if (SHELL_SAFE.test(value)) return value;
-  return platform === "win32" ? `"${value}"` : `'${value.replaceAll("'", "'\\''")}'`;
-}
-
 // ── Questions ───────────────────────────────────────────────────────────────
 
 /** What an answer asks the person for, plus what the agent lane writes in its place. */
 interface ChoiceInput extends SetupOptionInput {
   readonly placeholder: string;
+  /** The person types it as they like (a folder name), so it may hold a quote; a pack name never does. */
+  readonly freeText?: true;
 }
 
 interface Choice {
@@ -178,17 +180,26 @@ export interface QuestionForm {
   readonly trail: readonly string[];
   readonly choices: readonly Choice[];
   /** Overrides `rerail setup` in the agent lane's answer commands. */
-  readonly setupCommand?: string;
+  readonly setupCommand?: SetupCommand;
 }
 
 const AGENT_QUESTION_INTRO = "Rerail set-up is waiting for the person’s answer. Ask them this, as written, and wait for their reply:";
 const AGENT_QUESTION_OUTRO = "Do not choose for them. When they answer, run set-up again with their answer:";
 
-/** What the coding agent runs for one answer: the command, the answer's arguments, and the value it names. */
+/**
+ * What the coding agent runs for one answer: the set-up command and the answer's arguments as one line for the agent's
+ * shell, then the value it names, where the agent writes it.
+ */
 function agentCommand(form: QuestionForm, choice: Choice): string {
-  const input = choice.input === undefined ? [] : [choice.input.flag, choice.input.placeholder];
-  const command = [form.setupCommand ?? SETUP_COMMAND, ...choice.args.map(arg => shellQuote(arg)), ...input].join(" ");
+  const { words, shell } = form.setupCommand ?? SETUP_COMMAND;
+  const line = commandLine(shell, [...words, ...choice.args]);
+  const command = choice.input === undefined ? line : `${line} ${choice.input.flag} ${inputPlaceholder(shell, choice.input)}`;
   return choice.agentText === undefined ? command : choice.agentText(command);
+}
+
+/** Where the agent writes the person's value in `shell`; for text they type as they like, what to do to a quote in it. */
+function inputPlaceholder(shell: Shell, { placeholder, freeText }: ChoiceInput): string {
+  return freeText === true ? textPlaceholder(shell, placeholder) : placeholderWord(shell, placeholder);
 }
 
 /** Where a question sits in the set-up's main flow, shown before it in the terminal: "Step 2 of 3". */
@@ -269,7 +280,9 @@ export function setupQuestion(form: QuestionForm, baseArgs: readonly string[]): 
 }
 
 const FOLDER_PLACEHOLDER = "<the folder they name>";
-const folderInput = (example: string): ChoiceInput => ({ flag: SETUP_FLAGS.repo, prompt: "Which folder?", hint: `for example ${example}`, placeholder: FOLDER_PLACEHOLDER });
+const folderInput = (example: string): ChoiceInput => ({
+  flag: SETUP_FLAGS.repo, prompt: "Which folder?", hint: `for example ${example}`, placeholder: FOLDER_PLACEHOLDER, freeText: true,
+});
 
 // ── T1 · Banner ────────────────────────────────────────────────────────────
 
@@ -328,12 +341,18 @@ export function renderOnPath(input: OnPathInput, lane: SetupLane): string {
 export interface SessionsInput {
   /** What every answer carries on, so the run picks up where it was: `--repo <folder>` when one was named. */
   readonly carriedArgs: readonly string[];
-  readonly setupCommand?: string;
+  readonly setupCommand?: SetupCommand;
   /**
    * Internal testing: the hosts of the remotes this computer sends Rerail's data to (`rerail remote`), so the screen
    * never says nothing is sent when something is; null when the remote configuration could not be read.
    */
   readonly remoteHosts?: readonly string[] | null;
+  /**
+   * A coding agent relays set-up (`--relay`, or the json lane), so the person reads the question in a coding agent
+   * session: it asks about sessions like that one, rather than as if sessions were somewhere else. Not "this session":
+   * most coding agents load Rerail's hooks only in sessions started after set-up.
+   */
+  readonly inSession?: boolean;
 }
 
 /** What the sessions question says about where sessions go: nowhere, or each remote by its host, and how to stop. */
@@ -352,17 +371,20 @@ export function sessionsQuestion(input: SessionsInput): QuestionForm {
   return {
     id: "sessions",
     lead: [],
-    prompt: "Can Rerail see your coding agent sessions?",
+    prompt: input.inSession === true
+      ? "OK for Rerail to read coding agent sessions like this one?"
+      : "OK for Rerail to read your coding agent sessions?",
     trail: [
-      "Rerail sees what you ask your agent, what it does, and the files it edits,",
-      "so it can check the work against your rules.",
+      "Rerail checks your coding agent’s work, not you. It reads what you ask",
+      "the agent, what the agent does, and the files it edits.",
       "",
       ...sessionsDestination(input.remoteHosts),
       "  ✓ You’re asked once, for every repo you start Rerail in.",
+      "  ✓ Stop Rerail in a repo anytime: run rerail stop in its folder.",
     ],
     choices: [
-      { answer: "allow", label: "Yes, allow", args: [SETUP_FLAGS.answer, "allow", ...input.carriedArgs] },
-      { answer: "decline", label: "No, cancel set-up", hint: "nothing is connected or started", args: [SETUP_FLAGS.answer, "decline"] },
+      { answer: "allow", label: "Yes, that’s OK", args: [SETUP_FLAGS.answer, "allow", ...input.carriedArgs] },
+      { answer: "decline", label: "Not now, cancel set-up", hint: "nothing is connected or started", args: [SETUP_FLAGS.answer, "decline"] },
     ],
     ...(input.setupCommand === undefined ? {} : { setupCommand: input.setupCommand }),
   };
@@ -389,7 +411,7 @@ export interface ReadRepoInput {
   readonly repoName: string;
   readonly repoPath: string;
   /** Overrides `rerail setup` in the agent lane's answer commands. */
-  readonly setupCommand?: string;
+  readonly setupCommand?: SetupCommand;
 }
 
 /** T3 / C3: Rerail names the repo, says what scanning it does, and asks before reading it. */
@@ -401,10 +423,18 @@ export function readRepoQuestion(input: ReadRepoInput): QuestionForm {
     lead: [],
     prompt: `Find rule packs for ${repo}?`,
     trail: [
-      "Rule packs are ready-made sets of rules your coding agent must follow.",
-      "Rerail can scan this repo’s files and suggest packs that fit.",
+      "Rule packs are ready-made rules, mostly the same ones linters use",
+      "(ESLint, Ruff, Clippy…).",
       "",
-      "  ✓ Scanning only reads files. Your code stays on this computer.",
+      "How they differ from your linter: your linter checks code after it’s",
+      "written. Rerail checks while your coding agent writes it, so the agent",
+      "fixes problems in the same turn, before review or CI.",
+      "",
+      "  ✓ Your linter and CI stay as they are. Rerail doesn’t change them.",
+      "  ✓ Scanning looks at file types and dependencies to suggest packs, not at",
+      "    how your code is written. Your code stays on this computer.",
+      "  ✓ It also reads the ESLint, oxlint or Ruff config at the repo’s root:",
+      "    rules that config turns off start off in Rerail too.",
       "  ✓ Nothing is installed or turned on until you say yes.",
     ],
     choices: [
@@ -424,16 +454,22 @@ export function renderReadRepoQuestion(input: ReadRepoInput, lane: SetupLane): s
 
 /** What set-up takes from the repository's own lint config: `repository-lint-config.ts`'s result. */
 export interface LintConfigInput {
-  /** Rules that start off (`on: false`) or with option values (`config`), in a folder or everywhere (`""`), and the config entry that says so. */
-  readonly settings: readonly {
-    readonly ruleId: string;
-    readonly folder: string;
-    readonly on: false | null;
-    readonly config: Readonly<Record<string, unknown>> | null;
-    readonly because: string;
-  }[];
+  /** Rules that start on or off, or with option values (`config`), in a folder or everywhere (`""`), and the config entry that says so. */
+  readonly settings: readonly LintConfigInputSetting[];
   /** Files not read, options not mapped, conflicts. */
   readonly notes: readonly string[];
+}
+
+/** One rule setting set-up takes from the lint config. */
+export interface LintConfigInputSetting {
+  readonly ruleId: string;
+  readonly folder: string;
+  /** `null`: as the pack has it (the setting carries options only). */
+  readonly on: boolean | null;
+  readonly config: Readonly<Record<string, unknown>> | null;
+  /** Whether the config names the rule; not: a linter's defaults or a preset decide, and the screen counts it. */
+  readonly explicit: boolean;
+  readonly because: string;
 }
 
 export interface RecommendedPacksInput {
@@ -448,7 +484,7 @@ export interface RecommendedPacksInput {
   readonly withoutRules?: readonly string[];
   /** The coding agents "Yes" connects. */
   readonly agentsFound: readonly CodingAgent[];
-  readonly setupCommand?: string;
+  readonly setupCommand?: SetupCommand;
   /** The rule settings starting Rerail takes from the repository's lint config; nothing shown when empty. */
   readonly lintConfig?: LintConfigInput;
   /** Why no rule pack fits, when set-up scanned the repository and had packs to offer. */
@@ -461,20 +497,44 @@ const MAX_UNAVAILABLE_LINES = 4;
 /** At most this many lint config lines; the rest are counted. */
 const MAX_LINT_CONFIG_LINES = 8;
 
-/** Which rules start off or configured from the repository's lint config, and what was not read. */
+/** One setting the config names, as a row: how the rule starts, where, with which options, and why. */
+function explicitRow(setting: LintConfigInputSetting, style: Style): string {
+  const options = Object.entries(setting.config ?? {}).map(([name, value]) => `${name} = ${JSON.stringify(value)}`).join(", ");
+  const change = [
+    `starts${setting.on === null ? "" : setting.on ? " on" : " off"}`,
+    ...(setting.folder === "" ? [] : [`in ${clean(setting.folder)}/`]),
+    ...(options === "" ? [] : [`with ${options}`]),
+  ].join(" ");
+  return `    ${clean(setting.ruleId)} ${change}  ${style.dim(clean(setting.because))}`;
+}
+
+/**
+ * The settings a linter's defaults or a preset decide, one row per state and reason with how many rules it covers:
+ * there can be hundreds, and one reason (`eslint.config.js does not turn it on`) covers them all.
+ */
+function implicitRows(settings: readonly LintConfigInputSetting[], style: Style): string[] {
+  const groups = Map.groupBy(settings, setting => `${String(setting.on)}\0${setting.because}`);
+  return [...groups.values()].map(group => {
+    const [{ on, because }] = group as [LintConfigInputSetting];
+    const state = on ? "on" : "off";
+    const count = group.length === 1 ? `1 rule starts ${state}` : `${group.length} rules start ${state}`;
+    return `    ${count}  ${style.dim(clean(because))}`;
+  });
+}
+
+/** Which rules start on, off or configured from the repository's lint config, and what was not read. */
 function lintConfigLines(input: RecommendedPacksInput, style: Style): string[] {
   const settings = input.lintConfig?.settings ?? [];
   const notes = input.lintConfig?.notes ?? [];
   if (settings.length === 0 && notes.length === 0) return [];
+  // A setting for the whole repository the config does not name and that carries no options is counted, not listed.
+  const counted = (setting: LintConfigInputSetting): boolean => setting.explicit === false && setting.config === null && setting.folder === "";
   // What was not read comes first: it can explain every setting after it (a config not statically readable starts
-  // every rule it ports off), and the rows are capped.
+  // every rule it ports off), then the counts, which say the most per row; the rows are capped.
   const rows = [
     ...notes.map(note => `    ${style.dim(clean(note))}`),
-    ...settings.map(setting => {
-      const options = Object.entries(setting.config ?? {}).map(([name, value]) => `${name} = ${JSON.stringify(value)}`).join(", ");
-      const change = setting.on === false ? (setting.folder === "" ? "starts off" : `starts off in ${clean(setting.folder)}/`) : `starts with ${options}`;
-      return `    ${clean(setting.ruleId)} ${change}  ${style.dim(clean(setting.because))}`;
-    }),
+    ...implicitRows(settings.filter(counted), style),
+    ...settings.filter(setting => !counted(setting)).map(setting => explicitRow(setting, style)),
   ];
   const shown = rows.length > MAX_LINT_CONFIG_LINES ? rows.slice(0, MAX_LINT_CONFIG_LINES - 1) : rows;
   const more = rows.length - shown.length;
@@ -498,7 +558,7 @@ function packRowName(pack: RecommendedPack): string {
 function packTable(packs: readonly RecommendedPack[], style: Style): string[] {
   const names = packs.map(packRowName);
   const nameWidth = Math.max(TABLE_MIN_PACK_WIDTH, ...names.map(name => name.length + 2));
-  const header = style.dim(`  ${"Rule pack".padEnd(nameWidth)}${"Rules".padEnd(TABLE_RULES_WIDTH)}Why it fits`);
+  const header = style.dim(`  ${"Rule pack".padEnd(nameWidth)}${"Rules".padEnd(TABLE_RULES_WIDTH)}Why suggested`);
   const rows = packs.map(
     (pack, index) => `  ${(names[index] ?? "").padEnd(nameWidth)}${String(pack.ruleCount).padEnd(TABLE_RULES_WIDTH)}${clean(pack.reason)}`,
   );
@@ -672,8 +732,8 @@ function recommendationLines(input: RecommendedPacksInput, lane: SetupLane): str
   const repo = clean(input.repoName);
   const count = input.packs.length;
   const scanned = count === 0
-    ? `Scanned ${repo}. None of Rerail’s rule packs fit it.`
-    : `Scanned ${repo}. ${count === 1 ? "1 rule pack fits" : `${count} rule packs fit`}:`;
+    ? `Scanned ${repo}. No rule pack matches what it’s built with.`
+    : `Scanned ${repo}. ${count === 1 ? "1 rule pack" : `${count} rule packs`} suggested for what it’s built with:`;
   const connecting = input.agentsFound.length === 0
     ? ["  Will connect to: no coding agents found"]
     : [`  Will connect to: ${agentNames(input.agentsFound).join(", ")}`, `  Adds ${sigilIn(input.agentsFound)}rerail commands and a status line to each. Connecting is free.`];
@@ -748,7 +808,7 @@ export interface PacksNotDownloadedInput {
   readonly repoPath: string;
   /** Why npm gave no rule pack, each distinct reason once. */
   readonly reasons: readonly string[];
-  readonly setupCommand?: string;
+  readonly setupCommand?: SetupCommand;
 }
 
 /** The not-downloaded question's answers, in its order: "yes" scans again, as at the read-repo question. */
@@ -800,13 +860,15 @@ export function renderNotNow(agents: readonly CodingAgent[], lane: SetupLane): s
 
 // ── T6 / C6 / E6 · Summary ─────────────────────────────────────────────────
 
-/** A coding agent set-up could not connect; its config was left as it was. */
+/** A coding agent set-up could not connect; its config was left as it was, unless `registered`. */
 export interface AgentProblem {
   readonly agent: CodingAgent;
   /** Why: the parser's reason when `file` is set. */
   readonly message: string;
   /** The agent's config file, when that is not plain JSON. */
   readonly file?: string;
+  /** Rerail's hooks are written in the agent's config, but the one set-up ran failed. */
+  readonly registered?: true;
 }
 
 /** What connecting the coding agents left, which the summary's commands and notes follow. */
@@ -862,11 +924,12 @@ function connectionNotes(agents: AgentsConnection, style: Style): string[] {
   const added = agents.added ?? [];
   return [
     ...(added.length === 0 ? [] : [`  Now also connected: ${andList(agentNames(added))}.`]),
-    ...(agents.failed ?? []).flatMap(({ agent, message, file }) => {
+    ...(agents.failed ?? []).flatMap(({ agent, message, file, registered }) => {
       const name = clean(agent.name);
       const retry = `then run rerail setup again to connect ${name}.`;
+      const config = registered === true ? "Rerail’s hooks are written, but they fail." : "Rerail left its config as it is.";
       return file === undefined
-        ? [`  ${style.yellow("△")} Couldn’t connect ${name}: ${clean(message)}`, `    Rerail left its config as it is. Fix that, ${retry}`]
+        ? [`  ${style.yellow("△")} Couldn’t connect ${name}: ${clean(message)}`, `    ${config} Fix that, ${retry}`]
         : [
           `  ${style.yellow("△")} Couldn’t connect ${name}: ${clean(file)} is not plain JSON`,
           `    (${clean(message)}). Rerail left the file as it is.`,
@@ -1122,7 +1185,7 @@ export function renderWslNote(input: WslNoteInput, lane: SetupLane): string {
 // ── E3 · No repo here ──────────────────────────────────────────────────────
 
 export interface NoRepoInput {
-  readonly setupCommand?: string;
+  readonly setupCommand?: SetupCommand;
 }
 
 /** E3: no repo where set-up ran; ask which project to start with. Choosing a folder is the go-ahead to read it. */
@@ -1157,7 +1220,7 @@ export interface PickPacksInput {
   /** The names of the rule packs that have no rules yet, so are not offered. */
   readonly withoutRules?: readonly string[];
   /** Overrides `rerail setup` in the agent lane's answer commands. */
-  readonly setupCommand?: string;
+  readonly setupCommand?: SetupCommand;
 }
 
 /**
@@ -1206,8 +1269,8 @@ export function renderSkipped(agents: AgentsConnection, lane: SetupLane): string
   const style = styleFor(lane);
   const { connected } = agents;
   const start = connected.length === 0
-    ? summaryRow("Start", ["Run rerail start in one of your repos.", "Rerail asks, suggests rule packs that fit, and starts there."])
-    : summaryRow("Start", [`Open a session in one of your repos and type ${commandIn(connected, "rerail-start")}.`, "Rerail asks, suggests rule packs that fit, and starts there.", ...otherFormLines(connected, "rerail-start")]);
+    ? summaryRow("Start", ["Run rerail start in one of your repos.", "Rerail asks, suggests rule packs, and starts there."])
+    : summaryRow("Start", [`Open a session in one of your repos and type ${commandIn(connected, "rerail-start")}.`, "Rerail asks, suggests rule packs, and starts there.", ...otherFormLines(connected, "rerail-start")]);
   const summary = [
     bullet("Rerail is installed · not on in any repo yet", style),
     ...connectionNotes(agents, style),

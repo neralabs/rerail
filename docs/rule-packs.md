@@ -28,20 +28,22 @@ a private pack (`"private": true` in its `package.json`): it is never published 
 `src/engine/catalog/pack-list.generated.ts`; install it from a checkout with `rerail packs add packs/<id>`, and set-up
 then offers it from that copy.
 
-| Pack | Category | Rules (on) | Recommended for |
-|---|---|--:|---|
-| Cyclomatic complexity | language | 7 (7) | Python, TypeScript, JavaScript, PHP, Blade, Rust or Vue source outside tests. See [Cyclomatic complexity](#cyclomatic-complexity). |
-| JavaScript | language | 121 (36) | JavaScript or TypeScript source. ESLint core rules apply to both; eslint-plugin-unicorn rules to JavaScript files only. |
-| TypeScript | language | 65 (23) | a `typescript` dependency, or `*.ts`/`*.tsx` files |
-| Python | language | 537 (316) | Python source outside tests, scripts and docs |
-| PHP | language | 15 (5) | PHP source: `*.php` files, not Blade views |
-| Blade | language | 10 (8) | Blade templates: `*.blade.php` files |
-| Rust | language | 33 (17) | `*.rs` files |
-| SQL | language | 21 (19) | `*.sql` files |
-| Next.js | framework | 21 (21) | a `next` dependency |
-| Node.js | framework | 37 (11) | a Node.js server framework (`express`, `koa`, `fastify`, `@nestjs/core` and others) or `electron` dependency, or `*.cjs`/`*.mjs`/`*.cts`/`*.mts` files outside tests, scripts, fixtures and configuration |
-| Vue | framework | 23 (21) | `*.vue` files |
-| React | framework | 51 (32) | a `react` dependency, or `*.jsx` files |
+Packs that port a linter are [linter-equivalent](#linter-equivalent) to it.
+
+| Pack | Category | Equivalent to | Rules (on) | Recommended for |
+|---|---|---|--:|---|
+| Function complexity | language | counts like lizard 1.24.0 | 8 (8) | Python, TypeScript, JavaScript, PHP, Blade, Rust, Vue or Java source outside tests. See [Function complexity](#function-complexity). |
+| JavaScript | language | ESLint 10.11.0, eslint-plugin-unicorn 76.0.0 | 121 (36) | JavaScript or TypeScript source. ESLint core rules apply to both; eslint-plugin-unicorn rules to JavaScript files only. |
+| TypeScript | language | typescript-eslint 8.70.1, @vitest/eslint-plugin 1.6.27 | 65 (23) | a `typescript` dependency, or `*.ts`/`*.tsx` files |
+| Python | language | Ruff 0.16.9, Bandit 1.9.4 | 537 (316) | Python source outside tests, scripts and docs |
+| PHP | language | PHP_CodeSniffer 4.0.4, PHPStan 2.2.16, Psalm 6.19.1 | 15 (5) | PHP source: `*.php` files, not Blade views |
+| Blade | language | Bladestan 0.11.7, tlint 9.7.0, blade-parser 2.1.0 | 10 (8) | Blade templates: `*.blade.php` files |
+| Rust | language | Clippy 0.1.99 (Rust 1.99.0) | 33 (17) | `*.rs` files |
+| SQL | language | SQLFluff 4.4.0 | 21 (19) | `*.sql` files |
+| Next.js | framework | @next/eslint-plugin-next 16.3.8 | 21 (21) | a `next` dependency |
+| Node.js | framework | eslint-plugin-n 18.4.1 | 37 (11) | a Node.js server framework (`express`, `koa`, `fastify`, `@nestjs/core` and others) or `electron` dependency, or `*.cjs`/`*.mjs`/`*.cts`/`*.mts` files outside tests, scripts, fixtures and configuration |
+| Vue | framework | eslint-plugin-vue 10.11.1 | 23 (21) | `*.vue` files |
+| React | framework | eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1 | 51 (32) | a `react` dependency, or `*.jsx` files |
 
 - **A project's own pack** is a `repository` pack you install from its folder with `rerail packs add <folder>`. It counts as a third party's pack.
 - **Starting values** are a pack's `mode` and `on`: what its rules start with in a repository that adds it. Repository or checkout settings override them.
@@ -56,8 +58,27 @@ A project's own pack holds rule documents in `rules/` and a `pack.json` whose ma
 Starting values also apply to rules a later upgrade adds.
 
 - **Mode:** the rule document's (`steer`), unless `pack.json` sets one. A port of a rule upstream only warns about is listed with `"mode": "log"` ([pack format](pack-format.md#packjson)).
-- **On:** a ported rule starts on, unless no approved upstream configuration turns it on or upstream deprecates it. Such a rule is experimental, listed with `"on": false`. A reviewer also lists a rule `"on": false` when its steer would do harm where no matcher change can tell the cases apart; the pack's README says why for each (Python's B009 and B010).
+- **On:** a ported rule starts on, unless no approved upstream configuration turns it on or upstream deprecates it. Such a rule is experimental, listed with `"on": false`. A reviewer also holds a rule off when its steer would do harm where no matcher change can tell the cases apart: `"on": false` with `heldOff`, one line saying why (Python's B009 and B010; the pack's README says more). Set-up then turns rules on or off to match the repository's own lint config ([rule scoping](rule-scoping.md#the-repositorys-own-lint-config)), except that it never turns a held-off rule on ([pack format](pack-format.md#packjson)).
 - **Suppressions:** a rule honours its linter's suppression comments only if its document says so (`suppress`) and the repository's `suppressions` setting for it is `honour` ([rule scoping](rule-scoping.md#rules-attachments-and-settings)). The pack's `honourSuppressionComments` is the starting value.
+
+</details>
+
+### Linter-equivalent
+
+Each ported rule flags what the original flags, at the version the pack names. Any difference is declared.
+
+The claim is per rule: a pack doesn't ship every rule of its linter.
+
+<details>
+<summary>How it is checked</summary>
+
+- **Conformance.** A rule ships only when it matches its linter on the linter's own test cases, renamed copies of them
+  and labelled real code ([the gate](../conformance/README.md#the-gate)).
+- **Declared differences.** Any disagreement is listed in the pack's `divergences.json`, with evidence: the linter is
+  wrong (`upstream-wrong`), the case can't be compared (`not-comparable`), or Rerail lacks what the linter has, such as
+  types (`rerail-unknown`).
+- **Own rules.** Rules a pack writes itself, such as React's practice rules, are not ports and claim nothing.
+- **Cyclomatic complexity** counts like lizard, with the deviations its README lists.
 
 </details>
 
@@ -86,8 +107,8 @@ Packs never install into a project's `node_modules`: one Rerail serves every rep
 <summary>Each step in detail</summary>
 
 1. **Fetch.** Set-up fetches every listed pack under the update channel's npm dist-tag: `latest` by default, where each pack version is published ([pack format](pack-format.md#release)), or `next` for a pack with no `latest`. They land in a staging folder under `$RERAIL_HOME/packs/staging`, which installs nothing and is removed once read. Each is checked as the [catalog](#catalog-checks) does.
-2. **Keep newer versions.** A pack installed at a newer version than the tag's (`rerail packs add typescript@next`) is offered at that version. If it does not load (its core range, after setting up an older core again, say), set-up names it as unusable, with why, and does not offer it. An answer naming an older version than the installed one is refused; `rerail packs add` downgrades.
-3. **Ask.** Set-up lists each fitting pack with its rule count and why it fits, and the rules the repository's lint config turns off or configures. It warns when a yes replaces an installed version, which every repository on the computer runs. A fitting pack with no rule that starts on is named as having no rules yet, as is every such pack under "Skip, I'll pick packs". When no pack fits, it counts the files it scanned by ending, names the folders it did not scan, names up to two packs whose excludes left out every file they look for, with those excludes, and says what each pack looks for.
+2. **Keep newer versions.** A pack installed at a newer version than the tag's (`rerail packs add typescript@next`) is offered at that version. If it does not load (its core range, after setting up an older core again, say), set-up names it as unusable, with why, and does not offer it. The same goes for the tag's own version: when it does not load, because it is for a newer Rerail say, set-up names it with why and offers the version installed in its place, when that is another version and it loads. With none installed, the pack is not offered. An answer naming an older version than the installed one is refused; `rerail packs add` downgrades.
+3. **Ask.** Set-up lists each fitting pack with its rule count and why it fits, and the rules the repository's lint config turns on, turns off or configures. It warns when a yes replaces an installed version, which every repository on the computer runs. A fitting pack with no rule that starts on is named as having no rules yet, as is every such pack under "Skip, I'll pick packs". When no pack fits, it counts the files it scanned by ending, names the folders it did not scan, names up to two packs whose excludes left out every file they look for, with those excludes, and says what each pack looks for.
 4. **Install only what the answer carries.**
    - **"Yes"** installs the versions shown, from npm's cache where discovery left them; a coding agent passes `--packs typescript@0.1.1,…`.
    - **"Change rule packs…"** (`--answer choose`) installs only the packs picked from those fetched, replacing any an earlier dashboard review added. Not offered if no pack was fetched.
@@ -103,12 +124,14 @@ Packs never install into a project's `node_modules`: one Rerail serves every rep
 - **`add <id[@version]> …`**: installs a Rerail pack by id, or any pack by package name.
 - **`remove <id | package> …`**: uninstalls a package by name, or every installed package holding a pack id.
 - **`recommend [--repo <dir>]`**: runs set-up's discovery and prints what fits, or why nothing does; installs nothing.
+- **`calibrate [--repo <dir>] [--dry-run] [--json]`**: reads the repository's lint config again and updates the settings it gave the repository's packs, keeping yours ([calibrate later](rule-scoping.md#calibrate-later)).
 
 <details>
 <summary>Arguments and refusals</summary>
 
 - **`list`** names Rerail's packs by id and a third party's by package name.
 - **`add`** takes ids or package names (`@neralabs/rerail-pack-typescript`, `@acme/rerail-pack-sql`, `rerail-pack-lint`). It takes a version, range, dist-tag, or an existing tarball or folder; it refuses npm options, `npm:` aliases, git and URL specs. If a pack it installed is left out, or another stops loading, it puts the change back and fails with why.
+- **Updating a pack.** A pack is pinned to the version installed, so `add <id>` with no version leaves an installed pack where it is. Name the version (`add typescript@0.1.6`) or the tag (`add typescript@latest`); `rerail update` prints the command with the versions.
 - **`remove`** refuses to remove, by name, the package holding an id (the one loading under it, or Rerail's own) while another holder stays. Repositories adding the id would then run the other.
 
 </details>
@@ -120,9 +143,9 @@ Pack changes run one at a time, a running daemon picks them up without a restart
 <details>
 <summary>Lock, reload and core-range details</summary>
 
-- **Lock.** Set-up's install, `rerail packs add` and `remove` hold `$RERAIL_HOME/packs/.lock`. Others wait up to five minutes; a lock whose process has gone is taken over.
+- **Lock.** Set-up's install, `rerail packs add` and `remove` hold `$RERAIL_HOME/locks/packs.lock`. Others wait up to five minutes; the lock is free the moment the process holding it ends.
 - **Reload.** A running daemon re-reads the catalog at once after an install, removal or active-core change (`rerail update`), and rebuilds every checkout's rules and the dashboard's activity. Edits inside a folder-linked pack are seen only when its `pack.json` or `package.json` changes.
-- **Core range.** `peerDependencies["@neralabs/rerail"]` (`>=0.1.0-0 <0.2.0` today) covers the core versions a pack was released for. When `rerail update` activates a core outside an installed pack's range, it names the pack and range. Repositories adding it run none of its rules until a fitting version is installed (`rerail packs add <package>`).
+- **Core range.** `peerDependencies["@neralabs/rerail"]` names the core versions a pack fits. Rerail's own packs name the oldest and no newest (`>=0.1.0-0`, or the release a pack first needs: `>=0.1.5-0` for `python` and `complexity`), so a newer core never leaves one out by its range; a third party's pack may name a newest too. When `rerail update` activates a core outside an installed pack's range, it names the pack and range. Repositories adding it run none of its rules until a fitting version is installed (`rerail packs add <package>@<version>`; `rerail update` ends by listing the newer versions that fit).
 
 </details>
 
@@ -144,8 +167,8 @@ A pack must pass:
 The catalog reads only packs the packs folder's `package.json` lists as its own dependencies. A pack npm installed only as another package's dependency is never read. It is reported as left out, saying it is not in that `package.json`, with `rerail packs add <package>` as the fix. If that `package.json` is missing or unreadable, every pack on disk is reported that way, with why, not as no packs.
 
 1. **Package.** `package.json` matches `rulePackPackageSchema`, named `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`. So `@neralabs/rerail-pack-foo` in a `rerail-pack-foo` folder is left out (`it is installed as rerail-pack-foo, but its package.json names @neralabs/rerail-pack-foo`): no package borrows Rerail's publisher.
-2. **`pack.json`.** Valid (`rulePackFileSchema`, `match` included); every listed document carries the listed id.
-3. **Core range.** Prereleases included.
+2. **`pack.json`.** Valid (`rulePackFileSchema`, `match` included); every listed document carries the listed id. A rule document the schema refuses is named with its first issue (`Rule pack complexity: rules/<rule>.json clauses.0.forbid.ast.language Invalid option: …`).
+3. **Core range.** Prereleases included. It is the reason given whenever it leaves this Rerail out, also for a pack whose `pack.json` or rule documents this Rerail cannot read: a pack made for a newer Rerail holds what an older one does not know, and `it needs a newer Rerail (>=0.1.5-0) than this one (0.1.4)` says what to do where the refusal of an unknown field or language would not.
 4. **Compilation.** One refused only as `language-not-supported` loads, inactive until the engine reads its language; any other refusal leaves the pack out.
 5. **No clash.** Rerail's own wins (`pack id sql is taken by @neralabs/rerail-pack-sql`); between third parties, the first by package name. Install location never decides. While Rerail's own pack for an id is installed but left out (by its core range, say), the other is left out too (`pack id sql is kept for @neralabs/rerail-pack-sql, which is installed but left out`). Repositories adding the id run nothing until Rerail's loads.
 
@@ -187,7 +210,7 @@ It must be named `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>` (`<id>` from 
 - **Warning.** `rerail packs add`, and set-up before its question, say Rerail has not reviewed the pack, that its rules run in Log until a person approves this version, and that their steer text then reaches the coding agent.
 - **Approval.** Approve with `rerail rules approve <package>` or Approve on the pack's dashboard sheet. Each new version waits again. Rerail's own packs from npm need none.
 - **Clashes.** Pack and rule ids are not namespaced; repositories add packs by id. A third party's pack sharing a pack id or rule id with Rerail's is left out with why, and `rerail packs add` puts it back and fails.
-- **Set-up and updates.** Set-up fetches only Rerail's packs, but offers an installed third party's pack wherever it fits; `--packs` names it by package name (`@acme/rerail-pack-sql@1.0.0`). `rerail update` updates no pack; `rerail packs add <package>` does.
+- **Set-up and updates.** Set-up fetches only Rerail's packs, but offers an installed third party's pack wherever it fits; `--packs` names it by package name (`@acme/rerail-pack-sql@1.0.0`). `rerail update` installs no pack: it ends by listing each installed pack with a newer version on its channel (or on `next`, for a pack the channel has no version of) that fits the active core, a third party's marked as waiting for approval again, and the `rerail packs add <id>@<version>` command that installs them. A pack from a folder or tarball is not listed, and one installed newer than the channel's (from `next`) is never offered an older version.
 
 </details>
 
@@ -275,16 +298,16 @@ A language or framework pack goes in the folder holding all its matches (`web` w
 
 </details>
 
-## Cyclomatic complexity
+## Function complexity
 
-The `complexity` pack flags functions with cyclomatic complexity above 6, reproducing the Metrics-in-the-Loop study's feedback.
+The `complexity` pack keeps functions small enough to read, test and change. Each `if`, loop, `catch`, `&&` or `||` adds a path through a function, and the pack flags functions with more than 6: cyclomatic complexity above 6, as in the Metrics-in-the-Loop study's feedback. The limit of 6 is the study's: a strict standard a repository chooses to adopt, not a verdict on its code. Only functions an agent's edit touches are checked; a repository that works to another limit can set the pack to Log or leave it off.
 
 A finding names the function and number: `` CYCLOMATIC_COMPLEXITY src/grade.py:1: `grade` has cyclomatic complexity 8, over the ceiling of 6. Decompose it into smaller functions. ``
 
 <details>
 <summary>How complexity is counted</summary>
 
-Complexity is one plus a function's decision points, as lizard 1.24.0 counts them minus its tokenizer defects, in Python, TypeScript, JavaScript, PHP, Blade, Rust and Vue. Blade directives and Vue templates run in no function and are never scored; nor are test files.
+Complexity is one plus a function's decision points, as lizard 1.24.0 counts them minus its tokenizer defects, in Python, TypeScript, JavaScript, PHP, Blade, Rust, Vue and Java. Blade directives and Vue templates run in no function and are never scored; nor are test files.
 
 - **`switch`/`match`** counts once however many cases, as slapkit scores a function. One difference (a default-only switch beside a cased one) is in the pack README.
 - **Python** matches lizard for every function lizard reads correctly, checked function by function on jinja, click and marshmallow.
@@ -298,7 +321,7 @@ Complexity is one plus a function's decision points, as lizard 1.24.0 counts the
 
 The pack matches the study's C arm: same tool semantics, same limit, only the functions the agent changed.
 
-1. **Add the `complexity` pack.** Set-up offers it for Python, TypeScript, JavaScript, PHP, Blade, Rust or Vue source. Or run `rerail packs add complexity`, then `repository_attachments_set` (`PUT /api/repository/attachments`, body `{ "checkout": "<absolute path of a checkout>", "add": [{ "sourceKind": "pack", "sourceId": "complexity" }] }`, or `"repository": "<repository key>"` in place of `checkout`).
+1. **Add the `complexity` pack.** Set-up offers it for Python, TypeScript, JavaScript, PHP, Blade, Rust, Vue or Java source. Or run `rerail packs add complexity`, then `repository_attachments_set` (`PUT /api/repository/attachments`, body `{ "checkout": "<absolute path of a checkout>", "add": [{ "sourceKind": "pack", "sourceId": "complexity" }] }`, or `"repository": "<repository key>"` in place of `checkout`).
 2. **Keep the default `ai-output` audit scope**, which reports only functions the agent changed.
 
 <details>

@@ -1,27 +1,39 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type AdapterDelivery,
   type CodeRuleViolation,
   type RuleSteerDelivery,
   CodeRuleBridge,
+  codeRuleSchema,
+  NativeCodeRuleEnforcer,
   openRerailDatabase,
   SqliteAuditControlStore,
+  SqliteAuditStore,
   setRuleSetting,
   renderSteer,
   languageFor,
 } from "../../src/engine/index.js";
 import { RerailRuntime } from "../../src/runtime/runtime.js";
-import { SqliteSessionStore } from "../../src/runtime/session-store.js";
-import { setUpTestRepository } from "../support/repository-rules.js";
+import { SqliteSessionReader, SqliteSessionStore } from "../../src/runtime/session-store.js";
+import { testEmbedder } from "../support/hook-events.js";
+import { setUpTestRepository, testCodeRuleCatalog } from "../support/repository-rules.js";
+import { startTestRepository } from "../support/started-repository.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
+import { steerLatitude } from "../support/steers.js";
+import { withExperiments } from "../support/environment/experiments.js";
+
+withExperiments("CONVERSATION_RULES");
 
 const directories: string[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
-  await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(directories.splice(0).map(async path => await removeFolder(path)));
 });
 
 describe("Rerail session startup", () => {
@@ -275,7 +287,7 @@ describe("Rerail session startup", () => {
 });
 
 describe("A scan requested while the session's evaluator is still opening", () => {
-  /** A runtime whose evaluator's `openWorkspace` is held until `opening` settles, with one scan requested and claimed meanwhile. */
+  /** A runtime whose evaluator's `openWorkspace` is held until `opening` settles, with one scan requested meanwhile. */
   async function scanFixture() {
     const root = await mkdtemp(join(tmpdir(), "rerail-scan-opening-"));
     directories.push(root);
@@ -316,15 +328,13 @@ describe("A scan requested while the session's evaluator is still opening", () =
     await runtime.ingest({ kind: "session-start", eventId: "start", session });
     const controls = new SqliteAuditControlStore(databasePath);
     const request = controls.requestAudit(session.sessionId, { scope: "repository" });
-    // The control timer claims it within 250 ms, with the evaluator still held in its open.
+    // It waits, queued, for the evaluator: claimed at once, the scan's writes would come whenever the rules had compiled,
+    // each waiting up to 5 s for a write lock another process took meanwhile.
     const statusOf = () => controls.listAuditRequests(session.sessionId).find(item => item.id === request.id)?.status;
-    await vi.waitFor(() => expect(statusOf()).not.toBe("queued"), { timeout: 4_000 });
-    expect(statusOf()).toBe("running");
+    await delay(600);
+    expect(statusOf()).toBe("queued");
     const settled = async () => {
-      await vi.waitFor(
-        () => expect(controls.listAuditRequests(session.sessionId).find(item => item.id === request.id)?.status).not.toBe("running"),
-        { timeout: 10_000 },
-      );
+      await vi.waitFor(() => expect(statusOf()).not.toMatch(/^(queued|running)$/), { timeout: 10_000 });
       return controls.listAuditRequests(session.sessionId).find(item => item.id === request.id)!;
     };
     const close = async () => {
@@ -332,7 +342,7 @@ describe("A scan requested while the session's evaluator is still opening", () =
       await runtime.dispose();
       controls.close();
     };
-    return { opening, scans, settled, close };
+    return { runtime, sessionId: session.sessionId, opening, scans, settled, close };
   }
 
   it("completes with its audit once the evaluator has opened", async () => {
@@ -343,6 +353,17 @@ describe("A scan requested while the session's evaluator is still opening", () =
       const request = await test.settled();
       expect(request).toMatchObject({ status: "completed", auditIds: test.scans, error: null });
       expect(test.scans).toHaveLength(1);
+    } finally { await test.close(); }
+  });
+
+  it("keeps its quiet session open until the scan has finished, so an idle close does not cut the scan off", async () => {
+    const test = await scanFixture();
+    try {
+      const kept = await test.runtime.closeIdleSession(test.sessionId);
+      test.opening.resolve();
+      const request = await test.settled();
+      expect(request).toMatchObject({ status: "completed", auditIds: test.scans, error: null });
+      expect(kept).toEqual({ kind: "owing" });
     } finally { await test.close(); }
   });
 
@@ -360,6 +381,59 @@ describe("A scan requested while the session's evaluator is still opening", () =
       await test.close();
     }
   });
+});
+
+describe("A scan of a session's checkout", () => {
+  // What `rerail scan --session` finds is the checkout's, not the session's: the dashboard reads none of it.
+  it("is recorded as a scan, and leaves the session's violations, counts and rule activity to its own edits", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-scan-origin-")));
+    directories.push(root);
+    const databasePath = join(root, "rerail.sqlite");
+    await writeFile(join(root, ".gitignore"), "sessions/\nrerail.sqlite*\n");
+    await writeFile(join(root, "old.py"), "NEEDLE\n");
+    execFileSync("git", ["init", "--quiet"], { cwd: root });
+    startTestRepository(root, databasePath);
+    const catalog = testCodeRuleCatalog([codeRuleSchema.parse({
+      format: "rerail.policy/v1", id: "test:needle", revision: 1, mode: "steer",
+      scope: { include: ["**/*.py"], exclude: [] },
+      clauses: [{ id: "needle", violation: { code: "NEEDLE", anchor: "witness.span", message: "No needle" }, forbid: { regex: { pattern: "NEEDLE", source: "file.content" } } }],
+    })]);
+    const runtime = new RerailRuntime({
+      storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
+      createAuditor: options => new NativeCodeRuleEnforcer(catalog, options),
+    });
+    const controls = new SqliteAuditControlStore(databasePath);
+    const audits = new SqliteAuditStore(databasePath);
+    const reader = new SqliteSessionReader(databasePath);
+    const sessionId = "scan-origin";
+    const counts = () => reader.sessionPage({ limit: 10 }).sessions.find(session => session.sessionId === sessionId);
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "codex", sessionId, cwd: root } });
+      await runtime.codeRulesOpened(sessionId);
+      const request = controls.requestAudit(sessionId, { scope: "repository" });
+      const finished = () => controls.listAuditRequests(sessionId).find(item => item.id === request.id)!;
+      await vi.waitFor(() => expect(finished().status).toBe("completed"), { timeout: 10_000 });
+      const [scanId] = finished().auditIds;
+      expect(audits.get(scanId!)).toMatchObject({ origin: "scan", violations: [expect.objectContaining({ path: "old.py", code: "NEEDLE" })] });
+      expect(audits.list({ sessionId, origin: "scan" }).audits.map(audit => audit.auditId)).toEqual([scanId]);
+      expect(audits.listViolationHistory({ since: 0, sessionId }).total).toBe(0);
+      expect(audits.ruleActivity(0).has("test:needle")).toBe(false);
+      expect(counts()).toMatchObject({ violationCount: 0, steeredViolations: 0 });
+
+      // The session's own edit still counts, and only it.
+      await runtime.ingest({ kind: "call", eventId: "write-call", sessionId, toolCallId: "write", toolName: "Write", input: { file_path: join(root, "new.py"), content: "NEEDLE\n" } });
+      await writeFile(join(root, "new.py"), "NEEDLE\n");
+      await runtime.ingest({ kind: "result", eventId: "write-result", sessionId, toolCallId: "write", toolName: "Write", output: "" });
+      await vi.waitFor(() => expect(audits.listViolationHistory({ since: 0, sessionId }).violations.map(entry => entry.violation.path)).toEqual(["new.py"]), { timeout: 10_000 });
+      expect(audits.get(audits.listViolationHistory({ since: 0, sessionId }).violations[0]!.auditId)?.origin).toBe("ongoing");
+      expect(counts()).toMatchObject({ violationCount: 1 });
+    } finally {
+      await runtime.dispose();
+      controls.close();
+      audits.close();
+      reader.close();
+    }
+  }, 30_000);
 });
 
 describe("Rerail tool results waiting for their edit's check", () => {
@@ -429,8 +503,8 @@ describe("Rerail tool results waiting for their edit's check", () => {
       await writeFile(join(root, "a.ts"), text);
       return { answering: runtime.ingest({ kind: "result", eventId: `result-${id}`, sessionId: session.sessionId, toolCallId: id, toolName: "Write", output: "ok" }) };
     };
-    const turnEnd = (eventId: string) => runtime.ingest({ kind: "turn-end", eventId, sessionId: session.sessionId, text: "" });
-    return { runtime, check, checking, steered, edit, turnEnd };
+    const turnEnd = (eventId: string) => runtime.ingest({ kind: "turn-end", eventId, sessionId: session.sessionId, session, text: "" });
+    return { runtime, root, session, check, checking, steered, edit, turnEnd };
   }
 
   /** `a.ts`'s finding as a steer renders it, and the digest that lists it at the end of the agent's run. */
@@ -464,6 +538,61 @@ describe("Rerail tool results waiting for their edit's check", () => {
         .toEqual([STEER]);
     } finally {
       vi.useRealTimers();
+      check.resolve();
+      await runtime.dispose();
+    }
+  });
+
+  // An idle close opens the session again from its ledger, which holds neither a steer still to deliver nor a check
+  // still running; the agent may only have gone quiet behind a permission prompt or a long tool.
+  it("keeps a quiet session open while an edit's check runs or its steer waits for the next event, so the steer still reaches the agent", async () => {
+    const { runtime, session, check, checking, steered, edit } = await hookSession();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { answering } = await edit("t1", BAD);
+      await checking.promise;
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await answering).toEqual([]);
+      vi.useRealTimers();
+
+      const kept = [await runtime.closeIdleSession(session.sessionId)];
+      check.resolve();
+      await steered.promise;
+      // The drained checks let go of the session first, so only the steer holds it now.
+      await new Promise(resolve => setImmediate(resolve));
+      kept.push(await runtime.closeIdleSession(session.sessionId));
+      const next = await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId: session.sessionId, session, text: "next" });
+      expect(next.map(delivery => delivery.content)).toEqual([STEER]);
+      expect(kept).toEqual([{ kind: "owing" }, { kind: "owing" }]);
+      // Delivered: nothing holds the session in memory any more.
+      expect(await runtime.closeIdleSession(session.sessionId)).toMatchObject({ kind: "suspended" });
+    } finally {
+      vi.useRealTimers();
+      check.resolve();
+      await runtime.dispose();
+    }
+  });
+
+  it("keeps a quiet session open while a tool call waits for its result, so the edit the call makes is still checked", async () => {
+    const { runtime, root, session, check, turnEnd } = await hookSession();
+    try {
+      check.resolve();
+      const call = (id: string) => runtime.ingest({
+        kind: "call", eventId: `call-${id}`, sessionId: session.sessionId, session, toolCallId: id, toolName: "Write",
+        input: { file_path: join(root, "a.ts"), content: BAD },
+      });
+      await call("t1");
+      // The agent waits for the user to allow the write, or for a long tool, and sends nothing meanwhile.
+      const kept = await runtime.closeIdleSession(session.sessionId);
+      await writeFile(join(root, "a.ts"), BAD);
+      const answer = await runtime.ingest({ kind: "result", eventId: "result-t1", sessionId: session.sessionId, session, toolCallId: "t1", toolName: "Write", output: "ok" });
+      expect(answer.map(delivery => delivery.content)).toEqual([STEER]);
+      expect(kept).toEqual({ kind: "owing" });
+      // A call the user refused gets no result: the end of its turn settles it.
+      await call("t2");
+      await turnEnd("turn");
+      expect(await runtime.closeIdleSession(session.sessionId)).toMatchObject({ kind: "suspended" });
+    } finally {
       check.resolve();
       await runtime.dispose();
     }
@@ -550,6 +679,31 @@ describe("Rerail tool results waiting for their edit's check", () => {
       const fixed = await edit("t2", "export const a = 2;\n");
       expect(await fixed.answering).toEqual([]);
       expect(await runtime.yieldDeliveries("hook-check")).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+      check.resolve();
+      await runtime.dispose();
+    }
+  });
+
+  it("with the experimental digest on, keeps a quiet session open while it holds a finding for the digest", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST", "1");
+    const { runtime, session, check, checking, steered, edit, turnEnd } = await hookSession();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { answering } = await edit("t1", BAD);
+      await checking.promise;
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await answering).toEqual([]);
+      vi.useRealTimers();
+      check.resolve();
+      await steered.promise;
+      // The drained checks let go of the session first, so only the held finding holds it now.
+      await new Promise(resolve => setImmediate(resolve));
+
+      const kept = await runtime.closeIdleSession(session.sessionId);
+      expect((await turnEnd("turn")).map(delivery => delivery.content)).toEqual([DIGEST]);
+      expect(kept).toEqual({ kind: "owing" });
     } finally {
       vi.useRealTimers();
       check.resolve();
@@ -716,11 +870,53 @@ describe("Rerail session restore", () => {
         content: [
           "Rerail has guidance for this Bash call:",
           "- Ask before force-pushing. [acme:no-force-push]",
-          "Follow it, or tell the user in one line why you won't and run `rerail feedback acme:no-force-push '<that line>'`.",
+          steerLatitude("claude-code", "acme:no-force-push", "Follow"),
         ].join("\n"),
         ruleIds: ["acme:no-force-push"],
         rules: [{ id: "acme:no-force-push", state: "steered" }],
       })]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("checks no conversation rule while conversation rules are off, though the repository stores one", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_CONVERSATION_RULES", "0");
+    const root = await mkdtemp(join(tmpdir(), "rerail-tool-steer-off-"));
+    directories.push(root);
+    const databasePath = join(root, "rerail.sqlite");
+    setUpTestRepository(root, {
+      library: [{
+        kind: "conversation",
+        rule: {
+          id: "acme:no-force-push",
+          mode: "steer",
+          match: { field: "input.command", regex: String.raw`\bgit\s+push\b[^\n]*--force\b` },
+          sample: { source: "tool:Bash", boundary: "tool-call" },
+          action: { content: "Ask before force-pushing." },
+          repeat: { mode: "always" },
+        },
+      }],
+    }, databasePath);
+    const runtime = new RerailRuntime({
+      autostart: false,
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      modelPath: resolve("model"),
+      databasePath,
+      createAuditor: () => ({
+        openWorkspace: async () => undefined,
+        acceptsPath: () => false,
+        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
+        close: async () => undefined,
+      }),
+    });
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId: "tool", cwd: root } });
+      expect(await runtime.ingest({
+        kind: "call", eventId: "push", sessionId: "tool", toolCallId: "push", toolName: "Bash", input: { command: "git push --force origin main" },
+      })).toEqual([]);
+      await expect(runtime.manageRules("tool", { action: "list" })).rejects.toThrow("RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1");
     } finally {
       await runtime.dispose();
     }
@@ -780,5 +976,97 @@ describe("Rerail session restore", () => {
     const ledger = await readFile(join(root, "sessions", createHash("sha256").update("keys").digest("hex"), "events.jsonl"), "utf8");
     expect(ledger).not.toContain(key);
     expect(ledger).toContain("[redacted:openai-key:");
+  });
+});
+
+describe("A runtime's closed sessions", () => {
+  const runtimeIn = (root: string) => new RerailRuntime({
+    autostart: false,
+    workspaceRoot: root,
+    storageRoot: join(root, "sessions"),
+    databasePath: join(root, "rerail.sqlite"),
+    embedder: {
+      fingerprint: () => ({ modelId: "test", revision: "1", dimensions: 2, weightsSha256: "test", tokenizerSha256: "test", kernelFormatVersion: 1 }),
+      embed: async texts => texts.map(() => new Float32Array([1, 0])),
+    },
+    createAuditor: () => ({
+      openWorkspace: async () => undefined,
+      acceptsPath: () => false,
+      auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
+      close: async () => undefined,
+    }),
+  });
+
+  // A checkout's runtime lives while any session in it does, and the idle close lets each killed session there go too:
+  // after 30 quiet minutes, or after a day when the session still owed its agent a result, a steer or a held finding.
+  it("are kept for late receipts only while they are among the last sixteen to close", { timeout: 20_000 }, async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-closed-sessions-")));
+    directories.push(root);
+    const runtime = runtimeIn(root);
+    try {
+      for (let index = 0; index <= 16; index += 1) {
+        const session = { host: "claude-code" as const, sessionId: `s${index}`, cwd: root };
+        await runtime.ingest({ kind: "session-start", eventId: `s${index}:start`, session });
+        await runtime.codeRulesOpened(session.sessionId);
+        await runtime.ingest({ kind: "session-end", eventId: `s${index}:end`, sessionId: session.sessionId, session });
+      }
+      expect(() => runtime.recordSteer("s1", "late")).not.toThrow();
+      expect(() => runtime.recordSteer("s0", "late")).toThrow("Unknown session: s0");
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("each end at the time their close began, though sixteen later closes push one out while it is still closing", { timeout: 20_000 }, async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-closed-sessions-")));
+    directories.push(root);
+    const runtime = runtimeIn(root);
+    const sessionIds = Array.from({ length: 17 }, (_, index) => `s${index}`);
+    for (const sessionId of sessionIds) {
+      await runtime.ingest({ kind: "session-start", eventId: `${sessionId}:start`, session: { host: "claude-code", sessionId, cwd: root } });
+      await runtime.codeRulesOpened(sessionId);
+    }
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(1_000_000);
+      // Disposal begins every session's close at once; `s16`'s pushes `s0` out before `s0` finishes closing.
+      const disposed = runtime.dispose();
+      vi.setSystemTime(2_000_000);
+      await disposed;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const sessionStore = new SqliteSessionStore(join(root, "rerail.sqlite"));
+    try {
+      expect(sessionIds.map(sessionId => sessionStore.session(sessionId)?.endedAt)).toEqual(sessionIds.map(() => 1_000_000));
+    } finally {
+      sessionStore.close();
+    }
+  });
+
+  it("stay open once suspended, though sixteen later suspensions push one out while it is still closing", { timeout: 20_000 }, async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-closed-sessions-")));
+    directories.push(root);
+    const runtime = runtimeIn(root);
+    const sessionIds = Array.from({ length: 17 }, (_, index) => `s${index}`);
+    try {
+      for (const sessionId of sessionIds) {
+        await runtime.ingest({ kind: "session-start", eventId: `${sessionId}:start`, session: { host: "claude-code", sessionId, cwd: root } });
+        await runtime.codeRulesOpened(sessionId);
+      }
+      // Every idle close begins at once; `s16`'s pushes `s0` out before `s0` finishes closing.
+      const closes = await Promise.all(sessionIds.map(sessionId => runtime.closeIdleSession(sessionId)));
+      expect(closes.map(close => close.kind)).toEqual(sessionIds.map(() => "suspended"));
+    } finally {
+      await runtime.dispose();
+    }
+
+    const sessionStore = new SqliteSessionStore(join(root, "rerail.sqlite"));
+    try {
+      expect(sessionIds.map(sessionId => sessionStore.session(sessionId)?.endedAt)).toEqual(sessionIds.map(() => null));
+    } finally {
+      sessionStore.close();
+    }
   });
 });

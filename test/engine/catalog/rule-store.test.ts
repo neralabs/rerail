@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { readFile, mkdtemp, rm } from "node:fs/promises";
+import { readFile, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -18,6 +18,7 @@ import {
 } from "../../../src/cli/index.js";
 import { SqliteSessionReader, SqliteSessionStore } from "../../../src/runtime/index.js";
 import { fixturesPath } from "../../support/oracles.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const TOOL_CALL_RULES = parseConversationRuleDocument(JSON.parse(readFileSync(fixturesPath("host", "tool-call-rules", "rules.json"), "utf8")));
 
@@ -25,7 +26,7 @@ const TOOL_CALL_RULES = parseConversationRuleDocument(JSON.parse(readFileSync(fi
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 async function temporaryDatabase(): Promise<string> {

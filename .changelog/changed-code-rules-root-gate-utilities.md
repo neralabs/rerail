@@ -1,1 +1,0 @@
-Code rules: a file-level gate written once as a shared utility (for example `inside module` holding an import check) now skips a file that fails it as quickly as the same gate written in every clause.

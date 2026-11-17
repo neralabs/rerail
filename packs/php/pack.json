@@ -3,7 +3,7 @@
   "id": "php",
   "name": "PHP",
   "category": "language",
-  "covers": "PHP_CodeSniffer, PHPStan and Psalm rules for correct, consistent PHP.",
+  "covers": "Linter-equivalent to PHP_CodeSniffer 4.0.4, PHPStan 2.2.16 and Psalm 6.19.1, for correct, consistent PHP.",
   "reason": "matches PHP",
   "match": {
     "any": [

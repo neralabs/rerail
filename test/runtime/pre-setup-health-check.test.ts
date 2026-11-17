@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -12,6 +12,7 @@ import { defaultRerailDatabasePath } from "../../src/engine/index.js";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../../src/runtime/event-protocol.js";
 import { isPreSetupHealthCheck, skipsSessionsApproval } from "../../src/runtime/pre-setup-health-check.js";
 import { workspaceStartState } from "../../src/runtime/repository-start.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const SOURCE = resolve(import.meta.dirname, "../../src");
 // The old check runs the CLI from its scratch folder, where a bare `--import tsx` would not resolve.
@@ -19,7 +20,7 @@ const TSX = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 async function scratch(prefix: string): Promise<string> {

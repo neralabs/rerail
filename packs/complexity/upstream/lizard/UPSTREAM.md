@@ -11,6 +11,13 @@ source, so it is Rerail's too. Paths are relative to the pack directory.
 | `upstream/lizard/fixtures/blade/functions.blade.php` | written by Rerail |
 | `upstream/lizard/fixtures/blade/simple.blade.php` | written by Rerail |
 | `upstream/lizard/fixtures/blade/tests/excluded.blade.php` | written by Rerail |
+| `upstream/lizard/fixtures/java/Branches.java` | written by Rerail |
+| `upstream/lizard/fixtures/java/GradeTests.java` | written by Rerail |
+| `upstream/lizard/fixtures/java/Modern.java` | written by Rerail |
+| `upstream/lizard/fixtures/java/Nesting.java` | written by Rerail |
+| `upstream/lizard/fixtures/java/Simple.java` | written by Rerail |
+| `upstream/lizard/fixtures/java/Tokens.java` | written by Rerail |
+| `upstream/lizard/fixtures/java/src/test/java/ExcludedTest.java` | written by Rerail |
 | `upstream/lizard/fixtures/javascript/__tests__/excluded.js` | written by Rerail |
 | `upstream/lizard/fixtures/javascript/branches.js` | written by Rerail |
 | `upstream/lizard/fixtures/javascript/common.cjs` | written by Rerail |

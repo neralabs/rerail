@@ -23,6 +23,8 @@ Install Rerail, write rules, and see what it does in a session.
   DSL. Hand-written prose with generated regions; see `scripts/generate/README.md`.
 - [in-session-surfaces.md](in-session-surfaces.md): what Rerail shows inside a coding-agent session
 - [privacy.md](privacy.md): what Rerail sends over the network, what it stores locally, and how to delete it
+- [threat-model.md](threat-model.md): who can attack Rerail and through what, each threat's mitigations, and what
+  remains
 - [internal-testing.md](internal-testing.md): unreleased features and where each surfaces
 - [headless-scan.md](headless-scan.md): `rerail scan` of a checkout for CI, with no daemon or session, and its
   `rerail.scan/1` report (internal testing)
@@ -48,6 +50,8 @@ How core and packs are published.
 - [release.md](release.md): how core is built, versioned and published
 - [publishing-a-new-pack.md](publishing-a-new-pack.md): runbook for a pack's first npm publish and its trusted
   publisher
+- [environment-matrix.md](environment-matrix.md): the operating systems a release is installed and exercised on, and
+  what each run checks
 
 ## Repository
 How the project is run and laid out.
@@ -60,3 +64,9 @@ Internal designs for contributors.
 
 - [content-addressed-workspace-store.md](content-addressed-workspace-store.md): the machine-wide content store
 - [transducer-design.md](transducer-design.md): the tape transducer language used by tests and benchmarks
+- [merge-assist-v1-build.md](merge-assist-v1-build.md): Merge Assist (experimental, off by default), which detects
+  in-flight conflicts, where this checkout's work overlaps other branches and open pull requests, and tells the person
+  and their coding agent before they merge
+- [windows.md](windows.md): the rules Rerail keeps on Windows, the defect behind each, and the module or check that
+  holds it
+- [blade-parser.md](blade-parser.md): the Blade parser, a Rust port of Forte, what is ported and how it is checked

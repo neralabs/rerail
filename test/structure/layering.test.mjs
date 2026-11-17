@@ -1,6 +1,6 @@
 // Structure gate, layering metrics (#12-#15): each predicate on a tiny in-memory tree.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -9,6 +9,7 @@ import { check as flatDirectories } from "../../scripts/check/check-structure/me
 import { check as importDirection } from "../../scripts/check/check-structure/metrics/13-import-direction.mjs";
 import { check as fixturesRoot } from "../../scripts/check/check-structure/metrics/14-fixtures-root.mjs";
 import { check as duplicates } from "../../scripts/check/check-structure/metrics/15-duplicate-concepts.mjs";
+import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 const rule = (id) => JSON.stringify({ format: "rerail.policy/v1", id, clauses: [] });
 const paths = (result) => result.findings.map((item) => item.path);
@@ -58,7 +59,7 @@ describe("#13 import direction", () => {
         { path: "src/b.ts", line: 2, message: "[layer-order] x" },
       ]);
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      removeFolderSync(root);
     }
   });
 

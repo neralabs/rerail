@@ -21,7 +21,9 @@ import {
   CODE_RULE_PLANNED_LANGUAGES,
   codeRuleDialectForPath,
 } from "../../../src/engine/code-rule/code-rule-languages.js";
+import { LANGUAGE_SINCE } from "../../../scripts/release/core.mjs";
 import { EXEMPLAR, exemplarLanguageRegistry, exemplarRegistryModule } from "../support/exemplar-registry.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const capabilities = (support: "supported" | "refused" | "not-supported-yet") => ({ scope: support, value: support, arguments: support, calls: support, formatArgs: support });
 
@@ -65,6 +67,15 @@ describe("the language registry", () => {
     expect(CODE_RULE_PLANNED_LANGUAGES).not.toContain(EXEMPLAR);
   });
 
+  // An older core refuses a rule document in a language it does not know, and check 5 of the pack validation holds a
+  // pack's core range to the release that first reads each language: a language added after 0.1.0 fails here until
+  // LANGUAGE_SINCE names that release.
+  it("names the release that first reads each language added after 0.1.0", () => {
+    const readSince010 = ["python", "typescript", "javascript", "php", "blade", "rust", "sql", "vue"];
+    const added = readLanguageRegistry().map(entry => entry.id).filter(id => !readSince010.includes(id));
+    expect([...LANGUAGE_SINCE.keys()].toSorted()).toEqual(added.toSorted());
+  });
+
   it("reads the exemplar beside the product registry for tests: planned, with every capability not supported yet", () => {
     const product = readLanguageRegistry();
     const entries = exemplarLanguageRegistry();
@@ -94,8 +105,8 @@ describe("the language registry", () => {
       expect(readLanguageRegistry(product, directory).map(entry => entry.id)).toEqual(["one", "four"]);
       expect(readLanguageRegistry(product).map(entry => entry.id)).toEqual(["one"]);
     } finally {
-      rmSync(product, { recursive: true, force: true });
-      rmSync(directory, { recursive: true, force: true });
+      removeFolderSync(product);
+      removeFolderSync(directory);
     }
   });
 

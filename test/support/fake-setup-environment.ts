@@ -23,6 +23,8 @@ export function fakeSetupEnvironment(options: {
   seen?: readonly Harness[] | undefined;
   /** Coding agents whose config is not plain JSON: `connect` names each and connects the others. */
   unreadable?: readonly Harness[];
+  /** Coding agents whose registration is written but whose hook fails when set-up runs it, as Claude Code's can. */
+  hookFails?: readonly Harness[];
   browser?: boolean;
   /** Whether the person has let Rerail read their sessions already; true unless a test asks the question. */
   sessionsApproved?: boolean;
@@ -46,14 +48,18 @@ export function fakeSetupEnvironment(options: {
     async connect(agents, repoRoot) {
       if (agents.length > 0) connections.push({ agents, repoRoot });
       const unreadable = new Set(options.unreadable ?? []);
+      const hookFails = new Set(options.hookFails ?? []);
       const changed = agents.filter(id => !unreadable.has(id) && !connected.has(id));
       for (const id of changed) connected.add(id);
       seen ??= new Set();
-      for (const id of [...found, ...agents]) seen[unreadable.has(id) ? "delete" : "add"](id);
+      for (const id of [...found, ...agents]) seen[unreadable.has(id) || hookFails.has(id) ? "delete" : "add"](id);
       return {
         changed,
         all: [...connected],
-        failures: agents.filter(id => unreadable.has(id)).map(agent => ({ agent, message: "Unexpected token '/'", file: `/home/me/.${agent}/settings.json` })),
+        failures: [
+          ...agents.filter(id => unreadable.has(id)).map(agent => ({ agent, message: "Unexpected token '/'", file: `/home/me/.${agent}/settings.json` })),
+          ...changed.filter(id => hookFails.has(id)).map(agent => ({ agent, message: "Claude Code's Rerail hook exited 3: boom", registered: true as const })),
+        ],
         codexTrust: changed.includes("codex"),
         ompPlugin: false,
       };

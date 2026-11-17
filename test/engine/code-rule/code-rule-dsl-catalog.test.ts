@@ -1,7 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
@@ -29,11 +31,12 @@ import { approve, ruleSubject } from "../../../src/engine/catalog/rule-approval.
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { validateCodeRule } from "../../../src/engine/rules.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
-  for (const path of temporaryDirectories.splice(0)) rmSync(path, { force: true, recursive: true });
+  for (const path of temporaryDirectories.splice(0)) removeFolderSync(path);
 });
 
 function temporaryRoot(): string {
@@ -1314,6 +1317,11 @@ describe("code rule schema and engine agree on unsupported fields", () => {
 });
 
 describe("compiled rule cache", () => {
+  /** The executable a compile returned; a failure has none. */
+  function executableOf(outcome: ReturnType<CompiledRuleCache["compile"]>): object | undefined {
+    return outcome.ok ? outcome.executable : undefined;
+  }
+
   function cachedRule(id: string, revision: number): { text: string; digest: string } {
     const text = JSON.stringify({
       format: "rerail.policy/v1", id, revision, mode: "steer",
@@ -1329,7 +1337,7 @@ describe("compiled rule cache", () => {
     const first = cachedRule("cache:a", 1);
     const outcome = cache.compile(capabilities, "cache:a", first.text, first.digest, "null");
     expect(outcome.ok).toBe(true);
-    expect(cache.compile(capabilities, "cache:a", first.text, first.digest, "null")).toBe(outcome);
+    expect(executableOf(cache.compile(capabilities, "cache:a", first.text, first.digest, "null"))).toBe(executableOf(outcome));
     for (let revision = 2; revision <= 5; revision += 1) {
       const edited = cachedRule("cache:a", revision);
       expect(cache.compile(capabilities, "cache:a", edited.text, edited.digest, "null").ok).toBe(true);
@@ -1346,8 +1354,38 @@ describe("compiled rule cache", () => {
     const configured = cachedRule("cache:c", 2);
     const plainOutcome = cache.compile(capabilities, "cache:c", plain.text, plain.digest, "null");
     const configuredOutcome = cache.compile(capabilities, "cache:c", configured.text, configured.digest, "{\"option\":\"type\"}");
-    expect(cache.compile(capabilities, "cache:c", plain.text, plain.digest, "null")).toBe(plainOutcome);
-    expect(cache.compile(capabilities, "cache:c", configured.text, configured.digest, "{\"option\":\"type\"}")).toBe(configuredOutcome);
+    expect(executableOf(cache.compile(capabilities, "cache:c", plain.text, plain.digest, "null"))).toBe(executableOf(plainOutcome));
+    expect(executableOf(cache.compile(capabilities, "cache:c", configured.text, configured.digest, "{\"option\":\"type\"}")))
+      .toBe(executableOf(configuredOutcome));
     expect(cache.size).toBe(2);
   });
+
+  // A compiled rule holds its native program, 0.3 MB for most rules and 512 MB for the Node pack's builtins rule. The
+  // daemon disposes a repository's runtime when its last session ends; the cache kept every executable it ever
+  // compiled, so the daemon stayed at its busiest size with no session open.
+  it("keeps no executable alive that no checkout's catalog holds, and compiles it again once one is freed", async () => {
+    const cache = new CompiledRuleCache();
+    const capabilities = loadCodeRuleCapabilities();
+    const rule = cachedRule("cache:d", 1);
+    // In a function of its own, so nothing in this test still holds the executable once it returns.
+    const freed = ((): WeakRef<object> => {
+      const outcome = cache.compile(capabilities, "cache:d", rule.text, rule.digest, "null");
+      if (!outcome.ok) throw new Error(outcome.reason);
+      expect(executableOf(cache.compile(capabilities, "cache:d", rule.text, rule.digest, "null"))).toBe(outcome.executable);
+      return new WeakRef(outcome.executable);
+    })();
+    expect(await collected(freed)).toBe(true);
+    expect(cache.compile(capabilities, "cache:d", rule.text, rule.digest, "null").ok).toBe(true);
+  });
+
+  /** Whether a few full collections free what `reference` points at. */
+  async function collected(reference: WeakRef<object>): Promise<boolean> {
+    setFlagsFromString("--expose-gc");
+    const collect = runInNewContext("gc") as () => void;
+    for (let round = 0; round < 5 && reference.deref() !== undefined; round += 1) {
+      await new Promise(done => setImmediate(done));
+      collect();
+    }
+    return reference.deref() === undefined;
+  }
 });

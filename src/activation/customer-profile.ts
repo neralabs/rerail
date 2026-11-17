@@ -8,7 +8,10 @@ import {
   verify as verifySignature,
   type webcrypto,
 } from "node:crypto";
-import { readFile, rename, rm, writeFile, mkdir } from "node:fs/promises";
+import { readFile, rm, writeFile, mkdir } from "node:fs/promises";
+import { removeWithRetry, replaceFile } from "../engine/file-replace.js";
+import { withHomeLock } from "../engine/native/file-lock.js";
+import { makeRerailHome } from "../engine/storage/private-files.js";
 import { join } from "node:path";
 import { z } from "zod";
 import type { DeviceSecretStore } from "./device-keystore.js";
@@ -215,15 +218,23 @@ export const PROFILES_DIR = "profiles";
 /** In the Rerail home: the name of the active profile. */
 export const ACTIVE_PROFILE_FILE = "active-profile";
 
+/** How long an activation waits for another to let go of the profile's lock. */
+const PROFILE_LOCK_WAIT_MS = 5_000;
+
+export interface ProfileStoreOptions {
+  /** Waits between tries while another activation holds the profile's lock. */
+  readonly sleep?: (ms: number) => Promise<void>;
+}
+
 export class CustomerProfileStore {
   private readonly profilesRoot: string;
-  private readonly locksRoot: string;
   private readonly activeProfilePath: string;
+  private readonly sleep: ((ms: number) => Promise<void>) | undefined;
 
-  constructor(private readonly home: string) {
+  constructor(private readonly home: string, options: ProfileStoreOptions = {}) {
     this.profilesRoot = join(home, PROFILES_DIR);
-    this.locksRoot = join(this.profilesRoot, ".locks");
     this.activeProfilePath = join(home, ACTIVE_PROFILE_FILE);
+    this.sleep = options.sleep;
   }
 
   private profileDirectory(profileName: string): string {
@@ -231,28 +242,18 @@ export class CustomerProfileStore {
     return join(this.profilesRoot, profileName);
   }
 
+  /**
+   * Runs `operation` holding the profile's lock (`locks/profile-<name>.lock`, `withHomeLock`), waiting while another
+   * activation holds it.
+   */
   private async withProfileLock<T>(profileName: string, operation: () => Promise<T>): Promise<T> {
     assertProfileName(profileName);
-    await mkdir(this.locksRoot, { recursive: true, mode: 0o700 });
-    const lockPath = join(this.locksRoot, `${profileName}.lock`);
-    const deadline = Date.now() + 5_000;
-    while (true) {
-      try {
-        await mkdir(lockPath, { mode: 0o700 });
-        break;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        if (Date.now() >= deadline) throw new Error(`Timed out waiting for Rerail profile lock: ${profileName}`);
-        const { promise, resolve } = Promise.withResolvers<void>();
-        setTimeout(resolve, 10);
-        await promise;
-      }
-    }
-    try {
-      return await operation();
-    } finally {
-      await rm(lockPath, { recursive: true, force: true });
-    }
+    return await withHomeLock(this.home, {
+      name: `profile-${profileName}`,
+      waitMs: PROFILE_LOCK_WAIT_MS,
+      sleep: this.sleep,
+      busy: () => new Error(`Timed out waiting for Rerail profile lock: ${profileName}`),
+    }, operation);
   }
 
   private async optionalFile(path: string): Promise<string | undefined> {
@@ -315,9 +316,7 @@ export class CustomerProfileStore {
         }
 
         const stored = { schemaVersion: 1 as const, trustRoots, profile: envelope };
-        const temporaryPath = `${activationPath}.${process.pid}.${randomUUID()}.tmp`;
-        await writeFile(temporaryPath, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 });
-        await rename(temporaryPath, activationPath);
+        await replaceFile(activationPath, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 });
         await this.select(profileName);
         await afterActivation?.();
         return verified;
@@ -338,14 +337,13 @@ export class CustomerProfileStore {
 
   async select(profileName: string): Promise<void> {
     this.profileDirectory(profileName);
-    await mkdir(this.home, { recursive: true, mode: 0o700 });
-    const temporaryPath = `${this.activeProfilePath}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(temporaryPath, `${profileName}\n`, { mode: 0o600 });
-    await rename(temporaryPath, this.activeProfilePath);
+    makeRerailHome(this.home);
+    await replaceFile(this.activeProfilePath, `${profileName}\n`, { mode: 0o600 });
   }
 
   async remove(profileName: string): Promise<void> {
-    await rm(this.profileDirectory(profileName), { recursive: true, force: true });
+    // On Windows a virus scan or the indexer can hold a file in the folder for a moment; the removal waits that out.
+    await removeWithRetry(this.profileDirectory(profileName));
     if (await this.selectedProfileName() === profileName) await rm(this.activeProfilePath, { force: true });
   }
 }

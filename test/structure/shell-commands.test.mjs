@@ -1,11 +1,6 @@
 /**
- * How the structure checks read a shell line, which they rely on to tell what CI runs.
- *
- * Four constructs the tokenizer reads differently from a shell have no assertion here, so that this suite does not
- * hold it to the wrong answer: a quoted redirect target that holds a space or a separator, a file-descriptor
- * redirection (`2>&1`), a backslash inside double quotes before a character a shell does not let it escape, and a
- * backslash outside quotes other than a line continuation. https://github.com/neralabs/rerail/issues/475 lists each
- * case with what a shell does.
+ * How the structure checks read a shell line, which they rely on to tell what CI runs. Where a line is valid shell,
+ * the expected value is the commands and arguments `sh` runs for it.
  */
 import { describe, expect, it } from "vitest";
 import { shellCommands } from "../../scripts/check/check-structure/lib.mjs";
@@ -25,6 +20,19 @@ describe("shellCommands", () => {
     expect(shellCommands(`echo "open`)).toEqual([["echo", "open"]]);
   });
 
+  it("drops a backslash inside double quotes only before a character it escapes", () => {
+    expect(shellCommands(String.raw`echo "a\nb" "e\.f"`)).toEqual([["echo", String.raw`a\nb`, String.raw`e\.f`]]);
+    expect(shellCommands(String.raw`echo "x\$y\`z"`)).toEqual([["echo", "x$y`z"]]);
+    expect(shellCommands('echo "a\\\nb" c')).toEqual([["echo", "ab", "c"]]);
+  });
+
+  it("takes the character after a backslash outside quotes literally", () => {
+    expect(shellCommands(String.raw`a\b`)).toEqual([["ab"]]);
+    expect(shellCommands(String.raw`echo a\ b c\;d`)).toEqual([["echo", "a b", "c;d"]]);
+    expect(shellCommands(String.raw`echo x \# y`)).toEqual([["echo", "x", "#", "y"]]);
+    expect(shellCommands("echo end\\")).toEqual([["echo", "end"]]);
+  });
+
   it("joins a line continuation", () => {
     expect(shellCommands("a \\\n b")).toEqual([["a", "b"]]);
     expect(shellCommands("a\\\nb")).toEqual([["ab"]]);
@@ -42,6 +50,21 @@ describe("shellCommands", () => {
     expect(shellCommands("a < in; b")).toEqual([["a"], ["b"]]);
     expect(shellCommands("a >> out")).toEqual([["a"]]);
     expect(shellCommands("a >")).toEqual([["a"]]);
+    expect(shellCommands(`a >"out file" b`)).toEqual([["a", "b"]]);
+    expect(shellCommands(`a >"o;p" b`)).toEqual([["a", "b"]]);
+    expect(shellCommands("a >x>y b")).toEqual([["a", "b"]]);
+    expect(shellCommands("a >|clob b")).toEqual([["a", "b"]]);
+    expect(shellCommands(`a <<<"$x" b`)).toEqual([["a", "b"]]);
+  });
+
+  it("takes an unquoted number before a redirect as its file descriptor", () => {
+    expect(shellCommands("a 2>&1 b")).toEqual([["a", "b"]]);
+    expect(shellCommands("a 2>'err' b")).toEqual([["a", "b"]]);
+    expect(shellCommands("a 12>w b")).toEqual([["a", "b"]]);
+    expect(shellCommands("a 2>&1|b")).toEqual([["a"], ["b"]]);
+    expect(shellCommands("a b>z c")).toEqual([["a", "b", "c"]]);
+    expect(shellCommands(`a "2">x b`)).toEqual([["a", "2", "b"]]);
+    expect(shellCommands(String.raw`a \2>y b`)).toEqual([["a", "2", "b"]]);
   });
 
   it("keeps a backslash-newline as it is inside single quotes", () => {
