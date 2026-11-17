@@ -115,7 +115,10 @@ async function holdWriteLock(path: string): Promise<{ release(): Promise<void> }
       const released = once(child, "message");
       child.send("release");
       await released;
-      await once(child, "exit");
+      // Its IPC channel keeps the holder alive: closing it lets the process end.
+      const exited = once(child, "exit");
+      child.disconnect();
+      await exited;
     },
   };
 }
