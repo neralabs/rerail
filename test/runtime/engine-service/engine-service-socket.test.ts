@@ -10,6 +10,7 @@ import { engineHoldsCapability, engineProof } from "../../../src/runtime/engine-
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../../src/runtime/engine-pipe.js";
 import { chooseEngineSocketPath, ingestEngineEvent, listenBesideHeldPipe, preparePrivateDirectory, startEngineService } from "../../../src/runtime/engine-service.js";
 import { testEmbedder } from "../../support/hook-events.js";
+import { testEngineEndpoint } from "../../support/platform/engine-endpoint.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
 
@@ -74,20 +75,6 @@ describe.runIf(process.platform !== "win32")("engine service socket directory", 
     const service = await startEngineService({ socketPath, storageRoot: join(directory, "state") });
     try {
       await expect(ingestEngineEvent({ socketPath }, { kind: "session-end", eventId: "end", sessionId: "s" })).rejects.toThrow(/\(400\)/u);
-    } finally {
-      await service.close();
-    }
-  });
-
-  it("runs its before-event step before it routes each event sent on the socket", async () => {
-    const directory = join(await temporaryRoot(), "run");
-    await mkdir(directory, { mode: 0o700 });
-    const socketPath = join(directory, "engine.sock");
-    const steps: string[] = [];
-    const service = await startEngineService({ socketPath, storageRoot: join(directory, "state"), beforeEvent: () => steps.push("before") });
-    try {
-      await expect(ingestEngineEvent({ socketPath }, { kind: "session-end", eventId: "end", sessionId: "s" })).rejects.toThrow(/\(400\)/u);
-      expect(steps).toEqual(["before"]);
     } finally {
       await service.close();
     }
@@ -362,5 +349,27 @@ describe("an engine pipe another process holds", () => {
     await expect(listenBesideHeldPipe(PIPE, held, { listen, ownEngineAnswers: async () => true, fallback: () => FALLBACK }))
       .rejects.toThrow(/in use by a running daemon/u);
     await expect(listenBesideHeldPipe(PIPE, held, { listen, ownEngineAnswers: async () => false, fallback: undefined })).rejects.toBe(held);
+  });
+});
+
+// On every system, the Windows pipe included: the daemon takes what hooks left untaken in this step.
+describe("engine service before-event step", () => {
+  let root: string | undefined;
+  afterEach(async () => {
+    if (root !== undefined) await removeFolder(root);
+    root = undefined;
+  });
+
+  it("runs before it routes each event sent on its socket or pipe", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-before-event-"));
+    const socketPath = testEngineEndpoint(root);
+    const steps: string[] = [];
+    const service = await startEngineService({ socketPath, storageRoot: join(root, "state"), beforeEvent: () => steps.push("before") });
+    try {
+      await expect(ingestEngineEvent({ socketPath }, { kind: "session-end", eventId: "end", sessionId: "s" })).rejects.toThrow(/\(400\)/u);
+      expect(steps).toEqual(["before"]);
+    } finally {
+      await service.close();
+    }
   });
 });

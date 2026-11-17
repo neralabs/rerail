@@ -656,15 +656,31 @@ export class RerailDaemon {
   }
 
   /**
-   * Takes the events hooks left untaken in this daemon's home, oldest first, as its state file is written, and each one
-   * left later as soon as this daemon's event loop runs (`untaken-events.ts`). Only with the watch running does the state
-   * file tell hooks they may leave events for it without asking it; without one, events left by a hook that waited out
-   * this daemon are still taken at its next event and its next start.
+   * Watches this daemon's home for the events hooks leave untaken (`untaken-events.ts`), taking each as soon as this
+   * daemon's event loop runs. Only while the watch runs does the state file tell hooks they may leave events for it
+   * without asking it: a watch that can no longer follow the folder takes the word back (`#untakenLost`). Without one,
+   * events left by a hook that waited out this daemon are still taken at its next event and its next start.
    */
-  #takeUntaken(): void {
-    if (this.#untaken === undefined) return;
-    this.#takesUntaken = this.#untaken.watch();
-    this.#untaken.take();
+  #watchUntaken(stateFile: string): void {
+    this.#takesUntaken = this.#untaken?.watch(() => this.#untakenLost(stateFile)) ?? false;
+  }
+
+  /** The watch of the untaken folder ended for good: the state file stops telling hooks to leave events unasked. */
+  #untakenLost(stateFile: string): void {
+    this.#takesUntaken = false;
+    this.#recordChecked = this.#recordChecked.then(async () => {
+      if (this.#closed) return;
+      await this.#writeRecord(stateFile).catch((error: unknown) => {
+        process.stderr.write(`rerail daemon: could not write ${stateFile} again: ${errorText(error)}\n`);
+      });
+    });
+  }
+
+  /** Writes this daemon's state to `stateFile`, as what its record check keeps there. */
+  async #writeRecord(stateFile: string): Promise<void> {
+    const text = `${JSON.stringify(this.state(), null, 2)}\n`;
+    await replaceFile(stateFile, text, { mode: 0o600 });
+    this.#recordText = text;
   }
 
   /**
@@ -688,14 +704,15 @@ export class RerailDaemon {
    * start and hook in that home while it records into a database that home does not hold.
    */
   async #record(stateFile: string): Promise<void> {
-    this.#takeUntaken();
-    const text = `${JSON.stringify(this.state(), null, 2)}\n`;
-    await replaceFile(stateFile, text, { mode: 0o600 });
-    this.#recordText = text;
+    this.#watchUntaken(stateFile);
+    await this.#writeRecord(stateFile);
+    // After the file, so a launcher waiting for it is not held by a long backlog; an event sent meanwhile takes the rest
+    // first (the engine service's before-event step).
+    void this.#untaken?.drain();
     const check = this.#options.recordCheck;
     if (check === undefined) return;
     this.#recordCheck = setInterval(() => {
-      this.#recordChecked = this.#recordChecked.then(async () => await this.#restoreRecord(stateFile, text, check));
+      this.#recordChecked = this.#recordChecked.then(async () => await this.#restoreRecord(stateFile, this.#recordText!, check));
     }, check.everyMs);
     this.#recordCheck.unref();
   }

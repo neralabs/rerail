@@ -1,4 +1,4 @@
-import { mkdtemp, readdir } from "node:fs/promises";
+import { mkdtemp, readdir, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -40,7 +40,7 @@ describe("the home's untaken events", () => {
     const taken = Promise.withResolvers<UntakenEvent>();
     const taker = untakenEventTaker(rerailHome, event => taken.resolve(event));
     try {
-      expect(taker.watch()).toBe(true);
+      expect(taker.watch(() => undefined)).toBe(true);
       await leaveUntaken(rerailHome, 7, "left later", 5_000);
       expect(await taken.promise).toEqual({ body: "left later", arrivedAt: 5_000 });
     } finally {
@@ -54,5 +54,47 @@ describe("the home's untaken events", () => {
     const recorded: string[] = [];
     untakenEventTaker(rerailHome, event => recorded.push(event.body)).take();
     expect(recorded).toEqual(Array.from({ length: 11 }, (_, count) => `event ${count}`));
+  });
+
+  it("are taken by a watch that follows its folder once the folder was removed or moved and made again", async () => {
+    const rerailHome = await home();
+    const taken: string[] = [];
+    let next = Promise.withResolvers<void>();
+    const lost: string[] = [];
+    const taker = untakenEventTaker(rerailHome, event => {
+      taken.push(event.body);
+      next.resolve();
+    });
+    try {
+      expect(taker.watch(() => lost.push("lost"))).toBe(true);
+      await removeFolder(join(rerailHome, UNTAKEN_EVENTS_DIR));
+      await leaveUntaken(rerailHome, 7, "after the removal", 1_000);
+      await next.promise;
+      next = Promise.withResolvers<void>();
+      await rename(join(rerailHome, UNTAKEN_EVENTS_DIR), join(rerailHome, "moved"));
+      await leaveUntaken(rerailHome, 7, "after the move", 2_000);
+      await next.promise;
+      next = Promise.withResolvers<void>();
+      await leaveUntaken(rerailHome, 7, "later still", 3_000);
+      await next.promise;
+      expect(taken).toEqual(["after the removal", "after the move", "later still"]);
+      expect(lost).toEqual([]);
+    } finally {
+      taker.close();
+    }
+  });
+
+  it("drain a long backlog a slice per turn of the event loop, oldest first, so the daemon answers meanwhile", async () => {
+    const rerailHome = await home();
+    for (let count = 0; count < 100; count += 1) await leaveUntaken(rerailHome, 7, `event ${count}`, 1_000 + count);
+    const recorded: string[] = [];
+    const taker = untakenEventTaker(rerailHome, event => recorded.push(event.body));
+    const drained = taker.drain();
+    // The first slice is taken before drain returns; the rest waits for the next turn.
+    expect(recorded.length).toBeGreaterThan(0);
+    expect(recorded.length).toBeLessThan(100);
+    await drained;
+    expect(recorded).toEqual(Array.from({ length: 100 }, (_, count) => `event ${count}`));
+    expect(await readdir(join(rerailHome, UNTAKEN_EVENTS_DIR))).toEqual([]);
   });
 });

@@ -1,5 +1,6 @@
-import { mkdirSync, readdirSync, readFileSync, rmSync, watch, type FSWatcher } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { replaceFile } from "./file-replace.js";
 
 /**
@@ -79,10 +80,22 @@ export interface UntakenEvent {
 export interface UntakenEventTaker {
   /** Records every event the folder holds, oldest first, removing each once it is recorded. */
   take(): void;
-  /** Takes the folder whenever it changes, until `close`; false where no watch can start. */
-  watch(): boolean;
+  /**
+   * Takes every event the folder holds as `take` does, a slice per turn of the event loop, so a long backlog keeps the
+   * daemon answering while it is taken; a `take` meanwhile takes the rest at once, in the same order. Ends at `close`.
+   */
+  drain(): Promise<void>;
+  /**
+   * Takes the folder whenever it changes, until `close`, following it when it is removed or replaced; false where no
+   * watch can start. `lost` runs once the watch can no longer follow the folder (the home is gone), after which events
+   * are taken only at `take` and `drain`.
+   */
+  watch(lost: () => void): boolean;
   close(): void;
 }
+
+/** How many events a slice of `drain` takes before it lets the event loop run. */
+const DRAIN_SLICE = 64;
 
 /**
  * The taker of `home`'s untaken events for its daemon: `record` stores one, synchronously, and reports its own
@@ -92,22 +105,32 @@ export interface UntakenEventTaker {
  */
 export function untakenEventTaker(home: string, record: (event: UntakenEvent) => void): UntakenEventTaker {
   const recorded = new Set<string>();
-  let watcher: FSWatcher | undefined;
-  const take = (): void => {
-    for (const { name, order } of untakenNames(home)) {
+  let watcher: FolderWatch | undefined;
+  let closed = false;
+  const takeSome = (limit: number): boolean => {
+    const names = untakenNames(home);
+    for (const { name, order } of names.slice(0, limit)) {
       const path = join(untakenFolder(home), name);
       if (!recorded.has(name)) recordFile(path, order[0]!, record);
       recorded.add(name);
       if (removed(path)) recorded.delete(name);
     }
+    return names.length > limit;
   };
+  const take = (): void => void takeSome(Number.POSITIVE_INFINITY);
   return {
     take,
-    watch: () => {
-      watcher = watchFolder(home, take);
+    drain: async () => {
+      while (!closed && takeSome(DRAIN_SLICE)) await nextTurn();
+    },
+    watch: lost => {
+      watcher = watchFolder(home, take, lost);
       return watcher !== undefined;
     },
-    close: () => watcher?.close(),
+    close: () => {
+      closed = true;
+      watcher?.close();
+    },
   };
 }
 
@@ -132,14 +155,85 @@ function removed(path: string): boolean {
   }
 }
 
-/** A watch of `home`'s untaken folder that calls `changed` on each change; undefined where none can start. */
-function watchFolder(home: string, changed: () => void): FSWatcher | undefined {
+/** A watch of one untaken folder, and the identity of the folder it watches. */
+interface Watched {
+  watcher: FSWatcher;
+  ino: number;
+}
+
+/** What `watchFolder` gives back: the end of the watch. */
+interface FolderWatch {
+  close(): void;
+}
+
+/**
+ * A watch of `home`'s untaken folder that calls `changed` on each change. A folder removed, moved or made again is no
+ * longer the one watched (a watch follows what it opened), so a change that finds another folder there, or none, and an
+ * error once the folder went, open a watch on the folder at that path again, making it in a home that still exists.
+ * Once that fails, or the watch errs on the folder it watches, `lost` runs and the watch ends. Undefined where none can
+ * start.
+ */
+function watchFolder(home: string, changed: () => void, lost: () => void): FolderWatch | undefined {
+  let current: Watched | undefined;
+  let closed = false;
+  const end = (): void => {
+    current?.watcher.close();
+    current = undefined;
+    if (!closed) lost();
+  };
+  const follow = (): void => {
+    current?.watcher.close();
+    current = closed ? undefined : openWatch(home, onChange, failed);
+    if (!closed && current === undefined) lost();
+  };
+  // An error on the folder still at the path cannot be followed (a watch that fails where it is would fail again).
+  const failed = (): void => {
+    if (watchesFolder(home, current)) end();
+    else follow();
+  };
+  // A change named for the folder itself (its removal or move; the name may be reused at once) or a folder that is not
+  // the one watched any more: watch the folder at the path again.
+  const onChange = (_: string, name: string | null): void => {
+    if (name === null || name === UNTAKEN_EVENTS_DIR || !watchesFolder(home, current)) follow();
+    changed();
+  };
+  current = openWatch(home, onChange, failed);
+  if (current === undefined) return undefined;
+  return {
+    close: () => {
+      closed = true;
+      current?.watcher.close();
+    },
+  };
+}
+
+/** Opens a watch of `home`'s untaken folder, making the folder (not the home) first; undefined when either fails. */
+function openWatch(home: string, changed: (event: string, name: string | null) => void, failed: () => void): Watched | undefined {
   try {
-    mkdirSync(untakenFolder(home), { recursive: true, mode: 0o700 });
+    makeFolder(home);
+    const ino = statSync(untakenFolder(home)).ino;
     const watcher = watch(untakenFolder(home), { persistent: false }, changed);
-    watcher.on("error", () => watcher.close());
-    return watcher;
+    watcher.on("error", failed);
+    return { watcher, ino };
   } catch {
     return undefined;
+  }
+}
+
+/** Makes `home`'s untaken folder unless it is there; throws when the home itself is gone. */
+function makeFolder(home: string): void {
+  try {
+    mkdirSync(untakenFolder(home), { mode: 0o700 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+}
+
+/** Whether the folder at `home`'s untaken path is still the one `watched` watches. */
+function watchesFolder(home: string, watched: Watched | undefined): boolean {
+  try {
+    return watched !== undefined && statSync(untakenFolder(home)).ino === watched.ino;
+  } catch {
+    return false;
   }
 }
