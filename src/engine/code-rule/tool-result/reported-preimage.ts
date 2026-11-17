@@ -353,8 +353,8 @@ function heldLine(mark: string, held: string | undefined, text: string, ends: bo
  * mark out.
  */
 function sameLine(held: string, text: string, ends: boolean): boolean {
-  if (sameText(held, text, ends) || sameText(shownIndentation(held), text, ends)) return true;
-  return held.startsWith(BYTE_ORDER_MARK) && sameLine(held.slice(BYTE_ORDER_MARK.length), text, ends);
+  const unmarked = held.startsWith(BYTE_ORDER_MARK) ? held.slice(BYTE_ORDER_MARK.length) : held;
+  return [held, unmarked].some((line) => sameText(line, text, ends) || sameText(shownIndentation(line), text, ends));
 }
 
 function sameText(line: string, text: string, ends: boolean): boolean {
