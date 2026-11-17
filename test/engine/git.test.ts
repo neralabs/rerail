@@ -819,9 +819,14 @@ describe("gitStartEnvironment", () => {
       const env = { Path: person.Path, HOME, USERPROFILE: "", PLINK_PROTOCOL: "" };
       expect(gitStartEnvironment(ucrt, env, install(ucrt)), HOME).toEqual({ ...env, MSYSTEM: "UCRT64", PLINK_PROTOCOL: "ssh", Path: [...first("ucrt64"), person.Path].join(";") });
     }
-    // An empty HOMEPATH is unset, as gitHome reads it: HOMEDRIVE alone names the current folder of its drive.
-    const noShare = gitStartEnvironment(ucrt, { ...person, HOMEPATH: "" }, install(ucrt, "H:"));
-    expect([noShare.HOME, noShare.Path]).toEqual([person.USERPROFILE, [...first("ucrt64", person.USERPROFILE), person.Path].join(";")]);
+    // An empty HOME or HOMEPATH is unset, as gitHome reads them: HOMEDRIVE alone names the current folder of its drive.
+    for (const empty of [{ HOME: "" }, { HOMEPATH: "" }]) {
+      const started = gitStartEnvironment(ucrt, { ...person, ...empty }, install(ucrt, "H:"));
+      expect([started.HOME, started.Path]).toEqual([person.USERPROFILE, [...first("ucrt64", person.USERPROFILE), person.Path].join(";")]);
+    }
+    // An empty USERPROFILE is unset too: with no other home, HOME stays unset.
+    const noProfile = { Path: person.Path, USERPROFILE: "" };
+    expect(gitStartEnvironment(ucrt, noProfile, install(ucrt))).toEqual({ ...noProfile, MSYSTEM: "UCRT64", PLINK_PROTOCOL: "ssh", Path: [...first("ucrt64"), person.Path].join(";") });
     // No PATH, or an empty one: nothing after Git's folders, where an empty entry would be the current folder.
     for (const Path of [undefined, ""]) {
       expect(gitStartEnvironment(ucrt, { HOME: person.USERPROFILE, Path }, install(ucrt)).Path).toBe(first("ucrt64", person.USERPROFILE).join(";"));
