@@ -677,6 +677,53 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     expect(requestSteer).toHaveBeenCalledTimes(1);
   });
 
+  it("gives back the workspace a worktree's lane opened for Log batches once their audits settle, and records its next batch as before", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+    const closed = vi.spyOn(loadNativeBinding().CodeRuleDslWorkspace.prototype, "close");
+    cleanups.push(async () => { closed.mockRestore(); });
+    await auditor.openWorkspace("log-lanes");
+    const logBatch = async (revision: number, name: string) => {
+      const edits = [{ path: join(worktree, "api", name), language: "python" as const, generatedText: "NEEDLE\n" }];
+      await auditor.auditGeneratedEdits("log-lanes", { revision, checkpoints: ["edit"], mode: "log", edits });
+      await auditor.settleGeneratedEdits();
+    };
+
+    await logBatch(1, "x.py");
+    // A workspace holds its checkout's index: the worktree's goes once the batch's audit settles.
+    expect(closed).toHaveBeenCalledTimes(1);
+    await logBatch(2, "y.py");
+    expect(closed).toHaveBeenCalledTimes(2);
+    expect(audits.map(audit => [audit.workspaceRoot, audit.mode, audit.paths])).toEqual([[worktree, "log", ["api/x.py"]], [worktree, "log", ["api/y.py"]]]);
+    expect(violations(audits)).toEqual([
+      { checkout: worktree, path: "api/x.py", code: "SESSION", mode: "block" },
+      { checkout: worktree, path: "api/y.py", code: "SESSION", mode: "block" },
+    ]);
+
+    // A walk's questions there are answered by the session checkout's lane, at the same rules, and take no workspace.
+    const view = auditor.walkView();
+    expect([view.acceptsPath(join(worktree, "api", "x.py")), view.acceptsPath(join(worktree, "README.md"))]).toEqual([true, false]);
+    await auditor.close();
+    expect(closed).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps the workspace of a worktree's lane that the session's own edit reached", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+    const closed = vi.spyOn(loadNativeBinding().CodeRuleDslWorkspace.prototype, "close");
+    cleanups.push(async () => { closed.mockRestore(); });
+    await auditor.openWorkspace("own-lane");
+
+    await edit(auditor, "own-lane", 1, join(worktree, "api", "x.py"));
+    const edits = [{ path: join(worktree, "api", "y.py"), language: "python" as const, generatedText: "NEEDLE\n" }];
+    await auditor.auditGeneratedEdits("own-lane", { revision: 2, checkpoints: ["edit"], mode: "log", edits });
+    await auditor.settleGeneratedEdits();
+    expect(closed).not.toHaveBeenCalled();
+    expect(audits.map(audit => [audit.mode, audit.paths])).toEqual([["steer", ["api/x.py"]], ["log", ["api/y.py"]]]);
+  });
+
   it("keeps the stopped value a worktree outside the checkout has of its own", async () => {
     const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
     const database = openRerailDatabase(databasePath);
