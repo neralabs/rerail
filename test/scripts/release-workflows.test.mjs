@@ -32,3 +32,23 @@ describe("release.yml", () => {
     expect(guard).toBeLessThan(runs(steps, "npm dist-tag add"));
   });
 });
+
+describe("release-packs.yml", () => {
+  const { jobs } = workflow("release-packs.yml");
+
+  it("installs the dependencies the promote plan reads core ranges with, before npm is given the read token", () => {
+    const steps = jobs["promote-plan"].steps;
+    const deps = steps.findIndex((step) => step.uses === "./.github/actions/node-deps");
+    expect(deps).toBeGreaterThan(-1);
+    expect(deps).toBeLessThan(runs(steps, ".npmrc"));
+  });
+
+  it("makes each promoted pack's GitHub Release a full release", () => {
+    expect(jobs.promote.outputs.promoted).toBe("${{ steps.promote.outputs.promoted }}");
+    const releases = jobs["promoted-releases"];
+    expect(releases.needs).toBe("promote");
+    expect(releases.permissions.contents).toBe("write");
+    const step = releases.steps.find((candidate) => String(candidate.run ?? "").includes("github-release.mjs"));
+    expect(step.env.RELEASED).toBe("${{ needs.promote.outputs.promoted }}");
+  });
+});

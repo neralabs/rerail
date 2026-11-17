@@ -327,6 +327,22 @@ describe("planPromotions", () => {
   };
   const promoted = (plan) => plan.promote.map(({ id, version, latest, hold, release }) => ({ id, version, latest, hold, release }));
 
+  it("leaves out a pack the core on latest can't load, naming why, and promotes the rest", () => {
+    const problem = "needs core >=0.2.0-0; latest is 0.1.5";
+    const coreProblem = (candidate) => (candidate.id === "fresh" ? problem : null);
+    const plan = planPromotions([pack("behind", "0.1.3"), pack("fresh", "0.1.0")], tags, (packageName) => distTags[packageName], { coreProblem });
+    expect(plan.promote.map(({ id }) => id)).toEqual(["behind"]);
+    expect(plan.needsCore).toEqual([expect.objectContaining({ id: "fresh", version: "0.1.0", problem })]);
+  });
+
+  it("puts a pack back whatever core it needs, since an older version is no newer a pack", () => {
+    const coreProblem = () => "needs core >=0.2.0-0; latest is 0.1.5";
+    const request = promotionRequest([pack("behind", "0.1.3")], "behind", "0.1.2");
+    const plan = planPromotions(request.packs, [...tags, name("behind@0.1.2")], () => ({ latest: "0.1.3" }), { named: true, coreProblem });
+    expect(plan.promote.map(({ id, version, hold }) => [id, version, hold])).toEqual([["behind", "0.1.2", true]]);
+    expect(plan.needsCore).toEqual([]);
+  });
+
   it("sweeps every released version not latest yet, leaving out one held where it was put back, and one npm could not read", () => {
     const asked = [];
     const plan = planPromotions(

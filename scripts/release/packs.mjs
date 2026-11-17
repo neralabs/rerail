@@ -328,11 +328,13 @@ export function promotionRequest(packs, id, version) {
  * `held` dist-tags (absent when npm has none), or null when npm could not be read. A pack is promoted when its
  * version is released (its tag exists) and is not `latest` already; one without its tag is `unreleased`. A sweep
  * leaves out a pack held at its `latest` (put back on purpose); naming that pack promotes it. A promotion that is
- * not itself a hold releases any hold the pack has (`release`).
+ * not itself a hold releases any hold the pack has (`release`). A pack `coreProblem(pack)` says the core on `latest`
+ * can't load (a string naming why, or null) is left out as `needsCore`, with that `problem`: on `latest`, the people
+ * on stable would lose it until core is promoted. A hold is an older version, so it is never left out for that.
  */
-export function planPromotions(packs, tags, distTagsOf, { named = false } = {}) {
+export function planPromotions(packs, tags, distTagsOf, { named = false, coreProblem = () => null } = {}) {
   const existing = new Set(tags);
-  const plan = { promote: [], unreleased: [], held: [], unreadable: [] };
+  const plan = { promote: [], unreleased: [], held: [], unreadable: [], needsCore: [] };
   for (const pack of packs) {
     if (!existing.has(releaseTag(pack.name, pack.version))) {
       plan.unreleased.push(pack);
@@ -351,6 +353,11 @@ export function planPromotions(packs, tags, distTagsOf, { named = false } = {}) 
       continue;
     }
     if (latest === pack.version && held === (hold ? pack.version : null)) continue;
+    const problem = hold ? null : coreProblem(pack);
+    if (problem !== null) {
+      plan.needsCore.push({ ...pack, problem });
+      continue;
+    }
     plan.promote.push({ ...pack, latest, hold, release: !hold && held !== null });
   }
   return plan;

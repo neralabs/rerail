@@ -423,16 +423,14 @@ jobs:
             exit 1
           fi
 
-      - name: Set up Node.js v24
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: "24"
-
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
+
+      # The plan reads each pack's core range with semver. Installed before npm is given the read token.
+      - uses: ./.github/actions/node-deps
 
       # The file names the variable, not the token: npm reads NODE_AUTH_TOKEN from the step that runs it.
       - name: Authenticate npm to read the packs
@@ -457,6 +455,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: release
+    outputs:
+      promoted: ${{ steps.promote.outputs.promoted }}
     permissions:
       contents: read
       id-token: write
@@ -493,3 +493,30 @@ jobs:
         env:
           RELEASED: ${{ steps.promote.outputs.promoted }}
         run: node scripts/release/dist-tags-check.mjs
+
+  # The GitHub Release of each version the promote job moved to `latest`, rewritten as a full release: published under
+  # `next`, it was a pre-release. A pack's Release is never the repository's latest release (core's is). Its notes are
+  # the version's section of the pack's CHANGELOG.md on main, which keeps every released version's section.
+  promoted-releases:
+    name: Promoted GitHub Releases
+    needs: promote
+    if: ${{ !cancelled() && needs.promote.outputs.promoted != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Make each promoted version's GitHub Release a full release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASED: ${{ needs.promote.outputs.promoted }}
+        run: node scripts/release/github-release.mjs
