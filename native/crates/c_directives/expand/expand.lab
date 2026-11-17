@@ -286,6 +286,9 @@ i1:     IS m=0 8
         KEEP 0
         GOTO @il
 ie:     IF m=1 0
+        PUSH @ie2
+        GOTO @cond
+ie2:    EXPR m=14 0       ; whole, and true
         GOTO @iftrue
         COND m=0 0
         GOTO @skip
@@ -339,6 +342,9 @@ se1:    IS m=0 8
         KEEP 0
         GOTO @sel
 see:    IF m=1 0
+        PUSH @se2
+        GOTO @cond
+se2:    EXPR m=14 0
         GOTO @sktake
         GOTO @skip
 skedef: LINE 0
@@ -362,3 +368,54 @@ sen2:   LOOKUP 0
 sktake: SKIPLINE 0
         COND m=4 0
         GOTO @raw
+; `#if`'s expression (`pp_expr`'s precedence climbing): `cond` is `ternary (, ternary)*`,
+; `ternary` is `binary(1) (? cond : ternary)?`, `binary(min)` is `unary (op binary(p+1))*` over the
+; operators of precedence `min` or more, `unary` a prefix operator's operand, `( cond )` or a
+; primary. Each value is left on the expression's stack.
+cond:   PUSH @cd1
+        GOTO @tern
+cd1:    EXPR m=6 0        ; `,`
+        GOTO @cd2
+        RETURN 0
+cd2:    PUSH @cd1
+        GOTO @tern
+tern:   EXPR m=7 0
+        PUSH @tn1
+        GOTO @bin
+tn1:    EXPR m=11 0       ; `?`
+        GOTO @tn2
+        RETURN 0
+tn2:    PUSH @tn3
+        GOTO @cond
+tn3:    EXPR m=12 0       ; `:`
+        PUSH @tn4
+        GOTO @tern
+tn4:    EXPR m=13 0
+        RETURN 0
+bin:    PUSH @bn1
+        GOTO @un
+bn1:    EXPR m=8 0        ; a binary operator
+        GOTO @bn2
+        EXPR m=10 0
+        RETURN 0
+bn2:    PUSH @bn3
+        GOTO @bin
+bn3:    EXPR m=9 0
+        GOTO @bn1
+un:     EXPR m=0 0        ; an operand's token
+        GOTO @un1
+        RETURN 0
+un1:    EXPR m=1 0        ; a prefix operator
+        GOTO @un2
+        EXPR m=3 0        ; `(`
+        GOTO @un3
+        EXPR m=5 0
+        RETURN 0
+un2:    PUSH @un4
+        GOTO @un
+un4:    EXPR m=2 0
+        RETURN 0
+un3:    PUSH @un5
+        GOTO @cond
+un5:    EXPR m=4 0        ; `)`
+        RETURN 0

@@ -153,8 +153,8 @@ pub const SKIP: u8 = 0x77;
 /// `m=4` its chain taken; `m=5` its `#else` seen; `m=6` closed.
 pub const COND: u8 = 0x78;
 /// `m=0`: an `#if`'s line (the rest of it) pushed as a stop source, a level opened for its
-/// expansion, `defined` an operator; `m=1`, a test: the level closed and its expression's value
-/// true (`pp_expr`); `m=2`: as `m=0`, `defined` no operator (an `#include`'s line).
+/// expansion, `defined` an operator; `m=1`: the level closed, its tokens the expression `EXPR`
+/// reads; `m=2`: as `m=0`, `defined` no operator (an `#include`'s line).
 pub const IF: u8 = 0x79;
 /// A test: `T` is `defined` (not painted), its operand (`X` or `( X )`) read unexpanded, and
 /// `T` the number `1` or `0`.
@@ -200,6 +200,15 @@ pub const STR: u8 = 0x81;
 /// `m=0`, a test: one step of the range's pastes (`##` joins its neighbours into one token, or
 /// leaves them two); where none is left, the range ends at its last token written.
 pub const GLUE: u8 = 0x82;
+/// `#if`'s expression a step at a time (`pp_expr`'s precedence climbing as rules, its values on a
+/// stack, `pp_words::Ex`): `m=0`, a test: an operand's token taken (else an error, the value 0);
+/// `m=1`, a test: it is a prefix operator, pushed; `m=2` the prefix applied; `m=3`, a test: it is
+/// `(`; `m=4` its `)` read (else an error); `m=5` its value pushed (a primary); `m=6`, a test: `,`
+/// read, the left value dropped; `m=7` a binary operand's least precedence 1; `m=8`, a test: a
+/// binary operator of that precedence or more read; `m=9` it applied; `m=10` the least dropped;
+/// `m=11`, a test: `?` read; `m=12` its `:` read (else an error); `m=13` the arm chosen; `m=14`, a
+/// test: the expression whole, with no error, and true.
+pub const EXPR: u8 = 0x83;
 
 pub const NAMED: u8 = 1;
 pub const GREEDY: u8 = 1;

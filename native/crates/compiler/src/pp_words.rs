@@ -30,7 +30,7 @@ use std::collections::HashMap;
 
 /// Whether a word is one of the preprocessing words.
 pub fn is_pp(opcode: u8) -> bool {
-    (READ..=EMBED).contains(&opcode) || (SUB..=GLUE).contains(&opcode)
+    (READ..=EMBED).contains(&opcode) || (SUB..=EXPR).contains(&opcode)
 }
 
 // A token's kind.
@@ -236,7 +236,7 @@ const VA_OPT: &[u8] = b"__VA_OPT__";
 
 /// Whether a word is a test (it runs the next word where it holds, skips it where not).
 fn is_test(opcode: u8, mode: u8) -> bool {
-    matches!(opcode, LINE | IS | PEEK | LOOKUP | MACRO | DEFINED) || (opcode == INCLUDE && mode <= 1) || (opcode == EMBED && mode == 0) || (opcode == SUB && matches!(mode, 1..=4 | 6 | 7)) || (opcode == STR && mode == 1) || opcode == GLUE || (opcode == DEFINE && matches!(mode, 0..=3 | 5 | 7)) || (opcode == BUILTIN && mode >= 1) || (opcode == ARG && (mode == 2 || mode == 4)) || (opcode == PRE && mode == 0) || (opcode == COND && (mode == 2 || mode == 3)) || (opcode == IF && mode == 1)
+    matches!(opcode, LINE | IS | PEEK | LOOKUP | MACRO | DEFINED) || (opcode == INCLUDE && mode <= 1) || (opcode == EMBED && mode == 0) || (opcode == SUB && matches!(mode, 1..=4 | 6 | 7)) || (opcode == STR && mode == 1) || opcode == GLUE || (opcode == DEFINE && matches!(mode, 0..=3 | 5 | 7)) || (opcode == EXPR && matches!(mode, 0 | 1 | 3 | 6 | 8 | 11 | 14)) || (opcode == BUILTIN && mode >= 1) || (opcode == ARG && (mode == 2 || mode == 4)) || (opcode == PRE && mode == 0) || (opcode == COND && (mode == 2 || mode == 3)) 
 }
 
 /// A preprocessing program's rules: only these words, `GOTO`, `PUSH` (each followed by its
@@ -245,7 +245,8 @@ fn is_test(opcode: u8, mode: u8) -> bool {
 /// callee does. The steps: a token read (`READ`, `LINE`); on the held side of their tests, a
 /// body token taken (`SUB m=1`), a `__VA_OPT__`'s content closed (`SUB m=7`), a token
 /// stringized (`STR m=1`), a paste's step (`GLUE`), a `#define`'s token read or walked
-/// (`DEFINE m=2, 5, 7`). Each is a backend's loop head.
+/// (`DEFINE m=2, 5, 7`), an expression's token (`EXPR m=0, 6, 8, 11`). Each is a backend's loop
+/// head.
 pub fn validate(program: &Words) -> Result<(), Error> {
     let words = &program.words;
     let n = words.len();
@@ -270,6 +271,7 @@ pub fn validate(program: &Words) -> Result<(), Error> {
             EMBED => mode <= 2 && operand == 0,
             SUB => mode <= 10 && operand == 0,
             DEFINE => mode <= 8 && operand == 0,
+            EXPR => mode <= 14 && operand == 0,
             STR => mode <= 3 && operand == 0,
             GLUE => mode == 0 && operand == 0,
             ARG => mode <= 5 && operand == 0,
@@ -337,6 +339,8 @@ fn after(words: &[u32], pc: usize, memo: &mut HashMap<usize, Option<bool>>) -> V
         STR if mode == 1 => vec![pc + 2],
         // A parameter list's token, a body token read, a use walked.
         DEFINE if matches!(mode, 2 | 5 | 7) => vec![pc + 2],
+        // An operand's token, a `,`, a binary operator, a `?`.
+        EXPR if matches!(mode, 0 | 6 | 8 | 11) => vec![pc + 2],
         GOTO => vec![usize::from(operand)],
         PUSH => {
             let callee = usize::from(split(words[pc + 1]).2);
@@ -503,6 +507,25 @@ struct Machine<'a> {
     embed: (Vec<Tok>, Option<(Vec<u8>, bool)>, Option<u32>),
     sub: Sub,
     def: DefState,
+    ex: Ex,
+}
+
+/// `#if`'s expression being evaluated (`EXPR`): its tokens `kept[lo..hi]` and the next one,
+/// the token taken, and whether an error was met (the value is then false; the rules unwind
+/// with no more tokens read). Values, the operators pending (an operator and where it was), the
+/// binary operands' least precedences, and whether an operand is evaluated (`&&`, `||` and `?:`
+/// evaluate only the operands they take).
+#[derive(Default)]
+struct Ex {
+    lo: u32,
+    at: u32,
+    hi: u32,
+    t: Tok,
+    err: bool,
+    vals: Vec<crate::pp_expr::Value>,
+    ops: Vec<&'static [u8]>,
+    mins: Vec<u8>,
+    live: Vec<bool>,
 }
 
 /// The `#define` being read (`DEFINE`).
@@ -624,6 +647,7 @@ pub fn run(program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Resul
         embed: (Vec::new(), None, None),
         sub: Sub::default(),
         def: DefState::default(),
+        ex: Ex::default(),
     };
     m.install_builtins().map_err(|why| Refused { pc: 0, why })?;
     let words = &program.words;
@@ -681,12 +705,16 @@ pub fn run(program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Resul
                 m.if_open(mode == 0).map_err(fail)?;
                 None
             }
+            IF => {
+                m.expr_begin().map_err(fail)?;
+                None
+            }
+            EXPR => m.expr(mode).map_err(fail)?,
             INCLUDE => m.include(mode).map_err(fail)?,
             PRAGMA => {
                 m.pragma().map_err(fail)?;
                 None
             }
-            IF => Some(m.if_close().map_err(fail)?),
             DEFINED => Some(m.defined().map_err(fail)?),
             PEEK => Some(m.peek(&program.strings[usize::from(operand)])),
             LOOKUP => Some(m.lookup().map_err(fail)?),
@@ -1446,10 +1474,204 @@ impl Machine<'_> {
         Ok(self.kept.drain(at as usize..).collect())
     }
 
-    fn if_close(&mut self) -> R<bool> {
-        let toks = self.line_close()?;
-        let items: Vec<crate::pp_expr::Item> = toks.iter().map(|t| crate::pp_expr::item(t.kind, self.text(t), self.program.pp.cpp)).collect();
-        Ok(crate::pp_expr::eval(&items, self.program.pp.cpp).is_ok_and(|v| v.is_true()))
+    /// The level `if_open` opened closed, its tokens left for `EXPR`.
+    fn expr_begin(&mut self) -> R<()> {
+        let (_, at) = self.levels.pop().ok_or("no level open")?;
+        if !self.sources.pop().is_some_and(|s| s.stop) {
+            return Err("a line's source not on top");
+        }
+        self.in_if = false;
+        let mut ex = std::mem::take(&mut self.ex);
+        (ex.lo, ex.at, ex.hi, ex.err) = (at, at, self.kept.len() as u32, false);
+        (ex.vals.clear(), ex.ops.clear(), ex.mins.clear(), ex.live.clear());
+        ex.live.push(true);
+        self.ex = ex;
+        Ok(())
+    }
+
+    /// The operator of the expression's next token, if it has one.
+    fn expr_peek(&self) -> Option<&'static [u8]> {
+        let ex = &self.ex;
+        if ex.err || ex.at >= ex.hi {
+            return None;
+        }
+        self.expr_op(&self.kept[ex.at as usize])
+    }
+
+    /// A token's operator: a punctuator's spelling (or an alternative token's punctuator), as
+    /// one of the evaluator's operators; `None` for any other token.
+    fn expr_op(&self, t: &Tok) -> Option<&'static [u8]> {
+        const OPS: &[&[u8]] = &[b"||", b"&&", b"|", b"^", b"&", b"==", b"!=", b"<", b">", b"<=", b">=", b"<<", b">>", b"+", b"-", b"*", b"/", b"%", b"~", b"!", b"(", b")", b"?", b":", b","];
+        let it = crate::pp_expr::item(t.kind, self.text(t), self.program.pp.cpp);
+        let op = it.op?;
+        Some(OPS.iter().copied().find(|o| *o == op).unwrap_or(b"\0"))
+    }
+
+    fn live(&self) -> bool {
+        *self.ex.live.last().unwrap_or(&false)
+    }
+
+    fn expr_push(&mut self, v: crate::pp_expr::Value) -> R<()> {
+        if self.ex.vals.len() >= self.bounds.depth * 4 {
+            return Err("past the expression's bound");
+        }
+        self.ex.vals.push(v);
+        Ok(())
+    }
+
+    fn pop2(&mut self) -> R<(crate::pp_expr::Value, crate::pp_expr::Value)> {
+        let r = self.ex.vals.pop().ok_or("no value")?;
+        let l = self.ex.vals.pop().ok_or("no value")?;
+        Ok((l, r))
+    }
+
+    fn expr(&mut self, mode: u8) -> R<Option<bool>> {
+        use crate::pp_expr::{binary, prefix, Value};
+        let zero = Value::int(0);
+        Ok(Some(match mode {
+            0 => {
+                let ex = &mut self.ex;
+                if ex.err || ex.at >= ex.hi {
+                    ex.err = true;
+                    self.expr_push(zero)?;
+                    return Ok(Some(false));
+                }
+                ex.t = self.kept[ex.at as usize];
+                ex.at += 1;
+                true
+            }
+            1 => {
+                let t = self.ex.t;
+                match self.expr_op(&t) {
+                    Some(op @ (b"+" | b"-" | b"~" | b"!")) => {
+                        if self.ex.ops.len() >= self.bounds.depth * 4 {
+                            return Err("past the expression's bound");
+                        }
+                        self.ex.ops.push(op);
+                        true
+                    }
+                    _ => false,
+                }
+            }
+            2 => {
+                let op = self.ex.ops.pop().ok_or("no operator")?;
+                let v = self.ex.vals.last_mut().ok_or("no value")?;
+                *v = prefix(op, *v);
+                return Ok(None);
+            }
+            3 => {
+                let t = self.ex.t;
+                self.expr_op(&t) == Some(b"(")
+            }
+            4 => {
+                if self.expr_peek() == Some(b")") {
+                    self.ex.at += 1;
+                } else {
+                    self.ex.err = true;
+                }
+                return Ok(None);
+            }
+            5 => {
+                let t = self.ex.t;
+                let it = crate::pp_expr::item(t.kind, self.text(&t), self.program.pp.cpp);
+                let v = crate::pp_expr::primary(&it, self.program.pp.cpp);
+                if v.is_none() {
+                    self.ex.err = true;
+                }
+                self.expr_push(v.unwrap_or(zero))?;
+                return Ok(None);
+            }
+            6 => {
+                if self.expr_peek() != Some(b",") {
+                    return Ok(Some(false));
+                }
+                self.ex.at += 1;
+                self.ex.vals.pop().ok_or("no value")?;
+                true
+            }
+            7 => {
+                self.ex.mins.push(1);
+                return Ok(None);
+            }
+            8 => {
+                let min = *self.ex.mins.last().ok_or("no precedence")?;
+                let Some(op) = self.expr_peek() else { return Ok(Some(false)) };
+                let Some(p) = binary(op).filter(|&p| p >= min) else { return Ok(Some(false)) };
+                if self.ex.mins.len() >= self.bounds.depth * 4 {
+                    return Err("past the expression's bound");
+                }
+                self.ex.at += 1;
+                let l = *self.ex.vals.last().ok_or("no value")?;
+                let live = self.live()
+                    && match op {
+                        b"&&" => l.is_true(),
+                        b"||" => !l.is_true(),
+                        _ => true,
+                    };
+                (self.ex.ops.push(op), self.ex.mins.push(p + 1), self.ex.live.push(live));
+                true
+            }
+            9 => {
+                let op = self.ex.ops.pop().ok_or("no operator")?;
+                self.ex.live.pop();
+                let live = self.live();
+                let (l, r) = self.pop2()?;
+                let v = match op {
+                    b"&&" => Value::int((l.is_true() && r.is_true()) as i64),
+                    b"||" => Value::int((l.is_true() || r.is_true()) as i64),
+                    _ => match crate::pp_expr::apply(op, l, r, live, 0) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            self.ex.err = true;
+                            zero
+                        }
+                    },
+                };
+                self.expr_push(v)?;
+                return Ok(None);
+            }
+            10 => {
+                self.ex.mins.pop().ok_or("no precedence")?;
+                return Ok(None);
+            }
+            11 => {
+                if self.expr_peek() != Some(b"?") {
+                    return Ok(Some(false));
+                }
+                self.ex.at += 1;
+                let c = *self.ex.vals.last().ok_or("no value")?;
+                let live = self.live() && c.is_true();
+                self.ex.live.push(live);
+                true
+            }
+            12 => {
+                self.ex.live.pop();
+                if self.expr_peek() == Some(b":") {
+                    self.ex.at += 1;
+                } else {
+                    self.ex.err = true;
+                }
+                let n = self.ex.vals.len();
+                let c = *self.ex.vals.get(n.wrapping_sub(2)).ok_or("no value")?;
+                let live = self.live() && !c.is_true();
+                self.ex.live.push(live);
+                return Ok(None);
+            }
+            13 => {
+                self.ex.live.pop();
+                let (a, b) = self.pop2()?;
+                let c = self.ex.vals.pop().ok_or("no value")?;
+                let v = if c.is_true() { a } else { b };
+                self.expr_push(Value { bits: v.bits, unsigned: a.unsigned || b.unsigned })?;
+                return Ok(None);
+            }
+            _ => {
+                let ex = &self.ex;
+                let ok = !ex.err && ex.at == ex.hi && ex.vals.last().is_some_and(|v| v.is_true());
+                self.kept.truncate(ex.lo as usize);
+                ok
+            }
+        }))
     }
 
     /// `defined X` or `defined ( X )`: `T` its value, a number.

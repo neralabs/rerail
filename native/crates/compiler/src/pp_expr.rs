@@ -93,7 +93,7 @@ struct Eval<'a, 'b> {
 }
 
 /// A binary operator's precedence (higher binds tighter).
-fn binary(t: &[u8]) -> Option<u8> {
+pub fn binary(t: &[u8]) -> Option<u8> {
     Some(match t {
         b"||" => 1,
         b"&&" => 2,
@@ -201,8 +201,29 @@ impl<'a> Eval<'a, '_> {
     }
 }
 
+/// A prefix operator (`+ - ~ !`) applied.
+pub fn prefix(op: &[u8], v: Value) -> Value {
+    match op {
+        b"-" => Value { bits: v.bits.wrapping_neg(), unsigned: v.unsigned },
+        b"~" => Value { bits: !v.bits, unsigned: v.unsigned },
+        b"!" => Value::truth(!v.is_true()),
+        _ => v,
+    }
+}
+
+/// A primary's value: a number, a character constant, an identifier (0, or `true`'s 1 where
+/// it is a keyword); `None` for any other token, or a number or character constant that is none.
+pub fn primary(it: &Item, true_is_one: bool) -> Option<Value> {
+    match it.kind {
+        NUMBER => number(it.text),
+        LITERAL if it.text.iter().find(|&&c| c == b'"' || c == b'\'') == Some(&b'\'') => char_value(it.text),
+        IDENT => Some(Value::truth(true_is_one && it.text == b"true")),
+        _ => None,
+    }
+}
+
 /// `l op r`, the usual conversions applied.
-fn apply(op: &[u8], l: Value, r: Value, live: bool, at: usize) -> Result<Value, ExprError> {
+pub fn apply(op: &[u8], l: Value, r: Value, live: bool, at: usize) -> Result<Value, ExprError> {
     let u = l.unsigned || r.unsigned;
     let (a, b) = (l.bits, r.bits);
     let (sa, sb) = (a as i64, b as i64);

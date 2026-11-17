@@ -298,15 +298,15 @@ program - ir=7 grammar=none
   0148 IS m=1 s7
   0149 GOTO @0249
   0150 IS m=1 s8
-  0151 GOTO @0278
+  0151 GOTO @0281
   0152 IS m=1 s9
-  0153 GOTO @0278
+  0153 GOTO @0281
   0154 IS m=1 s10
-  0155 GOTO @0278
+  0155 GOTO @0281
   0156 IS m=1 s11
-  0157 GOTO @0278
+  0157 GOTO @0281
   0158 IS m=1 s12
-  0159 GOTO @0286
+  0159 GOTO @0289
   0160 IS m=1 s13
   0161 GOTO @0204
   0162 IS m=1 s14
@@ -394,7 +394,7 @@ program - ir=7 grammar=none
   0239 LINE 0
   0240 GOTO @0243
   0241 COND m=0 0
-  0242 GOTO @0289
+  0242 GOTO @0292
   0243 IS m=0 0  ; an identifier
   0244 GOTO @0246
   0245 GOTO @0262
@@ -416,7 +416,7 @@ program - ir=7 grammar=none
   0261 GOTO @0131
   0262 SKIPLINE 0
   0263 COND m=0 0
-  0264 GOTO @0289
+  0264 GOTO @0292
   ; `#if`: its line expanded, `defined` an operator, then evaluated.
   0265 IF m=0 0
   0266 PUSH @0268
@@ -426,79 +426,136 @@ program - ir=7 grammar=none
   0270 KEEP 0
   0271 GOTO @0266
   0272 IF m=1 0
-  0273 GOTO @0276
-  0274 COND m=0 0
-  0275 GOTO @0289
-  0276 COND m=1 0
-  0277 GOTO @0131
+  0273 PUSH @0275
+  0274 GOTO @0353
+  0275 EXPR m=14 0  ; whole, and true
+  0276 GOTO @0279
+  0277 COND m=0 0
+  0278 GOTO @0292
+  0279 COND m=1 0
+  0280 GOTO @0131
   ; An `#elif…` or `#else` read: its chain was taken, so the rest of it is passed, to its `#endif`.
-  0278 COND m=2 0
-  0279 GOTO @0282
-  0280 SKIPLINE 0  ; no group open: unmatched
-  0281 GOTO @0131
-  0282 IS m=1 s11
-  0283 COND m=5 0
-  0284 SKIPLINE 0
-  0285 GOTO @0289
-  0286 SKIPLINE 0
-  0287 COND m=6 0
-  0288 GOTO @0131
+  0281 COND m=2 0
+  0282 GOTO @0285
+  0283 SKIPLINE 0  ; no group open: unmatched
+  0284 GOTO @0131
+  0285 IS m=1 s11
+  0286 COND m=5 0
+  0287 SKIPLINE 0
+  0288 GOTO @0292
+  0289 SKIPLINE 0
+  0290 COND m=6 0
+  0291 GOTO @0131
   ; skip: a group not taken, passed by its chain to the next directive of it (lean `skip_group`).
-  0289 SKIP 0
-  0290 READ 0  ; its `#`
-  0291 IS m=0 8  ; the file's end, the chain open
-  0292 GOTO @0131
-  0293 LINE 0
-  0294 GOTO @0296
-  0295 GOTO @0289
-  0296 IS m=1 s12
-  0297 GOTO @0286
-  0298 COND m=3 0  ; taken already, or past its `#else`: passed too
-  0299 GOTO @0309
-  0300 IS m=1 s11
-  0301 GOTO @0312
-  0302 IS m=1 s8
-  0303 GOTO @0316
-  0304 IS m=1 s9
-  0305 GOTO @0326
-  0306 IS m=1 s10
-  0307 GOTO @0335
-  0308 GOTO @0289
-  0309 IS m=1 s11
-  0310 COND m=5 0
-  0311 GOTO @0289
-  0312 SKIPLINE 0
+  0292 SKIP 0
+  0293 READ 0  ; its `#`
+  0294 IS m=0 8  ; the file's end, the chain open
+  0295 GOTO @0131
+  0296 LINE 0
+  0297 GOTO @0299
+  0298 GOTO @0292
+  0299 IS m=1 s12
+  0300 GOTO @0289
+  0301 COND m=3 0  ; taken already, or past its `#else`: passed too
+  0302 GOTO @0312
+  0303 IS m=1 s11
+  0304 GOTO @0315
+  0305 IS m=1 s8
+  0306 GOTO @0319
+  0307 IS m=1 s9
+  0308 GOTO @0332
+  0309 IS m=1 s10
+  0310 GOTO @0341
+  0311 GOTO @0292
+  0312 IS m=1 s11
   0313 COND m=5 0
-  0314 COND m=4 0
-  0315 GOTO @0131
-  0316 IF m=0 0
-  0317 PUSH @0319
-  0318 GOTO @0007
-  0319 IS m=0 8
-  0320 GOTO @0323
-  0321 KEEP 0
-  0322 GOTO @0317
-  0323 IF m=1 0
-  0324 GOTO @0344
-  0325 GOTO @0289
-  0326 LINE 0
-  0327 GOTO @0329
-  0328 GOTO @0289
-  0329 IS m=0 0
-  0330 GOTO @0332
-  0331 GOTO @0289
-  0332 LOOKUP 0
-  0333 GOTO @0344
-  0334 GOTO @0289
-  0335 LINE 0
+  0314 GOTO @0292
+  0315 SKIPLINE 0
+  0316 COND m=5 0
+  0317 COND m=4 0
+  0318 GOTO @0131
+  0319 IF m=0 0
+  0320 PUSH @0322
+  0321 GOTO @0007
+  0322 IS m=0 8
+  0323 GOTO @0326
+  0324 KEEP 0
+  0325 GOTO @0320
+  0326 IF m=1 0
+  0327 PUSH @0329
+  0328 GOTO @0353
+  0329 EXPR m=14 0
+  0330 GOTO @0350
+  0331 GOTO @0292
+  0332 LINE 0
+  0333 GOTO @0335
+  0334 GOTO @0292
+  0335 IS m=0 0
   0336 GOTO @0338
-  0337 GOTO @0344
-  0338 IS m=0 0
-  0339 GOTO @0341
-  0340 GOTO @0344
-  0341 LOOKUP 0
-  0342 GOTO @0289
-  0343 GOTO @0344
-  0344 SKIPLINE 0
-  0345 COND m=4 0
-  0346 GOTO @0131
+  0337 GOTO @0292
+  0338 LOOKUP 0
+  0339 GOTO @0350
+  0340 GOTO @0292
+  0341 LINE 0
+  0342 GOTO @0344
+  0343 GOTO @0350
+  0344 IS m=0 0
+  0345 GOTO @0347
+  0346 GOTO @0350
+  0347 LOOKUP 0
+  0348 GOTO @0292
+  0349 GOTO @0350
+  0350 SKIPLINE 0
+  0351 COND m=4 0
+  0352 GOTO @0131
+  ; `#if`'s expression (`pp_expr`'s precedence climbing): `cond` is `ternary (, ternary)*`,
+  ; `ternary` is `binary(1) (? cond : ternary)?`, `binary(min)` is `unary (op binary(p+1))*` over the
+  ; operators of precedence `min` or more, `unary` a prefix operator's operand, `( cond )` or a
+  ; primary. Each value is left on the expression's stack.
+  0353 PUSH @0355
+  0354 GOTO @0360
+  0355 EXPR m=6 0  ; `,`
+  0356 GOTO @0358
+  0357 RETURN 0
+  0358 PUSH @0355
+  0359 GOTO @0360
+  0360 EXPR m=7 0
+  0361 PUSH @0363
+  0362 GOTO @0373
+  0363 EXPR m=11 0  ; `?`
+  0364 GOTO @0366
+  0365 RETURN 0
+  0366 PUSH @0368
+  0367 GOTO @0353
+  0368 EXPR m=12 0  ; `:`
+  0369 PUSH @0371
+  0370 GOTO @0360
+  0371 EXPR m=13 0
+  0372 RETURN 0
+  0373 PUSH @0375
+  0374 GOTO @0383
+  0375 EXPR m=8 0  ; a binary operator
+  0376 GOTO @0379
+  0377 EXPR m=10 0
+  0378 RETURN 0
+  0379 PUSH @0381
+  0380 GOTO @0373
+  0381 EXPR m=9 0
+  0382 GOTO @0375
+  0383 EXPR m=0 0  ; an operand's token
+  0384 GOTO @0386
+  0385 RETURN 0
+  0386 EXPR m=1 0  ; a prefix operator
+  0387 GOTO @0392
+  0388 EXPR m=3 0  ; `(`
+  0389 GOTO @0396
+  0390 EXPR m=5 0
+  0391 RETURN 0
+  0392 PUSH @0394
+  0393 GOTO @0383
+  0394 EXPR m=2 0
+  0395 RETURN 0
+  0396 PUSH @0398
+  0397 GOTO @0353
+  0398 EXPR m=4 0  ; `)`
+  0399 RETURN 0

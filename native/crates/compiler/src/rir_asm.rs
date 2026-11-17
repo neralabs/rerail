@@ -88,6 +88,7 @@ pub const OPCODES: &[(u8, &str)] = &[
     (SUB, "SUB"),
     (STR, "STR"),
     (GLUE, "GLUE"),
+    (EXPR, "EXPR"),
 ];
 
 /// How an opcode's operand prints.

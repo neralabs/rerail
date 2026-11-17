@@ -154,6 +154,19 @@ H5C(H5A())
             "#define D defined(N)\n#if D\nyes6\n#endif\n",
         ),
     ),
+    (
+        "#if's evaluator, its edges",
+        concat!(
+            "#if 0 && 1/0\nno1\n#elif 1 || 1%0\nyes1\n#endif\n",
+            "#if 1 ? 1 : 1/0\nyes2\n#endif\n#if 0 ? 1/0 : 3\nyes3\n#endif\n#if 1 ? 0 : 1/0\nno2\n#endif\n",
+            "#if (0 ? 1u : -1) > 0\nyes4\n#endif\n#if -1 > 0u\nyes5\n#endif\n#if (-1 >> 63) == -1 && (1u << 64) == 0\nyes6\n#endif\n",
+            "#if 1 ? 2, 0 : 3\nno3\n#endif\n#if 0, 1\nyes7\n#endif\n#if 1 ? 0 ? 5 : 6 : 7\nyes8\n#endif\n",
+            "#if ((((((((((((((((((((1))))))))))))))))))))\nyes9\n#endif\n#if - - ~ ! 0 == -2\nno4\n#elif !!7 == 1\nyes10\n#endif\n",
+            "#if (1\nno5\n#endif\n#if 1)\nno6\n#endif\n#if 1 +\nno7\n#endif\n#if 1 ? 2\nno8\n#endif\n#if 1.5\nno9\n#endif\n#if \"s\"\nno10\n#endif\n",
+            "#if 2 + 3 * 4 - 10 / 2 % 3 == 12 && (5 & 3 | 8 ^ 1) == 9 && 1 < 2 == 1 >= 0\nyes11\n#endif\n",
+            "#if 1 1\nno11\n#endif\n#if ,1\nno12\n#endif\n#if 1 = 1\nno13\n#endif\n",
+        ),
+    ),
     ("#elifdef, #elifndef", "#define A\n#ifdef Z\n#elifdef A\nyes\n#elifndef A\nno\n#endif\n#ifdef Z\n#elifndef Z\nyes2\n#else\nno\n#endif\n"),
     ("unmatched", "a\n#endif\nb\n#else\nc\n#elif 1\nd\n"),
     (
