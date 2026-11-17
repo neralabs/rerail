@@ -1,18 +1,18 @@
 {
   "format": "rerail.policy/v1",
   "id": "rerail-ui-pure-modules",
-  "revision": 1,
+  "revision": 2,
   "mode": "log",
   "description": "Keep the dashboard's pure derivation modules free of network, storage and DOM work and of imports of the modules that do it; they stay testable without a browser.",
   "scope": {
     "include": [
-      "ui/derive.js",
-      "ui/first-open.js",
-      "ui/pack-model.js",
-      "ui/history-model.js",
-      "ui/sessions-model.js",
-      "ui/settings-model.js",
-      "ui/repo-rules.js"
+      "ui/model/derive.js",
+      "ui/model/first-open.js",
+      "ui/model/pack-model.js",
+      "ui/model/history-model.js",
+      "ui/model/sessions-model.js",
+      "ui/model/settings-model.js",
+      "ui/model/repo-rules.js"
     ],
     "exclude": []
   },
@@ -33,7 +33,7 @@
                     "kind": "template_string"
                   }
                 ],
-                "regex": "^[\\\"'`](?:\\./|\\.\\./ui/|/(?:ui/)?)(?:(?:api|poll|shell|dom|app|actions|sheet|attachments|rule-remove|settings-writes)\\.js|(?:views|render|frame)/[^\\\"'`]*)(?:[?#][^\\\"'`]*)?[\\\"'`]$",
+                "regex": "^[\\\"'`](?:\\.\\./|\\.\\./\\.\\./ui/|/(?:ui/)?)(?:(?:shell|dom|app|actions|sheet)\\.js|data/(?:api|poll|scoped-requests|merge-assist|paged-lists|session-detail|session-titles|attachments|rule-remove|settings-writes)\\.js|(?:views|render|frame)/[^\\\"'`]*)(?:[?#][^\\\"'`]*)?[\\\"'`]$",
                 "not": {
                   "regex": "rule-sheet-model\\.js"
                 },
@@ -60,7 +60,7 @@
               },
               {
                 "kind": "template_string",
-                "regex": "^`(?:\\./|\\.\\./ui/|/(?:ui/)?)(?:views|render|frame)/",
+                "regex": "^`(?:\\.\\./|\\.\\./\\.\\./ui/|/(?:ui/)?)(?:views|render|frame)/",
                 "not": {
                   "regex": "rule-sheet-model\\.js"
                 },
@@ -92,7 +92,7 @@
       "violation": {
         "code": "UI_PURE_MODULE_IO_IMPORT",
         "anchor": "witness.span",
-        "message": "Take this data as an argument; do the request, write or DOM work in poll.js, a writes module or a view, and move a pure helper you need from there into a pure module."
+        "message": "Take this data as an argument; do the request, write or DOM work in data/poll.js, a writes module in data/ or a view, and move a pure helper you need from there into a pure module."
       }
     },
     {
@@ -430,7 +430,7 @@
       "violation": {
         "code": "UI_PURE_MODULE_IO_GLOBAL",
         "anchor": "witness.span",
-        "message": "Keep network, storage and DOM access out of this pure module: do it in poll.js, a writes module or a view, and pass the result in as an argument."
+        "message": "Keep network, storage and DOM access out of this pure module: do it in data/poll.js, a writes module in data/ or a view, and pass the result in as an argument."
       }
     }
   ]

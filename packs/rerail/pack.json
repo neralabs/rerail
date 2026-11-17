@@ -437,11 +437,11 @@
       "group": "Dashboard",
       "examples": {
         "caught": {
-          "path": "ui/settings-writes.js",
+          "path": "ui/data/settings-writes.js",
           "text": "const decider = (owner, target) => state => (owner === \"checkout\"\n  ? { by: \"checkout\", checkoutPath: data.checkout?.checkoutPath, folder: state.folder, target }\n  : { by: \"repository\", folder: state.folder, target });\n"
         },
         "passes": {
-          "path": "ui/poll.js",
+          "path": "ui/data/poll.js",
           "text": "const folderState = entry => ({\n  folder: entry.folder, on: entry.on, mode: entry.mode, suppressions: entry.suppressions, suppressionsSource: entry.suppressionsSource,\n  source: entry.source,\n});\n"
         }
       }
@@ -469,12 +469,12 @@
       "group": "Dashboard",
       "examples": {
         "caught": {
-          "path": "ui/repo-rules.js",
-          "text": "import { get } from \"./api.js\";\nimport { toStoredRules } from \"./poll.js\";\n"
+          "path": "ui/model/repo-rules.js",
+          "text": "import { get } from \"../data/api.js\";\nimport { toStoredRules } from \"../data/poll.js\";\n"
         },
         "passes": {
-          "path": "ui/repo-rules.js",
-          "text": "import { isRunning } from \"./derive.js\";\nimport { fmt, plural } from \"./format.js\";\n"
+          "path": "ui/model/repo-rules.js",
+          "text": "import { isRunning } from \"./derive.js\";\nimport { fmt, plural } from \"../format.js\";\n"
         }
       }
     },

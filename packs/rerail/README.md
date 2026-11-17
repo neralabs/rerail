@@ -496,7 +496,7 @@ maintainers merged and kept, and #196's deletion of one drops a match; quiet on 
 
 Gaps: Log because the API cannot yet say which folders a setting would decide and the settings write returns no
 deciders, so the only compliant change today would delete the optimistic update; main has 10 matches today, in
-`packSettingDecides` (`ui/derive.js`) and the client-built `decider` (`ui/settings-writes.js`). An `if` that renders
+`packSettingDecides` (`ui/model/derive.js`) and the client-built `decider` (`ui/data/settings-writes.js`). An `if` that renders
 text from `source.by` is flagged. Misses ranking under names it doesn't know and an optimistic update that drops the
 decider.
 
@@ -518,12 +518,13 @@ next line, `#000` in `mask-image`, `[fill="white"]` selectors and a quoted colou
 
 ### `rerail-ui-pure-modules`
 
-Flags imports of I/O or DOM modules (`api.js`, `poll.js`, `shell.js`, `dom.js`, `app.js`, the writes modules,
-`views/`, `render/`, `frame/`) and use of `fetch`, storage, `document`, `window`, `location` or `history` in the
-dashboard's pure modules. Do that work in `poll.js`, a writes module or a view and pass the result in. It runs only on
-the seven files `ui/README.md` lists as pure: `derive.js`, `first-open.js`, `pack-model.js`, `history-model.js`,
-`sessions-model.js`, `settings-model.js` and `repo-rules.js`. Imports of `state.js`, `format.js`, `routes.js` and
-`render/rule-sheet-model.js`, and shadowed names such as a local `document`, pass.
+Flags imports of I/O or DOM modules (`data/`'s request and writes modules, `api.js` and `poll.js` among them,
+`shell.js`, `dom.js`, `app.js`, `views/`, `render/`, `frame/`) and use of `fetch`, storage, `document`, `window`,
+`location` or `history` in the dashboard's pure modules. Do that work in `data/poll.js`, a writes module in `data/` or a
+view and pass the result in. It runs only on seven of the files in `ui/model/`: `derive.js`, `first-open.js`,
+`pack-model.js`, `history-model.js`, `sessions-model.js`, `settings-model.js` and `repo-rules.js`. Imports of
+`data/state.js`, `format.js`, `routes.js`, the other pure modules and `render/rule-sheet-model.js`, and shadowed names
+such as a local `document`, pass.
 
 History: caught the first draft of `ui/repo-rules.js` in #196; that import was merged and kept; quiet on 13 other merged
 dashboard PRs. There is no fix to gate on.
