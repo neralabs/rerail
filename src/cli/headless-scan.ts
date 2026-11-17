@@ -271,44 +271,57 @@ function copyTables(home: RerailDatabase, scratch: RerailDatabase, tables: reado
 }
 
 /**
- * Sets up the scan's own database. With the home's configuration (`useHome`), a copy of it. Otherwise `root` recorded,
- * started and set up with `packs` and the ref's rules, and the home's approvals: approval is of content, by its digest,
- * so a rule read from a ref, a worktree's rule or a pack from a folder steers here exactly when a person approved that
- * content in the Rerail home, as it would in a session. Returns the ids of the rules read from the ref.
+ * Sets up the scan's own database. With the home's configuration (`useHome`), a copy of it with `root` recorded, as a
+ * session started there records its folder. Otherwise a throwaway configuration (`setUpThrowawayConfiguration`).
+ * Returns the ids of the rules read from the ref.
  */
 function prepareScratchDatabase(
   databasePath: string, root: string, home: RerailDatabase | undefined, useHome: boolean,
   packs: readonly string[], refRules: RefRules | undefined, ruleDocuments: Map<string, RuleDocument> | undefined,
 ): Set<string> {
-  const refRuleIds = new Set<string>();
   const database = openRerailDatabase(databasePath);
   try {
-    if (useHome && home !== undefined) {
-      copyTables(home, database, CONFIGURATION_TABLES);
-      return refRuleIds;
-    }
-    const { repositoryKey } = recordCheckout(database, root);
-    const libraryRules: Array<{ sourceKind: "library_rule"; sourceId: string; folder: string }> = [];
-    if (refRules !== undefined) {
-      const catalog = loadRuleCatalog();
-      for (const document of refRules.documents) {
-        const stored = upsertLibraryRule(database, catalog, document.rule, "code");
-        const ruleId = stored.document.rule.id;
-        refRuleIds.add(ruleId);
-        ruleDocuments?.set(stored.payloadHash, stored.document);
-        libraryRules.push({ sourceKind: "library_rule", sourceId: ruleId, folder: "" });
-      }
-    }
-    setUpRepository(database, repositoryKey, { packs: packs.map(packId => ({ packId, folder: "" })), rules: libraryRules });
-    if (refRules !== undefined) {
-      // The working tree's own rules are what the change under review may have edited: they do not run.
-      setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: root }, folder: "", targetKind: "pack", targetId: WORKTREE_PACK_ID, on: false, mode: null });
-    }
-    setRepositoryStarted(database, repositoryKey, true);
-    if (home !== undefined) copyTables(home, database, ["rule_approvals"]);
+    if (!useHome || home === undefined) return setUpThrowawayConfiguration(database, root, home, packs, refRules, ruleDocuments);
+    copyTables(home, database, CONFIGURATION_TABLES);
+    // A copy of a started checkout made with its `.git` has no row: the home finds it by its clone id, but no session
+    // recorded it. Recorded here, it runs the home's rules as a session started in it would.
+    recordCheckout(database, root);
+    return new Set();
   } finally {
     database.$client.close();
   }
+}
+
+/**
+ * `root` recorded, started and set up with `packs` and the ref's rules, and the home's approvals: approval is of
+ * content, by its digest, so a rule read from a ref, a worktree's rule or a pack from a folder steers here exactly when
+ * a person approved that content in the Rerail home, as it would in a session. Returns the ids of the rules read from
+ * the ref.
+ */
+function setUpThrowawayConfiguration(
+  database: RerailDatabase, root: string, home: RerailDatabase | undefined,
+  packs: readonly string[], refRules: RefRules | undefined, ruleDocuments: Map<string, RuleDocument> | undefined,
+): Set<string> {
+  const refRuleIds = new Set<string>();
+  const { repositoryKey } = recordCheckout(database, root);
+  const libraryRules: Array<{ sourceKind: "library_rule"; sourceId: string; folder: string }> = [];
+  if (refRules !== undefined) {
+    const catalog = loadRuleCatalog();
+    for (const document of refRules.documents) {
+      const stored = upsertLibraryRule(database, catalog, document.rule, "code");
+      const ruleId = stored.document.rule.id;
+      refRuleIds.add(ruleId);
+      ruleDocuments?.set(stored.payloadHash, stored.document);
+      libraryRules.push({ sourceKind: "library_rule", sourceId: ruleId, folder: "" });
+    }
+  }
+  setUpRepository(database, repositoryKey, { packs: packs.map(packId => ({ packId, folder: "" })), rules: libraryRules });
+  if (refRules !== undefined) {
+    // The working tree's own rules are what the change under review may have edited: they do not run.
+    setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: root }, folder: "", targetKind: "pack", targetId: WORKTREE_PACK_ID, on: false, mode: null });
+  }
+  setRepositoryStarted(database, repositoryKey, true);
+  if (home !== undefined) copyTables(home, database, ["rule_approvals"]);
   return refRuleIds;
 }
 

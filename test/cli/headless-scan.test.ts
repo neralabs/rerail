@@ -270,41 +270,48 @@ describe("headless rerail scan", () => {
     expect(report.violations).toHaveLength(1);
   });
 
-  it("names why when the home's configuration runs nothing in the checkout, and claims no rules source", async () => {
+  it("uses the Rerail home's configuration in a copy of a started checkout that no session has recorded", async () => {
     const root = checkout();
     const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
     roots.push(home);
     const databasePath = join(home, "rerail.sqlite");
     setUpTestRepository(root, {}, databasePath);
     // A copy with its `.git` keeps the clone id, so the home reads it as started, but Git's registry does not list it
-    // and no session recorded it: the scan's router has no record of it and audits nothing.
+    // and no session recorded it. The scan records it, as a session started in it would.
     const copy = `${root}-copy`;
     roots.push(copy);
     cpSync(root, copy, { recursive: true });
     const report = await scan(copy, { databasePath });
-    // Checkout paths are matched by their ends: on Windows they may come back with forward slashes or short (8.3) names.
-    expect({ status: report.status, rulesSource: report.rulesSource, rules: report.rules, failures: report.failures }).toEqual({
-      status: "failed",
-      rulesSource: null,
-      rules: [],
-      failures: [{ code: "checkout-not-audited", message: expect.stringMatching(/-copy was not audited, so no rules ran: Rerail has no record of .+-copy$/u), path: null, ruleId: null }],
-    });
-    expect(report.summary).toEqual({ violations: 0, failures: 1 });
+    expect({ status: report.status, rulesSource: report.rulesSource, failures: report.failures }).toEqual({ status: "completed", rulesSource: { kind: "home" }, failures: [] });
+    expect(report.violations).toHaveLength(1);
   });
 
-  it("names the submodule, not the checkout around it, when the only paths asked for are in a submodule Rerail has no record of", async () => {
-    const root = checkout();
-    const submodule = checkout();
-    git(root, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet", submodule, "sub");
-    git(root, "commit", "--quiet", "-m", "Add the submodule");
-    const report = await scan(root, { paths: ["sub/a.py"] });
-    expect({ status: report.status, rulesSource: report.rulesSource, rules: report.rules, failures: report.failures }).toEqual({
-      status: "failed",
-      rulesSource: null,
-      rules: [],
-      failures: [{ code: "checkout-not-audited", message: expect.stringMatching(/[\\/]sub was not audited, so no rules ran: Rerail has no record of .+[\\/]sub$/u), path: null, ruleId: null }],
-    });
-  });
+  it.each(["worktree", "home"] as const)(
+    "names the submodule, not the checkout around it, when the only paths asked for are in a submodule Rerail has no record of (%s configuration)",
+    async configuration => {
+      const root = checkout();
+      const submodule = checkout();
+      git(root, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet", submodule, "sub");
+      git(root, "commit", "--quiet", "-m", "Add the submodule");
+      let options: Partial<Parameters<typeof runHeadlessScan>[0]> = { paths: ["sub/a.py"] };
+      if (configuration === "home") {
+        const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+        roots.push(home);
+        const databasePath = join(home, "rerail.sqlite");
+        setUpTestRepository(root, {}, databasePath);
+        options = { ...options, databasePath };
+      }
+      const report = await scan(root, options);
+      // Checkout paths are matched by their ends: on Windows they may come back with forward slashes or short (8.3) names.
+      expect({ status: report.status, rulesSource: report.rulesSource, rules: report.rules, failures: report.failures }).toEqual({
+        status: "failed",
+        rulesSource: null,
+        rules: [],
+        failures: [{ code: "checkout-not-audited", message: expect.stringMatching(/[\\/]sub was not audited, so no rules ran: Rerail has no record of .+[\\/]sub$/u), path: null, ruleId: null }],
+      });
+      expect(report.summary).toEqual({ violations: 0, failures: 1 });
+    },
+  );
 
   it("prints JSON and exits 3 on violations only with --fail-on-violations", async () => {
     const root = checkout();

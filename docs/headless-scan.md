@@ -70,11 +70,12 @@ Worktree, `--rules-ref` and non-npm pack rules run in **Log** until approved wit
 <summary>Exact conditions and approval policy</summary>
 
 Home applies when Rerail is started and set up in this checkout on this machine. It runs the rules as a session there
-would. `rulesSource` is `{"kind":"home"}`; a throwaway configuration gives `{"kind":"worktree"}`, or
-`{"kind":"ref","ref":…}` with `--rules-ref`. It is `null` when the scan had files to scan and audited none, so no
-rules ran: the scan fails, and a `checkout-not-audited` failure for each checkout it meant to audit says why (for
-example, a copy of a checkout that no session has recorded, or a submodule Rerail has no record of). A scan given an
-empty `paths` list has nothing to scan: it completes with no rules and keeps its `rulesSource`.
+would, in a worktree or a copy of the checkout that no session has recorded too: the scan records the checkout in its
+own copy of the configuration, as a session started there records it. `rulesSource` is `{"kind":"home"}`; a throwaway
+configuration gives `{"kind":"worktree"}`, or `{"kind":"ref","ref":…}` with `--rules-ref`. It is `null` when the scan
+had files to scan and audited none, so no rules ran: the scan fails, and a `checkout-not-audited` failure for each
+checkout it meant to audit says why (for example, the only paths asked for are in a submodule Rerail has no record
+of). A scan given an empty `paths` list has nothing to scan: it completes with no rules and keeps its `rulesSource`.
 
 Session [rule approvals](writing-rules.md) apply. These run in **Log** until a person approves that exact content in
 the Rerail home with `rerail rules approve`:
