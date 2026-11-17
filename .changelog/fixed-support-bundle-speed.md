@@ -1,1 +1,0 @@
-`rerail support-bundle` no longer slows down as Rerail records more checkouts: with nearly 900 recorded, it takes under a second instead of over half a minute. It also gives a busy daemon 10 more seconds to answer, and says Rerail runs from its managed install only when it does.

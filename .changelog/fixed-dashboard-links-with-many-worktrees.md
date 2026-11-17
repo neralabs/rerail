@@ -1,1 +1,0 @@
-With hundreds of worktrees, hooks no longer keep the daemon busy asking for the dashboard link on every event, each answer working out every worktree's state. Only a steer or a session start asks now.

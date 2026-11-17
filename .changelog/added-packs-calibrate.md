@@ -1,1 +1,0 @@
-`rerail packs calibrate` reads a set-up repository's lint config again and updates the rule settings set-up gave, keeping any setting you made yourself; `--dry-run` shows the changes first. Settings set-up wrote before this release count as yours, so calibrate keeps them.

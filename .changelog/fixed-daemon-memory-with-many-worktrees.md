@@ -1,1 +1,0 @@
-In a repository with many worktrees, the daemon walks the other worktrees once for all the repository's sessions, not once per session, and keeps one copy of what it read, with no text of files unchanged since the session started. Each session in another worktree now adds about half the memory it did.

@@ -1,1 +1,0 @@
-An idle daemon no longer rereads each session's settings and audit queue four times a second, which took up to 1.5% of a CPU core per three open sessions on a Windows laptop; it rereads them only after the database changes.

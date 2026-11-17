@@ -1,1 +1,0 @@
-On Windows, set-up, `rerail update` and `rerail install --remove` no longer fail at once, or wait minutes, when a virus scan or another program holds open a file in a folder they remove. They retry for about 6 s, then leave a temporary folder for the system to clear, or name the file held open.

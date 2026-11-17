@@ -1,1 +1,0 @@
-Each coding agent hook starts about twice as fast and uses about half the memory, peaking near 100 MB instead of 200 MB. Claude Code's status line, which runs every five seconds in each session, takes less CPU time and 16 MB less memory per run.

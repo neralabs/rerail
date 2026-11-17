@@ -1,1 +1,0 @@
-A session's first command in a large checkout waits less while Rerail walks its files: a stopped or not-set-up checkout skips what Git ignores, as a set-up one does, and a walk looks up each folder's checkout once. On Windows, a walk in an 84,000-file checkout takes half a second, not 2 to 28 seconds.
