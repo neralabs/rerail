@@ -19,10 +19,12 @@
     suppress ruff "PYI019"
 PYI019(at, x) :- receiver(f, k, t), sig_at(f, at), (k = "instance", self_var(t, x) ; k != "instance", builtin_sub(t, "type"),
     tsub(t, h, 0, e), kind(h, "identifier"), tsub_n(t, 1), self_var(e, x)).
-// receiver(f, k, t): method f of kind k (not static) has its first parameter annotated t, bare.
+// receiver(f, k, t): method f of kind k (not static) has its first parameter annotated t, bare. `within(t, f)` is
+// true of every row; it tells the engine that t is in f's file (first_param's annotation column is a loc), so the
+// rule runs file by file.
 .decl receiver(f: node, k: symbol, t: node)
 receiver(f, k, t) :- method_kind(f, k), k != "static", pyi_method(c, f, _), !metaclass_yes(c), !abstract(f),
-    !decorated(f, "overload"), first_param(f, _, a), !unset(a), type_bare(a, t).
+    !decorated(f, "overload"), first_param(f, _, a), !unset(a), type_bare(a, t), within(t, f).
 .decl sig_at(f: node, at: node)
 sig_at(f, at) :- receiver(f, _, _), (field(f, "type_parameters", at) ; !field(f, "type_parameters", _),
     field(f, "parameters", at)).

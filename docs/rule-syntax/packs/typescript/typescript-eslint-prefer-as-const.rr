@@ -24,14 +24,20 @@ to_const(t, m) :- asserted(t), prefer_as_const(t, m) => replace(t, `const`).
 
 // asserted(t): t is the literal type of `v as t` or `<t>v`, repeating v.
 .decl asserted(t: node)
-asserted(t) :- kind(a, "as_expression"), child(a, e, 0), child(a, ty, 1), same_literal(e, ty, t).
-asserted(t) :- kind(a, "type_assertion"), child(a, ta, 0), child(ta, ty, 0), child(a, e, 1), same_literal(e, ty, t).
+asserted(t) :- assert_pair(e, ty), same_literal(e, ty, t).
+.decl assert_pair(e: node, ty: node)
+assert_pair(e, ty) :- kind(a, "as_expression"), child(a, e, 0), child(a, ty, 1).
+assert_pair(e, ty) :- kind(a, "type_assertion"), child(a, ta, 0), child(ta, ty, 0), child(a, e, 1).
 // annotated(t): t is the literal type in `let x: t = v` or a class field `x: t = v`, repeating v.
 .decl annotated(t: node)
-annotated(t) :- (kind(d, "variable_declarator") ; kind(d, "public_field_definition")), field(d, "type", a),
-    child(a, ty, 0), field(d, "value", e), same_literal(e, ty, t).
+annotated(t) :- annot_pair(e, ty), same_literal(e, ty, t).
+.decl annot_pair(e: node, ty: node)
+annot_pair(e, ty) :- (kind(d, "variable_declarator") ; kind(d, "public_field_definition")), field(d, "type", a),
+    child(a, ty, 0), field(d, "value", e).
 // same_literal(e, ty, t): expression e and type ty, both without parentheses (t is ty's literal_type), are the
-// same literal as written. A literal type of null or undefined is TSNullKeyword in TSESTree, no literal.
+// same literal as written. A literal type of null or undefined is TSNullKeyword in TSESTree, no literal. Asked
+// only of the pairs above: on its own it matched every literal with every literal type of the same text.
 .decl same_literal(e: node, ty: node, t: node)
-same_literal(e, ty, t) :- deparen(e, v), type_child(ty, t), kind(t, "literal_type"), child(t, l, 0),
-    kind(l, k), (k = "string" ; k = "number" ; k = "true" ; k = "false"), kind(v, k), text(l, x), text(v, x).
+same_literal(e, ty, t) :- (assert_pair(e, ty) ; annot_pair(e, ty)), deparen(e, v), type_child(ty, t),
+    kind(t, "literal_type"), child(t, l, 0), kind(l, k), (k = "string" ; k = "number" ; k = "true" ; k = "false"),
+    kind(v, k), text(l, x), text(v, x).

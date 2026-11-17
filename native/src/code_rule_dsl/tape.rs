@@ -3053,6 +3053,8 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         let e = self.entry();
         Cow::Borrowed(e.alias.as_ref().map_or_else(|| self.grammar.kind_name(kind_of(e)).expect("validated grammar symbol"), |alias| alias.0.as_str()))
     }
+    // Every matcher's kind test and walk filter reads it, from the matcher's crate (rerail-w).
+    #[inline]
     fn kind_id(&self) -> u16 {
         read!("kind");
         kind_of(self.entry())

@@ -665,7 +665,13 @@ fn order_nodes(prog: &mut Program) {
 
 /// The checks and additions every program gets once parsed, whatever its syntax (this one or `.rr`, `logic::rr`):
 /// no computed term in a body atom, bounded lattices, the tree axes' input relations, bounded value cycles.
-pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Error> {
+pub(in crate::code_rule_dsl) fn finish(prog: Program) -> Result<Program, Error> {
+    finish_given(prog, None)
+}
+
+/// `finish` of a program lowered without the rules of the `library` it reads (`rr::Text::lower_in`): its value cycles
+/// are bounded by what the library's relations guarantee there (`cycles::check_given`).
+pub(in crate::code_rule_dsl) fn finish_given(mut prog: Program, library: Option<&Program>) -> Result<Program, Error> {
     order_nodes(&mut prog);
     for rule in &prog.rules {
         // A computed term is a value, not a pattern: an atom never matches on one (the backends would drop it).
@@ -696,7 +702,10 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
         return Err(Error::UndeclaredInput { relation: relation.clone() });
     }
     let checking = crate::code_rule_dsl::logic::profile::span(|| "check the program's cycles and caches".to_owned());
-    cycles::check(&prog)?;
+    match library {
+        Some(library) => cycles::check_given(&prog, library)?,
+        None => cycles::check(&prog)?,
+    };
     // A cache is two rules (decision 0103): a broken form refuses the program.
     caches::caches(&prog)?;
     drop(checking);

@@ -88,6 +88,16 @@ export interface CellItem {
   reproduce: string;
   /** metric.ts: start-up, net times, phases and workload; reported beside the gross metrics, never a status. */
   cost: CellCost | null;
+  /** The caps the cell's runs ran under, both sides alike: the pack's `--pack-cap`, else the defaults. */
+  caps: { memory: string[]; time_s: number[] };
+  /** `.rr`: the whole-pack run did not complete, so the candidate's metrics and findings are a chunked run's sums. */
+  chunked: { size: number; chunks: number; rules_run: number; rules_of: number; failed_chunks: { chunk: number; rules: string; reason: string }[] } | null;
+  /** `.rr`: how far the failed whole-pack run got (policies started, elapsed, peak RSS). */
+  progress: { started: number; of: number; wall_ms: number; rss_kb: number } | null;
+  /** `.rr`: whether run-policies ran the pack's policies combined (groups of several) or alone; null: not reported. */
+  grouping: { policies: number; combined: number; alone: number; largest: number } | null;
+  /** `.rr`: what the engine printed about running policies alone instead of together. */
+  fallback: string[];
 }
 
 export interface PackSummary {
@@ -297,6 +307,11 @@ function cellItem(candidate: Candidate, pack: string, cell: CellVerdict, reprodu
     method_gaps: [...new Set(cell.methods.flatMap(methodGaps))],
     reproduce: `npm run bench:ship -- run --baseline ${reproduce.baseline} --packs ${pack} --corpus ${cell.corpus} --candidates ${candidate} --runs ${reproduce.runs} --out <dir>`,
     cost: cell.cost,
+    caps: { memory: cell.caps.memCap, time_s: cell.caps.timeCapS },
+    chunked: cell.chunked === null ? null : { size: cell.chunked.size, chunks: cell.chunked.chunks, rules_run: cell.chunked.rulesRun, rules_of: cell.chunked.rulesOf, failed_chunks: cell.chunked.failedChunks },
+    progress: cell.progress === null ? null : { started: cell.progress.started, of: cell.progress.of, wall_ms: cell.progress.wallMs, rss_kb: cell.progress.rssKB },
+    grouping: cell.grouping,
+    fallback: cell.fallback,
   };
 }
 
@@ -355,7 +370,8 @@ function items(packs: readonly PackItem[], wanted: ItemStatus): FailureItem[] {
         if (m.status !== wanted) continue;
         const bar = 1 + TOLERANCE_PERCENT / 100;
         const confirmed = m.confirm === null ? "" : `; confirmation ${m.confirm.ratio === null ? "–" : `${m.confirm.ratio.toFixed(3)}x`}`;
-        out.push({ id: m.id, candidate: p.candidate, pack: p.pack, corpus: cell.corpus, item: m.metric, reason: `${m.ratio!.toFixed(3)}x baseline (bar ${bar.toFixed(2)}x)${confirmed}`, hint: cell.hint });
+        const chunked = cell.chunked === null ? "" : ` (chunked: the sum of ${cell.chunked.chunks} chunk runs)`;
+        out.push({ id: m.id, candidate: p.candidate, pack: p.pack, corpus: cell.corpus, item: m.metric, reason: `${m.ratio!.toFixed(3)}x baseline (bar ${bar.toFixed(2)}x)${confirmed}${chunked}`, hint: cell.hint });
       }
       if (wanted === "fail" && cell.findings?.status === "fail") out.push({ id: `${cell.id}/findings`, candidate: p.candidate, pack: p.pack, corpus: cell.corpus, item: "findings", reason: cell.findings.reason, hint: cell.findings.samples[0] ?? null });
     }

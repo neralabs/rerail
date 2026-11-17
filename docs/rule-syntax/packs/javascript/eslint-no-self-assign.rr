@@ -26,8 +26,11 @@ pair(x, y) :- kind(a, "augmented_assignment_expression"), (op(a, "&&=") ; op(a, 
 // Arrays, slot by slot, up to the shorter one. A spread on the right ends the comparison after it, and a rest
 // on the left is compared only with the last slot.   [a, ...b] = [a, ...b]
 pair(x, y) :- pair(l, r), kind(l, "array_pattern"), kind(r, "array"), slot(l, e, i), slot(r, f, i),
-    count : { slot(r, s, j), j < i, kind(s, "spread_element") } = 0,
-    (!kind(e, "rest_pattern") ; slot_count(r, k), i >= k - 1), deparen(e, x), deparen(f, y).
+    !spread_before(r, i), (!kind(e, "rest_pattern") ; slot_count(r, k), i >= k - 1), deparen(e, x), deparen(f, y).
+// spread_before(r, i): a spread sits before slot i of array r. Kept out of pair's recursion: as a count inside it,
+// the count's demand lost pair(l, r) and paired every array pattern with every array at the same slot index.
+.decl spread_before(r: node, i: number)
+spread_before(r, i) :- slot(r, s, j), kind(s, "spread_element"), slot(r, _, i), j < i.
 pair(x, y) :- pair(l, r), kind(l, "rest_pattern"), kind(r, "spread_element"), child(l, e, 0), deparen(e, x),
     child(r, f, 0), deparen(f, y).
 // Objects: each property against each property after the right's last spread, by static name.

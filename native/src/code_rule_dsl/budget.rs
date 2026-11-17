@@ -144,7 +144,9 @@ pub fn reset_matcher_calls() {
 }
 
 /// `matcher_budget_exhausted` for matcher entry points: polls every `BUDGET_CHECK_INTERVAL`
-/// calls, so a spent budget is noticed at most that many calls late.
+/// calls, so a spent budget is noticed at most that many calls late. Inlined into the matcher's
+/// crate (rerail-w), which calls it for every matcher call.
+#[inline]
 pub fn matcher_call_budget_exhausted() -> bool {
     #[cfg(any(test, feature = "test-hooks"))]
     MATCHER_CALLS.set(MATCHER_CALLS.get() + 1);

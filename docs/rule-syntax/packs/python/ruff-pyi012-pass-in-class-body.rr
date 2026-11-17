@@ -2,7 +2,7 @@
 .description "Remove pass statements from class bodies in stub files that already contain other statements; they do nothing there."
 .language python
 .mode steer
-.scope include "**/*"
+.scope include "**/*.pyi"
 
 // Ruff PYI012 (flake8-pyi), stubs only: `pass` in a class body that has other statements.
 //   class C:

@@ -36,7 +36,7 @@ npy_callee(c, e, q) :- kind(c, "call"), field(c, "function", f), unparen(f, e), 
 
 // ---- fallbacks (NPY201) -------------------------------------------------------------------------------------
 .decl npy_guarded(e: node, new: symbol)
-.decl npy_replacement(q: symbol, new: symbol)
+.decl npy_replacement(q: symbol, new: symbol) extensible  // its rows are NPY201's table (ruff-npy201's members file)
 npy_guarded(e, new) :- npy_ref(e, q), npy_replacement(q, new), kind(e, "attribute"), npy_in_handler(e, t),
     npy_catches(t, "AttributeError"), field(t, "body", b), within(a, b), kind(a, "attribute"), ruff_qual(a, new).
 npy_guarded(e, new) :- npy_ref(e, q), npy_replacement(q, new), ast_name(e, x), look(e, x, s), binding(s, x, site, "import"),

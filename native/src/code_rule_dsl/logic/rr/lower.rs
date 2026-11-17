@@ -242,6 +242,20 @@ struct Lowerer {
     /// lowering added. Linking keeps every module's stated inputs before the added ones, as one lowering of them all
     /// would order them.
     stated: usize,
+    /// The span sets of the library relations' columns (`span_columns` of the linked library), for a module lowered
+    /// in its library's scope, whose library relations are declared but not derived here (`link_seeded`).
+    library_spans: Option<std::sync::Arc<SpanColumns>>,
+}
+
+/// Each relation's columns' span sets, by name (`Lowerer::spans`): `None` where a column is bound to no span.
+pub type SpanColumns = BTreeMap<String, Vec<Option<BTreeSet<SpanIn>>>>;
+
+/// The span sets of a linked program's columns (a library's, `rr::Library::spans`): what a module lowered in its
+/// scope reads of the relations the library derives. The program is moved through and handed back.
+pub fn span_columns(prog: Program) -> (Program, SpanColumns) {
+    let mut l = Lowerer { prog, ..Default::default() };
+    let columns = l.spans(false).unwrap_or_default();
+    (l.prog, columns)
 }
 
 /// A helper relation's stem, column types and rules (their templates: variables numbered in order, so the fresh
@@ -930,7 +944,22 @@ pub fn link(modules: Vec<Module>) -> Result<Program, Error> {
     for m in modules {
         l.append(m);
     }
-    whole(l)
+    whole(l, None)
+}
+
+/// A library linked for the programs that include it (`rr::lower_library`, decision 0089) keeps each kind set its files
+/// declare as a relation: `kind_sets` drops a set no rule of the library reads as an atom, which holds of a whole
+/// program but not of a library, whose includers may read it (`kind(p, k), keyed_kind(k)` in
+/// react-no-access-state-in-setstate, beside `tsx/react-class.rr`'s `inside(c, m, keyed_kind)`). A program lowered in
+/// the library's scope reads the library's relation, so the set is the library's again: declared, its kinds its facts.
+pub fn keep_declared_kind_sets(program: &mut Program, modules: &[Module]) {
+    for (set, kinds) in &program.kindsets {
+        if program.decls.contains_key(set.as_str()) || !modules.iter().any(|m| m.written.get(set).is_some_and(|cols| cols.len() == 1)) {
+            continue;
+        }
+        program.decls.insert(set.as_str().into(), [("k".into(), "sym".into())].into());
+        program.facts.insert(set.clone(), kinds.iter().map(|k| [Value::Str(k.clone().into())].into()).collect());
+    }
 }
 
 /// A program's own module, linked in the scope of the library modules it includes (decision 0246 §2): the
@@ -940,16 +969,31 @@ pub fn link(modules: Vec<Module>) -> Result<Program, Error> {
 /// declarations from any part. Only for a module whose clauses add to no relation of its scope (it asks nothing of
 /// the library, decision 0089 §3): the scope's `.violation`s are the library's, and their findings are its rules.
 pub fn link_in(m: Module, scope: &[&Module], core: &BTreeSet<String>) -> Result<Program, Error> {
-    link_seeded(m, &seeds(scope), core)
+    link_seeded(m, &seeds(scope), core, None)
 }
 
-/// `link_in`, in a scope seeded already.
-pub fn link_seeded(m: Module, seeds: &Seeds, core: &BTreeSet<String>) -> Result<Program, Error> {
+/// `link_in`, in a scope seeded already. `library`, the scope's library linked and its columns' spans
+/// (`rr::Library::program`, `rr::Library::spans`), gives the guarantees of the library relations the module reads to
+/// its value cycles' check (`front::finish_given`), their kind sets' kinds and their columns' spans.
+pub fn link_seeded(m: Module, seeds: &Seeds, core: &BTreeSet<String>, library: Option<(&Program, &std::sync::Arc<SpanColumns>)>) -> Result<Program, Error> {
     let mut l = seeds.l.clone();
     let seeded = &seeds.seeded;
     l.violations.clear();
     l.append(m);
-    let mut program = whole(l)?;
+    // A kind set the module reads has the kinds the whole program read alone gives it, its library's relations' kinds
+    // among them. The scope seeds a library relation's declaration, not its facts or rules, so `kind_sets` found a
+    // set of the library (`nearest(f, s, scope)` over python/names.rr's `scope`, eslint-a-control.rr's
+    // `breakable_kind(k) :- loop_kind(k)`), or one of the module's own over one (no-unsafe-finally's
+    // `fn_stop(k) :- function_kind(k)`), without them: the program's `nearest` climbed to no kind or past a function
+    // in a pack (ruff-n807, RUF033, AIR303, F406, eslint's no-extra-label found nothing; no-unsafe-finally found more).
+    if let Some((library, _)) = library {
+        let given: Vec<(String, Vec<String>)> =
+            l.sets.iter().filter(|set| !l.prog.kindsets.contains_key(*set)).filter_map(|set| Some((set.clone(), kinds_in(&l.prog, Some(library), set, &mut BTreeSet::new())?))).collect();
+        l.prog.kindsets.extend(given);
+    }
+    // A span its library's rules bind a library relation's column to is the column's here (`spans`).
+    l.library_spans = library.map(|(_, spans)| std::sync::Arc::clone(spans));
+    let mut program = whole(l, library.map(|(program, _)| program))?;
     crate::code_rule_dsl::logic::front::declared(&program)?;
     let gone = |r: &str| !core.contains(r);
     program.decls.retain(|r, _| !(seeded.decls.contains(r.as_str()) && gone(r)));
@@ -961,8 +1005,9 @@ pub fn link_seeded(m: Module, seeds: &Seeds, core: &BTreeSet<String>) -> Result<
     Ok(program)
 }
 
-/// The lowering's whole-program half (decision 0246 §1), over the modules appended into `l`.
-fn whole(mut l: Lowerer) -> Result<Program, Error> {
+/// The lowering's whole-program half (decision 0246 §1), over the modules appended into `l`; `library` as
+/// `link_seeded` gives it.
+fn whole(mut l: Lowerer, library: Option<&Program>) -> Result<Program, Error> {
     let analyses = crate::code_rule_dsl::logic::profile::span(|| "the program's analyses (findings, spans, kinds)".to_owned());
     l.three_valued();
     l.findings()?;
@@ -1001,7 +1046,7 @@ fn whole(mut l: Lowerer) -> Result<Program, Error> {
         sources_on_request(&mut l.prog, round);
     }
     drop(analyses);
-    let mut program = crate::code_rule_dsl::logic::front::finish(l.prog)?;
+    let mut program = crate::code_rule_dsl::logic::front::finish_given(l.prog, library)?;
     let demand = crate::code_rule_dsl::logic::profile::span(|| "aggregate demand and sets".to_owned());
     super::aggregate_demand::optimize(&mut program);
     // The demand's rules, and the rules whose aggregate it made an existence test, read no relation either.
@@ -2220,9 +2265,6 @@ impl Lowerer {
         Ok(())
     }
 
-    /// `!(l, …)`: a helper relation of the conjunction, over the variables it shares with the rule (an aggregate's
-    /// inside it too: `shared_vars`), bound inside it by a context relation where the conjunction only tests them,
-    /// negated. A variable only the conjunction has is its own (Soufflé's scoping).
     /// A literal's alternatives with those that ground the variables they share with `used` (the rest of the rule)
     /// as one helper relation `rr_or<k>(shared)`, a rule each, and one atom in their place (as `!(…)` is
     /// `rr_not<k>`). An alternative that leaves one unbound (it does not name it) stays as it is.
@@ -2250,10 +2292,17 @@ impl Lowerer {
         keep.into_iter().chain([vec![Literal::Atom(head)]]).collect()
     }
 
+    /// `!(l, …)`: a helper relation of the conjunction, over the variables it shares with the rule (an aggregate's
+    /// inside it too: `shared_vars`), bound inside it by a context relation where the conjunction only tests them,
+    /// negated. A variable only the conjunction has is its own (Soufflé's scoping).
+    /// A conjunction that binds the shared variables in parts nothing ties (`!(yoda_str(lo, _), yoda_str(hi, _))`)
+    /// would hold every combination of the parts' rows, 13,369 strings giving 178 M pairs: its helper is bound by the
+    /// context over all of them, the rows the rule asks about (`cross_product`).
     fn negated_conjunction(&mut self, lits: &[Lit], outer: &BTreeSet<String>) -> Result<Literal, Error> {
         let shared: Vec<String> = shared_vars(lits).into_iter().filter(|v| outer.contains(v)).collect();
         let bound: BTreeSet<String> = body_vars(&lits.iter().filter(|l| binds_columns(l)).cloned().collect::<Vec<_>>());
-        let needed: Vec<String> = shared.iter().filter(|v| !bound.contains(*v)).cloned().collect();
+        let needed: Vec<String> =
+            if cross_product(lits, &shared, &bound) { shared.clone() } else { shared.iter().filter(|v| !bound.contains(*v)).cloned().collect() };
         let siblings = self.siblings.clone();
         let mut bodies = self.conjunction(lits, &shared.iter().cloned().collect())?;
         self.siblings = siblings.clone();
@@ -2687,21 +2736,42 @@ impl Lowerer {
     /// A derived relation's column holds the spans its rules bind it to: each rule binds it so, directly or through
     /// another such column (a fixpoint); rules that bind it differently give it each (string contents and comments).
     fn span_patterns(&mut self) -> Result<(), Error> {
+        self.spans(true).map(drop)
+    }
+
+    /// `span_patterns`, whose columns' span sets are returned (by relation) instead where `patterns` is false
+    /// (`span_columns`). A library relation a module lowered in its library's scope reads, declared and not derived
+    /// here, holds the spans its library rules bind it to (`library_spans`), not none: python's FAST003 matches
+    /// `match_all` over `route_path`'s `s`, a string by misc2-fastapi.rr's `plain_str`, and found nothing in a pack.
+    fn spans(&mut self, patterns: bool) -> Result<SpanColumns, Error> {
         // The relations by number, found by their name's address (a `Name` is interned: one name, one address), and
         // each column's spans a vector per relation: a lookup made no key and compared no text.
         let mut id: rustc_hash::FxHashMap<usize, u32> = Default::default();
+        let mut names: Vec<&str> = Vec::new();
         {
-            let mut number = |rel: &str| {
+            fn number<'a>(id: &mut rustc_hash::FxHashMap<usize, u32>, names: &mut Vec<&'a str>, rel: &'a str) {
                 let n = id.len() as u32;
-                id.entry(rel.as_ptr() as usize).or_insert(n);
-            };
-            for r in &self.prog.rules {
-                number(r.head.rel.as_str());
-                r.body.iter().filter_map(Literal::atom).for_each(|a| number(a.rel.as_str()));
+                if *id.entry(rel.as_ptr() as usize).or_insert(n) == n {
+                    names.push(rel);
+                }
             }
-            self.prog.decls.keys().for_each(|r| number(r.as_str()));
+            for r in &self.prog.rules {
+                number(&mut id, &mut names, r.head.rel.as_str());
+                r.body.iter().filter_map(Literal::atom).for_each(|a| number(&mut id, &mut names, a.rel.as_str()));
+            }
+            self.prog.decls.keys().for_each(|r| number(&mut id, &mut names, r.as_str()));
         }
         let rels = id.len();
+        let library = self.library_spans.clone();
+        // A library relation's column, as the library's rules bind it: `Some(None)` where they bind it to no span.
+        // `core.rr`'s relations are each program's own.
+        let given = |rel: u32, c: usize| -> Option<Option<BTreeSet<SpanIn>>> {
+            let name = names[rel as usize];
+            if is_core(name) {
+                return None;
+            }
+            library.as_deref()?.get(name).map(|cols| cols.get(c).cloned().flatten())
+        };
         let of = |rel: &str| id.get(&(rel.as_ptr() as usize)).copied();
         /// Each relation's columns' span sets, by number.
         struct Cols(Vec<Vec<Option<BTreeSet<SpanIn>>>>);
@@ -2747,7 +2817,8 @@ impl Lowerer {
             })
         };
         // A declared relation no rule derives, and that is not read in, has no rows: its columns hold no nodes, and a
-        // scan over them is empty. A library a pack's rules include (`…confusables.rr`) is loaded on its own too.
+        // scan over them is empty. A library a pack's rules include (`…confusables.rr`) is loaded on its own too. A
+        // library relation of a module lowered in its library's scope holds what the library's rules bind it to.
         {
             let heads: rustc_hash::FxHashSet<&str> = self.prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
             let inputs: rustc_hash::FxHashSet<&str> = self.prog.inputs.iter().map(String::as_str).collect();
@@ -2755,7 +2826,11 @@ impl Lowerer {
                 if !heads.contains(rel.as_str()) && !inputs.contains(rel.as_str()) && !self.prog.natives.contains_key(rel.as_str()) {
                     let r = of(rel).expect("a declared relation's number");
                     for i in 0..cols.len() {
-                        columns.insert(r, i, BTreeSet::new());
+                        match given(r, i) {
+                            Some(Some(set)) => columns.insert(r, i, set),
+                            Some(None) => {}
+                            None => columns.insert(r, i, BTreeSet::new()),
+                        }
                     }
                 }
             }
@@ -2793,8 +2868,13 @@ impl Lowerer {
                         Some(Term::Var(x)) => binder(&r.body, x, &columns),
                         _ => None,
                     }).collect();
-                    if let Some(each) = each {
-                        let all: BTreeSet<SpanIn> = each.into_iter().flatten().collect();
+                    // A library relation the module adds to holds the library's rules' spans too.
+                    let library_col = given(rel, i);
+                    if let Some(each) = each
+                        && library_col != Some(None)
+                    {
+                        let mut all: BTreeSet<SpanIn> = each.into_iter().flatten().collect();
+                        all.extend(library_col.flatten().unwrap_or_default());
                         if columns.get(Some(rel), i) != Some(&all) {
                             found.push((rel, i, all));
                         }
@@ -2813,6 +2893,10 @@ impl Lowerer {
             for (r, i, set) in found {
                 columns.insert(r, i, set);
             }
+        }
+        if !patterns {
+            // Every relation, a column bound to no span `None`: one absent is no library relation.
+            return Ok(names.iter().zip(columns.0).map(|(rel, cols)| ((*rel).to_owned(), cols)).collect());
         }
         // Top-down: a helper's column its own rules do not bind to spans, where every rule that reads the helper binds
         // that argument so (`binder`, or through its own head's such column), holds those spans. The helper derives
@@ -2887,7 +2971,7 @@ impl Lowerer {
                 }
             }
         }
-        Ok(())
+        Ok(SpanColumns::new())
     }
 
     /// A text test (`match`, `glob`, `contains`, …) on node or span `v`: a test of its text. `match` over a `source`
@@ -4282,26 +4366,43 @@ impl Lowerer {
 
     /// The kinds of a unary relation of kinds: its facts, and the kinds of `s` for each rule `set(k) :- s(k)`.
     fn kinds_of(&self, set: &str, seen: &mut BTreeSet<String>) -> Option<Vec<String>> {
-        if !seen.insert(set.to_owned()) || self.prog.inputs.iter().any(|i| i == set) || self.prog.decls.get(set).is_some_and(|c| c.len() != 1) {
-            return None;
-        }
-        let mut kinds: Vec<String> = Vec::new();
-        for row in self.prog.facts.get(set).into_iter().flatten() {
+        kinds_in(&self.prog, None, set, seen)
+    }
+}
+
+/// `Lowerer::kinds_of` over `prog`, and over `library`, the linked library of a module lowered in its scope
+/// (`link_seeded`), whose relations the module declares but does not hold: a relation's kinds there (its kind set,
+/// else its facts and rules) come first, as they do in the whole program read alone.
+fn kinds_in(prog: &Program, library: Option<&Program>, set: &str, seen: &mut BTreeSet<String>) -> Option<Vec<String>> {
+    if !seen.insert(set.to_owned()) || prog.inputs.iter().any(|i| i == set) || prog.decls.get(set).is_some_and(|c| c.len() != 1) {
+        return None;
+    }
+    let mut kinds: Vec<String> = Vec::new();
+    let from = |p: &Program, kinds: &mut Vec<String>, seen: &mut BTreeSet<String>| -> Option<()> {
+        for row in p.facts.get(set).into_iter().flatten() {
             let [Value::Str(k)] = row.as_slice() else { return None };
             kinds.push(k.to_string());
         }
-        for r in self.prog.rules.iter().filter(|r| r.head.rel == set) {
+        for r in p.rules.iter().filter(|r| r.head.rel == set) {
             let ([Term::Var(k)], [Literal::Atom(a)]) = (r.head.args.as_slice(), r.body.as_slice()) else { return None };
             if a.neg || !matches!(a.args.as_slice(), [Term::Var(v)] if v == k) {
                 return None;
             }
-            kinds.extend(self.kinds_of(&a.rel, seen)?);
+            kinds.extend(kinds_in(prog, library, &a.rel, seen)?);
         }
-        // In the order written, each once.
-        let mut once = BTreeSet::new();
-        kinds.retain(|k| once.insert(k.clone()));
-        Some(kinds)
+        Some(())
+    };
+    if let Some(library) = library.filter(|l| l.decls.contains_key(set)) {
+        match library.kindsets.get(set) {
+            Some(set_kinds) => kinds.extend(set_kinds.iter().cloned()),
+            None => from(library, &mut kinds, seen)?,
+        }
     }
+    from(prog, &mut kinds, seen)?;
+    // In the order written, each once.
+    let mut once = BTreeSet::new();
+    kinds.retain(|k| once.insert(k.clone()));
+    Some(kinds)
 }
 
 /// Whether a term is a float: a decimal number, `to_float(…)`, or arithmetic on one. (A variable's type is not
@@ -5235,6 +5336,37 @@ fn grounds(body: &[Literal], vars: &[String]) -> bool {
         }
     }
     vars.iter().all(|v| bound.contains(v))
+}
+
+/// Whether `lits` bind the variables of `shared` they bind (`bound`) in two or more parts that no literal ties: a
+/// binding atom or an equality ties its variables, a group all of its alternatives' variables. A comparison other than
+/// `=` ties nothing, since it only filters the combinations it is given.
+fn cross_product(lits: &[Lit], shared: &[String], bound: &BTreeSet<String>) -> bool {
+    let mut part: BTreeMap<String, usize> = BTreeMap::new();
+    let mut parts: Vec<BTreeSet<String>> = Vec::new();
+    for l in lits {
+        let vars: BTreeSet<String> = match l {
+            l @ Lit::Atom { .. } if binds_columns(l) => body_vars(std::slice::from_ref(l)),
+            l @ (Lit::Group { .. } | Lit::Cmp { op: "=", .. }) => shared_vars(std::slice::from_ref(l)),
+            _ => continue,
+        };
+        // Join every part these variables are in, and the variables themselves, into one.
+        let mut joined: BTreeSet<String> = vars.clone();
+        let mut found: BTreeSet<usize> = vars.iter().filter_map(|v| part.get(v).copied()).collect();
+        for k in &found {
+            joined.extend(std::mem::take(&mut parts[*k]));
+        }
+        let k = found.pop_first().unwrap_or(parts.len());
+        if k == parts.len() {
+            parts.push(BTreeSet::new());
+        }
+        for v in &joined {
+            part.insert(v.clone(), k);
+        }
+        parts[k] = joined;
+    }
+    let tied: BTreeSet<usize> = shared.iter().filter(|v| bound.contains(*v)).filter_map(|v| part.get(v).copied()).collect();
+    tied.len() > 1
 }
 
 /// Whether a literal binds every variable of its columns: a positive atom of a relation, not a text test nor a
