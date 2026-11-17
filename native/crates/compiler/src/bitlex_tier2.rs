@@ -92,6 +92,11 @@ enum Span {
     Last,
 }
 
+/// What a call's arm does: its acts, the state it goes to, the returns it pushes, what it tests
+/// before (`Pre`), where a guard that holds goes (the state's `default`), and the rule its words
+/// are (the caller's: a function's words are its own).
+type CallCode = (Vec<Act>, u16, Vec<u16>, Pre, u16, u16);
+
 /// What an arm tests before its acts.
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum Pre {
@@ -199,6 +204,9 @@ struct Emit<'a> {
     at_switch: Vec<bool>,
     /// Each arm's code, once per test before it.
     arm_code: HashMap<(usize, Span, Pre), u16>,
+    /// A call's code, by what it does (`CallCode`): a call takes no token, so the arms of one
+    /// call, one per token its callee may begin with, are one code.
+    call_code: HashMap<CallCode, u16>,
     /// The marks of one word, by order: their strings (`Lowered::mark_words`).
     mark_words: std::collections::BTreeMap<u8, u16>,
     /// Each keyword's leaf kind, by its string (`Words::word_kinds`): a leaf of a keyword's
@@ -219,8 +227,10 @@ struct Cand {
 }
 
 impl Emit<'_> {
+    /// The next word's address. A program past `u16`'s addresses is refused after the states
+    /// are lowered (`too_big`); until then the address saturates.
     fn pc(&self) -> u16 {
-        self.words.len() as u16
+        self.words.len().min(usize::from(u16::MAX) - 1) as u16
     }
 
     fn push(&mut self, op: &'static str, mode: u8, arg: Arg) {
@@ -293,8 +303,17 @@ impl Emit<'_> {
         if let Some(&pc) = self.arm_code.get(&(arm, span, pre.clone())) {
             return pc;
         }
+        let a = &self.arms[arm];
+        let call: Option<CallCode> = a.call.then(|| (a.acts.clone(), a.to, a.push.clone(), pre.clone(), self.default, self.rule));
+        if let Some(&pc) = call.as_ref().and_then(|k| self.call_code.get(k)) {
+            self.arm_code.insert((arm, span, pre.clone()), pc);
+            return pc;
+        }
         let at = self.pc();
         self.arm_code.insert((arm, span, pre.clone()), at);
+        if let Some(k) = call {
+            self.call_code.insert(k, at);
+        }
         // The arm's guards before its token is taken: a guard that holds goes on as if the
         // state had no arm on the token, which is then still the next one's (`SPAN` takes a
         // token for good, so every word knows whether its token is taken).
@@ -1042,6 +1061,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         tests_of: tests_of(states, arms, marks),
         at_switch: Vec::new(),
         arm_code: HashMap::new(),
+        call_code: HashMap::new(),
         mark_words: Default::default(),
         word_kinds: Default::default(),
     };
@@ -1130,6 +1150,24 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         }
         e.push("RETURN", 1, Arg::None);
         returns.insert(p, at);
+    }
+    // A word's place is a `u16`: a program past them refused, with what made it so big.
+    if e.words.len() >= usize::from(u16::MAX) - 1 {
+        // The words of each rule, the most first: what made it so big.
+        let mut by_rule: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
+        for r in &e.rule_of {
+            *by_rule.entry(usize::from(*r)).or_default() += 1;
+        }
+        // (words, the rule's level's kind, its states)
+        let mut top: Vec<(usize, u16, usize)> = by_rule.into_iter().map(|(r, n)| (n, states.iter().find(|s| usize::from(s.rule) == r).map_or(0, |s| s.level), states.iter().filter(|s| usize::from(s.rule) == r).count())).collect();
+        top.sort_by(|a, b| b.0.cmp(&a.0));
+        let mut ops: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+        for w in &e.words {
+            *ops.entry(w.0).or_default() += 1;
+        }
+        let mut ops: Vec<_> = ops.into_iter().collect();
+        ops.sort_by(|a, b| b.1.cmp(&a.1));
+        return Err(format!("tier 2's program is past {} words: {} states, {} arms; by opcode {:?}; words, level kind and states by rule: {:?}", u16::MAX - 2, states.len(), arms.len(), &ops[..ops.len().min(10)], &top[..top.len().min(12)]));
     }
     // Every target as a word's place, then the words that behave alike shared (`merge_words`).
     let place = |a: Arg| match a {

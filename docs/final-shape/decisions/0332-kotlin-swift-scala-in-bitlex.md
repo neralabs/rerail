@@ -120,6 +120,31 @@ Step 4 reads characters and backtick names.
 Corpus: 12 the same, 479 refused, 0 differ. The refusals: `::` 110, the grammar 108, `${…}` 90,
 numbers 80, raw strings 31, `;` 30, accessors 18, three-byte operators 5, others 7.
 
+## Kotlin, step 5 (`05-references.bitlex`)
+
+Step 5 reads callable references and trailing commas.
+
+- **Two readings of `::`, as the lean parser's.**
+  - At a primary's start, a name before `::`, or a `::` alone, is a `callable_reference`. The
+    name is a `type_identifier`; the `::` and a `class` after it are implied.
+  - After any other operand (`this`, a navigation, a call), `::` is a navigation suffix, which
+    keeps its leaves.
+  - The name before `::` is told by a mask mark (`cref`): from the word's last byte, the next
+    solid byte starts a `::`, carried back to its first. `this` is left out, as the lean
+    parser reads `this::f` as a navigation. A token mark could not leave it out: `this` is a
+    keyword of the name's token, and a mark's first token takes no `~`.
+- **A trailing comma keeps its `,` and the list's closer.** The lean parser leaves a list's
+  tokens out only where they are the ones the grammar implies, and after a trailing comma they
+  are not. A mark `trail` (`,` before `)`, `>` or `]`) takes the comma and the closer through
+  a choice whose tokens are not implied. This holds in all seven lists.
+- **A generic call in a tight operand is refused.** The lean parser puts the type arguments
+  over the whole operation in the right operand of a comparison or of any operator that binds
+  tighter (`a to f<T>()` is `call(infix(a, f), <T>())`). Those operands read a primary with no
+  generic call, so the `generic` mark is untaken and the file is refused.
+
+Corpus: 21 the same, 470 refused, 0 differ. The refusals: the grammar 209, `${…}` 90, numbers
+80, raw strings 31, `;` 30, accessors 18, others 12.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
@@ -200,6 +225,17 @@ numbers 80, raw strings 31, `;` 30, accessors 18, three-byte operators 5, others
     A byte's answer is that of every byte its readers do not tell apart, so it now searches
     one byte per group, and `never` stops at the first byte not proved. Kotlin's step 4 had
     `row_modes` at 46 s, almost all of it here; it compiles in about 2 s again.
+
+13. **A call's arms are one code.** A function a rule makes a call as an arm per token the
+    callee may begin with, each opening the callee's node, pushing its returns and going to the
+    callee's start, which switches on the token again. Those arms take no token, so their code
+    does not depend on it, but it was emitted once per arm. Tier 2 now keys a call's code by
+    what it does (`CallCode`): its acts, target, returns, tests, default and rule. Kotlin's
+    program fell from 65,203 words to 42,623 (`PUSH` from 7,164 to 522). It had been 332 words
+    under the limit.
+14. **A program past a word's address is refused.** Places are `u16`. A program past them was
+    an overflow panic; it is now an error that names the size, the opcodes, and the rules with
+    the most words.
 
 Single-extra grammars compile as before: rr's tests and the compiler's targeted tests pass.
 

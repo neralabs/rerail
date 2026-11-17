@@ -123,9 +123,42 @@ fn characters_and_backtick_names_are_the_lean_parsers() {
     ]);
 }
 
+/// Step 5: callable references.
 #[test]
-fn what_step_4_does_not_read_is_refused() {
+fn callable_references_are_the_lean_parsers() {
+    same(&[
+        "val a = String::class\n",
+        "val b = ::foo\n",
+        "val c = A::b\n",
+        "val d = a.b::c\n",
+        "val f = x::class\n",
+        "val g = foo(::bar, A::c)\n",
+        "val h = this::foo\n",
+        "val i = a::class.java\n",
+        "val j = foo()::bar\n",
+    ]);
+}
+
+/// Step 5: a trailing comma keeps its `,` and the list's closer.
+#[test]
+fn trailing_commas_are_the_lean_parsers() {
+    same(&[
+        "val a = f(1,)\n",
+        "fun g(a: Int,) {}\n",
+        "class C(val a: Int,)\n",
+        "val b: Map<A, B,> = f(x[1, 2,],)\n",
+        "val c = f(\n  1,\n  2,\n)\n",
+        "val d = f<T>() + 1\n",
+        "val e = a == f<T>()\n",
+    ]);
+}
+
+#[test]
+fn what_step_5_does_not_read_is_refused() {
     refused(&[
+        "val a = b to f<T>()\n",
+        "val a = x + f<T>(1)\n",
+        "val a = x < f<T>(1)\n",
         "package a; import b\n",
         "import a.b import c\n",
         "val s = 'x\n",
@@ -237,5 +270,30 @@ fn show() {
                 eprintln!("== {p}: refused {why:?}\n-- lean\n{lean}-- words\n{words}");
             }
         }
+    }
+}
+
+/// The tier 2 program's size, by its words' opcodes (`RERAIL_KOTLIN_GRAMMAR`: another grammar
+/// file than the ladder's last).
+#[test]
+#[ignore = "a measurement: run by hand"]
+fn program_size() {
+    let text = match std::env::var("RERAIL_KOTLIN_GRAMMAR") {
+        Ok(p) => std::fs::read_to_string(p).expect("the grammar file"),
+        Err(_) => crate::GRAMMAR.to_owned(),
+    };
+    let c = crate::compile_text(&text).expect("the grammar compiles");
+    let lines: Vec<&str> = c.words.lines().collect();
+    let mut by_op: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for l in &lines {
+        if let Some(op) = l.split_whitespace().find(|w| w.chars().all(|c| c.is_ascii_uppercase() || c == '_') && w.len() > 1) {
+            *by_op.entry(op).or_default() += 1;
+        }
+    }
+    let mut ops: Vec<_> = by_op.into_iter().collect();
+    ops.sort_by(|a, b| b.1.cmp(&a.1));
+    eprintln!("{} lines; by opcode: {:?}", lines.len(), &ops[..ops.len().min(12)]);
+    if let Ok(out) = std::env::var("RERAIL_KOTLIN_WORDS") {
+        std::fs::write(out, &c.words).expect("the words written");
     }
 }
