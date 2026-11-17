@@ -153,6 +153,19 @@ fn made<T: Copy>(b: &Block, span: *const Span<T>, n: usize, at: impl Fn(usize) -
     }
 }
 
+/// `n` values written by `fill` in `b`, and `span` set to them.
+fn made_with<T: Copy + Default>(b: &Block, span: *const Span<T>, n: usize, fill: impl FnOnce(&mut [T])) {
+    let p: *mut T = b.alloc_t(n.max(1));
+    // SAFETY: `p` holds `n` items, just allocated in `b` and set to their default before `fill` reads or writes them.
+    unsafe {
+        for k in 0..n {
+            p.add(k).write(T::default());
+        }
+        fill(std::slice::from_raw_parts_mut(p, n));
+        Span::set(span, p, n);
+    }
+}
+
 /// `n` values from `values`, in order, put in `b`, and `span` set to them.
 fn made_in_order<T: Copy>(b: &Block, span: *const Span<T>, n: usize, values: impl Iterator<Item = T>) {
     let p: *mut T = b.alloc_t(n.max(1));
@@ -216,8 +229,19 @@ pub fn build(batch: &Batch) -> Chunk {
             let core: &[u32] = (*d).core.as_slice();
             let ids = |l: usize| core[l];
             // Every local's, past the nodes too: a token's id is by definition as well (`Projected::global`).
-            match p.defs.as_ref() {
-                Some(x) => point(&b, &raw const (*d).low, &x.low),
+            // The ids' low bits, made by one scan of the granule table (nodes and tokens each come in local order).
+            match p.table() {
+                Some(table) => {
+                    let tokens = p.ranks().count(Item::Token) as usize;
+                    made_with(&b, &raw const (*d).low, n + tokens, |out| {
+                        let (mut a, mut k) = (0, n);
+                        table.scan(p.ranks(), |_, low, item| {
+                            let at = if item == Item::Node { &mut a } else { &mut k };
+                            out[*at] = low;
+                            *at += 1;
+                        });
+                    });
+                }
                 None => put(&b, &raw const (*d).low, &[]),
             }
             point(&b, &raw const (*d).ord, p.ordinals());

@@ -33,7 +33,7 @@
 //! never moved: a row's id is stable, and reading it takes no lock. The two sides keep their rows apart:
 //! rows made from `inner` are ids `0..`, rows made from `outer` ids from `OUTER` on. A scan makes every
 //! node's containers and reads ids `0..len`, so it sees each pair once. The planner's statistics come from the tree (depths and subtree sizes), not the rows.
-use super::{Batch, NONE, Projected};
+use super::{Batch, NONE, Projected, View};
 use crate::code_rule_dsl::facts::vtab::Source;
 use crate::code_rule_dsl::tape::formats::{DocTape, Format};
 use rerail_tape_format::tape::{CodeSet, Tape, nearest_all};
@@ -802,6 +802,16 @@ impl Source for Within {
             out.extend(start as usize..(start + n) as usize);
         }
         Some(out)
+    }
+    /// A pair's node's document: the key of the document its row is in (`Batch::locate`), no id read.
+    fn documents_of(&self, column: usize, each: &mut dyn FnMut(usize, i64)) {
+        for r in 0..self.len() {
+            let pair = self.pair(r);
+            let node = if column == 0 { (pair >> 32) as usize } else { (pair & 0xffff_ffff) as usize };
+            let p = self.batch.locate(View::Node, node).0;
+            // A document keyed 0 has ids below `1 << 32`, each its own "document" (`memo::document_of`).
+            each(r, if p.key == 0 { self.value(r, column) } else { i64::from(p.key) });
+        }
     }
     fn value(&self, row: usize, column: usize) -> i64 {
         let pair = self.pair(row);

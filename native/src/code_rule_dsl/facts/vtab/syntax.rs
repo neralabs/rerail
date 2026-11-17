@@ -1382,41 +1382,47 @@ pub fn comment_body(text: &str) -> &str {
 /// A file's nodes as `shape` numbers them: each local id's core id and kind name, and the way from a node id's low
 /// 32 bits to its local id (they differ when nodes are numbered per definition, `DefIds`). For making guests from
 /// requests that name host nodes (decision 0055, `corpus::guests`).
+/// It reads the projection in place: no list of the nodes, no way back by id.
 pub struct Numbering {
-    pub nodes: Vec<(u32, &'static str)>,
-    /// `(low, local)`, ascending, under `DefIds`; `None` when the low bits are the local id.
-    back: Option<Vec<(u32, u32)>>,
+    p: Option<(Projected, std::rc::Rc<Dialect>)>,
 }
 
 impl Numbering {
     /// The local id of the node whose id's low 32 bits are `low`.
     pub fn local(&self, low: u32) -> Option<u32> {
-        match &self.back {
-            None => Some(low),
-            Some(b) => b.binary_search_by_key(&low, |&(g, _)| g).ok().map(|i| b[i].1),
-        }
+        let (p, _) = self.p.as_ref()?;
+        p.local_of(low).filter(|&l| l < p.len())
     }
     /// The node whose id's low 32 bits are `low`: its local id, core id and kind.
     pub fn at(&self, low: u32) -> Option<(u32, u32, &'static str)> {
+        let (p, dialect) = self.p.as_ref()?;
         let l = self.local(low)?;
-        self.nodes.get(l as usize).map(|&(id, k)| (l, id, k))
+        let id = p.node(l);
+        Some((l, id, dialect.name(&p.facts, id)))
+    }
+    /// Local id `local`'s core id and kind name.
+    pub fn node(&self, local: u32) -> Option<(u32, &'static str)> {
+        let (p, dialect) = self.p.as_ref()?;
+        (local < p.len()).then(|| p.node(local)).map(|id| (id, dialect.name(&p.facts, id)))
+    }
+    /// The kind name of core id `id`, if the projection numbers it.
+    pub fn kind_of(&self, id: u32) -> Option<&'static str> {
+        let (p, dialect) = self.p.as_ref()?;
+        p.ranks().is(Item::Node, id).then(|| dialect.name(&p.facts, id))
     }
 }
 
 pub fn numbering(doc: &Document, shape: Shape) -> StoreResult<Numbering> {
     // A document read as text only has no nodes.
     if doc.facts.len() == 0 {
-        return Ok(Numbering { nodes: Vec::new(), back: None });
+        return Ok(Numbering { p: None });
     }
     let tag = crate::code_rule_dsl::facts::core::facts_tag(&doc.facts);
     let dialect = Dialect::kept(tag)?;
     // In `core.rr`'s shape a guest's nodes are its root's subtree; in T's, its whole tree (`Batch::build`).
     let guest = doc.guest.as_deref().filter(|_| shape == Shape::Core).map(|g| (g, Arc::new(core_rr::Lines::new("", false))));
     let p = Projected::new(doc.key, Arc::clone(&doc.facts), Some(&*dialect), shape, false, guest);
-    let nodes = p.nodes().map(|(_, id)| (id, dialect.name(&doc.facts, id))).collect();
-    // The ids the projection gives (`Projected::id`): per definition where it numbered the document so. A unit's own
-    // nodes are numbered before its tokens, so the nodes' ids need no tokens.
-    Ok(Numbering { nodes, back: p.defs.as_ref().map(|d| d.back().to_vec()) })
+    Ok(Numbering { p: Some((p, dialect)) })
 }
 
 /// Node `id`'s kind name in its facts' grammar (`""` where the facts' tag names no dialect).
@@ -1671,18 +1677,11 @@ pub struct Projected {
 /// Spans that are positions (a document's text, its lines, its tokens) are in the top slots, in order; `Extra`'s spans
 /// in the slots below them (`granules::ExtraSpan`), so a node by definition is never read as one of those spans, nor
 /// one of them as a node.
-// copy (0353 step 2): ids by node (`low`, `order`, `back`). They go: an id is computed in place from the
-// granule table and the tape (decision 0353, "Node identity").
+///
+/// An id is computed in place: the granule table (`granules::Table`), with the projection's rank index, answers a tape
+/// node's id, an id's tape node, and a node's order key (decision 0353, "Node identity"). No array by node.
 struct DefIds {
-    /// The low 32 bits of each node's and token's id, by local id, in the batch's block.
-    low: Cells<u32>,
-    /// `(low, local)`, ascending: the way back, made on first use (`back`): most runs never look a node up by id.
-    back: OnceLock<Vec<(u32, u32)>>,
-    /// Each node's order key, by local id (`granules::order`): `node_order`'s low 32 bits.
-    order: Vec<u32>,
-    /// The granule table: the same ids answered with no per-node array (decision 0353 step 2). `None` for a
-    /// narrowed projection (anchors), which it does not yet answer.
-    table: Option<granules::Table>,
+    table: granules::Table,
 }
 
 use granules::INDEX_BITS;
@@ -1707,37 +1706,10 @@ pub fn shown_local(low: i64) -> String {
 }
 
 impl DefIds {
-    /// The ids of `p`'s nodes, and of `tokens` (each token's node, in order), by definition.
-    /// With `in_place`, the granule table too.
-    fn new(p: &Projected, dialect: &Dialect, tokens: &[u32], in_place: bool) -> Self {
+    /// The ids of `p`'s nodes, and of `tokens` (each token's node, in order), by definition: the granule table.
+    fn new(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> Self {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "granules".into());
-        let (mut order, mut table) = (Vec::new(), None);
-        let low = Cells::build(p.block(), (p.len() as usize) + tokens.len(), |low| {
-            (order, table) = granules::number(p, dialect, tokens, low, in_place);
-            low.len()
-        })
-        .expect("a batch's block holds its projection");
-        DefIds { low, back: OnceLock::new(), order, table }
-    }
-
-    /// `(low, local)`, ascending.
-    fn back(&self) -> &[(u32, u32)] {
-        self.back.get_or_init(|| {
-            let _span = crate::code_rule_dsl::logic::profile::span(|| "definition ids' way back".into());
-            // A slot is one granule's, and `granules::place` gives its indexes in order: each run of one slot is
-            // ascending, and a slot's runs come in order, so the runs stably sorted by slot are the ids ascending.
-            let mut runs: Vec<(u32, usize, usize)> = Vec::new();
-            for (l, &g) in self.low.iter().enumerate() {
-                match runs.last_mut() {
-                    Some(run) if run.0 == g >> INDEX_BITS => run.2 = l + 1,
-                    _ => runs.push((g >> INDEX_BITS, l, l + 1)),
-                }
-            }
-            runs.sort_by_key(|run| run.0);
-            let back: Vec<(u32, u32)> = runs.iter().flat_map(|&(_, a, b)| (a..b).map(|l| (self.low[l], l as u32))).collect();
-            debug_assert!(back.windows(2).all(|w| w[0].0 < w[1].0));
-            back
-        })
+        DefIds { table: granules::number(p, dialect, tokens, None) }
     }
 }
 
@@ -1790,6 +1762,11 @@ impl Projected {
     pub fn new(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>) -> Self {
         let block = cells::block(Self::bytes(&facts));
         Self::narrowed(key, facts, dialect, shape, withheld, guest, None, &block)
+    }
+    /// `new`, narrowed to `anchors` (`narrowed`): the root and each outermost anchor's subtree.
+    pub fn anchored(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, anchors: &BTreeSet<String>) -> Self {
+        let block = cells::block(Self::bytes(&facts));
+        Self::narrowed(key, facts, dialect, shape, false, None, Some(anchors), &block)
     }
 
     /// What a projection's arrays can take in a block: `core`, `local`, `up`, `low`, the ordinals and the fielded
@@ -1900,7 +1877,7 @@ impl Projected {
                 // Each token's node, in preorder of the tokens (`token_order`).
                 let owners: Vec<u32> = p.token_order().into_iter().map(|(_, l)| l).collect();
                 debug_assert_eq!(owners.len(), tokens as usize);
-                p.defs = Some(DefIds::new(&p, dialect, &owners, ranges.len() == 1));
+                p.defs = Some(DefIds::new(&p, dialect, &owners));
             }
             // Raw file text remains valid when its tree is withheld. Guests have no own text spans.
             let own_text = guest.is_none();
@@ -1908,7 +1885,7 @@ impl Projected {
             p.extra = Some(Box::new(Locs { lines, tokens, ends: 0, token_spans: OnceLock::new(), own_text, host }));
         } else if definition_ids() && let Some(dialect) = dialect {
             // T's shape has no token spans: its nodes alone are numbered per definition.
-            p.defs = Some(DefIds::new(&p, dialect, &[], ranges.len() == 1));
+            p.defs = Some(DefIds::new(&p, dialect, &[]));
         }
         p
     }
@@ -2021,10 +1998,17 @@ impl Projected {
         let f = &self.facts;
         self.ranks.iter(Item::Token).map(|(_, x)| (x, f.parent(x).map_or(0, |q| self.local_of_node(q)))).collect()
     }
-    /// The numbered ids' low bits (nodes, then tokens) and the granule table, where ids are by definition: what the
-    /// in-place ids are checked and measured against (decision 0353 step 2).
-    pub fn numbered(&self) -> Option<(&[u32], Option<&granules::Table>)> {
-        self.defs.as_ref().map(|d| (&d.low[..], d.table.as_ref()))
+    /// The granule table, where ids are by definition (decision 0353 step 2).
+    pub fn table(&self) -> Option<&granules::Table> {
+        self.defs.as_ref().map(|d| &d.table)
+    }
+    /// The ids' low bits (nodes, then tokens) and the order keys as arrays, numbered again: the reference the table is
+    /// checked and measured against, not a reader's path.
+    pub fn reference(&self, dialect: &Dialect) -> granules::Reference {
+        let owners: Vec<u32> = if self.extra.is_some() { self.token_order().into_iter().map(|(_, l)| l).collect() } else { Vec::new() };
+        let mut r = granules::Reference::default();
+        granules::number(self, dialect, &owners, Some(&mut r));
+        r
     }
     /// Nodes and spans: the ids `text`, `line` and `docof` take.
     pub fn locs(&self) -> u32 {
@@ -2061,33 +2045,57 @@ impl Projected {
     pub fn len(&self) -> u32 {
         self.ranks.count(Item::Node)
     }
+    /// Node or span `local`'s id: `key << 32 |` its low bits, by definition from the granule table (a select and
+    /// the table's read), else its local id.
     pub fn global(&self, local: u32) -> i64 {
-        Self::id(self.key, &self.defs, local)
-    }
-    /// `global`, from the two fields it reads (so a caller may hold the others mutably).
-    fn id(key: u32, defs: &Option<DefIds>, local: u32) -> i64 {
-        let low = match defs {
-            Some(d) => d.low.get(local as usize).copied().unwrap_or_else(|| granules::span_low(local - d.low.len() as u32)),
+        let low = match &self.defs {
             None => local,
+            Some(d) => {
+                let (nodes, tokens) = (self.len(), self.ranks.count(Item::Token));
+                if local < nodes {
+                    d.table.low_of(Item::Node, local).expect("a numbered node")
+                } else if local < nodes + tokens {
+                    d.table.low_of(Item::Token, local - nodes).expect("a numbered token")
+                } else {
+                    granules::span_low(local - nodes - tokens)
+                }
+            }
         };
-        i64::from(key) << 32 | i64::from(low)
+        i64::from(self.key) << 32 | i64::from(low)
     }
-    /// Node `local`'s order key: `node_order`'s low 32 bits (`granules::order`; its preorder index without `DefIds`).
+    /// Every node in order with its id: `(local id, tape node, id)`. One walk (`granules::ids`), no point read.
+    pub fn node_ids(&self) -> impl Iterator<Item = (u32, u32, i64)> + '_ {
+        let key = i64::from(self.key) << 32;
+        granules::ids(self.table(), &self.ranks, Item::Node, self.len()).map(move |(l, x, low)| (l, x, key | i64::from(low)))
+    }
+    /// Every token in order with its id: `(local id, tape node, id)`, the local ids from `len()`.
+    pub fn token_ids(&self) -> impl Iterator<Item = (u32, u32, i64)> + '_ {
+        let (key, n) = (i64::from(self.key) << 32, self.len());
+        granules::ids(self.table(), &self.ranks, Item::Token, n).map(move |(k, x, low)| (n + k, x, key | i64::from(low)))
+    }
+    /// Every node, token and span in local order with its id: `(local id, id)` (`node_ids`, `token_ids`, then the
+    /// spans', which are their positions).
+    pub fn loc_ids(&self) -> impl Iterator<Item = (u32, i64)> + '_ {
+        let past = self.len() + self.ranks.count(Item::Token);
+        self.node_ids().chain(self.token_ids()).map(|(l, _, n)| (l, n)).chain((past..self.locs()).map(|l| (l, self.global(l))))
+    }
+    /// Node `local`'s order key: `node_order`'s low 32 bits (`granules::Table::order_of`, from its number; its
+    /// preorder index without `DefIds`).
     pub fn order(&self, local: u32) -> u32 {
-        self.defs.as_ref().map_or(local, |d| d.order[local as usize])
+        self.defs.as_ref().map_or(local, |d| d.table.order_of(local).expect("a node's order key"))
     }
-    /// The node whose order key (`node_order`'s low 32 bits) is `key`: the keys ascend with the local ids.
+    /// The node whose order key (`node_order`'s low 32 bits) is `key`.
     pub fn local_of_order(&self, key: u32) -> Option<u32> {
         match &self.defs {
-            Some(d) => d.order.binary_search(&key).ok().map(|l| l as u32),
+            Some(d) => d.table.number_of_order(key, self.len()),
             None => (key < self.len()).then_some(key),
         }
     }
-    /// The node or span whose id's low 32 bits are `low` (`global`'s inverse).
+    /// The node or span whose id's low 32 bits are `low` (`global`'s inverse): from the table's numbers, no select.
     pub fn local_of(&self, low: u32) -> Option<u32> {
         match &self.defs {
-            Some(d) if granules::span_of(low).is_some() => granules::span_of(low).map(|i| d.low.len() as u32 + i),
-            Some(d) => d.back().binary_search_by_key(&low, |&(g, _)| g).ok().map(|i| d.back()[i].1),
+            Some(_) if granules::span_of(low).is_some() => granules::span_of(low).map(|i| self.len() + self.ranks.count(Item::Token) + i),
+            Some(d) => d.table.number_of(low).map(|(item, k)| if item == Item::Node { k } else { self.len() + k }),
             None => Some(low),
         }
     }
@@ -2524,12 +2532,10 @@ impl Extra {
     /// (`Locs::place`, decision 0055).
     fn nodes(&mut self, p: &Projected, string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
-        let tokens = p.extra.as_ref().map_or(0, |x| x.tokens);
         let ends = p.extra.as_ref().map_or(0..0, |x| p.len() + x.ends_from()..p.len() + x.ends_from() + x.ends);
         let guest = p.extra.as_deref().filter(|x| x.host.is_some());
         if self.line_rows() || self.end_line || self.col || self.node_text {
-            for (local, id) in p.nodes().map(|(l, x)| (l as usize, x)) {
-                let n = p.global(local as u32);
+            for (_, id, n) in p.node_ids() {
                 let (start, end) = (f.start(id) as usize, f.end(id) as usize);
                 if self.node_text {
                     self.node_texts.push([n, string(f.text(id)) as i64]);
@@ -2557,8 +2563,7 @@ impl Extra {
                     self.cols.push([n, (start - f.lines.start(f.lines.line(start))) as i64]);
                 }
             }
-            for local in p.len()..p.len() + tokens {
-                let n = p.global(local);
+            for (local, _, n) in p.token_ids() {
                 let [start, end] = p.span(local).map(|at| at as usize);
                 if self.line_rows() {
                     self.lines.push([n, f.lines.line(start) as i64 + 1]);
@@ -2597,7 +2602,7 @@ impl Extra {
         }
         if self.docof {
             let key = i64::from(p.key);
-            self.docofs.extend((0..p.len() + tokens).chain(ends).map(|local| [p.global(local), key]));
+            self.docofs.extend(p.node_ids().chain(p.token_ids()).map(|(_, _, n)| n).chain(ends.map(|local| p.global(local))).map(|n| [n, key]));
         }
     }
 
@@ -2800,9 +2805,9 @@ impl Extra {
         let nodes_of = |test: &dyn Fn(&str) -> bool| -> Vec<Container> {
             match dialect {
                 Some(dialect) => p
-                    .nodes()
-                    .filter(|&(_, x)| test(dialect.name(f, x)))
-                    .map(|(l, x)| (p.global(l), f.start(x) as usize..f.end(x) as usize, None))
+                    .node_ids()
+                    .filter(|&(_, x, _)| test(dialect.name(f, x)))
+                    .map(|(_, x, n)| (n, f.start(x) as usize..f.end(x) as usize, None))
                     .collect(),
                 None => Vec::new(),
             }
@@ -2812,8 +2817,9 @@ impl Extra {
             match dialect {
                 Some(dialect) => p
                     .walk_up()
-                    .filter(|&(_, _, up)| up.is_some_and(|(_, q)| dialect.name(f, q) == kind))
-                    .map(|(l, x, _)| (p.global(l), f.start(x) as usize..f.end(x) as usize, None))
+                    .zip(p.node_ids())
+                    .filter(|&((_, _, up), _)| up.is_some_and(|(_, q)| dialect.name(f, q) == kind))
+                    .map(|((_, x, _), (_, _, n))| (n, f.start(x) as usize..f.end(x) as usize, None))
                     .collect(),
                 None => Vec::new(),
             }
@@ -2993,8 +2999,7 @@ impl NodeRows {
     /// Document `p`'s rows (`dialect` its grammar's kinds; `core`: in `core.rr`'s shape).
     fn document(&mut self, p: &Projected, dialect: &Dialect, core: bool, string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
-        for (local, id) in p.nodes().map(|(l, x)| (l as usize, x)) {
-            let n = p.global(local as u32);
+        for (_, id, n) in p.node_ids() {
             match dialect.class(f, id) {
                 Class::Text | Class::Attribute | Class::String if core => {}
                 Class::Text => {
@@ -3307,13 +3312,13 @@ impl Batch {
                 }
                 if core_nodes || wants_long_text_nodes {
                     let visits = c.visits(wants_text, wants_parts, wants_part_starts, wants_words);
-                    for (local, id) in p.nodes() {
+                    for (local, id, n) in p.node_ids() {
                         if wants_long_text_nodes && (p.facts.end(id) - p.facts.start(id)) as usize > core_rr::TEXT_INLINE {
-                            long_text_nodes.push(p.global(local));
+                            long_text_nodes.push(n);
                         }
                         if core_nodes && c.visited(visits, &p, dialect, id) {
                             visited += 1;
-                            c.node(&p, dialect, local, id, &mut string, wants_text, wants_parts, wants_part_starts, wants_words);
+                            c.node(&p, dialect, local, id, n, &mut string, wants_text, wants_parts, wants_part_starts, wants_words);
                         }
                     }
                 }
@@ -3580,8 +3585,8 @@ impl Batch {
             }
             // Ids by definition are not in local order: the locals whose ids fall in the range.
             if p.defs.is_some() {
-                let count = if matches!(view, View::Loc(_)) { p.locs() } else { p.len() };
-                let mut locals: Vec<u32> = (0..count).filter(|&l| (lo..=hi).contains(&p.global(l))).collect();
+                let ids: Box<dyn Iterator<Item = (u32, i64)>> = if matches!(view, View::Loc(_)) { Box::new(p.loc_ids()) } else { Box::new(p.node_ids().map(|(l, _, n)| (l, n))) };
+                let mut locals: Vec<u32> = ids.filter(|&(_, n)| (lo..=hi).contains(&n)).map(|(l, _)| l).collect();
                 locals.sort_unstable();
                 rows.extend(locals.into_iter().filter_map(|local| self.row(view, doc, local)));
                 continue;
@@ -3840,6 +3845,24 @@ impl Source for Viewed {
             });
         }
     }
+    /// A column that is a row's id, or its document (`node` and `core`'s first): every row of a document has its key.
+    fn documents_of(&self, column: usize, each: &mut dyn FnMut(usize, i64)) {
+        let own = match self.view {
+            View::Loc(_) => column == 0,
+            View::Node | View::Core if column == 0 => true,
+            _ => self.reads_id(column),
+        };
+        // A document keyed 0 has ids below `1 << 32`, each its own "document" (`memo::document_of`): read them.
+        if !own || self.batch.docs.iter().any(|p| p.key == 0) {
+            return self.for_rows(&[column], &mut |r, row| each(r, if row[0] >= 1 << 32 { row[0] >> 32 } else { row[0] }));
+        }
+        let offsets = self.batch.offsets(self.view);
+        for (doc, p) in self.batch.docs.iter().enumerate() {
+            for r in offsets[doc]..offsets[doc + 1] {
+                each(r, i64::from(p.key));
+            }
+        }
+    }
     /// The row's node selected once (`Projected::node`), however many columns read it.
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
         let (p, i) = self.batch.locate(self.view, row);
@@ -3854,9 +3877,10 @@ impl Source for Viewed {
         if x != NONE {
             let _ = node.set(x);
         }
-        let up = std::cell::OnceCell::new();
+        let (n, up) = (std::cell::OnceCell::new(), std::cell::OnceCell::new());
+        let x = || *node.get_or_init(|| p.node(local));
         for (o, &c) in out.iter_mut().zip(columns) {
-            *o = self.value_of(p, local, &|| *node.get_or_init(|| p.node(local)), &|| *up.get_or_init(|| p.parent(local as usize)), c);
+            *o = self.value_of(p, local, &x, &|| *n.get_or_init(|| p.global(local)), &|| *up.get_or_init(|| Self::parent_id(p, local)), c);
         }
     }
 }
@@ -3919,25 +3943,38 @@ impl Viewed {
     /// nodes visits them in order (`Projected::nodes`), so a row's tape node comes with it, not from a select a row;
     /// where `columns` read the parent, the walk (`Projected::walk`) brings it too, not a tape parent read a row.
     fn each_row(&self, p: &Projected, n: usize, columns: impl Iterator<Item = usize>, mut row: impl FnMut(usize, &dyn Fn(usize) -> i64)) {
-        let up = |l: u32| p.parent(l as usize);
-        let walked = self.parent().is_some_and(|q| columns.into_iter().any(|c| c == q));
+        let columns: Vec<usize> = columns.collect();
+        let walked = self.parent().is_some_and(|q| columns.contains(&q));
+        // The ids' walk (`node_ids`) only when a column reads a row's or its parent's id.
+        let ids = walked || columns.iter().any(|&c| self.reads_id(c));
         // `only`: the item a row's node must be (the `field` view's rows are the fielded nodes).
-        let visit = |row: &mut dyn FnMut(usize, &dyn Fn(usize) -> i64), skip: usize, only: Option<Item>| {
+        let visit = |row: &mut dyn FnMut(usize, &dyn Fn(usize) -> i64), skip: u32, only: Option<Item>| {
             let mut i = 0;
-            let mut each = |l: u32, x: u32, q: &dyn Fn() -> u32| {
-                if only.is_some_and(|item| !p.ranks().is(item, x)) {
+            let mut each = |l: u32, x: u32, n: &dyn Fn() -> i64, up: &dyn Fn() -> i64| {
+                if l < skip || only.is_some_and(|item| !p.ranks().is(item, x)) {
                     return;
                 }
-                row(i, &|c| self.value_of(p, l, &|| x, q, c));
+                row(i, &|c| self.value_of(p, l, &|| x, n, up, c));
                 i += 1;
             };
             if walked {
-                for (l, x, q) in p.walk().skip(skip) {
-                    each(l, x, &|| q);
+                // The open ancestors' local ids and ids: a parent's id comes from the walk, not a point read.
+                let mut open: Vec<(u32, i64)> = Vec::new();
+                for ((l, x, q), (_, _, n)) in p.walk().zip(p.node_ids()) {
+                    while open.last().is_some_and(|&(a, _)| a != q) {
+                        open.pop();
+                    }
+                    let up = open.last().map_or(-1, |&(_, g)| g);
+                    open.push((l, n));
+                    each(l, x, &|| n, &|| up);
+                }
+            } else if ids {
+                for (l, x, n) in p.node_ids() {
+                    each(l, x, &|| n, &|| Self::parent_id(p, l));
                 }
             } else {
-                for (l, x) in p.nodes().skip(skip) {
-                    each(l, x, &|| up(l));
+                for (l, x) in p.nodes() {
+                    each(l, x, &|| p.global(l), &|| Self::parent_id(p, l));
                 }
             }
         };
@@ -3946,11 +3983,53 @@ impl Viewed {
             View::Child => visit(&mut row, 1, None),
             // The nodes below the root with a field, in order (`fielded`).
             View::Field => visit(&mut row, 1, Some(Item::Field)),
-            View::Loc(_) => {
-                for i in 0..n {
-                    row(i, &|c| self.value_at(p, i, c));
+            View::Loc(place) => {
+                for ((i, (_, span)), (_, g)) in p.spans().enumerate().zip(p.loc_ids()).take(n) {
+                    row(i, &|c| Self::loc_value(p, place, g, span, c));
                 }
             }
+        }
+    }
+
+    /// Whether column `column` of this view is the row's id (`value_of`'s last arm).
+    fn reads_id(&self, column: usize) -> bool {
+        !matches!(
+            (self.view, column),
+            (View::Node | View::Core, 0)
+                | (View::Core, 1)
+                | (View::Node, 2..=4)
+                | (View::Line, 1)
+                | (View::Child | View::Field, 0)
+                | (View::Tape, 1..=3)
+                | (View::Child, 2)
+                | (View::Field, 1)
+                | (View::Depth, 1)
+                | (View::Order, 1)
+        )
+    }
+
+    /// The id of node `local`'s parent (`Projected::parent`), `-1` above the root.
+    fn parent_id(p: &Projected, local: u32) -> i64 {
+        match p.parent(local as usize) {
+            NONE => -1,
+            q => p.global(q),
+        }
+    }
+
+    /// Column `column` of a `Loc` view's row: a node's or span's id `g`, and its place from its byte span.
+    fn loc_value(p: &Projected, place: Place, g: i64, span: [u32; 2], column: usize) -> i64 {
+        if column == 0 {
+            return g;
+        }
+        if matches!(place, Place::Docof) {
+            return i64::from(p.key);
+        }
+        let (line, last, col) = p.extra.as_ref().expect("core.rr's lines").place(span);
+        match place {
+            Place::Line => i64::from(line),
+            Place::EndLine => i64::from(last),
+            Place::Col => i64::from(col),
+            Place::Docof => i64::from(p.key),
         }
     }
 
@@ -3958,20 +4037,15 @@ impl Viewed {
     fn value_at(&self, p: &Projected, i: usize, column: usize) -> i64 {
         if let View::Loc(place) = self.view {
             let local = i as u32;
-            if column == 0 {
-                return p.global(local);
-            }
-            if matches!(place, Place::Docof) { return i64::from(p.key); }
-            let (line, last, col) = p.extra.as_ref().expect("core.rr's lines").place(p.span(local));
-            return match place {
-                Place::Line => i64::from(line),
-                Place::EndLine => i64::from(last),
-                Place::Col => i64::from(col),
-                Place::Docof => i64::from(p.key),
+            return match (column, place) {
+                (0, _) => p.global(local),
+                (_, Place::Docof) => i64::from(p.key),
+                _ => Self::loc_value(p, place, 0, p.span(local), column),
             };
         }
         let (local, x) = self.local_of_row(p, i);
-        self.value_of(p, local, &|| if x != NONE { x } else { p.node(local) }, &|| p.parent(local as usize), column)
+        let node = || if x != NONE { x } else { p.node(local) };
+        self.value_of(p, local, &node, &|| p.global(local), &|| Self::parent_id(p, local), column)
     }
 
     /// The local id of document `p`'s row `i` in this view, and its tape node where finding the row read it (the
@@ -3989,13 +4063,11 @@ impl Viewed {
 
     /// Column `column` of node `local`'s row in this view, its tape node and parent (`Projected::parent`) read by
     /// `node` and `up` when the column needs them.
-    fn value_of(&self, p: &Projected, local: u32, node: &dyn Fn() -> u32, up: &dyn Fn() -> u32, column: usize) -> i64 {
+    /// `n` and `up` read its id and its parent's id (`-1` above the root), when the column needs them.
+    fn value_of(&self, p: &Projected, local: u32, node: &dyn Fn() -> u32, n: &dyn Fn() -> i64, up: &dyn Fn() -> i64, column: usize) -> i64 {
         let l = local as usize;
         let id = || node() as usize;
-        let parent = || match up() {
-            NONE => -1,
-            q => p.global(q),
-        };
+        let parent = up;
         match (self.view, column) {
             (View::Node | View::Core, 0) => i64::from(p.key),
             (View::Core, 1) => id() as i64,
@@ -4010,7 +4082,7 @@ impl Viewed {
             (View::Tape, 3) => i64::from(p.depth(l)),
             (View::Depth, 1) => i64::from(p.depth(l)),
             (View::Order, 1) => i64::from(p.key) << 32 | i64::from(p.order(local)),
-            _ => p.global(local),
+            _ => n(),
         }
     }
 }
@@ -4025,9 +4097,9 @@ pub fn field_atom(tag: u8, code: u16) -> u32 {
 pub fn definitions(key: u32, facts: &Arc<Facts>) -> StoreResult<HashMap<(u32, u32), i64>> {
     let dialect = Dialect::new(crate::code_rule_dsl::facts::core::facts_tag(facts))?;
     let p = Projected::new(key, Arc::clone(facts), Some(&dialect), Shape::T, false, None);
-    Ok(p.nodes()
-        .filter(|&(_, id)| matches!(dialect.name(facts, id), "function_definition" | "class_definition"))
-        .map(|(local, id)| ((facts.start(id), facts.end(id)), p.global(local)))
+    Ok(p.node_ids()
+        .filter(|&(_, id, _)| matches!(dialect.name(facts, id), "function_definition" | "class_definition"))
+        .map(|(_, id, n)| ((facts.start(id), facts.end(id)), n))
         .collect())
 }
 

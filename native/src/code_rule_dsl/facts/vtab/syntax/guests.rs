@@ -81,7 +81,7 @@ impl GuestRows {
         if at >= host.len() {
             return;
         }
-        for (local, span) in p.spans().take(p.len() as usize) {
+        for ((_, span), (_, _, n)) in p.spans().zip(p.node_ids()) {
             let [a, b] = g.place.bounds(span);
             let mut over = at;
             while let Some(c) = host.children(over).find(|&c| {
@@ -90,7 +90,7 @@ impl GuestRows {
             }) {
                 over = c;
             }
-            self.host_node.push([p.global(local), host.global(over)]);
+            self.host_node.push([n, host.global(over)]);
         }
     }
 

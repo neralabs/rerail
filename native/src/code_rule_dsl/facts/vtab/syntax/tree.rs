@@ -68,8 +68,7 @@ impl Tree {
         }
         let f = &*p.facts;
         let fields = [dialect.operator, dialect.operators];
-        for (local, id) in p.nodes().map(|(l, x)| (l as usize, x)) {
-            let n = p.global(local as u32);
+        for (_, id, n) in p.node_ids() {
             let kids = f.children(id);
             let operators = kids.iter().filter(|&&c| f.field(c) != 0 && fields.contains(&Some(f.field(c))));
             for (i, &c) in operators.enumerate() {
@@ -84,8 +83,7 @@ impl Tree {
         let Some(dialect) = dialect else { return };
         self.operators(p, dialect, string);
         if self.token_parts {
-            for (local, id) in p.nodes().map(|(l, x)| (l as usize, x)) {
-                let n = p.global(local as u32);
+            for (_, id, n) in p.node_ids() {
                 for (i, &c) in f.children(id).iter().enumerate() {
                     let (a, b) = (i64::from(f.start(c)), i64::from(f.end(c)));
                     let at = p.local_of_node(c as u32);
@@ -100,8 +98,7 @@ impl Tree {
             }
         }
         if self.prev_token || self.token {
-            for (local, id) in p.nodes().map(|(l, x)| (l as usize, x)) {
-                let n = p.global(local as u32);
+            for (_, id, n) in p.node_ids() {
                 let children = f.children(id);
                 // An anonymous token's text is its kind.
                 let text = |c: u32| if f.named(c) { f.text(c) } else { dialect.name(f, c) };

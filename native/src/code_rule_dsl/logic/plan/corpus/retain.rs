@@ -329,11 +329,19 @@ pub(in crate::code_rule_dsl) fn owners_delta(rel: &str, old: &dyn Source, new: &
     if old.columns().len() != width || g >= width {
         return None;
     }
+    // Each row's document (`Source::documents_of`: a view's rows have their document's key, no id read), then the new
+    // documents' rows whole.
+    let mut fresh: Vec<usize> = Vec::new();
+    new.documents_of(g, &mut |r, d| {
+        if is_new(d) {
+            fresh.push(r);
+        }
+    });
     let all: Vec<usize> = (0..width).collect();
-    let made: Vec<Vec<i64>> = (0..new.len())
-        .filter(|&r| is_new(super::memo::document_of(new.value(r, g))))
+    let made: Vec<Vec<i64>> = fresh
+        .into_iter()
         .map(|r| {
-            let mut row = vec![0i64; width];
+            let mut row = vec![0; width];
             new.row_at(r, &all, &mut row);
             row
         })

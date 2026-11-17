@@ -207,10 +207,20 @@ enum Fold {
     All,
 }
 
-/// The ids of `p`'s nodes and of `tokens` (each token's node, in preorder of the tokens): the low 32 bits, written to
-/// `low` (as many as nodes and tokens); and each node's order key (`order`), returned. With `in_place`, also the
-/// granule table that answers the same ids with no array (`Table`).
-pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32], low: &mut [u32], in_place: bool) -> (Vec<u32>, Option<Table>) {
+/// The ids of a projection's nodes and tokens, and its nodes' order keys, as arrays: what the granule table answers in
+/// place, made only to check and measure it (`number`'s `reference`).
+#[derive(Default)]
+pub struct Reference {
+    /// Each node's, then each token's, id's low 32 bits.
+    pub low: Vec<u32>,
+    /// Each node's order key.
+    pub order: Vec<u32>,
+}
+
+/// The granule table of `p` (`Table`): what answers the ids of its nodes and of `tokens` (each token's node, in
+/// preorder of the tokens) and its nodes' order keys in place. With `reference`, those ids and keys as arrays too,
+/// to check the table against.
+pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32], reference: Option<&mut Reference>) -> Table {
     let mut fold = Fold::None;
     loop {
         let cut = cut(p, dialect, fold);
@@ -230,9 +240,12 @@ pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32], low: &mut [u32],
         }
         let _span = crate::code_rule_dsl::logic::profile::span(|| "granule slots".into());
         let mut cut = cut;
-        cut.slots = place(&cut, &nodes, tokens, low);
-        let table = in_place.then(|| Table::new(p, &cut, &nodes, tokens));
-        return (order(&cut.of), table);
+        cut.slots = place(&cut, &nodes, tokens);
+        if let Some(r) = reference {
+            r.low = reference_low(&cut, tokens);
+            r.order = order(&cut.of);
+        }
+        return Table::new(p, &cut, &nodes, tokens);
     }
 }
 
@@ -451,7 +464,7 @@ fn settle(keys: &[(usize, String)], taken: &mut [bool], out: &mut HashMap<usize,
 
 /// The low bits of every node and token: granules placed, then their continuations. Returns each granule's slots,
 /// its first then its continuations.
-fn place(cut: &Cut, nodes: &[u32], tokens: &[u32], low: &mut [u32]) -> Vec<Vec<u32>> {
+fn place(cut: &Cut, nodes: &[u32], tokens: &[u32]) -> Vec<Vec<u32>> {
     let g = cut.starts.len();
     let mut ntok = vec![0u32; g];
     for &t in tokens {
@@ -486,15 +499,20 @@ fn place(cut: &Cut, nodes: &[u32], tokens: &[u32], low: &mut [u32]) -> Vec<Vec<u
             slots[who[m]].push(s);
         }
     }
-    let mut next = vec![0u32; g];
-    let owners = cut.of.iter().copied().chain(tokens.iter().map(|&t| cut.of[t as usize]));
-    assert_eq!(low.len(), cut.of.len() + tokens.len(), "a low id for each node and token");
-    for (slot, o) in low.iter_mut().zip(owners) {
-        let i = next[o as usize];
-        next[o as usize] += 1;
-        *slot = slots[o as usize][(i / INDEX) as usize] << INDEX_BITS | (i % INDEX);
-    }
     slots
+}
+
+/// Each node's, then each token's, id's low bits, from the placed slots: the reference the table is checked against.
+fn reference_low(cut: &Cut, tokens: &[u32]) -> Vec<u32> {
+    let mut next = vec![0u32; cut.starts.len()];
+    let owners = cut.of.iter().copied().chain(tokens.iter().map(|&t| cut.of[t as usize]));
+    owners
+        .map(|o| {
+            let i = next[o as usize];
+            next[o as usize] += 1;
+            cut.slots[o as usize][(i / INDEX) as usize] << INDEX_BITS | (i % INDEX)
+        })
+        .collect()
 }
 
 /// The low bits of span `i` (past the nodes and tokens): the top slots, down from the last.
@@ -553,6 +571,17 @@ pub struct Table {
     /// nodes and tokens of `g` before it: the stretches of `g` between them, found by bisection.
     first_kid: Vec<u32>,
     kids: Vec<Kid>,
+    /// The run rank of each stretch of each granule (`order`): granule `g`'s stretch `s` (after `s` of its child
+    /// granules) is `runs[first_kid[g] + g + s]`, `u32::MAX` where the stretch holds no node.
+    runs: Vec<u32>,
+    /// Each run's granule and stretch, by rank.
+    run_at: Vec<(u32, u32)>,
+    /// The order keys are preorder indexes: the runs or a granule's nodes outgrow the key's bits (`order`).
+    preorder_keys: bool,
+    /// Each granule's start and end as ranks, by item (`[nodes, tokens]`): the numbered items before its start and
+    /// before its subtree's end. With them a numbered item's id is read from its number alone, no select.
+    rank_starts: [Vec<u32>; 2],
+    rank_ends: [Vec<u32>; 2],
 }
 
 /// A child granule, and its parent's own numbered nodes and tokens before its start.
@@ -602,12 +631,140 @@ impl Table {
                 pos = ends[h];
             }
         }
-        Table { starts, ends, parents, nodes: prefix(&nodes[..g]), tokens: prefix(&ntok), at, slots: cut.slots[..g].concat(), by_slot, first_kid, kids }
+        // The runs (`order`): a run starts where a node's granule is not the one before it. A granule's stretch is how
+        // many of its child granules started before the node.
+        let mut runs = vec![u32::MAX; g + kids.len()];
+        let mut run_at: Vec<(u32, u32)> = Vec::new();
+        let mut passed = vec![0u32; g];
+        let mut next = 1;
+        for (l, &q) in cut.of.iter().enumerate().take(if g == 0 { 0 } else { cut.of.len() }) {
+            if next < g && cut.starts[next] as usize == l {
+                passed[parents[next] as usize] += 1;
+                next += 1;
+            }
+            if l == 0 || q != cut.of[l - 1] {
+                let (q, s) = (q as usize, passed[q as usize]);
+                runs[first_kid[q] as usize + q + s as usize] = run_at.len() as u32;
+                run_at.push((q as u32, s));
+            }
+        }
+        let preorder_keys = run_at.len() as u64 > 1 << (32 - ORDER_INDEX_BITS) || nodes[..g].iter().any(|&n| n > 1 << ORDER_INDEX_BITS);
+        let ranked = |at: &[u32], item: Item| at.iter().map(|&x| r.rank(item, x)).collect::<Vec<u32>>();
+        let rank_starts = [ranked(&starts, Item::Node), ranked(&starts, Item::Token)];
+        let rank_ends = [ranked(&ends, Item::Node), ranked(&ends, Item::Token)];
+        Table { starts, ends, parents, nodes: prefix(&nodes[..g]), tokens: prefix(&ntok), at, slots: cut.slots[..g].concat(), by_slot, first_kid, kids, runs, run_at, preorder_keys, rank_starts, rank_ends }
+    }
+
+    /// The innermost granule holding `item` number `k`, and the last granule starting at or before it: by ranks.
+    #[inline]
+    fn granule_of_number(&self, item: Item, k: u32) -> Option<(usize, usize)> {
+        let (starts, ends) = (&self.rank_starts[item as usize], &self.rank_ends[item as usize]);
+        // A granule starts at a node: an item numbered `k` is at or after a start when `k` items come before it.
+        let j = starts.partition_point(|&s| s <= k).checked_sub(1)?;
+        let mut g = j;
+        while k >= ends[g] {
+            g = self.parents[g] as usize;
+            if g == u32::MAX as usize {
+                return None;
+            }
+        }
+        Some((g, j))
+    }
+
+    /// `item` number `k`'s index in granule `g` (`j` the last granule starting at or before it).
+    #[inline]
+    fn index_of_number(&self, item: Item, k: u32, g: usize, j: usize) -> u32 {
+        let own = k - self.rank_starts[item as usize][g];
+        match item {
+            Item::Node => own - (self.nodes[j + 1] - self.nodes[g + 1]),
+            Item::Token => self.nodes[g + 1] - self.nodes[g] + own - (self.tokens[j + 1] - self.tokens[g + 1]),
+            Item::Field => unreachable!("ids number nodes and tokens"),
+        }
+    }
+
+    /// The low bits of `item` number `k`'s id (a node's local id; a token's number among the tokens): no select.
+    #[inline]
+    pub fn low_of(&self, item: Item, k: u32) -> Option<u32> {
+        let (g, j) = self.granule_of_number(item, k)?;
+        Some(self.low(g, self.index_of_number(item, k, g, j)))
+    }
+
+    /// The item whose id's low 32 bits are `low` (`low_of`'s inverse): what it is and its number.
+    pub fn number_of(&self, low: u32) -> Option<(Item, u32)> {
+        let slot = low >> INDEX_BITS;
+        let at = self.by_slot.partition_point(|e| e.0 < slot);
+        let &(s, g, c) = self.by_slot.get(at)?;
+        if s != slot {
+            return None;
+        }
+        let g = g as usize;
+        let index = c * INDEX + low % INDEX;
+        let own = self.nodes[g + 1] - self.nodes[g];
+        let (item, k) = if index < own { (Item::Node, index) } else { (Item::Token, index - own) };
+        let all = match item {
+            Item::Node => own,
+            _ => self.tokens[g + 1] - self.tokens[g],
+        };
+        if k >= all {
+            return None;
+        }
+        self.number_in(g, item, k, None).map(|n| (item, n))
+    }
+
+    /// The number of granule `g`'s own `item` `k` (its `k`-th, in order); with `stretch`, `None` unless it lies there.
+    #[inline]
+    fn number_in(&self, g: usize, item: Item, k: u32, stretch: Option<usize>) -> Option<u32> {
+        // The stretch of `g` the item lies in: after the last child granule with at most `k` of `g`'s before it.
+        let kids = &self.kids[self.first_kid[g] as usize..self.first_kid[g + 1] as usize];
+        let i = kids.partition_point(|kid| kid.before[item as usize] <= k);
+        if stretch.is_some_and(|s| s != i) {
+            return None;
+        }
+        let (from, before) = match i.checked_sub(1) {
+            None => (self.rank_starts[item as usize][g], 0),
+            Some(i) => (self.rank_ends[item as usize][kids[i].granule as usize], kids[i].before[item as usize]),
+        };
+        Some(from + k - before)
+    }
+
+    /// Node number `l`'s order key (`order`), from its number alone.
+    pub fn order_of(&self, l: u32) -> Option<u32> {
+        if self.preorder_keys {
+            return Some(l);
+        }
+        let (g, j) = self.granule_of_number(Item::Node, l)?;
+        let index = self.index_of_number(Item::Node, l, g, j);
+        let kids = &self.kids[self.first_kid[g] as usize..self.first_kid[g + 1] as usize];
+        let s = kids.partition_point(|kid| self.rank_starts[0][kid.granule as usize] < l);
+        Some(self.runs[self.first_kid[g] as usize + g + s] << ORDER_INDEX_BITS | index)
+    }
+
+    /// The node number whose order key is `key` (`order_of`'s inverse).
+    pub fn number_of_order(&self, key: u32, nodes: u32) -> Option<u32> {
+        if self.preorder_keys {
+            return (key < nodes).then_some(key);
+        }
+        let (g, s) = *self.run_at.get((key >> ORDER_INDEX_BITS) as usize)?;
+        let (g, k) = (g as usize, key & ((1 << ORDER_INDEX_BITS) - 1));
+        if k >= self.nodes[g + 1] - self.nodes[g] {
+            return None;
+        }
+        self.number_in(g, Item::Node, k, Some(s as usize))
+    }
+
+    /// Node `x`'s order key (`node_order`'s low 32 bits, `order`): its run's rank, then its index in its granule.
+    pub fn order(&self, r: &Ranks, x: u32) -> Option<u32> {
+        self.order_of(r.local(Item::Node, x)?)
+    }
+
+    /// The tape node whose order key is `key` (`order`'s inverse).
+    pub fn node_of_order(&self, r: &Ranks, key: u32) -> Option<u32> {
+        r.select(Item::Node, self.number_of_order(key, r.count(Item::Node))?)
     }
 
     /// Bytes the table holds.
     pub fn bytes(&self) -> usize {
-        4 * (self.starts.len() * 3 + self.nodes.len() * 2 + self.at.len() + self.slots.len() + 3 * self.by_slot.len() + self.first_kid.len())
+        4 * (self.starts.len() * 3 + self.nodes.len() * 2 + self.at.len() + self.slots.len() + 3 * self.by_slot.len() + self.first_kid.len() + self.runs.len() + 2 * self.run_at.len() + 4 * self.starts.len())
             + std::mem::size_of::<Kid>() * self.kids.len()
     }
 
@@ -624,20 +781,6 @@ impl Table {
         self.starts.is_empty()
     }
 
-    /// The innermost granule whose subtree holds tape node `x`, and the last granule starting at or before it.
-    #[inline]
-    fn granule_of(&self, x: u32) -> Option<(usize, usize)> {
-        let j = self.starts.partition_point(|&s| s <= x).checked_sub(1)?;
-        let mut g = j;
-        while x >= self.ends[g] {
-            g = self.parents[g] as usize;
-            if g == u32::MAX as usize {
-                return None;
-            }
-        }
-        Some((g, j))
-    }
-
     /// Tape node `x`'s id's low 32 bits, and what it is; `None` for a node the projection does not number.
     pub fn id(&self, r: &Ranks, x: u32) -> Option<(u32, Item)> {
         let item = if r.is(Item::Node, x) {
@@ -647,20 +790,7 @@ impl Table {
         } else {
             return None;
         };
-        let (g, j) = self.granule_of(x)?;
-        Some((self.low(g, self.index(r, item, x, g, j)), item))
-    }
-
-    /// Numbered `item` `x`'s index in its granule `g` (`j` the last granule starting at or before it).
-    #[inline]
-    fn index(&self, r: &Ranks, item: Item, x: u32, g: usize, j: usize) -> u32 {
-        let own = r.rank(item, x) - r.rank(item, self.starts[g]);
-        match item {
-            Item::Node => own - (self.nodes[j + 1] - self.nodes[g + 1]),
-            Item::Token => self.nodes[g + 1] - self.nodes[g] + own - (self.tokens[j + 1] - self.tokens[g + 1]),
-            // `id` numbers nodes and tokens; a fielded node's id is its node's.
-            Item::Field => unreachable!("ids number nodes and tokens"),
-        }
+        Some((self.low_of(item, r.rank(item, x))?, item))
     }
 
     /// Granule `g`'s item `index`'s low bits.
@@ -671,32 +801,8 @@ impl Table {
 
     /// The tape node whose id's low 32 bits are `low` (`id`'s inverse), and what it is.
     pub fn node(&self, r: &Ranks, low: u32) -> Option<(u32, Item)> {
-        let slot = low >> INDEX_BITS;
-        let at = self.by_slot.partition_point(|e| e.0 < slot);
-        let &(s, g, c) = self.by_slot.get(at)?;
-        if s != slot {
-            return None;
-        }
-        let g = g as usize;
-        let index = c * INDEX + low % INDEX;
-        let own = self.nodes[g + 1] - self.nodes[g];
-        let (item, k) = if index < own { (Item::Node, index) } else { (Item::Token, index - own) };
-        let all = match item {
-            Item::Node => own,
-            Item::Token => self.tokens[g + 1] - self.tokens[g],
-            Item::Field => unreachable!("ids number nodes and tokens"),
-        };
-        if k >= all {
-            return None;
-        }
-        // The stretch of `g` the item lies in: after the last child granule with at most `k` of `g`'s before it.
-        let kids = &self.kids[self.first_kid[g] as usize..self.first_kid[g + 1] as usize];
-        let i = kids.partition_point(|kid| kid.before[item as usize] <= k);
-        let (pos, before) = match i.checked_sub(1) {
-            None => (self.starts[g], 0),
-            Some(i) => (self.ends[kids[i].granule as usize], kids[i].before[item as usize]),
-        };
-        Some((r.select(item, r.rank(item, pos) + k - before)?, item))
+        let (item, k) = self.number_of(low)?;
+        Some((r.select(item, k)?, item))
     }
 
     /// Every numbered node and token of the document, in preorder, with its id's low bits: one walk over the rank
@@ -724,3 +830,52 @@ impl Table {
         }
     }
 }
+
+/// Every numbered `item` of a projection in order, with its number and its id's low bits: `(number, tape node, low)`.
+/// One walk over the item's set bits that carries the open granules and their counts (`Table::scan`, for one item);
+/// with no table (ids in preorder), the low bits are the local id.
+pub fn ids<'a>(table: Option<&'a Table>, r: &'a Ranks, item: Item, nodes: u32) -> Ids<'a> {
+    Ids { table, it: r.iter(item), item, open: Vec::new(), next: 0, past: if item == Item::Node { 0 } else { nodes } }
+}
+
+/// `ids`.
+pub struct Ids<'a> {
+    table: Option<&'a Table>,
+    it: super::ranks::Iter<'a>,
+    item: Item,
+    /// The open granules, innermost last, each with its `item`s so far.
+    open: Vec<(usize, u32)>,
+    /// The next granule to open.
+    next: usize,
+    /// What a local id adds to the item's number (the nodes, for a token), where ids are in preorder.
+    past: u32,
+}
+
+impl Iterator for Ids<'_> {
+    type Item = (u32, u32, u32);
+    #[inline]
+    fn next(&mut self) -> Option<(u32, u32, u32)> {
+        let (k, x) = self.it.next()?;
+        let Some(t) = self.table else { return Some((k, x, self.past + k)) };
+        // Open each granule starting at or before `x`, closing those it is past.
+        while self.next < t.starts.len() && t.starts[self.next] <= x {
+            let s = t.starts[self.next];
+            while self.open.last().is_some_and(|&(q, _)| s >= t.ends[q]) {
+                self.open.pop();
+            }
+            self.open.push((self.next, 0));
+            self.next += 1;
+        }
+        while self.open.last().is_some_and(|&(q, _)| x >= t.ends[q]) {
+            self.open.pop();
+        }
+        let (q, n) = self.open.last_mut().expect("a numbered item is in a granule");
+        let index = match self.item {
+            Item::Node => *n,
+            _ => t.nodes[*q + 1] - t.nodes[*q] + *n,
+        };
+        *n += 1;
+        Some((k, x, t.low(*q, index)))
+    }
+}
+

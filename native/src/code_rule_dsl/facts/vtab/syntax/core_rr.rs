@@ -683,10 +683,10 @@ impl CoreRows {
     }
 
     /// Node `local`'s rows: what its anonymous children, its kind and its own text give.
-    /// `id` is its tape node (`Projected::node`), which the caller's walk holds.
-    pub(super) fn node(&mut self, p: &Projected, dialect: &Dialect, local: u32, id: u32, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) {
+    /// `id` is its tape node (`Projected::node`) and `n` its id (`Projected::global`), which the caller's walk holds.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn node(&mut self, p: &Projected, dialect: &Dialect, local: u32, id: u32, n: i64, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) {
         let f = &*p.facts;
-        let n = p.global(local);
         let kind = dialect.name(f, id);
         let text = f.text(id);
         let children = f.children(id);
@@ -835,7 +835,7 @@ impl CoreRows {
         let key = i64::from(p.key);
         if x.ends > 0 {
             let from = p.len() + x.ends_from();
-            self.end_point.extend((0..x.ends).map(|l| [p.global(l), p.global(from + l)]));
+            self.end_point.extend(p.node_ids().take(x.ends as usize).map(|(l, _, n)| [n, p.global(from + l)]));
         }
         let lines_span = crate::code_rule_dsl::logic::profile::span(|| "lines".into());
         if own_text {
@@ -890,20 +890,19 @@ impl CoreRows {
         let Some(dialect) = dialect.filter(|_| wants_tokens) else { return };
         let _tokens_span = crate::code_rule_dsl::logic::profile::span(|| "tokens".into());
         // Tokens: the leaves, named or anonymous, other than comments, in source order (ESLint's token store).
-        let mut toks: Vec<(u32, u32, i64)> = p.nodes().filter_map(|(l, id)| {
+        let mut toks: Vec<(u32, u32, i64)> = p.node_ids().filter_map(|(_, id, n)| {
                 let [a, b] = [f.start(id), f.end(id)];
-                (f.children(id).is_empty() && b > a && !is_comment(dialect.name(f, id))).then(|| (a, b, p.global(l)))
+                (f.children(id).is_empty() && b > a && !is_comment(dialect.name(f, id))).then_some((a, b, n))
             })
             .collect();
-        toks.extend((0..x.tokens).map(|i| {
-            let [a, b] = p.span(p.len() + i);
-            (a, b, p.global(p.len() + i))
+        toks.extend(p.token_ids().map(|(l, _, n)| {
+            let [a, b] = p.span(l);
+            (a, b, n)
         }));
         toks.sort_unstable();
         let starts: Vec<u32> = toks.iter().map(|t| t.0).collect();
         let ends: Vec<u32> = toks.iter().map(|t| t.1).collect();
-        for (l, [a, b]) in p.spans().take((p.len() + x.tokens) as usize) {
-            let id = p.global(l);
+        for ((_, [a, b]), (_, id)) in p.spans().zip(p.loc_ids()).take((p.len() + x.tokens) as usize) {
             let first = starts.partition_point(|&s| s < a);
             if first < toks.len() && toks[first].1 <= b {
                 let last = ends.partition_point(|&e| e <= b) - 1;
@@ -1049,12 +1048,12 @@ impl CoreRows {
             }
         }
         let hex = |h: &[u8; 32]| -> String { h.iter().map(|b| format!("{b:02x}")).collect() };
-        for (local, id) in p.nodes() {
+        for (local, id, n) in p.node_ids() {
             if trees {
-                self.tree_digest.push([p.global(local), string(&hex(&hash[id as usize])) as i64]);
+                self.tree_digest.push([n, string(&hex(&hash[id as usize])) as i64]);
             }
             if units && (local == 0 || unit(id)) {
-                self.def_digest.push([p.global(local), string(&hex(&own[id as usize])) as i64]);
+                self.def_digest.push([n, string(&hex(&own[id as usize])) as i64]);
             }
         }
     }

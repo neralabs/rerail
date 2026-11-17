@@ -84,8 +84,9 @@ fn main() {
         let (mut ids, mut granules, mut table_bytes, mut biggest) = (0usize, 0usize, 0usize, 0u32);
         for f in &facts {
             let p = Projected::new(1, Arc::clone(f), Some(&dialect), Shape::Core, false, None);
-            let (low, table) = p.numbered().expect("ids by definition");
-            let table = table.expect("a granule table");
+            let reference = p.reference(&dialect);
+            let low = &reference.low[..];
+            let table = p.table().expect("ids by definition");
             let tokens = p.token_order();
             // Every numbered item's tape node, nodes then tokens: what a reader holds when it asks for an id.
             let items: Vec<u32> = p.nodes().map(|(_, x)| x).chain(tokens.iter().map(|&(x, _)| x)).collect();
