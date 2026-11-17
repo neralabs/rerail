@@ -84,11 +84,16 @@ export function render(root) {
   if (page.root.parentNode !== root) root.replaceChildren(page.root);
   const pack = ui.view === "created" ? null : packById(ui.pack), shown = shownRules(all);
   renderHead(all, shown, pack);
+  attachControls();
+  renderPackAll(all, pack?.name ?? CREATED);
+  renderRuleTable(page.table, shown);
+}
+
+/** The shared Search, Filter and Sort controls in this page, with the whole-pack switch in their slot. */
+function attachControls() {
   const controls = ruleControls();
   if (controls.root.parentNode !== page.controls) page.controls.replaceChildren(controls.root);
   if (page.packAll.parentNode !== controls.slot) controls.slot.replaceChildren(page.packAll);
-  renderPackAll(all, pack?.name ?? CREATED);
-  renderRuleTable(page.table, shown);
 }
 
 /** The whole-pack switch: a mixed or all-off page turns every rule on, an all-on page turns them all off. */
@@ -96,13 +101,20 @@ function togglePage() {
   const all = pageRules(pageKey(ui.view, ui.pack));
   if (all === null || all.length === 0) return;
   const turnOn = switchTurnsOn(packSwitch(all).state), pack = ui.view === "created" ? null : packById(ui.pack);
-  const state = turnOn ? "on" : "off", one = all.length === 1;
-  const label = pack ? (one ? `The ${pack.name} rule is ${state}.` : `All ${fmt(all.length)} ${pack.name} rules are ${state}.`)
-    : (one ? `Your rule is ${state}.` : `All ${fmt(all.length)} of your rules are ${state}.`);
-  const failure = `Couldn’t turn ${pack ? `${pack.name} rules` : "your rules"} ${state}`;
+  const state = turnOn ? "on" : "off";
+  const { label, failure } = toggleMessages(pack, all, state);
   // A pack's rules follow one setting for the pack; rules created by you have no pack, so each gets its own.
   if (pack) writes.setPackEnabled(pack.id, turnOn, label, failure);
   else writes.setEnabled(all.map(r => r.rule.id), turnOn, label, failure);
+}
+
+/** What the toast says once the page's rules are `state`, and what it says if the write fails. */
+function toggleMessages(pack, all, state) {
+  const one = all.length === 1;
+  const label = pack ? (one ? `The ${pack.name} rule is ${state}.` : `All ${fmt(all.length)} ${pack.name} rules are ${state}.`)
+    : (one ? `Your rule is ${state}.` : `All ${fmt(all.length)} of your rules are ${state}.`);
+  const failure = `Couldn’t turn ${pack ? `${pack.name} rules` : "your rules"} ${state}`;
+  return { label, failure };
 }
 
 export const actions = { ...ruleControlActions, ptoggle: togglePage };

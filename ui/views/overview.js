@@ -88,22 +88,32 @@ function renderLeftOut(root) {
     h("p", null, "Fix the file and this updates on its own. ", h("span.mono", null, "rerail packs list"), " in the worktree says the same.")))));
 }
 
-/**
- * The rules here whose content, or whose pack's, waits for a person's approval: each runs in Log until then. Each item
- * opens the sheet where it is approved. Not dismissible.
- */
-function renderApprovals(root) {
+/** What waits for approval, one item per subject: a pack whose rules wait opens once, not once per rule. */
+function approvalItems() {
   const items = new Map();
   for (const stored of data.loaded ? rulesArray() : []) {
     if (!awaitingApproval(stored)) continue;
     const { kind, id } = stored.approval.subject;
     if (items.has(`${kind}\0${id}`)) continue;
-    const packId = stored.source.kind === "pack" ? stored.source.id : packOfRule(stored)?.id;
-    items.set(`${kind}\0${id}`, kind === "pack" && packId !== undefined
-      ? { kind, label: `pack ${id}`, act: "viewpack", target: packId }
-      : { kind: "rule", label: titleOf(stored), act: "detail", target: stored.rule.id });
+    items.set(`${kind}\0${id}`, approvalItem(stored, kind, id));
   }
-  const list = [...items.values()], n = list.length;
+  return [...items.values()];
+}
+
+/** The button for rule `stored`'s approval subject: a pack's opens the pack's page, a rule's opens its sheet. */
+function approvalItem(stored, kind, id) {
+  const packId = stored.source.kind === "pack" ? stored.source.id : packOfRule(stored)?.id;
+  return kind === "pack" && packId !== undefined
+    ? { kind, label: `pack ${id}`, act: "viewpack", target: packId }
+    : { kind: "rule", label: titleOf(stored), act: "detail", target: stored.rule.id };
+}
+
+/**
+ * The rules here whose content, or whose pack's, waits for a person's approval: each runs in Log until then. Each item
+ * opens the sheet where it is approved. Not dismissible.
+ */
+function renderApprovals(root) {
+  const list = approvalItems(), n = list.length;
   const packs = list.filter(item => item.kind === "pack").length, rules = n - packs;
   const what = [rules && `${fmt(rules)} ${plural(rules, "rule")}`, packs && `${fmt(packs)} ${plural(packs, "pack")}`].filter(Boolean).join(" and ");
   setContent(root, JSON.stringify(list), () => (n === 0 ? null : h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
@@ -148,17 +158,29 @@ function renderTiles(tiles, sources, ruleCount, sessionsEver) {
   const label = rangeLabel();
   const rules = rulesArray();
   const on = rules.filter(isRunning).length;
-  const { steered, total } = steeredTally(data.activity);
-  setTile(tiles[0], "history?outcome=steered", steered, total, total > 0 ? label : ruleCount === 0 ? "nothing to steer yet" : sessionsEver === 0 ? NO_SESSIONS : `none ${label}`);
-
-  const started = data.activitySessions?.started ?? 0;
-  setTile(tiles[1], "sessions?filter=violations", started > 0 ? data.activitySessions.withViolations : 0, started,
-    started > 0 ? label : sessionsEver > 0 ? `no sessions ${label}` : NO_SESSIONS);
-
-  const fired = rules.filter(r => fires(r.rule.id) > 0).length;
-  setTile(tiles[2], "history", fired, on, fired > 0 ? label : sessionsEver === 0 ? NO_SESSIONS : `none ${label}`);
-
+  setSteeredTile(tiles[0], label, ruleCount, sessionsEver);
+  setSessionsTile(tiles[1], label, sessionsEver);
+  setFiredTile(tiles[2], label, rules, on, sessionsEver);
   setTile(tiles[3], rulesOnHash(sources), on, rules.length, rulesOnSource(sources.packs.length, sources.mine));
+}
+
+/** Violations steered, of all logged; with none, why: no rule to steer, no session yet, or none in the range. */
+function setSteeredTile(el, label, ruleCount, sessionsEver) {
+  const { steered, total } = steeredTally(data.activity);
+  setTile(el, "history?outcome=steered", steered, total, total > 0 ? label : ruleCount === 0 ? "nothing to steer yet" : sessionsEver === 0 ? NO_SESSIONS : `none ${label}`);
+}
+
+/** Sessions with violations logged, of the range's sessions. */
+function setSessionsTile(el, label, sessionsEver) {
+  const started = data.activitySessions?.started ?? 0;
+  setTile(el, "sessions?filter=violations", started > 0 ? data.activitySessions.withViolations : 0, started,
+    started > 0 ? label : sessionsEver > 0 ? `no sessions ${label}` : NO_SESSIONS);
+}
+
+/** Rules with violations logged, of the rules on. */
+function setFiredTile(el, label, rules, on, sessionsEver) {
+  const fired = rules.filter(r => fires(r.rule.id) > 0).length;
+  setTile(el, "history", fired, on, fired > 0 ? label : sessionsEver === 0 ? NO_SESSIONS : `none ${label}`);
 }
 
 /* ---------- Most violations logged ---------- */
@@ -229,27 +251,34 @@ const rulesOffCard = () => h("div.list", null, h("div.empty", null,
   h("p", null, "Turn rules on in a rule pack, then start a coding agent session."),
   h("p.acts", null, h("button.btn.sm.solid", { "data-act": "nav", "data-i": rulesOnHash(ruleSources()) }, "Turn rules on"))));
 
-function emptyBlock(body) {
-  const label = rangeLabel();
-  if (body === "no-rules") {
+const noRulesCard = () => h("div.list", null, h("div.empty", null,
+  h("h3", null, "No rules added yet."),
+  h("p", null, "Add a rule pack, or write a rule of your own with your coding agent."),
+  h("p.acts", null,
+    h("button.btn.sm.solid", { "data-act": "nav", "data-i": "packs" }, icon("plus"), "Add rule packs"),
+    h("button.btn.sm", { "data-act": "nav", "data-i": "create" }, "Create a rule"))));
+
+/** The welcome banner above says what to do; this says what the space will hold, so it reads alone once dismissed. */
+function noSessionsBlock() {
+  const on = rulesArray().filter(isRunning).length;
+  if (on > 0) {
     return h("div.list", null, h("div.empty", null,
-      h("h3", null, "No rules added yet."),
-      h("p", null, "Add a rule pack, or write a rule of your own with your coding agent."),
-      h("p.acts", null,
-        h("button.btn.sm.solid", { "data-act": "nav", "data-i": "packs" }, icon("plus"), "Add rule packs"),
-        h("button.btn.sm", { "data-act": "nav", "data-i": "create" }, "Create a rule"))));
+      h("h3", null, "No sessions yet."),
+      h("p", null, "The rules that log the most violations, and your recent sessions, show here.")));
   }
-  // The welcome banner above says what to do; this says what the space will hold, so it reads alone once dismissed.
-  if (body === "no-sessions") {
-    const on = rulesArray().filter(isRunning).length;
-    if (on > 0) {
-      return h("div.list", null, h("div.empty", null,
-        h("h3", null, "No sessions yet."),
-        h("p", null, "The rules that log the most violations, and your recent sessions, show here.")));
-    }
-    return rulesOffCard();
-  }
+  return rulesOffCard();
+}
+
+function emptyBlock(body) {
+  if (body === "no-rules") return noRulesCard();
+  if (body === "no-sessions") return noSessionsBlock();
   if (!rulesArray().some(isRunning)) return rulesOffCard();
+  return noViolationsCard();
+}
+
+/** A range in which no rule here logged a violation, with rules on: what the range did hold. */
+function noViolationsCard() {
+  const label = rangeLabel();
   const { started, withViolations } = data.activitySessions ?? { started: 0, withViolations: 0 };
   // Violations from rules taken out of the repository: the sessions tile counts them, and the list of rules can't.
   const title = withViolations > 0 ? `No current rule logged violations ${label}.` : `No violations logged ${label}.`;
@@ -320,6 +349,11 @@ export function render(root) {
 
   const top = topRules(rulesArray().map(stored => ({ id: stored.rule.id, title: titleOf(stored), fires: fires(stored.rule.id), stored })));
   const body = data.loaded ? overviewBody({ ruleCount, sessionsEver, topCount: top.length }) : "loading";
+  renderBody(body, top, repo, sources);
+}
+
+/** The lists, or the empty block in their place; neither while the page loads. */
+function renderBody(body, top, repo, sources) {
   page.lists.hidden = body !== "lists";
   page.empty.hidden = body === "lists" || body === "loading";
   if (body === "lists") renderLists(top, repo);

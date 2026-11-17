@@ -56,26 +56,52 @@ function regionActions(el) {
   return FRAME_ACTIONS;
 }
 
-document.addEventListener("click", e => {
-  closeRepoMenu(e.target);
-  const b = e.target.closest("[data-act]");
-  if (!b || b.disabled) { if (ui.removeAsk !== null && !e.target.closest(".rmask")) { ui.removeAsk = null; invalidate(); } return; }
-  if (b.closest("summary")) e.preventDefault(); // a button in a group heading must not fold it
-  const name = b.dataset.act;
-  // Inside the Remove question only its own buttons act; a click on its text must not open the pack behind it.
-  const answersRemove = name === "removepack" || name === "cancelremove";
-  if (ui.removeAsk !== null && e.target.closest(".rmask") && !answersRemove) return;
-  if (ui.removeAsk !== null && !answersRemove) { ui.removeAsk = null; invalidate(); }
+/** A click on no action withdraws the Remove question, unless it lands on the question itself. */
+function missRemoveAsk(e) {
+  if (ui.removeAsk !== null && !e.target.closest(".rmask")) { ui.removeAsk = null; invalidate(); }
+}
+
+/** Whether action `name` answers the Remove question: Remove, or Cancel. */
+const isRemoveAnswer = name => name === "removepack" || name === "cancelremove";
+
+/** Inside the Remove question only its own buttons act: a click on its text must not open the pack behind it. */
+function blockedByRemoveAsk(e, name) {
+  return ui.removeAsk !== null && e.target.closest(".rmask") !== null && !isRemoveAnswer(name);
+}
+
+/** Any action but the Remove question's own withdraws the question. */
+function withdrawRemoveAsk(name) {
+  if (ui.removeAsk !== null && !isRemoveAnswer(name)) { ui.removeAsk = null; invalidate(); }
+}
+
+/** Run the action of button `b`: its region's, else the common one. */
+function runAction(b, name) {
   const act = regionActions(b)[name] ?? commonActions[name];
   if (b.closest("#toast")) hideToast(); // an action's own toast (Undo → "added") replaces it
   if (act) act(b.dataset.i, b);
+}
+
+document.addEventListener("click", e => {
+  closeRepoMenu(e.target);
+  const b = e.target.closest("[data-act]");
+  if (!b || b.disabled) { missRemoveAsk(e); return; }
+  if (b.closest("summary")) e.preventDefault(); // a button in a group heading must not fold it
+  const name = b.dataset.act;
+  if (blockedByRemoveAsk(e, name)) return;
+  withdrawRemoveAsk(name);
+  runAction(b, name);
 });
+
+/** Escape closes the repository menu if it is open, else the sheet. */
+function closeOnEscape() {
+  if (closeRepoMenu(null)) return;
+  if (ui.panel !== null) closePanel();
+}
 
 // Rows that open a pack are role=button divs: Enter and Space act like a click.
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
-    if (closeRepoMenu(null)) return;
-    if (ui.panel !== null) closePanel();
+    closeOnEscape();
     return;
   }
   if ((e.key === "Enter" || e.key === " ") && e.target.matches?.("div[role=button][data-act]")) { e.preventDefault(); e.target.click(); }

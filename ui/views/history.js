@@ -192,8 +192,7 @@ function renderNothing(nothing, id) {
 function renderViolations(a, id, count, told) {
   const slot = data.findings, loaded = slot.owner === id && slot.pages > 0, label = rangeLabel();
   const total = loaded ? slot.total : count;
-  const activity = data.activity[id];
-  const sessions = activity === undefined || activity.measured === false ? 0 : activity.sessions;
+  const sessions = sessionsOf(id);
   setContent(a.summaryLine.firstChild, JSON.stringify([total, label, sessions]), () => [
     h("b", null, fmt(total)), ` ${plural(total, "violation")} logged ${label}`,
     sessions > 0 ? ` · ${fmt(sessions)} ${plural(sessions, "session")}` : null,
@@ -203,6 +202,17 @@ function renderViolations(a, id, count, told) {
   setAttr(a.summaryLine.firstChild, "hidden", none);
   if (none) renderNothing(a.nothing, id);
   syncChildren(a.violations, violationItems(id), i => i.key, createViolation, (node, item) => updateViolation(node, item, told));
+  renderMore(a, slot, loaded);
+}
+
+/** The sessions rule `id` logged violations in, in the range; 0 where the range has no measure of them. */
+function sessionsOf(id) {
+  const activity = data.activity[id];
+  return activity === undefined || activity.measured === false ? 0 : activity.sessions;
+}
+
+/** Load more, with how many of the rule's violations are still to load; hidden once every page is in. */
+function renderMore(a, slot, loaded) {
   const left = loaded && slot.next !== null ? slot.total - slot.rows.length : 0;
   setAttr(a.more, "hidden", left <= 0);
   if (left > 0) setText(a.more.firstChild, `Load more · ${fmt(left)} left`);

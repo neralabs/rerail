@@ -32,6 +32,9 @@ const PAGES = { "no-repo": noRepo, missing, "not-set-up": notSetUp };
 /** Views a repository that is not set up shows its Not set up page in place of: they list rules, and it has none. */
 const NEED_SET_UP = new Set(["overview", "pack", "created"]);
 
+/** Whether the view lists rules in a repository the daemon knows is not set up. */
+const showsNotSetUp = () => NEED_SET_UP.has(ui.view) && data.repository !== null && !data.repository.setUp;
+
 /**
  * What `#content` shows: the view, or the page in its place. Settings are the machine's and always show; every other
  * view needs a repository the daemon knows.
@@ -40,7 +43,7 @@ export function pageKey() {
   if (ui.view === "settings") return "settings";
   if (ui.scope === null) return "no-repo";
   if (data.missing) return "missing";
-  if (NEED_SET_UP.has(ui.view) && data.repository !== null && !data.repository.setUp) return "not-set-up";
+  if (showsNotSetUp()) return "not-set-up";
   return ui.view;
 }
 

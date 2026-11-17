@@ -43,6 +43,11 @@ function historyRow() {
   const name = repoName() || ui.scope?.repository || "this repo";
   if (ui.scope === null) return row("History stored at", [path, " · stays on this machine"], null);
   if (!clearAsk) return row("History stored at", [path, " · stays on this machine"], h("button.btn.sm.danger", { "data-act": "clearask" }, "Clear history"));
+  return clearQuestionRow(name);
+}
+
+/** Clear history asked: the question in the row, with Cancel and Clear history, both disabled while clearing. */
+function clearQuestionRow(name) {
   return row("History stored at",
     h("span.confirm", null, "Clear all history for ", h("span.mono", null, name),
       "? Running sessions keep recording. Rules and settings stay. This cannot be undone. In a terminal this is ", h("code", null, "rerail reset"), "."),
@@ -59,10 +64,15 @@ function general() {
         data.presence === null ? h("span.val", null, "…") : seg("presence", [["compact", "Show"], ["silent", "Do not show"]], data.presence)),
       installed === null ? null : row("Installed", null, h("span.val", null, installed)),
       historyRow(),
-      ui.scope === null ? null : row("Follow .gitignore",
-        [`New sessions in ${repoName() || "this repo"} skip Git-ignored files, and so does `, h("code", null, "rerail rules test"),
-          ". Agent tools can turn this on, not off."],
-        data.followGitignore === null ? h("span.val", null, "…") : seg("gitignore", [["on", "On"], ["off", "Off"]], data.followGitignore ? "on" : "off"))));
+      gitignoreRow()));
+}
+
+/** Follow .gitignore, for the repo shown; none without one. */
+function gitignoreRow() {
+  return ui.scope === null ? null : row("Follow .gitignore",
+    [`New sessions in ${repoName() || "this repo"} skip Git-ignored files, and so does `, h("code", null, "rerail rules test"),
+      ". Agent tools can turn this on, not off."],
+    data.followGitignore === null ? h("span.val", null, "…") : seg("gitignore", [["on", "On"], ["off", "Off"]], data.followGitignore ? "on" : "off"));
 }
 
 /** One repo: its name (a link to it unless the page shows it), how many rules it has, and On / Off where it has any. */
@@ -87,10 +97,15 @@ function repos() {
 function agentRow(agent) {
   const status = agentStatus(agent);
   return h(`div.agent${status.tone === "off" ? ".off" : ""}`, { "data-agent": agent.id },
-    h("div.rt2", null, h("span", null, agent.name), h(`span.st${status.tone && status.tone !== "off" ? `.${status.tone}` : ""}`, null, status.state),
-      status.data ? h(`span.st${status.data.warn ? ".warn" : ""}`, null, status.data.text) : null,
-      status.problem ? h("span.tip", null, status.problem) : null),
+    agentText(agent, status),
     status.command === null ? null : copyButton(status.command.text, status.command.label));
+}
+
+/** The agent's name over its state, whether its tools can read Rerail's data, and what is wrong, if anything. */
+function agentText(agent, status) {
+  return h("div.rt2", null, h("span", null, agent.name), h(`span.st${status.tone && status.tone !== "off" ? `.${status.tone}` : ""}`, null, status.state),
+    status.data ? h(`span.st${status.data.warn ? ".warn" : ""}`, null, status.data.text) : null,
+    status.problem ? h("span.tip", null, status.problem) : null);
 }
 
 function agents() {

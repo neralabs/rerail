@@ -150,6 +150,22 @@ export function closePanel() {
 
 /* ---------- navigation ---------- */
 
+/** Whether `route` shows another view, or another pack's page, than the one showing. */
+const movesPage = route => route.view !== ui.view || (route.view === "pack" && route.pack !== ui.pack);
+
+/** Whether `route` carries a History rule or chip, a session or its chip, or a Merge Assist conflict. */
+const carriesFocus = route => route.filterRule !== undefined || route.outcome !== undefined || route.session !== undefined || route.sessionFilter !== undefined || route.conflict !== undefined;
+
+/** Leave the view showing for `route`'s: the sheet closes, the catalog forgets its removals, the page starts at the top. */
+function moveTo(route) {
+  closePanel();
+  if (ui.view === "packs") ui.removedPacks.clear();
+  ui.view = route.view;
+  ui.pack = route.view === "pack" ? route.pack : null;
+  ui.removeAsk = null;
+  window.scrollTo(0, 0);
+}
+
 /**
  * Show `route` (`routes.js`; `view` set): another view closes the sheet and polls for the new view's data now; leaving
  * the catalog forgets the packs it removed. The view's `enter(route)` runs when it is entered, and again when the
@@ -157,16 +173,9 @@ export function closePanel() {
  * Assist's page too: the page brings the conflict into view only from a status read after the link.
  */
 export function go(route) {
-  const moved = route.view !== ui.view || (route.view === "pack" && route.pack !== ui.pack);
-  if (moved) {
-    closePanel();
-    if (ui.view === "packs") ui.removedPacks.clear();
-    ui.view = route.view;
-    ui.pack = route.view === "pack" ? route.pack : null;
-    ui.removeAsk = null;
-    window.scrollTo(0, 0);
-  }
-  const carries = route.filterRule !== undefined || route.outcome !== undefined || route.session !== undefined || route.sessionFilter !== undefined || route.conflict !== undefined;
+  const moved = movesPage(route);
+  if (moved) moveTo(route);
+  const carries = carriesFocus(route);
   if (moved || carries) hooks.enter(route);
   invalidate();
   if (moved || route.conflict !== undefined) refreshNow();

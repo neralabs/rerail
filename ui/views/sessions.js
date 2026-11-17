@@ -51,6 +51,11 @@ function jumpToFirst() {
 async function selectLinked(id, jump) {
   const error = await selectSession(id, jump ? jumpToFirst : undefined);
   if (error === null || !error.message.endsWith("answered 404")) return;
+  fallBackFromMissing(id);
+}
+
+/** Session `id` from a link is not in this repository: say so, and show the most recent session in its place. */
+function fallBackFromMissing(id) {
   // The page falls back to the list's first row, the most recent session, only while the missing one is selected.
   const selected = ui.selectedSession === id, fallback = selected ? currentSession() : null;
   const instead = fallback?.sessionId === id ? null : fallback;
@@ -244,11 +249,7 @@ function renderList(all, sess) {
   const q = ui.sessQuery.trim().toLowerCase();
   const visible = all.filter(s => passesFilter(s) && matchesQuery(s, q));
   const total = Math.max(data.sessions.total, all.length);
-  // Filters and search run over the loaded pages; the total says how many more Load more can bring.
-  const narrowed = ui.sessFilter !== "all" || q !== "";
-  setText(v.lead, narrowed ? `${fmt(visible.length)} of ${fmt(total)} sessions, newest first.` : `${fmt(total)} ${plural(total, "session")}, newest first.`);
-  if (v.search.value !== ui.sessQuery && document.activeElement !== v.search) v.search.value = ui.sessQuery;
-  for (const c of v.chips.children) setAttr(c, "aria-pressed", String(c.dataset.i === ui.sessFilter));
+  renderListHead(visible, total, q);
 
   if (sess.sessionId !== revealed) { revealed = sess.sessionId; ui.openDays.add(dayKey(daysAgo(sess.startedAt))); }
   const items = groupByDay(visible).flatMap(g => groupItems(g, q !== ""));
@@ -261,6 +262,15 @@ function renderList(all, sess) {
     (o, s) => { setText(o, `${titleOf(s.sessionId)} · ${shortSessionId(s.sessionId, s.host)}`); });
   if (v.pick.value !== sess.sessionId) v.pick.value = sess.sessionId;
   if (listHidden) renderHeadPicker(all, sess);
+}
+
+/** The list's lead line, its search box and its chips. */
+function renderListHead(visible, total, q) {
+  // Filters and search run over the loaded pages; the total says how many more Load more can bring.
+  const narrowed = ui.sessFilter !== "all" || q !== "";
+  setText(v.lead, narrowed ? `${fmt(visible.length)} of ${fmt(total)} sessions, newest first.` : `${fmt(total)} ${plural(total, "session")}, newest first.`);
+  if (v.search.value !== ui.sessQuery && document.activeElement !== v.search) v.search.value = ui.sessQuery;
+  for (const c of v.chips.children) setAttr(c, "aria-pressed", String(c.dataset.i === ui.sessFilter));
 }
 
 /** List hidden: the session heading is the picker, over every loaded session (and the selected one, if past them). */
