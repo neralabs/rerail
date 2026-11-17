@@ -3282,7 +3282,8 @@ mod json_probe {
     /// JSON's tier 1 by pass (decision 0323's next measure): over JSON's corpus
     /// (`RERAIL_JSON_CORPUS`) under B, each pass's instructions and cycles a byte, the least of
     /// `RR_ROUNDS`, against simdjson's stage 1 on the same files. `RERAIL_JSON_RUST=<path>`:
-    /// tier 1 written as Rust there (`clif_rust`, the ahead-of-time form), to read its shape.
+    /// tier 1 written as Rust there (`clif_rust`, the ahead-of-time form), to read its shape;
+    /// `RERAIL_JSON_ASM=<path>`, its machine code.
     #[test]
     #[ignore = "a benchmark: run by hand"]
     fn json_tier1_by_pass() {
@@ -3300,6 +3301,10 @@ mod json_probe {
             let mut text = String::new();
             rerail_compiler::block::block_rows(&mut text, 0, &json_split(Split::Tier2).block_programs[0]);
             std::fs::write(&path, text).expect("writes");
+        }
+        // `RERAIL_JSON_ASM=<path>`: tier 1's machine code, as the JIT made it.
+        if let Ok(path) = std::env::var("RERAIL_JSON_ASM") {
+            std::fs::write(&path, &p.tier1.disassembly).expect("writes");
         }
         if let Ok(path) = std::env::var("RERAIL_JSON_RUST") {
             rerail_compiler::native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);

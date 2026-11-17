@@ -5410,6 +5410,10 @@ fn record_file(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Rec
 /// yet in `pending` (`from`), and the word of the grammar token before (`unless after`); six.
 const STATE_WORDS: usize = 6;
 
+/// The full blocks the body makes before the token loop runs over them (decision 0349): 16, a
+/// kilobyte, in L1 still when the token loop reads it.
+const TOKEN_RUN: i64 = 16;
+
 /// In the marks so far (`pending`): the cursor's block has a gap mark's bit (`loop_marks`'
 /// lift), set by the refill. A token whose `pending` and hits are zero then takes no merge of
 /// the marks, and its gap test reads no word (`record_tokens`). Past every mark's bit.
@@ -7620,8 +7624,17 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             _ => unreachable!("a value"),
         };
         if tokened {
+            // The token loop after a run of `TOKEN_RUN` full blocks, not after each (decision
+            // 0349): its entry and exit (the file's columns, the body's values to the stack and
+            // back) cost a run once. The run's bytes are still in L1. Before the last full
+            // block, the body goes on.
             let args = to_tokens(&mut f, &again, &st);
-            f.ins().jump(tokens, &args);
+            let due = f.ins().band_imm(next, TOKEN_RUN - 1);
+            let due = f.ins().icmp_imm(IntCC::Equal, due, 0);
+            let last = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, next, full_end);
+            let due = f.ins().bor(due, last);
+            let on: Vec<BlockArg> = again.iter().copied().chain(st.iter().map(|&v| v.into())).collect();
+            f.ins().brif(due, tokens, &args, body_block, &on);
         } else {
             let more = f.ins().icmp(IntCC::UnsignedLessThan, next, full_end);
             f.ins().brif(more, body_block, &again, head, &again);
