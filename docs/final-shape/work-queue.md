@@ -1470,3 +1470,20 @@ views). Left, in order:
 
 Open: the sources' blocks put the peak resident size up 25 MB (CPU binding) to 50 MB (Metal) on hogql. And a
 block is given back only with its last part (0325, step 2's open item).
+
+### Q67. Come back to step 5's performance (0325, s5f at 8f8334e3d)
+
+The user asked (2026-11-17) to come back to the performance implications of the relation's own index. What s5f
+measured on hogql (load 68–80, so noisy): instructions 67.7–76.8 B against 68.3–74.1 B, peak 730–797 MB against
+699–787 MB, indexes built 916–925 a run against 937, found 913–1,048 against 741. To look at:
+
+- **Index room in every device relation's block** (8–12 bytes a row, reserved whether or not it is probed): its
+  share of the peak and of the device budget, and whether a relation's probes can be known when it is made, so only
+  those blocks have the room.
+- **Indexes still built once a run**: most relations a stratum probes are new each run (views, fixpoint totals).
+  Which of them could keep their index across runs (the relation kept, or rebuilt only for its delta).
+- **Moved copies** for a second key (`DevIndex::moved`): how many, and their bytes.
+- **Rebinding**: `DevIndex::buffer` takes the block's buffer on every `index` call, and a wrapped block's buffer is
+  remade when it has outgrown its wrap. Count the remakes.
+- **The build itself** (bucket, radix sort, place) against the old per-binding sort, by GPU time, on quiet runs.
+- **Done when**: each has a measurement on a quiet machine, and what it shows is either fixed or recorded in 0325.
