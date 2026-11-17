@@ -15,7 +15,7 @@
     suppress ruff "PYI057"
 PYI057(a) :- kind(i, "import_from_statement"), from_module_raw(i, m), bytestring_module(m), field(i, "name", a),
     (kind(a, "dotted_name"), text(a, "ByteString") ; kind(a, "aliased_import"), field(a, "name", n), text(n, "ByteString")).
-PYI057(e) :- kind(e, "attribute"), sym_of(e, q), split_dot(q, m, "ByteString"), bytestring_module(m).
+PYI057(e) :- kind(e, "attribute"), pyi_sym(e, q), split_dot(q, m, "ByteString"), bytestring_module(m).
 // `case typing.ByteString():` is a dotted name in a class pattern, not an attribute.
 PYI057(n) :- kind(c, "class_pattern"), child(c, n, 0), kind(n, "dotted_name"), text(n, t),
     split_dot(t, m, "ByteString"), bytestring_module(m).

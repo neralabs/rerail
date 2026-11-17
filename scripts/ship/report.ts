@@ -68,17 +68,37 @@ function findingsText(cell: CellItem): string {
   return "–";
 }
 
-function completionText(cell: CellItem): string {
-  if (cell.completion === null) return cell.reason ?? "–";
-  if (cell.completion.status === "fail") return `**no**: ${cell.completion.reason}`;
-  return cell.completion.kind === "both-failed" ? `neither side: ${cell.completion.reason}` : "both";
+/**
+ * How the cell ran, beside its completion: how far a failed `.rr` whole-pack run got, the chunked run standing in for
+ * it, whether run-policies ran the policies combined or alone, what the engine printed about it, and the cell's caps
+ * when packs ran under different ones (`--pack-cap`).
+ */
+function cellNotes(cell: CellItem, capsVary: boolean): string[] {
+  const { chunked, grouping, progress } = cell;
+  return [
+    progress === null ? "" : `whole-pack run got to policy ${progress.started} of ${progress.of} in ${(progress.wall_ms / 1000).toFixed(0)} s, ${(progress.rss_kb / 1048576).toFixed(1)} GiB peak RSS`,
+    cell.candidate === "rr" && cell.completion !== null && grouping === null ? "combined or alone: not reported by this engine" : "",
+    chunked === null ? "" : `chunked: figures are the sums of ${chunked.chunks} chunks of up to ${chunked.size} rules (${chunked.rules_run} of ${chunked.rules_of} rules ran)`,
+    ...(chunked?.failed_chunks.map((f) => `chunk ${f.chunk} (${f.rules}) failed: ${f.reason}`) ?? []),
+    grouping === null ? "" : grouping.combined > 0 ? `ran combined: ${grouping.combined} of ${grouping.policies} policies in groups (largest ${grouping.largest}), ${grouping.alone} alone` : `ran alone: all ${grouping.policies} policies one by one`,
+    ...cell.fallback.map((line) => `engine: ${line}`),
+    capsVary ? `caps ${cell.caps.memory.join("/")}, ${cell.caps.time_s.join("/")} s` : "",
+  ].filter((note) => note !== "");
+}
+
+function completionText(cell: CellItem, capsVary: boolean): string {
+  let text: string;
+  if (cell.completion === null) text = cell.reason ?? "–";
+  else if (cell.completion.status === "fail") text = `**no**: ${cell.completion.reason}`;
+  else text = cell.completion.kind === "both-failed" ? `neither side: ${cell.completion.reason}` : "both";
+  return text + cellNotes(cell, capsVary).map((note) => `; ${note.replaceAll("|", "\\|")}`).join("");
 }
 
 function cellMetric(cell: CellItem | undefined, metric: string): string {
   if (cell === undefined) return "–";
   if (cell.reason !== null && cell.metrics.length === 0) return cell.status === "fail" ? `**${cell.reason}**` : cell.reason;
   const m = cell.metrics.find((x) => x.metric === metric);
-  return m === undefined ? "–" : metricText(m);
+  return m === undefined ? "–" : `${cell.chunked === null || m.status === "not_compared" ? "" : "chunked "}${metricText(m)}`;
 }
 
 function drillSection(cell: CellItem): string[] {
@@ -132,7 +152,7 @@ function rawSection(cell: CellItem): string[] {
   return lines;
 }
 
-function packSection(p: PackItem): string[] {
+function packSection(p: PackItem, capsVary: boolean): string[] {
   const corpora = (["fixtures", "real"] as const).filter((corpus) => p.cells.some((cell) => cell.corpus === corpus));
   const cell = (corpus: "fixtures" | "real"): CellItem | undefined => p.cells.find((c) => c.corpus === corpus);
   const glance = corpora
@@ -149,7 +169,7 @@ function packSection(p: PackItem): string[] {
   lines.push(`| ${head.join(" | ")} |`, `|${head.map(() => "---").join("|")}|`);
   for (const metric of ["wall-cold", "wall-warm", "cpu-cold", "cpu-warm", "rss-cold", "rss-warm"]) lines.push(`| ${metricLabel(metric)} | ${corpora.map((corpus) => cellMetric(cell(corpus), metric)).join(" | ")} |`);
   lines.push(`| Findings | ${corpora.map((corpus) => findingsText(cell(corpus)!)).join(" | ")} |`);
-  lines.push(`| Completed | ${corpora.map((corpus) => completionText(cell(corpus)!)).join(" | ")} |`);
+  lines.push(`| Completed | ${corpora.map((corpus) => completionText(cell(corpus)!, capsVary)).join(" | ")} |`);
   lines.push(`| Rules run (baseline / candidate) | ${corpora.map((corpus) => `${cell(corpus)!.rules.baseline} / ${cell(corpus)!.rules.candidate}`).join(" | ")} |`);
   lines.push(...costRows(corpora.map(cell)), "", COST_NOTE, "");
   if (p.coverage.missing.length > 0) {
@@ -176,7 +196,7 @@ function itemsTable(title: string, items: CandidateItem["failures"], open: boole
   ];
 }
 
-function candidateSection(c: CandidateItem): string[] {
+function candidateSection(c: CandidateItem, capsVary: boolean): string[] {
   const packs = sortedPacks(c.packs);
   const lines = [
     `## ${c.candidate}: ${c.status}`,
@@ -192,9 +212,9 @@ function candidateSection(c: CandidateItem): string[] {
     ...itemsTable(`All ${c.failures.length} failing items`, c.failures, false),
     ...itemsTable(`${c.noisy.length} noisy items: failed at the median, passed confirmation`, c.noisy, false),
   ];
-  for (const p of packs.filter((p) => p.status === "fail" || p.status === "noisy")) lines.push(...packSection(p));
+  for (const p of packs.filter((p) => p.status === "fail" || p.status === "noisy")) lines.push(...packSection(p, capsVary));
   const rest = packs.filter((p) => p.status !== "fail" && p.status !== "noisy");
-  if (rest.length > 0) lines.push(`<details><summary>${rest.length} other packs</summary>`, "", ...rest.flatMap(packSection), "</details>", "");
+  if (rest.length > 0) lines.push(`<details><summary>${rest.length} other packs</summary>`, "", ...rest.flatMap((p) => packSection(p, capsVary)), "</details>", "");
   return lines;
 }
 
@@ -394,7 +414,9 @@ export function renderReport(report: Report): string {
     ...report.bar.methods.filter((m) => m.gaps.length > 0).map((m) => `Measured on ${m.method.platform} (${m.runs} runs): ${m.gaps.map((gap) => gap.split(":")[0]).join("; ")}; details under "Run, inputs and method".`),
     ...(report.bar.methods.some((m) => m.gaps.length > 0) ? [""] : []),
   ];
-  for (const c of report.candidates) lines.push(...candidateSection(c));
+  // Each cell names its caps only when packs ran under different ones (`--pack-cap`).
+  const capsVary = report.bar.caps.memory.length > 1 || report.bar.caps.time_s.length > 1;
+  for (const c of report.candidates) lines.push(...candidateSection(c, capsVary));
   if (report.waits !== null) lines.push(...waitsSection(report.waits));
   lines.push(...runSection(report, baseline));
   return `${lines.join("\n")}\n`;

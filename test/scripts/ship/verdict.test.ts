@@ -3,7 +3,7 @@
 // completion only where main completed, and fails coverage for every rule main ships that it cannot run.
 
 import { describe, expect, it } from "vitest";
-import { compareCompletion, compareFindings, compareMetric, findingKey, median, missingRules, newRuleFailures, scoreFindings, withinTolerance } from "../../../scripts/ship/verdict.js";
+import { chunkSums, compareCompletion, compareFindings, compareMetric, findingKey, grouping, median, missingRules, newRuleFailures, scoreFindings, withinTolerance } from "../../../scripts/ship/verdict.js";
 
 describe("the 10% bar", () => {
   it("passes a candidate at exactly 1.10 times main and fails one just above", () => {
@@ -116,5 +116,33 @@ describe("rules main ships that the candidate cannot run", () => {
 
   it("lists every rule of a pack missing on the candidate", () => {
     expect(missingRules(["a", "b"], new Map())).toHaveLength(2);
+  });
+});
+
+describe("a chunked .rr run", () => {
+  const run = (chunk: number, rep: number, mode: "cold" | "warm", wallMs: number, completed = true) => ({ chunk, rep, mode, completed, wallMs, cpuMs: wallMs * 2, rssKB: 1000 * (chunk + 1) });
+
+  it("sums wall and CPU over the chunks of each repetition and takes the largest chunk's peak RSS", () => {
+    const sums = chunkSums([run(0, 1, "cold", 10), run(1, 1, "cold", 20), run(0, 1, "warm", 1), run(1, 1, "warm", 2)], 2);
+    expect(sums).toEqual([
+      { mode: "cold", rep: 1, wallMs: 30, cpuMs: 60, rssKB: 2000 },
+      { mode: "warm", rep: 1, wallMs: 3, cpuMs: 6, rssKB: 2000 },
+    ]);
+  });
+
+  it("leaves a chunk that failed out of every repetition, and a repetition a kept chunk did not complete", () => {
+    const runs = [run(0, 1, "cold", 10), run(1, 1, "cold", 99, false), run(2, 1, "cold", 30), run(0, 2, "cold", 11)];
+    expect(chunkSums(runs, 3)).toEqual([{ mode: "cold", rep: 1, wallMs: 40, cpuMs: 80, rssKB: 3000 }]);
+  });
+});
+
+describe("how run-policies ran a pack", () => {
+  it("counts policies run in a group of several as combined and the rest as alone", () => {
+    expect(grouping([{ together: 3 }, { together: 3 }, { together: 3 }, { together: 1 }])).toEqual({ policies: 4, combined: 3, alone: 1, largest: 3 });
+    expect(grouping([{ together: 1 }, { together: 1 }])).toEqual({ policies: 2, combined: 0, alone: 2, largest: 1 });
+  });
+
+  it("leaves it unknown for an engine that does not report it", () => {
+    expect(grouping([{}, {}])).toBeNull();
   });
 });

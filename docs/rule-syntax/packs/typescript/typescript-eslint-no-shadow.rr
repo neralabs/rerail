@@ -116,18 +116,25 @@ hoisted(o, k) :- first_decl(_, _, o, k), (k = "type" ; k = "interface"),
     (option("hoist", "types") ; option("hoist", "functions-and-types") ; !option("hoist", _)).
 
 // init_pattern(s, x, p): s's function is an arrow or function expression right inside p, and the nearest call
-// around it ends inside the value given to the outer name: `const z = xs.map(z => z)`.
+// around it ends inside the value given to the outer name: `const z = xs.map(z => z)`. Only ignoreOnInitialization
+// reads it, so nothing is asked without the option.
 .decl init_pattern(s: node, x: symbol, p: node)
-init_pattern(s, x, p) :- shadowed(s, x, p), variable_scope(s, f), (kind(f, "arrow_function") ; kind(f, "function_expression")),
-    outer_scope(f, p), inside(f, c, "call_expression"), node(_, c, _, _, at), first_decl(p, x, o, _), init_holds(o, at).
+init_pattern(s, x, p) :- init_ask(s, x, p, o, at), init_holds(o, at).
+// init_ask(s, x, p, o, at): the outer name o, and the offset at which the nearest call around s's function ends.
+.decl init_ask(s: node, x: symbol, p: node, o: node, at: number)
+init_ask(s, x, p, o, at) :- option("ignoreOnInitialization", "true"), shadowed(s, x, p), variable_scope(s, f),
+    (kind(f, "arrow_function") ; kind(f, "function_expression")), outer_scope(f, p), inside(f, c, "call_expression"),
+    node(_, c, _, _, at), first_decl(p, x, o, _).
 .decl outer_scope(f: node, p: node)  // the scope around function f, past its name's scope
 outer_scope(f, p) :- fexpr_name(f, n), scope_up(n, p).
 outer_scope(f, p) :- scope_node(f), !fexpr_name(f, _), scope_up(f, p).
-.decl init_holds(o: node, at: number)  // offset at falls in the value that binds name o
-init_holds(o, at) :- first_decl(_, _, o, _), declarator_name(d, o, _), field(d, "value", v), spans(v, at).
-init_holds(o, at) :- first_decl(_, _, o, _), for_head(f, _), field(f, "left", l), (o = l ; within(o, l)),
-    field(f, "right", v), spans(v, at).
-init_holds(o, at) :- first_decl(_, _, o, _), (kind(a, "object_assignment_pattern") ; kind(a, "assignment_pattern")),
-    field(a, "left", l), (o = l ; within(o, l)), field(a, "right", v), spans(v, at).
-.decl spans(v: node, at: number)
-spans(v, at) :- node(_, v, _, b, e), node(_, c, "call_expression", _, at), b <= at, at <= e.
+// init_holds(o, at): offset at falls in the value v that binds name o. Asked for init_ask's pairs only: each value
+// is tested against the one offset, not against every call's end in the run.
+.decl init_holds(o: node, at: number)
+init_holds(o, at) :- init_value(o, at, v), node(_, v, _, b, e), b <= at, at <= e.
+.decl init_value(o: node, at: number, v: node)
+init_value(o, at, v) :- init_ask(_, _, _, o, at), declarator_name(d, o, _), field(d, "value", v).
+init_value(o, at, v) :- init_ask(_, _, _, o, at), for_head(f, _), field(f, "left", l), (o = l ; within(o, l)),
+    field(f, "right", v).
+init_value(o, at, v) :- init_ask(_, _, _, o, at), (kind(a, "object_assignment_pattern") ; kind(a, "assignment_pattern")),
+    field(a, "left", l), (o = l ; within(o, l)), field(a, "right", v).

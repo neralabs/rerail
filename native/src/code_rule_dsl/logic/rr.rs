@@ -295,15 +295,17 @@ impl Text {
         closed_program(&files, &own)?;
         let own: Vec<syntax::Statement> = own.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect();
         let m = lower::lower_module_seeded(own, &scoped.seeds)?;
-        let mut program = lower::link_seeded(m, &scoped.seeds, core_names())?;
+        let mut program = lower::link_seeded(m, &scoped.seeds, core_names(), Some((&library.program, &library.spans)))?;
         // A text that adds to library relations asks of the library (decision 0089 §3): its request's cone, the library
         // relations that read what it adds, and the helpers they read, are copied from the linked library, made once
-        // (decision 0246 §2: a cone is made at link time). The run's `own_part` then holds them as the request.
+        // (decision 0246 §2: a cone is made at link time). The run's `own_part` then holds them as the request. A fact
+        // adds as a rule does (`lit_repr_threshold(16384).`, `npy_replacement(…).`): left out, the library's readers
+        // read the library's relation without it, and found nothing (or every guarded case) in a pack.
         let declared: BTreeSet<String> = files.iter().flat_map(|(_, _, statements)| statements.iter()).filter_map(|(item, _)| match item {
             syntax::Item::Decl { name, .. } | syntax::Item::Violation { name, .. } => Some(name.clone()),
             _ => None,
         }).collect();
-        let asked: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.to_string()).filter(|h| declared.contains(h) && !core_names().contains(h)).collect();
+        let asked: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.to_string()).chain(program.facts.keys().cloned()).filter(|h| declared.contains(h) && !core_names().contains(h)).collect();
         if !asked.is_empty() {
             // The attributes on request made again over the program with its cone (decision 0174): its cone's readers
             // ask too, through copies of their own.
@@ -383,6 +385,8 @@ pub struct Library {
     /// Each module's key in the store (`module_key`).
     pub keys: Vec<crate::content_store::HashKey>,
     pub program: Program,
+    /// Its columns' spans (`lower::span_columns`), which a program lowered in its scope reads (`Text::lower_in`).
+    pub spans: std::sync::Arc<lower::SpanColumns>,
 }
 
 impl Text {
@@ -450,7 +454,8 @@ pub(in crate::code_rule_dsl) fn lower_library(paths: &[PathBuf], store: Option<&
     }
     check_names(&files, false)?;
     let library = if std::env::var("RERAIL_LIBRARY_LOWERING").is_ok_and(|v| v == "whole") {
-        Library { modules: Vec::new(), files: Vec::new(), keys: Vec::new(), program: lower::lower(files.into_iter().flat_map(|(_, statements): (PathBuf, Vec<syntax::Statement>)| statements).collect())? }
+        let (program, spans) = lower::span_columns(lower::lower(files.into_iter().flat_map(|(_, statements): (PathBuf, Vec<syntax::Statement>)| statements).collect())?);
+        Library { modules: Vec::new(), files: Vec::new(), keys: Vec::new(), program, spans: Arc::new(spans) }
     } else {
         let (modules, members, keys) = library_modules_with_files(paths, files, store)?;
         // The linked library is an image too (decision 0246 §2, §6), under its modules' keys: a store that holds it
@@ -464,7 +469,7 @@ pub(in crate::code_rule_dsl) fn lower_library(paths: &[PathBuf], store: Option<&
             crate::code_rule_dsl::prof::count("rr.linked_library_read", 1);
             Some(program)
         });
-        let program = match stored {
+        let mut program = match stored {
             Some(program) => program,
             None => {
                 let program = lower::link(modules.iter().map(lower::Module::clone).collect())?;
@@ -476,7 +481,10 @@ pub(in crate::code_rule_dsl) fn lower_library(paths: &[PathBuf], store: Option<&
                 program
             }
         };
-        Library { modules, files: members, keys, program }
+        // Its declared kind sets are relations its includers may read (an image kept before this was without them).
+        lower::keep_declared_kind_sets(&mut program, &modules);
+        let (program, spans) = lower::span_columns(program);
+        Library { modules, files: members, keys, program, spans: Arc::new(spans) }
     };
     let library = Arc::new(library);
     let mut kept = cache.lock().expect("the lowered libraries");
@@ -825,8 +833,14 @@ pub fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<Stri
     for (rel, n) in library.natives.iter().filter(|(r, _)| take.contains(*r)) {
         program.natives.entry(rel.clone()).or_insert_with(|| n.clone());
     }
+    // A relation the program states facts of has the library's too, as the program read whole holds both.
     for (rel, rows) in library.facts.iter().filter(|(r, _)| take.contains(*r)) {
-        program.facts.entry(rel.clone()).or_insert_with(|| rows.clone());
+        let mine = program.facts.entry(rel.clone()).or_default();
+        for row in rows {
+            if !mine.contains(row) {
+                mine.push(row.clone());
+            }
+        }
     }
     for (rel, d) in library.lattice.iter().filter(|(r, _)| take.contains(*r)) {
         program.lattice.entry(rel.clone()).or_insert_with(|| d.clone());
@@ -1384,52 +1398,58 @@ fn asks(name: &str) -> bool {
     WORLD.iter().any(|(r, _)| *r == name) || matches!(name, "parsed" | "sub_tape" | "parse_of" | "splice_of" | "parse" | "splice")
 }
 
-/// `unreached_dropped` of statements held elsewhere (`read_shared`'s): only the kept are copied.
-fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&syntax::Statement>)]) -> Files {
-    fn idents(text: &str, out: &mut BTreeSet<String>) {
-        out.extend(text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|w| w.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')).map(str::to_owned));
+/// The identifiers of `text`: a relation may be named in a string or a JSON term.
+fn idents(text: &str, out: &mut BTreeSet<String>) {
+    out.extend(text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|w| w.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')).map(str::to_owned));
+}
+
+/// The names term `t` reads: its calls', its aggregates' bodies', its variables', and the identifiers of its texts.
+fn term(t: &syntax::Term, out: &mut BTreeSet<String>) {
+    match t {
+        syntax::Term::Call { name, args, .. } => {
+            out.insert(name.clone());
+            args.iter().for_each(|a| term(a, out));
+        }
+        syntax::Term::Bin { l, r, .. } => {
+            term(l, out);
+            term(r, out);
+        }
+        syntax::Term::Agg { over, by, body, .. } => {
+            over.iter().for_each(|o| term(o, out));
+            by.iter().for_each(|b| term(b, out));
+            lits(body, out);
+        }
+        syntax::Term::Named(_, t) => term(t, out),
+        // A relation may be an argument (`nearest(n, p, block_node)`, a set of nodes): every name in a term may
+        // be one.
+        syntax::Term::Json(text) | syntax::Term::Str(text) | syntax::Term::Tick(text) => idents(text, out),
+        syntax::Term::Var(v) => {
+            out.insert(v.clone());
+        }
+        _ => {}
     }
-    fn term(t: &syntax::Term, out: &mut BTreeSet<String>) {
-        match t {
-            syntax::Term::Call { name, args, .. } => {
-                out.insert(name.clone());
+}
+
+/// The names a clause body reads (`term`'s, and each atom's relation).
+fn lits(body: &[syntax::Lit], out: &mut BTreeSet<String>) {
+    for l in body {
+        match l {
+            syntax::Lit::Atom { rel, args, .. } => {
+                out.insert(rel.clone());
                 args.iter().for_each(|a| term(a, out));
             }
-            syntax::Term::Bin { l, r, .. } => {
+            syntax::Lit::Cmp { l, r, .. } => {
                 term(l, out);
                 term(r, out);
             }
-            syntax::Term::Agg { over, by, body, .. } => {
-                over.iter().for_each(|o| term(o, out));
-                by.iter().for_each(|b| term(b, out));
-                lits(body, out);
-            }
-            syntax::Term::Named(_, t) => term(t, out),
-            // A relation may be an argument (`nearest(n, p, block_node)`, a set of nodes): every name in a term may
-            // be one.
-            syntax::Term::Json(text) | syntax::Term::Str(text) | syntax::Term::Tick(text) => idents(text, out),
-            syntax::Term::Var(v) => {
-                out.insert(v.clone());
-            }
-            _ => {}
+            syntax::Lit::Pattern { subject, .. } => term(subject, out),
+            syntax::Lit::Group { alts, .. } => alts.iter().for_each(|a| lits(a, out)),
         }
     }
-    fn lits(body: &[syntax::Lit], out: &mut BTreeSet<String>) {
-        for l in body {
-            match l {
-                syntax::Lit::Atom { rel, args, .. } => {
-                    out.insert(rel.clone());
-                    args.iter().for_each(|a| term(a, out));
-                }
-                syntax::Lit::Cmp { l, r, .. } => {
-                    term(l, out);
-                    term(r, out);
-                }
-                syntax::Lit::Pattern { subject, .. } => term(subject, out),
-                syntax::Lit::Group { alts, .. } => alts.iter().for_each(|a| lits(a, out)),
-            }
-        }
-    }
+}
+
+/// `unreached_dropped` of statements held elsewhere (`read_shared`'s): only the kept are copied.
+fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&syntax::Statement>)]) -> Files {
     let whole: Vec<PathBuf> = ["core.rr"].iter().chain(ENGINE_FILES.iter()).filter_map(|f| dunce::canonicalize(library().join(f)).ok()).chain(std::iter::once(own.to_owned())).collect();
     // The relations a library derives for the engine to read (`LIBRARY_DERIVED`: embeds, loads) are reached: no rule
     // reads them, and the corpus run makes them outputs (`corpus::run_observed`'s requests). Dropped, a library's
@@ -1495,6 +1515,80 @@ fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&syntax::Statemen
             ((*file).clone(), items)
         })
         .collect()
+}
+
+/// What a program asks guests of when it runs alone (decisions 0055, 0058 §1): a pack's programs make one set of
+/// guests, and a rule that reaches a guest reads every one the run made (an annotation one program's library asked
+/// for was every program's, `C408` in a `Literal["dict()"]`). Programs that ask the same run as one pack
+/// (`tools::policy_groups`); the rest run in packs of their own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GuestAsks {
+    /// Its `.guests` settings: `guest_policy`'s facts, which a pack's programs share.
+    pub settings: Vec<String>,
+    /// `None` when no rule it reaches reads a guest: alone it makes none (`corpus`'s guest requests are no outputs).
+    /// Else the library files whose clauses ask (`asks`, or an `embed`): an included file's asking clauses are kept
+    /// whatever reads them (`reached_statements`), so these files' clauses are what it asks for.
+    pub files: Option<Vec<PathBuf>>,
+    /// Its own clauses ask too: what it asks for is its own.
+    pub own: bool,
+}
+
+/// `src`'s guest requests (`GuestAsks`), read from its statements and its includes'.
+pub fn guest_asks(src: &str) -> Result<GuestAsks, Error> {
+    use super::plan::corpus::guests::READS;
+    let text = read_text(src)?;
+    let (files, own): (Vec<(&Path, &[syntax::Statement])>, &[syntax::Statement]) = match &text.0 {
+        Read::Plain(statements) => (Vec::new(), statements),
+        Read::Modular { files, own } => (files.iter().map(|(path, _, statements)| (path.as_path(), statements.as_slice())).collect(), own),
+    };
+    let settings: Vec<String> = own.iter().filter_map(|(item, _)| match item {
+        syntax::Item::Setting { key, text } if key == "guests" => Some(text.clone()),
+        _ => None,
+    }).collect();
+    // What a clause reads, and whether it makes a guest request (a read `lower` makes a demand of, or an `embed`).
+    let read = |heads: &[syntax::Head], body: &[syntax::Lit], edits: &[syntax::Term]| -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        heads.iter().for_each(|h| h.args.iter().for_each(|a| term(a, &mut out)));
+        lits(body, &mut out);
+        edits.iter().for_each(|e| term(e, &mut out));
+        out
+    };
+    let asking = |heads: &[syntax::Head], read: &BTreeSet<String>| {
+        read.iter().any(|r| asks(r) && !WORLD.iter().any(|(w, _)| w == r)) || heads.iter().any(|h| LIBRARY_DERIVED[..2].contains(&h.rel.as_str()))
+    };
+    let reads_guest = |read: &BTreeSet<String>| read.iter().any(|r| READS.contains(&r.as_str()) || r == "parse" || r == "splice");
+    let mut by_head: std::collections::HashMap<&str, Vec<BTreeSet<String>>> = std::collections::HashMap::new();
+    let mut asking_files: Vec<PathBuf> = Vec::new();
+    for (path, statements) in &files {
+        for (item, _) in statements.iter() {
+            let syntax::Item::Clause { heads, body, edits } = item else { continue };
+            let r = read(heads, body, edits);
+            if asking(heads, &r) && !asking_files.iter().any(|p| p == path) {
+                asking_files.push(path.to_path_buf());
+            }
+            heads.iter().for_each(|h| by_head.entry(h.rel.as_str()).or_default().push(r.clone()));
+        }
+    }
+    // The program's own clauses read what its findings reach; a guest read among what they reach makes its requests.
+    let (mut own_asks, mut reads) = (false, false);
+    let mut reached: BTreeSet<String> = BTreeSet::new();
+    for (item, _) in own {
+        let syntax::Item::Clause { heads, body, edits } = item else { continue };
+        let r = read(heads, body, edits);
+        own_asks |= asking(heads, &r);
+        reads |= reads_guest(&r);
+        reached.extend(heads.iter().map(|h| h.rel.clone()));
+        reached.extend(r);
+    }
+    let mut todo: Vec<String> = reached.iter().cloned().collect();
+    while let Some(rel) = todo.pop().filter(|_| !reads) {
+        for r in by_head.get(rel.as_str()).into_iter().flatten() {
+            reads |= reads_guest(r);
+            todo.extend(r.iter().filter(|n| reached.insert((*n).clone())).cloned());
+        }
+    }
+    asking_files.sort();
+    Ok(GuestAsks { settings, files: reads.then_some(asking_files), own: reads && own_asks })
 }
 
 /// The names a program's files may not declare or derive: `core.rr`'s, but in `core.rr` (decision 0141), and names
