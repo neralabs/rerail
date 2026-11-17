@@ -5369,6 +5369,7 @@ impl<'a> Run<'a, '_> {
         let was: Vec<(String, Option<f64>)> = sizes.into_iter().map(|(r, n)| (r.clone(), self.model.stats.card.insert(r, n.max(1.0)))).collect();
         // The form's rules are planned as the run's are, read by their handles.
         // A local copy: the run's versions are not grown by a pricing.
+        let placing = super::profile::span(|| "derive again or maintain: the forms placed".into());
         let mut vs = (*self.versions).clone();
         let keys = |vs: &mut body::Versions, deltas: bool| -> Vec<RuleKey> {
             let n = if deltas { again.deltas.len() } else { again.rules.len() };
@@ -5393,8 +5394,15 @@ impl<'a> Run<'a, '_> {
             let calls = rules.iter().map(|&r| vs.head_at(r)).collect::<BTreeSet<_>>().len();
             Some(total + CALL * calls as f64)
         };
-        let again_cost = price(&again_rules, false);
-        let kept = price(&kept_rules, true);
+        drop(placing);
+        let again_cost = {
+            let _s = super::profile::span(|| format!("derive again or maintain: derived again planned ({} rules)", again_rules.len()));
+            price(&again_rules, false)
+        };
+        let kept = {
+            let _s = super::profile::span(|| format!("derive again or maintain: maintained planned ({} rules)", kept_rules.len()));
+            price(&kept_rules, true)
+        };
         for (r, n) in was {
             match n {
                 Some(n) => self.model.stats.card.insert(r, n),
