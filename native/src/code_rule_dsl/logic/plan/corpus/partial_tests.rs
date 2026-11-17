@@ -45,8 +45,10 @@ called(c, x) :- kind(c, "call"), field(c, "function", f), text(f, x).
 defined(d, x) :- kind(d, "function_definition"), field(d, "name", n), text(n, x).
 .decl at(x: symbol, k: number)
 at(x, k) :- called(c, x), defined(_, x), col(c, k).
+.decl both(d: node, e: node, x: symbol)
+both(d, e, x) :- defined(d, x), defined(e, x), d != e.
 .decl twice(x: symbol)
-twice(x) :- defined(d, x), defined(e, x), d != e.
+twice(x) :- both(_, _, x).
 .decl flagged(n: node)
 flagged(n) :- kind(n, "assert_statement"), !kind(n, "{kind}").
 .decl flag_col(k: number, l: number)
@@ -116,6 +118,7 @@ fn a_hit_read_for_its_outputs_alone_decodes_no_export_or_base_rows() {
 /// of their export or base rows, and the statistics keeper counts the edited file out and in, and no other.
 fn assert_steady(edited: &super::Report, what: &str) {
     assert!(edited.cross_kept.is_some_and(|(run, all)| run < all), "{what}: the cross-file part kept, some strata not run: {:?}", edited.cross_kept);
+    assert_eq!(edited.cross_handed, 0, "{what}: a run driven by deltas hands nothing off");
     assert_eq!(edited.memo.0, 2, "{what}: the unchanged files are memo hits");
     assert_eq!(edited.memo_kept.0, 2, "{what}: the hits are read for their outputs alone (decision 0117 step 1)");
     assert_eq!(edited.memo_kept.1, 0, "{what}: {} hits read for their outputs alone decoded export or base rows", edited.memo_kept.0);
@@ -147,6 +150,7 @@ fn a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady() {
     };
     let (cold, _) = run(&dir, &program, OUTPUTS);
     assert_eq!(cold.stats_kept, Some(Ok((3, 0))), "a cold run counts every file in");
+    assert!(cold.cross_handed > 0, "a cold run hands its cross-file relations off as it goes, not all held to its end: {} handed; strata {:?}", cold.cross_handed, cold.cross_kept);
     assert_steady(&edit("\nhelper(4)\n").0, "an edit of the first build");
     crate::code_rule_dsl::build_ids::rebuild_for_tests();
     let (first, _) = edit("\nhelper(5)\n");
@@ -157,6 +161,7 @@ fn a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady() {
     // nothing to apply them to. So every input is new to it, `defined` too, which the edit leaves as it was.
     assert!(first.cross_kept.is_none_or(|(run, all)| run == all), "the new build derives every cross-file stratum: {:?}", first.cross_kept);
     assert!(first.cross_changed.iter().any(|r| r == "defined"), "no input compared with the old build's rows: {:?} changed", first.cross_changed);
+    assert!(first.cross_handed > 0, "its cross-file relations handed off as it goes");
     let tail = "\nhelper(6)\n";
     let (next, rows) = edit(tail);
     assert_steady(&next, "the new build's second edit");

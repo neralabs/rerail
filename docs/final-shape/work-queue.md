@@ -1397,9 +1397,21 @@ pass.
   2.12 GB, its live heap the run's inputs (exports 215 MB, base rows 191 MB, held for it), the writer's transaction
   (130 MB) and a long tail of every stratum's rows (none above 25 MB). The footprint stands 0.2–0.5 GB above the live
   heap.
-- **Open**: the two cold peaks, each above the 1 GB budget alone. t34's steps reach them: a relation's rows let go
-  after their last reader and frames queued per stratum (the cross part); the chunks' working sets bounded together
-  (the files' evaluation).
+- **Done, step 1** (2026-11-17): the cross part hands each relation it derives again off once no later stratum reads
+  it (`plan::Hooks::hand_off`, `retain::Handed`): its frame's digest and bytes made then, its rows let go;
+  `write_frames` writes the handed frames in their stratum order. A cold run and a new build's first edit hand off
+  every derived relation but the outputs and the caller's (1,950 at 300 files); a delta-driven run hands off what it
+  derives again. The hook now says whether it took a relation (`Result<bool>`): one it does not take (a view, a
+  maintained one) is held as before, and a relation a view that stays reads is never offered. Tests:
+  `cross_handed` in the partial tests (a cold run and a new build's first hand off, a delta-driven edit none).
+  Profiled peak 2.34 → 2.10 GB. Strict 10-file outputs identical.
+- **Where the rest is** (`heap.tsv`, the whole live heap at the peak, now written beside `memory.tsv`): at the cross
+  part's peak (2.09 GB footprint), 0.51 GB is live from the local chunks' spans (strata rows, specs, guests, the
+  profile's records), 0.42 GB the exports and base rows held for the cross part, 0.37 GB the cross strata (0.20 GB
+  of it sorted-column indexes on its inputs, held as long as the inputs), 0.12 GB parse, 0.10 GB input frames.
+- **Open**: the local chunks' leftovers at the cross part; the input indexes let go after their last prober; the
+  inputs' frames written before the run, so the inputs go after their last reader; then the chunks' working sets
+  bounded together (the files' evaluation, 1.9 GB).
 
 ## Questions for the user
 

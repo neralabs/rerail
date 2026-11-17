@@ -1336,6 +1336,7 @@ pub fn peaks() -> String {
     memory::sampled_report(&mut r);
     if let Some(dir) = directory() {
         let _ = std::fs::write(dir.join("memory.tsv"), memory::sampled_tsv());
+        let _ = std::fs::write(dir.join("heap.tsv"), memory::heap_tsv());
     }
     r
 }

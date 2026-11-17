@@ -1377,6 +1377,8 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_SPLIT_DUMP",
         "RERAIL_DEMAND_DUMP",
         "RERAIL_PREPARED_TRACE",
+        // A measurement aid (decision 0173): each version a program takes, written to a directory; the program is the same.
+        "RERAIL_VERSION_TRACE",
         "RERAIL_SPIKE_PROJECTION",
         // A diagnostic: a refused component's members, printed (`front::unstratified_trace`).
         "RERAIL_STRATA_COUNTS",

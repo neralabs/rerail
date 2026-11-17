@@ -2315,7 +2315,7 @@ impl Retained {
     /// rows changed, with the input's digests by document. The relations kept as they were stay as stored.
     /// `sccs`: `prog`'s strata, computed once by the caller.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn write_frames(&self, store: &ContentStore, was: &InFrames, prog: &Placed, domains: &lower::Domains, locations: &Locations, sccs: &[BTreeSet<String>], cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, (Vec<i64>, Vec<i64>)>) -> Result<usize> {
+    pub(in crate::code_rule_dsl) fn write_frames(&self, store: &ContentStore, was: &InFrames, prog: &Placed, domains: &lower::Domains, locations: &Locations, sccs: &[BTreeSet<String>], cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, (Vec<i64>, Vec<i64>)>, mut handed: HashMap<String, Handed>) -> Result<usize> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept part's changes, to the frames".into());
         let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed(prog.clone());
         // Literal-only leaves are part of the derived relation's identity (leaf_identity), not runtime
@@ -2530,6 +2530,20 @@ impl Retained {
                         continue;
                     }
                 }
+                // Handed off as the run went (`Handed`): its frame made then, in this order as any other's.
+                if let Some(h) = handed.remove(rel) {
+                    now.insert(rel.clone(), h.d);
+                    let Some(read_digests) = read_digests else { continue };
+                    if was.derived.get(rel).is_some_and(|s| s.digest == h.d && s.reads == read_digests) {
+                        continue;
+                    }
+                    written += h.n;
+                    if let Some(level) = h.levels {
+                        puts.push(FramePut { rel: name.clone(), part: LEVELS_PART, digest: h.d, reads: Vec::new(), rows: FrameRows { types: vec![b'i'], rows: level.into_iter().map(i64::from).collect(), n: h.n } }.encoded());
+                    }
+                    puts.push(FramePut::encoded_as(name.clone(), DOCS_PART, h.d, read_digests, h.types, h.n, h.bytes));
+                    continue;
+                }
                 // A relation with no rows to keep (a view) is named by its reads' digests:
                 // derived again from the same reads, it has the same rows, so its readers' frames stay current.
                 let done = made.remove(rel);
@@ -2609,6 +2623,32 @@ impl Retained {
 struct Whole {
     d: u64,
     bytes: Option<Vec<u8>>,
+}
+
+/// A derived relation the cross-file run handed off once no later stratum read it (`plan::Hooks::hand_off`), with
+/// its frame made then: its rows' digest and encoding, its levels. The run drops its rows, so the part's relations
+/// are not all held to its end to be written (Q55: 2,700 of them, the cross part's peak on 300 files). Not held for
+/// this process's next run either: it reads them from the frames, as a new process does.
+pub(in crate::code_rule_dsl) struct Handed {
+    n: usize,
+    types: Vec<u8>,
+    d: u64,
+    bytes: Vec<u8>,
+    levels: Option<Vec<u32>>,
+}
+
+impl Handed {
+    /// `held`'s frame as `write_frames` makes one written whole; `None` for a relation of no rows of its own (a view).
+    pub(in crate::code_rule_dsl) fn of(store: &ContentStore, prog: &Placed, domains: &lower::Domains, rel: &str, held: &InRel) -> Option<Handed> {
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "a relation handed off, its frame made".into());
+        let rows = held.live_rows()?;
+        let n = held.rows();
+        let types = frame_types(prog, domains, rel, held.types());
+        let atoms = store.atoms_handle();
+        let d = crate::code_rule_dsl::logic::plan::rows_digest(&Cells::new(&atoms, &types), &rows, n);
+        let bytes = FramePut::encode_rows(&FrameRows { types: types.clone(), rows, n });
+        Some(Handed { n, types, d, bytes, levels: held.live_levels() })
+    }
 }
 
 impl Retained {

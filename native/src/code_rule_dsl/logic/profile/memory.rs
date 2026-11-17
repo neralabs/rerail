@@ -300,6 +300,18 @@ pub(super) fn sampled_report(r: &mut String) {
     }
 }
 
+/// The live heap by allocating span near the peak (`RERAIL_HEAP_SAMPLE`), every span's, as TSV: the report shows
+/// the first 30, and a peak's tail of many small holders is where its bulk can be.
+pub fn heap_tsv() -> String {
+    use std::fmt::Write as _;
+    let s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut t = String::from("bytes\tspan\n");
+    for (id, bytes) in &s.heap {
+        let _ = writeln!(t, "{bytes}\t{}", rerail_prof::heap::name(*id));
+    }
+    t
+}
+
 /// The sampler's timeline as TSV.
 pub fn sampled_tsv() -> String {
     use std::fmt::Write as _;

@@ -9258,8 +9258,8 @@ pub fn run_atoms_native_over(
 #[derive(Default)]
 pub struct Hooks<'a> {
     /// A kept relation no later stratum reads: the caller writes it where it goes, and the run drops it
-    /// (`Outcome::handed`).
-    pub hand_off: Option<&'a mut dyn FnMut(&str) -> Result<()>>,
+    /// (`Outcome::handed`); one the caller does not take (`false`) is held to the run's end as before.
+    pub hand_off: Option<&'a mut dyn FnMut(&str) -> Result<bool>>,
     /// Inputs a stratum is about to read for the first time: the caller binds their rows now.
     pub load: Option<&'a mut dyn FnMut(&[String]) -> Result<()>>,
     /// Inputs no later stratum reads: the caller may drop their rows (the run has dropped its views of them).
@@ -10547,12 +10547,16 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     }
     // What stays, and what the views among it read (through views): SQL reads a view's inputs once the run ends.
     let mut pinned: BTreeSet<String> = stays.clone();
+    // Of them, the relations a view that stays reads (through views), kept ones too: not handed off (`hand_off`), as
+    // the view is read after the run.
+    let mut view_read: BTreeSet<String> = BTreeSet::new();
     loop {
-        let more: Vec<String> = body::Versions::keys(0, p0.len())
+        let reads: Vec<String> = body::Versions::keys(0, p0.len())
             .filter(|&r| pinned.contains(run.versions.head_at(r)) && run.views.contains(run.versions.head_at(r)))
             .flat_map(|r| reads_of(&run.versions, r).map(str::to_owned).collect::<Vec<_>>())
-            .filter(|r| !pinned.contains(r.as_str()))
             .collect();
+        view_read.extend(reads.iter().cloned());
+        let more: Vec<String> = reads.into_iter().filter(|r| !pinned.contains(r.as_str())).collect();
         if more.is_empty() {
             break;
         }
@@ -10796,9 +10800,11 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             }
         }
         if let Some(hand) = hooks.hand_off.as_deref_mut() {
-            let give: Vec<String> = read_out.iter().filter(|r| run.model.inputs.kept.contains(*r) && !gated.contains(*r)).cloned().collect();
-            for r in &give {
-                hand(r)?;
+            let mut give: Vec<String> = Vec::new();
+            for r in read_out.iter().filter(|r| run.model.inputs.kept.contains(*r) && !gated.contains(*r) && !view_read.contains(*r)) {
+                if hand(r)? {
+                    give.push(r.clone());
+                }
             }
             if !give.is_empty() {
                 super::native::component::release(db, &give);
