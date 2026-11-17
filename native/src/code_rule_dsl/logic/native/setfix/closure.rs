@@ -233,7 +233,7 @@ pub(super) fn prepare(cl: &Closure, store: &mut Store, syms: &mut super::Interne
         if rel.dead(id as u32) {
             continue;
         }
-        let v = rel.row(id)[cl.col];
+        let v = rel.value(id, cl.col);
         index.entry(v).or_insert_with(|| {
             nodes.push(v);
             (nodes.len() - 1) as u32

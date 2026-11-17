@@ -33,12 +33,18 @@ use super::rows::Row;
 /// rows, so what holds them can be a block's columns (decision 0325).
 pub(super) trait RowData {
     fn row(&self, id: u32, k: usize) -> Row;
+    /// Row `id`'s value in column `c`: what a compare, a tag or a fence reads, not the row.
+    fn value(&self, id: u32, k: usize, c: usize) -> i64;
 }
 
 impl RowData for [i64] {
     #[inline]
     fn row(&self, id: u32, k: usize) -> Row {
         Row::of(&self[id as usize * k..][..k])
+    }
+    #[inline]
+    fn value(&self, id: u32, k: usize, c: usize) -> i64 {
+        self[id as usize * k + c]
     }
 }
 
@@ -227,11 +233,11 @@ impl Sorted {
         if hi <= lo {
             return;
         }
-        debug_assert!((lo + 1..hi).all(|id| cmp_vals(cols, tagged(cols, k), &data.row(id - 1, k), &data.row(id, k)).is_le()), "rows {lo}..{hi} said sorted on {cols:?} are not");
+        debug_assert!((lo + 1..hi).all(|id| cmp_ids(data, k, cols, tagged(cols, k), id - 1, id).is_le()), "rows {lo}..{hi} said sorted on {cols:?} are not");
         if let Some((_, end, c)) = self.0.last_mut()
             && *end == lo
             && **c == *cols
-            && cmp_vals(cols, tagged(cols, k), &data.row(lo - 1, k), &data.row(lo, k)).is_le()
+            && cmp_ids(data, k, cols, tagged(cols, k), lo - 1, lo).is_le()
         {
             *end = hi;
             return;
@@ -268,12 +274,6 @@ impl Sorted {
 fn print_vals(vals: impl Iterator<Item = i64>) -> u8 {
     let h = vals.fold(0x2545_F491_4F6C_DD1Du64, |h, v| (h ^ v as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93));
     (h >> 56) as u8
-}
-
-/// A row's print in an order on `cols`.
-#[inline]
-fn print_of(row: &[i64], cols: &[usize]) -> u8 {
-    print_vals(cols.iter().map(|&c| row[c]))
 }
 
 /// A whole key's print (its values in the order's column order), as its rows' are.
@@ -355,9 +355,21 @@ pub(super) fn tagged(cols: &[usize], k: usize) -> bool {
 /// turn.
 #[inline]
 pub(super) fn cmp_vals(cols: &[usize], tagged: bool, ra: &[i64], rb: &[i64]) -> Ordering {
+    cmp_with(cols, tagged, |c| ra[c], |c| rb[c])
+}
+
+/// `cmp_vals` over two rows' values as read (`a(c)`, `b(c)`): only the columns compared are read.
+#[inline]
+pub(super) fn cmp_with(cols: &[usize], tagged: bool, a: impl Fn(usize) -> i64, b: impl Fn(usize) -> i64) -> Ordering {
     let Some(&lead) = cols.first() else { return Ordering::Equal };
-    (if tagged { tag(ra[lead]).cmp(&tag(rb[lead])) } else { Ordering::Equal })
-        .then_with(|| cols.iter().map(|&c| ra[c].cmp(&rb[c])).find(|o| o.is_ne()).unwrap_or(Ordering::Equal))
+    (if tagged { tag(a(lead)).cmp(&tag(b(lead))) } else { Ordering::Equal })
+        .then_with(|| cols.iter().map(|&c| a(c).cmp(&b(c))).find(|o| o.is_ne()).unwrap_or(Ordering::Equal))
+}
+
+/// Rows `a` and `b` of `data` compared on `cols` (`cmp_vals`), each value read where it lies.
+#[inline]
+pub(super) fn cmp_ids<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], tagged: bool, a: u32, b: u32) -> Ordering {
+    cmp_with(cols, tagged, |c| data.value(a, k, c), |c| data.value(b, k, c))
 }
 
 /// The span of `tags` (sorted) equal to `t`, searched from `from`: a galloping search forward from there, or (with
@@ -418,18 +430,17 @@ fn gallop_on() -> bool {
 
 #[inline]
 fn cmp_rows<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], a: u32, b: u32) -> Ordering {
-    let (ra, rb) = (data.row(a, k), data.row(b, k));
-    cmp_vals(cols, tagged(cols, k), &ra, &rb).then_with(|| a.cmp(&b))
+    cmp_ids(data, k, cols, tagged(cols, k), a, b).then_with(|| a.cmp(&b))
 }
 
 impl Run {
     fn fenced<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], ids: Ids) -> Run {
         if tagged(cols, k) {
-            let tags = ids.iter().map(|id| tag(data.row(id, k)[cols[0]])).collect();
+            let tags = ids.iter().map(|id| tag(data.value(id, k, cols[0]))).collect();
             return Run { ids, fences: Vec::new(), tags, prints: Vec::new() };
         }
         let fences = match cols.first() {
-            Some(&lead) => ids.iter().step_by(FENCE).map(|id| data.row(id, k)[lead]).collect(),
+            Some(&lead) => ids.iter().step_by(FENCE).map(|id| data.value(id, k, lead)).collect(),
             None => Vec::new(),
         };
         Run { ids, fences, tags: Vec::new(), prints: Vec::new() }
@@ -442,7 +453,7 @@ impl Run {
 
     /// This run with its ids' key prints (an order probed by whole keys): one row read an id.
     fn printed<D: RowData + ?Sized>(mut self, data: &D, k: usize, cols: &[usize]) -> Run {
-        self.prints = self.ids.iter().map(|id| print_of(&data.row(id, k), cols)).collect();
+        self.prints = self.ids.iter().map(|id| print_vals(cols.iter().map(|&c| data.value(id, k, c)))).collect();
         self
     }
 
@@ -450,7 +461,7 @@ impl Run {
     /// they sort (`sort_keyed`).
     fn of<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], mut ids: Vec<u32>) -> Run {
         let tagged = tagged(cols, k);
-        let tags = sort_keyed(&mut ids, tagged, cols.len(), |id, i| data.row(id, k)[cols[i]], |a, b| cmp_rows(data, k, cols, a, b));
+        let tags = sort_keyed(&mut ids, tagged, cols.len(), |id, i| data.value(id, k, cols[i]), |a, b| cmp_rows(data, k, cols, a, b));
         if tagged {
             return Run { ids: Ids::List(ids), fences: Vec::new(), tags, prints: Vec::new() };
         }
@@ -463,8 +474,7 @@ impl Run {
         // No columns: every row (a relation of no columns holds one row at most).
         let Some(&lead) = key.first() else { return self.ids.part(0, self.ids.len()) };
         let cmp = |id: u32| -> Ordering {
-            let r = data.row(id, k);
-            cols.iter().zip(key).map(|(&c, v)| r[c].cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
+            cols.iter().zip(key).map(|(&c, v)| data.value(id, k, c).cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
         };
         let (lo, hi) = if !self.tags.is_empty() {
             // The leading value's tag among the tags: only its ids are read.
@@ -493,8 +503,7 @@ impl Run {
         let Some(&lead) = key.first() else { return self.ids.part(0, self.ids.len()) };
         let n = self.ids.len();
         let cmp = |id: u32| -> Ordering {
-            let r = data.row(id, k);
-            cols.iter().zip(key).map(|(&c, v)| r[c].cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
+            cols.iter().zip(key).map(|(&c, v)| data.value(id, k, c).cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
         };
         let (lo, hi) = if !self.tags.is_empty() {
             let t = tag(lead);
@@ -540,7 +549,7 @@ impl Run {
                 continue;
             }
             let row = &rows[q as usize * k..][..k];
-            let cmp = |id: u32| -> Ordering { cmp_vals(cols, tagged, &data.row(id, k), row) };
+            let cmp = |id: u32| -> Ordering { cmp_with(cols, tagged, |c| data.value(id, k, c), |c| row[c]) };
             if tagged {
                 // The row's tag span, from where the last row's search ended; within it, the rows read in order.
                 let (s, e) = tag_span(&self.tags, tag(row[lead]), at, false);
@@ -573,7 +582,7 @@ impl Run {
             let (first, second) = if ahi == blo { (a, b) } else { (b, a) };
             if let (Ids::Rows(lo, mid), Ids::Rows(mid2, hi)) = (&first.ids, &second.ids)
                 && mid == mid2
-                && (lo == mid || mid2 == hi || cmp_vals(cols, tagged(cols, k), &data.row(mid - 1, k), &data.row(*mid, k)).is_le())
+                && (lo == mid || mid2 == hi || cmp_ids(data, k, cols, tagged(cols, k), mid - 1, *mid).is_le())
             {
                 let prints = if !first.prints.is_empty() && !second.prints.is_empty() { [first.prints.as_slice(), second.prints.as_slice()].concat() } else { Vec::new() };
                 let ids = Ids::Rows(*lo, *hi);
@@ -675,7 +684,7 @@ impl Run {
 
     /// Calls `f` on each group of ids equal on the first `m` columns of `cols`, in order.
     fn each_group<D: RowData + ?Sized>(&self, data: &D, k: usize, cols: &[usize], m: usize, mut f: impl FnMut(Part<'_>)) {
-        let same = |a: u32, b: u32| cols[..m].iter().all(|&c| data.row(a, k)[c] == data.row(b, k)[c]);
+        let same = |a: u32, b: u32| cols[..m].iter().all(|&c| data.value(a, k, c) == data.value(b, k, c));
         let (n, mut at) = (self.ids.len(), 0);
         while at < n {
             let mut end = at + 1;
@@ -1088,7 +1097,7 @@ impl Index {
         if !self.printed {
             return Run::of(data, k, &self.cols, (lo..hi).collect());
         }
-        let by_row: Vec<u8> = (lo..hi).map(|id| print_of(&data.row(id, k), &self.cols)).collect();
+        let by_row: Vec<u8> = (lo..hi).map(|id| print_vals(self.cols.iter().map(|&c| data.value(id, k, c)))).collect();
         let mut run = Run::of(data, k, &self.cols, (lo..hi).collect());
         run.prints = run.ids.iter().map(|id| by_row[(id - lo) as usize]).collect();
         run
@@ -1222,7 +1231,7 @@ impl Index {
             // taken in place (decision 0187), the rest sorted.
             if r.ids.iter().max().is_some_and(|hi| (hi - lo) as usize + 1 == r.ids.len()) {
                 let hi = lo + r.ids.len() as u32;
-                presorted::site(presorted::REORDER, r.ids.len(), |i| cmp_vals(&self.cols, t, &data.row(lo + i as u32 - 1, k), &data.row(lo + i as u32, k)).is_gt());
+                presorted::site(presorted::REORDER, r.ids.len(), |i| cmp_ids(data, k, &self.cols, t, lo + i as u32 - 1, lo + i as u32).is_gt());
                 let known = if known_beyond_runs() { sorted.within(&self.cols, k, lo, hi) } else { Vec::new() };
                 presorted::site_known(presorted::REORDER, known.iter().map(|&(a, b)| u64::from(b - a)).sum());
                 *r = Arc::new(self.run_over(data, k, lo, hi, &known));
@@ -1374,7 +1383,7 @@ pub mod presorted {
         let (mut start, mut long, mut stretches, mut whole) = (lo, 0u64, 0u64, true);
         let mut close = |start: u32, end: u32| if end - start >= 64 { long += u64::from(end - start); stretches += 1; };
         for id in lo + 1..hi {
-            if cmp_vals(cols, tagged(cols, k), &data.row(id - 1, k), &data.row(id, k)) == Ordering::Greater {
+            if cmp_ids(data, k, cols, tagged(cols, k), id - 1, id) == Ordering::Greater {
                 close(start, id);
                 start = id;
                 whole = false;

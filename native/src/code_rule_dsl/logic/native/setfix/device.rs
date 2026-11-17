@@ -1445,7 +1445,7 @@ fn column_values(rel: &InRel, col: usize) -> Vec<i64> {
     let n = rel.len();
     let live = (0..n).filter(|&id| rel.ndead == 0 || !is_dead(&rel.dead, id as u32));
     if rel.view.is_none() {
-        live.map(|id| rel.row(id)[col]).collect()
+        live.map(|id| rel.value(id, col)).collect()
     } else {
         live.map(|id| rel.at(id).read().at(col)).collect()
     }
@@ -1611,7 +1611,7 @@ fn column_symbols(rel: &InRel, col: usize) -> Vec<i64> {
         if is_dead(&rel.dead, id as u32) {
             continue;
         }
-        let v = if rel.view.is_none() { rel.row(id)[col] } else { rel.at(id).read().at(col) };
+        let v = if rel.view.is_none() { rel.value(id, col) } else { rel.at(id).read().at(col) };
         if seen.insert(v) {
             ids.push(v);
         }

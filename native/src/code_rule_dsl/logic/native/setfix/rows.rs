@@ -308,12 +308,6 @@ impl Rows {
         (p, id - first)
     }
 
-    /// Row `id`'s value in column `c` (`k` values a row).
-    #[inline]
-    pub(super) fn value(&self, id: u32, _k: usize, c: usize) -> i64 {
-        let (p, i) = self.part_of(id);
-        p.rel().rows.get(i, c)
-    }
 }
 
 impl RowData for Rows {
@@ -326,6 +320,12 @@ impl RowData for Rows {
         let rows = &p.rel().rows;
         Row::from_fn(k, |c| rows.get(i, c))
     }
+    /// Row `id`'s value in column `c`: one read where it lies.
+    #[inline]
+    fn value(&self, id: u32, _k: usize, c: usize) -> i64 {
+        let (p, i) = self.part_of(id);
+        p.rel().rows.get(i, c)
+    }
 }
 
 impl RowData for Vec<i64> {
@@ -333,44 +333,41 @@ impl RowData for Vec<i64> {
     fn row(&self, id: u32, k: usize) -> Row {
         Row::of(&self[id as usize * k..][..k])
     }
+    #[inline]
+    fn value(&self, id: u32, k: usize, c: usize) -> i64 {
+        self[id as usize * k + c]
+    }
 }
 
-/// The most columns a row holds (setfix's relations: `MAX_KEY`).
-pub(super) const MAX_ROW: usize = 64;
+/// The columns a row holds on the stack; a wider row's values are on the heap.
+const INLINE: usize = 16;
 
-/// One row's values, read out of the rows that hold it: on the stack, `k` of them written (a read returns it in its
-/// caller's slot). It reads as a slice.
-#[derive(Clone, Copy)]
-pub struct Row {
-    k: u8,
-    v: [std::mem::MaybeUninit<i64>; MAX_ROW],
+/// One row's values, read out of the rows that hold it: on the stack (up to `INLINE`, `k` of them written; a read
+/// returns it in its caller's slot), a wider one on the heap. It reads as a slice.
+#[derive(Clone)]
+pub enum Row {
+    Inline { k: u8, v: [std::mem::MaybeUninit<i64>; INLINE] },
+    Wide(Box<[i64]>),
 }
 
 impl Row {
-    /// A row of `vals` (at most `MAX_ROW`).
+    /// A row of `vals`.
     #[inline]
     pub fn of(vals: &[i64]) -> Row {
-        let mut r = Row::empty(vals.len());
-        for (d, &x) in r.v.iter_mut().zip(vals) {
-            d.write(x);
-        }
-        r
+        Row::from_fn(vals.len(), |c| vals[c])
     }
 
     /// A row of `k` values, each `value(c)`.
     #[inline]
     pub fn from_fn(k: usize, mut value: impl FnMut(usize) -> i64) -> Row {
-        let mut r = Row::empty(k);
-        for c in 0..k {
-            r.v[c].write(value(c));
+        if k > INLINE {
+            return Row::Wide((0..k).map(value).collect());
         }
-        r
-    }
-
-    #[inline]
-    fn empty(k: usize) -> Row {
-        assert!(k <= MAX_ROW, "a row of {k} columns, past {MAX_ROW}");
-        Row { k: k as u8, v: [std::mem::MaybeUninit::uninit(); MAX_ROW] }
+        let mut v = [std::mem::MaybeUninit::uninit(); INLINE];
+        for (c, d) in v.iter_mut().enumerate().take(k) {
+            d.write(value(c));
+        }
+        Row::Inline { k: k as u8, v }
     }
 }
 
@@ -378,8 +375,11 @@ impl std::ops::Deref for Row {
     type Target = [i64];
     #[inline]
     fn deref(&self) -> &[i64] {
-        // SAFETY: the first `k` values were written (`of`, `from_fn`).
-        unsafe { std::slice::from_raw_parts(self.v.as_ptr().cast(), self.k as usize) }
+        match self {
+            // SAFETY: the first `k` values were written (`from_fn`).
+            Row::Inline { k, v } => unsafe { std::slice::from_raw_parts(v.as_ptr().cast(), *k as usize) },
+            Row::Wide(v) => v,
+        }
     }
 }
 

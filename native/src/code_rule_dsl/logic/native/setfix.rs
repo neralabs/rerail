@@ -544,7 +544,7 @@ impl Rel {
         let mut row = vec![0i64; k];
         for (key, agg) in lat.group(rows, k) {
             let held = lat.at.get(&key).copied();
-            let old = held.map(|id| self.data.row(id, k)[lat.keys]);
+            let old = held.map(|id| self.data.value(id, k, lat.keys));
             let mut v = match old {
                 None => agg,
                 Some(o) if o == top => top,
@@ -606,7 +606,7 @@ impl Rel {
             let mut sketches = vec![Sketch::default(); k];
             for id in (0..old.n as u32).filter(|&id| !is_dead(&old.dead, id)) {
                 for (c, sk) in sketches.iter_mut().enumerate() {
-                    sk.add(old.rows.row(id, k)[c]);
+                    sk.add(old.rows.value(id, k, c));
                 }
             }
             (ix, sketches)
@@ -677,6 +677,8 @@ impl Rel {
         is_dead(&self.dead, id)
     }
     fn row(&self, id: usize) -> Row { self.data.row(id as u32, self.k) }
+    /// Row `id`'s value in column `c`, read where it lies.
+    fn value(&self, id: usize, c: usize) -> i64 { self.data.value(id as u32, self.k, c) }
     /// A live row equal to `row`, not one of `skip`: in the first order, or pushed since the last wave (`pending`).
     fn find(&self, row: &[i64], skip: impl Fn(u32) -> bool) -> Option<u32> {
         let (data, k) = (&self.data, self.k);
@@ -798,7 +800,7 @@ impl Rel {
     fn indexed_to_n(&mut self) {
         let _s = (self.n - self.indexed >= SPANNED_ROWS).then(|| crate::code_rule_dsl::logic::profile::span(|| "rows sketched and counted (indexed_to_n)".into()));
         let (data, k, lo, hi) = (&self.data, self.k, self.indexed, self.n);
-        let sketch = |c: usize, sk: &mut Sketch| for id in lo..hi { sk.add(data.row(id as u32, k)[c]); };
+        let sketch = |c: usize, sk: &mut Sketch| for id in lo..hi { sk.add(data.value(id as u32, k, c)); };
         let count = |stats: &mut Option<KeptStats>| if let Some(stats) = stats { stats.0.delta(&data.to_vec(lo, hi, k), &[], k); };
         // Many rows: each column's sketch, and the statistics, a job of its own (decision 0294). A sketch takes its
         // column's values in the rows' order, as one thread gives them (its exact counts give way in that order).
@@ -998,12 +1000,12 @@ impl Fresh {
         let tagged = runs::tagged(cols, k);
         let data = &self.data;
         let cmp = |a: u32, b: u32| -> std::cmp::Ordering {
-            runs::cmp_vals(cols, tagged, &data.row(a, k), &data.row(b, k))
+            runs::cmp_ids(data, k, cols, tagged, a, b)
         };
         let mut order: Vec<u32> = (settled as u32..n as u32).collect();
         runs::presorted::site(runs::presorted::FRESH, n - settled, |i| cmp((settled + i - 1) as u32, (settled + i) as u32).is_gt());
         let sort = |v: &mut [u32]| {
-            runs::sort_keyed(v, tagged, cols.len(), |q, i| data.row(q, k)[cols[i]], &cmp);
+            runs::sort_keyed(v, tagged, cols.len(), |q, i| data.value(q, k, cols[i]), &cmp);
         };
         if self.lost || !runs::known_beyond_runs() {
             sort(&mut order);
@@ -2543,7 +2545,7 @@ pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, whole: bool, 
         let stride = match src {
             Src::Delta(r) | Src::Full(r) | Src::FullMulti(r, _) => {
                 let rel = &store.rels[*r];
-                count(rel.n, &|i, c| (!rel.dead(i)).then(|| rel.row(i as usize)[c]))
+                count(rel.n, &|i, c| (!rel.dead(i)).then(|| rel.value(i as usize, c)))
             }
             Src::In(rel, _) => count(rel.len(), &|i, c| (!is_dead(&rel.dead, i)).then(|| rel.at(i as usize).read().at(c))),
         };
@@ -2957,7 +2959,7 @@ unsafe impl VTabCursor for RelCursor {
         let vals: Vec<i64> = keys.iter().map(|&(_, k)| k).collect();
         let (cands, _) = r.probe(&cols, &vals, self.delta);
         let ids = &mut self.ids;
-        cands.any(|id| { if !r.dead(id) && keys.iter().all(|&(c, k)| r.row(id as usize)[c] == k) { ids.push(id) } false });
+        cands.any(|id| { if !r.dead(id) && keys.iter().all(|&(c, k)| r.value(id as usize, c) == k) { ids.push(id) } false });
         Ok(())
     }
     fn next(&mut self) -> Result<()> { self.pos += 1; Ok(()) }
@@ -2965,7 +2967,7 @@ unsafe impl VTabCursor for RelCursor {
     fn column(&self, ctx: &mut VContext, i: c_int) -> Result<()> {
         let s = self.store.read().unwrap();
         let r = &s.rels[self.rel];
-        let v = r.row(self.ids[self.pos] as usize)[i as usize];
+        let v = r.value(self.ids[self.pos] as usize, i as usize);
         ctx.set_result(v)
     }
     fn rowid(&self) -> Result<i64> { Ok(self.ids[self.pos] as i64) }
@@ -4442,7 +4444,7 @@ impl InRel {
         ix.each_group(data, k, 1, |ids| {
             let v = data.row(ids.first(), k)[c];
             firsts.clear();
-            firsts.extend(ids.iter().filter(|&id| !is_dead(&self.dead, id)).map(|id| data.row(id, k)[0]));
+            firsts.extend(ids.iter().filter(|&id| !is_dead(&self.dead, id)).map(|id| data.value(id, k, 0)));
             if !firsts.is_empty() {
                 visit(v, &firsts);
             }
@@ -4489,6 +4491,8 @@ impl InRel {
     }
     /// A flat relation's row (a derived one: views are base inputs, or an index's relation, `hold_source`).
     pub fn row(&self, id: usize) -> Row { self.rows.row(id as u32, self.k) }
+    /// A flat relation's row `id`'s value in column `c`, read where it lies.
+    pub fn value(&self, id: usize, c: usize) -> i64 { self.rows.value(id as u32, self.k, c) }
     /// Row `id`'s values, flat or read from its view.
     pub fn values(&self, id: usize) -> Row {
         match &self.view {
@@ -4554,7 +4558,7 @@ impl InRel {
         }
         let k = self.k;
         let data = &self.rows;
-        let doc = |id: u32| data.row(id, k)[0] >> 32;
+        let doc = |id: u32| data.value(id, k, 0) >> 32;
         let live = (self.n - self.ndead) as i64;
         let mut out = Vec::with_capacity(k);
         let mut docs: Vec<i64> = Vec::new();
