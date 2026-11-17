@@ -939,6 +939,9 @@ impl Source for Renamed {
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         self.0.estimated_matches(column, batch)
     }
+    fn lookup_cost(&self, column: usize) -> f64 {
+        self.0.lookup_cost(column)
+    }
     fn estimated_matches_all(&self, columns: &[usize]) -> usize {
         self.0.estimated_matches_all(columns)
     }
@@ -1116,6 +1119,9 @@ impl Source for Layered {
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         self.kept.estimated_matches(column, batch)
+    }
+    fn lookup_cost(&self, column: usize) -> f64 {
+        self.kept.lookup_cost(column)
     }
     fn indexed(&self, column: usize) -> bool {
         self.kept.indexed(column)

@@ -778,6 +778,17 @@ pass.
 
   So a view's lookup costs 4 to 27 units where placement prices it at 1, and `within`'s at 176. The next step is
   placement's price per relation from these, or cheaper reads of `within`, `rr_nearest_scope`, `docof` and `col`.
+- **A lookup priced by its relation** (2026-11-16, decision 0312): each source declares a lookup's CPU per column as a
+  multiple of a derived relation's, fitted from `sources.tsv` (`within` by `n` 5.5, `docof` 4, `col` 3.5,
+  `rr_nearest_*` by `n` 3), and placement prices each join step at it. No stratum changed place on this run: the
+  costliest lookups are in strata the GPU runs. What still leaves strata priced under their CPU:
+  - **Their row estimates** (Q44's): `attr_of`, `rdefn`, `ann_root` and `qualname` estimate a step at 2.5–46 rows
+    that makes 450–870,000. Each `$n < 6917529027641081856` filter (the `0x6000…` value-class bound, which every node
+    passes) is estimated to keep half, so two or three cut a rule's estimate 4–8×; `kind($n, #k)` after a `field`
+    lookup is given a few percent where every row passes.
+  - **`col`'s lookup in `fzk287`**: 790 rows over 17 chunks in 52 ms, 65 µs a row against `col`'s 694 ns over the
+    run. Not the line index (built in projection, about 10 µs a file). It looks fixed per chunk. Next: a sample of
+    that step.
 - **The engine's steps were not the plan's** (found by the above, fixed 2026-11-16): a literal can make several
   engine steps (`$k = @sub(@strlen($dots), 1)` makes two; a head's computed term makes more), and the engine's
   counts were zipped against the plan's steps by place. From such a literal on, every step's counts were its

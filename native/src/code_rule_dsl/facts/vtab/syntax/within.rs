@@ -746,6 +746,15 @@ impl Source for Within {
     fn estimated_len(&self) -> usize {
         self.shape().rows as usize
     }
+    /// By `n`: its containers listed up the tree, 5.5 derived lookups; a kind-set axis's, 3 (decision 0312). By
+    /// `a`: the solved pairs searched, one.
+    fn lookup_cost(&self, column: usize) -> f64 {
+        match (self.mode, column) {
+            (Mode::Axis(_), 0) => 3.0,
+            (Mode::Tree | Mode::Span, 0) => 5.5,
+            _ => 1.0,
+        }
+    }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         let shape = self.shape();
         let per = (shape.rows / shape.ndv[column.min(1)].max(1)).max(1) as usize;

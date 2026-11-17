@@ -444,6 +444,9 @@ pub struct Stats {
     pub memo: HashMap<String, HashMap<(String, Constant), i64>>,
     steps_cache: StepsCache,
     kindsets: std::sync::Arc<BTreeMap<String, Vec<String>>>,
+    /// (relation, column) → a lookup's CPU as a multiple of a derived relation's, where its source says it is not
+    /// one (`Source::lookup_cost`, decision 0312): placement prices the step by it.
+    pub lookup: std::sync::Arc<BTreeMap<(String, String), f64>>,
     /// Relations whose statistics are made when first planned with (`lazy`, `Model::resolve`).
     lazy: LazyMap,
     /// Quiet strata's relations, whose columns take their `__old`'s statistics when first planned with
@@ -542,6 +545,7 @@ impl Stats {
             memo: HashMap::new(),
             steps_cache: StepsCache::default(),
             kindsets: Arc::new(prog.kindsets.clone()),
+            lookup: Default::default(),
             lazy: LazyMap::default(),
             prior_later: BTreeSet::new(),
         }
@@ -635,6 +639,25 @@ impl Stats {
         }
     }
 
+    /// The lookup costs `source` declares for relation `rel`'s columns, those not one (`Source::lookup_cost`).
+    pub fn lookup_costs(&mut self, rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source) {
+        for (c, col) in source.columns().into_iter().enumerate() {
+            let cost = source.lookup_cost(c);
+            if cost != 1.0 {
+                let col = crate::code_rule_dsl::facts::core::input_column_name(rel, &col).map_or(col, str::to_owned);
+                std::sync::Arc::make_mut(&mut self.lookup).insert((rel.to_owned(), col), cost);
+            }
+        }
+    }
+
+    /// A lookup on `rel`'s column `col`, as a multiple of a derived relation's: one unless its source said.
+    pub fn lookup_cost(&self, rel: &str, col: &str) -> f64 {
+        if self.lookup.is_empty() {
+            return 1.0;
+        }
+        self.lookup.get(&(rel.to_owned(), col.to_owned())).copied().unwrap_or(1.0)
+    }
+
     /// The statistics of `p`'s constants and inputs (a whole version: its rules by handle, its fields).
     fn read(db: &Connection, p: &body::Placed, inputs: &Inputs, fingerprint: bool) -> Result<Self> {
         let pf = p.fields()?;
@@ -721,6 +744,7 @@ impl Stats {
             }),
             steps_cache: StepsCache::default(),
             kindsets: Arc::new(pf.kindsets().iter().map(|(k, ks)| (pf.text(*k).to_owned(), ks.iter().map(|&a| pf.text(a).to_owned()).collect())).collect()),
+            lookup: Default::default(),
             lazy: LazyMap::default(),
             prior_later: BTreeSet::new(),
         })
@@ -877,6 +901,7 @@ impl Model {
             memo: HashMap::default(),
             steps_cache: StepsCache::default(),
             kindsets: st.kindsets.clone(),
+            lookup: st.lookup.clone(),
             lazy: LazyMap(rels.iter().filter_map(|r| Some((r.clone(), st.lazy.0.get(r)?.clone()))).collect()),
             prior_later: rels.iter().filter(|r| st.prior_later.contains(*r)).cloned().collect(),
         };
@@ -7388,7 +7413,7 @@ impl<'a> Run<'a, '_> {
             shape.add(Order::new(b, &order), work, false);
             shape.seeded(head, rows);
             if let Some(x) = &x {
-                shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0));
+                shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0), |rel, col| self.model.stats.lookup_cost(rel, col));
             }
             let Some(spec) = self.whole_join_spec(b, &order, None, &ri, scc, &native_rels) else {
                 if answering {
@@ -7508,7 +7533,7 @@ impl<'a> Run<'a, '_> {
                 shape.add(Order::new(b, &order), 0.0, true);
                 shape.probe(a, work, rows, delta);
                 if let Some(x) = &x {
-                    shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0));
+                    shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0), |rel, col| self.model.stats.lookup_cost(rel, col));
                 }
                 let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
                 let Some(spec) = self.whole_join_spec(b, &order, Some(at), &ri, scc, &native_rels) else {
