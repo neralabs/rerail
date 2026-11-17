@@ -1,6 +1,6 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
-import { replaceFile } from "../engine/file-replace.js";
+import { replaceFile } from "./file-replace.js";
 
 /**
  * The Rerail home's untaken events: events whose hook found the home's daemon running but not reading. The first hook

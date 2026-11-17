@@ -22,7 +22,6 @@ export {
   stopDaemon,
 } from "./daemon-control.js";
 export { engineRequestBody, type EngineService, ingestEngineEvent, parseEngineRequest, startEngineService } from "./engine-service.js";
-export { leaveUntaken, UNTAKEN_EVENTS_DIR } from "./untaken-events.js";
 export { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineProof } from "./engine-proof.js";
 export {
   AdapterEventSchema,

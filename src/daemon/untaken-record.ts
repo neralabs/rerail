@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import type { AdapterEvent } from "../engine/adapter-contract.js";
 import { parseEngineRequest } from "../runtime/engine-service.js";
 import { SqliteSessionStore } from "../runtime/session-store.js";
-import type { UntakenEvent } from "../runtime/untaken-events.js";
+import type { UntakenEvent } from "../engine/untaken-events.js";
 
 /** Where a daemon records the events hooks left untaken: its database, its own session store on it, and its stores' change mark. */
 export interface UntakenRecordTarget {

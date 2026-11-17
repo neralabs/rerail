@@ -2,8 +2,8 @@ import { mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { leaveUntaken, UNTAKEN_EVENTS_DIR, untakenEventTaker, untakenFor, type UntakenEvent } from "../../../src/runtime/untaken-events.js";
-import { removeFolder } from "../../support/platform/remove-folder.js";
+import { leaveUntaken, UNTAKEN_EVENTS_DIR, untakenEventTaker, untakenFor, type UntakenEvent } from "../../src/engine/untaken-events.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const homes: string[] = [];
 async function home(): Promise<string> {

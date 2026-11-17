@@ -5,7 +5,7 @@ import { readRepositoryState } from "../presentation/session-presentation.js";
 import { isRerailStarted } from "../runtime/repository-start.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 import { engineRequestBody, ingestEngineEvent, type EngineRuntimeConfiguration } from "../runtime/engine-service.js";
-import { leaveUntaken } from "../runtime/untaken-events.js";
+import { leaveUntaken } from "../engine/untaken-events.js";
 import { scrubValue } from "../engine/secret-scrub.js";
 import { WITHHELD_OUTPUT, type Withheld } from "../engine/transcript-boundary.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";

@@ -21,14 +21,12 @@ import {
   type DaemonState,
   engineRequestBody,
   ingestEngineEvent,
-  leaveUntaken,
   SqliteSessionReader,
   SqliteSessionStore,
   SESSION_EVENT_PAGE_LIMIT,
-  UNTAKEN_EVENTS_DIR,
 } from "../../src/runtime/index.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
-import { openRerailDatabase, RepositoryWorktreeWalks, SqliteAuditStore, SqliteAuditControlStore } from "../../src/engine/index.js";
+import { leaveUntaken, openRerailDatabase, RepositoryWorktreeWalks, SqliteAuditStore, SqliteAuditControlStore, UNTAKEN_EVENTS_DIR } from "../../src/engine/index.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
 import { linkFolder } from "../support/platform/links.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
