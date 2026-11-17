@@ -1491,17 +1491,17 @@ measured on hogql (load 68–80, so noisy): instructions 67.7–76.8 B against 6
 - **Also seen**: refusals at run time of an index (`an index of 715457 rows`) at the default budget. 0325 step
   6's run-time refusals no longer lose findings (ef6c6c386), but each one still costs the stratum's device work.
 
-### Q68. The CPU's price of strata that step 6 moved to the GPU (0325 step 6)
+### Q68. Step 6's prices spend the device's budget: refusals redone on the CPU (0325 step 6)
 
-Step 6 priced the device without copies, and placement got worse on hogql: strata CPU 1.81–1.97 s against
-1.52–1.88 s with the old prices, instructions 70.1–76.5 B against 65.7–71.0 B (load 33–38). The device's prices
-fit its measured runs. The error is on the CPU side: `ann_ctx` is priced 2.45 ms a run on the CPU and measures 1.0
-ms, so it goes to the GPU (3.7 ms). `pre_118` and `pre_105` moved the same way. The old prices hid this with copy
-prices the device no longer pays.
+Step 6's prices measured worse on hogql than the old: strata CPU 1.81–1.97 s against 1.52–1.88 s, instructions
+70.1–76.5 B against 65.7–71.0 B (three interleaved pairs, load 33–38; one binary varies by 5.3 B). The profiles
+put the difference in the CPU's join walk of strata refused at run time and redone on the CPU (`pre_118`,
+`pre_126`), not in the device path's host CPU, which is unchanged. It follows the refusals (5, 6 and 1 in the new
+runs: +0.51, +0.36, +0.02 s). Strata run apart because the wave's budget was spent went from 36–55 a run to 103–181.
+The refusals name indexes and views of 0.5–1.2 M rows.
 
-- Find why the CPU's estimate of these strata is high (`cpu_estimate_s` against `cpu_s` in `placement.tsv`,
-  per stratum): the planner's work estimate, or a per-work price (decision 0304's fit) that does not fit them.
-- A view's making cost depends on which stratum makes it first, and no per-stratum term predicts it. Pricing it
-  once per run, on the first reader placed on the device, may be the shape that fits.
+- Which strata's device bytes spend the budget under the new placement (a stratum's bytes are not in
+  `placement.tsv` yet), and whether placement should price a stratum's device bytes against the budget left.
+- How much each refusal's dropped residency cache (ef6c6c386) adds: views made again.
 - **Done when**: on hogql the new prices are no worse than the old in strata CPU and instructions over interleaved
   runs, with findings unchanged.

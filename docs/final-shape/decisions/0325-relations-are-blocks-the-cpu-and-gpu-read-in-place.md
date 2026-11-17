@@ -313,9 +313,14 @@ Step by step, each leaving the engine working (see the commits that name this de
     against 2.33–2.58 s at 1.25 and 1.5, and 2.95–3.05 s at 3). `RERAIL_GPU_BIAS` sets it for such a refit.
   - **A measured loss against the old prices** (three interleaved pairs, load 33–38): strata CPU 1.81–1.97 s
     against 1.52–1.88 s, instructions 70.1–76.5 B against 65.7–71.0 B, peak 849–913 MB against 761–847 MB. Findings
-    1,629 in all six runs. The cause is on the CPU side: `ann_ctx` is priced 2.45 ms a run on the CPU and measures
-    1.0 ms, so it moves to the GPU (3.7 ms) though the device's price of it is right. The old prices hid that error
-    with a copy price the device no longer pays (Q68).
+    1,629 in all six runs. Instructions vary by 5.3 B between runs of the same binary, so these are three pairs, not
+    a settled figure. By the profiles (own CPU by span): the device path's own host CPU is the same (0.37 s against
+    0.38 s in the pair with the same 19 chunks). The difference is the CPU's join walk of strata refused at run time
+    and redone on the CPU: `pre_118` +0.11 s, `pre_126` +0.16 s. It follows the refusals: 5 and 6 refusals gave
+    +0.51 s and +0.36 s, 1 refusal gave +0.02 s; the old runs had 0–2. Strata run apart from the wave because its
+    budget was spent: 103–181 a run against 36–55. Refused at run time: indexes of 0.5–1.2 M rows, views of 0.5–1.2 M
+    rows (`ann_ctx`'s among them), so the new placement spends the device's budget sooner. Not separated yet: how
+    much each refusal's dropped residency cache (ef6c6c386) adds (Q68).
   - Testing this at a 384 MB Metal budget found refusals at run time losing findings: a refused batch left the
     views it encoded cached as made, so later strata read relations nothing wrote. Fixed in ef6c6c386 (`unrun`,
     `a_view_made_in_a_refused_batch_is_made_again`), with two buffers that went back to the pool while an open
