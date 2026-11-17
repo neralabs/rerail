@@ -608,6 +608,39 @@ pass.
   Getting it working took four fixes in the link, each a name read for its meaning: `strtest_<k>`,
   `rr_ast_<k>_<m>` (its capture count), the requests a runner answers (never inputs), and a part's header (the
   whole program's 3,000 declarations per part made the link quadratic and every part's key the whole's).
+- **Where the 2.65 s of an edit goes, and what removes it** (2026-11-17, read from the e14 profile above, nothing
+  run again): B101's body edited, so 1 of 318 parts misses, 1 of 2,685 cross strata runs (`chain_below`), and 0 of
+  1,030 kept inputs change. Main thread 2.12 s CPU, other threads 0.41 s. Everything below the edit's one part and
+  one stratum is work over the unchanged whole:
+  - **prepare** (0.87 s). Each stage reads the 317 parts' images (0.096 s and 0.068 s), keys the parts (0.008 s,
+    0.025 s) and links all of them again: stage 1's link 0.106 s (the names 0.060 s), stage 2's 0.141 s (the
+    headers 0.131 s), with its headers and interfaces 0.042 s and merging identical relations 0.030 s. That is
+    0.53 s. A kept link (the last linked version, with each part's names, where only the missed part is spliced in
+    when its interface is unchanged) leaves one image read and one part. The whole passes after the link (lower
+    0.062, split 0.025, folding guests 0.026, the memo's strata and program 0.044, statistics and the keep 0.026,
+    the passes' own 0.061, about 0.24 s) still run on the whole, since the linked whole changed.
+  - **combine** (0.50 s main, 0.13 s before, 0.12 s on the pool). The tail stage 3 names is 0.39 s: hiding 0.104 s
+    (20 rounds over 5,744 rules), fact spaces 0.093 s, narrowing the requests 0.039 s, merging identical relations
+    0.037 s, sources on request 0.035 s, merging the programs 0.027 s, `parse the program` itself 0.055 s. Beside it
+    are 308 programs lowered again in their libraries' scope on the pool (0.117 s), the 317 texts read (0.045 s
+    CPU, 0.110 s wall), and before the phase the rule files read (0.076 s) and phase 0's include graphs (0.046 s).
+    A part that hits needs none of these if stage 3 keys each pass's result by part. Without stage 3, a lowered
+    program kept by its image's and its libraries' digests removes the pool's 0.117 s, and a stat index on the rule
+    files (as the corpus has) removes most of the read.
+  - **wait** (0.26 s) is not waiting: it is the parse phase's lookups on the main thread. The memo lookup of the
+    300 unchanged files, each one's outputs entry from SQLite, is 0.078 s, and decoding them is 0.029 s on the pool.
+    One check that the file-local plan and every file's stat are the last run's would replace 300 lookups. The
+    atoms' lease reads every stored atom in a new process (0.045 s); mapped atoms (decision 0170) make it lazy.
+    The cross part's frame names by identity (0.031 s) are derived from the placed programs on each run and could
+    be kept with the prepared program. Preloading the cross space reads 36,409 frames, 172 MB encoded (0.035 s),
+    for one stratum that reads 396 relations' 29,821 rows.
+  - **stats** (0.21 s) measures a run where nothing changed. The kept inputs from the frames are 0.084 s: all
+    1,030 inputs' document frames are decoded and checked against their digests, for one stratum's reads. The 4
+    semi-join base relations (`docof`, `end_line`, `tree_digest`, `visit_index`) are measured again on each run,
+    because a semi-join's statistics are never kept: 8 column sorts of 427k–464k rows, 0.060 s. Binding the kept
+    inputs lazily, per relation a running stratum reads, and keeping a semi-join's statistics under its exports'
+    digests leaves about 0.03 s.
+  - **cross** (0.11 s): the kept part from the frames is 0.042 s, the one stratum 0.021 s.
 
 ### Q19. A new process reads every kept frame of the cross part, its own or not
 
