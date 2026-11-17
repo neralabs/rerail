@@ -76,7 +76,7 @@ an infix expression (`public open class`, the name, a lambda). Probed: two modif
 does; the class alone or with a property after does not); it is the GLR's choice between versions
 alive past the class, not read here. Left open.
 
-About 90 MB/s on one core of an M-series Mac under load (`kotlin_costs`, the corpus 20 times).
+180 MB/s on one core (see "Speed").
 
 ## Swift
 
@@ -135,8 +135,7 @@ Oracle (`RERAIL_SWIFT_OUT`): 376 files from 25 repositories
 (`~/orca/rerail-shared/lean-corpus/swift`), 335 without errors: **335 the same, none refused, none
 differ**; all 41 error texts refused. Golden tests: 30 probe texts (`golden.rs`), the same.
 
-About 140 MB/s on one core under load (`swift_costs`, the corpus 20 times: 53.5 MB in 0.38 s of
-user time, 12 MB resident).
+161 MB/s on one core, 12 MB resident (see "Speed").
 
 ## Scala
 
@@ -189,9 +188,74 @@ instance with a template body. Each `new X(…) {` is ambiguous until its body c
 holds more GLR versions than tree-sitter keeps (6), and which survives is its pruning's choice,
 not the grammar's. Left open. Golden tests: 22 probe texts (`golden.rs`), the same.
 
-About 58 MB/s on one core while the machine was loaded (`scala_costs`, the corpus 20 times: 71.6 MB
-in 1.24 s of user time, 16 MB resident, `quiet-run --here` with a load average of 78 on 18 cores),
-so not comparable with Kotlin's and Swift's figures.
+146 MB/s on one core (see "Speed").
+
+## Speed
+
+Measured with each crate's `*_costs` example over its corpus 20 times, built with `--profile
+profiling`, through `quiet-run --here`. Each figure is the least of three rounds. The third
+argument `lex` runs the lexer alone (`lex_only`: every token from the start, no parse).
+
+| | whole parse | instructions / byte | cycles / byte | IPC | lexer alone: instructions / token | cycles / token |
+|---|---|---|---|---|---|---|
+| Kotlin | 180 MB/s | 120 | 25.0 | 4.8 | 184 | 52 |
+| Swift | 161 MB/s | 140 | 28.1 | 5.0 | 201 | 58 |
+| Scala | 146 MB/s | 144 | 30.4 | 4.7 | 224 | 52 |
+
+The lexer is about a quarter of the cycles (6.9 of 25.0 a byte for Kotlin). The rest is the
+parse and the tape writer, in about equal parts.
+
+**Hotspots** (`sample`, share of the samples):
+
+- The lexer: `token_at` (the dispatch on a token's first byte), `lex_batch` with `skip` inlined,
+  `name_end`, and Kotlin's ASI and Swift's semicolon scanner. 26-34%, at an IPC of 3.5 against
+  the parse's 4.8: its branches mispredict.
+- The writer (`tw.rs`, `Writer`): `claim`, `close_span`, `open`, `token`, the automata's `walk`,
+  `leaf`, `finish_columns`. About 30%. `Writer::insert` and its memmove are 4-6%. Wraps cause
+  most of it (Kotlin 106 of 117 samples, Scala 132 of 175): a postfix or operator chain wraps
+  its growing operand again and again, so k wraps over n nodes move k times n. The rest is
+  held tokens put in one insert each (Swift 83 of 153).
+- Scala only: the scanner was copied with its `Vec` at each layout question, about 7% in
+  malloc and free.
+
+**Changed** (tapes' digests unchanged):
+
+| Change | Effect |
+|---|---|
+| Scala's scanner holds its indentation stack inline (48 deep, deeper refused), and `read_word` a 16-byte buffer: a question allocates nothing | Scala −11% instructions |
+| `Writer::insert` (shared by every lean parser): a span that fits a window (16 bytes, 8 cells) moves by one fixed-size copy, not a `memmove` call per column | −1.4% to −3% cycles |
+| `skip` returns at once where the next byte touches the last token | Kotlin −2.7%, Scala −2.0% cycles |
+
+**Tried and dropped:**
+
+- One scan of the blank and line-end masks for a whole gap (`gap_end`): the lexer's
+  instructions rose by 6%. Most gaps are one space inside a block, which the old path already
+  handled cheaply.
+- Each bracket's match found once for Kotlin's `assignment_ahead`, which walks a statement's
+  tokens at each statement: −0.4% instructions. That gain doesn't pay for the memo's state and
+  invalidation.
+- Swift's `skip` fast exit: +1.7% cycles.
+
+**Opportunities**, largest first, with the Parser-generators work they come from:
+
+1. **The lexer in the block lexer's form** (docs/parser-generators/31, 36; decision 0177).
+   Every token start of a block is found at once (`!space & !(word & word << 1)`, pairs as
+   nibble products), and a run's tokens are written without a branch a token: the kind from a
+   table on the first byte, the end from the word mask, the word code from one 8-byte load and
+   the perfect hash (already used). Page 30's lexer runs 70-82 instructions a token against our
+   184-224, and doesn't mispredict on each token's first byte. Kotlin and Swift lex in batches
+   of 16 already. Scala's `relex_at` and Swift's `split_at` cut the buffer, so the batch stays
+   the unit. Worth up to 15% of the whole parse.
+2. **Writer chains for repeated wraps.** `Writer::open_chain` holds the wraps at one place and
+   puts them in one move (n + k), as `python_lean` and `ecma_lean` use it. `tw.rs` would open a
+   chain at a mark's first wrap and end it at `unmark`. `field_since`, `claim`'s walk over a
+   node's children, and `save`/`rewind` must then see the held wraps. Up to 4-6%, more on long
+   chains.
+3. **Held tokens put in one move at `claim`**: a multi-insert in `Writer` (one backward pass
+   per column) instead of an insert per kept token.
+4. **One symbol a token** (page 34): the token's keyword in its kind, so the parser's `match`
+   needs no second test on `word`. The lean parsers already carry the word code, so this is
+   mostly done; what remains is the parse's own branches.
 
 ## Testing loop
 
