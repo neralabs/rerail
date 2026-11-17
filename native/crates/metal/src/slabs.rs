@@ -57,80 +57,44 @@ pub fn aligned(length: usize) -> usize {
     length.div_ceil(ALIGN) * ALIGN
 }
 
-rerail_blocks::structure! {
-    /// A document as the device reads it (decision 0289 §4): its first byte in the batch's chunk
-    /// block, and its parts as byte offsets from there, so a copy into another block changes `at`
-    /// alone. `node_base` is the document's first node in a batch's numbering, set by the batch's
-    /// document table (`DocTable`). Its MSL is generated (`msl`), with layout assertions. It is
-    /// `Copy`, unlike a block's own structures: it holds no span, so a copy reads the same. The tape
-    /// is read where it lies, format 15's columns or format 16's arrays (decision 0293): nothing per
-    /// node is derived beside it.
+use rerail_blocks::structure;
+/// The view an entry holds past its `at` (the reads' one definition, decision 0310).
+pub use rerail_clif::view::TapeView;
+rerail_clif::tape_view_fields!(structure, [
+    /// A document as the device reads it (decisions 0289 §4, 0293, 0310): its first byte in the batch's chunk block
+    /// (`at`), then its view (`rerail_clif::view::TapeView`'s fields, from the one list): every offset of the view
+    /// counts from `at`, so a copy into another block changes `at` alone. The tape is read where it lies, format
+    /// 15's columns or format 16's arrays, by the reads written once (`metal_tape_reads.metal`, which take
+    /// `chunk + at` and the view): nothing per node is derived beside it. `node_base`, `source_base` and
+    /// `line_base` are the document's place in a batch's numbering, set by the batch's document table
+    /// (`DocTable`). Its MSL is generated (`msl`), with layout assertions. It is `Copy`, unlike a block's own
+    /// structures: it holds no span, so a copy reads the same.
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-    pub struct ChunkTape {
-    /// The document's first byte in its block: every part below is an offset from it.
+    pub struct ChunkTape
+], [
+    /// The document's first byte in its block: every offset of its view counts from it.
     pub at: u32,
-    pub nodes: u32,
-    pub node_base: u32,
-    /// The tape's format: 15 or 16 (a 16z tape is laid out as format 16 where it is placed).
-    pub format: u32,
-    /// Format 15: `size`'s, `off`'s and `tail`'s widths in bytes, at bits 0, 4 and 8; bit 12: tails
-    /// measured from the node's own start. Format 16: the slot, gap and length widths at bits 0, 4
-    /// and 8, the checkpoints' at 12, and the four side lists' value widths at 16, 20, 24 and 28.
-    pub widths: u32,
-    /// Format 15's columns (code, size, base, off, tail), or format 16's arrays (codes, slots, gaps,
-    /// lengths, checkpoints).
-    pub columns: [u32; 5],
-    /// Format 16: the four side lists (codes' low parts, escaped slots, gaps, lengths), and each
-    /// one's part starts (u32s, a part a 1,024 nodes).
-    pub side: [u32; 4],
-    pub parts: [u32; 4],
-    /// Format 16: its language's cutoff and the numbers a prefix byte covers.
-    pub cut: u32,
-    pub per: u32,
-    /// The code table (`DeviceCode`, format 16's: the language's).
-    pub codes: u32,
-    pub source: u32,
-    pub source_len: u32,
-    /// Line starts (u32, document-local bytes), the first 0, and how many.
-    pub lines: u32,
-    pub line_count: u32,
-    /// The code table's length.
-    pub code_count: u32,
-    /// The document's place in a batch's numbering of source bytes and lines, as a packed batch
-    /// concatenates them (set by `DocTable`).
-    pub source_base: u32,
-    pub line_base: u32,
-    /// Where the tape starts (its header).
-    pub tape: u32,
+]);
+const _: () = assert!(std::mem::size_of::<ChunkTape>() == 4 + std::mem::size_of::<rerail_clif::view::TapeView>());
+
+impl ChunkTape {
+    /// The entry of a document at `at` whose view is `view`.
+    pub fn new(at: u32, view: &rerail_clif::view::TapeView) -> ChunkTape {
+        let mut entry = ChunkTape { at, ..ChunkTape::default() };
+        *entry.view_mut() = *view;
+        entry
+    }
+    /// Its view: the fields after `at`, laid out as `TapeView` (both are made of the one list, in order).
+    pub fn view(&self) -> &rerail_clif::view::TapeView {
+        // SAFETY: `ChunkTape` is `repr(C)`, `at` (a u32) then `TapeView`'s fields of the same types in the same
+        // order (`tape_view_fields!`), so they lie at `TapeView`'s offsets past 4 bytes, at u32 alignment.
+        unsafe { &*(&raw const self.nodes).cast::<rerail_clif::view::TapeView>() }
+    }
+    pub fn view_mut(&mut self) -> &mut rerail_clif::view::TapeView {
+        // SAFETY: as `view`.
+        unsafe { &mut *(&raw mut self.nodes).cast::<rerail_clif::view::TapeView>() }
+    }
 }
-}
-const _: () = assert!(std::mem::size_of::<ChunkTape>() == 116);
-// The view the tape's reads take (`rerail_clif::view::TapeView`, decision 0310) is this entry's
-// layout, field for field: `at` is its first field, and a read's base is `chunk + at`.
-const _: () = {
-    use rerail_clif::view::TapeView;
-    use std::mem::{offset_of, size_of};
-    assert!(size_of::<ChunkTape>() == size_of::<TapeView>());
-    assert!(offset_of!(ChunkTape, at) == offset_of!(TapeView, at));
-    assert!(offset_of!(ChunkTape, nodes) == offset_of!(TapeView, nodes));
-    assert!(offset_of!(ChunkTape, node_base) == offset_of!(TapeView, node_base));
-    assert!(offset_of!(ChunkTape, format) == offset_of!(TapeView, format));
-    assert!(offset_of!(ChunkTape, widths) == offset_of!(TapeView, widths));
-    assert!(offset_of!(ChunkTape, columns) == offset_of!(TapeView, columns));
-    assert!(offset_of!(ChunkTape, side) == offset_of!(TapeView, side));
-    assert!(offset_of!(ChunkTape, parts) == offset_of!(TapeView, parts));
-    assert!(offset_of!(ChunkTape, cut) == offset_of!(TapeView, cut));
-    assert!(offset_of!(ChunkTape, per) == offset_of!(TapeView, per));
-    assert!(offset_of!(ChunkTape, codes) == offset_of!(TapeView, codes));
-    assert!(offset_of!(ChunkTape, source) == offset_of!(TapeView, source));
-    assert!(offset_of!(ChunkTape, source_len) == offset_of!(TapeView, source_len));
-    assert!(offset_of!(ChunkTape, lines) == offset_of!(TapeView, lines));
-    assert!(offset_of!(ChunkTape, line_count) == offset_of!(TapeView, line_count));
-    assert!(offset_of!(ChunkTape, code_count) == offset_of!(TapeView, code_count));
-    assert!(offset_of!(ChunkTape, source_base) == offset_of!(TapeView, source_base));
-    assert!(offset_of!(ChunkTape, line_base) == offset_of!(TapeView, line_base));
-    assert!(offset_of!(ChunkTape, tape) == offset_of!(TapeView, tape));
-};
 
 /// The MSL of `ChunkTape`, for the kernels that read documents in place (`metal_tape.metal`).
 pub fn msl() -> String {

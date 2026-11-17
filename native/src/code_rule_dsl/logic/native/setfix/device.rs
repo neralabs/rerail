@@ -1300,6 +1300,19 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                 let n_all = rel.len();
                 let ids: Option<Vec<usize>> = (rel.ndead > 0).then(|| (0..n_all).filter(|&id| !is_dead(&rel.dead, id as u32)).collect());
                 let n = ids.as_ref().map_or(n_all, Vec::len);
+                // A flat relation in its block is read where it lies (decision 0325 step 3): nothing uploaded, and the
+                // entry holds every column, each at its own place.
+                if let Some(b) = rel.in_block().filter(|_| ids.is_none() && !matches!(owner, Owner::Src(_))) {
+                    let device = rerail_accel::gpu::join::device()?;
+                    let held = rerail_accel::gpu::join::Held::kept(b.facts.block.gpu_buffer(device), Box::new(b.facts.clone()));
+                    let dev = mj::DevRel::in_block(held, b.at, n, rel.k);
+                    rep.in_place += 1;
+                    let bytes = old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
+                    let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
+                    res.entries.push(Entry { owner, cols: (0..rel.k).collect(), dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
+                    res.bytes = res.bytes();
+                    res.entries.len() - 1
+                } else {
                 let k = want.len();
                 res.trim(8 * k * n);
                 // The process's device budget short (the syntax side's tapes hold most of it): every relation kept
@@ -1344,10 +1357,11 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                             }
                         }
                         (_, None) => {
+                            // Each wanted value read where it lies (`RowRef::Rows`), not the row copied whole.
                             for r in 0..n {
-                                let row = rel.row(row_of(r));
+                                let row = rel.at(row_of(r));
                                 for (c, &w) in want.iter().enumerate() {
-                                    v[c * n + r] = row[w];
+                                    v[c * n + r] = row.at(w);
                                 }
                             }
                         }
@@ -1373,6 +1387,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                 res.entries.push(Entry { owner, cols: want, dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
                 res.bytes = res.bytes();
                 res.entries.len() - 1
+                }
                 }
             }
         };
@@ -1430,7 +1445,8 @@ pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStat
         .zip(&gathered)
         .map(|((c, d), g)| match (c, d, g) {
             (StatColumn::Values(v), _, _) => StatCol::Host(v),
-            (StatColumn::Rel(..), Some((d, at)), _) => StatCol::Device { buffer: &d.held().buffer, at: at * d.rows, rows: d.rows },
+            (StatColumn::Rel(..), Some((d, at)), _) if d.at != 0 => StatCol::Device { buffer: &d.held().buffer, at: d.at as usize, rows: d.rows, col: Some(*at as u32) },
+            (StatColumn::Rel(..), Some((d, at)), _) => StatCol::Device { buffer: &d.held().buffer, at: at * d.rows, rows: d.rows, col: None },
             (_, _, g) => StatCol::Host(g.as_deref().expect("gathered")),
         })
         .collect();
@@ -1444,7 +1460,7 @@ fn column_values(rel: &InRel, col: usize) -> Vec<i64> {
     let n = rel.len();
     let live = (0..n).filter(|&id| rel.ndead == 0 || !is_dead(&rel.dead, id as u32));
     if rel.view.is_none() {
-        live.map(|id| rel.row(id)[col]).collect()
+        live.map(|id| rel.value(id, col)).collect()
     } else {
         live.map(|id| rel.at(id).read().at(col)).collect()
     }
@@ -1610,7 +1626,7 @@ fn column_symbols(rel: &InRel, col: usize) -> Vec<i64> {
         if is_dead(&rel.dead, id as u32) {
             continue;
         }
-        let v = if rel.view.is_none() { rel.row(id)[col] } else { rel.at(id).read().at(col) };
+        let v = if rel.view.is_none() { rel.value(id, col) } else { rel.at(id).read().at(col) };
         if seen.insert(v) {
             ids.push(v);
         }

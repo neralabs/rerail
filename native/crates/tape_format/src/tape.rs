@@ -14,6 +14,7 @@
 //! (`crate::f16::F16`). A caller dispatches once a document (`with_tape!`), so the per-node reads are compiled
 //! for each format.
 
+use crate::generated_reads::f15 as reads;
 use crate::{CHECKPOINT_STRIDE, HEADER_BYTES, MAGIC, FORMAT_VERSION, TAIL_FROM_START, header, padded};
 
 /// What a code is: the grammar's kind and field, the flags (`CODE_EXTRA`, `CODE_ERROR`, `CODE_MISSING`), a
@@ -194,28 +195,20 @@ pub struct F15Columns<'a> {
     pub from_start: bool,
 }
 
-/// Format 15, read where its columns lie. Its codes are the tape's own table (numbered by first use); its parent
-/// is not stored, so it is found back over the nodes before (the format's cost: 0156 §1.7).
+/// Format 15, read where its columns lie, through the tape's reads (decision 0310's Rust backend,
+/// `generated_reads`) over its view. Its codes are the tape's own table (numbered by first use); its parent is not
+/// stored, so it is found back over the nodes before (the format's cost: 0156 §1.7).
 #[derive(Clone, Copy)]
 pub struct F15<'a> {
-    n: usize,
-    c: F15Columns<'a>,
+    bytes: &'a [u8],
+    view: rerail_clif::view::TapeView,
     table: &'a CodeTable,
 }
 
-#[inline(always)]
-fn cell(column: &[u8], width: u8, i: usize) -> u32 {
-    if width == 2 {
-        u32::from(u16::from_le_bytes([column[2 * i], column[2 * i + 1]]))
-    } else {
-        u32::from_le_bytes(column[4 * i..4 * i + 4].try_into().expect("4 bytes"))
-    }
-}
-
 impl<'a> F15<'a> {
-    /// The tape of `columns`, whose code ids `table` names. Checked: the widths, the columns' lengths, each code
-    /// id and size in range.
-    pub fn new(columns: F15Columns<'a>, table: &'a CodeTable) -> Result<Self, String> {
+    /// The tape of `columns`, which lie in `within`, whose code ids `table` names. Checked: the widths, the
+    /// columns' lengths, each code id and size in range.
+    pub fn new(within: &'a [u8], columns: F15Columns<'a>, table: &'a CodeTable) -> Result<Self, String> {
         if columns.widths.iter().any(|&w| w != 2 && w != 4) {
             return Err("a tape column of another width".into());
         }
@@ -224,32 +217,28 @@ impl<'a> F15<'a> {
         if columns.size.len() < n * w[0] || columns.off.len() < n * w[1] || columns.tail.len() < n * w[2] || columns.base.len() < 4 * n.div_ceil(CHECKPOINT_STRIDE) {
             return Err("a short tape column".into());
         }
-        let t = F15 { n, c: columns, table };
+        let t = F15::over(within, columns.view(within, 0)?, table);
         for i in 0..n {
-            if u16::from_le_bytes([columns.code[2 * i], columns.code[2 * i + 1]]) as usize >= table.len() {
+            if t.code(i) as usize >= table.len() {
                 return Err("a node's code is not in the table".into());
             }
-            if i + t.size(i) > n {
+            if t.subtree_end(i) > n {
                 return Err("a node's size runs past the tape".into());
             }
         }
         Ok(t)
     }
-    /// The tape of columns a writer made in this process (the engine's own image, whose shape its restore
-    /// checked): not checked again, as it is read once a document a pass. A wrong column panics where it is read.
-    pub fn over(columns: F15Columns<'a>, table: &'a CodeTable) -> Self {
-        F15 { n: columns.code.len() / 2, c: columns, table }
-    }
-    #[inline(always)]
-    fn size(&self, i: usize) -> usize {
-        (cell(self.c.size, self.c.widths[0], i) as usize).max(1)
+    /// The tape `view` places in `bytes` (the engine's own image, whose shape its restore checked): not checked
+    /// again, as it is read once a document a pass. A read past `bytes` panics where it is made.
+    pub fn over(bytes: &'a [u8], view: rerail_clif::view::TapeView, table: &'a CodeTable) -> Self {
+        F15 { bytes, view, table }
     }
 }
 
 impl Tape for F15<'_> {
     #[inline(always)]
     fn len(&self) -> usize {
-        self.n
+        self.view.nodes as usize
     }
     #[inline(always)]
     fn table(&self) -> &CodeTable {
@@ -257,60 +246,57 @@ impl Tape for F15<'_> {
     }
     #[inline(always)]
     fn code(&self, i: usize) -> u32 {
-        u32::from(u16::from_le_bytes([self.c.code[2 * i], self.c.code[2 * i + 1]]))
+        reads::tape_number(self.bytes, &self.view, i as u32)
     }
     #[inline(always)]
     fn subtree_end(&self, i: usize) -> usize {
-        i + self.size(i)
+        i + reads::tape_size(self.bytes, &self.view, i as u32) as usize
     }
-    /// Not stored: the nearest node before `i` whose subtree holds it, searched back over at most `BACK` nodes,
-    /// else found by descending from the root over the siblings' subtree ends (`Tape::path`): a search is never
-    /// longer than the path's siblings.
+    /// Not stored: the nearest node before `i` whose subtree holds it, searched back over at most 64 nodes, else
+    /// found by descending from the root over the siblings' subtree ends (`Tape::path`): a search is never longer
+    /// than the path's siblings.
     fn parent(&self, i: usize) -> Option<usize> {
-        const BACK: usize = 64;
-        if let Some(p) = (i.saturating_sub(BACK)..i).rev().find(|&j| j + self.size(j) > i) {
-            return Some(p);
-        }
-        if i == 0 {
-            return None;
-        }
-        let mut at = 0;
-        loop {
-            let mut c = at + 1;
-            while c + self.size(c) <= i {
-                c += self.size(c);
-            }
-            if c == i {
-                return Some(at);
-            }
-            at = c;
-        }
+        let p = reads::tape_parent(self.bytes, &self.view, i as u32);
+        (p != u32::MAX).then_some(p as usize)
     }
     #[inline(always)]
     fn start(&self, i: usize) -> u64 {
-        u64::from(cell(self.c.base, 4, i / CHECKPOINT_STRIDE).wrapping_add(cell(self.c.off, self.c.widths[1], i)))
+        u64::from(reads::tape_start(self.bytes, &self.view, i as u32))
     }
     #[inline(always)]
     fn end(&self, i: usize) -> u64 {
-        let from = if self.c.from_start { self.start(i) } else { self.start(i + self.size(i) - 1) };
-        u64::from((from as u32).wrapping_add(cell(self.c.tail, self.c.widths[2], i)))
+        u64::from(reads::tape_end(self.bytes, &self.view, i as u32))
     }
 }
 
 /// A stored format 15 image's columns and its code table (`MAGIC`, `FORMAT_VERSION`), read where they lie.
-/// The view a format 15 tape's reads take (decision 0310), the tape at byte `base` of what the view's offsets count
-/// from (0: the tape's own bytes).
+/// The view a format 15 tape's reads take (decision 0310), the stored tape at byte `base` of what the view's
+/// offsets count from (0: the tape's own bytes).
 pub fn f15_view(bytes: &[u8], base: usize) -> Result<rerail_clif::view::TapeView, String> {
-    let (c, _) = f15_columns(bytes)?;
-    let at = |column: &[u8]| u32::try_from(base + (column.as_ptr() as usize - bytes.as_ptr() as usize)).map_err(|_| "a tape placed past 4 GiB".to_owned());
-    let widths = u32::from(c.widths[0]) | u32::from(c.widths[1]) << 4 | u32::from(c.widths[2]) << 8 | u32::from(c.from_start) << 12;
-    Ok(rerail_clif::view::TapeView {
-        nodes: u32::try_from(c.code.len() / 2).map_err(|_| "a tape past 4 G nodes".to_owned())?,
-        format: 15,
-        widths,
-        columns: [at(c.code)?, at(c.size)?, at(c.base)?, at(c.off)?, at(c.tail)?],
-        ..Default::default()
-    })
+    f15_columns(bytes)?.0.view(bytes, base)
+}
+
+impl F15Columns<'_> {
+    /// The view the reads take (decision 0310): every column lies in `within`, which lies at byte `base` of what
+    /// the view's offsets count from.
+    pub fn view(&self, within: &[u8], base: usize) -> Result<rerail_clif::view::TapeView, String> {
+        let range = within.as_ptr_range();
+        let at = |column: &[u8]| {
+            let inside = range.start <= column.as_ptr() && column.as_ptr_range().end <= range.end;
+            if !inside {
+                return Err("a column outside the tape's bytes".to_owned());
+            }
+            u32::try_from(base + (column.as_ptr() as usize - range.start as usize)).map_err(|_| "a tape placed past 4 GiB".to_owned())
+        };
+        let widths = u32::from(self.widths[0]) | u32::from(self.widths[1]) << 4 | u32::from(self.widths[2]) << 8 | u32::from(self.from_start) << 12;
+        Ok(rerail_clif::view::TapeView {
+            nodes: u32::try_from(self.code.len() / 2).map_err(|_| "a tape past 4 G nodes".to_owned())?,
+            format: 15,
+            widths,
+            columns: [at(self.code)?, at(self.size)?, at(self.base)?, at(self.off)?, at(self.tail)?],
+            ..Default::default()
+        })
+    }
 }
 
 pub fn f15_columns(bytes: &[u8]) -> Result<(F15Columns<'_>, CodeTable), String> {
@@ -523,7 +509,7 @@ pub(crate) mod tests {
     fn nearest_all_is_the_climb() {
         let (image, _) = sample();
         let (columns, table) = f15_columns(&image).unwrap();
-        let t = F15::new(columns, &table).unwrap();
+        let t = F15::new(&image, columns, &table).unwrap();
         for k in 0..table.len() as u32 {
             let set = table.set(|e| *e == *table.entry(k) || e.kind % 3 == 0);
             let keep = |i: usize| i % 5 != 2;
@@ -558,7 +544,7 @@ pub(crate) mod tests {
         nodes[0].3 = nodes.len() as u32;
         let image = preorder_image(1, &src, &nodes);
         let (columns, table) = f15_columns(&image).unwrap();
-        let t = F15::new(columns, &table).unwrap();
+        let t = F15::new(&image, columns, &table).unwrap();
         let mut parents = vec![None; nodes.len()];
         let mut open: Vec<(usize, usize)> = Vec::new();
         for (i, &(.., size)) in nodes.iter().enumerate() {
@@ -581,7 +567,7 @@ pub(crate) mod tests {
     fn format_15_in_place_answers_as_its_tree() {
         let (image, nodes) = sample();
         let (columns, table) = f15_columns(&image).unwrap();
-        let t = F15::new(columns, &table).unwrap();
+        let t = F15::new(&image, columns, &table).unwrap();
         assert_eq!(t.len(), nodes.len());
         let mut parents = vec![None; nodes.len()];
         let mut open: Vec<(usize, usize)> = Vec::new();

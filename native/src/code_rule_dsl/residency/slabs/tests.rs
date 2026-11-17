@@ -150,9 +150,9 @@ fn a_batch_over_several_slabs_is_gathered_into_one_block() {
         let v = &gathered.view;
         assert_eq!(gathered.bytes_at(v.source, v.source_len as usize), document.bytes_at(document.view.source, document.view.source_len as usize));
         assert_eq!(u32s(gathered, v.lines, v.line_count as usize), u32s(document, document.view.lines, document.view.line_count as usize));
-        // Every part an offset from `at`: the copy moved `at` alone (decision 0289 §4).
-        assert_eq!(ChunkTape { at: 0, ..*v }, ChunkTape { at: 0, ..document.view });
-        assert_eq!(gathered.codes().len(), document.codes().len());
+        assert_eq!(gathered.codes(), document.codes());
+        // The view moved with the document: its offsets count from its first byte.
+        assert_eq!(gathered.view.view(), document.view.view());
     }
     // Asked again, the residency gives the gathered documents: one slab already, nothing copied.
     let again = admit_docs(&docs).unwrap();
@@ -173,7 +173,7 @@ fn the_device_reads_every_format_as_the_document_does() {
     use crate::code_rule_dsl::tape::formats::Format;
     use crate::code_rule_dsl::transducer::packed::metal_backend::{MappedBuffer, pipeline_named};
     use metal::MTLSize;
-    const TAPE: &str = include_str!("../../transducer/packed/metal_tape.metal");
+    const TAPE: &str = concat!(include_str!("../../transducer/packed/metal_tape_reads.metal"), include_str!("../../transducer/packed/metal_tape.metal"));
     const FIELDS: usize = 12;
     const KERNEL: &str = r#"
 inline uint tape_global(ChunkTape d,uint i){return i==TAPE_NONE?TAPE_NONE:d.node_base+i;}

@@ -760,9 +760,15 @@ fn scratch_rows(plan: &Plan<'_>) -> usize {
 }
 
 /// The device's tape view (decision 0032), which the label and pattern kernels read: the
-/// document table's entry as generated (`slabs::msl`, decision 0289 §4), then the readers.
+/// document table's entry as generated (`slabs::msl`, decision 0289 §4), the reads written once
+/// (decision 0310), then the readers.
 static TAPE_VIEW: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-    format!("#include <metal_stdlib>\nusing namespace metal;\n{}{}", crate::code_rule_dsl::residency::slabs::msl(), include_str!("metal_tape.metal"))
+    format!(
+        "#include <metal_stdlib>\nusing namespace metal;\n{}{}{}",
+        crate::code_rule_dsl::residency::slabs::msl(),
+        include_str!("metal_tape_reads.metal"),
+        include_str!("metal_tape.metal")
+    )
 });
 /// The label kernels over the tape view.
 static SOURCE: std::sync::LazyLock<String> =
@@ -1622,6 +1628,10 @@ impl Runner<'_> {
         };
         crate::code_rule_dsl::prof::count_named(format!("kernel_us.{label}"), ((end - start) * 1e6) as usize);
         crate::code_rule_dsl::prof::count_named(format!("kernel_n.{label}"), 1);
+        // The run's GPU time too: split off here, its buffer never reaches the flush that counts it.
+        crate::code_rule_dsl::prof::count("gpu.device_us", ((end - start) * 1e6) as usize);
+        self.outcome.device += (end - start).max(0.0);
+        self.outcome.command_buffers += 1;
         self.command = self.queue.new_command_buffer().to_owned();
         self.command.set_label("Rerail label passes");
     }

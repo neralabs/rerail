@@ -1004,6 +1004,14 @@ pass.
   - **`col`'s lookup in `fzk287`**: 790 rows over 17 chunks in 52 ms, 65 µs a row against `col`'s 694 ns over the
     run. Not the line index (built in projection, about 10 µs a file). It looks fixed per chunk. Next: a sample of
     that step.
+- **The estimates fixed, and placement leans to the GPU** (2026-11-16, decisions 0320 and 0321): the plan's record
+  prices filters as its search does, and the tree's counts know which kinds a field joins, so `attr_of`'s seed is
+  estimated at 4,400 rows a loop for 5,200 made (was 5). The steps' rows-weighted miss went from 8.2× to 2.0×. The GPU
+  is now chosen while priced under twice the CPU's. About 310 runs of 2,200 go to the GPU, against about 50, and the
+  same plans' GPU strata save 2.2 s of host CPU. Open:
+  - **A small stratum's device run** costs about 0.3 ms past its price (`asg`, `export_query__sup0`): refit
+    `DEVICE_SUBMISSION` for a stratum run outside a wave, on an idle machine.
+  - **`fzk287`'s `col` lookup** (above), still.
 - **The engine's steps were not the plan's** (found by the above, fixed 2026-11-16): a literal can make several
   engine steps (`$k = @sub(@strlen($dots), 1)` makes two; a head's computed term makes more), and the engine's
   counts were zipped against the plan's steps by place. From such a literal on, every step's counts were its
@@ -1148,6 +1156,11 @@ pass.
   work is priced at a tenth of its CPU.
 - **Whose**: the planner's statistics: the containment of a lookup after a `nearest` relation, and a lookup on two
   derived columns (0299's line of work).
+- **Progress** (2026-11-16, decision 0320): the plan's record no longer halves each filter, and a kind or field after a
+  field is priced by the tree's fielded counts. The steps that make 100+ rows miss by 2.0× on average, weighted by
+  rows (was 8.2×), 84% within 2×. Still open: `qn`'s `walk` by `(x, s)` (about 170× under), the `ask_*` stratum's
+  deltas of 1, and the kind memberships after a derived or `nearest` relation (`in_first_iter`, `tp_list`), which
+  the tree's counts do not see.
 - **Done when**: these strata's planned work is within 2× of their work.
 
 ### Q48. (Q46 at 1adc44eff) Under load, a Metal run loses findings (Native-and-GPU-strata's) — done
@@ -1249,6 +1262,49 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
 - **Done when**: the D416 clause's work is accounted (a limit too small for its walk, or a walk that loops), and
   the coverage test's count is explained (the pack's clauses) or met; both gates pass.
 
+### Q51. (Q47 at 8bfa12af6) W's reference graph parses every file a second time (39% of internal_dead_code's CPU)
+
+- **Found** (2026-11-16, t41 §2): `references::add_file` parses again with tree-sitter and runs W's
+  `calls::summarize`: 39.7 s over 3,110 files, 12.6 ms a file. The hot frames are `ts_node_child_with_descendant`
+  (tree-sitter's `parent()`, a walk from the root at every call).
+- **Done when**: the reference graph is built from the tape and facts the run already has (a rule program or the
+  transducer), with no second parse and no parent climbs; internal_dead_code's CPU drops by about that much.
+
+### Q52. (Q48 at 8bfa12af6) The memory line starves chunks without lowering the peak
+
+- **Found** (2026-11-16, t41 §3): the run's footprint is past `RUN_MB` (1 GB) early, so 455 of 498 chunk sizings
+  fell to the 8k-node minimum. `RERAIL_RUN_MB=8000` gave 34 chunks in place of 457, with the same peak (2,537 MB
+  against 2,501 MB), and cut the matcher kernels' GPU time from 5.5 s to 1.28 s.
+- **Done when**: what holds the footprint past the line is named and released or budgeted; chunk size follows the
+  device's grain on a device run; the warning "chunk sizings … cut by the run's memory line" is gone on the
+  data-layer corpus.
+
+### Q56. (Q49 at a3f9c49f2) Micro walks are root-serial on the GPU
+
+- **Found** (2026-11-16, t41 §4): `label_micro` (the loop tier) runs about 2,260 threads a dispatch, at 10 ms a
+  dispatch, while `clause_patterns` runs 17.8 M threads in 3 ms. Its walks (`desc`, `child … jump`) average 420–800
+  serial steps and reach 4,280.
+- **Done when**: `desc kind=K` is a range query on the preorder tape and a `child` loop a segmented pass, so a walk
+  costs its output, not its length; the longest walk at s1000 is under 100 steps.
+
+### Q50. A device run's matcher launches: the host's part and the GPU's in series, and prices 3× high
+
+- **Found** (2026-11-16, t41): over 32 GPU launches, 1.76 s of host CPU and 1.28 s of GPU time ran one after the
+  other on the one GPU slot. The executor estimated the batches at 16.3 s against 5.0 s run, so 38 of 70 went to
+  the CPU.
+- **Done when**: the next launch is encoded while the GPU runs this one, and the matcher's GPU price comes from
+  measured samples.
+
+### Q54. (Q20 at f51cab698) The CPU JIT's capture pairs compare and scan a byte a step
+
+Found 2026-11-16 (0310 step 2, moving the JIT's spans onto the tape): `native_cpu_capture_pair.rs`'s `text_equal`
+compares two captures' texts a byte an iteration, and `same_line` looks for a newline between two starts a byte an
+iteration. Both are per-byte loops, which the engine's code refuses elsewhere.
+
+- **Keep**: the pair's verdicts (equal texts, same line) as now.
+- **Done when**: both compare a word at a time over the window (or `same_line` reads the document's line table,
+  as the device's does), with no loop a byte a step.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
@@ -1272,3 +1328,18 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
    (`corpus::requests_file_local`, `file_local::requests_file_local`), with the test
    `a_cross_file_reader_finds_the_text_of_another_files_node`; `a_cross_file_text_test_is_maintained_as_a_filter`
    runs again.
+
+### Q55. Relations are blocks the CPU and GPU read in place (0325): the rest of steps 3–7
+
+Built: steps 1 and 2 (417256f3a, b84b98d3e, 061fbbfca, 640ce085c), and step 3 for flat relations (8aee765b0).
+The device reads a flat input in its block, so flat relations upload 0 MB. On posthog/hogql Metal retires 7%
+fewer instructions than step 1, and the CPU binding is level. Left, in order:
+
+1. Step 3 for a relation with dead rows: its bits move into the block beside its rows, and the kernels skip them.
+2. Step 4: heads written in place by count, reserve and write, so no rows come back (`rows back into the store`
+   is 160 ms of the device's host CPU on hogql).
+3. Step 5: indexes are the relation's (`rel_group`), so `rel_hash` per binding goes.
+4. Step 6: placement drops the upload and row-back prices, and `GPU_BIAS` is refitted.
+5. Step 7: the output's, frames' and memo's rows.
+
+The views (source views over a batch, 88 MB on hogql) are not relations in blocks, and still upload.

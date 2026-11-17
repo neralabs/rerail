@@ -46,7 +46,32 @@ read. Emitting the reads into the JIT by hand would make a third copy of every r
 2. The JIT reads the tape through them, for every packed-batch read it makes (kind, field, flags, span, parent,
    children, next sibling, subtree end); the packed batch's node records go from the CPU path.
 3. The Rust backend in the tape crate; the hand-written primitive reads go.
-4. The MSL backend; `metal_tape.metal`'s hand port goes. The device's document entry is then one definition with `TapeView`: until then it is two
-   declarations of one layout, `rerail_metal::slabs::ChunkTape` (0289 §4's generated MSL; `rerail-blocks` is not
-   built for WASM, where the tape crate and `TapeView` are) and `TapeView`, asserted equal field for field. Their
-   first field is the document's place in the chunk block (`at`), and a read's base is the document's start.
+4. The MSL backend; `metal_tape.metal`'s hand port goes.
+
+## Progress
+
+- **Step 1** (3b6f4355b): `rerail-clif` holds the reads of format 15 and 16 and the inlining pass. The hot reads are
+  inlined, and the cold ones (`tape_f16_side`, `tape_parent`) are defined once per module and called. A test equals
+  them with the tape crate's own on every node of format 16's test tapes and on format 15. `clif_rust::translate`
+  has not moved in yet: it moves with step 3, its first user.
+- **Step 2** (7d975e96b, 1ed1adff9, bb9787c65): every node read the JIT makes is a read call (`native_cpu_tape.rs`),
+  on the document's tape where it is held. Format 15 is held in one buffer, and a 16z tape is laid out as 16 once
+  (`DocTape::in_place`). The CPU path's batch (`PackedBatch::new_in_place`) packs no node records, children or
+  class pairs; Metal's packed path still does, until step 5's kernels read the slabs alone. A test equals the
+  reads with the document's on every format (`the_clif_reads_read_every_format_as_the_document_does`). The JIT
+  finds the same keys as the interpreter and both Metal backends on real files.
+- **Step 3** (90e0f7d1d): the translator is `rerail_clif::rust`. The tape crate's `F16`, `F16Z` and `F15` read
+  through the reads' Rust (`tape_format/src/generated_reads.rs`): `View`, `Sv` and the hand-written primitive
+  reads are gone. Three reads were added for the crate's API: `tape_length`, `tape_start_next` and `tape_slot`
+  (16z's parent steps cross its blocks). Choices made here:
+  - The generated file is checked in and kept current by a test (`the_tape_crates_reads_are_these`), not written
+    at build time, which would make cranelift-codegen a build dependency of the crate every crate builds on.
+  - The Rust backend checks each load of the tape against its bytes, so a corrupt tape panics as the slices did.
+    The JIT's and the kernels' loads are unchecked, as before.
+  - The reads' offsets and spans are u32s: a reader refuses a tape or a source past 4 GiB.
+- **Step 4** (ad06f0849): `rerail_clif::msl` writes the reads as MSL (`metal_tape_reads.metal`, kept current by
+  `the_kernels_reads_are_these`). `metal_tape.metal`'s hand port of them is gone; its readers wrap the generated
+  ones.
+- **Found on the way:** the step 1 CLIF `tape_start` and the Metal hand port added a checkpoint's gaps one at a
+  time, a per-byte loop at the usual one-byte gap width. The read now folds them in one word, as the tape crate's
+  hand-written reader did, in all three backends.

@@ -3195,7 +3195,9 @@ version = "0.1.0"
 dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
+ "cranelift-jit",
  "cranelift-module",
+ "rerail-blocks",
 ]
 
 [[package]]
@@ -3210,6 +3212,7 @@ dependencies = [
  "cranelift-module",
  "libc",
  "rayon",
+ "rerail-clif",
  "rerail-compiler",
  "rerail-tape-format",
 ]
@@ -3358,6 +3361,7 @@ dependencies = [
  "regex-syntax",
  "rerail-accel",
  "rerail-c-lean",
+ "rerail-clif",
  "rerail-compiler",
  "rerail-csharp-lean",
  "rerail-css-lean",
@@ -3577,6 +3581,7 @@ dependencies = [
  "regex-syntax",
  "rerail-accel",
  "rerail-c-lean",
+ "rerail-clif",
  "rerail-compiler",
  "rerail-csharp-lean",
  "rerail-css-lean",
@@ -4601,6 +4606,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-clif",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",

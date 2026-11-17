@@ -1,16 +1,16 @@
 //! A document's tape as its reads are told where it lies: byte offsets from a base (the document's
-//! first byte in its chunk block on the device, the tape's own bytes on the host), its format, its
-//! widths. The device's document table entry (`rerail_metal::slabs::ChunkTape`, decision 0289 §4)
-//! has this layout field for field, which the engine asserts; making the two one definition is the
-//! MSL backend's (decision 0310, step 4).
+//! first byte in its batch's block on the device, the tape's own bytes on the host), its format, its
+//! widths. One definition: the device's document entry (`ChunkTape`) holds it, made of the same fields.
 
-/// A document's view (116 bytes, u32s; the device's `ChunkTape`, `metal_tape.metal`).
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TapeView {
-    /// On the device, the document's first byte in its chunk block: the offsets below count from
-    /// there (`ChunkTape::at`). 0 on the host.
-    pub at: u32,
+/// The view's fields, written once (decision 0310; 0289 §4): `TapeView` here, and a structure that holds a view
+/// after fields of its own, the device's document entry (`rerail_metal::slabs::ChunkTape`, a `structure!` whose MSL
+/// is generated), are both made of them. `tape_view_fields!(m, [head], [first fields])` calls `m!` with `head` and
+/// a body of the first fields and then these, in this order, so a view's offsets in the entry are its own plus the
+/// first fields' size.
+#[macro_export]
+macro_rules! tape_view_fields {
+    ($m:ident, [$($head:tt)*], [$($first:tt)*]) => {
+        $m! { $($head)* { $($first)*
     pub nodes: u32,
     pub node_base: u32,
     /// The tape's format: 15 or 16 (a 16z tape is laid out as format 16 where it is placed).
@@ -42,9 +42,26 @@ pub struct TapeView {
     pub source_base: u32,
     pub line_base: u32,
     /// Where the stored tape starts.
-    pub tape: u32,
+    pub tape: u32
+        } }
+    };
 }
-const _: () = assert!(std::mem::size_of::<TapeView>() == 116);
+
+macro_rules! plain {
+    ($(#[$m:meta])* pub struct $name:ident { $($(#[$fm:meta])* pub $f:ident : $t:ty),* $(,)? }) => {
+        $(#[$m])*
+        #[repr(C)]
+        pub struct $name { $($(#[$fm])* pub $f: $t),* }
+    };
+}
+
+tape_view_fields!(plain, [
+    /// A document's view (112 bytes, u32s): offsets from the base its reads are given (on the device, the
+    /// document's first byte in its batch's block: `chunk + at`).
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct TapeView
+], []);
+const _: () = assert!(std::mem::size_of::<TapeView>() == 112);
 
 /// Format 16's numbers the reads are written for (`rerail_tape_format::f16`'s; a test there holds
 /// them equal): checkpoints every `K` nodes, side lists in parts of `PART` nodes, blocks of `BLOCK`.

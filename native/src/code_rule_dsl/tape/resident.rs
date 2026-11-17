@@ -64,6 +64,17 @@ pub fn device_codes_of(table: &rerail_tape_format::tape::CodeTable, grammar: &Gr
     Ok(codes)
 }
 
+/// The device's codes of the table a document's tape numbers its nodes by (format 16's: its language's): what the
+/// reads written once (decision 0310) index by a node's number, for its kind, field, flags and classes.
+pub fn doc_codes(doc: &TapeDoc) -> Result<Vec<DeviceCode>, String> {
+    rerail_tape_format::with_tape!(doc.tape(), |t| device_codes_of(t.table(), doc.grammar()))
+}
+
+/// What a document's codes are keyed by where documents share a table (format 16's: its language's): the table.
+pub fn codes_key(doc: &TapeDoc) -> usize {
+    rerail_tape_format::with_tape!(doc.tape(), |t| std::ptr::from_ref(t.table()) as usize)
+}
+
 /// The node and code counts an image's header declares, after its magic and version.
 pub fn header_counts(header: &[u8]) -> Result<(usize, usize), String> {
     if header.len() < HEADER || &header[..8] != TAPE_MAGIC {

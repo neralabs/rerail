@@ -1,12 +1,14 @@
 use super::{
-    metal_batch_abi::{LinkRecord, MetalNode},
+    metal_batch_abi::LinkRecord,
     native_cpu::NativeTaskContext,
+    native_cpu_tape,
     value::CaptureProgram,
 };
 use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::JITModule;
 use cranelift_module::{FuncId, Linkage, Module};
+use rerail_clif::inline::ReadIds;
 use std::mem;
 
 fn pointer(
@@ -33,20 +35,6 @@ fn link_pointer(
         .imul_imm(index, mem::size_of::<LinkRecord>() as i64);
     let offset = function.ins().uextend(ty, offset);
     function.ins().iadd(captures, offset)
-}
-
-fn node_pointer(
-    function: &mut FunctionBuilder<'_>,
-    task: cranelift_codegen::ir::Value,
-    node: cranelift_codegen::ir::Value,
-) -> cranelift_codegen::ir::Value {
-    let ty = function.func.dfg.value_type(task);
-    let nodes = pointer(function, task, mem::offset_of!(NativeTaskContext, nodes));
-    let offset = function
-        .ins()
-        .imul_imm(node, mem::size_of::<MetalNode>() as i64);
-    let offset = function.ins().uextend(ty, offset);
-    function.ins().iadd(nodes, offset)
 }
 
 fn label_count(
@@ -195,37 +183,14 @@ fn label_node(
 
 fn text_equal(
     function: &mut FunctionBuilder<'_>,
+    reads: &ReadIds,
     task: cranelift_codegen::ir::Value,
     left: cranelift_codegen::ir::Value,
     right: cranelift_codegen::ir::Value,
 ) -> cranelift_codegen::ir::Value {
     let ty = function.func.dfg.value_type(task);
-    let left_node = node_pointer(function, task, left);
-    let right_node = node_pointer(function, task, right);
-    let left_start = function.ins().load(
-        types::I32,
-        MemFlags::trusted(),
-        left_node,
-        mem::offset_of!(MetalNode, source_start) as i32,
-    );
-    let left_end = function.ins().load(
-        types::I32,
-        MemFlags::trusted(),
-        left_node,
-        mem::offset_of!(MetalNode, source_end) as i32,
-    );
-    let right_start = function.ins().load(
-        types::I32,
-        MemFlags::trusted(),
-        right_node,
-        mem::offset_of!(MetalNode, source_start) as i32,
-    );
-    let right_end = function.ins().load(
-        types::I32,
-        MemFlags::trusted(),
-        right_node,
-        mem::offset_of!(MetalNode, source_end) as i32,
-    );
+    let (left_start, left_end) = native_cpu_tape::span(function, reads, task, left);
+    let (right_start, right_end) = native_cpu_tape::span(function, reads, task, right);
     let left_length = function.ins().isub(left_end, left_start);
     let right_length = function.ins().isub(right_end, right_start);
     let loop_block = function.create_block();
@@ -281,25 +246,14 @@ fn text_equal(
 
 fn same_line(
     function: &mut FunctionBuilder<'_>,
+    reads: &ReadIds,
     task: cranelift_codegen::ir::Value,
     left: cranelift_codegen::ir::Value,
     right: cranelift_codegen::ir::Value,
 ) -> cranelift_codegen::ir::Value {
     let ty = function.func.dfg.value_type(task);
-    let left_node = node_pointer(function, task, left);
-    let right_node = node_pointer(function, task, right);
-    let left_start = function.ins().load(
-        types::I32,
-        MemFlags::trusted(),
-        left_node,
-        mem::offset_of!(MetalNode, source_start) as i32,
-    );
-    let right_start = function.ins().load(
-        types::I32,
-        MemFlags::trusted(),
-        right_node,
-        mem::offset_of!(MetalNode, source_start) as i32,
-    );
+    let (left_start, _) = native_cpu_tape::span(function, reads, task, left);
+    let (right_start, _) = native_cpu_tape::span(function, reads, task, right);
     let left_first = function
         .ins()
         .icmp(IntCC::UnsignedLessThan, left_start, right_start);
@@ -373,6 +327,7 @@ pub(super) fn define(
         Linkage::Local,
         &signature,
     )?;
+    let reads = ReadIds::declare(module)?;
     let mut context = module.make_context();
     context.func.signature = signature;
     let mut builder_context = FunctionBuilderContext::new();
@@ -421,9 +376,9 @@ pub(super) fn define(
         let left_node = label_node(&mut function, task, left, left_count, values[0]);
         let right_node = label_node(&mut function, task, right, right_count, values[0]);
         let result = if compare_text {
-            text_equal(&mut function, task, left_node, right_node)
+            text_equal(&mut function, &reads, task, left_node, right_node)
         } else {
-            same_line(&mut function, task, left_node, right_node)
+            same_line(&mut function, &reads, task, left_node, right_node)
         };
         let inverse = function.ins().bxor_imm(result, 1);
         let positive = if any {
