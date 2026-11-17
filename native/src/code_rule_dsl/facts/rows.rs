@@ -39,6 +39,8 @@ impl Life {
         match self {
             Life::Run => FACTS_BYTES,
             Life::Source => FACTS_BYTES / 4,
+            // Each alone in a block of its size (`try_new`).
+            Life::Device => 0,
         }
     }
 }
@@ -62,20 +64,49 @@ pub enum Life {
     /// runs' relations, they kept those blocks alive past them: on posthog/hogql every block leased stayed, and the
     /// peak resident size rose 125 MB.
     Source,
+    /// A device run's own relations (decision 0325 step 5): the views it makes from a chunk, a fixpoint's totals and
+    /// deltas, an upload. Leased as the device's join buffers are, within its budget (a refusal runs the stratum on
+    /// the CPU), and apart from the runs' relations, which they would keep alive.
+    Device,
 }
 
 /// The blocks new relations go in, while they have room: one a `Life`.
-static OPEN: [Mutex<Option<Arc<Facts>>>; 2] = [Mutex::new(None), Mutex::new(None)];
+static OPEN: [Mutex<Option<Arc<Facts>>>; 3] = [Mutex::new(None), Mutex::new(None), Mutex::new(None)];
 
 /// A block of at least `bytes`: the pool's when it has room to spare (nothing evicted for it, and half the Metal
 /// budget left to the device's own buffers), else anonymous. Either is read by the device in place.
-fn lease(bytes: usize, life: Life) -> Block {
+fn lease(bytes: usize, life: Life) -> Result<Block, String> {
     let bytes = bytes.max(life.block_bytes());
     #[cfg(target_os = "macos")]
     if let Ok(b) = rerail_accel::gpu::shared::lease_block_spare(kind::FACTS, bytes, rerail_accel::budget::metal() / 2) {
-        return b;
+        return Ok(b);
     }
-    Block::anon(kind::FACTS, bytes)
+    Ok(Block::anon(kind::FACTS, bytes))
+}
+
+/// The bytes a relation of `k` 8-byte columns and `rows` rows takes in its block: its descriptor and directories,
+/// and its chunks as `Rows::try_reserve` makes them (quarter steps of doubling groups, each chunk aligned).
+fn room_for(k: usize, rows: usize) -> usize {
+    let min_log = rerail_blocks::rows::MIN_LOG;
+    let align = |bytes: usize| if bytes >= rerail_blocks::block::PAGE { rerail_blocks::block::PAGE } else { 64 };
+    let mut chunks = 0;
+    let mut bytes = 0;
+    while rerail_blocks::rows::capacity(chunks, min_log) < rows as u64 {
+        let b = rerail_blocks::rows::chunk_rows(chunks as usize, min_log) as usize * 8;
+        bytes += k * (b + align(b));
+        chunks += 1;
+    }
+    bytes + (k + 1) * size_of::<rerail_blocks::rows::ColDir>() + 4096
+}
+
+/// A block of the device's own of at least `bytes`: a relation alone in it. Without Metal, anonymous memory.
+fn lease_exact(bytes: usize, life: Life) -> Result<Block, String> {
+    #[cfg(target_os = "macos")]
+    if life == Life::Device {
+        return rerail_accel::gpu::shared::lease_block_for_join(kind::FACTS, bytes);
+    }
+    let _ = life;
+    Ok(Block::anon(kind::FACTS, bytes.max(4 * rerail_blocks::block::PAGE)))
 }
 
 /// A relation of `k` values a row, 8 bytes each, read in their order.
@@ -101,14 +132,24 @@ unsafe impl Sync for Part {}
 impl Part {
     /// An empty relation of `k` columns with room for `rows` rows, in the open block or a new one.
     fn new(life: Life, k: usize, rows: usize) -> Part {
+        Part::try_new(life, k, rows).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
+    }
+
+    /// `new`, or why no block could be had (a device block past the device's budget).
+    fn try_new(life: Life, k: usize, rows: usize) -> Result<Part, String> {
         let spec = spec(k);
-        let need = rows * k * 8 + k * size_of::<rerail_blocks::rows::ColDir>() + 4096;
+        let need = room_for(k, rows);
+        // A device relation is written once at its size, and lives as the device's buffers did: alone in a block of
+        // its size (leased within the device's budget), given back with it. A run's tail grows: its block has room for
+        // it to double.
+        let alone = life == Life::Device;
         let mut open = OPEN[life as usize].lock().unwrap_or_else(|e| e.into_inner());
         for fresh in [false, true] {
             let facts = match &*open {
+                _ if alone => Arc::new(Facts { block: lease_exact(need, life)? }),
                 Some(f) if !fresh && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN => f.clone(),
                 _ => {
-                    let f = Arc::new(Facts { block: lease(2 * need + MARGIN, life) });
+                    let f = Arc::new(Facts { block: lease(2 * need + MARGIN, life)? });
                     *open = Some(f.clone());
                     f
                 }
@@ -118,10 +159,25 @@ impl Part {
             {
                 let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
                 let rel = std::ptr::from_ref(rel);
-                return Part { facts, life, rel, cols };
+                return Ok(Part { facts, life, rel, cols });
             }
         }
         unreachable!("a new block of {} bytes holds a relation of {need}", 2 * need + MARGIN)
+    }
+
+    /// A device run's own relation of `k` columns and `rows` rows (decision 0325 step 5), every row the device's to
+    /// write (claimed now: `len` is `rows`, and the device writes them all before any reader looks). `Err` when the
+    /// device's budget refuses its block.
+    pub fn for_device(k: usize, rows: usize) -> Result<Part, String> {
+        let part = Part::try_new(Life::Device, k, rows)?;
+        // SAFETY: rows `0..rows` are reserved; the caller's device work writes every one before a read.
+        unsafe { part.rel().rows.claim_reserved(rows as u32) };
+        Ok(part)
+    }
+
+    /// Its relation's descriptor's offset in its block: what a reader's `rel_*` reads take.
+    pub fn rel_at(&self) -> usize {
+        self.facts.block.offset_of(self.rel)
     }
 
     #[inline(always)]

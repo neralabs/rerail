@@ -1455,8 +1455,8 @@ pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStat
         .zip(&gathered)
         .map(|((c, d), g)| match (c, d, g) {
             (StatColumn::Values(v), _, _) => StatCol::Host(v),
-            (StatColumn::Rel(..), Some((d, at)), _) if d.at != 0 => StatCol::Device { buffer: &d.held().buffer, at: d.at as usize, rows: d.rows, col: Some(*at as u32) },
-            (StatColumn::Rel(..), Some((d, at)), _) => StatCol::Device { buffer: &d.held().buffer, at: at * d.rows, rows: d.rows, col: None },
+            // Every relation the device holds lies in a block (decision 0325 step 5), read there.
+            (StatColumn::Rel(..), Some((d, at)), _) => StatCol::Device { buffer: &d.held().buffer, at: d.at as usize, rows: d.rows, col: Some(*at as u32) },
             (_, _, g) => StatCol::Host(g.as_deref().expect("gathered")),
         })
         .collect();
@@ -1618,7 +1618,7 @@ fn verdicts(rel: &Arc<InRel>, col: usize, table: &Arc<crate::code_rule_dsl::text
         let text = column_text(e, rel, col, rep, names)?;
         let dt = mj::DevTable::upload(table).map_err(|e| format!("{e:?}"))?;
         let words = text.span.div_ceil(64).max(1);
-        let bits = Rc::new(mj::DevRel::upload(1, words, |v| v.fill(0)).map_err(|e| format!("{e:?}: verdicts of {} symbols", text.span))?);
+        let bits = Rc::new(mj::DevRel::words(words, |v| v.fill(0)).map_err(|e| format!("{e:?}: verdicts of {} symbols", text.span))?);
         batch.verdicts(&text, &dt, &bits).map_err(|e| format!("{e:?}"))?;
         batch.hold_table(dt);
         rep.sorts += 1;
@@ -2374,7 +2374,8 @@ fn place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], store: &Sto
         let device = rerail_accel::gpu::join::device()?;
         let block = rerail_accel::gpu::join::Held::kept(part.facts().block.gpu_buffer(device), Box::new(part.facts().clone()));
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
-        b.place_rows(mj::Rows::Table(&rows), cap, slot, &words, &ident, block, part.rows_at() as u64).map_err(|e| format!("{e:?}"))?;
+        let dst = mj::DevRel::in_block(block, part.rel_at(), 0, cap, k);
+        b.place_rows(mj::Rows::Table(&rows), cap, slot, &words, &ident, dst).map_err(|e| format!("{e:?}"))?;
         hold.push(rows);
         pending.push((h, part, slot, cap, words));
     }
@@ -2764,7 +2765,8 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         let device = rerail_accel::gpu::join::device()?;
         let block = rerail_accel::gpu::join::Held::kept(part.facts().block.gpu_buffer(device), Box::new(part.facts().clone()));
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
-        b.place_rows(mj::Rows::Rel(total), total.rows, None, &no_counts, &ident, block, part.rows_at() as u64).map_err(|e| format!("{e:?}"))?;
+        let dst = mj::DevRel::in_block(block, part.rel_at(), 0, total.rows, k);
+        b.place_rows(mj::Rows::Rel(total), total.rows, None, &no_counts, &ident, dst).map_err(|e| format!("{e:?}"))?;
         parts.push((h, part, total.rows));
     }
     if let Some(mut b) = batch {
@@ -2788,7 +2790,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             continue;
         }
         let k = store.rels[h].k;
-        let cols: Vec<&[i64]> = (0..k).map(|c| total.column(c)).collect();
+        let cols: Vec<Vec<i64>> = (0..k).map(|c| total.column(c)).collect();
         // A shortlex_min value is an arena text (decision 0307): stored as a symbol, all of the head's at once.
         let symbols: Option<HashMap<i64, i64>> = match &shared {
             Some(a) if text_head(h) => {
@@ -2807,7 +2809,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         };
         // Each row's round where the head keeps levels: a lattice's column after its changes, a set's kept by row.
         let lattice_levels = (lattices.contains_key(&h) && leveled(h)).then(|| total.column(k + 1));
-        let levels: Option<&[i64]> = lattice_levels;
+        let levels: Option<&[i64]> = lattice_levels.as_deref();
         let set_rounds = set_levels.get(&h).filter(|_| !lattices.contains_key(&h) && leveled(h));
         let mut row = vec![0i64; k];
         for x in 0..total.rows {

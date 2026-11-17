@@ -75,10 +75,15 @@ GPU read and write those blocks in place, through reads written once in CLIF.
    - **Every device relation is a blocks relation first** (the user, 2026-11-17: "Blocks first, one form"). The
      device's own relations (the views it makes from a chunk, the fixpoint's totals and deltas, a lattice's total,
      an upload) were column-major buffers with no descriptor, so a probe of them could not read `rel_group`. They
-     become relations in blocks of their own life (`Life::Device`: they die with the device's run or its resident
-     entries, and do not keep a run's blocks alive), written through `clif_rows_at` (a group's room is at most a
-     quarter of it). The column-major form (`at == 0`) goes, so every read and write of a relation on the device
-     is one form. A fixpoint's total is then its head's part, with no copy at the end.
+     become relations in blocks of their own life (`Life::Device`), written through `clif_rows_at` (a group's room
+     is at most a quarter of it). The column-major form (`at == 0`) goes, so every read and write of a relation on
+     the device is one form; what is left at `at == 0` is words a raw mode reads (a text's names, verdict bits),
+     not relations.
+   - A device relation is alone in a block of its size, leased as the device's join buffers are (within its
+     budget) and given back with it, as those buffers were. Shared 16 MB blocks, kept by any relation in them, had
+     the budget refuse small views their room.
+   - A fixpoint's total stays the device's: its rows are copied once into a run's block at the end (step 4), so
+     a kept head never holds a block of the device's budget.
    - An index is added to a relation after it is made (`Relation::try_add_index`): its directory, buckets and
      rows in the relation's block, built by the host or the device, rows in id order within a bucket, so a
      probe's answer has one order. A key has up to 8 columns (`Index::key`), as the device's probes. A block with
@@ -265,3 +270,13 @@ Step by step, each leaving the engine working (see the commits that name this de
     `a_leveled_recursion_on_the_device_has_the_cpus_levels` asserts the set head placed and the lattice read, with
     rows and levels equal to the CPU's.
   - On hogql, few rows are recursive: 4.507 M rows written in place against 4.498 M. Findings 1,629.
+- **Step 5, every device relation in a block** (2026-11-17): `DevRel` is a relation in a block. The device's own
+  relations (`DevRel::empty`, `upload`) are `Part::for_device` relations, written through `clif_rows_at` by one
+  copy kernel (`rows_copy`: a binding table or a relation on either side, an optional count slot; step 4's
+  `rows_place` is that kernel), by `view_expand` and by the lattice fold, which updates its total in place
+  through `rel_get` and `rows_at`. `rget` and `rel_hash` read only through `clif_rel_get`. A text's names and a
+  test's verdict bits are words (`DevRel::words`), not relations.
+  - A relation's chunks are not zeroed (`Block::try_alloc_raw`): a value is read only below `len`, and a dirty
+    pooled block would otherwise pay a memset for every view.
+  - On hogql (load 38–41, interleaved): Metal 67.5–72.0 B instructions against 68.2–68.7 B, peak 724–785 MB
+    against 739–783 MB, findings 1,629. Budget refusals 0–4 a run against 2–5.

@@ -250,6 +250,7 @@ impl Stage {
 /// `view_expand`, which makes each row as `Viewed::value_at` does.
 fn chunk_views_source() -> String {
     let mut s = String::from("#include <metal_stdlib>\nusing namespace metal;\n");
+    s += rerail_blocks::RELATION_READS;
     s += &crate::code_rule_dsl::facts::vtab::syntax::device_chunk::msl();
     s += CHUNK_VIEWS;
     s
@@ -326,12 +327,19 @@ inline uint doc_of_node(device const ChunkDoc* docs, uint ndocs, uint row) {
     return lo;
 }
 
+// Row `r`'s value `v` in column `c` of the relation `out` makes (decision 0325 step 5: a relation in its block, its
+// rows' descriptor at `rows_at`), through the read written once.
+static inline void view_put(device uchar* out, ulong rows_at, uint r, uint c, long v) {
+    *(device long*)(out + clif_rows_at((device const uchar*)out, rows_at, r, c)) = v;
+}
+
 // p: the root's offset, the view (`device_chunk::VIEW_*`), the rows, the columns, an axis's pairs' offset (else 0),
-// then each column's index.
-kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[buffer(1)]], constant uint* p [[buffer(2)]],
+// the made relation's rows' descriptor's offset (low, high), then each column's index.
+kernel void view_expand(device const char* B [[buffer(0)]], device uchar* out [[buffer(1)]], constant uint* p [[buffer(2)]],
                         uint r [[thread_position_in_grid]]) {
     uint n = p[2];
     if (r >= n) return;
+    ulong rows_at = ulong(p[5]) | (ulong(p[6]) << 32);
     device const ChunkRoot* root = (device const ChunkRoot*)(B + p[0]);
     device const ChunkDoc* docs = items<ChunkDoc>(root->docs);
     uint view = p[1];
@@ -339,9 +347,9 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
         // An axis read whole (`Within`): a pair of node rows, inner << 32 | outer; each column the node's id.
         ulong pair = ((device const ulong*)(B + p[4]))[r];
         for (uint c = 0u; c < p[3]; c++) {
-            uint row = p[5 + c] == 0u ? uint(pair >> 32) : uint(pair & 0xffffffffu);
+            uint row = p[7 + c] == 0u ? uint(pair >> 32) : uint(pair & 0xffffffffu);
             device const ChunkDoc& d = docs[doc_of_node(docs, root->ndocs, row)];
-            out[ulong(c) * n + r] = global_of(d, row - d.node_row);
+            view_put(out, rows_at, r, c, global_of(d, row - d.node_row));
         }
         return;
     }
@@ -367,7 +375,7 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
         device const uint* pl = items<uint>(d.placed) + 3u * l;
         for (uint c = 0u; c < p[3]; c++) {
             long v;
-            if (p[5 + c] == 0u) {
+            if (p[7 + c] == 0u) {
                 v = loc_global(d, l);
             } else if (view == 8u) {
                 v = long(d.key);
@@ -379,7 +387,7 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
                 else if (view == 6u) v = long(e > s ? max(line_of(d, e - 1u), 1u) : line);
                 else v = long(s - items<uint>(d.lines)[line - 1u]);
             }
-            out[ulong(c) * n + r] = v;
+            view_put(out, rows_at, r, c, v);
         }
         return;
     }
@@ -394,7 +402,7 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
     uint l = view == 1u ? i + 1u : (view == 2u ? items<uint>(d.fielded)[i] : i);
     uint id = items<uint>(d.core)[l];
     for (uint c = 0u; c < p[3]; c++) {
-        uint col = p[5 + c];
+        uint col = p[7 + c];
         long v;
         if ((view == 0u || view == 3u) && col == 0u) {
             v = long(d.key);
@@ -420,7 +428,7 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
         } else {
             v = global_of(d, l);
         }
-        out[ulong(c) * n + r] = v;
+        view_put(out, rows_at, r, c, v);
     }
 }
 
@@ -512,9 +520,9 @@ static inline long lane_of(long v, uint w) {
 }
 
 // A value of the probed relation: row `r`'s in column `col`, read in its block through the generated reads (`r_at`,
-// decision 0325), or column-major in a buffer of its own.
+// decision 0325). Every relation the device reads lies in a block (step 5).
 static inline long rget(constant Stage& s, device const long* R, uint r, uint col) {
-    return s.r_at == 0ul ? R[ulong(col) * s.nr + r] : long(clif_rel_get((device const uchar*)R, s.r_at, r, col));
+    return long(clif_rel_get((device const uchar*)R, s.r_at, r, col));
 }
 
 static inline long colval(constant Stage& s, uint k, device const long* L, uint t, device const long* R, uint r) {
@@ -1472,42 +1480,29 @@ kernel void text_map(device const long* T [[buffer(0)]], device uint* lens [[buf
     }
 }
 
-// Rows copied between column-major buffers (a binding table, a relation): `n` rows of `ncols` columns, column k of
-// the destination from source column `src[k]` (or the constant `konst[k]` where it is NONE), at `dst_off`.
+// Rows copied (decision 0325 step 5): `n` rows of `ncols` columns (as many as slot `count_slot` of `totals` says, at
+// most `n`; all `n` when it is NONE), column k of the destination from source column `src[k]` (or the constant
+// `konst[k]` where it is NONE), into rows `dst_off..`. Each side is a binding table (column-major, its stride; its
+// offset 0) or a relation in a block: read through the reads written once (`clif_rel_get`, the relation's descriptor
+// at `src_at`), written through them (`clif_rows_at`, its rows' descriptor at `dst_rows_at`).
 struct Copy {
     long konst[16];
     uint src[16];
-    uint n, ncols, src_stride, dst_stride, dst_off, pad0, pad1, pad2;
+    uint n, ncols, src_stride, dst_stride, dst_off, count_slot, pad0, pad1;
+    ulong src_at, dst_rows_at;
 };
 
-kernel void rows_copy(device const long* S [[buffer(0)]], device long* D [[buffer(1)]], constant Copy& c [[buffer(2)]],
-                      uint t [[thread_position_in_grid]]) {
-    if (t >= c.n) return;
-    for (uint k = 0; k < c.ncols && k < 16; k++) {
-        long v = c.src[k] == NONE ? c.konst[k] : S[ulong(c.src[k]) * c.src_stride + t];
-        D[ulong(k) * c.dst_stride + c.dst_off + t] = v;
-    }
-}
-
-// A head's rows written in place, in a relation of a block (decision 0325 step 4): table `S`'s first rows (as many as
-// slot `count_slot` of `totals` says, at most `cap`; all `cap` when it is NONE) into rows 0.. of the relation whose
-// rows' descriptor lies at `rows_at` in block `D`, its chunks reserved by the host. Each value's place is the read
-// written once (`clif_rows_at`); every column is 8 bytes.
-struct Place {
-    long konst[16];
-    uint src[16];
-    uint cap, ncols, src_stride, count_slot;
-    ulong rows_at;
-};
-
-kernel void rows_place(device const long* S [[buffer(0)]], device uchar* D [[buffer(1)]], device const uint* totals [[buffer(2)]],
-                       constant Place& c [[buffer(3)]], uint t [[thread_position_in_grid]]) {
-    uint n = c.count_slot == NONE ? c.cap : min(totals[c.count_slot], c.cap);
+kernel void rows_copy(device const uchar* S [[buffer(0)]], device uchar* D [[buffer(1)]], device const uint* totals [[buffer(2)]],
+                      constant Copy& c [[buffer(3)]], uint t [[thread_position_in_grid]]) {
+    uint n = c.count_slot == NONE ? c.n : min(totals[c.count_slot], c.n);
     if (t >= n) return;
     for (uint k = 0; k < c.ncols && k < 16; k++) {
-        long v = c.src[k] == NONE ? c.konst[k] : S[ulong(c.src[k]) * c.src_stride + t];
-        ulong a = clif_rows_at((device const uchar*)D, c.rows_at, t, k);
-        *(device long*)(D + a) = v;
+        uint from = c.src[k];
+        long v = from == NONE ? c.konst[k]
+               : c.src_at == 0ul ? ((device const long*)S)[ulong(from) * c.src_stride + t]
+               : long(clif_rel_get(S, c.src_at, t, from));
+        if (c.dst_rows_at == 0ul) ((device long*)D)[ulong(k) * c.dst_stride + c.dst_off + t] = v;
+        else *(device long*)(D + clif_rows_at((device const uchar*)D, c.dst_rows_at, c.dst_off + t, k)) = v;
     }
 }
 
@@ -1625,12 +1620,12 @@ kernel void rel_hash(device const long* R [[buffer(0)]], device uint* out [[buff
                      uint t [[thread_position_in_grid]]) {
     uint nr = p[0];
     if (t >= nr) return;
-    // The relation's descriptor's offset in its block (`p[3]`, `p[4]`: low, high), or 0 for one column-major.
+    // The relation's descriptor's offset in its block (`p[3]`, `p[4]`: low, high).
     ulong at = ulong(p[3]) | (ulong(p[4]) << 32);
     long kv[8];
     for (uint i = 0; i < p[1] && i < 8; i++) {
         uint c = p[5 + i];
-        kv[i] = at == 0ul ? R[ulong(c) * nr + t] : long(clif_rel_get((device const uchar*)R, at, t, c));
+        kv[i] = long(clif_rel_get((device const uchar*)R, at, t, c));
     }
     out[t] = hash_keys(kv, p[1], p[2]);
 }
@@ -1643,7 +1638,16 @@ kernel void rel_hash(device const long* R [[buffer(0)]], device uint* out [[buff
 // changed key's row (key and value) goes to `D`, the next round's delta: `counters[0]` of them, `counters[1]` new.
 // `level`: the round, written to a changed or new key's level column (`nkeys + 2`) where the relation keeps levels
 // (decision 0311); 0: no level column.
-struct LatP { long top; uint n; uint had; uint nkeys; uint code; uint after; uint pmask; uint hmask; uint level; };
+struct LatP { long top; uint n; uint had; uint nkeys; uint code; uint after; uint pmask; uint hmask; uint level; ulong r_at, r_rows_at; };
+
+// The held relation `R`'s row `row` in column `c`, and the place to write it: `R` is a relation in its block
+// (decision 0325 step 5), its descriptor at `r_at`, its rows' at `r_rows_at`.
+static inline long lat_r(device const uchar* R, constant LatP& p, uint row, uint c) {
+    return long(clif_rel_get(R, p.r_at, row, c));
+}
+static inline device long* lat_rp(device uchar* R, constant LatP& p, uint row, uint c) {
+    return (device long*)(R + clif_rows_at((device const uchar*)R, p.r_rows_at, row, c));
+}
 
 static inline uint lat_hash(thread const long* key, uint nk, uint mask) {
     ulong h = 0x9E3779B97F4A7C15ul;
@@ -1669,11 +1673,11 @@ kernel void lat_hclear(device uint* H [[buffer(0)]], constant LatP& p [[buffer(1
 }
 
 // `R`'s row `t` into `H` (a table grown: every held row placed again).
-kernel void lat_rehash(device const long* R [[buffer(0)]], device atomic_uint* H [[buffer(1)]], constant LatP& p [[buffer(2)]],
+kernel void lat_rehash(device const uchar* R [[buffer(0)]], device atomic_uint* H [[buffer(1)]], constant LatP& p [[buffer(2)]],
                        uint t [[thread_position_in_grid]]) {
     if (t >= p.had) return;
     long key[8];
-    for (uint c = 0; c < p.nkeys && c < 8; c++) key[c] = R[ulong(c) * p.had + t];
+    for (uint c = 0; c < p.nkeys && c < 8; c++) key[c] = lat_r(R, p, t, c);
     uint at = lat_hash(key, p.nkeys, p.hmask);
     // Bounded: a place at a time, and a weak exchange's spurious failure tries the place again.
     for (uint k = 0; k < 2 * (p.hmask + 1); k++) {
@@ -1779,7 +1783,7 @@ static inline long lat_widen(constant LatP& p, long old, long now) {
 }
 
 kernel void lat_merge(device const long* U [[buffer(0)]], device const uint* P [[buffer(1)]], device const uint* best [[buffer(2)]],
-                      device const uint* flags [[buffer(3)]], device long* R [[buffer(4)]], device atomic_uint* H [[buffer(5)]],
+                      device const uint* flags [[buffer(3)]], device uchar* R [[buffer(4)]], device atomic_uint* H [[buffer(5)]],
                       device long* N [[buffer(6)]], device long* D [[buffer(7)]], device atomic_uint* counters [[buffer(8)]],
                       device atomic_uint* A [[buffer(9)]], constant LatP& p [[buffer(10)]], uint s [[thread_position_in_grid]]) {
     if (s > p.pmask) return;
@@ -1797,22 +1801,22 @@ kernel void lat_merge(device const long* U [[buffer(0)]], device const uint* P [
         uint h = atomic_load_explicit(&H[at], memory_order_relaxed);
         if (h == 0xffffffffu) break;
         bool same = h < p.had;
-        for (uint c = 0; same && c < p.nkeys && c < 8; c++) same = R[ulong(c) * p.had + h] == key[c];
+        for (uint c = 0; same && c < p.nkeys && c < 8; c++) same = lat_r(R, p, h, c) == key[c];
         if (same) { held = h; break; }
         at = (at + 1) & p.hmask;
     }
     if (held != 0xffffffffu) {
-        long o = R[ulong(p.nkeys) * p.had + held];
+        long o = lat_r(R, p, held, p.nkeys);
         long m = lat_lub(p, A, o, v);
         if (m == o) return;
-        long changes = R[ulong(k) * p.had + held];
+        long changes = lat_r(R, p, held, k);
         if (p.after != 0xffffffffu && changes >= long(p.after)) {
             m = lat_widen(p, o, m);
             if (m == o) return;
         }
-        R[ulong(p.nkeys) * p.had + held] = m;
-        R[ulong(k) * p.had + held] = changes + 1;
-        if (p.level != 0) R[ulong(k + 1) * p.had + held] = long(p.level);
+        *lat_rp(R, p, held, p.nkeys) = m;
+        *lat_rp(R, p, held, k) = changes + 1;
+        if (p.level != 0) *lat_rp(R, p, held, k + 1) = long(p.level);
         v = m;
     } else {
         uint a = atomic_fetch_add_explicit(&counters[1], 1u, memory_order_relaxed);
@@ -1936,51 +1940,96 @@ pub(in crate::code_rule_dsl) struct DevRel {
     buffer: Held,
     pub(in crate::code_rule_dsl) rows: usize,
     pub(in crate::code_rule_dsl) cols: usize,
-    /// Its descriptor's offset in the block `buffer` binds, for a relation read where it lies (`in_block`, decision
-    /// 0325); 0 for one in a buffer of its own, column-major.
+    /// Its relation's descriptor's offset in the block `buffer` binds (decision 0325): every relation the device
+    /// reads or writes lies in a block, read through `rel_get` and written through `rows_at`. 0 for no relation:
+    /// words a raw mode reads (a text's names, a test's verdict bits).
     pub(in crate::code_rule_dsl) at: u64,
     /// Its dead rows' delta's offset in that block (`Stage::r_dead`); 0 when it has none.
     pub(in crate::code_rule_dsl) dead: u64,
+    /// The relation, when it is the device's own (`empty`, `upload`): what the host reads it by once the device
+    /// wrote it.
+    part: Option<crate::code_rule_dsl::facts::rows::Part>,
 }
 
 impl DevRel {
-    /// A relation of `cols` columns and `rows` rows, its values written by `fill` straight into the device's buffer
-    /// (column `c` at `[c * rows .. (c + 1) * rows]`).
+    /// A relation of the device's own, of `cols` columns and `rows` rows, in a block of the device's
+    /// (`Part::for_device`, decision 0325 step 5), every row the device's to write.
+    pub(in crate::code_rule_dsl) fn empty(cols: usize, rows: usize) -> Result<DevRel, Error> {
+        let part = crate::code_rule_dsl::facts::rows::Part::for_device(cols, rows).map_err(|_| Error::BackendCapacity)?;
+        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        let buffer = Held::kept(part.facts().block.gpu_buffer(device), Box::new(part.facts().clone()));
+        debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
+        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part) })
+    }
+
+    /// A relation of `cols` columns and `rows` rows, its values given by `fill` (column `c` at
+    /// `[c * rows .. (c + 1) * rows]`) and written by the host into a relation of the device's own.
     pub(in crate::code_rule_dsl) fn upload(cols: usize, rows: usize, fill: impl FnOnce(&mut [i64])) -> Result<DevRel, Error> {
-        let buffer = Held::new((8 * cols * rows).max(8))?;
-        // SAFETY: the buffer holds at least `cols * rows` values, and nothing else refers to it yet.
-        let values = unsafe { std::slice::from_raw_parts_mut(buffer.buffer.contents().cast::<i64>(), cols * rows) };
-        fill(values);
-        Ok(DevRel { buffer, rows, cols, at: 0, dead: 0 })
+        let mut values = vec![0i64; cols * rows];
+        fill(&mut values);
+        let dev = DevRel::empty(cols, rows)?;
+        let rel = dev.part.as_ref().expect("its own").rel();
+        for c in 0..cols {
+            for (r, &v) in values[c * rows..(c + 1) * rows].iter().enumerate() {
+                // SAFETY: row `r` is claimed (`for_device`), and nothing else writes the relation yet.
+                unsafe { rel.rows.put(r as u32, c, v) };
+            }
+        }
+        Ok(dev)
+    }
+
+    /// `words` 64-bit words a raw mode reads (not a relation), given by `fill`.
+    pub(in crate::code_rule_dsl) fn words(words: usize, fill: impl FnOnce(&mut [i64])) -> Result<DevRel, Error> {
+        let buffer = Held::new(8 * words.max(1))?;
+        // SAFETY: the buffer holds at least `words` values, and nothing else refers to it yet.
+        fill(unsafe { std::slice::from_raw_parts_mut(buffer.buffer.contents().cast::<i64>(), words) });
+        Ok(DevRel::raw(buffer, words))
+    }
+
+    /// The words of `buffer`, `words` of them (not a relation).
+    fn raw(buffer: Held, words: usize) -> DevRel {
+        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None }
     }
 
     /// A relation the device reads where it lies (decision 0325): the relation of `rows` rows and `cols` columns
     /// whose descriptor is `at` bytes into the block `buffer` binds. Nothing is copied.
     pub(in crate::code_rule_dsl) fn in_block(buffer: Held, at: usize, dead: usize, rows: usize, cols: usize) -> DevRel {
         assert!(at > 0, "a descriptor past the block's header");
-        DevRel { buffer, rows, cols, at: at as u64, dead: dead as u64 }
+        DevRel { buffer, rows, cols, at: at as u64, dead: dead as u64, part: None }
     }
 
-    /// The device memory it holds of its own: none for a relation read in its block.
+    /// Its rows' descriptor's offset in its block: what a writer's `rows_at` takes.
+    pub(in crate::code_rule_dsl) fn rows_at(&self) -> u64 {
+        assert!(self.at != 0, "words, not a relation");
+        self.at + REL_ROWS
+    }
+
+    /// The device memory it holds of its own: its relation's values, or its words; none for one read in another's
+    /// block.
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
-        if self.at != 0 { 0 } else { 8 * self.cols * self.rows }
+        match (&self.part, self.at) {
+            (Some(_), _) | (None, 0) => 8 * self.cols * self.rows,
+            _ => 0,
+        }
     }
 
-    /// The buffer: `cols` columns of `rows` 64-bit values, column-major.
+    /// The buffer it is bound by: its block's, or its words'.
     pub(in crate::code_rule_dsl) fn held(&self) -> &Held {
         &self.buffer
     }
 
-    /// A relation of `cols` columns and `rows` rows that the device fills (`Batch::copy_rows`).
-    pub(in crate::code_rule_dsl) fn empty(cols: usize, rows: usize) -> Result<DevRel, Error> {
-        Ok(DevRel { buffer: Held::new((8 * cols * rows).max(8))?, rows, cols, at: 0, dead: 0 })
+    /// Column `c`'s values, once the command buffer that wrote them completed: a relation of the device's own, read
+    /// where it lies.
+    pub(in crate::code_rule_dsl) fn column(&self, c: usize) -> Vec<i64> {
+        let rel = self.part.as_ref().expect("a relation of the device's own").rel();
+        (0..self.rows as u32).map(|r| rel.rows.get(r, c)).collect()
     }
 
-    /// Column `c`'s values, once the command buffer that wrote them completed.
-    pub(in crate::code_rule_dsl) fn column(&self, c: usize) -> &[i64] {
-        assert_eq!(self.at, 0, "a relation read in its block has no columns of its own");
-        // SAFETY: the buffer holds `rows` values per column; the writer completed.
-        unsafe { std::slice::from_raw_parts(self.buffer.buffer.contents().cast::<i64>().add(c * self.rows), self.rows) }
+    /// Words `0..n` (`words`, or a text's), once the command buffer that wrote them completed.
+    pub(in crate::code_rule_dsl) fn word_slice(&self, n: usize) -> &[i64] {
+        assert_eq!(self.at, 0, "a relation's values are read by column");
+        // SAFETY: the buffer holds at least `n` words; the writer completed.
+        unsafe { std::slice::from_raw_parts(self.buffer.buffer.contents().cast::<i64>(), n.min(self.rows)) }
     }
 }
 
@@ -2031,7 +2080,7 @@ impl DevText {
         let longest = offs.windows(2).map(|w| (w[1] - w[0]) as usize).max().unwrap_or(0);
         let sep = chars.contains(&0x1f);
         let nchars = chars.len();
-        Ok(DevText { packed: std::rc::Rc::new(DevRel { buffer: held, rows, cols: 1, at: 0, dead: 0 }), terms: n, span, longest, sep, chars: nchars })
+        Ok(DevText { packed: std::rc::Rc::new(DevRel::raw(held, rows)), terms: n, span, longest, sep, chars: nchars })
     }
 
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
@@ -2065,12 +2114,14 @@ pub(in crate::code_rule_dsl) enum Rows<'a> {
 }
 
 impl Rows<'_> {
-    fn of(&self) -> (&BufferRef, usize) {
+    /// Its buffer, its rows (a table's capacity, a relation's rows), and its descriptors' offsets: the relation's
+    /// and its rows' (0 for a table, column-major).
+    fn of(&self) -> (&BufferRef, usize, u64, u64) {
         match self {
-            Rows::Table(t) => (&t.buffer.buffer, t.cap),
+            Rows::Table(t) => (&t.buffer.buffer, t.cap, 0, 0),
             Rows::Rel(r) => {
-                assert_eq!(r.at, 0, "a copy of a relation read in its block: a copy reads and writes relations of their own");
-                (&r.buffer.buffer, r.rows.max(1))
+                assert!(r.at != 0, "a copy of words, not a relation");
+                (&r.buffer.buffer, r.rows, r.at, r.rows_at())
             }
         }
     }
@@ -2093,25 +2144,13 @@ struct CopyParams {
     src_stride: u32,
     dst_stride: u32,
     dst_off: u32,
-    pad: [u32; 3],
-}
-
-const _: () = assert!(std::mem::size_of::<CopyParams>() == 224);
-
-/// `rows_place`'s parameters (MSL's `Place`).
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct PlaceParams {
-    konst: [i64; 16],
-    src: [u32; 16],
-    cap: u32,
-    ncols: u32,
-    src_stride: u32,
     count_slot: u32,
-    rows_at: u64,
+    pad: [u32; 2],
+    src_at: u64,
+    dst_rows_at: u64,
 }
 
-const _: () = assert!(std::mem::size_of::<PlaceParams>() == 216);
+const _: () = assert!(std::mem::size_of::<CopyParams>() == 240);
 
 /// A relation sorted on the device by the hash of key columns: the sorted order (`perm`), the runs of equal hashes
 /// and their count, and the hash's mask.
@@ -2133,6 +2172,9 @@ fn hash_bits(rows: usize) -> u32 {
     let need = usize::BITS - rows.max(1).leading_zeros() + 8;
     need.clamp(16, 32).div_ceil(8) * 8
 }
+
+/// A relation's rows' descriptor's offset from its own (`rerail_blocks`' layout).
+const REL_ROWS: u64 = std::mem::offset_of!(rerail_blocks::relation::Relation, rows) as u64;
 
 /// A binding table on the device: `slots` columns of `cap` 64-bit values, column-major.
 /// The device buffers' budget left in the process (other lanes hold theirs: the syntax side's tapes most).
@@ -2425,7 +2467,8 @@ impl Batch {
         let expand = pipeline("chunk_views", "view_expand", chunk_views_source)?;
         let pass = self.pass(1)?;
         let at = |o: usize| u32::try_from(o).map_err(|_| Error::BackendCapacity);
-        let mut p = vec![at(root)?, view, out.rows as u32, cols.len() as u32, at(pairs)?];
+        let rows_at = out.rows_at();
+        let mut p = vec![at(root)?, view, out.rows as u32, cols.len() as u32, at(pairs)?, rows_at as u32, (rows_at >> 32) as u32];
         p.extend(cols.iter().map(|&c| c as u32));
         if out.rows > 0 {
             pass.run(&expand, &[block, &out.buffer.buffer], &p, &[], groups(out.rows));
@@ -2648,15 +2691,38 @@ impl Batch {
     /// `n` rows of `src` into `dst` at row `dst_off`, column k of `dst` as `cols[k]` says (a column of `src`, or a
     /// constant): a head's rows into its union, a union's new rows onto its relation.
     pub(in crate::code_rule_dsl) fn copy_rows(&mut self, src: Rows<'_>, n: usize, cols: &[Col], dst: Rows<'_>, dst_off: usize) -> Result<(), Error> {
+        self.copy(src, n, None, cols, dst, dst_off)
+    }
+
+    /// A head's rows written in place (decision 0325 step 4): `src`'s first rows (as many as slot `count` of `totals`
+    /// holds, at most `cap`; `cap` of them with no slot) into rows `0..` of `dst`, a relation in its block whose
+    /// chunks hold `cap` rows. Each column of the head is a column of `src` or a constant (`cols`). The batch keeps
+    /// `dst`'s block until its work completes.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::code_rule_dsl) fn place_rows(&mut self, src: Rows<'_>, cap: usize, count: Option<usize>, totals: &Words, cols: &[Col], dst: DevRel) -> Result<(), Error> {
+        self.copy(src, cap, count.map(|c| (c, totals)), cols, Rows::Rel(&dst), 0)?;
+        self.keep.push(dst.buffer);
+        Ok(())
+    }
+
+    /// `n` rows of `src` (as many as slot `count.0` of `count.1` holds, at most `n`), each column of `dst` a column of
+    /// `src` or a constant (`cols`), into `dst`'s rows `dst_off..`: `rows_copy`, either side a table or a relation in
+    /// its block.
+    #[allow(clippy::too_many_arguments)]
+    fn copy(&mut self, src: Rows<'_>, n: usize, count: Option<(usize, &Words)>, cols: &[Col], dst: Rows<'_>, dst_off: usize) -> Result<(), Error> {
         if n == 0 {
             return Ok(());
         }
         assert!(cols.len() <= 16);
         let copy = pipeline("join", "rows_copy", || SOURCE.to_owned())?;
-        let (s, src_stride) = src.of();
-        let (d, dst_stride) = dst.of();
-        assert!(dst_off + n <= dst_stride, "a copy of {n} rows at {dst_off} into a destination of {dst_stride}");
-        let mut p = CopyParams { konst: [0; 16], src: [NONE; 16], n: n as u32, ncols: cols.len() as u32, src_stride: src_stride as u32, dst_stride: dst_stride as u32, dst_off: dst_off as u32, pad: [0; 3] };
+        let (s, src_rows, src_at, _) = src.of();
+        let (d, dst_rows, _, dst_rows_at) = dst.of();
+        assert!(n <= src_rows.max(1), "a copy of {n} rows of a source of {src_rows}");
+        assert!(dst_off + n <= dst_rows, "a copy of {n} rows at {dst_off} into a destination of {dst_rows}");
+        let mut p = CopyParams {
+            konst: [0; 16], src: [NONE; 16], n: n as u32, ncols: cols.len() as u32, src_stride: src_rows as u32, dst_stride: dst_rows as u32,
+            dst_off: dst_off as u32, count_slot: count.map_or(NONE, |c| c.0 as u32), pad: [0; 2], src_at, dst_rows_at,
+        };
         for (k, c) in cols.iter().enumerate() {
             match *c {
                 Col::From(c) => p.src[k] = c as u32,
@@ -2666,36 +2732,9 @@ impl Batch {
         // SAFETY: `CopyParams` is `repr(C)` integers with no padding (its size asserted above).
         let bytes = unsafe { std::slice::from_raw_parts((&p as *const CopyParams).cast::<u8>(), std::mem::size_of::<CopyParams>()) };
         let (s, d) = (s.to_owned(), d.to_owned());
+        let totals = count.map_or_else(|| self.dummy.buffer.to_owned(), |c| c.1.buffer.buffer.to_owned());
         let pass = self.pass(1)?;
-        pass.run_bytes(&copy, &[&s, &d], bytes, groups(n));
-        Ok(())
-    }
-
-    /// A head's rows written in place (decision 0325 step 4): `src`'s first rows (as many as slot `count` of `totals`
-    /// holds, at most `cap`; `cap` of them with no slot) into rows `0..` of the relation whose rows' descriptor lies
-    /// at `rows_at` in `block`, whose chunks hold `cap` rows of 8-byte columns. Each column of the head is a column of
-    /// `src` or a constant (`cols`). The batch keeps `block` until its work completes.
-    #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn place_rows(&mut self, src: Rows<'_>, cap: usize, count: Option<usize>, totals: &Words, cols: &[Col], block: Held, rows_at: u64) -> Result<(), Error> {
-        if cap == 0 {
-            return Ok(());
-        }
-        let (s, stride) = src.of();
-        assert!(cols.len() <= 16 && cap <= stride, "{cap} rows of a source of {stride}");
-        let place = pipeline("join", "rows_place", || SOURCE.to_owned())?;
-        let mut p = PlaceParams { konst: [0; 16], src: [NONE; 16], cap: cap as u32, ncols: cols.len() as u32, src_stride: stride as u32, count_slot: count.map_or(NONE, |c| c as u32), rows_at };
-        for (k, c) in cols.iter().enumerate() {
-            match *c {
-                Col::From(c) => p.src[k] = c as u32,
-                Col::Const(v) => p.konst[k] = v,
-            }
-        }
-        // SAFETY: `PlaceParams` is `repr(C)` integers with no padding (its size asserted above).
-        let bytes = unsafe { std::slice::from_raw_parts((&p as *const PlaceParams).cast::<u8>(), std::mem::size_of::<PlaceParams>()) };
-        let pass = self.pass(1)?;
-        let s = s.to_owned();
-        pass.run_bytes(&place, &[&s, &block.buffer, &totals.buffer.buffer], bytes, groups(cap));
-        self.keep.push(block);
+        pass.run_bytes(&copy, &[&s, &d, &totals], bytes, groups(n));
         Ok(())
     }
 
@@ -2728,7 +2767,7 @@ impl Batch {
         let n = text.terms;
         // A match of at least a byte becomes `with`: no text grows past its length times `with`'s.
         let room = text.chars.saturating_mul(with.len().max(1));
-        let out = std::rc::Rc::new(DevRel::empty(1, (8 * (1 + n) + 4 * (n + 1) + room + 1).div_ceil(8))?);
+        let out = std::rc::Rc::new(DevRel::raw(Held::new((8 * (1 + n) + 4 * (n + 1) + room + 1).div_ceil(8) * 8)?, (8 * (1 + n) + 4 * (n + 1) + room + 1).div_ceil(8)));
         let kernel = pipeline("join", "text_replace", || SOURCE.to_owned())?;
         let groups = n.clamp(1, 1024);
         let scratch = Held::new(groups * 64 * states as usize)?;
@@ -2756,7 +2795,7 @@ impl Batch {
         let n = text.terms;
         // No function here makes a text longer.
         let room = text.chars;
-        let out = std::rc::Rc::new(DevRel::empty(1, (8 * (1 + n) + 4 * (n + 1) + room + 1).div_ceil(8))?);
+        let out = std::rc::Rc::new(DevRel::raw(Held::new((8 * (1 + n) + 4 * (n + 1) + room + 1).div_ceil(8) * 8)?, (8 * (1 + n) + 4 * (n + 1) + room + 1).div_ceil(8)));
         let kernel = pipeline("join", "text_map", || SOURCE.to_owned())?;
         let groups = n.clamp(1, 1024);
         let lens = Held::new(4 * (n + 1))?;
@@ -3050,7 +3089,9 @@ pub(in crate::code_rule_dsl) struct LatCode {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct LatParams { top: i64, n: u32, had: u32, nkeys: u32, code: u32, after: u32, pmask: u32, hmask: u32, level: u32 }
+struct LatParams { top: i64, n: u32, had: u32, nkeys: u32, code: u32, after: u32, pmask: u32, hmask: u32, level: u32, r_at: u64, r_rows_at: u64 }
+
+const _: () = assert!(std::mem::size_of::<LatParams>() == 56);
 
 impl Batch {
     /// A lattice relation's round (decision 0124): the `n` rows of `u` (its key's `nkeys` columns, then the value)
@@ -3068,7 +3109,8 @@ impl Batch {
         let had = total.map_or(0, |t| t.rows);
         let pplaces = (2 * n).next_power_of_two().max(16);
         let want = (2 * (had + n)).next_power_of_two().max(16);
-        let mut p = LatParams { top: lat.top, n: n as u32, had: had as u32, nkeys: nkeys as u32, code: lat.code, after: lat.after.unwrap_or(NONE), pmask: (pplaces - 1) as u32, hmask: 0, level: level.unwrap_or(0) };
+        let mut p = LatParams { top: lat.top, n: n as u32, had: had as u32, nkeys: nkeys as u32, code: lat.code, after: lat.after.unwrap_or(NONE), pmask: (pplaces - 1) as u32, hmask: 0, level: level.unwrap_or(0),
+                                 r_at: total.map_or(0, |t| t.at), r_rows_at: total.map_or(0, |t| t.rows_at()) };
         let r: metal::Buffer = total.map_or_else(|| self.dummy.buffer.to_owned(), |t| t.buffer.buffer.to_owned());
         if keys.places < want {
             // Grown: every held row placed again.
@@ -3110,6 +3152,6 @@ impl Batch {
 }
 
 fn lat_bytes(p: &LatParams) -> &[u8] {
-    // SAFETY: `LatParams` is `repr(C)`: an i64 then eight u32s, no padding.
+    // SAFETY: `LatParams` is `repr(C)`: an i64, eight u32s, two u64s, no padding (its size asserted).
     unsafe { std::slice::from_raw_parts((p as *const LatParams).cast::<u8>(), std::mem::size_of::<LatParams>()) }
 }
