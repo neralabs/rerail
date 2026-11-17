@@ -931,6 +931,16 @@ pub struct Tape16Z {
     payload: usize,
 }
 
+/// One 16z piece's decode (`Tape16Z::piece_jobs`): its stored bytes (in the tape as stored), LZ4 or raw, decoding
+/// to `fixed` (its array's bytes for its block's nodes) then `side` (its side list's part), in the format 16 tape.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PieceJob {
+    pub src: std::ops::Range<usize>,
+    pub lz4: bool,
+    pub fixed: std::ops::Range<usize>,
+    pub side: std::ops::Range<usize>,
+}
+
 /// Where a 16z tape's piece index, its kinds and its payload begin, and the number of pieces, from the placement of
 /// the tape it decodes to: past the head (up to the first region), the checkpoints and the newline index.
 fn index_at(p: &Placement) -> (usize, usize, usize, usize) {
@@ -1047,6 +1057,18 @@ impl Tape16Z {
     fn decoded(&self, j: usize) -> usize {
         let (fixed, side) = self.dest(j / PIECES, j % PIECES);
         fixed.len() + side.len()
+    }
+
+    /// Every piece's decode as a device kernel takes it (decision 0336 §8), in order: where its stored bytes lie in
+    /// `as_bytes` (a repeat's, the earlier piece's), whether they are LZ4, and where they decode to in the format 16
+    /// tape. With `decode_head_into`, the pieces make the tape.
+    pub fn piece_jobs(&self) -> impl Iterator<Item = PieceJob> + '_ {
+        let start = |j: usize| self.payload + u32_at(&self.buf, self.ix + 4 * j) as usize;
+        (0..PIECES * self.p.n.div_ceil(Z)).map(move |j| {
+            let k = if self.buf[self.kinds + j] == REPEAT { u32_at(&self.buf, start(j)) as usize } else { j };
+            let (fixed, side) = self.dest(j / PIECES, j % PIECES);
+            PieceJob { src: start(k)..start(k + 1), lz4: self.buf[self.kinds + k] == LZ4, fixed, side }
+        })
     }
 
     /// Piece `j`'s kind and its stored bytes.
@@ -1331,6 +1353,17 @@ mod tests {
             z.decode_block_into(b, &mut by_block, &mut scratch).unwrap();
         }
         assert_eq!(by_block, plain.as_bytes(), "16z's blocks decode in place");
+        // The pieces as a device decodes them: the head, then each piece from its stored bytes alone.
+        let mut by_job = vec![0u8; z.decoded_len()];
+        z.decode_head_into(&mut by_job).unwrap();
+        for job in z.piece_jobs() {
+            let stored = &z.as_bytes()[job.src.clone()];
+            let mut out = vec![0u8; job.fixed.len() + job.side.len()];
+            if job.lz4 { lz4::decompress(stored, &mut out).unwrap() } else { out.copy_from_slice(stored) }
+            by_job[job.fixed.clone()].copy_from_slice(&out[..job.fixed.len()]);
+            by_job[job.side.clone()].copy_from_slice(&out[job.fixed.len()..]);
+        }
+        assert_eq!(by_job, plain.as_bytes(), "16z's piece jobs decode to format 16's bytes");
         let p = placement(plain.as_bytes()).unwrap();
         assert_eq!(p, plain.p, "the placement is the reader's");
         // The header holds each region's start: the placement is read, not summed.

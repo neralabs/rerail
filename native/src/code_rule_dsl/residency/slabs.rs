@@ -51,7 +51,7 @@ fn invalid(message: impl std::fmt::Display) -> Error {
 /// Sizes of a document's parts, from its frames' raw lengths, the image's header and (format 15) the
 /// source's newlines, read by one streamed decode that keeps nothing. Format 16 holds its newline index
 /// (decision 0336 §6): no line is counted for it. A 16z tape is laid out as format 16
-/// where it is placed (`Tape16Z::decode_into`): `tape` is that length, and `z` its stored bytes,
+/// where it is placed (its head copied, its pieces decoded on the device: `Decodes`): `tape` is that length, and `z` its stored bytes,
 /// read once (a store's frame) to plan and place it.
 struct Plan {
     tape: usize,
@@ -174,15 +174,120 @@ pub fn admit_docs(docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> Result<Vec<Ar
     resident(&digests)
 }
 
-/// Places the misses' parts, keeping the slabs of every document `digests` reads.
+/// Places the misses' parts, keeping the slabs of every document `digests` reads. The 16z documents' pieces are
+/// decoded on the device, in one command, before any document is published (`Decodes`).
 fn insert_parts(digests: &[[u8; 32]], parts: Vec<([u8; 32], &Plan, &Grammar, Parts<'_>)>) -> Result<(), Error> {
+    let decodes = std::cell::RefCell::new(Decodes::default());
     let placements = parts
         .into_iter()
         .map(|(digest, plan, grammar, parts)| -> Placement<'_> {
-            (digest, plan.bytes(), plan.table, Box::new(move |slab: &Arc<Slab>, offset: usize, table: Option<TableAt>| place(slab, offset, table, &digest, parts, plan, grammar)))
+            let decodes = &decodes;
+            (digest, plan.bytes(), plan.table, Box::new(move |slab: &Arc<Slab>, offset: usize, table: Option<TableAt>| place(slab, offset, table, &digest, parts, plan, grammar, &mut decodes.borrow_mut())))
         })
         .collect();
-    insert(digests, placements)
+    insert(digests, placements, &mut || std::mem::take(&mut *decodes.borrow_mut()).run())
+}
+
+/// The device's decode of 16z's pieces (decision 0336 §8; 0156 E26's shape): `slabs/decode16z.metal`.
+const DECODE16Z: &str = include_str!("slabs/decode16z.metal");
+/// SIMD groups (pieces) a threadgroup.
+const DECODE_GROUPS: u64 = 4;
+
+/// One piece's decode as the kernel takes it (`PieceRun` in `decode16z.metal`): its stored bytes in the
+/// admission's upload, LZ4 or raw, and where its array's and side list's bytes go in the slab.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct PieceRun {
+    src: u32,
+    src_len: u32,
+    lz4: u32,
+    fixed: u32,
+    fixed_len: u32,
+    side: u32,
+    side_len: u32,
+    pad: u32,
+}
+
+/// The 16z documents of one admission, their pieces to decode on the device: their stored bytes, uploaded once,
+/// and each slab's pieces.
+#[derive(Default)]
+struct Decodes {
+    stored: Vec<u8>,
+    slabs: Vec<(Arc<Slab>, Vec<PieceRun>)>,
+}
+
+impl Decodes {
+    /// The pieces of `z`, whose format 16 tape lies at `tape_at` in `slab`.
+    fn add(&mut self, slab: &Arc<Slab>, tape_at: usize, z: &resident::Tape16Z) -> Result<(), Error> {
+        let base = self.stored.len();
+        self.stored.extend_from_slice(z.as_bytes());
+        self.stored.resize(aligned(self.stored.len()), 0);
+        let k = match self.slabs.iter().position(|(held, _)| held.id == slab.id) {
+            Some(k) => k,
+            None => {
+                self.slabs.push((Arc::clone(slab), Vec::new()));
+                self.slabs.len() - 1
+            }
+        };
+        let u = |n: usize| u32::try_from(n).map_err(|_| invalid("a 16z piece past 4 GiB"));
+        for job in z.piece_jobs() {
+            self.slabs[k].1.push(PieceRun {
+                src: u(base + job.src.start)?,
+                src_len: u(job.src.len())?,
+                lz4: u32::from(job.lz4),
+                fixed: u(tape_at + job.fixed.start)?,
+                fixed_len: u(job.fixed.len())?,
+                side: u(tape_at + job.side.start)?,
+                side_len: u(job.side.len())?,
+                pad: 0,
+            });
+        }
+        Ok(())
+    }
+
+    /// Every piece decoded into its slab: one command, a dispatch a slab, waited for. A piece that does not decode
+    /// to its length refuses the admission.
+    fn run(self) -> Result<(), Error> {
+        use rerail_metal::launch::{CheckedComputeEncoder as _, LaunchScope, commit_checked, wait_checked};
+        if self.slabs.is_empty() {
+            return Ok(());
+        }
+        let source = format!("#include <metal_stdlib>\nusing namespace metal;\n{DECODE16Z}");
+        let pipeline = rerail_metal::runtime::pipeline_named(&source, "decode16z")?;
+        let stored = rerail_metal::pool::upload(&self.stored)?;
+        let bad = rerail_metal::pool::zeroed::<u32>(1)?;
+        let runs = self.slabs.iter().map(|(_, runs)| rerail_metal::pool::upload(runs)).collect::<Result<Vec<_>, _>>()?;
+        let _scope = LaunchScope::enter();
+        let queue = rerail_metal::queue()?;
+        metal::objc::rc::autoreleasepool(|| {
+            let command = queue.new_command_buffer();
+            command.set_label("Rerail 16z decode");
+            let encoder = command.new_compute_command_encoder();
+            encoder.set_label("Rerail 16z decode");
+            encoder.set_compute_pipeline_state(&pipeline);
+            encoder.set_buffer(1, Some(stored.buffer()), 0);
+            encoder.set_buffer(3, Some(bad.buffer()), 0);
+            for ((slab, pieces), runs) in self.slabs.iter().zip(&runs) {
+                let count = pieces.len() as u32;
+                encoder.set_buffer(0, Some(runs.buffer()), 0);
+                encoder.set_buffer(2, Some(slab.buffer()), 0);
+                encoder.set_bytes(4, 4, std::ptr::from_ref(&count).cast());
+                encoder.checked_dispatch_thread_groups(command, metal::MTLSize::new(u64::from(count).div_ceil(DECODE_GROUPS), 1, 1), metal::MTLSize::new(32 * DECODE_GROUPS, 1, 1));
+            }
+            encoder.end_encoding();
+            if let Err(refused) = commit_checked(command) {
+                rerail_metal::launch::release_refused(command);
+                return Err(refused);
+            }
+            wait_checked(command)
+        })?;
+        // SAFETY: the command finished; the flag is a u32 the kernel wrote, or zero.
+        if unsafe { *bad.host().cast::<u32>() } != 0 {
+            return Err(invalid("a 16z piece that does not decode to its length"));
+        }
+        crate::code_rule_dsl::prof::count("residency.decoded_16z_pieces", self.slabs.iter().map(|(_, runs)| runs.len()).sum::<usize>());
+        Ok(())
+    }
 }
 
 /// Writes a document's parts into `slab` at `offset` (`plan.bytes()` of room), checked.
@@ -203,6 +308,7 @@ fn place(
     parts: Parts<'_>,
     plan: &Plan,
     grammar: &Grammar,
+    decodes: &mut Decodes,
 ) -> Result<Placed, Error> {
     let base = slab.host();
     // SAFETY: `room` gave this range to this document alone, inside the slab's mapping.
@@ -240,9 +346,12 @@ fn place(
             source.copy_from_slice(text);
         }
     }
-    // A 16z tape, checked as stored, is laid out as format 16 where it is placed.
+    // A 16z tape, checked as stored, is laid out as format 16 where it is placed: its head (header, part starts,
+    // checkpoints, newline index; stored as they are) copied here, its pieces decoded on the device before the
+    // document is published (`Decodes`). The checks below read the head alone.
     if let Some(z) = &plan.z {
-        z.decode_into(tape).map_err(invalid)?;
+        z.decode_head_into(tape).map_err(invalid)?;
+        decodes.add(slab, tape_at, z)?;
     }
     let tape = &*tape;
     let source = &*source;

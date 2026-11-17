@@ -547,11 +547,14 @@ pub struct Placed {
 }
 
 /// Places the misses, keeping the slabs of every document `digests` reads. A document of format 16 reads its
-/// language's table from its slab: placed with the first document of the language there, after its room.
-pub fn insert(digests: &[[u8; 32]], parts: Vec<Placement<'_>>) -> Result<(), Error> {
+/// language's table from its slab: placed with the first document of the language there, after its room. `ready`
+/// runs once every miss is placed and before any is published (the device's decode of 16z's pieces, decision 0336
+/// §8): a document is found only once it reads whole.
+pub fn insert(digests: &[[u8; 32]], parts: Vec<Placement<'_>>, ready: &mut dyn FnMut() -> Result<(), Error>) -> Result<(), Error> {
     let _admit = rerail_prof::Stage::start("residency.admit");
     let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
     let mut keep = digests.iter().filter_map(|digest| state.documents.get(digest).map(|document| document.slab.id)).collect::<Vec<_>>();
+    let mut placed_all = Vec::with_capacity(parts.len());
     for (digest, bytes, table, place) in parts {
         // The newest slab or a new one takes the document (`State::room`): the table's room too, where it lacks it.
         let held = |state: &State, table: Table| state.slabs.last().and_then(|last| last.slab.table(table.key)).is_some();
@@ -580,6 +583,10 @@ pub fn insert(digests: &[[u8; 32]], parts: Vec<Placement<'_>>) -> Result<(), Err
         let entry = &mut state.slabs[at];
         entry.last_use = clock;
         keep.push(entry.slab.id);
+        placed_all.push((digest, document));
+    }
+    ready()?;
+    for (digest, document) in placed_all {
         for (pool, bytes) in state.pools.iter_mut().zip(document.bytes) {
             *pool += bytes;
         }

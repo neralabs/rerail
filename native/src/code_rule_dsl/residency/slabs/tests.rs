@@ -242,6 +242,19 @@ kernel void tape_conformance(device const ChunkTape* docs [[buffer(0)]],device c
             digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));
         }
         let table = DocTable::one_block(admit(&store, &digests, &grammar).unwrap()).unwrap();
+        if format == Format::F16Z {
+            // The device decoded each 16z tape's pieces (decision 0336 §8): byte for byte the host's decode, LZ4
+            // pieces among them.
+            let mut lz4 = 0;
+            for (doc, resident_doc) in docs.iter().zip(&table.documents) {
+                let z = resident::Tape16Z::from_bytes(doc.resident_parts(None).unwrap().0).unwrap();
+                lz4 += z.piece_jobs().filter(|job| job.lz4).count();
+                let mut host = vec![0u8; z.decoded_len()];
+                z.decode_into(&mut host).unwrap();
+                assert_eq!(resident_doc.image(), host.as_slice(), "the device's 16z decode");
+            }
+            assert!(lz4 > 0, "LZ4 pieces decoded on the device");
+        }
         let expected_format = if format == Format::F15 { 15 } else { 16 };
         assert!(table.views.iter().all(|view| view.format == expected_format), "{format:?} placed as format {expected_format}");
         if format != Format::F15 {

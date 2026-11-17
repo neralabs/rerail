@@ -85,6 +85,17 @@ form. This decision says which of them go and what replaces them.
    (`gather`), and the copies' views point at it. Format 15 keeps a table a document. The residency's derived bytes
    for a format 16 document are now none: no codes, no line starts.
 
+8. **The device decodes 16z's pieces (2026-11-17, §2's first step).** The residency no longer decodes a 16z tape
+   on the host. Where it is placed, the host copies its head (header, part starts, checkpoints, newline index:
+   stored as they are, and what the placement's checks read), and every piece of the admission's 16z documents is
+   decoded on the GPU in one command before any document is published (`residency/slabs/decode16z.metal`): one
+   SIMD group a piece, E26's shape, straight into the slab (no threadgroup room, so no piece is too long), each
+   read and write bounds-checked, a piece that does not decode to its length refusing the admission. A repeat is
+   decoded from the earlier piece's stored bytes (`Tape16Z::piece_jobs`). The device's bytes are checked equal
+   to the host's decode. What is not built yet: a 16z tape resident as stored with blocks decoded as a job's reads
+   reach them, and so the planner's choice between that and the whole decode (Q65). Today every 16z document is
+   decoded whole, on the GPU, when placed.
+
 ## Consequences
 
 - The roll-up of 2026-11-17 merges the branches' views as they are (A1, a view computed at load), declared once.

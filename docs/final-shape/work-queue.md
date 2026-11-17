@@ -1480,8 +1480,10 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 
 - **Now** (2026-11-17): 16z is stored as 0156 §2.1 lays it (one piece per array per block of 1,024 nodes, raw, LZ4 HC
   or a repeat; checkpoints raw), and each block decodes in place into the format 16 tape (`Tape16Z::decode_block_into`).
-  The residency still decodes a 16z tape whole on the host when it is placed (`residency/slabs.rs`, `decode_into`),
-  and no dictionary is used yet (0156 §2.3).
+  Since 0336 §8 the GPU decodes every 16z document's pieces when it is placed (one SIMD group a piece, checked
+  byte for byte against the host's decode); the host copies only the stored head. No dictionary is used yet
+  (0156 §2.3). **Left**: residency as stored with blocks decoded as reads reach them (block-aware device reads or a
+  per-job decoded copy in the bound block), and the planner step choosing it or the whole decode.
 - **Done when**:
   - a 16z tape is resident as stored, and a kernel decodes the blocks a job's reads reach (a SIMD group a block,
     E26's shape), with the same CLIF reads over each decoded block;
