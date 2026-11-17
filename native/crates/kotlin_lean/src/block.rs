@@ -87,6 +87,14 @@ fn class(c: u8) -> u8 {
     LO[usize::from(c & 15)] & HI[usize::from(c >> 4)]
 }
 
+/// Whether `c` is white space (a blank or a line end). (Swift's lexer, sharing this file, has no
+/// use for it: its fast exit measured slower.)
+#[allow(dead_code)]
+#[inline(always)]
+pub fn is_space(c: u8) -> bool {
+    class(c) & (C_BLANK | C_EOL) != 0
+}
+
 /// Whether `c` may continue a name (ASCII only: a byte from 0x80 is read as a character).
 #[inline(always)]
 pub fn is_word(c: u8) -> bool {

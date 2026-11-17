@@ -103,3 +103,19 @@ mod tests {
         assert_eq!(unkey(key(K::Comment, 0, true)), (K::Comment as u16, 0, 0, true));
     }
 }
+
+/// The lexer alone over `src` (for measuring): the tokens it reads to the end, or to a refusal.
+#[doc(hidden)]
+pub fn lex_only(src: &[u8]) -> usize {
+    let lx = lex::Lexer::new(src);
+    let mut extras = Vec::new();
+    let (mut at, mut n) = (0, 0);
+    while let Ok(t) = lx.token(at, &mut extras) {
+        if t.kind == lex::T::Eof {
+            break;
+        }
+        n += 1;
+        at = t.end as usize;
+    }
+    n
+}

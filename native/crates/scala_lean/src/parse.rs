@@ -416,9 +416,13 @@ impl<'a> P<'a> {
             }
         }
         loop {
-            let mut sc = self.sc.clone();
+            let mut sc = self.sc;
             let pos = self.sp as usize;
-            match sc.scan(self.src, pos, valid) {
+            let r = sc.scan(self.src, pos, valid);
+            if sc.indents.deep {
+                return self.refuse();
+            }
+            match r {
                 Some((Ext::BlockComment, s, e)) => {
                     self.fit_comment(s as u32, e as u32)?;
                     self.sc = sc;
@@ -446,7 +450,7 @@ impl<'a> P<'a> {
                         self.sp = e as u32;
                         continue;
                     }
-                    self.memo = Some((self.sp, valid, None, self.sc.clone()));
+                    self.memo = Some((self.sp, valid, None, self.sc));
                     return Ok(None);
                 }
             }

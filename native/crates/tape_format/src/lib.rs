@@ -199,6 +199,22 @@ pub const MAX_CLASSES: usize = 4;
 /// columns are moved into place after the code column, and the header and code table written.
 ///
 /// A node's key is its code: `kf | flags << 16`, and a bit for each supertype class it is in
+
+/// `v[from..to]` moved up by `by` cells (an insert's room). A span that fits a fixed window of
+/// `W` cells, with room for the window past it, moves as one fixed-size copy: a vector load and
+/// store, not a call of `memmove` (most wraps move a few nodes). The cells past `to` it writes
+/// are free capacity.
+#[inline(always)]
+fn shift_up<T: Copy + Default, const W: usize>(v: &mut [T], from: usize, to: usize, by: usize) {
+    if to - from <= W && from + by + W <= v.len() {
+        let mut win = [T::default(); W];
+        win.copy_from_slice(&v[from..from + W]);
+        v[from + by..from + by + W].copy_from_slice(&win);
+    } else {
+        v.copy_within(from..to, from + by);
+    }
+}
+
 /// (`classes`, from `CLASS_SHIFT`).
 pub struct Writer<L: Layout = Widths> {
     /// The header, then the code column: the image's start, as it will be. Reserved for the
@@ -544,12 +560,12 @@ impl<L: Layout> Writer<L> {
         let (n, ws) = (self.n, self.layout.widths());
         let shift = |column: &mut [u8], width: u8| {
             let w = usize::from(width);
-            column.copy_within(at * w..n * w, at * w + w);
+            shift_up::<u8, 16>(column, at * w, n * w, w);
         };
         shift(&mut self.size, ws.size);
         shift(&mut self.tail, ws.tail);
-        self.keys.copy_within(at..n, at + 1);
-        self.starts.copy_within(at..n, at + 1);
+        shift_up::<u32, 8>(&mut self.keys, at, n, 1);
+        shift_up::<u32, 8>(&mut self.starts, at, n, 1);
         self.n = n + 1;
         self.keys[at] = key;
         self.starts[at] = start;

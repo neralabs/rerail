@@ -239,6 +239,12 @@ impl<'s> Lexer<'s> {
     /// token starts, and whether a line end is in the white space passed.
     #[inline]
     pub fn skip(&self, mut at: usize, extras: &mut Vec<(u32, u32, u32)>) -> R<(usize, bool)> {
+        // A token touching the last one (`f(`, `.b`): no white space, no comment.
+        if let Some(&c) = self.src.get(at) {
+            if c < 0x80 && c != b'/' && !crate::block::is_space(c) {
+                return Ok((at, false));
+            }
+        }
         let mut nl = false;
         loop {
             loop {
