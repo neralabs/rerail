@@ -1861,7 +1861,10 @@ impl RecordTables {
         let parted: Vec<&crate::records::Reader> = r.readers.iter().filter(|rd| rd.parts_in_tier1()).collect();
         if !parted.is_empty() {
             let tested = r.rules.iter().enumerate().any(|(k, e)| matches!(e, crate::records::EndRule::Read(i) if r.readers[usize::from(*i)].parts_in_tier1()) && r.checks.iter().any(|c| usize::from(c.rule) == k));
-            if parted.len() > 1 || parted[0].arms.len() != 1 || !r.marks.is_empty() || !r.retags.is_empty() || r.gaps != 0 || tested {
+            // A quiet region (`Reader::quiet`): no mark or retag holds in it, so its parts' codes
+            // are plain whatever the grammar's marks.
+            let marked = !parted[0].quiet && (!r.marks.is_empty() || !r.retags.is_empty() || r.gaps != 0);
+            if parted.len() > 1 || parted[0].arms.len() != 1 || marked || tested {
                 return Err(Error::UnsupportedFeature("a region read in parts, on the CPU, with this grammar's marks or tests"));
             }
         }
@@ -3214,7 +3217,7 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // The parts by their lengths: at one byte, the shortest part's, as `read_parts`' `min`.
     let mut parts: Vec<crate::records::ReadPart> = reader.parts.clone();
     parts.sort_by_key(|p| (p.bytes, p.start));
-    let limit = if std::iter::once(a.closer).chain(parts.iter().map(|p| p.start)).all(|o| rd.bytewise(o)) { None } else { limit };
+    let limit = if std::iter::once(a.closer).chain(parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last))).all(|o| rd.bytewise(o)) { None } else { limit };
     let (walk, join) = (f.create_block(), f.create_block());
     f.append_block_param(join, types::I64);
     f.append_block_param(join, types::I64);
@@ -3303,10 +3306,12 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // Then the closer, or a part.
     f.switch_to_block(after);
     let kc = f.block_params(after)[0];
-    let mut checks: Vec<(Value, i64, Option<i64>)> = vec![(xc, i64::from(a.off), None)];
-    checks.extend(parts.iter().zip(&xp).map(|(pt, &x)| (x, i64::from(pt.bytes) - 1, Some(i64::from(pt.bytes)))));
+    // Each: its bits, its last's offset (or the output its last is the first bit of), and its
+    // bytes where it is a part.
+    let mut checks: Vec<(Value, i64, Option<i64>, Option<u16>)> = vec![(xc, i64::from(a.off), None, None)];
+    checks.extend(parts.iter().zip(&xp).map(|(pt, &x)| (x, i64::from(pt.bytes) - 1, Some(i64::from(pt.bytes)), pt.last)));
     let n = checks.len();
-    for (j, (x, off, part)) in checks.into_iter().enumerate() {
+    for (j, (x, off, part, to_last)) in checks.into_iter().enumerate() {
         let (this, other) = (f.create_block(), if j + 1 < n { Some(f.create_block()) } else { None });
         match other {
             Some(o) => {
@@ -3318,6 +3323,46 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             }
         }
         f.switch_to_block(this);
+        // A part to a last (`ReadPart::last`): the first bit of its output from its start, a
+        // word at a time, as a lexer reads the name after a `$`.
+        if let Some(o) = to_last {
+            let (lscan, llook, lfound) = (f.create_block(), f.create_block(), f.create_block());
+            f.append_block_param(lscan, types::I64);
+            f.append_block_param(lscan, types::I64);
+            f.append_block_param(lfound, types::I64);
+            let q = f.ins().ushr_imm(pos, 6);
+            let sh = f.ins().band_imm(pos, 63);
+            let ones = f.ins().iconst(types::I64, -1);
+            let m = f.ins().ishl(ones, sh);
+            f.ins().jump(lscan, &[q.into(), m.into()]);
+            f.switch_to_block(lscan);
+            heads.push((lscan, Step::Word));
+            let (w, m) = (f.block_params(lscan)[0], f.block_params(lscan)[1]);
+            let inside = f.ins().icmp(IntCC::UnsignedLessThan, w, bound(c, limit));
+            inside_or_past(f, inside, llook, limit, none, &[]);
+            f.switch_to_block(llook);
+            let x = rd.word(f, c, w, o, heads);
+            let x = f.ins().band(x, m);
+            let w64 = f.ins().ishl_imm(w, 6);
+            let tz = f.ins().ctz(x);
+            let l = f.ins().iadd(w64, tz);
+            let w1 = f.ins().iadd_imm(w, 1);
+            let ones = f.ins().iconst(types::I64, -1);
+            f.ins().brif(x, lfound, &[l.into()], lscan, &[w1.into(), ones.into()]);
+            f.switch_to_block(lfound);
+            let l = f.block_params(lfound)[0];
+            let len = f.ins().isub(l, pos);
+            let len = f.ins().iadd_imm(len, 1);
+            let code = code_at(f, pos, len);
+            write_record(f, c, stores, kc, Some(pos), Some(l), code);
+            let k2 = c.step(f, kc);
+            let at2 = f.ins().iadd_imm(l, 1);
+            f.ins().jump(tok, &[k2.into(), at2.into()]);
+            if let Some(o) = other {
+                f.switch_to_block(o);
+            }
+            continue;
+        }
         let l = f.ins().iadd_imm(pos, off);
         let len = f.ins().iconst(types::I64, off + 1);
         let code = code_at(f, pos, len);

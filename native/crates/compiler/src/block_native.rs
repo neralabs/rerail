@@ -354,7 +354,7 @@ impl BlockNative {
             EndRule::Read(_) | EndRule::Next(_) => None,
         }));
         read.extend(r.readers.iter().flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer])));
-        read.extend(r.readers.iter().flat_map(|rd| rd.parts.iter().map(|p| p.start)));
+        read.extend(r.readers.iter().flat_map(|rd| rd.parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last))));
         read.extend(r.checks.iter().map(|c| c.o));
         // The marks the token loop sets from the bytes (`loop_marks`); an output another mark
         // still reads from its row stays stored.

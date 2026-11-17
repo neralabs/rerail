@@ -100,8 +100,16 @@ pub enum TokenRule {
 /// kind of the bytes between them.
 #[derive(Clone, Debug)]
 pub struct Parts {
-    pub parts: Vec<(String, Expr, u8)>,
+    pub parts: Vec<(String, Expr, PartLen)>,
     pub content: String,
+}
+
+/// How far a part of a region read in parts runs (`Parts`): `bytes N`, or `last L`, through the
+/// first byte of `L` at or after its start (an identifier after Kotlin's `$`).
+#[derive(Clone, Debug)]
+pub enum PartLen {
+    Bytes(u8),
+    Last(Expr),
 }
 
 impl Parts {
@@ -112,6 +120,7 @@ impl Parts {
     /// ```text
     /// closer:  c = prev(f) & ~f                    # its first byte; its last N - 1 after
     /// part P:  ps = E & body;   last prev(ps, N - 1)
+    ///          (`last L`: its bytes fill(ps, prev(L)), its last L & those bytes)
     /// content: x = body & ~(each part's bytes);   start x & ~prev(x), last x & ~next(x)
     /// ```
     pub fn rows(&self, kind: &str, r: &Region, s: &Expr) -> Vec<Stmt> {
@@ -131,14 +140,26 @@ impl Parts {
         // The reader's own row is its token's, the opener; the closer is its kind's too.
         let mut out = vec![token(kind, closer.clone(), prev(closer, r.bytes - 1))];
         let mut covered: Option<Expr> = None;
-        for (p, e, n) in &self.parts {
+        let mut cover = |c: Expr| {
+            covered = Some(match covered.take() {
+                Some(x) => or(x, c),
+                None => c,
+            });
+        };
+        for (p, e, len) in &self.parts {
             let ps = and(e.clone(), body.clone());
-            out.push(token(p, ps.clone(), prev(ps.clone(), n - 1)));
-            for k in 0..*n {
-                covered = Some(match covered {
-                    Some(c) => or(c, prev(ps.clone(), k)),
-                    None => prev(ps.clone(), k),
-                });
+            match len {
+                PartLen::Bytes(n) => {
+                    out.push(token(p, ps.clone(), prev(ps.clone(), n - 1)));
+                    for k in 0..*n {
+                        cover(prev(ps.clone(), k));
+                    }
+                }
+                PartLen::Last(l) => {
+                    let bytes = Expr::Call("fill".into(), vec![Arg::E(ps.clone()), Arg::E(prev(l.clone(), 1))]);
+                    out.push(token(p, ps.clone(), and(l.clone(), bytes.clone())));
+                    cover(bytes);
+                }
             }
         }
         let x = match covered {
@@ -1699,12 +1720,17 @@ impl P {
                             let p = self.kind()?;
                             self.want_p("=")?;
                             let e = self.expr()?;
-                            self.want_kw("bytes")?;
-                            let n = u8::try_from(self.int()?).map_err(|_| "a part of at most 255 bytes".to_owned())?;
-                            if n == 0 {
-                                return self.err("a part of one byte or more");
-                            }
-                            parts.push((p, e, n));
+                            let len = if self.eat_kw("last") {
+                                PartLen::Last(self.expr()?)
+                            } else {
+                                self.want_kw("bytes")?;
+                                let n = u8::try_from(self.int()?).map_err(|_| "a part of at most 255 bytes".to_owned())?;
+                                if n == 0 {
+                                    return self.err("a part of one byte or more");
+                                }
+                                PartLen::Bytes(n)
+                            };
+                            parts.push((p, e, len));
                             self.nls();
                             let _ = self.eat_p(",");
                         }

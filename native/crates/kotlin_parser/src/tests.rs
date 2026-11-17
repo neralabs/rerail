@@ -89,12 +89,31 @@ fn statements_and_expressions_are_the_lean_parsers() {
     ]);
 }
 
+/// Step 3: strings, with `$name` templates.
 #[test]
-fn what_step_2_does_not_read_is_refused() {
+fn strings_are_the_lean_parsers() {
+    same(&[
+        "val a = \"x\"\n",
+        "val b = \"\"\n",
+        "val c = \"a\\nb $d and $e_1!\"\n",
+        "val k = \"$\"\n",
+        "val l = \"a$\"\n",
+        "val m = \"\\$x \\\" y\\\\\"\n",
+        "val n = \"$$x $ y\"\n",
+        "fun f() {\n    g(\"a // b /* c\", \"$h.i\")\n    \"j\".k()\n}\n",
+        "val o = \"h\u{e9}llo\" // \u{fc}\n",
+    ]);
+}
+
+#[test]
+fn what_step_3_does_not_read_is_refused() {
     refused(&[
         "package a; import b\n",
         "import a.b import c\n",
-        "val s = \"x\"\n",
+        "val s = 'x'\n",
+        "val s = \"${x}\"\n",
+        "val s = \"\"\"raw\"\"\"\n",
+        "val s = \"open\n",
         "/* /* nested */ */\npackage a\n",
         "/* open\n",
         "fun f() { a.forEach { it } }\n",
@@ -129,7 +148,19 @@ fn corpus() {
             continue;
         };
         match c.image(&text) {
-            None => refused += 1,
+            None => {
+                refused += 1;
+                if std::env::var_os("RERAIL_KOTLIN_WHY").is_some() {
+                    // The reference evaluator's first escape or error; else the grammar refused.
+                    let stmts = ::bitlex::syntax::parse(crate::GRAMMAR).expect("parses");
+                    let tables = Default::default();
+                    let why = match ::bitlex::eval::Ev::run(&stmts, text.as_bytes(), &tables) {
+                        Ok(out) => out.errors.first().map(|e| e.split(" (byte").next().unwrap_or(e).to_string()).unwrap_or_else(|| "the grammar".into()),
+                        Err(e) => format!("eval: {e:?}"),
+                    };
+                    eprintln!("refused: {why} | {}", p.display());
+                }
+            }
             Some(image) if image_text(&image).as_deref() == Ok(&want) => same += 1,
             Some(_) => {
                 differ += 1;
@@ -150,6 +181,29 @@ fn show() {
     for p in std::env::var("RERAIL_KOTLIN_SHOW").expect("set RERAIL_KOTLIN_SHOW").split(':') {
         let text = std::fs::read_to_string(p).expect("a file");
         let lean = lean_text(&text).unwrap_or_else(|| "refused".into());
+        if std::env::var_os("RERAIL_KOTLIN_TOKENS").is_some() {
+            let stmts = ::bitlex::syntax::parse(crate::GRAMMAR).expect("parses");
+            match ::bitlex::eval::Ev::run(&stmts, text.as_bytes(), &Default::default()) {
+                Ok(out) => {
+                    for t in out.tokens.iter().filter(|t| !t.mark) {
+                        eprintln!("reference token {} {}..{}", t.kind, t.start, t.end);
+                    }
+                    eprintln!("reference errors {:?}", out.errors);
+                    if let Some(r) = &c.program.block_programs[0].records {
+                        for rd in r.readers.iter().filter(|rd| !rd.parts.is_empty()) {
+                            eprintln!("reader {:?}", rd);
+                        }
+                        let run = c.program.block_programs[0].run(text.as_bytes());
+                        for rd in r.readers.iter().filter(|rd| !rd.parts.is_empty()) {
+                            for o in rd.parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last)).chain([rd.arms[0].closer]) {
+                                eprintln!("output {o}: {:064b}", run.outputs[usize::from(o)].first().copied().unwrap_or(0).reverse_bits());
+                            }
+                        }
+                    }
+                }
+                Err(e) => eprintln!("reference: {e:?}"),
+            }
+        }
         match c.parser.image(text.as_bytes()) {
             Ok(image) => {
                 let got = image_text(&image).unwrap_or_default();
@@ -160,7 +214,7 @@ fn show() {
                 }
             }
             Err(why) => {
-                let words: String = c.explain(&text).lines().filter(|l| !l.contains("token ")).map(|l| format!("{l}\n")).collect();
+                let words: String = c.explain(&text).lines().filter(|l| std::env::var_os("RERAIL_KOTLIN_TOKENS").is_some() || !l.contains("token ")).map(|l| format!("{l}\n")).collect();
                 eprintln!("== {p}: refused {why:?}\n-- lean\n{lean}-- words\n{words}");
             }
         }

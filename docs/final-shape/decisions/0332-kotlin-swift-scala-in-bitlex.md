@@ -76,6 +76,33 @@ What step 2 does not read is handed over:
 
 Corpus (491 files): 9 the same, 482 refused, 0 differ (step 1: 5 the same).
 
+## Kotlin, step 3 (`03-strings.bitlex`)
+
+Step 3 reads strings with `$name` templates, as a region read in parts (0323):
+
+```text
+token '"' = start o_str read str parts {
+    interpolation_identifier_start = id_dollar bytes 1
+    interpolated_identifier = prev(id_dollar) last id_last
+    string_content = lone bytes 1
+  } else string_content
+```
+
+- The quotes are implied.
+- The content keeps its escapes (`\n`, `\$`), as tree-sitter's does.
+- A `$` before a name is `interpolation_identifier_start`, and the name runs to its last word
+  byte (a part to a `last`, below).
+- A `$` before anything else is a one-byte content token. The content after it is another,
+  because tree-sitter-kotlin's scanner splits there.
+- The string's opener counts as a token byte for the scanner's semicolon, so a line that starts
+  with a string ends the line before.
+
+Escapes hand over raw strings, `${…}` templates, characters and backtick names.
+
+Corpus: 11 the same, 480 refused, 0 differ. The refusals, by the reference evaluator's first
+reason: characters and backtick names 112, the grammar 93, `${…}` 73, `::` 71, numbers with a
+letter or a dot 65, `;` 29, accessors 15, raw strings 13.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
@@ -120,6 +147,32 @@ Corpus (491 files): 9 the same, 482 refused, 0 differ (step 1: 5 the same).
    - Its caller then takes the mark.
    - Before this, a hidden mark there was skipped, the level read on, and the file was refused.
 
+6. **A part to a `last`** (`P = E last L`, `PartLen::Last`, `ReadPart::last`). The part runs
+   from a bit of `E` through the first bit of `L` at or after it.
+   - In masks: its bytes are `fill(ps, prev(L))`, and its last is `L` within them.
+   - `read_parts` takes the part's last from `ReadPart::last_at`. The program's text is
+     `recpart K START 0 last O`.
+   - A's walk searches for the last a word at a time.
+   - B (tier 2's split) refuses it for now.
+7. **Rows read inside a region are not dispatched by a byte.** A string's content can start at
+   any byte. Three places now leave such rows (`Lowering::inside`) out:
+   - the search for a free byte for a reader's kind;
+   - the token marks' kind check;
+   - the grammar's token starts that marks are placed on.
+
+   Tier 2 meets these rows only in the region's mode (0337). Inside the region, a mark can only
+   be skipped (if hidden) or refuse the file (if not), so it never reads a token there.
+8. **A quiet region (`Reader::quiet`, `recquiet K`).** The lowering proves, with the regions'
+   fixed point (`Induction`), that no mask mark and no retag holds in the region's fill past
+   its opener, or at its closer. A's walk then writes plain codes (kind and word), and the CPU
+   builder no longer refuses a grammar with marks, retags or gaps around such a region.
+9. **An output at two delays.** A `prev` of a delayed value is the same operation at one byte
+   less of delay. Outputs were deduplicated by operation alone, so `prev(x)` became `x`'s output
+   at `x`'s delay: the interpolated name started at the `$`.
+   - The second delay now gets an operation of its own: a `prev` by one, at one byte more
+     delay. The program's delay grows to match.
+   - The masks and the records still find an output by its operation.
+
 Single-extra grammars compile as before: rr's tests and the compiler's targeted tests pass.
 
 ## Found on the way
@@ -132,6 +185,7 @@ Single-extra grammars compile as before: rr's tests and the compiler's targeted 
 
 ## Next
 
-Kotlin's ladder goes on. Next: strings with templates (regions read in parts), then lambdas,
-`when` and `try`, then enums, companions, accessors and the remaining operators. Swift and Scala start the same way, in their own crates: their step 1 is
+Kotlin's ladder goes on. Next: characters and backtick names, `${…}` templates (a region whose
+code nests: a count of braces), `::`, numbers, then lambdas, `when` and `try`, then enums,
+companions, accessors and the remaining operators. Swift and Scala start the same way, in their own crates: their step 1 is
 imports and comments, with Scala's comment kinds `comment` and `block_comment`.
