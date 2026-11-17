@@ -2042,11 +2042,12 @@ impl RecordTables {
 /// 64 is a shift by 0 in Cranelift.
 fn cut_to(f: &mut FunctionBuilder<'_>, w: Value, len: Value) -> Value {
     // All ones shifted down by `64 - 8 * min(len, 8)`, mod 64 (a shift's amount is): eight
-    // bytes, a shift of 0.
+    // bytes, a shift of 0. As lean's `u64::MAX >> (64 - 8 * len)`, a subtraction from 64, not
+    // a negation: LLVM makes `-(8 * n) & 63` a `(56 * n) & 56`, a multiply and an `and` more.
     let eight = f.ins().iconst(types::I64, 8);
     let n = f.ins().umin(len, eight);
     let bits = f.ins().ishl_imm(n, 3);
-    let sh = f.ins().ineg(bits);
+    let sh = f.ins().irsub_imm(bits, 64);
     let all = f.ins().iconst(types::I64, -1);
     let m = f.ins().ushr(all, sh);
     f.ins().band(w, m)
@@ -5963,14 +5964,16 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let kk = f.ins().load(types::I64, ro, sa, 0);
     let meta = f.ins().load(types::I64, ro, sa, 8);
     let same_key = f.ins().icmp(IntCC::Equal, kk, key);
-    let mlen = f.ins().band_imm(meta, 0xff);
+    // The slot's length and ninth byte are bytes of its meta, each loaded alone (lean's
+    // `ldrb`s): a byte load is as soon as the meta's, a field cut from it an instruction later.
+    let mlen = f.ins().uload8(types::I64, ro, sa, 8);
     let same_len = f.ins().icmp(IntCC::Equal, mlen, len);
     let mut hit = f.ins().band(same_key, same_len);
     if t.rest == WordRest::Ninth {
         // Its ninth byte, where it has nine, as the slot's (lean's `(len != 9) | (ninth ==
         // b'n')`): read past the token where it is shorter, in the padding at the file's end.
         let ninth = f.ins().uload8(types::I64, fl, from, 8);
-        let want = f.ins().ushr_imm(meta, NINTH_SHIFT);
+        let want = f.ins().uload8(types::I64, ro, sa, 8 + (NINTH_SHIFT / 8) as i32);
         let same = f.ins().icmp(IntCC::Equal, ninth, want);
         let other = f.ins().icmp_imm(IntCC::NotEqual, len, 9);
         let ok = f.ins().bor(same, other);

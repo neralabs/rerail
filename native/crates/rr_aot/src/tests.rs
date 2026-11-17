@@ -138,7 +138,15 @@ fn a_words_lookup_is_leans() {
         assert!(look.contains(".wrapping_shl(4)"), "a slot of 16 bytes: {look}");
         assert!(!look.contains("wrapping_add(16isize"), "a second key read: {look}");
         assert!(look.contains("((9i64 as u64) as u64)"), "the ninth byte asked where the token has nine: {look}");
+        // The slot's length and ninth byte loaded alone (lean's `ldrb`s), not cut from its
+        // meta word an instruction after its load.
+        assert!(look.contains("wrapping_add(8isize as usize)) as *const u8)") && !look.contains(".wrapping_shr(56)"), "the slot's length and ninth as bytes: {look}");
     }
+    // The key cut to its length as lean's `u64::MAX >> (64 - 8 * len)`: a shift by 64 less
+    // its bits, not by their negation (`(56 * n) & 56` to LLVM).
+    let negs = f0.match_indices(".wrapping_neg();\n").filter(|&(at, _)| f0[at..].lines().nth(1).is_some_and(|l| l.ends_with("= -1i64 as u64;"))).count();
+    assert_eq!(negs, 0, "a key cut by a negated shift");
+    assert!(f0.contains("(64i64 as u64).wrapping_sub("), "a key cut by 64 less its bits");
 }
 
 /// A word's or a punctuation's end is lean's `pos + words.max(n1)`: the run from its first

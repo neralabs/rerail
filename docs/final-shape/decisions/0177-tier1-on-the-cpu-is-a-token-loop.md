@@ -3568,3 +3568,40 @@ What is left of the words gap, about 2.4 cycles a token:
 
 Test: `a_cold_block_stays_a_branch` (every cold block carries the
 `asm!`).
+
+## The word lookup's chain is lean's
+
+The lookup's chain, from a word's length to its hit, was two
+instructions longer than lean's. Each one was a form LLVM could not
+shorten.
+
+The key cut: `cut_to` shifted all ones down by `-(8 * n)`, mod 64.
+LLVM turns that into `(56 * n) & 56`, three instructions. Lean writes
+`u64::MAX >> (64 - 8 * len)`, which LLVM makes `lsl #3; neg`. The cut
+is now `64 - 8 * n` (`irsub_imm`), the same amount mod 64:
+
+```rust
+// before: let sh = f.ins().ineg(bits);
+let sh = f.ins().irsub_imm(bits, 64);
+```
+
+The slot's length and ninth byte were cut from the meta word after its
+load (`and #0xff`, `lsr #56`). Now each is a byte load of its own, as
+lean's `ldrb`s, ready as soon as the meta's load:
+
+```rust
+let mlen = f.ins().uload8(types::I64, ro, sa, 8);
+let want = f.ins().uload8(types::I64, ro, sa, 8 + (NINTH_SHIFT / 8) as i32);
+```
+
+Tried first and dropped: printing register shifts in 64 bits instead of
+`as u32`. The machine code stayed the same; the multiply comes from the
+negation.
+
+Measured, as information: a word's lookup costs 2.9 cycles, from
+3.1 (lean's: about 2.1). Words: 17.8 → 17.2 cycles a token (lean
+15.4–15.9). All-keyword lines: 17.7 → 16.9. Instructions a token: words
+83.1 → 82.5, the other kinds within 0.1.
+
+Test: `a_words_lookup_is_leans` (the slot's bytes loaded alone, no key
+cut by a negated shift).
