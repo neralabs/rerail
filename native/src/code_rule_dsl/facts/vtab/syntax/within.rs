@@ -110,7 +110,10 @@ pub struct Within {
     /// The format a test reads the documents' tapes in (`reading`); else each is read as held.
     format: Option<Format>,
     /// Per document, the axis's set as its tape's code numbers (all of them for the tree's containment).
-    sets: Box<[OnceLock<CodeSet>]>,
+    sets: Box<[OnceLock<Arc<CodeSet>>]>,
+    /// The sets made, by language and table: format 16's documents share their language's table (decision 0336 §7),
+    /// so the set is made once for all of them, not once per document over the whole table.
+    shared: Mutex<FxHashMap<(u16, usize), Arc<CodeSet>>>,
 }
 
 /// An axis's `n` side for every node of the batch: per node row its run in `pairs` (`start[row]..start[row + 1]`),
@@ -157,6 +160,7 @@ impl Within {
             on_device: OnceLock::new(),
             format: None,
             sets: (0..batch.docs.len()).map(|_| OnceLock::new()).collect(),
+            shared: Mutex::new(FxHashMap::default()),
             batch,
         }
     }
@@ -186,16 +190,25 @@ impl Within {
     /// tree's containment).
     fn set<T: Tape>(&self, doc: usize, t: &T) -> &CodeSet {
         self.sets[doc].get_or_init(|| {
-            if self.mode == Mode::Tree {
-                return t.table().set(|_| true);
-            }
-            // An ERROR node's kind is `ERROR_SYMBOL` (`Facts::kind`), slot 0 of its tag's stride whatever kind its entry
-            // holds: a member where the set names ERROR, as `member` and the device's bits read it (0289).
-            let members = self.members.get(&self.batch.docs[doc].tag);
-            t.table().set(|e| {
-                let slot = if e.flags & rerail_tape_format::CODE_ERROR != 0 { 0 } else { usize::from(e.kind) };
-                members.is_some_and(|m| m.get(slot).is_some_and(|&x| x))
-            })
+            let tag = self.batch.docs[doc].tag;
+            let key = (if self.mode == Mode::Tree { u16::MAX } else { u16::from(tag) }, std::ptr::from_ref(t.table()) as usize);
+            let mut shared = self.shared.lock();
+            shared
+                .entry(key)
+                .or_insert_with(|| {
+                    if self.mode == Mode::Tree {
+                        return Arc::new(t.table().set(|_| true));
+                    }
+                    // An ERROR node's kind is `ERROR_SYMBOL` (`Facts::kind`), slot 0 of its tag's stride whatever kind
+                    // its entry holds: a member where the set names ERROR, as `member` and the device's bits read it
+                    // (0289).
+                    let members = self.members.get(&tag);
+                    Arc::new(t.table().set(|e| {
+                        let slot = if e.flags & rerail_tape_format::CODE_ERROR != 0 { 0 } else { usize::from(e.kind) };
+                        members.is_some_and(|m| m.get(slot).is_some_and(|&x| x))
+                    }))
+                })
+                .clone()
         })
     }
 
