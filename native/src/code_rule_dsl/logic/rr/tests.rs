@@ -3922,3 +3922,27 @@ fn a_context_in_a_cycle_is_widened_on_the_version() {
     let ctx: Vec<String> = v.rules().filter(|r| v.rel_name(r.head().rel()).starts_with("rr_ctx")).map(|r| v.show_rule(r)).collect();
     assert!(!ctx.is_empty() && ctx.iter().all(|r| !r.contains("ask(")), "{ctx:?}");
 }
+
+/// `whole()`'s sets run on a modular text's version (decision 0281's path, step 7b): a literal twice, a rule twice, a
+/// rule that is its own body and a fact twice are each once, or gone, as the tree's `lower::sets` makes them; a debug
+/// build checks the image against the tree's (`link_seeded_version`).
+#[test]
+fn the_lowerings_sets_are_made_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl a(x: number)\n.decl r(x: number)\n.output r\n",
+        "a(1). a(1). a(2).\n",
+        "r(x) :- a(x), a(x).\n",
+        "r(x) :- a(x), a(x).\n",
+        "r(x) :- r(x).\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let r: Vec<String> = v.rules().filter(|x| v.rel_name(x.head().rel()) == "r").map(|x| v.show_rule(x)).collect();
+    assert_eq!(r.len(), 1, "one rule of r, its literal once: {r:?}");
+    assert_eq!(r[0].matches("a(").count(), 1, "{r:?}");
+    let head = v.header(&Default::default()).unwrap();
+    assert_eq!(head.facts.get("a").map(|rows| rows.len()), Some(2), "a's facts once each: {:?}", head.facts.get("a"));
+}

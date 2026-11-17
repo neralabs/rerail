@@ -140,3 +140,89 @@ impl ProgramPass for WidenCyclicContexts {
         Ok(())
     }
 }
+
+/// A body is a conjunction: a literal twice is the literal once (`whole()`'s "a literal twice"), its first kept. Two
+/// literals of one rule are equal where they print alike: the rule's variables have one name each.
+pub struct LiteralsOnce;
+
+impl ProgramPass for LiteralsOnce {
+    const NAME: &'static str = "each literal of a body once";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        let v = cx.v();
+        let mut once: BTreeMap<RuleId, Vec<u32>> = BTreeMap::new();
+        for rule in v.rules() {
+            let shown: Vec<(u32, String)> = rule.body().map(|l| (l.node(), v.show_lit(rule, l))).collect();
+            let mut seen: BTreeSet<&str> = BTreeSet::new();
+            let kept: Vec<u32> = shown.iter().filter(|(_, s)| seen.insert(s.as_str())).map(|(n, _)| *n).collect();
+            if kept.len() < shown.len() {
+                once.insert(rule.id(), kept);
+            }
+        }
+        if once.is_empty() {
+            return Ok(());
+        }
+        let input = std::sync::Arc::clone(w.input());
+        let b = w.derive()?;
+        for rule in input.rules() {
+            let Some(kept) = once.get(&rule.id()) else {
+                b.keep(&input, rule);
+                continue;
+            };
+            let mut rb = b.rule().source(rule.id()).head_from(&input, rule, rule.head());
+            for &n in kept {
+                let l = rule.body().find(|l| l.node() == n).expect("a literal of the rule");
+                rb = rb.lit(&input, rule, l);
+            }
+            rb.finish()?;
+        }
+        Ok(())
+    }
+}
+
+/// A rule whose body is its own head derives nothing (`r(x) :- dfs_first_memo(x, …)` printed, whose construct lowers
+/// to the relation itself): dropped, as `whole()` drops it.
+pub struct DropSelfRules;
+
+impl ProgramPass for DropSelfRules {
+    const NAME: &'static str = "drop the rules that are their own body";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        let v = cx.v();
+        let args = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>| a.args().map(|t| v.show_term(r, t)).collect::<Vec<_>>();
+        let own = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>| {
+            let mut body = r.body();
+            match (body.next().map(|l| l.view()), body.next()) {
+                (Some(L::Atom(a)), None) => !a.neg() && a.rel() == r.head().rel() && args(r, a) == args(r, r.head()),
+                _ => false,
+            }
+        };
+        if v.rules().any(own) {
+            w.keep(|r| !own(r))?;
+        }
+        Ok(())
+    }
+}
+
+/// A relation's facts are a set too (`whole()`'s last set): each row once, its first kept.
+pub struct FactsOnce;
+
+impl ProgramPass for FactsOnce {
+    const NAME: &'static str = "each fact once";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        let v = cx.v();
+        let was = v.header(&Default::default())?;
+        let mut head = was.clone();
+        for rows in head.facts.values_mut() {
+            let mut kept: Vec<crate::code_rule_dsl::logic::front::List<crate::code_rule_dsl::logic::front::Value>> = Vec::with_capacity(rows.len());
+            for row in rows.drain(..) {
+                if !kept.contains(&row) {
+                    kept.push(row);
+                }
+            }
+            *rows = kept;
+        }
+        if head.facts != was.facts {
+            w.on()?.set_header(&was, &head);
+        }
+        Ok(())
+    }
+}

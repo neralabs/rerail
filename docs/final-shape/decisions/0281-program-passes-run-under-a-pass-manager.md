@@ -616,8 +616,10 @@ step 3 replaces what is under the writer.
      run of the pass as the tree's loop has them; the scope's declarations come out of its header after
      (`lower::unseed`, `rr::link_seeded_version`). The version half lives in the logic crate, as `rr::lower` is
      compiled below the program image. ep2's 317 policies over 10 files, fresh stores, debug: 0 rows, every check
-     passes. Next: the sets of rules and facts, the literals once, a rule that is its own body, `unit`, aggregate
-     demand, each moving the version one pass earlier.
+     passes. Then the sets (`lower::sets` on the tree): `lowering_tail::LiteralsOnce`, `DropSelfRules`, the
+     preparation's `DropRepeated` and `FactsOnce`, so the version is made after `unit`. Test:
+     `the_lowerings_sets_are_made_on_the_version` (each of the three new passes left out fails it). ep2's 317 policies
+     again: 0 rows, every check passes. Next: `unit`, then aggregate demand.
    - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.

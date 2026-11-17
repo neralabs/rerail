@@ -966,9 +966,11 @@ pub fn unseed(program: &mut Program, seeds: &Seeds, core: &BTreeSet<String>) {
     program.qualifiers.retain(|r, _| !(seeded.qualifiers.contains(r) && gone(r)));
 }
 
-/// `link_seeded` up to `whole()`'s tail: the program `rr::link_seeded_version` makes a version of, `declared`
-/// checked. The tail drops only literals of relations the program derives, and adds `node` only where it is
-/// declared, so the check before it refuses what the check after it does.
+/// `link_seeded` up to `whole()`'s tail (`sets`, `widen_cyclic_contexts`): the program `rr::link_seeded_version`
+/// makes a version of, `declared` checked. The tail drops repeats (a literal or rule another copy keeps), a rule
+/// whose body is its own head, and literals of relations the program derives, and adds `node` only where it is
+/// declared: the check before it refuses what the check after it does, but for a relation read only by its own
+/// copy-rule, which the lowering does not declare apart.
 pub fn link_seeded_front(m: Module, seeds: &Seeds) -> Result<Program, Error> {
     let mut l = seeds.l.clone();
     l.violations.clear();
@@ -981,11 +983,60 @@ pub fn link_seeded_front(m: Module, seeds: &Seeds) -> Result<Program, Error> {
 /// The lowering's whole-program half (decision 0246 §1), over the modules appended into `l`.
 fn whole(l: Lowerer) -> Result<Program, Error> {
     let mut program = whole_front(l)?;
+    sets(&mut program);
     widen_cyclic_contexts(&mut program);
     Ok(program)
 }
 
-/// `whole` up to its last pass, `widen_cyclic_contexts`, which `link_seeded_version` runs on the version.
+/// `whole()`'s sets, after `unit`: each literal of a body once, a rule that is its own body dropped, each rule once,
+/// each fact once. `rr::link_seeded_version` runs them on the version (`preparation::lowering_tail`).
+pub fn sets(program: &mut Program) {
+    // A body is a conjunction: a literal twice is the literal once. Lowering keeps each once, so a printed program
+    // (`match`'s groups printed as their bindings beside the test) lowers back to itself.
+    for rule in &mut program.rules {
+        if (1..rule.body.len()).any(|i| rule.body[..i].contains(&rule.body[i])) {
+            let mut kept: Vec<Literal> = Vec::with_capacity(rule.body.len());
+            for l in rule.body.iter() {
+                if !kept.contains(l) {
+                    kept.push(l.clone());
+                }
+            }
+            rule.body = kept.into();
+        }
+    }
+    // A rule whose body is its own head derives nothing: a natively made relation's rule as printed
+    // (`r(x) :- dfs_first_memo(x, …)`), whose construct lowers to the relation itself.
+    program.rules.retain(|r| !matches!(r.body.as_slice(), [Literal::Atom(a)] if !a.neg && a.rel == r.head.rel && a.args == r.head.args));
+    // So are a program's rules: a printed program states the rules its settings make (`.on syntax_error`'s finding,
+    // the scope's guards), which lowering its settings again makes once more.
+    {
+        use std::hash::{Hash, Hasher};
+        let mut seen: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
+        let mut kept: Vec<Rule> = Vec::with_capacity(program.rules.len());
+        for rule in program.rules.drain(..) {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            rule.hash(&mut h);
+            let same = seen.entry(h.finish()).or_default();
+            if same.iter().all(|&i| kept[i] != rule) {
+                same.push(kept.len());
+                kept.push(rule);
+            }
+        }
+        program.rules = kept;
+    }
+    // A relation's facts are a set too.
+    for rows in program.facts.values_mut() {
+        let mut kept: Vec<crate::code_rule_dsl::logic::front::List<Value>> = Vec::with_capacity(rows.len());
+        for row in rows.drain(..) {
+            if !kept.contains(&row) {
+                kept.push(row);
+            }
+        }
+        *rows = kept;
+    }
+}
+
+/// `whole` up to its tail (`sets`, `widen_cyclic_contexts`), which `rr::link_seeded_version` runs on the version.
 fn whole_front(mut l: Lowerer) -> Result<Program, Error> {
     let analyses = crate::code_rule_dsl::logic::profile::span(|| "the program's analyses (findings, spans, kinds)".to_owned());
     l.three_valued();
@@ -1030,49 +1081,6 @@ fn whole_front(mut l: Lowerer) -> Result<Program, Error> {
     super::aggregate_demand::optimize(&mut program);
     // The demand's rules, and the rules whose aggregate it made an existence test, read no relation either.
     unit(&mut program);
-    // A body is a conjunction: a literal twice is the literal once. Lowering keeps each once, so a printed program
-    // (`match`'s groups printed as their bindings beside the test) lowers back to itself.
-    for rule in &mut program.rules {
-        if (1..rule.body.len()).any(|i| rule.body[..i].contains(&rule.body[i])) {
-            let mut kept: Vec<Literal> = Vec::with_capacity(rule.body.len());
-            for l in rule.body.iter() {
-                if !kept.contains(l) {
-                    kept.push(l.clone());
-                }
-            }
-            rule.body = kept.into();
-        }
-    }
-    // A rule whose body is its own head derives nothing: a natively made relation's rule as printed
-    // (`r(x) :- dfs_first_memo(x, …)`), whose construct lowers to the relation itself.
-    program.rules.retain(|r| !matches!(r.body.as_slice(), [Literal::Atom(a)] if !a.neg && a.rel == r.head.rel && a.args == r.head.args));
-    // So are a program's rules: a printed program states the rules its settings make (`.on syntax_error`'s finding,
-    // the scope's guards), which lowering its settings again makes once more.
-    {
-        use std::hash::{Hash, Hasher};
-        let mut seen: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
-        let mut kept: Vec<Rule> = Vec::with_capacity(program.rules.len());
-        for rule in program.rules.drain(..) {
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            rule.hash(&mut h);
-            let same = seen.entry(h.finish()).or_default();
-            if same.iter().all(|&i| kept[i] != rule) {
-                same.push(kept.len());
-                kept.push(rule);
-            }
-        }
-        program.rules = kept;
-    }
-    // A relation's facts are a set too.
-    for rows in program.facts.values_mut() {
-        let mut kept: Vec<crate::code_rule_dsl::logic::front::List<Value>> = Vec::with_capacity(rows.len());
-        for row in rows.drain(..) {
-            if !kept.contains(&row) {
-                kept.push(row);
-            }
-        }
-        *rows = kept;
-    }
     drop(demand);
     Ok(program)
 }
