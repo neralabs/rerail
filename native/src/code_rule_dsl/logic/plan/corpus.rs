@@ -7543,6 +7543,14 @@ fn run_observed(
         // An export no chunk measured and the keeper gave none of (it gave up after its hits, as in a phase whose
         // files are all loads) is measured from its rows held too: the planner prices every input it reads.
         let unmeasured: BTreeSet<&String> = split.exports.iter().filter(|rel| !totals.rels.contains_key(rel.as_str())).collect();
+        // `RERAIL_KEPT_DOCS` (Q20): the listed exports' rows this process counted, by document, against those held.
+        if let Some(k) = keeper.as_ref() {
+            for rel in split.exports.iter().filter(|r| keptstats::kept_docs_listed(r)) {
+                for line in k.compare_documents(rel, &exports.borrow(), pf.types(rel).len()) {
+                    eprintln!("RERAIL_KEPT_DOCS {rel}: {line}");
+                }
+            }
+        }
         if hits_unmeasured || kept.is_some() || !unmeasured.is_empty() {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the exports' statistics, kept or measured".into());
             let tested = constants_tested_in(&prepared_placed.v);

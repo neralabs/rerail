@@ -671,8 +671,25 @@ pass.
     (463778 kept, 463777 held)`, `unparen (463778 kept, 463777 held)`. The keeper counts one row more than is held, in
     each, from the run that counted every file in (a new build's).
   - **Ruled out:** a row given to `Exports::add` twice (a counter of those read 0 for all three), and a value document
-    held by two files (`Keeper::holders`: none held by more than one). Not traced further: the next step is a
-    per-document comparison of the keeper's count-in against the rows held.
+    held by two files (`Keeper::holders`: none held by more than one). `holders` tracks only documents past
+    `HIDDEN_KEYS`, so it could not see the cause below.
+  - **Found** (2026-11-16, m3, a fresh ep2 store's cold run, `RERAIL_KEPT_DOCS=alias_value`, a per-document
+    comparison of the keeper's count-in against the rows held): one document, 1348786882, has 4 rows counted and 3
+    held. It is an annotation document (`ANNOTATION_KEYS..HIDDEN_KEYS`), and two files' entries name it:
+    `benchmarks/bench_versioning_git.py` gives 3 rows, `conform/l1100_rbac_schema/test_rbac_provider.py` gives 1,
+    equal to one of the 3. The held table keeps the union, and the keeper adds both.
+    - **The cause is a guest key collision**, not a shared document. A guest's key hashes (host path, place,
+      grammar) into its range (2^28 for annotations), and `guests::key` probes only against the chunk's own
+      `taken`. The two hosts are in different chunks, so both took the same key, and their nodes the same ids
+      (`key << 32 | index`). By the birthday bound, ep2's tens of thousands of guests give about one such
+      collision. On the 9,010-file repo they would give dozens.
+    - **More than a statistic.** Two documents share node ids, so the held table folds one file's row into the
+      other's. A memo hit's guests are never made, so no run-wide probe could see them either. The probe also
+      makes a key depend on the chunk's other files, against 0055's "a function of what it is".
+    - **The fix is the user's call** (a node-id or store format choice). Claiming keys in the store breaks 0104
+      (guests are made inside the waves). Reading the registry before the first wave is a read of unchanged data on
+      every edit. Provisional keys mapped at the store, as atoms are (0160/0170), are baked into memoised rows.
+      Wider keys change the node-id format.
   - For phased-facts' 0290: its table's "the kept inputs" (0.76 s on dl10) was measured before a2ff8071e.
 
 ### Q21. The hub's gate failures at 692cc9772
