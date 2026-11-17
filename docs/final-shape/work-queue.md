@@ -645,6 +645,21 @@ pass.
     - **Open:** two debug edits in a row (f4, f5 at 4b6518be9's debug build) hung after the frames preload until the
       115 s cap (26,123 frames read, 2,722 identities left out, against 31,551 and 0 in the others); the next run
       paid for three edits (685 G). Not reproduced; no sample.
+- **Done** (2026-11-17):
+  - **The blobs are out of the scan.** The hub's 0295 §4 (segments) is the format change this item waited on:
+    a frame's row holds no bytes now (`seg`, `seg_at`, `seg_len`), and `read_cross_space` skips a left-out frame
+    before `row_bytes` maps anything. So a frame that is not read costs a small key row.
+  - **The open read gap, fixed.** `frame_rels` now names, besides the declared relations, every relation the run
+    binds from an earlier phase (`repository`), as `Retained::from_frames` reads them, declared or not. Test:
+    `a_relation_bound_from_an_earlier_phase_is_read_by_identity_declared_or_not` (failed before).
+  - **ep2, measured** (the m3, a fresh store, profiling build at 51e67e692, strict; no build for this): after the
+    cold run, 13 B101 edits in a row, each a new process. Every edit read 32,002 frames, with 0 identities left out.
+    `wait` stayed at 0.23–0.27 s user, and edits at 28.9–31.3 G with rows identical to h1. The store holds 33,808
+    frames in 9 spaces and 15 manifests: 0302's lanes keep the space at its size. The done-when holds: the read is
+    the run's own identities, and `wait` does not grow with the runs kept.
+  - The debug hang of f4 and f5 was not seen again in these 13 edits, nor in the 6 before. It stays unexplained:
+    if it comes back, take a sample before the cap.
+
 
 ### Q20. After the hub's merge, an edit's kept inputs swing between missing and costing 85 G
 

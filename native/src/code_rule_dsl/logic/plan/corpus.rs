@@ -4796,7 +4796,12 @@ fn run_observed(
             Some(maintained) => {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "the cross part's frames, by identity".into());
                 let (_, binds) = retain::keys(&prepared_key, maintained.0.digest()?);
-                Some(retain::frame_rels(&[&cross.placed()?, &maintained.0.placed()?], &binds)?)
+                {
+                    // And what the run binds from an earlier phase, which `Retained::from_frames` reads as an input,
+                    // declared or not.
+                    let bound: Vec<&str> = repository.iter().map(|(rel, _, _)| rel.as_str()).collect();
+                    Some(retain::frame_rels(&[&cross.placed()?, &maintained.0.placed()?], &binds, &bound)?)
+                }
             }
             None => None,
         };

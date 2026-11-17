@@ -1197,6 +1197,19 @@ pub mod tests {
         assert_eq!((plus.len(), minus.len()), (0, 0));
     }
 
+    /// A relation the run binds from an earlier phase is read as an input by `from_frames`, declared or not, so it is
+    /// one of the identities the cross part's space is read by (Q19): an undeclared one was left out of the preload.
+    #[test]
+    fn a_relation_bound_from_an_earlier_phase_is_read_by_identity_declared_or_not() {
+        let text = ".decl e(x: number)\n.input e\n.decl out(x: number)\nout(x) :- e(x), types__wgen(x).\n.output out\n";
+        let placed = pl(&crate::code_rule_dsl::logic::rr::parse(text).unwrap());
+        let binds = [3; 32];
+        let rels = frame_rels(&[&placed], &binds, &["types__wgen"]).unwrap();
+        for rel in ["e", "types__wgen"] {
+            assert!(rels.contains(&FrameRel { name: rel.into(), ident: input_ident(rel, &placed, &binds) }), "{rel} read by identity");
+        }
+    }
+
     #[test]
     fn unchanged_gated_programs_reuse_only_complete_retained_results() {
         use crate::code_rule_dsl::logic::magic;
@@ -1334,15 +1347,17 @@ fn input_ident(rel: &str, prog: &Placed, key: &[u8; 32]) -> [u8; 32] {
 /// The frames a run's cross part can read in its space (Q19, `ContentStore::preload_frames_live`): each derived
 /// relation's identity in each of `progs` (`plan::identities`, by their components, as `Retained::from_frames`,
 /// `kept_strata::load` and the planner's `Kept` name them), and each declared relation's as the part's input under
-/// `binds` (`input_ident`, as `kept_inputs` and `from_frames` name them). Not an earlier build's or an earlier edit's
-/// identities, which a kept run's frames are under.
-pub(in crate::code_rule_dsl) fn frame_rels(progs: &[&Placed], binds: &[u8; 32]) -> Result<std::collections::HashSet<FrameRel>> {
+/// `binds` (`input_ident`, as `kept_inputs` and `from_frames` name them), and so each relation in `bound` (what the
+/// run binds from an earlier phase, which `from_frames` reads as an input, declared or not). Not an earlier build's or
+/// an earlier edit's identities, which a kept run's frames are under.
+pub(in crate::code_rule_dsl) fn frame_rels(progs: &[&Placed], binds: &[u8; 32], bound: &[&str]) -> Result<std::collections::HashSet<FrameRel>> {
     let mut out = std::collections::HashSet::new();
     for p in progs {
         let sccs = p.components()?;
         let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed((*p).clone());
         out.extend(leaves.identities_by_heads(&sccs)?.into_iter().map(|(name, ident)| FrameRel { name, ident }));
-        for (rel, _) in p.fields()?.decls_by_name() {
+        let fields = p.fields()?;
+        for rel in fields.decls_by_name().into_iter().map(|(rel, _)| rel).chain(bound.iter().copied()) {
             out.insert(FrameRel { name: rel.to_owned(), ident: input_ident(rel, p, binds) });
         }
     }
