@@ -99,7 +99,7 @@ pub fn run(version: Arc<Version>) -> Result<(Arc<Version>, Found), String> {
     for s in &stages {
         crate::code_rule_dsl::logic::profile::decision("preparation pass (decision 0281)", || format!("{}: {:?}, {:?}", s.pass, s.ran, s.form));
     }
-    // The store keeps a base's bytes (`program_text::store_version`): an edit's version is folded into one.
+    // The store keeps a base's bytes (`program_text::encode_version`): an edit's version is folded into one.
     let out = match out.base_bytes() {
         Some(_) => out,
         None => out.fold()?,

@@ -1223,6 +1223,10 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
             .unwrap();
         assert!(output.status.success(), "the runs' process: {}", output.status);
     };
+    // A process first keeps phase 0's graphs as images (decision 0246): every later run reads them, and so names none
+    // of the bootstrap run's plans (`phase0::Images`). Without it, the baseline's run derived the graphs and named
+    // those plans, which the runs after it, reading the images, do not.
+    run(1);
     // A process of one run: what a run names.
     run(1);
     let one = manifests();

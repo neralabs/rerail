@@ -220,7 +220,7 @@ impl Version {
             Version::Overlay { depth, .. } => *depth,
         }
     }
-    /// A base's image bytes, as they are stored (`program_text::store_version`); `None` for a view or an overlay.
+    /// A base's image bytes, as they are stored (`program_text::encode_version`); `None` for a view or an overlay.
     pub fn base_bytes(&self) -> Option<&[u8]> {
         match self {
             Version::Base { image, .. } => Some(image.bytes()),

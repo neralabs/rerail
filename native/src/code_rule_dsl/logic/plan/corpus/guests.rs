@@ -529,7 +529,7 @@ fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&Conte
     let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: Arc::new(key.2.clone()) };
     // A guest is made in a wave, so no SQL is read or written for it (decision 0104): its tape is one this process
     // queued, else it is parsed and its source and tape are the store's writer's, behind the run.
-    let built = match cache.map(|cache| core::build_in_wave(&file, cache, None, None, None)) {
+    let built = match cache.map(|cache| core::build_in_wave(&file, cache, None, None, false)) {
         Some(Ok(built)) => Ok(built),
         Some(Err(_)) => {
             crate::code_rule_dsl::prof::count("guests.cache_failed", 1);
@@ -560,7 +560,7 @@ fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&Conte
 /// memoised: a host embeds one program, and a file's tape is the store's.
 fn taped(path: &str, label: &str, text: String, cache: Option<&ContentStore>) -> Result<Option<(Parsed, Tape)>, String> {
     let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: Arc::new(text) };
-    let built = match cache.map(|cache| core::build_in_wave_with_tape(&file, cache, None, None, None, true)) {
+    let built = match cache.map(|cache| core::build_in_wave_with_tape(&file, cache, None, None, false, true)) {
         Some(Ok(built)) => Ok(built),
         Some(Err(_)) => {
             crate::code_rule_dsl::prof::count("guests.cache_failed", 1);

@@ -310,7 +310,7 @@ fn results_for_many_files_answer_as_one_file_at_a_time() {
     assert_eq!(found, vec![Some(b"b at b".to_vec()), None, Some(b"a at a".to_vec()), Some(b"b pure".to_vec()), None]);
     assert_eq!(store.facts_results_for(8, plan(1), &[(sa, "a.py")]).unwrap(), vec![None]);
     let hashes = [HashKey::sha256(b), HashKey::sha256(b"absent"), HashKey::sha256(a)];
-    assert_eq!(store.held_sources_by_hash(&hashes).unwrap(), vec![store.source_by_hash(hashes[0]).unwrap(), None, store.source_by_hash(hashes[2]).unwrap()]);
+    assert_eq!(store.sources_by_hashes(&hashes).unwrap(), vec![store.source_by_hash(hashes[0]).unwrap(), None, store.source_by_hash(hashes[2]).unwrap()]);
 }
 
 /// A small demanded batch must probe its keys, not multiply every retained plan row by every request.

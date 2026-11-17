@@ -553,6 +553,25 @@ pub fn check_shape(name: &str, c: &Compiled) {
     }
 }
 
+/// Tier 1 compiled agrees with its interpreter on a document: the same run, or, for a file both
+/// refuse, the same but for the codes past the token that refused (decision 0177, "A refusal
+/// leaves the loop"): the compiled loop leaves there and writes no code after it (each is 0), while
+/// the interpreter goes on. The stage's outputs and positions, made before the loop, are the same.
+fn tier1_agrees(compiled: &crate::block::BlockRun, interpreted: &crate::block::BlockRun) -> bool {
+    let refused = |r: &crate::block::BlockRun| r.totals.iter().any(|&t| t != 0);
+    if compiled == interpreted {
+        return true;
+    }
+    let left = compiled.codes.iter().zip(&interpreted.codes).position(|(a, b)| a != b).unwrap_or(compiled.codes.len());
+    refused(compiled)
+        && refused(interpreted)
+        && compiled.totals == interpreted.totals
+        && compiled.outputs == interpreted.outputs
+        && compiled.positions == interpreted.positions
+        && compiled.codes.len() == interpreted.codes.len()
+        && compiled.codes[left..].iter().all(|&c| c == 0)
+}
+
 /// A ladder's checks (`every_step_parses_as_the_reference`) over `steps`, mutations drawn from
 /// `alphabet`, and `fixed` documents besides; and `also`, for each document, given the
 /// reference's nodes: a difference with another parser, if any. The differences, one per step at
@@ -585,7 +604,7 @@ pub fn check_ladder(
             let interp = crate::stream::run(&c.program, &bytes, &run).ok().map(as_ids);
             let compiled = c.parser.parse(&bytes).ok().map(as_ids);
             let tier1 = c.parser.tier1.extract(&bytes);
-            if tier1 != run {
+            if !tier1_agrees(&tier1, &run) {
                 differ.push(format!("{}: tier 1 compiled differs from its interpreter", show()));
                 break;
             }

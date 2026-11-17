@@ -56,8 +56,8 @@ impl SolverDevice for Metal {
         packed::metal_join::available()
     }
 
-    fn compile_join(&self, join: &JoinRule, spec: &str) -> Result<JoinPlan, String> {
-        joins::compile(join, spec).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
+    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)]) -> Result<JoinPlan, String> {
+        joins::own_texts(own_texts.to_vec(), || joins::compile(join, spec)).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
     }
 
     fn refuse(&self, why: String) {
