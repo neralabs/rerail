@@ -374,7 +374,9 @@ fn congruence(v: &Version, f: Fields<'_>) -> Vec<Vec<String>> {
         for &r in &cands {
             let distinct = rules(r).iter().map(|x| x.hash()).collect::<HashSet<u64>>().len();
             let n = ids.len();
-            class.push(*ids.entry((f.types(r), distinct, facts_of(r))).or_insert(n));
+            // A library's facts may go undeclared: no types, as the tree's `prog.decls.get(rel)` gives.
+            let types = f.decl(r).map_or_else(Vec::new, |_| f.types(r));
+            class.push(*ids.entry((types, distinct, facts_of(r))).or_insert(n));
         }
     }
     let mut templates: HashMap<Vec<Tok<'_>>, usize> = HashMap::new();
@@ -461,5 +463,22 @@ mod tests {
         let (want, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
         assert_eq!((out.size(), out.digest()), (want.size(), want.digest()), "{}\n---\n{}", out.show(), want.show());
         assert!(out.rules().any(|r| out.rel_name(r.head().rel()) == "s_q"), "{}", out.show());
+    }
+
+    /// A library's facts may go undeclared (`param_slot("datetime.datetime", "tzinfo", 7).`): such relations merge by
+    /// their facts as the tree's do, and the merge does not ask for a declaration they lack.
+    #[test]
+    fn undeclared_fact_relations_merge_as_the_trees() {
+        let text = ".decl e(x: number)\n.input e\nf1(\"a\", 1).\nf2(\"a\", 1).\n\
+                    .decl uses(x: number, k: symbol)\nuses(x, k) :- e(x), f1(k, _).\nuses(x, k) :- e(x), f2(k, _).\n\
+                    .output uses\n";
+        let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        let mut p = Pipeline::new("test", v);
+        let mut merge = super::MergeIdentical::default();
+        p.program(&mut merge);
+        p.finish().unwrap();
+        let (m, _, _) = crate::code_rule_dsl::logic::plan::corpus::merge_and_drop_repeats(&mut tree);
+        assert_eq!(merge.merged, m);
     }
 }
