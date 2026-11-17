@@ -214,6 +214,8 @@ rerail-go-lean = { path = "crates/go_lean" }
 rerail-c-lean = { path = "crates/c_lean" }
 # The C and C++ preprocessor (0327): directives as facts, translation units applied.
 rerail-c-pp = { path = "crates/c_pp" }
+# Its directives compiled (Bitlex, 0327 mode (a)): the engine's answer where they read a file.
+rerail-c-directives = { path = "crates/c_directives" }
 # The lean C# parser, measured directly (`tape::tests::csharp_parse_costs`).
 rerail-csharp-lean = { path = "crates/csharp_lean" }
 # The lean PHP parser, measured directly (`tape::tests::php_parse_costs`).

@@ -385,8 +385,26 @@ unterminated `#if`). Every `#` is a `hash` token: a token mark tells kinds by fi
     (`walked_starts`), but a mark the loop does not set read its bits from it: every token
     mark's bit was 0, so no group opened. The starts stay made where such a mark reads them
     (`BlockNative::records_made`).
-- Left for the engine's wiring: each directive's line (from the file's line starts, not the
-  tape) and the include guard (a rule over the rows and chains); then the refusals above.
+
+### Mode (a) compiled, step 4 (`04-facts.bitlex`): the engine's answer
+
+`c_pp_file_req` is answered from the compiled grammar's tape where it reads the file, else from
+the lean scan (`rerail_c_directives::facts`). Both make one `Facts` value (`Facts::of` a tape's
+reading, `Facts::lean`), which the answerer writes as rows: one path for the rows whichever
+source.
+
+- **The guard** needs code outside the directives: a `code` leaf where it starts after each
+  directive (or the file's start), at most one a directive. A guard is a top level of one group
+  and nothing else, its chain its opener and its `#endif`, its opener `#ifndef X`,
+  `#if !defined X` or `#if !defined(X)` (the opener's expression's leaves).
+- **Problems**: an unmatched `#elif…`/`#else`/`#endif` (a chain directive at the top level), one
+  after its chain's `#else`, a `#define` or `#undef` with no name, an include with no header. An
+  unterminated group or an unclosed comment is refused, so the lean scan gives those.
+- **Lines** from the file's line breaks (`rerail_simd8::micro::find`), not the tape; texts with
+  their `\`-newlines removed. A `\`, blanks and a line break (GCC's and clang's splice) is
+  refused.
+- **Corpus**: `Facts` equal to the lean scan's on all 3,016 files read (119 refused).
+- Next: the refusals (carriage returns first: CRLF files), then step 8.
 
 ### Prior art in the other worktrees (surveyed 2026-11-17)
 

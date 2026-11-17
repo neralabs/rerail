@@ -12,14 +12,14 @@ use rerail_compiler::bitlex_masks as bitlex_compile;
 use rerail_compiler::{native_cpu_clusters, native_cpu_stream, native_ir, rir_asm as rir};
 
 /// The grammar: the ladder's last step.
-pub const GRAMMAR: &str = include_str!("../bitlex_ladder/03-groups.bitlex");
+pub const GRAMMAR: &str = include_str!("../bitlex_ladder/04-facts.bitlex");
 
 /// The tape's kinds, by id: the root, the directives' kinds (their names the lean scan's
 /// `Kind::name`), then the tokens' leaves and the operands' nodes.
 pub const KINDS: &[&str] = &[
     "directives", "null", "unknown", "line_marker", "define", "undef", "include", "include_next", "import", "embed", "if", "ifdef", "ifndef", "elif", "elifdef",
     "elifndef", "else", "endif", "line", "error", "warning", "pragma", "ident", "sccs", "assert", "unassert", "hash", "identifier", "number", "punct", "string",
-    "char_lit", "fn_open", "ellipsis", "header", "params", "operands", "plain_body", "macro_header", "pragma_text", "line_rest", "marker_rest", "group",
+    "char_lit", "fn_open", "ellipsis", "header", "params", "operands", "plain_body", "macro_header", "pragma_text", "line_rest", "marker_rest", "group", "code",
 ];
 
 /// The operands' fields, by id less one (0: no field).
@@ -115,6 +115,11 @@ impl Compiled {
         read(&self.image(src)?).ok()
     }
 
+    /// `src`'s facts (`Facts::of` its tape's reading), or `None` where the grammar refuses it.
+    pub fn facts(&self, src: &[u8]) -> Option<Facts> {
+        self.read(src).map(|r| Facts::of(&r, src))
+    }
+
     /// The same, by the interpreter: its tier 1 and its tier 2, the program's meaning.
     pub fn interpreter_read(&self, src: &[u8]) -> Option<Read> {
         let run = self.program.block_programs[0].run(src);
@@ -148,6 +153,18 @@ pub struct Read {
     pub operands: Vec<Operand>,
     /// Each conditional directive and the next of its chain (`c_cond_next`), in order.
     pub next: Vec<(u32, u32)>,
+    /// The file's top level: each item's directive (a group's, its opener's), and whether code
+    /// outside the directives is there.
+    pub top: Vec<u32>,
+    pub top_code: bool,
+    /// An `#elif…`, `#else` or `#endif` no group is open for (the lean scan's unmatched), and an
+    /// `#elif…` or `#else` after its chain's `#else`.
+    pub unmatched: Vec<u32>,
+    pub after_else: Vec<u32>,
+    /// Each directive's word's end (its `#`'s where it has none): where an operand it lacks is.
+    pub word_ends: Vec<u32>,
+    /// The first directive's expression's leaves (at most 5: a guard's test), kind and bytes.
+    pub first_expr: Vec<(&'static str, u32, u32)>,
 }
 
 /// A tape image read in place, in one walk: each directive (a node of a directive's kind, at the
@@ -157,10 +174,10 @@ pub fn read(image: &[u8]) -> Result<Read, String> {
     let v = rerail_tape_format::View::new(image)?;
     let kind = |k: usize| KINDS.get((v.key(k) & 0x3ff) as usize).copied().unwrap_or("");
     let field = |k: usize| FIELDS.get((((v.key(k) & 0xffff) >> rerail_tape_format::KIND_BITS) as usize).wrapping_sub(1)).copied();
-    let mut out = Read { rows: Vec::new(), operands: Vec::new(), next: Vec::new() };
-    // The open groups: each its end (a node index) and its chain's last directive (`None` before
-    // its opener).
-    let mut groups: Vec<(usize, Option<u32>)> = Vec::new();
+    let mut out = Read { rows: Vec::new(), operands: Vec::new(), next: Vec::new(), top: Vec::new(), top_code: false, unmatched: Vec::new(), after_else: Vec::new(), word_ends: Vec::new(), first_expr: Vec::new() };
+    // The open groups: each its end (a node index), its chain's last directive (`None` before
+    // its opener) and whether its chain has had its `#else`.
+    let mut groups: Vec<(usize, Option<u32>, bool)> = Vec::new();
     let mut i = 1;
     while i < v.len() {
         while groups.last().is_some_and(|g| g.0 <= i) {
@@ -168,7 +185,15 @@ pub fn read(image: &[u8]) -> Result<Read, String> {
         }
         let k = kind(i);
         if k == "group" {
-            groups.push((i + v.size(i), None));
+            if groups.is_empty() {
+                out.top.push(out.rows.len() as u32);
+            }
+            groups.push((i + v.size(i), None, false));
+            i += 1;
+            continue;
+        }
+        if k == "code" {
+            out.top_code |= groups.is_empty();
             i += 1;
             continue;
         }
@@ -177,14 +202,25 @@ pub fn read(image: &[u8]) -> Result<Read, String> {
             return Err(format!("node {i}: {k} where a directive is"));
         }
         let d = out.rows.len() as u32;
+        let chain = matches!(k, "elif" | "elifdef" | "elifndef" | "else" | "endif");
+        if groups.is_empty() {
+            out.top.push(d);
+            if chain {
+                out.unmatched.push(d);
+            }
+        }
         // A group's own directive: its opener (none yet), or a conditional at its level (a
         // nested `#if` opens a group of its own).
-        let own = groups.last().is_some_and(|g| g.1.is_none() || matches!(k, "elif" | "elifdef" | "elifndef" | "else" | "endif"));
+        let own = groups.last().is_some_and(|g| g.1.is_none() || chain);
         let parent = if own {
             let below = groups.len() - 1;
             if let Some(last) = groups[below].1 {
                 out.next.push((last, d));
             }
+            if groups[below].2 && k != "endif" {
+                out.after_else.push(d);
+            }
+            groups[below].2 |= k == "else";
             groups[below].1 = Some(d);
             below.checked_sub(1).and_then(|b| groups[b].1)
         } else {
@@ -192,6 +228,9 @@ pub fn read(image: &[u8]) -> Result<Read, String> {
         };
         out.rows.push(Row { kind: k, start: v.start(i) as u32, end: v.end(i) as u32, parent });
         let end = i + v.size(i);
+        // Its `#`'s leaf, then its word's (a line marker's number is its `rest`'s).
+        let word = if i + 2 < end && field(i + 2).is_none() { i + 2 } else { i + 1 };
+        out.word_ends.push(v.end(word) as u32);
         let mut last_param = false;
         for n in i + 1..end {
             let what = match field(n) {
@@ -221,6 +260,9 @@ pub fn read(image: &[u8]) -> Result<Read, String> {
             };
             last_param = what == What::Param;
             out.operands.push(Operand { i: d, what, start: v.start(n) as u32, end: v.end(n) as u32 });
+            if d == 0 && what == What::Expr && v.size(n) <= 6 {
+                out.first_expr = (n + 1..n + v.size(n)).map(|l| (kind(l), v.start(l) as u32, v.end(l) as u32)).collect();
+            }
         }
         i = end;
     }
@@ -278,6 +320,15 @@ pub fn image_text(image: &[u8]) -> Result<String, String> {
         open.push(i + v.size(i));
     }
     Ok(out)
+}
+
+mod facts;
+pub use facts::Facts;
+
+/// `src`'s mode (a) facts: from the compiled grammar's tape where it reads the file, else (a
+/// construct the ladder does not read, or a grammar that does not compile) the lean scan's.
+pub fn facts(src: &[u8], opts: rerail_c_pp::Options) -> Facts {
+    compiled().ok().and_then(|c| c.facts(src)).unwrap_or_else(|| Facts::lean(src, opts))
 }
 
 #[cfg(test)]

@@ -102,7 +102,11 @@ fn lean_next(src: &[u8], cpp: bool) -> Vec<(u32, u32)> {
 fn same(r: &Read, src: &[u8], cpp: bool) -> bool {
     let mut next = r.next.clone();
     next.sort();
-    r.rows == lean(src, cpp) && normal(src, &r.operands) == lean_operands(src, cpp) && next == lean_next(src, cpp)
+    r.rows == lean(src, cpp) && normal(src, &r.operands) == lean_operands(src, cpp) && next == lean_next(src, cpp) && Facts::of(r, src) == lean_facts(src, cpp)
+}
+
+fn lean_facts(src: &[u8], cpp: bool) -> Facts {
+    Facts::lean(src, if cpp { rerail_c_pp::Options::cpp(17, true) } else { rerail_c_pp::Options::c(17, true) })
 }
 
 fn compiled_or_panic() -> &'static Compiled {
@@ -136,6 +140,13 @@ fn directives_read_as_the_lean_scan_reads_them() {
         "#ifndef G\n#define G\n#if A\n#define X\n#elif B\n#ifdef C\n#endif\n#else\n#undef X\n#endif\nint x;\n#endif\n",
         "#if 0\n#if 1\n#elifdef Z\n#elifndef Y\n#else\n#endif\n#endif\n#define Q #x ## y\n# if 1\n#  endif\n",
         "#endif\n#else\n#define A\n",
+        "#ifndef G_H\n#define G_H\nint x;\n#endif\n",
+        "// c\n#if !defined(G)\n#endif /* G */\n",
+        "#if ! defined G\n#endif\n\n",
+        "int a;\n#ifndef G\n#endif\n",
+        "#ifndef G\n#endif\nint a;\n",
+        "#ifndef G\n#else\n#endif\n#define\n#undef 1\n#include\n#if A\n#else\n#elif B\n#endif\n",
+        "#define A(x) x \\\n  + 1\n#pragma a \\\n b\n",
     ];
     for src in cases {
         let b = src.as_bytes();
@@ -146,6 +157,7 @@ fn directives_read_as_the_lean_scan_reads_them() {
         let mut next = got.next.clone();
         next.sort();
         assert_eq!(next, lean_next(b, false), "{src:?}\n{}", text());
+        assert_eq!(Facts::of(&got, b), lean_facts(b, false), "{src:?}\n{}", text());
         assert_eq!(c.interpreter_read(b).as_ref(), Some(&got), "the interpreter, {src:?}");
     }
     #[cfg(target_os = "macos")]
@@ -195,7 +207,7 @@ fn the_corpus_reads_the_same_or_is_refused() {
                 None => refused += 1,
                 Some(r) if same(&r, &src, cpp) => same_n += 1,
                 Some(r) => {
-                    let (rows, want) = (r.rows, lean(&src, cpp));
+                    let (rows, want) = (r.rows.clone(), lean(&src, cpp));
                     let at = rows.iter().zip(&want).position(|(a, b)| a != b).unwrap_or(rows.len().min(want.len()));
                     let mut next = r.next.clone();
                     next.sort();
@@ -207,7 +219,17 @@ fn the_corpus_reads_the_same_or_is_refused() {
                         let (ops, want) = (normal(&src, &r.operands), lean_operands(&src, cpp));
                         let at = ops.iter().zip(&want).position(|(a, b)| a != b).unwrap_or(ops.len().min(want.len()));
                         let text = |o: Option<&Operand>| o.map(|o| format!("{o:?} {:?}", String::from_utf8_lossy(&src[o.start.min(o.end) as usize..o.end as usize])));
-                        differ.push(format!("{}: operand at {at}: {:?} against {:?}", p.display(), text(ops.get(at)), text(want.get(at))));
+                        if ops != want {
+                            differ.push(format!("{}: operand at {at}: {:?} against {:?}", p.display(), text(ops.get(at)), text(want.get(at))));
+                        } else {
+                            let (got, want) = (Facts::of(&r, &src), lean_facts(&src, cpp));
+                            let first = |a: &str, b: &str| {
+                                let at = a.bytes().zip(b.bytes()).position(|(x, y)| x != y).unwrap_or(a.len().min(b.len()));
+                                let from = at.saturating_sub(120);
+                                format!("{} against {}", &a[from..(at + 120).min(a.len())], &b[from..(at + 120).min(b.len())])
+                            };
+                            differ.push(format!("{}: facts: {}", p.display(), first(&format!("{got:?}"), &format!("{want:?}"))));
+                        }
                     }
                 }
             }

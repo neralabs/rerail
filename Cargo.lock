@@ -3188,6 +3188,7 @@ dependencies = [
  "rerail-c-pp",
  "rerail-compiler",
  "rerail-metal",
+ "rerail-simd8",
  "rerail-tape-format",
 ]
 
@@ -3367,6 +3368,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-c-directives",
  "rerail-c-lean",
  "rerail-c-pp",
  "rerail-compiler",
