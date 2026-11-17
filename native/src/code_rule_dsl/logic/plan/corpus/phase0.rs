@@ -210,8 +210,10 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
             map.insert(seed.clone(), Arc::new(g));
             false
         });
+        // The seeds an image held: the others are derived below. A seed whose kept graph no longer held is still in
+        // the map until it is derived again, so it is not taken from there.
         for (g, seed) in found.iter_mut().zip(seeds) {
-            if g.is_none() {
+            if g.is_none() && !wanted.contains(seed) {
                 *g = map.get(seed).cloned();
             }
         }
@@ -586,7 +588,7 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
         .into_iter()
         .flatten()
         .chain(dirs.iter().cloned())
-        .filter_map(|d| std::fs::canonicalize(d).ok())
+        .filter_map(|d| dunce::canonicalize(d).ok())
         .collect();
     for dir in dirs {
         text.push_str(&format!("env(\"rerail.program_dir\", {}).\n", quote(&dir.to_string_lossy())));
@@ -631,7 +633,7 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
         // library) was refused, not looked at: its listing came back empty. It is no absent file the graph depends
         // on, and `holds`, which stats it, found it whenever it was there: such a graph never held, and phase 0 ran
         // again on every run, warm ones too (its first wave read every frame of the store, 250 MB).
-        g.absent.retain(|p| p.parent().and_then(|d| std::fs::canonicalize(d).ok()).is_none_or(|d| roots.iter().any(|r| d.starts_with(r))));
+        g.absent.retain(|p| p.parent().and_then(|d| dunce::canonicalize(d).ok()).is_none_or(|d| roots.iter().any(|r| d.starts_with(r))));
         for r in outputs.rows("p0_phase") {
             if let (V::Text(from), V::Text(phase), V::Text(path)) = (r.get(0), r.get(1), r.get(2)) {
                 g.phases.entry(from.to_owned()).or_default().push((phase.to_owned(), PathBuf::from(path)));
