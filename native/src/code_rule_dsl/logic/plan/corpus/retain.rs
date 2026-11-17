@@ -1549,11 +1549,14 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept inputs, from the frames".into());
     let names: Vec<(String, FrameRel)> = rels.iter().map(|rel| (rel.clone(), FrameRel { name: rel.clone(), ident: input_ident(rel, prog, &binds) })).collect();
     let all: Vec<FrameRel> = names.iter().map(|(_, f)| f.clone()).collect();
+    let s_docs = crate::code_rule_dsl::logic::profile::span(|| "the documents' frames, admitted".into());
     let stored = store.frames(&space, &all, DOCS_PART).map_err(|e| Error::Plan(e.to_string()))?;
     if let Some(f) = all.iter().find(|f| !stored.contains_key(f)) {
         return Ok(Err(format!("{}: no frame of its documents ({} of {} inputs have one)", f.name, stored.len(), all.len())));
     }
     let admitted = store.admit_frames(&space, &all, DOCS_PART).map_err(|e| Error::Plan(e.to_string()))?;
+    drop(s_docs);
+    let s_decode = crate::code_rule_dsl::logic::profile::span(|| "the documents' frames, decoded and checked".into());
     let atoms = store.atoms_handle();
     let mut docs_of_rel: HashMap<String, (Arc<DocDigests>, u64, bool)> = HashMap::new();
     for (rel, frame) in &names {
@@ -1568,6 +1571,8 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
         }
         docs_of_rel.insert(rel.clone(), (Arc::new(docs), at.digest, got.types.first() == Some(&b's')));
     }
+    drop(s_decode);
+    let s_granules = crate::code_rule_dsl::logic::profile::span(|| "the granules, admitted".into());
     let keys: Vec<(FrameRel, i64)> = names
         .iter()
         .flat_map(|(rel, frame)| {
@@ -1580,6 +1585,8 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
         .chain(names.iter().filter(|(rel, _)| kept_stats::on() && stats_of.contains(rel)).map(|(_, frame)| (frame.clone(), kept_stats::PART)))
         .collect();
     let parts = store.admit_frame_parts(&space, &keys).map_err(|e| Error::Plan(e.to_string()))?;
+    drop(s_granules);
+    let _s_sources = crate::code_rule_dsl::logic::profile::span(|| "the inputs' ranges and sources".into());
     let mut out = HashMap::new();
     for (rel, frame) in &names {
         let Some(width) = prog.fields()?.arity(rel) else { return Ok(Err(format!("{rel}: not declared by the cross part"))) };
