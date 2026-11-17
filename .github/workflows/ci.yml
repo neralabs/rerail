@@ -134,16 +134,19 @@ jobs:
   # The Release pull request's merge guard (scripts/release/candidate/candidate-check.mjs), on that pull request alone. It fails
   # a head that release-pr.yml did not build, such as one GitHub's "Update branch" made, which would release all of
   # main. For a frozen release it waits for the CI run release-pr.yml started on the candidate and passes only when
-  # that passed, so what merges is what was tested. It needs the history, to place the head and the candidate on main.
+  # that passed, so what merges is what was tested. The candidate is not in the pull request's diff, so the job also
+  # rebuilds it: its commits must be its base and cherry-picks from main, and its Release commit must do only what the
+  # pull request shows. It needs the history, to place the head and the candidate on main.
   release-candidate:
     name: Release candidate
     needs: changes
     if: needs.changes.outputs.release-pr == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    # actions: read, for ci.yml's own runs on the candidate.
     permissions:
       contents: read
-      checks: read
+      actions: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

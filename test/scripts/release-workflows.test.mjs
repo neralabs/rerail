@@ -34,6 +34,14 @@ describe("release-packs.yml", () => {
     for (const found of pushes) expect(found).toContain(PUBLISHES);
   });
 
+  it("holds a release tag to a merged Release pull request's commit before anything is planned, tagged or published", () => {
+    const steps = packs.jobs.plan.steps;
+    const check = steps.findIndex((step) => String(step.run ?? "").includes("release-train-check.mjs"));
+    expect(steps[check].if).toBe(PUBLISHES);
+    expect(check).toBeLessThan(steps.findIndex((step) => step.id === "plan"));
+    for (const job of ["tag", "publish"]) expect([packs.jobs[job].needs].flat(), job).toContain("plan");
+  });
+
   it("gives the publish environment and write access only to jobs that follow that condition or a promotion by hand", () => {
     const gated = (name, seen = new Set()) => {
       const job = packs.jobs[name];

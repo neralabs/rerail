@@ -12,8 +12,10 @@
 //
 // The state is read from one place, the Release pull request's head commit: its message names the candidate
 // (`Release-Candidate`), whose own message names the base and the cherry-picks. release-candidate.mjs is the command.
+//
+// It imports nothing that needs `npm ci`: release-packs.yml reads it before installing anything.
 import { execFileSync } from "node:child_process";
-import semver from "semver";
+import { compareVersions } from "../dist-tags.mjs";
 
 /** The Release pull request's branch. */
 export const RELEASE_BRANCH = "changeset-release/main";
@@ -35,6 +37,7 @@ const CANDIDATE_REF = `${REFS}/${CANDIDATE_BRANCH}`;
 const CONSUMED = [".changelog/", ".changeset/"];
 
 export const short = (sha) => sha.slice(0, 9);
+const REBUILD = "Rebuild it with `gh workflow run release-pr.yml -f action=freeze` (or `-f action=unfreeze` to follow main again).";
 
 /** The tag that starts the packs' release at released commit `sha` (release-packs.yml): one per release. */
 export const releaseTrainTag = (sha) => `release-${sha.slice(0, 12)}`;
@@ -88,13 +91,44 @@ export function cherryPickRefusal({ commit, frozen, onMain, included }) {
 }
 
 /**
- * The verdict on a candidate's own CI, from the "CI result" check runs on its commit, newest first: `passed`,
- * `failed`, or `pending` while none has finished.
+ * The verdict on a candidate's own CI, from ci.yml's runs on its commit (`{ created_at, status, conclusion }` each,
+ * as the Actions API lists them): `passed` or `failed` by the newest run, `pending` while that has not finished. The
+ * runs are read from the workflow, not from check runs, whose names any job with a token can write.
  */
-export function candidateCiVerdict(checkRuns) {
-  const [latest] = [...checkRuns].sort((a, b) => String(b.started_at ?? "").localeCompare(String(a.started_at ?? "")));
+export function candidateCiVerdict(runs) {
+  const [latest] = [...runs].sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
   if (latest === undefined || latest.status !== "completed") return "pending";
   return latest.conclusion === "success" ? "passed" : "failed";
+}
+
+/**
+ * Why a frozen candidate is not what its Release pull request shows, or null. The pull request's diff is only the
+ * Release commit, so a reviewer never sees the candidate's own commits: they must be reviewed commits and nothing
+ * else. `baseTrusted`: its base is on main or is the latest release; `picksOnMain`: every cherry-pick it names is on
+ * main; `picksMatch`: cherry-picking them onto the base again gives the tree its Release commit sits on;
+ * `releaseMatches`: applying its Release commit to the commit the pull request's head sits on gives the head's tree,
+ * so what the pull request shows is all the Release commit does.
+ */
+export function candidateTrustRefusal({ candidate, baseTrusted, picksOnMain, picksMatch, releaseMatches }) {
+  const refusals = [
+    [!baseTrusted, "its base is not a commit on main or the latest release"],
+    [!picksOnMain, "it names a cherry-pick that is not a commit on main"],
+    [!picksMatch, "it holds changes that are not its base and the cherry-picks it names"],
+    [!releaseMatches, "its Release commit does something this pull request's changes do not show"],
+  ];
+  const refusal = refusals.find(([refused]) => refused)?.[1];
+  return refusal === undefined ? null : `Candidate ${short(candidate)} is not what release-pr.yml builds: ${refusal}. It was pushed to by hand. ${REBUILD}`;
+}
+
+/**
+ * Why a `release-*` tag's push must not release the packs, or null: the tag is named for its commit
+ * (releaseTrainTag), and that commit is one a merged Release pull request released (`released`, their commits).
+ * release-pr.yml makes the tag so; this stops one pushed by hand at another commit.
+ */
+export function releaseTrainRefusal({ tag, commit, released }) {
+  if (tag !== releaseTrainTag(commit)) return `${tag} is not the release tag of its commit ${short(commit)}, which is ${releaseTrainTag(commit)}: release-pr.yml makes these tags, when the Release pull request merges.`;
+  if (!released.includes(commit)) return `${short(commit)} is not a commit a merged Release pull request released: release-pr.yml makes these tags, when the Release pull request merges.`;
+  return null;
 }
 
 /**
@@ -107,8 +141,6 @@ export function releasedCommit(head, message) {
   if (named === null) return null;
   return named.candidate ?? head;
 }
-
-const REBUILD = "Rebuild it with `gh workflow run release-pr.yml -f action=freeze` (or `-f action=unfreeze` to follow main again).";
 
 /**
  * Why the Release pull request's head can't be merged, or null: merging tags the commit its message names, so the head
@@ -277,10 +309,10 @@ export function readState(git) {
   return { main, head, frozen: true, ...readFrozen(git, candidate) };
 }
 
-/** The commit of the latest stable core release's tag, or null before the first. */
-function latestReleaseCommit(git) {
-  const versions = git(["tag", "--list", "v*"]).split("\n").map((tag) => tag.slice(1)).filter((version) => semver.valid(version) === version && semver.prerelease(version) === null);
-  const [latest] = versions.sort(semver.rcompare);
+/** The commit of the latest stable core release's tag, among the `v*` tags the checkout holds, or null before the first. */
+export function latestReleaseCommit(git) {
+  const versions = git(["tag", "--list", "v*"]).split("\n").map((tag) => tag.slice(1)).filter((version) => /^\d+\.\d+\.\d+$/u.test(version));
+  const [latest] = versions.sort((a, b) => compareVersions(b, a));
   return latest === undefined ? null : revParse(git, `refs/tags/v${latest}`);
 }
 
@@ -292,6 +324,16 @@ const inMainOrder = (git, picks) => [...new Set(picks)].map((pick) => ({ pick, a
  * Release commit `version()` writes. Returns the candidate's commit, or null when nothing there is releasable.
  */
 function buildCandidate({ git, base, picks, version, frozen }) {
+  applyPicks(git, base, picks);
+  version(frozen ? { base, picks: picks.map((pick) => ({ commit: pick, subject: subjectOf(git, pick) })) } : null);
+  git(["add", "--all"]);
+  if (succeeds(git, ["diff", "--cached", "--quiet"])) return null;
+  git(["commit", "--quiet", "--message", candidateMessage({ base, picks })]);
+  return git(["rev-parse", "HEAD"]);
+}
+
+/** Leaves the checkout at `base` with each of `picks` cherry-picked onto it, in the order given. */
+function applyPicks(git, base, picks) {
   git(["checkout", "--quiet", "--force", "--detach", base]);
   for (const pick of picks) {
     try {
@@ -304,11 +346,17 @@ function buildCandidate({ git, base, picks, version, frozen }) {
       );
     }
   }
-  version(frozen ? { base, picks: picks.map((pick) => ({ commit: pick, subject: subjectOf(git, pick) })) } : null);
-  git(["add", "--all"]);
-  if (succeeds(git, ["diff", "--cached", "--quiet"])) return null;
-  git(["commit", "--quiet", "--message", candidateMessage({ base, picks })]);
-  return git(["rev-parse", "HEAD"]);
+}
+
+/** The tree of `base` with `picks` cherry-picked onto it: what a candidate's Release commit sits on. */
+export function pickedTree(git, base, picks) {
+  applyPicks(git, base, picks);
+  return git(["rev-parse", "HEAD^{tree}"]);
+}
+
+/** The tree of the Release pull request's commit for `candidate` on `onto`: its Release commit applied there. */
+export function pullRequestTree(git, candidate, onto) {
+  return git(["rev-parse", `${buildPullRequestCommit({ git, candidate, onto }).commit}^{tree}`]);
 }
 
 /**

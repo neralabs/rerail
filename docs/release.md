@@ -128,12 +128,18 @@ Every action changes the release in one push or refuses, and a refusal says what
   Freezing a different commit keeps the fixes it does not hold.
 - **The branch can't be changed by hand.** A head that `release-pr.yml` did not build, such as one from GitHub's
   **Update branch**, fails the check: it would release all of `main`.
+- **The candidate holds only reviewed commits.** The pull request shows the Release commit alone, so the check
+  rebuilds the candidate: it must be its base, cherry-picks that are commits on `main`, and a Release commit that does
+  exactly what the pull request shows.
 - **A fix that doesn't apply changes nothing.** One that builds on later work is refused, naming it: cherry-pick what
   it builds on first, or freeze a newer commit.
 - **Old commits are refused.** A tag's run uses the tagged commit's own workflows, so a commit from before this flow
   can't be frozen.
 - **Nothing publishes early.** A candidate's builds are unpublished. Packs publish only on a `release-*` tag's push,
   core only on a `v*` tag's, and both wait for the `release` environment's approval.
+- **A release tag pushed by hand releases nothing.** `release-packs.yml` holds a `release-*` tag to its own commit's
+  name and to a commit a merged Release pull request released. That stops a mistake; a tag's run uses the tagged
+  commit's own workflow, so who may create `release-*` and `v*` tags is the tag ruleset's to limit.
 
 </details>
 

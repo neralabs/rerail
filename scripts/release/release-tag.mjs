@@ -17,7 +17,8 @@
 //   node scripts/release/release-tag.mjs   (GH_REPO or the checkout's remote names the repository)
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
-import { CANDIDATE_BRANCH, RELEASE_BRANCH, releasedCommit, releaseTrainTag, short } from "./candidate/candidate.mjs";
+import { CANDIDATE_BRANCH, releaseTrainTag, short } from "./candidate/candidate.mjs";
+import { mergedReleaseHeads, releasedBy } from "./candidate/merged.mjs";
 import { coreTag, coreTagRefusal } from "./core.mjs";
 import { createReleaseTag, ROOT } from "./packs.mjs";
 
@@ -28,13 +29,6 @@ const say = (line) => {
   console.log(line);
   if (process.env.GITHUB_STEP_SUMMARY !== undefined) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n\n`);
 };
-
-/** The head commit of the Release pull request merged last, or null when none ever merged. */
-function lastMergedHead() {
-  const merged = JSON.parse(gh(["pr", "list", "--state", "merged", "--head", RELEASE_BRANCH, "--base", "main", "--limit", "20", "--json", "number,headRefOid,mergedAt"]));
-  const [last] = merged.sort((a, b) => b.mergedAt.localeCompare(a.mergedAt));
-  return last ?? null;
-}
 
 /** Tags core's version at `released`, unless it is tagged already; returns why it could not be, or null. */
 function tagCore(released) {
@@ -63,10 +57,10 @@ function removeCandidateBranch(released) {
 }
 
 function main() {
-  const merged = lastMergedHead();
-  if (merged === null) return say("No Release pull request has merged: nothing to tag.");
-  const head = merged.headRefOid;
-  const released = releasedCommit(head, api(`repos/{owner}/{repo}/commits/${head}`, ["--jq", ".commit.message"]));
+  const [merged] = mergedReleaseHeads();
+  if (merged === undefined) return say("No Release pull request has merged: nothing to tag.");
+  const { head } = merged;
+  const released = releasedBy(head);
   // Every push to main reaches the two lines below until the next release, so they stay out of the run summary.
   if (released === null) return console.log(`Release pull request ${merged.number}'s head ${short(head)} was not built by this workflow (it is from before it, or was changed by hand): nothing is tagged.`);
   const train = releaseTrainTag(released);

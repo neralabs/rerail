@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { actionComment, CANDIDATE_BRANCH, candidateCiVerdict, candidateMessage, cherryPickRefusal, FLOW_MARKER, freezeRefusal, gitIn, parseTarget, pullRequestHeadRefusal, pullRequestMessage, readReleaseMessage, RELEASE_BRANCH, releasedCommit, releaseTrainTag, runReleaseAction } from "../../scripts/release/candidate/candidate.mjs";
+import { actionComment, CANDIDATE_BRANCH, candidateCiVerdict, candidateMessage, candidateTrustRefusal, cherryPickRefusal, FLOW_MARKER, freezeRefusal, gitIn, parseTarget, pickedTree, pullRequestHeadRefusal, pullRequestMessage, pullRequestTree, releaseTrainRefusal, readReleaseMessage, RELEASE_BRANCH, releasedCommit, releaseTrainTag, runReleaseAction } from "../../scripts/release/candidate/candidate.mjs";
 import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 const SHA = "a".repeat(40);
@@ -60,8 +60,8 @@ describe("refusals", () => {
 });
 
 describe("candidateCiVerdict", () => {
-  it("reads the newest CI result on the candidate", () => {
-    const run = (started_at, status, conclusion = null) => ({ started_at, status, conclusion });
+  it("reads ci.yml's newest run on the candidate", () => {
+    const run = (created_at, status, conclusion = null) => ({ created_at, status, conclusion });
     expect(candidateCiVerdict([])).toBe("pending");
     expect(candidateCiVerdict([run("2026-01-01T00:00:00Z", "in_progress")])).toBe("pending");
     expect(candidateCiVerdict([run("2026-01-01T00:00:00Z", "completed", "success")])).toBe("passed");
@@ -120,6 +120,32 @@ describe("actionComment", () => {
     expect(actionComment({ action: "update", actor: "x", repository: "o/n", result: { releasable: true, changed: true, frozen: false } })).toBeNull();
     expect(actionComment({ action: "unfreeze", actor: "x", repository: "o/n", result: { releasable: true, changed: false, frozen: false } })).toBeNull();
     expect(actionComment({ action: "update", actor: "x", repository: "o/n", result: { ...frozen, changed: false, dropped: [".changelog/fixed-a.md"] } })).toMatch(/ships them as frozen.*`\.changelog\/fixed-a\.md`/su);
+  });
+});
+
+describe("candidateTrustRefusal", () => {
+  const trusted = { candidate: SHA, baseTrusted: true, picksOnMain: true, picksMatch: true, releaseMatches: true };
+
+  it("passes a candidate that rebuilds from reviewed commits to what the pull request shows", () => {
+    expect(candidateTrustRefusal(trusted)).toBeNull();
+  });
+
+  it("refuses one whose base, cherry-picks or Release commit are not what release-pr.yml builds", () => {
+    expect(candidateTrustRefusal({ ...trusted, baseTrusted: false })).toMatch(/base is not a commit on main or the latest release.*action=freeze/su);
+    expect(candidateTrustRefusal({ ...trusted, picksOnMain: false })).toMatch(/cherry-pick that is not a commit on main/u);
+    expect(candidateTrustRefusal({ ...trusted, picksMatch: false })).toMatch(/changes that are not its base and the cherry-picks/u);
+    expect(candidateTrustRefusal({ ...trusted, releaseMatches: false })).toMatch(/Release commit does something this pull request's changes do not show/u);
+  });
+});
+
+describe("releaseTrainRefusal", () => {
+  it("passes the tag release-pr.yml makes, at a commit a merged Release pull request released", () => {
+    expect(releaseTrainRefusal({ tag: releaseTrainTag(SHA), commit: SHA, released: [OTHER, SHA] })).toBeNull();
+  });
+
+  it("refuses a tag named for another commit, or at a commit no Release pull request released", () => {
+    expect(releaseTrainRefusal({ tag: "release-by-hand", commit: SHA, released: [SHA] })).toMatch(/is not the release tag of its commit aaaaaaaaa/u);
+    expect(releaseTrainRefusal({ tag: releaseTrainTag(SHA), commit: SHA, released: [OTHER] })).toMatch(/not a commit a merged Release pull request released/u);
   });
 });
 
@@ -444,6 +470,36 @@ describe("runReleaseAction", { timeout: 120_000 }, () => {
     expect(() => run("freeze", "v0.0.3", undefined, `${fix} ${again}`)).toThrow(/already in the frozen release/u);
     expect(run("freeze", "v0.0.3", undefined, again)).toMatchObject({ base: first, picks: [again] });
     expect(() => run("cherry-pick", fix)).toThrow(/already in the frozen release/u);
+  });
+
+  it("a frozen candidate rebuilds to the trees it was built with, and one changed by hand does not", () => {
+    const { commit, run, tip, ci } = repository();
+    commit("Add a", { ".changelog/added-a.md": "A.\n" });
+    run("freeze");
+    const fix = commit("Fix the app", { "src/app.txt": "app, fixed\n", ".changelog/fixed-app.md": "Fixed.\n" });
+    commit("Later work", { "src/later.txt": "later\n" });
+    const { candidate, base, picks } = run("cherry-pick", fix);
+    const head = tip(RELEASE_BRANCH);
+    const tree = (rev) => ci.git(["rev-parse", `${rev}^{tree}`]);
+    const parent = ci.git(["rev-parse", `${head}^`]);
+    expect(pickedTree(ci.git, base, picks)).toBe(tree(`${candidate}^`));
+    expect(pullRequestTree(ci.git, candidate, parent)).toBe(tree(head));
+
+    // A change slipped in under the Release commit: the candidate is no longer its base and cherry-picks.
+    ci.git(["checkout", "--quiet", "--force", "--detach", `${candidate}^`]);
+    writeFileSync(join(ci.folder, "src/app.txt"), "app, fixed, and more\n");
+    ci.git(["commit", "--quiet", "--all", "--message", "Slipped in"]);
+    ci.git(["cherry-pick", candidate]);
+    const slipped = ci.git(["rev-parse", "HEAD"]);
+    expect(pickedTree(ci.git, base, picks)).not.toBe(tree(`${slipped}^`));
+
+    // A Release commit that also changes code: the pull request's changes do not show it.
+    ci.git(["checkout", "--quiet", "--force", "--detach", candidate]);
+    writeFileSync(join(ci.folder, "src/app.txt"), "app, fixed, and more\n");
+    ci.git(["commit", "--quiet", "--all", "--amend", "--no-edit"]);
+    const amended = ci.git(["rev-parse", "HEAD"]);
+    expect(pullRequestTree(ci.git, amended, parent)).not.toBe(tree(head));
+    ci.git(["checkout", "--quiet", "--force", "--detach", "refs/release/main"]);
   });
 
   it("an update that loses the race to a freeze leaves the frozen release alone", () => {

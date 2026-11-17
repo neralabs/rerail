@@ -8,7 +8,8 @@ name: Release packs
 # opened by release-pr.yml; merging it is the release. release-pr.yml then tags the released commit `release-<commit>`
 # (scripts/release/release-tag.mjs): the frozen candidate, or main's tip with the Release commit when the release
 # followed main (docs/release.md, "Freezing a release"). Never main's merge commit, which holds whatever merged
-# after a freeze. On that tag's push, and on nothing else, this workflow releases, from the tagged commit:
+# after a freeze. On that tag's push, and on nothing else, this workflow releases, from the tagged commit, once the
+# plan job has held the tag to a commit a merged Release pull request released (release-train-check.mjs):
 #   Every pack whose package.json version has no `<name>@<version>` git tag is validated (the whole pack
 #   validation of test/engine/catalog/packs.test.ts), packed, checked to hold only what its `files` allows, and
 #   tagged. The release never waits on npm: the tag comes first, then the version's GitHub Release and its publish
@@ -111,6 +112,10 @@ jobs:
     if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    # pull-requests: read, to hold a release tag to a commit a merged Release pull request released.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       publish: ${{ steps.plan.outputs.publish }}
       first: ${{ steps.plan.outputs.first }}
@@ -121,6 +126,15 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+
+      # A release tag is release-pr.yml's to make, when the Release pull request merges. One pushed by hand at another
+      # commit releases nothing: every job that tags or publishes needs this job.
+      - name: Check the tag is the release a merged Release pull request made
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: node scripts/release/candidate/release-train-check.mjs
 
       # On a release tag's push, the plan reads from npm whether each tagged version is published and each pack's dist-tags (is it
       # held?), with the read-only NPM_PACKS_READ_TOKEN, as the promote-plan job does. A pack it cannot read fails the
