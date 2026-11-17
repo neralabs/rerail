@@ -5,12 +5,15 @@ import { dirname, resolve as resolvePath } from "node:path";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { z } from "zod/v4";
-import type { AdapterDelivery, AdapterEvent } from "../engine/adapter-contract.js";
+import type { AdapterDelivery, AdapterEvent, EventAnswerFacts } from "../engine/adapter-contract.js";
 import {
   AdapterEventSchema,
   decodeRerailEventResult,
   encodeRerailEventResult,
+  EVENT_ANSWER_HEADER,
+  EVENT_ANSWER_WITH_FACTS,
   RERAIL_EVENT_MAX_FRAME_BYTES,
+  type RerailEventSuccessFrame,
 } from "./event-protocol.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
@@ -194,7 +197,25 @@ type EngineServiceOptions = Omit<RerailRuntimeOptions, "workspaceRoot"> & {
   now?: () => number;
   /** How long a checkout's runtime stays open once no session uses it; {@link IDLE_RUNTIME_MS} by default. */
   idleRuntimeMs?: number;
+  /**
+   * What the answer to `event` tells a hook that asks (`EVENT_ANSWER_HEADER`) beside `deliveries`: the daemon's, which
+   * holds the dashboard and the database the hook would otherwise ask over HTTP. Undefined where it cannot say; the
+   * hook then asks. A standalone service (tests, benchmarks) has none.
+   */
+  answerFacts?: (event: AdapterEvent, deliveries: readonly AdapterDelivery[]) => Promise<EventAnswerFacts | undefined>;
 };
+
+/**
+ * The answer to `event`: its deliveries, with the facts of `answerFacts` only for a hook that says it reads them
+ * (`EVENT_ANSWER_WITH_FACTS` or later), since an older hook refuses an answer that carries them.
+ */
+async function eventAnswer(
+  incoming: IncomingMessage, event: AdapterEvent, deliveries: readonly AdapterDelivery[], options: EngineServiceOptions,
+): Promise<RerailEventSuccessFrame> {
+  const version = Number(incoming.headers[EVENT_ANSWER_HEADER]);
+  const reads = Number.isInteger(version) && version >= EVENT_ANSWER_WITH_FACTS;
+  return { eventId: event.eventId, deliveries: [...deliveries], ...(reads ? await options.answerFacts?.(event, deliveries) : undefined) };
+}
 
 /**
  * How long a checkout's runtime stays open after its last session ends. A session that starts there again within it
@@ -688,7 +709,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
       }
       const { event, configuration } = parseEngineRequest(JSON.parse(Buffer.concat(chunks).toString("utf8")));
       const deliveries = await engineService.ingest(event, configuration);
-      response.end(encodeRerailEventResult({ eventId: event.eventId, deliveries: [...deliveries] }));
+      response.end(encodeRerailEventResult(await eventAnswer(incoming, event, deliveries, options)));
     } catch (error) {
       response.writeHead(400).end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
     }
@@ -750,9 +771,30 @@ export async function ingestEngineEvent(
   event: AdapterEvent,
   configuration?: EngineRuntimeConfiguration,
 ): Promise<readonly AdapterDelivery[]> {
+  return (await postEngineEvent(endpoint, event, configuration, {})).deliveries;
+}
+
+/**
+ * The daemon's whole answer to `event`: its deliveries and, from a daemon that has them, the facts a hook builds the
+ * session-start note and a steer's link from (`EVENT_ANSWER_HEADER`).
+ */
+export async function ingestEngineEventAnswer(
+  endpoint: EngineEndpoint,
+  event: AdapterEvent,
+  configuration?: EngineRuntimeConfiguration,
+): Promise<RerailEventSuccessFrame> {
+  return await postEngineEvent(endpoint, event, configuration, { [EVENT_ANSWER_HEADER]: String(EVENT_ANSWER_WITH_FACTS) });
+}
+
+async function postEngineEvent(
+  endpoint: EngineEndpoint,
+  event: AdapterEvent,
+  configuration: EngineRuntimeConfiguration | undefined,
+  answerHeaders: Record<string, string>,
+): Promise<RerailEventSuccessFrame> {
   const body = JSON.stringify(RequestSchema.parse({ event, configuration }));
   if (Buffer.byteLength(body) > RERAIL_EVENT_MAX_FRAME_BYTES) throw new RangeError("Kernel event exceeds frame limit");
-  const { promise, resolve, reject } = Promise.withResolvers<readonly AdapterDelivery[]>();
+  const { promise, resolve, reject } = Promise.withResolvers<RerailEventSuccessFrame>();
   const outgoing = request(
     {
       socketPath: endpoint.socketPath,
@@ -762,6 +804,7 @@ export async function ingestEngineEvent(
       headers: {
         "content-type": "application/json",
         "content-length": Buffer.byteLength(body),
+        ...answerHeaders,
         ...(endpoint.accessToken === undefined ? {} : { [DAEMON_ACCESS_HEADER]: endpoint.accessToken }),
       },
     },
@@ -775,7 +818,7 @@ export async function ingestEngineEvent(
           if (response.statusCode !== 200) throw new Error(`Kernel request failed (${response.statusCode}): ${text}`);
           const result = decodeRerailEventResult(text);
           if (result.eventId !== event.eventId) throw new Error("Kernel response event identity mismatch");
-          resolve(result.deliveries);
+          resolve(result);
         } catch (error) {
           reject(error);
         }

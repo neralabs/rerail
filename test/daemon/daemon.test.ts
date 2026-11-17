@@ -24,8 +24,10 @@ import {
   SESSION_EVENT_PAGE_LIMIT,
 } from "../../src/runtime/index.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
-import { openRerailDatabase, RepositoryWorktreeWalks, SqliteAuditStore, SqliteAuditControlStore } from "../../src/engine/index.js";
+import { type AdapterEvent, openRerailDatabase, RepositoryWorktreeWalks, SqliteAuditStore, SqliteAuditControlStore } from "../../src/engine/index.js";
+import { presentedSessionNoteRules, steerDashboard } from "../../src/presentation/index.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
+import { setUpTestRepository } from "../support/repository-rules.js";
 import { linkFolder } from "../support/platform/links.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { withExperiments } from "../support/environment/experiments.js";
@@ -508,6 +510,43 @@ describe("Rerail daemon", () => {
       status: 404,
       body: { error: "session-not-found" },
     });
+  });
+
+  /** One event sent to the daemon's engine socket as a hook sends it, with `headers`; the answer as JSON. */
+  async function postEvent(daemon: RerailDaemon, event: AdapterEvent, headers: Record<string, string>): Promise<unknown> {
+    const body = JSON.stringify({ event });
+    const { promise, resolve: answered, reject } = Promise.withResolvers<unknown>();
+    const outgoing = httpRequest({
+      socketPath: daemon.kernelSocketPath, method: "POST", path: "/events",
+      headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body), [ACCESS_HEADER]: ACCESS, ...headers },
+    }, (incoming) => {
+      const chunks: Buffer[] = [];
+      incoming.on("data", chunk => chunks.push(chunk));
+      incoming.on("end", () => answered(JSON.parse(Buffer.concat(chunks).toString())));
+      incoming.on("error", reject);
+    });
+    outgoing.on("error", reject);
+    outgoing.end(body);
+    return await promise;
+  }
+
+  it.each([
+    ["set up", (root: string) => setUpTestRepository(root, { rerailRules: ["typescript-eslint-consistent-type-definitions"] }, join(root, "rerail.sqlite"))],
+    ["not set up", (root: string) => startTestRepository(root, join(root, "rerail.sqlite"))],
+  ])("answers a hook's session start in a repository %s with the dashboard and rules its HTTP API gives, and an older hook without them", async (_state, prepare) => {
+    root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));
+    prepare(root);
+    await mkdir(join(root, "home"), { recursive: true });
+    const daemon = await start({ stateFile: join(root, "home", "daemon.json") });
+    const session = { host: "claude-code" as const, sessionId: "answered-session", cwd: root };
+    const answer = await postEvent(daemon, { kind: "session-start", eventId: "start-answered", session }, { "x-rerail-event-answer": "2" });
+    // What the hook reads over HTTP right after the answer when the answer does not carry it.
+    expect(answer).toEqual({
+      eventId: "start-answered", deliveries: [], dashboard: await steerDashboard(root), sessionNote: await presentedSessionNoteRules(session),
+    });
+    // A hook older than these fields refuses an answer that carries them; it does not ask, so it gets the answer it knows.
+    const older = { ...session, sessionId: "older-session" };
+    expect(await postEvent(daemon, { kind: "session-start", eventId: "start-older", session: older }, {})).toEqual({ eventId: "start-older", deliveries: [] });
   });
 
   it("lists machine-wide history by default and one repository's with a repository filter, and reads any session by id", async () => {

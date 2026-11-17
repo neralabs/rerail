@@ -1,5 +1,5 @@
 import { rm } from "node:fs/promises";
-import { hookText, type AdapterDelivery, type RerailEventLoop } from "../../engine/adapter-contract.js";
+import { answeredFacts, hookText, type AdapterDelivery, type RerailEventLoop } from "../../engine/adapter-contract.js";
 import { claudeHookEvents, claudeWorkspace } from "./claude-event-adapter.js";
 import {
   deliveryConflicts,
@@ -111,8 +111,10 @@ export async function handleClaudeEvent(
   const cwd = claudeWorkspace(input.cwd);
   const links = terminalDrawsHyperlinks(env) ? "hyperlink" : "plain";
   const mark = rerailMark(colourDepth(env));
-  const note = hook === "SessionStart" ? sessionStartNote(await dashboardOrigin(cwd), "claude-code", sessionId, await presentedSessionNoteRules({ host: "claude-code", sessionId, cwd })) : undefined;
+  // The daemon's answer carries the note's link and rules and the steers' links; an older daemon's is read after it.
+  const answered = answeredFacts(eventLoop);
+  const note = hook === "SessionStart" ? sessionStartNote(await dashboardOrigin(cwd, answered), "claude-code", sessionId, await presentedSessionNoteRules({ host: "claude-code", sessionId, cwd }, answered)) : undefined;
   const routed = await routeDeliveries(path, hook, deliveries, CONTEXT_EVENTS);
   // `linkDeliveries` copies each delivery, so a steer the 0.1.2 hook held at `Stop` keeps its `late` mark.
-  return claudeHookOutput(hook, await linkDeliveries(routed, cwd), { note, links, mark });
+  return claudeHookOutput(hook, await linkDeliveries(routed, cwd, answered), { note, links, mark });
 }

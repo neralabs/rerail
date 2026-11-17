@@ -12,6 +12,7 @@ export {
   type AdapterEvent,
   type AdapterSample,
   type AdapterSession,
+  type EventAnswerFacts,
   type RerailEventLoop,
   type RerailHost,
   RULE_MESSAGE_TYPE,

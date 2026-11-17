@@ -1,9 +1,9 @@
-import type { AdapterEvent, AdapterSession, RerailEventLoop, RerailHost } from "../engine/adapter-contract.js";
+import type { AdapterEvent, AdapterSession, EventAnswerFacts, RerailEventLoop, RerailHost } from "../engine/adapter-contract.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { readRepositoryState } from "../presentation/session-presentation.js";
 import { isRerailStarted } from "../runtime/repository-start.js";
 import { RerailRuntime } from "../runtime/runtime.js";
-import { ingestEngineEvent } from "../runtime/engine-service.js";
+import { ingestEngineEventAnswer } from "../runtime/engine-service.js";
 import {
   autostartDaemon,
   autostartOff,
@@ -204,11 +204,17 @@ async function runHostHookOnce(
     // The daemon orders a session's events itself, so the lock guards only the session's files: a hook lets go of it
     // while the daemon checks its event, unless it keeps it (`SessionLock.kept`), and the hooks of a session's parallel
     // subagents, which all carry the parent's session id, do not queue behind each other's checks until one gives up.
-    const ingest = (adapterEvent: AdapterEvent) => lock.released(() => ingestEngineEvent(endpoint, adapterEvent, configuration))
+    // Each answer's facts are kept for the adapter, which then asks the daemon for none of them again.
+    let facts: EventAnswerFacts = {};
+    const ingest = (adapterEvent: AdapterEvent) => lock.released(() => ingestEngineEventAnswer(endpoint, adapterEvent, configuration))
+      .then(({ eventId: _eventId, deliveries, ...answered }) => {
+        facts = { ...facts, ...answered };
+        return deliveries;
+      })
       .catch((error: unknown) => {
         throw unreachable(error);
       });
-    const output = await handle({ ingest }, storageRoot, lock);
+    const output = await handle({ ingest, answerFacts: () => facts }, storageRoot, lock);
     return bindSteerReceipt(output, recordLocalReceipt(session, databasePath));
   });
 }

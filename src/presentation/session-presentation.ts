@@ -1,7 +1,9 @@
 import { realpath } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
-import { ADAPTER_CAPABILITIES, type AdapterDelivery, type AdapterSession, type RerailHost } from "../engine/adapter-contract.js";
+import {
+  ADAPTER_CAPABILITIES, type AdapterDelivery, type AdapterSession, type EventAnswerFacts, type RerailHost,
+} from "../engine/adapter-contract.js";
 import {
   presentationDaemonSchema,
   presentationReadSchema,
@@ -249,10 +251,11 @@ function onPresentation(
  * The dashboard the session-start note links into for `cwd`: the Rerail home daemon's recorded URL when it is
  * loopback, scoped to `cwd`'s repository and checkout (`?repository=&checkout=`) when the daemon names them, so the
  * session page opens in that repository rather than on the picker. Undefined when there is none, or the daemon is
- * bound somewhere a browser should not be sent (`0.0.0.0`). Passive: never starts anything.
+ * bound somewhere a browser should not be sent (`0.0.0.0`). Passive: never starts anything. The daemon's answer to the
+ * event (`answered`) gives it where it carries it.
  */
-export async function dashboardOrigin(cwd: string): Promise<string | undefined> {
-  return steerDashboard(cwd);
+export async function dashboardOrigin(cwd: string, answered: EventAnswerFacts = {}): Promise<string | undefined> {
+  return steerDashboard(cwd, answered);
 }
 
 /**
@@ -261,11 +264,13 @@ export async function dashboardOrigin(cwd: string): Promise<string | undefined> 
  * runtime records no link; each coding agent's adapter links them as it hands them over, and without a dashboard
  * leaves them unlinked.
  */
-export async function linkDeliveries<Delivery extends AdapterDelivery>(deliveries: readonly Delivery[], cwd: string | undefined): Promise<Delivery[]> {
+export async function linkDeliveries<Delivery extends AdapterDelivery>(
+  deliveries: readonly Delivery[], cwd: string | undefined, answered: EventAnswerFacts = {},
+): Promise<Delivery[]> {
   // Hooks call this on every event, and most events deliver nothing: only a rule or a conflict to link is worth asking
   // the daemon.
   const links = deliveries.some(delivery => delivery.rules.length > 0 || delivery.conflict !== undefined);
-  const dashboard = cwd === undefined || !links ? undefined : await steerDashboard(cwd);
+  const dashboard = cwd === undefined || !links ? undefined : await steerDashboard(cwd, answered);
   if (dashboard === undefined) return deliveries.map(delivery => ({ ...delivery }));
   return deliveries.map(delivery => ({
     ...delivery,
@@ -276,9 +281,12 @@ export async function linkDeliveries<Delivery extends AdapterDelivery>(deliverie
 
 /**
  * The dashboard a steer's `why?` links point into for `cwd`: the origin scoped to `cwd`'s repository and checkout
- * (`?repository=&checkout=`) when the daemon names them, else the bare origin. Never starts anything.
+ * (`?repository=&checkout=`) when the daemon names them, else the bare origin. Never starts anything. The daemon's
+ * answer to the event (`answered`) gives it where it carries it, so the hook asks nothing more of a daemon that may be
+ * busy again by then; a daemon older than that field is asked as before.
  */
-export async function steerDashboard(cwd: string): Promise<string | undefined> {
+export async function steerDashboard(cwd: string, answered: EventAnswerFacts = {}): Promise<string | undefined> {
+  if (answered.dashboard !== undefined) return answered.dashboard ?? undefined;
   try {
     const daemon = await verifyDaemon(cwd);
     if (typeof daemon === "string") return undefined;
@@ -568,9 +576,10 @@ export async function readPresentation(request: PresentationRequest): Promise<Se
 /**
  * What the session-start note says about the session's rules, as the daemon presents them (hosts that cannot open the
  * database). Read on demand: the note is the agent's, so the person's footer preference (silent) must not hide that the
- * repository is not set up.
+ * repository is not set up. The daemon's answer to the session's start (`answered`) gives it where it carries it.
  */
-export async function presentedSessionNoteRules(session: AdapterSession): Promise<SessionNoteRules> {
+export async function presentedSessionNoteRules(session: AdapterSession, answered: EventAnswerFacts = {}): Promise<SessionNoteRules> {
+  if (answered.sessionNote !== undefined) return answered.sessionNote;
   const presentation = await readPresentation({ sessionId: session.sessionId, host: session.host, cwd: session.cwd, onDemand: true });
   return presentation.status === "not-set-up" ? { setUp: false } : { setUp: true, ruleCount: presentation.counts?.rules ?? null };
 }

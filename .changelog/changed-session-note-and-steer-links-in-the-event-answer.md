@@ -1,0 +1,1 @@
+The session-start note in Claude Code, Codex and Cursor, and a steer's why? link, now come in the daemon's answer to the event, so a busy daemon no longer delays a session's start by up to 4 seconds or a steer by up to 2, nor leaves the note or the link out.

@@ -11,7 +11,7 @@ import { claudeHookOutput, handleClaudeEvent } from "../../../src/hosts/claude/c
 import { runClaudeHook } from "../../../src/hosts/claude/claude-hook.js";
 import { bindSteerReceipt, type HookInput, type HookOptions } from "../../../src/harness/index.js";
 import { dashboardOrigin, presentedSessionNoteRules } from "../../../src/presentation/index.js";
-import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
+import { answering, countingDaemon, hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { editSteer, steeredRules } from "../../support/steers.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
@@ -240,6 +240,22 @@ describe("Claude Code hook with a running daemon", () => {
     });
   }
 
+  it("gives the session note its link and rules from the daemon's answer to the session's start, reading neither again", { timeout: 60_000 }, async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    await startNativeTestDaemon(root);
+    const reads = vi.spyOn(globalThis, "fetch");
+    const start = await runClaudeHook({ session_id: "noted-session", cwd: root, hook_event_name: "SessionStart", source: "startup" }, daemonHookOptions(root, { keepDatabase: false }));
+    const paths = reads.mock.calls.map(([input]) => new URL(input instanceof Request ? input.url : input).pathname);
+    reads.mockRestore();
+    // The same note the daemon's HTTP API gives, read here after the hook.
+    const note = sessionStartNote(await dashboardOrigin(root), "claude-code", "noted-session", await presentedSessionNoteRules({ host: "claude-code", sessionId: "noted-session", cwd: root }));
+    expect(start).toEqual({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: note } });
+    // The start check reads the presentation before the event (`hookRerailStarted`); after the answer nothing is read.
+    expect(paths.filter(path => path.startsWith("/api/"))).toEqual(["/api/presentation"]);
+  });
+
   it("ends a reply at its empty last batch and stores the whole reply, blank line kept, as one message", { timeout: 60_000 }, async () => {
     const root = await temporaryDirectory();
     startTestRepository(root);
@@ -420,6 +436,33 @@ describe("Claude Code one-shot hook", () => {
       });
     } finally {
       vi.unstubAllEnvs();
+    }
+  });
+
+  it("builds the session note and a steer's why? from the daemon's answer, asking it nothing more, and reads an older daemon after it", async () => {
+    const root = await temporaryDirectory();
+    const daemon = await countingDaemon(join(root, "home"));
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    try {
+      const common = { session_id: "claude-session", cwd: root };
+      const dashboard = "http://127.0.0.1:4791/?repository=clone%3Aapp&checkout=%2Fwork%2Fapp";
+      const sessionNote = { setUp: true as const, ruleCount: 26 };
+      const start = await handleClaudeEvent({ ...common, hook_event_name: "SessionStart", source: "startup" }, answering(scriptedLoop({}), { dashboard, sessionNote }), join(root, "sessions"));
+      expect(start).toEqual({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: sessionStartNote(dashboard, "claude-code", "claude-session", sessionNote) } });
+
+      const steer = [delivery("steer", editSteer("acme:no-print", "Remove print."), ["acme:no-print"])];
+      const result = { ...common, hook_event_name: "PostToolUse", tool_name: "Write", tool_input: {}, tool_response: "ok" };
+      const linked = await handleClaudeEvent({ ...result, tool_use_id: "tool-1" }, answering(scriptedLoop({ result: steer }), { dashboard }), join(root, "sessions"));
+      expect(JSON.stringify(linked)).toContain(`${dashboard}#rule/acme%3Ano-print`);
+      expect(daemon.requests).toEqual([]);
+
+      // A daemon older than these facts answers without them: the hook reads the dashboard from it, as before.
+      const older = await handleClaudeEvent({ ...result, tool_use_id: "tool-2" }, scriptedLoop({ result: steer }), join(root, "sessions"));
+      expect(JSON.stringify(older)).toContain(`${daemon.origin}#rule/acme%3Ano-print`);
+      expect(daemon.requests).toContain("/api/repository");
+    } finally {
+      vi.unstubAllEnvs();
+      await daemon.close();
     }
   });
 

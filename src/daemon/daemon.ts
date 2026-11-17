@@ -31,6 +31,7 @@ import { accessCapability, createRerailApi, hostAllowlist, publicHostSet, reques
 import { createRerailMcpHandler } from "../api/mcp.js";
 import { operations } from "../api/operations.js";
 import { DatabaseApiStores } from "../api/stores.js";
+import { eventAnswerFacts, linkableDashboardOrigin } from "../api/event-answer.js";
 import { nativeHealth as loadNativeHealth, type NativeHealth } from "../engine/native/native.js";
 import { modelStatus } from "../engine/native/model-status.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
@@ -577,6 +578,9 @@ export class RerailDaemon {
         accessToken,
         worktreeWalks,
         ...sharedMergeAssist,
+        // Until the dashboard listens, a hook reads what it needs as it did before answers carried it.
+        answerFacts: async (event, deliveries) => daemon === undefined ? undefined
+          : await eventAnswerFacts(stores, linkableDashboardOrigin(daemon.url), event, deliveries),
         // On Windows any local user can create the default pipe first; the engine then listens on a random name.
         ...(options.kernelSocketPath === undefined
           ? { pipeFallback: () => fallbackPipe(kernelSocketPath) }
