@@ -14,6 +14,11 @@ def load(s,r):
     k=(s,r)
     if k not in cache:
         ps=glob.glob(f'{B}/rel-{s}/run*/{r}.tsv')
+        # A stratum the engine did not run again (its inputs unchanged since the store's last run, the previous step)
+        # writes no dump: its rows are the last step's that did. An empty relation writes an empty file.
+        at=steps.index(s) if s in steps else 0
+        while not ps and at>0:
+            at-=1;ps=glob.glob(f'{B}/rel-{steps[at]}/run*/{r}.tsv')
         if not ps: cache[k]=None
         else: cache[k]=set(tuple(int(v) if v.lstrip('-').isdigit() else v for v in l.rstrip('\n').split('\t')) for p in ps for l in open(p) if l.strip())
     return cache[k]
@@ -91,6 +96,8 @@ def sccs(nodes,succ):
                 if len(comp)>1 or v in succ.get(v,()): cyc.update(comp)
     return cyc
 steps=sys.argv[1:] or ['00','01','02','03','04','05','06','07','08']
+for s in steps:
+    if not glob.glob(f'{B}/rel-{s}/run*'): raise SystemExit(f'no dumps for step {s} in {B} (did the run fail?)')
 D={};R={}
 def evict(keep):
     for k in [k for k in cache if k[0] not in keep]: del cache[k]
@@ -100,9 +107,11 @@ def evict(keep):
 def state(s):
     D[s]=derivs(s); dumped=rows_of(s)
     heads={d[1] for d in D[s]}
-    # the relations as the program means them: every derivation's head. The engine's dump is the same, except for
-    # `found`, which it derives by demand (`.pragma "magic-transform"`): only the rows something asks for.
-    assert dumped<=heads and {r for r,_ in heads-dumped}<={'found'}, (s,len(dumped-heads),{r for r,_ in heads-dumped})
+    # the relations as the program means them: every derivation's head (the drv rules run in the cross part, over
+    # whole relations). The engine's dump is the same, except for `found`, which it derives by demand
+    # (`.pragma "magic-transform"`), and a file-local relation the per-file memo kept: only the edited files' rows.
+    # One store for every step: a store per step interns symbols and nodes apart, and rows do not compare.
+    assert dumped<=heads, (s,len(dumped-heads),sorted({r for r,_ in dumped-heads}),sorted(dumped-heads)[:3])
     R[s]=heads
     if os.environ.get('REC_SELFCHECK'):
         bad=[d for d in D[s] if not valid_in(s,d)]
@@ -200,6 +209,35 @@ for a,b in zip(steps,steps[1:]):
         if not more: break
         C|=more
     ynm_err=len(gone ^ removed)
+    # Sound yes/no/maybe (Backward/Forward's backward phase): a candidate stays only when proved, bottom-up, from
+    # derivations with no row of its own component: the rows its derivations read, transitively (its cone), derived
+    # again from below. One probe trusts a row that is not a candidate, which a cycle can hold up by itself
+    # (ynm_reach.py's ring). Proved rows are kept for the rest of the edit; the cone stops at them.
+    proved=set(); refuted=set()
+    def prove(x):
+        if x in proved: return True
+        cone={x}; st=[x]
+        while st:
+            r=st.pop()
+            for d in by_head[r]:
+                for o in d[2]:
+                    if o in RU and o not in proved and o not in refuted and o not in cone: cone.add(o); st.append(o)
+        local=set(); changed=True
+        while changed:
+            changed=False
+            for r in cone-local:
+                if any(all(o in RU and (o in proved or o in local) for o in d[2]) for d in by_head[r]):
+                    local.add(r); changed=True
+        proved.update(local); refuted.update(cone-local)
+        return x in local
+    C2=set(d[1] for d in lost if d[1] in Ro); work=list(C2); gone2=set()
+    while work:
+        x=work.pop()
+        if prove(x): continue
+        gone2.add(x)
+        for u in oldusers[x]:
+            if u in Ro and u not in C2: C2.add(u); work.append(u)
+    sound_err=len(gone2 ^ removed)
     ynm_back=len(opn & settled)
     rc=defaultdict(int)
     for x in removed: rc[own_of[x[0]]]+=1
@@ -208,4 +246,4 @@ for a,b in zip(steps,steps[1:]):
     print(f'edit {a}->{b}: removed {len(removed)} added {len(added)}; lost derivations {len(lost)}; '
           f'recheck-only keeps wrongly {len(wrong)} {dict(__import__('collections').Counter(r for r,_ in wrong))}; '
           f'DRed overdeletes {len(dele)} (true {len(dele-Rn)}); one probe: yes {yes} no {no} maybe {maybe} (of which kept {maybe_true}); '
-          f'removed in old cycles {len(removed & D[a+"cyc"])}; YNM: candidates {len(C)} (probes {probes}), yes at once {len(YES)}, open {len(opn)} (maybe {ynm_maybe}, no {ynm_no}), settled back {ynm_back}, final candidates {len(C)} in {rounds} rounds, errors {ynm_err}; removed by comp {dict((name(c),n) for c,n in rc.items())}')
+          f'removed in old cycles {len(removed & D[a+"cyc"])}; YNM: candidates {len(C)} (probes {probes}), yes at once {len(YES)}, open {len(opn)} (maybe {ynm_maybe}, no {ynm_no}), settled back {ynm_back}, final candidates {len(C)} in {rounds} rounds, errors {ynm_err}; on old cycles: candidates {len(C & D[a+"cyc"])}, kept {len(C & D[a+"cyc"] & settled)} (where one probe can keep a row wrongly, as on ynm_reach.py ring); sound: candidates {len(C2)}, proved {len(proved)}, refuted {len(refuted)}, errors {sound_err}; removed by comp {dict((name(c),n) for c,n in rc.items())}')

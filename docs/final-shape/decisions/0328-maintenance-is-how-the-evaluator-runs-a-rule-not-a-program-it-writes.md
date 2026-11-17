@@ -208,10 +208,12 @@ is stored whole.
    - **a non-recursive stratum:** delta joins and a recheck (3). Nothing kept. A head row with several
      derivations needs no count: the recheck finds the one that remains.
    - **an aggregate:** its changed groups computed again through an index on the group columns.
-   - **a recursive stratum:** yes/no/maybe from the deltas, nothing kept: each candidate rechecked, the
-     candidates settled together from the rows outside them. It was exact on `calls.rr`'s 8 real edits, with
-     candidates 1.03–1.17 times the rows removed ("Recursion in real edits" below). A level column or partitions
-     only for a dense closure, if a real workload shows one.
+   - **a recursive stratum: open again (2026-11-17, "The light pass" below).** Yes/no/maybe with one probe and
+     nothing kept is **not sound**: a cycle that loses its only support can hold itself up through rows that never
+     become candidates, and on `calls.rr`'s 14-file edit it kept 33 unfounded rows under one probe order of three.
+     A sound "yes" needs a witness that cannot lean on the row itself: a level column (0090's *levels, checked*;
+     one probe a candidate, the cheapest in the spike), or a proof from below with nothing kept (about DRed's work
+     on `calls.rr`), or partitions derived again. Which one is the user's choice.
    - **any stratum:** derived again when 0090 §4's threshold says an edit reaches too much of it.
 
    Counting and its support relations go, and so does the strategy byte: what a stratum does follows from whether
@@ -402,7 +404,8 @@ What each column is:
   - then every candidate is settled together, as the least fixpoint from the rows outside them. A row that does
     not come back is removed, and its dependents become candidates, until none is added.
 
-  It agreed exactly with the next state on all eight edits.
+  It agreed exactly with the next state on all eight edits in that run. That was the probe order's luck: under
+  another order the 14-file edit keeps 33 unfounded rows ("A correction" below).
 
 ### What it shows
 
@@ -411,12 +414,11 @@ What each column is:
    correct, but it is a good estimate of where the work is.
 2. **DRed is the wrong default.** It overdeletes 1.1–50 times the rows that are really removed (3,609 for 72), and
    rederives almost all of them.
-3. **Yes/no/maybe is exact, keeps nothing, and its work follows the change.** Its candidates are 1.03–1.17 times
+3. **Yes/no/maybe's work follows the change** (but one probe is not sound, "A correction" below). Its candidates are 1.03–1.17 times
    the rows really removed. Seven edits settle in one round, the eighth in 8. Each candidate costs one probe with
    its head bound, plus the settling fixpoint over the open ones. It is the published Backward/Forward idea
    (Motik et al.): look for another derivation before propagating a deletion.
-4. **Levels and counts are not needed here.** Neither DRed's overdelete nor a level column is used, and nothing is
-   stored between runs.
+4. **Counts are not needed here.** Levels are, or another well-founded witness: see "A correction" below.
 
 ### Is an approximation better?
 
@@ -433,12 +435,137 @@ So the exact form is the cheap one. Stored state would add something only for a 
 
 ### What this changes
 
-- Decision 6's recursive case: **yes/no/maybe from the deltas, nothing kept**, with 0090 §4's threshold to derive
-  again. The level column and partitions become fallbacks for a dense closure, measured when one appears in a
-  real workload.
+- ~~Decision 6's recursive case: yes/no/maybe from the deltas, nothing kept.~~ Reopened by "A correction" below.
 - This is a measure of rows, candidates and probes, not of instructions. Instructions come when the evaluator's
   mode (decision 3) runs it.
-- Not measured: `workload.rr`'s lattice components, and other workloads' recursion (dl10, the packs).
+
+## The light pass, and a correction: one probe is not sound (2026-11-17)
+
+The user asked for a light pass over the other places (`workload.rr`'s lattice components, dl10, the packs), and
+how a dense closure like the spike's `reach` would be handled if real data had one. The same tools measured it
+(`scripts/profiling/o125/recursion/`, README): `prov.py` now reads core.rr's declarations, keeps built-ins and
+aggregates as filters, and leaves lattice components out; `dump.sh` takes a tree per state (`STATES`) and runs
+`logic` without a policy's scope (`LOGIC=1`); `rec.py` takes a stratum the engine did not run again from the last
+step that dumped it.
+
+### The other places
+
+**`workload.rr`** (the O125 replay, 8 real edits): the lattice `cv` is **file-local**. The split puts it in each
+document's part, which an edit derives again for the edited files, so it needs no cross-file maintenance. The
+cross-file recursion is `returns` + `type_of` (7 rules): 32,000–34,000 rows, 30 on a cycle.
+
+| Edit | Removed | Candidates | On an old cycle | Recheck alone wrong | DRed overdeletes | Errors, one probe | Errors, proof |
+|---|---|---|---|---|---|---|---|
+| 00→01 | 83 | 84 | 0 | 0 | 84 | 0 | 0 |
+| 01→02 | 143 | 143 | 0 | 0 | 143 | 0 | 0 |
+| 02→03 | 146 | 148 | 0 | 0 | 148 | 0 | 0 |
+| 03→04 | 12 | 12 | 0 | 0 | 12 | 0 | 0 |
+| 04→05 | 674 | 683 | 0 | 0 | 707 | 0 | 0 |
+| 05→06 | 10 | 11 | 0 | 0 | 24 | 0 | 0 |
+| 06→07 | 45 | 45 | 0 | 0 | 45 | 0 | 0 |
+| 07→08 | 282 | 299 | 0 | 0 | 299 | 0 | 0 |
+
+**dl10** (10 files of the data-layer repository, which has no history here: three edits of
+`plan_composition.py`: cut to its first two thirds, two classes renamed, restored). The four data-layer policies
+read the same library components: 27–29 cross-file recursive ones, 44,000–68,000 rows, 25–27 of them on a cycle,
+all in `name_reach`. Per edit (`conditional-architecture`; the others alike):
+
+| Edit | Removed | Candidates | On an old cycle | Recheck alone wrong | DRed overdeletes | Errors, one probe | Errors, proof |
+|---|---|---|---|---|---|---|---|
+| cut | 9,244 | 9,244 | 2 | 2 (`name_reach`) | 9,244 | 0 | 0 |
+| rename | 3,468 | 3,472 | 1 | 1 | 3,472 | 0 | 0 |
+| restore | 3,468 | 3,472 | 1 | 1 | 3,472 | 0 | 0 |
+
+**The Python pack** (`B-now`, 50 files): its cross part has 64 recursive components. The largest are `truth_of`
+(23 rules), `negate` + `number`, `p224_allows` (17), `literal` (17) and `imm_prefix` + `immutable_ann` (13). Every
+one recurses over the tree: children, parents, wrappers, type applications. A tree has no cycle, so none of these
+derivations can lean on themselves, and none can leave an unfounded row. Rows were not measured: a cold debug run
+of the pack takes more than 2 minutes. Getting the split at all fixed two engine bugs (`on_version::base_locations`
+on an undeclared axis; the version's guest hiding of negated kind sets, `preparation/hide.rs`).
+
+### A correction: one probe is not sound
+
+Yes/no/maybe as written above trusts a row that is not a candidate. A cycle can hold itself up that way. Take a
+ring `r1 → … → r6 → r1`, entered by one edge `e → r1`, with `x → e` before it, and remove the edge into the ring.
+The two candidates, `reach(e, r1)` and `reach(x, r1)`, each have a derivation through `reach(e, r6)` or
+`reach(x, r6)`, which are not candidates, so both are "yes". Their dependents never become candidates, and all 12
+rows `reach(e, ri)` and `reach(x, ri)`, which should go, stay (`ynm_reach.py tmp/ynm-ring`).
+
+It happens on real data. On `calls.rr`'s 14-file edit, 25–26 candidates are on an old cycle. Which of them are
+"yes" depends on the order of the probes:
+
+| Probe order (`PYTHONHASHSEED`) | Candidates | Rounds | Wrong rows kept |
+|---|---|---|---|
+| 1 | 5,411 | 3 | 33 (`pv`, `bv`, `fret`) |
+| 2 | 5,371 | 6 | 0 |
+| 3 | 5,370 | 8 | 0 |
+
+The other sets were exact because they have few rows on a cycle (`workload.rr` none among its candidates; dl10 1–2;
+the pack none possible). That is the data's luck, not a property of the method.
+
+**A sound "yes" needs a witness that cannot lean on the row itself.** Three kinds, measured:
+- **a proof from below, nothing kept** (Backward/Forward's backward phase): a candidate stays when its cone, the
+  rows its derivations read, transitively, derives it again from derivations with no row of its own component.
+  Proved and refuted rows are kept for the rest of the edit. `rec.py`'s `prove`: exact on every edit, every set,
+  every probe order.
+- **levels** (0090's *levels, checked*): a "yes" only through rows of a lower level. One probe a candidate. The
+  level is a column of the recursive relation; a derive gives it free (the round a row is first derived in).
+- **partitions derived again** (the spike's `delta+part`): sound where preparation proves the rules partitioned by a
+  column.
+
+Rows touched an edit, on `calls.rr`:
+
+| Edit | Removed | Candidates (one probe, unsound) | Proof: rows proved or refuted | DRed overdeletes |
+|---|---|---|---|---|
+| 00→01 | 690 | 842 | 1,593 | 962 |
+| 01→02 | 582 | 600 | 1,662 | 3,817 |
+| 02→03 | 1,757 | 2,037 | 6,139 | 6,149 |
+| 03→04 | 135 | 148 | 167 | 167 |
+| 04→05 | 4,980 | 5,364 | 12,141 | 11,592 |
+| 05→06 | 72 | 84 | 1,124 | 3,609 |
+| 06→07 | 289 | 391 | 5,363 | 6,660 |
+| 07→08 | 2,452 | 2,604 | 8,924 | 8,597 |
+
+The proof with nothing kept touches about what DRed does (0.3–1.7 times DRed's rows, about 1 on four edits): to trust a row
+it has to prove the rows under it, and nothing says which of them are safe. Levels say it in one comparison, so
+their work is the candidates.
+
+### The synthetic reach, if real data had it
+
+The spike's `reach` (300 documents, 3,681 edges, 48,000 rows), its edges dumped per edit (`maintain`,
+`MAINTAIN_EDGES`) and counted the same way (`ynm_reach.py`):
+
+| Edit | Edges removed | `reach` removed | One probe: candidates (errors) | Proof: rows proved or refuted | DRed overdeletes | Levels (spike): candidates, level writes |
+|---|---|---|---|---|---|---|
+| 1 | 1 | 0 | 80 (0) | 5,600 | 17,600 | 1,592, 680 |
+| 2 | 2 | 0 | 160 (0) | 14,400 | 25,600 | 194, 2 |
+| 3 | 1 | 0 | 120 (0) | 8,400 | 24,000 | 154, 2 |
+| 7 | 1 | 0 | 160 (0) | 14,400 | 25,600 | 188, 2 |
+| 8 | 1 | 0 | 40 (0) | 1,200 | 11,200 | 58, 1 |
+| 9 (a module deleted) | 9 | 140 | 1,820 (0) | 11,200 | 25,200 | 2,036, 0 |
+
+Edits 4–6 change no edge. (The spike counts levels' candidates over every relation, the others over `reach`.)
+
+How it would go:
+1. **A dense closure is the easy case for the probe.** Every lost path has many others, so every candidate is
+   "yes" at once and nothing propagates. The one probe was right here, but only because no candidate's other
+   path ran back through itself; nothing checked that.
+2. **A sound probe on it costs what the witness costs.** With levels, a "yes" is a comparison, and the work is the
+   candidates (58–2,036 an edit; edit 1, levels' bad case, rewrites 680 levels). With nothing kept, the proof
+   re-derives each candidate's source's row of `reach` (1,200–14,400 rows), and DRed overdeletes half the relation.
+   Partitions are the proof by key (spike: 44–185 keys of 300).
+3. **The thin cycle is the hard case** (the ring, `calls.rr`'s points-to): few rows, but exactly where one probe
+   fails. Levels and the proof both get it right. Neither needs to know the closure is dense.
+4. So density does not need detecting. The witness makes every case sound, and 0090 §4's threshold still sends an
+   edit that reaches too much of a stratum to deriving it again.
+
+### What this changes
+
+- Decision 6's recursive case is open again: one probe with nothing kept is out. The choice is between a level
+  column (one probe a candidate; a column of the recursive relations, written by every derive) and a proof with
+  nothing kept (about DRed's rows on `calls.rr`). Partitions remain where the rules are partitioned. The user
+  decides (they kept levels against partitions aside, 2026-11-17).
+- The engine fixes found on the way are committed with this section.
 
 ## Sizes, today against this decision (dl10)
 

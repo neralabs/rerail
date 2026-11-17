@@ -15,3 +15,22 @@ What a maintained recursive stratum must handle, measured on the O125 replay
 
 `rec.py` takes each relation as the heads of its derivations, which is the program's meaning. The engine's dump
 agrees, except for `found`, which it derives by demand (`.pragma "magic-transform"`).
+
+With the per-file memo, a file-local relation's dump holds only the edited files' rows, and a stratum whose
+inputs did not change writes no dump: `rec.py` takes it from the last step that did. Every step runs on one store:
+a store per step interns symbols and nodes apart, and rows would not compare.
+
+`rec.py` also prints, per edit, the candidates on an old cycle (where one probe can keep a row wrongly) and a sound
+variant, `prove`: a candidate stays only when its cone is derived again from below. The one-probe result depends on
+the probe order; run it under a few `PYTHONHASHSEED`s.
+
+## Other programs (the light pass, 2026-11-17)
+
+- **`workload.rr`:** `REC=tmp/recw POLICY=tmp/recw/workload-prov.rr dump.sh NN`, then `REC_DIR=tmp/recw rec.py`.
+  `prov.py` leaves out components with a lattice relation (`cv`, which is file-local).
+- **a data-layer policy over dl10:** `expand.py docs/rule-syntax/data-layer/P.rr tmp/recd/P.rr` reads its
+  `#include`s in; `prov.py` as above; then `LOGIC=1 STATES=tmp/recd/states REC=tmp/recd/P POLICY=tmp/recd/P/prov.rr
+  dump.sh NN` for each tree `tmp/recd/states/NN` (`logic` over the whole tree, the policy's `.scope` dropped).
+- **a dense closure:** `MAINTAIN_EDGES=DIR target/profiling/examples/maintain 300 8` dumps the spike's `edge` per
+  edit; `ynm_reach.py DIR` counts one probe, the proof and DRed on its `reach`. A ring that loses its entry, where
+  one probe is wrong, is a two-file `DIR` by hand (decision 0328, "A correction").

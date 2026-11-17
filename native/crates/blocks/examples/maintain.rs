@@ -1317,6 +1317,18 @@ fn by_levels(rules: &[&Rule], rels: &[usize], changes: &[Change], old_views: &[O
     (kill, add)
 }
 
+/// `MAINTAIN_EDGES=DIR`: `edge`'s rows of state `n` to `DIR/edge-<n>.tsv` (the cold state 00, then each edit's), for
+/// counting yes/no/maybe on this closure (`scripts/profiling/o125/recursion/ynm_reach.py`).
+fn dump_edges(f: &FrozenFacts, n: usize) {
+    let Ok(dir) = std::env::var("MAINTAIN_EDGES") else { return };
+    let mut out = String::new();
+    VSrc(f.view(EDGE)).probe(&[], &[], &mut |r| {
+        out.push_str(&format!("{}\t{}\n", r[0], r[1]));
+        true
+    });
+    std::fs::write(format!("{dir}/edge-{n:02}.tsv"), out).expect("write the edges");
+}
+
 fn digests(f: &FrozenFacts) -> Vec<u64> {
     (0..NREL).map(|r| f.view(r).digest()).collect()
 }
@@ -1333,6 +1345,7 @@ fn main() {
     let t = retired();
     let mut kept = cold(&sc, &prog, &docs, &mut st);
     let cold_insn = retired() - t;
+    dump_edges(&kept, 0);
     let sizes: Vec<String> = (0..NREL).map(|r| format!("{} {}", sc.rels[r].name, kept.view(r).live_len())).collect();
     println!("{ndocs} documents; cold {:.1} M insn; rows: {}", cold_insn as f64 / 1e6, sizes.join(", "));
 
@@ -1350,6 +1363,7 @@ fn main() {
         }
         let mut so = Stats::default();
         let oracle = cold(&sc, &prog, &docs, &mut so);
+        dump_edges(&oracle, e);
         let want = digests(&oracle);
         let mut out = Vec::new();
         let mut next = None;

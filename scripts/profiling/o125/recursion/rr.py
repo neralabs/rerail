@@ -25,8 +25,8 @@ def split_top(s):
     out=[];cur='';d=0;q=False
     for ch in s:
         if ch=='"': q=not q
-        if not q and ch in '([': d+=1
-        if not q and ch in ')]': d-=1
+        if not q and ch in '([{': d+=1
+        if not q and ch in ')]}': d-=1
         if ch==',' and d==0 and not q: out.append(cur);cur=''
         else: cur+=ch
     if cur.strip(): out.append(cur)
