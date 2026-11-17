@@ -123,6 +123,29 @@ describe("the installed-pack catalog", () => {
         reason: /pack\.json: category /u,
       },
       {
+        name: "a rule document the schema refuses, named with its first issue and not as the schema's JSON",
+        breakPack: directory => editJson(directory, `rules/${PYTHON_RULE}.json`, rule => JSON.parse(JSON.stringify(rule).replaceAll('"language":"python"', '"language":"kotlin"')) as Record<string, unknown>),
+        reason: new RegExp(`^Rule pack complexity: rules/${PYTHON_RULE}\\.json \\S*language Invalid option: expected one of "python"\\|`, "u"),
+      },
+      // A pack made for a newer Rerail holds what this one cannot read. Its core range says so, and that is the reason
+      // given: this Rerail's refusal of a field or a language it does not know tells the person nothing.
+      {
+        name: "a pack.json this core cannot read, in a pack whose core range leaves this core out",
+        breakPack: directory => {
+          editJson(directory, "package.json", manifest => ({ ...manifest, peerDependencies: { "@neralabs/rerail": ">=9.0.0" } }));
+          editJson(directory, "pack.json", pack => ({ ...pack, category: "toolkit" }));
+        },
+        reason: /^it needs a newer Rerail \(>=9\.0\.0\) than this one \(.*\); `rerail update` installs the newest$/u,
+      },
+      {
+        name: "a rule document this core cannot read, in a pack whose core range leaves this core out",
+        breakPack: directory => {
+          editJson(directory, "package.json", manifest => ({ ...manifest, peerDependencies: { "@neralabs/rerail": ">=9.0.0" } }));
+          editJson(directory, `rules/${PYTHON_RULE}.json`, rule => JSON.parse(JSON.stringify(rule).replaceAll('"language":"python"', '"language":"kotlin"')) as Record<string, unknown>);
+        },
+        reason: /^it needs a newer Rerail \(>=9\.0\.0\) than this one \(.*\); `rerail update` installs the newest$/u,
+      },
+      {
         name: "a pack.json without match",
         breakPack: directory => editJson(directory, "pack.json", ({ match: _match, ...pack }) => pack),
         reason: /pack\.json: match /u,

@@ -284,6 +284,25 @@ function checkedCompileProblem(loaded: LoadedRulePack, options: RuleCatalogOptio
 }
 
 /**
+ * Why core `coreVersion` is outside the core range the pack in `directory` names, or undefined when it is inside, the
+ * pack names none, or no version is given. Read from `package.json` alone, so it answers for a pack whose `pack.json` or
+ * rule documents this core cannot read: a pack made for a newer Rerail, which is then told so and not shown the
+ * schema's refusal of what it does not know.
+ */
+function unreadCoreRangeProblem(directory: string, coreVersion: string | undefined): string | undefined {
+  if (coreVersion === undefined) return undefined;
+  let range: unknown;
+  try {
+    const manifest = JSON.parse(readFileSync(join(directory, "package.json"), "utf8")) as { peerDependencies?: Record<string, unknown> } | null;
+    range = manifest?.peerDependencies?.[RERAIL_PACKAGE_NAME];
+  } catch {
+    return undefined;
+  }
+  if (typeof range !== "string" || semver.validRange(range) === null) return undefined;
+  return semver.satisfies(coreVersion, range, { includePrerelease: true }) ? undefined : coreRangeProblem(range, coreVersion);
+}
+
+/**
  * What a skipped pack's `package.json` says about it, as far as it can be read, named by the package npm installed it
  * as where there is one: a package.json naming another package is not taken at its word.
  */
@@ -318,12 +337,28 @@ export function catalogDigest(packs: readonly LoadedRulePack[]): string {
 }
 
 /**
+ * {@link checkedCompileProblem} while `engine.compile` holds. Without the engine nothing compiles: the first pack to
+ * find that turns `engine.compile` off, so the packs after it are not asked either.
+ */
+function engineProblem(loaded: LoadedRulePack, options: RuleCatalogOptions, engine: { compile: boolean }): string | undefined {
+  if (!engine.compile) return undefined;
+  try {
+    return checkedCompileProblem(loaded, options);
+  } catch (error) {
+    if (!(error instanceof EngineUnavailableError)) throw error;
+    engine.compile = false;
+    return undefined;
+  }
+}
+
+/**
  * The catalog of the packs in `packDirectories`, read from disk on every call. Each pack is read and checked on its
  * own (`readRulePack`, its package name against the one npm installed it under, then the core range and the engine
- * with `options`). Two packs may not share a pack id or a rule id: Rerail's own pack loads and the other is skipped,
- * and between two others the first by package name loads (`comparePackPrecedence`), wherever each was found. While
- * Rerail's own pack for an id is there but left out, no other pack takes that id. A skipped pack is listed with its
- * reason, in the order given, and the others load.
+ * with `options`). A pack that cannot be read and whose core range leaves this core out is skipped for its core range:
+ * it was made for a newer Rerail, which is why this one cannot read it. Two packs may not share a pack id or a rule
+ * id: Rerail's own pack loads and the other is skipped, and between two others the first by package name loads
+ * (`comparePackPrecedence`), wherever each was found. While Rerail's own pack for an id is there but left out, no
+ * other pack takes that id. A skipped pack is listed with its reason, in the order given, and the others load.
  */
 export function readRuleCatalog(packDirectories: readonly string[], options: RuleCatalogOptions = {}): RuleCatalog {
   const read: { at: number; directory: string; loaded: LoadedRulePack }[] = [];
@@ -341,7 +376,7 @@ export function readRuleCatalog(packDirectories: readonly string[], options: Rul
       const localSource = options.localSources?.get(directory);
       read.push({ at, directory, loaded: localSource === undefined ? loaded : { ...loaded, pack: { ...loaded.pack, localSource } } });
     } catch (error) {
-      const entry = skippedPack(directory, error instanceof Error ? error.message : String(error));
+      const entry = skippedPack(directory, unreadCoreRangeProblem(directory, options.coreVersion) ?? (error instanceof Error ? error.message : String(error)));
       reserve(directory, entry.packageName);
       skipped.push({ at, entry });
     }
@@ -349,17 +384,9 @@ export function readRuleCatalog(packDirectories: readonly string[], options: Rul
   const loaded: LoadedRulePack[] = [];
   const holders = new Map<string, string>();
   const owner = new Map<string, string>();
-  let compile = options.compile === true;
+  const engine = { compile: options.compile === true };
   for (const { at, directory, loaded: pack } of read.sort((left, right) => comparePackPrecedence(left.loaded, right.loaded))) {
-    let problem = packProblem(pack, directory, { holders, owner, reserved }, options);
-    if (problem === undefined && compile) {
-      try {
-        problem = checkedCompileProblem(pack, options);
-      } catch (error) {
-        if (!(error instanceof EngineUnavailableError)) throw error;
-        compile = false;
-      }
-    }
+    const problem = packProblem(pack, directory, { holders, owner, reserved }, options) ?? engineProblem(pack, options, engine);
     if (problem !== undefined) {
       reserve(directory, pack.pack.packageName);
       skipped.push({ at, entry: skippedPack(directory, problem) });
