@@ -175,6 +175,20 @@ describe("a shell command's result reads the session folder by its change notice
     expect(audits[0]).not.toHaveProperty("mode");
   });
 
+  it("goes on, when opened again, from the last whole walk, not from a pass of noticed paths", async () => {
+    const root = await workspace();
+    const watch = platformWatch();
+    const { bridge } = await opened(root, watch);
+    const since = (await bridge.walkResume())?.since;
+    await command(bridge, "shell-1", async () => {
+      await writeFile(join(root, "src", "pkg_0", "m.py"), "eval(y)\n");
+      watch.silence(root);
+    });
+    // A session suspended now still judges, once opened again, the write no notice told of.
+    expect(since).toBeDefined();
+    expect((await bridge.walkResume())?.since).toBe(since);
+  });
+
   it("walks the whole folder at a result after notices were lost or the watch ended, and checks the write there", async () => {
     const root = await workspace();
     const watch = platformWatch();
