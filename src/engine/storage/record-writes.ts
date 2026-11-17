@@ -14,6 +14,7 @@
  * Reads on other connections see a waiting write once it is made.
  */
 import { resolve } from "node:path";
+import type Database from "better-sqlite3";
 import { openSqliteDatabase, type RerailDatabase } from "./database.js";
 import { isBusy } from "./sqlite-wal.js";
 import { waitForWriteLock } from "./write-lock-wait.js";
@@ -69,6 +70,7 @@ class FileRecordWriter {
   #waitingBytes = 0;
   #dropped = 0;
   #lockWait: AbortController | undefined;
+  #transaction: { begin: Database.Statement; commit: Database.Statement; rollback: Database.Statement } | undefined;
 
   constructor(path: string, ended: () => void) {
     this.#path = path;
@@ -98,9 +100,12 @@ class FileRecordWriter {
 
   #connection(): RerailDatabase {
     if (this.#database === undefined) {
-      this.#database = openSqliteDatabase(this.#path);
+      const database = openSqliteDatabase(this.#path);
       // A busy lock answers at once: the write waits in memory instead of on this thread.
-      this.#database.$client.pragma("busy_timeout = 0");
+      database.$client.pragma("busy_timeout = 0");
+      const statement = (text: string): Database.Statement => database.$client.prepare(text);
+      this.#transaction = { begin: statement("BEGIN IMMEDIATE"), commit: statement("COMMIT"), rollback: statement("ROLLBACK") };
+      this.#database = database;
     }
     return this.#database;
   }
@@ -110,16 +115,27 @@ class FileRecordWriter {
     this.#keep(write, bytes);
   }
 
-  /** True once `write` is made; false when the lock was held, which throws nothing. Other failures throw. */
+  /**
+   * True once `write` is made in one immediate transaction; false when the lock was held, before any statement ran.
+   * Other failures roll it back and throw. The transaction's statements are prepared once per connection.
+   */
   #makeNow(write: RecordWrite): boolean {
     const database = this.#connection();
+    const transaction = this.#transaction!;
     try {
-      database.$client.transaction(() => write(database)).immediate();
-      return true;
+      transaction.begin.run();
     } catch (error) {
       if (isBusy(error)) return false;
       throw error;
     }
+    try {
+      write(database);
+      transaction.commit.run();
+    } catch (error) {
+      if (database.$client.inTransaction) transaction.rollback.run();
+      throw error;
+    }
+    return true;
   }
 
   #keep(write: RecordWrite, bytes: number): void {
@@ -202,6 +218,7 @@ class FileRecordWriter {
     if (this.#waiting.length > 0) this.#makeWaitingOnThisThread();
     this.#database?.$client.close();
     this.#database = undefined;
+    this.#transaction = undefined;
   }
 
   /**
