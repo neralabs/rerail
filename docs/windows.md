@@ -244,12 +244,15 @@ the first reader of that folder (below). So a checkout keeps its start state, it
 preferences, and this version finds its rule settings under the new spelling. The rows under the old spelling stay as
 they were, so an earlier version that opens the database later, after a downgrade or for a coding agent whose Rerail
 is still on that version, finds each row it wrote where it wrote it. Its own lists show this version's copies beside
-its rows (a folder outside Git twice among the checkouts). Where a folder already has a row under the spelling this
-version looks it up by (the earlier version saved the folder under both spellings, or a version without the step
-recorded it), that row stays as it is and only the records it lacks are copied in, so each version reads it there as a
-version without the step does. The step records each spelling it copied from in the table `path_key_spellings`, and
-this version's list of repositories and their checkouts leaves the copies under those spellings out, so each folder is
-listed once there. Removing a presentation preference removes its copies too. A start state still counts an earlier
+its rows: its repository list shows each folder outside Git the step copied twice, from the open that copied it, also
+where this version never recorded that folder itself; beside a version without the step, it shows twice only the
+folders that version records itself. Where a folder already has a row under the spelling this version looks it up by
+(the earlier version saved the folder under both spellings, or a version without the step recorded it), that row stays
+as it is and only the records it lacks are copied in, so each version reads it there as a version without the step
+does. The step records each spelling it copied from in the table `path_key_spellings`, and this version's list of
+repositories and their checkouts leaves the copies under those spellings out, so each folder is listed once there.
+Removing a presentation preference here also removes the earlier version's rows of that folder for the same coding
+agent under the spellings the step recorded, so neither version shows it after. A start state still counts an earlier
 version's row of a folder as a checkout above or inside it, as a version without the step does: that version's
 `rerail stop` or `rerail start` in one folder sets every row its own check counts as inside the folder to follow it,
 which on Windows, where the check ignores letter case, includes this version's row of the same folder; and this
@@ -287,15 +290,18 @@ key, and the database still opens. A lookup that fails for a reason that can pas
 answer) leaves the key waiting for a later open from its drive. On macOS and Linux the step reads and copies nothing.
 
 What an earlier version changes later under a spelling the step recorded reaches this version's copy too. Triggers in
-the database (`src/engine/storage/path-key-spelling-triggers.ts`), which run inside that version's own writes, carry a
-start or a stop it makes, and each audit setting, rule setting of the checkout, repository audit and presentation
-preference it changes or deletes there, to the copy the step made, while the copy still holds what that version's row
-held. Once this version, or a session of the earlier version opened in the folder as the disk spells it, changes the
-copy (saving a setting again changes it, since that sets when it was saved), the copy keeps its own values, and so does
-a row that stood under that spelling before the step. A row the earlier version adds there is copied where this version
-has none. Nothing else goes the other way: an earlier version reads its own rows, as it does beside a version without
-the step. Rows an earlier version writes under a spelling the step never saw stay under
-that spelling: the step runs once per database.
+the database (`src/engine/storage/path-key-spelling-triggers.ts`), which run inside that version's own writes, carry
+what it changes there to the copy the step made, while the copy still holds what that version's row held: a start or a
+stop it makes, the audit settings it changes, and the status line it sets for a coding agent, so this version reads
+them in that folder too. A presentation preference it adds there is copied where this version has none. In the
+database the same triggers carry its changes to the checkout's rule settings and to its repository audits, and the
+rows it adds or deletes under that spelling (`test/engine/storage/path-key-spelling.test.ts`). Once this version, or a
+session of the earlier version opened in the folder as the disk spells it, changes the copy (saving a setting again
+changes it, since that sets when it was saved), the copy keeps its own values, and so does a row that stood under that
+spelling before the step copied the folder. An earlier version reads its own rows, as beside a version without the step, except where it
+looks a folder up as the disk spells it: there it reads this version's row. So 0.1.4's status line, in a folder it
+reached through a drive letter, reads the copy and applies what it saved under the letter. Rows an earlier version
+writes under a spelling the step never saw stay under that spelling: the step runs once per database.
 
 <details>
 <summary>Other places that compare Windows paths</summary>
