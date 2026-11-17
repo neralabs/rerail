@@ -200,12 +200,12 @@ impl Rows {
         Rows { k, ..Rows::default() }
     }
 
-    /// `n` rows of a relation that does not grow (an `InRel` made of them): one frozen segment, shared by a
-    /// relation started from it without a copy.
-    pub(super) fn frozen(rows: Vec<i64>, n: usize) -> Rows {
-        let mut r = Rows::default();
+    /// `n` rows of `k` values of a relation that does not grow (an `InRel` made of them): one frozen segment,
+    /// shared by a relation started from it without a copy. `k` is the relation's even with no rows: a relation
+    /// started from them pushes rows of `k` values.
+    pub(super) fn frozen(rows: Vec<i64>, k: usize, n: usize) -> Rows {
+        let mut r = Rows::new(k);
         if n > 0 && !rows.is_empty() {
-            r.k = rows.len() / n;
             r.hint = n;
             r.extend_from_slice(&rows);
         }
@@ -443,12 +443,25 @@ impl std::fmt::Debug for Row {
 mod tests {
     use super::*;
 
+    /// A frozen relation of no rows keeps its width: one started from it holds the rows it pushes (it took the width
+    /// from its rows, so a kept relation of none started relations of width 0 that dropped every row pushed, and the
+    /// first read of one panicked, "a row of the tail").
+    #[test]
+    fn rows_started_from_a_kept_relation_of_none_hold_their_own() {
+        let kept = Rows::frozen(Vec::new(), 2, 0);
+        let mut next = kept.shared(0);
+        next.extend_from_slice(&[7, 8]);
+        assert_eq!(next.len(), 2);
+        assert_eq!(*next.row(0, 2), [7, 8]);
+        assert_eq!(next.value(0, 2, 1), 8);
+    }
+
     /// A frozen relation's rows are shared by one started from it, which pushes its own after them; freezing that
     /// one moves its tail into a segment, and both read every row by id.
     #[test]
     fn started_rows_share_the_kept_segments_and_freeze_their_own() {
         let k = 2;
-        let kept = Rows::frozen((0..20).collect(), 10);
+        let kept = Rows::frozen((0..20).collect(), 2, 10);
         let mut next = kept.shared(10);
         assert!(next.shares(&kept));
         next.extend_from_slice(&[100, 101]);
