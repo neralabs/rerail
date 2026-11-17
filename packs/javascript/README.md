@@ -151,7 +151,7 @@ Port of ESLint no-caller; the arguments object is matched through parentheses.
 
 ### `eslint-no-case-declarations`
 
-Port of ESLint no-case-declarations. using declarations, which tree-sitter-typescript 0.23.2 parses as assignments with a using token, count as lexical declarations.
+Port of ESLint no-case-declarations. `using` and `await using` declarations count as lexical declarations.
 
 ### `eslint-no-compare-neg-zero`
 
@@ -391,7 +391,7 @@ Flags an empty constructor only in a class without `extends`; otherwise a constr
 
 ### `eslint-one-var`
 
-Port of ESLint one-var with default options (`always`). var scope is the enclosing function, let/const scope the enclosing block. `using` and `await using` declarations (JavaScript files only: the TypeScript grammar has no `using_declaration`) are block-scoped kinds of their own under `always` (the default, or the `using`/`awaitUsing`/`initialized` options); their `consecutive` and `never` modes are not modelled.
+Port of ESLint one-var with default options (`always`). var scope is the enclosing function, let/const scope the enclosing block. `using` and `await using` declarations are block-scoped kinds of their own under `always` (the default, or the `using`/`awaitUsing`/`initialized` options); their `consecutive` and `never` modes are not modelled.
 
 ### `eslint-operator-assignment`
 

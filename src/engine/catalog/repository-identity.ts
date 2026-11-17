@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { physicalPath, storedPath } from "./checkout-control.js";
+import { checkoutRealpath, physicalPath, storedPath } from "./checkout-control.js";
 import { linkedWorktreeFromFiles, ownedAsGitTakes, placementInputs, type PlacementInputs } from "./checkouts/git-placement.js";
 import { openNoFollowSync } from "../no-follow.js";
 import { GitUnavailableError, gitText, runGit } from "../git.js";
@@ -161,13 +161,62 @@ function rememberGitPlaced(common: string): void {
   if (identity !== undefined) gitPlacedCommons.set(common, identity);
 }
 
-/** Git's top level, common directory and Git directory for `requested`; undefined when Git is not installed. */
+/**
+ * Git's top level, common directory and Git directory for `requested`; undefined when Git is not installed, or when Git
+ * would find no repository there ({@link outsideGit}), so a folder outside Git, asked about on every hook event of a
+ * session working in it, starts no Git process.
+ */
 function locateInGit(requested: string): ReturnType<typeof runGit> | undefined {
+  if (outsideGit(requested)) return undefined;
   try {
     return runGit(requested, ["rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--git-dir"]);
   } catch (error) {
     if (error instanceof GitUnavailableError) return undefined;
     throw error;
+  }
+}
+
+/**
+ * What Git's search for a repository finds in a folder: a `.git` folder, file or link, or the `HEAD` every Git folder
+ * holds (a bare repository, a folder inside a `.git`, a Git folder kept apart from its work tree).
+ */
+const GIT_MARKERS = [".git", "HEAD"];
+
+/**
+ * Whether Git, asked about `folder`, finds no repository, read from the disk without starting Git: `GIT_DIR` is unset in
+ * the environment Rerail runs Git in, and no folder from `folder` up to its root holds one of {@link GIT_MARKERS}, by
+ * the path as written and by its real path (Git searches up from the folder it changed into, and whether that folder's
+ * name keeps a link's path or resolves it differs by system). False wherever the disk cannot tell: a folder that does
+ * not resolve, an entry that cannot be read. So it skips Git only where Git has nothing to find; where a `.git` is there
+ * and Git still answers no repository (another owner's, past `GIT_CEILING_DIRECTORIES`, an empty `.git` folder), Git is
+ * asked as before.
+ */
+export function outsideGit(folder: string): boolean {
+  if (process.env.GIT_DIR !== undefined) return false;
+  const written = resolve(folder);
+  let real: string;
+  try {
+    real = checkoutRealpath(written);
+  } catch {
+    return false;
+  }
+  return noMarkerUpFrom(written) && (real === written || noMarkerUpFrom(real));
+}
+
+/** Whether no folder from `start` up to its root holds one of {@link GIT_MARKERS}, or an entry that cannot be read. */
+function noMarkerUpFrom(start: string): boolean {
+  for (let current = start; ; current = dirname(current)) {
+    if (GIT_MARKERS.some(name => entryMayBeThere(join(current, name)))) return false;
+    if (dirname(current) === current) return true;
+  }
+}
+
+/** Whether `path` names an entry of any kind, a broken link included; true when it cannot be read either way. */
+function entryMayBeThere(path: string): boolean {
+  try {
+    return lstatSync(path, { throwIfNoEntry: false }) !== undefined;
+  } catch {
+    return true;
   }
 }
 

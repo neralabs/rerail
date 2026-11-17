@@ -455,8 +455,19 @@ failed, the coding agent and its version, the Rerail version and the reason, suc
 (it was busy, for example opening a large checkout; events are recorded again once it answers),
 `the Rerail daemon (pid …) refused the access capability in daemon.json` (`daemon.json` was edited or written by
 another daemon; run `rerail daemon stop`, then `rerail daemon start`) or a payload field the coding agent sent in a
-shape Rerail did not expect. The failures are kept in `hook-failures.jsonl` in the Rerail home. Update Rerail with
+shape Rerail did not expect. The failures are kept in `hook-failures.jsonl` in the Rerail home; past 256 KB one hook
+moves it to `hook-failures.jsonl.1`, replacing the one there, and the line counts both. While it cannot be moved, as
+when another program holds `hook-failures.jsonl.1`, it stops taking failures at 1 MB. Update Rerail with
 `rerail update`; if the line stays, report it with `rerail support-bundle`.
+
+The line leads with the first hook that failed after the last event Rerail recorded. When hooks also failed before
+that event, it goes on with the count of all of them: `K hook events failed, of N that could not be recorded in the
+last 24 hours`. When events were recorded after the last failure, the line reads `Hooks: N hook events could not be
+recorded in the last 24 hours` instead. Once the log has moved aside and holds nothing from 24 hours ago, failures from
+before `hook-failures.jsonl.1` began may be gone, so the line counts the failures since it began and says when that
+was: `since <time>, as far back as the log goes`; when another program keeps `hook-failures.jsonl.1` from being read,
+it counts from when `hook-failures.jsonl` began. When every failure it still holds came after the last recorded
+event, hooks may have failed before the time it leads with, and the line says `as far back as the log goes` too.
 
 With `RERAIL_AUTOSTART=0` (or `false`) hooks start no daemon, and a hook that finds none logs nothing, since that is
 what you asked for. A session that starts with no daemon running says so as it starts: Claude Code and Codex
@@ -627,10 +638,12 @@ Off loopback:
 
 </details>
 
-### The dashboard says "Needs the dashboard link"
+### The dashboard asks to connect this browser
 
-Run `rerail manage` (or `rerail daemon start --open`) to open the page with the daemon's access capability, a secret
-carried in the dashboard link.
+The page says "Connect this browser to Rerail" in place of every view. Run `rerail manage` (or
+`rerail daemon start --open`) in a terminal to open the page with the daemon's access capability, a secret carried in
+the dashboard link. The page that asked then continues on its own. If it opens in a browser other than the one you
+want, paste the link it prints into that one.
 
 <details>
 <summary>Why the link is needed, scripts, and a refused capability</summary>
