@@ -1753,6 +1753,10 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                     };
                     let _ = writeln!(out, "  block {at} recarm {k} {} {} {} {none}", a.opener, a.closer, a.off);
                 }
+                // `block N recpart K START BYTES` each part of a region read in parts.
+                for p in &rd.parts {
+                    let _ = writeln!(out, "  block {at} recpart {k} {} {}", p.start, p.bytes);
+                }
             }
         }
         // `block N recretag O KIND MARKS`: a reader's kind and marks by its start mask.

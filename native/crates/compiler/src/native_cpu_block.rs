@@ -1848,6 +1848,10 @@ impl RecordTables {
     }
 
     pub fn new(r: &crate::records::Records, made: &crate::block_native::BlockNative) -> Result<Self, Error> {
+        // A region read in parts (`Reader::parts`): not yet the CPU loop's.
+        if r.readers.iter().any(|rd| !rd.parts.is_empty()) {
+            return Err(Error::UnsupportedFeature("a region read in parts, on the CPU"));
+        }
         let table = crate::records::WordTable::new(&r.words).map_err(|_| Error::InvalidTarget(0))?;
         let mut words: Vec<u64> = r.kinds.chunks(8).map(|c| u64::from_le_bytes(c.try_into().expect("8 kinds"))).collect();
         let slots = 8 * words.len();

@@ -3099,3 +3099,88 @@ pub mod tests {
         eprintln!("load: {load}");
     }
 }
+
+#[cfg(test)]
+mod json_probe {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    /// A grammar's program, as `compile_padded` makes it, without the CPU's code (the
+    /// interpreter's input), its kinds by their own ids.
+    fn program(g: &str) -> Result<rerail_compiler::program::Words, String> {
+        let stmts = ::bitlex::syntax::parse(g)?;
+        let own: RefCell<HashMap<String, u16>> = RefCell::new(HashMap::new());
+        let id = |name: &str| -> u16 {
+            let mut own = own.borrow_mut();
+            let next = 1 + own.len() as u16;
+            *own.entry(name.to_owned()).or_insert(next)
+        };
+        let kind = |n: &str| Some(if n == "ERROR" { u16::MAX } else { id(n) });
+        let field = |n: &str| Some(id(n.trim_start_matches("field ")));
+        let symbols = rerail_compiler::bitlex_masks::Symbols { kind: &kind, field: &field };
+        let compiled = rerail_compiler::bitlex_masks::compile_shaped(&stmts, &[rerail_compiler::bitlex_masks::FALLBACK], Some(&symbols), rerail_compiler::bitlex_masks::Shape::Rules)?;
+        rerail_compiler::rir_asm::assemble(&compiled.text())
+    }
+
+    /// A probe (JSON step 1): the token-loop JSON (`json_parser/json.bitlex`) against the ladder's
+    /// step 14, both by the interpreter: the same nodes on each input.
+    #[test]
+    #[ignore = "a probe: run by hand"]
+    fn json_loop_against_step_14() {
+        let new = program(include_str!("../../json_parser/json.bitlex")).unwrap_or_else(|e| panic!("json.bitlex: {e}"));
+        let old = program(include_str!("../../compiler/bitlex_ladder/14-json.bitlex")).unwrap_or_else(|e| panic!("14-json: {e}"));
+        let r = new.block_programs[0].records.as_ref().expect("records");
+        eprintln!("rules {:?}\nreaders {:?}", r.rules, r.readers);
+        let inputs: Vec<&[u8]> = vec![
+            br#"{"a": [1, -2.5e3, true, null], "b\n": {"c": "d\u0041x"}}"#,
+            br#""""#,
+            br#""\\""#,
+            br#"["a\"b", "\\\"", "x"]"#,
+            br#"  [ 1 , 2 ]  "#,
+            br#"{"k":"v"}"#,
+            br#""open"#,
+            br#"[01]"#,
+            br#"[1.]"#,
+            br#"tru"#,
+            br#"["\q"]"#,
+        ];
+        // JSONTestSuite's files and the corpus's small ones (`RERAIL_JSON_SUITE`,
+        // `RERAIL_JSON_CORPUS`).
+        let mut owned: Vec<(String, Vec<u8>)> = Vec::new();
+        for var in ["RERAIL_JSON_SUITE", "RERAIL_JSON_CORPUS"] {
+            let Ok(dir) = std::env::var(var) else { continue };
+            let mut paths: Vec<_> = std::fs::read_dir(&dir).expect("the directory").flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+            paths.sort();
+            for p in paths {
+                let b = std::fs::read(&p).expect("reads");
+                if b.len() < 1 << 20 {
+                    owned.push((p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), b));
+                }
+            }
+        }
+        let quiet = !owned.is_empty();
+        let inputs: Vec<(String, &[u8])> = inputs.into_iter().map(|f| (String::from_utf8_lossy(f).into_owned(), f)).chain(owned.iter().map(|(n, b)| (n.clone(), b.as_slice()))).collect();
+        let (mut bad, mut ok, mut refused) = (0, 0, 0);
+        for (name, f) in inputs {
+            let a = rerail_compiler::stream::run(&new, f, &new.block_programs[0].run(f)).map(|n| n.iter().map(|x| (x.kind, x.start, x.end, x.size)).collect::<Vec<_>>());
+            let b = rerail_compiler::stream::run(&old, f, &old.block_programs[0].run(f)).map(|n| n.iter().map(|x| (x.kind, x.start, x.end, x.size)).collect::<Vec<_>>());
+            let same = match (&a, &b) {
+                (Ok(x), Ok(y)) => x == y,
+                (Err(_), Err(_)) => true,
+                _ => false,
+            };
+            if !same {
+                bad += 1;
+            } else if a.is_ok() {
+                ok += 1;
+            } else {
+                refused += 1;
+            }
+            if !same || !quiet {
+                eprintln!("{} {name:?}: new {:?}, step 14 {:?}", if same { "same" } else { "DIFF" }, a.as_ref().map(|n| n.len()).map_err(|e| e.why), b.as_ref().map(|n| n.len()).map_err(|e| e.why));
+            }
+        }
+        eprintln!("{ok} parsed the same, {refused} refused by both, {bad} differ");
+        assert_eq!(bad, 0);
+    }
+}

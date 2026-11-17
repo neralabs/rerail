@@ -633,7 +633,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     Ok(w) if w == "retag" => Some((line.number("")?, line.number("")?)),
                     _ => None,
                 };
-                r.readers.push(crate::records::Reader { arms: Vec::new(), other, retag });
+                r.readers.push(crate::records::Reader { arms: Vec::new(), other, retag, parts: Vec::new() });
             } else if first == "recretag" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recretag before its records"))?;
                 let (o, kind, marks): (u16, u8, u32) = (line.number("")?, line.number("")?, line.number("")?);
@@ -650,6 +650,13 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 };
                 let rd = r.readers.get_mut(k).ok_or(format!("block {at} recarm {k}: no such reader"))?;
                 rd.arms.push(crate::records::ReadArm { opener, closer, off, none });
+            } else if first == "recpart" {
+                // `recpart K START BYTES`: a part of reader K's region (`Reader::parts`).
+                let r = program.records.as_mut().ok_or(format!("block {at} recpart before its records"))?;
+                let k: usize = line.number("")?;
+                let (start, bytes): (u16, u8) = (line.number("")?, line.number("")?);
+                let rd = r.readers.get_mut(k).ok_or(format!("block {at} recpart {k}: no such reader"))?;
+                rd.parts.push(crate::records::ReadPart { start, bytes });
             } else if first == "recuntaken" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recuntaken before its records"))?;
                 r.untaken.push(line.number("")?);
