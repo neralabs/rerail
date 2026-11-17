@@ -82,6 +82,12 @@ opt-level = 3
 [profile.dev.package.rerail-vue-lean]
 opt-level = 3
 
+# The grammar compiler (`rerail-compiler`: Bitlex's lowering, its prover `bitlex_prove`, tier 2's
+# lowering) proves hundreds of mask questions for each grammar a test compiles (C's token grammar:
+# minutes unoptimized, work queue Q34).
+[profile.dev.package.rerail-compiler]
+opt-level = 3
+
 # simdjson's operations (`rerail-simd8`) are each a few instructions, inlined into the kernels that use them.
 [profile.dev.package.rerail-simd8]
 opt-level = 3

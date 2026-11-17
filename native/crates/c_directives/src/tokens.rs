@@ -218,3 +218,32 @@ mod tests {
         assert!(differ.is_empty());
     }
 }
+
+#[cfg(test)]
+mod lowering_time {
+    /// The token grammar's lowering, step by step (work queue Q34): run it with `--nocapture`.
+    #[test]
+    #[ignore = "a measurement"]
+    fn lowering_steps() {
+        use rerail_compiler::bitlex_masks as bc;
+        for cpp in [false, true] {
+            let t = std::time::Instant::now();
+            let stmts = ::bitlex::syntax::parse(&super::grammar(cpp)).unwrap();
+            let parse = t.elapsed();
+            let kind = |name: &str| super::KINDS.iter().position(|&k| k == name).map(|i| i as u16).or(Some(900));
+            let field = |_: &str| None;
+            let symbols = bc::Symbols { kind: &kind, field: &field };
+            let t = std::time::Instant::now();
+            let compiled = bc::compile_shaped(&stmts, &[bc::FALLBACK], Some(&symbols), bc::Shape::Rules).unwrap();
+            let compile = t.elapsed();
+            let t = std::time::Instant::now();
+            let text = compiled.text();
+            let program = rerail_compiler::rir_asm::assemble(&text).unwrap();
+            let assemble = t.elapsed();
+            let t = std::time::Instant::now();
+            let _native = rerail_compiler::native_ir::lower(&program, 0, 0).unwrap();
+            let lower = t.elapsed();
+            eprintln!("cpp {cpp}: parse {parse:?}, compile {compile:?}, assemble {assemble:?} ({} bytes of rir, {} ops), lower {lower:?}", text.len(), program.block_programs[0].ops.len());
+        }
+    }
+}

@@ -844,6 +844,12 @@ pass.
 - **Record** (2026-11-17): on the farm (cargo, debug), `the_examples_expand_as_the_lean_pass_does`
   took 416 s, lowering C's and C++'s grammars and interpreting 14 small files twice; the
   nextest override ends a c-directives test at 480 s. Under Relax the same test takes 43 s.
+- **Done** (2026-11-17): timed by phase, 13 of 13 s were `tree_section`'s proofs, 204 of 206
+  `bitlex_prove::never` questions failing after proving all 256 bytes each. `never` now stops at
+  the first class of bytes not proved, and the position's byte is asked once per class its
+  readers tell apart (`Proof::own`), in `first_bytes` too; both grammars' programs are the same
+  text as before. And `rerail-compiler` is optimized in dev builds (the root `Cargo.toml`). On
+  the farm: the lowering 1.3 s a dialect, the examples test 416 s → 2.4 s.
 
 ## Questions for the user
 
