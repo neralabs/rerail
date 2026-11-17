@@ -1,15 +1,17 @@
 //! Each test's own store, copied from a template (the data-layer repository's SQLite fixtures, `conform/conftest.py`).
 //!
 //! A test that does not name a store (`TEST_TAPE_CACHE`, `RERAIL_TAPE_CACHE`) gets one of its own on first use: a
-//! copy of the template, cloned (APFS `clonefile`, else a copy) into a directory of its own, and removed when the
-//! test's thread ends. No test sees what another left behind, and none waits on another's leases (O146).
+//! copy of the template (its file and its packs), cloned (APFS `clonefile`, else a copy) into a directory of its own,
+//! and removed when the test's thread ends. No test sees what another left behind, and none waits on another's leases
+//! (O146).
 //!
 //! The template holds what every test would otherwise make first: the rule library's phase 0 (each module's tape and
 //! its loads, `bootstrap.rr`'s plan) and the core program's plan. It is made once per build (keyed by the build's
 //! identities, `build_ids`), by the first test process that wants it, under a file lock; the processes after it find
 //! it ready (`<key>.ready`). It is written to a staging store, drained (atoms, queued writes), and published with
-//! `VACUUM INTO` and a rename, so a reader never sees half of one. A binary that registers no language (a lower
-//! crate's) cannot run phase 0: its template is an empty store, and it says so once.
+//! `VACUUM INTO`, its memo packs beside it (decision 0240 §4), and a rename, so a reader never sees half of one. A
+//! binary that registers no language (a lower crate's) cannot run phase 0: its template is an empty store, and it says
+//! so once.
 //!
 //! A copy is a new store: the template has no identity, and a copy takes its own (`store_identity`) at its first open,
 //! as a store created does. So a copy is a clone and nothing more.
@@ -90,8 +92,14 @@ fn make(path: &Path) {
         std::fs::create_dir_all(&staging).expect("the template's staging directory");
         drop(crate::content_store::ContentStore::open(&store).expect("an empty store"));
     }
+    publish(&store, path);
+    let _ = std::fs::remove_dir_all(&staging);
+}
+
+/// Publishes the drained store at `store` as the template at `path`: its file whole, then renamed into place.
+fn publish(store: &Path, path: &Path) {
     let published = path.with_extension(format!("{}.{}.tmp", std::process::id(), nanos()));
-    let db = rusqlite::Connection::open(&store).expect("the template's staging store");
+    let db = rusqlite::Connection::open(store).expect("the template's staging store");
     db.execute("VACUUM INTO ?1", [published.to_string_lossy()]).expect("the template, written whole");
     drop(db);
     // Published as a copy needs it: in WAL mode (a store's first open would switch it), and with no identity (each
@@ -99,8 +107,13 @@ fn make(path: &Path) {
     let db = rusqlite::Connection::open(&published).expect("the published template");
     db.execute_batch("DELETE FROM store_identity; PRAGMA journal_mode=WAL;").expect("the template, made ready to copy");
     drop(db);
+    // The memo's entries are in packs beside the store (decision 0240 §4), which its rows name: published with it,
+    // before the file that names them. Without them a copy's rows named a pack its own writer began again, and read
+    // its new entries' bytes as theirs.
+    let packs = crate::content_store::memo_pack_dir(path);
+    let _ = std::fs::remove_dir_all(&packs);
+    copy_packs(&crate::content_store::memo_pack_dir(store), &packs).expect("the template's packs, published");
     std::fs::rename(&published, path).expect("the template, published");
-    let _ = std::fs::remove_dir_all(&staging);
 }
 
 /// Phase 0 over every library module and the core program, then a run of the core program over an empty corpus:
@@ -203,8 +216,14 @@ pub fn copy() -> Store {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("a test store's directory");
     let path = dir.join("store.sqlite");
-    clone_file(template, &path).expect("a copy of the template");
+    clone_store(template, &path);
     Store { dir, path }
+}
+
+/// The template at `template` cloned to `path`: its file and its packs.
+fn clone_store(template: &Path, path: &Path) {
+    clone_file(template, path).expect("a copy of the template");
+    copy_packs(&crate::content_store::memo_pack_dir(template), &crate::content_store::memo_pack_dir(path)).expect("a copy of the template's packs");
 }
 
 thread_local! {
@@ -300,6 +319,7 @@ fn sweep_templates(dir: &Path, key: &str) {
             for suffix in [".sqlite", ".ready", ".lock"] {
                 let _ = std::fs::remove_file(dir.join(format!("{other}{suffix}")));
             }
+            let _ = std::fs::remove_dir_all(crate::content_store::memo_pack_dir(&entry.path()));
         }
     }
     for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
@@ -330,6 +350,18 @@ fn clone_file(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::copy(from, to).map(|_| ())
 }
 
+/// The packs of the store at `from` (`content_store::memo_pack_dir`) into `to`, each a clone where it can be: none
+/// where `from` has none.
+fn copy_packs(from: &Path, to: &Path) -> std::io::Result<()> {
+    let Ok(packs) = std::fs::read_dir(from) else { return Ok(()) };
+    std::fs::create_dir_all(to)?;
+    for pack in packs {
+        let pack = pack?;
+        clone_file(&pack.path(), &to.join(pack.file_name()))?;
+    }
+    Ok(())
+}
+
 fn nanos() -> u128 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos())
 }
@@ -348,8 +380,8 @@ impl Lock {
 
 #[cfg(test)]
 mod tests {
-    /// Another build's template unused for an hour goes, by its mark's time or, without one, its own; a fresh one and
-    /// this build's stay.
+    /// Another build's template unused for an hour goes, by its mark's time or, without one, its own, and its packs
+    /// with it; a fresh one and this build's stay.
     #[test]
     fn another_builds_template_unused_for_an_hour_is_swept() {
         let dir = tempfile::tempdir().unwrap();
@@ -359,12 +391,41 @@ mod tests {
         };
         at("old.sqlite", 7200);
         at("old.lock", 7200);
+        std::fs::create_dir_all(dir.path().join("old.sqlite.memo")).unwrap();
+        at("old.sqlite.memo/1.pack", 7200);
         at("unmarked.sqlite", 7200);
         at("fresh.sqlite", 7200);
         at("fresh.ready", 60);
+        std::fs::create_dir_all(dir.path().join("fresh.sqlite.memo")).unwrap();
         at("mine.sqlite", 7200);
         super::sweep_templates(dir.path(), "mine");
         let left: std::collections::BTreeSet<String> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
-        assert_eq!(left, ["fresh.ready", "fresh.sqlite", "mine.sqlite"].map(String::from).into_iter().collect());
+        assert_eq!(left, ["fresh.ready", "fresh.sqlite", "fresh.sqlite.memo", "mine.sqlite"].map(String::from).into_iter().collect());
+    }
+
+    /// A template is published, and copied, with its memo packs: the copy's rows find the template's bytes (decision
+    /// 0240 §4), and its own writes go after them. Its file alone was published and copied before, so its rows named a
+    /// pack the copy's writer began again, and read the copy's entries as theirs
+    /// (`a_store_copied_without_its_packs_reads_no_other_entrys_bytes`).
+    #[test]
+    fn a_template_is_published_and_copied_with_its_memo_packs() {
+        use crate::content_store::{ContentStore, MemoPut};
+        let dir = tempfile::tempdir().unwrap();
+        let space = crate::content_store::local_space(&[7u8; 32]);
+        let put = |part: i64, byte: u8| MemoPut { part, path: format!("{part}.py"), digest: [part as u8; 32], key: 1, bytes: vec![byte; 100], raw: 100, over: false };
+        let staging = dir.path().join("staging.sqlite");
+        ContentStore::open(&staging).unwrap().put_memo_entries(&space, (0..4).map(|p| put(p, 1)).collect(), 4).unwrap();
+        let template = dir.path().join("template.sqlite");
+        super::publish(&staging, &template);
+        let copy = dir.path().join("copy/store.sqlite");
+        std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+        super::clone_store(&template, &copy);
+        let store = ContentStore::open(&copy).unwrap();
+        store.put_memo_entries(&space, (4..8).map(|p| put(p, 2)).collect(), 4).unwrap();
+        let read = store.memo_entries(&space, &(0..8).collect::<Vec<_>>(), true).unwrap();
+        assert_eq!(read.len(), 8, "the template's entries and the copy's each find their bytes");
+        for (part, blob) in read {
+            assert!(blob.bytes.iter().all(|&b| b == if part < 4 { 1 } else { 2 }), "part {part} reads the bytes it was put with");
+        }
     }
 }

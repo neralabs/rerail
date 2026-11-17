@@ -8,9 +8,11 @@
 //!
 //! The pack is appended inside the store's write transaction, so writers of other processes take turns at it as they
 //! do at the store. A batch whose transaction fails leaves bytes no row names; a row whose bytes did not reach the
-//! disk (a crash before the file was flushed) names bytes that do not decode, and is a miss. Collection forgets rows
-//! (`collect_unreachable_frames`, a dead plan's space); compaction (`compact_memo_pack`) copies the rows' bytes to a
-//! new pack and removes the old, once the bytes no row names are most of it.
+//! disk (a crash before the file was flushed) names bytes that do not decode, and is a miss. A pack whose file is gone
+//! (the store's file copied without its packs) is not begun again: the writer begins the next (`current_pack`), and
+//! the rows that name it miss. Collection forgets rows (`collect_unreachable_frames`, a dead plan's space); compaction
+//! (`compact_memo_pack`) copies the rows' bytes to a new pack and removes the old, once the bytes no row names are most
+//! of it.
 //!
 //! An entry a later run found as it was, under more identities (decision 0225 §2), keeps its bytes: only those
 //! identities are appended, as a small image its row names beside the entry's (`over_*`, decision 0280). A reader
@@ -58,8 +60,9 @@ struct At {
     len: usize,
 }
 
-/// The directory of the store's packs: beside its file.
-fn pack_dir(database: &std::path::Path) -> std::path::PathBuf {
+/// The directory of the store's packs: beside its file (`<store>.memo`). A copy of a store is its file and this
+/// directory (a test's store, copied from its template).
+pub fn pack_dir(database: &std::path::Path) -> std::path::PathBuf {
     let mut name = database.as_os_str().to_owned();
     name.push(".memo");
     std::path::PathBuf::from(name)
@@ -69,9 +72,20 @@ fn pack_path(database: &std::path::Path, pack: i64) -> std::path::PathBuf {
     pack_dir(database).join(format!("{pack}.pack"))
 }
 
-/// The pack being appended: the newest.
-fn current_pack(t: &rusqlite::Connection) -> rusqlite::Result<i64> {
-    t.query_row_cached("SELECT coalesce(max(pack), 1) FROM memo_packs", [], |r| r.get(0))
+/// The newest pack the store records, if any.
+fn newest_pack(t: &rusqlite::Connection) -> rusqlite::Result<Option<i64>> {
+    t.query_row_cached("SELECT max(pack) FROM memo_packs", [], |r| r.get(0))
+}
+
+/// The pack being appended: the newest, while its file is there. A recorded pack whose file is gone (a store's file
+/// copied without its packs) is never begun again: appended from its start, the rows that name it would name the new
+/// bytes, and read another entry's. The next pack is begun, and those rows miss, as after compaction.
+fn current_pack(t: &rusqlite::Connection, database: &std::path::Path) -> rusqlite::Result<i64> {
+    Ok(match newest_pack(t)? {
+        None => 1,
+        Some(pack) if pack_path(database, pack).exists() => pack,
+        Some(pack) => pack + 1,
+    })
 }
 
 /// The bytes at each of `wanted` (in order), read from the packs: a pack or range that is not there is `None`.
@@ -213,7 +227,7 @@ impl ContentStore {
         }
         let database = self.database_path.clone();
         let gone = self.immediate_transaction_once(|t| {
-            let pack = current_pack(t)?;
+            let pack = current_pack(t, &database)?;
             t.execute_cached("INSERT OR IGNORE INTO memo_packs(pack) VALUES (?1)", [pack])?;
             std::fs::create_dir_all(pack_dir(&database))?;
             let mut file = std::fs::OpenOptions::new().create(true).append(true).open(pack_path(&database, pack))?;
@@ -304,7 +318,7 @@ impl ContentStore {
         let database = self.database_path.clone();
         let old = self.immediate_transaction_once(|t| {
             let packs: Vec<i64> = t.prepare_cached("SELECT pack FROM memo_packs")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
-            let pack = current_pack(t)? + 1;
+            let pack = newest_pack(t)?.unwrap_or(1) + 1;
             // Each entry's bytes and what is kept over it (`over_len` 0: nothing).
             let rows: Vec<(Vec<u8>, i64, At, At)> = t
                 .prepare_cached("SELECT space, part, pack, at, len, over_pack, over_at, over_len FROM memo_entries ORDER BY pack, at")?

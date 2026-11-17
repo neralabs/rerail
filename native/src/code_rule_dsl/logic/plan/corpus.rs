@@ -5117,6 +5117,9 @@ fn run_observed(
         /// A chunk or the memo's hits have been handed on: a corpus with no document hands on one empty chunk.
         sent: bool,
         read_sources: Vec<crate::content_store::SourceId>,
+        /// The memo hits whose content is known by its digest alone (`memo::Content::Unstored`), named behind the run
+        /// (`memo::named_contents`): a parsed file's source is named as it is stored, a hit's was named by nothing.
+        unstored_hits: Vec<[u8; 32]>,
         parse: (f64, f64),
         batch: (f64, f64),
     }
@@ -5381,6 +5384,9 @@ fn run_observed(
             match made {
                 Ok(Some((source_id, Ok(entry)))) => {
                     c.read_sources.extend(source_id.and_then(memo::Content::stored));
+                    if let Some(memo::Content::Unstored(digest)) = source_id {
+                        c.unstored_hits.push(digest);
+                    }
                     if let Some(content) = source_id {
                         self.run_docs.lock().expect("the run's documents").insert(path.clone(), (content, *d));
                     }
@@ -5472,6 +5478,7 @@ fn run_observed(
             ended: false,
             sent: false,
             read_sources: Vec::new(),
+            unstored_hits: Vec::new(),
             parse: (0.0, 0.0),
             batch: (0.0, 0.0),
         }),
@@ -5766,7 +5773,7 @@ fn run_observed(
     let worker_conns: parking_lot::Mutex<Vec<(Connection, Modules)>> = parking_lot::Mutex::new(Vec::new());
     // What the run wrote before its waves is a wave: the combined program, the prepared sources, the plan holds.
     crate::content_store::write_back::end_wave(crate::content_store::write_back::Boundary::Before);
-    let worker_cpu = crate::threads::scope(|jobs| -> Result<((f64, f64), (f64, f64), Vec<crate::content_store::SourceId>, Vec<(String, crate::content_store::FileStat, memo::Content)>)> {
+    let worker_cpu = crate::threads::scope(|jobs| -> Result<((f64, f64), (f64, f64), Vec<crate::content_store::SourceId>, Vec<(String, crate::content_store::FileStat, memo::Content)>, Vec<[u8; 32]>)> {
     // The main thread's error or end stops the builder: no job it starts after is left running.
     let _stop = Stopper(&builder.stopped);
     // A chunk's file-local part: its memo hits replayed, its documents evaluated, its exports written to `x`.
@@ -6267,6 +6274,11 @@ fn run_observed(
             let mut string_files: HashMap<i64, BTreeSet<i64>> = HashMap::new();
             if !wanted.is_empty() {
                 for (rel, source) in &text_sources {
+                    // A string's own rows (`value_type`, `memo::Owner::Text`) are no file's text: their first column
+                    // is the string, not a document, so it names no owner.
+                    if matches!(memo::owner(rel), memo::Owner::Text(_)) {
+                        continue;
+                    }
                     let (Some(columns), Some((_, texts))) = (super::super::sql::select::input_columns(rel), crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(r, _)| r == rel)) else { continue };
                     let have = source.columns();
                     let at = |name: &str| have.iter().position(|h| h == name);
@@ -7134,7 +7146,7 @@ fn run_observed(
         "root":root,"buildJobs":builder.build_jobs.load(std::sync::atomic::Ordering::Relaxed),
         "cachedDocuments":builder.ready_hits.load(std::sync::atomic::Ordering::Relaxed)
     }).to_string());
-    Ok(((c.parse.0 + jobs_cpu.0, c.parse.1 + jobs_cpu.1), c.batch, std::mem::take(&mut c.read_sources), std::mem::take(&mut *stats_read.lock())))
+    Ok(((c.parse.0 + jobs_cpu.0, c.parse.1 + jobs_cpu.1), c.batch, std::mem::take(&mut c.read_sources), std::mem::take(&mut *stats_read.lock()), std::mem::take(&mut c.unstored_hits)))
     })?;
     (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
     // The reference graph over every chunk's files, bound for the cross-file part with its statistics.
@@ -7155,6 +7167,12 @@ fn run_observed(
     // The run's manifest, then collection in the background while the cross-file part runs (decision 0053).
     let mut run_sources = worker_cpu.2.clone();
     run_sources.extend(program_sources.iter().copied());
+    // A memo hit known by its digest alone (a file inside the stat index's racy window, read in the waves where the
+    // store is not) names its source behind the run, as a parsed file's does: unnamed, the run's manifest left the
+    // file out, and the run after it recorded another.
+    if recording {
+        memo::named_contents(store, worker_cpu.4, &late_sources);
+    }
     // A run that read no file anew (every one known by its stat) has no stat to record.
     if recording && !worker_cpu.3.is_empty() {
         let _stats = crate::code_rule_dsl::logic::profile::span(|| "record stats".into());

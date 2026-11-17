@@ -68,7 +68,9 @@ Now:
   image's length. A batch is one `write`, inside the store's write transaction, so writers in other processes take
   turns at the pack as they do at the store.
 - **Failures.** A failed transaction leaves bytes that no row names. A row whose bytes did not reach the disk does
-  not decode, and is a miss.
+  not decode, and is a miss. A pack the rows name whose file is gone (a store's file copied without its packs) is not
+  begun again, or those rows would name the new entries' bytes: the writer begins the next pack, and they miss
+  (`a_store_copied_without_its_packs_reads_no_other_entrys_bytes`).
 - **One copy.** The outputs' second copy is gone: a file read for its outputs alone reads its entry, and the
   entry's other relations are not decoded (`Found::projected`).
 - **Keeping and collection.** A path keeps its newest four contents, ordered by where they were appended.

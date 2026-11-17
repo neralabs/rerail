@@ -213,6 +213,9 @@ bootstrap_invariants_stmtk("class_definition"). bootstrap_invariants_stmtk("func
 .decl primitive_install_valid(d: number, p: symbol)
 .decl rr_agg5(c: node, dn: node, rr_any1: number, rr_any2: number, rr_any3: number, rr_any4: number)
 .decl rr_demand_agg_rr_agg5(dn: node)
+.decl rr_node_text_req_by_bootstrap_invariants_zero_0(n: node)
+.decl rr_value_req_by_bootstrap_invariants_str_0(n: node)
+.decl rr_value_req_by_bootstrap_invariants_zero_0(n: node)
 .decl src_line_lf(d: number, l: number, sp: node)
 .decl strprefix(n: node, p: symbol)
 .decl syntax_error(d: number)
@@ -1021,4 +1024,12 @@ bootstrap_source_syntax_scope(d) :- bootstrap_source_syntax_doc(d, p), match("(.
 bootstrap_source_syntax_scope(d) :- bootstrap_source_syntax_doc(d, _), bootstrap_invariants_base_bootstrap(d).
 bootstrap_source_syntax_scope(d) :- bootstrap_source_syntax_doc(d, _), node(d, m, "module", _, _), node_text(m, s), (contains("Bootstrap", s) ; contains("bootstrap", s) ; contains("schema_transaction", s) ; contains("materialized_pipeline", s) ; contains("physical_table", s) ; contains("reconciliation", s)).
 violation("data-layer-bootstrap-engine-invariants", "bootstrap-source-syntax", "NATIVE-SYNTAX", p, l) :- bootstrap_source_syntax_scope(d), bootstrap_source_syntax_doc(d, p), node(d, m, "module", _, _), line(m, l).
+rr_node_text_req_by_bootstrap_invariants_zero_0(rr_dn) :- bootstrap_invariants_kw(_, _, _, rr_dn).
+rr_value_req_by_bootstrap_invariants_str_0(rr_dn) :- line(rr_dn, _).
+rr_value_req_by_bootstrap_invariants_str_0(rr_dn) :- bootstrap_invariants_arg0(n_rr_d320_3, rr_dn), line(n_rr_d320_3, _).
+rr_value_req_by_bootstrap_invariants_zero_0(rr_dn) :- bootstrap_invariants_kw(_, _, _, rr_dn).
 rr_demand_agg_rr_agg5(dn) :- node(_, dn, "dotted_name", _, _), inside(dn, _, bootstrap_invariants_casek).
+rr_node_text_req_by_bootstrap_invariants_zero_0(rr_dn) :- bootstrap_invariants_kw(_, _, _, rr_dn).
+rr_value_req_by_bootstrap_invariants_str_0(rr_dn) :- line(rr_dn, _).
+rr_value_req_by_bootstrap_invariants_str_0(rr_dn) :- bootstrap_invariants_arg0(n_rr_d334_3, rr_dn), line(n_rr_d334_3, _).
+rr_value_req_by_bootstrap_invariants_zero_0(rr_dn) :- bootstrap_invariants_kw(_, _, _, rr_dn).

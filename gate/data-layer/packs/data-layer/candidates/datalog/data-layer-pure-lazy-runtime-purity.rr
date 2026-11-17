@@ -191,6 +191,8 @@ prs_lambdak("lambda").
 .decl prs_walk(e: node, x: node, tc: number)
 .decl prs_wrapm(s: symbol)
 .decl prs_wrapper(v: node)
+.decl rr_node_text_req_by_prs_typesub_0(n: node)
+.decl rr_value_req_by_prs_sval_0(n: node)
 .decl strprefix(n: node, p: symbol)
 .decl syntax_error(d: number)
 .decl tape_syntax_error(d: number)
@@ -603,3 +605,9 @@ prs_exp(m, nm) :- prs_en(d, m, nm), prs_doc(d, p, _), glob("data_layer/*.py", p)
 prs_exp(m, nm) :- prs_en(d, m, nm), prs_doc(d, p, _), glob("data_layer/*.py", p), !prefix("_", nm), prs_allname(d, nm).
 prs_exp(tm, tn) :- prs_exp(m, nm), prs_ent(m, nm, tm, tn).
 violation("data-layer-pure-lazy-runtime-purity", "pure-runtime-state", "PLP-007", p, l) :- !prs_scansource(0), prs_exp(m, nm), prs_doc(d, p, m), prs_pathok(d), prs_flag(d, f), !prs_lp(f, _), prs_decl(d, f, _, nm, _, _), suffix("_lazy", nm), !prefix("_", nm), !prs_explicit(f), line(f, l).
+rr_node_text_req_by_prs_typesub_0(rr_dn) :- prs_kid(rr_dn, _, _).
+rr_value_req_by_prs_sval_0(rr_dn) :- prs_n(_, rr_dn, "string", _, _), strprefix(rr_dn, p_rr_d13_4), match("[ru]*", p_rr_d13_4).
+rr_value_req_by_prs_sval_0(rr_dn) :- prs_n(_, rr_dn, "concatenated_string", _, _), prs_first(rr_dn, c_rr_d14_5), strprefix(c_rr_d14_5, p_rr_d14_5), match("[ru]*", p_rr_d14_5).
+rr_node_text_req_by_prs_typesub_0(rr_dn) :- prs_kid(rr_dn, _, _).
+rr_value_req_by_prs_sval_0(rr_dn) :- prs_n(_, rr_dn, "string", _, _), strprefix(rr_dn, p_rr_d29_4), match("[ru]*", p_rr_d29_4).
+rr_value_req_by_prs_sval_0(rr_dn) :- prs_n(_, rr_dn, "concatenated_string", _, _), prs_first(rr_dn, c_rr_d30_5), strprefix(c_rr_d30_5, p_rr_d30_5), match("[ru]*", p_rr_d30_5).

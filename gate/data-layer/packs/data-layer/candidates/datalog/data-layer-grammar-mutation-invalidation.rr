@@ -24,6 +24,7 @@ mutation_fdef("function_definition").
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
 .decl out_scope(d: number)
+.decl rr_node_text_req_by_mutation_memo_decorator_0(n: node)
 .decl syntax_error(d: number)
 .decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
@@ -94,3 +95,5 @@ mutation_runtime(c, x) :- mutation_edge(c, x, _), !prefix("_", x).
 mutation_runtime(c, y) :- mutation_runtime(c, x), mutation_edge(c, x, y).
 mutation_satisfied(c, x) :- mutation_edge(c, _, x), mutation_construction(c, x), !mutation_runtime(c, x).
 violation("data-layer-grammar-mutation-invalidation", "mutation", "MUTATION_WITHOUT_INVALIDATION", p, l) :- mutation_subject(d, c, f, x), !mutation_satisfied(c, x), doc(d, p, _), line(f, l).
+rr_node_text_req_by_mutation_memo_decorator_0(rr_dn) :- node(_, c_rr_d2_10, "class_definition", _, _), field(c_rr_d2_10, "body", b_rr_d2_10), child(b_rr_d2_10, dd_rr_d2_10, _), node(_, dd_rr_d2_10, "decorated_definition", _, _), child(dd_rr_d2_10, f_rr_d2_10, _), node(_, f_rr_d2_10, "function_definition", _, _), field(f_rr_d2_10, "name", i_rr_d2_10), node(_, i_rr_d2_10, "identifier", _, _), text(i_rr_d2_10, "render"), child(dd_rr_d2_10, rr_dn, _).
+rr_node_text_req_by_mutation_memo_decorator_0(rr_dn) :- node(_, c_rr_d14_10, "class_definition", _, _), field(c_rr_d14_10, "body", b_rr_d14_10), child(b_rr_d14_10, dd_rr_d14_10, _), node(_, dd_rr_d14_10, "decorated_definition", _, _), child(dd_rr_d14_10, f_rr_d14_10, _), node(_, f_rr_d14_10, "function_definition", _, _), field(f_rr_d14_10, "name", i_rr_d14_10), node(_, i_rr_d14_10, "identifier", _, _), text(i_rr_d14_10, "render"), child(dd_rr_d14_10, rr_dn, _).

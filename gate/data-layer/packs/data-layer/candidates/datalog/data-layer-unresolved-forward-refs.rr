@@ -46,6 +46,10 @@ inspection_kinds_function("function_definition").
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
 .decl out_scope(d: number)
+.decl rr_node_text_req_by_inspection_dict_0(n: node)
+.decl rr_node_text_req_by_inspection_function_0(n: node)
+.decl rr_node_text_req_by_inspection_object_0(n: node)
+.decl rr_node_text_req_by_inspection_safe_0(n: node)
 .decl syntax_error(d: number)
 .decl tape_syntax_error(d: number)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
@@ -140,3 +144,11 @@ inspection_neq(x, y) :- inspection_pair(x, y), inspection_kids(x), inspection_ki
 inspection_fallback(n) :- inspection_context(n), inside(n, c, inspection_kinds_call), inspection_get_call(c, n).
 inspection_fallback(n) :- inspection_seed(n, m), !inspection_neq(n, m).
 violation("data-layer-unresolved-forward-refs", "inspection", "unresolved_forward_ref", p, l) :- inspection_context(n), !inspection_fallback(n), node(d, n, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(n, l).
+rr_node_text_req_by_inspection_dict_0(rr_dn) :- node(_, c_rr_d30_7, "call", _, _), field(c_rr_d30_7, "function", f_rr_d30_7), node(_, f_rr_d30_7, "attribute", _, _), field(f_rr_d30_7, "attribute", a_rr_d30_7), node(_, a_rr_d30_7, "identifier", _, _), field(f_rr_d30_7, "object", rr_dn), field(c_rr_d30_7, "arguments", al_rr_d30_7), inspection_second(al_rr_d30_7, _).
+rr_node_text_req_by_inspection_function_0(rr_dn) :- child(al_rr_d17_6, _, _), node(_, al_rr_d17_6, "argument_list", _, _), child(c_rr_d17_6, al_rr_d17_6, _), node(_, c_rr_d17_6, "call", _, _), field(c_rr_d17_6, "function", rr_dn).
+rr_node_text_req_by_inspection_object_0(rr_dn) :- node(_, n_rr_d3_5, "attribute", _, _), field(n_rr_d3_5, "attribute", a_rr_d3_5), node(_, a_rr_d3_5, "identifier", _, _), field(n_rr_d3_5, "object", rr_dn).
+rr_node_text_req_by_inspection_safe_0(rr_dn) :- node(_, c_rr_d16_6, "call", _, _), field(c_rr_d16_6, "function", f_rr_d16_6), node(_, f_rr_d16_6, "identifier", _, _), field(c_rr_d16_6, "arguments", al_rr_d16_6), inspection_second(al_rr_d16_6, rr_dn).
+rr_node_text_req_by_inspection_dict_0(rr_dn) :- node(_, c_rr_d40_7, "call", _, _), field(c_rr_d40_7, "function", f_rr_d40_7), node(_, f_rr_d40_7, "attribute", _, _), field(f_rr_d40_7, "attribute", a_rr_d40_7), node(_, a_rr_d40_7, "identifier", _, _), field(f_rr_d40_7, "object", rr_dn), field(c_rr_d40_7, "arguments", al_rr_d40_7), inspection_second(al_rr_d40_7, _).
+rr_node_text_req_by_inspection_function_0(rr_dn) :- child(al_rr_d27_6, _, _), node(_, al_rr_d27_6, "argument_list", _, _), child(c_rr_d27_6, al_rr_d27_6, _), node(_, c_rr_d27_6, "call", _, _), field(c_rr_d27_6, "function", rr_dn).
+rr_node_text_req_by_inspection_object_0(rr_dn) :- node(_, n_rr_d13_5, "attribute", _, _), field(n_rr_d13_5, "attribute", a_rr_d13_5), node(_, a_rr_d13_5, "identifier", _, _), field(n_rr_d13_5, "object", rr_dn).
+rr_node_text_req_by_inspection_safe_0(rr_dn) :- node(_, c_rr_d26_6, "call", _, _), field(c_rr_d26_6, "function", f_rr_d26_6), node(_, f_rr_d26_6, "identifier", _, _), field(c_rr_d26_6, "arguments", al_rr_d26_6), inspection_second(al_rr_d26_6, rr_dn).

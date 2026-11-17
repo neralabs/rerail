@@ -27,7 +27,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 mod memo_pack;
-pub use memo_pack::{MemoBlob, MemoPut};
+pub use memo_pack::{MemoBlob, MemoPut, pack_dir as memo_pack_dir};
 pub(super) use memo_pack::drop_memo_space;
 
 /// The run each space last counted in this process, by its token: a later program of that run puts under the same
@@ -1797,6 +1797,48 @@ mod tests {
         }
         let (frames, _) = store.preload_frames_live(None).unwrap();
         assert_eq!(frames, 0, "no memo entry is a frame");
+    }
+
+    /// A store's file copied without its packs (a test's store, cloned from its template's file alone) has rows naming
+    /// a pack that is not there. Its writer began that pack again from its start, so those rows named the new entries'
+    /// bytes, and a reader of one read another entry's ("a corpus memo entry does not decompress: Unknown frame
+    /// descriptor", seen as the tests' processes shared a box). A writer and a reader at once on the copy: a copied
+    /// row misses, and every entry read is the one put under its part.
+    #[test]
+    fn a_store_copied_without_its_packs_reads_no_other_entrys_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let space = local_space(&[6u8; 32]);
+        let put = |part: i64, byte: u8| MemoPut { part, path: format!("{part}.py"), digest: [part as u8; 32], key: 1, bytes: vec![byte; 100], raw: 100, over: false };
+        let copied = dir.path().join("copy.sqlite");
+        {
+            let original = ContentStore::open(&dir.path().join("original.sqlite")).unwrap();
+            original.put_memo_entries(&space, (0..8).map(|p| put(p, 1)).collect(), 4).unwrap();
+            // As the template is published: its file whole, with no identity of its own.
+            original.connection.lock().unwrap().execute("VACUUM INTO ?1", [copied.to_string_lossy()]).unwrap();
+            rusqlite::Connection::open(&copied).unwrap().execute_batch("DELETE FROM store_identity; PRAGMA journal_mode=WAL;").unwrap();
+        }
+        let store = ContentStore::open(&copied).unwrap();
+        let copied_parts: Vec<i64> = (0..8).collect();
+        let written = |round: i64| (0..8).map(move |p| 100 + round * 8 + p);
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                for round in 0..20 {
+                    store.put_memo_entries(&space, written(round).map(|p| put(p, 2)).collect(), 4).unwrap();
+                }
+            });
+            s.spawn(|| {
+                for _ in 0..200 {
+                    for (part, blob) in store.memo_entries(&space, &copied_parts, true).unwrap() {
+                        assert!(blob.bytes.iter().all(|&b| b == 1), "copied part {part} read bytes another entry was put with");
+                    }
+                }
+            });
+        });
+        assert!(store.memo_entries(&space, &copied_parts, true).unwrap().is_empty(), "a copied row whose pack is not there misses");
+        let all: Vec<i64> = (0..20).flat_map(written).collect();
+        let read = store.memo_entries(&space, &all, true).unwrap();
+        assert_eq!(read.len(), all.len());
+        assert!(read.values().all(|b| b.bytes.iter().all(|&x| x == 2)), "each entry put on the copy reads back as put");
     }
 
     /// Q19: a new process reads before its run's first wave, of its cross part's space, the frames of the identities

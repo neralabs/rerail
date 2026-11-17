@@ -57,6 +57,11 @@ k1("module").
 .decl node_text(n: node, s: symbol)
 .decl option_on(name: symbol)
 .decl out_scope(d: number)
+.decl rr_node_text_req_by_m24_0(n: node)
+.decl rr_node_text_req_by_m35_0(n: node)
+.decl rr_node_text_req_by_m46_0(n: node)
+.decl rr_node_text_req_by_m55_0(n: node)
+.decl rr_node_text_req_by_m77_0(n: node)
 .decl syntax_error(d: number)
 .decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
@@ -143,6 +148,11 @@ blocked73(low, high) :- inside(low, s, k0), u5(s), inside(s, high, k0).
 m77(n) :- node(_, n, "module", _, _), node_text(n, v74), match("(?s:.*)(?:open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan)(?s:.*)", v74).
 m77(n) :- inside(n, v75, k1), node(_, v75, "module", _, _), node_text(v75, v76), match("(?s:.*)(?:open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan)(?s:.*)", v76).
 violation("data-layer-plan-scope-side-effects", "python-side-effect", "PSE-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v56), m71(v56), inside(n, v72, k0), !blocked73(n, v72), u5(v72), m77(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+rr_node_text_req_by_m24_0(rr_dn) :- node(_, rr_dn, "attribute", _, _), field(rr_dn, "attribute", v1_rr_d23_8), node(_, v1_rr_d23_8, "identifier", _, _), text(v1_rr_d23_8, v2_rr_d23_8), inside(rr_dn, v3_rr_d23_8, k0), u5(v3_rr_d23_8), node(d_rr_d23_8, rr_dn, _, _, _), in_scope(d_rr_d23_8), doc(d_rr_d23_8, _, _), line(rr_dn, _), v2_rr_d23_8 = "resolved_value".
+rr_node_text_req_by_m35_0(rr_dn) :- node(_, rr_dn, "call", _, _), field(rr_dn, "function", v25_rr_d29_6), m29(v25_rr_d29_6), inside(rr_dn, v30_rr_d29_6, k0), u5(v30_rr_d29_6), node(d_rr_d29_6, rr_dn, _, _, _), in_scope(d_rr_d29_6), doc(d_rr_d29_6, _, _), line(rr_dn, _).
+rr_node_text_req_by_m46_0(rr_dn) :- node(_, rr_dn, "call", _, _), field(rr_dn, "function", v36_rr_d35_6), m40(v36_rr_d35_6), inside(rr_dn, v41_rr_d35_6, k0), u5(v41_rr_d35_6), node(d_rr_d35_6, rr_dn, _, _, _), in_scope(d_rr_d35_6), doc(d_rr_d35_6, _, _), line(rr_dn, _).
+rr_node_text_req_by_m55_0(rr_dn) :- node(_, rr_dn, "call", _, _), field(rr_dn, "function", v47_rr_d39_10), node(_, v47_rr_d39_10, "attribute", _, _), field(v47_rr_d39_10, "attribute", v48_rr_d39_10), node(_, v48_rr_d39_10, "identifier", _, _), text(v48_rr_d39_10, v49_rr_d39_10), inside(rr_dn, v50_rr_d39_10, k0), u5(v50_rr_d39_10), node(d_rr_d39_10, rr_dn, _, _, _), in_scope(d_rr_d39_10), doc(d_rr_d39_10, _, _), line(rr_dn, _), (v49_rr_d39_10 = "read" ; v49_rr_d39_10 = "read_async" ; v49_rr_d39_10 = "write" ; v49_rr_d39_10 = "write_async").
+rr_node_text_req_by_m77_0(rr_dn) :- node(_, rr_dn, "call", _, _), field(rr_dn, "function", v56_rr_d52_6), m71(v56_rr_d52_6), inside(rr_dn, v72_rr_d52_6, k0), u5(v72_rr_d52_6), node(d_rr_d52_6, rr_dn, _, _, _), in_scope(d_rr_d52_6), doc(d_rr_d52_6, _, _), line(rr_dn, _).
 branch_audit_callee(c, s) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, s).
 branch_audit_callee(c, s) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", x), node(_, x, "identifier", _, _), text(x, s).
 branch_audit_opened(v, s) :- branch_audit_callee(v, s).
@@ -172,3 +182,8 @@ branch_audit_if(i) :- branch_audit_read_test(i).
 branch_audit_gate(d) :- doc(d, _, _), !option_on("sourceGate").
 branch_audit_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), match("(?s:.*)(?:open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan)(?s:.*)", s).
 violation("data-layer-plan-scope-side-effects", "branch-audit", "PSE-AUDIT-010", p, l) :- option_on("oracleAnalyzer"), branch_audit_if(i), node(d, i, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), branch_audit_gate(d), doc(d, p, _), line(i, l).
+rr_node_text_req_by_m24_0(rr_dn) :- node(_, rr_dn, "attribute", _, _), field(rr_dn, "attribute", v1_rr_d23_8), node(_, v1_rr_d23_8, "identifier", _, _), text(v1_rr_d23_8, v2_rr_d23_8), inside(rr_dn, v3_rr_d23_8, k0), u5(v3_rr_d23_8), node(d_rr_d23_8, rr_dn, _, _, _), in_scope(d_rr_d23_8), doc(d_rr_d23_8, _, _), line(rr_dn, _), v2_rr_d23_8 = "resolved_value".
+rr_node_text_req_by_m35_0(rr_dn) :- node(_, rr_dn, "call", _, _), field(rr_dn, "function", v25_rr_d29_6), m29(v25_rr_d29_6), inside(rr_dn, v30_rr_d29_6, k0), u5(v30_rr_d29_6), node(d_rr_d29_6, rr_dn, _, _, _), in_scope(d_rr_d29_6), doc(d_rr_d29_6, _, _), line(rr_dn, _).
+rr_node_text_req_by_m46_0(rr_dn) :- node(_, rr_dn, "call", _, _), field(rr_dn, "function", v36_rr_d35_6), m40(v36_rr_d35_6), inside(rr_dn, v41_rr_d35_6, k0), u5(v41_rr_d35_6), node(d_rr_d35_6, rr_dn, _, _, _), in_scope(d_rr_d35_6), doc(d_rr_d35_6, _, _), line(rr_dn, _).
+rr_node_text_req_by_m55_0(rr_dn) :- node(_, rr_dn, "call", _, _), field(rr_dn, "function", v47_rr_d39_10), node(_, v47_rr_d39_10, "attribute", _, _), field(v47_rr_d39_10, "attribute", v48_rr_d39_10), node(_, v48_rr_d39_10, "identifier", _, _), text(v48_rr_d39_10, v49_rr_d39_10), inside(rr_dn, v50_rr_d39_10, k0), u5(v50_rr_d39_10), node(d_rr_d39_10, rr_dn, _, _, _), in_scope(d_rr_d39_10), doc(d_rr_d39_10, _, _), line(rr_dn, _), (v49_rr_d39_10 = "read" ; v49_rr_d39_10 = "read_async" ; v49_rr_d39_10 = "write" ; v49_rr_d39_10 = "write_async").
+rr_node_text_req_by_m77_0(rr_dn) :- node(_, rr_dn, "call", _, _), field(rr_dn, "function", v56_rr_d52_6), m71(v56_rr_d52_6), inside(rr_dn, v72_rr_d52_6, k0), u5(v72_rr_d52_6), node(d_rr_d52_6, rr_dn, _, _, _), in_scope(d_rr_d52_6), doc(d_rr_d52_6, _, _), line(rr_dn, _).

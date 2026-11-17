@@ -100,6 +100,8 @@ side_effect_block("block").
 .decl rr_agg1(p: node, s: number, t: number)
 .decl rr_ctx2(p: node, s: number)
 .decl rr_demand_agg_rr_agg1(p: node, s: number)
+.decl rr_token_req_by_sc1_comment_at_0(n: node)
+.decl rr_value_req_by_side_effect_value_0(n: node)
 .decl rrs_bindings(b: node, name: symbol, v: node)
 .decl rrs_calls(c: node)
 .decl rrs_calls_callee(c: node, callee: symbol)
@@ -1540,4 +1542,22 @@ sc6_hit(n) :- sc6_postop("post_op_with_refs", n), sc6_call_full(n, t), t != "par
 sc6_hit(n) :- sc6_postop(_, n), !node(_, n, "call", _, _), sc6_user_callable(n).
 sc6_hit(n) :- sc6_callback_fn(f), inside(n, f, sc6_k_fn), sc6_call(n, _), sc6_user_callable(n).
 violation("data-layer-serverplan-steps", "step-contracts-6", "STEP-028", p, l) :- sc6_hit(n), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_legacy_postop_user_callable_escape_hatches").
+rr_token_req_by_sc1_comment_at_0(rr_dn) :- child(r_rr_d376_0, rr_dn, _), node(_, r_rr_d376_0, "return_statement", _, _), inside(r_rr_d376_0, f_rr_d376_0, sc1_k0), sc1_cmt_fn(f_rr_d376_0).
+rr_token_req_by_sc1_comment_at_0(rr_dn) :- child(a_rr_d377_0, rr_dn, _), node(_, a_rr_d377_0, "argument_list", _, _), child(c_rr_d377_0, a_rr_d377_0, _), node(_, c_rr_d377_0, "call", _, _), field(c_rr_d377_0, "function", x_rr_d377_0), sc1_m52(x_rr_d377_0), inside(rr_dn, f_rr_d377_0, sc1_k0), sc1_cmt_fn(f_rr_d377_0).
+rr_token_req_by_sc1_comment_at_0(rr_dn) :- inside(rr_dn, f_rr_d378_0, sc1_k0), sc1_cmt_fn(f_rr_d378_0), field(f_rr_d378_0, "return_type", t_rr_d378_0), node(_, t_rr_d378_0, _, _, _).
+rr_token_req_by_sc1_comment_at_0(rr_dn) :- inside(rr_dn, f_rr_d379_0, sc1_k0), field(f_rr_d379_0, "name", x_rr_d379_0), node(_, x_rr_d379_0, "identifier", _, _), text(x_rr_d379_0, "cte_column_type_hints"), sc1_m68(f_rr_d379_0).
+rr_token_req_by_sc1_comment_at_0(rr_dn) :- inside(rr_dn, i_rr_d380_0, sc1_k1), field(i_rr_d380_0, "condition", c_rr_d380_0), node(_, c_rr_d380_0, _, _, _), sc1_m114(i_rr_d380_0), inside(i_rr_d380_0, f_rr_d380_0, sc1_k0), sc1_compile_fn(f_rr_d380_0).
+rr_token_req_by_sc1_comment_at_0(rr_dn) :- field(w_rr_d381_0, "value", rr_dn), node(_, w_rr_d381_0, "keyword_argument", _, _), child(a_rr_d381_0, w_rr_d381_0, _), node(_, a_rr_d381_0, "argument_list", _, _), child(c_rr_d381_0, a_rr_d381_0, _), node(_, c_rr_d381_0, "call", _, _), field(c_rr_d381_0, "function", x_rr_d381_0), sc1_m153(x_rr_d381_0).
+rr_token_req_by_sc1_comment_at_0(rr_dn) :- inside(rr_dn, c_rr_d382_0, sc1_k2), node(_, c_rr_d382_0, "call", _, _), field(c_rr_d382_0, "function", x_rr_d382_0), sc1_m164(x_rr_d382_0).
+rr_token_req_by_sc1_comment_at_0(rr_dn) :- inside(rr_dn, r_rr_d383_0, sc1_k3), node(_, r_rr_d383_0, "raise_statement", _, _), inside(r_rr_d383_0, f_rr_d383_0, sc1_k0), sc1_compile_fn(f_rr_d383_0).
+rr_value_req_by_side_effect_value_0(rr_dn) :- node(d_rr_d11_7, n_rr_d11_7, "function_definition", _, _), field(n_rr_d11_7, "name", x_rr_d11_7), node(_, x_rr_d11_7, "identifier", _, _), text(x_rr_d11_7, "step_tags"), sps_step_method(n_rr_d11_7), field(n_rr_d11_7, "body", b_rr_d11_7), inside(rr_dn, b_rr_d11_7, side_effect_block), in_scope(d_rr_d11_7), doc(d_rr_d11_7, _, _), line(n_rr_d11_7, _).
 rr_demand_agg_rr_agg1(p, s) :- sc4_sel_child(p, n, _), node(_, n, _, s, _), sc4_sel_before(p, s).
+rr_token_req_by_sc1_comment_at_0(rr_dn) :- child(r_rr_d454_0, rr_dn, _), node(_, r_rr_d454_0, "return_statement", _, _), inside(r_rr_d454_0, f_rr_d454_0, sc1_k0), sc1_cmt_fn(f_rr_d454_0).
+rr_token_req_by_sc1_comment_at_0(rr_dn) :- child(a_rr_d455_0, rr_dn, _), node(_, a_rr_d455_0, "argument_list", _, _), child(c_rr_d455_0, a_rr_d455_0, _), node(_, c_rr_d455_0, "call", _, _), field(c_rr_d455_0, "function", x_rr_d455_0), sc1_m52(x_rr_d455_0), inside(rr_dn, f_rr_d455_0, sc1_k0), sc1_cmt_fn(f_rr_d455_0).
+rr_token_req_by_sc1_comment_at_0(rr_dn) :- inside(rr_dn, f_rr_d456_0, sc1_k0), sc1_cmt_fn(f_rr_d456_0), field(f_rr_d456_0, "return_type", t_rr_d456_0), node(_, t_rr_d456_0, _, _, _).
+rr_token_req_by_sc1_comment_at_0(rr_dn) :- inside(rr_dn, f_rr_d457_0, sc1_k0), field(f_rr_d457_0, "name", x_rr_d457_0), node(_, x_rr_d457_0, "identifier", _, _), text(x_rr_d457_0, "cte_column_type_hints"), sc1_m68(f_rr_d457_0).
+rr_token_req_by_sc1_comment_at_0(rr_dn) :- inside(rr_dn, i_rr_d458_0, sc1_k1), field(i_rr_d458_0, "condition", c_rr_d458_0), node(_, c_rr_d458_0, _, _, _), sc1_m114(i_rr_d458_0), inside(i_rr_d458_0, f_rr_d458_0, sc1_k0), sc1_compile_fn(f_rr_d458_0).
+rr_token_req_by_sc1_comment_at_0(rr_dn) :- field(w_rr_d459_0, "value", rr_dn), node(_, w_rr_d459_0, "keyword_argument", _, _), child(a_rr_d459_0, w_rr_d459_0, _), node(_, a_rr_d459_0, "argument_list", _, _), child(c_rr_d459_0, a_rr_d459_0, _), node(_, c_rr_d459_0, "call", _, _), field(c_rr_d459_0, "function", x_rr_d459_0), sc1_m153(x_rr_d459_0).
+rr_token_req_by_sc1_comment_at_0(rr_dn) :- inside(rr_dn, c_rr_d460_0, sc1_k2), node(_, c_rr_d460_0, "call", _, _), field(c_rr_d460_0, "function", x_rr_d460_0), sc1_m164(x_rr_d460_0).
+rr_token_req_by_sc1_comment_at_0(rr_dn) :- inside(rr_dn, r_rr_d461_0, sc1_k3), node(_, r_rr_d461_0, "raise_statement", _, _), inside(r_rr_d461_0, f_rr_d461_0, sc1_k0), sc1_compile_fn(f_rr_d461_0).
+rr_value_req_by_side_effect_value_0(rr_dn) :- node(d_rr_d89_7, n_rr_d89_7, "function_definition", _, _), field(n_rr_d89_7, "name", x_rr_d89_7), node(_, x_rr_d89_7, "identifier", _, _), text(x_rr_d89_7, "step_tags"), sps_step_method(n_rr_d89_7), field(n_rr_d89_7, "body", b_rr_d89_7), inside(rr_dn, b_rr_d89_7, side_effect_block), in_scope(d_rr_d89_7), doc(d_rr_d89_7, _, _), line(n_rr_d89_7, _).
