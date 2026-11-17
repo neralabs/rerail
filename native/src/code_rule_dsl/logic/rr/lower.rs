@@ -154,7 +154,7 @@ fn ty(t: &str) -> String {
 
 /// A `.violation V(at, …)`: its relation, its columns, its code, and whether its `at` is a node (else a span or a
 /// place); `places`: whether a rule gives it a `@place(path, line)`, kept in its place relation (`place_relation`).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Violation {
     name: String,
     arity: usize,
@@ -167,7 +167,7 @@ struct Violation {
 }
 
 /// A finding's code: the violation's name, a column's value, or a constant.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum FindingCode {
     Name,
     Column(usize),
@@ -966,7 +966,7 @@ pub fn unseed(program: &mut Program, seeds: &Seeds, core: &BTreeSet<String>) {
     program.qualifiers.retain(|r, _| !(seeded.qualifiers.contains(r) && gone(r)));
 }
 
-/// `link_seeded` up to `core_and_projections`, `span_patterns`, `grammar_names`, `builtins_out`, `kind_sets`, `unit`, `whole_back`, `front::finish` and `whole()`'s tail (aggregate demand, `unit`, `sets`,
+/// `link_seeded` up to `findings`, `core_and_projections`, `span_patterns`, `grammar_names`, `builtins_out`, `kind_sets`, `unit`, `whole_back`, `front::finish` and `whole()`'s tail (aggregate demand, `unit`, `sets`,
 /// `widen_cyclic_contexts`): the program `rr::link_seeded_version`
 /// makes a version of, with what the lowerer knows of it; `declared` checked. `builtins_out` takes out declarations
 /// of relations no rule reads (the built-ins are written out), but `within`, which it declares where read. `kind_sets` takes out only sets no rule
@@ -987,7 +987,8 @@ pub fn link_seeded_front(m: Module, seeds: &Seeds) -> Result<Lowered, Error> {
 
 /// The lowering's whole-program half (decision 0246 §1), over the modules appended into `l`.
 fn whole(l: Lowerer) -> Result<Program, Error> {
-    let Lowered { mut program, sets: named, rewritten, docof_of_locs } = whole_front(l)?;
+    let Lowered { mut program, sets: named, rewritten, docof_of_locs, findings: pending } = whole_front(l)?;
+    findings(&mut program, &pending)?;
     core_and_projections(&mut program, docof_of_locs)?;
     span_patterns_into(&mut program)?;
     grammar_names(&program)?;
@@ -1054,17 +1055,17 @@ pub fn sets(program: &mut Program) {
     }
 }
 
-/// `whole` up to the lowerer's analyses before core.rr's declarations, with what the lowerer knows of the program
-/// (`Lowered`): what `core_and_projections`, `span_patterns`, `grammar_names`, `builtins_out`, `kind_sets`,
+/// `whole` up to the lowerer's analyses before its findings, with what the lowerer knows of the program
+/// (`Lowered`): what `findings`, `core_and_projections`, `span_patterns`, `grammar_names`, `builtins_out`, `kind_sets`,
 /// `unit`, `whole_back`, `front::finish` and the tail (aggregate demand, `unit`,
 /// `sets`, `widen_cyclic_contexts`) make of it `rr::link_seeded_version` makes on the version.
 fn whole_front(mut l: Lowerer) -> Result<Lowered, Error> {
     let analyses = crate::code_rule_dsl::logic::profile::span(|| "the program's analyses (findings, spans, kinds)".to_owned());
     l.three_valued();
-    l.findings()?;
     let rewritten: Vec<String> = self::core::REWRITTEN.into_iter().filter(|r| l.rewritten(r)).map(str::to_owned).collect();
     drop(analyses);
-    Ok(Lowered { program: l.prog, sets: l.sets, rewritten, docof_of_locs: l.docof_of_locs })
+    let findings = PendingFindings { violations: std::mem::take(&mut l.violations), next: l.next };
+    Ok(Lowered { program: l.prog, sets: l.sets, rewritten, docof_of_locs: l.docof_of_locs, findings })
 }
 
 /// The program `whole_front` leaves, with what the lowerer knows of it that the passes after read: the sets its
@@ -1075,6 +1076,80 @@ pub struct Lowered {
     pub rewritten: Vec<String>,
     /// Whether the program's `docof` is core.rr's, over spans (`core_and_projections`).
     pub docof_of_locs: bool,
+    /// The `.violation`s the clauses declared, for `findings`.
+    pub findings: PendingFindings,
+}
+
+/// The `.violation`s a program's clauses declared, and the lowerer's count of fresh names, with which `findings` writes
+/// their rules after the lowerer is gone.
+#[derive(Clone, Default)]
+pub struct PendingFindings {
+    violations: Vec<Violation>,
+    next: usize,
+}
+
+impl PendingFindings {
+    /// Its bytes, for a pass's settings.
+    pub fn key(&self) -> Vec<u8> {
+        format!("{} {:?}", self.next, self.violations).into_bytes()
+    }
+}
+
+/// What `findings` reads of a program's rules, which it does not see.
+#[derive(Clone, Copy)]
+pub struct RulesSeen {
+    /// Whether a rule makes a `@place` value: only then can a span or loc `at` hold one.
+    pub place_values: bool,
+    /// Whether a rule reads `guest_policy`.
+    pub reads_guest_policy: bool,
+}
+
+impl RulesSeen {
+    pub fn of(rules: &[Rule]) -> Self {
+        RulesSeen {
+            place_values: rules.iter().any(|r| r.head.args.iter().chain(r.body.iter().flat_map(literal_terms)).any(has_place)),
+            reads_guest_policy: rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == GUEST_POLICY),
+        }
+    }
+}
+
+/// The findings of the `.violation`s (`Lowerer::findings`) on a program: its rules taken out while they are written,
+/// what they show given as `RulesSeen`, so the version (`lowering_tail::Findings`) writes the same.
+pub fn findings(prog: &mut Program, pending: &PendingFindings) -> Result<(), Error> {
+    let seen = RulesSeen::of(&prog.rules);
+    let rules = std::mem::take(&mut prog.rules);
+    let (header, made, wrote) = findings_on_header(std::mem::take(prog), pending, seen)?;
+    *prog = header;
+    prog.rules = rules;
+    if wrote {
+        widen_violation_heads(prog.rules.iter_mut().map(|r| &mut r.head));
+    }
+    prog.rules.extend(made);
+    Ok(())
+}
+
+/// `findings` on a header (a program of no rules): the header it leaves, the rules to append, and whether it wrote the
+/// findings (then the program's own `violation` heads of five columns are widened, `widen_violation_heads`).
+pub fn findings_on_header(header: Program, pending: &PendingFindings, seen: RulesSeen) -> Result<(Program, Vec<Rule>, bool), Error> {
+    debug_assert!(header.rules.is_empty(), "findings sees no rules");
+    let mut l = Lowerer { prog: header, violations: pending.violations.clone(), next: pending.next, ..Lowerer::default() };
+    let wrote = l.findings(seen)?;
+    let made = std::mem::take(&mut l.prog.rules);
+    Ok((l.prog, made, wrote))
+}
+
+/// A program that derives `violation` itself, in the older five columns, is read at column 0.
+pub fn widen_violation_heads<'r>(heads: impl Iterator<Item = &'r mut Atom>) {
+    for h in heads {
+        if h.rel == "violation" && h.args.len() == 5 {
+            h.args.push(Term::Int(0));
+        }
+    }
+}
+
+/// Whether a term makes a `@place` value (`RulesSeen`).
+pub fn is_place_call(name: &str) -> bool {
+    name == PLACE
 }
 
 /// Every constant grammar a rule names, in an `embed` or `embed_value` head or a `parsed` or `sub_tape` atom, is
@@ -1848,7 +1923,7 @@ impl Lowerer {
     /// `node`'s column; a span's is `docof` (`core.rr`), and so is its line. A `@place(path, line)` row is read from
     /// V's place relation; a span or loc `at` that holds a `@place` value made elsewhere (`PLACE`) is found at its
     /// path and line.
-    fn findings(&mut self) -> Result<(), Error> {
+    fn findings(&mut self, seen: RulesSeen) -> Result<bool, Error> {
         // `.on syntax_error report CODE [at line 1]` and `.on input_error report CODE` (`core.rr`).
         let on: Vec<(String, String, bool)> = self
             .prog
@@ -1863,9 +1938,9 @@ impl Lowerer {
                 }
             })
             .collect();
-        let guest_errors = self.guest_policy();
+        let guest_errors = self.guest_policy(seen.reads_guest_policy);
         if self.violations.is_empty() && on.is_empty() && guest_errors.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
         let policy = self
             .prog
@@ -1879,12 +1954,8 @@ impl Lowerer {
         // A finding is its rule, clause, code, path, line and column (the anchor's 0-based byte column): two findings
         // on one line are two rows. A finding with no column (a place, an error of a file or input) has column 0.
         self.prog.decls.insert("violation".to_owned().into(), [("rule", "sym"), ("clause", "sym"), ("code", "sym"), ("path", "sym"), ("line", "int"), ("col", "int")].iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
-        // A program that derives `violation` itself, in the older five columns, is read at column 0.
-        for r in &mut self.prog.rules {
-            if r.head.rel == "violation" && r.head.args.len() == 5 {
-                r.head.args.push(Term::Int(0));
-            }
-        }
+        // A program that derives `violation` itself, in the older five columns, is read at column 0: the caller's
+        // (`widen_violation_heads`), for this sees no rules.
         // Where it is already (a printed program's `.output`), else last.
         if !self.prog.outputs.iter().any(|o| o == "violation") {
             self.prog.outputs.push("violation".to_owned());
@@ -1892,7 +1963,7 @@ impl Lowerer {
         let v = |s: &str| Term::Var(s.to_owned().into());
         let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned().into(), args: args.into(), neg: false, gated: false });
         // Whether a rule makes a `@place` value: only then can a span or loc `at` hold one.
-        let place_values = self.prog.rules.iter().any(|r| r.head.args.iter().chain(r.body.iter().flat_map(literal_terms)).any(has_place));
+        let place_values = seen.place_values;
         for f in std::mem::take(&mut self.violations) {
             self.diagnostics(&policy, &f)?;
             let code_col = match f.code {
@@ -1979,7 +2050,7 @@ impl Lowerer {
             self.error_diagnostic(&policy, "guest_error", &code, body.clone())?;
             self.prog.rules.push(Rule { head, body: body.into() });
         }
-        Ok(())
+        Ok(true)
     }
 
     /// The `.scope` settings as a test of a finding's path `$rr_p` (`core.rr`): a document's path is in scope in one
@@ -2082,7 +2153,7 @@ impl Lowerer {
     ///   CODE` (skip): `guest_policy("errors" | "errors:GRAMMAR", "skip" | "partial")`. A skipped guest is
     ///   withheld; a partial one keeps the tree it has. `warn` and `report` both give a finding, `warn`'s of severity
     ///   warning (`.severity guest_error warning`); the findings are returned, `(grammar, code)`, for `findings`.
-    fn guest_policy(&mut self) -> Vec<(Option<String>, String)> {
+    fn guest_policy(&mut self, reads: bool) -> Vec<(Option<String>, String)> {
         let mut facts = Vec::new();
         let mut findings = Vec::new();
         let mut warn = false;
@@ -2125,7 +2196,6 @@ impl Lowerer {
         // The libraries' `embed`s are made by default: a program that reads the setting and sets none reads
         // `guest_policy("library", "on")`, a stated fact, so `!guest_policy("library", "off")` is decided before the
         // run (`simplify`) instead of reading a relation nothing gives.
-        let reads = self.prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == GUEST_POLICY);
         // A program printed with the fact states it already.
         let stated = self.prog.facts.get(GUEST_POLICY).is_some_and(|rows| rows.iter().any(|r| matches!(r.first(), Some(Value::Str(k)) if k == "library")));
         if reads && !stated && !facts.iter().any(|(k, _)| k == "library") {

@@ -656,7 +656,15 @@ step 3 replaces what is under the writer.
      they go, so the tree (`core_and_projections`) and the version (`lowering_tail::CoreDecls { docof_of_locs }`,
      the lowerer's flag handed on in `Lowered`) share them; `base_relation_derived` is `base_relation` for a header
      (`KindSets` uses it too). Test: `core_declarations_and_projections_are_made_on_the_version` (fails with the
-     pass left out); ep2's 317 policies: 0 rows. Next: findings and three-valued relations.
+     pass left out); ep2's 317 policies: 0 rows. Then the findings: `Lowerer::findings` sees no rules, what it read of
+     them given as `lower::RulesSeen` (a rule makes a `@place`; a rule reads `guest_policy`), and the widening of a
+     program's own five-column `violation` heads is its caller's (`widen_violation_heads`); `findings_on_header` runs
+     it on a header with the lowerer's pending `.violation`s and fresh-name count (`PendingFindings`, handed on in
+     `Lowered`) and returns the rules it appends. The tree (`lower::findings`) and the version
+     (`lowering_tail::Findings { pending }`) both call it. Test: `findings_are_written_on_the_version` (a
+     `.violation` with a message, `.on syntax_error`, an own five-column `violation` rule; fails with the pass left
+     out, and with the version's widening left out); ep2's 317 policies: 0 rows. Next: the three-valued relations,
+     the last of `whole_front` but the clauses.
    - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.

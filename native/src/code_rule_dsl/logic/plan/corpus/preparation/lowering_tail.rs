@@ -1365,6 +1365,70 @@ impl ProgramPass for CoreDecls {
     }
 }
 
+/// The findings of the `.violation`s (`lower::findings`) on the version: `lower::findings_on_header` writes them on
+/// the header, given what it reads of the rules (`RulesSeen`, read off the image); the rules it makes go last, and
+/// the program's own `violation` heads of five columns are widened, as the tree's are. Its settings: the pending
+/// findings, which the lowerer hands on.
+pub struct Findings {
+    pub pending: crate::code_rule_dsl::logic::rr::lower::PendingFindings,
+}
+
+impl ProgramPass for Findings {
+    const NAME: &'static str = "findings";
+    fn settings(&self) -> Vec<u8> {
+        self.pending.key()
+    }
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::logic::rr::lower::{RulesSeen, findings_on_header, is_place_call};
+        let v = cx.v();
+        fn place(v: &Version, t: TermRef<'_>) -> bool {
+            match t {
+                TermRef::Call(f, args) => is_place_call(v.text(f)) || args.into_iter().any(|a| place(v, a)),
+                _ => false,
+            }
+        }
+        let seen = RulesSeen {
+            place_values: v.rules().any(|r| {
+                r.head().args().any(|t| place(v, t))
+                    || r.body().any(|l| match l.view() {
+                        L::Atom(a) | L::Agg { atom: a, .. } => a.args().any(|t| place(v, t)),
+                        L::Cmp { l, r, .. } => place(v, l) || place(v, r),
+                        _ => false,
+                    })
+            }),
+            reads_guest_policy: v.rules().flat_map(|r| r.body()).any(|l| matches!(l.view(), L::Atom(a) | L::Agg { atom: a, .. } if v.rel_name(a.rel()) == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY)),
+        };
+        let was = v.header(&Default::default())?;
+        let (head, made, wrote) = findings_on_header(was.clone(), &self.pending, seen).map_err(|e| e.to_string())?;
+        let five = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>| wrote && v.rel_name(r.head().rel()) == "violation" && r.head().args().count() == 5;
+        if made.is_empty() && !v.rules().any(five) {
+            w.on()?.set_header(&was, &head);
+            return Ok(());
+        }
+        let input = std::sync::Arc::clone(w.input());
+        let b = w.derive()?;
+        b.set_header(&was, &head);
+        use crate::code_rule_dsl::logic::program_image::build::t_of;
+        for r in input.rules() {
+            if !five(r) {
+                b.keep(&input, r);
+                continue;
+            }
+            let mut args: Vec<T<'_>> = r.head().args().map(|t| t_of(&input, r, t)).collect();
+            args.push(T::Int(0));
+            let mut rb = b.rule().source(r.id()).head("violation", &args);
+            for l in r.body() {
+                rb = rb.lit(&input, r, l);
+            }
+            rb.finish()?;
+        }
+        for rule in &made {
+            b.add(rule)?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::code_rule_dsl::logic::program_image::{build::Builder, manager::Pipeline};

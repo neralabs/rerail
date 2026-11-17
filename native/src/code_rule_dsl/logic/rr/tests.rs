@@ -4123,3 +4123,31 @@ fn core_declarations_and_projections_are_made_on_the_version() {
     let head = v.header(&Default::default()).unwrap();
     assert!(!head.inputs.iter().any(|i| i == "kind"), "{:?}", head.inputs);
 }
+
+/// The findings of a modular text's `.violation`s are written on its version (decision 0281's path, step 7b): the
+/// `violation` rule at the anchor's line and column, the diagnostic with the message's placeholders (a fresh name per
+/// value, the lowerer's count handed on), `.on syntax_error`'s rule, and the text's own `violation` rule of five columns
+/// widened, as the tree's `lower::findings` writes them;
+/// a debug build checks the image against the tree's.
+#[test]
+fn findings_are_written_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".on syntax_error report BAD000 at line 1\n",
+        ".violation call_at(at: node) code \"C001\" \"call {at}\"\n",
+        "call_at(n) :- kind(n, \"call\").\n",
+        "violation(\"p\", \"own\", \"X\", p, 1) :- doc(_, p, _).\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
+    assert!(rules.iter().any(|r| r.starts_with("violation(") && r.contains("call_at(") && r.contains("\"C001\"")), "{rules:#?}");
+    assert!(rules.iter().any(|r| r.starts_with("violation(") && r.contains("syntax_error(")), "{rules:#?}");
+    assert!(rules.iter().any(|r| r.contains("$rr_message")), "{rules:#?}");
+    // The text's own `violation` rule, in the older five columns, read at column 0.
+    assert!(rules.iter().any(|r| r.starts_with("violation(\"p\", \"own\", \"X\", $p, 1, 0)")), "{rules:#?}");
+    let head = v.header(&Default::default()).unwrap();
+    assert!(head.outputs.iter().any(|o| o == "violation") && head.decls.get("violation").is_some_and(|c| c.len() == 6), "{:?}", head.outputs);
+}

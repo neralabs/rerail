@@ -948,7 +948,7 @@ pub fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<Stri
 
 /// A lowered program's image (decision 0173): its rules, declarations, facts and `.about` rows.
 /// `program` as a version, opened from the image the store keeps of it (`encode_program`).
-/// `lower::link_seeded` as a version (decision 0281's path, step 7b): the program made a version before core.rr's declarations, its span patterns, grammar names, `builtins_out`, `kind_sets`,
+/// `lower::link_seeded` as a version (decision 0281's path, step 7b): the program made a version before its findings, core.rr's declarations, its span patterns, grammar names, `builtins_out`, `kind_sets`,
 /// `unit`, `whole_back`,
 /// `front::finish` and `whole()`'s tail (`lower::link_seeded_front`), the tail run on it as program passes (`preparation::lowering_tail` and
 /// `DropRepeated`: aggregate demand, `unit`, the sets, then the widened contexts), then the
@@ -956,11 +956,12 @@ pub fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<Stri
 /// checks the two images agree.
 fn link_seeded_version(m: lower::Module, seeds: &lower::Seeds, core: &BTreeSet<String>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     use super::program_image::{Builder, manager::Pipeline};
-    let lower::Lowered { program, sets, rewritten, docof_of_locs } = lower::link_seeded_front(m, seeds)?;
+    let lower::Lowered { program, sets, rewritten, docof_of_locs, findings } = lower::link_seeded_front(m, seeds)?;
     let v = version_of(&program)?;
     let mut p = Pipeline::new("the lowering's tail", v);
     {
         use super::plan::corpus::preparation::{lowering_tail, on_request::SourcesOnRequest};
+        p.program(&mut lowering_tail::Findings { pending: findings.clone() });
         p.program(&mut lowering_tail::CoreDecls { docof_of_locs }).program(&mut lowering_tail::SpanPatterns).program(&mut lowering_tail::GrammarNames).program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
         p.program(&mut lowering_tail::KindSets { sets: sets.clone() }).program(&mut lowering_tail::Unit);
         p.program(&mut lowering_tail::BooleanRelations).program(&mut lowering_tail::ScopeGlobs);
@@ -995,6 +996,7 @@ fn link_seeded_version(m: lower::Module, seeds: &lower::Seeds, core: &BTreeSet<S
     #[cfg(debug_assertions)]
     {
         let mut tree = program;
+        lower::findings(&mut tree, &findings)?;
         lower::core_and_projections(&mut tree, docof_of_locs)?;
         lower::span_patterns_into(&mut tree)?;
         lower::builtins_out(&mut tree, &rewritten);
