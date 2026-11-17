@@ -131,5 +131,8 @@ describe("the daemon lock of a Rerail home", () => {
     const other = await holdInAnotherProcess(home);
     expect(homeDaemonHolder(home)).toBe(other.pid);
     expect(lease!.holdsHome()).toBe(false);
+    // Letting go, as its process exits, leaves the record of the daemon that holds the home at the path now.
+    lease!.release();
+    expect(homeDaemonHolder(home)).toBe(other.pid);
   }, 30_000);
 });

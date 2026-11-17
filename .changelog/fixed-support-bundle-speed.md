@@ -1,0 +1,1 @@
+`rerail support-bundle` takes seconds, not minutes, once Rerail has recorded hundreds of checkouts, gives a busy daemon 10 more seconds to answer, and says Rerail runs from its managed install only when it does.

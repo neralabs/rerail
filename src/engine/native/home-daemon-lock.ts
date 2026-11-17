@@ -85,9 +85,10 @@ export function forgetHomeDaemonHolder(home: string, pid: number): void {
 
 /**
  * Makes this process the daemon of `home` for the rest of its life, or throws {@link HomeDaemonConflictError} when
- * another process still holds the home after {@link ACQUIRE_WAIT_MS}. Undefined where the lock cannot be tried (the
- * native binding does not load, or the lock file does not open): the engine pipe's or socket's own check is then all
- * that keeps a second daemon out, as on a build without the lock.
+ * another process still holds the home after {@link ACQUIRE_WAIT_MS}; when the last try of that wait threw instead of
+ * finding the lock held, its error ({@link waitForLock}). Undefined where the first try cannot be made (the native
+ * binding does not load, or the lock file does not open): the engine pipe's or socket's own check is then all that keeps
+ * a second daemon out, as on a build without the lock.
  */
 export async function holdHomeDaemonLock(home: string): Promise<HomeDaemonLease | undefined> {
   if (held !== undefined) throw new Error("This process already holds a Rerail home's daemon lock");
@@ -102,14 +103,8 @@ export async function holdHomeDaemonLock(home: string): Promise<HomeDaemonLease 
   } catch {
     return undefined;
   }
-  const deadline = Date.now() + ACQUIRE_WAIT_MS;
-  while (lock === null) {
-    if (Date.now() >= deadline) throw new HomeDaemonConflictError(home, homeDaemonHolder(home));
-    await sleep(ACQUIRE_POLL_MS);
-    lock = tryLock();
-  }
+  const taken = lock ?? await waitForLock(home, tryLock);
   recordHolder(home);
-  const taken = lock;
   held = taken;
   // The file this process locked, read by path just after: only a home moved in that instant could give another.
   const locked = fileAt(path);
@@ -123,8 +118,11 @@ export async function holdHomeDaemonLock(home: string): Promise<HomeDaemonLease 
       if (held !== taken) return;
       held = undefined;
       try {
-        // Still the holder here, so no other daemon can have written the record yet.
-        rmSync(join(home, LOCKS_DIR, HOLDER_FILE), { force: true });
+        // Only a record naming this process: once the home was moved and made again at its path, the record there is
+        // another daemon's.
+        forgetHomeDaemonHolder(home, process.pid);
+      } catch {
+        // A record that cannot be removed (Windows: another program has it open) names a pid that soon runs no daemon.
       } finally {
         taken.release();
       }
@@ -133,16 +131,42 @@ export async function holdHomeDaemonLock(home: string): Promise<HomeDaemonLease 
 }
 
 /**
+ * Tries for the lock another process held at the first try until {@link ACQUIRE_WAIT_MS} runs out. A try that throws,
+ * as one can on Windows while another program has the lock file open, does not end the wait; when the last try threw,
+ * its error is what the wait ends with, since nothing then says another daemon holds the home.
+ */
+async function waitForLock(home: string, tryLock: () => NativeExclusiveFileLock | null): Promise<NativeExclusiveFileLock> {
+  const deadline = Date.now() + ACQUIRE_WAIT_MS;
+  let failure: { readonly error: unknown } | undefined;
+  for (;;) {
+    if (Date.now() >= deadline) throw failure === undefined ? new HomeDaemonConflictError(home, homeDaemonHolder(home)) : failure.error;
+    await sleep(ACQUIRE_POLL_MS);
+    try {
+      const lock = tryLock();
+      if (lock !== null) return lock;
+      failure = undefined;
+    } catch (error) {
+      failure = { error };
+    }
+  }
+}
+
+/**
  * Writes this process's pid beside the lock, whole, since a refusal may read the record at any moment: the replace is
  * atomic, so a reader sees the record a holder killed outright left, or this one, never none. Never fails the daemon:
- * a holder that could not record itself holds the home all the same, and the refusal then names no pid.
+ * a holder that could not record itself holds the home all the same, and removes the record an earlier holder left, so
+ * the refusal names no pid rather than one that runs no daemon.
  */
 function recordHolder(home: string): void {
   const record = join(home, LOCKS_DIR, HOLDER_FILE);
   try {
     replaceFileSync(record, `${JSON.stringify({ pid: process.pid })}\n`, { mode: 0o600 });
   } catch {
-    // Unrecorded, the holder holds the home all the same.
+    try {
+      rmSync(record, { force: true });
+    } catch {
+      // Unrecorded, the holder holds the home all the same.
+    }
   }
 }
 

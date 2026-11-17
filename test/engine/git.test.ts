@@ -676,7 +676,7 @@ describe("gitExcludeFiles", () => {
     const { root, home } = await isolatedRepository();
     expect(await gitExcludeFiles(root)).toEqual([join(root, ".git", "info", "exclude"), join(home, ".config", "git", "ignore")]);
     vi.stubEnv("XDG_CONFIG_HOME", join(home, "xdg"));
-    expect((await gitExcludeFiles(root))[1]).toBe(join(home, "xdg", "git", "ignore"));
+    expect((await gitExcludeFiles(root))?.[1]).toBe(join(home, "xdg", "git", "ignore"));
   });
 
   it("follows core.excludesFile, with `~` read as the home, and gives a linked worktree the common info/exclude", async () => {
@@ -686,9 +686,14 @@ describe("gitExcludeFiles", () => {
     expect(await gitExcludeFiles(join(home, "linked"))).toEqual([join(root, ".git", "info", "exclude"), join(home, "ignores")]);
   });
 
-  it("names none outside a Git checkout", async () => {
-    const { home } = await isolatedRepository();
-    expect(await gitExcludeFiles(home)).toEqual([]);
+  it("answers undefined outside a Git checkout, and when Git does not answer: no files is not its answer", async () => {
+    const { root, home } = await isolatedRepository();
+    expect(await gitExcludeFiles(home)).toBeUndefined();
+    expect(await gitConfigFiles(home)).toBeUndefined();
+    const stopped = new AbortController();
+    stopped.abort();
+    expect(await gitExcludeFiles(root, { signal: stopped.signal })).toBeUndefined();
+    expect(await gitConfigFiles(root, { signal: stopped.signal })).toBeUndefined();
   });
 
   it("names the configuration files that can set core.excludesFile: the repository's, the worktree's and the global ones", async () => {
@@ -698,8 +703,7 @@ describe("gitExcludeFiles", () => {
       join(root, ".git", "config"), join(root, ".git", "config.worktree"), join(home, ".gitconfig"), join(home, ".config", "git", "config"),
     ]);
     vi.stubEnv("GIT_CONFIG_GLOBAL", join(home, "global"));
-    expect((await gitConfigFiles(root)).slice(2)).toEqual([join(home, "global")]);
-    expect(await gitConfigFiles(home)).toEqual([]);
+    expect((await gitConfigFiles(root))?.slice(2)).toEqual([join(home, "global")]);
   });
 
   it("finds the global files in Git's own home, which on Windows without HOME is HOMEDRIVE and HOMEPATH", async () => {
@@ -709,11 +713,11 @@ describe("gitExcludeFiles", () => {
     await mkdir(share);
     const globals = [join(share, ".gitconfig"), join(share, ".config", "git", "config")];
     // Git's home, not the account's: HOME here names another folder than the one homedir() answers.
-    expect((await gitConfigFiles(root, { env: { ...process.env, HOME: share } })).slice(2)).toEqual(globals);
+    expect((await gitConfigFiles(root, { env: { ...process.env, HOME: share } }))?.slice(2)).toEqual(globals);
     if (process.platform === "win32") {
       const { HOME: _home, ...withoutHome } = process.env;
       const drive = share.slice(0, 2);
-      expect((await gitConfigFiles(root, { env: { ...withoutHome, HOMEDRIVE: drive, HOMEPATH: share.slice(2) }, platform: "win32" })).slice(2)).toEqual(globals);
+      expect((await gitConfigFiles(root, { env: { ...withoutHome, HOMEDRIVE: drive, HOMEPATH: share.slice(2) }, platform: "win32" }))?.slice(2)).toEqual(globals);
     }
   });
 });

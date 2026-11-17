@@ -287,11 +287,12 @@ export const AUTOSTART_CLAIM_FILE = "autostart.claim";
 
 const START_TIMEOUT_MS = 15_000;
 /**
- * The longest a launcher keeps its autostart claim (`keepAutostartClaim`): its whole life, its wait for the start lock
- * and then for the daemon. A launcher that hangs past it no longer keeps the processes that find the daemon down from
- * launching.
+ * The longest a launcher keeps its autostart claim (`keepAutostartClaim`): its whole life, each of its start's waits of
+ * {@link START_TIMEOUT_MS} in turn: for the start lock, for a daemon that holds the home to record itself
+ * (`lookupHomeDaemon`), and for the daemon it launched. A launcher that hangs past it no longer keeps the processes that
+ * find the daemon down from launching.
  */
-const AUTOSTART_CLAIM_MS = 2 * START_TIMEOUT_MS;
+const AUTOSTART_CLAIM_MS = 3 * START_TIMEOUT_MS;
 /**
  * How long an autostart claim holds once nothing renews it, even while the pid it names is alive: a launcher renews it
  * every {@link AUTOSTART_CLAIM_RENEW_MS} while it runs, so past this its launcher was killed or hung, and the pid can be
