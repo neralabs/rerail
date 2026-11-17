@@ -3744,30 +3744,6 @@ mod transducer {
             #[allow(unused_imports)]
             use std::collections::HashMap as Map;
         }
-        pub mod metal_grid {
-            #[cfg(any(test, feature = "test-hooks"))]
-            #[allow(unused_imports)]
-            pub use rerail_transducer::code_rule_dsl::transducer::packed::metal_grid::*;
-            #[cfg(test)]
-            #[path = "tests.rs"]
-            pub mod tests;
-            #[allow(unused_imports)]
-            use super::execution_shape::{compile_entry_shapes, execution_class};
-            #[allow(unused_imports)]
-            use super::packed_batch::PackedBatch;
-            #[allow(unused_imports)]
-            use super::{Error, Program};
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::tape::TapeDoc;
-            #[allow(unused_imports)]
-            use std::cmp::Reverse;
-            #[allow(unused_imports)]
-            use std::collections::{BTreeMap, BinaryHeap, HashMap};
-            #[allow(unused_imports)]
-            use std::hash::{DefaultHasher, Hash, Hasher};
-            #[allow(unused_imports)]
-            use std::sync::Arc;
-        }
         // `.`: no directory `compilation/` exists to resolve `..` through.
         #[cfg_attr(test, path = ".")]
         pub mod compilation {
@@ -3870,9 +3846,6 @@ mod transducer {
         }
         #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
         #[allow(unused_imports)]
-        pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_grid_backend;
-        #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
-        #[allow(unused_imports)]
         pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_join;
         #[cfg(target_os="macos")]
         #[cfg_attr(test, path = ".")]
@@ -3883,6 +3856,9 @@ mod transducer {
             #[path = "metal_tape_tests.rs"]
             pub mod tape_tests;
         }
+        // Metal's semantic fixtures parse documents: they run where the languages are registered.
+        #[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
+        pub mod metal_semantic_conformance;
         #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
         #[allow(unused_imports)]
         pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_rows;

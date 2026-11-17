@@ -2,7 +2,7 @@ use super::{
     metal_batch_abi::{
         ARENA_KIND_COUNT, FORMAT_VERSION, FinalCaptureRecord, GreedyEntryRecord, LinkRecord, LuaInstructionRecord,
         LuaSetMemberRecord, MetalBatchHeader, MetalEvaluation, MetalFile as BatchFile,
-        MetalGlobalArenas, MetalNode as BatchNode, MetalProgram as BatchProgram,
+        MetalGlobalArenas, MetalProgram as BatchProgram,
         MetalString as BatchString, MetalSupertype as BatchSupertype, MetalTask as BatchTask, NONE,
         NfaRangeRecord, NfaStateRecord, PendingRecord, PropertyRecord, QueryBucketRecord,
         QueryMemberRecord, QueuedStateRecord, RepeatRecord, ResultRecord, TaskStatus, ValueRecord,
@@ -65,12 +65,11 @@ struct OutputInstructionRecord {
     fifth: u32,
 }
 
-/// What a batch packs of its documents' trees.
+/// What a batch packs of its documents: never their trees, which every executor reads on the tape (decisions 0310,
+/// 0324).
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum Layout {
-    /// Node records, children and class pairs, with the source and line starts (`new`).
-    Packed,
-    /// The source and line starts alone: the executor reads each document's tape in place (`new_in_place`).
+    /// The source and line starts: the executor reads each document's tape in place (`new_in_place`).
     InPlace,
     /// Nothing: the device reads the documents resident in the slabs (`new_resident`).
     Resident,
@@ -79,11 +78,8 @@ enum Layout {
 #[derive(Clone, Default)]
 pub struct PackedBatch {
     pub header: MetalBatchHeader,
-    pub nodes: Vec<BatchNode>,
-    pub children: Vec<u32>,
     pub source: Vec<u8>,
     pub line_starts: Vec<u32>,
-    pub supertypes: Vec<BatchSupertype>,
     /// The files' derived classes (`TapeDoc::with_labels`) over the batch's nodes: per class from
     /// `DERIVED_CLASS_BASE`, `derived_words` words of bits, class after class.
     pub(super) derived: Vec<u32>,
@@ -136,15 +132,14 @@ const DURABLE_PROPERTY_PAGE_CAPACITY: u32 = 2_097_152;
 const DURABLE_OUTPUT_BYTE_PAGE_CAPACITY: u32 = 64 * 1024 * 1024;
 
 impl PackedBatch {
-    /// Metal's supertypes buffer and files: with derived classes, the buffer starts with them as
-    /// the interpreter's `has_supertype` reads them (one record of the class and word counts, then
-    /// the bits), and each file's supertypes start past them.
-    pub fn metal_supertypes(&self) -> (std::borrow::Cow<'_, [BatchSupertype]>, std::borrow::Cow<'_, [BatchFile]>) {
+    /// Metal's supertypes buffer: the derived classes as the interpreter's `has_supertype` reads them (one record
+    /// of the class and word counts, then the bits), or nothing without them. A node's other classes are its
+    /// code's, read on the tape.
+    pub fn metal_supertypes(&self) -> Vec<BatchSupertype> {
         if self.derived_classes == 0 {
-            return (std::borrow::Cow::Borrowed(&self.supertypes), std::borrow::Cow::Borrowed(&self.files));
+            return Vec::new();
         }
-        let prefix = 1 + self.derived.len().div_ceil(2);
-        let mut supertypes = Vec::with_capacity(prefix + self.supertypes.len());
+        let mut supertypes = Vec::with_capacity(1 + self.derived.len().div_ceil(2));
         supertypes.push(BatchSupertype {
             node: self.derived_classes,
             kind: self.derived_words,
@@ -153,12 +148,7 @@ impl PackedBatch {
             node: pair[0],
             kind: pair.get(1).copied().unwrap_or(0),
         }));
-        supertypes.extend_from_slice(&self.supertypes);
-        let mut files = self.files.clone();
-        for file in &mut files {
-            file.supertype_start += prefix as u32;
-        }
-        (std::borrow::Cow::Owned(supertypes), std::borrow::Cow::Owned(files))
+        supertypes
     }
 
     pub(super) fn arena_start(&self, kind: ArenaKind) -> u32 {
@@ -193,22 +183,24 @@ impl PackedBatch {
         Ok(index)
     }
 
-    pub fn new(
+    /// The batch a host executor's results are published over (`PackedExecution::interpret`): the files' source
+    /// and line starts and the programs, with no tasks.
+    pub(super) fn new_published(
         programs: &[Program],
         files: &[TapeDoc],
         anchors: &[Vec<Vec<u32>>],
     ) -> Result<Self, Error> {
-        Self::build(programs, files, anchors, true)
+        Self::build_tapes(programs, files, anchors, false, Layout::InPlace)
     }
 
     /// The tasks of `programs` over `files` for an executor that reads each document's tape in place (the CPU
-    /// JIT, decision 0310): `new`'s batch without its node records, children or class pairs.
+    /// JIT, decision 0310).
     pub fn new_in_place(
         programs: &[Program],
         files: &[TapeDoc],
         anchors: &[Vec<Vec<u32>>],
     ) -> Result<Self, Error> {
-        Self::build_tapes(programs, files.len(), anchors, true, Layout::InPlace, |file| Ok(std::borrow::Cow::Borrowed(&files[file])), |_| Ok(()))
+        Self::build_tapes(programs, files, anchors, true, Layout::InPlace)
     }
 
     /// The tasks of `programs` over `files` resident in the slabs (decision 0032): each file's
@@ -219,91 +211,17 @@ impl PackedBatch {
         files: &[TapeDoc],
         anchors: &[Vec<Vec<u32>>],
     ) -> Result<Self, Error> {
-        Self::build_tapes(programs, files.len(), anchors, true, Layout::Resident, |file| Ok(std::borrow::Cow::Borrowed(&files[file])), |_| Ok(()))
+        Self::build_tapes(programs, files, anchors, true, Layout::Resident)
     }
 
-    pub fn new_grid_inputs(
+    fn build_tapes(
         programs: &[Program],
         files: &[TapeDoc],
         anchors: &[Vec<Vec<u32>>],
-    ) -> Result<Self, Error> {
-        Self::build(programs, files, anchors, false)
-    }
-
-    pub(super) fn new_shared_grid_inputs(
-        programs: &[Program],
-        files: &[TapeDoc],
-        anchors: &[Vec<Arc<[u32]>>],
-    ) -> Result<Self, Error> {
-        Self::build(programs, files, anchors, false)
-    }
-
-    fn build<R: AsRef<[u32]>>(
-        programs: &[Program],
-        files: &[TapeDoc],
-        anchors: &[Vec<R>],
-        materialize_tasks: bool,
-    ) -> Result<Self, Error> {
-        Self::build_from_tapes(
-            programs,
-            files.len(),
-            anchors,
-            materialize_tasks,
-            |file| Ok(std::borrow::Cow::Borrowed(&files[file])),
-            |_| Ok(()),
-        )
-    }
-
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub(super) fn new_streamed_grid_inputs(
-        programs: &[Program],
-        files: &[crate::code_rule_dsl::tape::TapeSource],
-        anchors: &[Vec<Arc<[u32]>>],
-    ) -> Result<Self, Error> {
-        Self::new_streamed_grid_inputs_with_upload(programs, files, anchors, |_| Ok(()))
-    }
-
-    pub(super) fn new_streamed_grid_inputs_with_upload(
-        programs: &[Program],
-        files: &[crate::code_rule_dsl::tape::TapeSource],
-        anchors: &[Vec<Arc<[u32]>>],
-        after_file: impl FnMut(&mut Self) -> Result<(), Error>,
-    ) -> Result<Self, Error> {
-        Self::build_from_tapes(
-            programs,
-            files.len(),
-            anchors,
-            false,
-            |file| {
-                files[file]
-                    .restore(&|| false)
-                    .map(std::borrow::Cow::Owned)
-                    .map_err(|_| Error::BackendFailure)
-            },
-            after_file,
-        )
-    }
-
-    fn build_from_tapes<'a, R: AsRef<[u32]>>(
-        programs: &[Program],
-        file_count: usize,
-        anchors: &[Vec<R>],
-        materialize_tasks: bool,
-        load: impl FnMut(usize) -> Result<std::borrow::Cow<'a, TapeDoc>, Error>,
-        after_file: impl FnMut(&mut Self) -> Result<(), Error>,
-    ) -> Result<Self, Error> {
-        Self::build_tapes(programs, file_count, anchors, materialize_tasks, Layout::Packed, load, after_file)
-    }
-
-    fn build_tapes<'a, R: AsRef<[u32]>>(
-        programs: &[Program],
-        file_count: usize,
-        anchors: &[Vec<R>],
         materialize_tasks: bool,
         layout: Layout,
-        mut load: impl FnMut(usize) -> Result<std::borrow::Cow<'a, TapeDoc>, Error>,
-        mut after_file: impl FnMut(&mut Self) -> Result<(), Error>,
     ) -> Result<Self, Error> {
+        let file_count = files.len();
         if anchors.len() != file_count || anchors.iter().any(|file| file.len() != programs.len()) {
             return Err(Error::InvalidAnchor);
         }
@@ -321,7 +239,7 @@ impl PackedBatch {
         let mut documents = Vec::new();
         let (mut source_length, mut line_length) = (0usize, 0usize);
         for file in 0..file_count {
-            let tape = load(file)?;
+            let tape = &files[file];
             if layout == Layout::Resident {
                 let source = tape.transducer_source();
                 let lines = 1 + source.iter().filter(|&&byte| byte == b'\n').count();
@@ -361,93 +279,22 @@ impl PackedBatch {
             if !tape.transducer_labels().is_empty() {
                 derived.push((node_start, tape.transducer_labels_shared()));
             }
-            if layout == Layout::InPlace {
-                // The source and line starts are the batch's; the nodes are read on the tape.
-                let nodes = tape.transducer_len();
-                navigation[0] += nodes;
-                navigation[1] += nodes.saturating_sub(1);
-                navigation[3] += batch.line_starts.len() - first_line;
-                batch.files.push(BatchFile {
-                    node_start,
-                    node_count: checked_u32(nodes)?,
-                    source_start,
-                    source_length: checked_u32(source.len())?,
-                    line_start,
-                    line_count: checked_u32(batch.line_starts.len() - first_line)?,
-                    supertype_start: 0,
-                    supertype_count: 0,
-                });
-                documents.push(tape);
-                after_file(&mut batch)?;
-                continue;
-            }
-            let supertype_start = checked_u32(navigation[2])?;
-            let first_supertype = batch.supertypes.len();
-            batch
-                .supertypes
-                .extend(
-                    tape.transducer_supertypes()
-                        .map(|(node, kind)| BatchSupertype {
-                            node: node_start + node,
-                            kind: u32::from(kind),
-                        }),
-                );
-            // One pass over the tape in preorder (decision 0293): a node's children, read off its subtree, set
-            // their parent and next siblings, so no parent or sibling is searched for.
-            let mut local_children = Vec::new();
-            let base = batch.nodes.len();
-            let count = tape.transducer_len();
-            batch.nodes.resize(base + count, BatchNode { parent: NONE, next_any: NONE, next_named: NONE, ..BatchNode::default() });
-            for node in 0..count as u32 {
-                let child_start = checked_u32(navigation[1] + local_children.len())?;
-                let first_child = local_children.len();
-                for child in tape.transducer_children(node) {
-                    local_children
-                        .push(node_start.checked_add(child).ok_or(Error::BackendFailure)?);
-                }
-                let (mut next_any, mut next_named) = (NONE, NONE);
-                for &child in local_children[first_child..].iter().rev() {
-                    let local = child - node_start;
-                    let record = &mut batch.nodes[base + local as usize];
-                    (record.parent, record.next_any, record.next_named) = (node_start + node, next_any, next_named);
-                    next_any = child;
-                    if tape.transducer_is_named(local) {
-                        next_named = child;
-                    }
-                }
-                let span = tape.transducer_span(node);
-                let record = &mut batch.nodes[base + node as usize];
-                record.child_start = child_start;
-                record.child_count = checked_u32(local_children.len() - first_child)?;
-                record.descendant_end = node_start
-                    .checked_add(tape.transducer_descendants(node).end)
-                    .ok_or(Error::BackendFailure)?;
-                record.source_start = source_start
-                    .checked_add(checked_u32(span.start)?)
-                    .ok_or(Error::BackendFailure)?;
-                record.source_end = source_start
-                    .checked_add(checked_u32(span.end)?)
-                    .ok_or(Error::BackendFailure)?;
-                record.kind = u32::from(tape.transducer_kind(node));
-                record.field = u32::from(tape.transducer_field(node));
-                record.flags = u32::from(tape.transducer_flags(node));
-            }
-            navigation[0] += tape.transducer_len();
-            navigation[1] += local_children.len();
-            navigation[2] += batch.supertypes.len() - first_supertype;
+            // The source and line starts are the batch's; the nodes are read on the tape.
+            let nodes = tape.transducer_len();
+            navigation[0] += nodes;
+            navigation[1] += nodes.saturating_sub(1);
             navigation[3] += batch.line_starts.len() - first_line;
-            batch.children.extend(local_children);
             batch.files.push(BatchFile {
                 node_start,
-                node_count: checked_u32(tape.transducer_len())?,
+                node_count: checked_u32(nodes)?,
                 source_start,
                 source_length: checked_u32(source.len())?,
                 line_start,
                 line_count: checked_u32(batch.line_starts.len() - first_line)?,
-                supertype_start,
-                supertype_count: checked_u32(batch.supertypes.len() - first_supertype)?,
+                supertype_start: 0,
+                supertype_count: 0,
             });
-            after_file(&mut batch)?;
+            documents.push(tape);
         }
         drop(stage);
         let stage = crate::code_rule_dsl::prof::Stage::start("batch.derived");
@@ -710,7 +557,6 @@ impl PackedBatch {
         let _tasks = crate::code_rule_dsl::prof::Stage::start("batch.tasks");
         for (file, file_anchors) in anchors.iter().enumerate() {
             for (program, roots) in file_anchors.iter().enumerate() {
-                let roots = roots.as_ref();
                 if roots.windows(2).any(|pair| pair[0] >= pair[1]) {
                     return Err(Error::InvalidAnchor);
                 }
@@ -726,18 +572,11 @@ impl PackedBatch {
                         .node_start
                         .checked_add(root)
                         .ok_or(Error::BackendFailure)?;
-                    let task_nodes = if layout != Layout::Packed {
-                        let local = root - batch.files[file].node_start;
-                        let document = &documents[file];
-                        let span = document.transducer_span(local);
-                        batch.root_spans.push(checked_u32(span.end - span.start)?);
-                        document.transducer_descendants(local).end.saturating_sub(local).max(1)
-                    } else {
-                        batch.nodes[root as usize]
-                            .descendant_end
-                            .saturating_sub(root)
-                            .max(1)
-                    };
+                    let local = root - batch.files[file].node_start;
+                    let document = &documents[file];
+                    let span = document.transducer_span(local);
+                    batch.root_spans.push(checked_u32(span.end - span.start)?);
+                    let task_nodes = document.transducer_descendants(local).end.saturating_sub(local).max(1);
                     let has_repeats = programs[program]
                         .words
                         .iter()
@@ -905,7 +744,7 @@ impl PackedBatch {
         files: &[TapeDoc],
         anchors: &[Vec<Vec<u32>>],
     ) -> Result<(), Error> {
-        let mut batch = Self::new(programs, files, anchors)?;
+        let mut batch = Self::new_in_place(programs, files, anchors)?;
         batch.assign_workspace(programs).map(|_| ())
     }
 
@@ -981,11 +820,8 @@ impl PackedBatch {
                 let facts = facts[task.program as usize];
                 let (program_values, strip_states, source_transform, mime_transform, one_result, marks) = per_program[task.program as usize];
                 let file = &self.files[task.file as usize];
-                let root = match self.root_spans.get(task.batch_ordinal as usize) {
-                    // A resident batch's root: its span alone is read.
-                    Some(&length) if self.nodes.is_empty() => BatchNode { source_start: 0, source_end: length, ..BatchNode::default() },
-                    _ => self.nodes[task.root as usize],
-                };
+                // The task's root: its span's length alone is read.
+                let root_length = *self.root_spans.get(task.batch_ordinal as usize).ok_or(Error::BackendFailure)?;
                 let work_capacity = |operations: u32| {
                     if operations == 0 {
                         0
@@ -1002,7 +838,7 @@ impl PackedBatch {
                 let result_states = work_capacity(facts.emit_operations);
                 // Candidates are still every path's; only the first accepted is kept.
                 let (candidate_states, result_states) = (result_states, if marks { 0 } else if one_result { result_states.min(1) } else { result_states });
-                let node_source_length = root.source_end.saturating_sub(root.source_start);
+                let node_source_length = root_length;
                 let value_states = program_values.iter().try_fold(0_u32, |maximum, value| {
                     let needed = if value.kind == 2 {
                         value
@@ -1652,7 +1488,8 @@ impl PackedExecution {
         {
             return Err(Error::InvalidAnchor);
         }
-        let input = super::metal_grid::MetalGridInput::build(programs, files, anchors)?;
+        let batch = PackedBatch::new_published(programs, files, anchors)?;
+        let spans = EvaluationSpan::of(anchors)?;
         let BatchOutcome { outputs, errors } = super::execute_batch_outcomes(programs, files, anchors)?;
         if outputs.len() != files.len()
             || errors.len() != files.len()
@@ -1665,7 +1502,7 @@ impl PackedExecution {
         let mut properties = Vec::new();
         let mut bytes = Vec::new();
         // The interpreter's nodes and spans are the file's; the batch's are past the files before.
-        let bases = input.packed.files.iter().map(|file| (file.node_start, file.source_start)).collect::<Vec<_>>();
+        let bases = batch.files.iter().map(|file| (file.node_start, file.source_start)).collect::<Vec<_>>();
         for ((base, source), program, error, mut outputs) in outputs
             .into_iter()
             .zip(&errors)
@@ -1754,15 +1591,13 @@ impl PackedExecution {
                 });
             }
         }
-        let errors = input
-            .grid
-            .evaluation_spans
+        let errors = spans
             .iter()
             .map(|span| errors[span.file as usize][span.program as usize].clone())
             .collect();
         Self::from_grid_arenas(
-            input.packed,
-            &input.grid.evaluation_spans,
+            batch,
+            &spans,
             results,
             captures,
             properties,
@@ -1803,7 +1638,7 @@ impl PackedExecution {
 
     pub fn from_grid_records(
         batch: impl Into<Arc<PackedBatch>>,
-        evaluations: &[super::metal_grid::EvaluationSpan],
+        evaluations: &[EvaluationSpan],
         results: Vec<ResultRecord>,
         captures: Vec<FinalCaptureRecord>,
         errors: Vec<Option<Error>>,
@@ -1821,7 +1656,7 @@ impl PackedExecution {
 
     pub(super) fn from_grid_arenas(
         batch: impl Into<Arc<PackedBatch>>,
-        evaluations: &[super::metal_grid::EvaluationSpan],
+        evaluations: &[EvaluationSpan],
         results: Vec<ResultRecord>,
         captures: Vec<FinalCaptureRecord>,
         properties: Vec<PropertyRecord>,
@@ -2119,6 +1954,32 @@ impl EvaluationRows {
         Ok(self.rows.get(&evaluation).map_or(&[], Vec::as_slice))
     }
 }
+/// One (file, program) evaluation with roots, as results published per evaluation are grouped: its roots'
+/// task ordinals are `semantic_start..semantic_start + root_count`, the files' and programs' roots in order.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct EvaluationSpan {
+    pub file: u32,
+    pub program: u32,
+    pub root_count: u32,
+    pub semantic_start: u32,
+}
+
+impl EvaluationSpan {
+    /// The evaluations of `anchors` (per file, per program) that have roots.
+    fn of(anchors: &[Vec<Vec<u32>>]) -> Result<Vec<Self>, Error> {
+        let mut spans = Vec::new();
+        let mut semantic_start = 0_u32;
+        for (file, programs) in anchors.iter().enumerate() {
+            for (program, roots) in programs.iter().enumerate().filter(|(_, roots)| !roots.is_empty()) {
+                let root_count = checked_u32(roots.len())?;
+                spans.push(Self { file: checked_u32(file)?, program: checked_u32(program)?, root_count, semantic_start });
+                semantic_start = semantic_start.checked_add(root_count).ok_or(Error::BackendCapacity)?;
+            }
+        }
+        Ok(spans)
+    }
+}
+
 type GridOrder = (u32, u32, Option<u32>, u32);
 pub struct GridFragment {
     page: PackedResultPage,
@@ -2127,12 +1988,12 @@ pub struct GridFragment {
 }
 pub struct GridPublication {
     template: PackedExecution,
-    evaluations: Vec<super::metal_grid::EvaluationSpan>,
+    evaluations: Vec<EvaluationSpan>,
 }
 impl GridPublication {
     pub fn new(
         batch: Arc<PackedBatch>,
-        evaluations: &[super::metal_grid::EvaluationSpan],
+        evaluations: &[EvaluationSpan],
         errors: Vec<Option<Error>>,
     ) -> Result<Self, Error> {
         if !batch.tasks.is_empty() || errors.len() != evaluations.len() {
@@ -2897,76 +2758,6 @@ pub mod tests {
     use crate::code_rule_dsl::language::GrammarDialect as SupportLang;
     use ast_grep_core::tree_sitter::LanguageExt;
 
-    #[test]
-    fn streamed_tapes_preserve_all_immutable_grid_input_bytes() {
-        use crate::code_rule_dsl::tape::{Grammar, TapeImage, TapeSource};
-        use ast_grep_core::tree_sitter::StrDoc;
-        let grammar = Grammar::new(SupportLang::Python).unwrap();
-        let inputs = ["# comment\nvalue = f'{item}'\n", "def broken(\n  pass\n"].map(|text| {
-            let source = Arc::new(text.to_owned());
-            let native = StrDoc::new(text, SupportLang::Python);
-            TapeSource {
-                source: Arc::clone(&source),
-                grammar: Arc::clone(&grammar),
-                image: Arc::new(
-                    TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false)
-                        .unwrap(),
-                ),
-                lines: Arc::new(crate::code_rule_dsl::lines::LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::Newlines)),
-            }
-        });
-        let docs = inputs
-            .iter()
-            .map(|input| input.restore(&|| false).unwrap())
-            .collect::<Vec<_>>();
-        let programs = [Program::compile_tree_sitter_query_pattern(
-            "(_) @node",
-            &SupportLang::Python.get_ts_language(),
-        )
-        .unwrap()];
-        let anchors = docs
-            .iter()
-            .map(|doc| {
-                vec![Arc::<[u32]>::from(
-                    (0..doc.transducer_len() as u32).collect::<Vec<_>>(),
-                )]
-            })
-            .collect::<Vec<_>>();
-        let expected = PackedBatch::new_shared_grid_inputs(&programs, &docs, &anchors).unwrap();
-        let actual = PackedBatch::new_streamed_grid_inputs(&programs, &inputs, &anchors).unwrap();
-        assert_eq!(actual.header, expected.header);
-        assert_eq!(actual.nodes, expected.nodes);
-        assert_eq!(actual.children, expected.children);
-        assert_eq!(actual.supertypes, expected.supertypes);
-        assert_eq!(actual.line_starts, expected.line_starts);
-        assert_eq!(actual.files, expected.files);
-        assert_eq!(actual.source, expected.source);
-        assert_eq!(actual.words, expected.words);
-        assert!(actual.tasks.is_empty());
-        let (mut nodes, mut children, mut supertypes, mut lines) =
-            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        let streamed = PackedBatch::new_streamed_grid_inputs_with_upload(
-            &programs,
-            &inputs,
-            &anchors,
-            |batch| {
-                nodes.append(&mut batch.nodes);
-                children.append(&mut batch.children);
-                supertypes.append(&mut batch.supertypes);
-                lines.append(&mut batch.line_starts);
-                Ok(())
-            },
-        )
-        .unwrap();
-        assert_eq!(streamed.header, expected.header);
-        assert_eq!(streamed.files, expected.files);
-        assert_eq!(nodes, expected.nodes);
-        assert_eq!(children, expected.children);
-        assert_eq!(supertypes, expected.supertypes);
-        assert_eq!(lines, expected.line_starts);
-        assert!(streamed.nodes.is_empty() && streamed.children.is_empty());
-    }
-
     fn batch() -> PackedBatch {
         let mut batch = PackedBatch::default();
         batch.files.push(BatchFile {
@@ -2989,13 +2780,13 @@ pub mod tests {
         }
         batch.evaluations.push(evaluation);
         batch.source.push(b'x');
-        batch.nodes.push(BatchNode::default());
+        batch.root_spans.push(1);
         batch
     }
 
     #[test]
     fn direct_grid_result_validation_rejects_malformed_typed_records() {
-        let evaluation = super::super::metal_grid::EvaluationSpan {
+        let evaluation = EvaluationSpan {
             root_count: 1,
             ..Default::default()
         };

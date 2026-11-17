@@ -3,6 +3,16 @@ use super::super::metal_backend::launch::{LaunchScope, commit_checked, wait_chec
 use super::super::metal_backend::metal_execution_guard;
 use super::*;
 
+/// `count` values of `buffer`, from its start.
+fn read<T: Copy>(buffer: &MappedBuffer, count: usize) -> Result<Vec<T>, Error> {
+    let length = count.checked_mul(std::mem::size_of::<T>()).ok_or(Error::BackendFailure)?;
+    if length as u64 > buffer.buffer.length() {
+        return Err(Error::BackendFailure);
+    }
+    // SAFETY: `length` bytes lie in the buffer, which the finished command no longer writes.
+    Ok(unsafe { std::slice::from_raw_parts(buffer.buffer.contents().cast::<T>(), count).to_vec() })
+}
+
 fn oracle(values: &[[u32; 4]]) -> (Vec<[u32; 4]>, [u32; 4]) {
     let mut offsets = Vec::new();
     let mut sum = [0u32; 4];
@@ -58,7 +68,7 @@ fn independent_arenas_share_each_scan_level_without_mixing_columns_or_overflows(
             wait_checked(command).unwrap();
             let get = |scan: &Scan| {
                 let offsets =
-                    super::super::metal_register_execution::read::<[u32; 4]>(&scan.values, count)
+                    read::<[u32; 4]>(&scan.values, count)
                         .unwrap();
                 let sum = unsafe { scan.total().contents().cast::<[u32; 4]>().read() };
                 (offsets, sum)
@@ -158,7 +168,7 @@ fn independent_scan_domains_keep_every_saturated_prefix_with_one_dispatch() {
         wait_checked(command).unwrap();
         let execution_seconds = started.elapsed().as_secs_f64();
         for (scan, values) in [(&left, &left_values), (&right, &right_values)] {
-            let actual = super::super::metal_register_execution::read::<[u32; 4]>(
+            let actual = read::<[u32; 4]>(
                 &scan.values,
                 values.len(),
             )
@@ -214,7 +224,7 @@ fn bounded_scans_preserve_every_prefix_and_saturated_total_in_one_dispatch() {
             wait_checked(command).unwrap();
             let seconds = started.elapsed().as_secs_f64();
             let actual =
-                super::super::metal_register_execution::read::<[u32; 4]>(&scan.values, count)
+                read::<[u32; 4]>(&scan.values, count)
                     .unwrap();
             let total = unsafe { scan.total().contents().cast::<[u32; 4]>().read() };
             assert_eq!((actual, total), expected, "count={count}");
@@ -275,7 +285,7 @@ fn gpu_counted_bounded_scans_preserve_inactive_values_and_every_live_prefix() {
             commit_checked(command).unwrap();
             wait_checked(command).unwrap();
             let actual =
-                super::super::metal_register_execution::read::<[u32; 4]>(&scan.values, capacity)
+                read::<[u32; 4]>(&scan.values, capacity)
                     .unwrap();
             assert_eq!(actual, expected, "count={count}");
             assert_eq!(

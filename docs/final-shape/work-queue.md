@@ -1258,9 +1258,42 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
 - `metal_catches_a_widened_walk`: Metal and the CPU agree on every widened clause, but only 2 differ from W's
   matcher where the test wants 3.
 
+- **The cause** (2026-11-16, after 0310): the two limits differ. The CPU charges every task against
+  `MAX_WORK_PER_TASK` (2^26, `charge_task_work`). The device's limit is the task's workspace estimate:
+  - the packed batch's `workspace_work_estimate`, and the resident `resident_work`;
+  - both are the root's subtree (its file where the program repeats) × program words × 4,096, in [4,096, 2^26].
+  
+  A small root with a long text test (D416's underlined section) passes on the CPU and fails on the device. It
+  fails the same at HEAD and before 0310 step 4 (the generated reads). Seen through `label_sink`'s status codes:
+  4 on the narrow lanes and again on the wide ones.
+- **Tradeoff for the user**: (a) the device takes the CPU's limit, so the results are equal and the estimate
+  only sizes the workspace; one lane may then run up to 2^26 steps, against the launch bound and the GPU's
+  watchdog. (b) The CPU takes the device's estimate, so both fail alike: a clause the CPU answers today fails.
+  (c) A task over its estimate goes back to the CPU, or to a later launch with the full limit: equal results,
+  and no lane runs long, at the cost of a second path. Recommended: (c), if a lane's run time must stay bounded;
+  else (a).
 - **Keep**: the device's roots equal the CPU's on every clause the device takes; a refused launch stays a refusal.
 - **Done when**: the D416 clause's work is accounted (a limit too small for its walk, or a walk that loops), and
   the coverage test's count is explained (the pack's clauses) or met; both gates pass.
+- **Also held back by it** (2026-11-16, 0324): 16 of Metal's semantic fixtures, moved from the grid to the packed
+  JIT and ignored with "Q49". In each, the device stops a task at its estimate (`WorkLimit`) where the CPU
+  interpreter does not:
+  - `accepted_witness_limits_follow_shared_predicates_and_preserve_duplicate_captures`
+  - `finite_literals_filter_before_witness_limits_across_register_and_dynamic_branches`
+  - `late_failures_invalidate_only_their_evaluation_even_after_the_witness_limit`
+  - `metal_inline_text_values_compare_long_literals_and_regexes_before_capturing`
+  - `metal_inline_text_work_is_inherited_across_successful_values_before_later_errors`
+  - `mime_properties_use_source_snapshots_and_reject_missing_captures_before_witness_limits`
+  - `operand_failures_follow_logical_paths_and_source_root_order_instead_of_arrival_or_pc_order`
+  - `ordinary_capture_operators_apply_the_complete_truth_table_at_the_assertion`
+  - `query_inline_text_values_preserve_false_paths_and_inherited_work_before_later_operands`
+  - `query_predicate_counts_preserve_complete_layouts_when_entries_are_equal`
+  - `query_text_quantifiers_preserve_empty_groups_duplicate_captures_and_transform_order`
+  - `shared_capture_operators_compare_long_utf8_spans_and_chunk_crossing_needles`
+  - `shared_capture_operators_preserve_pairing_quantifiers_empty_groups_and_properties`
+  - `shared_query_capture_text_batches_programs_and_files_without_output_directives`
+  - `transformed_candidate_rejection_precedes_accepted_witness_limits`
+  - `typed_output_preserves_late_operand_failures_without_publishing_failed_evaluations`
 
 ### Q51. (Q47 at 8bfa12af6) W's reference graph parses every file a second time (39% of internal_dead_code's CPU)
 
@@ -1306,6 +1339,14 @@ iteration. Both are per-byte loops, which the engine's code refuses elsewhere.
 - **Done when**: both compare a word at a time over the window (or `same_line` reads the document's line table,
   as the device's does), with no loop a byte a step.
 
+Their siblings, found later the same day (0310 steps 4 and 5):
+- `metal_batch_runtime.metal`'s `text_equal`: the Metal interpreter's and JIT's copy of the same pair test,
+  also a byte an iteration.
+- `rerail_tape_format::f16::group`: it matches a format 16 code group's bytes a byte at a time
+  (`match_groups`).
+- `metal_tape.metal`'s `f16_word` is gone with the hand port (step 4): the generated reads load words.
+
+
 ### Q60. (Q53 at 8e2b232ad) On the device, a group of 64 nodes' roots run serially in one thread, and a parent is a search (oscar's to take)
 
 - **Found** (2026-11-16, t41's last section, measured on oscar's f51cab698 against the hub's tree at s1000): 0293
@@ -1343,6 +1384,58 @@ iteration. Both are per-byte loops, which the engine's code refuses elsewhere.
   `setfix.rs:3043`, `RowRef::at`, index 5 of a view row's 2 columns, from `step_histograms` in
   `Run::exact_statistics`. The hub's tree runs the same corpus.
 - **Done when**: oscar's next hub merge runs the corpus, or the cause is found and fixed there.
+
+### Q63. (Q21 at f15aac19d) The farm's mirror never removes a deleted file
+
+Found 2026-11-16 (0324, retiring the grid). A checkout's changes reach a host's copy through the farm's mirror,
+which sends changed and new files and never removes one the checkout deleted. After the grid's 151 files went
+(staged `git rm`), the host's copy still held all of them. Nothing mounted them, so builds were right. But
+`executors_are_shared`, which reads every source file, failed on the stale grid files. A deleted file that is still
+mounted somewhere would build on the host and fail here.
+
+- **Keep**: the mirror's incremental sends.
+- **Done when**: a file the checkout deleted (tracked at the host's copy's last sync, now gone) is removed from the
+  host's copy before the command runs, and a test of the mirror covers it.
+
+### Q64. (Q22 at f15aac19d) Metal's semantic fixtures on the packed JIT: refusals, failures and different results
+
+Found 2026-11-16 (0324, retiring the grid). Metal's semantic fixtures (`metal_semantic_conformance` and the phase-four
+files) compare Metal with the CPU interpreter. They ran only on the grid machine. On the packed JIT, which the
+product runs, 79 of 115 pass, 18 fail on Q49's work limit, and 18 fail in the ways below. Each is ignored with
+"Q64". The JIT itself did not change with the grid's retirement, so these differences were there before.
+
+- **Refused (`BackendCapacity`)**, where the CPU runs the batch (15). The cause is not traced: it may be Q49's
+  estimate sizing the workspace, or another of the JIT's caps.
+  - `corpus_optional_test_bodies_and_regex_injections_match_cpu`
+  - `finite_literal_register_work_stays_broad_across_programs_and_files`
+  - `inputs_absent_field_uses_shared_facts_for_wide_and_file_local_inputs`
+  - `inputs_adaptive_pages_retry_from_the_last_published_checkpoint_without_duplicates`
+  - `inputs_bounded_page_plan_continues_after_its_descriptor_ring_is_full`
+  - `inputs_bounded_paths_keep_unique_children_in_registers_and_branching_children_in_frontiers`
+  - `inputs_bounded_semantic_ranges_preserve_late_failures_limits_and_raw_order`
+  - `inputs_compact_stage_capture_predicates_use_the_correct_capture_generation`
+  - `inputs_compact_stage_capturing_sibling_closures_preserve_maximal_prefixes`
+  - `inputs_compact_stage_query_large_values_follow_maximal_capture_selection`
+  - `inputs_compact_stage_waves_match_cpu_navigation_and_control_flow`
+  - `inputs_nested_optional_type_captures_preserve_raw_candidate_ordinals`
+  - `inputs_shared_root_predicates_intern_values_and_need_no_frontier_records`
+  - `inputs_small_automata_defer_long_inputs_into_shared_value_frontiers`
+  - `shared_ancestor_sets_exclude_self_cross_scan_groups_and_file_boundaries`
+  - and, found at the hub's merge of f15aac19d (46e5b3abc + oscar), four of `packed::tests` whose Metal parity
+    ran on the grid and now runs the packed JIT, ignored on macOS (their CPU parity still runs elsewhere):
+    `all_backends_execute_every_verified_instruction_and_mode`, `cpu_jit_compiles_general_scm_control_flow`,
+    `scm_host_predicates_filter_text_kinds_lines_and_relations`, `scm_quantified_runs_preserve_each_distinct_middle_capture`.
+- **Failed (`BackendFailure`)** in output directives (2): transformed text snapshots, and a selection with
+  zero-length MIME values.
+  - `selection_handles_empty_groups_missing_targets_and_zero_length_mime_values`
+  - `transformed_text_snapshots_and_utf8_offsets_preserve_directive_order`
+- **Different results** (3): the same outputs up to a point, then a difference (not yet read).
+  - `bounded_body_admission_preserves_guarded_capture_identity_and_multiplicity`
+  - `inputs_captured_membership_contains_and_ancestors_yield_with_exact_quantifiers`
+  - `inputs_repeated_disjoint_alternatives_share_a_bounded_capture_tail`
+
+- **Keep**: the fixtures' CPU results as the oracle.
+- **Done when**: each fixture passes on the packed JIT, or its difference is shown to be the CPU's error.
 
 ## Questions for the user
 
