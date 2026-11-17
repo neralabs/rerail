@@ -55,9 +55,11 @@ async function heldStopSession(early?: string) {
   const session = { host: "claude-code" as const, sessionId: "stop-gave-up", cwd: root };
   await runtime.ingest({ kind: "session-start", eventId: "start", session });
   await runtime.codeRulesOpened(session.sessionId);
-  /** Sends the turn's end with a signal the test aborts as the hook gives up; `answer` is what the stop answered. */
-  const stop = () => {
-    const hook = new AbortController();
+  /**
+   * Sends the turn's end with `hook`'s signal, which the test aborts as the hook gives up (one already aborted: the hook
+   * gave up before the stop's turn came); `answer` is what the stop answered.
+   */
+  const stop = (hook = new AbortController()) => {
     const event: AdapterEvent = { kind: "turn-end", eventId: "stop", sessionId: session.sessionId, session, text: "" };
     const answered: { answer?: readonly AdapterDelivery[] } = {};
     const answering = runtime.ingest(event, { signal: hook.signal }).then((deliveries) => {
@@ -87,6 +89,18 @@ describe("a Claude Code stop whose hook gave up", () => {
     expect(answered.answer).toEqual([]);
     // The checks run on: an idle close leaves the session open for the steers they find, as for a check that outran
     // a tool result's wait.
+    expect(await held.runtime.closeIdleSession(held.sessionId)).toEqual({ kind: "owing" });
+  });
+
+  it("waits for none of the checks when its hook gave up before the stop's turn came", async () => {
+    const held = await heldStopSession();
+    const hook = new AbortController();
+    // The hook gave up while the stop waited behind the session's earlier events or its source walk.
+    hook.abort();
+    const { answered } = held.stop(hook);
+    await held.settling;
+    await nextCheckPhase();
+    expect(answered.answer).toEqual([]);
     expect(await held.runtime.closeIdleSession(held.sessionId)).toEqual({ kind: "owing" });
   });
 
