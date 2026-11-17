@@ -1399,11 +1399,13 @@ export class CodeRuleBridge {
     toolName: string,
     input: unknown,
     restoredPreimages?: Readonly<Record<string, Preimage>>,
+    cwd?: string,
   ): Promise<Readonly<Record<string, Preimage>>> {
     const discovery = this.#requireDiscovery();
-    discovery.toolCalls.begin(toolCallId, await filesystemClock());
-    this.refreshCodeRules();
     const paths = generatedEditPaths(toolName, input);
+    const named = paths.flatMap(path => sessionRelativePath(discovery.root, path) ?? []);
+    discovery.toolCalls.begin(toolCallId, await filesystemClock(), { folder: await this.#callFolder(cwd), paths: named });
+    this.refreshCodeRules();
     this.#auditor.refreshOwners?.(paths);
     // What the ignore files a tool is about to write hold now is the baseline its edit is compared with.
     await this.#rememberIgnoreFiles(paths);
@@ -1428,8 +1430,19 @@ export class CodeRuleBridge {
    * credits what was stamped while it ran; its result reconciles nothing, and what it wrote is the next walk's. A host
    * whose edit tool no hook shows opens one for each turn the same way, as its writes are seen by no call.
    */
-  async unwatchedCall(toolCallId: string): Promise<void> {
-    (this.#discovery?.toolCalls ?? this.#unwatched).begin(toolCallId, await filesystemClock());
+  async unwatchedCall(toolCallId: string, cwd?: string): Promise<void> {
+    const at = await filesystemClock();
+    (this.#discovery?.toolCalls ?? this.#unwatched).begin(toolCallId, at, { folder: await this.#callFolder(cwd), paths: [] });
+  }
+
+  /**
+   * The folder a call runs in (its host's `cwd`), relative to the session folder as a walk names paths, through any link
+   * as the walks resolve the worktrees; undefined where the host did not say.
+   */
+  async #callFolder(cwd: string | undefined): Promise<string | undefined> {
+    if (cwd === undefined) return undefined;
+    const root = this.#discovery?.root ?? await realpath(this.#cwd).catch(() => resolve(this.#cwd));
+    return sessionPath(root, await realpath(cwd).catch(() => resolve(cwd)));
   }
 
   /** Ends the window `unwatchedCall` opened for the call, at its result. */
