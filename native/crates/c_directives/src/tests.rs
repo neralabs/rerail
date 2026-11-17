@@ -13,11 +13,88 @@ fn lean(src: &[u8], cpp: bool) -> Vec<Row> {
         .collect()
 }
 
+/// The lean scan's operands of `src`, as `operands` gives them: an empty span is none, a
+/// function-like macro's `Params` at 0..0 (the lean scan keeps only that it is one), a line's
+/// `Number` its value at `start`.
+fn lean_operands(src: &[u8], cpp: bool) -> Vec<Operand> {
+    let opts = if cpp { rerail_c_pp::Options::cpp(17, true) } else { rerail_c_pp::Options::c(17, true) };
+    let d = rerail_c_pp::directives::scan(src, opts);
+    let mut out = Vec::new();
+    let mut put = |i: u32, what: What, s: rerail_c_pp::directives::Span| {
+        if !s.is_empty() {
+            let (start, end) = d.file(s);
+            out.push(Operand { i, what, start, end });
+        }
+    };
+    use rerail_c_pp::directives::{Form, Variadic};
+    for m in &d.defines {
+        put(m.i, What::Name, m.name);
+        for p in &m.params {
+            put(m.i, What::Param, *p);
+        }
+        put(m.i, What::Body, m.body);
+    }
+    for (i, n) in &d.undefs {
+        put(*i, What::Name, *n);
+    }
+    for c in &d.includes {
+        put(c.i, match c.form { Form::Quote => What::Quote, Form::Angle => What::Angle, Form::Macro => What::Macro }, c.spelled);
+    }
+    for c in &d.conds {
+        put(c.i, What::Expr, c.expr);
+    }
+    for p in &d.pragmas {
+        put(p.i, What::First, p.first);
+        put(p.i, What::Second, p.second);
+        put(p.i, What::Text, p.text);
+    }
+    for l in &d.lines {
+        put(l.i, What::File, l.file);
+        put(l.i, What::Rest, l.rest);
+    }
+    for t in &d.texts {
+        put(t.i, What::Text, t.text);
+    }
+    // The operands without bytes in the lean scan's rows.
+    for m in &d.defines {
+        if m.fnlike {
+            out.push(Operand { i: m.i, what: What::Params, start: 0, end: 0 });
+        }
+        match m.variadic {
+            Variadic::No => {}
+            Variadic::Standard => out.push(Operand { i: m.i, what: What::Variadic, start: 0, end: 0 }),
+            Variadic::Named => out.push(Operand { i: m.i, what: What::NamedVariadic, start: 0, end: 0 }),
+        }
+    }
+    for l in &d.lines {
+        if let Some(n) = l.n {
+            out.push(Operand { i: l.i, what: What::Number, start: n as u32, end: 0 });
+        }
+    }
+    out.sort();
+    out
+}
+
+/// `operands` made comparable with `lean_operands`: `Params` and the variadics at 0..0, a
+/// `Number` its value (none where it does not parse).
+fn normal(src: &[u8], ops: &[Operand]) -> Vec<Operand> {
+    let mut out: Vec<Operand> = ops
+        .iter()
+        .filter_map(|o| match o.what {
+            What::Params | What::Variadic | What::NamedVariadic => Some(Operand { start: 0, end: 0, ..o.clone() }),
+            What::Number => std::str::from_utf8(&src[o.start as usize..o.end as usize]).ok()?.parse::<u64>().ok().map(|n| Operand { start: n as u32, end: 0, ..o.clone() }),
+            _ => Some(o.clone()),
+        })
+        .collect();
+    out.sort();
+    out
+}
+
 fn compiled_or_panic() -> &'static Compiled {
     compiled().unwrap_or_else(|e| panic!("the grammar compiles: {e}"))
 }
 
-/// Each case reads as the lean scan reads it: kinds and bytes.
+/// Each case reads as the lean scan reads it: kinds, bytes and operands.
 #[test]
 fn directives_read_as_the_lean_scan_reads_them() {
     let c = compiled_or_panic();
@@ -34,18 +111,28 @@ fn directives_read_as_the_lean_scan_reads_them() {
         "x = a / b; /* c */\n#define Y\n",
         "#define S(x) #x\n#define C(a, b) a ## b\n",
         "\u{feff}#pragma once\n#include \"a.h\"\n",
+        "#define F(a, b) a + b\n#define G() 1\n#define H (x)\n#define V(...) __VA_ARGS__\n#define W(a, ...) a\n#define N(args...) f(args)\n#define E\n",
+        "#undef X junk\n#undef\n#include M(x)\n#embed <a.bin> limit(4)\n#include <sys/a.h> // c\n",
+        "#ifdef A\n#elif defined(B) && C > 1\n#else x\n#endif // A\n#if\n#endif\n",
+        "#pragma GCC diagnostic push\n#pragma once\n#pragma 1 x\n#pragma\n#pragma omp(x)\n",
+        "#line 42\n#line 7 \"f.c\"\n# 33 \"g.c\" 1 3\n#line X \"h.c\"\n#line\n",
+        "#error a b\n#warning\n#ident \"x\"\n#foo bar baz\n#! x\n#define include 1\n#undef define\n",
+        "#define LONG(a, \\\n  b) \\\n  ((a) \\\n + (b))\n",
     ];
     for src in cases {
-        let got = c.rows(src.as_bytes()).unwrap_or_else(|| panic!("refused: {src:?}"));
-        assert_eq!(got, lean(src.as_bytes(), false), "{src:?}\n{}", image_text(&c.image(src.as_bytes()).unwrap()).unwrap());
-        assert_eq!(c.interpreter_rows(src.as_bytes()).as_ref(), Some(&got), "the interpreter, {src:?}");
+        let b = src.as_bytes();
+        let got = c.read(b).unwrap_or_else(|| panic!("refused: {src:?}"));
+        let text = || image_text(&c.image(b).unwrap()).unwrap();
+        assert_eq!(got.rows, lean(b, false), "{src:?}\n{}", text());
+        assert_eq!(normal(b, &got.operands), lean_operands(b, false), "{src:?}\n{}", text());
+        assert_eq!(c.interpreter_read(b).as_ref(), Some(&got), "the interpreter, {src:?}");
     }
     #[cfg(target_os = "macos")]
     {
         let files: Vec<&[u8]> = cases.iter().map(|s| s.as_bytes()).collect();
-        let metal = c.metal_rows(&files).expect("the device runs the batch");
+        let metal = c.metal_read(&files).expect("the device runs the batch");
         for (src, m) in cases.iter().zip(metal) {
-            assert_eq!(m, c.rows(src.as_bytes()), "Metal, {src:?}");
+            assert_eq!(m, c.read(src.as_bytes()), "Metal, {src:?}");
         }
     }
 }
@@ -75,21 +162,28 @@ fn the_corpus_reads_the_same_or_is_refused() {
         paths.sort();
         for p in paths {
             let src = std::fs::read(&p).unwrap();
-            let cl = c.rows(&src);
-            if c.interpreter_rows(&src) != cl {
+            let cl = c.read(&src);
+            if c.interpreter_read(&src) != cl {
                 interp.push(p.display().to_string());
             }
             #[cfg(target_os = "macos")]
-            if c.metal_rows(&[&src]).is_some_and(|m| m[0] != cl) {
+            if c.metal_read(&[&src]).is_some_and(|m| m[0] != cl) {
                 metal.push(p.display().to_string());
             }
             match cl {
                 None => refused += 1,
-                Some(rows) if rows == lean(&src, cpp) => same += 1,
-                Some(rows) => {
-                    let want = lean(&src, cpp);
+                Some(r) if r.rows == lean(&src, cpp) && normal(&src, &r.operands) == lean_operands(&src, cpp) => same += 1,
+                Some(r) => {
+                    let (rows, want) = (r.rows, lean(&src, cpp));
                     let at = rows.iter().zip(&want).position(|(a, b)| a != b).unwrap_or(rows.len().min(want.len()));
-                    differ.push(format!("{}: at {at}: {:?} against {:?}", p.display(), rows.get(at), want.get(at)));
+                    if rows != want {
+                        differ.push(format!("{}: at {at}: {:?} against {:?}", p.display(), rows.get(at), want.get(at)));
+                    } else {
+                        let (ops, want) = (normal(&src, &r.operands), lean_operands(&src, cpp));
+                        let at = ops.iter().zip(&want).position(|(a, b)| a != b).unwrap_or(ops.len().min(want.len()));
+                        let text = |o: Option<&Operand>| o.map(|o| format!("{o:?} {:?}", String::from_utf8_lossy(&src[o.start.min(o.end) as usize..o.end as usize])));
+                        differ.push(format!("{}: operand at {at}: {:?} against {:?}", p.display(), text(ops.get(at)), text(want.get(at))));
+                    }
                 }
             }
         }
@@ -112,10 +206,24 @@ fn a_file_past_64_kib_is_read_at_wide_columns() {
     let c = compiled_or_panic();
     for (head, tail) in [("#define A 1\n", ""), ("", "#include <x.h>\n"), ("#if X\n", "#endif\n")] {
         let src = format!("{head}{}{tail}", "int x;\n".repeat(12_000));
-        let got = c.rows(src.as_bytes()).unwrap_or_else(|| panic!("refused: {head:?} … {tail:?}"));
-        assert_eq!(got, lean(src.as_bytes(), false));
-        assert_eq!(c.interpreter_rows(src.as_bytes()), Some(got.clone()), "the interpreter");
+        let got = c.read(src.as_bytes()).unwrap_or_else(|| panic!("refused: {head:?} … {tail:?}"));
+        assert_eq!(got.rows, lean(src.as_bytes(), false));
+        assert_eq!(normal(src.as_bytes(), &got.operands), lean_operands(src.as_bytes(), false));
+        assert_eq!(c.interpreter_read(src.as_bytes()), Some(got.clone()), "the interpreter");
         #[cfg(target_os = "macos")]
-        assert_eq!(c.metal_rows(&[src.as_bytes()]).expect("the device runs it")[0], Some(got), "Metal");
+        assert_eq!(c.metal_read(&[src.as_bytes()]).expect("the device runs it")[0], Some(got), "Metal");
     }
+}
+
+/// Every step of the ladder compiles (the last is `GRAMMAR`).
+#[test]
+fn every_ladder_step_compiles() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/bitlex_ladder");
+    let mut steps: Vec<_> = std::fs::read_dir(dir).expect("the ladder").map(|e| e.expect("an entry").path()).collect();
+    steps.sort();
+    assert!(steps.len() >= 2);
+    for p in &steps {
+        compile_text(&std::fs::read_to_string(p).unwrap()).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+    }
+    assert_eq!(std::fs::read_to_string(steps.last().unwrap()).unwrap(), GRAMMAR, "the last step is the grammar");
 }

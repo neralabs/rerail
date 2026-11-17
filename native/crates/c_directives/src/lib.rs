@@ -3,30 +3,35 @@
 //! and tier 2 on Cranelift, as `.rr`'s (`rerail_rr_parser`) and Kotlin's are.
 //!
 //! Its tape is the directive tape: a `directives` root and a node a directive, of its kind
-//! (`KINDS`), from its `#` to its line's last token's end. Its rows (`rows`) are the lean scan's
-//! (`rerail_c_pp::directives`), which is its reference. A file the grammar refuses (a construct
+//! (`KINDS`), from its `#` to its line's last token's end, its operands fields' nodes below it.
+//! Its rows (`rows`) and operands (`operands`) are the lean scan's (`rerail_c_pp::directives`),
+//! which is its reference. A file the grammar refuses (a construct
 //! the ladder does not read yet) goes to the lean scan, so a row is never wrong.
 
 use rerail_compiler::bitlex_masks as bitlex_compile;
 use rerail_compiler::{native_cpu_clusters, native_cpu_stream, native_ir, rir_asm as rir};
 
 /// The grammar: the ladder's last step.
-pub const GRAMMAR: &str = include_str!("../bitlex_ladder/01-lines.bitlex");
+pub const GRAMMAR: &str = include_str!("../bitlex_ladder/02-operands.bitlex");
 
 /// The tape's kinds, by id: the root, the directives' kinds (their names the lean scan's
-/// `Kind::name`), then the tokens' leaves.
+/// `Kind::name`), then the tokens' leaves and the operands' nodes.
 pub const KINDS: &[&str] = &[
     "directives", "null", "unknown", "line_marker", "define", "undef", "include", "include_next", "import", "embed", "if", "ifdef", "ifndef", "elif", "elifdef",
     "elifndef", "else", "endif", "line", "error", "warning", "pragma", "ident", "sccs", "assert", "unassert", "hash", "identifier", "number", "punct", "string",
-    "char_lit",
+    "char_lit", "fn_open", "ellipsis", "header", "params", "operands", "plain_body", "macro_header", "pragma_text", "line_rest", "marker_rest",
 ];
+
+/// The operands' fields, by id less one (0: no field).
+pub const FIELDS: &[&str] = &["name", "params", "param", "variadic", "body", "spelled", "expr", "text", "first", "second", "n", "file", "rest"];
 
 /// The first leaf's id: below it, a directive's kind.
 const LEAVES: u16 = 26;
 
-/// Ids above `KINDS`, for the grammar's own names (marks, keywords' leaves) that never name a
-/// row, as `rerail_rr_parser`'s.
-const OWN_IDS: u16 = 0x4000;
+/// Ids above `KINDS`, for the grammar's own names (marks, keywords' leaves, the operands'
+/// nodes). Below 0x400: a tape's kind is 10 bits (`rerail_tape_format::KIND_BITS`), and an id
+/// past them would read as another kind, its field lost.
+const OWN_IDS: u16 = 0x300;
 
 /// The compiled grammar.
 pub struct Compiled {
@@ -67,10 +72,13 @@ pub fn compile_text(grammar: &str) -> Result<Compiled, String> {
         kind_id(name).or_else(|| {
             let mut own = own.borrow_mut();
             let next = OWN_IDS + own.len() as u16;
+            if next >= 1 << rerail_tape_format::KIND_BITS {
+                return None;
+            }
             Some(*own.entry(name.to_owned()).or_insert(next))
         })
     };
-    let field = |_: &str| None;
+    let field = |name: &str| FIELDS.iter().position(|&f| f == name).map(|i| i as u16 + 1);
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
     let compiled = bitlex_compile::compile_shaped(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules)?;
     let program = rir::assemble(&compiled.text()).map_err(|e| format!("{e}\n{}", compiled.words))?;
@@ -102,30 +110,47 @@ impl Compiled {
         rows(&self.image(src)?).ok()
     }
 
+    /// `src`'s directives and their operands (`read`), or `None` where the grammar refuses it.
+    pub fn read(&self, src: &[u8]) -> Option<Read> {
+        read(&self.image(src)?).ok()
+    }
+
     /// The same, by the interpreter: its tier 1 and its tier 2, the program's meaning.
-    pub fn interpreter_rows(&self, src: &[u8]) -> Option<Vec<Row>> {
+    pub fn interpreter_read(&self, src: &[u8]) -> Option<Read> {
         let run = self.program.block_programs[0].run(src);
         let nodes = rerail_compiler::stream::run(&self.program, src, &run).ok()?;
-        rows(&rerail_compiler::stream::image(&nodes, &self.program.readings.extras, 0, src)).ok()
+        read(&rerail_compiler::stream::image(&nodes, &self.program.readings.extras, 0, src)).ok()
     }
 
     /// The same for each of `files`, tier 1 on Metal and tier 2 over its buffers; `None` for a
     /// file refused, and for all where the device cannot run the batch.
     #[cfg(target_os = "macos")]
-    pub fn metal_rows(&self, files: &[&[u8]]) -> Option<Vec<Option<Vec<Row>>>> {
+    pub fn metal_read(&self, files: &[&[u8]]) -> Option<Vec<Option<Read>>> {
         use rerail_metal::block_program::serial::{Segments, run_resident};
         let batch: Vec<_> = files.iter().map(|f| rerail_compiler::block::BatchFile { bytes: f, program: 0 }).collect();
         match run_resident(&[&self.native], &batch, Segments { blocks: 29, warm: 1 }) {
-            Ok((_, run)) => Some((0..files.len()).map(|i| rerail_metal::tier2_on::image_on(&self.parser, &run, i).ok().and_then(|t| rows(&t).ok())).collect()),
+            Ok((_, run)) => Some((0..files.len()).map(|i| rerail_metal::tier2_on::image_on(&self.parser, &run, i).ok().and_then(|t| read(&t).ok())).collect()),
             Err(rerail_compiler::Error::BackendCapacity) if files.len() > 1 => {
                 let (a, b) = files.split_at(files.len() / 2);
-                let mut out = self.metal_rows(a)?;
-                out.extend(self.metal_rows(b)?);
+                let mut out = self.metal_read(a)?;
+                out.extend(self.metal_read(b)?);
                 Some(out)
             }
             Err(_) => None,
         }
     }
+}
+
+/// A file's directives and their operands, as its tape gives them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Read {
+    pub rows: Vec<Row>,
+    pub operands: Vec<Operand>,
+}
+
+/// `rows` and `operands` of a tape image.
+pub fn read(image: &[u8]) -> Result<Read, String> {
+    Ok(Read { rows: rows(image)?, operands: operands(image)? })
 }
 
 /// The directives of a tape image: each node below the root of a directive's kind.
@@ -140,6 +165,87 @@ pub fn rows(image: &[u8]) -> Result<Vec<Row>, String> {
         }
         out.push(Row { kind: KINDS[kind as usize], start: v.start(i) as u32, end: v.end(i) as u32 });
         i += v.size(i);
+    }
+    Ok(out)
+}
+
+/// An operand of directive `i` (its index among the file's directives): what it is and its
+/// bytes in the file, as `c_define`, `c_include` and the rest of 0327's mode (a) relations take
+/// them.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Operand {
+    pub i: u32,
+    pub what: What,
+    pub start: u32,
+    pub end: u32,
+}
+
+/// What an operand is. A function-like macro's parameter list is `Params` (its bytes, the
+/// parentheses too); its variadic parameter is `Variadic` (`...`) or `NamedVariadic` (GNU's
+/// `name...`, the last `Param`). An include's header is `Quote`, `Angle` or `Macro` by its form.
+/// `Number` is a line's number where its token is one (`value`'s bytes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum What {
+    Name,
+    Params,
+    Param,
+    Variadic,
+    NamedVariadic,
+    Body,
+    Quote,
+    Angle,
+    Macro,
+    Expr,
+    Text,
+    First,
+    Second,
+    Number,
+    File,
+    Rest,
+}
+
+/// The operands of a tape image's directives, in order: each field's node below a directive,
+/// read in place.
+pub fn operands(image: &[u8]) -> Result<Vec<Operand>, String> {
+    let v = rerail_tape_format::View::new(image)?;
+    let field = |k: usize| FIELDS.get((((v.key(k) & 0xffff) >> rerail_tape_format::KIND_BITS) as usize).wrapping_sub(1)).copied();
+    let kind = |k: usize| KINDS.get((v.key(k) & 0x3ff) as usize).copied().unwrap_or("");
+    let mut out = Vec::new();
+    let (mut i, mut d) = (1, 0u32);
+    while i < v.len() {
+        let end = i + v.size(i);
+        let mut last_param = false;
+        for k in i + 1..end {
+            let what = match field(k) {
+                Some("name") => What::Name,
+                Some("params") => What::Params,
+                Some("param") => What::Param,
+                // GNU's `name...`: the parameter's leaf right before it (a `,` is a leaf of none).
+                Some("variadic") if last_param => What::NamedVariadic,
+                Some("variadic") => What::Variadic,
+                Some("body") => What::Body,
+                Some("spelled") => match kind(k) {
+                    "string" => What::Quote,
+                    "header" => What::Angle,
+                    _ => What::Macro,
+                },
+                Some("expr") => What::Expr,
+                Some("text") => What::Text,
+                Some("first") => What::First,
+                Some("second") => What::Second,
+                Some("n") => What::Number,
+                Some("file") => What::File,
+                Some("rest") => What::Rest,
+                _ => {
+                    last_param = false;
+                    continue;
+                }
+            };
+            last_param = what == What::Param;
+            out.push(Operand { i: d, what, start: v.start(k) as u32, end: v.end(k) as u32 });
+        }
+        i = end;
+        d += 1;
     }
     Ok(out)
 }

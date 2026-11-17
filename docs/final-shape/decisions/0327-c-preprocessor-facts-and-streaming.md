@@ -342,9 +342,28 @@ otherwise). The tape's rows are read in place (`rerail_c_directives::rows`).
   Metal's buffers): at 4 bytes, then at the narrowest widths its values fit, so the image is the
   writer's byte for byte (work queue Q31). Found with it and fixed: an offset was flagged wide at
   any width (`native_cpu_tape::blocks_from`, `rust_stream`).
-- Next steps: the operands (a `#define`'s name, parameters and body; an `#include`'s form and
-  spelling; `#if`'s expression), then the conditionals' chains and groups as nesting, then the
-  refusals above.
+
+### Mode (a) compiled, step 2 (`02-operands.bitlex`): the operands
+
+Each operand is a field's node below its directive, read in place (`rerail_c_directives::operands`):
+a `#define`'s `name`, its `params` where a `(` touches the name (each `param`, a `variadic`
+`...`, GNU's `name...` as the `...` right after a parameter) and its `body`; an `#undef`'s
+`name`; an include's `spelled`, its form by the node (a string, a `header` `<…>` to its first
+`>`, or the tokens a macro makes one of; `#embed`'s first token only); a conditional's `expr`;
+a `#pragma`'s `text`, with `first` and `second` where they are words; a `#line`'s or a line
+marker's `rest`, its `n` where its first token is a number and its `file` where the second is a
+string; any other directive's `text` after its word.
+
+- **Corpus**: 3,016 files the same as the lean scan, rows and every operand; 119 refused (none
+  new); 0 differ; the interpreter's and Metal's images are Cranelift's on every file.
+- **The lean scan ended a directive at its last operand**, not at its line's last token as its
+  rows say (`#undef X junk`, an include's tokens after its header, `#embed`'s parameters). It
+  now reads the line's remaining tokens; the grammar's node ends there too.
+- **The grammar's own ids stay below 0x400**: a tape's kind is 10 bits, and an id past them
+  (`0x4000` on, as `.rr`'s parser numbers its own) read as another kind on Cranelift and lost
+  its field in the interpreter's image. Unseen in step 1, whose nodes had no fields.
+- Next steps: the conditionals' chains and groups as nesting (`c_cond_next`, `c_cond_parent`,
+  the guard), each directive's line, then the refusals above.
 
 ### Prior art in the other worktrees (surveyed 2026-11-17)
 

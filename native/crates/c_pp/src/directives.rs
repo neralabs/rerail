@@ -535,6 +535,9 @@ impl<'t> Scanner<'t> {
                 d.texts.push(Text { i, text: s });
             }
         }
+        // The tokens no operand takes (`#undef X junk`, `#embed`'s parameters): the directive
+        // still ends at its line's last token.
+        while toks(&mut self.lx, &mut end).is_some() {}
         self.lx.skip_line();
         end
     }
