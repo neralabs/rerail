@@ -7,9 +7,23 @@ import { physicalPath, storedPath } from "../../../../src/engine/catalog/checkou
 import { linkFolder } from "../../../support/platform/links.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
 
+/** The paths whose `lstat` fails with `EPERM`, as it does for a path the system will not describe. */
+const lstatRefused = vi.hoisted(() => new Set<string>());
+vi.mock("node:fs", async importOriginal => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  // The cast keeps lstatSync's overloads: the wrapper passes every argument on.
+  const lstatSync = ((...args: Parameters<typeof fs.lstatSync>) => {
+    const named = String(args[0]);
+    if (lstatRefused.has(named)) throw Object.assign(new Error(`EPERM: operation not permitted, lstat '${named}'`), { code: "EPERM" });
+    return fs.lstatSync(...args);
+  }) as typeof fs.lstatSync;
+  return { ...fs, lstatSync };
+});
+
 const roots: string[] = [];
 afterEach(async () => {
   vi.restoreAllMocks();
+  lstatRefused.clear();
   await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
 
@@ -55,6 +69,14 @@ describe("a path whose real path the system refuses", () => {
     expect(physicalPath(join(root, "app", "locked", "hidden.py"), "win32")).toBe(join(above, "locked", "hidden.py"));
   });
 
+  it("is the real path of the folder holding it, plus its name, when the system refuses it with EACCES", async () => {
+    const root = await temporaryRoot();
+    const secret = join(root, "secret.py");
+    await writeFile(secret, "SECRET = 1\n");
+    refuseNativeRealpath(secret, "EACCES");
+    expect(physicalPath(secret, "win32")).toBe(join(realpathSync.native(root), "secret.py"));
+  });
+
   it("is the real path of the folder that held it, plus its name, for a path gone between the look and the real path", async () => {
     const root = await temporaryRoot();
     const going = join(root, "going.py");
@@ -71,6 +93,15 @@ describe("a path whose real path the system refuses", () => {
     refuseNativeRealpath(link);
     expect(() => physicalPath(link, "win32")).toThrow(expect.objectContaining({ code: "EPERM" }));
     expect(() => physicalPath(join(link, "a.py"), "win32")).toThrow(expect.objectContaining({ code: "EPERM" }));
+  });
+
+  it("stays refused for a path lstat cannot describe, since it may be a link", async () => {
+    const root = await temporaryRoot();
+    const secret = join(root, "secret.py");
+    await writeFile(secret, "SECRET = 1\n");
+    refuseNativeRealpath(secret);
+    lstatRefused.add(secret);
+    expect(() => physicalPath(secret, "win32")).toThrow(expect.objectContaining({ code: "EPERM", message: expect.stringContaining("realpath") }));
   });
 
   it("stays refused for any other failure", async () => {
