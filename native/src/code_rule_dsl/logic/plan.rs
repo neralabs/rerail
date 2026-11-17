@@ -2139,7 +2139,7 @@ impl Model {
         if self.stats.solving.contains(rel) { return None; }
         let col = self.col(rel, c);
         let [rows, ndv, _, _] = *self.stats.col.get(&(rel.to_owned(), col.clone()))?;
-        if ndv > 64 { return None; }
+        if ndv > SMALL_NDV { return None; }
         let values: Vec<_> = self.stats.memo.get(rel)?.iter().filter(|((name, _), n)| *name == col && **n > 0).collect();
         if values.len() as i64 != ndv || values.iter().map(|(_, n)| **n).sum::<i64>() != rows { return None; }
         Some(values.into_iter().map(|((_, v), _)| v).collect())
@@ -10035,6 +10035,10 @@ impl<'a> Cells<'a> {
         r.chunks_exact(w).map(row_digest).collect()
     }
 }
+
+/// The most distinct values a column may have for its whole value set to be read from the statistics
+/// (`Model::small_values`): the corpus's totals keep every value of such a column, and of others only those tested.
+pub const SMALL_NDV: i64 = 64;
 
 /// An order-independent digest of rows (a set) of their content (`Cells`), as `corpus::retain::digest` takes a
 /// source's.

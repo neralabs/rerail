@@ -1505,3 +1505,18 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   one box per distinct string, most passing no test); `record stats` 44 MB; atoms interned 36 MB.
 - **The run's peak** is the chunks' again: 2,159–2,227 MB (was 2,330–2,518).
 - Scripts: `working-data/m3/{peak,phases,timeline}.py`.
+- **Done: the totals keep per value only what the planner reads** (2026-11-17). The 118 MB of per-value counts and
+  `cross`'s 106 MB were one thing: every distinct value of every export column, counted (`Totals::vals`), applied into
+  `Stats::memo` (about 80 B a value in its `HashMap<(String, Constant), i64>`), and copied again into each input's
+  kept statistics (`input_stats`, by `of_relation`/`of_columns`). The planner reads per-value counts only by a
+  program's constant (`binding_domains`, `memo.get(&(col, k))`) and whole value sets of columns of 64 values or
+  fewer (`small_values`): `Totals::apply` now keeps those two and no others (`SMALL_NDV`); each column's moments are
+  still of all its values. Test: `the_totals_keep_per_value_counts_only_for_what_the_planner_reads`.
+  M3, PostHog cold, the memory line lifted, at load 32–44 (others' builds; CPU and instructions not comparable): the
+  cross part's live heap 1,344 → 1,138 MB, its most footprint 1,826 → 1,658 MB; both holders gone from the list.
+  Findings 29,747, the same hash. The cross strata's plans: the same steps and scanned rows; their planned and done
+  work differ from the run before exactly as two runs of the old code differ (Q60's timing: `P__sup0` 32/33, a few
+  rows of work).
+- **Found, not mine:** `corpus::tests::a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test` (4 files
+  held open after it) and `the_run_after_a_cold_one_writes_nothing` (a warm run records a manifest and commits a
+  write) fail at 2fd15f524 too, on the M3 farm host.
