@@ -158,14 +158,44 @@ function calledUtilities(node: Record<string, unknown>): string[] {
   return isRecord(matches) ? Object.keys(matches) : [];
 }
 
+/** A `define` clause's utilities and the language whose queries may call them. */
+function definedUtilities(clause: unknown): { language: string; utils: Record<string, unknown> } | undefined {
+  const define = isRecord(clause) ? clause.define : undefined;
+  return isRecord(define) && typeof define.language === "string" && isRecord(define.utils) ? { language: define.language, utils: define.utils } : undefined;
+}
+
+/**
+ * Each language's shared utilities: the `utils` of the document's `define` clauses, which every ast query of that
+ * language may call as if it listed them in its own `utils`.
+ */
+function sharedUtilities(clauses: unknown): Map<string, Record<string, unknown>> {
+  const shared = new Map<string, Record<string, unknown>>();
+  for (const clause of Array.isArray(clauses) ? clauses : []) {
+    const defined = definedUtilities(clause);
+    if (defined !== undefined) shared.set(defined.language, { ...shared.get(defined.language), ...defined.utils });
+  }
+  return shared;
+}
+
+/** A query's own `utils`. */
+function ownUtilities(query: Record<string, unknown>): Record<string, unknown> {
+  return isRecord(query.utils) ? query.utils : {};
+}
+
+/** An ast query: a `rule` in a `language`, with optional `utils` of its own. */
+function isAstQuery(value: Record<string, unknown>): value is Record<string, unknown> & { rule: Record<string, unknown>; language: string } {
+  return isRecord(value.rule) && typeof value.language === "string";
+}
+
 /**
  * The most times one node kind (or pattern) occurs along a single nesting path. A path counts what each node
  * definitely is: its own kind, its `all` parts, a one-item `any`, and the utilities it calls (each at most once per
- * path, so recursion walks a tree instead of counting). Each alternative of a larger `any` is its own branch, and
- * `not` says what a node is not, so neither is merged into the node. `has`, `inside`, `follows`, `precedes` and
- * their `count` forms move to the next node.
+ * path, so recursion walks a tree instead of counting), its own or its language's shared ones. Each alternative of a
+ * larger `any` is its own branch, and `not` says what a node is not, so neither is merged into the node. `has`,
+ * `inside`, `follows`, `precedes` and their `count` forms move to the next node.
  */
 function longestNestingRun(clauses: unknown): number {
+  const shared = sharedUtilities(clauses);
   let longest = 0;
   const walkLevel = (start: Record<string, unknown>, utils: Record<string, unknown>, counts: Map<string, number>, level: Set<string>, onPath: Set<string>): void => {
     const definite: Record<string, unknown>[] = [];
@@ -208,7 +238,8 @@ function longestNestingRun(clauses: unknown): number {
   const queries = (value: unknown): void => {
     if (Array.isArray(value)) value.forEach(queries);
     else if (isRecord(value)) {
-      if (isRecord(value.rule) && typeof value.language === "string") walkLevel(value.rule, isRecord(value.utils) ? value.utils : {}, new Map(), new Set(), new Set());
+      // A query's own utilities and the shared ones it reaches are one namespace: the engine refuses an id in both.
+      if (isAstQuery(value)) walkLevel(value.rule, { ...shared.get(value.language), ...ownUtilities(value) }, new Map(), new Set(), new Set());
       for (const [key, child] of Object.entries(value)) if (key !== "violation") queries(child);
     }
   };

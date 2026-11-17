@@ -97,6 +97,25 @@ test("compact finds repetition written out along one nesting path, through wrapp
   assert.equal(compactGate(FLAGGED, recursive).metrics.nestingRun, 1);
 });
 
+test("compact follows a query into its language's shared define utilities", () => {
+  const nested = (depth: number): Record<string, unknown> => Object.fromEntries(Array.from({ length: depth }, (_, index) => [`level${index}`, { kind: "parenthesized_expression", has: index < depth - 1 ? { matches: `level${index + 1}` } : { kind: "identifier" } }]));
+  const shared = (language: string, utils: Record<string, unknown>) => ({ id: "shared", define: { language, utils } });
+  const query = (extra: Record<string, unknown> = {}) => ({ id: "c", forbid: { ast: { language: "typescript", rule: { matches: "level0" }, ...extra } } });
+  // A parenthesized expression three deep, written out through shared utilities, is written-out repetition.
+  const result = compactGate(FLAGGED, { clauses: [shared("typescript", nested(3)), query()] });
+  assert.equal(result.metrics.nestingRun, NESTING_RUN_LIMIT);
+  assert.equal(result.checks.find((check) => check.id === "no-written-out-repetition")!.ok, false);
+  // Another language's define is invisible to the query.
+  assert.equal(compactGate(FLAGGED, { clauses: [shared("python", nested(3)), query()] }).metrics.nestingRun, 0);
+  // A query's own utilities and its shared ones join along one path.
+  const ownFirst = query({ utils: { level0: { kind: "parenthesized_expression", has: { matches: "level1" } } } });
+  assert.equal(compactGate(FLAGGED, { clauses: [shared("typescript", { level1: nested(3).level1, level2: nested(3).level2 }), ownFirst] }).metrics.nestingRun, NESTING_RUN_LIMIT);
+  // Shared utilities that reach each other walk a tree and end.
+  const cycle = { a: { kind: "parenthesized_expression", has: { matches: "b" } }, b: { kind: "parenthesized_expression", has: { matches: "a" } } };
+  const cyclic = compactGate(FLAGGED, { clauses: [shared("typescript", cycle), { id: "c", forbid: { ast: { language: "typescript", rule: { matches: "a" } } } }] });
+  assert.equal(cyclic.metrics.nestingRun, 2);
+});
+
 test("compact reports recursive utilities called by id or with parameters, per query", () => {
   const callForm = rule({ matches: "walk" }, { utils: { walk: { params: ["N"], rule: { any: [{ kind: "call_expression" }, { has: { matches: { walk: { N: "$N" } } } }] } } } });
   assert.deepEqual(compactGate(FLAGGED, callForm).metrics.recursiveUtils, ["walk"]);
