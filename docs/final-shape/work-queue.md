@@ -911,6 +911,14 @@ pass.
   - Left, the next misses: `pre_1022`/`pre_1023`/`pre_2515` (6 k planned, 0.5 M done), `rr_agg286` (9 k, 0.67 M),
     `rr_ctx282` (31 k, 1.3 M), all among decision 0203's slow joins. Overestimates are the larger share of the
     total (150 M planned, 55 M done). Not yet measured on hogql's pre_120.
+  - Those misses are correlations, not implications the rules prove: `pre_1023`'s `scope_node($n, $s)` and
+    `kind($n, "identifier")` after `look($n, $x, $s)` are priced as independent filters (8,694 bindings to 27) and
+    pass every row. `look`'s scope is walked up (`walk`), so `scope_node` is not implied by its rules, and the
+    simplifier's implied atoms (decision 0038) do not cover it. Decision 0203's measured pair statistics are the
+    mechanism for that, but a second cold run with the first run's costs store (`RERAIL_COSTS` kept, a fresh tape
+    store) plans the same: 150.5 M planned, 54.9 M done, the same 9 strata 10×+ under, in both. **Open**: why the
+    slow lines' pair statistics (`slow joins`, 7 lines) do not reach the next run's estimates here, where Q36's
+    hogql runs said kept costs took `pre_120` from 5 M to 0.36 M.
 
 ### Q37. (Q28, then Q31, on Native-and-GPU-strata) A rule that copies a view's columns is a stratum
 
