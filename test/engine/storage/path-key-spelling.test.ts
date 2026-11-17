@@ -18,7 +18,8 @@ import { currentPathKey, pathKeysCanMove, readableRoots, withDriveBudget } from 
 import { PATH_KEY_SPELLING_TRIGGER_STATEMENTS } from "../../../src/engine/storage/path-key-spelling-triggers.js";
 import { hookRerailStarted } from "../../../src/harness/index.js";
 import {
-  setCheckoutStarted, SqlitePresentationPreferenceStore, startStateReader, stopRerail, workspaceStartState, type RepositorySetupIo,
+  setCheckoutStarted, SqlitePresentationPreferenceStore, startSetUpRepository, startStateReader, stopRerail, workspaceStartState,
+  type RepositorySetupIo,
 } from "../../../src/runtime/index.js";
 import { fakeSetupEnvironment } from "../../support/fake-setup-environment.js";
 import { holdEngineEndpoint, testEngineEndpoint } from "../../support/platform/engine-endpoint.js";
@@ -499,6 +500,28 @@ describe("path keys an earlier build stored under another spelling", () => {
       expect([workspaceStartState(folder, databasePath), dashboardState(folder, databasePath).started, earlierBuildReads(databasePath, stored).started])
         .toEqual([started ? "started" : "stopped", started, { started: null }]);
     }
+  });
+
+  // Set-up's start of one folder in a repository not started counts a stopped containing checkout and starts the folder
+  // itself. Left out of the checkouts it counted, an earlier build's stopped row of the same folder in another letter
+  // case left this build's row following the repository, so the folder read stopped once set-up had started it.
+  it.runIf(process.platform === "win32")("start, on Windows, a folder an earlier build stopped in another case when set-up starts its repository", async () => {
+    const actual = await vi.importActual<PathKeySpelling>("../../../src/engine/storage/path-key-spelling.js");
+    vi.mocked(currentPathKey).mockImplementation(actual.currentPathKey);
+    const { folder, databasePath } = await checkoutFolder({ git: false });
+    onTheSystemDrive(folder);
+    const stored = otherSpelling(folder).replace(/^[A-Z]:/u, drive => drive.toLowerCase());
+    earlierBuildRecorded(folder, databasePath, stored);
+    // The earlier build stopped the folder in a repository it never started.
+    write(databasePath, [["UPDATE repositories SET started = NULL"], ["UPDATE checkouts SET started = 0"]]);
+    const database = openRerailDatabase(databasePath);
+    try {
+      startSetUpRepository(database, recordCheckout(database, folder), false);
+    } finally {
+      database.$client.close();
+    }
+
+    expect([workspaceStartState(folder, databasePath), workspaceStartState(stored, databasePath)]).toEqual(["started", "started"]);
   });
 
   // The step put the newer of two rows of one folder under the key the disk stores, so where an earlier build had saved

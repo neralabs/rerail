@@ -49,6 +49,7 @@ export {
   isRerailStarted,
   setCheckoutStarted,
   setRepositoryStarted,
+  startSetUpRepository,
   startStateReader,
   stopRerail,
   workspaceStartState,
