@@ -29,7 +29,7 @@ import {
   type RepositorySetupIo,
 } from "../../src/runtime/repository-start.js";
 import { SqliteSessionStore } from "../../src/runtime/session-store.js";
-import { makeAnswersFolder } from "../../src/runtime/stopped-answers.js";
+import { makeAnswersFolder } from "../../src/runtime/start-check/stopped-answers.js";
 import { startRerail } from "../../src/cli/index.js";
 import { fakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { RerailRuntime } from "../../src/runtime/runtime.js";

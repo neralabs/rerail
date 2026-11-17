@@ -567,10 +567,17 @@ async function connect(run: Run, repository: Repository | undefined, again = fal
   const seen = again ? environment.agentsSeen() : undefined;
   const agents = named ?? (!again ? found : seen === undefined ? [] : found.filter(id => !seen.includes(id)));
   const result = await environment.connect(agents, repository?.root);
+  // A registration written whose hook then failed is changed and failed at once: it is named only as failed.
+  const failed = new Set(result.failures.map(({ agent }) => agent));
   return {
     connected: codingAgents(result.all),
-    ...(again && named === undefined ? { added: codingAgents(result.changed) } : {}),
-    failed: result.failures.map(({ agent, message, file }) => ({ agent: { id: agent, name: CODING_AGENT_NAMES[agent] }, message, ...(file === undefined ? {} : { file }) })),
+    ...(again && named === undefined ? { added: codingAgents(result.changed.filter(id => !failed.has(id))) } : {}),
+    failed: result.failures.map(({ agent, message, file, registered }) => ({
+      agent: { id: agent, name: CODING_AGENT_NAMES[agent] },
+      message,
+      ...(file === undefined ? {} : { file }),
+      ...(registered === undefined ? {} : { registered }),
+    })),
     codexTrust: result.codexTrust,
     ompPlugin: result.ompPlugin,
     anyFound: found.length > 0,

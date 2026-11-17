@@ -860,13 +860,15 @@ export function renderNotNow(agents: readonly CodingAgent[], lane: SetupLane): s
 
 // ── T6 / C6 / E6 · Summary ─────────────────────────────────────────────────
 
-/** A coding agent set-up could not connect; its config was left as it was. */
+/** A coding agent set-up could not connect; its config was left as it was, unless `registered`. */
 export interface AgentProblem {
   readonly agent: CodingAgent;
   /** Why: the parser's reason when `file` is set. */
   readonly message: string;
   /** The agent's config file, when that is not plain JSON. */
   readonly file?: string;
+  /** Rerail's hooks are written in the agent's config, but the one set-up ran failed. */
+  readonly registered?: true;
 }
 
 /** What connecting the coding agents left, which the summary's commands and notes follow. */
@@ -922,11 +924,12 @@ function connectionNotes(agents: AgentsConnection, style: Style): string[] {
   const added = agents.added ?? [];
   return [
     ...(added.length === 0 ? [] : [`  Now also connected: ${andList(agentNames(added))}.`]),
-    ...(agents.failed ?? []).flatMap(({ agent, message, file }) => {
+    ...(agents.failed ?? []).flatMap(({ agent, message, file, registered }) => {
       const name = clean(agent.name);
       const retry = `then run rerail setup again to connect ${name}.`;
+      const config = registered === true ? "Rerail’s hooks are written, but they fail." : "Rerail left its config as it is.";
       return file === undefined
-        ? [`  ${style.yellow("△")} Couldn’t connect ${name}: ${clean(message)}`, `    Rerail left its config as it is. Fix that, ${retry}`]
+        ? [`  ${style.yellow("△")} Couldn’t connect ${name}: ${clean(message)}`, `    ${config} Fix that, ${retry}`]
         : [
           `  ${style.yellow("△")} Couldn’t connect ${name}: ${clean(file)} is not plain JSON`,
           `    (${clean(message)}). Rerail left the file as it is.`,

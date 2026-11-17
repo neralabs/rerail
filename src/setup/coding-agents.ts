@@ -206,6 +206,8 @@ export async function refreshCodingAgents(root: string, home: string): Promise<R
 export interface ConnectProblem extends RefreshProblem {
   /** The agent's config file when it is not plain JSON; `message` is then the parser's reason. */
   file?: string;
+  /** The registration is written, but its hook failed when set-up ran it; otherwise the config is left as it was. */
+  registered?: true;
 }
 
 export interface ConnectResult {
@@ -219,7 +221,7 @@ export interface ConnectResult {
   all: Harness[];
   /**
    * The coding agents named, and Pi when its npm source was to be swapped, that could not be registered, with the
-   * reason; their config is left as it was.
+   * reason; their config is left as it was. Set-up adds Claude Code, `registered`, when the hook it wrote fails.
    */
   failures: ConnectProblem[];
   /** Codex's hooks were written: Codex runs them only once the person trusts them with `/hooks`. */

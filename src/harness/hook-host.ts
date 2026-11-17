@@ -3,7 +3,7 @@ import type { AdapterEvent, AdapterSession, RerailEventLoop, RerailHost } from "
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { readStartAnswer } from "../presentation/session-presentation.js";
 import { isRerailStarted } from "../runtime/repository-start.js";
-import { keepStartAnswer, markBeforeAsking, repeatsStoppedAnswer, type MarkBeforeAsking, type StartAnswer } from "../runtime/stopped-answers.js";
+import { keepStartAnswer, markBeforeAsking, repeatsStoppedAnswer, type MarkBeforeAsking, type StartAnswer } from "../runtime/start-check/stopped-answers.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 import { ingestEngineEvent } from "../runtime/engine-service.js";
 import {

@@ -966,8 +966,8 @@ async function startCheckHost(proof?: (workspace: string) => boolean, spelling?:
     };
     return { ...actual, openRerailDatabase, openRerailDatabaseAsIs };
   });
-  vi.doMock("../../src/runtime/stopped-answers.js", async () => {
-    const actual = await vi.importActual<typeof import("../../src/runtime/stopped-answers.js")>("../../src/runtime/stopped-answers.js");
+  vi.doMock("../../src/runtime/start-check/stopped-answers.js", async () => {
+    const actual = await vi.importActual<typeof import("../../src/runtime/start-check/stopped-answers.js")>("../../src/runtime/start-check/stopped-answers.js");
     const repeatsStoppedAnswer: typeof actual.repeatsStoppedAnswer = (workspace, now) =>
       seen.proofs.run(() => proof === undefined ? actual.repeatsStoppedAnswer(workspace, now) : proof(workspace));
     return { ...actual, repeatsStoppedAnswer };
@@ -2307,7 +2307,7 @@ describe("the hook start check", () => {
   });
   afterEach(() => {
     vi.doUnmock("../../src/engine/git.js");
-    vi.doUnmock("../../src/runtime/stopped-answers.js");
+    vi.doUnmock("../../src/runtime/start-check/stopped-answers.js");
     vi.doUnmock("../../src/engine/storage/database.js");
     vi.doUnmock("../../src/engine/catalog/checkout-control.js");
     vi.doUnmock("node:fs/promises");

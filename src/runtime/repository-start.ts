@@ -145,8 +145,16 @@ export class RepositoryStartWatch {
     this.#resolveCheckout = createCheckoutResolver(this.#database);
   }
 
+  /**
+   * The checkout whose start state this watch reads, looked up as `started` looks it up: in a Git repository Git runs
+   * once for the folder, then only the database is read. Undefined where Rerail records no checkout there.
+   */
+  checkout(): CheckoutContext | undefined {
+    return this.#resolveCheckout(this.#workspace);
+  }
+
   started(): boolean {
-    return checkoutStatus(this.#database, this.#resolveCheckout(this.#workspace)).started;
+    return checkoutStatus(this.#database, this.checkout()).started;
   }
 
   close(): void {

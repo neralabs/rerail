@@ -16,7 +16,7 @@ import {
   DAEMON_STATE_FILE, daemonAccessHeaders, daemonFetch, readDaemonState, recordedDaemonAlive, recordedDaemonStatus, type DaemonState,
 } from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
-import type { StartAnswer } from "../runtime/stopped-answers.js";
+import type { StartAnswer } from "../runtime/start-check/stopped-answers.js";
 import type { PresentationPresence } from "../engine/storage/presentation-presence.js";
 import { cappedLine, ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
 import { conflictUrl } from "../engine/merge-assist/conflict-note.js";

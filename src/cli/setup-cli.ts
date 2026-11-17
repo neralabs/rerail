@@ -65,7 +65,7 @@ import { TerminalInput } from "./setup-menu.js";
 import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, setupPacks, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
 import { npmPackStore, type PackStore, type PackVersion } from "../setup/rule-pack-store.js";
 import { workspaceStartState, type RepositorySetupIo } from "../runtime/repository-start.js";
-import { STOPPED_ANSWERS_DIR } from "../runtime/stopped-answers.js";
+import { STOPPED_ANSWERS_DIR } from "../runtime/start-check/stopped-answers.js";
 import { renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, type DashboardLink, type SetupCommand, type SetupLane } from "../harness/setup-screens.js";
 import { colourDepth } from "../presentation/rerail-mark.js";
 import type { SetupStep } from "../harness/setup-step.js";
@@ -1002,7 +1002,7 @@ export function setupEnvironment(context: SetupContext, port?: number): SetupEnv
       // will, and one that fails is a failed connection.
       if (agents.includes("claude-code") && !result.failures.some(({ agent }) => agent === "claude-code")) {
         const problem = await runRegisteredClaudeHook(home);
-        if (problem !== undefined) result.failures.push({ agent: "claude-code", message: problem });
+        if (problem !== undefined) result.failures.push({ agent: "claude-code", message: problem, registered: true });
       }
       // One that could not be connected stays unseen, even if `rerail install` recorded it before, so set-up run again
       // connects it once its config is fixed.

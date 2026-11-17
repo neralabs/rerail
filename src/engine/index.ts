@@ -59,8 +59,6 @@ export {
 export { getLibraryRule, listLibraryRules, upsertLibraryRule, writeLibraryRule } from "./catalog/rule-library.js";
 export { BLOCK_STEERS_NOTE, RULE_MODES, type RuleMode } from "./catalog/rule-mode.js";
 export {
-  HELD_OFF_SINCE,
-  LANGUAGE_SINCE,
   loadRulePacks,
   RULE_PACK_RULE_ID,
   type RulePack,

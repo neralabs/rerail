@@ -290,9 +290,9 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
 - On open, an existing home, database, state file, log or content cache that other users could read is tightened
   (`src/engine/storage/private-files.ts`).
 - State files go through a 0600 temp file and rename; logs open 0600.
-- The daemon's last answers of stopped that hooks repeat (`stopped-answers/`, `src/runtime/stopped-answers.ts`) are
-  written 0600 in folders made 0700, hold no path, and are never read, written or removed through a link; the daemon
-  removes those of the daemons before it. The hook's own check reads an answer, and the checkout's `.git`, `commondir`
+- The daemon's last answers of stopped that hooks repeat (`stopped-answers/`,
+  `src/runtime/start-check/stopped-answers.ts`) are written 0600 in folders made 0700, hold no path, and are never
+  read, written or removed through a link; the daemon removes those of the daemons before it. The hook's own check reads an answer, and the checkout's `.git`, `commondir`
   and clone id files, only as small plain files opened without waiting, and opens the database only where it, its WAL
   and the WAL's index are plain files, so a named pipe planted at one of those names never holds the check. A pipe at a
   Git folder's clone id file, at a linked worktree's `commondir` or at `daemon.json` still holds the hook through the
@@ -345,7 +345,7 @@ in code or by running it when this model was written; unmarked items are code re
 | T7 | Malicious update or dependency | npm or registry compromise | Mostly mitigated | Low–Medium |
 | T8 | Repo-planted `.rerail/` redirects or exposes ledgers | Malicious repo | Mitigated | Low |
 | T9 | Capability exposed with `--allow-remote` | Network attacker | Mitigated: TLS required, clients pin the certificate | Low |
-| T10 | Files and directories not kept private | Other OS users | Mitigated on Unix | Low |
+| T10 | Files and directories not kept private | Other OS users | Mitigated | Low |
 | T11 | Repo-controlled environment and config redirect Rerail | Malicious repo | Mostly host-equivalent | Low–Medium |
 | T12 | Native engine crash or hang | Malicious repo | Partly mitigated | Low |
 | T13 | CI and release compromise | Malicious PR, compromised action | Mostly mitigated | Low–Medium (maintainers) |
@@ -580,7 +580,10 @@ audit errors, and Rerail's `daemon.log` lines. Rule matching and steers use the 
 - **Secret-like files.** A tool result for a call naming a secret-like path is stored without its output
   (`callNamesSecretPath` in `persistEvent`, `src/runtime/runtime.ts`). The judgment goes to the session ledger
   (`secret-call`, `secret-result`), so a result arriving after a daemon restart or host reconnect is withheld too.
-  Preimages of a secret-like file, or one whose text holds a secret, keep only a hash and size.
+  Preimages of a secret-like file, or one whose text holds a secret, keep only a hash and size. A finding in a
+  secret-like file that a session still owes its agent when its memory is freed, or when the daemon stops or restarts,
+  is kept in the ledger without its message or fix, as its steer withholds them. Each steer and finding it owes then
+  keeps the SHA-256 of each file it names, as a preimage does, so a file changed meanwhile drops it.
 - **Erasure.** Database writers use `secure_delete`. `rerail reset` checkpoints the WAL, runs `VACUUM`, and checkpoints
   again, so deleted history cannot be read back from the file.
 - **History stored by older versions.** `rerail scrub` redacts the database, its pre-update copy, every recorded
@@ -707,7 +710,9 @@ capability.
 
 ### T10: Files and directories not kept private
 
-On Unix, Rerail creates its files private and tightens existing ones. Windows is unchanged.
+On Unix, Rerail creates its files private and tightens existing ones. On Windows, which ignores modes, a Rerail home or
+`.rerail\sessions` folder made outside the profile folder gets an ACL for the person, SYSTEM and Administrators alone
+([B6](#b6-data-at-rest)).
 
 <details>
 <summary>Mitigations and what remains</summary>
@@ -726,7 +731,7 @@ command that makes it private; meanwhile the daemon serves this computer alone o
 only, a start that asked for other machines exits 1, and a key that is missing, unreadable or no private key stops
 the start.
 
-**What remains:** Windows is unchanged, and any new data file in the home must be added to that list.
+**What remains:** any new data file in the home must be added to that list.
 
 </details>
 
@@ -759,7 +764,8 @@ should not widen it.
   current folder is the repository it runs in. Set-up's look for `node` on `PATH` ends at the first entry that names
   a server by its UNC path, which it never opens, and writes the `cmd.exe` entry there.
 - The Claude status-line wrapper runs an inherited `statusLine` command, re-read from the working directory's
-  `.claude/settings*.json`, with `shell: true` (`src/hosts/claude/claude-status.ts`, `src/setup/claude-status-store.ts`).
+  `.claude/settings*.json`, through a shell: `shell: true`, or Git Bash's `bash -c` on Windows when Rerail finds one
+  (`src/hosts/claude/claude-status.ts`, `src/setup/claude-status-store.ts`).
 - `hooks/cursor.json` uses the relative path `./dist/hosts/cursor/cursor-hook.js`. [INFERENCE: exposed only if Cursor
   runs plugin hooks with the project as working directory. `rerail setup` writes absolute paths.]
 

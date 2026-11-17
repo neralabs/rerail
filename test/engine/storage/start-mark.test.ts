@@ -61,7 +61,7 @@ const markOf = (db: RerailDatabase): string | undefined => startMarkFound(db.$cl
 const answers = (db: RerailDatabase): string => join(dirname(db.$client.name), STOPPED_ANSWERS_DIR);
 
 /** Each change to where Rerail runs, made on a database where `app`, a Git checkout with no remote, is recorded. */
-const writers: Array<{ what: string; write: (db: RerailDatabase, app: string, root: string) => void }> = [
+const writers: Array<{ what: string; write: (db: RerailDatabase, app: string, root: string) => void | Promise<void> }> = [
   { what: "a repository started or stopped", write: (db, app) => setRepositoryStarted(db, recordCheckout(db, app).repositoryKey, false) },
   { what: "a checkout started or stopped", write: (db, app) => setCheckoutStarted(db, recordCheckout(db, app), false) },
   {
@@ -74,11 +74,13 @@ const writers: Array<{ what: string; write: (db: RerailDatabase, app: string, ro
   { what: "a repository that takes a remote", write: (db, app) => adoptRemote(db, recordCheckout(db, app).repositoryKey, "remote:github.com/acme/web") },
   { what: "a repository that takes an alias", write: (db, app) => linkAlias(db, recordCheckout(db, app).repositoryKey, "https://github.com/acme/old-web") },
   {
-    what: "checkouts forgotten", write: (db, _app, root) => {
-      const gone = gitRepository(join(root, "gone"));
+    what: "checkouts forgotten", write: async (db, app, root) => {
+      // A worktree Git removed, which the daemon forgets while a checkout of its clone is on disk to ask Git in.
+      const gone = join(root, "gone");
+      git(app, "worktree", "add", "-q", "-b", "gone", gone);
       recordCheckout(db, gone);
-      removeFolderSync(gone);
-      expect(pruneCheckouts(db)).toHaveLength(1);
+      git(app, "worktree", "remove", gone);
+      expect(await pruneCheckouts(db)).toHaveLength(1);
     },
   },
 ];
@@ -90,7 +92,7 @@ describe("the start mark", () => {
     const app = gitRepository(join(root, "app"));
     recordCheckout(db, app);
     const before = markOf(db);
-    write(db, app, root);
+    await write(db, app, root);
     const after = markOf(db);
     expect({ before, after: after?.split(":").length, renewed: after !== before }).toEqual({ before: "none", after: 4, renewed: true });
   });
@@ -101,7 +103,7 @@ describe("the start mark", () => {
     const app = gitRepository(join(root, "app"));
     recordCheckout(db, app);
     const before = listing(join(root, "home"));
-    write(db, app, root);
+    await write(db, app, root);
     expect({ home: listing(join(root, "home")), mark: markOf(db) }).toEqual({ home: before, mark: undefined });
   });
 
