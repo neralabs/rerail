@@ -229,6 +229,8 @@ describe("CheckoutCodeRuleRouter in a repository with many worktrees", () => {
     await writeOwnRule(main);
     auditor.refreshCodeRules();
     expect(catalog.status.ruleCount).toBe(before + 1);
+    // The new rule's storage attaches after the read: on Windows a store still attaching keeps its folder at the end.
+    await auditEditIn(auditor, main, 1);
   }, 60_000);
 
   it("reads a worktree's rules when its lane opens again, after events that did not use the lane before it closed", async () => {
@@ -276,6 +278,10 @@ describe("CheckoutCodeRuleRouter in a repository with many worktrees", () => {
     second.refreshCodeRules();
     expect(second.acceptsPath(path)).toBe(true);
     expect(catalog.status.ruleCount).toBe(before + 1);
+    // Each lane's newest rules attach their storage after the read: on Windows a store still attaching keeps its folder.
+    await auditEditIn(auditor, worktree!, 1);
+    await second.auditGeneratedEdits("second", { revision: 1, checkpoints: ["edit"], edits: [{ path, language: "python", generatedText: "x = 1\n" }] });
+    await second.settleGeneratedEdits();
   }, 60_000);
 
   it("walks a worktree Git creates again at the path it still lists, though the walks worked the list out while it was gone", async () => {
