@@ -3181,6 +3181,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-c-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+ "unicode-ident",
+]
+
+[[package]]
 name = "rerail-compiler"
 version = "0.1.0"
 dependencies = [
@@ -3339,12 +3348,14 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-c-lean",
  "rerail-compiler",
  "rerail-csharp-lean",
  "rerail-css-lean",
  "rerail-device-metal",
  "rerail-ecma-lean",
  "rerail-facts",
+ "rerail-go-lean",
  "rerail-html-lean",
  "rerail-java-lean",
  "rerail-lang",
@@ -3482,6 +3493,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-go-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+ "unicode-ident",
+]
+
+[[package]]
 name = "rerail-html-lean"
 version = "0.1.0"
 dependencies = [
@@ -3547,10 +3567,12 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-c-lean",
  "rerail-compiler",
  "rerail-csharp-lean",
  "rerail-css-lean",
  "rerail-ecma-lean",
+ "rerail-go-lean",
  "rerail-html-lean",
  "rerail-java-lean",
  "rerail-lang",
