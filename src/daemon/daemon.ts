@@ -23,6 +23,7 @@ import { engineIdentity, enginePipeName, fallbackPipe } from "../runtime/engine-
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../runtime/merge-assist/service.js";
 import { NativeSessionServer } from "./native-session-server.js";
+import { startCheckoutPruning, type CheckoutPruning } from "./checkout-pruning.js";
 import type { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
 import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
@@ -76,6 +77,8 @@ export interface RerailDaemonOptions {
   version: string;
   /** Internal testing: false keeps the remote sink's sender off; tests may shorten its interval. */
   remoteSink?: false | { intervalMs: number };
+  /** False keeps the hourly forgetting of removed checkouts off ({@link startCheckoutPruning}); tests may shorten its interval. */
+  checkoutPruning?: false | { intervalMs: number };
   /** Defaults to `$RERAIL_HOME/rerail.sqlite`; embedding and tests pass their own. */
   databasePath?: string;
   /** Checkout native sessions address; defaults to the current directory. The API serves every repository. */
@@ -485,6 +488,7 @@ export class RerailDaemon {
   /** The Merge Assist the API and every session share, while the experiment is on: stopped before the database closes. */
   readonly #mergeAssist: MergeAssistRuntime | undefined;
   #remoteSink: RemoteSinkLoop | undefined;
+  #checkoutPruning: CheckoutPruning | undefined;
   #recordCheck: NodeJS.Timeout | undefined;
   /** The check of the state file in flight, which a close waits for before it removes the file. */
   #recordChecked: Promise<void> = Promise.resolve();
@@ -552,6 +556,7 @@ export class RerailDaemon {
     // The paths of a session whose host sends none.
     const { storageRoot, modelPath } = resolveSessionPaths(workspaceRoot);
     let daemon: RerailDaemon | undefined;
+    const started: StartedServices = {};
     // One Merge Assist for the API and every session this daemon runs, so a scan runs once per checkout and gh's
     // readiness is read once; its database opens with the stores', on first use.
     const sharedMergeAssist = daemonMergeAssist(() => stores.database());
@@ -561,9 +566,11 @@ export class RerailDaemon {
       health: () => daemon!.health(),
       origin: () => new URL(daemon!.url).origin,
       ...(options.codingAgents === undefined ? {} : { codingAgents: options.codingAgents }),
+      // The server listens only once the engine service runs, so a scan request always finds it. The engine service
+      // reports a failure itself, and its close waits for the open.
+      resumeSession: sessionId => void started.engineService?.resumeSession(sessionId),
       ...sharedMergeAssist,
     });
-    const started: StartedServices = {};
     try {
       // One walk of each repository's other worktrees for the sessions of both servers: hook sessions and native OMP and
       // Pi sessions in worktrees of one repository read them once, through the engine's one watch.
@@ -600,6 +607,7 @@ export class RerailDaemon {
         nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256, worktreeWalks, ...sharedMergeAssist,
       });
       await daemon.#announce(remembered);
+      daemon.#startCheckoutPruning();
       daemon.#startProvenanceMove();
       return daemon;
     } catch (error) {
@@ -615,6 +623,12 @@ export class RerailDaemon {
     this.#startRemoteSink();
     // A start that asked for any free port (`0`) takes a throwaway one; it does not replace the port links point at.
     if (options.portFile !== undefined && options.port !== 0 && this.port !== remembered) await rememberPort(options.portFile, this.port);
+  }
+
+  /** Once nothing can fail the start: checkouts whose folder is gone stop costing every read of their repository. */
+  #startCheckoutPruning(): void {
+    const pruning = this.#options.checkoutPruning;
+    if (pruning !== false) this.#checkoutPruning = startCheckoutPruning(this.#databasePath, pruning ?? {});
   }
 
   /**
@@ -744,6 +758,8 @@ export class RerailDaemon {
     try {
       this.#provenanceMove?.stop.abort();
       await this.#provenanceMove?.done;
+      // Pruning stops first: a remote sink that fails to stop must not leave a pass free to commit after close begins.
+      await this.#checkoutPruning?.stop();
       await this.#remoteSink?.stop();
       await closeHttpServer(this.#server);
     } finally {

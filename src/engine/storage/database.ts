@@ -76,6 +76,22 @@ export function openSqliteDatabase(path: string, options: OpenRerailDatabaseOpti
   }
 }
 
+/**
+ * Throws SQLite's `SQLITE_BUSY` at once while another connection holds the write lock of the database at `path`, where
+ * a write would wait for it up to `busy_timeout` (5 s) on the caller's thread; takes and gives back the lock otherwise.
+ * For work that can wait for the lock without holding the thread: the daemon's reopen of a quiet session for a scan.
+ */
+export function failWhileWriteLocked(path: string): void {
+  const database = openSqliteDatabase(path);
+  try {
+    database.$client.pragma("busy_timeout = 0");
+    database.$client.exec("BEGIN IMMEDIATE");
+    database.$client.exec("ROLLBACK");
+  } finally {
+    database.$client.close();
+  }
+}
+
 /** What a file on disk records about its schema. */
 interface SchemaStamp {
   /** Whether the file holds any table; a file without one is new while it carries no stamp either. */
