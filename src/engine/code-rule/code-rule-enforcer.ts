@@ -1324,12 +1324,26 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       });
   }
 
+  /** Whether the lane takes or installs a workspace before its next edit: it holds none and edits wait, or a replacement does. */
+  #workspaceToInstall(): boolean {
+    return (this.#released && this.#pending.size > 0) || this.#replacement !== undefined;
+  }
+
+  /**
+   * A lane with no workspace takes one in its turn (`#workspaceForPending`); else its replacement goes in
+   * (`#replaceWorkspace`), whose own promise the pump awaits, as it did before lanes gave workspaces back.
+   */
+  #installWorkspace(): Promise<void> {
+    const replacement = this.#replacement;
+    if (this.#released || replacement === undefined) return this.#workspaceForPending();
+    return this.#replaceWorkspace(replacement);
+  }
+
   async #run(): Promise<void> {
     await yieldToHost();
     while (!this.#closing) {
-      // Only a lane with no workspace waits here: an open lane picks its next edit up in the same turn, as before.
-      if (this.#released) await this.#workspaceForPending();
-      while (this.#replacement !== undefined && !this.#closing) await this.#replaceWorkspace(this.#replacement);
+      // An open lane with no replacement picks its next edit up in the same turn.
+      while (this.#workspaceToInstall() && !this.#closing) await this.#installWorkspace();
       const entry = this.#pending.entries().next().value;
       if (entry === undefined) return;
       const [path, stored] = entry;
