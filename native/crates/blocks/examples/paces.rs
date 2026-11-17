@@ -880,7 +880,13 @@ fn main() {
     let sc = schemas();
 
     #[cfg(target_os = "macos")]
-    let gpu = match if std::env::var_os("PACES_NO_GPU").is_some() { Err("PACES_NO_GPU".to_string()) } else { rerail_blocks::gpu::Gpu::new() } {
+    let gpu = match if std::env::var_os("PACES_NO_GPU").is_some() { Err("PACES_NO_GPU".to_string()) } else { {
+        // A benchmark of its own process: it makes the device and queue the engine's owner would hand it.
+        metal::Device::system_default().ok_or_else(|| "no Metal device".to_string()).and_then(|d| {
+            let q = d.new_command_queue();
+            rerail_blocks::gpu::Gpu::on(d, q)
+        })
+    } } {
         Ok(g) => Some(g),
         Err(e) => {
             println!("no GPU: {e}");
