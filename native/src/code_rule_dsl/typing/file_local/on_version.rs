@@ -218,7 +218,13 @@ impl<'v> Program<'v> {
         if matches!(rel, "reference_edge" | "reference_open") {
             return Vec::new();
         }
-        let mut columns: Vec<usize> = self.f.types(rel).iter().enumerate().filter(|(_, t)| **t == "node").map(|(i, _)| i).collect();
+        // As the tree's (`file_local::base_locations`): an undeclared relation has no node columns. A pass after the
+        // program's check makes tree axes it does not declare (the Python pack's `rr_inside_rr_kind_assignment`),
+        // where `Fields::types` panicked.
+        let mut columns: Vec<usize> = match self.f.decl(rel) {
+            Some(_) => self.f.types(rel).iter().enumerate().filter(|(_, t)| **t == "node").map(|(i, _)| i).collect(),
+            None => Vec::new(),
+        };
         if let Some(column) = document_column(rel) {
             columns.push(column);
         }

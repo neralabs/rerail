@@ -980,6 +980,11 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
     use std::io::Write;
     // The two parts' rules beside it, a line each (printed from their versions, 0276 §6), and the exports.
     let rules = |v: &Version| v.rules().map(|r| format!("{}\n", v.show_rule(r))).collect::<String>();
+    // One set of files a program: a batch (`run-policies`) splits several, each to the next free number.
+    let stem = path.file_stem().map_or_else(|| "split".into(), |s| s.to_string_lossy().into_owned());
+    let n = (0..).find(|n| !path.with_file_name(format!("{stem}-{n}.cross.rr")).exists()).unwrap_or(0);
+    let numbered = path.with_file_name(format!("{stem}-{n}.txt"));
+    let path = numbered.as_path();
     let _ = std::fs::write(path.with_extension("local.rr"), rules(&split.versions.local));
     let _ = std::fs::write(path.with_extension("cross.rr"), rules(&split.versions.cross));
     let _ = std::fs::write(path.with_extension("exports.txt"), split.exports.join("\n"));
