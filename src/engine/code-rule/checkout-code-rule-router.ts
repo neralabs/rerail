@@ -81,6 +81,8 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   readonly #gitIgnore = new Map<string, NativeGitIgnoreMatcher | null>();
   /** The checkouts with no lane whose Git ignore rules failed a read, reported once each. */
   readonly #gitIgnoreReported = new Set<string>();
+  /** The checkouts another lane answered for: their catalogs are read again when the lanes' are (`refreshCodeRules`). */
+  readonly #answeredByOthers = new Set<string>();
   #settings: Required<AuditSettings>;
   #sessionId: string | undefined;
   #closing = false;
@@ -111,6 +113,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   refreshCodeRules(): void {
     if (this.#closing) return;
     for (const root of this.#eligibility.keys()) this.#eligibility.set(root, this.#options.catalogs.refresh(root));
+    this.#refreshAnsweredCatalogs();
     for (const lane of [...this.#lanes.values()]) {
       if (this.#mayRun(lane.root)) {
         lane.enforcer.refreshCodeRules();
@@ -176,17 +179,51 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     };
   }
 
-  /** Whether the lane of `owner`'s checkout reads its path; nothing is read where no lane runs. */
+  /**
+   * Whether the lane of `owner`'s checkout reads its path; nothing is read where no lane runs. A walk asks this of every
+   * file of every worktree it reads: a checkout with no lane open is answered by an open lane at its rules' version,
+   * which reads the same paths, with Git's ignore rules of its own, and opens its lane only when no open lane holds its
+   * rules. A lane holds a native workspace and its checkout's index, so opening one in every worktree to answer took
+   * the daemon's memory to gigabytes with one session in a repository of many.
+   */
   #accepts(owner: CheckoutOwner | undefined): boolean {
     if (owner === undefined) return false;
-    const lane = this.#lane(owner.checkoutRoot);
-    return lane !== undefined && lane.enforcer.acceptsPath(owner.path);
+    const root = owner.checkoutRoot;
+    const lane = this.#lanes.get(root) ?? this.#laneWithRulesOf(root) ?? this.#lane(root);
+    return lane !== undefined && this.#readsIn(lane, owner);
   }
 
+  /** Whether `lane` reads `owner`'s path: its own checkout's answer, or another's by the same rules and that checkout's Git ignore rules. */
+  #readsIn(lane: Lane, owner: CheckoutOwner): boolean {
+    if (lane.root === owner.checkoutRoot) return lane.enforcer.acceptsPath(owner.path);
+    return lane.enforcer.readsPath(owner.path) && !this.#gitIgnores(owner, false);
+  }
+
+  /** A lane follows its own checkout's Git ignore rules, as `#gitIgnores` does, so a checkout needs no lane to answer. */
   #ignores(owner: CheckoutOwner | undefined, directory: boolean): boolean {
     if (owner === undefined) return false;
-    const lane = this.#lane(owner.checkoutRoot);
+    const lane = this.#lanes.get(owner.checkoutRoot);
     return lane === undefined ? this.#gitIgnores(owner, directory) : lane.enforcer.ignoresPath(owner.path, directory);
+  }
+
+  /** An open lane at the version of the rules `root`'s catalog holds; undefined for a checkout that may not run rules. */
+  #laneWithRulesOf(root: string): Lane | undefined {
+    if (this.#sessionId === undefined || this.#closing || !this.#mayRun(root)) return undefined;
+    this.#answeredByOthers.add(root);
+    return this.#laneAt(this.#options.catalogs.catalog(root).status.version);
+  }
+
+  /** An open lane whose rules are at `version`. */
+  #laneAt(version: string): Lane | undefined {
+    for (const lane of this.#lanes.values()) if (lane.enforcer.rulesVersion === version) return lane;
+    return undefined;
+  }
+
+  /** Reads again the rules of each checkout another lane answers for, as each lane reads its own (`refreshCodeRules`). */
+  #refreshAnsweredCatalogs(): void {
+    for (const root of this.#answeredByOthers) {
+      if (!this.#lanes.has(root) && this.#mayRun(root)) this.#options.catalogs.catalog(root).refresh();
+    }
   }
 
   /**
