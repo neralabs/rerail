@@ -361,7 +361,8 @@ describe("engine service before-event step", () => {
   });
 
   it("runs before it routes each event sent on its socket or pipe", async () => {
-    root = await mkdtemp(join(tmpdir(), "rerail-before-event-"));
+    // A Unix socket path must fit 104 bytes on macOS and 108 on Linux, so off Windows the folder sits in SOCKET_ROOT.
+    root = await mkdtemp(join(process.platform === "win32" ? tmpdir() : SOCKET_ROOT, "rerail-before-event-"));
     const socketPath = testEngineEndpoint(root);
     const steps: string[] = [];
     const service = await startEngineService({ socketPath, storageRoot: join(root, "state"), beforeEvent: () => steps.push("before") });
