@@ -4530,6 +4530,28 @@ impl InRel {
     pub fn posts_all(&self) -> bool {
         self.view.is_none() && (0..self.k).all(|c| self.chains.iter().any(|ix| ix.cols.first() == Some(&c) && ix.rows() >= self.n))
     }
+    /// Its live rows a window at a time, row-major (`f` called with up to 4,096 rows): read where they lie, with no
+    /// copy of them all (a frame digested and encoded from them, Q61). `false` for a view.
+    pub fn each_live_window(&self, f: &mut dyn FnMut(&[i64])) -> bool {
+        if self.view.is_some() {
+            return false;
+        }
+        const WINDOW: usize = 4096;
+        let mut buf: Vec<i64> = Vec::with_capacity(WINDOW.min(self.n) * self.k);
+        for id in 0..self.n {
+            if self.ndead == 0 || !is_dead(&self.dead, id as u32) {
+                buf.extend_from_slice(&self.row(id));
+                if buf.len() == WINDOW * self.k {
+                    f(&buf);
+                    buf.clear();
+                }
+            }
+        }
+        if !buf.is_empty() {
+            f(&buf);
+        }
+        true
+    }
     /// Its live rows, row-major.
     pub fn live_rows(&self) -> Option<Vec<i64>> {
         if self.view.is_some() {

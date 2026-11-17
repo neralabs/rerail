@@ -2485,18 +2485,32 @@ impl Retained {
         // The copy of a relation's rows lives only in its job: kept for every relation until the loop below, the
         // copies were the run's peak (460 MB of 3.3 GB at 300 files, beside the relations and their bytes). A
         // relation whose rows are the stored ones and whose reads changed copies its rows again there.
+        // Each relation's rows are read where they lie, a window at a time, to digest them and, when its frame is
+        // written, to encode it straight into the write's segments (Q61): neither a copy of its rows nor its frame's
+        // bytes are made on the heap. Copied and encoded on the heap, the frames were held whole until queued, and
+        // the cross part's were a cold PostHog run's peak (1.8 → 2.3 GB in its last second).
+        let placer = store.frame_placer(whole.len() + inputs.len() + 16, whole.iter().map(|(_, k)| k.rel.rows() * k.width * 2).sum());
         let made: HashMap<&String, Whole> = {
             use rayon::prelude::*;
             let atoms = &atoms;
+            let placer = &placer;
             // Under the span open here, on whichever thread runs it: rayon's loops open none of their own.
             let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
             whole.into_par_iter().filter_map(|(rel, k)| {
                 let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || "a relation's frame, digested and encoded".into());
-                let rows = k.rel.live_rows()?;
+                if k.rel.levels_shape().2 {
+                    return None;
+                }
+                let each = |f: &mut dyn FnMut(&[i64])| {
+                    k.rel.each_live_window(f);
+                };
                 let n = k.rel.rows();
                 let types = frame_types(prog, domains, rel, k.rel.types());
-                let d = crate::code_rule_dsl::logic::plan::rows_digest(&Cells::new(atoms, &types), &rows, n);
-                let bytes = was.derived.get(rel).is_none_or(|s| s.digest != d).then(|| FramePut::encode_rows(&FrameRows { types, rows, n }));
+                let d = crate::code_rule_dsl::logic::plan::rows_digest_windows(&Cells::new(atoms, &types), n, &each);
+                let bytes = was.derived.get(rel).is_none_or(|s| s.digest != d).then(|| match placer.place_rows(types.len(), DOCS_PART, &each) {
+                    Some(p) => WholeBytes::Placed(p),
+                    None => WholeBytes::Heap(FramePut::encode_rows(&FrameRows { rows: k.rel.live_rows().unwrap_or_default(), types, n })),
+                });
                 Some((rel, Whole { d, bytes }))
             }).collect()
         };
@@ -2592,7 +2606,8 @@ impl Retained {
                 }
                 let types = frame_types(prog, domains, rel, k.rel.types());
                 puts.push(match (bytes, rows) {
-                    (Some(bytes), _) => FramePut::encoded_as(name.clone(), DOCS_PART, d, read_digests, types, n, bytes),
+                    (Some(WholeBytes::Heap(bytes)), _) => FramePut::encoded_as(name.clone(), DOCS_PART, d, read_digests, types, n, bytes),
+                    (Some(WholeBytes::Placed(p)), _) => FramePut::placed_as(name.clone(), DOCS_PART, d, read_digests, types, n, p),
                     (None, Some(rows)) => FramePut { rel: name.clone(), part: DOCS_PART, digest: d, reads: read_digests, rows: FrameRows { types, rows, n } }.encoded(),
                     (None, None) => return Err(Error::Plan(format!("{rel}: its rows are not held, and its frame is to be written"))),
                 });
@@ -2617,7 +2632,7 @@ impl Retained {
         // documents' table), its digests and granules are of content, so a forked process's frames are written as the
         // store numbers them, and read back as the reader does. Keyed by this process's numbering, they were dropped
         // after a fork, and every next run derived the cross part again.
-        crate::code_rule_dsl::logic::profile::behind(|| store.queue_encoded_retagged(was.space, puts, retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token(), self.key))));
+        crate::code_rule_dsl::logic::profile::behind(|| store.queue_placed_retagged(was.space, puts, retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token(), self.key)), placer));
         Ok(written)
     }
 }
@@ -2625,7 +2640,13 @@ impl Retained {
 /// A relation written whole (`write_frames`): its digest, and its rows' bytes when its rows are not the stored ones.
 struct Whole {
     d: u64,
-    bytes: Option<Vec<u8>>,
+    bytes: Option<WholeBytes>,
+}
+
+/// A frame's bytes made in its job: placed in the write's segments, or (no segment took them) on the heap.
+enum WholeBytes {
+    Placed(crate::content_store::PlacedFrame),
+    Heap(Vec<u8>),
 }
 
 impl Retained {

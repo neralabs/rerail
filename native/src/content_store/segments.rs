@@ -247,6 +247,23 @@ impl SegmentWriter {
         Ok(open)
     }
 
+    /// The entries placed so far.
+    pub fn len(&self) -> usize {
+        self.placed.len()
+    }
+
+    /// Tests: entry `i`'s bytes as written, before the segments are sealed.
+    #[cfg(test)]
+    pub fn entry_bytes(&self, i: usize) -> Option<Vec<u8>> {
+        let &(seg, at, len) = self.placed.get(i)?;
+        if seg < self.done.len() {
+            return Some(self.done[seg].reader().bytes(at, at + len).to_vec());
+        }
+        let open = self.open.as_ref()?;
+        // SAFETY: `at..at + len` was placed in the open block and written by its `put`.
+        Some(unsafe { std::slice::from_raw_parts(open.block().ptr::<u8>(at), len) }.to_vec())
+    }
+
     /// Seals the open segment: the entries go to the writer, read in place meanwhile.
     pub fn seal(mut self) -> SealedSegments {
         if let Some(open) = self.open.take() {

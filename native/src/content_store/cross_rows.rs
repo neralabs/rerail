@@ -56,6 +56,45 @@ pub(super) fn encode(width: usize, values: &[i64]) -> Vec<u8> {
     out
 }
 
+/// `encode`'s bytes of rows given a window at a time (`each` calls its argument with each window, rows of `width`,
+/// flat, and is called twice): each column's length counted first, then each column written into its own range of
+/// one entry (`write`, given the total). No copy of the rows, nor of the bytes (a frame encoded where it is stored,
+/// Q61).
+pub(super) fn encode_windows<E>(width: usize, each: &dyn Fn(&mut dyn FnMut(&[i64])), write: impl FnOnce(usize, &mut dyn FnMut(&mut [u8])) -> Result<(), E>) -> Result<(), E> {
+    let zigzag = |d: i64| ((d << 1) ^ (d >> 63)) as u64;
+    let varint_len = |z: u64| (64 - (z | 1).leading_zeros() as usize).div_ceil(7);
+    let mut lens = vec![0usize; width];
+    let mut last = vec![0i64; width];
+    each(&mut |rows: &[i64]| {
+        for row in rows.chunks_exact(width) {
+            for c in 0..width {
+                lens[c] += varint_len(zigzag(row[c].wrapping_sub(last[c])));
+                last[c] = row[c];
+            }
+        }
+    });
+    let total = lens.iter().sum();
+    write(total, &mut |out: &mut [u8]| {
+        let mut at: Vec<usize> = lens.iter().scan(0, |a, &l| { let s = *a; *a += l; Some(s) }).collect();
+        let mut last = vec![0i64; width];
+        each(&mut |rows: &[i64]| {
+            for row in rows.chunks_exact(width) {
+                for c in 0..width {
+                    let mut z = zigzag(row[c].wrapping_sub(last[c]));
+                    last[c] = row[c];
+                    while z >= 0x80 {
+                        out[at[c]] = (z as u8) | 0x80;
+                        at[c] += 1;
+                        z >>= 7;
+                    }
+                    out[at[c]] = z as u8;
+                    at[c] += 1;
+                }
+            }
+        });
+    })
+}
+
 /// Column `c` of `values` (rows of `width`) onto `out`, as `encode` writes it: `last` is the value of the row above
 /// the first.
 fn encode_column(width: usize, c: usize, values: &[i64], mut last: i64, out: &mut Vec<u8>) {
