@@ -1233,6 +1233,20 @@ pass.
   Not creating it eagerly (`atoms::key` resolving a missing file by its directory) did not remove it: the connection
   makes it. The next run removes it with the scratch files.
 
+### Q57. The warm run after a cold one asks the observer's store inside the waves (the hub, 8e4b6b68e)
+
+- **Found** (2026-11-16, django-bugs after merging the hub at 8e4b6b68e, and 8e4b6b68e alone, both on the m3):
+  `the_run_after_a_cold_one_writes_nothing` fails. Its warm child run exits 3 with "the observer's store not asked
+  inside the waves in a warm run (…/src: its answers unknown, read again)", twice. The backtrace:
+  `observe::load_under` <- `ensure` <- `watch` (observe.rs) <- `World::new` (corpus/world.rs, `o.watch(&watched)`)
+  <- the requests answered inside the fixpoint (corpus.rs, `world::World::new(root, &prog)`). So the corpus root's
+  part of the store was not read before the waves in the warm run, and the requests' world watches it inside them.
+  The hub's record of the test passing (b40d89145) is before the merges of d5cc33981 (a stat-known file's digest from
+  its text, not SQL in the waves), 05e2bbf6a and 17417fb8f (Q45: racy answers settled at a run's end), the
+  candidates for what stopped reading the root first.
+- **Done when**: the warm child run exits 0. Either the root's part is read before the waves wherever the requests'
+  world will watch it, or the world watches it before they start.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
