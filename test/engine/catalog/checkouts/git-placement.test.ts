@@ -140,8 +140,10 @@ describe("every other folder, and every worktree whose files Git might read othe
     linkFolder(join(main, "src"), join(root, "into-checkout"));
     linkFolder(join(root, "outside"), join(main, "out-of-checkout"));
 
-    const folders = [join(root, "into-checkout"), join(main, "out-of-checkout"), join(root, "outside"), join(root, "gone")];
+    const folders = [join(root, "into-checkout"), join(main, "out-of-checkout"), join(root, "gone")];
     expect(expectGitsAnswers(...folders)).toBe(folders.length);
+    // A plain folder with no Git folder in it or above it is answered as Git would, with no Git process (outsideGit).
+    expect(expectGitsAnswers(join(root, "outside"))).toBe(0);
   });
 
   it("a worktree moved by hand, one whose HEAD Git has not written yet, and one whose repository sets an extension", async () => {
