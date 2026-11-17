@@ -1,1 +1,1 @@
-Rerail now checks a Claude Code edit that a busy Rerail took up only after the tool had written the file, once the session's code rules are open, wherever Claude Code's result tells what the file held before the write. It used to see no change and check nothing.
+Rerail now checks a Claude Code edit whose call a busy Rerail took up only after the tool wrote the file, once the session's code rules are open, wherever Claude Code's result tells what the file held before; it used to check nothing. A new file a formatter changed before Rerail took up its call is still not checked.
