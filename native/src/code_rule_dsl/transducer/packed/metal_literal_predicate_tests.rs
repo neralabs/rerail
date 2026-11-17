@@ -127,7 +127,6 @@ fn finite_literals_filter_before_witness_limits_across_register_and_dynamic_bran
 }
 
 #[test]
-#[ignore = "Q22: the packed Metal JIT refuses this batch (BackendCapacity) where the CPU interpreter runs it"]
 fn finite_literal_register_work_stays_broad_across_programs_and_files() {
     let programs = [
         program(b"#KEEP", false, 0),

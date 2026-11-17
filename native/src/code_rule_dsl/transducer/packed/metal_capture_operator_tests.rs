@@ -602,7 +602,6 @@ fn shared_capture_pairs_apply_negation_before_any_or_all_and_zip_occurrences() {
 }
 
 #[test]
-#[ignore = "Q22: the packed Metal JIT refuses this batch (BackendCapacity) where the CPU interpreter runs it"]
 fn shared_ancestor_sets_exclude_self_cross_scan_groups_and_file_boundaries() {
     let language = SupportLang::Python.get_ts_language();
     let call = language.id_for_node_kind("call", true);

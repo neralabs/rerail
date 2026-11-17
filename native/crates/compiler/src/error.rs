@@ -15,6 +15,9 @@ pub enum Error {
     /// A task stopped at its budget, below the ceiling (`WorkBudget::Replan`): unfinished, not failed. Its
     /// evaluation is replanned and restarted (decision 0334).
     OverBudget,
+    /// A task ran out of a state quota sized from its predicted steps, below the worst case's: unfinished, not
+    /// failed. Its evaluation restarts with twice the states (decision 0334 §9).
+    StatesOutgrown,
     UnsupportedPattern,
     UnsupportedFeature(&'static str),
     UnknownNodeKind(String),

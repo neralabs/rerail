@@ -24,6 +24,7 @@ pub mod forms;
 pub mod kernel;
 pub mod lanes;
 pub mod price;
+pub mod program_steps;
 pub mod rows;
 pub mod score;
 pub mod stream;

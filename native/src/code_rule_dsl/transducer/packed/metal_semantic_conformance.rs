@@ -20,7 +20,7 @@ pub(super) fn metal_packed(
     anchors: &[Vec<Vec<u32>>],
     result_limits: Option<&[u32]>,
 ) -> Result<PackedExecution, Error> {
-    device::matcher().ok_or(Error::UnsupportedBackend)?.execute_packed(device::Engine::Jit, programs, files, anchors, result_limits, crate::code_rule_dsl::transducer::packed::WorkBudget::current())
+    device::matcher().ok_or(Error::UnsupportedBackend)?.execute_packed(device::Engine::Jit, programs, files, anchors, result_limits, crate::code_rule_dsl::transducer::packed::Budget::current())
 }
 
 #[cfg(test)]
@@ -145,7 +145,6 @@ fn pinned_corpus_optional_body_and_injection_differential() {
 }
 
 #[test]
-#[ignore = "Q22: the packed Metal JIT refuses this batch (BackendCapacity) where the CPU interpreter runs it"]
 fn corpus_optional_test_bodies_and_regex_injections_match_cpu() {
     let queries = [
         r#"((function_definition name: (identifier) @_name body: (block)? @test.inside) @test.around (#match? @_name "^test_"))"#,
@@ -510,7 +509,6 @@ fn retained_repeat_errors_preserve_exact_public_operand_pcs() {
 pub mod retained_grid_runtime {
     use super::*;
     #[test]
-    #[ignore = "Q22: the packed Metal JIT refuses this batch (BackendCapacity) where the CPU interpreter runs it"]
     fn inputs_bounded_page_plan_continues_after_its_descriptor_ring_is_full() {
         let program = Program::new(
             vec![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
@@ -556,7 +554,7 @@ pub mod retained_grid_runtime {
         assert_fixture(&programs, &files, &anchors);
     }
     #[test]
-    #[ignore = "Q22: the packed Metal JIT refuses this batch (BackendCapacity) where the CPU interpreter runs it"]
+    #[ignore = "Q22: Metal finds other results than the CPU interpreter, which the CPU JIT agrees with (hidden behind a capacity refusal until 0334 §9)"]
     fn inputs_nested_optional_type_captures_preserve_raw_candidate_ordinals() {
         let query = "(type (_ [(identifier) (none)]? @type (_ [(identifier) (none)]? @type (_ [(identifier) (none)]? @type (_ [(identifier) (none)]? @type)))))";
         let programs = [Program::compile_tree_sitter_query_pattern(
@@ -599,7 +597,7 @@ pub mod retained_grid_runtime {
         }
     }
     #[test]
-    #[ignore = "Q22: the packed Metal JIT refuses this batch (BackendCapacity) where the CPU interpreter runs it"]
+    #[ignore = "Q22: Metal finds other results than the CPU interpreter, which the CPU JIT agrees with (hidden behind a capacity refusal until 0334 §9)"]
     fn inputs_compact_stage_capture_predicates_use_the_correct_capture_generation() {
         let language = SupportLang::Python.get_ts_language();
         let module = language.id_for_node_kind("module", true);
@@ -1363,7 +1361,6 @@ pub mod retained_grid_runtime {
         }
     }
     #[test]
-    #[ignore = "Q22: the packed Metal JIT refuses this batch (BackendCapacity) where the CPU interpreter runs it"]
     fn inputs_small_automata_defer_long_inputs_into_shared_value_frontiers() {
         let language = SupportLang::Python.get_ts_language();
         let mut programs = [
@@ -1413,7 +1410,6 @@ pub mod retained_grid_runtime {
         assert_fixture(&programs, &files, &anchors);
     }
     #[test]
-    #[ignore = "Q22: the packed Metal JIT refuses this batch (BackendCapacity) where the CPU interpreter runs it"]
     fn inputs_shared_root_predicates_intern_values_and_need_no_frontier_records() {
         let language = SupportLang::Python.get_ts_language();
         let queries = [
@@ -1663,7 +1659,6 @@ pub mod retained_grid_runtime {
         assert_fixture(&programs, &files, &anchors);
     }
     #[test]
-    #[ignore = "Q22: the packed Metal JIT refuses this batch (BackendCapacity) where the CPU interpreter runs it"]
     fn inputs_compact_stage_capturing_sibling_closures_preserve_maximal_prefixes() {
         let patterns = [
             "(module ((comment) @item)+)",
@@ -1729,7 +1724,6 @@ pub mod retained_grid_runtime {
         }
     }
     #[test]
-    #[ignore = "Q22: the packed Metal JIT refuses this batch (BackendCapacity) where the CPU interpreter runs it"]
     fn inputs_compact_stage_query_large_values_follow_maximal_capture_selection() {
         let pattern = "x".repeat(80);
         let queries = [
@@ -2652,7 +2646,6 @@ pub mod retained_grid_runtime {
         assert_fixture(&programs, &files, &anchors);
     }
     #[test]
-    #[ignore = "Q22: the packed Metal JIT refuses this batch (BackendCapacity) where the CPU interpreter runs it"]
     fn inputs_bounded_semantic_ranges_preserve_late_failures_limits_and_raw_order() {
         let language = SupportLang::Python.get_ts_language();
         let failing = Program::new(
@@ -2854,7 +2847,6 @@ pub mod retained_grid_runtime {
         assert_fixture(&programs, &files, &anchors);
     }
     #[test]
-    #[ignore = "Q22: the packed Metal JIT refuses this batch (BackendCapacity) where the CPU interpreter runs it"]
     fn inputs_bounded_paths_keep_unique_children_in_registers_and_branching_children_in_frontiers()
     {
         let language = SupportLang::Python.get_ts_language();
@@ -2985,7 +2977,6 @@ pub mod retained_grid_runtime {
         assert_fixture(std::slice::from_ref(&program), &files, &anchors);
     }
     #[test]
-    #[ignore = "Q22: the packed Metal JIT refuses this batch (BackendCapacity) where the CPU interpreter runs it"]
     fn inputs_adaptive_pages_retry_from_the_last_published_checkpoint_without_duplicates() {
         let call = SupportLang::Python
             .get_ts_language()
@@ -3253,7 +3244,7 @@ pub mod retained_grid_frontier_runtime {
         assert_fixture(&programs, &files, &anchors);
     }
     #[test]
-    #[ignore = "Q22: the packed Metal JIT refuses this batch (BackendCapacity) where the CPU interpreter runs it"]
+    #[ignore = "Q22: Metal finds other results than the CPU interpreter, which the CPU JIT agrees with (hidden behind a capacity refusal until 0334 §9)"]
     fn inputs_compact_stage_waves_match_cpu_navigation_and_control_flow() {
         let programs = vec![
             program(vec![
@@ -3415,7 +3406,6 @@ pub mod retained_grid_frontier_runtime {
         }
     }
     #[test]
-    #[ignore = "Q22: the packed Metal JIT refuses this batch (BackendCapacity) where the CPU interpreter runs it"]
     fn inputs_absent_field_uses_shared_facts_for_wide_and_file_local_inputs() {
         let wide = (0..130)
             .map(|i| format!("item_{i} = value\n"))
@@ -4077,13 +4067,21 @@ fn long_interpolated_query_oracles(complete_cpu: bool, metal: bool) {
     }
 }
 
-/// Decision 0334: a badly planned evaluation (a budget of its estimate alone, where a long string's regex costs
-/// far more than a small root's estimate, as Q19's clause) stops over its budget, is restarted with twice the
-/// budget until it finishes, and gives the full budget's results, on the CPU JIT and on Metal.
+/// The program's cost as the store would give it badly: a rate of almost nothing, so every task is predicted
+/// `MIN_PREDICTED` steps (decision 0334's misprediction).
+fn mispredict(program: &Program) {
+    use crate::code_rule_dsl::transducer::packed::evaluation_costs::{self, Rate};
+    evaluation_costs::install([(program.plain_digest().to_owned(), Rate { steps_per_unit: 1e-6, samples: 1 })].into_iter().collect());
+}
+
+/// Decision 0334: a badly predicted evaluation (a long string's regex, as Q19's clause, under a rate of almost
+/// nothing) stops over its step budget, is restarted with twice the budget until it finishes, and gives the worst
+/// case's results, on the CPU JIT and on Metal. Its runs are observed for the cost store: the over-budget run as a
+/// misprediction, the finished one with its steps.
 #[test]
 fn a_misplanned_evaluation_is_restarted_and_gives_the_full_budgets_results() {
     use crate::code_rule_dsl::transducer::packed::{
-        CAPTURE, EMIT, PlanId, TEXT, TextPredicate, WorkBudget, execute_planned_budgeted,
+        Budget, CAPTURE, EMIT, PlanId, TEXT, TextPredicate, WorkBudget, evaluation_costs, execute_planned_budgeted,
     };
     let source = format!("x = '{}'\ny = 'short b'\n", "a".repeat(40_000));
     let files = [tape(&source)];
@@ -4098,17 +4096,50 @@ fn a_misplanned_evaluation_is_restarted_and_gives_the_full_budgets_results() {
     .unwrap()];
     let anchors = [vec![(0..files[0].transducer_len() as u32).collect::<Vec<_>>()]];
     let plan = PlanId::of_programs(&programs);
-    let misplanned = WorkBudget::Replan { slack: 1, doublings: 0 };
+    mispredict(&programs[0]);
+    evaluation_costs::keep(true);
+    let misplanned = Budget { work: WorkBudget::Replan { slack: 1, doublings: 0 }, states: Some(0) };
     for backend in [ExecutionBackend::CpuJit, ExecutionBackend::MetalJit] {
-        let full = execute_planned_budgeted(backend, plan, &programs, &files, &anchors, None, WorkBudget::Full)
+        let full = execute_planned_budgeted(backend, plan, &programs, &files, &anchors, None, Budget::worst())
             .and_then(|execution| execution.into_outcome())
             .map(|outcome| (outcome.outputs, outcome.errors))
             .unwrap();
         assert_eq!(full.1, [vec![None]], "{backend:?}");
         assert!(!full.0[0][0].is_empty(), "{backend:?}");
+        let _ = evaluation_costs::drain();
         let replanned = execute_planned_budgeted(backend, plan, &programs, &files, &anchors, None, misplanned).unwrap();
         assert!(replanned.restarted_evaluations() > 0, "{backend:?}: the misplanned evaluation stops over its budget");
         let replanned = replanned.into_outcome().map(|outcome| (outcome.outputs, outcome.errors)).unwrap();
         assert_eq!(replanned, full, "{backend:?}");
+        let (observed, _) = evaluation_costs::drain();
+        assert!(observed.iter().any(|o| o.over_budget), "{backend:?}: the misprediction is observed: {observed:?}");
+        let finished = observed.iter().find(|o| !o.over_budget).expect("the finished run is observed");
+        assert!(finished.steps > finished.predicted, "{backend:?}: {finished:?}");
+    }
+}
+
+/// Decision 0334 §9: states sized from a task's size (`STATES_PER_UNIT` a node) run out where every node gives eight
+/// results (three forks before the emit); the evaluation restarts with twice the states until it fits, and gives the
+/// worst case's results, on the CPU JIT and on Metal.
+#[test]
+fn outgrown_states_restart_and_give_the_worst_cases_results() {
+    use crate::code_rule_dsl::transducer::packed::{Budget, PlanId, WorkBudget, execute_planned_budgeted};
+    let source = "a = 1\n".repeat(800);
+    let files = [tape(&source)];
+    let words = vec![word(DESCEND, 0, 0), word(FORK, 0, 2), word(FORK, 0, 3), word(FORK, 0, 4), word(EMIT, 0, 0)];
+    let programs = [Program::new(words, vec![b"match".to_vec()], Vec::new(), vec![0], Vec::new()).unwrap()];
+    let anchors = [vec![vec![0]]];
+    let plan = PlanId::of_programs(&programs);
+    for backend in [ExecutionBackend::CpuJit, ExecutionBackend::MetalJit] {
+        let worst = execute_planned_budgeted(backend, plan, &programs, &files, &anchors, None, Budget::worst())
+            .and_then(|execution| execution.into_outcome())
+            .map(|outcome| (outcome.outputs, outcome.errors))
+            .unwrap();
+        assert_eq!(worst.1, [vec![None]], "{backend:?}");
+        assert!(worst.0[0][0].len() > 4 * files[0].transducer_len(), "{backend:?}: {}", worst.0[0][0].len());
+        let sized = execute_planned_budgeted(backend, plan, &programs, &files, &anchors, None, Budget { work: WorkBudget::Full, states: Some(0) }).unwrap();
+        assert!(sized.restarted_evaluations() > 0, "{backend:?}: the predicted states run out");
+        let sized = sized.into_outcome().map(|outcome| (outcome.outputs, outcome.errors)).unwrap();
+        assert_eq!(sized, worst, "{backend:?}");
     }
 }

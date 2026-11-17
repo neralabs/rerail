@@ -117,6 +117,19 @@ pub struct PackedBatch {
     /// Each program's result limit (`assign_workspace_with_result_limits`), empty for none: a selection of the
     /// evaluation's first results in their order, made as the page is compacted, never a capacity.
     pub(super) result_limits: Vec<u32>,
+    /// Each task's size and predicted steps, and its states in the worst case (decision 0334), host-side: what its
+    /// budgets are made from (`apply_budget`). Empty for a resident batch's.
+    pub(super) sizing: Vec<TaskSizing>,
+}
+
+/// A task's size and predicted steps (`evaluation_costs`), and its states of each kind in the worst case: the
+/// workspace formula (its subtree, or file where the program repeats, times its words times 4,096, within [4,096,
+/// 2^26]), capped as `task_capacities` caps it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct TaskSizing {
+    pub size: u64,
+    pub predicted: u64,
+    pub worst: u32,
 }
 
 fn checked_u32(value: usize) -> Result<u32, Error> {
@@ -128,6 +141,9 @@ fn global_node(base: u32, node: Option<u32>) -> Result<u32, Error> {
         base.checked_add(node).ok_or(Error::BackendFailure)
     })
 }
+
+/// A task's states of each kind at most, where the batch has no `state_cap`.
+const MAX_STATES_PER_KIND: u32 = 65_536;
 
 const DURABLE_RESULT_PAGE_CAPACITY: u32 = 4_194_304;
 const DURABLE_CAPTURE_PAGE_CAPACITY: u32 = 8_388_608;
@@ -217,10 +233,35 @@ impl PackedBatch {
         Self::build_tapes(programs, files, anchors, true, Layout::Resident)
     }
 
-    /// Every task's budget from its workspace estimate (decision 0334): the batch as `budget` runs it.
-    pub fn apply_budget(&mut self, budget: super::WorkBudget) {
-        for task in &mut self.tasks {
-            task.work_limit = budget.task_limit(task.workspace_work_estimate);
+    /// Every task's budgets (decision 0334): the batch as `budget` runs it. Its steps (`work_limit`) from its
+    /// predicted steps, and its states (`workspace_work_estimate`, which sizes them) from its size.
+    pub fn apply_budget(&mut self, budget: super::Budget, growth: &super::StateGrowth) {
+        for (task, sizing) in self.tasks.iter_mut().zip(&self.sizing) {
+            task.work_limit = budget.work.task_limit(sizing.predicted);
+            let root = task.root - self.files[task.file as usize].node_start;
+            let grown = if growth.is_empty() { 0 } else { growth.get(&(task.file as usize, task.program as usize, root)).copied().unwrap_or(0) };
+            task.workspace_work_estimate = budget.task_states(sizing.size, sizing.worst, grown);
+        }
+    }
+
+    /// A task's states of each kind as its workspace holds them (`task_capacities`).
+    fn task_state_capacity(&self, task: &BatchTask) -> u32 {
+        task.workspace_work_estimate.min(self.state_cap.unwrap_or(MAX_STATES_PER_KIND))
+    }
+
+    /// Task `at`'s status as its evaluation's error (`status_error`), where a state quota run out below the worst
+    /// case's states is `StatesOutgrown`: unfinished, restarted with twice the states (decision 0334 §9).
+    pub(super) fn task_error(&self, at: usize, status: &TaskStatus) -> Option<Error> {
+        let task = &self.tasks[at];
+        match status_error(status, task.work_limit) {
+            Some(Error::BackendCapacity)
+                if self.sizing.get(at).is_some_and(|sizing| {
+                    self.task_state_capacity(task) < sizing.worst.min(self.state_cap.unwrap_or(MAX_STATES_PER_KIND))
+                }) =>
+            {
+                Some(Error::StatesOutgrown)
+            }
+            other => other,
         }
     }
 
@@ -566,6 +607,12 @@ impl PackedBatch {
         }
         drop(stage);
         let _tasks = crate::code_rule_dsl::prof::Stage::start("batch.tasks");
+        // Each program's measured steps per unit of size, from the cost store: read once a batch.
+        let rates = if materialize_tasks {
+            programs.iter().map(|program| super::evaluation_costs::rate(program.plain_digest())).collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         for (file, file_anchors) in anchors.iter().enumerate() {
             for (program, roots) in file_anchors.iter().enumerate() {
                 if roots.windows(2).any(|pair| pair[0] >= pair[1]) {
@@ -602,13 +649,16 @@ impl PackedBatch {
                         .saturating_mul(4_096)
                         .clamp(4_096, MAX_WORK_PER_TASK as u64)
                         as u32;
+                    let size = super::evaluation_costs::size(&programs[program], scoped_nodes, span.end.saturating_sub(span.start) as u32);
+                    let predicted = super::evaluation_costs::predict(&programs[program], rates[program], size);
+                    batch.sizing.push(TaskSizing { size, predicted, worst: workspace_work_estimate });
                     batch.tasks.push(BatchTask {
                         batch_ordinal: ordinal,
                         file: checked_u32(file)?,
                         program: checked_u32(program)?,
                         root,
                         workspace_work_estimate,
-                        work_limit: budget.task_limit(workspace_work_estimate),
+                        work_limit: budget.task_limit(predicted),
                         ..BatchTask::default()
                     });
                 }
@@ -838,7 +888,7 @@ impl PackedBatch {
                     if operations == 0 {
                         0
                     } else {
-                        task.workspace_work_estimate.min(self.state_cap.unwrap_or(65_536))
+                        self.task_state_capacity(task)
                     }
                 };
                 let pending_states = work_capacity(facts.pending_operations);
@@ -992,12 +1042,13 @@ impl PackedBatch {
             evaluation.workspace_work_estimate = match budget {
                 // The label sweep is not replanned yet: under `Replan` it runs as `Full`.
                 super::WorkBudget::Full | super::WorkBudget::Replan { .. } => super::MAX_WORK_PER_TASK as u32,
-                super::WorkBudget::Estimate => checked_u32(program.words.len().saturating_mul(4_096).min(0x7fff_ffff))? | u32::from(repeats) << 31,
             };
+            let _ = (program, repeats);
             start += spec[4];
         }
         self.tasks.clear();
         self.root_spans.clear();
+        self.sizing.clear();
         self.header.task_count = total;
         Ok(totals)
     }
@@ -1481,21 +1532,64 @@ fn grid_result_failure() -> Error {
 }
 
 impl PackedExecution {
-    /// The (file, program) evaluations a task of which stopped at its budget, below the ceiling (decision 0334):
-    /// unfinished, to be replanned.
-    pub(super) fn over_budget(&self) -> Vec<(usize, usize)> {
+    /// The (file, program) evaluations a task of which stopped at its step budget or ran out of its states, below
+    /// the ceilings (decision 0334): unfinished, to be restarted (`restarting`), and why.
+    pub(super) fn unfinished(&self) -> Vec<(usize, usize, super::Unfinished)> {
         let Ok(page) = self.single_page() else {
             return Vec::new();
         };
-        let mut found = Vec::new();
-        for (task, status) in self.batch.tasks.iter().zip(&page.statuses) {
+        let mut found: Vec<(usize, usize, super::Unfinished)> = Vec::new();
+        for (index, (task, status)) in self.batch.tasks.iter().zip(&page.statuses).enumerate() {
+            let (work, outgrown) = match self.batch.task_error(index, status) {
+                Some(Error::OverBudget) => (true, None),
+                Some(Error::StatesOutgrown) => (false, Some(task.root - self.batch.files[task.file as usize].node_start)),
+                _ => continue,
+            };
             let at = (task.file as usize, task.program as usize);
-            if matches!(status_error(status, task.work_limit), Some(Error::OverBudget)) && found.last() != Some(&at) {
-                found.push(at);
+            if found.last().is_none_or(|(file, program, _)| (*file, *program) != at) {
+                found.push((at.0, at.1, super::Unfinished::default()));
+            }
+            let seen = &mut found.last_mut().expect("pushed").2;
+            seen.work |= work;
+            seen.outgrown.extend(outgrown);
+        }
+        found
+    }
+
+    /// Each evaluation's run, for the cost store (`evaluation_costs`): the steps its tasks took (at least the budget
+    /// where one stopped over it), its size and its prediction. Evaluations that measured no steps (the
+    /// interpreter's) and restarted ones (their restart's run counts) are left out.
+    pub(super) fn observations(&self, programs: &[Program]) -> Vec<super::evaluation_costs::Observation> {
+        let Ok(page) = self.single_page() else {
+            return Vec::new();
+        };
+        let mut found: Vec<((u32, u32), super::evaluation_costs::Observation)> = Vec::new();
+        for (index, (task, status)) in self.batch.tasks.iter().zip(&page.statuses).enumerate() {
+            let Some(sizing) = self.batch.sizing.get(index) else { break };
+            let error = self.batch.task_error(index, status);
+            let over_budget = matches!(error, Some(Error::OverBudget));
+            if error.is_some() && !over_budget {
+                continue;
+            }
+            let steps = u64::from(if over_budget { task.work_limit } else { status.reserved & 0x7fff_ffff });
+            let at = (task.file, task.program);
+            match found.last_mut() {
+                Some((seen, observation)) if *seen == at => {
+                    observation.steps += steps;
+                    observation.size += sizing.size;
+                    observation.predicted += sizing.predicted;
+                    observation.over_budget |= over_budget;
+                }
+                _ => found.push((at, super::evaluation_costs::Observation {
+                    program: programs.get(task.program as usize).map_or_else(String::new, |program| program.plain_digest().to_owned()),
+                    steps,
+                    size: sizing.size,
+                    predicted: sizing.predicted,
+                    over_budget,
+                })),
             }
         }
-        found.dedup();
-        found
+        found.into_iter().map(|(_, observation)| observation).filter(|observation| observation.steps > 0 && !observation.program.is_empty()).collect()
     }
 
     /// This execution with `evaluations` taken from `restarted`: the same programs and files, run again for those
@@ -1892,7 +1986,8 @@ impl PackedExecution {
                 [record.task_start as usize..(record.task_start + record.task_count) as usize];
             let tasks = &self.batch.tasks
                 [record.task_start as usize..(record.task_start + record.task_count) as usize];
-            if let Some(error) = statuses.iter().zip(tasks).find_map(|(status, task)| status_error(status, task.work_limit)) {
+            let first = record.task_start as usize;
+            if let Some(error) = statuses.iter().zip(tasks).enumerate().find_map(|(at, (status, _))| self.batch.task_error(first + at, status)) {
                 return Ok((Vec::new(), Some(error)));
             }
         }
@@ -2617,8 +2712,8 @@ impl PackedResultPage {
         let mut errors = (0..batch.files.len())
             .map(|_| batch.programs.iter().map(|_| None).collect::<Vec<_>>())
             .collect::<Vec<_>>();
-        for (task, status) in batch.tasks.iter().zip(&self.statuses) {
-            if let Some(error) = status_error(status, task.work_limit) {
+        for (index, (task, status)) in batch.tasks.iter().zip(&self.statuses).enumerate() {
+            if let Some(error) = batch.task_error(index, status) {
                 errors[task.file as usize][task.program as usize].get_or_insert(error);
                 outputs[task.file as usize][task.program as usize].clear();
                 continue;
@@ -2735,8 +2830,8 @@ impl PackedBatch {
         let mut errors = (0..self.files.len())
             .map(|_| self.programs.iter().map(|_| None).collect::<Vec<_>>())
             .collect::<Vec<_>>();
-        for (task, status) in packed.batch.tasks.iter().zip(packed.statuses) {
-            if let Some(error) = status_error(status, task.work_limit) {
+        for (index, (task, status)) in packed.batch.tasks.iter().zip(packed.statuses).enumerate() {
+            if let Some(error) = packed.batch.task_error(index, status) {
                 errors[task.file as usize][task.program as usize].get_or_insert(error);
                 outputs[task.file as usize][task.program as usize].clear();
                 continue;

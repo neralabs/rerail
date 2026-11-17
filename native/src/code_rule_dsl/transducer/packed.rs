@@ -147,6 +147,7 @@ pub mod block_plan;
 #[cfg(test)]
 pub mod block_plan_tests;
 pub mod value_packing;
+pub mod evaluation_costs;
 
 // The transducer's word program and its opcodes, the compiler crate's (`rerail_compiler::program`).
 use rerail_compiler::program::*;
@@ -155,43 +156,43 @@ pub const MAX_FINITE_JOB_INSTRUCTIONS: usize = 256;
 pub const MAX_STEPS_PER_PATH: usize = 1 << 20;
 pub const MAX_WORK_PER_TASK: usize = 1 << 26;
 
-/// What a task may spend before it stops (decision 0334), on the device and on the CPU JIT alike. The workspace
-/// estimate sizes a task's states either way; the budget alone stops it.
+/// What a task may spend before it stops (decision 0334), on the device and on the CPU JIT alike.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorkBudget {
-    /// The CPU's limits: `MAX_WORK_PER_TASK` a task, `MAX_STEPS_PER_PATH` a path. A task runs past its estimate, and
-    /// its results are the CPU's. The default.
+    /// The CPU's limits: `MAX_WORK_PER_TASK` a task, `MAX_STEPS_PER_PATH` a path. A task runs past its prediction,
+    /// and its results are the CPU's. The default.
     Full,
-    /// The workspace estimate: a task stops at it (`WorkLimit`), where the CPU's may run on. `RERAIL_DEVICE_BUDGET=estimate`.
-    /// Kept until `Replan` is the default; it changes results.
-    Estimate,
-    /// The estimate times `slack`, doubled `doublings` times, below the ceiling. A task past it stops `OverBudget`,
-    /// unfinished: its evaluation is replanned (`execute_planned`) and restarted with twice the budget, never an error
-    /// until the ceiling. Results are `Full`'s. `RERAIL_DEVICE_BUDGET=replan`.
+    /// The task's predicted steps (`evaluation_costs::predict`) times `slack`, doubled `doublings` times, below the
+    /// ceiling. A task past it stops `OverBudget`, unfinished: its evaluation is replanned (`execute_planned`), never
+    /// an error until the ceiling. Results are `Full`'s. `RERAIL_DEVICE_BUDGET=replan`.
     Replan { slack: u32, doublings: u32 },
 }
 
-/// A replanned budget's slack over the estimate: a well-planned task never reaches it.
+/// A replanned budget's slack over the prediction: a well-predicted task never reaches it.
 pub const REPLAN_SLACK: u32 = 8;
+/// A task's states of each kind per unit of its size (its nodes, and its text's bytes over eight): the paths, captures
+/// and results a task holds follow the nodes it reaches, not its program's words (a query's many words fail fast at
+/// most nodes). A task that holds more restarts with twice the states (decision 0334 §9).
+pub const STATES_PER_UNIT: u64 = 4;
+/// A task's states of each kind at least.
+pub const MIN_STATES: u64 = 512;
 
 impl WorkBudget {
-    /// The process's budget: `RERAIL_DEVICE_BUDGET` (`full`, the default, `estimate` or `replan`).
+    /// The process's budget: `RERAIL_DEVICE_BUDGET` (`full`, the default, or `replan`).
     pub fn current() -> Self {
         match std::env::var("RERAIL_DEVICE_BUDGET").as_deref() {
-            Ok("estimate") => Self::Estimate,
             Ok("replan") => Self::Replan { slack: REPLAN_SLACK, doublings: 0 },
             _ => Self::Full,
         }
     }
 
-    /// A task's budget from its workspace estimate.
-    pub fn task_limit(self, estimate: u32) -> u32 {
+    /// A task's budget from its predicted steps.
+    pub fn task_limit(self, predicted: u64) -> u32 {
         let ceiling = MAX_WORK_PER_TASK as u64;
         match self {
             Self::Full => ceiling as u32,
-            Self::Estimate => estimate,
             Self::Replan { slack, doublings } => {
-                let base = (u64::from(estimate & 0x7fff_ffff) * u64::from(slack.max(1))).max(1);
+                let base = predicted.saturating_mul(u64::from(slack.max(1))).max(1);
                 base.checked_shl(doublings).filter(|limit| *limit < ceiling).unwrap_or(ceiling) as u32
             }
         }
@@ -208,6 +209,113 @@ impl WorkBudget {
     pub fn replans(self) -> bool {
         matches!(self, Self::Replan { .. })
     }
+}
+
+/// A batch's budgets (decision 0334): a task's steps (`work`), from its predicted steps (`evaluation_costs::predict`),
+/// and its states, from its size. An evaluation that outgrows either is unfinished, never failed: it
+/// restarts with twice as much (`restarting`), up to the ceilings. Steps are bounded under `WorkBudget::Replan`
+/// (`OverBudget`); states whenever they are predicted (`StatesOutgrown`). So neither changes results.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Budget {
+    pub work: WorkBudget,
+    /// A task's states of each kind: `Some(d)`, its size times `STATES_PER_UNIT` (at least `MIN_STATES`), doubled `d` times; `None`,
+    /// the worst case (the workspace formula, `PackedBatch::new_in_place`), for a run that cannot restart.
+    pub states: Option<u32>,
+}
+
+impl Budget {
+    /// The process's step budget, and states as predicted: what a run that restarts takes.
+    pub fn current() -> Self {
+        Self { work: WorkBudget::current(), states: Some(0) }
+    }
+
+    /// The ceilings: no step budget, states for the worst case. A run that does not restart.
+    pub fn worst() -> Self {
+        Self { work: WorkBudget::Full, states: None }
+    }
+
+    /// A task's states of each kind, doubled `grown` more times where the task outgrew them (`StateGrowth`): the
+    /// worst case's (`worst`) where none are predicted, else at most it.
+    pub fn task_states(self, size: u64, worst: u32, grown: u32) -> u32 {
+        match self.states {
+            None => worst,
+            Some(doublings) => size
+                .saturating_mul(STATES_PER_UNIT)
+                .max(MIN_STATES)
+                .checked_shl(doublings + grown)
+                .unwrap_or(u64::MAX)
+                .min(u64::from(worst)) as u32,
+        }
+    }
+
+    pub fn with_more_work(self) -> Self {
+        Self { work: self.work.doubled(), ..self }
+    }
+
+}
+
+/// What made an evaluation unfinished (decision 0334): a task's steps past its budget, or the roots whose tasks ran
+/// out of their states.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Unfinished {
+    pub work: bool,
+    pub outgrown: Vec<u32>,
+}
+
+/// The tasks whose states grew in a restart (decision 0334 §9): (file, program, root within its file) to how many
+/// times they doubled. Only a task that ran out grows: its evaluation's other tasks keep their size.
+pub type StateGrowth = std::collections::BTreeMap<(usize, usize, u32), u32>;
+
+/// Runs a packed batch with `budget` (`once`), and restarts its unfinished evaluations alone, with the same programs
+/// and files (so the same compiled binding): twice the step budget where a task ran over it, twice the states for
+/// each task that ran out of them (`StateGrowth`), until each finishes or reaches a ceiling (`WorkLimit`,
+/// `BackendCapacity`, as `Budget::worst` gives). Restarts begin again from the roots, never from the stopped state;
+/// their results stand for the evaluations' (`PackedExecution::with_restarted`), so every budget gives the worst
+/// case's results. Each run's evaluations are observed for the cost store (`evaluation_costs`).
+pub fn restarting(
+    programs: &[Program],
+    anchors: &[Vec<Vec<u32>>],
+    budget: Budget,
+    once: &mut dyn FnMut(&[Vec<Vec<u32>>], Budget, &StateGrowth) -> Result<packed_batch::PackedExecution, Error>,
+) -> Result<packed_batch::PackedExecution, Error> {
+    restarting_grown(programs, anchors, budget, &StateGrowth::new(), once)
+}
+
+fn restarting_grown(
+    programs: &[Program],
+    anchors: &[Vec<Vec<u32>>],
+    budget: Budget,
+    growth: &StateGrowth,
+    once: &mut dyn FnMut(&[Vec<Vec<u32>>], Budget, &StateGrowth) -> Result<packed_batch::PackedExecution, Error>,
+) -> Result<packed_batch::PackedExecution, Error> {
+    let execution = once(anchors, budget, growth)?;
+    if evaluation_costs::keeping() {
+        evaluation_costs::observe(execution.observations(programs));
+    }
+    let unfinished = execution.unfinished();
+    if unfinished.is_empty() {
+        return Ok(execution);
+    }
+    let next = if unfinished.iter().any(|(_, _, why)| why.work) { budget.with_more_work() } else { budget };
+    let mut grown = growth.clone();
+    for (file, program, why) in &unfinished {
+        for &root in &why.outgrown {
+            *grown.entry((*file, *program, root)).or_default() += 1;
+        }
+    }
+    crate::code_rule_dsl::logic::profile::decision("evaluations over their budget, restarted with twice the budget (0334)", || {
+        format!("{} evaluations at {budget:?}", unfinished.len())
+    });
+    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+        eprintln!("TEMPO_PACKED_RESTART budget={budget:?} next={next:?} unfinished={unfinished:?}");
+    }
+    let mut rerun = anchors.iter().map(|file| vec![Vec::new(); file.len()]).collect::<Vec<_>>();
+    for &(file, program, _) in &unfinished {
+        rerun[file][program] = anchors[file][program].clone();
+    }
+    let restarted = restarting_grown(programs, &rerun, next, &grown, once)?;
+    let evaluations = unfinished.iter().map(|&(file, program, _)| (file, program)).collect::<Vec<_>>();
+    execution.with_restarted(restarted, &evaluations)
 }
 
 #[derive(Clone)]
@@ -4006,15 +4114,13 @@ pub fn execute_planned(
     anchors: &[Vec<Vec<u32>>],
     result_limits: Option<&[u32]>,
 ) -> Result<packed_batch::PackedExecution, Error> {
-    execute_planned_budgeted(backend, plan, programs, files, anchors, result_limits, WorkBudget::current())
+    execute_planned_budgeted(backend, plan, programs, files, anchors, result_limits, Budget::current())
 }
 
-/// [`execute_planned`] with each task held to `budget` (decision 0334). Under `WorkBudget::Replan`, an evaluation a
-/// task of which stops at its budget is unfinished, not failed: it is replanned here. The misprediction is recorded
-/// (the evaluation, its budget), and the evaluation restarts, alone, with twice the budget, until it finishes or
-/// reaches the ceiling (`WorkLimit`, which callers answer with another plan: W's matcher, `WaveRun::limited`).
-/// Restarts begin again from the roots, never from the stopped state. The restart keeps the plan (the same programs
-/// and files, so its compiled binding), and its results are the evaluation's: every budget gives `Full`'s.
+/// [`execute_planned`] with `budget` (decision 0334): an evaluation that outgrows its steps or states is unfinished,
+/// not failed, and the backend restarts it with twice as much (`restarting`), until it finishes or reaches a ceiling
+/// (`WorkLimit`, which callers answer with another plan: W's matcher, `WaveRun::limited`). Every budget gives the
+/// worst case's results.
 pub fn execute_planned_budgeted(
     backend: ExecutionBackend,
     plan: PlanId,
@@ -4022,25 +4128,9 @@ pub fn execute_planned_budgeted(
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],
     result_limits: Option<&[u32]>,
-    budget: WorkBudget,
+    budget: Budget,
 ) -> Result<packed_batch::PackedExecution, Error> {
-    let execution = execute_planned_once(backend, plan, programs, files, anchors, result_limits, budget)?;
-    if !budget.replans() {
-        return Ok(execution);
-    }
-    let unfinished = execution.over_budget();
-    if unfinished.is_empty() {
-        return Ok(execution);
-    }
-    crate::code_rule_dsl::logic::profile::decision("evaluations over their budget, restarted with twice the budget (0334)", || {
-        format!("{} evaluations at {budget:?}", unfinished.len())
-    });
-    let mut rerun = vec![vec![Vec::new(); programs.len()]; files.len()];
-    for &(file, program) in &unfinished {
-        rerun[file][program] = anchors[file][program].clone();
-    }
-    let restarted = execute_planned_budgeted(backend, plan, programs, files, &rerun, result_limits, budget.doubled())?;
-    execution.with_restarted(restarted, &unfinished)
+    execute_planned_once(backend, plan, programs, files, anchors, result_limits, budget)
 }
 
 fn execute_planned_once(
@@ -4050,7 +4140,7 @@ fn execute_planned_once(
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],
     result_limits: Option<&[u32]>,
-    budget: WorkBudget,
+    budget: Budget,
 ) -> Result<packed_batch::PackedExecution, Error> {
     if anchors.len() != files.len() || anchors.iter().any(|file| file.len() != programs.len()) {
         return Err(Error::InvalidAnchor);
@@ -4308,7 +4398,7 @@ pub fn execute_production_corpus(
         .map(|file| file.iter().map(|roots| roots.to_vec()).collect())
         .collect::<Vec<_>>();
     if let Some(device) = device::matcher() {
-        return device.execute_packed(device::Engine::Jit, programs, files, &anchors, Some(result_limits), WorkBudget::current());
+        return device.execute_packed(device::Engine::Jit, programs, files, &anchors, Some(result_limits), Budget::current());
     }
     execute_with_backend_packed_result_limits(ExecutionBackend::CpuJit, programs, files, &anchors, Some(result_limits))
 }

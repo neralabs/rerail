@@ -728,17 +728,30 @@ pub fn execute_packed_with_result_limits(
     anchors: &[Vec<Vec<u32>>],
     result_limits: Option<&[u32]>,
 ) -> Result<PackedExecution, Error> {
-    execute_packed_budgeted(engine, programs, files, anchors, result_limits, super::WorkBudget::current())
+    execute_packed_budgeted(engine, programs, files, anchors, result_limits, super::Budget::current())
 }
 
-/// The batch with each task held to `budget` (decision 0334): a task past it stops `OverBudget`.
+/// The batch with `budget` (decision 0334): an evaluation that outgrows its steps or states restarts with twice as
+/// much (`restarting`).
 pub fn execute_packed_budgeted(
     engine: &Engine,
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],
     result_limits: Option<&[u32]>,
-    budget: super::WorkBudget,
+    budget: super::Budget,
+) -> Result<PackedExecution, Error> {
+    super::restarting(programs, anchors, budget, &mut |anchors, budget, growth| execute_packed_once(engine, programs, files, anchors, result_limits, budget, growth))
+}
+
+fn execute_packed_once(
+    engine: &Engine,
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+    result_limits: Option<&[u32]>,
+    budget: super::Budget,
+    growth: &super::StateGrowth,
 ) -> Result<PackedExecution, Error> {
     let _evaluation = super::metal_backend::metal_execution_guard()?;
     if matches!(engine, Engine::Jit { programs: count, .. } if *count != programs.len()) {
@@ -751,36 +764,47 @@ pub fn execute_packed_budgeted(
         }
         error
     })?;
-    batch.apply_budget(budget);
+    batch.apply_budget(budget, growth);
     if batch.tasks.is_empty() {
         return Ok(PackedExecution::new(batch, PackedResultPage::empty()));
-    }
-    let totals = batch
-        .assign_workspace_with_result_limits_and_lanes(programs, result_limits, EXECUTION_LANES)
-        .map_err(|error| {
-            if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-                eprintln!("TEMPO_PACKED_BATCH_ERROR stage=workspace error={error:?}");
-            }
-            error
-        })?;
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-        eprintln!(
-            "TEMPO_PACKED_BATCH_PROFILE backend=metal programs={} tasks={} workspaceBytes={} totals={totals:?}",
-            programs.len(),
-            batch.tasks.len(),
-            batch.workspace_allocation_bytes(totals).unwrap_or(u64::MAX),
-        );
     }
     let allocation_started = std::time::Instant::now();
     let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     let queue = rerail_metal::queue()?;
-    let workspace = MetalWorkspaceLease::acquire(
-        device,
-        totals,
-        batch.header.scheduler_byte_count,
-        batch.header.workspace_byte_count,
-        batch.tasks.len(),
-    )?;
+    // Every lane reserves the widest evaluation's states: a workspace the pool refuses runs with half the lanes,
+    // down to one (decision 0334 §9). Fewer lanes run its tasks in fewer at a time; the results are the same.
+    let mut lanes = EXECUTION_LANES;
+    let (totals, workspace) = loop {
+        let totals = batch
+            .assign_workspace_with_result_limits_and_lanes(programs, result_limits, lanes)
+            .map_err(|error| {
+                if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+                    eprintln!("TEMPO_PACKED_BATCH_ERROR stage=workspace error={error:?}");
+                }
+                error
+            })?;
+        if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+            eprintln!(
+                "TEMPO_PACKED_BATCH_PROFILE backend=metal programs={} tasks={} lanes={lanes} workspaceBytes={} totals={totals:?}",
+                programs.len(),
+                batch.tasks.len(),
+                batch.workspace_allocation_bytes(totals).unwrap_or(u64::MAX),
+            );
+        }
+        match MetalWorkspaceLease::acquire(
+            device,
+            totals,
+            batch.header.scheduler_byte_count,
+            batch.header.workspace_byte_count,
+            batch.tasks.len(),
+        ) {
+            Err(Error::BackendCapacity) if lanes > 1 => {
+                crate::code_rule_dsl::prof::count("metal.fewer_lanes", 1);
+                lanes /= 2;
+            }
+            workspace => break (totals, workspace?),
+        }
+    };
     for evaluation in &mut batch.evaluations {
         evaluation.generation = workspace.generation;
     }
