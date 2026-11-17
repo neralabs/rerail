@@ -163,17 +163,22 @@ fn c_array(items: &[CString]) -> Vec<*mut libc::c_char> {
         .collect()
 }
 
+/// One socket pair for the child's descriptor `target`: this process's end, and the child's, given to it as `target`.
+fn stdio_pair(spawn: &mut Spawn, target: RawFd) -> io::Result<(OwnedFd, OwnedFd)> {
+    let (mine, child) = socket_pair()?;
+    let child = above_stdio(child)?;
+    spawn.give(&child, target)?;
+    Ok((mine, child))
+}
+
 /// The child's ends of its stdio, given to it as 0, 1 and 2; this process's ends, returned.
 fn stdio(spawn: &mut Spawn, pipe_stderr: bool) -> io::Result<(Vec<OwnedFd>, Vec<OwnedFd>)> {
-    let mut ours = Vec::new();
-    let mut theirs = Vec::new();
-    for target in 0..if pipe_stderr { 3 } else { 2 } {
-        let (mine, child) = socket_pair()?;
-        let child = above_stdio(child)?;
-        spawn.give(&child, target)?;
-        ours.push(mine);
-        theirs.push(child);
-    }
+    let piped: RawFd = if pipe_stderr { 3 } else { 2 };
+    let (ours, theirs) = (0..piped)
+        .map(|target| stdio_pair(spawn, target))
+        .collect::<io::Result<Vec<_>>>()?
+        .into_iter()
+        .unzip();
     if !pipe_stderr {
         spawn.null_stderr()?;
     }
@@ -215,6 +220,23 @@ fn wait_unreaped(pid: libc::pid_t) {
     }
 }
 
+/// `program` as a path, `program` and `args` as argv, and `env`: each as C strings, refused when one holds a NUL byte.
+fn c_strings(
+    program: &str,
+    args: &[String],
+    env: &[String],
+) -> io::Result<(CString, Vec<CString>, Vec<CString>)> {
+    let argv = std::iter::once(program)
+        .chain(args.iter().map(String::as_str))
+        .map(c_string)
+        .collect::<io::Result<_>>()?;
+    let envp = env
+        .iter()
+        .map(|entry| c_string(entry))
+        .collect::<io::Result<_>>()?;
+    Ok((c_string(program)?, argv, envp))
+}
+
 /// `program` started with `args` and `env`, its stdin and stdout (and stderr when `pipe_stderr`) on socket pairs:
 /// its pid and this process's ends, in that order. The child's ends are closed here once it has them.
 pub(super) fn spawn_child(
@@ -223,15 +245,7 @@ pub(super) fn spawn_child(
     env: &[String],
     pipe_stderr: bool,
 ) -> io::Result<(libc::pid_t, Vec<OwnedFd>)> {
-    let argv: Vec<CString> = std::iter::once(program)
-        .chain(args.iter().map(String::as_str))
-        .map(c_string)
-        .collect::<io::Result<_>>()?;
-    let envp: Vec<CString> = env
-        .iter()
-        .map(|entry| c_string(entry))
-        .collect::<io::Result<_>>()?;
-    let path = c_string(program)?;
+    let (path, argv, envp) = c_strings(program, args, env)?;
     let mut spawn = Spawn::new()?;
     let (ours, theirs) = stdio(&mut spawn, pipe_stderr)?;
     let mut pid: libc::pid_t = 0;
