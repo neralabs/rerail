@@ -475,6 +475,11 @@ function untakenTaker(stateFile: string | undefined, databasePath: string, store
   }, event));
 }
 
+/** The engine service's step before each event: taking what hooks left untaken first, for a daemon with a taker. */
+function takenBeforeEvents(untaken: UntakenEventTaker | undefined): { beforeEvent?: () => void } {
+  return untaken === undefined ? {} : { beforeEvent: () => untaken.take() };
+}
+
 export class RerailDaemon {
   readonly host: string;
   readonly port: number;
@@ -597,7 +602,7 @@ export class RerailDaemon {
         databasePath,
         workspaceRoot,
         accessToken,
-        ...(untaken === undefined ? {} : { beforeEvent: () => untaken.take() }),
+        ...takenBeforeEvents(untaken),
         worktreeWalks,
         ...sharedMergeAssist,
         // On Windows any local user can create the default pipe first; the engine then listens on a random name.
