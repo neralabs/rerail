@@ -443,6 +443,26 @@ at `a` would take first bytes from a kind the token marks name.
 
 Corpus: 204 the same, 287 refused, 0 differ.
 
+## Kotlin, step 18 (`18-objects.bitlex`)
+
+**Object literals.** `object : X() { … }` keeps `object` and `:` as leaves. A statement's
+`object` declares one, so the literal is told apart by a mask: an `object` before `:` or `{`,
+not after `companion`. The mask joins the shared mark `dotted`, since no expression holds a
+receiver.
+
+**Secondary constructors.** `constructor(…) : this(…) { … }` is a class member. The scanner lets
+a line that starts with `constructor` go on the line before only in a class's header (a primary
+constructor). So `goes` takes `constructor` only within `class_head`, from `class` to its `(`,
+`{` or `=`. In a body, the line break before it is a semicolon.
+
+**Destructuring.** `val (a, b) = p` is a `multi_variable_declaration`. Its `(` is a leaf of the
+lean tape; its `)` is not.
+
+Refused: `class A : I by d {`. The lean parser ends the delegate's expression before the body,
+while here `d {` is a call with a trailing lambda.
+
+Corpus: 221 the same, 270 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment

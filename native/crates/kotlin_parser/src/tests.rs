@@ -284,8 +284,17 @@ fn delegates_are_the_lean_parsers() {
     ]);
 }
 
+/// Step 18: object literals, secondary constructors, destructuring.
 #[test]
-fn what_step_17_does_not_read_is_refused() {
+fn objects_are_the_lean_parsers() {
+    same(&[
+        "val h = object : Handler(), I {\n    override fun f() {}\n}\nclass A @Inject constructor(\n    private val b: B,\n) : C() {\n    constructor(x: Int) : this(B()) {\n        g()\n    }\n    constructor() : super()\n}\nfun g() {\n    val (a, b) = p\n    val (c: Int, _) = q\n}\n",
+        "class A {\n    companion object {\n    }\n    val o = f(object : R {\n        override fun run() {}\n    })\n}\n",
+    ]);
+}
+
+#[test]
+fn what_step_18_does_not_read_is_refused() {
     refused(&[
         "val a = b to f<T>()\n",
         "val a = x + f<T>(1)\n",
@@ -314,6 +323,7 @@ fn what_step_17_does_not_read_is_refused() {
         "fun <T : Any> T.f() {}\n",
         "fun String?.h() = 1\n",
         "val h = i as? J\n",
+        "class A(d: C) : C by d {\n}\n",
         "val s = \"a $field b\"\n",
         "abstract class A {\n    fun f() {}\n    /* c */\n    abstract fun g()\n}\n",
         "fun f() {\n    a()\n    /* c */\n    // d\n    b()\n}\n",
