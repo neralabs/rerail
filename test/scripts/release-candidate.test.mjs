@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { actionComment, CANDIDATE_BRANCH, candidateCiVerdict, candidateMessage, candidateTrustRefusal, cherryPickRefusal, coreVersionRefusal, FLOW_MARKER, freezeRefusal, gitIn, parseTarget, pickedTree, pullRequestHeadRefusal, pullRequestMessage, pullRequestTree, releaseTrainRefusal, readReleaseMessage, RELEASE_BRANCH, releasedCommit, releaseTrainTag, runReleaseAction } from "../../scripts/release/candidate/candidate.mjs";
+import { RELEASE_AUTHOR, releasePulls } from "../../scripts/release/candidate/merged.mjs";
 import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 const SHA = "a".repeat(40);
@@ -163,6 +164,21 @@ describe("releaseTrainRefusal", () => {
   it("refuses a tag named for another commit, or at a commit no Release pull request released", () => {
     expect(releaseTrainRefusal({ tag: "release-by-hand", commit: SHA, released: [SHA] })).toMatch(/is not the release tag of its commit aaaaaaaaa/u);
     expect(releaseTrainRefusal({ tag: releaseTrainTag(SHA), commit: SHA, released: [OTHER] })).toMatch(/not a commit a merged Release pull request released/u);
+  });
+});
+
+describe("releasePulls", () => {
+  const pull = (number, mergedAt, rest = {}) => ({ number, headRefOid: String(number).repeat(40).slice(0, 40), mergedAt, author: { login: RELEASE_AUTHOR }, isCrossRepository: false, ...rest });
+
+  it("takes only this repository's pull requests the release app opened, last merged first", () => {
+    const merged = [
+      pull(1, "2026-11-01T00:00:00Z"),
+      pull(2, "2026-11-03T00:00:00Z", { isCrossRepository: true }),
+      pull(3, "2026-11-04T00:00:00Z", { author: { login: "someone" } }),
+      pull(4, "2026-11-02T00:00:00Z"),
+    ];
+    expect(releasePulls(merged).map(({ number }) => number)).toEqual([4, 1]);
+    expect(releasePulls(merged)[0]).toEqual({ number: 4, head: "4".repeat(40) });
   });
 });
 

@@ -26,6 +26,13 @@ describe("release-packs.yml", () => {
     expect(packs.on.push.branches).toEqual([CANDIDATE_BRANCH]);
   });
 
+  it("reads a frozen release from the Release pull request's head, not from whether the candidate's branch exists", () => {
+    const step = Object.values(packs.jobs).flatMap((job) => job.steps ?? []).find((candidate) => candidate.id === "staged");
+    expect(step.env.HEAD_SHA).toBe("${{ github.event.pull_request.head.sha }}");
+    expect(step.run).toContain("readReleaseMessage(process.env.MESSAGE)?.candidate");
+    expect(step.run).not.toContain("git/ref/heads/changeset-release/candidate");
+  });
+
   it("tags and publishes only on a release tag's push", () => {
     for (const job of ["tag", "publish", "first-publish"]) expect(packs.jobs[job].if, job).toContain(PUBLISHES);
     // No condition treats a push alone as a release: the candidate branch's push is one too.

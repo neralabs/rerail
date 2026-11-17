@@ -271,20 +271,27 @@ jobs:
 
       # While a release is frozen, the tarballs to test are the candidate's, from this workflow's run on its branch.
       # The Release pull request's own run packs main's tip with the Release commit, which is not what merging
-      # releases, so it uploads nothing a tester could take for the candidate's.
+      # releases, so it uploads nothing a tester could take for the candidate's. Frozen is what the pull request's head
+      # says (readReleaseMessage in candidate.mjs), not whether the candidate's branch exists: one left behind by an
+      # earlier release would hold back a release that follows main.
       - id: staged
         name: Whether these tarballs are the staged release's
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           HEAD_REF: ${{ github.head_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          if [ "$HEAD_REF" = "changeset-release/main" ] && gh api "repos/{owner}/{repo}/git/ref/heads/changeset-release/candidate" --silent 2> /dev/null; then
-            echo "::notice::The release is frozen: the pack tarballs to test are in the Release packs run on changeset-release/candidate, so this run uploads none."
-            echo "upload=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "upload=true" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          upload=true
+          if [ "$HEAD_REF" = "changeset-release/main" ]; then
+            message="$(gh api "repos/{owner}/{repo}/commits/${HEAD_SHA}" --jq .commit.message)"
+            if MESSAGE="$message" node --input-type=module --eval 'import { readReleaseMessage } from "./scripts/release/candidate/candidate.mjs"; process.exit(readReleaseMessage(process.env.MESSAGE)?.candidate === undefined ? 1 : 0);'; then
+              echo "::notice::The release is frozen: the pack tarballs to test are in the Release packs run on changeset-release/candidate, so this run uploads none."
+              upload=false
+            fi
           fi
+          echo "upload=${upload}" >> "$GITHUB_OUTPUT"
 
       - name: Upload the pack tarballs
         if: steps.staged.outputs.upload == 'true'
