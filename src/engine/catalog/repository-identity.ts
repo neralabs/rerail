@@ -47,9 +47,9 @@ interface HeldTopLevel {
 
 /**
  * Git's answers for the folders it took for their own checkout's top level, each kept while what Git read to give it
- * is unchanged ({@link PlacementInputs.stamp}) and Git would still take its folders as the user's: a daemon asks after
- * every registered worktree each time a repository starts, in every session's runtime, and once a checkout is recorded
- * every runtime asks again.
+ * and the real paths it printed are unchanged ({@link PlacementInputs.stamp}) and Git would still take its folders as
+ * the user's: a daemon asks after every registered worktree each time a repository starts, in every session's runtime,
+ * and once a checkout is recorded every runtime asks again.
  */
 const heldTopLevels = new Map<string, HeldTopLevel>();
 
@@ -239,7 +239,8 @@ export function worktreeRegistry(checkout: string): WorktreeRegistry | undefined
  * The physical common directory Git reads for `checkout` now; undefined when the folder is gone or not in Git. Placed at
  * every call, and a placement is kept only while what Git reads at the folder is unchanged: a recorded checkout's folder
  * can be removed and become another repository's checkout, the folder above it renamed, or its `.git` file rewritten to
- * name another repository, and the registry to read is then that repository's. A kept placement costs a few lstats.
+ * name another repository, and the registry to read is then that repository's. A kept placement costs a few lstats,
+ * reads of small files and two real paths.
  */
 function registryCommonDirectory(checkout: string): string | undefined {
   if (!existsSync(checkout)) return undefined;

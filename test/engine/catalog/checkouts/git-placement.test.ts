@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, realpathSync } from "node:fs";
-import { mkdtemp, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, open, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -206,6 +206,106 @@ describe("every other folder, and every worktree whose files Git might read othe
     vi.unstubAllEnvs();
     vi.stubEnv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1");
     expect(expectGitsAnswers(join(root, "linked"), main)).toBe(2);
+  });
+});
+
+/** Points the link at `path`, a symbolic link or on Windows a junction, at `target` instead. */
+async function relink(path: string, target: string): Promise<void> {
+  await unlink(path);
+  linkFolder(target, path);
+}
+
+describe("a kept answer is placed again once Git's answer can move, whatever file times say", () => {
+  it("a main checkout reached through a link, once the link's folder is renamed and the link pointed at the new name", async () => {
+    const root = await temporaryRoot();
+    repository(join(root, "r1"));
+    const link = join(root, "L");
+    linkFolder(join(root, "r1"), link);
+    expectGitsAnswers(link, link);
+
+    await rename(join(root, "r1"), join(root, "r2"));
+    await relink(link, join(root, "r2"));
+    expect(expectGitsAnswers(link)).toBe(1);
+    expect(expectGitsAnswers(link)).toBe(0);
+  });
+
+  it("a linked worktree under a linked folder, and the owner of its files once the recorded checkouts change", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    mkdirSync(join(root, "p1"));
+    git(main, "worktree", "add", "--quiet", "-b", "w", join(root, "p1", "w"));
+    const link = join(root, "L");
+    linkFolder(join(root, "p1"), link);
+    let recorded = "1";
+    const owners = new CheckoutOwners(() => recorded);
+    const file = join(link, "w", "src", "x.ts");
+    expectGitsAnswers(main, join(link, "w"));
+    expect(owners.ownerOf(file)).toEqual({ checkoutRoot: physicalPath(join(root, "p1", "w")), path: "src/x.ts" });
+
+    await rename(join(root, "p1"), join(root, "p2"));
+    await relink(link, join(root, "p2"));
+    recorded = "2";
+    expect(owners.ownerOf(file)).toEqual({ checkoutRoot: physicalPath(join(root, "p2", "w")), path: "src/x.ts" });
+    expectGitsRegistries(join(link, "w"));
+  });
+
+  it("a linked worktree whose .git file names its Git folder through a link, once the repository is renamed and the link pointed at it", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "r1"));
+    const worktree = join(root, "w");
+    git(main, "worktree", "add", "--quiet", "-b", "w", worktree);
+    const link = join(root, "L");
+    linkFolder(join(root, "r1"), link);
+    await rewriteInPlace(join(worktree, ".git"), `gitdir: ${join(link, ".git", "worktrees", "w")}\n`);
+    expectGitsRegistries(main, worktree);
+
+    await rename(join(root, "r1"), join(root, "r2"));
+    await relink(link, join(root, "r2"));
+    expectGitsRegistries(worktree);
+  });
+
+  it("core.bare and core.worktree in config.worktree, which Git reads once extensions.worktreeConfig is set", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    git(main, "config", "extensions.worktreeConfig", "true");
+    git(main, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    mkdirSync(join(root, "elsewhere"));
+    expectGitsAnswers(main, join(root, "w"), main, join(root, "w"));
+
+    git(main, "config", "--worktree", "core.bare", "true");
+    git(join(root, "w"), "config", "--worktree", "core.worktree", join(root, "elsewhere"));
+    expectGitsAnswers(main, join(root, "w"));
+    git(main, "config", "--worktree", "--unset", "core.bare");
+    git(join(root, "w"), "config", "--worktree", "--unset", "core.worktree");
+    expectGitsAnswers(main, join(root, "w"), main, join(root, "w"));
+  });
+
+  it("core.bare and core.worktree in a file the config includes, which Git does not read to place a checkout", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    mkdirSync(join(root, "elsewhere"));
+    await writeFile(join(root, "included"), `[core]\n\tbare = true\n\tworktree = ${join(root, "elsewhere").replaceAll("\\", "/")}\n`);
+    expectGitsAnswers(main);
+
+    git(main, "config", "include.path", join(root, "included"));
+    expectGitsAnswers(main, main);
+  });
+
+  it("a checkout whose Git folder Git no longer takes for one, and again once it does", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    const head = join(main, ".git", "HEAD");
+    const contents = await readFile(head, "utf8");
+    expectGitsAnswers(main, join(root, "w"));
+
+    await rewriteInPlace(head, "not a head\n");
+    expectGitsAnswers(main);
+    await rewriteInPlace(head, contents);
+    await rename(join(main, ".git", "objects"), join(main, ".git", "objects-away"));
+    expectGitsAnswers(main, join(root, "w"));
+    await rename(join(main, ".git", "objects-away"), join(main, ".git", "objects"));
+    expectGitsAnswers(main, join(root, "w"));
   });
 });
 

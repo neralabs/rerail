@@ -1,13 +1,16 @@
 /**
  * Where Git places a folder that holds a `.git` entry, read from the files Git itself reads to place it: the entry, the
- * Git folder it names, that folder's `HEAD`, `gitdir` and `commondir`, and the common Git folder's `objects`, `refs` and
- * `config`. The daemon places every registered worktree of a repository when the repository starts, and a Git process
- * per worktree there held its one thread for seconds to minutes on a slow Windows machine. A linked worktree is placed
- * from these files once Git has placed a checkout of its repository; any other entry (a clone's own `.git` folder, a
- * submodule's, a Git folder kept apart), and any linked worktree whose files Git might read otherwise, is left to Git,
- * whose answer `repositoryIdentityLocation` keeps while these files are unchanged ({@link PlacementInputs.stamp}).
+ * Git folder it names, that folder's `HEAD`, `gitdir`, `commondir` and `config.worktree`, and the common Git folder's
+ * `objects`, `refs` and `config`. The daemon places every registered worktree of a repository when the repository
+ * starts, and a Git process per worktree there held its one thread for seconds to minutes on a slow Windows machine. A
+ * linked worktree is placed from these files once Git has placed a checkout of its repository; any other entry (a
+ * clone's own `.git` folder, a submodule's, a Git folder kept apart), and any linked worktree whose files Git might read
+ * otherwise, is left to Git, whose answer `repositoryIdentityLocation` keeps while these files and the real paths Git
+ * prints are unchanged ({@link PlacementInputs.stamp}). Each file is read again at every use, as Git reads it at every
+ * start: no file time stands in for its text, since a rewrite within one tick of the file system's clock leaves every
+ * time as it was.
  */
-import { lstatSync, readFileSync, type Stats } from "node:fs";
+import { closeSync, constants as fsConstants, fstatSync, lstatSync, openSync, readFileSync, type Stats } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathsOwnedByCurrentUser } from "../../native/native.js";
 import { storedPath } from "../checkout-control.js";
@@ -16,10 +19,15 @@ import { storedPath } from "../checkout-control.js";
 export interface PlacementInputs {
   /** The folder holding the `.git` entry, resolved. */
   readonly folder: string;
+  /** The folder's real path, spelled as Git prints a top level ({@link storedPath}). */
+  readonly realFolder: string;
   /**
    * One string that changes when any of these inputs changes in a way that can move Git's answer: the entry, the Git
-   * folder it names, that folder's `commondir`, and what the common `config` says of the format and the work tree. A
-   * Git folder's own times are left out, since every index write moves them.
+   * folder it names and their owners, that folder's `commondir`, whether Git takes it for a Git folder, what the common
+   * `config` (and the Git folder's `config.worktree`, when the common one has Git read it) says of the format and the
+   * work tree, and the real paths of the folder and of the common Git folder, which a link retargeted at a renamed
+   * folder moves while every file stays as it was. A Git folder's own times are left out, since every index write
+   * moves them.
    */
   readonly stamp: string;
   /** Whether the entry is a `.git` file, as a linked worktree's is. */
@@ -28,6 +36,10 @@ export interface PlacementInputs {
   readonly gitFolder: string;
   /** The common Git folder its `commondir` names, resolved; undefined when it has none (a clone's own Git folder). */
   readonly linkedCommon: string | undefined;
+  /** The real path of the common Git folder: the one `commondir` names, else the Git folder itself. */
+  readonly realCommon: string;
+  /** Whether Git takes the Git folder for one: a `HEAD` Git takes, and `objects` and `refs` in the common folder. */
+  readonly takenByGit: boolean;
   readonly config: ConfigFacts;
 }
 
@@ -75,14 +87,7 @@ function isFolder(looked: Looked): looked is Stats {
 }
 
 interface FileText {
-  /** Changes when the file's lstat changes, or its text under the same lstat (a rewrite within one clock tick). */
-  readonly stamp: string;
   readonly text: string;
-}
-
-/** A file's text as last read, with the lstat it was read under. */
-interface KnownText extends FileText {
-  readonly looked: string;
 }
 
 function isText(read: FileText | "none" | undefined): read is FileText {
@@ -92,56 +97,37 @@ function isText(read: FileText | "none" | undefined): read is FileText {
 /** Git refuses a `.git` file larger than this; the other files read here are smaller still. */
 const LARGEST_READ = 1 << 20;
 
+/** Opens a file to read it; on POSIX a FIFO planted at its name opens at once, and is then refused as no regular file. */
+const READ_FLAGS = fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0);
+
 /**
- * How long a file's lstat cannot yet show a rewrite: one at the same size within the same tick of the file system's
- * clock leaves every time as it was (Git's racy-index rule). The longest tick is FAT's 2 s; this adds a margin.
+ * A file's text, read now, as Git reads it (through a link at its name); `"none"` when nothing is there, undefined when
+ * it is no regular file, is too large or cannot be read.
  */
-const SAME_TICK_MS = 3_000;
-
-/** How many rewrites under an unchanged lstat were seen, to give each its own stamp. */
-let rewritesUnderOneLstat = 0;
-
-/** The small files read here, each read again once its lstat changed, and at each use while its times are recent. */
-const texts = new Map<string, KnownText>();
-
-/** A regular file's text and stamp, `"none"` when nothing is there, undefined when it is something else or unreadable. */
 function fileText(path: string): FileText | "none" | undefined {
-  const looked = look(path);
-  if (!isEntry(looked)) return looked;
-  if (!looked.isFile() || looked.size > LARGEST_READ) return undefined;
-  const lstat = `${looked.ino}:${looked.size}:${looked.mtimeMs}:${looked.ctimeMs}`;
-  const known = texts.get(path);
-  return stillKnown(known, lstat, looked) ? known : readText(path, lstat, known);
-}
-
-/** Whether `known` holds for a file whose lstat reads `lstat` now: the same, and its last write a clock tick ago. */
-function stillKnown(known: KnownText | undefined, lstat: string, looked: Stats): known is KnownText {
-  return known !== undefined && known.looked === lstat && Math.max(looked.mtimeMs, looked.ctimeMs) < Date.now() - SAME_TICK_MS;
-}
-
-/**
- * The file's text, read now. Read under the lstat `known` was and the same, it is `known`, stamp and all; another text
- * under that lstat gets a stamp of its own, so every answer read from the file before is read again.
- */
-function readText(path: string, lstat: string, known: KnownText | undefined): FileText | undefined {
-  let text: string;
+  let descriptor: number;
   try {
-    text = readFileSync(path, "utf8");
+    descriptor = openSync(path, READ_FLAGS);
+  } catch (error) {
+    return missing(error) ? "none" : undefined;
+  }
+  try {
+    return regularText(descriptor);
   } catch {
     return undefined;
+  } finally {
+    closeSync(descriptor);
   }
-  if (known === undefined || known.looked !== lstat) return keepText(path, { looked: lstat, stamp: lstat, text });
-  return known.text === text ? known : keepText(path, { looked: lstat, stamp: rewriteStamp(lstat), text });
 }
 
-function rewriteStamp(lstat: string): string {
-  rewritesUnderOneLstat += 1;
-  return `${lstat}#${rewritesUnderOneLstat}`;
+function regularText(descriptor: number): FileText | undefined {
+  const stats = fstatSync(descriptor);
+  return stats.isFile() && stats.size <= LARGEST_READ ? { text: readFileSync(descriptor, "utf8") } : undefined;
 }
 
-function keepText(path: string, read: KnownText): KnownText {
-  texts.set(path, read);
-  return read;
+function missing(error: unknown): boolean {
+  const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+  return code === "ENOENT" || code === "ENOTDIR";
 }
 
 /**
@@ -178,48 +164,100 @@ function gitFolderOf(folder: string, entry: Stats): NamedGitFolder | undefined {
   const read = entry.isFile() ? fileText(at) : undefined;
   if (!isText(read) || !read.text.startsWith(GITDIR)) return undefined;
   const named = readPath(read.text.slice(GITDIR.length));
-  return named === undefined ? undefined : { gitFolder: resolve(folder, named), stamp: `f:${read.stamp}`, file: true };
+  return named === undefined ? undefined : { gitFolder: resolve(folder, named), stamp: `f:${read.text}`, file: true };
 }
 
-/** {@link gitFolderOf} the `.git` entry in `folder`, when the Git folder is there; its stamp adds that folder's identity. */
+/**
+ * {@link gitFolderOf} the `.git` entry in `folder`, when the Git folder is there; its stamp adds that folder's identity
+ * and the owners Git compares with the user ({@link ownersStamp}).
+ */
 function gitFolderAt(folder: string): NamedGitFolder | undefined {
   const entry = look(join(folder, ".git"));
-  const named = isEntry(entry) ? gitFolderOf(folder, entry) : undefined;
+  if (!isEntry(entry)) return undefined;
+  const named = gitFolderOf(folder, entry);
   const gitFolder = named === undefined ? undefined : look(named.gitFolder);
   if (named === undefined || !isFolder(gitFolder)) return undefined;
-  return { ...named, stamp: `${named.stamp}\n${gitFolder.ino}` };
+  return { ...named, stamp: [named.stamp, gitFolder.ino, ownersStamp(folder, entry, gitFolder)].join("\n") };
+}
+
+/**
+ * The owners of the folder, its `.git` entry and its Git folder, which Git compares with the user's before it takes a
+ * repository ({@link ownedAsGitTakes}): on POSIX their lstats give them, so a change of owner moves the stamp. Windows
+ * gives Node no owner; there a kept answer's owners are read again at each change of the recorded checkouts.
+ */
+function ownersStamp(folder: string, entry: Stats, gitFolder: Stats): string {
+  if (process.platform === "win32") return "";
+  const top = look(folder);
+  return `${isEntry(top) ? top.uid : "?"}:${entry.uid}:${gitFolder.uid}`;
+}
+
+interface CommonFolder {
+  readonly linked: string | undefined;
+  readonly stamp: string;
 }
 
 /** The common Git folder `gitFolder`'s `commondir` names (undefined `linked` without one); undefined when unreadable. */
-function commonOf(gitFolder: string): { readonly linked: string | undefined; readonly stamp: string } | undefined {
+function commonOf(gitFolder: string): CommonFolder | undefined {
   const read = fileText(join(gitFolder, "commondir"));
   if (read === "none") return { linked: undefined, stamp: "-" };
   const named = isText(read) ? readPath(read.text) : undefined;
-  return named === undefined || !isText(read) ? undefined : { linked: resolve(gitFolder, named), stamp: read.stamp };
+  return named === undefined ? undefined : { linked: resolve(gitFolder, named), stamp: named };
 }
 
 /**
  * What Git reads to place `folder`, when it holds a `.git` folder or file whose Git folder is there; undefined when it
  * holds none, when an input cannot be read or is shaped in a way not modelled here, or when the environment moves
- * Git's lookup. Four lstats once the files are known.
+ * Git's lookup. A few lstats, reads of small files and two real paths, and no Git process.
  */
 export function placementInputs(folder: string): PlacementInputs | undefined {
   const entry = environmentMovesLookup() ? undefined : gitFolderAt(folder);
-  return entry === undefined ? undefined : withCommon(folder, entry);
+  const common = entry === undefined ? undefined : commonOf(entry.gitFolder);
+  return entry === undefined || common === undefined ? undefined : withCommon(folder, entry, common);
 }
 
-function withCommon(folder: string, entry: NamedGitFolder): PlacementInputs | undefined {
-  const common = commonOf(entry.gitFolder);
-  const config = common === undefined ? undefined : configFactsAt(common.linked ?? entry.gitFolder);
-  if (common === undefined || config === undefined) return undefined;
+function withCommon(folder: string, entry: NamedGitFolder, common: CommonFolder): PlacementInputs | undefined {
+  const facts = gitFolderFacts(folder, entry.gitFolder, common.linked ?? entry.gitFolder);
+  if (facts === undefined) return undefined;
+  const { realFolder, realCommon, takenByGit, config } = facts;
   return {
     folder,
-    stamp: [entry.stamp, common.stamp, config.signature].join("\n"),
+    stamp: [realFolder, realCommon, entry.stamp, common.stamp, `taken:${takenByGit}`, config.signature].join("\n"),
     gitFile: entry.file,
     gitFolder: entry.gitFolder,
     linkedCommon: common.linked,
-    config,
+    ...facts,
   };
+}
+
+type GitFolderFacts = Pick<PlacementInputs, "realFolder" | "realCommon" | "takenByGit" | "config">;
+
+/** What the Git folder and the common one tell of `folder`, read now; undefined when one cannot be read. */
+function gitFolderFacts(folder: string, gitFolder: string, common: string): GitFolderFacts | undefined {
+  const config = configOf(gitFolder, common);
+  const real = config === undefined ? undefined : realPaths(folder, common);
+  if (config === undefined || real === undefined) return undefined;
+  const takenByGit = gitFolderTaken(gitFolder, common);
+  return takenByGit === undefined ? undefined : { ...real, takenByGit, config };
+}
+
+/** The real paths of `folder` and of `common`, spelled as Git prints them; undefined when one cannot be read. */
+function realPaths(folder: string, common: string): { readonly realFolder: string; readonly realCommon: string } | undefined {
+  try {
+    return { realFolder: storedPath(folder), realCommon: storedPath(common) };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Whether Git takes `gitFolder` for a Git folder, as it does before it places a checkout there: a `HEAD` it takes
+ * ({@link validHead}), and `objects` and `refs` in the common Git folder. Undefined where `HEAD` is a link, which Git
+ * reads by its target's name and which is left to Git.
+ */
+function gitFolderTaken(gitFolder: string, common: string): boolean | undefined {
+  const head = validHead(gitFolder);
+  if (head === undefined) return undefined;
+  return head && isFolder(look(join(common, "objects"))) && isFolder(look(join(common, "refs")));
 }
 
 /**
@@ -230,32 +268,31 @@ function withCommon(folder: string, entry: NamedGitFolder): PlacementInputs | un
  * Git is asked ({@link readAsGitReads}).
  */
 export function linkedWorktreeFromFiles(inputs: PlacementInputs, gitPlaced: (common: string) => boolean): LinkedPlacement | undefined {
-  const common = inputs.linkedCommon;
-  if (common === undefined || !readAsGitReads(inputs, common)) return undefined;
-  const placed = realPlacement(inputs.folder, common);
-  return placed !== undefined && gitPlaced(placed.commonDirectory) ? placed : undefined;
+  if (inputs.linkedCommon === undefined || !readAsGitReads(inputs)) return undefined;
+  return gitPlaced(inputs.realCommon) ? { top: inputs.realFolder, commonDirectory: inputs.realCommon } : undefined;
 }
 
 /**
- * Whether the files decide the placement as Git would: the entry is a `.git` file; the Git folder it names has a `HEAD`
- * Git takes and a `gitdir` that names this folder's `.git` back; the common config sets no extension and a format every
- * Git reads; and Git takes the folders for the current user's ({@link ownedAsGitRequires}).
+ * Whether the files decide the placement as Git would: the entry is a `.git` file; Git takes the Git folder it names
+ * ({@link PlacementInputs.takenByGit}), whose `gitdir` names this folder's `.git` back; the common config sets no
+ * extension and a format every Git reads; and Git takes the folders for the current user's ({@link ownedAsGitTakes}).
  */
-function readAsGitReads(inputs: PlacementInputs, common: string): boolean {
-  return inputs.gitFile && inputs.config.plainFormat && validHead(inputs.gitFolder) && namesBack(inputs) && ownedAsGitRequires(inputs, common);
+function readAsGitReads(inputs: PlacementInputs): boolean {
+  return inputs.gitFile && inputs.config.plainFormat && inputs.takenByGit && namesBack(inputs) && ownedAsGitTakes(inputs);
 }
 
-function realPlacement(folder: string, common: string): LinkedPlacement | undefined {
-  try {
-    return { top: storedPath(folder), commonDirectory: storedPath(common) };
-  } catch {
-    return undefined;
-  }
+/**
+ * Whether Git takes `gitFolder/HEAD` for a `HEAD`: a regular file naming a ref under `refs/`, or an object id.
+ * Undefined for a link, which Git takes by the name it holds.
+ */
+function validHead(gitFolder: string): boolean | undefined {
+  const path = join(gitFolder, "HEAD");
+  const looked = look(path);
+  if (looked === undefined || (isEntry(looked) && looked.isSymbolicLink())) return undefined;
+  return looked !== "none" && headTaken(fileText(path));
 }
 
-/** Whether Git takes `gitFolder/HEAD` for a `HEAD`: a regular file naming a ref under `refs/`, or an object id. */
-function validHead(gitFolder: string): boolean {
-  const head = fileText(join(gitFolder, "HEAD"));
+function headTaken(head: FileText | "none" | undefined): boolean {
   return isText(head) && (/^ref:\s*refs\//u.test(head.text) || /^(?:[0-9a-f]{64}|[0-9a-f]{40})/iu.test(head.text));
 }
 
@@ -273,15 +310,6 @@ function namesBack(inputs: PlacementInputs): boolean {
   } catch {
     return false;
   }
-}
-
-/**
- * Whether Git takes the linked worktree's folders as the current user's ({@link ownedAsGitTakes}), and the common folder
- * holds the `objects` and `refs` Git looks for.
- */
-function ownedAsGitRequires(inputs: PlacementInputs, common: string): boolean {
-  if (!isFolder(look(join(common, "objects"))) || !isFolder(look(join(common, "refs")))) return false;
-  return ownedAsGitTakes(inputs);
 }
 
 /**
@@ -312,18 +340,31 @@ export interface ConfigFacts {
   readonly plainFormat: boolean;
 }
 
-const configs = new Map<string, { readonly stamp: string; readonly facts: ConfigFacts }>();
+/** Each config file's facts with the text they were read from, so an unchanged text is not parsed again. */
+const configs = new Map<string, { readonly text: string; readonly facts: ConfigFacts }>();
 
-/** {@link ConfigFacts} of `<common>/config`, read again only once it changed; undefined when it cannot be read. */
-function configFactsAt(common: string): ConfigFacts | undefined {
-  const path = join(common, "config");
+/** {@link ConfigFacts} of the config file at `path`, read now; undefined when it cannot be read. */
+function configFactsAt(path: string): ConfigFacts | undefined {
   const read = fileText(path);
   if (!isText(read)) return read === "none" ? { signature: "none", plainFormat: true } : undefined;
   const known = configs.get(path);
-  if (known?.stamp === read.stamp) return known.facts;
+  if (known?.text === read.text) return known.facts;
   const facts = configFacts(read.text);
-  configs.set(path, { stamp: read.stamp, facts });
+  configs.set(path, { text: read.text, facts });
   return facts;
+}
+
+/**
+ * The config Git reads to place a checkout: the common folder's `config`, and with `extensions.worktreeConfig` set
+ * there (by `git sparse-checkout`, say) the Git folder's own `config.worktree` too, whose `core.bare` and
+ * `core.worktree` Git takes over the common ones. Git reads no included file to place a checkout. Undefined when one
+ * cannot be read.
+ */
+function configOf(gitFolder: string, common: string): ConfigFacts | undefined {
+  const shared = configFactsAt(join(common, "config"));
+  if (shared === undefined || !shared.signature.split("\n").some(line => line.startsWith("extensions.worktreeconfig="))) return shared;
+  const own = configFactsAt(join(gitFolder, "config.worktree"));
+  return own === undefined ? undefined : { signature: `${shared.signature}\n[config.worktree]\n${own.signature}`, plainFormat: false };
 }
 
 /** A section header: a name, then a quoted subsection; a comment may follow. */
