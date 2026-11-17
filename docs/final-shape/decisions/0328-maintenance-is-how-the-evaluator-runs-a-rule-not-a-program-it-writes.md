@@ -213,7 +213,8 @@ is stored whole.
      become candidates, and on `calls.rr`'s 14-file edit it kept 33 unfounded rows under one probe order of three.
      A sound "yes" needs a witness that cannot lean on the row itself: a level column (0090's *levels, checked*;
      one probe a candidate, the cheapest in the spike), or a proof from below with nothing kept (about DRed's work
-     on `calls.rr`), or partitions derived again. Which one is the user's choice.
+     on `calls.rr`), or partitions derived again. **Decided by 0364: levels**, kept with the rows, never
+     re-levelled on adds; none for a component the static check proves cannot cycle.
    - **any stratum:** derived again when 0090 §4's threshold says an edit reaches too much of it.
 
    Counting and its support relations go, and so does the strategy byte: what a stratum does follows from whether
@@ -631,8 +632,8 @@ sequence of edits on the dense graph that also adds shortcuts, 5 edges added and
 | Minimal levels, recomputed every edit | 33,575 | 1,950 | 0 | 0 |
 | Levels carried, never lowered | 28,564 | 1,035 | 0 | +3.35 |
 
-Carried levels drift, but they cost less: 15% fewer candidates and 47% fewer rewrites. They were worse on one
-edit (5,425 against 4,187). A level only has to be a witness, and a higher one seems to depend on fewer rows that
+Carried levels drift, but they cost less: 15% fewer candidates and 47% fewer rewrites. They were worse on two
+edits (5,425 against 4,187; 2,171 against 1,991). A level only has to be a witness, and a higher one seems to depend on fewer rows that
 change. **So: never re-level on added rows.** A stratum derived again by 0090 §4's threshold gets fresh levels
 for free.
 
@@ -705,9 +706,8 @@ it would then need its own handling.
   (decision 3).
 - **The chunked dump.** A chunked first run dumped 210 `dotted_expr` rows that no `drv` rule derives. It is a
   file-local relation, and the rows measured are the derivations' heads, but the cause is not known.
-- **The decision.** The data point to levels, carried and never re-levelled on added rows, as the recursive case
-  of decision 6, for every component the static check does not prove. Rewrites go as kills and adds. It is the
-  user's to take.
+- **The decision** was taken as 0364: levels, carried and never re-levelled on added rows, for every component the
+  static check does not prove; rewrites as kills and adds. 0364 holds the full data and method.
 
 ## Sizes, today against this decision (dl10)
 
