@@ -3676,13 +3676,25 @@ impl Source for Viewed {
         self.lookup_docs(column, values, None)
     }
     /// A field's children by parent and field (`field($a, #f, $t)`, `$a` bound): each child's field read off the
-    /// tape as the children are walked, not its row's values found again.
+    /// tape as the children are walked, not its row's values found again. By child and field (`field(_, #f, $n)`,
+    /// `$n` bound: whether `$n` is its parent's `#f`), the child's own field read off the tape: its one row or
+    /// none. Found by child and filtered, `nameref`'s `!field(_, #f65541, $n)` took 300 ns a probe, 25 M probes of a
+    /// cold PostHog run.
     fn lookup_eq(&self, column: usize, value: i64, eqs: &[(usize, i64)]) -> Option<Vec<usize>> {
         let &[(1, f)] = eqs else { return None };
-        if !matches!(self.view, View::Field) || column != 0 {
+        if !matches!(self.view, View::Field) {
             return None;
         }
         let b = &*self.batch;
+        if column == 2 {
+            let Some((doc, local)) = b.node(value) else { return Some(Vec::new()) };
+            let p = &b.docs[doc];
+            let own = i64::from(field_atom(p.tag, p.facts.field(p.core[local as usize]))) == f;
+            return Some(if own { b.row(View::Field, doc, local).into_iter().collect() } else { Vec::new() });
+        }
+        if column != 0 {
+            return None;
+        }
         let mut rows = Vec::new();
         if let Some((doc, local)) = b.node(value) {
             let p = &b.docs[doc];

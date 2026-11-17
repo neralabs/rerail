@@ -248,8 +248,21 @@ fn a_fields_lookup_by_parent_and_field_holds_what_a_filter_keeps() {
         }
     }
     assert!(found > 0, "some parent holds one of the fields tried");
+    // By child and field: the child's one row where its field is the one asked, for every child, each field and one
+    // no row has, and for a node of no document.
+    let children: BTreeSet<i64> = (0..field.len()).map(|r| field.value(r, 2)).collect();
+    let mut kept = 0;
+    for &c in &children {
+        for f in fields.iter().copied().take(6).chain([-7]) {
+            let filtered: Vec<usize> = field.lookup(2, &[c]).unwrap().into_iter().filter(|&r| field.value(r, 1) == f).collect();
+            assert_eq!(field.lookup_eq(2, c, &[(1, f)]), Some(filtered.clone()), "child {c}, field {f}");
+            kept += filtered.len();
+        }
+    }
+    assert!(kept > 0, "some child is one of the fields tried");
+    assert_eq!(field.lookup_eq(2, i64::MAX, &[(1, 1)]), Some(Vec::new()));
     // Any other probe is the lookup and filter's.
-    assert_eq!(field.lookup_eq(2, 1, &[(1, 1)]), None);
+    assert_eq!(field.lookup_eq(1, 1, &[(2, 1)]), None);
     assert_eq!(field.lookup_eq(0, 1, &[(2, 1)]), None);
 }
 
