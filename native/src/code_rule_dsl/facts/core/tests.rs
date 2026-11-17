@@ -32,13 +32,13 @@ fn atom(language: &str, kind: &str) -> u32 {
 #[test]
 fn columns_are_a_preorder_tree_with_children_and_kind_postings() {
     let f = facts("a.py", "python", "value = left + right\nprint(value)\n");
-    assert_eq!(f.parent[0], NONE);
+    assert_eq!(f.parent_or_none(0 as u32), NONE);
     for id in 1..f.len() as u32 {
         let parent = f.parent(id).unwrap();
         assert!(parent < id, "a parent precedes its children in preorder");
         assert!(f.children(parent).contains(&id));
-        assert!(id < f.subtree_end[parent as usize]);
-        assert!(f.start[parent as usize] <= f.start[id as usize] && f.end[id as usize] <= f.end[parent as usize]);
+        assert!(id < f.subtree_end(parent));
+        assert!(f.start(parent) <= f.start(id) && f.end(id) <= f.end(parent));
     }
     let identifiers = f.of_kind(atom("python", "identifier"));
     assert_eq!(
@@ -47,7 +47,7 @@ fn columns_are_a_preorder_tree_with_children_and_kind_postings() {
     );
     assert_eq!(f.start_line(*identifiers.last().unwrap()), 2);
     assert!(f.of_kind(atom("python", "binary_operator")).iter().all(|&id| f.named(id)));
-    assert!(!f.syntax_errors);
+    assert!(!f.syntax_errors());
     assert!(f.depth() >= 4);
 }
 
@@ -68,9 +68,9 @@ fn every_dialect_reads_its_own_grammar_and_kinds_never_collide() {
     let typescript = facts("a.ts", "typescript", "f(x);\n");
     assert_eq!(typescript.of_kind(atom("typescript", "call_expression")).len(), 1);
     assert_eq!(python.of_kind(atom("python", "call")).len(), 1);
-    let (p, t) = (python.kind[0] / KIND_STRIDE, typescript.kind[0] / KIND_STRIDE);
+    let (p, t) = (python.kind(0) / KIND_STRIDE, typescript.kind(0) / KIND_STRIDE);
     assert_ne!(p, t);
-    assert!(python.kind.iter().all(|kind| kind / KIND_STRIDE == p));
+    assert!((0..python.len() as u32).all(|id| python.kind(id) / KIND_STRIDE == p));
 }
 
 #[test]
@@ -82,9 +82,11 @@ fn the_digest_is_of_the_content_not_the_path() {
     assert_ne!(a, digest(&facts("a.py", "python", "y = 2\n")));
 }
 
+/// The facts read the same tree in every format (decision 0293, step 4), whether held by a restored document or by
+/// an image alone: every node's answers, the kind and class scans, and the lines.
 #[test]
-fn direct_tape_columns_equal_restored_columns_and_line_contracts() {
-    use crate::code_rule_dsl::{lines::{LineTable, Terminators}, tape::{Grammar, TapeDoc, TapeImage}};
+fn every_format_reads_the_same_facts_off_the_tape() {
+    use crate::code_rule_dsl::{lines::{LineTable, Terminators}, tape::{Grammar, TapeDoc, TapeImage, formats::Format}};
     for (label, source) in [
         ("python", "é = f(1)\r\nclass A:\r def f(self):\n  return 'x'\n"),
         ("python", "def broken(:\n    pass\n"),
@@ -106,17 +108,32 @@ fn direct_tape_columns_equal_restored_columns_and_line_contracts() {
         let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
         let doc = TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), &image.primary, &|| false).unwrap();
         let old = from_tape(&doc, Arc::clone(&lines)).unwrap();
-        let new = from_image(Arc::clone(&source), &grammar, &image.primary, Arc::clone(&lines)).unwrap();
-        for (a,b) in [(&old.kind,&new.kind),(&old.parent,&new.parent),(&old.start,&new.start),(&old.end,&new.end),
-            (&old.subtree_end,&new.subtree_end),(&old.children,&new.children),(&old.child_offsets,&new.child_offsets),
-            (&old.kind_keys,&new.kind_keys),(&old.kind_offsets,&new.kind_offsets),(&old.kind_nodes,&new.kind_nodes),
-            (&old.class_keys,&new.class_keys),(&old.class_offsets,&new.class_offsets),(&old.class_nodes,&new.class_nodes)] {
-            assert_eq!(a,b,"{label}: {source}");
+        let same = from_image(Arc::clone(&source), &grammar, image.primary.clone(), Arc::clone(&lines)).unwrap();
+        assert_eq!(digest(&old), digest(&same), "{label}");
+        let (kinds, classes) = old.histogram();
+        for format in Format::ALL {
+            let new = from_image(Arc::clone(&source), &grammar, image.primary.clone().in_format(format), Arc::clone(&lines)).unwrap();
+            let at = format!("{label} in {}: {source}", format.name());
+            assert_eq!(old.len(), new.len(), "{at}");
+            for id in 0..new.len() as u32 {
+                assert_eq!((old.kind(id), old.parent(id), old.span(id), old.subtree_end(id), old.flags(id), old.field(id)),
+                    (new.kind(id), new.parent(id), new.span(id), new.subtree_end(id), new.flags(id), new.field(id)), "{at}: node {id}");
+                assert_eq!((old.start(id), old.end(id)), new.span(id), "{at}: node {id}");
+                assert_eq!(old.children(id), new.children(id), "{at}: node {id}");
+                assert_eq!(new.start_line(id), lines.line(new.start(id) as usize) as u32 + 1);
+            }
+            assert_eq!((kinds.clone(), classes.clone()), new.histogram(), "{at}");
+            for &(kind, n) in &kinds {
+                let nodes = new.of_kind(kind);
+                assert_eq!(nodes.len() as u32, n, "{at}");
+                assert_eq!(nodes, old.of_kind(kind), "{at}");
+                assert!(nodes.iter().all(|&id| new.kind(id) == kind));
+            }
+            for &(class, _) in &classes {
+                assert_eq!(new.of_class(class), old.of_class(class), "{at}");
+            }
+            assert_eq!(old.syntax_errors(), new.syntax_errors(), "{at}");
+            assert_eq!(old.depth(), new.depth(), "{at}");
         }
-        assert_eq!(old.flags,new.flags,"{label}");
-        assert_eq!(old.field,new.field,"{label}");
-        assert_eq!(old.syntax_errors,new.syntax_errors,"{label}");
-        assert_eq!(digest(&old),digest(&new),"{label}");
-        for id in 0..new.len() as u32 { assert_eq!(new.start_line(id), lines.line(new.start[id as usize] as usize) as u32 + 1); }
     }
 }

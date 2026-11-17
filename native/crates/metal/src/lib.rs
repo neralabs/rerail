@@ -31,6 +31,8 @@ pub use rerail_compiler::Error;
 pub static METAL_DEVICE: std::sync::LazyLock<Option<metal::Device>> = std::sync::LazyLock::new(|| {
     // Relational work's bounded leases count the pool's reservations against the Metal budget (decision 0126).
     rerail_accel::gpu::shared::set_other_reserved(runtime::reserved);
+    // The pool's one eviction order: idle buffers, then the residency's least recently used slabs (0266 §16).
+    rerail_accel::gpu::shared::set_evictor(slabs::evict);
     rerail_accel::gpu::shared::get().map(|s| s.device.clone())
 });
 

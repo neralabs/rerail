@@ -772,7 +772,7 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
             root,
             1,
             HashKey::sha256(b"rerail-grammars-v1"),
-            i64::from(tape::TAPE_FORMAT_VERSION),
+            i64::from(tape::formats::stored_version()),
         )
         .unwrap();
     let owner = "stored-workspace-test";
@@ -862,7 +862,7 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
         store
             .tapes_without_search_index_after(
                 grammar_version(),
-                i64::from(tape::TAPE_FORMAT_VERSION),
+                i64::from(tape::formats::stored_version()),
                 None,
                 8
             )

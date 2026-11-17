@@ -266,8 +266,15 @@ impl<'v> Program<'v> {
         if rel == "docof" && !columns.contains(&1) {
             columns.push(1);
         }
-        if rel == "docof" {
-            columns.push(1);
+        // The tape's `tape(n, par, size, depth)` (the climbs' parent column, lower.rs `need_tape`) is declared over
+        // numbers, but a node's parent is a node of its document: both are locations (decision 0267,
+        // O-cold-seed-join).
+        if rel == "tape" {
+            for column in [0, 1] {
+                if !columns.contains(&column) {
+                    columns.push(column);
+                }
+            }
         }
         columns
     }
@@ -376,12 +383,15 @@ impl<'v> Program<'v> {
                 _ => true,
             })
         };
+        // A relation `locate` moved (`CROSS_FILE`): its rows name no document, so it is derived once over every file
+        // (decision 0290).
+        let moved = |rel: &str| self.f.qualified(rel, super::CROSS_FILE);
         let mut local_now: Vec<bool> = (0..n)
             .map(|r| {
                 rels.is_derived(r as u32)
                     && match was(r) {
                         Some(p) => p.local.contains(self.name(r as u32)),
-                        None => !cross_native(self.name(r as u32)),
+                        None => !cross_native(self.name(r as u32)) && !moved(self.name(r as u32)),
                     }
             })
             .collect();
@@ -390,7 +400,8 @@ impl<'v> Program<'v> {
                 let rel = self.name(r);
                 match was(r as usize) {
                     Some(p) => p.causes.get(rel).map(|c| (rel.to_owned(), c.clone())),
-                    None => cross_native(rel).then(|| (rel.to_owned(), "made natively".to_owned())),
+                    None if cross_native(rel) => Some((rel.to_owned(), "made natively".to_owned())),
+                    None => moved(rel).then(|| (rel.to_owned(), "its rows name no document (moved by `locate`)".to_owned())),
                 }
             })
             .collect();

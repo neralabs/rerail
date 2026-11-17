@@ -28,6 +28,7 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
                 decode: d.decode_cpu,
                 uploads: u64::from(d.uploads),
                 upload_bytes: d.upload_bytes,
+                upload_by: d.upload_by,
                 resident: u64::from(d.resident_hits),
                 sorts: u64::from(d.sorts),
                 sort_hits: u64::from(d.sort_hits),
@@ -53,6 +54,8 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
     t.forms = shape.forms.iter().map(|f| f.name()).collect();
     t.missing = p.missing.iter().map(|f| f.name()).collect();
     t.planned_work += shape.work;
+    t.planned_scanned += shape.scanned.min(shape.work).max(0.0);
+    t.steps += shape.steps as u64;
     t.work += work;
     t.cpu_estimate += p.cpu_s;
     t.gpu_estimate += p.gpu_s;
@@ -261,24 +264,28 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     let work = |steps: &Vec<(u64, u64)>| super::plan_work(steps);
     let mut native: Vec<_> = state.native.iter().collect();
     native.sort_by_key(|(_, s)| std::cmp::Reverse(work(s)));
-    let mut native_tsv = String::from("span\twork\tsteps_in_out\tplan\tcpu_s\n");
+    let mut native_tsv = String::from("span\twork\tsteps_in_out\tplan\tcpu_s\tsteps_cpu_ms\n");
     for ((p, plan), steps) in &native {
         let s: Vec<String> = steps.iter().map(|(a, b)| format!("{a}:{b}")).collect();
         let cpu = state.native_cpu.get(&(p.clone(), plan.clone())).copied().unwrap_or(0.0);
-        let _ = writeln!(native_tsv, "{p}\t{}\t{}\t{plan}\t{cpu:.4}", work(steps), s.join(","));
+        // Per step, and last the head's rows made (`setfix::step_cpu`): empty where the steps were not timed.
+        let stepped: Vec<String> = state.native_step_cpu.get(&(p.clone(), plan.clone())).map_or_else(Vec::new, |c| c.iter().map(|c| format!("{:.3}", c * 1e3)).collect());
+        let _ = writeln!(native_tsv, "{p}\t{}\t{}\t{plan}\t{cpu:.4}\t{}", work(steps), s.join(","), stepped.join(","));
     }
     std::fs::write(dir.join("native.tsv"), native_tsv)?;
-    let mut placement_tsv = String::from("stratum\truns\ton_gpu\tgpu_cheaper\tplanned_work\twork\tcpu_s\tcpu_estimate_s\tgpu_estimate_s\tforms\tmissing\n");
+    let mut placement_tsv = String::from("stratum\truns\ton_gpu\tgpu_cheaper\tplanned_work\twork\tcpu_s\tcpu_estimate_s\tgpu_estimate_s\tforms\tmissing\tplanned_scanned\tsteps\n");
     for (key, t) in &state.placements {
         let _ = writeln!(
             placement_tsv,
-            "{key}\t{}\t{}\t{}\t{:.0}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}",
-            t.runs, t.on_gpu, t.gpu_cheaper, t.planned_work, t.work, t.cpu, t.cpu_estimate, t.gpu_estimate, t.forms.join(","), t.missing.join(",")
+            "{key}\t{}\t{}\t{}\t{:.0}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{:.0}\t{}",
+            t.runs, t.on_gpu, t.gpu_cheaper, t.planned_work, t.work, t.cpu, t.cpu_estimate, t.gpu_estimate, t.forms.join(","), t.missing.join(","), t.planned_scanned, t.steps
         );
     }
     std::fs::write(dir.join("placement.tsv"), placement_tsv)?;
 
-    // The report.
+    // The report. The process's life (`life`) as it begins: put after the header once the report's own work is known.
+    let life = super::life::now();
+    let mut after: Vec<(String, f64, f64)> = Vec::new();
     let mut r = String::new();
     r.push_str(header);
     let _ = writeln!(r, "Memory budgets (decision 0126): overall {} MB, Metal {} MB on top of it", rerail_accel::budget::memory() >> 20, rerail_accel::budget::metal() >> 20);
@@ -305,6 +312,8 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     kinds::searches(&mut r, &state.spans);
     let heads_tsv = kinds::by_head(&mut r, &native, &state.native_cpu);
     std::fs::write(dir.join("heads.tsv"), heads_tsv)?;
+    let sources_tsv = super::sources::by_source(&mut r, &state, crate::code_rule_dsl::logic::plan::placement::CPU_PER_WORK);
+    std::fs::write(dir.join("sources.tsv"), sources_tsv)?;
     memory_report(&mut r, &state.spans);
 
     let sql_ns: u64 = sql.iter().map(|(_, s)| s.ns).sum();
@@ -354,7 +363,8 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
             j.0 += work(steps) + made;
             j.1 += made;
         }
-        roofline::report(&mut r, &own, &charged, &joins);
+        let (wall, cpu, what) = roofline::report(&mut r, &own, &charged, &joins);
+        after.push((what, wall, cpu));
     }
 
     let _ = writeln!(r, "\n== Waits: wall time each thread spent blocked, on what, and what that was doing when the wait began");
@@ -549,6 +559,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     for (k, v) in state.notes.iter().filter(|(k, _)| !k.starts_with("plan:")) {
         let _ = writeln!(r, "{k}: {}", short(v, 600));
     }
+    r.insert_str(header.len(), &super::life::section(&life, &after));
     std::fs::write(dir.join("profile.txt"), r)
 }
 

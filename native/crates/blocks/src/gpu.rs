@@ -47,12 +47,13 @@ inline ulong mix(ulong h, long v) { h ^= ulong(v); h *= 0x9E3779B97F4A7C15ul; re
 // A self-relative reference: the field's own address plus its offset.
 inline device char* follow(device const void* f, long off) { return (device char*)((device const char*)f + off); }
 
-// Rows: chunk k holds 2^(min_log + k) rows; row i's chunk is one clz.
+// Rows: group k holds 2^(min_log + k) rows in four chunks of a quarter each; row i's group is one clz.
 inline uint2 chunk_of(uint i, uint min_log) {
     ulong q = (ulong(i) >> min_log) + 1ul;
     uint k = 63u - uint(clz(q));
-    ulong first = ((1ul << k) - 1ul) << min_log;
-    return uint2(k, uint(ulong(i) - first));
+    ulong l = ulong(i) - (((1ul << k) - 1ul) << min_log);
+    uint qlog = min_log + k - 2u;
+    return uint2(4u * k + uint(l >> qlog), uint(l & ((1ul << qlog) - 1ul)));
 }
 inline device ColDir* rows_col(device const Rows* r, uint c) { return (device ColDir*)follow(&r->cols, r->cols.off) + c; }
 inline device char* rows_at(device const Rows* r, uint i, uint c, thread uint& w) {
@@ -92,15 +93,10 @@ inline device const Index* rel_index(device const Relation* r, uint idx) {
 // A key's group in one relation's index: (start, len) into its rows; bounded by the table's size.
 inline uint2 rel_group(device const Relation* r, uint idx, ulong h) {
     device const Index* ix = rel_index(r, idx);
-    if (ix->buckets.len == 0ul) return uint2(0u);
-    device const Bucket* b = (device const Bucket*)follow(&ix->buckets, ix->buckets.off);
-    ulong s = h & ix->mask;
-    for (ulong n = 0ul; n <= ix->mask; n++) {
-        device const Bucket* x = b + ((s + n) & ix->mask);
-        if (x->len == 0u) return uint2(0u);
-        if (x->hash == h) return uint2(x->start, x->len);
-    }
-    return uint2(0u);
+    if (ix->offs.len == 0ul) return uint2(0u);
+    device const uint* o = (device const uint*)follow(&ix->offs, ix->offs.off);
+    ulong b = h & ix->mask;
+    return uint2(o[b], o[b + 1ul] - o[b]);
 }
 inline device const uint* rel_group_rows(device const Relation* r, uint idx) {
     device const Index* ix = rel_index(r, idx);
@@ -188,33 +184,30 @@ pub struct JoinRun {
 }
 
 impl Gpu {
-    pub fn new() -> Result<Gpu, String> {
-        let device = Device::system_default().ok_or("no Metal device")?;
+    /// The join kernels on `device`, dispatched on `queue`: the process's one device and queue (decision 0100 §2,
+    /// `rerail_metal::device()`/`queue()`), which this crate, below their owner, does not make.
+    pub fn on(device: Device, queue: CommandQueue) -> Result<Gpu, String> {
         let lib = device.new_library_with_source(&source(), &CompileOptions::new())?;
         let pipe = |name: &str| -> Result<ComputePipelineState, String> {
             let f = lib.get_function(name, None)?;
             device.new_compute_pipeline_state_with_function(&f)
         };
         let (count, write) = (pipe("join_count")?, pipe("join_write")?);
-        let queue = device.new_command_queue();
         Ok(Gpu { device, queue, count, write })
     }
 
     /// The block as a no-copy shared buffer: its pages are the device's too. It covers what the block has used
     /// (rounded to 1 MiB), not its whole reservation: a command buffer's cost grows with the length of the buffers
     /// it makes resident (measured: 2 GiB wrapped cost 120 ms a join, 256 MiB 17 ms).
+    /// The block's device buffer: kept by the block, so a dispatch never pays a fresh buffer's mapping.
     pub fn wrap(&self, b: &Block) -> Buffer {
-        self.wrap_len(b, b.used())
+        b.gpu_buffer(&self.device)
     }
 
+    /// A fresh no-copy wrap of `len` bytes of the block, not kept: for measuring what keeping saves.
     pub fn wrap_len(&self, b: &Block, len: usize) -> Buffer {
         let len = len.div_ceil(1 << 20).max(1) << 20;
-        self.device.new_buffer_with_bytes_no_copy(
-            b.base_ptr() as *const c_void,
-            len.min(b.reserved()) as u64,
-            MTLResourceOptions::StorageModeShared,
-            None,
-        )
+        self.device.new_buffer_with_bytes_no_copy(b.base_ptr() as *const c_void, len.min(b.reserved()) as u64, MTLResourceOptions::StorageModeShared, None)
     }
 
     fn dispatch(&self, p: &ComputePipelineState, args: &JoinArgs, b: [&Buffer; 3], counts: &Buffer) {

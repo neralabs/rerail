@@ -227,7 +227,7 @@ impl Version {
             Version::Overlay { depth, .. } => *depth,
         }
     }
-    /// A base's image bytes, as they are stored (`program_text::store_version`); `None` for a view or an overlay.
+    /// A base's image bytes, as they are stored (`program_text::encode_version`); `None` for a view or an overlay.
     pub fn base_bytes(&self) -> Option<&[u8]> {
         match self {
             Version::Base { image, .. } => Some(image.bytes()),
@@ -508,6 +508,7 @@ pub fn differences(a: &Version, b: &Version) -> String {
         let cell = |c: Cell| match c {
             Cell::Int(i) => i.to_string(),
             Cell::Str(x) => format!("{:?}", v.text(x)),
+            Cell::Branded(b) => b.to_string(),
         };
         for f in v.all_facts().into_iter().chain(v.about_facts()) {
             for (k, row) in f.rows().enumerate() {

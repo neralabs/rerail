@@ -15,6 +15,8 @@ pub(crate) static METAL: Metal = Metal;
 pub fn register() {
     crate::code_rule_dsl::logic::device::register(&METAL);
     crate::code_rule_dsl::transducer::packed::device::register(&METAL);
+    // Kind-set axes solved on the device in a batch's chunk block (decision 0289 §2).
+    crate::code_rule_dsl::facts::nearest::install_chunk_axis(packed::metal_join::axis_in_chunk);
     crate::code_rule_dsl::prof::register_device_memory(|| (packed::metal_backend::reserved_mb(), packed::metal_backend::driver_mb()));
 }
 
@@ -54,8 +56,8 @@ impl SolverDevice for Metal {
         packed::metal_join::available()
     }
 
-    fn compile_join(&self, join: &JoinRule, spec: &str) -> Result<JoinPlan, String> {
-        joins::compile(join, spec).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
+    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)]) -> Result<JoinPlan, String> {
+        joins::own_texts(own_texts.to_vec(), || joins::compile(join, spec)).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
     }
 
     fn refuse(&self, why: String) {

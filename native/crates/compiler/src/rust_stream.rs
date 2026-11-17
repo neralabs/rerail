@@ -256,9 +256,16 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
             writeln!(windows, "/// Gap mark {k}'s mask from the bytes, a window (`native_cpu_bytes`).\nmod lazy_window_{k} {{\n{src}}}\n").unwrap();
             let unless: Vec<String> = r.unless.iter().filter(|&&(m, _)| m == k).map(|&(_, w)| w.to_string()).collect();
             let unless = if unless.is_empty() { String::new() } else { format!("        if matches!(word, {}) {{ return false; }}\n", unless.join(" | ")) };
+            // A mark with token tests (`lazy_coded`): its tests' hit, in the token's code, first.
+            let coded = if crate::native_cpu_block::lazy_coded(r) >> k & 1 == 1 {
+                format!("        if unsafe {{ *self.codes.add((self.next as usize - 1) * self.rs) }} >> {} & 1 != 0 {{ return true; }}\n", crate::records::MARK_SHIFT + u32::from(k))
+            } else {
+                String::new()
+            };
             writeln!(
                 out,
                 "    /// Gap mark {k} at the token, from the bytes (`native_cpu_block::lazy_marks`).\n    #[inline(never)]\n    fn lazy_{k}(&self) -> bool {{\n\
+                 {coded}\
                  \x20       let mut j = self.next as usize - 1;\n\
                  \x20       let (from, word) = loop {{\n\
                  \x20           if j == 0 {{ break (0, 0); }}\n\

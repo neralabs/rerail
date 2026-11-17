@@ -67,7 +67,7 @@ pub(in crate::code_rule_dsl) enum Pass<'a> {
 /// A pass's roots, as a rule over each document's codes (decision 0033): no node list is built.
 /// Every root test a pass's domain makes (its kinds, its program's leading kind and supertype
 /// tests, `matcher::Entry`) is a property of a node's code, so a pass's roots in a document are
-/// the nodes of the codes its rule admits, which the residency indexes (`DocView::by_code`). The
+/// the nodes of the codes its rule admits, which the residency indexes (`ChunkTape::by_code`). The
 /// run hands the device each pass's (document, code) runs (`RootSeg`); the device reads its root
 /// in place. Listed roots (a clause's prefilter candidates, few and scattered) are a list.
 #[derive(Debug)]
@@ -749,11 +749,15 @@ fn scratch_rows(plan: &Plan<'_>) -> usize {
     plan.steps.iter().flat_map(|(_, levels)| levels).map(Vec::len).max().unwrap_or(0).max(1)
 }
 
-/// The device's tape view (decision 0032), which the label and pattern kernels read.
-const TAPE_VIEW: &str = concat!("#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape.metal"));
+/// The device's tape view (decision 0032), which the label and pattern kernels read: the
+/// document table's entry as generated (`slabs::msl`, decision 0289 §4), then the readers.
+static TAPE_VIEW: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    format!("#include <metal_stdlib>\nusing namespace metal;\n{}{}", crate::code_rule_dsl::residency::slabs::msl(), include_str!("metal_tape.metal"))
+});
 /// The label kernels over the tape view.
-const SOURCE: &str = concat!("#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape.metal"), include_str!("metal_work_queue.metal"), include_str!("metal_label_passes.metal"));
-/// Where a label kernel binds the batch's four slabs (`Slabs`): past every other buffer.
+static SOURCE: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| format!("{}{}{}", *TAPE_VIEW, include_str!("metal_work_queue.metal"), include_str!("metal_label_passes.metal")));
+/// Where a label kernel binds the batch's chunk block (`ChunkTape`'s `at`): past every other buffer.
 const SLAB_SLOT: u64 = 27;
 const KERNELS: [&str; 14] = [
     "label_sink",
@@ -873,7 +877,7 @@ fn pipelines() -> Result<Vec<ComputePipelineState>, Error> {
     }
     let pipelines = KERNELS
         .iter()
-        .map(|name| pipeline_named(SOURCE, name))
+        .map(|name| pipeline_named(&SOURCE, name))
         .collect::<Result<Vec<_>, _>>()?;
     *cached = Some(pipelines.clone());
     Ok(pipelines)
@@ -922,7 +926,7 @@ fn bytes_of<T: Copy>(values: &[T]) -> &[u8] {
 /// The batch's tape buffers, shared by every level.
 struct Tapes {
     /// The batch's documents, resident (decision 0032): the label kernels read their tapes in
-    /// place, `docs` holding each one's `DocView`.
+    /// place, `docs` holding each one's `ChunkTape`.
     table: crate::code_rule_dsl::residency::slabs::DocTable,
     docs: MappedBuffer,
     /// The label state: the prefix (head, labels, the sweeps' words), the scratch rows and the
@@ -1108,8 +1112,8 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
                 .map(|tape| {
                     let mut nested = vec![0_usize; tape.transducer_len()];
                     let mut longest = 0;
-                    for node in 0..tape.transducer_len() as u32 {
-                        let above = tape.transducer_parent(node).map_or(0, |parent| nested[parent as usize]);
+                    for (node, parent) in (0..tape.transducer_len() as u32).zip(tape.transducer_parents()) {
+                        let above = parent.map_or(0, |parent| nested[parent as usize]);
                         nested[node as usize] = above + usize::from(has(tape, node));
                         longest = longest.max(nested[node as usize]);
                         if *siblings {
@@ -1497,15 +1501,14 @@ fn tapes(
         // Back for a retry, which builds the prefix again.
         plan.initial.set(initial);
     }
-    // The documents in the slabs, one table over them: a batch over `MAX_SLABS` is the wave's to
-    // split.
+    // The documents resident, gathered into one block (decision 0289 §4), one table over them.
     let table = crate::code_rule_dsl::prof::time("residency.docs", || crate::code_rule_dsl::residency::slabs::admit_docs(files))?;
-    let table = crate::code_rule_dsl::residency::slabs::DocTable::new(table).ok_or_else(capacity)?;
+    let table = crate::code_rule_dsl::residency::slabs::DocTable::one_block(table).ok_or_else(capacity)?;
     if table.nodes != files.iter().map(TapeDoc::transducer_len).sum::<usize>() {
         return Err(Error::BackendFailure);
     }
     let docs = if table.views.is_empty() {
-        MappedBuffer::zeroed::<crate::code_rule_dsl::residency::slabs::DocView>(device, 1)?
+        MappedBuffer::zeroed::<crate::code_rule_dsl::residency::slabs::ChunkTape>(device, 1)?
     } else {
         MappedBuffer::from_slice(device, &table.views)?
     };
@@ -1520,7 +1523,6 @@ fn tapes(
 }
 
 impl Runner<'_> {
-    /// The batch's slabs at `SLAB_SLOT..` (`Slabs`), the last repeated where it has fewer.
     /// The pooled stacks every walk tier and root walk runs on (`STACK_WORDS`), made at first use
     /// and kept for the next run (`Kept`). Kernels that share them run in order (tracked).
     fn stacks(&mut self) -> Result<Buffer, Error> {
@@ -1530,12 +1532,13 @@ impl Runner<'_> {
         Ok(self.stacks.as_ref().expect("stacks").buffer.clone())
     }
 
+    /// The batch's chunk block, as kernels read documents (`SLAB_SLOT`; a stand-in for none).
+    fn block(&self) -> &Buffer {
+        self.tapes.table.block.as_ref().map_or(&self.flags.buffer, |block| block.buffer())
+    }
+
     fn bind_slabs(&self, encoder: &metal::ComputeCommandEncoderRef) {
-        let slabs = &self.tapes.table.slabs;
-        for slot in 0..crate::code_rule_dsl::residency::slabs::MAX_SLABS {
-            let buffer = slabs.get(slot).or(slabs.last()).map_or(&self.flags.buffer, |slab| &slab.buffer.buffer);
-            encoder.set_buffer(SLAB_SLOT + slot as u64, Some(buffer), 0);
-        }
+        encoder.set_buffer(SLAB_SLOT, Some(self.block()), 0);
     }
 
     fn flag(&self, index: usize) -> u32 {
@@ -2183,15 +2186,15 @@ impl Runner<'_> {
     }
 
     /// The interpreter's buffers for a prepared batch, in `run_batch`'s order: over resident
-    /// tapes, the document table at `files` and the slabs at `nodes`, `children`, `source` and
-    /// `lineStarts` (`RERAIL_RESIDENT`).
+    /// tapes, the document table at `files` and the chunk block at `nodes`, which the kernel reads
+    /// (`RERAIL_RESIDENT`; `children`, `source` and `lineStarts` bind it too, unread).
     fn bound(&self, prepared: &Prepared) -> Vec<Buffer> {
         let lease = &self.workspace.as_ref().expect("a workspace").lease;
         let tapes = &self.tapes;
-        let slabs = &tapes.table.slabs;
-        let slab = |slot: usize| slabs.get(slot).or(slabs.last()).map_or(&self.flags.buffer, |slab| &slab.buffer.buffer);
+        let block = self.block();
         let program_buffers = &prepared.program;
-        let (files, nodes, children, source, lines) = (&tapes.docs.buffer, slab(0), slab(1), slab(2), slab(3));
+        // The block at `nodes`, where the kernel reads it; the other three are unread there.
+        let (files, nodes, children, source, lines) = (&tapes.docs.buffer, block, block, block, block);
         [
             &prepared.tasks.buffer,
             &prepared.header.buffer,

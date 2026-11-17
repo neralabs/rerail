@@ -1282,6 +1282,9 @@ mod language {
         // Java's and C#'s families: syntax only so far, their tapes from the lean parsers.
         pub mod csharp;
         pub mod java;
+        // Go's, C's and C++'s families: syntax only so far, their tapes from the lean parsers.
+        pub mod c;
+        pub mod go;
         // HTML's, CSS's and Markdown's families: syntax only so far, read by tree-sitter.
         pub mod css;
         pub mod html;
@@ -3124,10 +3127,6 @@ pub mod sql_admission {
 #[cfg_attr(any(test, feature = "test-hooks"), path = "query")]
 mod query {
     pub use rerail_w::code_rule_dsl::query::*;
-    // The async-call family's reference (`plan::async_reference`) is read by the p-anchor-corpus tests alone.
-    #[cfg(test)]
-    #[cfg_attr(not(feature = "p-anchor-corpus"), allow(dead_code))]
-    pub mod plan;
     #[cfg(test)]
     pub mod tests;
     #[allow(unused_imports)]
@@ -3829,8 +3828,6 @@ mod transducer {
             #[cfg(test)]
             pub mod engine_tests;
         }
-        #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-        pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_frontier_conformance;
         #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
         pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_grid_backend;
         #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
@@ -4645,7 +4642,7 @@ pub(crate) use rule_api::CodeRuleDslEditor;
 pub(crate) fn install_languages() {
     use language::Family;
     use language::adapter::pack::{Pack, pack, register};
-    use language::adapter::{blade::Blade, css::Css, csharp::Csharp, ecma::Ecma, format::Format, html::Html, java::Java, json::Json, markdown::Markdown, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
+    use language::adapter::{blade::Blade, c::C, css::Css, csharp::Csharp, go::Go, ecma::Ecma, format::Format, html::Html, java::Java, json::Json, markdown::Markdown, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
     register(Family::Python, &Pack::<Python>::NEW);
     language::register_base(Family::Python, &Pack::<Python>::NEW);
     register(Family::Ecma, &Pack::<Ecma>::NEW);
@@ -4670,6 +4667,10 @@ pub(crate) fn install_languages() {
     language::register_base(Family::Java, &Pack::<Java>::NEW);
     register(Family::Csharp, &Pack::<Csharp>::NEW);
     language::register_base(Family::Csharp, &Pack::<Csharp>::NEW);
+    register(Family::Go, &Pack::<Go>::NEW);
+    language::register_base(Family::Go, &Pack::<Go>::NEW);
+    register(Family::C, &Pack::<C>::NEW);
+    language::register_base(Family::C, &Pack::<C>::NEW);
     register(Family::Html, &Pack::<Html>::NEW);
     language::register_base(Family::Html, &Pack::<Html>::NEW);
     register(Family::Css, &Pack::<Css>::NEW);
@@ -4762,7 +4763,7 @@ pub(crate) fn install_languages() {
     // The containment relations' `nearest` solve (the file-local FIX's).
     facts::nearest::install_nearest(typing::file_local::nearest);
     // `core.rr`'s names, as the rule language reads them.
-    facts::core::install_core_names(logic::rr::core_names);
+    facts::core::install_core_names(logic::rr::core_shape);
     // What the evaluator keeps per connection, dropped with it.
     facts::vtab::install_forget(facts::vtab::Forget { scope: logic::native::forget_scope, engine: logic::native::forget_engine });
     // core.rr's functors whose meaning is W's or a language's.
@@ -4843,6 +4844,21 @@ pub(crate) fn install_languages() {
             // The lean Java parser (`tape::java_lean`, decision 0195); a file it refuses goes to
             // tree-sitter-java.
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Java, name: "lean Java parser", rank: 0, runs: true, parser: &tape::java_lean::Lean });
+        }
+        if cfg!(feature = "lang-go") {
+            // The lean Go parser (`tape::go_lean`, decision 0314); a file it refuses goes to
+            // tree-sitter-go.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Go, name: "lean Go parser", rank: 0, runs: true, parser: &tape::go_lean::Lean });
+        }
+        if cfg!(feature = "lang-c") {
+            // The lean C parser (`tape::c_lean`, decision 0317); a file it refuses goes to
+            // tree-sitter-c.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::C, name: "lean C parser", rank: 0, runs: true, parser: &tape::c_lean::Lean });
+        }
+        if cfg!(feature = "lang-cpp") {
+            // The lean C++ parser (`tape::c_lean`, decision 0317); a file it refuses goes to
+            // tree-sitter-cpp.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Cpp, name: "lean C++ parser", rank: 0, runs: true, parser: &tape::c_lean::Lean });
         }
         if cfg!(feature = "lang-csharp") {
             // The lean C# parser (`tape::csharp_lean`, decision 0196); a file it refuses goes to

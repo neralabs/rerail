@@ -285,6 +285,7 @@ pub fn projections(v: &Version) -> Vec<(RelId, Vec<(usize, i64)>)> {
                 TermRef::Var(s) => vars.push(s),
                 TermRef::Wild => {}
                 TermRef::Int(i) => eqs.push((c, i)),
+                TermRef::Branded(a) => eqs.push((c, a.value())),
                 _ => plain = false,
             }
         }

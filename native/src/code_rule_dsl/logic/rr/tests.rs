@@ -2259,6 +2259,26 @@ roots(k) :- kind(s, "string"), parsed(s, "annotation", r), kind(r, k).
     assert!(!names.iter().any(|n| n[0].starts_with("Nope")), "{names:?}");
 }
 
+/// A guest is made in a wave, where no run reads the store (decision 0104), so no later process reads its tape: a run
+/// stores none, and its own collection has none to delete (Q30). The host's source is stored; the annotation's text,
+/// parsed as a guest (wrapped: `(List[int])`), is not.
+#[test]
+fn a_run_stores_no_source_of_its_guests() {
+    use sha2::Digest as _;
+    let py = "x: \"List[int]\" = []\n";
+    let rule = r#"
+.decl ident(x: symbol)
+ident(x) :- kind(s, "string"), parsed(s, "annotation", _), guest(g, _, s, _), node(g, i, "identifier", _, _), text(i, x).
+.output ident
+"#;
+    let [names] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("no-guest-sources", &[("a.py", py)], rule, &["ident"])).unwrap();
+    assert!(names.contains(&shown_row(&["List"])), "the guest was made: {names:?}");
+    let store = crate::content_store::ContentStore::open(&crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().unwrap()).unwrap();
+    let key = |t: &str| crate::content_store::HashKey::from_sha256_digest(sha2::Sha256::digest(t.as_bytes()).into());
+    assert!(store.source_by_hash(key(py)).unwrap().is_some(), "the host's source is stored");
+    assert!(store.source_by_hash(key("(List[int])")).unwrap().is_none(), "the guest's source is not");
+}
+
 /// `.on guest_error`: a guest that does not parse is withheld (skip, the default) or keeps its partial tree, and
 /// `report` gives a finding at its line in the host; the host's own `.on syntax_error` does not see it.
 #[test]
@@ -3338,6 +3358,7 @@ fn lowers_back(dirs: &[&str], k: usize, n: usize) {
         .filter(|p| p.extension().is_some_and(|e| e == "rr"))
         .collect();
     paths.sort();
+    crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(paths.iter().skip(k).step_by(n));
     let (mut read, mut differ) = (0, Vec::new());
     for path in paths.iter().skip(k).step_by(n) {
         let Ok((program, _)) = super::read_file(path) else { continue };
@@ -3442,6 +3463,7 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
     }
     // The `part.0`th of `part.1` parts, by position in name order: a group too long for one test is split.
     paths.sort();
+    crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(paths.iter().enumerate().filter(|(i, _)| i % part.1 == part.0).map(|(_, p)| p));
     let counts: Vec<(usize, usize)> = paths.iter().enumerate().filter(|(i, _)| i % part.1 == part.0).map(|(_, p)| p).filter_map(|path| {
         let path = path.as_path();
         let Ok((statements, _)) = program(&path) else { return None };
@@ -3773,9 +3795,95 @@ fn a_program_adds_only_to_extensible_library_relations() {
     super::read_text(open).unwrap().lower(false).expect("cmp_same_ask is extensible");
 }
 
+/// Decision 0275: a text's header is kept under its bytes with the library files its includes read, and found again:
+/// the header found is the header read, and another text's is its own.
+#[test]
+fn a_texts_header_is_found_under_its_bytes() {
+    let text = "#include \"core.rr\"\n.policy \"test:header-0275\" revision 1\n.language python\n.decl out(x: symbol)\n.output out\n";
+    let header = text_header(text).unwrap();
+    let kept = kept_header_found(text).expect("kept by the first read");
+    assert_eq!(format!("{kept:?}"), format!("{header:?}"), "the header kept is the header read");
+    assert!(kept.settings.iter().any(|(k, v)| k == "policy" && v.contains("test:header-0275")), "{:?}", kept.settings);
+    assert_eq!(format!("{:?}", text_header(text).unwrap()), format!("{header:?}"), "read again from the entry");
+    let other = text.replace("header-0275", "header-0275-b");
+    assert!(kept_header_found(&other).is_none(), "another text: its own entry");
+}
+
+/// Decision 0275: a rule file's program is kept under its path and sha with the files it read, and found again while
+/// each still reads as recorded: by its `stat`, and by its sha where the stat moved. An edit to an included file reads
+/// the program again; its bytes put back, the stat moved but the sha holds, and the entry is found again.
+#[test]
+fn a_rule_files_program_is_found_while_what_it_read_holds() {
+    let dir = tempfile::tempdir().unwrap();
+    let (main, helper) = (dir.path().join("main.rr"), dir.path().join("helper_0275.rr"));
+    let original = ".decl helper(x: symbol)\nhelper(\"a\").\n";
+    std::fs::write(&helper, original).unwrap();
+    std::fs::write(&main, "#include \"helper_0275.rr\"\n.decl out(x: symbol)\nout(x) :- helper(x).\n.output out\n").unwrap();
+    let main = main.canonicalize().unwrap();
+    let found = || kept_program_found(&main);
+    assert!(found().is_none(), "nothing kept before the first read");
+    let (program, files) = read_file(&main).unwrap();
+    let (kept, kept_files) = found().expect("kept by the first read");
+    assert_eq!(format!("{kept:?}"), format!("{program:?}"), "the program kept is the program read");
+    assert_eq!(kept_files, files, "with the files it read, in reading order");
+    std::fs::write(&helper, ".decl helper(x: symbol)\nhelper(\"b\").\n").unwrap();
+    assert!(found().is_none(), "an included file edited: read again");
+    std::fs::write(&helper, original).unwrap();
+    assert!(found().is_some(), "its bytes put back: its sha holds though its stat moved");
+}
+
+/// Decision 0089 §3 with 0174: a program that adds to a library relation takes the library's readers of it (its
+/// cone), not the on-request rewrite's rules. Through those (`x`'s readers' request for `value`, `value`'s answer) the
+/// cone reached every reader of the attribute: `z` here, and 1,300 of the Python pack's library rules in each of its
+/// five programs that ask of the library.
+#[test]
+fn a_cone_is_taken_without_the_attributes_requests() {
+    let decls = ".decl kind(n: node, k: symbol)\n.input kind\n.decl value(n: node, v: symbol)\n.input value\n.decl x(n: node)\n.decl y(n: node, v: symbol)\n.decl z(n: node, v: symbol)\n";
+    let library = parse(&format!("{decls}x(n) :- kind(n, \"call\").\ny(n, v) :- x(n), value(n, v).\nz(n, v) :- kind(n, \"name\"), value(n, v).\n.output y, z\n")).unwrap();
+    assert!(library.rules.iter().any(|r| r.head.rel == "rr_value_req"), "the library reads `value` on request: {:?}", library.rules.iter().map(|r| r.head.rel.to_string()).collect::<Vec<_>>());
+    // As `Text::lower_in` does: the program's own rewrite undone, the cone added, the rewrite made again over both.
+    let mut program = parse(&format!("{decls}x(n) :- kind(n, \"attribute\").\n")).unwrap();
+    lower::undo_on_request(&mut program);
+    let declared: BTreeSet<String> = ["kind", "value", "x", "y", "z"].into_iter().map(str::to_owned).collect();
+    crate::code_rule_dsl::logic::rr::with_cone(&mut program, &library, &["x".to_owned()].into(), &declared);
+    let heads: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.to_string()).collect();
+    assert!(heads.contains("y"), "`y` reads `x`: {heads:?}");
+    assert!(!heads.contains("z"), "`z` reads only `value`: {heads:?}");
+    assert!(!heads.iter().any(|h| lower::on_request_rule(h)), "the rewrite's rules are not copied from the library: {heads:?}");
+    for round in lower::ON_REQUEST {
+        lower::sources_on_request(&mut program, round);
+    }
+    let asks: Vec<String> = program.rules.iter().filter(|r| r.head.rel == "rr_value_req").map(|r| format!("{:?}", r.body)).collect();
+    assert!(asks.len() == 1 && asks[0].contains("\"x\""), "`y`'s nodes are asked for, by `x`: {asks:?}");
+}
+
+/// Decision 0174 §6: an attribute a cross-file reader asks for stays eager. `@rr_node_value` reads the node's document
+/// from the chunk's batch, which the cross-file part does not hold: answered there, every reader of `value` saw no
+/// value, the file-local ones too (`vals`), as the Python pack's `__all__` and `exports` readers made it.
+#[test]
+fn an_attribute_a_cross_file_reader_asks_for_is_eager() {
+    let rule = r#"
+.policy "t:values" revision 1
+.decl pick(n: node)
+pick(n) :- kind(n, "integer"), kind(m, "integer"), docof(n, d), docof(m, e), d != e.
+.decl cv(v: symbol)
+cv(v) :- pick(n), value(n, v).
+.decl vals(v: symbol)
+vals(v) :- kind(n, "integer"), value(n, v).
+.decl ends(l: number)
+ends(l) :- kind(n, "expression_statement"), last_token(n, t), line(t, l).
+.output cv, vals, ends
+"#;
+    let [cv, vals, ends] = <[Vec<String>; 3]>::try_from(joined(guests_run("cross-value", &[("a.py", "x = 1\n"), ("b.py", "x = 2\n")], rule, &["cv", "vals", "ends"])).into_iter().map(|mut rows| { rows.sort(); rows }).collect::<Vec<_>>()).unwrap();
+    assert_eq!(vals, ["1", "2"], "the file-local reader's values");
+    assert_eq!(cv, ["1", "2"], "the cross-file reader's values");
+    // With `value`'s round undone the program still has core.rr's shape: its token leaves are made.
+    assert_eq!(ends, ["1"], "a token leaf's reader");
+}
+
 /// A program that adds to an extensible library relation (`cmp_same_ask`, decision 0263) asks the library for its
-/// cone (decision 0089 §3): the library rules reading it (`cmp_same`) are copied in. On the version (`lower_in_version`, the run's path) the
-/// cone is copied from the library's version, and its image is the tree's (`lower_in`).
+/// cone (decision 0089 §3): the library rules reading it (`cmp_same`) are copied in. The version the run reads
+/// (`lower_in_version`) is the tree's (`lower_in`).
 #[test]
 fn a_cone_copied_onto_the_version_is_the_trees() {
     let src = "#include \"python/compare.rr\"\n.decl hit(a: node)\ncmp_same_ask(a, a) :- kind(a, \"call\").\nhit(a) :- cmp_same(a, a).\n.output hit\n";

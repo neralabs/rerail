@@ -8,8 +8,9 @@ e.g. `scripts/dev/test-remote -- cargo nextest run --lib --profile gate` for the
 `scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'`.
 
 The host is a usable one (`scripts/build/farm/status`: reachable, on its link, with disk to spare)
-with a free test slot, the most cores to spare first (its cores less its load: a host busy with its
-own work comes after an idle one with fewer); with none free, the first usable one, once its run ends.
+with a free test slot (a third of its cores, or `test_slots` in the configuration), the one with the
+most of its slots free first, then the most cores to spare; with none free, whichever slot frees
+first on any of them.
 What changed of this checkout is sent through the farm's mirror into the host's farm root, after
 the host is asked again what it holds (it may have been cleaned). COMMAND runs there at `nice -n
 10`, from the checkout's `native/` (or `--dir`), with this machine's open-file limit, and builds in
@@ -24,6 +25,10 @@ status is COMMAND's. Ctrl-C, a kill or a closed terminal stops it on the host to
 `--tree DIR` also sends DIR whole (untracked files too, at the same path under the host's farm
 root): a run's inputs and a program built here, e.g. `--tree tmp/bench --tree tmp/engines` for a
 benchmark run on the host.
+
+The pack test data pulled here (`npm run fixtures:pull`: the ignored files under
+`packs/<pack>/upstream/<tool>/`, none of it in git) is sent too, as trees: the tests that read it
+fail without it, on the host as here. The first run sends it (about 13 MB), later ones what changed.
 
 It runs the installed farm (`~/.local/share/rerail-farm`, `scripts/build/farm/setup`), the one every
 worktree's compiles use, whatever version this checkout has.
@@ -42,6 +47,7 @@ SHARE = os.path.expanduser("~/.local/share/rerail-farm")
 USAGE = __doc__.split("\n\n")[1]
 
 UNAVAILABLE = 69
+KEPT = []
 
 
 def say(message):
@@ -60,7 +66,8 @@ def here(argv, directory, why, remote_only):
         say(f"{why}; --remote-only: not run")
         sys.exit(UNAVAILABLE)
     say(f"{why}: running it here, at nice 19")
-    proc = subprocess.Popen(["nice", "-n", "19"] + argv, cwd=os.path.join(CHECKOUT, directory))
+    proc = subprocess.Popen(["nice", "-n", "19"] + argv, cwd=os.path.join(CHECKOUT, directory),
+                            env=dict(os.environ, RERAIL_FARM_TESTS_HERE="1"))
     try:
         sys.exit(proc.wait())
     except KeyboardInterrupt:
@@ -83,13 +90,44 @@ def choose(named):
         if not candidates:
             reasons = [f"{h['name']}: {farm.health(h).get('why')}" for h in farm.hosts() if h.get("enabled", True)]
             return None, None, "no usable host" + (f" ({'; '.join(reasons)})" if reasons else " (none configured)")
-    for host in candidates:
-        slot = farm.Lock(farm.state("tests", host["name"] + ".lock"), blocking=False)
-        if slot.held:
-            return host, slot, None
-        slot.release()
-    say(f"every usable host runs another test command: waiting for {candidates[0]['name']}")
-    return candidates[0], farm.Lock(farm.state("tests", candidates[0]["name"] + ".lock")), None
+    said = False
+    while True:
+        # The host with the most of its test slots free, then the most cores to spare; any slot that
+        # frees on any host is taken, not only the first host's.
+        free = []
+        for host in candidates:
+            paths = farm.test_slot_paths(host["name"], host)
+            got = None
+            idle = 0
+            for path in paths:
+                lock = farm.Lock(path, blocking=False)
+                if lock.held:
+                    idle += 1
+                    if got is None:
+                        got = lock
+                        continue
+                lock.release()
+            if got:
+                # This checkout's commands on one host share its target directory there, and cargo
+                # runs them one at a time: another host with a free slot goes first.
+                mine = farm.Lock(farm.state("tests", f"{host['name']}.{farm.key(CHECKOUT)}.checkout"), blocking=False)
+                free.append((not mine.held, -idle / len(paths), -farm.spare(host), host, got, mine))
+        if free:
+            free.sort(key=lambda f: f[:3])
+            for f in free[1:]:
+                f[4].release()
+                f[5].release()
+            best = free[0]
+            if best[5].held:
+                KEPT.append(best[5])  # held until exit: a lock closes with its last reference
+            else:
+                best[5].release()
+            return best[3], best[4], None
+        if not said:
+            say("every test slot of every usable host is taken: waiting for the first that frees ("
+                + ", ".join(f"{h['name']} {farm.test_slots(h)}" for h in candidates) + ")")
+            said = True
+        time.sleep(2)
 
 
 def usage(why):
@@ -132,8 +170,22 @@ def parse(argv):
     return named, directory, remote_only, trees, argv
 
 
+def pack_data():
+    """The tool directories of the packs (`packs/<pack>/upstream/<tool>/`) that hold pulled test data:
+    files git ignores there. Tracked files in them go as the checkout's too, the same bytes."""
+    out = subprocess.run(["git", "-C", CHECKOUT, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "--", "packs"],
+                         capture_output=True, text=True)
+    dirs = set()
+    for name in out.stdout.splitlines():
+        parts = name.split("/")
+        if len(parts) >= 5 and parts[0] == "packs" and parts[2] == "upstream":
+            dirs.add(os.path.join(CHECKOUT, *parts[:4]))
+    return sorted(d for d in dirs if os.path.isdir(d))
+
+
 def main(argv):
     named, directory, remote_only, trees, argv = parse(argv)
+    trees += [t for t in pack_data() if t not in trees]
     stop_on_signals()
     if not os.path.exists(os.path.join(SHARE, "farm.py")):
         here(argv, directory, "the farm is not installed (scripts/build/farm/setup)", remote_only)
@@ -168,7 +220,7 @@ def main(argv):
            "env": {"RUSTC_WRAPPER": ""}, "target": farm.key(CHECKOUT), "nice": 10,
            "nofile": resource.getrlimit(resource.RLIMIT_NOFILE)[0],
            "min_free_gb": farm.config().get("min_free_gb", 40)}
-    remote = farm.on_host("farm-agent") + " exec " + shlex.quote(json.dumps(job))
+    remote = farm.agent_exec(job)
     proc = subprocess.Popen(farm.ssh(name, remote, "test"), stdin=subprocess.PIPE)
     try:
         code = proc.wait()

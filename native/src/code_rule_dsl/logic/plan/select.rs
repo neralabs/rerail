@@ -64,6 +64,7 @@ fn term(b: &Body<'_>, t: TermRef<'_>, env: &Env, atoms: Option<[i64; 3]>) -> Res
     Ok(match t {
         TermRef::Var(v) => env.get(v).cloned().ok_or_else(|| Error::Plan(format!("${} is unbound in SQL", b.var(v))))?,
         TermRef::Int(i) => integer(i),
+        TermRef::Branded(a) => integer(a.value()),
         TermRef::Str(s) => string(b.v.text(s)),
         TermRef::Top => integer(TOP),
         TermRef::Call(f, args) => {
@@ -302,7 +303,7 @@ impl Model {
                                 Some(e) => conds.push(eq(column, e.clone())),
                                 None => env.set(v, column),
                             },
-                            TermRef::Int(_) | TermRef::Str(_) | TermRef::Top => conds.push(eq(column, term(b, t, &env, atoms)?)),
+                            TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) | TermRef::Top => conds.push(eq(column, term(b, t, &env, atoms)?)),
                             _ => {}
                         }
                     }
@@ -357,7 +358,7 @@ impl Model {
                                 Lit::Cmp { l: TermRef::Var(v), op: CmpOp::Eq, r }
                                     if v == q
                                         && (matches!(r, TermRef::Str(s) if !b.v.text(s).is_empty())
-                                            || inputs.atoms.is_some() && matches!(r, TermRef::Int(n) if n > 0)) =>
+                                            || inputs.atoms.is_some() && (matches!(r, TermRef::Int(n) if n > 0) || matches!(r, TermRef::Branded(a) if a.atom > 0))) =>
                                 {
                                     Some(r)
                                 }

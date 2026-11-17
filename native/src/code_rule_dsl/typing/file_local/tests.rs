@@ -21,6 +21,26 @@ fn source_relations_keep_their_document_location() {
     }
 }
 
+/// A relation whose rows name no document (`aware()`, as data-layer's `ma_branch_aware`), handed on to a cross-file
+/// reader (`found`, as `MA033` over `ma_owner(_)`), is moved to the cross-file part with its file-local readers
+/// (decision 0290), so `locate` leaves every row the chunks hand on located.
+#[test]
+fn a_relation_naming_no_document_moves_to_the_cross_file_part() {
+    use crate::code_rule_dsl::logic::rr::parse;
+    let text = ".decl doc(d: number, p: symbol, x: number)\n.input doc\n.decl owner(d: number)\nowner(d) :- doc(d, \"a.py\", _).\n\
+                .decl aware()\naware() :- owner(d), d > 0.\n.decl found(k: number)\nfound(1) :- owner(_), !aware().\n.output found\n";
+    let mut program = parse(text).unwrap();
+    assert!(split(&program).contains("aware"), "the case: aware is file-local before the move");
+    let located = locate(&mut program).expect("every row the chunks hand on located");
+    assert_eq!(moved(&program), ["aware"]);
+    let parts = split(&program);
+    assert!(!parts.contains("aware") && !parts.contains("found") && parts.contains("owner"), "{parts:?}, located {located:?}");
+    assert_eq!(cross_causes(&program)["aware"], "its rows name no document (moved by `locate`)");
+    // Located again, nothing more moves.
+    locate(&mut program).unwrap();
+    assert_eq!(moved(&program), ["aware"]);
+}
+
 /// Two trees in one chunk (kinds 1 = module, 2 = function, 3 = other):
 ///
 /// ```text
@@ -327,6 +347,22 @@ hit(n, l) :- pick(n), line(n, l).
     }
 }
 
+/// A climb up the tree (`inside`, `has`, a nearest over a derived set: lower.rs `climb`) reads the tape's parent
+/// column, which `need_tape` declares over numbers. A node's parent is in its document, so the climb is file-local:
+/// cross-file, every climb of a pack joined the corpus on one worker (O-cold-seed-join).
+#[test]
+fn a_climb_over_the_tapes_parent_column_is_file_local() {
+    use crate::code_rule_dsl::logic::rr::parse;
+    let text = ".decl kind(n: node, k: number)\n.input kind\n.decl tape(n: int, par: int, size: int, depth: int)\n.input tape\n\
+        .decl stop(n: node)\nstop(n) :- kind(n, 7).\n\
+        .decl up(n: node, a: int)\nup(n, p) :- kind(n, 3), tape(n, p, _, _), p >= 0.\nup(n, q) :- up(n, p), !stop(p), tape(p, q, _, _), q >= 0.\n\
+        .decl under(n: node)\nunder(n) :- up(n, a), stop(a).\n.output under\n";
+    let program = parse(text).unwrap();
+    let (local, locations, _) = split_located(&program);
+    assert!(local.contains("up") && local.contains("under"), "{local:?}");
+    assert!(locations["up"].contains(&0), "{locations:?}");
+}
+
 /// `boot-python.rr`'s `deco_word`: a disjunction's branch `(e0 = d ; …)` leaves `e0 = d` between two per-file pieces.
 /// The equality names one value, so the pieces are one join, pushed into the chunks whole; apart, the split pushed each
 /// and left their join to the cross-file part (decision 0093 §4, O140).
@@ -506,6 +542,41 @@ fn rows_are_located_on_a_version_as_on_the_tree() {
     let want = locate(&mut tree);
     assert_eq!(want, Ok(vec!["named".to_owned(), "named2".to_owned(), "named3".to_owned()]));
     assert_eq!(pass.result(), want);
+    let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
+}
+
+/// A located rule keeps its branded atoms (decision 0270, a lowered program's atoms): `named`'s `node(_, n,
+/// "function", _, _)`, its kind branded as lowering brands it, is the atom whose unnamed document column the located
+/// rule names, its other terms copied (`passes::t_of`): the kind stays the same branded atom. The same program as the
+/// tree's `locate`.
+#[test]
+fn a_located_rule_keeps_its_branded_atoms() {
+    use crate::code_rule_dsl::logic::front::{Branded, Class, Literal, Term};
+    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+    let text = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl text(n: node, s: symbol)\n.input node, text\n\
+                .decl named(s: symbol)\nnamed(s) :- node(_, n, \"function\", _, _), text(n, s).\n\
+                .decl all(s: symbol)\nall(s) :- named(s).\n.output all\n";
+    let kind = Branded { class: Class::Kind, atom: 7 };
+    let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    for r in &mut tree.rules {
+        for l in &mut r.body {
+            if let Literal::Atom(a) = l {
+                a.args.iter_mut().filter(|t| matches!(t, Term::Str(_))).for_each(|t| *t = Term::Branded(kind));
+            }
+        }
+    }
+    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    assert!(!v.show().contains("\"function\""), "branded: {}", v.show());
+    let mut pass = Locate::default();
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut pass);
+    let (out, _) = p.finish().unwrap();
+    let want = locate(&mut tree);
+    assert_eq!(want, Ok(vec!["named".to_owned()]));
+    assert_eq!(pass.result(), want);
+    let keeps = |l: &Literal| matches!(l, Literal::Atom(a) if a.rel.as_str() == "node" && a.args.iter().any(|t| *t == Term::Branded(kind)));
+    assert!(tree.rules.iter().any(|r| r.head.rel.as_str() == "named_at" && r.body.iter().any(keeps)), "the tree's located rule keeps it");
     let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
     assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
 }

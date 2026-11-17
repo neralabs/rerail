@@ -35,6 +35,8 @@ pub enum T<'a> {
     Wild,
     Top,
     Int(i64),
+    /// A branded atom (decision 0270).
+    Branded(crate::code_rule_dsl::logic::front::Branded),
     Str(&'a str),
     StrAtom(AtomId),
     Call(&'a str, Vec<T<'a>>),
@@ -49,6 +51,7 @@ pub fn t_of<'v>(v: &'v Version, r: RuleRef<'v>, t: TermRef<'v>) -> T<'v> {
         TermRef::Wild => T::Wild,
         TermRef::Top => T::Top,
         TermRef::Int(i) => T::Int(i),
+        TermRef::Branded(b) => T::Branded(b),
         TermRef::Str(a) => T::StrAtom(a),
         TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| t_of(v, r, a)).collect()),
     }
@@ -295,12 +298,14 @@ impl<'p> Builder<'p> {
         rows.iter().map(|row| row.iter().map(|v| match v {
             Value::Int(i) => Cell::Int(*i),
             Value::Str(s) => Cell::Str(AtomId(self.enc.atom(s))),
+            Value::Branded(b) => Cell::Branded(*b),
         }).collect()).collect()
     }
     fn hash_rows(rel: &str, about: bool, rows: &[List<Value>]) -> u64 {
         encoder::facts_hash(rel, about, rows.iter().map(|row| row.iter().map(|v| match v {
             Value::Int(i) => CellText::Int(*i),
             Value::Str(s) => CellText::Str(s.as_str()),
+            Value::Branded(b) => CellText::Branded(*b),
         })))
     }
     /// States relation `rel`'s facts, replacing the parent's.
@@ -337,6 +342,7 @@ impl<'p> Builder<'p> {
         encoder::facts_hash(rel, about, rows.iter().map(|row| row.iter().map(|c| match *c {
             Cell::Int(i) => CellText::Int(i),
             Cell::Str(x) => CellText::Str(enc.text(x.0)),
+            Cell::Branded(b) => CellText::Branded(b),
         })))
     }
     /// The rows of about relation `name` this edit states, or its parent's (`about.rs` reads and writes them by type).
@@ -712,6 +718,15 @@ impl Version {
         Ok(p.finish()?.0)
     }
 
+    /// A part of this version whose rules are those whose id `rules` takes, with its own inputs and outputs (a
+    /// selection from a general form, decision 0298): one overlay, its relations' other fields this version's.
+    pub fn part_rules<S: AsRef<str>, T: AsRef<str>>(self: &Arc<Self>, rules: impl Fn(RuleId) -> bool, inputs: &[S], outputs: &[T]) -> Result<Arc<Version>, String> {
+        use super::manager::Pipeline;
+        let mut p = Pipeline::new("part", self.clone());
+        p.program(&mut super::passes::SelectPart { keep: rules, inputs, outputs });
+        Ok(p.finish()?.0)
+    }
+
     /// `to` as an edit of this version: its rules matched by hash, its parts by relation. For a caller that holds
     /// both programs (a test, the trace's replay); a pass states its edit instead.
     pub fn diff<'p>(self: &'p Arc<Self>, to: &Program) -> Result<Builder<'p>, String> {
@@ -789,6 +804,7 @@ fn write_t(e: &mut Encoder<'_>, t: &T<'_>) {
         T::Wild => e.leaf(kind::WILD, 0),
         T::Top => e.leaf(kind::TOP, 0),
         T::Int(i) => e.int(*i),
+        T::Branded(b) => e.leaf(kind::BRANDED | super::brand_code(b.class) << 5, b.atom),
         T::Str(s) => {
             let a = e.atom(s);
             e.leaf(kind::STR, a);

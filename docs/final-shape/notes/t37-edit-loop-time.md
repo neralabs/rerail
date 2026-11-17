@@ -66,6 +66,44 @@ compiled. `--lib --tests` and `cargo test --workspace` (CI) also build the plain
 where feature unification turned the variant `AstMatcher::TestUnknown` on and its match arms off.
 The variant is now always there (e26cc1d5b).
 
+### One feature set (2026-11-16)
+
+The disk filled: the worktrees' target directories held 908 GB, 575 GB of it incremental state,
+406 GB of that unused for 2 hours. One worktree held 44 incremental directories for
+`rerail_logic` alone, 1–3 GB each. Each is a variant of the crate: a feature set, profile and
+dependency graph some command built it with. The cleaner kept each for a day (now 2 hours).
+
+The variants came mostly from feature unification. The engine's dev-dependencies turn on
+`test-hooks` in 16 workspace crates, 16 more grammars in `ast-grep-language`, and rusqlite's
+`array`. cargo applies dev-dependency features only to builds of test targets, so
+`cargo build --bin rerail-engine` built every dependency crate without them and
+`cargo nextest run --lib` built every one again with them: each edit compiled each crate above
+it twice, and kept two sets of incremental state. `cargo test -p <crate>` (the crate's
+`default`) and `--features metal-tests` add more.
+
+The engine's `test-hooks` feature now turns on everything the dev-dependencies add, and a
+development build of the CLI uses it (`AGENTS.md`). `cargo tree` then gives both builds the same
+features for every crate but the engine itself and the test-only `rerail-parser-tests`.
+`scripts/check/check-dev-features.py` (in the pre-commit hook) checks that the feature keeps
+up with the dev-dependencies, target-specific ones included, and the farm's wrapper tells a CLI
+build without it. Product and `profiling` builds are unchanged.
+
+A crate's own tests made variants too. `cargo test -p rerail-logic` gave logic its `default`, which
+the engine's builds did not (they take the crates without defaults), and it gave `rerail-metal` no
+hooks: the hooks reached it only through the engine's own dev-dependencies. Two manifest rules fix
+both, and the check enforces them: each crate's `default` turns on the `default` of the workspace
+crates it takes without defaults, and each crate's `test-hooks` turns on the `test-hooks` of every
+hooked workspace crate below it, its own test build turning on its own. `cargo tree` then gives
+every workspace crate the same features in the CLI build, the engine's tests and each crate's own
+tests (registry crates still differ in a crate's own tests, but they compile once into the cache,
+with no incremental state).
+
+What the rules miss, the farm's wrapper catches as it happens: it records the feature set of each
+workspace crate's compile per target and profile, and a new one within 2 hours of another is told
+in that build's output and at the checkout's builds for 3 hours, with the differing features, the
+earlier command and what to do. A new dependency graph with the same features (after a Cargo.toml
+change) is not told.
+
 ## 2. The test suite is the slow part
 
 One run of the engine's library tests took 762 s wall and 2,682 s CPU (45 CPU-minutes):
@@ -241,6 +279,72 @@ It was a hard link of Relax's own binary, and cargo removes and links build scri
 it rebuilds them. macOS's syspolicyd then could not read the file by the name it was scanning
 ("Unable (errno: 2) to read file") and killed the running Relax ("Terminating process due to
 Malware rejection").
+
+Sharing the workspace's crates (2026-11-15). The fork, its setup and the invariants are in `scripts/dev/relax/README.md`. Under `RELAX_SHARE=rerail` Relax mounts each worktree at
+one path, so the keys of the workspace's own crates match across worktrees: a second worktree's
+first run of the same code took 15 s wall, 27 s CPU. But two worktrees whose code differed undid
+each other's stores, and each turn cost what a run after an edit did (60–75 s wall, about 200 s
+CPU; 115–183 s at a load of 50–85). The cause was the native receipt. The engine's build script
+compiles C, so the native build's key hashes the engine's files, and its `rustc-env` build ID
+hashes all its sources. Relax gave every build script that reaches a native package (all reach
+libc) the receipt's path in its environment, and the receipt names every native package's outputs
+and the library's folder (the native key's). After any engine edit every script ran again in a new
+OUT_DIR, and every crate whose closure reads one (24 stores, all above `unicode_names2`) went
+stale. rerail.patch keys a script on `RELAX_NATIVE_RECEIPT_ID` instead: the outputs of the native
+packages it reaches, their files when they are path packages, and the library's archives and
+packages as sets (the link lists them in no fixed order; a first version hashed the list and
+still missed). Taking turns, A then C (a one-line edit) at a load of 35–65:
+
+| Run | Wall | CPU | Cache hits / misses |
+|---|---|---|---|
+| A, cold (new Relax build) | 87 s | 354 s | 0 / 61647 |
+| C after A | 30 s | 113 s | 55924 / 1436 |
+| A after C | 40 s | 114 s | 55946 / 1201 |
+| C after A | 26 s | 97 s | 56016 / 1169 |
+
+Before the fix the same turns took 115–183 s wall, 242–272 s CPU, with about 22000 hits. What
+each turn still redoes is the engine's own crate (its build ID, and `RERAIL_FIXTURES_DIR`, an
+absolute checkout path the build script sets) and the native cargo step.
+
+Two runs at once (2026-11-15), A and C as above, both from the installed Relax under
+`RELAX_SHARE=rerail`, at a load of 55–75. Both cold: 152 s and 156 s wall (471 s and 328 s CPU);
+the second waited on the first's build-script claims (`waits for its claim`) and took their
+outputs. Both again: 28 s and 70 s wall. The first try found that two native builds at once list a
+package's host and target runs (libc) in either order, which gave the same outputs two identities;
+the identity takes every list as a set now.
+
+Bounded and remote (2026-11-15, later). `clean-target` removes Relax run dirs idle for 6 hours,
+the build script keeps two installed versions, and the store cap is a fixed 8 GB
+(`RELAX_CACHE_MAX=8192`). The engine's build script no longer writes the checkout's fixtures path,
+so worktrees with the same code share the engine's store too: C after A 10 s, A again 6 s. Two
+live sessions side by side (A and C) each patched only their own checkout's edits, 3–10 s after
+the save. `live-test-remote` now runs as here (`RELAX_SHARE`, the cap) with its home under the
+host's farm root, and sends the open-file limit (it did not, though §2 said so): on the M3 Max a
+cold first verdict in 160 s, then 2–3 s per body edit. Details in `scripts/dev/relax/README.md`.
+
+Quiet runs (2026-11-15, farm 9). Benchmarks among a dozen agents measured whatever else was
+running. `scripts/dev/quiet-run` leases a machine (a host, or this one) for a command: fair turns
+by the last hour's use, one request per checkout, 10 minutes at most a run (first 5 minutes, and
+more only while nobody wanted the machine; set to a flat 10 the same day). While leased the farm sends it no compiles or test commands, and here every
+compile waits. Work the farm does not control (tests, Relax) is reported by checkout, and that
+checkout's builds are told it was unfair. Tested here, on the M1 Max, queued (two checkouts) and
+stopped when wanted (since removed). Here the machine never got idle in these tests: 5–18 cores busy at the
+start, mostly Spotlight, media analysis and other agents' tests. So the report, not the lease,
+is what makes a local benchmark's number readable. A host is the place for a quiet one.
+
+Hub code under Relax (2026-11-15). Relax rejected `ColMap::of_rel` (plan/table.rs) with E0310, which
+rustc accepts. The reduction: an edition 2024 `impl Iterator` returned from `fn f(&self, _r: &str)`
+(so it captures both lifetimes) that holds a closure built inside another closure, which captures
+`self`. Relax gives each region slot of a closure type an identity, and a slot that is one of the
+parent's own regions is mapped to that region when the nested body's requirements are applied,
+so the nested body propagates nothing for it. The parent's instantiation of the closure type had
+a fresh variable there that nothing else constrained when the slot was in the signature: the inner
+closure's borrow reached the hidden type free, and between `'a` and `'b` (unrelated) member
+constraints chose `'static`. rerail.patch ties those signature slots to the parent's regions
+(borrowck/root_cx.rs `tie_inherited_slots`; upvar slots are left alone, since an or-pattern's binding
+records only one of its regions, and tying it rejected `chunked.rs` `combine`). Relax's 272 borrowck
+tests pass, the hub's session test passes under Relax, and the reduction is a test that fails
+without the tie.
 
 The hang was a bug of ours that cargo's fast code hid: under cargo the window is milliseconds wide.
 It may be the cause of 0204's phase 0 race too.
@@ -566,3 +670,9 @@ Still to do:
    - a slow-test timeout.
 5. **The farm for every worktree (§4), and the gates on the idle machines.**
 
+### No benchmark leases (2026-11-16)
+
+`quiet-run`'s leases (farm 9) are removed in farm 20. Its turns, drains, 10-minute cap and
+fairness refusals made agents wait for an idle machine rather than work; with several test slots per
+host (farm 19) the hosts are used for everything instead. `quiet-run` runs its command at once
+through `test-remote`; a benchmark reports the load it ran under.

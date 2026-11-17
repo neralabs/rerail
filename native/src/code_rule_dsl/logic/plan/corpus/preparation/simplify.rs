@@ -51,6 +51,8 @@ pub(super) enum Tm {
     Top,
     Int(i64),
     Str(String),
+    /// A branded atom (decision 0270), the store's: written as it is.
+    Branded(crate::code_rule_dsl::logic::front::Branded),
     Call(String, Vec<Tm>),
 }
 
@@ -62,6 +64,7 @@ impl Tm {
             TermRef::Top => Tm::Top,
             TermRef::Int(i) => Tm::Int(i),
             TermRef::Str(a) => Tm::Str(v.text(a).to_owned()),
+            TermRef::Branded(b) => Tm::Branded(b),
             TermRef::Call(f, args) => Tm::Call(v.text(f).to_owned(), args.map(|a| Tm::of(v, r, a)).collect()),
         }
     }
@@ -73,6 +76,7 @@ impl Tm {
             Tm::Top => T::Top,
             Tm::Int(i) => T::Int(*i),
             Tm::Str(s) => T::StrAtom(b.atom(s)),
+            Tm::Branded(x) => T::Branded(*x),
             Tm::Call(f, args) => T::CallAtom(b.atom(f), args.iter().map(|a| a.write(b)).collect()),
         }
     }
@@ -86,7 +90,7 @@ impl Tm {
         }
     }
     fn is_const(&self) -> bool {
-        matches!(self, Tm::Int(_) | Tm::Str(_))
+        matches!(self, Tm::Int(_) | Tm::Str(_) | Tm::Branded(_))
     }
     /// Each variable `to` names renamed at once.
     fn renamed(&self, to: &dyn Fn(&str) -> Option<String>) -> Tm {
@@ -106,6 +110,7 @@ fn own(v: &Version, r: RuleRef<'_>, t: TermRef<'_>) -> T<'static> {
         TermRef::Top => T::Top,
         TermRef::Int(i) => T::Int(i),
         TermRef::Str(a) => T::StrAtom(a),
+        TermRef::Branded(b) => T::Branded(b),
         TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| own(v, r, a)).collect()),
     }
 }
@@ -522,6 +527,7 @@ impl ProgramPass for GroundRules {
 enum Value {
     Int(i64),
     Str(String),
+    Branded(crate::code_rule_dsl::logic::front::Branded),
 }
 
 impl Value {
@@ -529,6 +535,7 @@ impl Value {
         match t {
             TermRef::Int(i) => Some(Value::Int(i)),
             TermRef::Str(a) => Some(Value::Str(v.text(a).to_owned())),
+            TermRef::Branded(b) => Some(Value::Branded(b)),
             _ => None,
         }
     }
@@ -536,12 +543,14 @@ impl Value {
         match c {
             Cell::Int(i) => Value::Int(i),
             Cell::Str(a) => Value::Str(v.text(a).to_owned()),
+            Cell::Branded(b) => Value::Branded(b),
         }
     }
     fn write(&self, b: &mut Builder<'_>) -> Cell {
         match self {
             Value::Int(i) => Cell::Int(*i),
             Value::Str(s) => Cell::Str(b.atom(s)),
+            Value::Branded(x) => Cell::Branded(*x),
         }
     }
 }

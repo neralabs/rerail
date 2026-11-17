@@ -24,6 +24,7 @@ pub(super) fn t_of<'a>(v: &'a Version, rule: RuleRef<'a>, t: TermRef<'a>) -> T<'
         TermRef::Int(n) => T::Int(n),
         TermRef::Str(a) => T::StrAtom(a),
         TermRef::Call(f, args) => T::Call(v.text(f), args.map(|a| t_of(v, rule, a)).collect()),
+        TermRef::Branded(b) => T::Branded(b),
     }
 }
 

@@ -198,6 +198,7 @@ impl<'a> Normal<'a> {
         let prefix = self.sentinel[head.rel().index()].then_some(Cell::Int(1));
         prefix.into_iter().map(Some).chain(head.args().map(|t| match t {
             TermRef::Int(i) => Some(Cell::Int(i)),
+            TermRef::Branded(b) => Some(Cell::Branded(b)),
             TermRef::Str(a) => Some(Cell::Str(a)),
             TermRef::Top => Some(Cell::Int(top)),
             _ => None,
@@ -284,6 +285,26 @@ impl<F: Fn(&str) -> bool> ProgramPass for Retain<F> {
             return Ok(());
         }
         w.keep(|r| (self.0)(v.rel_name(r.head().rel())))
+    }
+}
+
+/// A maintained stratum's selection from its general form (decision 0298): the rules whose id `keep` takes, the rest
+/// removed, with the inputs and outputs the selection states. One overlay, never folded (so the rules keep the ids
+/// the form's maintenance names), whose relations' other fields are the general form's.
+pub struct SelectPart<'f, F, S, T> {
+    pub keep: F,
+    pub inputs: &'f [S],
+    pub outputs: &'f [T],
+}
+
+impl<F: Fn(super::RuleId) -> bool, S: AsRef<str>, T: AsRef<str>> ProgramPass for SelectPart<'_, F, S, T> {
+    const NAME: &'static str = "a selection from a general form";
+    fn run(&mut self, _: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        let b = w.overlay()?;
+        b.retain(|r| (self.keep)(r.id()));
+        b.set_inputs(self.inputs);
+        b.set_outputs(self.outputs);
+        Ok(())
     }
 }
 

@@ -78,11 +78,11 @@ pub fn decode(bytes: &[u8]) -> Result<Module, String> {
     }
     let text = |c: &Cell| match c {
         Cell::Str(a) => Ok(v.text(*a).to_owned()),
-        Cell::Int(_) => Err("a module image's row: a number where a name is".to_owned()),
+        Cell::Int(_) | Cell::Branded(_) => Err("a module image's row: a number where a name is".to_owned()),
     };
     let int = |c: &Cell| match c {
         Cell::Int(i) => Ok(*i),
-        Cell::Str(_) => Err("a module image's row: a name where a number is".to_owned()),
+        Cell::Str(_) | Cell::Branded(_) => Err("a module image's row: a name where a number is".to_owned()),
     };
     let of = |rel: &str| rows.get(rel).map(Vec::as_slice).unwrap_or(&[]);
     let mut p = ModuleParts { prog, ..ModuleParts::default() };

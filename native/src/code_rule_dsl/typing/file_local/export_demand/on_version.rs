@@ -49,12 +49,14 @@ fn term_text(v: &Version, rule: RuleRef<'_>, t: TermRef<'_>) -> String {
         TermRef::Top => "⊤".into(),
         TermRef::Int(n) => n.to_string(),
         TermRef::Str(a) => format!("{:?}", v.text(a)),
+        // A branded atom (decision 0270) is equal to another only as the same atom.
+        TermRef::Branded(a) => format!("#{}", a.value()),
         TermRef::Call(f, args) => format!("@{}({})", v.text(f), args.map(|a| term_text(v, rule, a)).collect::<Vec<_>>().join(",")),
     }
 }
 
 fn is_const(t: TermRef<'_>) -> bool {
-    matches!(t, TermRef::Int(_) | TermRef::Str(_))
+    matches!(t, TermRef::Int(_) | TermRef::Str(_) | TermRef::Branded(_))
 }
 
 fn find(alias: &BTreeMap<String, String>, v: &str) -> String {

@@ -185,6 +185,7 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
                     .iter()
                     .map(|v| match v {
                         Value::Int(i) => i.to_string(),
+                        Value::Branded(b) => b.value().to_string(),
                         Value::Str(s) => format!("'{}'", s.replace('\'', "''")),
                     })
                     .collect::<Vec<_>>()
@@ -248,7 +249,7 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
     let lattices = prog.lattice.iter().filter(|(rel, _)| derived(rel)).map(|(rel, l)| (rel.clone(), l.keys, super::super::native::TOP)).collect();
     Ok(Emitted {
         constant_rows: std::sync::Arc::new(prog.facts.iter().filter(|(rel,rows)|derived(rel) && !rows.is_empty())
-            .filter_map(|(rel,rows)|rows.iter().map(|row|row.iter().map(|v|if let Value::Int(n)=v {Some(*n)}else{None}).collect::<Option<Vec<_>>>()).collect::<Option<Vec<_>>>().map(|rows|(rel.clone(),rows))).collect()),
+            .filter_map(|(rel,rows)|rows.iter().map(|row|row.iter().map(Value::integer).collect::<Option<Vec<_>>>()).collect::<Option<Vec<_>>>().map(|rows|(rel.clone(),rows))).collect()),
         value_types: std::sync::Arc::new(prog.decls.iter().map(|(r,c)|(r.to_string(),c.iter().map(|(_,t)|t.clone()).map(String::from).collect())).collect()),
         analysis: model.analysis(prog),
         program: schedule::Program { name: name.to_owned(), column_types:relations.iter().map(|(rel,_)|(rel.clone(),prog.decls[rel.as_str()].iter().map(|(_,ty)|if !atoms && ty=="sym" {"TEXT".into()} else {"INTEGER".into()}).collect())).collect(), relations, steps, file_local: false, partitions: Vec::new(), lattices, lattice_operations:BTreeMap::new() },

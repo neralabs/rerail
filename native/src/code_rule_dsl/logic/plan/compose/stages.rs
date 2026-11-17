@@ -165,6 +165,7 @@ fn same_term(v: &Version, x: TermRef<'_>, y: TermRef<'_>) -> bool {
         (TermRef::Var(s), TermRef::Var(t)) => s == t,
         (TermRef::Wild, TermRef::Wild) | (TermRef::Top, TermRef::Top) => true,
         (TermRef::Int(i), TermRef::Int(j)) => i == j,
+        (TermRef::Branded(a), TermRef::Branded(b)) => a == b,
         (TermRef::Str(a), TermRef::Str(b)) => v.text(a) == v.text(b),
         (TermRef::Call(f, xs), TermRef::Call(g, ys)) => v.text(f) == v.text(g) && same_terms(v, xs, ys),
         _ => false,

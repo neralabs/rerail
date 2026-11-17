@@ -276,6 +276,14 @@ and after, and with the library lowered together, on one file (144 rows) and on 
 
 ## Stages 3, 4 and 7, as built so far (2026-11-15)
 
+- **Linking merges helpers equal across modules** (found merging the hub, 2026-11-15). Lowering makes a context's,
+  cover's or aggregate's helper once per stem, columns and rule templates (365610cbf), but only within one lowering:
+  two library modules each made their own, and the linked library had both where lowering them together has one
+  (`library_modules_link_to_the_lowering_of_them_together`, javascript's `rr_cover`s). `append` keys each module's
+  helpers as `helper_once` does, in the order they were made, and an equal one is renamed to the earlier module's.
+  A module image keeps its helpers' stems (`module_helper` rows): an aggregate's names its readers' heads, which its
+  rules do not say.
+
 - **Every program is lowered in its libraries' scope** (`rr::Text::lower_in`, `lower::link_in`): its own clauses,
   as a module against the library modules its includes reach, and the whole-program half over them with the scope
   seeded; the scope's names are then taken out (core's and the kind sets stay, as `own_part` left them). No program
@@ -328,6 +336,119 @@ time: no image exists yet to derive from.
 
 Open, found on the way: `typing::phase_tests::types_resolves_names_bases_members_and_annotations_by_symbol` fails
 ("a dotted annotation through `import pkg.m`"), at stage 2's commit too, so before this work.
+
+## Stage 5, first steps (2026-11-15)
+
+With the shipped bundle (0264) and its prepared programs (0270), preparing a run that reads its program prepared
+was 0.27 s, then 0.125 s once the text tests' automata shipped too. These steps take derivations off that path:
+
+- **The guests' copies are folded where the program is prepared.** `fold_own` and its `merge_and_drop_repeats` ran
+  on the combined program before the prepared program was looked up (0.022 s), though the result is a function of
+  the combined program and the run's language, which the prepared key names. The fold now runs on a miss alone, on
+  the way into preparing; what the run read of the program before it (whether it loads, the cross memo's pragma) is
+  checked to be the same after it in a debug build.
+- **The split's parts are views** (§4). `file_local::assemble` copied the whole lowered program twice, one copy per
+  part, and kept each beside its part's version (`Tree::beside`). Where the parts have versions, a part's tree is
+  now `Tree::of` its version, made where a reader asks. Two readers still ask, both of the cross-file part: the
+  cone of requests (`cone_of`) and the support relations (`supports::supports`), t36 item 7's.
+
+Measured (Python pack, one file, release, one thread, M3 Max, fresh stores, the bundle): prepare 1.71 G → 1.38 G,
+the run 23.44 G → 23.19 G; no bundle 40.4 G (unchanged). Every output relation is the baseline's, and the 50-file
+outputs are the build's before the hub merge, 0174 on and eager.
+
+What preparing still does on this path (unprofiled, the timeline): the memo's program and the components' plan
+0.029 s (the per-file memo's identities 0.016 s, a digest of each stratum's rules), the split's parts 0.015 s, the
+projection 0.012 s, statistics 0.011 s, reading the prepared program's two texts 0.013 s, the cone of requests
+0.006 s. Each is a function of the prepared program (with the run's options and phase rows for the identities): the
+next step keeps them with its image.
+
+### The memo's strata kept with the prepared program (2026-11-15)
+
+The per-file memo's identity of each relation (decision 0225 §2) is a digest of its stratum's rules and of what they
+read, then of the run's options, its earlier phases' rows and the projection, where its rules reach them. The first
+part is a function of the file-local part alone, so it now is the prepared program's (`memo::Strata`, made with the
+split, `Prepared::memo_strata`), kept with it as three relations (`prepared_memo_part`, `prepared_memo_stratum`,
+`prepared_memo_reach`; the prepared plan is v3) and read back with it. A run adds the second part
+(`Strata::identities`); a run whose file-local part is another (the digest differs) makes the strata again. The
+identities are the same as before: a stratum's leaves are now every relation the part does not derive, of which a
+run digests only the phased ones, as before (an earlier phase's export is never derived in the part, checked in a
+debug build).
+
+Measured as above: every bundle run reads the strata kept (`corpus.memo_strata_kept`), and the run is 23.00 G
+(23.03 G before), every output the baseline's. The step's other half, the components' plan and the memo space's
+digest, stays. With it the hit path's prepare is the derivations listed above, about 0.1 G each; they are small next
+to what the run does outside the main run (below), and each next step there is measured against that.
+
+### What a bundle run does outside the main run (2026-11-15)
+
+A cold bundle run of one file was 23.0 G, and the main run's sections sum to 12.3 G. The timeline now carries the
+process's instructions retired (`i=`, `RERAIL_TIMELINE=sections` for the sections and the CLI's marks alone, without
+a line per span), which places the other 10.7 G:
+
+| Stretch | G |
+|---|---|
+| The CLI's start and the settings | 0.30 |
+| Phase 0's run (`bootstrap.rr`, the texts' include graphs) | 3.06 |
+| Phase 0's observations written, and the stretch to the next run | 1.98 |
+| Phase 0's second run (`components.rr`) | 0.28 |
+| After the main run's write: the whole-run cutoff's record | 5.11 |
+
+The record is the largest. `reuse::record` lists the rule files the run depends on (`rule_files`) through
+`Texts::names`, which resolves every text's includes again: 42 `.rr` modules, 458 KB, each read back into statements
+(`rr::stored_statements`, a tape and its facts, then the statements), 4.3 G, about 9.4 k instructions a byte. With
+the bundle nothing else parses those modules: combining reads the combined program's image. The warm check
+(`reuse::reused`) calls the same `rule_files` once every recorded digest matched, so a warm run pays it too.
+
+What the list needs, the run has: each text's includes, transitively, are phase 0's graph's (`Texts::derived`, with
+each module's digest), and the phase programs its declarations name are the only other rule files. The next step is
+for phase 0 to derive that second dependency with the first, the phase programs a text's declarations name (a
+`bootstrap.rr` output beside `p0_include`), so the record and its check read both off the graph and parse nothing.
+
+### Phase 0 lists the rule files, and its graphs are images (2026-11-16)
+
+Both steps are built.
+
+1. **The phase programs a text names are phase 0's.** `bootstrap.rr` reads a declaration named `<phase>__<x>` (not
+   `typing_` or `rr_`) as a reference to the phase program `<phase>.rr` in `env("rerail.phase_lib")` (the builtin
+   phases' directory), loads it as it loads an include, and outputs `p0_phase(from, phase, path)`. A text's own
+   references come in as `p0_text_phase` facts (`rr::phases_named`, from the statements the text seed is made
+   from anyway). A graph keeps them (`Graph::phases`) and the files reached through them with their digests
+   (`Graph::rules`, outside the graph's digest, checked by `holds`). `reuse::rule_files` is then the graphs' files
+   and the engine's own (`rr::engine_files`), and parses nothing. It lists as before (`listed`) where a run sets
+   `phase_dir` or a text has no graph. `RERAIL_REUSE_CHECK=1` prints both lists. They were equal in every run that
+   checked: the targeted tests (2 files each) and the pack (44 files).
+2. **A graph is an image** (decision 0264's): keyed by the build and the seed (`rerail phase 0 graph image 1`), its
+   paths relative to the library or the phases' directory, so the shipped bundle's graphs hold on any checkout of the
+   same library. `phase0::graphs` reads them before it derives, and takes one where every file it names still has
+   its digest (each file looked at once for the call, however many graphs name it). A newly derived graph is kept
+   in the build's image store and exported into the bundle. A seed's key names the seed, not what its graph
+   reached, so an edited library gives a key another graph: the store keeps the first under the key
+   (`keep_graph_image` looks first), and a run finds it no longer holds and derives the graph again.
+
+The image store is opened once for a call's seeds. Opened once per seed, its 316 opens cost 3.2 G, more than the
+derivation they replaced.
+
+The Python pack, one file, fresh project store, release, one thread, M5 Max (G instructions):
+
+| Stretch | Before | Now |
+|---|---|---|
+| Phase 0, the program files' graphs | 3.06 | 0.35 |
+| Phase 0's observations and the gap after | 1.98 | 0.94 + 0.43 |
+| Phase 0, second run (`components.rr`) | 0.28 | 0.40 (read, not derived) |
+| After the main write (the record) | 5.11 | 1.87 |
+| Whole run, with the bundle | 23.0 | 17.9 |
+
+Without the bundle (a fresh build's first run) the run is 40.0 G, a second project on the build 28.7 G. Every
+output matches the export run's.
+
+The 0.94 G of reading the 317 texts was not parsing. Split: the lean parser's tape 0.023 G (46 instructions a
+byte), the text's seed (lex, tape, statements) 0.089 G, writing includes in 0.12 G, and `keep_text` 0.77 G, of
+which 0.6 G was `source_tree::root()` searching for the checkout again on every call (the loader's lookup, a
+canonical path, a walk up the directories: 1.9 M instructions a call), through `phase_lib()`. Found once a process
+(a static, on benchmarks-on-integration, 575e5916f), the stretch was 0.40 G, and the run 17.7–18.1 G over four runs
+against 18.1–18.9 G. In the hub the reader of many texts finds the two directories once and hands them on
+(`phase0::Dirs`, to `keep_text` and `module_text`): no process-wide memo, and the root is still looked for where the
+working directory or `RERAIL_SOURCE_ROOT` may have changed.
 
 ## Aligned with django-bugs (decisions 0239, 0240)
 

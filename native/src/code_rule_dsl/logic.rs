@@ -22,9 +22,11 @@ mod test_load {
 }
 pub mod analysis;
 // Nothing emits SQL through them until the planner (Phase 6) does.
+// Its files are its test modules alone.
 #[cfg_attr(any(test, feature = "test-hooks"), path = "logic/front")]
 pub mod front {
     pub use rerail_rr::code_rule_dsl::logic::front::*;
+    // Its files are its test modules alone.
     #[cfg_attr(any(test, feature = "test-hooks"), path = ".")]
     pub mod caches {
         pub use rerail_rr::code_rule_dsl::logic::front::caches::*;
@@ -40,6 +42,7 @@ pub mod front {
     pub mod data_layer_tests;
     #[cfg(any(test, feature = "test-hooks"))]
     pub mod tests;
+    // Its files are its test modules alone.
     #[cfg_attr(any(test, feature = "test-hooks"), path = "yaml")]
     pub mod yaml {
         pub use rerail_rr::code_rule_dsl::logic::front::yaml::*;
@@ -62,6 +65,7 @@ pub mod lanes;
 #[allow(dead_code)]
 pub mod answers;
 pub mod liveness;
+// Its files are its test modules alone.
 #[cfg_attr(any(test, feature = "test-hooks"), path = "logic/magic")]
 pub mod magic {
     pub use rerail_rr::code_rule_dsl::logic::magic::*;
@@ -106,6 +110,7 @@ pub mod sql;
 pub mod simplify;
 /// The reach index's form found in a program (decision 0119).
 pub mod reach_form;
+// Its files are its test modules alone.
 #[cfg_attr(any(test, feature = "test-hooks"), path = "logic/strings")]
 pub mod strings {
     pub use rerail_facts::code_rule_dsl::logic::strings::*;

@@ -433,11 +433,17 @@ impl Vocabulary {
     /// cached is determinized; otherwise it runs on the lazy DFA (`Searchers::new`).
     pub fn compile(&self, cache: Option<&dyn crate::code_rule_dsl::text::vocabulary::DfaCache>, dense: bool) -> Option<crate::code_rule_dsl::text::vocabulary::Compiling> {
         let mut made = None;
-        self.compiled.get_or_init(|| {
+        let compiled = self.compiled.get_or_init(|| {
             let compiled = self.compile_with(cache, dense);
             made = Some(compiled.searchers.compiling);
             compiled
         });
+        // Compiled before (another run of this process): its groups named in this run's cache, as compiling did.
+        if made.is_none()
+            && let Some(c) = cache
+        {
+            compiled.searchers.name_in(c);
+        }
         made
     }
 
