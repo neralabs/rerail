@@ -69,7 +69,7 @@ Every change of the branch meets four requirements before it joins it:
 
 ## How the work arrives
 
-As one pull request from one branch. Each change is verified on Linux x64 and on Windows 11, then joins that branch as commits of its own, each saying which wait goes and what replaces it, so the pull request can be read change by change; the product before the tests. Six changes are being built now, the largest waits first. A design issue in this repository asks for agreement on the approach before that pull request opens.
+As one pull request from one branch. Each change is verified on Linux x64 and on Windows 11, then joins that branch as commits of its own, each saying which wait goes and what replaces it, so the pull request can be read change by change; the product before the tests. Ten changes are being built now, the largest waits first. A design issue in this repository asks for agreement on the approach before that pull request opens.
 
 ## How it was made
 
