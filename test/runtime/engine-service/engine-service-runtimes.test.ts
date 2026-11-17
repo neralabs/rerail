@@ -60,6 +60,17 @@ function holdWalkResume() {
   return { entered: entered.promise, release: () => released.resolve(), restore: () => spy.mockRestore() };
 }
 
+/** Resolves once a control store records the end of the scan request `id`: the test waits for that, not a clock. */
+function requestFinished(id: string): Promise<void> {
+  const finish = SqliteAuditControlStore.prototype.finish;
+  return new Promise(resolve => {
+    vi.spyOn(SqliteAuditControlStore.prototype, "finish").mockImplementation(function (this: SqliteAuditControlStore, ...args) {
+      finish.apply(this, args);
+      if (args[0] === id) resolve();
+    });
+  });
+}
+
 const roots: string[] = [];
 const services: EngineService[] = [];
 afterEach(async () => {
@@ -554,17 +565,18 @@ describe("the engine service's idle close", () => {
     const writer = new Database(databasePath);
     try {
       const request = controls.requestAudit("a", { scope: "repository" });
+      const finished = requestFinished(request.id);
       writer.exec("BEGIN IMMEDIATE");
       vi.useFakeTimers({ toFake: ["setTimeout", "setInterval"] });
       await service.resumeSession("a");
       expect(vi.getTimerCount()).toBe(0);
       vi.useRealTimers();
       writer.exec("ROLLBACK");
-      await vi.waitFor(() => {
-        expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({ status: "completed", error: null });
-      }, { timeout: 10_000, interval: 50 });
+      await finished;
+      expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({ status: "completed", error: null });
       expect(scans).toEqual(["repository"]);
     } finally {
+      vi.restoreAllMocks();
       vi.useRealTimers();
       if (writer.inTransaction) writer.exec("ROLLBACK");
       writer.close();
