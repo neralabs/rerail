@@ -9,12 +9,15 @@ import { removeFolder } from "../../support/platform/remove-folder.js";
 
 /** The steer the turn's edit checks find once the test lets them end. */
 const LATE = "late steer";
+/** A steer the checks find while the stop waits for the rest. */
+const EARLY = "early steer";
 
 /**
- * A Claude Code session whose turn's edit checks end only once the test opens `checks`, then steer `LATE` once. Each
- * event's hook request is the one `stop` and `next` give it: none stands for a hook that waits for its answer.
+ * A Claude Code session whose turn's edit checks, at its stop, steer `early` when given, then end only once the test
+ * opens `checks`, and steer `LATE`. Each event's hook request is the one `stop` gives it: none stands for a hook that
+ * waits for its answer.
  */
-async function heldStopSession() {
+async function heldStopSession(early?: string) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-stop-gave-up-")));
   onTestFinished(async () => {
     await removeFolder(root);
@@ -36,9 +39,10 @@ async function heldStopSession() {
       acceptsPath: () => true,
       auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
       settleGeneratedEdits: async () => {
+        if (steers++ > 0) return;
+        if (early !== undefined) await steerDelivery.requestSteer("stop-gave-up", "steer", early, { revision: 0, scope: [] });
         settling.resolve();
         await checks.promise;
-        if (steers++ > 0) return;
         await steerDelivery.requestSteer("stop-gave-up", "steer", LATE, { revision: 0, scope: [] });
         steered.resolve();
       },
@@ -100,6 +104,18 @@ describe("a Claude Code stop whose hook gave up", () => {
     // Before, the stop took the steer into the answer its hook no longer read, and recorded it as delivered.
     expect(answered.answer).toEqual([]);
     expect(await held.next("next")).toEqual([LATE]);
+    expect(await held.next("after")).toEqual([]);
+  });
+
+  it("leaves the steers its checks found while it waited for the session's next event, once", async () => {
+    const held = await heldStopSession(EARLY);
+    const { giveUp, answered } = held.stop();
+    await held.settling;
+    giveUp();
+    await nextCheckPhase();
+    // A stop that stopped waiting yet took what the session holds would put it into an answer no one reads.
+    expect(answered.answer).toEqual([]);
+    expect(await held.next("next")).toEqual([EARLY]);
     expect(await held.next("after")).toEqual([]);
   });
 
