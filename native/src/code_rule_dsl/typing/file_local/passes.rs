@@ -27,6 +27,23 @@ pub(super) fn t_of<'a>(v: &'a Version, rule: RuleRef<'a>, t: TermRef<'a>) -> T<'
     }
 }
 
+/// Decision 0290 on the version: each relation `Locate` left (`blocked`) moves to the cross-file part, qualified
+/// `CROSS_FILE`, beside the qualifiers the program has; the split (`FileLocal`) then holds it cross-file, with its
+/// file-local readers, and `Locate` runs again (`preparation::run`), as `file_local::locate`'s rounds.
+pub struct MoveCrossFile(pub Vec<String>);
+
+impl ProgramPass for MoveCrossFile {
+    const NAME: &'static str = "move what names no document to the cross-file part";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        let v = cx.v();
+        let d = cx.get::<FieldsData>()?;
+        let mut words: Vec<(String, String)> = d.about.qualifiers.iter().map(|q| (v.text(q.0).to_owned(), v.text(q.1).to_owned())).collect();
+        words.extend(self.0.iter().map(|r| (r.clone(), super::CROSS_FILE.to_owned())));
+        w.overlay()?.set_qualifiers(&words);
+        Ok(())
+    }
+}
+
 /// `file_local::locate` on the version: every relation the chunks hand on (an export, or a file-local output) given
 /// a location column, so each of its rows names its document (decision 0052). A relation without one, `r(p, l)`, is
 /// derived by the chunks as `r_at(d, p, l)` (`r_at_` where the program has an `r_at` of its own), `d` a document its

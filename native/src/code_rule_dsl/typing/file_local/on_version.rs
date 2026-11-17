@@ -335,12 +335,15 @@ impl<'v> Program<'v> {
                 _ => true,
             })
         };
+        // A relation `locate` moved (`CROSS_FILE`, decision 0290): its rows name no document, so it is derived once
+        // over every file.
+        let moved = |rel: &str| self.f.qualified(rel, super::CROSS_FILE);
         let mut local_now: Vec<bool> = (0..n)
             .map(|r| {
                 rels.is_derived(r as u32)
                     && match was(r) {
                         Some(p) => p.local.contains(self.name(r as u32)),
-                        None => !cross_native(self.name(r as u32)),
+                        None => !cross_native(self.name(r as u32)) && !moved(self.name(r as u32)),
                     }
             })
             .collect();
@@ -349,7 +352,8 @@ impl<'v> Program<'v> {
                 let rel = self.name(r);
                 match was(r as usize) {
                     Some(p) => p.causes.get(rel).map(|c| (rel.to_owned(), c.clone())),
-                    None => cross_native(rel).then(|| (rel.to_owned(), "made natively".to_owned())),
+                    None if cross_native(rel) => Some((rel.to_owned(), "made natively".to_owned())),
+                    None => moved(rel).then(|| (rel.to_owned(), "its rows name no document (moved by `locate`)".to_owned())),
                 }
             })
             .collect();

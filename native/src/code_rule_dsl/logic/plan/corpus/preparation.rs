@@ -4,7 +4,7 @@
 
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, Pipeline, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::Version;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
 mod merge;
@@ -97,8 +97,25 @@ pub fn run(version: Arc<Version>, factorize: bool) -> Result<(Arc<Version>, Foun
         crate::code_rule_dsl::logic::profile::decision("export demand", || line.clone());
     }
     // Every relation the chunks hand on names its document per row, so a file's rows can be memoised (decision 0052).
-    let mut locate = crate::code_rule_dsl::typing::file_local::Locate::default();
-    p.program(&mut locate);
+    // A relation left moves to the cross-file part, and the rows are located again (decision 0290), as
+    // `file_local::locate`'s rounds: each round moves one the split held file-local, so they end.
+    let located = {
+        let (mut located, mut moved) = (Vec::new(), BTreeSet::new());
+        loop {
+            let mut locate = crate::code_rule_dsl::typing::file_local::Locate::default();
+            p.program(&mut locate);
+            located.extend(locate.located);
+            if locate.blocked.is_empty() {
+                break Ok(located);
+            }
+            let fresh: Vec<String> = locate.blocked.into_iter().filter(|r| !moved.contains(r)).collect();
+            if fresh.is_empty() {
+                break Err(moved.into_iter().collect::<Vec<String>>());
+            }
+            moved.extend(fresh.iter().cloned());
+            p.program(&mut crate::code_rule_dsl::typing::file_local::MoveCrossFile(fresh));
+        }
+    };
     let mut merge = MergeIdentical::default();
     let mut repeats = DropRepeated::default();
     if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
@@ -108,7 +125,7 @@ pub fn run(version: Arc<Version>, factorize: bool) -> Result<(Arc<Version>, Foun
         p.program(&mut merge);
         p.program(&mut repeats);
     }
-    let found = Found { pushed: pushed.made, factorized: factorized.lines, demand: demand.lines, located: locate.result(), merged: merge.merged, shared: merge.shared, repeated: repeats.0 };
+    let found = Found { pushed: pushed.made, factorized: factorized.lines, demand: demand.lines, located, merged: merge.merged, shared: merge.shared, repeated: repeats.0 };
     p.program(&mut InputsRead);
     if let Ok(order) = std::env::var("RERAIL_RULE_ORDER") {
         p.program(&mut RuleOrder(order));
