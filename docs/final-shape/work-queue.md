@@ -1460,8 +1460,8 @@ ffed8d55b). The device reads flat relations, relations with dead rows and the vt
 makes every chunk view itself. On hogql, uploads read on the host are 5.6 MB (was 160 MB of relations and 84 MB of
 views). Left, in order:
 
-1. Step 4: heads written in place by count, reserve and write, so no rows come back (`rows back into the store`
-   is 115–150 ms of the device's host CPU on hogql).
+1. Step 4's rest: the recursive fixpoint's rows, heads a rule makes texts into, and lattices still come back
+   (0.45 M of 4.95 M head rows on hogql; the seed heads are written in place since step 4's first part).
 2. Step 5: indexes are the relation's (`rel_group`), so `rel_hash` per binding goes.
 3. Step 6: placement drops the upload and row-back prices, and `GPU_BIAS` is refitted.
 4. Step 7: the output's, frames' and memo's rows, and the reach closure's (`Closed`, 5.6 MB on hogql).

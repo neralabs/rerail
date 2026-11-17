@@ -219,3 +219,26 @@ Step by step, each leaving the engine working (see the commits that name this de
   - What step 3 leaves copied: the native reach closure's relation (`Closed`, 5.6 MB), and the chunk's views,
     which the device makes itself from the chunk block (164 MB on the device, no upload). `DevRel::upload` stays
     for those, for a view filtered by constants (`ids`), and for a block that cannot hold a dead rows' delta.
+- **Step 4, a stratum's seed heads** (2026-11-17): the device writes a head's rows in place, into a relation of a
+  block, and the store takes that relation as it lies. No row is read back.
+  - Between the passes (`device::place`, after the stratum's joins finish, so each rule's distinct count is known):
+    one submission for the stratum's heads. Each head gets the union of its rules' distinct rows, in its columns
+    with its constants (`copy_rows`). The union is made distinct when more than one rule makes it. Then come the
+    rows the head holds: read where they lie (`Rel::in_block`, dead rows marked), and an anti stage removes them.
+    The `rows_place` kernel writes what is left into a relation whose chunks the host reserved for the union
+    (`Part::for_writes`), through the generated `clif_rows_at`. Its count is read from the last stage's slot.
+  - The host then sets the part's length (`Part::written`) and hands it to the wave (`Fresh::place`). `push_fresh`
+    appends it to the head's rows as a segment (`Rows::append_part`): no copy, no sort, no held check. The rows
+    are distinct and none is held, as the CPU's `settle` would make them. The head's index runs sort the new ids
+    reading values where they lie (`set_delta`); step 5 makes those indexes the relation's own.
+  - The device's rows sit beside rows derived on the CPU in the same wave, which may repeat them, or go to a
+    lattice, which folds each row. Either way they are read into the wave's batch and settled as before.
+  - Left to the rows read back: heads a rule makes texts into (arena values are symbols only once the host names
+    them), lattices, heads whose held rows have more columns than a probe's keys (8), and the recursive fixpoint's
+    rows (`fixpoint`'s last read).
+  - On hogql: 4.50 M of 4.95 M distinct head rows written in place. "Rows into the store" fell from 116 ms to
+    6 ms of host CPU, and `Fresh::settle` from 71 ms to 3 ms. Metal 68.2-72.2 B instructions against
+    71.0-75.5 B (interleaved runs, one load). Peak 747-820 MB against 783-848 MB. Findings 1,629.
+  - Tests: `a_strata_seeds_on_the_device_are_the_cpus_rows_and_counts` runs again with the head holding rows
+    before the run, some of them derived again; both runs' rows written in place (`placed == distinct`) and equal
+    the CPU's. `a_part_written_elsewhere_is_appended_as_a_segment` (facts::rows).

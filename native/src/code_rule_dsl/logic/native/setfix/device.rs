@@ -2203,6 +2203,9 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
         }
         finish_timed(b, rep)?;
     }
+    // Each head's rows written in place, in a relation of a block, which the store takes as they lie (decision 0325
+    // step 4); the heads `place` cannot take read back below.
+    let placed = place(&runs, rules, store, rep)?;
     // The rows into the store, and each step's counts.
     let d0 = thread_cpu();
     let _h = crate::code_rule_dsl::logic::lanes::prof::host("device join (decision 0095)", "decode: rows into the store");
@@ -2211,6 +2214,12 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
         let last = r.io.last().map_or(0, |io| io.1);
         let n = r.totals.get(last) as usize;
         let distinct = r.totals.get(r.totals.len - 1) as usize;
+        if placed.contains(&head) {
+            out.push(n as u64);
+            rep.rows += n as u64;
+            counted(r, plan, j, rep);
+            continue;
+        }
         let uniq = r.uniq.as_ref().expect("the head's distinct rows");
         let cols: Vec<&[i64]> = plan
             .head_slots
@@ -2254,7 +2263,135 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
     }
     drop(_h);
     rep.decode_cpu += thread_cpu() - d0;
+    // The placed heads' rows into the store: their parts, as the device wrote them.
+    for (h, part) in placed.into_parts() {
+        fresh[h].place(part);
+    }
     Ok(out)
+}
+
+/// The heads whose rows `place` wrote in place, and their parts.
+#[derive(Default)]
+struct Placed {
+    parts: Vec<(usize, crate::code_rule_dsl::facts::rows::Part)>,
+    heads: Vec<usize>,
+}
+
+impl Placed {
+    fn contains(&self, head: &usize) -> bool {
+        self.heads.contains(head)
+    }
+    fn into_parts(self) -> Vec<(usize, crate::code_rule_dsl::facts::rows::Part)> {
+        self.parts
+    }
+}
+
+/// Each head's rows from `runs` (finished), written in place on the device (decision 0325 step 4): the union of its
+/// rules' distinct rows (each rule's head columns, constants among them), made distinct when more than one rule makes
+/// them, less the rows the head holds (read where they lie, its dead rows skipped), into a relation of a block whose
+/// chunks the host reserved for them all (a rule's distinct count is known here, between the passes). The store then
+/// takes that relation as it lies (`Fresh::place`): no row is read back. One submission for the stratum's heads.
+///
+/// A head is left to the rows read back (not in the result) when a rule of it makes texts (arena values, symbols only
+/// once the host names them), when it folds (a lattice), or when the rows it holds have more columns than a probe's
+/// keys.
+fn place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], store: &Store, rep: &mut Report) -> Result<Placed, String> {
+    let mut placed = Placed::default();
+    let mut heads: Vec<usize> = rules.iter().map(|r| r.2).collect();
+    heads.sort_unstable();
+    heads.dedup();
+    let mut batch: Option<mj::Batch> = None;
+    // Per head: its part, the slot its count is in (`None`: the union's, known), the words, and what the work reads.
+    let mut pending: Vec<(usize, crate::code_rule_dsl::facts::rows::Part, Option<usize>, usize, mj::Words)> = Vec::new();
+    let mut hold: Vec<mj::Table> = Vec::new();
+    let mut hold_rels: Vec<(mj::DevRel, mj::DevIndex)> = Vec::new();
+    for h in heads {
+        let rel = &store.rels[h];
+        let k = rel.k;
+        let from: Vec<(usize, usize)> = runs.iter().enumerate().filter(|&(x, _)| rules[x].2 == h).map(|(x, r)| (x, r.totals.get(r.totals.len - 1) as usize)).collect();
+        if from.iter().any(|&(x, _)| rules[x].0.arena.iter().any(|&a| a)) || rel.folds() || k == 0 || k > 16 || (rel.n > 0 && k > mj::MAX_KEYS) {
+            continue;
+        }
+        placed.heads.push(h);
+        let cap: usize = from.iter().map(|f| f.1).sum();
+        if cap == 0 {
+            continue;
+        }
+        let b = match &mut batch {
+            Some(b) => b,
+            None => batch.insert(direct_batch(None)?),
+        };
+        // The union, in the head's columns.
+        let union = mj::Table::new(k, cap).map_err(|e| format!("{e:?}: a union of {cap} rows"))?;
+        let mut at = 0;
+        for &(x, n) in &from {
+            let (plan, r) = (rules[x].0, &runs[x]);
+            let cols: Vec<mj::Col> = plan.head.iter().zip(&plan.head_slots).map(|(c, s)| match c {
+                Some(v) => mj::Col::Const(*v),
+                None => mj::Col::From(r.uniq_cols.iter().position(|u| u == s).unwrap_or(0)),
+            }).collect();
+            b.copy_rows(mj::Rows::Table(r.uniq.as_ref().expect("the head's distinct rows")), n, &cols, mj::Rows::Table(&union), at).map_err(|e| format!("{e:?}"))?;
+            at += n;
+        }
+        let words = mj::Words::zeroed(3).map_err(|e| format!("{e:?}"))?;
+        words.set(0, cap as u32);
+        let all: Vec<usize> = (0..k).collect();
+        // Made distinct: one rule's rows are already.
+        let (rows, slot) = if from.len() > 1 {
+            let distinct = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
+            b.dedup(&union, &all, 0, 1, &words, &distinct).map_err(|e| format!("{e:?}"))?;
+            hold.push(union);
+            (distinct, Some(1))
+        } else {
+            (union, None)
+        };
+        // Less the rows the head holds, read where they lie.
+        let (rows, slot) = match rel.in_block() {
+            Some(held) if rel.n > 0 => {
+                let device = rerail_accel::gpu::join::device()?;
+                let buffer = rerail_accel::gpu::join::Held::kept(held.facts.block.gpu_buffer(device), Box::new(held.facts.clone()));
+                let dev = mj::DevRel::in_block(buffer, held.at, held.dead, held.rows as usize, k);
+                let ix = b.index(&dev, &all).map_err(|e| format!("{e:?}: a sort of {} rows", dev.rows))?;
+                rep.in_place += 1;
+                rep.sorts += 1;
+                let mut d = mj::Stage { mode: mj::ANTI, nkeys: k as u32, ..mj::Stage::default() };
+                for c in 0..k {
+                    d.key_rcol[c] = c as u32;
+                    d.key_kind[c] = mj::SLOT;
+                    d.key_slot[c] = c as u32;
+                }
+                let fresh_rows = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
+                let counters = mj::Words::zeroed(1).map_err(|e| format!("{e:?}"))?;
+                // A stage reads its bindings' count from its in-slot: the union's is the cap (slot 0).
+                b.stage(d, &rows, Some((&dev, Some(&ix))), slot.unwrap_or(0), 2, &words, &counters, None, &fresh_rows).map_err(|e| format!("{e:?}"))?;
+                hold.push(rows);
+                hold_rels.push((dev, ix));
+                (fresh_rows, Some(2))
+            }
+            _ => (rows, slot),
+        };
+        let part = crate::code_rule_dsl::facts::rows::Part::for_writes(k, cap);
+        let device = rerail_accel::gpu::join::device()?;
+        let block = rerail_accel::gpu::join::Held::kept(part.facts().block.gpu_buffer(device), Box::new(part.facts().clone()));
+        let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
+        b.place_rows(&rows, cap, slot, &words, &ident, block, part.rows_at() as u64).map_err(|e| format!("{e:?}"))?;
+        hold.push(rows);
+        pending.push((h, part, slot, cap, words));
+    }
+    if let Some(mut b) = batch {
+        finish_timed(&mut b, rep)?;
+    }
+    drop((hold, hold_rels));
+    for (h, part, slot, cap, words) in pending {
+        let n = slot.map_or(cap, |s| words.get(s) as usize).min(cap);
+        // SAFETY: the batch is finished, and `rows_place` wrote every column of rows `0..n` (`n` within `cap`, the
+        // rows `for_writes` reserved).
+        unsafe { part.written(n as u32) };
+        rep.distinct += n as u64;
+        rep.placed += n as u64;
+        placed.parts.push((h, part));
+    }
+    Ok(placed)
 }
 
 

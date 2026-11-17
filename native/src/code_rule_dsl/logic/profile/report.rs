@@ -35,6 +35,7 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
                 sort_hits: u64::from(d.sort_hits),
                 rows: d.rows,
                 distinct: d.distinct,
+                placed: d.placed,
                 bindings: d.bindings,
                 made: d.made,
                 waved: u64::from(d.waved),

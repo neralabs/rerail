@@ -370,6 +370,8 @@ pub struct GpuTotal {
     pub sort_hits: u64,
     pub rows: u64,
     pub distinct: u64,
+    /// Head rows written in place into their head's block (decision 0325 step 4).
+    pub placed: u64,
     pub bindings: u64,
     /// Texts made on the device into heads, stored as symbols.
     pub made: u64,
@@ -407,6 +409,7 @@ impl GpuTotal {
         self.sort_hits += o.sort_hits;
         self.rows += o.rows;
         self.distinct += o.distinct;
+        self.placed += o.placed;
         self.bindings += o.bindings;
         self.made += o.made;
         self.waved += o.waved;
@@ -2024,8 +2027,8 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
         ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns, sum.arena_reruns, sum.waved, sum.sized);
     let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, uploads {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
         ms(sum.host()), ms(sum.encode), ms(sum.upload), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
-    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), read in place {}, found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device); texts made {}",
-        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.in_place, sum.resident, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.made);
+    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), read in place {}, found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device; {} written in place into their heads' blocks); texts made {}",
+        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.in_place, sum.resident, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.placed, sum.made);
     let by: Vec<String> = UPLOAD_KINDS.iter().zip(&sum.upload_by).map(|(k, (b, c))| format!("{k} {:.1} MB in {:.1} ms", *b as f64 / 1e6, ms(*c))).collect();
     let _ = writeln!(r, "  uploads by what they read: {}", by.join(", "));
     let mut top = ran.clone();
@@ -2832,6 +2835,9 @@ pub struct Report {
     pub decode_cpu: f64,
     /// Head rows left once made distinct on the device (of `rows`).
     pub distinct: u64,
+    /// Of those, rows the device wrote in place into their head's block, which the store takes as they lie
+    /// (decision 0325 step 4): none read back.
+    pub placed: u64,
     pub upload_cpu: f64,
     /// Relations uploaded (and their bytes), found resident; sorts made, found resident.
     pub uploads: u32,

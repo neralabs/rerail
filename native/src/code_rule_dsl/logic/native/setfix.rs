@@ -518,6 +518,16 @@ impl Rel {
         Ok(())
     }
     /// Whether its rows keep levels (decision 0090; the device writes them, 0311).
+    /// Its rows as one relation in a block, its dead rows marked: what the device reads in place (decision 0325).
+    /// `None` with no rows, or when they are not all in it.
+    pub fn in_block(&self) -> Option<InBlock> {
+        let b = if self.ndead > 0 { self.data.in_block_dead(&self.dead) } else { self.data.in_block() };
+        b.filter(|b| b.rows as usize == self.n)
+    }
+    /// Whether it folds rows into a lattice (decision 0124) rather than adding them.
+    pub fn folds(&self) -> bool {
+        self.lat.is_some()
+    }
     pub fn keeps_levels(&self) -> bool {
         self.leveled
     }
@@ -769,6 +779,41 @@ impl Rel {
     /// (decision 0112). `pend`: the rows stay in no order past this wave's end (a gate's relation, its delta set
     /// later), so they are also put in `pending` for the dedup tests until then. Whether any was new.
     fn push_fresh(&mut self, mut f: Fresh, pend: bool) -> bool {
+        // Rows placed by the device (decision 0325 step 4) are taken as they lie, as segments of this relation's
+        // rows. Beside rows derived here (which may repeat them) or into a lattice (which folds each), they are read
+        // with those instead.
+        let placed = std::mem::take(&mut f.placed);
+        if !placed.is_empty() && (f.n > 0 || self.lat.is_some()) {
+            let k = self.k;
+            for p in placed {
+                let rows = { let mut r = Rows::new(k); r.append_part(p); r };
+                for id in 0..rows.rows() {
+                    f.data.extend_from_slice(&rows.row(id as u32, k));
+                    f.n += 1;
+                }
+                f.lost = true;
+            }
+        } else if !placed.is_empty() {
+            let k = self.k;
+            let from = self.n;
+            for p in placed {
+                let m = p.len() as usize;
+                self.data.append_part(p);
+                for _ in 0..m {
+                    if self.leveled && self.level.len() == self.n {
+                        self.level.push(self.lbase + self.wave + 1);
+                    }
+                    self.n += 1;
+                }
+            }
+            if pend {
+                let data = &self.data;
+                for id in from..self.n {
+                    self.pending.insert_unique(hash_vals(data.row(id as u32, k).iter().copied()), id as u32, |&i| hash_vals(data.row(i, k).iter().copied()));
+                }
+            }
+            return self.n > from;
+        }
         f.settle(self);
         if self.lat.is_some() {
             debug_assert!(!pend, "a lattice relation in a gate's place");
@@ -945,7 +990,10 @@ impl Cands<'_> {
 #[derive(Clone, Default)]
 /// `levels`: per row, the device fixpoint's round that made it (decision 0311), where its relation keeps levels; else
 /// empty.
-pub struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize, breaks: Vec<u32>, lost: bool, levels: Vec<u32> }
+pub struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize, breaks: Vec<u32>, lost: bool, levels: Vec<u32>,
+                   /// Rows written in place by another writer (the device, decision 0325 step 4), each part distinct,
+                   /// not held by the relation, and in no order: the relation takes them as they lie (`push_fresh`).
+                   placed: Vec<crate::code_rule_dsl::facts::rows::Part> }
 
 /// The shortest stretch of a wave's batch taken as in order (`Fresh::settle`): shorter ones are sorted with their
 /// neighbours, as merging them costs about what sorting them does.
@@ -958,6 +1006,12 @@ const FRESH_BATCH: usize = 1 << 16;
 /// `RERAIL_SPIKE_DERIVATIONS`: rows derived (new or already held) and rows held new, by relation, over the process.
 pub static DERIVATIONS: std::sync::Mutex<std::collections::BTreeMap<String, (u64, u64)>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
 impl Fresh {
+    /// Rows another writer wrote in place (`placed`): distinct, none held by the relation.
+    pub fn place(&mut self, part: crate::code_rule_dsl::facts::rows::Part) {
+        if part.len() > 0 {
+            self.placed.push(part);
+        }
+    }
     /// A row in no known order (its batch is sorted whole).
     pub fn add(&mut self, row: &[i64]) { self.data.extend_from_slice(row); self.n += 1; self.lost = true; }
     /// A row of the device's fixpoint and the round that made it (decision 0311: its level, above the run's base).
@@ -2010,6 +2064,8 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                         f.n += d.n;
                         // The device's rows, in no order known here.
                         f.lost |= d.n > 0;
+                        // Its rows written in place (decision 0325 step 4).
+                        f.placed.extend(d.placed);
                     }
                     true
                 }

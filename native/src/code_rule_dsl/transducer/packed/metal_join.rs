@@ -1489,6 +1489,28 @@ kernel void rows_copy(device const long* S [[buffer(0)]], device long* D [[buffe
     }
 }
 
+// A head's rows written in place, in a relation of a block (decision 0325 step 4): table `S`'s first rows (as many as
+// slot `count_slot` of `totals` says, at most `cap`; all `cap` when it is NONE) into rows 0.. of the relation whose
+// rows' descriptor lies at `rows_at` in block `D`, its chunks reserved by the host. Each value's place is the read
+// written once (`clif_rows_at`); every column is 8 bytes.
+struct Place {
+    long konst[16];
+    uint src[16];
+    uint cap, ncols, src_stride, count_slot;
+    ulong rows_at;
+};
+
+kernel void rows_place(device const long* S [[buffer(0)]], device uchar* D [[buffer(1)]], device const uint* totals [[buffer(2)]],
+                       constant Place& c [[buffer(3)]], uint t [[thread_position_in_grid]]) {
+    uint n = c.count_slot == NONE ? c.cap : min(totals[c.count_slot], c.cap);
+    if (t >= n) return;
+    for (uint k = 0; k < c.ncols && k < 16; k++) {
+        long v = c.src[k] == NONE ? c.konst[k] : S[ulong(c.src[k]) * c.src_stride + t];
+        ulong a = clif_rows_at((device const uchar*)D, c.rows_at, t, k);
+        *(device long*)(D + a) = v;
+    }
+}
+
 // Slots set in place, in order: a later one may read an earlier one.
 kernel void stage_map(device long* B [[buffer(0)]], device const uint* totals [[buffer(1)]], constant Stage& s [[buffer(2)]],
                       uint t [[thread_position_in_grid]]) {
@@ -2076,6 +2098,21 @@ struct CopyParams {
 
 const _: () = assert!(std::mem::size_of::<CopyParams>() == 224);
 
+/// `rows_place`'s parameters (MSL's `Place`).
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PlaceParams {
+    konst: [i64; 16],
+    src: [u32; 16],
+    cap: u32,
+    ncols: u32,
+    src_stride: u32,
+    count_slot: u32,
+    rows_at: u64,
+}
+
+const _: () = assert!(std::mem::size_of::<PlaceParams>() == 216);
+
 /// A relation sorted on the device by the hash of key columns: the sorted order (`perm`), the runs of equal hashes
 /// and their count, and the hash's mask.
 pub(in crate::code_rule_dsl) struct DevIndex {
@@ -2631,6 +2668,32 @@ impl Batch {
         let (s, d) = (s.to_owned(), d.to_owned());
         let pass = self.pass(1)?;
         pass.run_bytes(&copy, &[&s, &d], bytes, groups(n));
+        Ok(())
+    }
+
+    /// A head's rows written in place (decision 0325 step 4): `src`'s first rows (as many as slot `count` of `totals`
+    /// holds, at most `cap`; `cap` of them with no slot) into rows `0..` of the relation whose rows' descriptor lies
+    /// at `rows_at` in `block`, whose chunks hold `cap` rows of 8-byte columns. Each column of the head is a column of
+    /// `src` or a constant (`cols`). The batch keeps `block` until its work completes.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::code_rule_dsl) fn place_rows(&mut self, src: &Table, cap: usize, count: Option<usize>, totals: &Words, cols: &[Col], block: Held, rows_at: u64) -> Result<(), Error> {
+        if cap == 0 {
+            return Ok(());
+        }
+        assert!(cols.len() <= 16 && cap <= src.cap, "{cap} rows of a table of {}", src.cap);
+        let place = pipeline("join", "rows_place", || SOURCE.to_owned())?;
+        let mut p = PlaceParams { konst: [0; 16], src: [NONE; 16], cap: cap as u32, ncols: cols.len() as u32, src_stride: src.cap as u32, count_slot: count.map_or(NONE, |c| c as u32), rows_at };
+        for (k, c) in cols.iter().enumerate() {
+            match *c {
+                Col::From(c) => p.src[k] = c as u32,
+                Col::Const(v) => p.konst[k] = v,
+            }
+        }
+        // SAFETY: `PlaceParams` is `repr(C)` integers with no padding (its size asserted above).
+        let bytes = unsafe { std::slice::from_raw_parts((&p as *const PlaceParams).cast::<u8>(), std::mem::size_of::<PlaceParams>()) };
+        let pass = self.pass(1)?;
+        pass.run_bytes(&place, &[&src.buffer.buffer, &block.buffer, &totals.buffer.buffer], bytes, groups(cap));
+        self.keep.push(block);
         Ok(())
     }
 

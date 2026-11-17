@@ -7,7 +7,9 @@
     /// One stratum's seed joins run on the CPU and on the device: the same rows, and the same observed counts per
     /// step. The joins: a scan, a keyed join with a fused comparison and `docof`, a negation, a semi-join, a filter
     /// after a step that binds nothing, a `let`, constants in keys and heads; one rule whose second join's rows
-    /// overflow the first guess of its table.
+    /// overflow the first guess of its table. The rules' rows, one head's, are written in place on the device
+    /// (decision 0325 step 4): made distinct across the rules, and, with the head holding rows before the run (some
+    /// of them derived again, some not), less those, read where they lie.
     #[test]
     fn a_strata_seeds_on_the_device_are_the_cpus_rows_and_counts() {
         if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
@@ -59,21 +61,32 @@
             // h0(x, n) :- c(x), n = count : { b(_, _) }: no keys, the whole relation.
             format!("pos {c} v0\ncount {b} _ _ v1\nhead v0 v1"),
         ];
+        for held in [false, true] {
         let mut got = Vec::new();
         for device in [false, true] {
             db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+            if held {
+                // Rows the fourth rule derives again, and rows no rule derives.
+                db.execute_batch("INSERT INTO temp.h0 SELECT a.c0, b.c1 FROM temp.a JOIN temp.b ON a.c1 = b.c0 LIMIT 700;").unwrap();
+                for v in 0..300 {
+                    db.execute("INSERT INTO temp.h0 VALUES (?1, ?2)", [-1 - v, v]).unwrap();
+                }
+            }
             let mut spec = vec!["name dev_test".to_owned()];
             if device {
                 spec.push("device".into());
             }
-            spec.push("rel h0 ii empty".into());
+            spec.push(if held { "rel h0 ii".into() } else { "rel h0 ii empty".into() });
             spec.extend(rules.iter().map(|r| format!("seed 0 {}", hex(r))));
             super::super::open(&db, &spec.join("\n")).unwrap();
             super::super::run(&db, "dev_test", 0).unwrap();
             let report = super::take_report();
             assert_eq!(report.as_ref().is_some_and(|r| r.refused.is_none()), device, "{report:?}");
             if let Some(r) = &report {
-                assert!(r.reruns >= 1 && r.submissions >= 2, "the large join overflows its first table: {r:?}");
+                // The first run only: the next guesses the join's growth from it (`GROWTH`).
+                assert!(held || r.reruns >= 1 && r.submissions >= 2, "the large join overflows its first table: {r:?}");
+                assert!(r.placed > 1000 && r.placed == r.distinct, "the head's rows written in place: {r:?}");
+                assert!(!held || r.in_place >= 1, "the rows held read in place: {r:?}");
             }
             let counts = super::super::step_counts(&db, "dev_test").unwrap();
             super::super::close(&db, "dev_test").unwrap();
@@ -82,8 +95,9 @@
             got.push((rows, counts));
         }
         assert!(got[0].0.len() > 1000, "{} rows", got[0].0.len());
-        assert_eq!(got[0].0, got[1].0, "the device's rows are the CPU's");
-        assert_eq!(got[0].1, got[1].1, "the device's counts per step are the CPU's");
+        assert_eq!(got[0].0, got[1].0, "the device's rows are the CPU's (held: {held})");
+        assert_eq!(got[0].1, got[1].1, "the device's counts per step are the CPU's (held: {held})");
+        }
     }
 
     /// A recursive stratum on the device: its rounds to the fixpoint there, the same rows as the CPU's waves.

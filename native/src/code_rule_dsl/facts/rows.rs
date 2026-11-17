@@ -136,8 +136,31 @@ impl Part {
     }
 
     #[inline]
-    fn len(&self) -> u32 {
+    pub fn len(&self) -> u32 {
         self.rel().rows.len()
+    }
+
+    /// An empty relation of `k` columns in a run's block, with room for `rows` rows that a writer other than the
+    /// host fills (decision 0325 step 4: the device writes a head's rows in place, through the reads written once,
+    /// `rows_at`), then says how many it wrote (`written`).
+    pub fn for_writes(k: usize, rows: usize) -> Part {
+        Part::new(Life::Run, k, rows)
+    }
+
+    /// Its rows' descriptor's offset in its block: what a writer's `rows_at` takes.
+    pub fn rows_at(&self) -> usize {
+        self.facts.block.offset_of(&raw const self.rel().rows)
+    }
+
+    /// Rows `0..n` written by the writer it was made for (`for_writes`), now its rows.
+    ///
+    /// # Safety
+    /// The writer has finished, and wrote every value of rows `0..n`, `n` within the rows reserved.
+    pub unsafe fn written(&self, n: u32) {
+        assert_eq!(self.len(), 0, "rows written into a relation that has some");
+        assert!(n <= self.rel().rows.reserved(), "{n} rows written into room for {}", self.rel().rows.reserved());
+        // SAFETY: within the rows reserved (asserted); the caller says they are written.
+        unsafe { self.rel().rows.claim_reserved(n) };
     }
 
     /// Appends a row of `k` values, room made first: a full block moves the relation to another.
@@ -386,6 +409,30 @@ impl Rows {
         })
     }
 
+    /// `part`'s rows after these, as a segment of their own: not copied (decision 0325 step 4, a head's rows the
+    /// device wrote in place). The tail, if it has rows, becomes a segment first; the next row pushed starts a new one.
+    pub fn append_part(&mut self, part: Part) {
+        let n = part.len();
+        if n == 0 {
+            return;
+        }
+        let k = part.rel().rows.ncols as usize;
+        debug_assert!(self.k == 0 || self.k == k, "a part of {k} columns after rows of {}", self.k);
+        self.k = k;
+        self.merged.take();
+        self.kills.take();
+        let at = match self.tail.take() {
+            Some(t) if t.len() > 0 => {
+                let next = self.from + t.len();
+                self.segs.push((self.from, t));
+                next
+            }
+            _ => self.from,
+        };
+        self.segs.push((at, part));
+        self.from = at + n;
+    }
+
     /// Whether these rows share a frozen segment with `other` (a relation started from it).
     pub fn shares(&self, other: &Rows) -> bool {
         self.segs.iter().any(|(_, a)| other.segs.iter().any(|(_, b)| std::ptr::eq(a.rel, b.rel)))
@@ -546,5 +593,32 @@ mod tests {
         assert_eq!(next.len(), 2 * k);
         assert_eq!(*next.row(1, k), [4, 5, 6]);
         assert_eq!(*next.freeze(2).row(0, k), [1, 2, 3]);
+    }
+
+    /// A part another writer filled, after rows pushed and before rows pushed again: every row read by its id, the
+    /// part's not copied.
+    #[test]
+    fn a_part_written_elsewhere_is_appended_as_a_segment() {
+        let k = 2;
+        let mut rows = Rows::new(k);
+        rows.extend_from_slice(&[1, 2, 3, 4]);
+        let part = Part::for_writes(k, 3);
+        // SAFETY: rows 0..3 are reserved, and nothing else writes this part.
+        unsafe {
+            for i in 0..3u32 {
+                part.rel().rows.put(i, 0, 10 + i64::from(i));
+                part.rel().rows.put(i, 1, 20 + i64::from(i));
+            }
+            part.written(3);
+        }
+        let place = part.rel() as *const _;
+        rows.append_part(part);
+        rows.extend_from_slice(&[5, 6]);
+        assert_eq!(rows.rows(), 6);
+        let all: Vec<Vec<i64>> = (0..6).map(|i| rows.row(i, k).to_vec()).collect();
+        assert_eq!(all, [[1, 2], [3, 4], [10, 20], [11, 21], [12, 22], [5, 6]].map(|r| r.to_vec()));
+        assert!(rows.segs.iter().any(|(_, p)| std::ptr::eq(p.rel, place)), "the part itself is a segment");
+        let frozen = rows.freeze(6);
+        assert_eq!(*frozen.row(4, k), [12, 22]);
     }
 }
