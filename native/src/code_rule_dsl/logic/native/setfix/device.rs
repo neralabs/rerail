@@ -1991,14 +1991,20 @@ thread_local! {
     /// into it and wait for the wave, so a level's small strata go out in one commit and one wait. Its number, and
     /// whether it is open.
     static WAVE: RefCell<Option<(u64, mj::Batch)>> = const { RefCell::new(None) };
-    static WAVES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// The waves flushed, by number: their completion (or why they failed), and the device's seconds not yet
     /// counted by a stratum.
     static FLUSHED: RefCell<HashMap<u64, Result<Option<mj::Done>, String>>> = RefCell::new(HashMap::new());
     /// Strata waiting for their wave, by ticket: their encoded runs, their wave, their report so far.
     static SUSPENDED: RefCell<HashMap<u64, (Vec<Run<'static>>, u64, Report, Vec<usize>)>> = RefCell::new(HashMap::new());
-    static TICKETS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
+
+/// The waves' and the tickets' numbers, of the process. A parked stratum can resume on another thread than the one it
+/// was submitted on (a job run while its thread waited, which joined a wave that thread had open, `plan::issue`). That
+/// thread's `SUSPENDED` must then miss it, and a miss refuses the stratum to the CPU. With numbers of one thread, it
+/// found that thread's own stratum of the same number instead, and resumed it with these rules: a panic on a rule
+/// index, or another stratum's rows.
+static WAVES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static TICKETS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// A batch of its own (not the wave's), with a text arena of `arena` bytes when given. The thread's open wave is
 /// committed first: the relations kept resident (`resident`, `verdicts`, the texts) take their sorts, indexes and
@@ -2052,8 +2058,7 @@ fn submit_(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Opti
     let mut rep = Report { rules: rules.len() as u32, stages: rules.iter().map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
     let opened = WAVE.with_borrow(Option::is_none);
     if opened {
-        let n = WAVES.get() + 1;
-        WAVES.set(n);
+        let n = WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         WAVE.with_borrow_mut(|w| -> Result<(), String> {
             *w = Some((n, mj::Batch::new().map_err(|e| format!("{e:?}"))?));
             Ok(())
@@ -2078,8 +2083,7 @@ fn submit_(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Opti
         return Ok(None);
     }
     rep.encode_cpu = thread_cpu() - c0 - rep.upload_cpu;
-    let t = TICKETS.get() + 1;
-    TICKETS.set(t);
+    let t = TICKETS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     SUSPENDED.with_borrow_mut(|s| s.insert(t, (runs, wave, rep, live)));
     Ok(Some(t))
 }
