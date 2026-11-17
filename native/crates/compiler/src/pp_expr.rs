@@ -1,7 +1,7 @@
-//! `#if`'s expressions (C17 §6.10.1, C++ [cpp.cond]), the meaning of the preprocessing words'
-//! `EVAL` (decision 0348): integer constant expressions over `intmax_t` and `uintmax_t`, after
-//! macro expansion and `defined`. The lean pass's evaluator (`rerail-c-pp`'s `expr`), over the
-//! words' tokens: kinds and spellings.
+//! `#if`'s expressions (C17 §6.10.1, C++ [cpp.cond]): integer constant expressions over
+//! `intmax_t` and `uintmax_t`, after macro expansion and `defined`. The operators' and primaries'
+//! meanings, which the preprocessing words' `EXPR` applies (decision 0348): its program's rules are
+//! the precedence climbing of the lean pass's evaluator (`rerail-c-pp`'s `expr`).
 //!
 //! Every operand is 64 bits, signed unless an operand made it unsigned (the usual arithmetic
 //! conversions). `&&`, `||` and `?:` evaluate only the operands they take, and an operand not
@@ -31,23 +31,6 @@ impl Value {
     }
 }
 
-/// What an expression gets wrong.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ExprError {
-    /// No expression (`#if` alone).
-    Empty,
-    /// A token where an operand or operator was wanted, by its index.
-    Unexpected(usize),
-    /// Tokens left after the expression.
-    Trailing(usize),
-    /// A division or remainder by zero, evaluated.
-    DivByZero(usize),
-    /// A number that is no integer (a floating constant), or out of range.
-    BadNumber(usize),
-    /// A character constant that is not one.
-    BadChar(usize),
-}
-
 /// A token as the evaluator reads it: its kind (`pp_words`' kinds), its operator (a
 /// punctuator's spelling, or, where the dialect has them, an alternative token's: `and` is `&&`),
 /// and its spelling.
@@ -73,25 +56,6 @@ pub fn item<'a>(kind: u8, text: &'a [u8], alt: bool) -> Item<'a> {
     Item { kind: if op.is_some() { PUNCT } else { kind }, op, text }
 }
 
-/// The value of `items` (an `#if`'s expanded tokens, `defined` and the `__has_*` family answered).
-pub fn eval(items: &[Item], true_is_one: bool) -> Result<Value, ExprError> {
-    if items.is_empty() {
-        return Err(ExprError::Empty);
-    }
-    let mut e = Eval { items, at: 0, true_is_one };
-    let v = e.cond(true)?;
-    if e.at < items.len() {
-        return Err(ExprError::Trailing(e.at));
-    }
-    Ok(v)
-}
-
-struct Eval<'a, 'b> {
-    items: &'b [Item<'a>],
-    at: usize,
-    true_is_one: bool,
-}
-
 /// A binary operator's precedence (higher binds tighter).
 pub fn binary(t: &[u8]) -> Option<u8> {
     Some(match t {
@@ -107,98 +71,6 @@ pub fn binary(t: &[u8]) -> Option<u8> {
         b"*" | b"/" | b"%" => 10,
         _ => return None,
     })
-}
-
-impl<'a> Eval<'a, '_> {
-    fn peek(&self) -> Option<&'a [u8]> {
-        self.items.get(self.at)?.op
-    }
-
-    /// `cond (',' cond)*`: C forbids the comma outside an unevaluated operand, but compilers take
-    /// it; its value is the right's.
-    fn cond(&mut self, live: bool) -> Result<Value, ExprError> {
-        let mut v = self.ternary(live)?;
-        while self.peek() == Some(&b","[..]) {
-            self.at += 1;
-            v = self.ternary(live)?;
-        }
-        Ok(v)
-    }
-
-    fn ternary(&mut self, live: bool) -> Result<Value, ExprError> {
-        let c = self.binary(1, live)?;
-        if self.peek() != Some(&b"?"[..]) {
-            return Ok(c);
-        }
-        self.at += 1;
-        let a = self.cond(live && c.is_true())?;
-        if self.peek() != Some(&b":"[..]) {
-            return Err(ExprError::Unexpected(self.at));
-        }
-        self.at += 1;
-        let b = self.ternary(live && !c.is_true())?;
-        // The usual conversions over both arms.
-        let unsigned = a.unsigned || b.unsigned;
-        let v = if c.is_true() { a } else { b };
-        Ok(Value { bits: v.bits, unsigned })
-    }
-
-    /// Precedence climbing from `min`.
-    fn binary(&mut self, min: u8, live: bool) -> Result<Value, ExprError> {
-        let mut l = self.unary(live)?;
-        while let Some(op) = self.peek() {
-            let Some(p) = binary(op) else { break };
-            if p < min {
-                break;
-            }
-            let at = self.at;
-            self.at += 1;
-            l = match op {
-                b"&&" => {
-                    let r = self.binary(p + 1, live && l.is_true())?;
-                    Value::truth(l.is_true() && r.is_true())
-                }
-                b"||" => {
-                    let r = self.binary(p + 1, live && !l.is_true())?;
-                    Value::truth(l.is_true() || r.is_true())
-                }
-                _ => {
-                    let r = self.binary(p + 1, live)?;
-                    apply(op, l, r, live, at)?
-                }
-            };
-        }
-        Ok(l)
-    }
-
-    fn unary(&mut self, live: bool) -> Result<Value, ExprError> {
-        let at = self.at;
-        let Some(it) = self.items.get(at) else { return Err(ExprError::Unexpected(at)) };
-        self.at += 1;
-        match it.kind {
-            PUNCT => match it.op.unwrap_or(b"") {
-                b"+" => self.unary(live),
-                b"-" => self.unary(live).map(|v| Value { bits: v.bits.wrapping_neg(), unsigned: v.unsigned }),
-                b"~" => self.unary(live).map(|v| Value { bits: !v.bits, unsigned: v.unsigned }),
-                b"!" => self.unary(live).map(|v| Value::truth(!v.is_true())),
-                b"(" => {
-                    let v = self.cond(live)?;
-                    if self.peek() != Some(&b")"[..]) {
-                        return Err(ExprError::Unexpected(self.at));
-                    }
-                    self.at += 1;
-                    Ok(v)
-                }
-                _ => Err(ExprError::Unexpected(at)),
-            },
-            NUMBER => number(it.text).ok_or(ExprError::BadNumber(at)),
-            // A character constant (a string literal is no operand).
-            LITERAL if it.text.iter().find(|&&c| c == b'"' || c == b'\'') == Some(&b'\'') => char_value(it.text).ok_or(ExprError::BadChar(at)),
-            // Any other identifier (`false` too) is 0.
-            IDENT => Ok(Value::truth(self.true_is_one && it.text == b"true")),
-            _ => Err(ExprError::Unexpected(at)),
-        }
-    }
 }
 
 /// A prefix operator (`+ - ~ !`) applied.
@@ -222,17 +94,18 @@ pub fn primary(it: &Item, true_is_one: bool) -> Option<Value> {
     }
 }
 
-/// `l op r`, the usual conversions applied.
-pub fn apply(op: &[u8], l: Value, r: Value, live: bool, at: usize) -> Result<Value, ExprError> {
+/// `l op r`, the usual conversions applied; `None` for a division or remainder by zero evaluated
+/// (`live`: one not evaluated is 0).
+pub fn apply(op: &[u8], l: Value, r: Value, live: bool) -> Option<Value> {
     let u = l.unsigned || r.unsigned;
     let (a, b) = (l.bits, r.bits);
     let (sa, sb) = (a as i64, b as i64);
     let v = |bits: u64| Value { bits, unsigned: u };
-    Ok(match op {
+    Some(match op {
         b"*" => v(a.wrapping_mul(b)),
         b"/" | b"%" => {
             if b == 0 {
-                return if live { Err(ExprError::DivByZero(at)) } else { Ok(v(0)) };
+                return if live { None } else { Some(v(0)) };
             }
             match (op, u) {
                 (b"/", true) => v(a / b),

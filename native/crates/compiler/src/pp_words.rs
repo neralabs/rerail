@@ -236,7 +236,7 @@ const VA_OPT: &[u8] = b"__VA_OPT__";
 
 /// Whether a word is a test (it runs the next word where it holds, skips it where not).
 fn is_test(opcode: u8, mode: u8) -> bool {
-    matches!(opcode, LINE | IS | PEEK | LOOKUP | MACRO | DEFINED) || (opcode == INCLUDE && mode <= 1) || (opcode == EMBED && mode == 0) || (opcode == SUB && matches!(mode, 1..=4 | 6 | 7)) || (opcode == STR && mode == 1) || opcode == GLUE || (opcode == DEFINE && matches!(mode, 0..=3 | 5 | 7)) || (opcode == EXPR && matches!(mode, 0 | 1 | 3 | 6 | 8 | 11 | 14)) || (opcode == BUILTIN && mode >= 1) || (opcode == ARG && (mode == 2 || mode == 4)) || (opcode == PRE && mode == 0) || (opcode == COND && (mode == 2 || mode == 3)) 
+    matches!(opcode, LINE | IS | PEEK | LOOKUP | MACRO | DEFINED) || (opcode == INCLUDE && mode <= 1) || (opcode == EMBED && matches!(mode, 0 | 3 | 4 | 5 | 7 | 8)) || (opcode == SUB && matches!(mode, 1..=4 | 6 | 7)) || (opcode == STR && mode == 1) || opcode == GLUE || (opcode == DEFINE && matches!(mode, 0..=3 | 5 | 7)) || (opcode == EXPR && matches!(mode, 0 | 1 | 3 | 6 | 8 | 11 | 14)) || (opcode == BUILTIN && mode >= 1) || (opcode == ARG && (mode == 2 || mode == 4)) || (opcode == PRE && mode == 0) || (opcode == COND && (mode == 2 || mode == 3)) 
 }
 
 /// A preprocessing program's rules: only these words, `GOTO`, `PUSH` (each followed by its
@@ -245,7 +245,8 @@ fn is_test(opcode: u8, mode: u8) -> bool {
 /// callee does. The steps: a token read (`READ`, `LINE`); on the held side of their tests, a
 /// body token taken (`SUB m=1`), a `__VA_OPT__`'s content closed (`SUB m=7`), a token
 /// stringized (`STR m=1`), a paste's step (`GLUE`), a `#define`'s token read or walked
-/// (`DEFINE m=2, 5, 7`), an expression's token (`EXPR m=0, 6, 8, 11`). Each is a backend's loop
+/// (`DEFINE m=2, 5, 7`), an expression's token (`EXPR m=0, 6, 8, 11`), an `#embed`'s parameter, argument token or byte
+/// (`EMBED m=3, 4, 8`). Each is a backend's loop
 /// head.
 pub fn validate(program: &Words) -> Result<(), Error> {
     let words = &program.words;
@@ -268,10 +269,10 @@ pub fn validate(program: &Words) -> Result<(), Error> {
             MACRO => mode <= 2 && operand == 0,
             BUILTIN => mode <= 4 && operand == 0,
             LINEDIR => mode <= 1 && operand == 0,
-            EMBED => mode <= 2 && operand == 0,
             SUB => mode <= 10 && operand == 0,
             DEFINE => mode <= 8 && operand == 0,
             EXPR => mode <= 14 && operand == 0,
+            EMBED => mode <= 10 && operand == 0,
             STR => mode <= 3 && operand == 0,
             GLUE => mode == 0 && operand == 0,
             ARG => mode <= 5 && operand == 0,
@@ -341,6 +342,8 @@ fn after(words: &[u32], pc: usize, memo: &mut HashMap<usize, Option<bool>>) -> V
         DEFINE if matches!(mode, 2 | 5 | 7) => vec![pc + 2],
         // An operand's token, a `,`, a binary operator, a `?`.
         EXPR if matches!(mode, 0 | 6 | 8 | 11) => vec![pc + 2],
+        // An `#embed`'s parameter or argument token, a byte.
+        EMBED if matches!(mode, 3 | 4 | 8) => vec![pc + 2],
         GOTO => vec![usize::from(operand)],
         PUSH => {
             let callee = usize::from(split(words[pc + 1]).2);
@@ -504,10 +507,59 @@ struct Machine<'a> {
     line_last: Tok,
     /// The `#embed` read: its parameters' tokens until they are pushed, its name, and its file
     /// where mode (a) read its name (`Some(NONE)`: not found).
-    embed: (Vec<Tok>, Option<(Vec<u8>, bool)>, Option<u32>),
+    embed: ((u32, u32), Option<(Spell<'a>, bool)>, Option<u32>),
     sub: Sub,
     def: DefState,
     ex: Ex,
+    em: Em,
+    /// Where scratch spells the numbers 0 to 255 and `,` (`#embed`'s bytes), once written.
+    digits: Option<u32>,
+}
+
+/// A spelling: a range of scratch, or the input's bytes (a file's, its path, the environment's).
+#[derive(Clone, Copy)]
+enum Spell<'a> {
+    Scratch(u32, u32),
+    Bytes(&'a [u8]),
+}
+
+impl<'a> Spell<'a> {
+    /// Bytes `a..b` of it.
+    fn sub(self, a: usize, b: usize) -> Spell<'a> {
+        match self {
+            Spell::Scratch(lo, _) => Spell::Scratch(lo + a as u32, lo + b as u32),
+            Spell::Bytes(x) => Spell::Bytes(&x[a..b]),
+        }
+    }
+}
+
+/// Tokens in place: a range of the kept tokens, or of the arena.
+#[derive(Clone, Copy)]
+enum Toks {
+    Kept(u32, u32),
+    Arena(u32, u32),
+}
+
+/// The `#embed` whose parameters are read and bytes pushed (`EMBED m=2` on): its parameters'
+/// tokens `kept[lo..hi]` and the next, the parameter read, its argument's start and depth, the
+/// arguments kept (ranges of `kept`), `limit`, and the bytes: the file, the next, the end; the
+/// tokens pushed start at `a`.
+#[derive(Clone, Copy, Default)]
+struct Em {
+    lo: u32,
+    i: u32,
+    hi: u32,
+    p: Tok,
+    arg: (u32, u32),
+    depth: u32,
+    prefix: (u32, u32),
+    suffix: (u32, u32),
+    if_empty: (u32, u32),
+    limit: Option<usize>,
+    file: u32,
+    k: u32,
+    n: u32,
+    a: u32,
 }
 
 /// `#if`'s expression being evaluated (`EXPR`): its tokens `kept[lo..hi]` and the next one,
@@ -602,6 +654,26 @@ pub fn key(b: &[u8]) -> u64 {
     h
 }
 
+/// `0` … `255` spelled one after another, then `,`: `#embed`'s bytes' spellings.
+const DIGITS: [u8; 659] = {
+    let (mut b, mut i, mut d) = ([0u8; 659], 0, 0u32);
+    while d < 256 {
+        if d >= 100 {
+            b[i] = b'0' + (d / 100) as u8;
+            i += 1;
+        }
+        if d >= 10 {
+            b[i] = b'0' + (d / 10 % 10) as u8;
+            i += 1;
+        }
+        b[i] = b'0' + (d % 10) as u8;
+        i += 1;
+        d += 1;
+    }
+    b[658] = b',';
+    b
+};
+
 fn word_byte(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_' || c == b'$'
 }
@@ -644,10 +716,12 @@ pub fn run(program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Resul
         bi: (0, eof(0), 0),
         marker: None,
         line_last: eof(0),
-        embed: (Vec::new(), None, None),
+        embed: ((0, 0), None, None),
         sub: Sub::default(),
         def: DefState::default(),
         ex: Ex::default(),
+        em: Em::default(),
+        digits: None,
     };
     m.install_builtins().map_err(|why| Refused { pc: 0, why })?;
     let words = &program.words;
@@ -773,7 +847,7 @@ pub fn run(program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Resul
     }
 }
 
-impl Machine<'_> {
+impl<'a> Machine<'a> {
     fn text(&self, t: &Tok) -> &[u8] {
         let b = if t.buf == 0 { &self.scratch[..] } else { self.files[t.buf as usize - 1].bytes };
         &b[t.start as usize..t.end as usize]
@@ -872,8 +946,7 @@ impl Machine<'_> {
         if self.t.kind != IDENT || self.t.flags & NOEXP != 0 {
             return Ok(false);
         }
-        let b = self.text(&self.t).to_vec();
-        Ok(match self.find(&b)? {
+        Ok(match self.find(self.text(&self.t))? {
             Ok(i) if self.table[i].unwrap().def != NONE => {
                 self.d = self.table[i].unwrap().def;
                 true
@@ -1111,11 +1184,17 @@ impl Machine<'_> {
         if l.flags & PLACEMARKER != 0 {
             return Ok(Some(Tok { flags: (r.flags & !(BOL | SPACE)) | (l.flags & (BOL | SPACE)), ..r }));
         }
-        let (lb, rb) = (self.text(&l).to_vec(), self.text(&r).to_vec());
-        let mut text = lb.clone();
-        text.extend_from_slice(&rb);
-        let Some(kind) = self.pasted_kind(&l, &r, &lb, &rb, &text)? else { return Ok(None) };
-        Ok(Some(Tok { exp: id, ..self.scratch_tok(kind, &text, l.flags & (BOL | SPACE))? }))
+        // The two spelled together in scratch: the token's spelling, where they make one.
+        let s0 = self.scratch.len();
+        self.scratch_copy(&l, false)?;
+        let m = self.scratch.len();
+        self.scratch_copy(&r, false)?;
+        let kind = self.pasted_kind(&l, &r, &self.scratch[s0..m], &self.scratch[m..], &self.scratch[s0..]);
+        let Ok(Some(kind)) = kind else {
+            self.scratch.truncate(s0);
+            return kind.map(|_| None);
+        };
+        Ok(Some(Tok { kind, flags: l.flags & (BOL | SPACE), buf: 0, start: s0 as u32, end: self.scratch.len() as u32, exp: id }))
     }
 
     /// The kind of the one token `l`'s and `r`'s bytes spell, `None` where they spell none.
@@ -1364,19 +1443,7 @@ impl Machine<'_> {
                 if v.s.0 > v.s_first && t.flags & (SPACE | BOL) != 0 && self.scratch.len() as u32 > v.sb + 1 {
                     self.scratch_push(b" ")?;
                 }
-                let text = self.text(&t).to_vec();
-                if t.kind == LITERAL {
-                    let mut e = Vec::with_capacity(text.len() + 2);
-                    for c in text {
-                        if c == b'"' || c == b'\\' {
-                            e.push(b'\\');
-                        }
-                        e.push(c);
-                    }
-                    self.scratch_push(&e)?;
-                } else {
-                    self.scratch_push(&text)?;
-                }
+                self.scratch_copy(&t, t.kind == LITERAL)?;
                 Ok(Some(true))
             }
             _ => {
@@ -1389,6 +1456,48 @@ impl Machine<'_> {
                 Ok(None)
             }
         }
+    }
+
+    /// Token `t`'s spelling appended to scratch, with `"` and `\\` escaped where `escape` (a
+    /// literal stringized): the runs between them copied whole.
+    fn scratch_copy(&mut self, t: &Tok, escape: bool) -> R<()> {
+        let s = if t.buf == 0 { Spell::Scratch(t.start, t.end) } else { Spell::Bytes(&self.files[t.buf as usize - 1].bytes[t.start as usize..t.end as usize]) };
+        self.copy_spell(s, escape)
+    }
+
+    /// A spelling appended to scratch, `"` and `\\` escaped where `escape`: the runs between
+    /// them copied whole.
+    fn copy_spell(&mut self, s: Spell<'a>, escape: bool) -> R<()> {
+        let (start, end) = match s {
+            Spell::Scratch(lo, hi) => (lo as usize, hi as usize),
+            Spell::Bytes(b) => (0, b.len()),
+        };
+        let worst = if escape { 2 * (end - start) } else { end - start };
+        if self.scratch.len() + worst > self.bounds.scratch {
+            return Err("past the scratch bytes' bound");
+        }
+        let mut at = start;
+        while at < end {
+            let b = match s {
+                Spell::Scratch(..) => &self.scratch[at..end],
+                Spell::Bytes(b) => &b[at..end],
+            };
+            let run = if escape { b.iter().position(|&c| c == b'"' || c == b'\\').unwrap_or(b.len()) } else { b.len() };
+            match s {
+                Spell::Scratch(..) => self.scratch.extend_from_within(at..at + run),
+                Spell::Bytes(b) => self.scratch.extend_from_slice(&b[at..at + run]),
+            }
+            at += run;
+            if at < end {
+                let c = match s {
+                    Spell::Scratch(..) => self.scratch[at],
+                    Spell::Bytes(b) => b[at],
+                };
+                self.scratch.extend_from_slice(&[b'\\', c]);
+                at += 1;
+            }
+        }
+        Ok(())
     }
 
     fn scratch_push(&mut self, b: &[u8]) -> R<()> {
@@ -1464,25 +1573,72 @@ impl Machine<'_> {
         Ok(())
     }
 
-    /// The level `if_open` opened closed: its tokens.
-    fn line_close(&mut self) -> R<Vec<Tok>> {
+    /// The level `if_open` opened closed: its tokens' range of `kept`, left in place (the caller
+    /// cuts `kept` back once it has read them).
+    fn line_end(&mut self) -> R<(u32, u32)> {
         let (_, at) = self.levels.pop().ok_or("no level open")?;
         if !self.sources.pop().is_some_and(|s| s.stop) {
             return Err("a line's source not on top");
         }
         self.in_if = false;
-        Ok(self.kept.drain(at as usize..).collect())
+        Ok((at, self.kept.len() as u32))
+    }
+
+    /// A spelling's bytes.
+    fn spell(&self, s: Spell<'a>) -> &[u8] {
+        match s {
+            Spell::Scratch(lo, hi) => &self.scratch[lo as usize..hi as usize],
+            Spell::Bytes(b) => b,
+        }
+    }
+
+    /// A token's spelling, in place.
+    fn tok_spell(&self, t: &Tok) -> Spell<'a> {
+        let files: &'a [File<'a>] = self.files;
+        if t.buf == 0 { Spell::Scratch(t.start, t.end) } else { Spell::Bytes(&files[t.buf as usize - 1].bytes[t.start as usize..t.end as usize]) }
+    }
+
+    fn tok_in(&self, ts: Toks, k: u32) -> Tok {
+        match ts {
+            Toks::Kept(..) => self.kept[k as usize],
+            Toks::Arena(..) => self.arena[k as usize],
+        }
+    }
+
+    /// A string literal's text (its escapes of `"` and `\\` undone) appended to scratch: its range;
+    /// `None` for a raw literal or no string literal.
+    fn destringize(&mut self, s: Spell<'a>) -> R<Option<Spell<'a>>> {
+        let b = self.spell(s);
+        let Some(q) = b.iter().position(|&c| c == b'"' || c == b'\'') else { return Ok(None) };
+        if b[q] != b'"' || b[..q].contains(&b'R') || b.len() < q + 2 {
+            return Ok(None);
+        }
+        let (lo, hi) = (q + 1, b.len() - 1);
+        if self.scratch.len() + (hi - lo) > self.bounds.scratch {
+            return Err("past the scratch bytes' bound");
+        }
+        let start = self.scratch.len() as u32;
+        let mut k = lo;
+        while k < hi {
+            let b = self.spell(s);
+            let j = (k..hi).find(|&j| b[j] == b'\\' && j + 1 < hi && matches!(b[j + 1], b'"' | b'\\')).unwrap_or(hi);
+            self.copy_spell(s.sub(k, j), false)?;
+            if j < hi {
+                let c = self.spell(s)[j + 1];
+                self.scratch.push(c);
+                k = j + 2;
+            } else {
+                k = hi;
+            }
+        }
+        Ok(Some(Spell::Scratch(start, self.scratch.len() as u32)))
     }
 
     /// The level `if_open` opened closed, its tokens left for `EXPR`.
     fn expr_begin(&mut self) -> R<()> {
-        let (_, at) = self.levels.pop().ok_or("no level open")?;
-        if !self.sources.pop().is_some_and(|s| s.stop) {
-            return Err("a line's source not on top");
-        }
-        self.in_if = false;
+        let (at, hi) = self.line_end()?;
         let mut ex = std::mem::take(&mut self.ex);
-        (ex.lo, ex.at, ex.hi, ex.err) = (at, at, self.kept.len() as u32, false);
+        (ex.lo, ex.at, ex.hi, ex.err) = (at, at, hi, false);
         (ex.vals.clear(), ex.ops.clear(), ex.mins.clear(), ex.live.clear());
         ex.live.push(true);
         self.ex = ex;
@@ -1619,13 +1775,10 @@ impl Machine<'_> {
                 let v = match op {
                     b"&&" => Value::int((l.is_true() && r.is_true()) as i64),
                     b"||" => Value::int((l.is_true() || r.is_true()) as i64),
-                    _ => match crate::pp_expr::apply(op, l, r, live, 0) {
-                        Ok(v) => v,
-                        Err(_) => {
-                            self.ex.err = true;
-                            zero
-                        }
-                    },
+                    _ => crate::pp_expr::apply(op, l, r, live).unwrap_or_else(|| {
+                        self.ex.err = true;
+                        zero
+                    }),
                 };
                 self.expr_push(v)?;
                 return Ok(None);
@@ -1687,8 +1840,7 @@ impl Machine<'_> {
         }
         let n = self.t;
         let v = n.kind == IDENT && {
-            let b = self.text(&n).to_vec();
-            matches!(self.find(&b)?, Ok(i) if self.table[i].unwrap().def != NONE)
+            matches!(self.find(self.text(&n))?, Ok(i) if self.table[i].unwrap().def != NONE)
         };
         if paren {
             self.read();
@@ -1701,7 +1853,7 @@ impl Machine<'_> {
 
     fn include(&mut self, mode: u8) -> R<Option<bool>> {
         // `m=1`'s line, its stop source on top, closed first.
-        let toks = if mode == 1 { self.line_close()? } else { Vec::new() };
+        let line = if mode == 1 { self.line_end()? } else { (0, 0) };
         let i = self.file_src()?;
         let s = self.sources[i];
         match mode {
@@ -1718,20 +1870,27 @@ impl Machine<'_> {
                 Ok(Some(true))
             }
             1 => {
-                let Some((name, angle)) = self.header_name(&toks) else { return Ok(Some(false)) };
+                let s0 = self.scratch.len();
+                let hn = self.header_name(Toks::Kept(line.0, line.1))?;
+                self.kept.truncate(line.0 as usize);
+                let Some((name, angle)) = hn else { return Ok(Some(false)) };
                 // `#include_next` in the main file is `#include` (clang's reading).
                 let next = self.inc.0 == 1 && s.file != 0;
                 let named = self.files[s.file as usize].named;
-                match named.iter().find(|n| n.is(&name, angle, next, false)) {
-                    Some(n) => {
-                        self.inc.1 = n.to;
-                        Ok(Some(true))
+                let found = named.iter().find(|n| n.is(self.spell(name), angle, next, false)).map(|n| n.to);
+                let held = match found {
+                    Some(to) => {
+                        self.inc.1 = to;
+                        true
                     }
                     None => {
+                        let name = self.spell(name).to_vec();
                         self.wanted.push((s.file, Named { name, angle, next, embed: false, to: NONE }));
-                        Ok(Some(false))
+                        false
                     }
-                }
+                };
+                self.scratch.truncate(s0);
+                Ok(Some(held))
             }
             _ => {
                 let f = self.inc.1;
@@ -1752,58 +1911,72 @@ impl Machine<'_> {
         }
     }
 
-    /// The header name tokens make: a string literal's inside, or `<` … `>` spelled with their
-    /// blanks (the lean pass's `header_of`).
-    fn header_name(&self, toks: &[Tok]) -> Option<(Vec<u8>, bool)> {
-        let first = toks.first()?;
-        let s = self.text(first);
-        if first.kind == LITERAL && s.first() == Some(&b'"') && s.len() >= 2 {
-            return Some((s[1..s.len() - 1].to_vec(), false));
+    /// The header name tokens make: a string literal's inside (in place), or `<` … `>` spelled
+    /// with their blanks, in scratch (the lean pass's `header_of`).
+    fn header_name(&mut self, ts: Toks) -> R<Option<(Spell<'a>, bool)>> {
+        let (Toks::Kept(lo, hi) | Toks::Arena(lo, hi)) = ts;
+        if lo >= hi {
+            return Ok(None);
         }
-        if s != b"<" {
-            return None;
+        let first = self.tok_in(ts, lo);
+        let n = self.text(&first).len();
+        if first.kind == LITERAL && self.text(&first).first() == Some(&b'"') && n >= 2 {
+            return Ok(Some((self.tok_spell(&first).sub(1, n - 1), false)));
         }
-        let mut name = Vec::new();
-        for (k, t) in toks[1..].iter().enumerate() {
-            if self.text(t) == b">" && t.kind == PUNCT {
-                return Some((name, true));
+        if self.text(&first) != b"<" {
+            return Ok(None);
+        }
+        // `<` … `>`: spelled in scratch.
+        let start = self.scratch.len();
+        for k in lo + 1..hi {
+            let t = self.tok_in(ts, k);
+            if self.text(&t) == b">" && t.kind == PUNCT {
+                return Ok(Some((Spell::Scratch(start as u32, self.scratch.len() as u32), true)));
             }
-            if k > 0 && t.flags & SPACE != 0 {
-                name.push(b' ');
+            if k > lo + 1 && t.flags & SPACE != 0 {
+                self.scratch_push(b" ")?;
             }
-            name.extend_from_slice(self.text(t));
+            self.scratch_copy(&t, false)?;
         }
-        None
+        self.scratch.truncate(start);
+        Ok(None)
     }
 
     fn pragma(&mut self) -> R<()> {
         let i = self.file_src()?;
         let file = self.sources[i].file;
-        let mut toks = Vec::new();
+        let (mut toks, mut n) = ([Tok::default(); 3], 0);
         while let Some(t) = self.line_tok()? {
-            if toks.len() < 4 {
-                toks.push(t);
+            if n < 3 {
+                toks[n] = t;
             }
+            n += 1;
         }
-        let word = toks.first().filter(|t| t.kind == IDENT).map_or(Vec::new(), |t| self.text(t).to_vec());
+        let word = if n > 0 && toks[0].kind == IDENT { self.tok_spell(&toks[0]) } else { Spell::Bytes(b"") };
         // The lean pass's string argument: `( "…" )`, a string literal, not a raw one.
-        let arg = toks.get(1).filter(|t| self.spelled(t, b"(")).and(toks.get(2)).filter(|t| t.kind == LITERAL).and_then(|t| destringize(self.text(t)));
-        self.pragma_do(file, &word, arg)
+        let lit = (n > 2 && self.spelled(&toks[1], b"(") && toks[2].kind == LITERAL).then(|| self.tok_spell(&toks[2]));
+        self.pragma_do(file, word, lit)
     }
 
-    /// A pragma carried out: its first word, and its string argument destringized.
-    fn pragma_do(&mut self, file: u32, word: &[u8], arg: Option<Vec<u8>>) -> R<()> {
-        if word == b"once" {
+    /// A pragma carried out: its first word, and its string argument (destringized here, where
+    /// it is `push_macro`'s or `pop_macro`'s).
+    fn pragma_do(&mut self, file: u32, word: Spell<'a>, lit: Option<Spell<'a>>) -> R<()> {
+        let w = self.spell(word);
+        if w == b"once" {
             self.once[file as usize] = true;
             return Ok(());
         }
-        let (push, pop) = (word == b"push_macro", word == b"pop_macro");
-        let Some(name) = arg.filter(|_| push || pop) else { return Ok(()) };
-        let slot = match self.find(&name)? {
+        let (push, pop) = (w == b"push_macro", w == b"pop_macro");
+        if !(push || pop) {
+            return Ok(());
+        }
+        let Some(lit) = lit else { return Ok(()) };
+        let Some(name @ Spell::Scratch(n0, n1)) = self.destringize(lit)? else { return Ok(()) };
+        let slot = match self.find(self.spell(name))? {
             Ok(i) => i,
             Err(i) if push => {
-                let n = self.scratch_tok(IDENT, &name, 0)?;
-                self.table[i] = Some(Slot { key: key(&name), name: n, def: NONE });
+                let n = Tok { kind: IDENT, flags: 0, buf: 0, start: n0, end: n1, exp: 0 };
+                self.table[i] = Some(Slot { key: key(self.spell(name)), name: n, def: NONE });
                 i
             }
             Err(_) => return Ok(()),
@@ -1840,7 +2013,7 @@ impl Machine<'_> {
         match mode {
             0 => {
                 let t = self.t;
-                self.t = self.builtin_value(b, &t, &[])?;
+                self.t = self.builtin_value(b, &t, Toks::Kept(0, 0))?;
                 Ok(None)
             }
             1 => {
@@ -1871,16 +2044,18 @@ impl Machine<'_> {
             3 => {
                 self.collecting -= 1;
                 let (_, at) = self.levels.pop().ok_or("no level open")?;
-                let op: Vec<Tok> = self.kept.drain(at as usize..).collect();
+                let hi = self.kept.len() as u32;
                 let (b, name, _) = self.bi;
                 let header = matches!(b, B_HAS_INCLUDE | B_HAS_INCLUDE_NEXT | B_HAS_EMBED);
-                let starts = |m: &Self| op.first().is_some_and(|t| (t.kind == LITERAL && m.text(t).first() == Some(&b'"')) || (t.kind == PUNCT && m.spelled(t, b"<")));
-                if b == B_PRAGMA || (header && !starts(self)) {
+                let starts = at < hi && {
+                    let t = self.kept[at as usize];
+                    (t.kind == LITERAL && self.text(&t).first() == Some(&b'"')) || (t.kind == PUNCT && self.spelled(&t, b"<"))
+                };
+                if b == B_PRAGMA || (header && !starts) {
                     // The operand expanded first: a stop source of its tokens, and a level.
                     let a = self.arena.len() as u32;
-                    for t in op {
-                        self.push_arena(t)?;
-                    }
+                    self.push_kept((at, hi))?;
+                    self.kept.truncate(at as usize);
                     if self.sources.len() >= self.bounds.depth || self.levels.len() >= self.bounds.depth {
                         return Err("past the sources' bound");
                     }
@@ -1888,24 +2063,27 @@ impl Machine<'_> {
                     self.levels.push((u16::MAX, self.kept.len() as u32));
                     return Ok(Some(true));
                 }
-                self.t = self.builtin_value(b, &name, &op)?;
+                self.t = self.builtin_value(b, &name, Toks::Kept(at, hi))?;
+                self.kept.truncate(at as usize);
                 Ok(Some(false))
             }
             _ => {
-                let toks = self.line_close()?;
+                let (lo, hi) = self.line_end()?;
                 let (b, name, _) = self.bi;
                 if b != B_PRAGMA {
-                    self.t = self.builtin_value(b, &name, &toks)?;
+                    self.t = self.builtin_value(b, &name, Toks::Kept(lo, hi))?;
+                    self.kept.truncate(lo as usize);
                     return Ok(Some(true));
                 }
                 // `_Pragma("…")`: one string literal, its text the pragma's.
-                if let [s] = toks.as_slice()
-                    && s.kind == LITERAL
-                    && let Some(text) = destringize(self.text(s))
+                let one = (hi - lo == 1).then(|| self.kept[lo as usize]).filter(|s| s.kind == LITERAL);
+                self.kept.truncate(lo as usize);
+                if let Some(s) = one
+                    && let Some(text @ Spell::Scratch(t0, t1)) = self.destringize(self.tok_spell(&s))?
                 {
                     let file = self.cur_file();
-                    let (word, arg) = pragma_words(&text);
-                    self.pragma_do(file, &word, arg)?;
+                    let (w, lit) = pragma_words(&self.scratch[t0 as usize..t1 as usize]);
+                    self.pragma_do(file, text.sub(w.0, w.1), lit.map(|l| text.sub(l.0, l.1)))?;
                 }
                 Ok(Some(false))
             }
@@ -1929,35 +2107,44 @@ impl Machine<'_> {
         (phys + i64::from(delta)) as u32
     }
 
-    fn presumed_path(&self) -> Vec<u8> {
+    fn presumed_path(&self) -> Spell<'a> {
         match self.sources.iter().rev().find(|s| s.file != NONE) {
-            Some(s) if s.presumed.0 != NONE => self.scratch[s.presumed.0 as usize..s.presumed.1 as usize].to_vec(),
-            Some(s) => self.files[s.file as usize].path.to_vec(),
-            None => Vec::new(),
+            Some(s) if s.presumed.0 != NONE => Spell::Scratch(s.presumed.0, s.presumed.1),
+            Some(s) => Spell::Bytes(self.files[s.file as usize].path),
+            None => Spell::Bytes(b""),
         }
     }
 
     fn number_tok(&mut self, v: i64, like: &Tok) -> R<Tok> {
-        let t = self.scratch_tok(NUMBER, v.to_string().as_bytes(), like.flags & (BOL | SPACE))?;
+        // The digits from the right, in a word's worth of bytes (at most 20, and a sign).
+        let (mut b, mut i, mut u) = ([0u8; 21], 21, v.unsigned_abs());
+        loop {
+            i -= 1;
+            b[i] = b'0' + (u % 10) as u8;
+            u /= 10;
+            if u == 0 {
+                break;
+            }
+        }
+        if v < 0 {
+            i -= 1;
+            b[i] = b'-';
+        }
+        let t = self.scratch_tok(NUMBER, &b[i..], like.flags & (BOL | SPACE))?;
         Ok(Tok { exp: like.exp, ..t })
     }
 
     /// A string literal of `s`, its `"` and `\` escaped.
-    fn string_tok(&mut self, s: &[u8], like: &Tok) -> R<Tok> {
-        let mut q = vec![b'"'];
-        for &c in s {
-            if c == b'"' || c == b'\\' {
-                q.push(b'\\');
-            }
-            q.push(c);
-        }
-        q.push(b'"');
-        let t = self.scratch_tok(LITERAL, &q, like.flags & (BOL | SPACE))?;
-        Ok(Tok { exp: like.exp, ..t })
+    fn string_tok(&mut self, s: Spell<'a>, like: &Tok) -> R<Tok> {
+        let start = self.scratch.len() as u32;
+        self.scratch_push(b"\"")?;
+        self.copy_spell(s, true)?;
+        self.scratch_push(b"\"")?;
+        Ok(Tok { kind: LITERAL, flags: like.flags & (BOL | SPACE), buf: 0, start, end: self.scratch.len() as u32, exp: like.exp })
     }
 
     /// Built-in `b`'s value for its use `t` and its operand `op`.
-    fn builtin_value(&mut self, b: u8, t: &Tok, op: &[Tok]) -> R<Tok> {
+    fn builtin_value(&mut self, b: u8, t: &Tok, op: Toks) -> R<Tok> {
         match b {
             B_LINE => {
                 // The line of the outermost call's end (clang's: its expansion range's end).
@@ -1969,9 +2156,14 @@ impl Machine<'_> {
                 self.number_tok(i64::from(line), t)
             }
             B_FILE | B_FILE_NAME | B_BASE_FILE => {
-                let path = if b == B_BASE_FILE { self.files.first().map_or(Vec::new(), |f| f.path.to_vec()) } else { self.presumed_path() };
-                let path = if b == B_FILE_NAME { path.rsplit(|&c| c == b'/').next().unwrap_or(b"").to_vec() } else { path };
-                self.string_tok(&path, t)
+                let path = if b == B_BASE_FILE { Spell::Bytes(self.files.first().map_or(&b""[..], |f| f.path)) } else { self.presumed_path() };
+                // The name after the last `/`.
+                let path = match path {
+                    _ if b != B_FILE_NAME => path,
+                    Spell::Bytes(p) => Spell::Bytes(p.rsplit(|&c| c == b'/').next().unwrap_or(b"")),
+                    Spell::Scratch(lo, hi) => Spell::Scratch(self.scratch[lo as usize..hi as usize].iter().rposition(|&c| c == b'/').map_or(lo, |k| lo + k as u32 + 1), hi),
+                };
+                self.string_tok(path, t)
             }
             B_COUNTER => {
                 self.counter += 1;
@@ -1987,21 +2179,23 @@ impl Machine<'_> {
                     B_TIME => self.env.time,
                     _ => self.env.timestamp,
                 };
-                self.string_tok(s, t)
+                self.string_tok(Spell::Bytes(s), t)
             }
             B_HAS_INCLUDE | B_HAS_INCLUDE_NEXT | B_HAS_EMBED => {
                 let file = self.cur_file();
-                let v = match self.header_name(op) {
+                let s0 = self.scratch.len();
+                let v = match self.header_name(op)? {
                     Some((name, angle)) => {
                         let next = b == B_HAS_INCLUDE_NEXT && file != 0;
                         let embed = b == B_HAS_EMBED;
                         let named = self.files[file as usize].named;
-                        match named.iter().find(|n| n.is(&name, angle, next, embed)) {
+                        match named.iter().find(|n| n.is(self.spell(name), angle, next, embed)) {
                             Some(n) if n.to == NONE => 0,
                             // 1: found, and not empty; 2: found and empty (`__STDC_EMBED_EMPTY__`).
                             Some(n) if b == B_HAS_EMBED && self.files[n.to as usize].bytes.is_empty() => 2,
                             Some(_) => 1,
                             None => {
+                                let name = self.spell(name).to_vec();
                                 self.wanted.push((file, Named { name, angle, next, embed, to: NONE }));
                                 0
                             }
@@ -2009,21 +2203,28 @@ impl Machine<'_> {
                     }
                     None => 0,
                 };
+                self.scratch.truncate(s0);
                 self.number_tok(v, t)
             }
             _ => {
                 let builtin = BUILTINS[usize::from(b)].0.as_bytes();
-                let mut name = Vec::new();
-                for x in op {
-                    name.extend_from_slice(self.text(x));
+                // The operand's spellings, run together in scratch.
+                let s0 = self.scratch.len();
+                let (Toks::Kept(lo, hi) | Toks::Arena(lo, hi)) = op;
+                for k in lo..hi {
+                    let x = self.tok_in(op, k);
+                    self.scratch_copy(&x, false)?;
                 }
-                let v = match self.env.features.iter().find(|f| f.0 == builtin && f.1 == &name[..]) {
-                    Some(f) => f.2,
+                let found = self.env.features.iter().find(|f| f.0 == builtin && f.1 == &self.scratch[s0..]).map(|f| f.2);
+                let v = match found {
+                    Some(v) => v,
                     None => {
+                        let name = self.scratch[s0..].to_vec();
                         self.unanswered.push((builtin.to_vec(), name));
                         i64::from(builtin == b"__is_identifier")
                     }
                 };
+                self.scratch.truncate(s0);
                 self.number_tok(v, t)
             }
         }
@@ -2036,20 +2237,26 @@ impl Machine<'_> {
             return Ok(());
         }
         let last = self.line_last;
-        let mut toks = self.line_close()?;
-        if let Some(m) = self.marker.take() {
-            toks.insert(0, m);
-        }
+        let (lo, hi) = self.line_end()?;
+        // The line's tokens, after the marker's (a line marker's number) where there is one.
+        let marker = self.marker.take();
+        let tok = |m: &Self, k: u32| match marker {
+            Some(t) if k == 0 => Some(t),
+            Some(_) => (lo + k - 1 < hi).then(|| m.kept[(lo + k - 1) as usize]),
+            None => (lo + k < hi).then(|| m.kept[(lo + k) as usize]),
+        };
+        let (first, second) = (tok(self, 0), tok(self, 1));
+        self.kept.truncate(lo as usize);
         let i = self.file_src()?;
-        let Some(n) = toks.first().filter(|t| t.kind == NUMBER).and_then(|t| crate::pp_expr::number(self.text(t))) else { return Ok(()) };
-        let path = toks.get(1).filter(|t| t.kind == LITERAL).and_then(|t| destringize(self.text(t)));
+        let Some(n) = first.filter(|t| t.kind == NUMBER).and_then(|t| crate::pp_expr::number(self.text(&t))) else { return Ok(()) };
         // The directive's last line: the line after it is line `n`.
         let s = self.sources[i];
         let phys = self.files[s.file as usize].lines.partition_point(|&k| k < last.end) as i64 + 2;
         self.sources[i].delta = (n.bits as i64 - phys) as i32;
-        if let Some(p) = path {
-            let t = self.scratch_tok(LITERAL, &p, 0)?;
-            self.sources[i].presumed = (t.start, t.end);
+        if let Some(t) = second.filter(|t| t.kind == LITERAL)
+            && let Some(Spell::Scratch(p0, p1)) = self.destringize(self.tok_spell(&t))?
+        {
+            self.sources[i].presumed = (p0, p1);
         }
         Ok(())
     }
@@ -2057,15 +2264,11 @@ impl Machine<'_> {
     // `#embed`.
 
     /// `toks` pushed to be expanded: a stop source, and a level.
-    fn push_expand(&mut self, toks: Vec<Tok>) -> R<()> {
-        let a = self.arena.len() as u32;
-        for t in toks {
-            self.push_arena(t)?;
-        }
+    fn push_expand(&mut self, r: (u32, u32)) -> R<()> {
         if self.sources.len() >= self.bounds.depth || self.levels.len() >= self.bounds.depth {
             return Err("past the sources' bound");
         }
-        self.sources.push(Src::arena(a, self.arena.len() as u32, NONE, true));
+        self.sources.push(Src::arena(r.0, r.1, NONE, true));
         self.levels.push((u16::MAX, self.kept.len() as u32));
         Ok(())
     }
@@ -2075,118 +2278,181 @@ impl Machine<'_> {
             0 => {
                 let i = self.file_src()?;
                 let s = self.sources[i];
-                let mut rest = Vec::new();
+                // The line's tokens to the arena: the name's, then the parameters'.
+                let a = self.arena.len() as u32;
                 while let Some(t) = self.line_tok()? {
-                    rest.push(t);
+                    self.push_arena(t)?;
                 }
-                // The name's tokens, then the parameters: the name ends with its `"…"` or `>`.
-                let k = if rest.first().is_some_and(|t| t.kind == PUNCT && self.spelled(t, b"<")) { rest.iter().position(|t| t.kind == PUNCT && self.spelled(t, b">")).map_or(rest.len(), |k| k + 1) } else { 1.min(rest.len()) };
-                let name: Vec<Tok> = rest.drain(..k).collect();
+                let end = self.arena.len() as u32;
+                // The name ends with its `"…"` or `>`.
+                let angle = a < end && self.arena[a as usize].kind == PUNCT && self.spelled(&self.arena[a as usize], b"<");
+                let k = if angle { (a..end).find(|&k| self.arena[k as usize].kind == PUNCT && self.spelled(&self.arena[k as usize], b">")).map_or(end, |k| k + 1) } else { (a + 1).min(end) };
                 let incs = self.files[s.file as usize].includes;
-                self.embed = (Vec::new(), None, incs.binary_search_by_key(&s.hash, |x| x.0).ok().map(|k| incs[k].1));
-                let spelled = name.first().is_some_and(|t| (t.kind == LITERAL && self.text(t).first() == Some(&b'"')) || (t.kind == PUNCT && self.spelled(t, b"<")));
-                if spelled || name.is_empty() {
-                    self.embed.1 = self.header_name(&name);
+                self.embed = ((k, end), None, incs.binary_search_by_key(&s.hash, |x| x.0).ok().map(|k| incs[k].1));
+                let spelled = angle || (a < k && self.arena[a as usize].kind == LITERAL && self.text(&self.arena[a as usize]).first() == Some(&b'"'));
+                if spelled || a == k {
+                    self.embed.1 = self.header_name(Toks::Arena(a, k))?;
                     // Malformed: nothing, its parameters not expanded (the lean pass's order).
-                    self.push_expand(if self.embed.1.is_some() { rest } else { Vec::new() })?;
+                    let rest = if self.embed.1.is_some() { (k, end) } else { (end, end) };
+                    self.push_expand(rest)?;
                     return Ok(Some(false));
                 }
-                self.embed.0 = rest;
-                self.push_expand(name)?;
+                self.push_expand((a, k))?;
                 Ok(Some(true))
             }
             1 => {
-                let name = self.line_close()?;
-                self.embed.1 = self.header_name(&name);
-                let rest = if self.embed.1.is_some() { std::mem::take(&mut self.embed.0) } else { Vec::new() };
+                let (lo, hi) = self.line_end()?;
+                self.embed.1 = self.header_name(Toks::Kept(lo, hi))?;
+                self.kept.truncate(lo as usize);
+                let rest = if self.embed.1.is_some() { self.embed.0 } else { (0, 0) };
                 self.push_expand(rest)?;
                 Ok(None)
             }
-            _ => {
-                let rest = self.line_close()?;
-                let Some((name, angle)) = self.embed.1.take() else { return Ok(None) };
-                let (mut limit, mut prefix, mut suffix, mut if_empty) = (None, Vec::new(), Vec::new(), Vec::new());
-                let mut i = 0;
-                while i < rest.len() {
-                    let p = rest[i];
-                    let mut arg = Vec::new();
-                    let mut j = i + 1;
-                    if rest.get(j).is_some_and(|t| self.spelled(t, b"(")) {
-                        let mut depth = 0;
-                        j += 1;
-                        while j < rest.len() {
-                            if self.spelled(&rest[j], b"(") {
-                                depth += 1;
-                            } else if self.spelled(&rest[j], b")") {
-                                if depth == 0 {
-                                    break;
-                                }
-                                depth -= 1;
-                            }
-                            arg.push(rest[j]);
-                            j += 1;
-                        }
-                        j += 1;
-                    }
-                    if p.kind == IDENT {
-                        match self.text(&p) {
-                            b"limit" => {
-                                let items: Vec<crate::pp_expr::Item> = arg.iter().map(|t| crate::pp_expr::item(t.kind, self.text(t), self.program.pp.cpp)).collect();
-                                limit = crate::pp_expr::eval(&items, self.program.pp.cpp).ok().map(|v| v.bits as usize);
-                            }
-                            b"prefix" => prefix = arg,
-                            b"suffix" => suffix = arg,
-                            b"if_empty" => if_empty = arg,
-                            _ => {}
-                        }
-                    }
-                    i = j;
+            2 => {
+                let (at, hi) = self.line_end()?;
+                // No name: nothing read, nothing pushed.
+                let i = if self.embed.1.is_some() { at } else { hi };
+                self.em = Em { lo: at, i, hi, ..Em::default() };
+                Ok(None)
+            }
+            3 => {
+                let v = self.em;
+                if v.i >= v.hi {
+                    return Ok(Some(false));
                 }
+                self.em.p = self.kept[v.i as usize];
+                let paren = v.i + 1 < v.hi && self.spelled(&self.kept[v.i as usize + 1], b"(");
+                self.em.i = v.i + 1 + u32::from(paren);
+                // No `(`: an empty argument, closed already.
+                self.em.arg = (self.em.i, if paren { u32::MAX } else { self.em.i });
+                self.em.depth = 0;
+                Ok(Some(true))
+            }
+            4 => {
+                let v = self.em;
+                if v.arg.1 != u32::MAX {
+                    return Ok(Some(false));
+                }
+                if v.i < v.hi {
+                    let t = self.kept[v.i as usize];
+                    if self.spelled(&t, b"(") {
+                        self.em.depth += 1;
+                    } else if self.spelled(&t, b")") {
+                        if v.depth == 0 {
+                            self.em.arg.1 = v.i;
+                            self.em.i = v.i + 1;
+                            return Ok(Some(false));
+                        }
+                        self.em.depth -= 1;
+                    }
+                    self.em.i = v.i + 1;
+                    return Ok(Some(true));
+                }
+                // Unclosed: the argument runs to the end.
+                (self.em.arg.1, self.em.i) = (v.hi, v.hi + 1);
+                Ok(Some(false))
+            }
+            5 => {
+                let v = self.em;
+                if v.p.kind != IDENT {
+                    return Ok(Some(false));
+                }
+                match self.text(&v.p) {
+                    b"limit" => {
+                        let mut ex = std::mem::take(&mut self.ex);
+                        (ex.lo, ex.at, ex.hi, ex.err) = (v.arg.0, v.arg.0, v.arg.1, false);
+                        (ex.vals.clear(), ex.ops.clear(), ex.mins.clear(), ex.live.clear());
+                        ex.live.push(true);
+                        self.ex = ex;
+                        return Ok(Some(true));
+                    }
+                    b"prefix" => self.em.prefix = v.arg,
+                    b"suffix" => self.em.suffix = v.arg,
+                    b"if_empty" => self.em.if_empty = v.arg,
+                    _ => {}
+                }
+                Ok(Some(false))
+            }
+            6 => {
+                let ex = &self.ex;
+                self.em.limit = (!ex.err && ex.at == ex.hi).then(|| ex.vals.last().map_or(0, |v| v.bits as usize));
+                Ok(None)
+            }
+            7 => {
+                let v = self.em;
+                self.em.a = self.arena.len() as u32;
+                let Some((name, angle)) = self.embed.1.take() else { return Ok(Some(false)) };
                 let file = self.cur_file();
                 let to = match self.embed.2.take() {
                     Some(to) => to,
-                    None => match self.files[file as usize].named.iter().find(|n| n.is(&name, angle, false, true)) {
+                    None => match self.files[file as usize].named.iter().find(|n| n.is(self.spell(name), angle, false, true)) {
                         Some(n) => n.to,
                         None => {
+                            let name = self.spell(name).to_vec();
                             self.wanted.push((file, Named { name, angle, next: false, embed: true, to: NONE }));
                             NONE
                         }
                     },
                 };
                 if to == NONE {
-                    return Ok(None);
+                    return Ok(Some(false));
                 }
-                let bytes = self.files[to as usize].bytes;
-                let bytes = &bytes[..limit.unwrap_or(bytes.len()).min(bytes.len())];
-                let mut out = Vec::new();
-                if bytes.is_empty() {
-                    out = if_empty;
-                } else {
-                    out.extend(prefix);
-                    for (k, &b) in bytes.iter().enumerate() {
-                        if k > 0 {
-                            out.push(self.scratch_tok(PUNCT, b",", 0)?);
-                        }
-                        out.push(self.scratch_tok(NUMBER, b.to_string().as_bytes(), 0)?);
-                    }
-                    out.extend(suffix);
+                let len = self.files[to as usize].bytes.len();
+                let n = v.limit.unwrap_or(len).min(len) as u32;
+                (self.em.file, self.em.k, self.em.n) = (to, 0, n);
+                self.push_kept(if n == 0 { v.if_empty } else { v.prefix })?;
+                if n > 0 && self.digits.is_none() {
+                    // `0` … `255`, then `,`.
+                    let base = self.scratch.len() as u32;
+                    self.scratch_push(&DIGITS)?;
+                    self.digits = Some(base);
                 }
-                if let Some(f) = out.first_mut() {
-                    f.flags |= BOL;
+                Ok(Some(n > 0))
+            }
+            8 => {
+                let v = self.em;
+                if v.k >= v.n {
+                    return Ok(Some(false));
                 }
-                if !out.is_empty() {
-                    let a = self.arena.len() as u32;
-                    for t in out {
-                        self.push_arena(t)?;
-                    }
+                let base = self.digits.ok_or("no digits")?;
+                if v.k > 0 {
+                    let c = base + 658;
+                    self.push_arena(Tok { kind: PUNCT, flags: 0, buf: 0, start: c, end: c + 1, exp: 0 })?;
+                }
+                let d = u32::from(self.files[v.file as usize].bytes[v.k as usize]);
+                let (off, len) = if d < 10 { (d, 1) } else if d < 100 { (10 + 2 * (d - 10), 2) } else { (190 + 3 * (d - 100), 3) };
+                self.push_arena(Tok { kind: NUMBER, flags: 0, buf: 0, start: base + off, end: base + off + len, exp: 0 })?;
+                self.em.k = v.k + 1;
+                Ok(Some(true))
+            }
+            9 => {
+                let v = self.em;
+                self.push_kept(v.suffix)?;
+                Ok(None)
+            }
+            _ => {
+                let v = self.em;
+                self.kept.truncate(v.lo as usize);
+                let end = self.arena.len() as u32;
+                if end > v.a {
+                    self.arena[v.a as usize].flags |= BOL;
                     if self.sources.len() >= self.bounds.depth {
                         return Err("past the sources' bound");
                     }
-                    self.sources.push(Src::arena(a, self.arena.len() as u32, NONE, false));
+                    self.sources.push(Src::arena(v.a, end, NONE, false));
                 }
                 Ok(None)
             }
         }
+    }
+
+    /// Tokens `kept[r.0..r.1]` pushed to the arena.
+    fn push_kept(&mut self, r: (u32, u32)) -> R<()> {
+        for k in r.0..r.1 {
+            let t = self.kept[k as usize];
+            self.push_arena(t)?;
+        }
+        Ok(())
     }
 
     // The directives.
@@ -2301,10 +2567,9 @@ impl Machine<'_> {
                 }
                 self.defs.push(d);
                 let k = (self.defs.len() - 1) as u32;
-                let b = self.text(&v.name).to_vec();
-                match self.find(&b)? {
+                match self.find(self.text(&v.name))? {
                     Ok(i) => self.table[i].as_mut().unwrap().def = k,
-                    Err(i) => self.table[i] = Some(Slot { key: key(&b), name: v.name, def: k }),
+                    Err(i) => self.table[i] = Some(Slot { key: key(self.text(&v.name)), name: v.name, def: k }),
                 }
                 return Ok(None);
             }
@@ -2384,8 +2649,7 @@ impl Machine<'_> {
 
     fn undef(&mut self) -> R<()> {
         if let Some(n) = self.line_tok()?.filter(|t| t.kind == IDENT) {
-            let b = self.text(&n).to_vec();
-            if let Ok(i) = self.find(&b)? {
+            if let Ok(i) = self.find(self.text(&n))? {
                 self.table[i].as_mut().unwrap().def = NONE;
             }
         }
@@ -2400,27 +2664,10 @@ impl Machine<'_> {
 
 /// A string literal's characters, its `\"` and `\\` unescaped (the lean pass's `destringize`):
 /// `None` where it is no string literal (a character constant, a raw string).
-fn destringize(s: &[u8]) -> Option<Vec<u8>> {
-    let q = s.iter().position(|&c| c == b'"' || c == b'\'')?;
-    if s[q] != b'"' || s[..q].contains(&b'R') || s.len() < q + 2 {
-        return None;
-    }
-    let body = &s[q + 1..s.len() - 1];
-    let mut out = Vec::with_capacity(body.len());
-    let mut k = 0;
-    while k < body.len() {
-        if body[k] == b'\\' && matches!(body.get(k + 1), Some(b'"' | b'\\')) {
-            k += 1;
-        }
-        out.push(body[k]);
-        k += 1;
-    }
-    Some(out)
-}
 
 /// A pragma's text (`_Pragma`'s) read as `#pragma`'s tokens are: its first word, and the string
-/// literal of `( "…" )` after it.
-fn pragma_words(text: &[u8]) -> (Vec<u8>, Option<Vec<u8>>) {
+/// literal of `( "…" )` after it (ranges of `text`).
+fn pragma_words(text: &[u8]) -> ((usize, usize), Option<(usize, usize)>) {
     let blank = |c: u8| c == b' ' || c == b'\t' || c == b'\x0b' || c == b'\x0c';
     let mut k = 0;
     let skip = |k: &mut usize| {
@@ -2433,7 +2680,7 @@ fn pragma_words(text: &[u8]) -> (Vec<u8>, Option<Vec<u8>>) {
     while k < text.len() && word_byte(text[k]) {
         k += 1;
     }
-    let word = text[w..k].to_vec();
+    let word = (w, k);
     skip(&mut k);
     if text.get(k) != Some(&b'(') {
         return (word, None);
@@ -2454,5 +2701,13 @@ fn pragma_words(text: &[u8]) -> (Vec<u8>, Option<Vec<u8>>) {
     if k >= text.len() {
         return (word, None);
     }
-    (word, destringize(&text[s..=k]))
+    (word, Some((s, k + 1)))
+}
+
+#[cfg(test)]
+#[test]
+fn the_digits_spell_0_to_255_and_a_comma() {
+    let mut want: Vec<u8> = (0..=255u32).flat_map(|d| d.to_string().into_bytes()).collect();
+    want.push(b',');
+    assert_eq!(&DIGITS[..], &want[..]);
 }

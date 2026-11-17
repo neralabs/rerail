@@ -269,6 +269,8 @@ const TUS: &[(&str, &[(&str, &str)])] = &[
                     "#define L 1+2\n#embed \"d.bin\" limit(L) unknown(x) if_empty(not)\n#define NAME \"d.bin\"\n#embed NAME suffix(;)\n",
                     "#define P prefix(q,)\n#embed \"d.bin\" P\n#embed \"none.bin\" if_empty(x)\n#embed\n#embed \"d.bin\" limit(0) if_empty(zero)\n",
                     "#if __has_embed(\"d.bin\") == 1 && __has_embed(\"e.bin\") == 2 && !__has_embed(\"none\")\nyes\n#endif\n",
+                    "#embed \"d.bin\" prefix((a)(b),) limit((1)+(2)) if_empty()\n#embed \"d.bin\" limit(1/0)\n#embed \"d.bin\" limit(2 3)\n",
+                    "#embed \"d.bin\" limit(4) suffix(x (y)\n",
                     "#include \"d.bin\"\nend\n",
                 ),
             ),

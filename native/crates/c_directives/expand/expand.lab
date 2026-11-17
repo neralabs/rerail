@@ -192,6 +192,24 @@ er1:    IS m=0 8
         KEEP 0
         GOTO @er
 ere:    EMBED m=2 0
+ep:     EMBED m=3 0       ; a parameter
+        GOTO @ea
+        EMBED m=7 0       ; the file, its first tokens
+        GOTO @eb
+        GOTO @ee
+ea:     EMBED m=4 0       ; an argument's token
+        GOTO @ea
+        EMBED m=5 0       ; `limit`
+        GOTO @el
+        GOTO @ep
+el:     PUSH @el1
+        GOTO @cond
+el1:    EMBED m=6 0
+        GOTO @ep
+eb:     EMBED m=8 0       ; a byte
+        GOTO @eb
+        EMBED m=9 0
+ee:     EMBED m=10 0
         GOTO @raw
 en:     PUSH @en1
         GOTO @one

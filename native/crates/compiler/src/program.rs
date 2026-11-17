@@ -179,8 +179,13 @@ pub const BUILTIN: u8 = 0x7d;
 pub const LINEDIR: u8 = 0x7e;
 /// `#embed` (`T` its word): `m=0`, a test: its name's tokens pushed to be expanded (a
 /// level), else its parameters' (the name read by mode (a) or spelled); `m=1` the name's level
-/// closed, the name made, the parameters pushed; `m=2` the parameters' level closed and read
-/// (`limit`, `prefix`, `suffix`, `if_empty`), the file's bytes as numbers and commas pushed.
+/// closed, the name made, the parameters pushed; `m=2` the parameters' level closed, its tokens
+/// left in place; `m=3`, a test: a parameter's name read (and its argument's `(`); `m=4`, a test:
+/// an argument's token stepped; `m=5`, a test: the argument closed, and the parameter `limit` (its
+/// expression `EXPR`'s; else `prefix`, `suffix` or `if_empty` kept); `m=6` `limit` its value;
+/// `m=7`, a test: the file found, its first tokens pushed (`prefix`, or `if_empty` where it has no
+/// bytes), and it has bytes; `m=8`, a test: a byte pushed, a number (after a `,`); `m=9` `suffix`
+/// pushed; `m=10` the tokens pushed a source.
 pub const EMBED: u8 = 0x7f;
 /// The top frame's macro substituted into the arena, a body token a turn (`pp_words::Sub`):
 /// `m=0` begun (the expansion recorded); `m=1`, a test: the body's next token taken (`B`);
