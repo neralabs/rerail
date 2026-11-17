@@ -1263,17 +1263,18 @@ iteration. Both are per-byte loops, which the engine's code refuses elsewhere.
    `a_cross_file_reader_finds_the_text_of_another_files_node`; `a_cross_file_text_test_is_maintained_as_a_filter`
    runs again.
 
-### Q55. Relations are blocks the CPU and GPU read in place (0325): the rest of steps 3–7
+### Q55. Relations are blocks the CPU and GPU read in place (0325): steps 4–7
 
-Built: steps 1 and 2 (417256f3a, b84b98d3e, 061fbbfca, 640ce085c), and step 3 for flat relations (8aee765b0).
-The device reads a flat input in its block, so flat relations upload 0 MB. On posthog/hogql Metal retires 7%
-fewer instructions than step 1, and the CPU binding is level. Left, in order:
+Built: steps 1 and 2 (417256f3a, b84b98d3e, 061fbbfca, 640ce085c) and step 3 (8aee765b0, 71b1ff602, 27d67f1e2,
+ffed8d55b). The device reads flat relations, relations with dead rows and the vtab's relations in their blocks, and
+makes every chunk view itself. On hogql, uploads read on the host are 5.6 MB (was 160 MB of relations and 84 MB of
+views). Left, in order:
 
-1. Step 3 for a relation with dead rows: its bits move into the block beside its rows, and the kernels skip them.
-2. Step 4: heads written in place by count, reserve and write, so no rows come back (`rows back into the store`
-   is 160 ms of the device's host CPU on hogql).
-3. Step 5: indexes are the relation's (`rel_group`), so `rel_hash` per binding goes.
-4. Step 6: placement drops the upload and row-back prices, and `GPU_BIAS` is refitted.
-5. Step 7: the output's, frames' and memo's rows.
+1. Step 4: heads written in place by count, reserve and write, so no rows come back (`rows back into the store`
+   is 115–150 ms of the device's host CPU on hogql).
+2. Step 5: indexes are the relation's (`rel_group`), so `rel_hash` per binding goes.
+3. Step 6: placement drops the upload and row-back prices, and `GPU_BIAS` is refitted.
+4. Step 7: the output's, frames' and memo's rows, and the reach closure's (`Closed`, 5.6 MB on hogql).
 
-The views (source views over a batch, 88 MB on hogql) are not relations in blocks, and still upload.
+Open: the sources' blocks put the peak resident size up 25 MB (CPU binding) to 50 MB (Metal) on hogql. And a
+block is given back only with its last part (0325, step 2's open item).
