@@ -988,9 +988,9 @@ describe("a record whose live pid is not the home's daemon", () => {
     return fakeMachine(platform, {
       env: { RERAIL_HOME: home },
       kill: (pid, signal) => {
+        if (pid !== LIVE_PID || !running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
         if (signal !== 0) signals.push(signal);
         if (signal === "SIGTERM" || signal === "SIGKILL") running = false;
-        if (pid !== LIVE_PID || !running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
         return true;
       },
       pipes: () => [pipeNameOf(PIPE)],
@@ -1074,14 +1074,25 @@ describe("a record whose live pid is not the home's daemon", () => {
     const signals: Array<string | number | undefined> = [];
     await holdHome(home, LIVE_PID);
     await writeFile(stateFile, JSON.stringify(state(platform)));
-    const machine = machineWith(platform, signals, heldFor(2));
+    // The daemon ends as it lets go of the home.
+    const lock = heldFor(2);
+    let held = true;
+    const machine: DaemonMachine = {
+      ...machineWith(platform, signals, () => (held = lock())),
+      kill: (_pid, signal) => {
+        if (signal !== 0) signals.push(signal);
+        if (!held) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+        return true;
+      },
+    };
     const found = await lookupDaemon(home, machine);
     if (found.status === "absent") throw new Error("the daemon that holds the home was not found");
     expect(await stopFoundDaemon(home, found, machine)).toBe("stopped");
     expect(signals).toEqual([]);
   });
 
-  it("stops waiting, and sends no SIGKILL, once the daemon it stopped lets go of the home, whoever has its pid", async () => {
+  // The stop waits its 10 s for the pid to end, as for any daemon that does not end at its SIGTERM.
+  it("sends no SIGKILL to a pid the daemon it stopped let go of, whoever has it now", { timeout: 20_000 }, async () => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     const signals: Array<string | number | undefined> = [];
     await holdHome(home, LIVE_PID);

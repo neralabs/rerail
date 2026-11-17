@@ -15,6 +15,7 @@ vi.mock("../../src/runtime/daemon-control.js", async () => {
 import { HOOK_FAILURES_FILE, hookFailureLines, readHookFailures, recordHookFailure, type HookFailure } from "../../src/harness/hook-failures.js";
 import { DaemonUnreachableError, runHostHook } from "../../src/harness/hook-host.js";
 import { listenAsEngine } from "../support/platform/engine-endpoint.js";
+import { holdHomeAsDaemon } from "../support/processes/home-lock.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 const homes: string[] = [];
@@ -99,12 +100,13 @@ describe("a hook that cannot record its event", () => {
     const rerailHome = await home();
     vi.stubEnv("RERAIL_HOME", rerailHome);
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
-    // A live daemon: this process, holding the engine socket daemon.json names and proving the capability it records,
-    // with `answer` at the URL it records.
+    // A live daemon: this process, holding the home, the engine socket daemon.json names and proving the capability it
+    // records, with `answer` at the URL it records.
     const front = createHttpServer(answer);
     const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-alive-${process.pid}-${Date.now()}` : join(rerailHome, "engine.sock");
     await new Promise<void>(resolve => front.listen(0, "127.0.0.1", resolve));
     const closeEngine = await listenAsEngine(socketPath, "token");
+    const releaseHome = holdHomeAsDaemon(rerailHome);
     try {
       const port = (front.address() as AddressInfo).port;
       writeFileSync(join(rerailHome, "daemon.json"), JSON.stringify({
@@ -123,6 +125,7 @@ describe("a hook that cannot record its event", () => {
       })]);
     } finally {
       front.closeAllConnections();
+      releaseHome();
       await Promise.all([new Promise(resolve => front.close(resolve)), closeEngine()]);
     }
   });

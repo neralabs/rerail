@@ -7,10 +7,9 @@ import type { AddressInfo, Server } from "node:net";
 import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  checkouts, defaultRerailDatabasePath, events, loadNativeBinding, LOCKS_DIR, openRerailDatabase, PACKAGE_ROOT, policySessionOwners, sessions, SqliteAuditStore,
-} from "../../src/engine/index.js";
+import { checkouts, defaultRerailDatabasePath, events, openRerailDatabase, PACKAGE_ROOT, policySessionOwners, sessions, SqliteAuditStore } from "../../src/engine/index.js";
 import { collectSupportBundle, type KnownValue, runSupportBundleCommand, scrubText, type SupportBundle } from "../../src/cli/support-bundle.js";
+import { holdHomeAsDaemon } from "../support/processes/home-lock.js";
 import { startTestRepository } from "../support/started-repository.js";
 import { NO_POSIX_MODES, POSIX_MODES } from "../support/platform/file-mode.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -229,17 +228,14 @@ async function slowDaemon(home: string, delayMs: number | undefined, onProbe?: (
     pid: process.pid, host: "127.0.0.1", port, url: `http://127.0.0.1:${port}/`, version: "9.9.9", databasePath: join(home, "rerail.sqlite"),
     kernelSocketPath, ui: "bundled", startedAt: 1, packageRoot: home, accessToken,
   }));
-  // A daemon holds its home's lock and records its pid beside it; a lookup keeps a record that does not answer only then.
-  mkdirSync(join(home, LOCKS_DIR), { recursive: true });
-  const homeLock = loadNativeBinding().tryLockExclusive(join(home, LOCKS_DIR, "daemon.lock"));
-  writeFileSync(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: process.pid }));
+  const releaseHome = holdHomeAsDaemon(home);
   const closed = async (server: Server | HttpServer): Promise<void> => await new Promise(resolve => server.close(() => resolve()));
   return {
     close: async () => {
       http.closeAllConnections();
       engine.closeAllConnections();
       await Promise.all([closed(http), closed(engine)]);
-      homeLock?.release();
+      releaseHome();
     },
   };
 }
