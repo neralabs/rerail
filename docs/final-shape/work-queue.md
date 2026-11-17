@@ -390,6 +390,14 @@ data-layer-eager-resolve fails (rc 1), on 50 sampled data-layer files.
     exempts only its native build (rr-align's form).
   - The Native-and-GPU-strata merge (645070bce) takes its generator-made mounts (`tools/cratify/mounts.py`): the
     engine's library and test builds compile with no warning but the linker's `__eh_frame` note.
+  - Review (2026-11-16, by me): no code warning in the engine's debug CLI, test or rerail-logic builds. The jobserver
+    lines are not only cargo's old replays: a build at 18:20 captured them again for ast-grep-core,
+    rerail-tape-format and tree-sitter (`target/debug/.fingerprint/*/output-*`, 524 files in all). Cause: sccache
+    keeps each compile's stderr with its entry, and `CARGO_MAKEFLAGS` is not in its key, so a hit on an entry made
+    before the farm stripped the variables (farm.py 1178) replays the warning; the wrapper `execve`s sccache
+    (farm.py 503), so nothing sees a hit's output. Waiting for the crates to compile again does not end it while
+    the entries hit. To decide (question 3 below). Also: `diagnose` says this checkout pins rustc 1.95.0; it pins
+    1.99.1 (c88acc0e7): the farm's check reads something stale.
 
 ### Q14. Plan-time switches and the plan cache
 
@@ -733,3 +741,11 @@ pass.
    (`corpus::requests_file_local`, `file_local::requests_file_local`), with the test
    `a_cross_file_reader_finds_the_text_of_another_files_node`; `a_cross_file_text_test_is_maintained_as_a_filter`
    runs again.
+
+3. **Q13: stale jobserver warnings replayed from the shared compile cache.** sccache entries made before the farm
+   stripped `CARGO_MAKEFLAGS` (2026-11-15) hold the warning in their stderr, and every hit replays it. Options:
+   (a) remove those entries from the cache: one scan of the local cache (up to 100 GiB of entries, each opened to
+   read its stderr), then each such crate compiles once more, cleanly; (b) have the wrapper drop that one
+   diagnostic from what sccache prints: a pipe through the wrapper on every compile, and it hides the line rather
+   than removing its cause; (c) leave it until the cache evicts those entries (LRU at the 100 GiB cap).
+   Recommended: (a), run once at nice 19.
