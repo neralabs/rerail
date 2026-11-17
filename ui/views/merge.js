@@ -18,7 +18,8 @@
 import { h, icon, setAttr, setContent, setText, syncChildren } from "../dom.js";
 import { ago, failed, fmt, plural, stamp } from "../format.js";
 import { data, ui, repoName } from "../data/state.js";
-import { captureScope, inScope, mergeAssistMark, mergeAssistReadAfter, writeMergeAssist } from "../data/poll.js";
+import { captureScope, inScope } from "../data/scoped-requests.js";
+import { mergeAssistMark, mergeAssistReadAfter, writeMergeAssist } from "../data/merge-assist.js";
 import { invalidate, renderNow, toast } from "../shell.js";
 import {
   HOOK_TIMEOUT_DEFAULT, HOOK_TIMEOUT_MAX, QUIET_TEXT, TOLD_TEXT,

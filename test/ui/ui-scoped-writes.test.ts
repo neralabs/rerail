@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { captureScope, changeScope, inScope, queueInScope, recommendationsFor, sendInScope } from "../../ui/data/poll.js";
+import { changeScope, recommendationsFor } from "../../ui/data/poll.js";
+import { captureScope, inScope, queueInScope, sendInScope } from "../../ui/data/scoped-requests.js";
 import { data, keptPacks, setScope, ui } from "../../ui/data/state.js";
 import { attachmentWrites } from "../../ui/data/attachments.js";
 

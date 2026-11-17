@@ -8,7 +8,8 @@
 import { send } from "./api.js";
 import { data } from "./state.js";
 import { inPack, packSettingDecides } from "../model/derive.js";
-import { captureScope, inScope, refetch, refreshNow } from "./poll.js";
+import { refreshNow } from "./poll.js";
+import { captureScope, inScope, refetch } from "./scoped-requests.js";
 import { failed as failedText } from "../format.js";
 
 const SETTINGS = "/api/repository/settings";
@@ -73,6 +74,43 @@ export function packSwitchWrites(packId, enabled) {
  */
 const writing = new Map();
 
+/**
+ * Send `puts` to the captured scope's target as owner `by`, once the writes clicked before them for the same target
+ * are answered. Stops at the first that fails, or once the page shows another repository. What failed (`null` when
+ * nothing did), and how many writes saved.
+ */
+async function sendInOrder(scope, by, puts) {
+  const key = JSON.stringify(scope.target);
+  const previous = writing.get(key) ?? Promise.resolve();
+  const { promise: settled, resolve: done } = Promise.withResolvers();
+  writing.set(key, settled);
+  let failure = null, saved = 0;
+  try {
+    await previous;
+    for (const { folder, targets, setting } of puts) {
+      if (!inScope(scope)) break;
+      await put({ ...scope.target, folder, owner: by, targets, ...setting });
+      saved += 1;
+    }
+  } catch (error) {
+    failure = error;
+  } finally {
+    done();
+  }
+  return { failure, saved };
+}
+
+/**
+ * Show a change on `rules` at once with `show`. Returns what puts back what it showed (`undo`), on a write that saved
+ * nothing.
+ */
+function showChange(rules, show) {
+  const before = new Map(rules.map(r => [r, { ...r }]));
+  for (const r of rules) show(r);
+  const shown = new Map(rules.map(r => [r, { ...r }]));
+  return () => { for (const r of rules) undo(r, before.get(r), shown.get(r)); };
+}
+
 export function settingWrites({ toast, invalidate, owner }) {
   /**
    * Send `puts` (`{ folder, targets, setting }` each) in order, and show the change on `rules` at once with `show`.
@@ -84,34 +122,16 @@ export function settingWrites({ toast, invalidate, owner }) {
     if (puts.length === 0) return;
     const scope = captureScope();
     const by = owner(packId);
-    const before = new Map(rules.map(r => [r, { ...r }]));
-    for (const r of rules) show(r);
-    const shown = new Map(rules.map(r => [r, { ...r }]));
+    const putBack = showChange(rules, show);
     invalidate();
-    const key = JSON.stringify(scope.target);
-    const previous = writing.get(key) ?? Promise.resolve();
-    const { promise: settled, resolve: done } = Promise.withResolvers();
-    writing.set(key, settled);
-    let failure = null, saved = 0;
-    try {
-      await previous;
-      for (const { folder, targets, setting } of puts) {
-        if (!inScope(scope)) break;
-        await put({ ...scope.target, folder, owner: by, targets, ...setting });
-        saved += 1;
-      }
-    } catch (error) {
-      failure = error;
-    } finally {
-      done();
-    }
+    const { failure, saved } = await sendInOrder(scope, by, puts);
     // Another repository's page now: these rows and the outcome are not its.
     if (!inScope(scope)) return;
     if (failure === null) {
       toast(label);
     } else {
       // A write that saved may decide folders below it: only the reload says what holds where.
-      if (saved === 0) for (const r of rules) undo(r, before.get(r), shown.get(r));
+      if (saved === 0) putBack();
       refetch("rules");
       toast(failedText(failed, failure));
     }

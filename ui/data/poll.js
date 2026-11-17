@@ -4,146 +4,36 @@
  * Data lands in the store; the caller re-renders and reconciles in place. Every poll reads the repository
  * list and the daemon's health, and with a repository in scope its context; beyond that only the needs the
  * page names (`setNeeds`: the open view's, the sidebar's and an open sheet's, from `views/index.js`). Long lists
- * are paged with a cursor: a poll refreshes their first page and keeps the further pages the person loaded.
+ * are paged with a cursor (`paged-lists.js`), a selected session loads through `session-detail.js` and Merge
+ * Assist through `merge-assist.js`; what a request needs to land in the right scope is in `scoped-requests.js`.
  */
-import { get, send } from "./api.js";
+import { get } from "./api.js";
 import { data, ui, sinceFor, setScope, pagedList, panelRuleId } from "./state.js";
+import { fetchFresh, forgetScope, generation, captureScope, inScope, sendInScope, scopeQuery, repositoryFilter } from "./scoped-requests.js";
+import { loadFirstPage } from "./paged-lists.js";
+import { loadSession, loadSessionFindings } from "./session-detail.js";
+import { loadMergeAssist, forgetMergeAssistRead, MERGE_ASSIST_COUNT_EVERY } from "./merge-assist.js";
+import { setTitleListener } from "./session-titles.js";
 import { toStoredRules } from "../model/derive.js";
 import { historyRuleId } from "../model/history-model.js";
-import { promptText } from "../model/sessions-model.js";
 import { failed } from "../format.js";
 
 export { toStoredRules };
 
 const INTERVAL = 5_000;
 const MAX_BACKOFF = 30_000;
-/** Page sizes: History's selected rule's violations, a rule sheet's, the sessions list, the selected session's violations, its transcript. */
+/** Page sizes: History's selected rule's violations, a rule sheet's, the sessions list. */
 const FINDINGS_PAGE = 25;
 /** Overview's Recent sessions. */
 const RECENT_SESSIONS = 5;
 const RULE_FINDINGS_PAGE = 50;
 const SESSIONS_PAGE = 50;
-const SESSION_FINDINGS_PAGE = 200;
-const EVENTS_PAGE = 500;
 
-/**
- * ETag per data slot, not per URL: range-scoped resources fetch a different URL for every range,
- * and the tag must describe what `data.*` currently holds so that returning to a range whose body
- * the daemon already served once still answers 200 instead of a 304 that leaves the other range's
- * data in place.
- */
-const etags = new Map();
 let onChange = () => {};
 let timer = null;
 let backoff = INTERVAL;
 let inFlight = null;
 let queued = false;
-/** Bumped when the scope changes, so a response for the previous repository lands nowhere. */
-let generation = 0;
-
-/**
- * Conditional GET; resolves `undefined` on 304, after a scope change, or once `wanted()` says the answer no longer
- * belongs where it would land (its ETag is then not kept either); the body on 200. `slot` names the ETag's data slot.
- */
-async function fetchFresh(path, slot = path, wanted = () => true) {
-  const started = generation;
-  const { status, etag, body } = await get(path, { etag: etags.get(slot) });
-  if (started !== generation || status === 304 || !wanted()) return undefined;
-  if (etag !== undefined) etags.set(slot, etag);
-  return body;
-}
-
-/**
- * Fetch slot `slot` in full on the next poll, not conditionally: after a write failed, what the page shows was
- * changed by hand and may differ from what the daemon holds although the daemon's body did not change.
- */
-export const refetch = slot => { etags.delete(slot); };
-
-/** `repository=…&checkout=…` from the page's scope: the target every repository read and write names. */
-function scopeTarget() {
-  const target = {};
-  const repository = data.repository?.repositoryKey ?? ui.scope?.repository;
-  if (repository !== undefined) target.repository = repository;
-  if (ui.scope?.checkout !== undefined) target.checkout = ui.scope.checkout;
-  return target;
-}
-
-/**
- * The scope a write belongs to, fixed at the click: its `target` and a `token` that goes stale once the page
- * shows another repository. A write sends to `target` and touches the page's state only while `inScope`.
- */
-export const captureScope = () => ({ target: scopeTarget(), token: generation });
-
-/** Whether the page still shows the scope `captureScope` fixed. */
-export const inScope = scope => scope.token === generation;
-
-/**
- * One write to the captured scope's target. Nothing is sent once the page shows another repository. Resolves
- * `true` when sent and the page still shows the scope, `false` when it does not (so nothing of the answer is the
- * page's); rejects with the write's error only while the page still shows the scope, so a rollback lands there.
- */
-export async function sendInScope(scope, method, path, body) {
-  if (!inScope(scope)) return false;
-  try {
-    await send(method, path, { ...scope.target, ...body });
-  } catch (error) {
-    if (inScope(scope)) throw error;
-    return false;
-  }
-  return inScope(scope);
-}
-
-/**
- * The last attachment write queued on this page: the scope `token` it was clicked in, whether it is still
- * `pending`, whether it was sent and answered OK (`clear`), and `settled` once those are known.
- */
-let lastAttachmentWrite = { token: generation, pending: false, clear: true, settled: Promise.resolve() };
-
-/**
- * `sendInScope` for attachment writes, in click order. The place is taken at the call, while `body` (the body, or a
- * promise of it, `null` to send nothing) may still be loading. A write called while an earlier one in the same
- * scope is still pending is sent once that one is answered OK, and dropped (resolves `false`, nothing sent) when it
- * failed or was dropped. Each was clicked against the state the earlier ones would make: a pack added behind a
- * set-up that failed would set the repository up with that pack alone. Rejects when its own body fails to load, as
- * when its send fails, and like a send only while the page still shows the scope: a failure after a switch resolves
- * `false`, so no rollback lands on the other repository's page. A scope switch starts a new queue.
- */
-export function queueInScope(scope, method, path, body) {
-  const before = lastAttachmentWrite;
-  const waits = before.pending && before.token === scope.token;
-  const ready = Promise.resolve(body);
-  // Read only once the writes before it went out OK; a dropped write's failing body is nobody's error.
-  ready.catch(() => {});
-  const sending = (async () => {
-    if (waits) {
-      await before.settled;
-      if (!before.clear) return false;
-    }
-    let loaded;
-    try {
-      loaded = await ready;
-    } catch (error) {
-      if (inScope(scope)) throw error;
-      return false;
-    }
-    return loaded === null ? false : sendInScope(scope, method, path, loaded);
-  })();
-  const write = { token: scope.token, pending: true, clear: false, settled: null };
-  write.settled = sending.then(
-    sent => { write.pending = false; write.clear = sent; },
-    () => { write.pending = false; },
-  );
-  lastAttachmentWrite = write;
-  return sending;
-}
-
-const scopeQuery = () => new URLSearchParams(scopeTarget()).toString();
-
-/** `&repository=<key>` for the machine-wide reads (activity, violations, sessions), once the key is known. */
-function repositoryFilter() {
-  const key = data.repository?.repositoryKey ?? ui.scope?.repository;
-  return key === undefined ? "" : `&repository=${encodeURIComponent(key)}`;
-}
 
 async function loadRepositories() {
   const body = await fetchFresh("/api/repositories", "repositories");
@@ -269,358 +159,6 @@ async function loadRecentSessions(since) {
   return true;
 }
 
-/** How long the sidebar's Merge Assist count may be before it is read again, on a page other than Merge Assist's. */
-const MERGE_ASSIST_COUNT_EVERY = 30_000;
-/**
- * The last Merge Assist read: when it last answered, an error included (so the sidebar's count backs off to every
- * 30 s while the read fails), and the one in flight with the scope generation it was sent for.
- */
-let mergeAssistRead = { at: 0, loading: null, generation: -1 };
-/**
- * Merge Assist writes sent and answered. A read in flight while either count moves may hold the checkout's state from
- * before a write, so it lands nowhere; and only the latest write sent replaces the status, so an earlier write that
- * answers last cannot put back what a later one changed.
- */
-const mergeAssistWrites = { sent: 0, answered: 0 };
-/**
- * Merge Assist requests sent, reads and writes alike, numbered in order (`asked`), and the number of the one whose
- * answer `data.mergeAssist` holds (`held`): a conflict link is looked up only in a status asked for after it.
- */
-const mergeAssistRequests = { asked: 0, held: 0 };
-
-/** The number of the last Merge Assist request sent, for `mergeAssistReadAfter`. */
-export const mergeAssistMark = () => mergeAssistRequests.asked;
-
-/**
- * Whether `data.mergeAssist` answers a request sent after `mark` (`mergeAssistMark()`): not one read before it, which
- * the sidebar's count may have read half a minute ago, nor one already out then.
- */
-export const mergeAssistReadAfter = mark => data.mergeAssist !== null && mergeAssistRequests.held > mark;
-
-/**
- * Merge Assist read `request` answered: `body`, or nothing new on `undefined` (304), which confirms the status held.
- * Whether anything shown changed.
- */
-function takeMergeAssist(body, request) {
-  mergeAssistRead.at = Date.now();
-  mergeAssistRequests.held = request;
-  const changed = data.mergeAssistError !== null || data.mergeAssistExperiment !== true;
-  Object.assign(data, { mergeAssistError: null, mergeAssistExperiment: true });
-  if (body === undefined) return changed;
-  data.mergeAssist = body;
-  return true;
-}
-
-/**
- * A Merge Assist read failed with `error`, kept for the page. It says nothing of whether the daemon runs Merge Assist:
- * only a read that answers shows its sidebar item. Whether anything shown changed.
- */
-function takeMergeAssistFailure(error) {
-  mergeAssistRead.at = Date.now();
-  // The API's own reason when it answered one ("Rerail does not know the checkout …"), else the status line.
-  const why = error.apiMessage ?? error.message;
-  const changed = data.mergeAssistError !== why;
-  data.mergeAssistError = why;
-  return changed;
-}
-
-/** The daemon runs without Merge Assist (`404 experimental-off`): nothing of it is shown or read again until it restarts. */
-function experimentOff(error) {
-  if (error.status !== 404 || error.code !== "experimental-off") return false;
-  Object.assign(data, { mergeAssist: null, mergeAssistError: null, mergeAssistExperiment: false });
-  return true;
-}
-
-/** Whether a Merge Assist read is skipped: the daemon runs without it, or the last answer is younger than `maxAge`. */
-function skipMergeAssist(maxAge) {
-  if (data.mergeAssistExperiment === false) return true;
-  const held = data.mergeAssist !== null || data.mergeAssistError !== null;
-  return maxAge > 0 && held && Date.now() - mergeAssistRead.at < maxAge;
-}
-
-/** Read Merge Assist and take the answer while `current()` says it still lands. Whether anything shown changed. */
-async function readMergeAssist(current) {
-  const request = ++mergeAssistRequests.asked;
-  try {
-    const body = await fetchFresh(`/api/merge-assist?${scopeQuery()}`, "mergeAssist", current);
-    return current() && takeMergeAssist(body, request);
-  } catch (error) {
-    if (error.name === "AccessRequired") throw error;
-    return experimentOff(error) || (current() && takeMergeAssistFailure(error));
-  }
-}
-
-/**
- * Merge Assist for the scoped checkout (`data.mergeAssist`), at most once at a time; `maxAge` skips the read while the
- * last answer is younger. A failure is kept in `data.mergeAssistError` for the page and the sidebar, never failing
- * the poll: the rest of the dashboard does not depend on Merge Assist. A `404 experimental-off` is no failure: the
- * daemon runs without Merge Assist (`data.mergeAssistExperiment` false), and nothing reads it again until it restarts.
- */
-function loadMergeAssist(maxAge = 0) {
-  if (mergeAssistRead.loading !== null && mergeAssistRead.generation === generation) return mergeAssistRead.loading;
-  if (skipMergeAssist(maxAge)) return false;
-  const started = generation;
-  const { sent, answered } = mergeAssistWrites;
-  const current = () => started === generation && sent === mergeAssistWrites.sent && answered === mergeAssistWrites.answered;
-  const loading = readMergeAssist(current).finally(() => {
-    if (mergeAssistRead.loading === loading) mergeAssistRead.loading = null;
-  });
-  mergeAssistRead = { at: mergeAssistRead.at, loading, generation: started };
-  return loading;
-}
-
-/**
- * A write's answered status replaces `data.mergeAssist`, unless a later write was sent meanwhile (`write` is its count;
- * `request` its number among all Merge Assist requests).
- */
-function keepWriteStatus(write, request, status) {
-  if (status === undefined || write !== mergeAssistWrites.sent) return;
-  mergeAssistRequests.held = request;
-  data.mergeAssist = status;
-  data.mergeAssistError = null;
-  mergeAssistRead.at = Date.now();
-}
-
-/**
- * One Merge Assist write to a captured scope's target. Every Merge Assist write answers the checkout's status: it
- * replaces `data.mergeAssist` unless a later write was sent meanwhile, and a read sent before it answered lands nowhere.
- * Resolves that status, or `null` when there is none or the page shows another repository by then. Rejects with the
- * write's error only while the page still shows the scope.
- */
-export async function writeMergeAssist(scope, method, path, body) {
-  const write = ++mergeAssistWrites.sent, request = ++mergeAssistRequests.asked;
-  try {
-    const { body: status } = await send(method, path, { ...scope.target, ...body });
-    if (!inScope(scope)) return null;
-    keepWriteStatus(write, request, status);
-    return status ?? null;
-  } catch (error) {
-    if (inScope(scope)) throw error;
-    return null;
-  } finally {
-    // A write to a scope no longer shown has nothing to say about the reads of the one shown now.
-    if (inScope(scope)) mergeAssistWrites.answered += 1;
-    // The slot's ETag describes the last read, not what the write put in its place.
-    refetch("mergeAssist");
-  }
-}
-
-/** How a row of each paged resource is told apart from the others. */
-const ROW_ID = { violations: r => `${r.auditId}:${r.id}`, sessions: r => r.sessionId };
-
-/**
- * The first page of the paged list `data[name]` at `key` (its URL without a cursor; `field` names the rows in the
- * answer), conditionally. Another key starts the list over at once, dropping the previous key's pages. Under the
- * same key, pages loaded beyond the first stay, deduplicated, with the cursor past the last of them, as long as the
- * fresh page reaches them: when more rows arrived than a page holds, the rows between the fresh page and the kept
- * ones could never be loaded, so the list starts over from the fresh page and its own cursor.
- */
-async function loadFirstPage(name, field, key, owner = null) {
-  if (data[name].key !== key) {
-    etags.delete(name);
-    data[name] = pagedList(key, owner);
-  }
-  const body = await fetchFresh(key, name, () => data[name].key === key);
-  if (body === undefined) return false;
-  const current = data[name], rows = body[field];
-  const id = ROW_ID[field];
-  const kept = new Set(current.rows.map(id));
-  // The fresh page is the whole list, or it does not reach the kept pages: it replaces them.
-  const complete = body.nextCursor === null;
-  const reaches = rows.length > 0 && kept.has(id(rows.at(-1)));
-  if (current.pages <= 1 || complete || !reaches) {
-    data[name] = { ...current, rows, total: body.total, next: body.nextCursor, pages: 1 };
-    return true;
-  }
-  const fresh = new Set(rows.map(id));
-  data[name] = { ...current, rows: rows.concat(current.rows.filter(r => !fresh.has(id(r)))), total: body.total };
-  return true;
-}
-
-/**
- * The page after `data[name]`'s cursor, appended without duplicates. `false` when there is none, or when the list
- * moved on meanwhile (another key or scope, or this page already appended by an earlier click).
- */
-async function loadNextPage(name, field) {
-  const { key, next } = data[name];
-  if (key === null || next === null) return false;
-  const started = generation;
-  const { body } = await get(`${key}&cursor=${encodeURIComponent(next)}`);
-  const current = data[name];
-  if (started !== generation || current.key !== key || current.next !== next) return false;
-  const id = ROW_ID[field], have = new Set(current.rows.map(id));
-  data[name] = {
-    ...current, rows: current.rows.concat(body[field].filter(r => !have.has(id(r)))),
-    total: body.total, next: body.nextCursor, pages: current.pages + 1,
-  };
-  return true;
-}
-
-/** History: the next page of the shown rule's violations. */
-export const loadMoreFindings = () => loadNextPage("findings", "violations");
-
-/** Sessions view: the next page of the list. */
-export const loadMoreSessions = () => loadNextPage("sessions", "sessions");
-
-/**
- * The selected session's violations, all time, newest first; selecting another session drops the previous one's.
- * Their total goes into the session's list row too, so its count, the With violations filter and its day agree
- * however old the page the row came with.
- */
-export async function loadSessionFindings(id) {
-  const changed = await loadFirstPage("sessionFindings", "violations",
-    `/api/violations?since=0&sessionId=${encodeURIComponent(id)}&limit=${SESSION_FINDINGS_PAGE}${repositoryFilter()}`, id);
-  const slot = data.sessionFindings;
-  if (slot.owner === id && slot.pages > 0) patchSessionRow({ sessionId: id, violationCount: slot.total });
-  return changed;
-}
-
-/** One page of a session's transcript, `query` saying where (`after=…` or `before=…`). */
-async function eventsPage(id, query) {
-  const { body } = await get(`/api/sessions/${encodeURIComponent(id)}/events?${query}&limit=${EVENTS_PAGE}`);
-  return body;
-}
-
-/** Runs `load` as the session's one transcript load; a call while one runs joins it. */
-async function sessionLoad(detail, load) {
-  if (detail.loading) return detail.loading;
-  detail.loading = load();
-  try { return await detail.loading; } finally { detail.loading = null; }
-}
-
-/** Writes a session's fresh fields over its row in the loaded list, so a row past the first page stays current too. */
-function patchSessionRow(fields) {
-  const rows = data.sessions.rows;
-  if (!rows.some(s => s.sessionId === fields.sessionId)) return;
-  data.sessions = { ...data.sessions, rows: rows.map(s => (s.sessionId === fields.sessionId ? { ...s, ...fields } : s)) };
-}
-
-/** Forgets a session the daemon no longer has; the view then falls back to another, as for a session never selected. */
-function dropSession(id) {
-  data.sessionDetail.delete(id);
-  data.sessions = { ...data.sessions, rows: data.sessions.rows.filter(s => s.sessionId !== id) };
-  if (data.sessionFindings.owner === id) data.sessionFindings = pagedList();
-  if (ui.selectedSession === id) ui.selectedSession = null;
-}
-
-/**
- * One session's head and the newest page of its transcript; later calls refresh the head (it is one row, and the
- * list may hold an old copy of it) and append the events recorded since. The head is fetched before any events: a
- * session missing on its first load fails with its 404 rather than looking like an empty transcript, while one that
- * disappears later (a reset) is dropped. Older events come with Load earlier (`loadEarlier`); `earlier` says some
- * may be left. `gaps` is what the whole transcript says it missed, from the daemon.
- */
-export async function loadSession(id) {
-  let detail = data.sessionDetail.get(id);
-  if (detail === undefined) {
-    detail = { head: null, gaps: null, events: [], nextAfter: 0, loaded: false, earlier: false, loading: null };
-    data.sessionDetail.set(id, detail);
-  }
-  return sessionLoad(detail, async () => {
-    let body;
-    try {
-      ({ body } = await get(`/api/sessions/${encodeURIComponent(id)}`));
-    } catch (error) {
-      if (!detail.loaded || !/answered 404$/u.test(error.message)) throw error;
-      dropSession(id);
-      return true;
-    }
-    const was = detail.head, wasGaps = detail.gaps;
-    detail.head = body.session;
-    detail.gaps = body.gaps;
-    patchSessionRow(body.session);
-    const changed = was?.eventCount !== body.session.eventCount || was?.endedAt !== body.session.endedAt
-      || JSON.stringify(wasGaps) !== JSON.stringify(body.gaps);
-    const page = await eventsPage(id, detail.loaded ? `after=${detail.nextAfter}` : `before=${Number.MAX_SAFE_INTEGER}`);
-    if (!detail.loaded) detail.earlier = page.events.length === EVENTS_PAGE;
-    detail.loaded = true;
-    detail.nextAfter = page.nextAfter;
-    if (page.events.length === 0) return changed;
-    detail.events = detail.events.concat(page.events);
-    return true;
-  });
-}
-
-/**
- * Load earlier: reach one page further back in the selected session. The transcript and the session's violations
- * page back together (`loadedFrom` in `sessions-model.js`): whichever reaches back less far loads its next page.
- */
-export async function loadEarlier(id) {
-  const detail = data.sessionDetail.get(id);
-  if (detail?.loading) await detail.loading.catch(() => {});
-  if (detail === undefined || !detail.loaded) return false;
-  const slot = data.sessionFindings;
-  const oldestViolation = slot.rows.at(-1)?.at ?? Infinity;
-  const oldestEvent = detail.earlier ? detail.events[0]?.observedAt ?? -Infinity : -Infinity;
-  if (slot.owner === id && slot.next !== null && oldestViolation >= oldestEvent) return loadNextPage("sessionFindings", "violations");
-  if (!detail.earlier) return false;
-  return sessionLoad(detail, async () => {
-    const page = await eventsPage(id, `before=${detail.events[0]?.sequence ?? Number.MAX_SAFE_INTEGER}`);
-    detail.earlier = page.events.length === EVENTS_PAGE;
-    detail.events = page.events.concat(detail.events);
-    return page.events.length > 0;
-  });
-}
-
-const WEAK = /^(continue|yes|no|ok|okay|go|try again|thanks|thank you|do it|next|y|n)\.?$/i;
-const TITLE_MAX = 96;
-/**
- * First user prompt with three or more words that is not a bare acknowledgement; its first line, trimmed to a title.
- * Text the coding agent's harness wrote into a prompt (`promptText`) is never the title.
- */
-export function titleFromPrompts(texts) {
-  const prompts = texts.map(promptText).filter(Boolean);
-  const t = prompts.find(u => u.split(/\s+/).length >= 3 && !WEAK.test(u.trim())) || prompts[0];
-  if (!t) return null;
-  const line = t.trim().split("\n")[0].replace(/\s+/g, " ").trim();
-  return line.length > TITLE_MAX ? `${line.slice(0, TITLE_MAX - 1).trimEnd()}…` : line;
-}
-
-const titleQueue = [];
-let titleWorkers = 0;
-const TITLE_WORKERS = 4;
-/** sessionId → `eventCount` the current or last lookup covered; a retry waits for new events. */
-const titleTried = new Map();
-
-function titleFromEvents(events) {
-  return titleFromPrompts(events.filter(e => e.kind === "user-prompt").map(e => String(e.payload?.text ?? "")).filter(Boolean));
-}
-
-/**
- * Titles come from the first user prompts; sessions_list carries none, so they load lazily per visible
- * row. Cached transcripts resolve synchronously, so the caller's `titleOf` sees the result in the same
- * render. A session without a usable prompt stays "Untitled" until it records more events; it is never
- * re-fetched (or re-rendered) just because it rendered again.
- */
-export function ensureTitle(session) {
-  const id = session.sessionId;
-  if (typeof data.titles.get(id) === "string") return;
-  const tried = titleTried.get(id);
-  if (tried !== undefined && (session.endedAt !== null || session.eventCount <= tried)) return;
-  titleTried.set(id, session.eventCount);
-  // Only a transcript loaded from its start holds the first prompts; a newer page would name a later one.
-  const detail = data.sessionDetail.get(id);
-  if (detail?.loaded && !detail.earlier && detail.events.length) { data.titles.set(id, titleFromEvents(detail.events)); return; }
-  if (!titleQueue.includes(id)) titleQueue.push(id);
-  pumpTitles();
-}
-
-function pumpTitles() {
-  while (titleWorkers < TITLE_WORKERS && titleQueue.length) {
-    const id = titleQueue.shift();
-    titleWorkers += 1;
-    (async () => {
-      try {
-        const { body } = await get(`/api/sessions/${encodeURIComponent(id)}/events?after=0&limit=60`);
-        const title = titleFromEvents(body.events);
-        if (title !== null || data.titles.get(id) === undefined) data.titles.set(id, title);
-        onChange();
-      } catch { titleTried.delete(id); /* the row keeps "Untitled session" and retries on a later render */ }
-      finally { titleWorkers -= 1; pumpTitles(); }
-    })();
-  }
-}
-
 /**
  * What a page can ask a poll for, by name; each loads with the range's `since`. A view declares the names it shows
  * (`needs` in its module) and the poll loads each name once, whoever else asked for it.
@@ -681,6 +219,33 @@ async function scopedJobs(since) {
   return [...context, ...neededJobs(since)];
 }
 
+/** A poll answered: what it read is the page's now, and the daemon is reachable. */
+function pollAnswered(since, results) {
+  if (since === 0) { data.activityAll = data.activity; data.activityAllSessions = data.activitySessions; }
+  data.updatedAt = Date.now();
+  data.disconnected = false;
+  data.accessRequired = false;
+  data.missing = false;
+  data.loaded = true;
+  backoff = INTERVAL;
+  onChange(results.some(Boolean));
+}
+
+/**
+ * A poll failed with `error`. A repository or checkout the daemon does not know is an answer, not a lost connection:
+ * the context or rules read answering 404, not some other read (a session that went away is handled where it is
+ * read). Neither is a 401: the daemon is up, and this browser has not opened its link.
+ */
+function pollFailed(error) {
+  data.accessRequired = error.name === "AccessRequired";
+  data.missing = !data.accessRequired && /^\/api\/repository(\/rules)?\?.* answered 404$/u.test(error.message);
+  data.disconnected = !data.missing && !data.accessRequired;
+  data.loaded = data.missing;
+  backoff = data.missing ? INTERVAL : Math.min(MAX_BACKOFF, backoff * 2);
+  if (!data.missing) console.warn("poll failed", error);
+  onChange(data.missing);
+}
+
 async function poll() {
   const since = sinceFor();
   const started = generation;
@@ -688,26 +253,10 @@ async function poll() {
     const shared = [loadRepositories(), loadHealth()];
     const results = await Promise.all(ui.scope === null ? shared : [...shared, ...await scopedJobs(since)]);
     if (started !== generation) return;
-    if (since === 0) { data.activityAll = data.activity; data.activityAllSessions = data.activitySessions; }
-    data.updatedAt = Date.now();
-    data.disconnected = false;
-    data.accessRequired = false;
-    data.missing = false;
-    data.loaded = true;
-    backoff = INTERVAL;
-    onChange(results.some(Boolean));
+    pollAnswered(since, results);
   } catch (error) {
     if (started !== generation) return;
-    // A repository or checkout the daemon does not know is an answer, not a lost connection: the context or rules read
-    // answering 404, not some other read (a session that went away is handled where it is read). Neither is a 401: the
-    // daemon is up, and this browser has not opened its link.
-    data.accessRequired = error.name === "AccessRequired";
-    data.missing = !data.accessRequired && /^\/api\/repository(\/rules)?\?.* answered 404$/u.test(error.message);
-    data.disconnected = !data.missing && !data.accessRequired;
-    data.loaded = data.missing;
-    backoff = data.missing ? INTERVAL : Math.min(MAX_BACKOFF, backoff * 2);
-    if (!data.missing) console.warn("poll failed", error);
-    onChange(data.missing);
+    pollFailed(error);
   }
 }
 
@@ -733,6 +282,7 @@ function schedule() {
 
 export function startPolling(listener) {
   onChange = listener;
+  setTitleListener(listener);
   refresh().then(schedule);
   document.addEventListener("visibilitychange", () => { if (hidden()) clearTimeout(timer); else refreshNow(); });
 }
@@ -748,8 +298,7 @@ export async function refreshNow() {
  * previous one, and poll now. A response still in flight for the previous scope is discarded.
  */
 export function changeScope(scope) {
-  generation += 1;
-  etags.clear();
+  forgetScope();
   setScope(scope);
   ui.panel = null;
   ui.backToPack = null;
@@ -769,7 +318,7 @@ export function changeScope(scope) {
     sessionFindings: pagedList(), recentSessions: null, recommendations: null, followGitignore: null, loaded: false, missing: false,
     mergeAssist: null, mergeAssistError: null,
   });
-  mergeAssistRead = { at: 0, loading: null, generation: -1 };
+  forgetMergeAssistRead();
   data.sessionDetail.clear();
   refreshNow();
 }

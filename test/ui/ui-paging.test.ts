@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadEarlier, loadMoreFindings, loadSession, loadSessionFindings, refresh, refreshNow, setNeeds } from "../../ui/data/poll.js";
+import { refresh, refreshNow, setNeeds } from "../../ui/data/poll.js";
+import { loadMoreFindings } from "../../ui/data/paged-lists.js";
+import { loadEarlier, loadSession, loadSessionFindings } from "../../ui/data/session-detail.js";
 import { placeCorrections, sessionCorrections, sessionTurns } from "../../ui/model/sessions-model.js";
 import { data, pagedList, setScope, ui, type Violation } from "../../ui/data/state.js";
 import { currentNeeds } from "../../ui/views/index.js";

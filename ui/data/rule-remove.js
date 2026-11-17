@@ -7,7 +7,8 @@
 import { data, repoName, titleOf } from "./state.js";
 import { failed as failedText } from "../format.js";
 import { send } from "./api.js";
-import { captureScope, inScope, queueInScope, refreshNow } from "./poll.js";
+import { refreshNow } from "./poll.js";
+import { captureScope, inScope, queueInScope } from "./scoped-requests.js";
 import { closePanel, toast } from "../shell.js";
 import { libraryAttachments } from "../render/rule-sheet-model.js";
 

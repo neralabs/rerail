@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MergeAssistStatus } from "../../src/engine/index.js";
-import { captureScope, changeScope, mergeAssistMark, mergeAssistReadAfter, refresh, setNeeds, writeMergeAssist } from "../../ui/data/poll.js";
+import { changeScope, refresh, setNeeds } from "../../ui/data/poll.js";
+import { captureScope } from "../../ui/data/scoped-requests.js";
+import { mergeAssistMark, mergeAssistReadAfter, writeMergeAssist } from "../../ui/data/merge-assist.js";
 import { data, setScope, ui } from "../../ui/data/state.js";
 import { currentNeeds } from "../../ui/views/index.js";
 import { sampleStatus } from "../support/merge-assist/status.js";

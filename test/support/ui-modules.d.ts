@@ -59,33 +59,52 @@ declare module "*/ui/model/sessions-model.js" {
   export function violationCounts(s: SessionRow): { logged: number; steered: number };
 }
 
-declare module "*/ui/data/poll.js" {
+declare module "*/ui/data/session-titles.js" {
   export function titleFromPrompts(prompts: readonly string[]): string | null;
-  /** What each poll loads for a repository in scope, by need name (`NEEDS` in poll.js). */
-  export function setNeeds(needs: () => Iterable<string>): void;
-  export function attachedPacksOf(
-    entries: ReadonlyArray<{ folder: string; source: { kind: string; id: string } }>,
-    unavailable: ReadonlyArray<{ sourceKind: string; sourceId: string; folder: string; reason?: string }>,
-  ): Map<string, string[]>;
+}
+
+declare module "*/ui/data/scoped-requests.js" {
   export interface Scope { target: { repository?: string; checkout?: string }; token: number }
   export function captureScope(): Scope;
   export function inScope(scope: Scope): boolean;
   export function sendInScope(scope: Scope, method: string, path: string, body: object): Promise<boolean>;
   /** `body` may be a promise of the body; `null` sends nothing. */
   export function queueInScope(scope: Scope, method: string, path: string, body: object | Promise<object | null> | null): Promise<boolean>;
-  export function recommendationsFor(scope: Scope): Promise<Array<{ packId: string; folder: string }>>;
-  export function saveFollowGitignore(follow: boolean, page: { toast(message: string): void; invalidate(): void }): Promise<void>;
+}
+
+declare module "*/ui/data/merge-assist.js" {
+  /** A scope from `captureScope` (`scoped-requests.js`). */
+  interface Scope { target: { repository?: string; checkout?: string }; token: number }
   export function writeMergeAssist(scope: Scope, method: string, path: string, body: object): Promise<import("../../src/engine/index.js").MergeAssistStatus | null>;
   export function mergeAssistMark(): number;
   export function mergeAssistReadAfter(mark: number): boolean;
-  export function changeScope(scope: { repository?: string; checkout?: string } | null): void;
-  export function refresh(): Promise<void>;
-  export function refreshNow(): Promise<void>;
+}
+
+declare module "*/ui/data/paged-lists.js" {
   export function loadMoreFindings(): Promise<boolean>;
   export function loadMoreSessions(): Promise<boolean>;
+}
+
+declare module "*/ui/data/session-detail.js" {
   export function loadSessionFindings(id: string): Promise<boolean>;
   export function loadSession(id: string): Promise<boolean>;
   export function loadEarlier(id: string): Promise<boolean>;
+}
+
+declare module "*/ui/data/poll.js" {
+  /** What each poll loads for a repository in scope, by need name (`NEEDS` in poll.js). */
+  export function setNeeds(needs: () => Iterable<string>): void;
+  export function attachedPacksOf(
+    entries: ReadonlyArray<{ folder: string; source: { kind: string; id: string } }>,
+    unavailable: ReadonlyArray<{ sourceKind: string; sourceId: string; folder: string; reason?: string }>,
+  ): Map<string, string[]>;
+  /** A scope from `captureScope` (`scoped-requests.js`). */
+  interface Scope { target: { repository?: string; checkout?: string }; token: number }
+  export function recommendationsFor(scope: Scope): Promise<Array<{ packId: string; folder: string }>>;
+  export function saveFollowGitignore(follow: boolean, page: { toast(message: string): void; invalidate(): void }): Promise<void>;
+  export function changeScope(scope: { repository?: string; checkout?: string } | null): void;
+  export function refresh(): Promise<void>;
+  export function refreshNow(): Promise<void>;
   export type Suppressions = "honour" | "ignore";
   /** One folder's own on, mode and suppressions, what decided its suppressions, and what added the rule there. */
   export interface FolderState { folder: string; on: boolean; mode: string; suppressions: Suppressions; suppressionsSource: object; source: { kind: string; id: string } }

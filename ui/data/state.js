@@ -250,16 +250,52 @@ function searchText(stored) {
   return hay;
 }
 
+/** What each filter chip but All keeps. */
+const FILTERS = {
+  on: stored => isRunning(stored),
+  off: stored => !isRunning(stored),
+  fired: stored => fires(stored.rule.id) !== 0,
+};
+
 export function matches(stored) {
-  const id = stored.rule.id;
-  const f = ui.filter;
-  if (f === "on" && !isRunning(stored)) return false;
-  if (f === "off" && isRunning(stored)) return false;
-  if (f === "fired" && fires(id) === 0) return false;
+  const keeps = Object.hasOwn(FILTERS, ui.filter) ? FILTERS[ui.filter] : undefined;
+  if (keeps !== undefined && !keeps(stored)) return false;
   if (ui.query && !searchText(stored).includes(ui.query)) return false;
   return true;
 }
 export const filtering = () => ui.filter !== "all" || ui.query !== "";
+
+/**
+ * The repository's rules by section: created by you (`mine`), by added pack and its groups (`byPack`), and every other
+ * rule from a pack by the pack it comes from (`other`).
+ */
+function rulesBySection() {
+  const mine = [], byPack = new Map(), other = new Map();
+  for (const r of data.rules.values()) {
+    if (!isFromPack(r)) { mine.push(r); continue; }
+    const pack = attachedPackOf(r);
+    if (pack === undefined) { addOther(other, r); continue; }
+    addToPack(byPack, pack, r);
+  }
+  return { mine, byPack, other };
+}
+
+/** Rule `r`, from a pack not added here, into `other` under that pack's name, or its id's prefix when the pack is unknown. */
+function addOther(other, r) {
+  const known = packOfRule(r);
+  const key = known === undefined ? rulePrefix(r.rule.id) : packOriginName(known);
+  if (!other.has(key)) other.set(key, []);
+  other.get(key).push(r);
+}
+
+/** Rule `r` into its group of added pack `pack` in `byPack`; a pack's groups start in the pack's own order. */
+function addToPack(byPack, pack, r) {
+  if (!byPack.has(pack.id)) byPack.set(pack.id, new Map(packGroups(pack).map(g => [g, []])));
+  const group = packRuleOf(r.rule.id)?.rule.group ?? "Other";
+  const groups = byPack.get(pack.id);
+  if (!groups.has(group)) groups.set(group, []);
+  groups.get(group).push(r);
+}
 
 /**
  * The rule list's sections, in order: Created rules, one per rule pack added here, then every other
@@ -267,23 +303,7 @@ export const filtering = () => ui.filter !== "all" || ui.query !== "";
  * every rule (`all`).
  */
 export function ruleSections() {
-  const mine = [], byPack = new Map(), other = new Map();
-  for (const r of data.rules.values()) {
-    if (!isFromPack(r)) { mine.push(r); continue; }
-    const pack = attachedPackOf(r);
-    if (pack === undefined) {
-      const known = packOfRule(r);
-      const key = known === undefined ? rulePrefix(r.rule.id) : packOriginName(known);
-      if (!other.has(key)) other.set(key, []);
-      other.get(key).push(r);
-      continue;
-    }
-    if (!byPack.has(pack.id)) byPack.set(pack.id, new Map(packGroups(pack).map(g => [g, []])));
-    const group = packRuleOf(r.rule.id)?.rule.group ?? "Other";
-    const groups = byPack.get(pack.id);
-    if (!groups.has(group)) groups.set(group, []);
-    groups.get(group).push(r);
-  }
+  const { mine, byPack, other } = rulesBySection();
   const group = (name, all) => ({ name, all });
   const sections = [{ key: "mine", kind: "mine", groups: [group("Created by you", mine)] }];
   for (const pack of data.packs) {

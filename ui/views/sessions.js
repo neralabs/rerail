@@ -6,7 +6,9 @@
 import { h, setAttr, setText, setClass, chevron, searchIcon, syncChildren } from "../dom.js";
 import { fmt, plural, ago, duration, stamp, dayLabel, daysAgo, shortSessionId, truncate } from "../format.js";
 import { data, ui, repoName, titleOf as ruleTitle, packRuleOf } from "../data/state.js";
-import { ensureTitle, loadSession, loadSessionFindings, loadMoreSessions, loadEarlier } from "../data/poll.js";
+import { ensureTitle } from "../data/session-titles.js";
+import { loadSession, loadSessionFindings, loadEarlier } from "../data/session-detail.js";
+import { loadMoreSessions } from "../data/paged-lists.js";
 import { sessionTurns, sessionCorrections, sessionViolationTotal, loadedFrom, placeCorrections, resumeCommand, openState, lastEventAt, isOpen, violationCounts } from "../model/sessions-model.js";
 import { copyText, invalidate, loadMore, renderNow, toast } from "../shell.js";
 import { renderTimeline, jumpTo, placeTicks } from "../render/timeline.js";

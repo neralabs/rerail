@@ -32,11 +32,15 @@ daemon's `/api` operations and `/healthz` (`data/api.js`).
   state and clicks in `rule-sheet-actions.js`, its pure text and prompts in `rule-sheet-model.js`), a rule pack in the
   sheet (`pack-panel.js`), and the session timeline (`timeline.js`).
 - `data/` holds the page's data: `state.js` the state; `poll.js` refreshes it with what the page needs (`setNeeds`);
-  `api.js` the daemon's `/api` reads and writes; `repo-rule-counts.js` reads each repository's rule counts;
-  `attachments.js` writes rule pack changes in click order, `rule-remove.js` deletes a rule created by you from the
-  repository (with Undo), and `settings-writes.js` writes rule settings. Merge Assist's writes go through
-  `writeMergeAssist` in `poll.js`: each answers the checkout's status, which replaces the page's unless a later write
-  was sent, and a read sent before the write answered is dropped.
+  `scoped-requests.js` ties every read and write to the repository the page shows (the scope's generation, the
+  conditional GETs and their ETags, the scoped writes and the attachment write queue); `paged-lists.js` pages the long
+  lists with a cursor; `session-detail.js` loads the selected session's head, transcript and violations, and Load
+  earlier; `session-titles.js` titles sessions from their first prompts; `api.js` the daemon's `/api` reads and
+  writes; `repo-rule-counts.js` reads each repository's rule counts; `attachments.js` writes rule pack changes in click
+  order, `rule-remove.js` deletes a rule created by you from the repository (with Undo), and `settings-writes.js`
+  writes rule settings. `merge-assist.js` reads Merge Assist and writes to it (`writeMergeAssist`): each write answers
+  the checkout's status, which replaces the page's unless a later write was sent, and a read sent before the write
+  answered is dropped.
 - `model/` holds the pure derivations, without the DOM: `derive.js` (a rule's title, mode, scope and a pack's
   suppression comments), `first-open.js` (the Overview: the repository's first-open state, the Violations steered
   tally, the Most violations logged ranking, whether a session is live), `pack-model.js` (a pack page's rules as

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { placeCorrections, resumeCommand, sessionTurns, type Correction } from "../../ui/model/sessions-model.js";
-import { titleFromPrompts } from "../../ui/data/poll.js";
+import { titleFromPrompts } from "../../ui/data/session-titles.js";
 import { sinceFor } from "../../ui/data/state.js";
 
 const T0 = 1_700_000_000_000;

@@ -4,7 +4,8 @@
  * page shows its outcome at once and rolls it back if it fails. `toast` and `invalidate` are the page's.
  */
 import { data, ui, packById, packFolder, isSetUp, keptPacks } from "./state.js";
-import { recommendationsFor, captureScope, inScope, queueInScope, refreshNow } from "./poll.js";
+import { recommendationsFor, refreshNow } from "./poll.js";
+import { captureScope, inScope, queueInScope } from "./scoped-requests.js";
 import { andList, failed as failedText } from "../format.js";
 
 const ATTACHMENTS = "/api/repository/attachments";
