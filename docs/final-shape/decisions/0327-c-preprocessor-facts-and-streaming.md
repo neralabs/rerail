@@ -84,10 +84,12 @@ requests with their own rows.
 | `c_directive(path, i, kind, start, end, line)` | directive `i` of the file, its kind (`define`, `include`, `if`, …, `null`, `unknown`), its bytes and line |
 | `c_define(path, i, name, fnlike, params, variadic, body_start, body_end)` | a macro's definition |
 | `c_undef(path, i, name)` | |
-| `c_include(path, i, form, spelled)` | `form`: `quote`, `angle`, `next_quote`, `next_angle`, `import`, `macro` |
+| `c_include(path, i, kind, form, spelled)` | `kind`: `include`, `include_next`, `import`, `embed`; `form`: `quote`, `angle`, `macro` (tokens that make a header name once expanded) |
 | `c_cond(path, i, kind, expr_start, expr_end)` | `if`, `ifdef`, `ifndef`, `elif`, `elifdef`, `elifndef`, `else`, `endif` |
 | `c_cond_next(path, i, j)`, `c_cond_parent(path, i, p)` | the chain of a conditional's groups, and the group a directive sits in |
-| `c_pragma(path, i, text)`, `c_line(path, i, n, file)` | |
+| `c_pragma(path, i, first, second, text)`, `c_line(path, i, n, file)` | a pragma's first two words (`once`; `GCC system_header`; `push_macro`), so rules join on words, not text (ledger row 18) |
+| `c_guard(path, i, name)` | the file's include guard, by clang's multiple-include rule: `#ifndef X` or `#if !defined X` first, its `#endif` last, no token outside |
+| `c_pp_problem(path, i, kind)` | an unmatched `#elif`/`#else`/`#endif`, one after `#else`, an unclosed `#if`, a malformed operand, an unclosed comment |
 
 **Mode (b), per translation unit and configuration:**
 
@@ -172,9 +174,16 @@ must not become a per-token one (history index, lesson 6).
   under one compiler profile. Both outputs are read by our lexer, and their token spellings and
   lines are compared. Each difference is fixed or named.
 - **Mode (a) tests:**
-  - against a scalar reading, over random texts of directives, continuations, comments and
-    strings;
-  - against tree-sitter's preproc nodes, where tree-sitter parses the file.
+  - against a byte-at-a-time reading of the phase-2 text (directives' starts, kinds, lines), over
+    random texts of directives, continuations, trigraphs, comments and strings, and over every
+    file of the C and C++ corpora (3,135 files, 58,234 directives);
+  - operands, chains, nesting and guards by unit tests.
+
+  Where a reading was in doubt, clang's is the one kept. A `#` after a comment that spans lines
+  starts a directive when its line started before the comment (`/*\n*/ #define W`), and not when a
+  token came first (`x /*\n*/ #define Z` is text); a line end inside a comment ends no directive.
+  tree-sitter's preproc nodes were not used as the oracle: tree-sitter reads a directive only where
+  its grammar can, and refuses most of what the preprocessor must still read.
 - **The compiled forms** are held to the lean preprocessor: the same rows and the same tokens, on
   every backend.
 

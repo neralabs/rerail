@@ -212,6 +212,8 @@ rerail-java-lean = { path = "crates/java_lean" }
 rerail-go-lean = { path = "crates/go_lean" }
 # The lean C and C++ parser, measured directly (`tape::tests::cpp_parse_costs`).
 rerail-c-lean = { path = "crates/c_lean" }
+# The C and C++ preprocessor (0327): directives as facts, translation units applied.
+rerail-c-pp = { path = "crates/c_pp" }
 # The lean C# parser, measured directly (`tape::tests::csharp_parse_costs`).
 rerail-csharp-lean = { path = "crates/csharp_lean" }
 # The lean PHP parser, measured directly (`tape::tests::php_parse_costs`).

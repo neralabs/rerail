@@ -36,7 +36,7 @@ pub mod pp;
 mod oracle;
 
 pub use kinds::{FIELDS, K, KINDS, f};
-pub use lex::Refusal;
+pub use lex::{Refusal, T};
 pub use rerail_tape_format::Columns as Tape;
 
 /// The language read: C (tree-sitter-c) or C++ (tree-sitter-cpp).

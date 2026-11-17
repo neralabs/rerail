@@ -3189,6 +3189,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-c-pp"
+version = "0.1.0"
+dependencies = [
+ "rerail-c-lean",
+ "rerail-simd8",
+]
+
+[[package]]
 name = "rerail-compiler"
 version = "0.1.0"
 dependencies = [
@@ -3348,6 +3356,7 @@ dependencies = [
  "regex-syntax",
  "rerail-accel",
  "rerail-c-lean",
+ "rerail-c-pp",
  "rerail-compiler",
  "rerail-csharp-lean",
  "rerail-css-lean",
