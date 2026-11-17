@@ -536,6 +536,8 @@ struct Shape {
     queue: u32,
     /// A walk's steps between spills (`SPILL_BUDGET`).
     budget: u32,
+    /// The lanes a micro walk's item takes (`Runner::walk`, `ROOT_LANES`): a power of two up to 32; 0 is 1.
+    lanes: u32,
 }
 
 /// A walk's steps before it spills a frame, and between spills: well past a short walk's (most take
@@ -838,6 +840,14 @@ const MICRO_POOL: usize = 4096;
 /// (`simd_roots`), and every pool and stack count here is a multiple of it.
 const SIMD_WIDTH: usize = 32;
 const _: () = assert!(MICRO_POOL % SIMD_WIDTH == 0 && MICRO_DEEP_POOL % SIMD_WIDTH == 0);
+/// The lanes a micro walk's item (a group of 64 nodes) takes in each tier (`Shape::lanes`): each lane finds the roots
+/// among its share of the group's nodes, and the SIMD group walks all its lanes' roots. The short walks' tiers
+/// take a SIMD group an item: a thread an item gave their dispatches a 32nd of the threads (at s1000, `label_micro_8`
+/// 179 ms against 94; work queue Q57). The loop tier's pool is 4,096 threads whatever its items, and its groups hold
+/// few roots (about 6 at s1000): 1, 4 and 32 lanes an item measured the same there (at load 70–95), so it keeps a
+/// thread an item.
+const TIER_LANES: [usize; 3] = [32, 32, 1];
+const _: () = assert!(TIER_LANES[0] <= SIMD_WIDTH && TIER_LANES[1] <= SIMD_WIDTH && TIER_LANES[2] <= SIMD_WIDTH);
 const MICRO_STACK_WORDS: usize = 64 * 17;
 /// The pooled stacks' words (`Runner::stacks`), shared by every tier and the root walks: a tier
 /// of `frames` frames of `words` words each runs this many lanes (32,768 of 8 micro frames).
@@ -2712,10 +2722,12 @@ impl Runner<'_> {
         if crate::code_rule_dsl::prof::on() {
             crate::code_rule_dsl::prof::count_named(format!("items.tier{tier}"), threads);
         }
+        let lanes = TIER_LANES[tier];
+        shape.lanes = lanes as u32;
         let (pipeline, threads) = match tier {
-            2 if self.deep => (DEEP_KERNEL, threads.min(MICRO_DEEP_POOL)),
-            2 => (TIER_KERNELS[2], threads.min(MICRO_POOL)),
-            _ => (TIER_KERNELS[tier], threads.min(stack_lanes(TIER_FRAMES[tier], 17))),
+            2 if self.deep => (DEEP_KERNEL, (threads * lanes).min(MICRO_DEEP_POOL)),
+            2 => (TIER_KERNELS[2], (threads * lanes).min(MICRO_POOL)),
+            _ => (TIER_KERNELS[tier], (threads * lanes).min(stack_lanes(TIER_FRAMES[tier], 17))),
         };
         self.kernel(pipeline, &buffers, shape, threads);
         self.walk_bind = None;

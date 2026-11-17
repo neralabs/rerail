@@ -611,6 +611,15 @@ fn stages(r: &mut String) {
         walks.sort_by(|a, b| b.1.cmp(&a.1));
         let total: usize = walks.iter().map(|w| w.1).sum();
         let _ = writeln!(r, "\n  micro walks by steps ({total} steps in all; t0 = 8 frames, t2 = the loop tier):");
+        // Each tier's walks and steps over every pass, not the 30 listed: two runs walked the same starts where these
+        // match (a deep rerun walks the loop tier's again).
+        for tier in ["t0:", "t1:", "t2:"] {
+            let of = walks.iter().filter(|(w, _)| w.starts_with(tier));
+            let (steps, items) = of.fold((0usize, 0usize), |(s, i), (w, n)| (s + n, i + stages.get(&format!("walk_items.{w}")).map_or(0, |e| e.1)));
+            if items > 0 {
+                let _ = writeln!(r, "  {tier} {items} walks, {steps} steps");
+            }
+        }
         let _ = writeln!(r, "{:>14} {:>10} {:>10} {:>10}  walk words", "steps", "walks", "per walk", "longest");
         for (w, steps) in walks.iter().take(30) {
             let items = stages.get(&format!("walk_items.{w}")).map_or(0, |e| e.1);

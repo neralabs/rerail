@@ -1429,6 +1429,21 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
     compare (SWAR, the offsets 8 a load) for every escaped read, sizes and gaps included; worth it only if the
     escapes are a large share, which the device does not count yet (a `walk_escapes` counter beside
     `walk_steps`).
+  - **The spike** (2026-11-17, decision 0359): the parent climb is not the cost.
+    - An oracle parent column (every parent made by a kernel before the walks) gained nothing (220 ms against
+      172–217 ms), and neither did the window pass (170 ms).
+    - Counted: 4.0 M climbs in 97 M steps, 1.8 hops each, 92% inside the start's window.
+    - The cost was the dispatch's shape: a thread a 64-node group gave `label_micro_8` about 8,800 threads a launch.
+      A group's nodes are now a SIMD group's in the short tiers: `label_micro_8` 88–134 ms, the hub engine's
+      75–107 ms, with the same walks.
+  - **Left:**
+    - the walk test (a device test that fails on a walk whose steps change);
+    - the reads' widths;
+    - `clause_patterns` (6.5 ms against the hub engine's 3 ms), whose fact items hold one root each, so a SIMD group
+      an item would idle 31 lanes for a fact;
+    - `lowered_clauses_find_the_same_roots_on_the_resident_interpreter` fails on
+      `ruff-d416-missing-section-name-colon/missing-colon-underlined` (`BackendFailure`) without this change too.
+      It was hidden while the engine's `metal-tests` build did not compile (`crate::test_languages`, fixed).
 
 ### Q63. (Q54 at 64ef54cb0) Oscar's engine stops on the data-layer corpus in `step_histograms` (to check on the merged tree)
 
