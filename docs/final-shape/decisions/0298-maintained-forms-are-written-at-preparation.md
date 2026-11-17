@@ -41,11 +41,14 @@ too.
    rows match.
 4. **Each general form is a keyed step of the store (0281 §6)**, so a new process reads it instead of writing it:
    one step per stratum, keyed by the part (its version's identity and its atoms' names, `forms_identity`), the
-   stratum, and the kept old rows of the relations it mentions. Its output is stored as the form's own layers over
-   the part's atoms (the form's, then its maintenance's), not a folded image, which would hold every atom of the
-   part; it is opened over the atoms the run makes once (`Builder::under`). Its decision row is what a selection
-   reads: each rule's driving read and inputs, the form's inputs and outputs, its maintenance by names and places.
-   A stratum whose form the store lacks writes it, and the form is queued for the store's writer.
+   stratum, and the kept old rows of the relations it mentions. A form is one source of the store, under its key
+   (amended 2026-11-16, "compact", below): its record, then its own layers over the part's atoms (the form's, then
+   its maintenance's), not a folded image, which would hold every atom of the part; it is opened over the atoms the
+   run makes once (`Builder::under`). The record is what a selection reads (each rule's driving read and inputs,
+   the form's inputs and outputs, its maintenance), as varints: names as atoms of the form's image, relations as
+   its ids, rules as its places. Nothing else is stored: the step's pass and version are in its key, and opening a
+   layer checks it. A form holds the kind sets its stratum reads, not the program's every set. A stratum whose form
+   the store lacks writes it, and the form is queued for the store's writer.
 5. **A reached stratum's form is read inside the waves** (the user's call, 2026-11-16), decision 0104's one
    exception: its key names the kept old rows, which the run knows only as it reaches the stratum, and the strata
    reached are known only then. `profile::read_in_waves` runs the read as work behind the run, which the strict
@@ -154,6 +157,27 @@ A first version stored a folded image per form. Each held the part's whole atom 
 were a write each (two per form); they are one, behind the run.
 
 Each step's rows are compared with a cold run on a fresh store over the same files (below).
+
+### Compact (2026-11-16)
+
+The user asked for the stored forms to be as small as they can be. As first stored, a form was two sources (its
+layers, and a facts record of 0281 §6's step), each with an alias and a pin, and the record held the step's key as
+hex three times, its layers' digest as hex, and the selection's row as JSON: 677 B per form beside its layers. And
+each form held every kind set of the program (`kindset_kind`'s rows, 57% of a layer's bytes).
+
+| Per form (cold run, 39 policies) | First stored | Compact |
+|---|---|---|
+| Layers | 5.5 KB | 2.4 KB (the stratum's kind sets alone) |
+| Record | 677 B: facts, hex and JSON | 94 B: varints |
+| Sources, aliases, pins | 2 each | 1 each |
+
+0281 §6's facts format stays as Typing-support's for their steps; a general form keeps its own (`StoredForms`).
+With the kind sets gone, a one-file edit on a warmed store costs 49.9–51.0 G (77.4–77.7 G before), a cold run 261 G
+on the same build. The five steps again hold the oracle's rows.
+
+What is left of a layer is the program image's (0173): its header is 976 B whatever the layer holds (16 + 24 × 40
+regions), 18% of the stored bytes, and the string buckets 10%; the rest is the rules' node trees (about 256 nodes a
+form). Decision 0266's `Program` block replaces both.
 
 ## Path
 

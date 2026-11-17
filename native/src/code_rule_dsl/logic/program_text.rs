@@ -477,10 +477,8 @@ fn unhex32(text: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
-impl StoredSteps<'_> {
-    /// `find`, its step's sources not pinned but returned, for a caller that pins them behind the run (a read inside
-    /// the waves, decision 0298 §4).
-    pub fn find_unpinned(&self, key: &[u8; 32]) -> Result<Option<(crate::code_rule_dsl::logic::program_image::manager::StepRecord, [SourceId; 2])>, String> {
+impl crate::code_rule_dsl::logic::program_image::manager::Steps for StoredSteps<'_> {
+    fn find(&self, key: &[u8; 32]) -> Result<Option<crate::code_rule_dsl::logic::program_image::manager::StepRecord>, String> {
         use crate::code_rule_dsl::logic::program_image::manager::{Decided, StepRecord};
         let e = |e: crate::content_store::StoreError| e.to_string();
         let Some(id) = self.0.source_by_alias(step_alias(key)).map_err(e)? else { return Ok(None) };
@@ -501,43 +499,24 @@ impl StoredSteps<'_> {
         let image = unhex32(&text(&out[1])?).ok_or_else(|| bad("a step's image is not a digest"))?;
         // A step whose image the store lost is not found: the step runs again.
         let Some(image_id) = self.0.source_by_alias(image_key(&image)).map_err(e)? else { return Ok(None) };
+        self.0.pin_held_sources(&[id, image_id]).map_err(e)?;
         let mut decided: Vec<(i64, Decided)> = Vec::new();
         for r in rows("pipeline_step_decision") {
             decided.push((int(&r[1])?, Decided { pass: text(&r[2])?.into(), what: text(&r[3])?.into(), detail: text(&r[4])? }));
         }
         decided.sort_by_key(|(k, _)| *k);
-        Ok(Some((StepRecord { pass, version, image, output: (int(&out[2])? as usize, int(&out[3])? as u64), decided: decided.into_iter().map(|(_, d)| d).collect() }, [id, image_id])))
-    }
-
-    /// The bytes stored as a step's output `image` (`keep_bytes`), its source not pinned but returned.
-    pub fn open_bytes_unpinned(&self, image: &[u8; 32]) -> Result<Option<(Vec<u8>, SourceId)>, String> {
-        let e = |e: crate::content_store::StoreError| e.to_string();
-        let Some(id) = self.0.source_by_alias(image_key(image)).map_err(e)? else { return Ok(None) };
-        Ok(Some((self.0.get_source(id).map_err(e)?, id)))
-    }
-
-    /// `open`, its image's source not pinned but returned (`find_unpinned`).
-    pub fn open_unpinned(&self, image: &[u8; 32]) -> Result<Option<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, SourceId)>, String> {
-        let e = |e: crate::content_store::StoreError| e.to_string();
-        let Some(id) = self.0.source_by_alias(image_key(image)).map_err(e)? else { return Ok(None) };
-        crate::code_rule_dsl::logic::program_image::Version::open(&self.0.get_source(id).map_err(e)?).map(|v| Some((v, id)))
-    }
-}
-
-impl crate::code_rule_dsl::logic::program_image::manager::Steps for StoredSteps<'_> {
-    fn find(&self, key: &[u8; 32]) -> Result<Option<crate::code_rule_dsl::logic::program_image::manager::StepRecord>, String> {
-        let Some((record, held)) = self.find_unpinned(key)? else { return Ok(None) };
-        self.0.pin_held_sources(&held).map_err(|e| e.to_string())?;
-        Ok(Some(record))
+        Ok(Some(StepRecord { pass, version, image, output: (int(&out[2])? as usize, int(&out[3])? as u64), decided: decided.into_iter().map(|(_, d)| d).collect() }))
     }
 
     fn open(&self, image: &[u8; 32]) -> Result<Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>, String> {
-        let Some((v, id)) = self.open_unpinned(image)? else { return Ok(None) };
-        self.0.pin_held_sources(&[id]).map_err(|e| e.to_string())?;
-        Ok(Some(v))
+        let e = |e: crate::content_store::StoreError| e.to_string();
+        let Some(id) = self.0.source_by_alias(image_key(image)).map_err(e)? else { return Ok(None) };
+        self.0.pin_held_sources(&[id]).map_err(e)?;
+        crate::code_rule_dsl::logic::program_image::Version::open(&self.0.get_source(id).map_err(e)?).map(Some)
     }
 
     fn keep(&self, key: &[u8; 32], record: &crate::code_rule_dsl::logic::program_image::manager::StepRecord, output: &crate::code_rule_dsl::logic::program_image::Version) -> Result<(), String> {
+        let e = |e: crate::content_store::StoreError| e.to_string();
         let folded;
         let bytes = match output.base_bytes() {
             Some(b) => b,
@@ -546,15 +525,6 @@ impl crate::code_rule_dsl::logic::program_image::manager::Steps for StoredSteps<
                 folded.base_bytes().ok_or("a folded version is a base")?
             }
         };
-        self.keep_bytes(key, record, bytes)
-    }
-}
-
-impl StoredSteps<'_> {
-    /// `keep`, the step's output given as the bytes its reader opens (`open_bytes`): a base's image, or layers over a
-    /// parent the reader holds (a general form's, decision 0298 §4).
-    pub fn keep_bytes(&self, key: &[u8; 32], record: &crate::code_rule_dsl::logic::program_image::manager::StepRecord, bytes: &[u8]) -> Result<(), String> {
-        let e = |e: crate::content_store::StoreError| e.to_string();
         let (image, mut held) = store_image(self.0, bytes).map_err(e)?;
         let k = Value::Str(hex32(key).into());
         let mut facts = Facts::new();
