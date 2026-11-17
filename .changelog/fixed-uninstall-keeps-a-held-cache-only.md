@@ -1,1 +1,0 @@
-`rerail install --remove` no longer keeps the shared content cache because some other program runs under the process number of a daemon that ended without its clean-up. On Windows that can still happen while another Rerail home's daemon runs.

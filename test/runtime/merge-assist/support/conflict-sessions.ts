@@ -4,7 +4,7 @@
  */
 import { join } from "node:path";
 import type { Conflict } from "../../../../src/engine/index.js";
-import { RerailRuntime, type MergeAssistRuntime } from "../../../../src/runtime/index.js";
+import { RerailRuntime, type MergeAssistRuntime, type RerailRuntimeOptions } from "../../../../src/runtime/index.js";
 import { testEmbedder } from "../../../support/hook-events.js";
 import type { Workspace } from "../../../support/merge-assist/workspace.js";
 
@@ -21,9 +21,14 @@ export const open = (conflicts: readonly Conflict[]): Conflict[] => conflicts.fi
 
 /**
  * A session runtime over the workspace's database with Merge Assist `service`, and an evaluator that finds nothing;
- * `mergeAssistWaitMs` bounds how long an edit's result waits for Merge Assist where a hook command is set.
+ * `mergeAssistWaitMs` bounds how long an edit's result waits for Merge Assist where a hook command is set, and
+ * `suspendedSessions` keeps the sessions it lets go of while quiet, as the engine service keeps them.
  */
-export function sessionRuntime(ws: Workspace, service: MergeAssistRuntime, { mergeAssistWaitMs }: { mergeAssistWaitMs?: number } = {}): RerailRuntime {
+export function sessionRuntime(
+  ws: Workspace,
+  service: MergeAssistRuntime,
+  { mergeAssistWaitMs, suspendedSessions }: Pick<RerailRuntimeOptions, "mergeAssistWaitMs" | "suspendedSessions"> = {},
+): RerailRuntime {
   return new RerailRuntime({
     autostart: false,
     workspaceRoot: ws.repo,
@@ -31,6 +36,7 @@ export function sessionRuntime(ws: Workspace, service: MergeAssistRuntime, { mer
     databasePath: ws.databasePath,
     mergeAssist: service,
     ...(mergeAssistWaitMs === undefined ? {} : { mergeAssistWaitMs }),
+    ...(suspendedSessions === undefined ? {} : { suspendedSessions }),
     embedder: testEmbedder,
     createAuditor: () => ({
       openWorkspace: async () => undefined,

@@ -1,1 +1,0 @@
-On Windows, and in a checkout at `/workspace`, rules that resolve imports, such as the node pack's `n-no-missing-import`, now read the files and installed packages on disk; on Windows they also take an import or a tsconfig `extends` or `paths` entry written as an absolute path (`C:\repo\lib\a.js`). Before, they reported these imports, and installed packages, as missing.

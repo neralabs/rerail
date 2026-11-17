@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { MergeAssistRuntime } from "../../../src/runtime/index.js";
 import type { PullRequestListing } from "../../../src/runtime/merge-assist/github.js";
+import type { SessionSuspension, SuspendedSessions } from "../../../src/runtime/runtime.js";
 import { commit, writeFiles } from "../../support/merge-assist/git.js";
 import { FakeGithub, mergeAssistWorkspaces } from "../../support/merge-assist/workspace.js";
 import { sessionRuntime } from "./support/conflict-sessions.js";
@@ -168,14 +169,25 @@ describe("Merge Assist in a session", { timeout: 60_000 }, () => {
       scans.push(scan);
       return scan;
     };
-    const runtime = sessionRuntime(ws, service);
+    // Keeps the session it lets go of while quiet, owner claim included, as the engine service does.
+    const suspended = new Map<string, SessionSuspension>();
+    const suspendedSessions: SuspendedSessions = {
+      keep: suspension => void suspended.set(suspension.descriptor.sessionId, suspension),
+      get: id => suspended.get(id),
+      take: id => {
+        const suspension = suspended.get(id);
+        suspended.delete(id);
+        return suspension;
+      },
+    };
+    const runtime = sessionRuntime(ws, service, { suspendedSessions });
     const session = { host: "claude-code" as const, sessionId: "quiet-session", cwd: ws.repo };
     const { sessionId } = session;
     try {
       await runtime.ingest({ kind: "session-start", eventId: "start", session });
       // The scan's note waits for the session's next boundary, and the session sends nothing.
       await queued.promise;
-      expect(await runtime.closeIdleSession(sessionId)).toBe(true);
+      expect(await runtime.closeIdleSession(sessionId)).toMatchObject({ kind: "suspended" });
       const next = await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId, session, text: "Go on." });
       expect(next.map(delivery => delivery.content)).toEqual([expect.stringContaining("overlaps open work")]);
       // The session opened again scans its checkout again.
