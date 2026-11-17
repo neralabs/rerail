@@ -16,7 +16,7 @@ import {
 } from "../../../src/engine/catalog/repository-registry.js";
 import { setUpRepository } from "../../../src/engine/catalog/rule-configuration.js";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
-import { currentPathKey, pathKeysCanMove, readableRoots, withDriveBudget } from "../../../src/engine/storage/path-key-spelling.js";
+import { currentPathKey, lookUpPathKeys, pathKeysCanMove, readableRoots, withDriveBudget } from "../../../src/engine/storage/path-key-spelling.js";
 import { PATH_KEY_SPELLING_TRIGGER_STATEMENTS } from "../../../src/engine/storage/path-key-spelling-triggers.js";
 import { hookRerailStarted } from "../../../src/harness/index.js";
 import {
@@ -1318,6 +1318,33 @@ describe("path keys an earlier build stored under another spelling", () => {
     });
 
     expect(() => openRerailDatabase(databasePath)).toThrow("a fault in this build");
+  });
+
+  // The read before the lock ended its transaction in a `finally`: when the read failed and the end failed too, the
+  // end's error took the place of the read's, which says what went wrong.
+  it("throw a failed read's own error when ending its read transaction fails too", async () => {
+    const { databasePath } = await checkoutFolder();
+    const database = openRerailDatabase(databasePath);
+    try {
+      let statements = 0;
+      const failing = new Proxy(database, {
+        get(target, property, receiver) {
+          // The read's first query fails, and every statement after the BEGIN fails as an ended transaction does.
+          if (property === "all") return () => { throw new Error("the read's own error"); };
+          if (property === "run") {
+            return (query: Parameters<RerailDatabase["run"]>[0]) => {
+              statements += 1;
+              if (statements > 1) throw new Error("cannot commit - no transaction is active");
+              return target.run(query);
+            };
+          }
+          return Reflect.get(target, property, receiver) as unknown;
+        },
+      });
+      expect(() => lookUpPathKeys(failing, path => path)).toThrow("the read's own error");
+    } finally {
+      database.$client.close();
+    }
   });
 
   // A key that waited could keep the watermark of the open that first met it, so a preference saved as the disk spells

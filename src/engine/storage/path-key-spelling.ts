@@ -298,13 +298,29 @@ function lookedUp(lookups: PathKeyLookups, stored: string): string | undefined {
   return lookups.keys.has(stored) ? lookups.keys.get(stored) : undefined;
 }
 
-/** `read`'s result, every statement of it in one read transaction, so the keys and the history's last rowids agree. */
+/**
+ * `read`'s result, every statement of it in one read transaction, so the keys and the history's last rowids agree. When
+ * `read` throws, its error is the one thrown: the transaction is rolled back quietly, so a failure to end it cannot
+ * take the place of the read's own.
+ */
 function readInOneSnapshot<T>(database: RerailDatabase, read: () => T): T {
   database.run(sql.raw("BEGIN"));
   try {
-    return read();
-  } finally {
+    const result = read();
     database.run(sql.raw("COMMIT"));
+    return result;
+  } catch (error) {
+    endQuietly(database);
+    throw error;
+  }
+}
+
+/** Rolls back the read transaction of a read that failed; a rollback that fails too says less than the read's error. */
+function endQuietly(database: RerailDatabase): void {
+  try {
+    database.run(sql.raw("ROLLBACK"));
+  } catch {
+    // The read's own error is the one its caller gets.
   }
 }
 
