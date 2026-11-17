@@ -1,6 +1,6 @@
 # Hook failures: `rerail status` counts every failure since the time it names
 
-For [pull request #658](https://github.com/neralabs/rerail/pull/658), head e872cf241. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #658](https://github.com/neralabs/rerail/pull/658), head c863c4614. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -13,7 +13,7 @@ For [pull request #658](https://github.com/neralabs/rerail/pull/658), head e872c
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 2,503 lines in 5 files: 908 ship, 1,595 are tests and text | Standard. Medium risk; automated approval of 3046af36f only. | #577's three questions. No maintainer has answered. | 3 |
+| 2,504 lines in 5 files: 908 ship, 1,596 are tests and text | Standard. Medium risk; automated review: 0 blockers, 1 follow-up answered; unapproved. | #577's three questions. No maintainer has answered. | 3 |
 
 ## 2. Intent, and the gap
 
@@ -42,17 +42,16 @@ Reported in #577, 12 November 2026.
 
 ## 4. Risk against verification
 
-<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. Failure count, medium risk: independent review holds with a limit, users lose nothing holds with a limit. CI at this head does not hold yet for every change.">
+<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. Failure count, medium risk: independent review holds with a limit, users lose nothing holds with a limit. CI at this head holds for every change.">
 
 Start at check 3: one state writes where `main` does not.
 
-<details><summary>Each limit, and each check that does not hold yet</summary>
+<details><summary>Each half mark's limit</summary>
 
-| Change | Check | Its limit, or why it does not hold yet |
+| Change | Check | It holds with this limit |
 |---|---|---|
-| Failure count | independent review | The automated reviewer approves 3046af36f with 0 blockers, 2 follow-ups and 1 nit; it has not reviewed the 16 commits and the merge since. Second runs from a separate checkout, and fixes, found 23 things at ten commits; the description lists each with its fix. The limit: no person on the team has reviewed or commented. |
+| Failure count | independent review | The automated reviewer's last review, of e872cf241, has 0 blockers and 1 follow-up and does not approve; c863c4614 answers the follow-up and is not reviewed yet. Second runs from a separate checkout, and fixes, found 23 things at ten commits; the description lists each with its fix. The limit: no approval; no person on the team has reviewed or commented. |
 | Failure count | users lose nothing | With both parts of the log full, `rerail status` takes 172.0 ms against `main`'s 171.5 on Linux x64 (median of 20, 6f563beed). `main` reads this version's logs after a downgrade. The limit: one state costs more than `main` (decision 2), in one a hook writes a line where `main` writes none, and eight cases are left (part 8). |
-| Failure count | CI at this head | No CI result at e872cf241 when read on 17 November 2026. The last run, 43768974645 at 3046af36f: 24 checks, 19 pass, 5 are skipped, none fails. It passed on its third attempt; the first two each failed one test of `main` in a file this change does not edit, in `Unit tests (Windows, 2/2)` (#691, then #681). |
 
 </details>
 
@@ -95,7 +94,7 @@ Before: At main, a hook that finds the log past 256 KB renames it straight to .1
 
 It holds `main` at 71e0822ce and stands on it alone; the file three open pull requests share merges clean.
 
-**Shared files and trial merges.** #503, merged, brought the hook failure log and the OS locks. #578, closed, was the first pull request for #577. `git merge-tree --write-tree` of e872cf241 is clean with `main` at 71e0822ce and with #673 at 9cc848d8d. `docs/troubleshooting.md` merges clean with #720's at 6c35c24e9, a three-way merge of that one file. #506 at 06c94a596 has merge conflicts with `main` itself in four dashboard files, none this change's. No other open pull request edits `cli.ts`, `hook-failures.ts` or its test file. Nothing waits on this one.
+**Shared files and trial merges.** #503, merged, brought the hook failure log and the OS locks. #578, closed, was the first pull request for #577. `git merge-tree --write-tree` of c863c4614 is clean with `main` at cb5040824 and with #673 at 9cc848d8d. `docs/troubleshooting.md` merges clean with #720's at 6c35c24e9, a three-way merge of that one file. #506 at 06c94a596 has merge conflicts with `main` itself in four dashboard files, none this change's. No other open pull request edits `cli.ts`, `hook-failures.ts` or its test file. Nothing waits on this one.
 
 </details>
 
@@ -103,7 +102,7 @@ It holds `main` at 71e0822ce and stands on it alone; the file three open pull re
 
 1. **One state writes where `main` does not:** with `.1` refusing the move and a person's file over 256 KB, a hook can write one line into that file.
 2. **Seven cases lose lines or make a read wrong,** in a give-back by copy, during a move, under a link, or as a person links the live name.
-3. **Not run:** macOS; the whole suite outside CI; the load runs and CI at e872cf241.
+3. **Not run:** macOS, c863c4614's skip included; the whole suite outside CI; the load runs at c863c4614.
 
 **Smaller gaps**
 
@@ -143,9 +142,9 @@ The record is the description's "How you tested it".
 
 | Where | What ran | Result |
 |---|---|---|
-| CI on GitHub | Run 43768974645 at 3046af36f, its three attempts, read on 17 November 2026; e872cf241 had no result then | At 3046af36f, 24 checks on the pull request: 19 pass, 5 are skipped, none fails. The run passes every job on its third attempt. The first two each failed one test of `main` in a file this change does not edit, in `Unit tests (Windows, 2/2)`: `test/cli/audit-cli.test.ts` (#691), then `test/hosts/claude/claude-status.test.ts` (#681). |
+| CI on GitHub | Run 44037348383 at c863c4614, read on 17 November 2026 | 25 checks on the pull request: 21 pass, 4 are skipped, none fails. The two Linux unit jobs, the five Windows unit jobs and the Licences job pass. |
 | Linux x64 and Windows 11 | Fails first: the five reproductions at `main` and at d2e27d773; one-line changes to fix lines, each tried in turn; the tests of the commits since 3046af36f against the code before each | Each reproduction fails at `main` and passes at d2e27d773, on both systems. Every one-line change tried fails a test. The tests of 5e3471332 and the first test of 7b09287ac fail at c944d752b on both systems; the second test of 7b09287ac fails on Windows 11 with its line taken out. |
-| Linux x64 and Windows 11 | The 9 test files of the change and of the modules that import it, at 3769efb32, the parent of e872cf241. On Linux x64, the automated reviewer's rules and both packs over the diff against the merge base | Linux x64: 270 passed, 1 skipped, 0 failed. Windows 11: 260 passed, 13 skipped, 0 failed, none outside `main`'s baseline. The changed test file: 80 of 81 and 80 of 83. The cases since 3046af36f: 20 of 20 runs in a row on each. The rules: no new finding; 4 existing ones in `cli.ts` functions this change does not edit. |
+| Linux x64 and Windows 11 | The 9 test files of the change and of the modules that import it, at 3769efb32; `hook-failures.test.ts` again at c863c4614, Linux x64. On Linux x64, the automated reviewer's rules and both packs over the diff against the merge base | Linux x64: 270 passed, 1 skipped, 0 failed. Windows 11: 260 passed, 13 skipped, 0 failed, none outside `main`'s baseline. The changed test file: 80 of 81 and 80 of 83; at c863c4614, 80 of 81. The cases since 3046af36f: 20 of 20 runs in a row on each. The rules: no new finding; 4 existing ones in `cli.ts` functions this change does not edit. |
 | Linux x64 and Windows 11 | Through a real daemon and real Claude Code hooks, against `main`: the count across two moves at 3769efb32; 30 hooks behind a daemon that does not answer, 20 rounds, at 06538bc53 (Linux x64) | The count, on both systems: 2,614, 1,308, 1,312, 2,619, 1,313, each the failures since the time named; `main` counted 1,307, 1, 5, 1,312, 1. The burst: 0 lines lost and status right in 20 of 20; `main` lost 21 lines in 9 rounds and was right in 0. |
 | Linux x64 and Windows 11 | A function seam, processes calling `recordHookFailure` with no daemon and no hook: one process for 2 hours at 50 failures a minute, read every 5 minutes, and 30 at one instant, 20 rounds: `main` against d2e27d773 | The count: `main` 20 of 24 readings short on both, d2e27d773 0 short and 0 over. The burst on Linux x64: `main` lost 1,253 lines and was right in 0 of 20; d2e27d773 lost none and was right in 20 of 20. On Windows 11 `main` lost 9 lines in one run and none in another; d2e27d773 was right in 20 of 20. |
 | Linux x64 and Windows 11 | Status reads under hook bursts at cd0d87fe2, and checks with no move in flight | Windows 11: 0 of 1,392 reads short. Linux x64: 7 of 648 short, the worst by 63 lines. No read missed a whole part. With no move in flight, 390 of 390 checks exact on each. `main` under the same load: 1,722 of 1,911 Windows 11 reads short, the worst by 5,600. |
@@ -155,12 +154,12 @@ The record is the description's "How you tested it".
 **What this report adds to the description**
 
 - **The line's lead is a change of intent.** The description lists it as one row of its changes and one question on #577. At `main` a code comment and a test's name both say the line leads only when every failure is newer than the last recorded event. This pull request changes that rule and that test's case, so part 2 marks it as a change of intent and ask 1 asks for the ruling.
-- **Sixteen commits and a merge came after 3046af36f.** The description lists each with what it does. Status reads only regular files at `.1` and at hooks' names (1717aa47e). A link a person makes at the live name moves as `main` moves it and is not read, copied or written through, but for the one state in part 8 (3d87e90e3 to 7b09287ac). 3769efb32 merges `main` at 71e0822ce; e872cf241 changes one docs word.
-- **The automated review of 3046af36f leaves one thing as it was.** It approves with 0 blockers. Follow-up 1: a hand-made link at the live name, once a hook moves it to `.1`, is no longer counted. That stays, as on `main`, and `docs/troubleshooting.md` says why (e2f67a8dc); part 8's link case covers it. Follow-up 2: 09f768768 makes the held-up-writer test fail when a take leaves the change time. The nit: ef383d252. It has not reviewed the commits since.
+- **Seventeen commits and a merge came after 3046af36f.** The description lists each with what it does. Status reads only regular files at `.1` and at hooks' names (1717aa47e). A link a person makes at the live name moves as `main` moves it and is not read, copied or written through, but for the one state in part 8 (3d87e90e3 to 7b09287ac). 3769efb32 merges `main` at 71e0822ce; e872cf241 changes one docs word; c863c4614 skips one test on macOS.
+- **The automated review of 3046af36f leaves one thing as it was.** It approves. Follow-up 1: a hand-made link at the live name, once a hook moves it to `.1`, is no longer counted. That stays, as on `main`, and `docs/troubleshooting.md` says why (e2f67a8dc); part 8's link case covers it. Follow-up 2: 09f768768 makes the held-up-writer test fail when a take leaves the change time. The nit: ef383d252. Its review of e872cf241 marks all three resolved; c863c4614 answers its one follow-up.
 - **Two figures for the same wait.** A comment on the pull request gives the wait inside the 2 s as 258 ms on Linux x64 and 358 ms on Windows 11. That is the Hooks line's own work in that state. The description gives the whole `rerail status` there: 420.0 against 162.4 ms, and 549.9 against 200.0 ms.
-- **#577's third question gives earlier figures.** It says the take grows `hook-failures.ts` from 112 to 668 lines and leaves five cases. At e872cf241 the file has 938 lines and eight cases are left (part 8). The question itself stands.
-- **Our answer to the read-first question.** Yes, in the cases part 8 names. At e872cf241: a hook stopped after its take leaves the log under its own name, where status counts it. A hook held up through both reads of a give-back by copy loses its line. Status counts each file once by file id; a read that overlaps a give-back by copy can miss those lines or count them twice.
+- **#577's third question gives earlier figures.** It says the take grows `hook-failures.ts` from 112 to 668 lines and leaves five cases. At c863c4614 the file has 938 lines and eight cases are left (part 8). The question itself stands.
+- **Our answer to the read-first question.** Yes, in the cases part 8 names. At c863c4614: a hook stopped after its take leaves the log under its own name, where status counts it. A hook held up through both reads of a give-back by copy loses its line. Status counts each file once by file id; a read that overlaps a give-back by copy can miss those lines or count them twice.
 
-**Sources.** The branch at e872cf241 for the diff. Pull request #658 for its checks and reviews, and issue #577 with its comments and edit history, read on 17 November 2026. Rerail at `main` (71e0822ce) for each quoted intent and its line. The description for the runs, the timings and the load figures, each at the commit named. Each open pull request's files and head for the shared files and trial merges.
+**Sources.** The branch at c863c4614 for the diff. Pull request #658 for its checks and reviews, and issue #577 with its comments and edit history, read on 17 November 2026. Rerail at `main` (71e0822ce) for each quoted intent and its line. The description for the runs, the timings and the load figures, each at the commit named. Each open pull request's files and head for the shared files and trial merges.
 
 </details>
