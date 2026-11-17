@@ -494,6 +494,8 @@ describe("Rerail MCP bridge beside a busy daemon", () => {
     const run = await pending;
     expect(run.stdout).toEqual([pong]);
     expect(run.requests).toEqual([ping]);
+    // The call's bound ends with the call: an idle bridge keeps no timer to fire after its answer.
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("calls a newly recorded daemon still silent to its health check at the bound busy, and sends it nothing", async () => {
