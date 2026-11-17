@@ -4,7 +4,7 @@ use crate::code_rule_dsl::facts::core::{self, Built};
 use crate::code_rule_dsl::language::{GrammarDialect, dialect_by_label, tape_tag};
 use crate::code_rule_dsl::model::FileInput;
 use crate::content_store::Binding;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 fn root() -> PathBuf {
@@ -232,6 +232,33 @@ fn a_views_filter_scan_holds_the_rows_a_per_row_read_finds() {
 /// A field's children by parent and field (`lookup_eq`, a join's `field($a, #f, $t)` with `$a` bound) are the rows a
 /// lookup by parent finds and a filter on the field keeps, in the same order: for every parent and each of its
 /// fields, and for a field it lacks.
+/// The statistics of a relation held as a view of `node` (decision 0329) are its rows' counts, made without reading
+/// them: per column, the distinct values, the squares of their counts and each value's count, as counting every row
+/// gives (`n`, the key: each value once, no counts).
+#[test]
+fn a_node_columns_counts_are_its_rows_counts() {
+    let store = ContentStore::open(&temp("node-counts")).unwrap();
+    let (_, node) = sources(&store, documents().into_iter().take(4).collect()).unwrap().into_iter().find(|(name, _)| *name == "node").unwrap();
+    let batch = node.python_batch().expect("a batch's view");
+    assert!(node.len() > 50, "the documents have nodes");
+    for column in 0..3 {
+        let mut by: BTreeMap<i64, i64> = BTreeMap::new();
+        for r in 0..node.len() {
+            *by.entry(node.value(r, column)).or_default() += 1;
+        }
+        let counts: Vec<(i64, i64)> = by.into_iter().collect();
+        let (ndv, sq, got) = node_column_counts(&batch, column).expect("node's column");
+        assert_eq!(ndv, counts.len() as i64, "column {column}'s distinct values");
+        assert_eq!(sq, counts.iter().map(|&(_, n)| n * n).sum::<i64>(), "column {column}'s squares");
+        if column == 1 {
+            assert!(counts.iter().all(|&(_, n)| n == 1) && got.is_none(), "n is node's key");
+        } else {
+            assert_eq!(got, Some(counts), "column {column}'s counts");
+        }
+    }
+    assert!(node_column_counts(&batch, 3).is_none());
+}
+
 #[test]
 fn a_fields_lookup_by_parent_and_field_holds_what_a_filter_keeps() {
     let store = ContentStore::open(&temp("lookup-eq")).unwrap();

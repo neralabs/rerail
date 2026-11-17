@@ -5696,6 +5696,62 @@ impl<'a> Run<'a, '_> {
         Ok(Some(source.len()))
     }
 
+    /// The input columns a stratum's one rule projects, where it is a projection of `node` that keeps its key `n`:
+    /// `kind(n, k) :- node(_, n, k, _, _)`, the lowering's (decision 0141), and `docof` over nodes. Its rows are then
+    /// `node`'s, one each: held as a view of the bound source (`hold_projection`), not copied.
+    fn node_projection(&self, scc: &BTreeSet<String>, rules: &[RuleKey]) -> Option<Vec<usize>> {
+        let ([_], [k]) = (scc.iter().collect::<Vec<_>>().as_slice(), rules) else { return None };
+        let (v, r) = self.versions.rule_at(*k);
+        let mut body = r.body();
+        let (Some(l), None) = (body.next(), body.next()) else { return None };
+        let a = l.atom().filter(|a| !a.neg() && v.rel_name(a.rel()) == "node" && self.inputs.contains("node"))?;
+        let args: Vec<_> = a.args().map(|t| t.var()).collect();
+        let mut cols = Vec::new();
+        for t in r.head().args() {
+            let h = t.var()?;
+            let mut at = args.iter().enumerate().filter(|(_, x)| **x == Some(h)).map(|(j, _)| j);
+            let (Some(j), None) = (at.next(), at.next()) else { return None };
+            if cols.contains(&j) { return None }
+            cols.push(j);
+        }
+        // `node`'s key, its column `n`: each row a node of its own, so the projection's rows are distinct.
+        cols.contains(&1).then_some(cols)
+    }
+
+    /// `node_projection`'s relation held as a view of the bound `node` (decision 0329): its statistics `node`'s
+    /// columns'. `None`: `node` is not bound in place, and the stratum runs.
+    fn hold_projection(&mut self, rel: &str, cols: &[usize]) -> Option<usize> {
+        let src = crate::code_rule_dsl::facts::vtab::bound_source(self.db, "node")?;
+        if src.columns().len() != 5 {
+            return None;
+        }
+        let f = self.fields();
+        let types: Vec<u8> = f.types(rel).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>().into_bytes();
+        if types.len() != cols.len() {
+            return None;
+        }
+        let n = src.len() as i64;
+        // Each column's statistics as the stored relation's sketches gave them (`live_of`): distinct values, squares,
+        // and exact counts, from the batch without reading its rows (`syntax::node_column_counts`).
+        let batch = src.python_batch()?;
+        let mut ndv = Vec::new();
+        let mut sq = Vec::new();
+        let mut freq: Vec<(usize, HashMap<Constant, i64>)> = Vec::new();
+        for (j, &c) in cols.iter().enumerate() {
+            let (d, s, counts) = crate::code_rule_dsl::facts::vtab::syntax::node_column_counts(&batch, c)?;
+            ndv.push(d);
+            sq.push(s);
+            if let Some(counts) = counts {
+                freq.push((j, counts.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect()));
+            }
+        }
+        super::native::component::hold_view(self.db, rel, src, cols.to_vec(), types);
+        self.native_rels.insert(rel.to_owned());
+        live_stats(&mut self.model, rel, LiveRel { n, delta: n, ndv, sq, freq });
+        let n = n as usize;
+        Some(n)
+    }
+
     /// The reach index (decision 0119, `front::Native::Reach` and `ReachThrough`) over relations the engine holds:
     /// held as the index, read in place by its readers, no row made. `None`: an input is not held natively (the rows
     /// are then made by `reach_rows`).
@@ -6564,6 +6620,9 @@ impl<'a> Run<'a, '_> {
         }
         if rules.iter().any(|&r| self.versions.rule_at(r).1.body().any(|l| matches!(l.view(), Lit::Ast { .. }))) {
             return Err("an Ast literal");
+        }
+        if self.node_projection(scc, rules).is_some() && crate::code_rule_dsl::facts::vtab::bound_source(self.db, "node").is_some() {
+            return Err("a projection of node, held in place");
         }
         let mut reads: BTreeSet<String> = scc.clone();
         for &r in rules {
@@ -11485,6 +11544,17 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             && let Some((n, why)) = run.native_reach(rel, native)?
         {
             super::profile::stratum(&skey, "reach index over held relations (decision 0119)", || why);
+            super::profile::note(format!("{rel} rows"), || n.to_string());
+            outcome.native.insert(key);
+            continue;
+        }
+        // A projection of `node` that keeps its key, held as a view of the bound `node` (decision 0329): no row made.
+        if maintaining.is_none()
+            && let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && let Some(cols) = run.node_projection(scc, &rules)
+            && let Some(n) = run.hold_projection(rel, &cols)
+        {
+            super::profile::stratum(&skey, "a projection of node held in place (decision 0329)", String::new);
             super::profile::note(format!("{rel} rows"), || n.to_string());
             outcome.native.insert(key);
             continue;

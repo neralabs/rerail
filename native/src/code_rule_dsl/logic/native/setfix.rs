@@ -3461,6 +3461,19 @@ pub fn retain(conn: impl Scoped, table: &str, mut rows: Vec<Vec<i64>>, types: Ve
     Ok(())
 }
 
+/// Holds `table` in `conn`'s run as `src`'s rows in its columns `cols`, read in place: a projection of a bound input that
+/// keeps the input's key (`kind(n, k) :- node(_, n, k, _, _)`), whose rows are the input's, one each, no copy made.
+pub fn hold_view(conn: impl Scoped, table: &str, src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vec<usize>, types: Vec<u8>) {
+    let conn = conn.db();
+    let k = types.len();
+    debug_assert_eq!(cols.len(), k);
+    let view = View { src, cols, ids: None, eqs: Vec::new() };
+    let rel = Arc::new(InRel { k, n: 0, rows: Rows::default(), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
+    let _ = rel.name.set(table.to_owned());
+    forgotten_on_close();
+    DERIVED.lock(conn.at()).insert((conn.at(), table.to_owned()), rel);
+}
+
 /// Holds `table` in `conn`'s run as `src`'s rows, read in place (a view of every row): a relation an index holds
 /// (the reach index, decision 0119) is probed through the source's own lookups, never copied into rows.
 pub fn hold_source(conn: impl Scoped, table: &str, src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, types: Vec<u8>) {

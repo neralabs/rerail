@@ -3603,6 +3603,52 @@ impl Viewed {
         }
     }
 }
+/// `node`'s column `column` over `batch`, counted without reading its rows (decision 0329): its distinct values, the
+/// sum of their counts' squares, and each value's count. A kind's count is its postings' (`of_kind`), a document's its
+/// nodes; `n` is the key (each value once, no counts). `None` for another column.
+pub fn node_column_counts(batch: &Batch, column: usize) -> Option<(i64, i64, Option<Vec<(i64, i64)>>)> {
+    let squares = |counts: &[(i64, i64)]| counts.iter().map(|&(_, n)| n * n).sum::<i64>();
+    match column {
+        0 => {
+            let counts: Vec<(i64, i64)> = batch.docs.iter().map(|p| (i64::from(p.key), i64::from(p.len()))).filter(|&(_, n)| n > 0).collect();
+            Some((counts.len() as i64, squares(&counts), Some(counts)))
+        }
+        1 => {
+            let n: i64 = batch.docs.iter().map(|p| i64::from(p.len())).sum();
+            Some((n, n, None))
+        }
+        2 => {
+            // The batch's nodes (a document's tape holds tokens and nodes it leaves out), each node's code read once into
+            // its dialect's counts by code (`of_kind`, a scan of the tape a kind, took 12 s of a cold PostHog run's
+            // guests), each code read as the column reads it (`Dialect::kind`: its canonical code).
+            let mut by_code: std::collections::BTreeMap<u8, Vec<i64>> = Default::default();
+            for p in &batch.docs {
+                let dialect = &batch.dialects[p.tag];
+                let counts = by_code.entry(p.tag).or_default();
+                for l in 0..p.len() {
+                    let code = usize::from(dialect.code(&p.facts, p.core[l as usize]));
+                    if counts.len() <= code {
+                        counts.resize(code + 1, 0);
+                    }
+                    counts[code] += 1;
+                }
+            }
+            let mut by: HashMap<i64, i64> = HashMap::new();
+            for (tag, counts) in by_code {
+                let dialect = &batch.dialects[tag];
+                for (code, &n) in counts.iter().enumerate().filter(|(_, n)| **n > 0) {
+                    let code = code as u16;
+                    *by.entry(i64::from(kind_atom(tag, dialect.canonical.get(usize::from(code)).copied().unwrap_or(code)))).or_default() += n;
+                }
+            }
+            let mut counts: Vec<(i64, i64)> = by.into_iter().collect();
+            counts.sort_unstable();
+            Some((counts.len() as i64, squares(&counts), Some(counts)))
+        }
+        _ => None,
+    }
+}
+
 impl Source for Viewed {
     fn python_batch(&self)->Option<Arc<Batch>> {Some(Arc::clone(&self.batch))}
     #[cfg(target_os = "macos")]
