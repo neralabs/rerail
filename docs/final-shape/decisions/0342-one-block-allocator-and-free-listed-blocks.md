@@ -75,3 +75,21 @@ and a reader of the block in place (`InBlock`) holds the part, so nothing it rea
   `rerail_blocks::rows`), so only the host takes and gives chunks today. The layout and the two operations are
   the kernel's to share when it does.
 - Moving a frozen free-listed slab to a smaller one (a pooled slab cannot be truncated).
+
+## Measured (2026-11-17, M3, PostHog cold, profiled, the memory line lifted: `RERAIL_RUN_MB`)
+
+| | user CPU | instructions | peak | chunks |
+|---|---|---|---|---|
+| before 0325 (recorded, load 26–35) | 208.6 s | 2,696 G | 2,297 MB | 170 |
+| 0325 (recorded, load 78) | 196.7 s | 2,382 G | 2,917 MB | 178 |
+| 0342, two runs (load 8–11) | 192.1, 191.6 s | 2,498, 2,491 G | 2,472, 2,529 MB | 174 |
+
+Findings 29,747, the same hash. Median footprint 1,849 and 1,837 MB. The host blocks (the new ledger): median
+155–166 MB, at most 274–287 MB, of which a median 40–48 MB lies free on their lists.
+
+- The peak is about 400 MB under 0325's, and still about 200 MB over the run before it.
+- What the lists hold free and is not taken again (40–48 MB) is chunks of a class no later chunk asks for: a
+  list does not split a chunk. A relation's descriptor and column directories (about 800 B a column) are still
+  bump-allocated and never given back.
+- About 110 G more instructions than 0325's run; not yet attributed (a reused chunk is zeroed, where a fresh page
+  came zero from the OS).
