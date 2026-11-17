@@ -5774,7 +5774,10 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let mut inner: Option<cranelift_codegen::ir::Block> = None;
     // The loop over a block's runs (`mid`, its header) and the starts after the run (`rest`),
     // where the rare starts split them, as the lean lexer's.
-    let mut runs_loop: Option<(cranelift_codegen::ir::Block, Value, cranelift_codegen::ir::Block)> = None;
+    // The starts after the run (`rest`) are in a slot of their own, stored once a run and read
+    // where it ends (0356): live across the inner loop, Cranelift's allocator split them and
+    // loaded and stored them each token, a chain through memory.
+    let mut runs_loop: Option<(cranelift_codegen::ir::Block, cranelift_codegen::ir::StackSlot, cranelift_codegen::ir::Block)> = None;
     // The rare starts' head, where the runs loop has one: its token block, the state, the
     // block's registers, as the run loop's (`Side::Rare`).
     let mut rare_part: Option<(cranelift_codegen::ir::Block, Vec<Value>, BlockRegs)> = None;
@@ -6092,6 +6095,8 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 let below = f.ins().band_not(below, rare);
                 let run = f.ins().band(cand, below);
                 let rest = f.ins().bxor(cand, run);
+                let rest_slot = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8, 3));
+                f.ins().stack_store(rest, rest_slot, 0);
                 // The run's end (`run_done`, with the starts after the run and the state): the
                 // rare start found here, as the lean lexer's `if rare == 0 { break }` after its
                 // run; none, the refill. `mid` comes to it with no run.
@@ -6118,7 +6123,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 let s0 = f.ins().iadd(q64, tz);
                 let args: Vec<BlockArg> = [s0, left].iter().chain(st).map(|&v| v.into()).collect();
                 f.ins().jump(rare_word.expect("with mid"), &args);
-                runs_loop = Some((mid, rest, run_done));
+                runs_loop = Some((mid, rest_slot, run_done));
                 // The rare head: the state and the block's words as the run loop's, its token
                 // block its own.
                 let rw = rare_word.expect("with mid");
@@ -6635,7 +6640,10 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             // With the runs (`runs_loop`), the starts left are the run's and those after it; a
             // rare start's are those after the run already (`run_done`'s).
             let cand = match runs_loop {
-                Some((_, rest, _)) if !matches!(side, Side::Rare(_)) => f.ins().bor(g.cand, rest),
+                Some((_, rest_slot, _)) if !matches!(side, Side::Rare(_)) => {
+                    let rest = f.ins().stack_load(types::I64, rest_slot, 0);
+                    f.ins().bor(g.cand, rest)
+                }
                 _ => g.cand,
             };
             let mut left = f.ins().band(cand, m);
@@ -6688,11 +6696,11 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         if let Some(p) = reread {
             back[3] = p.into();
         }
-        if let (Some(inner), Some((mid, rest, run_done))) = (inner, runs_loop) {
+        if let (Some(inner), Some((mid, rest_slot, run_done))) = (inner, runs_loop) {
             // A fused token: the run's next start, in the inner loop, as the lean lexer's
-            // `while run != 0`; the run done, the starts after it (`mid`). Another rule's token:
-            // the starts left, by `mid`, out of the inner loop.
-            let after: Vec<BlockArg> = std::iter::once(BlockArg::from(if common && lean.is_some() { rest } else { left })).chain(back.iter().cloned()).collect();
+            // `while run != 0`; the run done, the starts after it (`mid`), read from their slot
+            // there (`run_end`). Another rule's token: the starts left, by `mid`, out of the
+            // inner loop.
             if common && lean.is_some() {
                 // The block's base (`BlockRegs::base`): starts are left only where the cursor is
                 // in the token's block.
@@ -6700,8 +6708,17 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 let tz = f.ins().ctz(left);
                 let s0 = f.ins().iadd(base, tz);
                 let on: Vec<BlockArg> = [s0, left].iter().copied().map(BlockArg::from).chain(back.iter().cloned()).collect();
-                f.ins().brif(left, inner, &on, run_done, &after);
+                let run_end = f.create_block();
+                for _ in 0..back.len() {
+                    f.append_block_param(run_end, types::I64);
+                }
+                f.ins().brif(left, inner, &on, run_end, &back);
+                f.switch_to_block(run_end);
+                let rest = f.ins().stack_load(types::I64, rest_slot, 0);
+                let after: Vec<BlockArg> = std::iter::once(rest).chain(f.block_params(run_end).to_vec()).map(BlockArg::from).collect();
+                f.ins().jump(run_done, &after);
             } else {
+                let after: Vec<BlockArg> = std::iter::once(BlockArg::from(left)).chain(back.iter().cloned()).collect();
                 f.ins().jump(mid, &after);
             }
         } else if let Some(inner) = inner {
