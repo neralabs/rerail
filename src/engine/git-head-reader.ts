@@ -406,14 +406,23 @@ function configReader(settleMs: number): (cwd: string, layout: Layout, signal: A
 /** Git's own answer: the checkout's Git folders where `cwd` is its top, and the commit `HEAD` names. */
 async function askHead(cwd: string, signal: AbortSignal | undefined): Promise<Asked> {
   const printed = await gitRun(cwd, ["rev-parse", "--show-cdup", "--git-dir", "--git-common-dir", "--verify", "--quiet", "HEAD"], signal);
-  const lines = printed?.stdout.split(/\r?\n/u) ?? [];
-  if (lines.at(-1) === "") lines.pop();
-  const [cdup, gitDir = "", commonDir = "", head] = lines;
-  if (printed?.status === 0 && lines.length === 4)
-    return { layout: cdup === "" ? { gitDir: resolve(cwd, gitDir), commonDir: resolve(cwd, commonDir) } : undefined, head };
+  const lines = printedLines(printed);
+  if (printed?.status === 0 && lines.length === 4) return askedOf(cwd, lines);
   // Git named the folders and no commit: `HEAD` names none. Any other end is asked as `gitHead` asks it.
   if (printed?.status === 1 && lines.length === 3) return { layout: undefined, head: undefined };
   return { layout: undefined, head: await gitHead(cwd, { signal }) };
+}
+
+/** The lines Git printed, without the empty one after the last newline. */
+function printedLines(printed: GitResult | undefined): string[] {
+  const lines = printed?.stdout.split(/\r?\n/u) ?? [];
+  if (lines.at(-1) === "") lines.pop();
+  return lines;
+}
+
+/** `rev-parse`'s four lines: the way up to the top (empty at the top), the Git folder, the common folder, the commit. */
+function askedOf(cwd: string, [cdup, gitDir = "", commonDir = "", head]: readonly string[]): Asked {
+  return { layout: cdup === "" ? { gitDir: resolve(cwd, gitDir), commonDir: resolve(cwd, commonDir) } : undefined, head };
 }
 
 /** `runGitAsync`, or undefined where no Git can be started. */

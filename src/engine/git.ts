@@ -678,7 +678,7 @@ const GIT_TRUE = /^(?:true|yes|on|1)$/iu;
 export type CrlfRule = "auto" | "text";
 
 /** The line-ending attributes Git reads for one path, each as `git check-attr` prints it: `set`, `unset`, `unspecified` or a value. */
-export interface LineEndingAttributes {
+interface LineEndingAttributes {
   readonly text: string;
   /** The older name of `text`, which Git reads where `text` declares nothing. */
   readonly crlf: string;
@@ -686,7 +686,7 @@ export interface LineEndingAttributes {
 }
 
 /** `core.autocrlf` and `core.eol`, lowercased; undefined where unset. */
-export interface LineEndingConfig {
+interface LineEndingConfig {
   readonly autocrlf: string | undefined;
   readonly coreEol: string | undefined;
 }
@@ -715,7 +715,7 @@ function textGetsCrlf({ autocrlf, coreEol }: LineEndingConfig, platform: NodeJS.
  * `eol`, an `input` file gets LF, a `text` or `auto` file gets CRLF where a text file does ({@link textGetsCrlf}), and a
  * file that declares nothing is `auto` under `core.autocrlf=true` alone.
  */
-export function crlfRule(attributes: LineEndingAttributes, config: LineEndingConfig, platform: NodeJS.Platform): CrlfRule | undefined {
+function crlfRule(attributes: LineEndingAttributes, config: LineEndingConfig, platform: NodeJS.Platform): CrlfRule | undefined {
   const declared = declaredText(attributes.text) ?? declaredText(attributes.crlf);
   if (declared === "binary") return undefined;
   if (attributes.eol === "crlf") return declared === "auto" ? "auto" : "text";
@@ -728,7 +728,7 @@ export function crlfRule(attributes: LineEndingAttributes, config: LineEndingCon
  * The `text`, `crlf` and `eol` attributes of each of `paths` (relative to `cwd`), by one `git check-attr --stdin`; empty
  * without Git, outside a repository or past the timeout.
  */
-export async function lineEndingAttributes(cwd: string, paths: readonly string[], signal: AbortSignal | undefined): Promise<Map<string, LineEndingAttributes>> {
+async function lineEndingAttributes(cwd: string, paths: readonly string[], signal: AbortSignal | undefined): Promise<Map<string, LineEndingAttributes>> {
   const attributes = new Map<string, { text: string; crlf: string; eol: string }>();
   const chunks: Buffer[] = [];
   await streamGit(cwd, ["check-attr", "-z", "--stdin", "text", "crlf", "eol"], {
@@ -773,6 +773,9 @@ export async function gitCrlfPaths(
   }
   return rules;
 }
+
+// The pieces of `gitCrlfPaths` a reader that keeps its answers by the stamps of their inputs asks again (`git-crlf-reader.ts`).
+export { crlfRule, lineEndingAttributes, type LineEndingAttributes, type LineEndingConfig };
 
 /** The most bytes of a listing `gitModifiedOrUntrackedPaths` and `unmergedEntries` read: past it, the first lists none and the second cannot say. */
 const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;

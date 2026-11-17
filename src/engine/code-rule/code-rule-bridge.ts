@@ -224,6 +224,22 @@ async function readGitView(discovery: SourceDiscovery, checkout: string, paths: 
 function unmergedNow(discovery: SourceDiscovery, checkout: string): Promise<ReadonlyMap<string, string> | undefined> {
   return discovery.git.run(signal => discovery.readUnmerged(checkout, { signal }));
 }
+/** Puts `root`'s unmerged entries now in `unmerged`; a checkout whose entries Git could not list is left out. */
+async function readEntriesInto(discovery: SourceDiscovery, root: string, unmerged: Map<string, ReadonlyMap<string, string>>): Promise<void> {
+  const entries = await unmergedNow(discovery, root);
+  if (entries !== undefined) unmerged.set(root, entries);
+}
+/** `HEAD` of each of `roots` that names a commit, with its unmerged entries put in `unmerged`. */
+async function readHeads(discovery: SourceDiscovery, roots: Iterable<string>, unmerged: Map<string, ReadonlyMap<string, string>>): Promise<Map<string, string>> {
+  const heads = new Map<string, string>();
+  for (const root of roots) {
+    const head = await discovery.git.run(signal => readGitHead(root, { signal }));
+    if (head === undefined) continue;
+    heads.set(root, head);
+    await readEntriesInto(discovery, root, unmerged);
+  }
+  return heads;
+}
 /** A checkout's unmerged entries now and as the last walk saw them; the first entries read become its snapshot. */
 async function readUnmergedView(discovery: SourceDiscovery, checkout: string): Promise<Pick<GitBlobs, "unmerged" | "unmergedBefore">> {
   const unmerged = await unmergedNow(discovery, checkout);
@@ -2370,24 +2386,14 @@ export class CodeRuleBridge {
    * list is left out of `unmerged`, so the last entries read stay its snapshot.
    */
   async #readCheckouts(discovery: SourceDiscovery): Promise<Pick<WalkStart, "heads" | "unmerged">> {
-    const heads = new Map<string, string>();
     const unmerged = new Map<string, ReadonlyMap<string, string>>();
-    const readEntries = async (root: string): Promise<void> => {
-      const entries = await unmergedNow(discovery, root);
-      if (entries !== undefined) unmerged.set(root, entries);
-    };
     const walkedApart = (root: string): boolean => discovery.worktrees.roots.has(sessionPath(discovery.root, root));
     const others = [...discovery.heads.keys()].filter(known => !walkedApart(known));
     // When no checkout owns the session folder, no change in it is asked about.
     const session = this.#owningCheckout(discovery.root, "");
     const withHead = new Set(session === undefined ? others : [session, ...others]);
-    for (const root of withHead) {
-      const head = await discovery.git.run(signal => readGitHead(root, { signal }));
-      if (head === undefined) continue;
-      heads.set(root, head);
-      await readEntries(root);
-    }
-    for (const root of discovery.passedCheckouts) if (!withHead.has(root) && !walkedApart(root)) await readEntries(root);
+    const heads = await readHeads(discovery, withHead, unmerged);
+    for (const root of discovery.passedCheckouts) if (!withHead.has(root) && !walkedApart(root)) await readEntriesInto(discovery, root, unmerged);
     return { heads, unmerged };
   }
 

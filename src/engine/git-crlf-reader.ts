@@ -133,18 +133,23 @@ function foldersOf(path: string): string[] {
 
 /** A path's key: what it depends on beside the folders, each folder's file, and the index where a tracked one is absent. */
 function pathKey(sources: Sources, path: string, folders: ReadonlyMap<string, Stamped | undefined>): PathKey | undefined {
-  const parts = [sources.key];
-  let settled = sources.settled;
-  let any = sources.any;
+  const parts: PathKey[] = [];
   for (const folder of foldersOf(path)) {
     const stamped = folders.get(folder);
     if (stamped === undefined) return undefined;
-    const fromIndex = stamped.stamp === "absent" && sources.tracked.has(folder);
-    parts.push(fromIndex ? `index\0${sources.index}` : stamped.stamp);
-    settled &&= stamped.settled;
-    any ||= fromIndex || stamped.stamp !== "absent";
+    parts.push(folderPart(sources, folder, stamped));
   }
-  return { key: parts.join("\0"), settled, any };
+  return {
+    key: [sources.key, ...parts.map(part => part.key)].join("\0"),
+    settled: sources.settled && parts.every(part => part.settled),
+    any: sources.any || parts.some(part => part.any),
+  };
+}
+
+/** One folder's part of a path's key: its `.gitattributes`' stamp, or the index's where that file is tracked and absent. */
+function folderPart(sources: Sources, folder: string, stamped: Stamped): PathKey {
+  const fromIndex = stamped.stamp === "absent" && sources.tracked.has(folder);
+  return { key: fromIndex ? `index\0${sources.index}` : stamped.stamp, settled: stamped.settled, any: fromIndex || stamped.stamp !== "absent" };
 }
 
 interface PathKey {
@@ -154,13 +159,35 @@ interface PathKey {
   readonly any: boolean;
 }
 
-type Kept = Map<string, { readonly key: string; readonly attributes: LineEndingAttributes }>;
+interface KeptAttributes {
+  readonly key: string;
+  readonly attributes: LineEndingAttributes;
+}
+
+type Kept = Map<string, KeptAttributes>;
 
 /** A path's attributes without Git: kept under the same key, or none where no file can set them; undefined otherwise. */
-function withoutGit(held: Kept extends Map<string, infer V> ? V | undefined : never, key: PathKey | undefined): LineEndingAttributes | undefined {
+function withoutGit(held: KeptAttributes | undefined, key: PathKey | undefined): LineEndingAttributes | undefined {
   if (key === undefined) return undefined;
   if (held?.key === key.key) return held.attributes;
   return key.any ? undefined : UNSPECIFIED;
+}
+
+/** The settings and attribute files a call found named, and the stamps of those files and of the index. */
+interface Named {
+  readonly config: CheckoutConfiguration;
+  readonly files: readonly string[];
+}
+
+/** {@link Sources} from the configuration's key, the attribute files' stamps, the tracked folders and the index's stamp. */
+function sourcesOf(found: Named, stamps: readonly Stamped[], tracked: ReadonlySet<string>, index: Stamped): Sources {
+  return {
+    key: [found.config.key, ...found.files.map((path, at) => `${path}\0${stamps[at]!.stamp}`)].join("\0"),
+    settled: found.config.settled && stamps.every(stamped => stamped.settled),
+    any: stamps.some(stamped => stamped.stamp !== "absent"),
+    tracked,
+    index: index.stamp,
+  };
 }
 
 /** Each of `paths`' folders' `.gitattributes` in `cwd`, stamped once per call. */
@@ -210,24 +237,21 @@ export function gitCrlfReader(): GitCrlfReader {
     const [index, ...stamps] = await Promise.all([join(found.config.layout.gitDir, "index"), ...found.files].map(stampOf));
     const folders = index === undefined ? undefined : await trackedFor(cwd, index, signal);
     if (folders === undefined || !stamps.every(stamped => stamped !== undefined)) return undefined;
-    return {
-      settings: found.named,
-      sources: {
-        key: [found.config.key, ...found.files.map((path, at) => `${path}\0${stamps[at]!.stamp}`)].join("\0"),
-        settled: found.config.settled && stamps.every(stamped => stamped.settled),
-        any: stamps.some(stamped => stamped.stamp !== "absent"),
-        tracked: folders,
-        index: index!.stamp,
-      },
-    };
+    return { settings: found.named, sources: sourcesOf(found, stamps, folders, index!) };
+  };
+
+  /** What `cwd`'s reader keeps per path, started again from none past `KEPT_PATHS`. */
+  const keptFor = (cwd: string): Kept => {
+    const known: Kept = kept.get(cwd) ?? new Map();
+    if (known.size > KEPT_PATHS) known.clear();
+    kept.set(cwd, known);
+    return known;
   };
 
   /** Each asked path's attributes: kept, none where no file can set them, else Git's (kept where its inputs settled). */
   const attributesFor = async (cwd: string, sources: Sources, asked: readonly string[], signal: AbortSignal | undefined) => {
     const folders = await folderStamps(cwd, asked);
-    const known: Kept = kept.get(cwd) ?? new Map();
-    if (known.size > KEPT_PATHS) known.clear();
-    kept.set(cwd, known);
+    const known = keptFor(cwd);
     const keys = new Map(asked.map(path => [path, pathKey(sources, path, folders)]));
     const answers = new Map<string, LineEndingAttributes>();
     for (const [path, key] of keys) {
