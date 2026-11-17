@@ -1519,5 +1519,4 @@ inventory of today's copies (12 sites, marked `copy (0353 step N)`) and the plan
 3. Then steps 3 (CPU views on the tape), 4 (GPU views on the tape: the 660.8 MB a run), 5 (axes written once),
    6 (in-place writes and indexes), 7 (the transducer's packed batch, its owners'), 8 (0325 step 7), 9 (prices).
 
-Open for the user: `Projected::up` (0293 §6 kept it on measurement; 0353 recommends dropping it with step 2).
 Q68 (step 6's prices) waits for step 4: most of what it prices goes.

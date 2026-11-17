@@ -158,7 +158,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 
 | # | Copy | Where | Size or cost (hogql) | Removed by |
 |---|---|---|---|---|
-| 1 | The projection's per-node arrays: `core`, `local`, `up`, `idx`, `fielded`, `size`, `depth` | `syntax.rs`, `Projected` | 4 bytes a node each (`up`: see Open) | Step 2 |
+| 1 | The projection's per-node arrays: `core`, `local`, `up`, `idx`, `fielded`, `size`, `depth` | `syntax.rs`, `Projected` | 4 bytes a node each | Step 2 |
 | 2 | Definition ids by node: `DefIds::low`, `order`, `back` | `syntax.rs`, `DefIds` | 4 + 4 + 8 bytes a node | Step 2 |
 | 3 | The chunk block's node columns: `start`, `end`, `kind`, `field`, and the canonical code copy | `device_chunk.rs`, `build` (`made`, `put`) | 14 bytes a node; 0.07 s a run | Step 4 |
 | 4 | Views expanded into device relations | `metal_join.rs`, `expand_view`; `device.rs`, `resident` | 660.8 MB, 111.5 ms a run | Step 4 |
@@ -235,8 +235,8 @@ reads need the ids, and the CPU's reads are their check.
 - **0325 step 5.** "The views it makes from a chunk … become relations in blocks of their own life" is withdrawn
   for views. A view is never made. The device's own relations that are derived (a fixpoint's total and delta, a
   lattice's total) stay relations in blocks.
-- **0293 §6, `Projected::up`.** It is kept on measurement, by the user's call, and is a per-node copy under this
-  rule. See Open.
+- **0293 §6, `Projected::up`.** A per-node copy: it goes with step 2. Scans carry the parent in the walk and point
+  reads use the tape's parent, so nothing reads it node by node.
 
 ## What it keeps
 
@@ -262,11 +262,5 @@ reads need the ids, and the CPU's reads are their check.
 
 ## Open
 
-- **`Projected::up`, the user's call.** 0293 §6 kept each node's parent on measurement: a pass reading every node's
-  parent off the tape cost 45–100 times a pass over the array. Under this rule it is a copy.
-  - The in-place readers in "How readers read" never read a parent node by node: a scan carries it in the walk, and a
-    GPU group finds it by one descent.
-  - The recommendation is to drop it with step 2, measured on the readers as built. Until the user decides, it is
-    the one named exception kept on purpose.
 - The rank directory for ids, only if step 2's measurement needs it.
 - Texts compared in place (spans' bytes) rather than through symbols: a later question, after step 3.
