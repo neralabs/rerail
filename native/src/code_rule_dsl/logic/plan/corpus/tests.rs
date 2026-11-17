@@ -1401,6 +1401,15 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_COSTS",
         // Keyed through what it adds: the observer's facts (the source files), which the prepared key hashes.
         "RERAIL_SOURCES_PHASE",
+        // Where rule images are read from and kept (decision 0246 §6): an image is keyed by its text, its scope and
+        // the format, so whichever store gives it, it is the same program; off, the text is lowered again.
+        "RERAIL_MODULE_IMAGES",
+        "RERAIL_IMAGE_STORE",
+        "RERAIL_SHIPPED_IMAGES",
+        // A bundle's export: the images written beside the store as well.
+        "RERAIL_EXPORT_IMAGES",
+        // A measurement aid (decision 0173): each version written out, the program unchanged.
+        "RERAIL_VERSION_TRACE",
     ];
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
     // Every switch named, however it is read (`var`, `var_os`, a constant, a helper's argument).
@@ -1466,10 +1475,15 @@ fn every_switch_lowering_reads_is_classified() {
         let b = a + corpus[a..].find(to).unwrap_or_else(|| panic!("corpus.rs has no {to:?} after {from:?}"));
         corpus[a..b].to_owned()
     };
-    // Combining: `combine_read`, what it calls that reads a switch (`scoping::guard`), and the `.rr` lowering its
-    // `rr::parse` runs (`logic/rr`, `front`). The combined program is kept under `COMBINING` alone.
-    let mut combining = sources(&["logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs"]);
-    combining.push(("corpus.rs, combine_read".to_owned(), region("\nfn combine_read(", "\n}\n")));
+    // Combining: `combine_read` (its link, `combine_linked`, and its tail on the tree and on the version), what it
+    // calls that reads a switch (`scoping::guard`, the tail's passes), and the `.rr` lowering its `rr::parse` runs
+    // (`logic/rr`, `front`). The combined program is kept under `COMBINING` alone.
+    let mut combining = sources(&[
+        "logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs", "logic/plan/corpus/preparation/whole.rs",
+        "logic/plan/corpus/preparation/on_request.rs", "logic/plan/corpus/preparation/hide.rs", "logic/plan/corpus/link.rs",
+    ]);
+    combining.push(("corpus.rs, combine_read and its tail".to_owned(), region("\nfn combine_read(", "\n/// `combine_read` up to the programs linked")));
+    combining.push(("corpus.rs, combine_linked".to_owned(), region("\nfn combine_linked_as<", "Tail::Many { hide: (shared")));
     // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (`hiding::fold_own`,
     // memo, session, profile, costs) and the passes. The prepared key holds `PREPARING` and the combined program's
     // key. Not `plan/keeps.rs` and `plan/choices.rs`: what a relation keeps is chosen in `plan::run` and kept under
@@ -1478,6 +1492,8 @@ fn every_switch_lowering_reads_is_classified() {
     let mut preparing = sources(&[
         "logic/simplify.rs", "logic/strings.rs", "logic/reach_form.rs", "logic/magic.rs", "logic/magic", "logic/plan/lower.rs",
         "logic/plan/corpus/cross_memo.rs", "logic/plan/corpus/hiding.rs", "logic/plan/corpus/memo.rs", "logic/plan/corpus/prepared.rs",
+        // Its passes on the version: `fold_own`'s and the merges (`combining`), and the combine's fact spaces.
+        "logic/plan/corpus/preparation/combining.rs",
         "logic/plan/corpus/session.rs", "logic/profile.rs", "logic/costs.rs", "typing/file_local.rs", "typing/file_local",
     ]);
     preparing.push(("corpus.rs, run_observed's preparation".to_owned(), region("\nfn run_observed(", "Arc::new(Prepared {")));

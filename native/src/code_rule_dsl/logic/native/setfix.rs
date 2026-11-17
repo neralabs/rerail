@@ -5389,7 +5389,7 @@ pub enum Step {
     /// `texts`: for a node read (`syntax::NODE_READS`), the run's binding of the long-text nodes it reads through
     /// (`functions::node_read`).
     Func { name: &'static str, kinds: &'static [crate::code_rule_dsl::logic::strings::functions::Kind], args: Vec<Key>, out: usize, bind: bool,
-        texts: Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> },
+        texts: Option<NodeTexts> },
     /// `@doc(a) = @doc(b)` (`eq`) or `!=`: the nodes' documents, `d` of `d << 32 | index`, compared.
     Doc { a: Key, b: Key, eq: bool },
     /// `out = @doc(n)`: node n's document, bound or tested.
@@ -5436,6 +5436,24 @@ impl JoinRule {
     /// The step made first for plan step `p`.
     pub fn step_of(&self, p: usize) -> Option<usize> {
         self.from.iter().position(|&f| f == p)
+    }
+}
+
+/// Where a node read (`Step::Func`'s `texts`) finds the run's long-text nodes: the binding, when the join was made
+/// after it, or the connection's scope, looked up as the step runs when it was made before (a phase's plan made
+/// before its run binds its nodes). Without a binding a read is NULL, as the SQL function's (`functions::register`).
+#[derive(Clone)]
+pub enum NodeTexts {
+    Held(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>),
+    At(usize),
+}
+
+impl std::fmt::Debug for NodeTexts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NodeTexts::Held(_) => f.write_str("Held"),
+            NodeTexts::At(at) => write!(f, "At({at})"),
+        }
     }
 }
 
@@ -5783,8 +5801,12 @@ fn join_rule_with(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, index
                 // A node's text or value is read through the run's binding of the long-text nodes, which holds its
                 // batch (`syntax::LongTexts`).
                 let texts = if crate::code_rule_dsl::facts::vtab::syntax::NODE_READS.contains(&name) {
-                    let nodes = crate::code_rule_dsl::facts::vtab::bound_source(conn, crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES);
-                    Some(nodes.ok_or_else(|| err(format!("@{name} without the run's long-text nodes bound")))?)
+                    let long = crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES;
+                    let at = conn.at();
+                    Some(match crate::code_rule_dsl::facts::vtab::bound_source_at(at, long) {
+                        Some(nodes) => NodeTexts::Held(nodes),
+                        None => NodeTexts::At(at),
+                    })
                 } else {
                     None
                 };
@@ -6521,7 +6543,14 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             Step::Func { name, kinds, args, out, bind, texts } => {
                 use crate::code_rule_dsl::logic::strings::functions::{eval, node_read, Kind};
                 let value = if let Some(nodes) = texts {
-                    node_read(name, Some(&**nodes), val(slots, args[0])).map_or(rusqlite::types::Value::Null, rusqlite::types::Value::Text)
+                    let read = match nodes {
+                        NodeTexts::Held(nodes) => node_read(name, Some(&**nodes), val(slots, args[0])),
+                        NodeTexts::At(at) => {
+                            let nodes = crate::code_rule_dsl::facts::vtab::bound_source_at(*at, crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES);
+                            node_read(name, nodes.as_deref(), val(slots, args[0]))
+                        }
+                    };
+                    read.map_or(rusqlite::types::Value::Null, rusqlite::types::Value::Text)
                 } else {
                     let mut strs = Vec::new();
                     let mut numbers = Vec::new();

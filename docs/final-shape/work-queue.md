@@ -1188,9 +1188,16 @@ pass.
     `text(i, x)`, and its run fails with `@rr_node_text without the run's long-text nodes bound`
     (`native/setfix.rs`, the function step's binding of `LONG_TEXT_NODES`). Some part of a phase's run evaluates a
     node's text before the run binds its long-text nodes.
+    **Fixed** (2026-11-16): the join was made before the run bound its nodes, and took the binding then. A node read
+    now holds the binding when there is one, or the connection's scope, and looks the binding up as it runs
+    (`setfix::NodeTexts`); with none bound it reads NULL, as the SQL function does. The 15 typing oracle tests,
+    `base_relations_read_are_inputs` and this test pass.
   - `corpus::tests::every_switch_lowering_reads_is_classified`: `RERAIL_EXPORT_IMAGES`, `RERAIL_IMAGE_STORE`,
     `RERAIL_SHIPPED_IMAGES` (`rr/images.rs`) and `RERAIL_MODULE_IMAGES` (`combine_read`) are read in combining but
     are in neither list. Each needs classifying: does it change a prepared program (`COMBINING`) or not?
+    **Fixed** (2026-11-16, with 0281 step 7a-1): none changes a prepared program. An image is keyed by its text, its
+    scope and the format, so the store it comes from gives the same program; the export only writes it out too.
+    They and `RERAIL_VERSION_TRACE` (a measurement aid that writes each version) are in `NOT_PREPARING`.
   - `sql_executor::tests::rule_files_use_the_core_prelude_and_unused_inputs_need_no_binding` (red at aa36f9104):
     running a rule file after binding a snapshot fails with `value: SQL output already exists; rebind inputs to
     clear derived results` (`sql_executor/session.rs`): the core prelude's `value` is taken for an output that
@@ -1198,6 +1205,10 @@ pass.
   - `convert::tests::helpers_take_the_metavariables_bound_around_them` and
     `convert::tests::a_sample_of_the_replay_gives_the_recorded_findings` (77 of 268 events), red at a31a11e22 with
     the phases test's error (`@rr_node_text without the run's long-text nodes bound`): the same cause, likely.
+  - `corpus::base_tests::base_relations_read_are_inputs` (red at e2c15672d, 2026-11-16): `text(sp, s)` of a
+    document's `source` span fails with the same error: no phase here, so the cause is not phase-specific.
+  - `typing::oracle_tests::rust_calls_program_agrees_with_rust_analyzer` (red at 0281 step 6d, 2026-11-16, its first
+    run since): the same error, in a Rust run.
   - Also: `sql_executor` as a whole, in parallel, passes 3 GB RSS (`tmp/capped.sh 3000`); with four threads too.
 - **Done when**: each passes, the first by binding the long-text nodes before whichever part reads them (or by the
   part not reading node text), the second by classifying each switch from what it does, the third from the cause.
@@ -1388,6 +1399,31 @@ pass.
   version's pass locates. This is 0281's debug check of a pass against its tree form, and Typing-support has changed
   those passes since 468130306 (6a–6e).
 - **Done when**: the test passes after Typing-support's next merge here, or the difference is traced to one side.
+### Q51. (Q22 on Typing-support) Every run parses its 10,047 guest tapes again
+
+- **Found** (2026-11-17, ep2 at 0281 step P, with B101 edits): every run, cold or edit, reports 132–462 tape
+  cache hits and 10,047 misses (`input tape cache`), over 300 files. The writer stores 10,047 tapes each run
+  (`a tape and its source: 10047 jobs`), so the next run never finds what this one wrote.
+  - The key (`facts/core.rs`, `queued_tape`) is the content digest, the tape tag, the grammar version and the format:
+    stable across runs. The hit depends on the caller's lookup (`found`), so the guests' lookup likely misses.
+  - Cost over an edit (`prof-body5`): parsing 1.82 s, guests 1.19 s and most of the store writer's 1.20 s, of 10.3 s.
+- **Done when**: an edit's run finds the guest tapes the last run wrote, and parses none of an unchanged file.
+- **Here** (at the merge of e829e72a7): Q30 (5d32effea) stopped the writes: a guest is parsed in memory, its tape
+  not stored. The parse each run stays; what is left is this item.
+
+### Q52. Three passes still go through a tree on Typing-support's version path (the merge of e829e72a7)
+
+- **Found** (2026-11-17, at the merge): the hub's passes that ours had on trees have no pass on the manager yet. The
+  merge keeps them correct by going through the tree:
+  - `requests_file_local` and `answers_where_documents_are` (0286, 0174 §8b) on the combine's tail
+    (`tail_version` → `requests_where_documents_are`): a program that answers an attribute on request is decoded,
+    the two run, and its image made again.
+  - A requesting text's cone (`rr::Text::lowered_in_version`): 0174 makes the on-request rewrite again over the
+    cone, and `sources_on_request` reads a tree. Typing-support's `with_cone_version` (from before 0174) copied the
+    library's on-request rules into the cone and is dropped.
+- **Done when**: each is a `ProgramPass` (as `on_request::SourcesOnRequest` is). A debug build checks it against
+  the tree, and the combine and the cone decode no tree.
+
 
 ## Questions for the user
 

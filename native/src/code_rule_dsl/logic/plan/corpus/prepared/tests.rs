@@ -50,7 +50,7 @@
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.py"), "from typing import List\nx: List[int] = []\n").unwrap();
         super::super::run(&program, &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        let prepared = super::super::with_prepared(|kept| kept.values().flatten().find(|p| p.prog.rules.iter().any(|r| r.head.rel.contains("violation"))).cloned()).expect("a prepared program");
+        let prepared = super::super::with_prepared(|kept| kept.values().flatten().find(|p| p.source.rules().any(|r| p.source.rel_name(r.head().rel()).contains("violation"))).cloned()).expect("a prepared program");
         let mut facts = super::facts_of(&prepared);
         // Another store, its atoms numbered past strings this one interned first: the program's names are not its.
         let store = crate::content_store::ContentStore::open(&dir.join("other.sqlite")).unwrap();
@@ -65,13 +65,11 @@
         let kept: Vec<i64> = facts["prepared_interned_atom"].iter().map(|r| r[3].integer().unwrap()).collect();
         assert_eq!(kept, here);
         assert!(super::relocate(&store, &mut facts, &moved, &lists).expect("read").is_none(), "already this store's");
-        let text = crate::code_rule_dsl::logic::program_text::print;
-        let front = crate::code_rule_dsl::logic::program_text::read(&text(&prepared.prog).unwrap()).unwrap();
-        super::prepared_of(&facts, front, moved, prepared.lowered.dialect).expect("the moved program reads as prepared");
+        super::prepared_of(&facts, std::sync::Arc::clone(&prepared.source), moved, prepared.lowered.dialect, &lists).expect("the moved program reads as prepared");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A prepared program reads back from what is kept of it: its two programs from their text, the rest from its
+    /// A prepared program reads back from what is kept of it: its two programs from their images, the rest from its
     /// facts (decision 0155). A pack rule, prepared.
     #[test]
     fn a_prepared_program_reads_back_from_its_text_and_facts() {
@@ -81,17 +79,18 @@
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.py"), "from typing import List\nx: List[int] = []\n").unwrap();
         super::super::run(&program, &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        let prepared = super::super::with_prepared(|kept| kept.values().flatten().find(|p| p.prog.rules.iter().any(|r| r.head.rel.contains("violation") || !r.body.is_empty())).cloned()).expect("a prepared program");
+        let prepared = super::super::with_prepared(|kept| kept.values().flatten().find(|p| p.source.rules().any(|r| p.source.rel_name(r.head().rel()).contains("violation") || r.body().next().is_some())).cloned()).expect("a prepared program");
         let facts = super::facts_of(&prepared);
         let dialect = prepared.lowered.dialect;
-        let text = crate::code_rule_dsl::logic::program_text::print;
-        let read = |p: &crate::code_rule_dsl::logic::front::Program| crate::code_rule_dsl::logic::program_text::read(&text(p).unwrap()).unwrap();
         // The lowered program's version, read back from its image's bytes, as the loader opens it.
         let lowered_image = |p: &super::Prepared| crate::code_rule_dsl::logic::program_image::Version::open(p.lowered.version.base_bytes().expect("a prepared program's version is a base")).unwrap();
+        // The source's version, read back the same way.
+        let source_image = |p: &super::Prepared| crate::code_rule_dsl::logic::program_image::Version::open(p.source.base_bytes().expect("the source is a base")).unwrap();
+        let lists = crate::code_rule_dsl::logic::front::Lists::default();
         let digest = |l: &crate::code_rule_dsl::logic::plan::lower::Lowered| l.placed().unwrap().digest();
-        let back = super::prepared_of(&facts, read(&prepared.prog), lowered_image(&prepared), dialect).unwrap();
+        let back = super::prepared_of(&facts, source_image(&prepared), lowered_image(&prepared), dialect, &lists).unwrap();
         // Program has no PartialEq: its Debug form is the comparison, field by field; versions compare by digest.
-        assert_eq!(format!("{:?}", back.prog), format!("{:?}", prepared.prog), "the front program");
+        assert_eq!((back.source.size(), back.source.digest()), (prepared.source.size(), prepared.source.digest()), "the source");
         assert_eq!(digest(&back.lowered), digest(&prepared.lowered), "the lowered program");
         assert_eq!(back.lowered.domains, prepared.lowered.domains);
         let matches = |p: &super::Prepared| p.vocabulary.matches.iter().map(|re| re.as_str().to_owned()).collect::<Vec<_>>();
@@ -108,14 +107,14 @@
         // tests that run beside this one.
         let all: Vec<std::sync::Arc<super::Prepared>> = super::super::with_prepared(|kept| kept.values().flatten().cloned().collect());
         for p in &all {
-            let b = super::prepared_of(&super::facts_of(p), read(&p.prog), lowered_image(p), p.lowered.dialect).unwrap();
+            let b = super::prepared_of(&super::facts_of(p), source_image(p), lowered_image(p), p.lowered.dialect, &lists).unwrap();
             assert_eq!((&b.split.exports, &b.split.base, &b.split.locations, &b.split.same_doc), (&p.split.exports, &p.split.base, &p.split.locations, &p.split.same_doc));
             assert_eq!(b.split.versions.cross.digest(), p.split.versions.cross.digest());
         }
         // And one stored without its split (an earlier entry's facts) makes it again, the same.
         let mut unsplit = facts.clone();
         unsplit.remove("prepared_split");
-        let again = super::prepared_of(&unsplit, read(&prepared.prog), lowered_image(&prepared), dialect).unwrap();
+        let again = super::prepared_of(&unsplit, source_image(&prepared), lowered_image(&prepared), dialect, &lists).unwrap();
         assert_eq!(again.split.versions.cross.digest(), prepared.split.versions.cross.digest(), "the split, made again");
         // No program is in the facts: no row per node (decision 0155).
         assert!(["program", "rule", "atom", "term"].iter().all(|r| !facts.contains_key(*r)), "{:?}", facts.keys().collect::<Vec<_>>());

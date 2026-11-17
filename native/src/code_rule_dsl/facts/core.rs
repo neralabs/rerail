@@ -682,7 +682,7 @@ pub fn digest(f: &Facts) -> [u8; 32] {
 
 /// The relations a program in `core.rr`'s shape declares (the engine's names, decision 0141, less those decision
 /// 0174's rewrite adds), as the rule language reads them; registered at load (`install_core_names`). Empty without one.
-pub(crate) fn core_names() -> &'static std::collections::BTreeSet<String> {
+pub fn core_names() -> &'static std::collections::BTreeSet<String> {
     static EMPTY: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     CORE_NAMES.get().map_or(&EMPTY, |names| names())
 }

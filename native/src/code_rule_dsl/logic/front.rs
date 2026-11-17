@@ -167,7 +167,7 @@ impl From<rerail_rr_syntax::Error> for Error {
 impl Error {
     /// The component and relation of a stratification failure (a negation or an aggregation inside its own
     /// component): T raised `NotStratifiable` for both, and magic sets recovers from either the same way.
-    pub(in crate::code_rule_dsl) fn unstratified(&self) -> Option<(&BTreeSet<String>, &str)> {
+    pub fn unstratified(&self) -> Option<(&BTreeSet<String>, &str)> {
         match self {
             Error::NotStratifiable { component, negated, .. } => Some((component, negated)),
             Error::AggregationInRecursion { component, aggregated, .. } => Some((component, aggregated)),

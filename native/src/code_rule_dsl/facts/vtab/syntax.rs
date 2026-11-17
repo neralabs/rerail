@@ -188,24 +188,40 @@ impl Projection {
     /// T's for one that declares its base relations itself (T's programs, the converter's, O74).
     pub fn of(program: &crate::code_rule_dsl::logic::front::ast::Program, reads: BTreeSet<String>) -> Self {
         let (spans, token_text) = span_text_demand(program);
-        crate::code_rule_dsl::logic::profile::decision("text of tokens", || if token_text { "made (a rule reads a token's text)".into() } else { "none (no rule reads a token's text)".into() });
         crate::code_rule_dsl::logic::profile::projection_plan(program, &reads);
         let core = crate::code_rule_dsl::facts::core::core_names();
-        let shape = if !core.is_empty() && core.iter().all(|r| program.decls.contains_key(r.as_str())) { Shape::Core } else { Shape::T };
-        let partial = program.facts.get(GUEST_POLICY).into_iter().flatten().filter_map(|row| match row.as_slice() {
+        let core_shape = !core.is_empty() && core.iter().all(|r| program.decls.contains_key(r.as_str()));
+        let partial: BTreeSet<String> = program.facts.get(GUEST_POLICY).into_iter().flatten().filter_map(|row| match row.as_slice() {
             [Value::Str(k), Value::Str(v)] if v == "partial" => k.strip_prefix("errors").map(|g| g.strip_prefix(':').unwrap_or("*").to_owned()),
             _ => None,
-        });
-        let verdict = shape == Shape::T && program.decls.get("syntax_error").is_some_and(|cols| cols.len() == 3);
+        }).collect();
+        let error_triple = program.decls.get("syntax_error").is_some_and(|cols| cols.len() == 3);
         let derived: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.to_string()).collect();
+        Self::of_parts(ProjectionParts { spans, token_text, core_shape, partial, error_triple, derived, rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect() }, reads)
+    }
+
+    /// `of` from what it reads of the program, found by its caller (`logic::plan::text_demand` over a version).
+    pub fn of_parts(parts: ProjectionParts, reads: BTreeSet<String>) -> Self {
+        let ProjectionParts { spans, token_text, core_shape, partial, error_triple, derived, rx_spans, ast_patterns } = parts;
+        crate::code_rule_dsl::logic::profile::decision("text of tokens", || if token_text { "made (a rule reads a token's text)".into() } else { "none (no rule reads a token's text)".into() });
+        let shape = if core_shape { Shape::Core } else { Shape::T };
+        let verdict = shape == Shape::T && error_triple;
         let reads = reads.into_iter().filter(|r| !derived.contains(r)).collect();
-        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect(), text_spans: Some(spans), token_text, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: partial.collect(), verdict, derived, compiled_rx: CompiledSpans::default() }
+        Projection { shape, reads: Some(reads), rx_spans, ast_patterns, text_spans: Some(spans), token_text, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial, verdict, derived, compiled_rx: CompiledSpans::default() }
     }
 
     /// This projection, with `text` made at any length for the node kinds whose text the program's rules read
     /// ([`text_kind_demand`]; `matchers` are the program's `ast` relations, by relation, as `matchers::lower` gives them).
-    pub fn with_long_text(mut self, program: &crate::code_rule_dsl::logic::front::ast::Program, matchers: &[(String, String, Vec<String>)]) -> Self {
-        let TextDemand { long, any, read, wide } = text_kind_demand(program, matchers);
+    pub fn with_long_text(self, program: &crate::code_rule_dsl::logic::front::ast::Program, matchers: &[(String, String, Vec<String>)]) -> Self {
+        let demand = text_kind_demand(program, matchers);
+        let anchors = if std::env::var("RERAIL_NODE_ANCHORS").is_ok_and(|v| v == "off") { Err("RERAIL_NODE_ANCHORS=off".into()) } else { node_anchors(program, matchers) };
+        self.with_long_text_parts(demand, anchors)
+    }
+
+    /// `with_long_text` from the text the rules read and the anchors, found by its caller (`logic::plan::text_demand`
+    /// over a version).
+    pub fn with_long_text_parts(mut self, demand: TextDemand, anchors: Result<BTreeSet<String>, String>) -> Self {
+        let TextDemand { long, any, read, wide } = demand;
         self.long_text = long;
         self.long_text_any = !any.is_empty();
         crate::code_rule_dsl::logic::profile::decision("text past the inline bound", || {
@@ -221,7 +237,6 @@ impl Projection {
         if !std::env::var("RERAIL_TEXT_NODES").is_ok_and(|v| v == "all") {
             self.text_nodes = read;
         }
-        let anchors = if std::env::var("RERAIL_NODE_ANCHORS").is_ok_and(|v| v == "off") { Err("RERAIL_NODE_ANCHORS=off".into()) } else { node_anchors(program, matchers) };
         crate::code_rule_dsl::logic::profile::decision("nodes projected", || match &anchors {
             Ok(kinds) => format!("the root and the subtrees of {} kinds: {}", kinds.len(), kinds.iter().cloned().collect::<Vec<_>>().join(", ")),
             Err(why) => format!("every node ({why})"),
@@ -282,13 +297,27 @@ impl TextNodes {
 /// What the rules read of `text` (`text_kind_demand`).
 pub struct TextDemand {
     /// The kinds whose text is read at any length.
-    long: BTreeSet<String>,
+    pub long: BTreeSet<String>,
     /// The text atoms (rule, body position) of a node of any kind, no twin reading its long text.
     pub any: Vec<(usize, usize)>,
     /// The nodes whose text (within the bound) is read; `None` every node.
     pub read: Option<TextNodes>,
     /// Where `read` is every node: the first rule that reads the text of a node it does not narrow.
-    wide: Option<String>,
+    pub wide: Option<String>,
+}
+
+/// What `Projection::of` reads of a program: the spans whose text a rule reads and whether a token's, whether the
+/// program declares every relation `core.rr` does (core.rr's shape), the grammars whose errors keep a partial tree,
+/// whether `syntax_error` has three columns, the derived relations, and the regex spans and AST patterns.
+pub struct ProjectionParts {
+    pub spans: BTreeSet<crate::code_rule_dsl::logic::front::ast::SpanIn>,
+    pub token_text: bool,
+    pub core_shape: bool,
+    pub partial: BTreeSet<String>,
+    pub error_triple: bool,
+    pub derived: BTreeSet<String>,
+    pub rx_spans: Vec<(crate::code_rule_dsl::logic::front::ast::SpanIn, String)>,
+    pub ast_patterns: Vec<String>,
 }
 
 /// Whether `v` is a node in a field whose every kind is a leaf (`field(x, "attribute", v)`): a token's text, which
@@ -330,8 +359,9 @@ pub fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::ast::Pr
     }
     // Each rule's twins follow it, so a rule's place does not depend on what other rules the program holds.
     let mut twins: std::collections::BTreeMap<usize, Vec<crate::code_rule_dsl::logic::front::ast::Rule>> = Default::default();
-    let mut fresh = 0usize;
     for (r, atoms) in by_rule.into_iter().filter(|(_, a)| a.len() <= MAX) {
+        // Fresh names counted per rule: a rule's twins do not depend on the others'.
+        let mut fresh = 0usize;
         for set in 1..(1u32 << atoms.len()) {
             let mut twin = program.rules[r].clone();
             for (bit, &i) in atoms.iter().enumerate().filter(|(b, _)| set >> b & 1 == 1) {

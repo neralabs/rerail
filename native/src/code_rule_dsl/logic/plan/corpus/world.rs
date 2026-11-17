@@ -33,14 +33,15 @@ pub(super) const LOAD: &str = "load";
 pub(super) const LOADED: &str = "loaded";
 
 /// Whether the program reads the file system or loads documents.
-pub(super) fn wanted(prog: &front::Program) -> bool {
-    std::iter::once(LOAD).chain(WORLD.iter().map(|(_, req)| *req)).any(|req| asks(prog, req))
+/// `prog` is the program's header (`Version::header`), `shape` its rules'.
+pub(super) fn wanted(prog: &front::Program, shape: &super::shape::Shape) -> bool {
+    std::iter::once(LOAD).chain(WORLD.iter().map(|(_, req)| *req)).any(|req| asks(prog, shape, req))
 }
 
 /// Whether `prog` makes request `req`: by a rule, or as facts (a constant key lowers to one: `dir_entry("sub", …)`
 /// asks with the fact `rr_dir_req("sub")`, `rr::lower`'s `world_demand`).
-fn asks(prog: &front::Program, req: &str) -> bool {
-    prog.rules.iter().any(|r| r.head.rel == req) || prog.facts.get(req).is_some_and(|rows| !rows.is_empty())
+fn asks(prog: &front::Program, shape: &super::shape::Shape, req: &str) -> bool {
+    shape.made.contains(req) || prog.facts.get(req).is_some_and(|rows| !rows.is_empty())
 }
 
 /// The requests a program makes, each with what answers it, before a load's per-file rows are added
