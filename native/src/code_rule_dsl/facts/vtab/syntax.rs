@@ -2895,9 +2895,7 @@ impl Extra {
     #[allow(clippy::type_complexity)]
     fn relations(self, atom: &dyn Fn(i64) -> i64) -> (Vec<(&'static str, Relation)>, Vec<(String, Relation)>) {
         let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
-            let mut r = Relation::new(columns);
-            rows.for_each(|row| r.push(&row));
-            r
+            Relation::from_rows(columns, rows)
         };
         let mut out = Vec::new();
         if self.source {
@@ -3390,9 +3388,7 @@ impl Batch {
             .collect();
         let _relations_span = crate::code_rule_dsl::logic::profile::span(|| "relations".into());
         let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
-            let mut r = Relation::new(columns);
-            rows.for_each(|row| r.push(&row));
-            r
+            Relation::from_rows(columns, rows)
         };
         let pairs = |columns: &[&str], rows: &[[i64; 2]], sym: [bool; 2]| {
             relation(columns, &mut rows.iter().map(|&[a, b]| vec![if sym[0] { atom(a) } else { a }, if sym[1] { atom(b) } else { b }]))

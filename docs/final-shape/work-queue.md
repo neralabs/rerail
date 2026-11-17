@@ -1932,3 +1932,11 @@ that into the cross part's columns, and copy the files' rows into their entries.
 The columns themselves stay: they are the only copy of rows whose batch is gone, and they hold only the columns
 read. Their accumulated size, about 160–190 MB at 300 files, is data, not a copy. "base rows for the memo" plus
 "for the cross part" took 0.96 s; they take 0.73 s now.
+
+### Q85. The vtab's relations written at their size, not staged
+
+Done 2026-11-17. The user's list, item "the virtual-table staging in Relation::push". Producers build a relation from
+an iterator. `Relation::from_rows` writes the rows straight into a block relation reserved at their number when the
+iterator knows it exactly, as the producers' iterators over vectors do. There is no heap staging, and no growth or
+move: the moves are why rows were staged (70 MB more at the peak on hogql, 0325 step 3). An iterator that doesn't
+know its length is staged as before. 300 files: peak 2.36 GB (2.38 before), findings the reference's.
