@@ -4710,6 +4710,12 @@ fn run_observed(
     let mut base_held: HashMap<String, Vec<Option<String>>> = HashMap::new();
     // Their digests, when a session's run took them (`retain::kept_source`).
     let mut input_digests: HashMap<String, u64> = HashMap::new();
+    // A semi-join's base relations' statistics (`semijoin`): no keeper counts them (it counts every row, the relation
+    // holds those its exports name), so each run measured them, sorting every column (8 sorts of 430k-460k rows on
+    // an edit of ep2). Measured once at their rows, they are kept beside the input's frame (`write_input_frames`)
+    // and read with it on the kept route (`kept_inputs`): by relation, the rows' digest and the statistics.
+    let mut kept_input_stats: HashMap<String, (u64, Vec<(String, i64, i64, i64, i64)>)> = HashMap::new();
+    let mut semijoin_stats: HashMap<String, Vec<(String, i64, i64, i64, i64)>> = HashMap::new();
     // The atoms the inputs' digests read their content by (`retain::cells_of`, decision 0212).
     let input_atoms = store.atoms_handle();
     let mut totals = Totals::default();
@@ -7950,7 +7956,7 @@ fn run_observed(
                 let prog = &placed;
                 let fields = prog.fields().map_err(|e| e.to_string())?;
                 let rels: Vec<String> = split.exports.iter().cloned().chain(stored.iter().map(|(r, _)| r.clone())).collect();
-                let kept = retain::kept_inputs(store, kept_strata::space(root), binds, prog, &split.locations, &rels).map_err(|e| e.to_string())?.map_err(|why| format!("no kept inputs of this cross part: {why}"))?;
+                let kept = retain::kept_inputs(store, kept_strata::space(root), binds, prog, &split.locations, &rels, &semijoin).map_err(|e| e.to_string())?.map_err(|why| format!("no kept inputs of this cross part: {why}"))?;
                 let _s1 = crate::code_rule_dsl::logic::profile::span(|| "the changed files' old and new rows".into());
                 // The changed files' entries as the kept inputs hold them: the keeper's, found before the first wave.
                 let mut old_entries = Vec::new();
@@ -8084,7 +8090,10 @@ fn run_observed(
                 for (rel, width, is_base, bound, source, patch) in results {
                     let k = &kept[&rel];
                     input_digests.insert(rel.clone(), patch.digest);
-                    adopted.insert(rel.clone(), retain::KeptInput { source: retain::renamed(Arc::clone(&k.source), bound.clone()), docs: Arc::clone(&k.docs), digest: k.digest, ranges: Arc::clone(&k.ranges) });
+                    if let Some(st) = &k.stats {
+                        kept_input_stats.insert(rel.clone(), (k.digest, st.clone()));
+                    }
+                    adopted.insert(rel.clone(), retain::KeptInput { source: retain::renamed(Arc::clone(&k.source), bound.clone()), docs: Arc::clone(&k.docs), digest: k.digest, ranges: Arc::clone(&k.ranges), stats: k.stats.clone() });
                     if let Some(docs) = patch.docs {
                         // Its rows' digests by owner, for the frames written back and the next run.
                         kept_input_docs.insert(rel.clone(), Arc::new(docs));
@@ -8283,6 +8292,15 @@ fn run_observed(
                         let n = rows as i64;
                         columns.iter().map(|c| by_name.get(c).cloned().unwrap_or((c.clone(), n, n, n, n))).collect::<Vec<_>>()
                     }
+                    // A semi-join's, kept at these rows (`kept_input_stats`), else measured and kept for the next run.
+                    None if semijoin.contains(&rel) => match kept_input_stats.get(&rel).filter(|(d, _)| input_digests.get(&rel) == Some(d)) {
+                        Some((_, st)) => st.clone(),
+                        None => {
+                            let st = syntax::statistics(source.as_ref());
+                            semijoin_stats.insert(rel.clone(), st.clone());
+                            st
+                        }
+                    },
                     None => syntax::statistics(source.as_ref()),
                 };
                 totals.add(&rel, rows, &statistics);
@@ -8302,7 +8320,14 @@ fn run_observed(
                 None => crate::code_rule_dsl::logic::native::component::columns_source(columns, values),
             };
             let source = retain::kept_source(parts.as_deref(), &rel, Arc::clone(&source), &retain::cells_of(&input_atoms, &run_placed, &lowered.domains, &rel, source.columns().len()), &mut input_digests);
-            let statistics = statistics.unwrap_or_else(|| syntax::statistics(source.as_ref()));
+            let statistics = statistics.unwrap_or_else(|| {
+                let st = syntax::statistics(source.as_ref());
+                // A semi-join's, kept beside its frame for the next run's kept route (`kept_input_stats`).
+                if semijoin.contains(&rel) {
+                    semijoin_stats.insert(rel.clone(), st.clone());
+                }
+                st
+            });
             totals.add(&rel, rows, &statistics);
             base_sources.insert(rel, source);
         }
@@ -8965,7 +8990,7 @@ fn run_observed(
                     let derived_again: std::cell::RefCell<BTreeSet<String>> = std::cell::RefCell::new(BTreeSet::new());
                     // The inputs' frames, before the run: they depend on the inputs alone.
                     let inputs_done = match (&was_frames, let_go_inputs) {
-                        (Some(was), true) => Some(retain::write_input_frames(store, was, &cross_placed, &cross.domains, &split.locations, &cross_inputs, &digests, &input_docs)),
+                        (Some(was), true) => Some(retain::write_input_frames(store, was, &cross_placed, &cross.domains, &split.locations, &cross_inputs, &digests, &input_docs, &semijoin_stats)),
                         _ => None,
                     };
                     // `false`: not taken, so the run holds it to its end as before.
@@ -9342,7 +9367,7 @@ fn run_observed(
                     let s = span("retain");
                     let mut next = retain::after(cell.take(), ckey, digests.clone(), &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_stats, input_docs, (run_docs_held.lock().expect("the run's documents").clone(), memo_whole), patched, retain::budget());
                     if let Some(was) = &was_frames {
-                        let written = next.write_frames(store, was, &cross_placed, &cross.domains, &split.locations, &cross_sccs, &cut, &cross_inputs, &digests, &unchanged_rels, &run_deltas, handed, inputs_done)?;
+                        let written = next.write_frames(store, was, &cross_placed, &cross.domains, &split.locations, &cross_sccs, &cut, &cross_inputs, &digests, &unchanged_rels, &run_deltas, handed, inputs_done, &semijoin_stats)?;
                         crate::code_rule_dsl::logic::profile::decision("the kept part, to the frames (t33 K4)", || format!("{written} rows of what changed queued to the store"));
                     }
                     drop(s);
@@ -11491,7 +11516,7 @@ pub mod tests {
         let hash = super::super::row_digest(&[string]);
         let docs: retain::DocDigests = [(string, (hash.wrapping_mul(3), 3))].into_iter().collect();
         let ranges: retain::Ranges = [(string, (0u32, 3u32))].into_iter().collect();
-        let kept = retain::KeptInput { source, digest: retain::digest_of_docs(&docs), docs: Arc::new(docs), ranges: Arc::new(ranges) };
+        let kept = retain::KeptInput { source, digest: retain::digest_of_docs(&docs), docs: Arc::new(docs), ranges: Arc::new(ranges), stats: None };
         let evaluated: BTreeSet<i64> = [string].into_iter().collect();
         // The changed file held the string, and holds it still.
         let cells = super::super::Cells::plain(1);
@@ -11519,6 +11544,7 @@ pub mod tests {
             digest: retain::digest_of_docs(&docs),
             docs: Arc::new(docs.clone()),
             ranges: Arc::new(ranges.clone()),
+            stats: None,
         };
         let evaluated: BTreeSet<i64> = [doc].into_iter().collect();
         let cells = super::super::Cells::plain(2);

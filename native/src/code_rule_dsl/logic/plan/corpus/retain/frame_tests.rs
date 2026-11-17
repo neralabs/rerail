@@ -250,7 +250,7 @@ fn a_kept_input_is_decoded_where_it_is_first_read() {
     store.keep_frames(&SPACE, &[bad], &[], None).unwrap();
     store.written().unwrap();
     let rels = ["input0".to_owned(), "input1".to_owned()];
-    let kept = kept_inputs(&store, SPACE, KEY, &pl(&prog), &Locations::new(), &rels).unwrap().expect("the inputs' tables and counts are as kept");
+    let kept = kept_inputs(&store, SPACE, KEY, &pl(&prog), &Locations::new(), &rels, &BTreeSet::new()).unwrap().expect("the inputs' tables and counts are as kept");
     let (good, read_bad) = (&kept["input0"].source, &kept["input1"].source);
     assert_eq!((good.len(), read_bad.len()), (3, 3), "each input's rows counted from its documents' table");
     // Q70: a row read before the input is read whole decodes its granule alone, so input1's good granules read as

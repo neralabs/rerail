@@ -4,7 +4,7 @@ use super::*;
 use crate::code_rule_dsl::language::{self, GrammarDialect};
 use crate::code_rule_dsl::fixtures::{document, temp};
 use crate::code_rule_dsl::residency::slabs::{self, ChunkTape, DocTable};
-use crate::code_rule_dsl::tape::{Grammar, TAPE_FORMAT_VERSION, TapeDoc};
+use crate::code_rule_dsl::tape::{Grammar, TapeDoc};
 use crate::content_store::ContentStore;
 use sha2::{Digest as _, Sha256};
 // What the backend reads through its own imports, which its facade in the engine does not re-export.

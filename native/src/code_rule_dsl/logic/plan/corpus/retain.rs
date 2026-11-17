@@ -1518,6 +1518,9 @@ pub(in crate::code_rule_dsl) struct KeptInput {
     pub(in crate::code_rule_dsl) docs: Arc<DocDigests>,
     pub(in crate::code_rule_dsl) digest: u64,
     pub(in crate::code_rule_dsl) ranges: Arc<Ranges>,
+    /// Its statistics as a run measured them at these rows (`digest`), kept beside its frame (decision 0120 §3's
+    /// part): asked only for an input `kept_inputs` is told to (`stats_of`), whose statistics no keeper counts.
+    pub(in crate::code_rule_dsl) stats: Option<Vec<(String, i64, i64, i64, i64)>>,
 }
 
 /// Each owner's rows in a kept input: (first row, rows).
@@ -1542,7 +1545,7 @@ pub(in crate::code_rule_dsl) fn kept_inputs_stored(store: &ContentStore, space: 
 /// The inputs `rels` of the cross part `prog` (key `key`) as the store's frames in `space` keep them: read as
 /// `Retained::load` reads a changed input, each owner's rows a range. `Err` (why) when one is not kept, or its frames
 /// do not match their document table.
-pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32], binds: [u8; 32], prog: &Placed, locations: &Locations, rels: &[String]) -> Result<std::result::Result<HashMap<String, KeptInput>, String>> {
+pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32], binds: [u8; 32], prog: &Placed, locations: &Locations, rels: &[String], stats_of: &BTreeSet<String>) -> Result<std::result::Result<HashMap<String, KeptInput>, String>> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept inputs, from the frames".into());
     let names: Vec<(String, FrameRel)> = rels.iter().map(|rel| (rel.clone(), FrameRel { name: rel.clone(), ident: input_ident(rel, prog, &binds) })).collect();
     let all: Vec<FrameRel> = names.iter().map(|(_, f)| f.clone()).collect();
@@ -1572,6 +1575,9 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
             let owners = atom_owned.then_some(&*atoms);
             docs.keys().map(|d| granule(*d, owners)).collect::<BTreeSet<_>>().into_iter().map(move |g| (frame.clone(), g))
         })
+        // An input's statistics, where the run is to read them kept (`stats_of`): a part of its frame, admitted
+        // with its granules, so no read of its own.
+        .chain(names.iter().filter(|(rel, _)| kept_stats::on() && stats_of.contains(rel)).map(|(_, frame)| (frame.clone(), kept_stats::PART)))
         .collect();
     let parts = store.admit_frame_parts(&space, &keys).map_err(|e| Error::Plan(e.to_string()))?;
     let mut out = HashMap::new();
@@ -1617,7 +1623,17 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
             }
             None => source,
         };
-        out.insert(rel.clone(), KeptInput { source, docs: Arc::clone(docs), digest: *digest, ranges: Arc::new(ranges) });
+        // Its statistics at these rows: the part's entry under the frame's digest (an older entry is never matched).
+        let stats = parts
+            .get(&(frame.clone(), kept_stats::PART))
+            .filter(|p| p.stored.digest == *digest)
+            .and_then(|p| p.rows().ok())
+            .and_then(|r| kept_stats::from_words(&r.rows))
+            .and_then(|all| match all.get(&(rel.clone(), *digest)) {
+                Some(kept_stats::KeptStat::Measured((columns, _, _))) => Some(columns.clone()),
+                _ => None,
+            });
+        out.insert(rel.clone(), KeptInput { source, docs: Arc::clone(docs), digest: *digest, ranges: Arc::new(ranges), stats });
     }
     Ok(Ok(out))
 }
@@ -2427,7 +2443,7 @@ impl Retained {
     /// rows changed, with the input's digests by document. The relations kept as they were stay as stored.
     /// `sccs`: `prog`'s strata, computed once by the caller.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn write_frames(&self, store: &ContentStore, was: &InFrames, prog: &Placed, domains: &lower::Domains, locations: &Locations, sccs: &[BTreeSet<String>], cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, (Vec<i64>, Vec<i64>)>, mut handed: HashMap<String, Handed>, inputs_done: Option<InputsWritten>) -> Result<usize> {
+    pub(in crate::code_rule_dsl) fn write_frames(&self, store: &ContentStore, was: &InFrames, prog: &Placed, domains: &lower::Domains, locations: &Locations, sccs: &[BTreeSet<String>], cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, (Vec<i64>, Vec<i64>)>, mut handed: HashMap<String, Handed>, inputs_done: Option<InputsWritten>, input_stats: &HashMap<String, Vec<(String, i64, i64, i64, i64)>>) -> Result<usize> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept part's changes, to the frames".into());
         let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed(prog.clone());
         // Literal-only leaves are part of the derived relation's identity (leaf_identity), not runtime
@@ -2445,7 +2461,7 @@ impl Retained {
         // lets its inputs go, `inputs_done`).
         let InputsWritten { mut now, mut written, queued: inputs_queued } = match inputs_done {
             Some(done) => done,
-            None => write_input_frames(store, was, prog, domains, locations, inputs, digests, &self.input_docs),
+            None => write_input_frames(store, was, prog, domains, locations, inputs, digests, &self.input_docs, input_stats),
         };
         // Every input the run bound, framed or not (an option's `env`, an earlier phase's export): its digest is
         // what a relation derived from it records.
@@ -2630,7 +2646,7 @@ pub(in crate::code_rule_dsl) struct InputsWritten {
 /// by document, queued as each input's job makes them. They depend on the inputs alone, so a run that lets its inputs
 /// go after their last reader (Q74) writes them before it runs, and hands what it wrote to `write_frames`.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &InFrames, prog: &Placed, domains: &lower::Domains, locations: &Locations, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, input_docs: &HashMap<String, Arc<DocDigests>>) -> InputsWritten {
+pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &InFrames, prog: &Placed, domains: &lower::Domains, locations: &Locations, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, input_docs: &HashMap<String, Arc<DocDigests>>, input_stats: &HashMap<String, Vec<(String, i64, i64, i64, i64)>>) -> InputsWritten {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the inputs' frames".into());
     let mut now: HashMap<String, u64> = HashMap::new();
     let mut written = 0;
@@ -2664,7 +2680,16 @@ pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &I
         let types = types_of(prog, domains, rel);
         let cells = if types.len() == width { Cells::new(&atoms, &types) } else { Cells::plain(width) };
         let digest = digests.get(rel).copied().unwrap_or_else(|| digest(source.as_ref(), &cells));
+        // Its statistics this run measured (an input no keeper counts, a semi-join's: `kept_inputs`' `stats_of`),
+        // kept beside its frame at these rows (decision 0120 §3's part), unchanged rows or not: measured, they were
+        // not kept at them.
+        if let Some(columns) = input_stats.get(rel).filter(|_| kept_stats::on()) {
+            let all: kept_stats::ByDigest = [((rel.clone(), digest), kept_stats::KeptStat::Measured((columns.clone(), Vec::new(), BTreeSet::new())))].into_iter().collect();
+            let words = kept_stats::to_words(&kept_stats::encode(&all));
+            puts.push(FramePut { rel: name.clone(), part: kept_stats::PART, digest, reads: Vec::new(), rows: FrameRows { types: vec![b'i'], n: words.len(), rows: words } }.encoded());
+        }
         if was.inputs.get(rel).is_some_and(|(d, _)| *d == digest) {
+            queue(puts);
             return Some((digest, written));
         }
         // A relation of no columns is its count: one document's entry, its digest the input's (`digest`).
