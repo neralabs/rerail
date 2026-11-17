@@ -23,7 +23,7 @@ import {
   worktreeRegistry,
   type RepositoryIdentityLocation,
 } from "./repository-identity.js";
-import { checkouts, mergeAssistState, notAnEarlierSpelling, repositories, ruleSettings } from "../storage/schema.js";
+import { checkouts, mergeAssistState, notAnEarlierSpelling, pathKeySpellings, repositories, ruleSettings } from "../storage/schema.js";
 
 type Reader = Pick<RerailDatabase, "select">;
 type Writer = Pick<RerailDatabase, "select" | "insert" | "update" | "delete">;
@@ -594,9 +594,19 @@ export function repositoryHistoryIds(repository: RepositoryListing): string[] {
  */
 type OnDisk = { readonly commonDirectory: string } | "unlisted" | "unknown";
 
-interface LookedAt {
+/**
+ * A recorded checkout as a pass reads it: `path`, the key it is recorded under, and `folder`, the key this build gives
+ * its folder. They differ for a row the `path-keys-as-stored` step kept for an earlier build under another spelling of
+ * the folder (`path_key_spellings`): the pass looks at that row as its folder, so it goes with the folder and never
+ * because Git or the file system no longer answers to the earlier spelling.
+ */
+interface RecordedRow {
   readonly path: string;
   readonly cloneId: string;
+  readonly folder: string;
+}
+
+interface LookedAt extends RecordedRow {
   readonly onDisk: OnDisk;
 }
 
@@ -676,7 +686,7 @@ async function unlistedByTheirClones(looked: readonly LookedAt[], pass: Pass): P
   const gone: string[] = [];
   for (const row of looked) {
     if (pass.signal?.aborted === true) return [];
-    if (row.onDisk === "unlisted" && !(await listedInClone(row.path, clones.get(row.cloneId), pass))) gone.push(row.path);
+    if (row.onDisk === "unlisted" && !(await listedInClone(row.folder, clones.get(row.cloneId), pass))) gone.push(row.path);
   }
   return gone;
 }
@@ -687,10 +697,10 @@ async function unlistedByTheirClones(looked: readonly LookedAt[], pass: Pass): P
  */
 function cloneFolders(looked: readonly LookedAt[]): Map<string, Map<string, string>> {
   const clones = new Map<string, Map<string, string>>();
-  for (const { path, cloneId, onDisk } of looked) {
+  for (const { folder, cloneId, onDisk } of looked) {
     if (typeof onDisk !== "object") continue;
     const folders = clones.get(cloneId) ?? new Map<string, string>();
-    if (!folders.has(onDisk.commonDirectory)) folders.set(onDisk.commonDirectory, path);
+    if (!folders.has(onDisk.commonDirectory)) folders.set(onDisk.commonDirectory, folder);
     clones.set(cloneId, folders);
   }
   for (const { cloneId, onDisk } of looked) if (onDisk === "unknown") clones.delete(cloneId);
@@ -914,6 +924,9 @@ export interface UnansweredLooks {
   looking: Promise<unknown> | undefined;
 }
 
+/** The key this build gives a recorded checkout's folder: the one `path_key_spellings` names for its key, else its key. */
+const folderKey = sql<string>`coalesce(${pathKeySpellings.current}, ${checkouts.checkoutPath})`;
+
 /**
  * Forget the recorded checkouts Git no longer takes for checkouts of their clone ({@link unlistedByTheirClones}), with
  * their own settings, and return their paths. A checkout Git can't answer for stays, whatever became of its folder: a
@@ -924,15 +937,16 @@ export interface UnansweredLooks {
  * first leaves the call it waited on in `unanswered`, and no pass looks at anything until it is answered, so a share
  * that does not answer holds one pool thread or one Git. A checkout recorded or seen again since `now` stays, as when a
  * session starts in a worktree made again at a removed one's path while the others are looked at. A copy kept for an
- * earlier build under another spelling of a folder stays: Git lists the folder under this build's spelling.
+ * earlier build under another spelling of a folder is looked at as its folder ({@link RecordedRow}): it stays while
+ * that folder does, and goes with it.
  */
 export async function pruneCheckouts(
   db: RerailDatabase,
   { now = Date.now(), signal, unanswered = { looking: undefined } }: PruneCheckoutsOptions = {},
 ): Promise<string[]> {
   if (unanswered.looking !== undefined) return [];
-  const rows = db.select({ path: checkouts.checkoutPath, cloneId: checkouts.cloneId }).from(checkouts)
-    .where(notAnEarlierSpelling(checkouts.checkoutPath)).all();
+  const rows = db.select({ path: checkouts.checkoutPath, cloneId: checkouts.cloneId, folder: folderKey }).from(checkouts)
+    .leftJoin(pathKeySpellings, eq(pathKeySpellings.stored, checkouts.checkoutPath)).all();
   const looking = goneCheckouts(rows, signal);
   unanswered.looking = looking;
   const answered = (): void => { unanswered.looking = undefined; };
@@ -943,7 +957,7 @@ export async function pruneCheckouts(
 }
 
 /** {@link unlistedByTheirClones} of `rows`, their folders looked at one by one; none once `signal` aborts. */
-async function goneCheckouts(rows: ReadonlyArray<{ readonly path: string; readonly cloneId: string }>, signal: AbortSignal | undefined): Promise<string[]> {
+async function goneCheckouts(rows: readonly RecordedRow[], signal: AbortSignal | undefined): Promise<string[]> {
   const pass: Pass = { signal, recorded: new Set(rows.map(row => listingKey(row.path))), removed: new Map(), listings: new Map() };
   const looked: LookedAt[] = [];
   for (const row of rows) {
@@ -972,10 +986,10 @@ async function unlessAborted<T>(work: Promise<T>, signal: AbortSignal | undefine
   }
 }
 
-async function onDiskOf({ path, cloneId }: { readonly path: string; readonly cloneId: string }, pass: Pass): Promise<OnDisk> {
-  const present = await folderPresent(path, cloneId, pass);
+async function onDiskOf({ folder, cloneId }: RecordedRow, pass: Pass): Promise<OnDisk> {
+  const present = await folderPresent(folder, cloneId, pass);
   if (present === undefined) return "unknown";
-  return present ? await gitEntry(path, cloneId, pass) : "unlisted";
+  return present ? await gitEntry(folder, cloneId, pass) : "unlisted";
 }
 
 /** Forget those of `gone` not recorded or seen again since `now`, with their own settings, and return their paths. */

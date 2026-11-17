@@ -12,7 +12,7 @@ import { startRerail } from "../../../src/cli/index.js";
 import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import {
-  listedCheckouts, listedCheckoutStates, listRepositories, nestedCheckouts, recordCheckout, repositoryHistoryIds,
+  listedCheckouts, listedCheckoutStates, listRepositories, nestedCheckouts, pruneCheckouts, recordCheckout, repositoryHistoryIds,
 } from "../../../src/engine/catalog/repository-registry.js";
 import { setUpRepository } from "../../../src/engine/catalog/rule-configuration.js";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
@@ -133,6 +133,43 @@ async function checkoutFolder({ git = true } = {}): Promise<{ folder: string; da
  */
 function onTheSystemDrive(folder: string): void {
   vi.stubEnv("SystemDrive", win32.parse(folder).root.slice(0, 2));
+}
+
+/**
+ * A worktree of the clone at `folder`, beside it, which an earlier build recorded under a spelling that no longer reaches
+ * it (as through a link or a drive letter since removed), with a rule turned off there; the step has copied its rows to
+ * the worktree's own key, and this build has recorded the clone's own checkout at `folder`.
+ */
+function worktreeRecordedEarlier(folder: string, databasePath: string): { worktree: string; stored: string } {
+  const worktree = join(dirname(folder), "feature");
+  const stored = join(dirname(folder), "link", "feature");
+  execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.com", "commit", "-q", "--allow-empty", "-m", "first"],
+    { cwd: folder, stdio: "ignore" });
+  execFileSync("git", ["worktree", "add", "-q", "-b", "feature", worktree], { cwd: folder, stdio: "ignore" });
+  earlierBuildRecorded(worktree, databasePath, stored);
+  vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? worktree : path));
+  const database = openRerailDatabase(databasePath);
+  try {
+    recordCheckout(database, folder);
+  } finally {
+    database.$client.close();
+  }
+  return { worktree, stored };
+}
+
+/** What a pruning pass forgets, and the checkouts and checkout settings it leaves. */
+async function pruned(databasePath: string) {
+  const database = openRerailDatabase(databasePath);
+  try {
+    const forgotten = (await pruneCheckouts(database)).sort();
+    return {
+      forgotten,
+      recorded: listRepositories(database).flatMap(repository => repository.checkouts.map(row => row.checkoutPath)).sort(),
+      settings: rows(database, `SELECT owner_id AS ownerId, "on" FROM rule_settings WHERE owner_kind = 'checkout' ORDER BY owner_id`),
+    };
+  } finally {
+    database.$client.close();
+  }
 }
 
 /** Holds the file's write lock on a connection of its own, as another writer does, until the returned end runs. */
@@ -796,6 +833,32 @@ describe("path keys an earlier build stored under another spelling", () => {
       counts: listing.repositories.map(repository => repository.checkoutCount),
       page: page.clones.flatMap(clone => clone.checkouts.map(checkout => checkout.checkoutPath)),
     }).toEqual({ counts: [1], page: [folder] });
+  });
+
+  // The daemon's pass that forgets checkouts Git no longer lists looked at an earlier build's row under its own spelling,
+  // which Git does not list: it forgot the row of a worktree still there, and the delete trigger took the rule settings
+  // of the step's copy with it.
+  it("stay, with the copy's settings, while their folder is a checkout Git lists, though the spelling no longer reaches it", async () => {
+    const { folder, databasePath } = await checkoutFolder();
+    onTheSystemDrive(folder);
+    const { worktree, stored } = worktreeRecordedEarlier(folder, databasePath);
+
+    expect(await pruned(databasePath)).toEqual({
+      forgotten: [],
+      recorded: [folder, stored, worktree].sort(),
+      settings: [{ ownerId: worktree, on: 0 }, { ownerId: stored, on: 0 }],
+    });
+  });
+
+  // The pass left an earlier build's rows out, so a removed worktree's row under an earlier spelling stayed for good,
+  // with its settings, and every read over the repository's checkouts went on paying for it.
+  it("go with their folder once Git no longer lists it, as the copy of their row does", async () => {
+    const { folder, databasePath } = await checkoutFolder();
+    onTheSystemDrive(folder);
+    const { worktree, stored } = worktreeRecordedEarlier(folder, databasePath);
+    execFileSync("git", ["worktree", "remove", "--force", worktree], { cwd: folder, stdio: "ignore" });
+
+    expect(await pruned(databasePath)).toEqual({ forgotten: [stored, worktree].sort(), recorded: [folder], settings: [] });
   });
 
   it("stay where the key cannot be resolved or is no whole path, and the database still opens", async () => {
