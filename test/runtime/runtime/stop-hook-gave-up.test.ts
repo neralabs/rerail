@@ -90,7 +90,7 @@ describe("a Claude Code stop whose hook gave up", () => {
     expect(answered.answer).toEqual([]);
     // The checks run on: an idle close leaves the session open for the steers they find, as for a check that outran
     // a tool result's wait.
-    expect(await held.runtime.closeIdleSession(held.sessionId)).toBe(false);
+    expect(await held.runtime.closeIdleSession(held.sessionId)).toEqual({ kind: "owing" });
   });
 
   it("hands the steers its checks find to the session's next event, once", async () => {
