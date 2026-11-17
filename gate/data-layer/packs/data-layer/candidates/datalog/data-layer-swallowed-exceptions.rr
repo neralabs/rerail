@@ -17,7 +17,6 @@ swe_stop_target("class_definition"). swe_stop_target("function_definition"). swe
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
 .decl out_scope(d: number)
-.decl rr_node_text_req_by_swe_async_with_0(n: node)
 .decl swe_alias(e: node, s: symbol)
 .decl swe_async_with(w: node)
 .decl swe_attr(n: node, object: symbol, attribute: symbol)
@@ -104,7 +103,3 @@ swe_shadowed(w, i) :- swe_before(w, i), swe_ctx_import(d, i, _, ie), swe_ctx_imp
 swe_imported_suppress(w) :- swe_before(w, i), swe_imports_suppress(i), !swe_shadowed(w, i).
 violation("data-layer-swallowed-exceptions", "suppress-critical", "CRITICAL", p, l) :- swe_doc(d, p), node(d, w, "with_statement", _, _), swe_with_call(w, c), swe_contextlib_suppress(c), !swe_one_keyerror(c), line(w, l).
 violation("data-layer-swallowed-exceptions", "suppress-critical", "CRITICAL", p, l) :- swe_doc(d, p), node(d, w, "with_statement", _, _), swe_with_call(w, c), swe_suppress_name(c), swe_imported_suppress(w), !swe_one_keyerror(c), line(w, l).
-rr_node_text_req_by_swe_async_with_0(rr_dn) :- swe_doc(d_rr_d31_2, _), node(d_rr_d31_2, rr_dn, "with_statement", _, _), swe_with_call(rr_dn, c_rr_d31_2), swe_suppress_name(c_rr_d31_2), line(rr_dn, _).
-rr_node_text_req_by_swe_async_with_0(rr_dn) :- swe_doc(d_rr_d32_2, _), node(d_rr_d32_2, rr_dn, "with_statement", _, _), swe_with_call(rr_dn, c_rr_d32_2), swe_contextlib_suppress(c_rr_d32_2), line(rr_dn, _).
-rr_node_text_req_by_swe_async_with_0(rr_dn) :- swe_doc(d_rr_d44_2, _), node(d_rr_d44_2, rr_dn, "with_statement", _, _), swe_with_call(rr_dn, c_rr_d44_2), swe_suppress_name(c_rr_d44_2), line(rr_dn, _).
-rr_node_text_req_by_swe_async_with_0(rr_dn) :- swe_doc(d_rr_d45_2, _), node(d_rr_d45_2, rr_dn, "with_statement", _, _), swe_with_call(rr_dn, c_rr_d45_2), swe_contextlib_suppress(c_rr_d45_2), line(rr_dn, _).

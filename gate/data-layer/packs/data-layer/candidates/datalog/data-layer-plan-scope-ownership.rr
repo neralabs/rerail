@@ -48,8 +48,6 @@ workflow_type("type").
 .decl option_on(name: symbol)
 .decl out_scope(d: number)
 .decl plan_scope_gate(d: number)
-.decl rr_node_text_req_by_invent_candidate_0(n: node)
-.decl rr_node_text_req_by_invent_mention_0(n: node)
 .decl runner_atom(a: node)
 .decl runner_before(q: node)
 .decl runner_before2(q: node)
@@ -206,13 +204,3 @@ violation("data-layer-plan-scope-ownership", "mode-pair-5", "PSO012", p, l) :- n
 nested_terminal_callee(f) :- node(_, f, "identifier", _, _), text(f, s), (s = "commit" ; s = "execute" ; s = "fetch" ; s = "open_read_plan" ; s = "open_write_plan" ; s = "read_transaction" ; s = "rollback" ; s = "write_transaction").
 nested_terminal_callee(f) :- node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, s), (s = "commit" ; s = "execute" ; s = "fetch" ; s = "open_read_plan" ; s = "open_write_plan" ; s = "read_transaction" ; s = "rollback" ; s = "write_transaction").
 violation("data-layer-plan-scope-ownership", "nested-terminal", "PSO006", p, l) :- node(d, c, "call", _, _), field(c, "function", f), nested_terminal_callee(f), nearest(c, g, nested_terminal_fn), field(g, "name", i), text(i, s), contains("nested_versioned", s), doc(d, p, _), (p = "conform/versioned_plan_scope_helpers.py" ; p = "data_layer_testing/versioning/query_helpers.py" ; p = "l2000_connection/connection_callback_results.py" ; p = "l2000_connection/connection_plan_workflows.py" ; p = "l2000_connection/plan_scopes.py" ; p = "l7000_versioned_schema/versioned_connection.py" ; p = "l9900_auto_api/_versioning_helpers.py"), plan_scope_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), line(c, l).
-rr_node_text_req_by_invent_candidate_0(rr_dn) :- field(rr_dn, "function", f_rr_d75_0), node(d_rr_d75_0, f_rr_d75_0, _, fb_rr_d75_0, fe_rr_d75_0), inside(x_rr_d75_0, rr_dn, invent_call), node(d_rr_d75_0, x_rr_d75_0, _, xb_rr_d75_0, xe_rr_d75_0), fb_rr_d75_0 <= xb_rr_d75_0, xe_rr_d75_0 <= fe_rr_d75_0.
-rr_node_text_req_by_invent_candidate_0(rr_dn) :- inside(_, rr_dn, invent_call).
-rr_node_text_req_by_invent_candidate_0(rr_dn) :- node(d_rr_d77_0, rr_dn, _, _, _), in_scope(d_rr_d77_0), doc(d_rr_d77_0, _, _), line(rr_dn, _).
-rr_node_text_req_by_invent_mention_0(rr_dn) :- field(c_rr_d75_7, "function", f_rr_d75_7), node(d_rr_d75_7, f_rr_d75_7, _, fb_rr_d75_7, fe_rr_d75_7), inside(rr_dn, c_rr_d75_7, invent_call), node(d_rr_d75_7, rr_dn, _, xb_rr_d75_7, xe_rr_d75_7), fb_rr_d75_7 <= xb_rr_d75_7, xe_rr_d75_7 <= fe_rr_d75_7.
-rr_node_text_req_by_invent_mention_0(rr_dn) :- inside(rr_dn, _, invent_call).
-rr_node_text_req_by_invent_candidate_0(rr_dn) :- field(rr_dn, "function", f_rr_d145_0), node(d_rr_d145_0, f_rr_d145_0, _, fb_rr_d145_0, fe_rr_d145_0), inside(x_rr_d145_0, rr_dn, invent_call), node(d_rr_d145_0, x_rr_d145_0, _, xb_rr_d145_0, xe_rr_d145_0), fb_rr_d145_0 <= xb_rr_d145_0, xe_rr_d145_0 <= fe_rr_d145_0.
-rr_node_text_req_by_invent_candidate_0(rr_dn) :- inside(_, rr_dn, invent_call).
-rr_node_text_req_by_invent_candidate_0(rr_dn) :- node(d_rr_d147_0, rr_dn, _, _, _), in_scope(d_rr_d147_0), doc(d_rr_d147_0, _, _), line(rr_dn, _).
-rr_node_text_req_by_invent_mention_0(rr_dn) :- field(c_rr_d145_7, "function", f_rr_d145_7), node(d_rr_d145_7, f_rr_d145_7, _, fb_rr_d145_7, fe_rr_d145_7), inside(rr_dn, c_rr_d145_7, invent_call), node(d_rr_d145_7, rr_dn, _, xb_rr_d145_7, xe_rr_d145_7), fb_rr_d145_7 <= xb_rr_d145_7, xe_rr_d145_7 <= fe_rr_d145_7.
-rr_node_text_req_by_invent_mention_0(rr_dn) :- inside(rr_dn, _, invent_call).

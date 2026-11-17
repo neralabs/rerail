@@ -18,7 +18,6 @@ ss_import_k("import_statement"). ss_import_k("import_from_statement").
 .decl rr_agg21(e: symbol, q: symbol)
 .decl rr_agg22(e: symbol, q: symbol)
 .decl rr_agg23(n: node, q: symbol, v: symbol)
-.decl rr_value_req_by_ss_val_0(n: node)
 .decl ss_any_finding(x: number)
 .decl ss_assign_to(a: node, x: symbol)
 .decl ss_bad_fate(f: symbol)
@@ -261,9 +260,3 @@ violation("data-layer-post-op-side-effects", "signed-surface", "POSTOP203", p, 1
 violation("data-layer-post-op-side-effects", "signed-surface", c, "l2070_batching/post_op.py", 1) :- ss_entry("_collect_violations"), ss_finding(c).
 violation("data-layer-post-op-side-effects", "signed-surface", "POSTOP204", "l2070_batching/post_op.py", 1) :- ss_entry("_collect_broad_runtime_authority_violations"), ss_finding("POSTOP204").
 violation("data-layer-post-op-side-effects", "signed-surface", c, "l2070_batching/post_op.py", 1) :- ss_entry("_collect_exact_runtime_symbol_coverage_violations"), ss_finding(c), (c = "POSTOP205" ; c = "POSTOP206").
-rr_value_req_by_ss_val_0(rr_dn) :- ss_strnode(_, rr_dn, _, _).
-rr_value_req_by_ss_val_0(rr_dn) :- ss_registry_node(_, rr_dn).
-rr_value_req_by_ss_val_0(rr_dn) :- ss_sig_node(rr_dn).
-rr_value_req_by_ss_val_0(rr_dn) :- ss_strnode(_, rr_dn, _, _).
-rr_value_req_by_ss_val_0(rr_dn) :- ss_registry_node(_, rr_dn).
-rr_value_req_by_ss_val_0(rr_dn) :- ss_sig_node(rr_dn).

@@ -47,7 +47,6 @@ lao_decorator("decorator").
 .decl node_text(n: node, s: symbol)
 .decl op(n: node, s: symbol)
 .decl out_scope(d: number)
-.decl rr_node_text_req_by_lao_kw_string_0(n: node)
 .decl syntax_error(d: number)
 .decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
@@ -152,7 +151,3 @@ lao_issue(d, f, "LAO004") :- lao_pure(f), lao_owned(d, f, _, _, _, _), lao_call(
 lao_issue(d, f, "LAO005") :- lao_owned(d, f, _, _, _, _), !lao_is_legacy(f), !lao_external(f), !lao_pure(f), lao_eager(f).
 lao_issue(d, f, "LAO006") :- lao_owned(d, f, _, _, _, _), op(f, "async"), !lao_is_legacy(f), !lao_external(f), lao_abstract_bad(f), lao_has_tx(f), !lao_awaits(f).
 violation("data-layer-lazy-adapter-ownership", "adapter-ownership", code, p, l) :- lao_issue(d, f, code), doc(d, p, _), line(f, l).
-rr_node_text_req_by_lao_kw_string_0(rr_dn) :- lao_legacy(d_rr_d23_7, _, dec_rr_d23_7, _), inside(kw_rr_d23_7, dec_rr_d23_7, lao_decorator), node(d_rr_d23_7, kw_rr_d23_7, "keyword_argument", _, _), field(kw_rr_d23_7, "name", ni_rr_d23_7), node(d_rr_d23_7, ni_rr_d23_7, "identifier", _, _), text(ni_rr_d23_7, "lazy_name"), field(kw_rr_d23_7, "value", rr_dn).
-rr_node_text_req_by_lao_kw_string_0(rr_dn) :- lao_stmt(_, n_rr_d31_2, "expression_statement"), child(n_rr_d31_2, rr_dn, 0).
-rr_node_text_req_by_lao_kw_string_0(rr_dn) :- lao_legacy(d_rr_d41_7, _, dec_rr_d41_7, _), inside(kw_rr_d41_7, dec_rr_d41_7, lao_decorator), node(d_rr_d41_7, kw_rr_d41_7, "keyword_argument", _, _), field(kw_rr_d41_7, "name", ni_rr_d41_7), node(d_rr_d41_7, ni_rr_d41_7, "identifier", _, _), text(ni_rr_d41_7, "lazy_name"), field(kw_rr_d41_7, "value", rr_dn).
-rr_node_text_req_by_lao_kw_string_0(rr_dn) :- lao_stmt(_, n_rr_d49_2, "expression_statement"), child(n_rr_d49_2, rr_dn, 0).

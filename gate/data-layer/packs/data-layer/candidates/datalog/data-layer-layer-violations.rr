@@ -30,7 +30,6 @@ lv_if("if_statement").
 .decl option_on(name: symbol)
 .decl out_scope(d: number)
 .decl path_part(d: number, s: symbol)
-.decl rr_node_text_req_by_lv_impl_0(n: node)
 .decl source(d: number, sp: node)
 .decl syntax_error(d: number)
 .decl tape_syntax_error(d: number)
@@ -88,8 +87,3 @@ violation("data-layer-layer-violations", "api_impl-1", "api_impl", p, l) :- api_
 conform_impl_doc(d, p) :- lv_doc(d, p), match("^(?:.*/)?conform/(?:.*/)?[^/]*\\.py$", p), !match("^(?:.*/)?conftest\\.py$|^(?:.*/)?bench_all_backends\\.py$|^(?:.*/)?test_bugbot_regressions\\.py$|^(?:.*/)?test_bulk_loader\\.py$|^(?:.*/)?test_config\\.py$|^(?:.*/)?test_cross_backend_import\\.py$|^(?:.*/)?test_export_import\\.py$|^(?:.*/)?test_fts_basic\\.py$|^(?:.*/)?test_fts_pagination\\.py$|^(?:.*/)?test_fts_validation\\.py$|^(?:.*/)?test_incremental_export_import\\.py$|^(?:.*/)?test_log_model_registry\\.py$|^(?:.*/)?test_log_table_export_import\\.py$|^(?:.*/)?test_materialization\\.py$|^(?:.*/)?test_materialization_jobs\\.py$|^(?:.*/)?test_migration_ddl_bugs_round2\\.py$|^(?:.*/)?test_neo4j_validation\\.py$|^(?:.*/)?test_object_history\\.py$|^(?:.*/)?test_permission_audit\\.py$|^(?:.*/)?test_permission_cache\\.py$|^(?:.*/)?test_permission_column_filter\\.py$|^(?:.*/)?test_permission_events\\.py$|^(?:.*/)?test_permission_evolution\\.py$|^(?:.*/)?test_permission_introspection\\.py$|^(?:.*/)?test_permission_noop\\.py$|^(?:.*/)?test_permission_ownership\\.py$|^(?:.*/)?test_permission_pagination\\.py$|^(?:.*/)?test_permission_row_filter\\.py$|^(?:.*/)?test_permission_share\\.py$|^(?:.*/)?test_permission_validation\\.py$|^(?:.*/)?test_pgvector_e2e\\.py$|^(?:.*/)?test_pgvector_low_level\\.py$|^(?:.*/)?test_pgvector_migrations\\.py$|^(?:.*/)?test_pgvector_stress\\.py$|^(?:.*/)?test_pgvector_vs_hnsw_comparison\\.py$|^(?:.*/)?test_polymorphic_inheritance\\.py$|^(?:.*/)?test_rbac_audit_integration\\.py$|^(?:.*/)?test_rbac_foreign_keys\\.py$|^(?:.*/)?test_rbac_integration\\.py$|^(?:.*/)?test_rbac_polymorphic\\.py$|^(?:.*/)?test_rbac_provider\\.py$|^(?:.*/)?test_rbac_schema\\.py$|^(?:.*/)?test_schema_drift_e2e\\.py$|^(?:.*/)?test_security_regression\\.py$|^(?:.*/)?test_sparse_backend_incremental\\.py$|^(?:.*/)?test_sql_roundtrip_efficiency\\.py$|^(?:.*/)?test_uuid_introspection\\.py$|^(?:.*/)?test_uuid_validation\\.py$|^(?:.*/)?test_vector_query_analysis\\.py$|^(?:.*/)?test_versioned_operations\\.py$", p).
 violation("data-layer-layer-violations", "conform_impl-0", "conform_impl", p, l) :- conform_impl_doc(d, p), lv_from_import(d, n, _), lv_impl(n), line(n, l).
 violation("data-layer-layer-violations", "conform_impl-1", "conform_impl", p, l) :- conform_impl_doc(d, p), lv_import(d, n, _), lv_impl(n), line(n, l).
-rr_node_text_req_by_lv_impl_0(rr_dn) :- line(rr_dn, _).
-rr_node_text_req_by_lv_impl_0(rr_dn) :- line(rr_dn, _).
-rr_node_text_req_by_lv_impl_0(rr_dn) :- line(rr_dn, _).
-rr_node_text_req_by_lv_impl_0(rr_dn) :- line(rr_dn, _).
-rr_node_text_req_by_lv_impl_0(rr_dn) :- line(rr_dn, _).

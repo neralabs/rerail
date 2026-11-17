@@ -23,7 +23,6 @@
 .decl option_on(name: symbol)
 .decl out_scope(d: number)
 .decl report_when_gt(k: number)
-.decl rr_node_text_req_by_unsafe_init_def_0(n: node)
 .decl strprefix(n: node, p: symbol)
 .decl syntax_error(d: number)
 .decl tape_line(d: number, l: number, sp: node)
@@ -579,7 +578,3 @@ violation("data-layer-sql-grammar-escape-hatches", "usage-5", "escape_hatch", p,
 violation("data-layer-sql-grammar-escape-hatches", "usage-6", "escape_hatch", p, l) :- esc_found("usage-6", p, l), esc_report(1).
 violation("data-layer-sql-grammar-escape-hatches", "usage-7", "escape_hatch", p, l) :- esc_found("usage-7", p, l), esc_report(1).
 violation("data-layer-sql-grammar-escape-hatches", "usage-8", "escape_hatch", p, l) :- esc_found("usage-8", p, l), esc_report(1).
-rr_node_text_req_by_unsafe_init_def_0(rr_dn) :- field(_, "body", b_rr_d40_3), child(b_rr_d40_3, rr_dn, _).
-rr_node_text_req_by_unsafe_init_def_0(rr_dn) :- field(_, "body", b_rr_d41_5), child(b_rr_d41_5, dd_rr_d41_5, _), node(_, dd_rr_d41_5, "decorated_definition", _, _), field(dd_rr_d41_5, "definition", rr_dn).
-rr_node_text_req_by_unsafe_init_def_0(rr_dn) :- field(_, "body", b_rr_d50_3), child(b_rr_d50_3, rr_dn, _).
-rr_node_text_req_by_unsafe_init_def_0(rr_dn) :- field(_, "body", b_rr_d51_5), child(b_rr_d51_5, dd_rr_d51_5, _), node(_, dd_rr_d51_5, "decorated_definition", _, _), field(dd_rr_d51_5, "definition", rr_dn).

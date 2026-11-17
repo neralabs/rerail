@@ -41,7 +41,6 @@ authority_wrapper_kind("decorated_definition").
 .decl out_scope(d: number)
 .decl rr_agg1(r: node, t: number)
 .decl rr_demand_agg_rr_agg1(r: node)
-.decl rr_node_text_req_by_authority_plain_prefix_0(n: node)
 .decl syntax_error(d: number)
 .decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
@@ -133,6 +132,4 @@ authority_signed_site(r) :- authority_qualname(r, q), node(d, r, _, _, _), doc(d
 violation("data-layer-execution-authority-bypass", "authority-sites", "AUTH001", p, l) :- authority_site(r, "AUTH001"), authority_qualname(r, q), node(d, r, _, _, _), doc(d, p, _), p != "l2050_transaction/execution_boundary.py", !authority_private_exception(p, q), line(r, l).
 violation("data-layer-execution-authority-bypass", "authority-sites", "AUTH002", p, l) :- authority_site(r, "AUTH002"), authority_qualname(r, q), node(d, r, _, _, _), doc(d, p, _), !authority_signed_site(r), !authority_explicit_exception(p, q), line(r, l).
 violation("data-layer-execution-authority-bypass", "authority-sites", "AUTH003", p, l) :- authority_site(r, "AUTH003"), authority_qualname(r, q), node(d, r, _, _, _), doc(d, p, _), !authority_private_exception(p, q), line(r, l).
-rr_node_text_req_by_authority_plain_prefix_0(rr_dn) :- authority_setattr(_, a_rr_d28_2), child(a_rr_d28_2, rr_dn, _), value_type_of(rr_dn, "str").
 rr_demand_agg_rr_agg1(r) :- authority_site_frame(r, _).
-rr_node_text_req_by_authority_plain_prefix_0(rr_dn) :- authority_setattr(_, a_rr_d38_2), child(a_rr_d38_2, rr_dn, _), value_type_of(rr_dn, "str").

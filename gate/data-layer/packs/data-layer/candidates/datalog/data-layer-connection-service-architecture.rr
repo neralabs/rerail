@@ -124,7 +124,6 @@ connection_import_kind("import_statement"). connection_import_kind("import_from_
 .decl op(n: node, s: symbol)
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
-.decl rr_value_req_by_connection_str_const_0(n: node)
 .decl schema_facade(d: number)
 .decl schema_facade_class(d: number, cn: symbol)
 .decl schema_facade_complete(d: number)
@@ -445,11 +444,3 @@ connection_row(d, "CONN000", 1) :- schema_facade(d), connection_entry("_lint_sch
 connection_entry_default(e) :- connection_entry(e), e != "analyze_source", e != "_lint_schema_transaction_facades_source", e != "_lint_sql_services", e != "_lint_backend_cores", e != "_lint_duplicate_service_ownership_across_files", e != "_lint_forbidden_connection_level_schema_methods_for_files", e != "all".
 violation("data-layer-connection-service-architecture", "connection-services", i, p, l) :- connection_row(d, i, l), doc(d, p, _).
 violation("data-layer-connection-service-architecture", "schema-transaction-facades", "CONN000", p, 1) :- connection_entry("all"), schema_facade(d), doc(d, p, _), p = "l2000_connection/schema_transaction.py".
-rr_value_req_by_connection_str_const_0(rr_dn) :- node(_, rr_dn, _, _, _).
-rr_value_req_by_connection_str_const_0(rr_dn) :- connection_probe_arg(_, rr_dn).
-rr_value_req_by_connection_str_const_0(rr_dn) :- connection_legacy(_, m_rr_d164_9, mode_rr_d164_9, _), connection_name_deco(m_rr_d164_9, r_rr_d164_9, mode_rr_d164_9), node(_, r_rr_d164_9, "call", _, _), field(r_rr_d164_9, "arguments", al_rr_d164_9), child(al_rr_d164_9, k_rr_d164_9, _), node(_, k_rr_d164_9, "keyword_argument", _, _), field(k_rr_d164_9, "name", kn_rr_d164_9), text(kn_rr_d164_9, "lazy_name"), field(k_rr_d164_9, "value", rr_dn).
-rr_value_req_by_connection_str_const_0(rr_dn) :- schema_first_method(_, "AsyncSchemaTransaction", m_rr_d195_8, "ensure_polymorphic_columns_exist_async"), connection_name_deco(m_rr_d195_8, r_rr_d195_8, "legacy_async"), field(r_rr_d195_8, "arguments", al_rr_d195_8), child(al_rr_d195_8, k_rr_d195_8, _), node(_, k_rr_d195_8, "keyword_argument", _, _), field(k_rr_d195_8, "name", kn_rr_d195_8), text(kn_rr_d195_8, "lazy_name"), field(k_rr_d195_8, "value", rr_dn).
-rr_value_req_by_connection_str_const_0(rr_dn) :- node(_, rr_dn, _, _, _).
-rr_value_req_by_connection_str_const_0(rr_dn) :- connection_probe_arg(_, rr_dn).
-rr_value_req_by_connection_str_const_0(rr_dn) :- connection_legacy(_, m_rr_d173_9, mode_rr_d173_9, _), connection_name_deco(m_rr_d173_9, r_rr_d173_9, mode_rr_d173_9), node(_, r_rr_d173_9, "call", _, _), field(r_rr_d173_9, "arguments", al_rr_d173_9), child(al_rr_d173_9, k_rr_d173_9, _), node(_, k_rr_d173_9, "keyword_argument", _, _), field(k_rr_d173_9, "name", kn_rr_d173_9), text(kn_rr_d173_9, "lazy_name"), field(k_rr_d173_9, "value", rr_dn).
-rr_value_req_by_connection_str_const_0(rr_dn) :- schema_first_method(_, "AsyncSchemaTransaction", m_rr_d204_8, "ensure_polymorphic_columns_exist_async"), connection_name_deco(m_rr_d204_8, r_rr_d204_8, "legacy_async"), field(r_rr_d204_8, "arguments", al_rr_d204_8), child(al_rr_d204_8, k_rr_d204_8, _), node(_, k_rr_d204_8, "keyword_argument", _, _), field(k_rr_d204_8, "name", kn_rr_d204_8), text(kn_rr_d204_8, "lazy_name"), field(k_rr_d204_8, "value", rr_dn).

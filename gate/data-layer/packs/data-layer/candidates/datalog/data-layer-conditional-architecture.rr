@@ -157,8 +157,6 @@ conditional_type_kinds("type").
 .decl node_text(n: node, s: symbol)
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
-.decl rr_node_text_req_by_conditional_async_for_0(n: node)
-.decl rr_value_req_by_conditional_numzero_0(n: node)
 .decl text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
@@ -445,9 +443,3 @@ conditional_bc_attr(d, a, s, e) :- node(d, a, "attribute", s, e), field(a, "attr
 conditional_bc_in(x, a) :- conditional_pred(x, t), node(d, t, _, ts, te), conditional_bc_attr(d, a, as, ae), as >= ts, ae <= te.
 conditional_bc_nested(x, a) :- conditional_bc_in(x, a), conditional_pred(x, t), node(d, t, _, ts, te), conditional_bc_in(y, a), y != x, node(d, y, _, ys, ye), ys >= ts, ye <= te.
 conditional_finding(p, l) :- conditional_case(1), conditional_mevent(c, _, m), conditional_derived_class(c), conditional_mnode(m, n), conditional_bc_in(n, a), !conditional_bc_nested(n, a), node(d, n, _, _, _), doc(d, p, _), line(n, l).
-rr_node_text_req_by_conditional_async_for_0(rr_dn) :- conditional_mnode(_, rr_dn), node(_, rr_dn, "for_statement", _, _), visit_index(rr_dn, _), field(rr_dn, "right", it0_rr_d210_3), conditional_unparen(it0_rr_d210_3, it_rr_d210_3), conditional_local_name(it_rr_d210_3, q_rr_d210_3), conditional_branch_iter(q_rr_d210_3), field(rr_dn, "left", _).
-rr_value_req_by_conditional_numzero_0(rr_dn) :- conditional_shared_class(c_rr_d181_4, "l2070_batching.conditional_step.ConditionalStep"), conditional_method(c_rr_d181_4, "level", m_rr_d181_4), conditional_return(m_rr_d181_4, _, rr_dn), node(d_rr_d181_4, c_rr_d181_4, _, _, _), doc(d_rr_d181_4, _, _), line(c_rr_d181_4, _).
-rr_value_req_by_conditional_numzero_0(rr_dn) :- conditional_method(_, "level", m_rr_d182_3), conditional_numret_count(m_rr_d182_3, 1), conditional_return(m_rr_d182_3, _, rr_dn).
-rr_node_text_req_by_conditional_async_for_0(rr_dn) :- conditional_mnode(_, rr_dn), node(_, rr_dn, "for_statement", _, _), visit_index(rr_dn, _), field(rr_dn, "right", it0_rr_d216_3), conditional_unparen(it0_rr_d216_3, it_rr_d216_3), conditional_local_name(it_rr_d216_3, q_rr_d216_3), conditional_branch_iter(q_rr_d216_3), field(rr_dn, "left", _).
-rr_value_req_by_conditional_numzero_0(rr_dn) :- conditional_shared_class(c_rr_d187_4, "l2070_batching.conditional_step.ConditionalStep"), conditional_method(c_rr_d187_4, "level", m_rr_d187_4), conditional_return(m_rr_d187_4, _, rr_dn), node(d_rr_d187_4, c_rr_d187_4, _, _, _), doc(d_rr_d187_4, _, _), line(c_rr_d187_4, _).
-rr_value_req_by_conditional_numzero_0(rr_dn) :- conditional_method(_, "level", m_rr_d188_3), conditional_numret_count(m_rr_d188_3, 1), conditional_return(m_rr_d188_3, _, rr_dn).

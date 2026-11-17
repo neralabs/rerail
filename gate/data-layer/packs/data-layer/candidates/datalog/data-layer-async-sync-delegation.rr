@@ -63,7 +63,6 @@ wrapper_shape_argk("argument_list").
 .decl op(n: node, s: symbol)
 .decl option_on(name: symbol)
 .decl out_scope(d: number)
-.decl rr_node_text_req_by_asd_compact_0(n: node)
 .decl strprefix(n: node, p: symbol)
 .decl sync_delegation_awaits(f: node)
 .decl sync_delegation_blk_ok(b: node)
@@ -689,9 +688,3 @@ escape_hatch_exempt(c) :- escape_hatch_call(c, d), doc(d, p, _), suffix("impl/co
 escape_hatch_exempt(c) :- escape_hatch_call(c, d), doc(d, p, _), suffix("impl/common/l2550_storage_backend/backend.py", p), nearest(c, f, asd_fdef), field(f, "name", nmn), text(nmn, "store_async").
 escape_hatch_exempt(c) :- escape_hatch_call(c, d), doc(d, p, _), suffix("impl/sqlite/native_async_wrapper.py", p), nearest(c, f, asd_fdef), field(f, "name", nmn), text(nmn, "_run_sqlite_call_in_thread").
 violation("data-layer-async-sync-delegation", "escape-hatch", "C", p, l) :- escape_hatch_call(c, d), asd_doc(d, p), !asd_test_path(p), !escape_hatch_exempt(c), line(c, l).
-rr_node_text_req_by_asd_compact_0(rr_dn) :- wrapper_shape_thin(_, rr_dn).
-rr_node_text_req_by_asd_compact_0(rr_dn) :- wrapper_shape_lazy_thin(_, rr_dn).
-rr_node_text_req_by_asd_compact_0(rr_dn) :- wrapper_shape_thin(_, rr_dn).
-rr_node_text_req_by_asd_compact_0(rr_dn) :- wrapper_shape_thin(_, rr_dn).
-rr_node_text_req_by_asd_compact_0(rr_dn) :- wrapper_shape_thin(_, rr_dn).
-rr_node_text_req_by_asd_compact_0(rr_dn) :- wrapper_shape_lazy_thin(_, rr_dn).

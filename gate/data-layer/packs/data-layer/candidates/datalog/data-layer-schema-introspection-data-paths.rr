@@ -64,7 +64,6 @@ introspection_frame_mark("function_definition"). introspection_frame_mark("decor
 .decl rr_ctx7(e: node, i: number)
 .decl rr_demand_agg_rr_agg3(b: number, e: node)
 .decl rr_demand_agg_rr_agg6(e: node, i: number)
-.decl rr_value_req_by_introspection_const_0(n: node)
 .decl schema_approval_approved(x: number)
 .decl schema_approval_entry(e: symbol)
 .decl schema_approval_error(x: number)
@@ -277,7 +276,5 @@ schema_approval_approved(1) :- option_value("parameters", _), !schema_approval_e
 schema_approval_approved(1) :- schema_approval_verified(1), !schema_approval_error(1).
 violation("data-layer-schema-introspection-data-paths", "schema-approval-configuration", "SIDP000", "scripts/lint_schema_introspection_data_paths.py", 1) :- option_value("entryPoint", v), v != "_collect_violations", schema_approval_error(1).
 violation("data-layer-schema-introspection-data-paths", "schema-approval-configuration", "SIDP000", "scripts/lint_schema_introspection_data_paths.py", 1) :- option_value("entryPoint", v), v != "_collect_violations", schema_approval_listed(1), !schema_approval_verified(1).
-rr_value_req_by_introspection_const_0(rr_dn) :- node(_, rr_dn, _, _, _), line(rr_dn, _).
 rr_demand_agg_rr_agg3(b, e) :- introspection_field(e, _, b, _).
 rr_demand_agg_rr_agg6(e, i) :- introspection_fhost(e), fstring_piece(e, i, "interpolation", _).
-rr_value_req_by_introspection_const_0(rr_dn) :- node(_, rr_dn, _, _, _), line(rr_dn, _).

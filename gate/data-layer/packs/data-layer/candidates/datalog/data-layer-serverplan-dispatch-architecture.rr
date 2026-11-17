@@ -91,8 +91,6 @@ executor_matchk("match_statement").
 .decl node_text(n: node, s: symbol)
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
-.decl rr_value_req_by_backend_identity_literal_0(n: node)
-.decl rr_value_req_by_step_name_compare_literal_0(n: node)
 .decl step_name_compare_literal(n: node)
 .decl step_name_compare_name(n: node)
 .decl step_name_compare_type(o: node)
@@ -330,7 +328,3 @@ executor_scope_arg(c) :- executor_arg(a, c, 1), node_text(a, t), match("['\"]*(?
 executor_finding(n, "SPD005") :- executor_call(n, ce), (ce = "delattr" ; ce = "getattr" ; ce = "getattr_static" ; ce = "hasattr" ; ce = "setattr" ; ce = "vars" ; ce = "__getattribute__"), executor_arg(a, n, 0), executor_owner(a), !executor_scope_arg(n).
 executor_finding(n, "SPD005") :- executor_call(n, ce), executor_call_plain(n), ce != "PlanExecutor", ce != "attrgetter", ce != "cast", ce != "delattr", ce != "getattr", ce != "getattr_static", ce != "hasattr", ce != "run_executable_pipeline", ce != "run_executable_pipeline_async", ce != "setattr", ce != "vars", executor_arg(a, n, _), executor_owner(a).
 violation("data-layer-serverplan-dispatch-architecture", "executor-provenance", code, p, l) :- executor_finding(n, code), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-rr_value_req_by_backend_identity_literal_0(rr_dn) :- node(d_rr_d20_3, n_rr_d20_3, "comparison_operator", _, _), backend_identity_source(x_rr_d20_3), inside(x_rr_d20_3, n_rr_d20_3, backend_identity_cmp), inside(rr_dn, n_rr_d20_3, backend_identity_cmp), in_scope(d_rr_d20_3), doc(d_rr_d20_3, _, _), line(n_rr_d20_3, _).
-rr_value_req_by_step_name_compare_literal_0(rr_dn) :- node(d_rr_d25_3, n_rr_d25_3, "comparison_operator", _, _), child(n_rr_d25_3, x_rr_d25_3, _), step_name_compare_name(x_rr_d25_3), inside(rr_dn, n_rr_d25_3, backend_identity_cmp), in_scope(d_rr_d25_3), doc(d_rr_d25_3, _, _), line(n_rr_d25_3, _).
-rr_value_req_by_backend_identity_literal_0(rr_dn) :- node(d_rr_d48_3, n_rr_d48_3, "comparison_operator", _, _), backend_identity_source(x_rr_d48_3), inside(x_rr_d48_3, n_rr_d48_3, backend_identity_cmp), inside(rr_dn, n_rr_d48_3, backend_identity_cmp), in_scope(d_rr_d48_3), doc(d_rr_d48_3, _, _), line(n_rr_d48_3, _).
-rr_value_req_by_step_name_compare_literal_0(rr_dn) :- node(d_rr_d53_3, n_rr_d53_3, "comparison_operator", _, _), child(n_rr_d53_3, x_rr_d53_3, _), step_name_compare_name(x_rr_d53_3), inside(rr_dn, n_rr_d53_3, backend_identity_cmp), in_scope(d_rr_d53_3), doc(d_rr_d53_3, _, _), line(n_rr_d53_3, _).

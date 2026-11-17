@@ -13,8 +13,6 @@
 .decl raise_imported(r: node)
 .decl raise_imported_name(c: node)
 .decl raise_module_name(m: node)
-.decl rr_node_text_req_by_raise_imported_name_0(n: node)
-.decl rr_node_text_req_by_raise_module_name_0(n: node)
 .decl syntax_error(d: number)
 .decl tape_line(d: number, l: number, sp: node)
 .decl tape_syntax_error(d: number)
@@ -43,7 +41,3 @@ raise_imported(r) :- raise_builtin(d, r, s), raise_import(d, e), e <= s.
 raise_allowed(r) :- raise_builtin(d, r, _), line(r, l), tape_line(d, l, sp), text(sp, t), contains("lint: allow-builtin-permission-error", t).
 raise_allowed(r) :- raise_builtin(d, r, _), line(r, l), k = @sub(l, 1), tape_line(d, k, sp), text(sp, t), contains("lint: allow-builtin-permission-error", t).
 violation("data-layer-permission-error", "raise", "builtin_permission_error", p, l) :- raise_builtin(d, r, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), !raise_imported(r), !raise_allowed(r), doc(d, p, _), line(r, l).
-rr_node_text_req_by_raise_imported_name_0(rr_dn) :- node(_, i_rr_d5_4, "import_from_statement", _, _), field(i_rr_d5_4, "module_name", _), field(i_rr_d5_4, "name", rr_dn).
-rr_node_text_req_by_raise_module_name_0(rr_dn) :- node(_, i_rr_d5_2, "import_from_statement", _, _), field(i_rr_d5_2, "module_name", rr_dn), field(i_rr_d5_2, "name", _).
-rr_node_text_req_by_raise_imported_name_0(rr_dn) :- node(_, i_rr_d16_4, "import_from_statement", _, _), field(i_rr_d16_4, "module_name", _), field(i_rr_d16_4, "name", rr_dn).
-rr_node_text_req_by_raise_module_name_0(rr_dn) :- node(_, i_rr_d16_2, "import_from_statement", _, _), field(i_rr_d16_2, "module_name", rr_dn), field(i_rr_d16_2, "name", _).
