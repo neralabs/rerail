@@ -5643,7 +5643,7 @@ fn run_observed(
                     if memoised {
                         slice_rounds.push(asked.iter().filter(|(r, _)| guests::LIBRARY.contains(&r.as_str()) || guests::DEMANDS.contains(&r.as_str())).map(|(r, l)| (r.clone(), Arc::clone(l))).collect());
                     }
-                    let new = made.make(guests::requests(&asked), &docs, tapes.as_ref()).map_err(Error::Plan)?;
+                    let new = made.make(guests::requests(&asked), &docs).map_err(Error::Plan)?;
                     if new.is_empty() {
                         break;
                     }

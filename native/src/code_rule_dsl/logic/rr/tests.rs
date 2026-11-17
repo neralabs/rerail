@@ -2259,6 +2259,26 @@ roots(k) :- kind(s, "string"), parsed(s, "annotation", r), kind(r, k).
     assert!(!names.iter().any(|n| n[0].starts_with("Nope")), "{names:?}");
 }
 
+/// A guest is made in a wave, where no run reads the store (decision 0104), so no later process reads its tape: a run
+/// stores none, and its own collection has none to delete (Q30). The host's source is stored; the annotation's text,
+/// parsed as a guest (wrapped: `(List[int])`), is not.
+#[test]
+fn a_run_stores_no_source_of_its_guests() {
+    use sha2::Digest as _;
+    let py = "x: \"List[int]\" = []\n";
+    let rule = r#"
+.decl ident(x: symbol)
+ident(x) :- kind(s, "string"), parsed(s, "annotation", _), guest(g, _, s, _), node(g, i, "identifier", _, _), text(i, x).
+.output ident
+"#;
+    let [names] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("no-guest-sources", &[("a.py", py)], rule, &["ident"])).unwrap();
+    assert!(names.contains(&shown_row(&["List"])), "the guest was made: {names:?}");
+    let store = crate::content_store::ContentStore::open(&crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().unwrap()).unwrap();
+    let key = |t: &str| crate::content_store::HashKey::from_sha256_digest(sha2::Sha256::digest(t.as_bytes()).into());
+    assert!(store.source_by_hash(key(py)).unwrap().is_some(), "the host's source is stored");
+    assert!(store.source_by_hash(key("(List[int])")).unwrap().is_none(), "the guest's source is not");
+}
+
 /// `.on guest_error`: a guest that does not parse is withheld (skip, the default) or keeps its partial tree, and
 /// `report` gives a finding at its line in the host; the host's own `.on syntax_error` does not see it.
 #[test]

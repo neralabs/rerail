@@ -1322,6 +1322,16 @@ pass.
 - **Keep**: decision 0306 step 4 (the run's lease is its one hold on collection); 0104.
 - **Done when**: guests' tapes are either named by the manifest (if a later run reads them: measured) or not
   written at all, and a cold run's store holds no source its own collection deletes.
+- **Done** (2026-11-17): a guest's tape is not written at all. A guest is made in a wave, which reads no SQL
+  (0104): `build_in_wave` looks only at what this process queued, never at the store, so no later process read a
+  guest's stored tape. `guests::parse` and `taped` now parse in memory (`core::build`, `build_with_tape`). Equal
+  texts are still parsed once per process (`parse`'s kept map), and `make` takes no store. So a cold run queues no
+  guest source or tape, and its collection has none to delete.
+  - Test: `a_run_stores_no_source_of_its_guests` (rerail-engine): a cold run with one annotation stores the host's
+    source and not the guest's `(List[int])`. It failed before ("the guest's source is not").
+  - Also pass: `string_annotations_are_guests_at_their_host_lines`, `guests_that_do_not_parse_follow_the_policy`,
+    `embeds_declare_guests_and_guests_off_leaves_them_out`.
+
 
 ### Q42. `a_second_corpus_run_deletes_and_creates_its_store_again` fails now and then beside the planner's tests
 
@@ -1370,6 +1380,14 @@ pass.
   later run then misses and keeps them again.
 - **Done when**: Typing-support wires the steps into runs, naming their sources in the run's record
   (`Apply::name`), with a test that a collection between two runs keeps them.
+
+### Q50. `parse_splice_and_unparse_make_value_documents` fails the debug check of `locate` (Typing-support's)
+
+- **Found** (2026-11-17, at 05795a8df, with and without Q30's change): "the version's rows are located as the
+  tree's", left `Ok(["fixed", "seen", "tables"])`, right `Err(["back"])`. The tree's `locate` refuses where the
+  version's pass locates. This is 0281's debug check of a pass against its tree form, and Typing-support has changed
+  those passes since 468130306 (6a–6e).
+- **Done when**: the test passes after Typing-support's next merge here, or the difference is traced to one side.
 
 ## Questions for the user
 
