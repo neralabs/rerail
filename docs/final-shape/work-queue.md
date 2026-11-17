@@ -1268,6 +1268,17 @@ pass.
   writes its sources just before the cold run: Q45's racy window is the lead (its answers kept untrusted, settled at
   the run's end since Q45's fix, which the warm run then finds unknown).
 - **Done when**: the test passes, with the cause named.
+- **Record**: done (2026-11-16). Two faults, the second hidden behind the first. (1) A run whose rules make requests
+  makes its `World` inside the fixpoint ("requests answered inside the fixpoint"), and `World::new` watched its
+  roots there: `watch` reads a root's part of the observer's store, which no wave may ask (0104). The roots are now
+  watched before the first wave (`World::watch`), and the `World` made inside finds each asked already. (2) The
+  warm run then recorded a new manifest: same plan and sources, other `also`. Phase 0's graph was read from its
+  image (0246), which kept no plans ("a graph read so used none"), so the outer run's manifest left out the
+  bootstrap run's plans that the cold run's named. The image now keeps them (a seventh list; images are keyed by
+  the engine's build), so a warm run names what the cold run named, and they stay live while the image is used.
+  Not the racy window (Q45). Verified: the test, a_second_run_in_one_process, the phase 0, graph, world, load,
+  observe, racy and manifest tests (84/84); strict 10-file cold, warm and edit runs, outputs byte-identical, the
+  warm run writing nothing.
 
 ## Questions for the user
 

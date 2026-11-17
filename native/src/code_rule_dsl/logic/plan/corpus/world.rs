@@ -89,6 +89,30 @@ pub(super) struct World {
 impl World {
     /// The roots a request may read: the corpus root, and each setting's value that is a directory.
     pub(super) fn new(root: &Path, prog: &front::Program) -> World {
+        let (roots, budget) = Self::roots(root, prog);
+        // Watched before the first wave (`watch`); asked again here, each is one this run asked already.
+        Self::watch_roots(root, &roots);
+        World { roots, root: root.to_path_buf(), budget, ..World::default() }
+    }
+
+    /// Watches the roots a request of `prog` may read (decision 0105), before the first wave: watching a root reads
+    /// its part of the observer's store, which no wave may ask (decision 0104). A `World` made inside the waves then
+    /// finds each asked already (Q49: a warm run faulted, "the observer's store not asked inside the waves").
+    pub(super) fn watch(root: &Path, prog: &front::Program) {
+        Self::watch_roots(root, &Self::roots(root, prog).0);
+    }
+
+    /// What may be read, watched (decision 0105): a directory listed or a file read that the journal says is
+    /// unchanged is not statted. Not phase 0's root, up front: an empty placeholder (`phase0`); a read under it is
+    /// watched as it comes.
+    fn watch_roots(root: &Path, roots: &[PathBuf]) {
+        let placeholder = super::phase0::active().then(|| std::fs::canonicalize(root).ok()).flatten();
+        let watched: Vec<PathBuf> = roots.iter().filter(|r| Some(*r) != placeholder.as_ref()).cloned().collect();
+        super::observe(|o| o.watch(&watched));
+    }
+
+    /// The roots (`new`) and the load budget `prog`'s settings give.
+    fn roots(root: &Path, prog: &front::Program) -> (Vec<PathBuf>, usize) {
         let canonical = |p: &Path| std::fs::canonicalize(p).ok();
         let mut roots: Vec<PathBuf> = canonical(root).into_iter().collect();
         let mut budget = BUDGET;
@@ -102,13 +126,7 @@ impl World {
                 }
             }
         }
-        // What the requests may read is watched (decision 0105): a directory listed or a file read that the
-        // journal says is unchanged is not statted.
-        // Not phase 0's root, up front: an empty placeholder (`phase0`); a read under it is watched as it comes.
-        let placeholder = super::phase0::active().then(|| canonical(root)).flatten();
-        let watched: Vec<PathBuf> = roots.iter().filter(|r| Some(*r) != placeholder.as_ref()).cloned().collect();
-        super::observe(|o| o.watch(&watched));
-        World { roots, root: root.to_path_buf(), budget, ..World::default() }
+        (roots, budget)
     }
 
     /// The file `asked` names, when it lies under a root: relative to the corpus root, or absolute.

@@ -4877,6 +4877,11 @@ fn run_observed(
             crate::code_rule_dsl::logic::profile::decision("frames read before the first wave (decision 0104)", || format!("{frames} frames, {:.1} MB encoded", bytes as f64 / 1048576.0));
         }
     }
+    // The roots its requests may read, watched before the first wave (`World::watch`): a `World` made inside the
+    // fixpoint would otherwise read the observer's store there (decision 0104; Q49).
+    if loading.is_some() {
+        world::World::watch(root, &prog);
+    }
     let mut waves = Some(crate::code_rule_dsl::logic::profile::waves());
     // A file's memo entry when the run is memoised and the memo has it, else its document, built. An entry
     // without the base rows this run's cross-file part reads is a miss.
