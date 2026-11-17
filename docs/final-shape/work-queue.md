@@ -1620,7 +1620,7 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 - **Seen beside it**: the measurement script's watchdog killed its shell, not the engine: four hung engines ran on
   for hours on the m3. Scripts kill the engine by name now.
 
-### Q69. A test's store stays open after its test (`a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test`)
+### Q69. (done) A test's store stays open after its test (`a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test`)
 
 - **Found** (2026-11-17, at this branch's merge of the hub at 52a579d59): fails on both sides before the merge, on
   the m3. After both probe runs end and their stores are dropped, the process still holds four descriptors of one
@@ -1632,3 +1632,8 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 - **Next**: list the raw `Connection::open` calls on the run's path (outside `content_store::connection`) and the
   services that outlive a run; the one holding it closes with the run or registers its connection.
 - **Done when**: the test passes, the store's directory gone and nothing of it held.
+- **Done** (2026-11-17): the holder was upkeep's frames job (0303, `content_store::upkeep::Frames`), registered for
+  the process once a store, whose read connection for its poll (`due`) stayed on the deleted file until its next
+  poll; and each test's store added a job the process kept for its life. `ContentStore::forget` (a test store's
+  drop) now takes the file's jobs out (`rerail_accel::upkeep::forget_file`, a step under way waited for), which
+  closes their connections. The test passes three runs in a row on the m3; test: `a_forgotten_files_jobs_are_taken_out`.
