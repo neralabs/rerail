@@ -44,6 +44,12 @@ holds 2^28 keys, so by the birthday bound a corpus with tens of thousands of gue
   row is about 60 bytes, and a range holds 2^28 keys. Collecting them waits for a measured need.
 - A store made before this decision has guests in its memo and frames that the registry does not hold. A new engine
   build's memo is cold, so its runs make every guest again and claim it.
+- §5 drops the losing host's entries in the store. A process that admitted them into its memo snapshot before the
+  waves still holds them until it reads the memo again, so only a later run in that same process could hit one.
+  Another process reads the store.
+- Built in 51e67e692: `content_store/guest_keys.rs`. The registry lives on the store's `Atoms`, so a store created
+  again at its path has a registry of its own. On ep2's fresh store the cold run claims 27,073 keys, and the edits
+  claim none, so they write nothing.
 - Tests:
   - `guest_keys::tests::a_guests_key_is_its_identitys_in_every_process_and_a_collision_probes_past_it` (store).
   - `guests::tests::two_chunks_guests_that_hash_alike_take_two_keys` (engine) fails without §1–3.

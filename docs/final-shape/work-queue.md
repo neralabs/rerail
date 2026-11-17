@@ -724,6 +724,19 @@ pass.
       (guests are made inside the waves). Reading the registry before the first wave is a read of unchanged data on
       every edit. Provisional keys mapped at the store, as atoms are (0160/0170), are baked into memoised rows.
       Wider keys change the node-id format.
+    - **Fixed** (2026-11-16, 51e67e692): the user chose the registry read before the first wave, decision 0323.
+      `guest_keys(identity, key, path)` is read once a process and held with the store's atoms; every chunk claims
+      in memory, probing past every key held; a run's claims are an item of its record.
+      - Tests: `two_chunks_guests_that_hash_alike_take_two_keys` (failed before), and the store's two in
+        `guest_keys::tests`.
+      - m3, fresh ep2 store, profiling build, strict:
+        - The cold run (887.5 G, 15.1 s wall) prints no `RERAIL_KEPT_DOCS` mismatch for `alias_value`, `type_bare`
+          or `unparen`, and holds 27,073 guest keys.
+        - The edits give 1334 rows, none differing from h1, at 31.3 G and 30.6 G (28–29.5 G before, on the build
+          before the Typing-support and cost-classifier merges). A profiled edit reads "983 kept; 0 measured from
+          the rows held".
+      - `RERAIL_KEPT_DOCS` is meant for cold runs only. In an edit the keeper counts no memo hit, so it prints every
+        held row: 246,000 lines, and two edits hit the 115 s cap.
   - For phased-facts' 0290: its table's "the kept inputs" (0.76 s on dl10) was measured before a2ff8071e.
 
 ### Q21. The hub's gate failures at 692cc9772

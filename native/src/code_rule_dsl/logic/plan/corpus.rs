@@ -3536,6 +3536,8 @@ fn run_observed(
             let _step = crate::code_rule_dsl::logic::profile::span(|| "nearest sets made by the transducer".into());
             let sets = lowered.transduce_nearest();
             // The preparation passes edit the lowered tree, the last before its one image (below).
+            // Edited after the image only by a debug build's check of the version against the tree (below).
+            #[cfg_attr(not(debug_assertions), allow(unused_mut))]
             let mut program: front::Program = std::mem::take(&mut lowered.program);
             bound(&program)?;
             drop(_step);
