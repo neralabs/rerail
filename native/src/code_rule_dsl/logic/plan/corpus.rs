@@ -74,6 +74,7 @@ pub mod constants;
 pub mod inputs;
 pub use inputs::parameters as input_parameters;
 pub mod world;
+mod link;
 mod shape;
 pub mod connections;
 pub mod reuse;
@@ -669,11 +670,15 @@ type Beside = ();
 /// `combine_linked`'s program as a version, and `combine_read`'s tail run on it (`tail_version`). A debug build runs
 /// the tree's tail beside it and checks the two agree.
 fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&front::Program>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
-    let (linked, tail) = combine_linked(programs, extra, read, images_used)?;
-    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&linked).and_then(|b| b.finish()).map_err(Error::Plan)?;
+    let (v, tail) = combine_linked_as::<link::Versioned>(programs, extra, read, images_used)?;
+    // The parts linked as trees beside (decision 0281's path, step 7a-2): the same program.
     #[cfg(debug_assertions)]
-    let tree = linked.clone();
-    drop(linked);
+    let tree = {
+        let (tree, _) = crate::code_rule_dsl::logic::profile::quiet(|| combine_linked(programs, extra, read, None))?;
+        let (of_tree, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).map_err(Error::Plan)?;
+        assert_eq!((of_tree.size(), of_tree.digest()), (v.size(), v.digest()), "the parts linked as versions are the trees linked: {}", crate::code_rule_dsl::logic::program_image::differences(&of_tree, &v));
+        tree
+    };
     let v = tail_version(v, &tail)?;
     #[cfg(debug_assertions)]
     {
@@ -1200,7 +1205,13 @@ fn tail_version(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tai
 
 /// `combine_read` up to the programs linked into one, and what its tail does to that (`Tail`).
 fn combine_linked(programs: &[&str], extra: &added::Added, read: Option<&front::Program>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<(front::Program, Tail)> {
-    use front::{Literal, Program};
+    combine_linked_as::<front::Program>(programs, extra, read, images_used)
+}
+
+/// `combine_linked` over parts of either form (`link::Part`): trees, or versions (`link::Versioned`, the run's,
+/// decision 0281's path, step 7a-2).
+fn combine_linked_as<P: link::Part>(programs: &[&str], extra: &added::Added, read: Option<&front::Program>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<(P::Linked, Tail)> {
+    use front::Program;
     // Each program is given the rows the run adds once it is read (decision 0249): rows, not text after it.
     let given = |mut prog: Program| -> Result<Program> {
         extra.add_to(&mut prog);
@@ -1208,7 +1219,7 @@ fn combine_linked(programs: &[&str], extra: &added::Added, read: Option<&front::
         front::declared(&prog)?;
         Ok(prog)
     };
-    let parse = |text: &str| -> Result<Program> { given(crate::code_rule_dsl::logic::rr::parse(text)?) };
+    let parse = |text: &str| -> Result<P> { P::of_tree(given(crate::code_rule_dsl::logic::rr::parse(text)?)?) };
     let parsing = crate::code_rule_dsl::logic::profile::span(|| format!("parse each program ({})", programs.len()));
     // Each text read once, for its modules and its program.
     let reading = crate::code_rule_dsl::logic::profile::span(|| "read each text (tape, statements, includes)".to_owned());
@@ -1296,25 +1307,23 @@ fn combine_linked(programs: &[&str], extra: &added::Added, read: Option<&front::
         .zip(&own_only)
         .zip(texts.par_iter_mut())
         .zip(&scope_of)
-        .map(|(((text, &own_only), slot), scope_of)| recorded_on_worker(|| -> Result<Program> {
+        .map(|(((text, &own_only), slot), scope_of)| recorded_on_worker(|| -> Result<P> {
             if let Some(read) = read.filter(|_| programs.len() == 1) {
-                return given(read.clone());
+                return P::of_tree(given(read.clone())?);
             }
             if let Some(read) = slot.take() {
                 if let Some(library) = in_scope && let Some(k) = *scope_of {
                     let _in_scope = crate::code_rule_dsl::logic::profile::span(|| "lower the program in its libraries' scope (decision 0246 §2)".to_owned());
                     // Its library's relations are the library's, declared there, not in the program: it is handed the
                     // run's rows (0249) but not checked for its own declarations (`front::declared`).
-                    let mut prog = read.lower_in(text, library, &scoped[k], images.as_deref())?.expect("a modular text");
-                    extra.add_to(&mut prog);
-                    return Ok(prog);
+                    return P::lowered_in(read, text, library, &scoped[k], images.as_deref(), extra);
                 }
-                return given(read.lower(!own_only)?);
+                return P::of_tree(given(read.lower(!own_only)?)?);
             }
             if !own_only {
                 return parse(text);
             }
-            given(crate::code_rule_dsl::logic::rr::parse_own(text)?)
+            P::of_tree(given(crate::code_rule_dsl::logic::rr::parse_own(text)?)?)
         }))
         .collect();
     let mut parsed = each
@@ -1342,8 +1351,8 @@ fn combine_linked(programs: &[&str], extra: &added::Added, read: Option<&front::
         let _ = std::fs::write(path, lines);
     }
     drop(parsing);
-    let makes_guests = parsed.iter().any(|p| p.rules.iter().any(|r| guests::REQUESTS.contains(&r.head.rel.as_str())));
-    let bounds: Vec<u32> = parsed.iter().map(hiding::bound).collect();
+    let makes_guests = parsed.iter().any(|p| guests::REQUESTS.iter().any(|r| p.has_head(r)));
+    let bounds: Vec<u32> = parsed.iter().map(|p| hiding::bound(p.head())).collect();
     // The libraries once (decision 0089): two or more programs name theirs as modules, and all are read under one
     // bound of the documents they show, so the library's relations are the same for each.
     // `RERAIL_LIBRARIES=copied` copies them into each program, as before, to compare.
@@ -1367,7 +1376,7 @@ fn combine_linked(programs: &[&str], extra: &added::Added, read: Option<&front::
             "copied into each program: fewer than two programs name their libraries as modules".to_owned()
         }
     });
-    let mut library: Option<Program> = None;
+    let mut library: Option<P> = None;
     // A program's request (§3): its key's number and the relations it holds, named `q<k>_` for every asker.
     let mut requests: Vec<Option<(usize, BTreeSet<String>)>> = vec![None; parsed.len()];
     if shared {
@@ -1379,7 +1388,7 @@ fn combine_linked(programs: &[&str], extra: &added::Added, read: Option<&front::
                 }
             }
         }
-        library = Some(lowered_library.as_ref().expect("made with the programs' modules").program.clone());
+        library = Some(P::library(lowered_library.as_ref().expect("made with the programs' modules"))?);
         let mut cones = 0;
         let mut kept = 0;
         // Each program's request (§3): the cone's library relations and the program's own relations they read, held
@@ -1405,16 +1414,11 @@ fn combine_linked(programs: &[&str], extra: &added::Added, read: Option<&front::
             }
             if k != n {
                 // Another program asked the same: read its copy.
-                prog.rules.retain(|r| !unit.contains(r.head.rel.as_str()));
-                prog.decls.retain(|r, _| !unit.contains(r.as_str()));
-                prog.facts.retain(|r, _| !unit.contains(r));
-                prog.natives.retain(|r, _| !unit.contains(r));
-                prog.lattice.retain(|r, _| !unit.contains(r));
-                prog.nullary.retain(|r| !unit.contains(r));
+                drop_relations(prog, &unit);
             }
             requests[i] = Some((k, unit));
         }
-        let rules = library.as_ref().map_or(0, |l| l.rules.len());
+        let rules = library.as_ref().map_or(0, |l| l.rule_count());
         crate::code_rule_dsl::logic::profile::decision("library relations", || {
             format!("{rules} library rules once; {kept} relations taken from the library instead of a program's copy; {cones} cone relations in {asking} programs' requests (§3)")
         });
@@ -1431,41 +1435,42 @@ fn combine_linked(programs: &[&str], extra: &added::Added, read: Option<&front::
     // makes none is left as written. With the libraries once, the combined program is bounded once (below).
     if makes_guests && !shared {
         let _hiding = crate::code_rule_dsl::logic::profile::span(|| {
-            format!("bound each program to the documents it shows ({} programs, {} rules; decision 0058)", parsed.len(), parsed.iter().map(|p| p.rules.len()).sum::<usize>())
+            format!("bound each program to the documents it shows ({} programs, {} rules; decision 0058)", parsed.len(), parsed.iter().map(|p| p.rule_count()).sum::<usize>())
         });
         for (i, p) in parsed.iter_mut().enumerate() {
-            let _one = crate::code_rule_dsl::logic::profile::span(|| format!("program #{i} ({} rules)", p.rules.len()));
-            let bound = hiding::bound(p);
-            hiding::hide(p, bound);
+            let _one = crate::code_rule_dsl::logic::profile::span(|| format!("program #{i} ({} rules)", p.rule_count()));
+            let bound = hiding::bound(p.head());
+            p.hide(bound)?;
         }
     }
     let _merging = crate::code_rule_dsl::logic::profile::span(|| "merge the programs".into());
     if parsed.len() == 1 {
         let one = parsed.pop().expect("one program");
-        return Ok((one, Tail::One));
+        return Ok((one.alone()?, Tail::One));
     }
-    let axis = crate::code_rule_dsl::logic::front::AXIS;
     let mut all = Program::default();
     let mut sets: BTreeMap<Vec<String>, String> = BTreeMap::new();
     let core = crate::code_rule_dsl::logic::rr::core_names();
     let mut policies: Vec<scoping::Policy> = Vec::new();
     // A library's rule may ask for guests too (`vue/view.rr`'s view, decision 0222): read once, it is no program's.
-    let makes_guests = makes_guests || library.as_ref().is_some_and(|l| l.rules.iter().any(|r| guests::REQUESTS.contains(&r.head.rel.as_str())));
+    let makes_guests = makes_guests || library.as_ref().is_some_and(|l| guests::REQUESTS.iter().any(|r| l.has_head(r)));
     // The node attributes answered on request (decision 0174) are the combined program's, made once below over all
     // its readers: a part lowered on its own (a program's own part, without the library's rules) could not see
     // which library relations read an attribute, so its requests read them as they are, not through their widened
     // copies, and a request was recursive with its attribute (PYI062 with PYI059: `literal_down` negates
     // `typing_subscript`, which reads `value` through `exports`, and `rr_value_req` read `literal_leaf`).
     if let Some(l) = library.as_mut() {
-        crate::code_rule_dsl::logic::rr::lower::undo_on_request(l);
+        l.undo_on_request();
     }
     for p in parsed.iter_mut() {
-        crate::code_rule_dsl::logic::rr::lower::undo_on_request(p);
+        p.undo_on_request();
     }
     // The library, when held once, is the first part: its names are the run's (decision 0089 §2).
     let units = library.into_iter().map(|l| (None, l)).chain(parsed.into_iter().enumerate().map(|(i, p)| (Some(i), p)));
-    for (unit, mut prog) in units {
+    let mut rules: Vec<P::Rules> = Vec::new();
+    for (unit, mut part) in units {
         let i = unit.unwrap_or(usize::MAX);
+        let prog = part.head_mut();
         let scope = prog.doc_scopes.clone();
         let (named, library) = front::globals(&prog.settings);
         prog.settings.retain(|(k, _)| k != front::GLOBAL);
@@ -1493,103 +1498,18 @@ fn combine_linked(programs: &[&str], extra: &added::Added, read: Option<&front::
         }
         // The library's relations keep their names (decision 0089 §2). Named repository readers belong to their
         // policy (`own_names`): equal relation names alone do not mean equal input files or selectors.
-        let own: BTreeSet<String> = if unit.is_some() { own_names(&prog, core) } else { BTreeSet::new() };
-        let request = unit.and_then(|u| requests[u].as_ref());
+        let own: BTreeSet<String> = if unit.is_some() { own_names(&part, core) } else { BTreeSet::new() };
+        let request = unit.and_then(|u| requests[u].clone());
         // The library held once is no policy's: canonical by construction, made over every document read (0091 §3).
         if unit.is_some() {
             policies.push(scoping::Policy { prefix: format!("p{i}_"), own: own.iter().map(|r| format!("p{i}_{r}")).collect(), named, library, scope });
         }
-        let rename = |rel: &str| -> String {
-            if let Some((k, held)) = request
-                && held.contains(rel)
-            {
-                return format!("q{k}_{rel}");
-            }
-            if own.contains(rel) {
-                return format!("p{i}_{rel}");
-            }
-            // Both axes name their set: `inside`'s (`rr_inside_<set>`) and `has`'s (`rr_has_<set>`). A `has` left
-            // on its own name kept a set the merge renamed, so guest hiding could not name it in the guest's
-            // grammar, and `has(n, c, "identifier")` found no guest node once two programs ran together.
-            match crate::code_rule_dsl::logic::front::axis(rel).and_then(|(set, has)| set_of.get(set).map(|s| (s, has))) {
-                Some((shared, has)) => format!("{}{shared}", if has { crate::code_rule_dsl::logic::front::DESCENDANTS } else { axis }),
-                None => rel.to_owned(),
-            }
-        };
-        let atom = |a: &mut front::Atom| a.rel = rename(&a.rel).into();
-        for rule in &mut prog.rules {
-            atom(&mut rule.head);
-            for l in &mut rule.body {
-                match l {
-                    Literal::Atom(a) => atom(a),
-                    Literal::Agg { atom: a, .. } => atom(a),
-                    Literal::Nearest { kindset, .. } => {
-                        if let Some(shared) = set_of.get(kindset) {
-                            *kindset = shared.clone();
-                        }
-                    }
-                    Literal::Cmp { .. } | Literal::Ast { .. } => {}
-                }
-            }
-        }
-        all.nullary.extend(prog.nullary.iter().map(|rel|rename(rel)));
-        for (rel, cols) in prog.decls {
-            all.decls.entry(rename(&rel).into()).or_insert(cols);
-        }
-        for (rel, decl) in prog.lattice {
-            all.lattice.insert(rename(&rel), decl);
-        }
-        for (rel, rows) in prog.facts {
-            all.facts.insert(rename(&rel), rows);
-        }
-        for (rel, words) in prog.qualifiers {
-            all.qualifiers.entry(rename(&rel)).or_default().extend(words);
-        }
-        for (rel, cols) in prog.tapes {
-            all.tapes.entry(rename(&rel)).or_default().extend(cols);
-        }
-        for (rel, mut native) in prog.natives {
-            native.rename_reads(rename);
-            all.natives.insert(rename(&rel), native);
-        }
-        // A rule `core.rr` gives (its head is the engine's) is taken once.
-        for rule in prog.rules {
-            if !(core.contains(rule.head.rel.as_str()) && all.rules.contains(&rule)) {
-                all.rules.push(rule);
-            }
-        }
-        for list in [(&mut all.inputs, prog.inputs), (&mut all.outputs, prog.outputs), (&mut all.demand, prog.demand)] {
-            for rel in list.1 {
-                let rel = rename(&rel);
-                if !list.0.contains(&rel) {
-                    list.0.push(rel);
-                }
-            }
-        }
-        all.policies.extend(prog.policies);
-        // Its join shape directives, on its relations as renamed (O-join-shape-directives).
-        for mut shape in prog.shapes {
-            shape.head = rename(&shape.head);
-            shape.lit = rename(&shape.lit);
-            if let front::ShapeWait::After(a) = &mut shape.wait {
-                *a = rename(a);
-            }
-            if !all.shapes.contains(&shape) {
-                all.shapes.push(shape);
-            }
-        }
-        // What the batch makes for the program's rules: its regexes over spans, its AST patterns.
-        all.rx_spans.extend(prog.rx_spans);
-        all.ast_patterns.extend(prog.ast_patterns);
-        for mut setting in prog.settings {
-            if matches!(setting.0.as_str(), "input" | "output") && let Some((rel, params)) = setting.1.split_once('(') {
-                setting.1 = format!("{}({params}", rename(rel));
-            }
-            if !all.settings.contains(&setting) {
-                all.settings.push(setting);
-            }
-        }
+        let names = link::Names { i, own, request, set_of };
+        let (header, renamed) = part.into_parts(&names);
+        rules.push(renamed);
+        link::link_header(&mut all, header, &names);
     }
+    let all = P::link(all, rules, core)?;
     Ok((all, Tail::Many { hide: (shared && makes_guests).then_some(bounds[0]), policies }))
 }
 
@@ -1748,25 +1668,16 @@ fn bound(v: &crate::code_rule_dsl::logic::program_image::Version) -> std::result
 /// program's own clauses add to it or it reads one they add to, through any relation (the request's cone, §3): the
 /// program keeps its own copy of those, as before. A relation lowering made for library rules alone (every reader
 /// of it the library's) goes with them. Returns the relations taken out, and the cone's.
-fn own_part(prog: &mut front::Program, modules: &crate::code_rule_dsl::logic::rr::Modules, core: &BTreeSet<String>) -> (usize, BTreeSet<String>) {
-    use front::Literal;
+fn own_part<P: link::Part>(of: &mut P, modules: &crate::code_rule_dsl::logic::rr::Modules, core: &BTreeSet<String>) -> (usize, BTreeSet<String>) {
+    let rules = of.rules();
+    let prog = of.head();
     // An input the program reads (`within`, which lowering keeps where a rule reads it) is a base relation, the run's:
     // its declaration stays with the program.
     let library: BTreeSet<&str> =
         modules.files.iter().flat_map(|(_, _, names)| names).map(String::as_str).filter(|r| !core.contains(*r) && !prog.inputs.iter().any(|i| i == r)).collect();
-    let reads = |r: &front::Rule| -> Vec<String> {
-        r.body
-            .iter()
-            .filter_map(|l| match l {
-                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.to_string()),
-                _ => None,
-            })
-            .collect()
-    };
-    let edges: Vec<(String, Vec<String>)> = prog
-        .rules
+    let edges: Vec<(String, Vec<String>)> = rules
         .iter()
-        .map(|r| (r.head.rel.to_string(), reads(r)))
+        .cloned()
         .chain(prog.natives.iter().map(|(rel, n)| (rel.to_string(), n.reads().into_iter().map(str::to_owned).collect())))
         .collect();
     let mut cone: BTreeSet<String> = modules.heads.iter().filter(|h| library.contains(h.as_str())).cloned().collect();
@@ -1792,7 +1703,7 @@ fn own_part(prog: &mut front::Program, modules: &crate::code_rule_dsl::logic::rr
         .decls
         .keys()
         .map(|r| r.as_str())
-        .chain(prog.rules.iter().map(|r| r.head.rel.as_str()))
+        .chain(rules.iter().map(|(head, _)| head.as_str()))
         .chain(prog.natives.keys().map(String::as_str))
         .filter(|r| !library.contains(*r) && !core.contains(*r) && !cone.contains(*r))
         .map(str::to_owned)
@@ -1808,21 +1719,29 @@ fn own_part(prog: &mut front::Program, modules: &crate::code_rule_dsl::logic::rr
             break;
         }
     }
-    let taken = part.iter().filter(|r| prog.decls.contains_key(r.as_str()) || prog.rules.iter().any(|x| &x.head.rel == *r)).count();
-    prog.rules.retain(|r| !part.contains(r.head.rel.as_str()));
-    prog.decls.retain(|r, _| !part.contains(r.as_str()));
-    prog.facts.retain(|r, _| !part.contains(r));
-    prog.natives.retain(|r, _| !part.contains(r));
-    prog.lattice.retain(|r, _| !part.contains(r));
-    prog.nullary.retain(|r| !part.contains(r));
+    let taken = part.iter().filter(|r| prog.decls.contains_key(r.as_str()) || rules.iter().any(|(head, _)| head == *r)).count();
     let cones = cone.into_iter().filter(|r| library.contains(r.as_str())).collect();
+    drop_relations(of, &part);
     (taken, cones)
+}
+
+/// `relations` taken out of `part`: their rules, declarations, rows, natives, lattices and nullary marks.
+fn drop_relations<P: link::Part>(part: &mut P, relations: &BTreeSet<String>) {
+    part.drop_heads(&|head| relations.contains(head));
+    let prog = part.head_mut();
+    prog.decls.retain(|r, _| !relations.contains(r.as_str()));
+    prog.facts.retain(|r, _| !relations.contains(r));
+    prog.natives.retain(|r, _| !relations.contains(r));
+    prog.lattice.retain(|r, _| !relations.contains(r));
+    prog.nullary.retain(|r| !relations.contains(r));
 }
 
 /// A program's relations that take its prefix (`p<i>_`) when programs are combined: what it declares, holds facts of
 /// or derives, other than the base inputs, the shared outputs, `core.rr`'s (decision 0141), the bridged and the
 /// guests' shared relations. A repository file a policy reads (`.input r(IO=…)`) is its own.
-fn own_names(prog: &front::Program, core: &BTreeSet<String>) -> BTreeSet<String> {
+fn own_names<P: link::Part>(part: &P, core: &BTreeSet<String>) -> BTreeSet<String> {
+    let prog = part.head();
+    let heads: Vec<String> = part.rules().into_iter().map(|(head, _)| head).collect();
     // `violation`, and each finding's relation (`rr::is_diagnostic`, named by its policy).
     let shared_outputs = |r: &str| r == "violation" || crate::code_rule_dsl::logic::rr::is_diagnostic(r);
     let file_inputs = file_inputs(prog);
@@ -1830,7 +1749,7 @@ fn own_names(prog: &front::Program, core: &BTreeSet<String>) -> BTreeSet<String>
         .keys()
         .map(|r| r.as_str())
         .chain(prog.facts.keys().map(String::as_str))
-        .chain(prog.rules.iter().map(|r| r.head.rel.as_str()))
+        .chain(heads.iter().map(String::as_str))
         .filter(|r| (!prog.inputs.iter().any(|i| i == r) || file_inputs.contains(*r)) && !shared_outputs(r) && !core.contains(*r) && !bridge::is_bridged(r) && !phases::is_phased(r) && !guests::SHARED.contains(r))
         .map(str::to_owned)
         .collect()
@@ -1846,23 +1765,17 @@ fn file_inputs(prog: &front::Program) -> BTreeSet<String> {
 /// with one key ask the same, so they read one copy. A request that reads one of the program's own relations it does
 /// not hold, or a repository file, is the program's alone (its index is in the key), as is every request when
 /// `alone`.
-fn request_unit(prog: &front::Program, cone: &BTreeSet<String>, core: &BTreeSet<String>, i: usize, alone: bool) -> (BTreeSet<String>, [u8; 32]) {
-    use front::Literal;
+fn request_unit<P: link::Part>(part: &P, cone: &BTreeSet<String>, core: &BTreeSet<String>, i: usize, alone: bool) -> (BTreeSet<String>, [u8; 32]) {
     use sha2::Digest as _;
-    let own = own_names(prog, core);
+    let own = own_names(part, core);
+    let prog = part.head();
+    let rules = part.rules();
     let files = file_inputs(prog);
     let mut unit: BTreeSet<String> = cone.iter().filter(|r| own.contains(*r)).cloned().collect();
     let mut work: Vec<String> = unit.iter().cloned().collect();
     let mut outside = false;
     while let Some(rel) = work.pop() {
-        let mut reads: Vec<String> = Vec::new();
-        for r in prog.rules.iter().filter(|r| r.head.rel == rel) {
-            for l in &r.body {
-                if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l {
-                    reads.push(a.rel.to_string());
-                }
-            }
-        }
+        let mut reads: Vec<String> = rules.iter().filter(|(head, _)| *head == rel).flat_map(|(_, reads)| reads.iter().cloned()).collect();
         if let Some(native) = prog.natives.get(&rel) {
             reads.extend(native.reads().into_iter().map(str::to_owned));
         }
@@ -1879,7 +1792,7 @@ fn request_unit(prog: &front::Program, cone: &BTreeSet<String>, core: &BTreeSet<
     if alone || outside {
         hash.update(format!("program {i}\n"));
     }
-    let mut rules: Vec<String> = prog.rules.iter().filter(|r| unit.contains(r.head.rel.as_str())).map(|r| format!("{r:?}")).collect();
+    let mut rules: Vec<String> = part.shown(&unit);
     rules.sort();
     for rule in rules {
         hash.update(rule);

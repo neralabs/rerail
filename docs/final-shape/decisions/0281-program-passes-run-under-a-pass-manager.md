@@ -567,6 +567,15 @@ step 3 replaces what is under the writer.
        library's image likewise, and the per-part passes (`own_part`, the requests' units, `undo_on_request`, each
        part's hiding when the libraries are not held once) run on them; the link renames each part's version into
        the combined one (`Builder`), with the kind sets shared by their kinds.
+       *Done (2026-11-16):* `combine_linked` is written once over a part (`corpus::link::Part`): a tree, the tools'
+       and a debug build's check, or a version (`link::Versioned`), the run's. What it reads of a part is its header
+       and its rules' heads and reads; what it edits is the header and which relations' rules are kept. `own_part`,
+       the requests' units (keyed by each form's own rule text), `undo_on_request` (over `rr::lower::RuleSet`) and
+       each part's hiding (`hide::Hide`) run on either. `Text::lower_in_version` hands on the stored image unread,
+       and the library keeps its linked version (`Library::version`), its tree decoded only when a cone is copied
+       from it. The link merges the headers (`link::link_header`) and copies each part's rules from its image
+       through the renames (`link::Names`, a `Rewrite`), `core.rr`'s repeated rules dropped once linked. A debug
+       build links the trees beside and checks the two images agree.
    - **P**, the per-policy edit: the combined version is kept, and a run's is an overlay of the last one's (the
      edited policy's rules out, its new ones in). The preparation pipeline runs `again` from its stored run. Each
      pass reruns on the delta, or maintains what it reads, or runs whole where it must. ep2 is measured once, at the

@@ -1290,10 +1290,10 @@ fn every_switch_lowering_reads_is_classified() {
     // (`logic/rr`, `front`). The combined program is kept under `COMBINING` alone.
     let mut combining = sources(&[
         "logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs", "logic/plan/corpus/preparation/whole.rs",
-        "logic/plan/corpus/preparation/on_request.rs", "logic/plan/corpus/preparation/hide.rs",
+        "logic/plan/corpus/preparation/on_request.rs", "logic/plan/corpus/preparation/hide.rs", "logic/plan/corpus/link.rs",
     ]);
     combining.push(("corpus.rs, combine_read and its tail".to_owned(), region("\nfn combine_read(", "\n/// `combine_read` up to the programs linked")));
-    combining.push(("corpus.rs, combine_linked".to_owned(), region("\nfn combine_linked(", "Tail::Many { hide: (shared")));
+    combining.push(("corpus.rs, combine_linked".to_owned(), region("\nfn combine_linked_as<", "Tail::Many { hide: (shared")));
     // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (`hiding::fold_own`,
     // memo, session, profile, costs) and the passes. The prepared key holds `PREPARING` and the combined program's
     // key. Not `plan/keeps.rs` and `plan/choices.rs`: what a relation keeps is chosen in `plan::run` and kept under
