@@ -3558,7 +3558,7 @@ fn run_observed(
             let _step = crate::code_rule_dsl::logic::profile::span(|| "nearest sets made by the transducer".into());
             let sets = lowered.transduce_nearest();
             // The preparation passes edit the lowered tree, the last before its one image (below).
-            let mut program: front::Program = std::mem::take(&mut lowered.program);
+            let program: front::Program = std::mem::take(&mut lowered.program);
             bound(&program)?;
             drop(_step);
             // The prepared program's one image (decision 0281's path, step 4): made here, after the last pass that edits
@@ -3581,6 +3581,9 @@ fn run_observed(
             lowered.domains = lower::domains_of(&version)?;
             let _step = crate::code_rule_dsl::logic::profile::span(|| "split the file-local and cross-file parts".into());
             let split = crate::code_rule_dsl::typing::file_local::programs_of(version.clone()).map_err(Error::Plan)?;
+            // Only the debug check below edits the tree: a build without debug assertions keeps it immutable.
+            #[cfg(debug_assertions)]
+            let mut program = program;
             // While passes before the image edit the tree, a debug build checks the version's split and domains are
             // the tree's (the tree's inputs pruned as `preparation::InputsRead` prunes the version's).
             #[cfg(debug_assertions)]
