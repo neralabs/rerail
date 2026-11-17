@@ -597,6 +597,15 @@ pass.
       the local 151 MB one: the same). Left: the long-lived store's history, or code since h4–h5's build. Settled by
       one local run on the long-lived store with the current binary (cold, then two edits), when the load allows: 55
       G means a fresh store lacks something worth finding; 217 G means a regression since h4–h5.
+    - **Settled, not a store effect** (2026-11-16): the farm binaries were debug builds (`cargo build --bin`), and
+      h1–h16's were profiling builds. One debug binary on both stores (the m3, each with its own cost and image
+      stores): long-lived 222–245 G an edit, fresh 217–224 G, prepare 3.8 s on both. The long store's state cheapens
+      only the new build's cold run (2,416 G against 6,452 G: content kept across builds).
+    - **The merged build, profiling, a fresh store** (the m3, 4b6518be9): cold 800 G, 13 s wall; four B101 edits
+      28.2–29.5 G, 2.4–2.5 s CPU, 2.0–2.2 s wall, rows identical to h1. Half of h4–h5's 55 G.
+    - **Open:** two debug edits in a row (f4, f5 at 4b6518be9's debug build) hung after the frames preload until the
+      115 s cap (26,123 frames read, 2,722 identities left out, against 31,551 and 0 in the others); the next run
+      paid for three edits (685 G). Not reproduced; no sample.
 
 ### Q20. After the hub's merge, an edit's kept inputs swing between missing and costing 85 G
 
