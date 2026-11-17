@@ -41,7 +41,7 @@ import { loadCheckoutRuleSet, ruleConfigurationSignature, ruleConfigurationVersi
 import { LIBRARY_OWNER, quarantinedLibraryRules } from "../catalog/rule-library.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
 import { ruleAttachments, ruleSettings } from "../storage/schema.js";
-import { compareDeterministicStrings, stableJsonText } from "../stable-json.js";
+import { compareDeterministicStrings, ruleSourceText, stableJsonText } from "../stable-json.js";
 
 export { bundledCodeRuleDslDirectory };
 
@@ -281,10 +281,10 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
         quarantined.push({ ruleId: id, kind: "code", owner: RERAIL_OWNER, reason: `The repository's config for this rule does not apply: ${rule.configError}` });
         continue;
       }
-      const sourceText = stableJsonText(rule.document.rule);
-      if (sourceText === undefined) throw new Error(`Policy ${id} is not JSON representable`);
-      const sourceDigest = digest(sourceText);
-      const outcome = compiledRules.compile(this.#capabilities, id, sourceText, sourceDigest, stableJsonText(rule.config) ?? "");
+      const source = ruleSourceText(rule.document.rule);
+      if (source === undefined) throw new Error(`Policy ${id} is not JSON representable`);
+      const sourceDigest = source.digest;
+      const outcome = compiledRules.compile(this.#capabilities, id, source.text, sourceDigest, stableJsonText(rule.config) ?? "");
       if (!outcome.ok) {
         // A rule naming a language the engine does not read yet is inactive by design: quarantined with that code, not reported.
         const unsupported = languageNotSupportedOf(outcome.reason);

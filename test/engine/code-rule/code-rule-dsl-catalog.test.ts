@@ -33,6 +33,7 @@ import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { validateCodeRule } from "../../../src/engine/rules.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
+import { installPack } from "../../support/installed-packs.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -237,6 +238,34 @@ describe("checkout code-rule catalog", () => {
       expect(catalog.quarantined()).toEqual([
         expect.objectContaining({ kind: "code", ruleId: "test:requires-python", owner: "library", reason: expect.stringMatching(/missing.*python.*capability/iu) }),
       ]);
+    } finally {
+      catalogs.close();
+    }
+  });
+
+  it("serializes a pack rule once for every checkout's catalog, which all build from the daemon's one rule catalog", () => {
+    installPack("python");
+    const base = temporaryRoot();
+    const main = join(base, "main");
+    execFileSync("git", ["init", "--quiet", "-b", "main", main]);
+    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "base"], { cwd: main });
+    const [first, second] = ["first", "second"].map(name => join(base, name)) as [string, string];
+    for (const worktree of [first, second]) execFileSync("git", ["worktree", "add", "--quiet", "--detach", worktree], { cwd: main });
+    const databasePath = join(base, "rerail.sqlite");
+    setUpTestRepository(main, { packs: ["python"] }, databasePath);
+    const ruleCatalog = loadRuleCatalog();
+    const rules = new Set<unknown>([...ruleCatalog.documents.values()].map(document => document.rule));
+    const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog });
+    try {
+      const firstCount = catalogs.catalog(first).status.ruleCount;
+      expect(firstCount).toBeGreaterThan(0);
+      // A pack rule is serialized whole, or wrapped with its kind for its digest.
+      const stringify = vi.spyOn(JSON, "stringify");
+      const secondCount = catalogs.catalog(second).status.ruleCount;
+      const serialized = stringify.mock.calls.filter(([value]) => rules.has(value) || rules.has((value as { rule?: unknown } | undefined)?.rule)).length;
+      stringify.mockRestore();
+      expect(secondCount).toBe(firstCount);
+      expect(serialized).toBe(0);
     } finally {
       catalogs.close();
     }
