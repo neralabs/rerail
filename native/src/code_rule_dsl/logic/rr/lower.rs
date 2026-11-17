@@ -930,7 +930,22 @@ pub fn link(modules: Vec<Module>) -> Result<Program, Error> {
     for m in modules {
         l.append(m);
     }
-    whole(l)
+    whole(l, None)
+}
+
+/// A library linked for the programs that include it (`rr::lower_library`, decision 0089) keeps each kind set its files
+/// declare as a relation: `kind_sets` drops a set no rule of the library reads as an atom, which holds of a whole
+/// program but not of a library, whose includers may read it (`kind(p, k), keyed_kind(k)` in
+/// react-no-access-state-in-setstate, beside `tsx/react-class.rr`'s `inside(c, m, keyed_kind)`). A program lowered in
+/// the library's scope reads the library's relation, so the set is the library's again: declared, its kinds its facts.
+pub fn keep_declared_kind_sets(program: &mut Program, modules: &[Module]) {
+    for (set, kinds) in &program.kindsets {
+        if program.decls.contains_key(set.as_str()) || !modules.iter().any(|m| m.written.get(set).is_some_and(|cols| cols.len() == 1)) {
+            continue;
+        }
+        program.decls.insert(set.as_str().into(), [("k".into(), "sym".into())].into());
+        program.facts.insert(set.clone(), kinds.iter().map(|k| [Value::Str(k.clone().into())].into()).collect());
+    }
 }
 
 /// A program's own module, linked in the scope of the library modules it includes (decision 0246 §2): the
@@ -940,16 +955,17 @@ pub fn link(modules: Vec<Module>) -> Result<Program, Error> {
 /// declarations from any part. Only for a module whose clauses add to no relation of its scope (it asks nothing of
 /// the library, decision 0089 §3): the scope's `.violation`s are the library's, and their findings are its rules.
 pub fn link_in(m: Module, scope: &[&Module], core: &BTreeSet<String>) -> Result<Program, Error> {
-    link_seeded(m, &seeds(scope), core)
+    link_seeded(m, &seeds(scope), core, None)
 }
 
-/// `link_in`, in a scope seeded already.
-pub fn link_seeded(m: Module, seeds: &Seeds, core: &BTreeSet<String>) -> Result<Program, Error> {
+/// `link_in`, in a scope seeded already. `library`, the scope's library linked (`rr::Library::program`), gives the
+/// guarantees of the library relations the module reads to its value cycles' check (`front::finish_given`).
+pub fn link_seeded(m: Module, seeds: &Seeds, core: &BTreeSet<String>, library: Option<&Program>) -> Result<Program, Error> {
     let mut l = seeds.l.clone();
     let seeded = &seeds.seeded;
     l.violations.clear();
     l.append(m);
-    let mut program = whole(l)?;
+    let mut program = whole(l, library)?;
     crate::code_rule_dsl::logic::front::declared(&program)?;
     let gone = |r: &str| !core.contains(r);
     program.decls.retain(|r, _| !(seeded.decls.contains(r.as_str()) && gone(r)));
@@ -961,8 +977,9 @@ pub fn link_seeded(m: Module, seeds: &Seeds, core: &BTreeSet<String>) -> Result<
     Ok(program)
 }
 
-/// The lowering's whole-program half (decision 0246 §1), over the modules appended into `l`.
-fn whole(mut l: Lowerer) -> Result<Program, Error> {
+/// The lowering's whole-program half (decision 0246 §1), over the modules appended into `l`; `library` as
+/// `link_seeded` gives it.
+fn whole(mut l: Lowerer, library: Option<&Program>) -> Result<Program, Error> {
     let analyses = crate::code_rule_dsl::logic::profile::span(|| "the program's analyses (findings, spans, kinds)".to_owned());
     l.three_valued();
     l.findings()?;
@@ -1001,7 +1018,7 @@ fn whole(mut l: Lowerer) -> Result<Program, Error> {
         sources_on_request(&mut l.prog, round);
     }
     drop(analyses);
-    let mut program = crate::code_rule_dsl::logic::front::finish(l.prog)?;
+    let mut program = crate::code_rule_dsl::logic::front::finish_given(l.prog, library)?;
     let demand = crate::code_rule_dsl::logic::profile::span(|| "aggregate demand and sets".to_owned());
     super::aggregate_demand::optimize(&mut program);
     // The demand's rules, and the rules whose aggregate it made an existence test, read no relation either.

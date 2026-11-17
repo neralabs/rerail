@@ -295,15 +295,17 @@ impl Text {
         closed_program(&files, &own)?;
         let own: Vec<syntax::Statement> = own.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect();
         let m = lower::lower_module_seeded(own, &scoped.seeds)?;
-        let mut program = lower::link_seeded(m, &scoped.seeds, core_names())?;
+        let mut program = lower::link_seeded(m, &scoped.seeds, core_names(), Some(&library.program))?;
         // A text that adds to library relations asks of the library (decision 0089 §3): its request's cone, the library
         // relations that read what it adds, and the helpers they read, are copied from the linked library, made once
-        // (decision 0246 §2: a cone is made at link time). The run's `own_part` then holds them as the request.
+        // (decision 0246 §2: a cone is made at link time). The run's `own_part` then holds them as the request. A fact
+        // adds as a rule does (`lit_repr_threshold(16384).`, `npy_replacement(…).`): left out, the library's readers
+        // read the library's relation without it, and found nothing (or every guarded case) in a pack.
         let declared: BTreeSet<String> = files.iter().flat_map(|(_, _, statements)| statements.iter()).filter_map(|(item, _)| match item {
             syntax::Item::Decl { name, .. } | syntax::Item::Violation { name, .. } => Some(name.clone()),
             _ => None,
         }).collect();
-        let asked: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.to_string()).filter(|h| declared.contains(h) && !core_names().contains(h)).collect();
+        let asked: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.to_string()).chain(program.facts.keys().cloned()).filter(|h| declared.contains(h) && !core_names().contains(h)).collect();
         if !asked.is_empty() {
             // The attributes on request made again over the program with its cone (decision 0174): its cone's readers
             // ask too, through copies of their own.
@@ -464,7 +466,7 @@ pub(in crate::code_rule_dsl) fn lower_library(paths: &[PathBuf], store: Option<&
             crate::code_rule_dsl::prof::count("rr.linked_library_read", 1);
             Some(program)
         });
-        let program = match stored {
+        let mut program = match stored {
             Some(program) => program,
             None => {
                 let program = lower::link(modules.iter().map(lower::Module::clone).collect())?;
@@ -476,6 +478,8 @@ pub(in crate::code_rule_dsl) fn lower_library(paths: &[PathBuf], store: Option<&
                 program
             }
         };
+        // Its declared kind sets are relations its includers may read (an image kept before this was without them).
+        lower::keep_declared_kind_sets(&mut program, &modules);
         Library { modules, files: members, keys, program }
     };
     let library = Arc::new(library);
@@ -784,8 +788,14 @@ pub fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<Stri
     for (rel, n) in library.natives.iter().filter(|(r, _)| take.contains(*r)) {
         program.natives.entry(rel.clone()).or_insert_with(|| n.clone());
     }
+    // A relation the program states facts of has the library's too, as the program read whole holds both.
     for (rel, rows) in library.facts.iter().filter(|(r, _)| take.contains(*r)) {
-        program.facts.entry(rel.clone()).or_insert_with(|| rows.clone());
+        let mine = program.facts.entry(rel.clone()).or_default();
+        for row in rows {
+            if !mine.contains(row) {
+                mine.push(row.clone());
+            }
+        }
     }
     for (rel, d) in library.lattice.iter().filter(|(r, _)| take.contains(*r)) {
         program.lattice.entry(rel.clone()).or_insert_with(|| d.clone());

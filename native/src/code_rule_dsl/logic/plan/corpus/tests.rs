@@ -898,6 +898,54 @@ fn libraries_are_held_once_and_equal_requests_share_one_cone() {
     assert_eq!(reads("p3_quiet"), ["cmp_same"]);
 }
 
+/// A library's kind set that its own rules read only as a set (`tsx/react-class.rr`'s `inside(c, m, keyed_kind)`) is a
+/// relation of the library held once all the same: a program that reads it as one (`kind(p, k), keyed_kind(k)`, react's
+/// no-access-state-in-setstate) finds its rows in a pack. The library linked alone dropped it, and the react pack
+/// failed on `no such table: main.keyed_kind`.
+#[test]
+fn a_librarys_kind_set_is_a_relation_its_includers_read_in_a_pack() {
+    let reads = ".language typescript\n#include \"tsx/react-class.rr\"\n.decl keyed(p: node)\nkeyed(p) :- kind(p, k), keyed_kind(k).\n.output keyed\n";
+    let other = ".language typescript\n#include \"tsx/react-class.rr\"\n.decl state(c: node)\nstate(c) :- set_state_in(c, _).\n.output state\n";
+    let prog = super::combine_texts(&[reads, other]).unwrap_or_else(|e| panic!("{e}"));
+    assert!(prog.rules.iter().any(|r| r.head.rel == "p0_keyed" && r.body.iter().filter_map(|l| l.atom()).any(|a| a.rel == "keyed_kind")));
+    assert!(prog.decls.contains_key("keyed_kind"), "keyed_kind is no relation of the pack");
+    assert_eq!(prog.facts.get("keyed_kind").map(Vec::len), Some(5));
+}
+
+/// A value cycle that a library relation bounds (`deparen(e, a)`: a is e or below it) is bounded in a pack too, where
+/// a program is lowered without its library's rules (`rr::Text::lower_in`): typescript-eslint's
+/// no-duplicate-enum-values (`enum_number`) and vitest's expect-expect (`name_of`) failed the typescript pack as
+/// unbounded value cycles, though each is bounded alone.
+#[test]
+fn a_value_cycle_a_library_relation_bounds_is_bounded_in_a_pack() {
+    let cycle = ".language typescript\n#include \"tsx/ts-b.rr\"\n\
+                 .decl ua(x: node, a: node)\nua(x, a) :- kind(x, \"unary_expression\"), field(x, \"argument\", e), deparen(e, a).\n\
+                 .decl num(x: node, f: float)\nnum(x, to_float(v)) :- kind(x, \"number\"), value(x, v).\n\
+                 num(x, 0.0 - f) :- ua(x, a), num(a, f).\n.output num\n";
+    let other = ".language typescript\n#include \"tsx/ts-b.rr\"\n.decl d(e: node, a: node)\nd(e, a) :- deparen(e, a).\n.output d\n";
+    // Alone, its library's rules read with it, the cycle is bounded.
+    super::combine_texts(&[cycle]).unwrap_or_else(|e| panic!("alone: {e}"));
+    let prog = super::combine_texts(&[cycle, other]).unwrap_or_else(|e| panic!("in a pack: {e}"));
+    assert!(prog.rules.iter().any(|r| r.head.rel == "p0_num"));
+}
+
+/// A program that states facts of a library relation (`lit_repr_threshold(16384).`, an `extensible` one) asks of the
+/// library as one that derives it does (decision 0089 §3): its readers in the library (`dec_lit_repr`) are copied into
+/// its request, over its facts. Taken as the library's, they read the library's relation without them, and
+/// clippy-decimal-literal-representation found nothing in a pack (as NPY201's `npy_replacement` and RUF057's
+/// `param_slot` lost theirs).
+#[test]
+fn a_programs_facts_of_a_library_relation_ask_of_the_library() {
+    let stating = ".language rust\n#include \"rust/syntax-literals.rr\"\n.decl hit(n: node)\nhit(n) :- dec_lit_repr(n).\n.output hit\nlit_repr_threshold(16384).\n";
+    let other = ".language rust\n#include \"rust/syntax-literals.rr\"\n.decl lit(n: node, v: number)\nlit(n, v) :- int_lit_value(n, v).\n.output lit\n";
+    let prog = super::combine_texts(&[stating, other]).unwrap_or_else(|e| panic!("{e}"));
+    let read: Vec<String> = prog.rules.iter().filter(|r| r.head.rel == "p0_hit").flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string())).collect();
+    let copy = read.iter().find(|r| r.starts_with('q') && r.ends_with("_dec_lit_repr")).unwrap_or_else(|| panic!("p0_hit reads {read:?}"));
+    assert!(!read.iter().any(|r| r == "dec_lit_repr"), "p0_hit reads the library's dec_lit_repr: {read:?}");
+    let threshold = copy.replace("_dec_lit_repr", "_lit_repr_threshold");
+    assert_eq!(prog.facts.get(&threshold).map(Vec::len), Some(1), "{threshold}: {:?}", prog.facts.keys().filter(|k| k.contains("threshold")).collect::<Vec<_>>());
+}
+
 /// Each test's store is its own: a copy of the template (the library's phase 0 in it), with an identity of its own,
 /// and closed and removed when the test ends (`test_store`). Two tests at once have two stores.
 #[test]
