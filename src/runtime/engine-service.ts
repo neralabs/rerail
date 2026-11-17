@@ -1,6 +1,7 @@
 import { lstat, mkdir, unlink } from "node:fs/promises";
 import { createServer, request, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { connect, type Socket } from "node:net";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { dirname, resolve as resolvePath } from "node:path";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
@@ -283,7 +284,6 @@ function resolveRuntimeRoute(
   if (configuration !== undefined && options.mergeAssist !== undefined && runtimeOptions.databasePath === serviceDatabasePath) {
     runtimeOptions.mergeAssist = options.mergeAssist;
   }
-  runtimeOptions.hookRequest = routed => state.hookRequests.get(routed);
   const runtimeKey = JSON.stringify([
     runtimeOptions.storageRoot,
     runtimeOptions.modelPath,
@@ -302,6 +302,7 @@ async function routeEngineEvent(
 ): Promise<readonly AdapterDelivery[]> {
   const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
   const { runtimeKey, runtimeOptions } = resolveRuntimeRoute(event, configuration, options, state);
+  if (runtimeOptions !== undefined) runtimeOptions.hookRequest = routed => state.hookRequests.get(routed);
   const lane = laneOf(runtimeKey, sessionId);
   clearTimeout(state.idle.get(runtimeKey));
   state.idle.delete(runtimeKey);
@@ -581,6 +582,28 @@ function hookRequestSignal(response: ServerResponse): AbortSignal {
   return request.signal;
 }
 
+/** The hook request the engine socket is handling (`watchHookRequests`), through the awaits of its handling. */
+const handledHookRequest = new AsyncLocalStorage<AbortSignal>();
+
+/**
+ * Gives each request `server` handles its `hookRequestSignal`, watched from before its body is read, so a close at any
+ * point before the answer is written counts. The listener runs just ahead of the server's handler, in the same
+ * synchronous emit, so the handling and every await of it see that request's signal; the event the handling ingests
+ * is tied to it (`withHookRequest`).
+ */
+function watchHookRequests(server: Server): void {
+  server.prependListener("request", (_incoming: IncomingMessage, response: ServerResponse) => {
+    handledHookRequest.enterWith(hookRequestSignal(response));
+  });
+}
+
+/** `event`, tied in `state` to the hook request it arrived on, when it came through the engine socket. */
+function withHookRequest(state: EngineRoutingState, event: AdapterEvent): AdapterEvent {
+  const request = handledHookRequest.getStore();
+  if (request !== undefined) state.hookRequests.set(event, request);
+  return event;
+}
+
 /** What listening beside a held pipe needs; tests pass their own. */
 export interface HeldPipeListening {
   listen: (socketPath: string) => Promise<void>;
@@ -697,8 +720,6 @@ export async function startEngineService(options: EngineServiceOptions): Promise
       return;
     }
     try {
-      // Watched before the body is read, so a close at any point before the answer is written counts.
-      const hookRequest = hookRequestSignal(response);
       const chunks: Buffer[] = [];
       let size = 0;
       for await (const chunk of incoming) {
@@ -708,7 +729,6 @@ export async function startEngineService(options: EngineServiceOptions): Promise
         chunks.push(bytes);
       }
       const { event, configuration } = parseEngineRequest(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-      routing.hookRequests.set(event, hookRequest);
       const deliveries = await engineService.ingest(event, configuration);
       response.end(encodeRerailEventResult({ eventId: event.eventId, deliveries: [...deliveries] }));
     } catch (error) {
@@ -717,11 +737,12 @@ export async function startEngineService(options: EngineServiceOptions): Promise
   });
   let socketPath = options.socketPath;
   const connections = trackConnections(server);
+  watchHookRequests(server);
   const engineService: EngineService = {
     get socketPath() {
       return socketPath;
     },
-    ingest: (event, configuration) => routeEngineEvent(event, configuration, options, routing),
+    ingest: (event, configuration) => routeEngineEvent(withHookRequest(routing, event), configuration, options, routing),
     openRuntimes: () => routing.runtimes.size,
     closeIdleSessions: sweepIdleSessions,
     async close() {
