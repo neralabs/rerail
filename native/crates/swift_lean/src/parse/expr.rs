@@ -1253,9 +1253,8 @@ impl<'a> P<'a> {
                 self.tk(K::TSelf)?;
                 self.close(s);
             } else {
-                if matches!(self.word(), w::WEAK | w::UNOWNED) && self.kind_at(1) == T::Name {
-                    self.ownership_modifier()?;
-                } else if self.is_word(w::UNOWNED) && self.kind_at(1) == T::LParen {
+                // `weak x`, `unowned x`, `unowned(safe) x`.
+                if (matches!(self.word(), w::WEAK | w::UNOWNED) && self.kind_at(1) == T::Name) || (self.is_word(w::UNOWNED) && self.kind_at(1) == T::LParen) {
                     self.ownership_modifier()?;
                 }
                 self.simple_identifier_f(f::NAME)?;

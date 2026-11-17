@@ -3608,12 +3608,8 @@ fn go_parse_costs() {
     let bytes: usize = files.iter().map(String::len).sum();
     let nodes: usize = files.iter().map(|f| go_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
-    let cpu = || {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    };
-    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+    let cpu = || rerail_prof::thread_cpu().as_secs_f64();
+    let steps: Vec<CostStep<'_>> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_go_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(go_lean::encode(&grammar, f, &|| false)).is_ok()))),
         ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
@@ -3668,12 +3664,8 @@ fn cpp_parse_costs() {
     let bytes: usize = files.iter().map(String::len).sum();
     let nodes: usize = files.iter().map(|f| c_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
-    let cpu = || {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    };
-    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+    let cpu = || rerail_prof::thread_cpu().as_secs_f64();
+    let steps: Vec<CostStep<'_>> = vec![
         ("lean: the parser's columns", Box::new(|f| rerail_c_lean::tape(f.as_bytes(), dialect).map_or(0, |t| t.code.len()))),
         ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(c_lean::encode(&grammar, f, &|| false)).is_ok()))),
         ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),

@@ -310,7 +310,7 @@ impl P<'_> {
                     // `10 seconds`, `a op b c`: a postfix expression (its operand and identifier
                     // unfielded), where the operand is all the expression so far (an
                     // `_infix_operand`, an infix expression too).
-                    if !(min == 0 && !self.right_operand) {
+                    if min != 0 || self.right_operand {
                         return self.refuse();
                     }
                     self.t.refield(n, f::NONE);

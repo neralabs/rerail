@@ -346,11 +346,7 @@ impl<'a> P<'a> {
         // The primary constructor: the scanner reads `constructor` on the next line here.
         self.cx.ctor = true;
         let ctor = match self.tok() {
-            t if t.nl && self.stmt => match self.asi() {
-                Asi::No => true,
-                Asi::Ctor => true,
-                _ => false,
-            },
+            t if t.nl && self.stmt => matches!(self.asi(), Asi::No | Asi::Ctor),
             _ => true,
         };
         self.cx.ctor = false;

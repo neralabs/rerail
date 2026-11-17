@@ -1083,6 +1083,7 @@ struct EdgeRule { head: usize, src: usize, key: Vec<usize>, ecols: Vec<usize>, p
                   edges: HashMap<Vec<i64>, Vec<Vec<i64>>>, has_edge: bool, nslots: usize }
 /// A probe's body: SQL over the `set_rel` vtabs, or a native join pipeline (`join.rs` spec).
 /// `Unplanned`: a join probe whose plan is made when its delta first has rows (decision 0123 §9, `Line::Unplanned`).
+#[allow(clippy::large_enum_variant)]
 enum Body { Sql(String), Join(JoinRule), Unplanned }
 /// `whole`: a join probe's plan for the wave whose delta is its whole relation (the relation was empty before it), in
 /// any literal order, reading that relation in full. `wkey`: its spec, the same for each probe of one rule: in a wave

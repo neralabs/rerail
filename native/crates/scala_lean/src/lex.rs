@@ -609,9 +609,8 @@ impl<'s> Lexer<'s> {
                 i = digits(j);
             }
         }
-        if matches!(self.at(i), b'f' | b'F' | b'd' | b'D') {
-            i += 1;
-        } else if !float && matches!(self.at(i), b'l' | b'L') {
+        // A float's suffix, or an integer's `L`.
+        if matches!(self.at(i), b'f' | b'F' | b'd' | b'D') || (!float && matches!(self.at(i), b'l' | b'L')) {
             i += 1;
         }
         self.number_end(i)
