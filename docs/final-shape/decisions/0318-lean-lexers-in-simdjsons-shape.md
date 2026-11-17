@@ -181,6 +181,17 @@ to 5% between runs, the fixed cost of a run most of all. Only the farm's figures
   dropped the text they held only for its length. Their own tests and the engine's 31 lean-parser
   tests pass unchanged.
 
+**All of this session's steps**, on the M1 Max (load 2 to 6), the best of three rounds,
+interleaved, against `81d1d4fe7`:
+
+| | instructions | | cycles | |
+|---|---:|---:|---:|---:|
+| C, the parse | 9.77 → 9.31 G | −4.7% | 2.59 → 2.44 G | −5.7% |
+| C++, the parse | 14.73 → 14.15 G | −3.9% | 3.71 → 3.54 G | −4.6% |
+| Go, the parse | 12.56 → 11.97 G | −4.7% | 3.34 → 3.19 G | −4.6% |
+| C, the lexer alone, a token | 119.2 → 102.5 | | 44.3 → 37.9 | |
+| Go, the lexer alone, a token | 117.5 → 101.3 | | 40.8 → 35.0 | |
+
 ### Measured and dropped
 
 - **One path for every token** (page 31's run in full): the starts a block at a time, a
@@ -197,7 +208,7 @@ to 5% between runs, the fixed cost of a run most of all. Only the farm's figures
 
 ## Open
 
-- **Cycles: 39 a token against the floor's 4** (44 before the steps above). At about 2.7
+- **Cycles: 38 a token against the floor's 4** (44 before the steps above). At about 2.7
   instructions a cycle, the gap is branches: the per-token choice between punctuator, name,
   string and the rest depends on the data. One path for every token cost far more (above).
   `LEAD`'s class by one indirect jump, as simdjson's stage 2 takes its byte, is not to be had
