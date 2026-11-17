@@ -5,6 +5,7 @@ import { loadNativeBinding, type NativeBinding } from "../native/native.js";
 import { LANGUAGE_NOT_SUPPORTED, languageNotSupportedOf, type CodeRuleLanguageNotSupported } from "./code-rule-language-support.js";
 import { codeRuleSchema, type CodeRule } from "./code-rule-schema.js";
 import { stableJsonText } from "../stable-json.js";
+import { experimentEnabled, experimentOffMessage } from "../experimental-features.js";
 
 /** `language-not-supported`: the rule names a language or capability the engine does not read yet; anything else is `invalid-rule`. */
 export type CodeRuleCompileErrorCode = typeof LANGUAGE_NOT_SUPPORTED | "invalid-rule";
@@ -37,6 +38,16 @@ export function bundledCodeRuleDslDirectory(): string {
   return resolve(PACKAGE_ROOT, "native", "src", "code_rule_dsl");
 }
 
+/**
+ * Experimental: `relational` clauses, which carry SQL over the engine's relations (internal testing). Off, a rule that
+ * has one is refused where it is written and does not run where it is stored, with this reason; undefined when `rule`
+ * may run. `RERAIL_EXPERIMENTAL_RELATIONAL_RULES`.
+ */
+export function relationalRulesOff(rule: Pick<CodeRule, "clauses">): string | undefined {
+  if (experimentEnabled("RELATIONAL_RULES") || !rule.clauses.some(clause => "relational" in clause)) return undefined;
+  return experimentOffMessage("RELATIONAL_RULES");
+}
+
 let bundledCapabilities: string | undefined;
 
 function capabilitiesJson(): string {
@@ -67,6 +78,8 @@ export function readsLeftOutToken(reason: string): boolean {
 export function assertCodeRuleCompiles(rule: CodeRule): void {
   const sourceText = stableJsonText(rule);
   if (sourceText === undefined) throw new CodeRuleCompileError(rule.id, NOT_JSON_REPRESENTABLE);
+  const relationalOff = relationalRulesOff(rule);
+  if (relationalOff !== undefined) throw new CodeRuleCompileError(rule.id, relationalOff);
   let binding: NativeBinding;
   let capabilities: string;
   try {

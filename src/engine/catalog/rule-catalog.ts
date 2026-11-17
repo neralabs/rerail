@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import semver from "semver";
-import { CodeRuleCompileError, EngineUnavailableError, readsLeftOutToken, storableCodeRule } from "../code-rule/code-rule-compile.js";
+import { CodeRuleCompileError, EngineUnavailableError, readsLeftOutToken, relationalRulesOff, storableCodeRule } from "../code-rule/code-rule-compile.js";
 import { PACKAGE_ROOT, RERAIL_PACKAGE_NAME } from "../package-root.js";
 import { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "../stable-json.js";
 import { CURRENT_LINK, defaultRerailHome } from "../storage/rerail-home.js";
@@ -235,9 +235,10 @@ function comparePackPrecedence(left: LoadedRulePack, right: LoadedRulePack): num
  * Why the engine rejects `document`, in its own words, or undefined; throws `EngineUnavailableError` without the
  * engine. A code rule must compile; a conversation rule's patterns must be ones the engine accepts, so a bad pattern
  * leaves the pack out here rather than failing a session when it loads the rule.
- * One refusal is no problem of the pack: a code rule reading a token a tape may leave out (`readsLeftOutToken`) is an
- * older pack's form this engine no longer answers, so its pack loads, and the live catalog skips that rule alone and
- * reports it with the engine's reason, as it does every rule that fails to compile when it loads.
+ * Two refusals are no problem of the pack: a code rule reading a token a tape may leave out (`readsLeftOutToken`) is an
+ * older pack's form this engine no longer answers, and a `relational` clause waits for its experiment
+ * (`relationalRulesOff`). Its pack loads, and the live catalog skips that rule alone and reports it with the reason, as
+ * it does every rule that fails to compile when it loads.
  */
 function engineRefusal(document: RuleDocument): string | undefined {
   if (document.kind === "conversation") {
@@ -250,7 +251,7 @@ function engineRefusal(document: RuleDocument): string | undefined {
     return undefined;
   } catch (error) {
     if (!(error instanceof CodeRuleCompileError)) throw error;
-    return readsLeftOutToken(error.reason) ? undefined : error.reason;
+    return readsLeftOutToken(error.reason) || error.reason === relationalRulesOff(document.rule) ? undefined : error.reason;
   }
 }
 
