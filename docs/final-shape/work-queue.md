@@ -627,6 +627,15 @@ pass.
   before only when the first process took over 2 s to start (2.08 s measured at 1449681e9). Backdating the files
   makes it pass, but hides the gap. Fix: name a hit's source by its digest when the manifest is recorded (the
   writer resolves `Unstored` digests to source ids), so a run names what it read whatever the stat index knew.
+- **Record**: done (2026-11-16). A memo hit's content goes to the manifest as it is (`Cut::read_sources` holds
+  `memo::Content`, `Held` left out as before): a stored source by its id, an `Unstored` one by its digest
+  (`Manifest::digests`), which `apply_manifest` turns into the source the store holds then (`sources_by_hashes`, one
+  indexed read per file inside the racy window). A miss's digest finds the source its tape's write stored, already
+  named (`name_sources`; the manifest's ids are deduplicated). Self-review against the brief: the three `record_run`
+  callers pass the digests; nothing else reads `read_sources`; a digest the store does not hold is dropped, as an
+  unstored content was. Verified: the test passes with fresh files (it failed on every run before), with
+  `the_run_after_a_cold_one_writes_nothing`; strict cold, warm and edit runs over 10 corpus0 files write the same
+  rows as before and the warm run writes nothing.
 
 ### Q25. `rrs_records_are_rows_on_the_cpu` expects no `/` among the punctuation bytes
 
