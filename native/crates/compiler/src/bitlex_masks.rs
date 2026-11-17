@@ -774,6 +774,14 @@ impl Lowering {
                         Some(r) => {
                             let (pair, e) = match r {
                                 ::bitlex::syntax::TokenRule::Run(e) => (false, e),
+                                // `pair empty`: no byte pairs, a table of none (`EndRule::Next`), as
+                                // `pair P` with no spellings. Its tokens are one byte, read from the
+                                // first byte's entry (the fused pair rule's), not a mask's word that is
+                                // always zero, by a call a token (0354).
+                                ::bitlex::syntax::TokenRule::Pair(e @ ::bitlex::syntax::Expr::Empty) => {
+                                    self.token_pairs.insert(kind.clone(), Vec::new());
+                                    (true, e)
+                                }
                                 ::bitlex::syntax::TokenRule::Pair(e) => (true, e),
                                 ::bitlex::syntax::TokenRule::Pairs { pairs, mask } => {
                                     self.token_pairs.insert(kind.clone(), pairs.clone());

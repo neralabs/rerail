@@ -1657,8 +1657,9 @@ pub mod tests {
             rerail_compiler::records::EndRule::Next(i) => rerail_compiler::native_cpu_block::pair_nibbles(r, &r.nexts[usize::from(i)], k).map(|n| n[0].iter().fold(0u8, |a, &x| a | x).count_ones() as usize),
             _ => None,
         }).collect();
-        // `:` `=` `!` `<` `>` `-`: six first bytes, six bits.
-        assert_eq!(found, vec![6]);
+        // `:` `=` `!` `<` `>` `-`: six first bytes, six bits; and `pair empty`'s table of none,
+        // no bits (0354: its word is zero, no lookup).
+        assert_eq!(found, vec![6, 0]);
     }
 
     /// A `within(d)` the CPU's windows leave out (`native_cpu_lanes::unguarded`): where another
@@ -3319,8 +3320,10 @@ mod json_probe {
             std::fs::write(&path, &src).expect("writes");
             eprintln!("tier 1 as Rust: {path}, {} bytes", src.len());
         }
-        let files: Vec<Vec<u8>> = json_files().into_iter().filter(|f| p.image(f).is_ok()).collect();
-        let bytes: usize = files.iter().map(Vec::len).sum();
+        // `RERAIL_JSON_ONLY=<name>`: that made input alone, no corpus (to trace one input's path).
+        let only = std::env::var("RERAIL_JSON_ONLY").ok();
+        let files: Vec<Vec<u8>> = if only.is_some() { Vec::new() } else { json_files().into_iter().filter(|f| p.image(f).is_ok()).collect() };
+        let bytes: usize = files.iter().map(Vec::len).sum::<usize>().max(1);
         let passes = p.tier1.pass_count();
         let mut batches: Vec<_> = files.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_slice()])).collect();
         for b in &mut batches {
@@ -3366,7 +3369,7 @@ mod json_probe {
             ("12-digit numbers", [b"[".as_slice(), &"123456789012,".repeat(n / 13).into_bytes(), b"0]"].concat()),
             ("short strings", [b"[".as_slice(), &"\"ab\",".repeat(n / 5).into_bytes(), b"0]"].concat()),
         ];
-        for (name, f) in &synth {
+        for (name, f) in synth.iter().filter(|(name, _)| only.as_deref().is_none_or(|o| o == *name)) {
             p.image(f).unwrap_or_else(|e| panic!("{name}: {e:?}"));
             let mut bs: Vec<_> = (0..16).map(|_| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_slice()])).collect();
             for b in &mut bs {

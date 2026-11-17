@@ -1892,6 +1892,8 @@ pub struct RecordTables {
     /// Where each pair table's rows (a byte a first byte) and sets (four words each) are
     /// (`Records::nexts`).
     pub pairs: Vec<(usize, usize)>,
+    /// Each pair table holds no pair (`pair empty`, 0354): its tokens are one byte, no row read.
+    pub pairless: Vec<bool>,
     /// Where each first byte's entry is, eight bytes each (`TOKEN_*`): its kind, its end rule,
     /// whether a word starts with it, its pair row. A token's one load, as the lean lexer's
     /// `TOKEN`. Where the codes are in the entries (`punct_in_entry`), 512 of them, as the lean
@@ -2050,6 +2052,7 @@ impl RecordTables {
             words.extend(t.sets.iter().flatten());
             pairs.push((rows, sets));
         }
+        let pairless: Vec<bool> = r.nexts.iter().map(|t| t.sets.iter().all(|x| *x == [0; 4])).collect();
         let token = 8 * words.len();
         // The tests' filters, a bit each past the word flag, as many as fit below the pair row.
         let mut filters = Vec::new();
@@ -2190,7 +2193,7 @@ impl RecordTables {
         let punct = 8 * words.len();
         words.extend(punct_codes.iter().map(|&(one, two, _)| one | two << 32));
         let rare_unpaired = rare.is_some_and(|n| (0..256).all(|b| n[0][b & 15] & n[1][b >> 4] == 0 || entries[b] == entries[b | 256]));
-        Ok(RecordTables { words, slots, tails, rest, rare, ends: ends_of, rare_unpaired, table, starts: r.starts, lasts: r.lasts, pairs, token, filters, layout: crate::records::RecordLayout::Columns, fused, punct, punct_in_entry, lean })
+        Ok(RecordTables { words, slots, tails, rest, rare, ends: ends_of, rare_unpaired, table, starts: r.starts, lasts: r.lasts, pairs, pairless, token, filters, layout: crate::records::RecordLayout::Columns, fused, punct, punct_in_entry, lean })
     }
 }
 
@@ -4460,7 +4463,8 @@ const PAIR_WORD: u16 = 0x2000;
 /// zero; none where the tables do not say exactly `holds` for each first byte of the rule.
 pub fn pair_nibbles(r: &crate::records::Records, t: &crate::records::PairTable, rule: usize) -> Option<[[u8; 16]; 4]> {
     let firsts: Vec<u8> = (0..=255u8).filter(|&a| r.ends.get(usize::from(a)).is_some_and(|&e| usize::from(e) == rule) && (0..=255u8).any(|b| t.holds(a, b))).collect();
-    if firsts.is_empty() || firsts.len() > 8 {
+    // No pair (`pair empty`, 0354): tables of zeros, the pair word zero (`pair_word`'s none).
+    if firsts.len() > 8 {
         return None;
     }
     let mut n = [[0u8; 16]; 4];
@@ -4509,8 +4513,9 @@ fn fused_of(r: &crate::records::Records, filters: &[Option<i64>], native: Option
 /// of the fused rules (`fused_rules`, the pair rule `kn`, the run rule `kr`) covers no start
 /// after its own, and the loop clears its bit alone. It holds where the words are the bytes'
 /// alone and: no first byte of `kn`, nor a second of its pairs, is a run byte (a pair ends no
-/// run, starts none); a pair's second byte and a run byte are no skip's and no zero (the bytes
-/// past the file), so a start put back after another rule's token (`record_tokens`) is one.
+/// run, starts none); a pair's second byte and a run byte are no skip's, and a pair's second
+/// no zero (the bytes past the file: the pair word is not cut there, the run's is), so a start
+/// put back after another rule's token (`record_tokens`) is one.
 /// A first byte of `kr` that is no run byte (`#` of `#include`: the run from the byte after
 /// it starts there) is then not fused (`run_fused`): its token takes the rules' general tail.
 ///
@@ -4524,7 +4529,10 @@ pub fn lean_starts(r: &crate::records::Records, native: &crate::block_native::Bl
     let (word, space) = (alone(o)?, alone(skip)?);
     let of = |x: u8, k: usize| r.ends.get(usize::from(x)).is_some_and(|&e| usize::from(e) == k);
     let pairs_apart = (0..=255u8).filter(|&a| of(a, kn)).all(|a| !word.has(a) && (0..=255u8).filter(|&b| pt.holds(a, b)).all(|b| !word.has(b) && !space.has(b) && b != 0));
-    let words_start = !word.has(0) && (0..=255u8).all(|x| !word.has(x) || !space.has(x));
+    // A run byte may be zero (JSON's `wordbyte`, `~(ws | op | quote)`): the bytes past the file
+    // are then no run's, as the run's word is cut at the file's end (`Bytewise::word`'s `cut64`,
+    // where the output is not false on a zero byte), so no start is put back past it (0354).
+    let words_start = (0..=255u8).all(|x| !word.has(x) || !space.has(x));
     let starts_pair = |a: u8| of(a, kn) && (0..=255u8).any(|b| pt.holds(a, b));
     let chained = (0..=255u8).filter(|&a| starts_pair(a)).any(|a| (0..=255u8).any(|b| pt.holds(a, b) && starts_pair(b)));
     (pairs_apart && words_start).then_some(chained)
@@ -4757,6 +4765,10 @@ fn set_word(f: &mut FunctionBuilder<'_>, file: &crate::native_cpu_bytes::File, n
 /// token's bytes, one load of the set.
 #[allow(clippy::too_many_arguments)]
 fn next_last(f: &mut FunctionBuilder<'_>, t: &RecordTables, c: &FileCols, s: Value, raw: Value, entry: Value, i: u16) -> Value {
+    // A table of no pairs: the first byte alone.
+    if t.pairless.get(usize::from(i)).copied().unwrap_or(false) {
+        return s;
+    }
     let ro = MemFlags::trusted().with_readonly();
     let (_, sets) = t.pairs[usize::from(i)];
     let i1 = f.ins().iadd_imm(s, 1);
@@ -5931,7 +5943,8 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             let (x, mut words) = (got[0], got[1..].to_vec());
             if let (Some(n), Some((_, file))) = (&pairs, rd.bytes) {
                 let p = f.ins().ishl_imm(q, 6);
-                words.push(pair_word(f, &file, n, p));
+                // No pair (zero tables, `pair empty`): the word is zero, no lookup.
+                words.push(if n.iter().all(|x| *x == [0; 16]) { zero } else { pair_word(f, &file, n, p) });
             }
             let x = f.ins().bnot(x);
             let x = f.ins().band(x, m);

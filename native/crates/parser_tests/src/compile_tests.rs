@@ -1209,7 +1209,12 @@ fn json_compiled_path_equals_the_interpreters() {
     // record's (`records`): no search.
     assert!(!tier2.wraps);
     assert!(tier2.heads.iter().all(|h| matches!(h.1, native_cpu_shape::Step::Token | native_cpu_shape::Step::Block)), "{:?}", tier2.heads);
-    assert_eq!(tier2.own_calls, 0, "no pass over the table");
+    // Its calls are the tape's (8a1762be0: tier 2 writes the tape): a block's offsets, a commit,
+    // a code taken back, the image's end, each rare (`TableFns`), the module's ids 1 to 4. A pass
+    // over the table (a wrap's `shift`, a drop's) would be declared before them, and the tape's
+    // ids past 4.
+    let callees: Vec<u32> = tier2.clif.lines().filter_map(|l| l.trim().split_once(" = colocated u0:")).filter(|(k, _)| k.starts_with("fn")).filter_map(|(_, rest)| rest.split_whitespace().next()?.parse().ok()).collect();
+    assert!(callees.iter().all(|&id| (1..=4).contains(&id)), "no pass over the table: {callees:?}");
     let files = json_tier2_files();
     for f in &files {
         let want1 = p.block_programs[0].run_files(&[f]).remove(0);
