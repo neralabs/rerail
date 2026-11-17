@@ -26,8 +26,15 @@ export function checkoutRealpath(path: string): string {
 
 /**
  * The realpath Rerail 0.1.4 and earlier keyed records by on every platform: the JS one, which on Windows keeps the
- * letter case, drive letter and mapped drive the caller spelt. Only for finding a record those versions saved under the
- * folder as its session spelt it; this build keys every record through {@link checkoutRealpath}.
+ * letter case, drive letter, mapped drive and 8.3 name the caller spelt. Only for finding a record those versions saved
+ * under the folder as its session spelt it; this build keys every record through {@link checkoutRealpath}.
+ *
+ * The lookup under that earlier key is for Windows installs upgrading from 0.1.4 or earlier, which saved a folder's
+ * audit settings, and the start state of a folder outside Git, under it. It copies and stores nothing. Once no install
+ * upgrades from those versions, delete this function, {@link earlierPhysicalPath}, and what the compiler then names:
+ * the earlier-key read of `SqliteAuditControlStore` (`#settingsRow`, `#earlierKey`, `settingsUnderEither`),
+ * `CheckoutContext.earlierCheckoutPath` with `earlierKeyOf` and `ownStarted`'s second key in `repository-registry.ts`;
+ * and `startStateFolder` in `session-presentation.ts`, which hands the daemon the folder as spelt for this lookup.
  */
 export function earlierRealpath(path: string): string {
   return realpathOn("linux")(path);
