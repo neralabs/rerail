@@ -5844,9 +5844,15 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             // cursor's block made every refill's loads wait for the block's last token's end,
             // the token chain and the refill in series, where the lean lexer's next window is
             // `base + 64` whatever its tokens did (0177, "The next block waits on no token").
+            // The refill follows the body (0359): the lean lexer's skips, no gap marks folded, a
+            // part of the fused pass (`limit`). It reads up to the blocks made (`ready`), not the
+            // file's end, and a wait there keeps the block it would read next (`spent_q`).
+            let bounded = skips && !folded && limit.is_some();
             let (q0, m0) = if skips {
                 let read = f.ins().iadd_imm(qc, 1);
-                let spent = f.ins().icmp(IntCC::Equal, h[4], read);
+                // A wait at `ready` leaves `h[4]` past the cursor's block: the blocks between were
+                // read and had no start. Else `h[4]` is at most the block after the cursor's.
+                let spent = if bounded { f.ins().icmp(IntCC::UnsignedGreaterThan, h[4], qc) } else { f.ins().icmp(IntCC::Equal, h[4], read) };
                 let reread = f.ins().icmp_imm(IntCC::SignedLessThan, h[3], 0);
                 let reread = f.ins().bnot(reread);
                 let here = f.ins().band(spent, reread);
@@ -5917,7 +5923,26 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             };
             let inside = f.ins().icmp(IntCC::UnsignedLessThan, q, to);
             let (look, next) = (f.create_block(), f.create_block());
-            inside_or_past(f, inside, look, refill_limit, finish, &[h[2].into(), h[0].into(), pend_q.into(), if folded { h[4] } else { from_q }.into()]);
+            match limit.filter(|_| bounded) {
+                Some(l) => {
+                    // Before the file's end and past the blocks made: the wait, with the block to
+                    // read next as the state's spent one.
+                    let (made, rwait) = (f.create_block(), f.create_block());
+                    f.append_block_param(rwait, types::I64);
+                    inside_or_past(f, inside, made, None, finish, &[h[2].into(), h[0].into(), pend_q.into(), from_q.into()]);
+                    f.switch_to_block(made);
+                    let ok = f.ins().icmp(IntCC::UnsignedLessThan, q, l.ready);
+                    f.ins().brif(ok, look, &[], rwait, &[q.into()]);
+                    f.switch_to_block(rwait);
+                    f.set_cold_block(rwait);
+                    let k = c.index(f, head_h[0]);
+                    let mut st: Vec<Value> = head_h[1..STATE_WORDS].to_vec();
+                    st[3] = f.block_params(rwait)[0];
+                    let args: Vec<BlockArg> = std::iter::once(k).chain(st).map(BlockArg::from).collect();
+                    f.ins().jump(then, &args);
+                }
+                None => inside_or_past(f, inside, look, refill_limit, finish, &[h[2].into(), h[0].into(), pend_q.into(), if folded { h[4] } else { from_q }.into()]),
+            }
             f.switch_to_block(look);
             // The skip and the run words from one window of the block's bytes.
             let all: Vec<u16> = std::iter::once(o).chain(outs.iter().copied()).collect();
