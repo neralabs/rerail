@@ -386,6 +386,15 @@ function programMissing(error: unknown): boolean {
 }
 
 /**
+ * The Git to start once more after a start of `executable`, the Git kept, found no program there (`missing`): the Git
+ * found again ({@link ProcessGit.afterMissing}). Undefined when that start found a program, or once `signal` is aborted:
+ * a stopped call starts no other Git and looks for none, and its first answer stands.
+ */
+function gitAgain(executable: string, missing: boolean, signal?: AbortSignal): string | undefined {
+  return missing && signal?.aborted !== true ? processGit.afterMissing(executable) : undefined;
+}
+
+/**
  * Git Bash's `bash.exe` in the Git for Windows install Rerail runs Git from ({@link gitExecutable}), or undefined
  * without Git or a Git Bash beside it. `<Git>\bin\bash.exe` sits a folder or two above its git.exe: `cmd\`, `bin\` or
  * `<build>\bin\` ({@link GIT_FOR_WINDOWS_BUILDS}).
@@ -441,7 +450,7 @@ export function runGit(cwd: string, args: readonly string[], options: RunGitOpti
   const run = (executable: string): GitResult => runGitWith(executable, [...SAFE_CONFIG, "-C", cwd, ...args], options);
   const executable = gitExecutable();
   const result = run(executable);
-  const again = programMissing(result.error) ? processGit.afterMissing(executable) : undefined;
+  const again = gitAgain(executable, programMissing(result.error));
   return again === undefined ? result : run(again);
 }
 
@@ -466,13 +475,13 @@ type RunGitAsyncOptions = RunGitOptions & GitReadOptions & { input?: string };
  * answers a null status with its error. The timeout and `signal` end Git as they end a batch read
  * ({@link settleWhenDone}), with every process it started, and the answer comes once that Git has exited
  * ({@link GitReadOptions}); once `signal` is aborted it starts no Git. When the Git kept for the process is gone, it
- * runs once more with the Git found again ({@link ProcessGit.afterMissing}), as `runGit` does.
+ * runs once more with the Git found again, as `runGit` does, unless `signal` is aborted by then ({@link gitAgain}).
  */
 export async function runGitAsync(cwd: string, args: readonly string[], options: RunGitAsyncOptions = {}): Promise<GitResult> {
   const run = async (executable: string): Promise<GitResult> => await runGitAsyncWith(executable, [...SAFE_CONFIG, "-C", cwd, ...args], options);
   const executable = gitExecutable();
   const result = await run(executable);
-  const again = programMissing(result.error) ? processGit.afterMissing(executable) : undefined;
+  const again = gitAgain(executable, programMissing(result.error), options.signal);
   return again === undefined ? result : await run(again);
 }
 
@@ -589,7 +598,7 @@ async function readWithGit<T>(signal: AbortSignal | undefined, read: (executable
   const executable = readerGit(signal);
   if (executable === undefined) return undefined;
   const first = await read(executable);
-  const again = first.missing && signal?.aborted !== true ? processGit.afterMissing(executable) : undefined;
+  const again = gitAgain(executable, first.missing, signal);
   return again === undefined ? first.answer : (await read(again)).answer;
 }
 

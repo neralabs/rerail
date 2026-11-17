@@ -137,6 +137,23 @@ describe("the Git a process keeps, gone under it", () => {
     expect(started(spawn)).toEqual([kept, now]);
   });
 
+  it("starts no other Git for a call that does not block, stopped while its Git failed to start, and the next call finds it", async () => {
+    const [kept, now] = await moveKeptGit();
+    started(spawn);
+    const stop = new AbortController();
+    vi.mocked(spawn).mockImplementationOnce((file, args, options) => {
+      stop.abort();
+      return actual.spawn(program(file), args, options);
+    });
+    const stopped = await runGitAsync(repository, ["rev-parse", "HEAD"], { signal: stop.signal });
+    expect([stopped.status, (stopped.error as NodeJS.ErrnoException | undefined)?.code]).toEqual([null, "ENOENT"]);
+    expect(started(spawn)).toEqual([kept]);
+    expect(gitExecutable()).toBe(kept);
+    const result = await runGitAsync(repository, ["rev-parse", "HEAD"]);
+    expect([result.status, result.stdout.trim()]).toEqual([0, head]);
+    expect(started(spawn)).toEqual([kept, now]);
+  });
+
   it("looks for Git again only when a start finds no program, not when Git exits non-zero or prints past maxBuffer", async () => {
     const kept = gitExecutable();
     // First on the first look's PATH, so a look now would keep it.
