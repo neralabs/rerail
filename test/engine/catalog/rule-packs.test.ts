@@ -135,6 +135,12 @@ describe("rule pack definitions", () => {
     expect(() => readRulePacks(directories)).toThrow("Conversation rule talk in rule pack one takes no example path");
   });
 
+  it("reject a code rule example without a file", async () => {
+    const examples = { caught: { path: "a.ts", text: "a" }, passes: { text: "b" } };
+    const directories = await packFolder([definition("one", "cyclomatic", { examples })]);
+    expect(() => readRulePacks(directories)).toThrow("Code rule cyclomatic in rule pack one needs a path on both examples");
+  });
+
   it("reject a pack whose globs do not compile, naming the pack, when the packs are read", async () => {
     const nested = { ...definition("one", "cyclomatic"), match: { any: [{ files: ["**/*.{ts,{js,jsx}}"], label: "code" }] } };
     const directories = await packFolder([nested]);
@@ -146,6 +152,22 @@ describe("rule pack definitions", () => {
     const loaded = readRulePacks(directories);
     expect(loaded.find(found => found.id === "one")!.rules[0]).toMatchObject({ kind: "conversation", mode: "log", on: false });
     expect(loaded.find(found => found.id === "two")!.rules[0]).toMatchObject({ kind: "code", mode: typescriptRule.rule.mode, on: true });
+  });
+
+  it("list a held-off rule with its reason, off", async () => {
+    const directories = await packFolder([definition("one", "cyclomatic", { on: false, heldOff: "its steer did harm" }), definition("two", "talk", { on: false })]);
+    const loaded = readRulePacks(directories);
+    expect(loaded.find(found => found.id === "one")!.rules[0]).toMatchObject({ on: false, heldOff: "its steer did harm" });
+    expect(loaded.find(found => found.id === "two")!.rules[0]).not.toHaveProperty("heldOff");
+  });
+
+  it.each([
+    ["on", { on: true, heldOff: "its steer did harm" }, "rules.0.heldOff needs \"on\": false"],
+    ["on by default", { heldOff: "its steer did harm" }, "rules.0.heldOff needs \"on\": false"],
+    ["with no reason", { on: false, heldOff: " " }, "rules.0.heldOff must be a non-empty string"],
+  ])("reject a held-off rule %s", async (_, rule, message) => {
+    const directories = await packFolder([definition("one", "cyclomatic", rule)]);
+    expect(() => readRulePacks(directories)).toThrow(message);
   });
 });
 
@@ -349,7 +371,8 @@ describe("the complexity pack's match", () => {
     [{ "app/Grade.php": "<?php\n", "resources/views/grade.blade.php": "<p></p>\n" }, "matches *.php files in app and *.blade.php files in resources/views", ""],
     [{ "crates/core/src/lib.rs": "pub fn f() {}\n" }, "matches *.rs files in crates/core/src", "crates/core/src"],
     [{ "web/src/App.vue": "<template></template>\n" }, "matches *.vue files in web/src", "web/src"],
-  ])("fits Python, TypeScript, JavaScript, PHP, Blade, Rust and Vue source: %j", async (files, reason, folder) => {
+    [{ "service/src/main/java/com/example/Plan.java": "class Plan {}\n" }, "matches *.java files in service/src/main/java/com/example", "service/src/main/java/com/example"],
+  ])("fits Python, TypeScript, JavaScript, PHP, Blade, Rust, Vue and Java source: %j", async (files, reason, folder) => {
     const root = await temporaryDirectory("rerail-complexity-match-");
     writeFiles(root, files);
     expect(recommendRulePacks(root, [complexity!]).map(found => [found.reason, found.folder])).toEqual([[reason, folder]]);
@@ -365,6 +388,8 @@ describe("the complexity pack's match", () => {
       "tests/views/grade.blade.php": "<p></p>\n",
       "tests/grade.rs": "fn f() {}\n",
       "src/__tests__/Grade.vue": "<template></template>\n",
+      "src/test/java/com/example/Grades.java": "class Grades {}\n",
+      "src/main/java/com/example/GradeTest.java": "class GradeTest {}\n",
       "main.go": "package main\n",
     });
     expect(recommendRulePacks(root, [complexity!])).toEqual([]);

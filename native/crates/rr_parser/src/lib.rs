@@ -1783,7 +1783,8 @@ pub mod tests {
         let pair_bytes: Vec<u8> = (0..=255u8).filter(|&b| r.ends.get(usize::from(b)).is_some_and(|&e| pairs(e)) && b != b'<').collect();
         assert!(pair_bytes.contains(&b'/'), "the comment reader's other reads the pair table");
         assert_eq!(c.parser.tier1.punct_bytes(), pair_bytes);
-        // Their codes fit their entries: no load beside the entry's.
+        // Their codes fit their entries: no load beside the entry's. The entries' codes stay the
+        // fused rule's alone.
         assert!(c.parser.tier1.punct_in_entry());
         // Its starts are the lean lexer's (`lean_starts`): a word's or a pair's token clears its
         // own start alone. Its pairs chain (`=>=`), read left to right. `#` (`#include`), whose
@@ -1794,6 +1795,29 @@ pub mod tests {
         let src = ".decl a(x: number)\na(1). // c\na(\"s\").\n";
         let lean = crate::rr::lean::tape(src);
         assert_eq!(c.parser.image(src.as_bytes()).ok().as_deref(), Some(&lean[..]), "rows: the lean tape");
+    }
+
+    /// The gap marks tier 2 on the CPU tests itself (`native_cpu_block::lazy_marks`: the line
+    /// marks, where a statement asks whether the next token is on its line) read the token's
+    /// `Next` and `Start` as their caller has them: in one function, whose state is in a stack
+    /// slot, as in clusters by rules, whose state is in `ctx`. Each tree is the interpreter's: a
+    /// `.policy` with no object ends at its line, a setting's arguments are on its line.
+    #[test]
+    fn a_lazy_marks_token_is_its_callers() {
+        use rerail_compiler::native_cpu_clusters as cl;
+        let c = crate::compiled().expect("compiles");
+        let mut native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
+        native.tag = rerail_tape_format::RR_TAG;
+        let n = native.structural.len();
+        for (shape, cut) in [("one function", cl::Cut::one(n)), ("by rules", cl::by_rules(&native))] {
+            let parser = rerail_compiler::native_cpu_stream::Parser::with_cut(&native, &cut).expect("compiles");
+            for src in [".policy\nmust().", ".mode\nr(x).", ".policy // c\n\nmust().", ".mode a\n.policy must().", ".policy must()."] {
+                let run = c.program.block_programs[0].run(src.as_bytes());
+                let want = rerail_compiler::stream::run(&c.program, src.as_bytes(), &run).map(rerail_compiler::ladder::as_ids).expect("the interpreter parses it");
+                let got = parser.parse(src.as_bytes()).map(rerail_compiler::ladder::as_ids).ok();
+                assert_eq!(got.as_ref(), Some(&want), "{shape}: {src:?}");
+            }
+        }
     }
 
     /// What a rule's count tests need of the bytes, together (`native_cpu_bytes::needs`): a

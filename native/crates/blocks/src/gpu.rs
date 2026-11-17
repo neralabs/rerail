@@ -184,16 +184,18 @@ pub struct JoinRun {
 }
 
 impl Gpu {
+    /// The kernels on the process's one device, submitted to its one queue (`rerail_forest::gpu::shared`, decision
+    /// 0100 §2).
     pub fn new() -> Result<Gpu, String> {
-        let device = Device::system_default().ok_or("no Metal device")?;
+        let shared = rerail_forest::gpu::shared::get().ok_or("no Metal device")?;
+        let device = shared.device.clone();
         let lib = device.new_library_with_source(&source(), &CompileOptions::new())?;
         let pipe = |name: &str| -> Result<ComputePipelineState, String> {
             let f = lib.get_function(name, None)?;
             device.new_compute_pipeline_state_with_function(&f)
         };
         let (count, write) = (pipe("join_count")?, pipe("join_write")?);
-        let queue = device.new_command_queue();
-        Ok(Gpu { device, queue, count, write })
+        Ok(Gpu { device, queue: shared.queue.clone(), count, write })
     }
 
     /// The block as a no-copy shared buffer: its pages are the device's too. It covers what the block has used

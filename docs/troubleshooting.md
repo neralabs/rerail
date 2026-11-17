@@ -130,6 +130,19 @@ The installed `rerail` command is `rerail.cmd`, which the policy does not block.
 
 The first `npx @neralabs/rerail setup` downloads and installs about 300 MB; npx prints nothing for 20 to 60 seconds.
 Set-up then prints `Downloading @neralabs/rerail@<version> from npm…`, and npm installs it again under `~/.rerail`.
+From there each step prints a line as it starts, and a step still running prints `still running after 30 s`, then
+again every 30 seconds.
+
+### Set-up or `rerail update` says npm may be stuck
+
+```text
+Downloading @neralabs/rerail@<version> from npm has taken 3 min. npm may be stuck: check your network or proxy, and the registry npm uses (`npm config get registry`). Rerail stops it at 20 min.
+```
+
+npm prints nothing while it downloads, so Rerail times each step. On a slow line the download can take this long; wait
+or press Ctrl-C. A download still running at 20 minutes, or an npm request at 3, is stopped: the update fails, its
+staged files are removed and the version that was active stays active. Check the settings in
+[npm cannot reach the registry](#npm-cannot-reach-the-registry), then run it again.
 
 ### npx exits with code 1 and prints nothing
 
@@ -210,10 +223,10 @@ Node.js and React would fit, but have no rules yet, so set-up does not offer the
 These packs are published but have no rules yet, so they would check nothing. Nothing to do: a later version brings
 its rules. `rerail packs recommend` lists them too.
 
-### `None of Rerail’s rule packs fit it`
+### `No rule pack matches what it’s built with`
 
 ```text
-Scanned acme-api. None of Rerail’s rule packs fit it.
+Scanned acme-api. No rule pack matches what it’s built with.
 
   Found           .py 3 · .md 1
                   from Git’s list of files, which leaves out what Git ignores
@@ -555,6 +568,20 @@ The following lines are what this start wrote to `~/.rerail/daemon.log`, and say
 A second daemon, from another `RERAIL_HOME` or left behind, holds Rerail's machine-wide lock. Stop it
 (`rerail daemon stop` from its home, or end its pid), then start again.
 
+### `Another Rerail daemon (pid …) runs in …`
+
+Another daemon holds this Rerail home's lock (`locks/daemon.lock`). A daemon started there waits a second for it, then
+writes this line to the home's `daemon.log` and exits; a `rerail daemon start` that launched it prints the line under
+`Rerail daemon exited with code 1 before it was ready`. While the daemon it names answers, the next
+`rerail daemon start` finds it. If it does not, `rerail daemon stop` stops it once `daemon.json` names it, or gives the
+pid to end; if the stop finds none and a start prints this line again, end the process it names and start again.
+
+### `this daemon (pid …) no longer holds the Rerail home at …`
+
+The Rerail home was moved or removed while its daemon ran. The daemon writes this line to `daemon.log` and stops
+writing `daemon.json`, so a home made again at that path never names it, but it still runs, recording into the
+database of the home it lost. End the pid it names, then run `rerail daemon start`.
+
 ### Containers: the dashboard does not open from the host
 
 The daemon listens on the container's loopback only, so a published port (`-p 4737:4737`) gets an empty reply. Set-up
@@ -738,5 +765,5 @@ finishes the job:
 
 </details>
 
-Choosing "No, cancel set-up" at set-up's sessions question connects and starts nothing, but Rerail is already installed
+Choosing "Not now, cancel set-up" at set-up's sessions question connects and starts nothing, but Rerail is already installed
 and on `PATH`. Set-up says so: `Rerail stays installed, and off; rerail install --remove takes it off this computer.`

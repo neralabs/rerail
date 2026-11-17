@@ -4472,9 +4472,10 @@ pub struct OnRequest {
     pub eager: Option<&'static str>,
 }
 
-/// Whether `rel` is one the rewrite adds (`sources_on_request`): a request, an attribute's eager half or named
-/// children, or a widened copy. `core.rr`'s names hold them (it is read with the rewrite), and a program with a round
-/// undone (`undo_round`) has none of that round's: a check that a program declares every core name passes over them.
+/// Whether `rel` is one the rewrite adds (`sources_on_request`): a request, its demand (decision 0291), an attribute's
+/// eager half or named children, or a widened copy. `core.rr`'s names hold them (it is read with the rewrite), and a
+/// program with a round undone (`undo_round`) has none of that round's: a check that a program declares every core
+/// name passes over them.
 pub fn made_on_request(rel: &str) -> bool {
     rel.starts_with("rr_wide_")
         || ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| {
@@ -4482,17 +4483,22 @@ pub fn made_on_request(rel: &str) -> bool {
                 Answer::Children { named } => Some(named),
                 Answer::Function(_) => None,
             };
-            a.req == rel || a.eager == Some(rel) || named == Some(rel)
+            a.req == rel || demand_of_request(rel, a.req) || a.eager == Some(rel) || named == Some(rel)
         })
 }
 
-/// Whether rules of `head` are the on-request rewrite's own (decision 0174): an attribute's answer, its requests, a
-/// widened copy. They are no reader of anything a program adds: a library's cone (`rr::with_cone`) is taken without
-/// them, or it reached, from a relation a program adds to, the widened copies of its readers, their requests, the
-/// attribute's answer and then every reader of the attribute (five of the Python pack's programs took 1,300 of the
-/// library's rules each).
+/// Whether rules of `head` are the on-request rewrite's own (decision 0174): an attribute's answer, its requests and
+/// their demands (decision 0291), a widened copy. They are no reader of anything a program adds: a library's cone
+/// (`rr::with_cone`) is taken without them, or it reached, from a relation a program adds to, the widened copies of
+/// its readers, their requests, the attribute's answer and then every reader of the attribute (five of the Python
+/// pack's programs took 1,300 of the library's rules each).
 pub fn on_request_rule(head: &str) -> bool {
-    head.starts_with("rr_wide_") || ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| a.rel == head || a.req == head)
+    head.starts_with("rr_wide_") || ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| a.rel == head || a.req == head || demand_of_request(head, a.req))
+}
+
+/// Whether `rel` is a demand narrowing request `req` (decision 0291, `Widen::demand_of`): `<req>_by_<reader>_<column>`.
+fn demand_of_request(rel: &str, req: &str) -> bool {
+    rel.strip_prefix(req).is_some_and(|rest| rest.starts_with("_by_"))
 }
 
 /// What answers an attribute's request for a node.
@@ -4596,29 +4602,50 @@ pub fn sources_on_request(prog: &mut crate::code_rule_dsl::logic::front::ast::Pr
                 }
                 // Narrowed by what the reader's own readers ask of it (decision 0291): where `n` is a column of the
                 // reader's head that every rule reading it binds, the request joins those rules' asks.
-                let mut body = body;
-                let narrowed = w.demand_of(rule, &to).map(|(col, asks)| {
+                let whole = body;
+                let mut body = whole.clone();
+                let (mut gate, mut wide) = (BTreeSet::from([rule.head.rel.to_string()]), None);
+                let narrowed = w.demand_of(rule, &to).map(|(col, asks, unnarrowed)| {
                     let dem = format!("{req}_by_{}_{col}", rule.head.rel);
+                    // The narrowed request is kept while one of the asks is (`Program::asked_by`): with none it asks
+                    // for nothing.
+                    gate = asks.iter().flat_map(|(by, _)| by.iter().cloned()).collect();
                     if !demands.contains_key(&dem) {
-                        demands.insert(dem.clone(), asks.into_iter().map(|ask| Rule { head: Atom { rel: dem.as_str().into(), args: vec![Term::Var("rr_dn".into())].into(), neg: false, gated: false }, body: ask.into() }).collect());
+                        // Each ask kept while its reading rules' relations are reached, as a request is with its
+                        // reader: an unreached reader's ask would widen the request.
+                        asked.insert(dem.clone(), asks.iter().map(|(by, _)| by.clone()).collect());
+                        demands.insert(dem.clone(), asks.into_iter().map(|(_, ask)| Rule { head: Atom { rel: dem.as_str().into(), args: vec![Term::Var("rr_dn".into())].into(), neg: false, gated: false }, body: ask.into() }).collect());
                     }
                     body.push(Literal::Atom(Atom { rel: dem.as_str().into(), args: vec![Term::Var(n.clone())].into(), neg: false, gated: false }));
+                    // A reading site that asks for no narrower set (`demand_of`) keeps the request whole while its
+                    // rule's relation is reached: the request unnarrowed too, kept by those relations alone.
+                    wide = (!unnarrowed.is_empty()).then_some(unnarrowed);
                     dem
                 });
                 // A variable the request reads once, outside its head, is a witness: a wildcard, so its atom is a test
                 // of existence, not a join over every row (`kind(v, k)` beside `kind(e, k)`, asking for `e`).
-                let body = wild_singletons(body, &to);
-                let request = Rule { head: Atom { rel: req.into(), args: vec![Term::Var(n.clone())].into(), neg: false, gated: false }, body: body.into() };
-                if on() {
-                    explained.push(format!("{} reads `{lit}`: asks `{request}`{}{}", rule.head.rel, Widen::left_out(&dropped), narrowed.map_or(String::new(), |d| format!("; narrowed by its readers' asks, `{d}`"))));
+                let request = |body: Vec<Literal>| Rule { head: Atom { rel: req.into(), args: vec![Term::Var(n.clone())].into(), neg: false, gated: false }, body: wild_singletons(body, &to).into() };
+                let mut asking = vec![(request(body), gate)];
+                if let Some(by) = wide {
+                    asking.push((request(whole), by));
                 }
-                match requests.iter().position(|r| *r == request) {
-                    Some(k) => {
-                        readers[k].insert(rule.head.rel.to_string());
-                    }
-                    None => {
-                        requests.push(request);
-                        readers.push(BTreeSet::from([rule.head.rel.to_string()]));
+                if on() {
+                    explained.push(format!(
+                        "{} reads `{lit}`: asks `{}`{}{}{}",
+                        rule.head.rel,
+                        asking[0].0,
+                        Widen::left_out(&dropped),
+                        narrowed.map_or(String::new(), |d| format!("; narrowed by its readers' asks, `{d}`")),
+                        asking.get(1).map_or(String::new(), |(_, by)| format!(", unnarrowed while {} is reached", by.iter().cloned().collect::<Vec<_>>().join(" or ")))
+                    ));
+                }
+                for (request, by) in asking {
+                    match requests.iter().position(|r| *r == request) {
+                        Some(k) => readers[k].extend(by),
+                        None => {
+                            requests.push(request);
+                            readers.push(by);
+                        }
                     }
                 }
             }
@@ -4702,8 +4729,8 @@ pub fn sources_on_request(prog: &mut crate::code_rule_dsl::logic::front::ast::Pr
 }
 
 /// `prog` as it was before `sources_on_request`: each attribute it answered on request an input again, without its
-/// requests, answers, eager rows' rule and widened copies. For programs merged into one and lowered once
-/// (`convert::overlay`): the requests are made over the merged program's readers.
+/// requests, their demands, answers, eager rows' rule and widened copies. For programs merged into one and lowered
+/// once (`convert::overlay`): the requests are made over the merged program's readers.
 pub fn undo_on_request(prog: &mut crate::code_rule_dsl::logic::front::ast::Program) {
     for round in ON_REQUEST.iter().rev() {
         undo_round(prog, round);
@@ -4717,9 +4744,10 @@ pub fn undo_round(prog: &mut crate::code_rule_dsl::logic::front::ast::Program, r
         if answered.is_empty() {
             return;
         }
-        // A round's copies are named after its first attribute present (`Widen::new`): any of the round's.
+        // A round's copies are named after its first attribute present (`Widen::new`): any of the round's. Its
+        // requests' demands (decision 0291) go with them.
         let wide: Vec<String> = round.iter().map(|a| format!("rr_wide_{}_", a.rel)).collect();
-        let copy = |rel: &str| wide.iter().any(|w| rel.starts_with(w.as_str()));
+        let copy = |rel: &str| wide.iter().any(|w| rel.starts_with(w.as_str())) || round.iter().any(|a| demand_of_request(rel, a.req));
         let mut gone: BTreeSet<String> = BTreeSet::new();
         for a in answered {
             gone.insert(a.rel.to_owned());
@@ -4829,30 +4857,43 @@ impl<'a> Widen<'a> {
         format!("{}{rel}", self.prefix)
     }
 
-    /// Decision 0291: what the rules reading `rule`'s relation ask of its column holding `n`, where every one asks:
-    /// the column, and per reading site, its other literals widened (as a request's are) and joined to the column's
-    /// variable, renamed apart with that variable as `rr_dn`. None where the relation is an output, is read in an
-    /// aggregate or by its own rules, or is read with that column a constant or bound by nothing its reader keeps.
-    fn demand_of(&self, rule: &Rule, n: &str) -> Option<(usize, Vec<Vec<Literal>>)> {
+    /// Decision 0291: what the rules reading `rule`'s relation ask of its column holding `n`: the column, per reading
+    /// site that asks, the reading rule's relation and its other literals widened (as a request's are) and joined to
+    /// the column's variable, which is `rr_dn`, and the relations of the rules whose reading sites ask for every row:
+    /// those read the relation in an aggregate or by name (`nearest`), or that column as a constant or bound by nothing
+    /// their reader keeps. Each ask, and the unnarrowed request beside it, is kept while its rules' relation is reached
+    /// (`sources_on_request`), so a clause no output reaches neither widens the request nor keeps it from narrowing.
+    /// None where the relation is an output or an input, is read by its own rules or a native step, or no site asks.
+    #[allow(clippy::type_complexity)]
+    fn demand_of(&self, rule: &Rule, n: &str) -> Option<(usize, Vec<(BTreeSet<String>, Vec<Literal>)>, BTreeSet<String>)> {
         let rel = &*rule.head.rel;
         let col = rule.head.args.iter().position(|t| matches!(t, Term::Var(v) if v == n))?;
-        if self.prog.outputs.iter().any(|o| o == rel) || self.prog.inputs.iter().any(|i| i == rel) {
+        if self.prog.outputs.iter().any(|o| o == rel) || self.prog.inputs.iter().any(|i| i == rel) || self.prog.natives.values().any(|s| s.reads().contains(&rel)) {
             return None;
         }
-        let mut asks = Vec::new();
-        for (k, r) in self.prog.rules.iter().enumerate() {
+        let (mut asks, mut every): (Vec<(BTreeSet<String>, Vec<Literal>)>, BTreeSet<String>) = (Vec::new(), BTreeSet::new());
+        for r in &self.prog.rules {
             for (i, l) in r.body.iter().enumerate() {
                 let a = match l {
                     Literal::Atom(a) if a.rel == rel => a,
-                    Literal::Agg { atom, .. } if atom.rel == rel => return None,
-                    // Read by name, not as an atom: no reading site to ask from.
-                    Literal::Nearest { kindset, .. } if kindset == rel => return None,
+                    // In an aggregate, or by name (not as an atom): no reading site to ask from.
+                    Literal::Agg { atom, .. } if atom.rel == rel => {
+                        every.insert(r.head.rel.to_string());
+                        continue;
+                    }
+                    Literal::Nearest { kindset, .. } if kindset == rel => {
+                        every.insert(r.head.rel.to_string());
+                        continue;
+                    }
                     _ => continue,
                 };
                 if r.head.rel == rel {
                     return None;
                 }
-                let Some(Term::Var(u)) = a.args.get(col) else { return None };
+                let Some(Term::Var(u)) = a.args.get(col) else {
+                    every.insert(r.head.rel.to_string());
+                    continue;
+                };
                 let u = u.to_string();
                 let (body, ..) = self.widen(&r.body, Some(i), &BTreeSet::new(), Some(&u));
                 // No widened copy: a copy of a recursive relation can lose what bounds it (a counter's step, once its
@@ -4860,13 +4901,27 @@ impl<'a> Widen<'a> {
                 // bind the column and stay joined to it.
                 let body = Self::joined(body.into_iter().filter(|l| !matches!(l, Literal::Atom(a) if a.rel.starts_with(self.prefix.as_str()))).collect(), &u);
                 if !body.iter().any(|l| matches!(l, Literal::Atom(a) if a.vars().contains(&u))) {
-                    return None;
+                    every.insert(r.head.rel.to_string());
+                    continue;
                 }
-                let name = |v: &str| if v == u { "rr_dn".to_owned() } else { format!("{v}_rr_d{k}_{i}") };
-                asks.push(wild_singletons(body, &u).iter().map(|l| rename_literal(l, &name)).collect());
+                // Each ask is a rule of its own, so its other variables keep the reader's names (as the program's
+                // other rules do, numbered by the lowering, not by the reading site's place in the program, which an
+                // unreached clause dropped before it would change). Only a variable already named `rr_dn` is moved.
+                let vars: BTreeSet<String> = body.iter().flat_map(Literal::vars).collect();
+                let moved = (0..).map(|j| format!("rr_dn{j}")).find(|v| !vars.contains(v)).expect("a free name");
+                let name = |v: &str| if v == u { "rr_dn".to_owned() } else if v == "rr_dn" { moved.clone() } else { v.to_owned() };
+                // One ask of each body, kept while any of its reading rules' relations is (a repeated rule is kept
+                // once, which would leave its record of readers apart from its rules).
+                let ask: Vec<Literal> = wild_singletons(body, &u).iter().map(|l| rename_literal(l, &name)).collect();
+                match asks.iter().position(|(_, a)| *a == ask) {
+                    Some(k) => {
+                        asks[k].0.insert(r.head.rel.to_string());
+                    }
+                    None => asks.push((BTreeSet::from([r.head.rel.to_string()]), ask)),
+                }
             }
         }
-        (!asks.is_empty()).then_some((col, asks))
+        (!asks.is_empty()).then_some((col, asks, every))
     }
 
     /// The atoms of `lits` joined to `n` through atoms, and the comparisons over what they bind.

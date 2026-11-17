@@ -5,10 +5,16 @@
  */
 import { cappedLine, plainLine } from "../code-rule/rerail-steer.js";
 
-const MERGE_ASSIST_NOTE_LEAD = "This note comes from Rerail, not the user.";
+/** How every Merge Assist note starts: it is Rerail's, not the user's. */
+export const MERGE_ASSIST_NOTE_LEAD = "This note comes from Rerail, not the user.";
 
 /** Longest summary of the other side's work a Merge Assist note quotes. */
 const CONFLICT_SUMMARY_CHARS = 200;
+/** Longest label or author of the other side a Merge Assist note quotes. */
+const CONFLICT_NAME_CHARS = 80;
+
+/** Another person's name for their side or for themselves, as a note quotes it: one line, cut short. */
+const quotedName = (text: string): string => JSON.stringify(cappedLine(text, CONFLICT_NAME_CHARS));
 
 /** An in-flight overlap as a Merge Assist note names it: the file, their side's label, author and one-sentence summary. */
 export interface ConflictNoteInput {
@@ -33,7 +39,7 @@ export function sideName(side: { readonly label: string; readonly author: string
  * page. Every part of it from the other side is one line and cut short.
  */
 export function conflictNote(note: ConflictNoteInput): string {
-  const who = sideName({ label: note.peer, author: note.author }, cappedLine);
+  const who = sideName({ label: note.peer, author: note.author }, quotedName);
   return [
     MERGE_ASSIST_NOTE_LEAD,
     `Your edit to ${cappedLine(note.file)} overlaps open work: ${who}, described on their side as ${JSON.stringify(cappedLine(note.summary, CONFLICT_SUMMARY_CHARS))}.`,
@@ -55,7 +61,7 @@ export function hookNote(content: string, note: string | null): string {
  * without it: which conflict, then the hook's words, attributed as in {@link hookNote}.
  */
 export function hookFollowUpNote(conflict: { readonly title: string; readonly peer: string }, note: string): string {
-  return hookNote([MERGE_ASSIST_NOTE_LEAD, `About the conflict with ${cappedLine(conflict.peer)}: ${cappedLine(conflict.title).replace(/\.$/u, "")}.`].join("\n"), note);
+  return hookNote([MERGE_ASSIST_NOTE_LEAD, `About the conflict with ${quotedName(conflict.peer)}: ${cappedLine(conflict.title).replace(/\.$/u, "")}.`].join("\n"), note);
 }
 
 /** A conflict's card on `dashboard`'s Merge Assist page; the link the person's `open` follows. */

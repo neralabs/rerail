@@ -985,13 +985,14 @@ fn own_word(f: &mut FunctionBuilder<'_>, p: &[Value], refuses: bool, body: &dyn 
 /// Whether gap mark `o`'s mask has a bit from the byte after the grammar token before's first
 /// to the token's (`records::gap_marks`), 1 or 0: the records before past the extras (a stated
 /// loop, `Step::Token`), none where that token's word is an `unless after` one; then the mask's
-/// words from the bytes (`native_cpu_bytes`), a stated loop of words.
+/// words from the bytes (`native_cpu_bytes`), a stated loop of words. `next` and `s` are the
+/// state's `Next` and `Start`, its caller's: arguments, as a check's (`Op::Check`), since the
+/// state is in `ctx` only in clusters (one function keeps it in a stack slot, a cut's `held`
+/// fields in registers).
 #[allow(clippy::too_many_arguments)]
-fn lazy_mark(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, bw: &crate::native_cpu_bytes::Bytewise<'_>, o: u16, extra: Option<u8>, unless: &[u16], coded: Option<u8>, heads: &mut Vec<(Block, Step)>) -> Value {
+fn lazy_mark(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, bw: &crate::native_cpu_bytes::Bytewise<'_>, o: u16, extra: Option<u8>, unless: &[u16], coded: Option<u8>, next: Value, s: Value, heads: &mut Vec<(Block, Step)>) -> Value {
     let flags = MemFlags::trusted();
     let (codes, starts, bytes, len) = ((e.ctx)(f, CODES), (e.ctx)(f, STARTS), (e.ctx)(f, BYTES), (e.ctx)(f, LEN));
-    let next = (e.get)(f, Mem::Next);
-    let s = (e.get)(f, Mem::Start);
     let here = f.ins().iadd_imm(next, -1);
     let zero = f.ins().iconst(types::I64, 0);
     let one = f.ins().iconst(types::I64, 1);
@@ -3776,7 +3777,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                                 let extra = r.extra;
                                 let coded = (crate::native_cpu_block::lazy_coded(r) >> order & 1 == 1).then_some(order);
                                 let name = format!("tempo_word_{}", word_fns.len());
-                                let made = outline(&mut module, &name, 1, 1, pinned_ctx, &[], |g, q, hs| {
+                                let made = outline(&mut module, &name, 3, 1, pinned_ctx, &[], |g, q, hs| {
                                     let ctx = q[0];
                                     let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
                                     let set = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| field_set(f, ctx, k, x);
@@ -3784,14 +3785,15 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                                     let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a mark does not refuse");
                                     let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
                                     let bw = crate::native_cpu_bytes::Bytewise::of(bn);
-                                    let v = lazy_mark(g, &env, &bw, o, extra, &unless, coded, hs);
+                                    let v = lazy_mark(g, &env, &bw, o, extra, &unless, coded, q[1], q[2], hs);
                                     g.ins().return_(&[v]);
                                 })?;
                                 word_fns.insert(key, made);
                             }
                             let (id, sig, _) = &word_fns[&key];
                             let c = pinned(&mut f);
-                            let r = call_word(&mut f, *id, sig, pinned_ctx, c, &[])[0];
+                            let (next, start) = (mget(&mut f, Mem::Next), mget(&mut f, Mem::Start));
+                            let r = call_word(&mut f, *id, sig, pinned_ctx, c, &[next, start])[0];
                             f.ins().brif(r, holds, &[], skip, &[]);
                             f.switch_to_block(holds);
                         }

@@ -155,6 +155,42 @@ pub fn count_transfers(disassembly: &str, kind: Transfer) -> usize {
     disassembly.lines().flat_map(transfers).filter(|&t| t == kind).count()
 }
 
+/// The calls in `clif`'s functions that each one's entry reaches. Cranelift drops a block no
+/// branch reaches before code generation, and a call in it with it: the machine code has the
+/// reached ones alone.
+pub fn reachable_calls(clif: &str) -> usize {
+    let is_call = |t: &str| t.starts_with("call ") || t.contains(" = call ");
+    let mut total = 0;
+    for function in clif.split("function ").filter(|f| !f.trim().is_empty()) {
+        // Each block's name, its calls and the blocks its branches go to, in layout order (the
+        // entry first).
+        let mut blocks: Vec<(&str, usize, Vec<&str>)> = Vec::new();
+        for line in function.lines() {
+            let t = line.trim();
+            // An instruction's source location (`@0005`) before it, if any.
+            let t = if t.starts_with('@') { t.split_once(char::is_whitespace).map_or("", |(_, rest)| rest.trim_start()) } else { t };
+            if t.starts_with("block") && t.ends_with(':') {
+                blocks.push((t.split(['(', ':', ' ']).next().unwrap_or(""), 0, Vec::new()));
+            } else if let Some((_, calls, to)) = blocks.last_mut() {
+                *calls += usize::from(is_call(t));
+                if matches!(opcode(t), "brif" | "jump" | "br_table") {
+                    to.extend(t.split(|c: char| !c.is_alphanumeric()).filter(|w| w.starts_with("block")));
+                }
+            }
+        }
+        let mut seen = vec![false; blocks.len()];
+        let mut work = vec![0usize];
+        while let Some(b) = work.pop() {
+            if b >= blocks.len() || std::mem::replace(&mut seen[b], true) {
+                continue;
+            }
+            total += blocks[b].1;
+            work.extend(blocks[b].2.iter().filter_map(|n| blocks.iter().position(|x| x.0 == *n)));
+        }
+    }
+    total
+}
+
 /// The Cranelift IR of the loop body: everything between the body block's label and the next
 /// block's. `block0` is the entry, `block1` a file's row, `block2` the body over its blocks.
 pub fn body_of(clif: &str) -> Vec<String> {
@@ -205,4 +241,15 @@ pub fn carried_params(clif: &str) -> usize {
 pub fn sink_params(native: &crate::block_native::BlockNative) -> usize {
     // A delayed output's word is not held (`native_cpu_block::delayed_store`).
     crate::native_cpu_block::counted(native).len()
+}
+
+#[cfg(test)]
+mod tests {
+    /// A call in a block no branch reaches is not counted: code generation drops it. One
+    /// behind a source location is.
+    #[test]
+    fn a_call_nothing_reaches_is_not_counted() {
+        let clif = "function u0:1(i64) -> i64 system_v {\n    fn0 = colocated u0:2 sig0\n\nblock0(v0: i64):\n    brif v0, block1, block2\n\nblock3 cold:\n    v9 = call fn0(v0)\n    return v9\n\nblock1:\n@0001                               v1 = call fn0(v0)\n@0001                               jump block2\n\nblock2:\n    return v0\n}\n";
+        assert_eq!(super::reachable_calls(clif), 1);
+    }
 }

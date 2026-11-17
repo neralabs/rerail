@@ -6339,6 +6339,11 @@ fn run_observed(
             let mut string_files: HashMap<i64, BTreeSet<i64>> = HashMap::new();
             if !wanted.is_empty() {
                 for (rel, source) in &text_sources {
+                    // A string's own rows (`value_type`, `memo::Owner::Text`) are no file's text: their first column
+                    // is the string, not a document, so it names no owner.
+                    if matches!(memo::owner(rel), memo::Owner::Text(_)) {
+                        continue;
+                    }
                     let (Some(columns), Some((_, texts))) = (super::super::sql::select::input_columns(rel), crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(r, _)| r == rel)) else { continue };
                     let have = source.columns();
                     let at = |name: &str| have.iter().position(|h| h == name);
@@ -10694,9 +10699,16 @@ pub mod tests {
         // Typed apart: Relax's rustc does not infer `&[][..] as &[String]` (E0283), as cargo's does.
         let no_files: &[String] = &[];
         empty.extend(super::reuse::encode_lists(&[no_files]));
-        assert_eq!(record.map(|(_, files)| files), Some(empty), "the empty answer is kept, with no overlay and no file");
+        // The record holds with the journal's cursors (decision 0105). With no journal (Linux without Watchman, as on
+        // CI's runners) nothing could say the answer still holds, so none is kept, and each run asks Git again.
+        let journal = crate::content_store::journal::volume(&real).is_some();
+        assert_eq!(
+            record.map(|(_, files)| files),
+            journal.then_some(empty),
+            "the empty answer is kept where a journal runs, with no overlay and no file; without one, nothing is"
+        );
         let _run = super::ObservedBatch::begin();
-        assert_eq!(super::git_files(&root), None, "and answered from the record");
+        assert_eq!(super::git_files(&root), None, "and answered from the record, or from Git again without a journal");
     }
 
     /// A string's test rows (`strtest_<k>`, `memo::Owner::Text`) are held once by each file whose text holds the

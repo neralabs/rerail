@@ -30,15 +30,16 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
-type Recorded = "runs" | "missing" | "cannot-run";
+type Recorded = "runs" | "missing" | "cannot-run" | "itself";
 
 async function launch(recorded: Recorded, hookSource = REPORTING_HOOK): Promise<{ status: number | null; stdout: string; stderr: string }> {
   const base = await mkdtemp(join(tmpdir(), "rerail-hook-launcher-"));
   temporaryDirectories.push(base);
   const hook = join(base, "claude-hook.mjs");
   await writeFile(hook, hookSource);
-  // A distinct "recorded node", so the test can tell it from the node that starts the launcher.
-  const node = join(base, RECORDED_NODE);
+  // A distinct "recorded node", so the test can tell it from the node that starts the launcher; or that node itself,
+  // which runs the hook in the launcher's own process.
+  const node = recorded === "itself" ? process.execPath : join(base, RECORDED_NODE);
   if (recorded === "runs") await recordedNode(node);
   // A file that is no program: without the execute bit, or on Windows (which has none) not an executable at all.
   if (recorded === "cannot-run") await (WINDOWS ? writeFile(node, "not a program\n") : writeFile(node, "#!/bin/sh\n", { mode: 0o644 }));
@@ -54,6 +55,34 @@ async function recordedNode(path: string): Promise<void> {
   await writeFile(path, `#!/bin/sh\nRECORDED=recorded exec "${process.execPath}" "$@"\n`);
   await chmod(path, 0o755);
 }
+
+describe("hook launcher started by the recorded node", () => {
+  it("runs the hook in its own process, so a hook event starts one node", async () => {
+    const base = await mkdtemp(join(tmpdir(), "rerail-hook-launcher-"));
+    temporaryDirectories.push(base);
+    const hook = join(base, "claude-hook.mjs");
+    await writeFile(hook, "process.stdout.write(JSON.stringify({ pid: process.pid, argv1: process.argv[1] }));");
+    // Set-up writes the recorded node as the command where `node` on PATH is another one.
+    const result = spawnSync(process.execPath, ["--import", "tsx", LAUNCHER, process.execPath, hook], { input: "{}", encoding: "utf8" });
+    expect(JSON.parse(result.stdout), result.stderr).toEqual({ pid: result.pid, argv1: hook });
+    expect(result.status).toBe(0);
+  }, 30_000);
+
+  const ANSWER = '{"continue":true}';
+  it.each([
+    ["ends the process before it answers", "process.exit(3);", "{}\n"],
+    ["throws once it has loaded, before it answers", 'setTimeout(() => { throw new Error("late failure"); }, 0);', "{}\n"],
+    ["leaves a failing exit code and answers nothing", "process.exitCode = 3;", "{}\n"],
+    ["answers, then ends the process", `process.stdout.write(${JSON.stringify(ANSWER)}); process.exit(3);`, ANSWER],
+    ["answers, then fails while loading", `process.stdout.write(${JSON.stringify(ANSWER)}); throw new Error("late failure");`, ANSWER],
+  ])("answers for a hook that %s as for one it runs as a child: exit 0, and {} only when it wrote nothing", async (_case, source, answer) => {
+    const child = await launch("runs", source);
+    expect(child, child.stderr).toMatchObject({ status: 0, stdout: answer });
+    const ownProcess = await launch("itself", source);
+    expect(ownProcess, ownProcess.stderr).toMatchObject({ status: 0, stdout: answer });
+    expect(ownProcess.stderr).toContain("rerail hook:");
+  }, 30_000);
+});
 
 describe("hook launcher", () => {
   it("runs the hook under the recorded node while that binary exists, passing its answer through", async () => {

@@ -55,8 +55,9 @@ pub struct MemoBlob {
     pub over: Option<SegmentBytes>,
 }
 
-/// The directory of the store's segments: beside its file.
-fn pack_dir(database: &Path) -> PathBuf {
+/// The directory of the store's segments: beside its file (`<store>.memo`). A copy of a store is its file and this
+/// directory (a test's store, copied from its template).
+pub fn pack_dir(database: &Path) -> PathBuf {
     let mut name = database.as_os_str().to_owned();
     name.push(".memo");
     PathBuf::from(name)
