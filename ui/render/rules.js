@@ -44,9 +44,8 @@ function countContent(stored) {
   return { text: "–", zero: true, tip: "Not run yet." };
 }
 
-function updateRow(row, stored) {
-  const id = stored.rule.id, r = row._r, title = titleOf(stored);
-  setClass(row, "off", !isRunning(stored));
+/** The "Not running" badge, and why: shown for a rule switched on that Rerail runs nowhere. */
+function updateStopped(r, stored) {
   // Switched on, but its stored options no longer apply to its document: Rerail runs it nowhere.
   // A conversation rule is in internal testing: it runs only while the daemon runs that experiment.
   const experimentOff = isInternalTesting(stored) && !(data.health?.experiments ?? []).includes("CONVERSATION_RULES");
@@ -54,6 +53,20 @@ function updateRow(row, stored) {
   setAttr(r.stopped, "title", experimentOff
     ? "Conversation rules are experimental and off: start the Rerail daemon with RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1 to run them."
     : stored.configError ? `Its options don't apply: ${stored.configError}` : null);
+}
+
+/** When the rule last logged a violation, hidden when it never did. */
+function updateLast(r, id) {
+  const lastSeen = activityAllOf(id).lastSeenAt;
+  const lastText = allFires(id) && lastSeen ? `last logged ${whenLabel(lastSeen)}` : "";
+  setText(r.last, lastText);
+  setAttr(r.last, "hidden", lastText === "");
+}
+
+function updateRow(row, stored) {
+  const id = stored.rule.id, r = row._r, title = titleOf(stored);
+  setClass(row, "off", !isRunning(stored));
+  updateStopped(r, stored);
   setAttr(row, "aria-selected", panelRuleId() === id ? "true" : null);
   setText(r.title, title);
   setAttr(r.title, "title", title);
@@ -68,10 +81,7 @@ function updateRow(row, stored) {
   // The folders the rule is added at, when it is not the whole repository.
   setText(r.folder, stored.folders.filter(f => f !== "").join(", "));
   setAttr(r.folder, "hidden", stored.folders.every(f => f === ""));
-  const lastSeen = activityAllOf(id).lastSeenAt;
-  const lastText = allFires(id) && lastSeen ? `last logged ${whenLabel(lastSeen)}` : "";
-  setText(r.last, lastText);
-  setAttr(r.last, "hidden", lastText === "");
+  updateLast(r, id);
 }
 
 /* ---------- the table ---------- */

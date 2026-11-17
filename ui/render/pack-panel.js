@@ -120,15 +120,21 @@ function renderList(pack) {
       h("span.mono", null, rule.id)))));
 }
 
+/** How the added pack's rules here treat suppression comments; `null` before it is added, during the review, or with none present. */
+function suppressionsOf(pack) {
+  const added = isAttached(pack);
+  // Every rule the pack added in some folder: a rule may also be added on its own elsewhere, and that folder comes first.
+  const present = [...data.rules.values()].filter(r => inPack(r, pack.id));
+  return added && !reviewing() && present.length > 0 ? packSuppressions(present, pack.id, changeOwner(pack.id), data.checkout?.checkoutPath) : null;
+}
+
 export function renderPackPanel(root, pack) {
   if (sheet === null) build();
   if (sheet.root.parentNode !== root) { root.replaceChildren(sheet.root); delete root.dataset.sig; }
   if (sheet.packId !== pack.id) { sheet.packId = pack.id; sheet.query = ""; sheet.input.value = ""; }
   sheet.pack = pack;
-  const on = packOn(pack), added = isAttached(pack);
-  // Every rule the pack added in some folder: a rule may also be added on its own elsewhere, and that folder comes first.
-  const present = [...data.rules.values()].filter(r => inPack(r, pack.id));
-  const suppressions = added && !reviewing() && present.length > 0 ? packSuppressions(present, pack.id, changeOwner(pack.id), data.checkout?.checkoutPath) : null;
+  const on = packOn(pack);
+  const suppressions = suppressionsOf(pack);
   renderHead(pack, on);
   renderIntro(pack, on, suppressions);
   sheet.filter.hidden = pack.rules.length <= SHEET_FILTER_AT;

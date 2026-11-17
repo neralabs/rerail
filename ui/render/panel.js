@@ -88,9 +88,14 @@ function renderAsk(stored) {
   const prompt = askPrompt(askRule(stored), ui.askIntent);
   if (p.askText.value !== prompt) p.askText.value = prompt;
   setText(p.askWhere, `Pick what to change, then paste the prompt into a coding agent session in ${repoLabel()}.`);
-  setText(p.askWhy, `${ASK_OPEN[ui.askIntent] ? "Finish the sentence after pasting. " : ""}${ui.askIntent === "ask"
+  setText(p.askWhy, askWhy(stored));
+}
+
+/** The line under the prompt: what to finish after pasting, and what the coding agent does with it. */
+function askWhy(stored) {
+  return `${ASK_OPEN[ui.askIntent] ? "Finish the sentence after pasting. " : ""}${ui.askIntent === "ask"
     ? "Your coding agent answers from the rule and its History."
-    : askHint({ fromPack: isFromPack(stored) })}`);
+    : askHint({ fromPack: isFromPack(stored) })}`;
 }
 
 /** Why a mode button does nothing when clicked: its title and its toast. */
@@ -124,6 +129,11 @@ function renderStats(stored, id) {
   setAttr(p.statsNone, "hidden", !none);
   // Off is off in every folder: `enabled` also reads off for a rule on in only some of them.
   if (none) { setText(p.statsNone, stored.folderStates.every(state => !state.on) ? "Off. Nothing is logged or steered." : "No violations logged yet."); return; }
+  renderStatCells({ measured, f, all, lastSeen });
+}
+
+/** The three cells: violations in the range, when one was last logged, and violations since install. */
+function renderStatCells({ measured, f, all, lastSeen }) {
   const [s1, s2, s3] = p.stats.children;
   setText(s1.firstChild, measured ? fmt(f) : "–");
   setText(s1.lastChild, measured ? `logged ${rangeLabel()}` : "not counted in this release");
@@ -234,11 +244,8 @@ function renderFoot(stored, id) {
     : h("button.btn.sm.danger.quiet", { "data-act": "delask", "aria-expanded": "false" }, "Delete rule")));
 }
 
-function renderRule(root, stored) {
-  if (p === null) buildRule();
-  if (p.root.parentNode !== root) { root.replaceChildren(p.root); delete root.dataset.sig; }
-  const id = stored.rule.id;
-  syncSheetState(id);
+/** The header: the way back (to the rule pack it was opened from, else the list), the title and the switch. */
+function renderHead(stored, id) {
   setText(p.back, ui.backToPack ? `← Back to ${data.packs.find(x => x.id === ui.backToPack)?.name ?? "the rule pack"}` : "← Back to list");
   setAttr(p.back, "class", ui.backToPack ? "back show" : "back");
   setText(p.title, titleOf(stored));
@@ -247,6 +254,14 @@ function renderRule(root, stored) {
   setAttr(p.sw, "aria-label", `Turn ${titleOf(stored)} ${stored.enabled ? "off" : "on"}`);
   setAttr(p.sw, "data-i", id);
   setText(p.swText, stored.enabled ? "On" : "Off");
+}
+
+function renderRule(root, stored) {
+  if (p === null) buildRule();
+  if (p.root.parentNode !== root) { root.replaceChildren(p.root); delete root.dataset.sig; }
+  const id = stored.rule.id;
+  syncSheetState(id);
+  renderHead(stored, id);
   renderAsk(stored);
   renderModes(stored);
   renderApproval(stored);
@@ -259,11 +274,17 @@ function renderRule(root, stored) {
   renderFoot(stored, id);
 }
 
-/** Render whichever sheet `ui.panel` names, and mark the page so the grid makes room for it. */
-export function renderPanel(root) {
+/** The rule or the rule pack `ui.panel` names, each `undefined` unless it names one this page has. */
+function panelSubject() {
   const panel = ui.panel;
   const stored = panel?.kind === "rule" ? data.rules.get(panel.id) : undefined;
   const pack = panel?.kind === "pack" ? data.packs.find(x => x.id === panel.id) : undefined;
+  return { stored, pack };
+}
+
+/** Render whichever sheet `ui.panel` names, and mark the page so the grid makes room for it. */
+export function renderPanel(root) {
+  const { stored, pack } = panelSubject();
   const open = stored !== undefined || pack !== undefined;
   const state = open ? "open" : "";
   if (document.body.dataset.panel !== state) document.body.dataset.panel = state;

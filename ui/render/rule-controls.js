@@ -32,8 +32,13 @@ export function ruleControls() {
   setClass(built.filterCtl, "on", ui.filter !== "all");
   setAttr(built.clear, "hidden", ui.filter === "all");
   if (built.sort.value !== ui.sort) built.sort.value = ui.sort;
-  if (built.search.value.trim().toLowerCase() !== ui.query && document.activeElement !== built.search) built.search.value = ui.query;
+  syncSearch();
   return { root: built.root, slot: built.slot };
+}
+
+/** The search box follows `ui.query`, except while the person types in it. */
+function syncSearch() {
+  if (built.search.value.trim().toLowerCase() !== ui.query && document.activeElement !== built.search) built.search.value = ui.query;
 }
 
 export const ruleControlActions = {

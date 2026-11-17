@@ -40,14 +40,24 @@ function outcome(ev) {
 
 const str = v => (typeof v === "string" ? v : "");
 
+const searchRows = (ev, i, row) => { row(ev.verb === "find" ? "Glob" : "Pattern", ev.target, true); row("In", str(i.path), true); };
+
+/** Verb-specific head rows of the payload table, by verb; a `Map`, so a verb such as "constructor" falls to `pathRow`. */
+const INPUT_ROWS = new Map([
+  ["run", (ev, i, row) => { row("Description", str(i.description)); row("Kind", ev.kind); }],
+  ["search", searchRows],
+  ["find", searchRows],
+  ["web", (ev, i, row) => row("URL", ev.target, true)],
+  ["ask", (ev, i, row) => { row("Question", ev.target); row("Options", Array.isArray(i.options) ? i.options.join(" · ") : ""); }],
+  ["agent", (ev, i, row) => { row("Task", ev.target); row("Type", typeof i.subagent_type === "string" ? i.subagent_type : str(i.agent)); }],
+]);
+
+/** Any other verb's head row: its target, as a path. */
+const pathRow = (ev, i, row) => row("Path", ev.target, true);
+
 /** Verb-specific head rows of the payload table. */
 function inputRows(ev, i, row) {
-  if (ev.verb === "run") { row("Description", str(i.description)); row("Kind", ev.kind); }
-  else if (ev.verb === "search" || ev.verb === "find") { row(ev.verb === "find" ? "Glob" : "Pattern", ev.target, true); row("In", str(i.path), true); }
-  else if (ev.verb === "web") row("URL", ev.target, true);
-  else if (ev.verb === "ask") { row("Question", ev.target); row("Options", Array.isArray(i.options) ? i.options.join(" · ") : ""); }
-  else if (ev.verb === "agent") { row("Task", ev.target); row("Type", typeof i.subagent_type === "string" ? i.subagent_type : str(i.agent)); }
-  else row("Path", ev.target, true);
+  (INPUT_ROWS.get(ev.verb) ?? pathRow)(ev, i, row);
 }
 
 function resultCell(ev) {
@@ -60,6 +70,11 @@ const diffLines = (cls, sign, text) => text.split("\n").map(l => h(cls, null, `$
 /** The command line, or the diff of what was written; `null` when the verb carries neither. */
 function commandOrDiff(ev, i) {
   if (ev.verb === "run") return h("pre", null, `$ ${ev.target}`);
+  return writtenDiff(ev, i);
+}
+
+/** The diff of what was written: the replaced text, else a created or edited file's content; `null` when neither. */
+function writtenDiff(ev, i) {
   if (typeof i.old_string === "string" && typeof i.new_string === "string") {
     return h("div.diff", null, diffLines("div.d", "-", i.old_string), diffLines("div.a", "+", i.new_string));
   }
@@ -120,6 +135,12 @@ function updateEvent(node, ev) {
   setClass(tg, "desc", desc);
   setText(tg, desc ? ev.title : shortPath(ev.title));
   setAttr(tg, "title", ev.target);
+  updateEventOut(eh, ev);
+  updatePayload(node, ev, isOpen);
+}
+
+/** The right end of an event's header: its outcome, tool, call and result numbers, and when it ran and for how long. */
+function updateEventOut(eh, ev) {
   const sig = `${ev.resSeq}|${ev.failed}|${ev.lines}`;
   const oc = eh.querySelector(".oc");
   if (oc.dataset.sig !== sig) { oc.dataset.sig = sig; oc.replaceChildren(...outcome(ev)); }
@@ -129,6 +150,10 @@ function updateEvent(node, ev) {
   setAttr(sq, "title", `Call #${ev.callSeq}${resultRef}`);
   const took = ev.dur ? ` · ${ev.dur}s` : "";
   setText(eh.querySelector(".tm"), `${clockSeconds(ev.callTime)}${took}`);
+}
+
+/** The payload under an open event, rebuilt only when the event opens, closes or gets its result. */
+function updatePayload(node, ev, isOpen) {
   const pay = node.lastChild;
   const paySig = isOpen ? `${ev.key}|${ev.resSeq}` : "";
   if (pay.dataset.sig !== paySig) { pay.dataset.sig = paySig; pay.replaceChildren(...(isOpen ? payload(ev) : [])); }
@@ -259,9 +284,12 @@ function coverageGaps(sess) {
     ...(unchecked === 0 ? [] : [`rules had not yet seen shell edits at ${fmt(unchecked)} ${plural(unchecked, "boundary", "boundaries")}`]),
     ...(rulesPending === 0 ? [] : [`code rules were not yet running at ${fmt(rulesPending)} ${plural(rulesPending, "boundary", "boundaries")}`]),
     ...(ignored === 0 ? [] : [`${fmt(ignored)} ${plural(ignored, "edit")} went unchecked because Git ignores the file`]),
-    ...(ruleChanges === 0 ? [] : [`Git's ignore rules changed ${ruleChanges === 1 ? "once" : `${fmt(ruleChanges)} times`}`]),
+    ...(ruleChanges === 0 ? [] : [`Git's ignore rules changed ${timesText(ruleChanges)}`]),
   ].join("; ");
 }
+
+/** How often, in words: "once", else "3 times". */
+const timesText = n => (n === 1 ? "once" : `${fmt(n)} times`);
 
 /** The audited-clean note, and what it says of the session's coverage. */
 function renderCleanNote(sess, gaps, loaded, clean) {
