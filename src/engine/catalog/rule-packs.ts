@@ -67,22 +67,6 @@ export const RULE_PACK_RULE_ID = /^[a-z0-9][a-z0-9-]*$/u;
  */
 const documentPathSchema = z.string().regex(/^rules\/[a-z0-9][a-z0-9-]*\.json$/u, "must be rules/<id>.json");
 
-/**
- * The first core release that reads a rule's `heldOff`: an older core refuses a `pack.json` naming it, so a pack holding
- * a rule off has to leave those cores out of its core range once this one ships (the pack validation's check 5).
- */
-export const HELD_OFF_SINCE = "0.1.5";
-
-/**
- * The first core release that reads each language added after 0.1.0: an older core refuses a rule document naming it,
- * so a pack shipping a rule in one has to leave those cores out of its core range once that release ships (the pack
- * validation's check 5).
- */
-export const LANGUAGE_SINCE: ReadonlyMap<string, string> = new Map(
-  ["c", "cpp", "csharp", "css", "eslint-directive", "go", "html", "java", "json", "markdown", "python-format", "rr"]
-    .map(id => [id, "0.1.5"] as const),
-);
-
 const packRuleFields = {
   id: z.string().regex(RULE_PACK_RULE_ID, "must be lowercase letters, digits and dashes"),
   title: nonEmpty,
@@ -329,13 +313,27 @@ function packRuleOf(rule: RulePackFile["rules"][number], document: RuleDocument)
   };
 }
 
+/**
+ * The rule document `source`, read from `documentPath`. One the schema refuses is reported like a refused `pack.json`:
+ * the pack, the document and its first issue, in a sentence, where the schema's own error is every issue as JSON.
+ */
+function parsePackDocument(id: string, document: string, source: unknown, documentPath: string): RuleDocument {
+  try {
+    return parseRuleDocument(source, documentPath);
+  } catch (error) {
+    if (!(error instanceof z.ZodError)) throw error;
+    const issue = error.issues[0];
+    throw new Error(`Rule pack ${id}: ${document} ${issue?.path.join(".") ?? ""} ${issue?.message ?? "is invalid"}`.replace(/\s+/gu, " "));
+  }
+}
+
 /** One listed rule read and checked: its document is named for its id, exists and carries that id, and its examples fit its kind. */
 function readPackRule(directory: string, id: string, rule: RulePackFile["rules"][number]): { rule: RulePackRule; document: RuleDocument; source: unknown } {
   const documentPath = join(directory, rule.document);
   if (basename(rule.document, ".json") !== rule.id) throw new Error(`Rule pack ${id} lists ${rule.id}, whose document must be rules/${rule.id}.json, not ${rule.document}`);
   if (!existsSync(documentPath)) throw new Error(`Rule pack ${id} lists ${rule.id}, whose document ${rule.document} does not exist`);
   const source = readJsonDocument(documentPath);
-  const document = parseRuleDocument(source, documentPath);
+  const document = parsePackDocument(id, rule.document, source, documentPath);
   if (document.rule.id !== rule.id) throw new Error(`Rule pack ${id} lists ${rule.id}, but ${rule.document} has id ${document.rule.id}`);
   checkExamples(id, rule.id, document.kind, rule.examples);
   return { rule: packRuleOf(rule, document), document, source };

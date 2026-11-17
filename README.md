@@ -19,7 +19,7 @@ Rule checking runs on your machine and makes no network requests. No account or 
 
 ## Quickstart
 
-You need Node.js 24 or later and Git, on macOS, Linux with glibc 2.28 or later (not Alpine or other musl Linux), or Windows, on arm64 or x64. Prebuilt native engines ship in the package, so nothing is compiled on your machine. If set-up or Rerail goes wrong, see [Troubleshooting](docs/troubleshooting.md).
+You need Node.js 24 or later and Git, on macOS, Linux with glibc 2.28 or later (not Alpine or other musl Linux), or Windows, on arm64 or x64. On Windows, Claude Code also needs Git Bash, from Git for Windows. Prebuilt native engines ship in the package, so nothing is compiled on your machine. If set-up or Rerail goes wrong, see [Troubleshooting](docs/troubleshooting.md).
 
 In your repository, run this to install Rerail under `~/.rerail`, connect your coding agents and start Rerail there:
 
@@ -55,7 +55,7 @@ The agent drafts the rule from your description, tests it against the repository
 </p>
 
 1. **Capture.** Hooks (Claude Code, Codex, Cursor) or native extensions (OMP, Pi) observe the session automatically, so the agent never has to remember to call Rerail. Before an edit, Rerail records the file as it was, so it can tell which lines the agent changed.
-2. **Evaluate.** One background daemon keeps the engine and every repository's compiled rules in memory, checks the files the agent touched, and reports only the lines it changed.
+2. **Evaluate.** One background daemon keeps the engine and the compiled rules of each repository in use in memory, checks the files the agent touched, and reports only the lines it changed.
 3. **Steer.** Each rule has a mode. `log` records the violation. `steer` sends the agent the rule, the location, what is wrong and, where the rule has one, a suggested fix.
 4. **Record.** Sessions and violations are stored in one local SQLite database (`~/.rerail/rerail.sqlite`) and shown in the dashboard, so you can see what fired, where and why.
 
@@ -104,7 +104,7 @@ Packs that port a linter are [linter-equivalent](docs/rule-packs.md#linter-equiv
 | --- | --- |
 | `python` | Ruff v0.16, Bandit v1 |
 | `javascript` | ESLint v10, eslint-plugin-unicorn v76 |
-| `typescript` | typescript-eslint v8, eslint-plugin-vitest v1 |
+| `typescript` | typescript-eslint v8, @vitest/eslint-plugin v1 |
 | `next` | @next/eslint-plugin-next v16 |
 | `react` | eslint-plugin-react v7, eslint-plugin-react-hooks v7 |
 | `node` | eslint-plugin-n v18 |
@@ -182,7 +182,7 @@ Each is off until its `RERAIL_EXPERIMENTAL_<FEATURE>` variable is set. Their lis
 ├── packs/            # rule packs, one npm package each
 ├── model/            # bundled, pinned potion-base-8M model (Git LFS)
 ├── hooks/            # hook manifests for Claude Code, Codex and Cursor
-├── skills/           # agent skills shipped with Rerail (rerail-create)
+├── skills/           # agent skills shipped with Rerail (rerail-create, rerail-bug-report)
 ├── .claude-plugin/ .codex-plugin/ .cursor-plugin/  # agent plugin manifests
 ├── ui/               # dashboard: plain HTML, CSS and ES modules, no build step
 ├── conformance/      # the conformance check: scores ported rules against upstream tools' findings

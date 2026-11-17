@@ -270,7 +270,7 @@ Default options. Flags a declaration whose name is already declared in an enclos
 
 ### `typescript-eslint-no-unused-vars`
 
-Reported where ESLint reports (last write from the variable's own function, else its first definition). Usedness, exports, `/* exported */` comments and report anchors come from the engine's per-variable references (`binds`, `resolves.write: "last"`); options filter on them. The head of a qualified type name (`ns.T`) reads only types, so it marks an import or namespace used and never a parameter of the same name; members declared with `declare` directly in a `declare module` body count as used. An unused `/* global */` name with no declaration is reported at the name in the first comment that declares it (first three names of a comment). Divergences (`rerail-unknown`): an index signature or mapped type with no type, and `using`/`await using` declarations, which the TypeScript grammar does not read.
+Reported where ESLint reports (last write from the variable's own function, else its first definition). Usedness, exports, `/* exported */` comments and report anchors come from the engine's per-variable references (`binds`, `resolves.write: "last"`); options filter on them. The head of a qualified type name (`ns.T`) reads only types, so it marks an import or namespace used and never a parameter of the same name; members declared with `declare` directly in a `declare module` body count as used. An unused `/* global */` name with no declaration is reported at the name in the first comment that declares it (first three names of a comment). Divergences (`rerail-unknown`): an index signature or mapped type with no type, which the TypeScript grammar does not read.
 
 ### `typescript-eslint-no-useless-constructor`
 

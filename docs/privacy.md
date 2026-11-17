@@ -20,7 +20,9 @@ no hosted model.
   you add (in internal testing; none by default). Rerail's other network traffic, listed below, carries none of them.
 - **No credentials of its own.** Rerail makes no network request with credentials of its own. Where it runs a tool
   that reaches the network for you (`npm`, and with Merge Assist on, `gh`), that tool uses your own configuration and
-  sign-in, and Rerail never reads or stores a token.
+  sign-in, and Rerail keeps no token. For its own installs Rerail gives npm a copy of your npm user config (`~/.npmrc`)
+  without any `allow-scripts` setting, in a private temporary folder it removes when npm ends; a token in that file is
+  copied with it, for npm alone to read.
 - **No hosted model or LLM API.** Semantic matching uses a bundled embedding model (`model/`,
   `minishlab/potion-base-8M`), run in-process after a SHA-256 manifest check. The engine has no HTTP or socket code
   (`native/Cargo.toml`, `native/src/model.rs`).
@@ -37,7 +39,7 @@ no hosted model.
 Apart from Merge Assist (below), only `npm` traffic to your configured registry, carrying package names and versions;
 rule evaluation needs no network.
 
-npm runs for updates, setup, listing and adding packs, and SQLite rebuilds (`src/runtime/npm.ts`).
+npm runs for updates, set-up, recommending and adding packs, and SQLite rebuilds (`src/runtime/npm.ts`).
 
 <details>
 <summary>When npm runs</summary>
@@ -45,8 +47,9 @@ npm runs for updates, setup, listing and adding packs, and SQLite rebuilds (`src
 | When | What npm fetches |
 | --- | --- |
 | `rerail update`, `rerail update check` | Latest `@neralabs/rerail` on your channel, then that version |
+| `rerail update` | The newest version of each rule pack you installed, asked by its package name on your channel (on `next` for a pack the channel has no version of) |
 | `rerail setup` from a non-managed copy (e.g. `npx`) | The managed `@neralabs/rerail` install |
-| Set-up, `rerail start`, `rerail packs list`, `rerail packs recommend` | Every rule pack, matched to your repository **locally**; nothing about it is sent |
+| Set-up, `rerail start`, `rerail packs recommend` | Every rule pack, matched to your repository **locally**; nothing about it is sent |
 | `rerail packs add`, packs confirmed in set-up | The chosen packs |
 | SQLite binding fails its load check | `npm rebuild better-sqlite3`; may fetch a prebuilt binary or Node headers through that package's own tooling |
 
@@ -105,7 +108,7 @@ repository's `.rerail/sessions/`.
 | Where | What |
 | --- | --- |
 | `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits, findings, steer feedback, and all agent events (prompts, replies, tool inputs and outputs). With Merge Assist on, also its in-flight conflicts (both sides' summaries and contested hunks; a dismissed one keeps everything but its hunks and evidence: its title, files, each side's branch or pull request, commit, author, link, summary and location, who dismissed it, and the hook command's last answer: its note (up to 600 characters), status line and any error (up to 300 characters of the command's output)), its last scan, your `gh` sign-in state and login, which notes each session was handed, and your Merge Assist settings; turning Merge Assist off clears the conflicts, scans and `gh` sign-in state, and `rerail reset` clears the notes of the sessions it removes. Also daemon state and log, consent answer, rule packs, managed installs |
-| `~/.cache/rerail/` (Windows: `%USERPROFILE%\AppData\Local\rerail`) | `content-v5.sqlite`: source files Rerail read, with syntax trees and check results. Sources and syntax trees from a scan are kept uncompressed in the `content-v5.sqlite.objects` folder beside it, and the facts derived from them in the `.frames` and `.memo` folders. `content-v5.sqlite.files` records the paths, sizes and times of the files Rerail looked at, with their contents' digests, so it can tell an unchanged file without reading it |
+| `~/.cache/rerail/` (Windows: `%USERPROFILE%\AppData\Local\rerail`) | `content-v5.sqlite`: source files Rerail read, with syntax trees and check results. Sources and syntax trees from a scan are kept uncompressed in the `content-v5.sqlite.objects` folder beside it, and the facts derived from them in the `.frames` and `.memo` folders. `content-v5.sqlite.files` records the paths, sizes and times of the files Rerail looked at, with their contents' digests, so it can tell an unchanged file without reading it. On Windows, the copy an earlier release kept in `~/.cache/rerail` stays until `rerail install --remove` deletes it |
 | `<your repository>/.rerail/sessions/` | One ledger per session: events and pre-edit file text. Its `.gitignore` of `*` keeps it out of Git |
 
 Steer feedback is the agent's one-line reason for ignoring a steer (`rerail feedback`). It is sent nowhere;
@@ -206,7 +209,9 @@ It does not block programs running as you; they can read the file.
 
 `--allow-remote` or `--public-host` exposes the daemon with a fresh capability per start. It serves HTTPS with
 `--tls-cert` and `--tls-key`, and refuses plain HTTP without `--insecure-http`. Rerail's clients verify the
-certificate's recorded fingerprint before sending the capability.
+certificate's recorded fingerprint before sending the capability. A `--tls-key` other accounts can read is never
+served with: the daemon then serves this computer alone, over plain HTTP on loopback, and a start that asked for
+`--allow-remote` or `--public-host` exits 1 ([reference](reference.md#network-binding-and-tls)).
 
 </details>
 
@@ -248,8 +253,9 @@ Three commands remove data, each reaching further.
 - **`rerail reset`** in a repository deletes its history (sessions, events, steer feedback, audits) and rewrites the
   database so it cannot be recovered. Rules, settings, `.rerail/sessions/`, the content cache and daemon log stay. All
   writes zero freed space (`secure_delete`).
-- **`rerail install --remove`** disconnects agents, stops the daemon, removes Rerail from `PATH`, and **moves** the
-  database to `~/.rerail-clean-YYYYMMDD`.
+- **`rerail install --remove`** disconnects agents, stops the daemon, **moves** the database to
+  `~/.rerail-clean-YYYYMMDD`, removes Rerail from `PATH`, and deletes the installation, the rule packs and the content
+  cache.
 - **`rerail install --remove --delete-data`** deletes the databases, every `~/.rerail-clean-*` backup, the content cache,
   recorded checkouts' `.rerail/sessions/`, the device secrets of `rerail activate` profiles, and everything else Rerail
   wrote in its home, then the home. `--dry-run` previews. Unrecorded checkouts, a custom `RERAIL_STORAGE_ROOT` and the

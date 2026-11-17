@@ -108,7 +108,9 @@ agents already connected, to bring the new version's commands and skills.
   keeping its filters.
 - **Claude Code:** hooks, status line (wrapping any you had) and
   [sandbox and permission denies](#sandbox-and-permission-entries) in `~/.claude/settings.json`; commands in
-  `~/.claude/commands/`. Windows hooks run without Git Bash.
+  `~/.claude/commands/`. Windows hooks run without Git Bash. Set-up then runs the SessionStart hook once, as Claude
+  Code will, from an empty temporary folder: a hook that does not exit 0 with a JSON answer within 30 seconds makes the
+  connection a failed one, named in the summary ([troubleshooting](troubleshooting.md#couldnt-connect-claude-code-claude-codes-rerail-hook-)).
 - **Codex:** hooks in `~/.codex/hooks.json` (trusted once with `/hooks` in Codex); one skill per command in
   `~/.codex/skills/<name>/SKILL.md`, invoked as `$rerail`, `$rerail-manage` and so on.
 - **Cursor:** hooks in `~/.cursor/hooks.json`, commands in `~/.cursor/commands/`, permission denies in
@@ -434,7 +436,7 @@ rerail rules approve ID  # print a waiting rule's content and approve it so it s
 rerail rules export      # dump your rules and every repository's configuration to ~/.rerail/rules.json
 rerail support-bundle    # write a file of diagnostics to attach to an issue, to ~/rerail-support-bundle.json
 rerail install --remove  # take Rerail out of every coding agent, stop the daemon, back up the database, delete the install
-rerail install --remove --delete-data  # the same, deleting the database, backups, cache and checkouts' session ledgers instead
+rerail install --remove --delete-data  # the same, deleting the database, backups, cache, checkouts' session ledgers and the rest of the Rerail home instead
 ```
 
 Every coding agent also gets slash commands, from `/rerail` to `/rerail-bug-report`. Restart the coding agent after
