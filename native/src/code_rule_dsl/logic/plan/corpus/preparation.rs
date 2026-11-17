@@ -8,7 +8,20 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 mod merge;
+mod nearest;
 pub use merge::{DropRepeated, MergeIdentical};
+pub use nearest::Nearest;
+
+/// A check of the program that writes nothing (what every relation read is bound by, `corpus::bound`): its error
+/// stops the pipeline.
+pub struct Check<F>(pub F);
+
+impl<F: FnMut(&Version) -> Result<(), String>> ProgramPass for Check<F> {
+    const NAME: &'static str = "a check of the program";
+    fn run(&mut self, cx: &Cx<'_>, _w: &mut ProgramW<'_>) -> Result<(), String> {
+        (self.0)(cx.v())
+    }
+}
 
 /// An input no rule reads is never bound or measured: it is not an input of what runs (an output stays one).
 pub struct InputsRead;
@@ -64,6 +77,8 @@ impl ProgramPass for RuleOrder {
 /// rules dropped.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Found {
+    /// The relations the run makes for the tree axes and `nearest` (`Nearest::sets`).
+    pub sets: Vec<(String, Vec<i64>)>,
     /// The relations the file-local joins were pushed into (`file_local::PushLocalJoins`).
     pub pushed: Vec<String>,
     /// What the factorized store handed on as parts (`file_local::FactorizeExports`): a line per relation.
@@ -82,8 +97,12 @@ pub struct Found {
 /// of one library rule made two: after the rows are located, they are merged again, and so are the relations over
 /// them, before the program splits. The merges (`merge`) run as `corpus::merge_and_drop_repeats`
 /// runs them, or the merge alone with `RERAIL_SAME=off`.
-pub fn run(version: Arc<Version>, factorize: bool) -> Result<(Arc<Version>, Found), String> {
+/// `bound` checks every relation read is bound, after `nearest` is read from the transducer.
+pub fn run(version: Arc<Version>, factorize: bool, bound: impl FnMut(&Version) -> Result<(), String>) -> Result<(Arc<Version>, Found), String> {
     let mut p = Pipeline::new("preparation", version);
+    let mut nearest = Nearest::default();
+    p.rules(&mut nearest);
+    p.program(&mut Check(bound));
     // The file-local part of each cross-file rule runs in the chunks, which export its rows, not their base relations.
     let mut pushed = crate::code_rule_dsl::typing::file_local::PushLocalJoins::default();
     p.program(&mut pushed);
@@ -108,7 +127,7 @@ pub fn run(version: Arc<Version>, factorize: bool) -> Result<(Arc<Version>, Foun
         p.program(&mut merge);
         p.program(&mut repeats);
     }
-    let found = Found { pushed: pushed.made, factorized: factorized.lines, demand: demand.lines, located: locate.result(), merged: merge.merged, shared: merge.shared, repeated: repeats.0 };
+    let found = Found { sets: nearest.sets, pushed: pushed.made, factorized: factorized.lines, demand: demand.lines, located: locate.result(), merged: merge.merged, shared: merge.shared, repeated: repeats.0 };
     p.program(&mut InputsRead);
     if let Ok(order) = std::env::var("RERAIL_RULE_ORDER") {
         p.program(&mut RuleOrder(order));
@@ -139,7 +158,7 @@ mod tests {
         )
         .unwrap();
         let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
-        let (out, _) = run(v.clone(), true).unwrap();
+        let (out, _) = run(v.clone(), true, |_| Ok(())).unwrap();
         assert!(out.base_bytes().is_some(), "a base");
         let inputs: Vec<&str> = out.inputs().map(|a| out.text(a)).collect();
         assert_eq!(inputs, ["a", "c"], "b is read by no rule; c is an output");

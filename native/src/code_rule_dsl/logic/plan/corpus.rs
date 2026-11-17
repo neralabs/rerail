@@ -1557,21 +1557,22 @@ pub const GIVEN: [&str; 8] = ["in_scope", "out_scope", "report_when_gt", "option
 /// value.c0`). A program's own inputs are its business (facts it is given later), so are the facts the converter
 /// gives (`GIVEN`: core.rr's `option_item` among them, empty for an option of no items), and the relations not made
 /// yet are empty (`NOT_MADE`, O76).
-fn bound(prog: &front::Program) -> Result<()> {
-    let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).chain(prog.facts.keys().map(String::as_str)).collect();
+fn bound(v: &crate::code_rule_dsl::logic::program_image::Version) -> std::result::Result<(), String> {
+    let derived = |rel: &str| v.rel(rel).is_some_and(|r| v.heads(r).next().is_some()) || v.find(rel).and_then(|a| v.facts(a)).is_some_and(|f| !f.about());
     let cpython = "CPython (core.rr: the isolated `ast.parse` worker), which the corpus runner does not run";
     // `env` is the run's settings (`tools::with_settings`): facts when there are any, else empty. The world's
     // relations (`dir_entry`, `file_line`, …, and `loaded`) are answered by the runner (`world`).
     let world = |rel: &str| rel == world::LOADED || crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(r, _)| *r == rel);
     let given = |rel: &str| GIVEN.contains(&rel) || rel == "env" || world(rel) || NOT_MADE.iter().any(|(r, _)| *r == rel);
     // core.rr's literal parts are made in core.rr's shape only (`syntax::core_rr`): a program that declares its base
-    // relations itself (T's shape) has none.
-    let t_shape = syntax::Projection::of(prog, BTreeSet::new()).shape == syntax::Shape::T;
+    // relations itself (T's shape, `syntax::Projection::of`: not every relation core.rr declares is declared) has none.
+    let core = crate::code_rule_dsl::facts::core::core_names();
+    let t_shape = core.is_empty() || !core.iter().all(|r| v.decl_of(r.as_str()).is_some());
     let parts = |rel: &str| t_shape && rel.starts_with("str_part");
-    for rule in &prog.rules {
-        for a in rule.body.iter().filter_map(front::Literal::atom) {
-            let rel = a.rel.as_str();
-            if !parts(rel) && (derived.contains(rel) || super::super::sql::select::input_columns(rel).is_some() || !crate::code_rule_dsl::logic::rr::is_core(rel) || given(rel)) {
+    for rule in v.rules() {
+        for a in rule.body().filter_map(|l| l.atom()) {
+            let rel = v.rel_name(a.rel());
+            if !parts(rel) && (derived(rel) || super::super::sql::select::input_columns(rel).is_some() || !crate::code_rule_dsl::logic::rr::is_core(rel) || given(rel)) {
                 continue;
             }
             let why = match rel {
@@ -1579,7 +1580,7 @@ fn bound(prog: &front::Program) -> Result<()> {
                 "list_len" => "it counts a pattern's list variable ($$$X), and patterns do not lower".to_owned(),
                 _ => "the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md)".to_owned(),
             };
-            return Err(Error::Plan(format!("{rel} is read, and nothing derives it or binds it: {why}")));
+            return Err(format!("{rel} is read, and nothing derives it or binds it: {why}"));
         }
     }
     Ok(())
@@ -3146,20 +3147,30 @@ fn run_observed(
                 Ok(atoms)
             })?;
             drop(lowering);
-            let _step = crate::code_rule_dsl::logic::profile::span(|| "nearest sets made by the transducer".into());
-            let sets = lowered.transduce_nearest();
-            // The preparation passes edit the lowered tree, the last before its one image (below).
-            let mut program: front::Program = std::mem::take(&mut lowered.program);
-            bound(&program)?;
-            drop(_step);
-            // The prepared program's one image (decision 0281's path, step 4): made here, after the last pass that edits
-            // the tree; the passes after it run on the manager over the version (step 5: the file-local joins pushed,
-            // the exports factorized and cut to their demand, the rows located, the merges, the inputs the rules read,
-            // the rule order), and the run's readers read the version (`Lowered::placed`), the split's parts views of
-            // it. A program the image cannot hold is an error, not a run read from the tree.
+            // The prepared program's one image (decision 0281's path, step 6): made here, after the last pass that edits
+            // the tree (`lower_tree`); the passes after it run on the manager over the version (`nearest` read from
+            // the transducer, the bound check, the file-local joins pushed, the exports factorized and cut to their
+            // demand, the rows located, the merges, the inputs the rules read, the rule order), and the run's readers
+            // read the version (`Lowered::placed`), the split's parts views of it. A program the image cannot hold is
+            // an error, not a run read from the tree.
             let _step = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's image and the passes on it".into());
+            #[cfg_attr(not(debug_assertions), allow(unused_mut))]
+            let mut program: front::Program = std::mem::take(&mut lowered.program);
             let (version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).and_then(|b| b.finish()).map_err(Error::Plan)?;
-            let (version, found) = preparation::run(version, factorizing).map_err(Error::Plan)?;
+            // A debug build checks the version's passes against the tree's (below), which runs them on the tree.
+            #[cfg(debug_assertions)]
+            let tree_sets = {
+                let mut given = lower::Given { program: std::mem::take(&mut program), domains: lowered.domains.clone(), ops: lowered.ops, dialect: lowered.dialect };
+                let sets = given.transduce_nearest();
+                program = given.program;
+                sets
+            };
+            #[cfg(not(debug_assertions))]
+            drop(program);
+            let (version, found) = preparation::run(version, factorizing, bound).map_err(Error::Plan)?;
+            let sets = found.sets.clone();
+            #[cfg(debug_assertions)]
+            assert_eq!(tree_sets, sets, "the version's nearest sets are the tree's");
             let factorized = found.factorized.clone();
             let pushed = found.pushed.clone();
             let merged = (found.merged, found.shared);
