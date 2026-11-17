@@ -215,7 +215,7 @@ function runSection(report: Report, baseline: string): string[] {
     `- Started ${report.run.started_at ?? "–"}, reported ${report.run.finished_at}, by ${report.run.invoked_by ?? "an unknown caller"}.`,
     `- Command: \`${report.run.command ?? "–"}\`; harness at \`${short(report.run.harness_sha)}\`.`,
     `- Baseline ${baseline}; candidate \`${short(report.candidate.sha)}\`.`,
-    `- Bar: each metric's median of ${report.bar.runs_per_side} runs at most ${report.bar.max_ratio.toFixed(2)}× the baseline's; ${report.bar.confirm_runs > 0 ? `a failing cell runs ${report.bar.confirm_runs} confirmation repetitions` : "no confirmation runs were recorded"}; ${report.bar.drill_reps > 0 ? `a confirmed slowdown is attributed to rules with ${report.bar.drill_reps} cold runs per rule and side` : "rule attribution, where shown, states its own runs"}.`,
+    `- Bar: ${report.bar.runs_per_side === 1 ? "each metric's single run per side" : `each metric's median of ${report.bar.runs_per_side} runs`} at most ${report.bar.max_ratio.toFixed(2)}× the baseline's; ${report.bar.confirm_runs > 0 ? `a failing cell runs ${report.bar.confirm_runs} confirmation repetition${report.bar.confirm_runs === 1 ? "" : "s"}` : "no confirmation runs were recorded"}; ${report.bar.drill_reps > 0 ? `a confirmed slowdown is attributed to rules with ${report.bar.drill_reps} cold runs per rule and side` : "rule attribution, where shown, states its own runs"}.`,
     `- CPUs ${report.bar.pinned_cpus.join(" / ") || "–"} (${report.bar.threads.join(", ") || "–"} threads, one per physical core, siblings idle where the platform pins); caps ${report.bar.caps.memory.join(", ") || "–"} memory, ${report.bar.caps.time_s.join(", ") || "–"} s.`,
     "",
   ];

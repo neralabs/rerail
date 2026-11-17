@@ -10,14 +10,19 @@
 //
 // Commands (each prints what it refuses and why; nothing is measured unpinned):
 //
-//   node --import tsx scripts/ship/shipbar.ts prepare --baseline <git ref | dir> --out <dir> [--packs a,b] [--record]
-//       the baseline checkout (a git ref is exported to <out>/baseline with its pack data pulled) and the pinned corpora
-//       in <out>/corpora: each pack's fixtures from its upstream recordings, and its real-code corpus from
-//       scripts/ship/corpora.json, whose file count and hash the corpus must match (--record writes them there).
-//       Needs git and the pack data cache; runs anywhere.
+//   node --import tsx scripts/ship/shipbar.ts prepare --baseline <release:version | git ref | dir> --out <dir> [--packs a,b]
+//       [--record]
+//       the baseline checkout and the pinned corpora in <out>/corpora: each pack's fixtures from its upstream
+//       recordings, and its real-code corpus from scripts/ship/corpora.json, whose file count and hash the corpus must
+//       match (--record writes them there). A git ref is exported to <out>/baseline with its pack data pulled;
+//       release:<version> (e.g. release:0.1.4) is the source at its tag v<version> with the published
+//       @neralabs/rerail@<version>'s prebuilt engines and JavaScript put in place, so the baseline is never built:
+//       `npm ci` is all it needs. Needs git, npm and the pack data cache (AWS); runs anywhere.
 //   node --import tsx scripts/ship/shipbar.ts run --baseline <dir | ref> --out <dir> [--candidate <dir>] [--corpora <dir>]
-//       [--packs a,b] [--corpus fixtures|real|all] [--runs 3] [--cpus 8-11] [--mem-cap 24G] [--time-cap 2700]
-//       [--candidates ships,rr] [--gate ships,rr] [--confirm 3] [--drill 2] [--drill-candidates ships] [--build]
+//       [--packs a,b] [--corpus fixtures|real|all] [--runs 1] [--cpus 8-11] [--mem-cap 24G] [--time-cap 2700]
+//       [--candidates ships] [--gate ships] [--confirm 1] [--drill 2] [--drill-candidates ships] [--build]
+//       Defaults are the quick run: one run per side, a failing cell run once more, the shipped packs only (add
+//       `--candidates ships,rr` for the `.rr` rewrites, `--runs 3 --confirm 3` for medians).
 //       Linux, macOS or Windows (platform.ts: how each pins, caps and measures, recorded in every run row): prepares what
 //       is missing, measures every pack and corpus, then writes the report. Resumable: a run already in a cell's logs is
 //       not made again.
@@ -57,11 +62,12 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, copyFileSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, join, matchesGlob, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { engineJson } from "./engine-json.js";
 import { cachedWorkload, type CellCost, cellCost, engineBinary, type Phases, readPhases, readWorkload, ruleSet } from "./metric.js";
 import { busiest, cpuList, LINUX_METHOD, type MachineInfo, methodCounts, openPlatform, parseProcStat, type Platform, type RunMethod } from "./platform.js";
 import { buildReport, type RunMeta } from "./report-model.js";
@@ -101,7 +107,9 @@ export type Corpus = "fixtures" | "real";
 const CORPORA: readonly Corpus[] = ["fixtures", "real"];
 export const METRICS = ["wall-cold", "wall-warm", "cpu-cold", "cpu-warm", "rss-cold", "rss-warm"] as const;
 
-const PRODUCT_BUILD = "npm ci --ignore-scripts && npm run build:native";
+const NPM_INSTALL = "npm ci --ignore-scripts";
+const NATIVE_BUILD = "npm run build:native";
+const PRODUCT_BUILD = `${NPM_INSTALL} && ${NATIVE_BUILD}`;
 const ENGINE_BUILD = "cargo build --release --manifest-path native/Cargo.toml --bin rerail-engine";
 
 // ---------------------------------------------------------------- small helpers
@@ -173,25 +181,34 @@ function checkoutSha(dir: string): string {
   return existsSync(join(dir, SOURCE_FILE)) ? readJson<{ sha: string }>(join(dir, SOURCE_FILE)).sha : "unknown";
 }
 
-/** The baseline: an existing checkout, or a git ref of this repository exported to <out>/baseline (pack data pulled). */
+/**
+ * The baseline: an existing checkout; release:<version>, the published release (resolveRelease); or a git ref of this
+ * repository exported to <out>/baseline with its pack data pulled.
+ */
 function resolveBaseline(spec: string, out: string, packDataCache: string | undefined): Checkout {
   if (existsSync(join(spec, "packs"))) {
     const source = join(spec, SOURCE_FILE);
     const ref = existsSync(source) ? readJson<{ ref?: string }>(source).ref : undefined;
     return { dir: resolve(spec), sha: checkoutSha(resolve(spec)), ...(ref === undefined ? {} : { ref }) };
   }
+  const release = /^release:(\d+\.\d+\.\d+(?:-[\w.]+)?)$/.exec(spec)?.[1];
+  if (release !== undefined) return resolveRelease(release, out, packDataCache);
   const parsed = run("git", ["-C", SELF, "rev-parse", "--verify", `${spec}^{commit}`]);
-  if (parsed.status !== 0) fail(`--baseline ${spec} is neither a checkout (no packs/) nor a commit of ${SELF}`);
-  const sha = parsed.stdout.trim();
+  if (parsed.status !== 0) fail(`--baseline ${spec} is neither a checkout (no packs/), release:<version>, nor a commit of ${SELF}`);
+  return exportCommit(parsed.stdout.trim(), spec, out, packDataCache);
+}
+
+/** A commit of this repository exported to <out>/baseline, its pack data pulled; reused when already there. */
+function exportCommit(sha: string, ref: string, out: string, packDataCache: string | undefined): Checkout {
   const dir = join(out, "baseline");
-  if (existsSync(join(dir, SOURCE_FILE)) && readJson<{ sha: string }>(join(dir, SOURCE_FILE)).sha === sha) return { dir, sha, ref: spec };
+  if (existsSync(join(dir, SOURCE_FILE)) && readJson<{ sha: string }>(join(dir, SOURCE_FILE)).sha === sha) return { dir, sha, ref };
   if (existsSync(dir)) fail(`${dir} holds another baseline; remove it or pass it as --baseline`);
   mkdirSync(dir, { recursive: true });
   const tar = join(out, "baseline.tar");
   if (run("git", ["-C", SELF, "archive", "-o", tar, sha]).status !== 0 || run("tar", ["-xf", tar, "-C", dir]).status !== 0) fail(`could not export ${sha} to ${dir}`);
   rmSync(tar);
   mkdirSync(join(dir, ".rerail"), { recursive: true });
-  writeFileSync(join(dir, SOURCE_FILE), JSON.stringify({ sha, ref: spec }));
+  writeFileSync(join(dir, SOURCE_FILE), JSON.stringify({ sha, ref }));
   // The pack data: the archives the locks name, from the cache a pull keeps, verified and extracted by main's own pull.
   const cache = packDataCache ?? join(dirname(run("git", ["-C", SELF, "rev-parse", "--path-format=absolute", "--git-common-dir"]).stdout.trim()), ".rerail", "pack-data", "archives");
   mkdirSync(join(dir, ".rerail", "pack-data"), { recursive: true });
@@ -199,7 +216,45 @@ function resolveBaseline(spec: string, out: string, packDataCache: string | unde
   console.log(`shipbar: baseline ${sha} exported to ${dir}; pulling its pack data`);
   const pull = spawnSync("node", ["scripts/s3/pack-fixtures.mjs", "pull"], { cwd: dir, stdio: "inherit" });
   if (pull.status !== 0) fail(`the baseline's pack data pull failed; run \`node scripts/s3/pack-fixtures.mjs pull\` in ${dir}`);
-  return { dir, sha, ref: spec };
+  return { dir, sha, ref };
+}
+
+/** <baseline>/.rerail/shipbar-release.json: the published package whose built parts a release baseline holds. */
+const RELEASE_FILE = ".rerail/shipbar-release.json";
+
+/**
+ * The baseline as users have it: release:<version>. Its source at the tag v<version> (the conformance runner and the
+ * packs the product path reads, exported as a git ref is), with the published @neralabs/rerail@<version>'s prebuilt
+ * engines for every platform (native/*.node) and its built JavaScript (dist/) put in place of a build: the baseline
+ * then needs `npm ci` and nothing built, on any host.
+ */
+function resolveRelease(version: string, out: string, packDataCache: string | undefined): Checkout {
+  const tag = `v${version}`;
+  let parsed = run("git", ["-C", SELF, "rev-parse", "--verify", `${tag}^{commit}`]);
+  if (parsed.status !== 0) {
+    run("git", ["-C", SELF, "fetch", "--quiet", "origin", "tag", tag, "--no-tags"]);
+    parsed = run("git", ["-C", SELF, "rev-parse", "--verify", `${tag}^{commit}`]);
+  }
+  if (parsed.status !== 0) fail(`release ${version}: no tag ${tag} in ${SELF}, and fetching it from origin failed`);
+  const checkout = exportCommit(parsed.stdout.trim(), `release:${version}`, out, packDataCache);
+  if (existsSync(join(checkout.dir, RELEASE_FILE))) return checkout;
+  const name = `@neralabs/rerail@${version}`;
+  const packed = run("npm", ["pack", name, "--silent", "--pack-destination", out]);
+  const tarball = join(out, lastLine(packed.stdout));
+  if (packed.status !== 0 || !existsSync(tarball)) fail(`npm pack ${name} failed: ${lastLine(packed.stderr)}`);
+  const unpacked = join(out, "release-package");
+  rmSync(unpacked, { recursive: true, force: true });
+  mkdirSync(unpacked, { recursive: true });
+  if (run("tar", ["-xzf", tarball, "-C", unpacked]).status !== 0) fail(`could not extract ${tarball}`);
+  const addons = readdirSync(join(unpacked, "package", "native")).filter((file) => /^rerail_engine\..+\.node$/.test(file));
+  if (addons.length === 0) fail(`${name} ships no prebuilt engine (native/rerail_engine.*.node)`);
+  for (const addon of addons) copyFileSync(join(unpacked, "package", "native", addon), join(checkout.dir, "native", addon));
+  cpSync(join(unpacked, "package", "dist"), join(checkout.dir, "dist"), { recursive: true });
+  writeFileSync(join(checkout.dir, RELEASE_FILE), JSON.stringify({ package: name, tag, addons }, null, 1));
+  rmSync(unpacked, { recursive: true, force: true });
+  rmSync(tarball, { force: true });
+  console.log(`shipbar: baseline ${name}: ${tag}'s source with the package's ${addons.length} prebuilt engines and dist/`);
+  return checkout;
 }
 
 function shippedRules(checkout: string, pack: string): string[] {
@@ -399,12 +454,15 @@ function requireBuilt(checkout: string, needs: { product: boolean; engine: boole
   const addon = (): boolean => existsSync(join(checkout, "native")) && readdirSync(join(checkout, "native")).some((name) => /^rerail_engine\..+\.node$/.test(name));
   const tsx = (): boolean => existsSync(join(checkout, "node_modules", "tsx"));
   const steps: string[] = [];
-  if (needs.product && (!addon() || !tsx())) steps.push(PRODUCT_BUILD);
+  // A release baseline holds its prebuilt engine: installing its dependencies is all it needs.
+  if (needs.product && !tsx()) steps.push(NPM_INSTALL);
+  if (needs.product && !addon()) steps.push(NATIVE_BUILD);
   if (needs.engine && engineBinary(checkout) === undefined) steps.push(ENGINE_BUILD);
   if (steps.length > 0 && !build) fail(`${checkout} is not built; run there (both release profile): ${steps.join(" && ")}\n  or pass --build`);
   for (const step of steps) {
     console.log(`shipbar: building ${checkout}: ${step}`);
-    if (spawnSync("bash", ["-c", step], { cwd: checkout, stdio: "inherit" }).status !== 0) fail(`build failed in ${checkout}: ${step}`);
+    // The platform's shell (cmd.exe on Windows, /bin/sh elsewhere): Windows hosts have no bash on PATH.
+    if (spawnSync(step, { cwd: checkout, stdio: "inherit", shell: true }).status !== 0) fail(`build failed in ${checkout}: ${step}`);
   }
   return { engine: needs.engine ? engineBinary(checkout) : undefined };
 }
@@ -438,7 +496,7 @@ function rrRules(candidate: string, engine: string, mainRules: readonly string[]
     const checked = run(engine, ["check-rr", ...present.map((rule) => rules[rule]!.path!)], { cwd: candidate });
     let rows: { path: string; status: string; error?: string }[] = [];
     try {
-      rows = JSON.parse(checked.stdout);
+      rows = engineJson<typeof rows>(checked.stdout);
     } catch {
       fail(`check-rr gave no report for ${pack}: ${lastLine(checked.stderr)}`);
     }
@@ -588,7 +646,8 @@ function measure(settings: Settings, cell: string, p: Process, pack: string, cor
   let phases: Phases | null = null;
   if (completed) {
     try {
-      const output = readJson<{ evaluateMs?: number; loadMs?: number; compileMs?: number }>(result);
+      // The `.rr` side's result is the engine's stdout: its JSON, then its timing lines (engine-json.ts).
+      const output = engineJson<{ evaluateMs?: number; loadMs?: number; compileMs?: number }>(readFileSync(result, "utf8"));
       if (side !== "rr" && typeof output.evaluateMs === "number") evaluateMs = Math.round(output.evaluateMs);
       if (side !== "rr") phases = readPhases(output);
     } catch {
@@ -862,7 +921,7 @@ function sideFindings(cell: string, side: Side, rr: RrRules | undefined): Set<st
   const keys = new Set<string>();
   if (side === "rr") {
     const policyToRule = new Map(Object.entries(rr?.rules ?? {}).filter(([, rule]) => rule.policy !== undefined).map(([id, rule]) => [rule.policy!, id]));
-    for (const d of readJson<{ diagnostics: { policy: string; path: string; line: number; code: string }[] }>(path).diagnostics) {
+    for (const d of engineJson<{ diagnostics: { policy: string; path: string; line: number; code: string }[] }>(readFileSync(path, "utf8")).diagnostics) {
       keys.add(findingKey(policyToRule.get(d.policy) ?? d.policy, d.path, d.line, d.code));
     }
   } else {
@@ -1108,13 +1167,13 @@ function main(): void {
       out: { type: "string" },
       packs: { type: "string" },
       corpus: { type: "string", default: "all" },
-      runs: { type: "string", default: "3" },
+      runs: { type: "string", default: "1" },
       cpus: { type: "string", default: "8-11" },
       "mem-cap": { type: "string", default: "24G" },
       "time-cap": { type: "string", default: "2700" },
-      candidates: { type: "string", default: "ships,rr" },
+      candidates: { type: "string", default: "ships" },
       gate: { type: "string" },
-      confirm: { type: "string", default: "3" },
+      confirm: { type: "string", default: "1" },
       drill: { type: "string", default: "2" },
       "drill-candidates": { type: "string", default: "ships" },
       build: { type: "boolean", default: false },

@@ -18,6 +18,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { engineJson } from "./engine-json.js";
 import { median } from "./verdict.js";
 
 // ---------------------------------------------------------------- phases
@@ -135,7 +136,7 @@ function countNodes(engine: string, corpus: string, family: string): number | nu
     const env = { ...process.env, RERAIL_TAPE_CACHE: join(scratch, "store.sqlite"), TMPDIR: join(scratch, "tmp") };
     const r = spawnSync(engine, ["run-rr", rule, corpus, join(scratch, "out")], { env, encoding: "utf8", maxBuffer: 1 << 30 });
     if (r.status !== 0) return null;
-    const result: unknown = JSON.parse(r.stdout);
+    const result = engineJson(r.stdout);
     return result !== null && typeof result === "object" && "nodes" in result && typeof result.nodes === "number" ? result.nodes : null;
   } finally {
     rmSync(scratch, { recursive: true, force: true });
