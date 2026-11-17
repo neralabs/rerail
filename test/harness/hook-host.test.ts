@@ -3552,11 +3552,13 @@ describe("a session's start where RERAIL_AUTOSTART keeps the daemon off and none
       } finally {
         await answered.close();
       }
-      // The same daemon, now busy: it would answer started, so an answer of `{}` within the second is the kept one.
+      // The same daemon, now busy: it would answer started, so an answer of `{}` within the second is the kept one. The
+      // hook ends its request once it repeats, which can be before the request reaches the daemon (Windows 11 under load).
       const busy = await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest);
       try {
         expect(await answeredWellBeforeReadLimit(run(laterPrompts[host](app), throughDaemon))).toEqual({});
-        expect(await endedStartChecks(busy)).toEqual({ asked: 1, ended: 1 });
+        const { asked, ended } = await endedStartChecks(busy);
+        expect(ended).toBe(asked);
       } finally {
         await busy.close();
       }
