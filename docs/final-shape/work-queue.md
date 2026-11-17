@@ -1494,6 +1494,14 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   starts: 1,140 MB, of which at the peak `export to cross/hold the export` 288 MB, the store writer's atoms held 138
   MB, `an input's frames` 109 MB, `cross` 105 MB, `text tests` (a chunk's projection) 57 MB, `record stats` 42 MB.
   Host blocks 287 MB.
-- **Next**: the frames' encoding as a stream (a relation's frame written as it is digested, not built whole), and
-  what the cross part holds from the local part (the export, the writer's atoms).
+- **Done** (1a54c6354, 4dd9bba9e): every frame `write_frames` makes is read from its relation or input a window at a
+  time and encoded straight into the write's segments (`FramePlacer`); an input's granules are grouped by row id;
+  `columns_source` trims its columns. The cross part's peak 2,263–2,304 → 1,830 MB; the frame jobs raise the
+  high-water mark by 0 MB; a warm run reads the frames back, findings the same.
+- **Left in the cross part** (`RERAIL_HEAP_AT=cross/session`, 1,329 MB live at 1,830 MB footprint): the exports
+  198 MB (its input, trimmed); the store writer's atoms held as stored 138 MB (+35 MB SQLite); the cross part's
+  statistics from the chunks' totals 118 MB (per-value frequency maps, held for the whole part: a cap to the most
+  common values is a statistics decision); `cross` 106 MB; the text tests' memo 50 MB (a `HashMap<u32, Box<[u64]>>`,
+  one box per distinct string, most passing no test); `record stats` 44 MB; atoms interned 36 MB.
+- **The run's peak** is the chunks' again: 2,159–2,227 MB (was 2,330–2,518).
 - Scripts: `working-data/m3/{peak,phases,timeline}.py`.
