@@ -36,6 +36,17 @@ export const AdapterEventSchema: z.ZodType<AdapterEvent> = z.discriminatedUnion(
   z.object({ kind: z.literal("turn-end"), eventId: z.string().min(1), sessionId: z.string().min(1), session: SessionSchema.optional(), text: z.string() }).strict(),
 ]);
 
+/**
+ * The receipt of a steer, as a hook hands it to the daemon once the answer that carried the steer is written: its
+ * session, its id, which is its record's identity, so a receipt recorded twice counts once, and the rules it credits.
+ */
+export const SteerReceiptSchema = z.object({
+  session: SessionSchema,
+  receiptId: z.string().min(1),
+  ruleIds: z.array(z.string()),
+}).strict();
+export type SteerReceipt = z.infer<typeof SteerReceiptSchema>;
+
 /** A rule a delivery names, for the person's line (`SteerRule`). */
 export const SteerRuleSchema = z.object({
   id: z.string().min(1),

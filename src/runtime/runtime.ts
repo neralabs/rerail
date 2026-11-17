@@ -1823,6 +1823,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     };
   }
 
+  /** Whether this runtime holds `sessionId`, open or closed by it, so it can record the session's facts (`recordSteer`). */
+  holdsSession(sessionId: string): boolean {
+    return this.#sessions.has(sessionId) || this.#closedSessions.has(sessionId);
+  }
+
   recordSteer(sessionId: string, receiptId: string, ruleIds: readonly string[] = []): void {
     this.#recordSessionFact(sessionId, (store, descriptor, attribution) => store.recordSteer(descriptor, receiptId, ruleIds, attribution));
   }

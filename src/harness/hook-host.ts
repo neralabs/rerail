@@ -3,7 +3,7 @@ import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { readRepositoryState } from "../presentation/session-presentation.js";
 import { isRerailStarted } from "../runtime/repository-start.js";
 import { RerailRuntime } from "../runtime/runtime.js";
-import { ingestEngineEvent } from "../runtime/engine-service.js";
+import { engineLink, type EngineLink, type EngineRuntimeConfiguration } from "../runtime/engine-service.js";
 import {
   autostartDaemon,
   autostartOff,
@@ -24,36 +24,27 @@ import {
   type SessionLock,
 } from "./hook-adapter.js";
 import type { SemanticEmbedder } from "../engine/native/semantic-types.js";
-import { SqliteSessionStore } from "../runtime/session-store.js";
-import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
+import { recordSteerReceipt } from "../runtime/session-store.js";
+import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { rerailRunsIn } from "../engine/catalog/repository-model.js";
-import { lookupCheckout } from "../engine/catalog/repository-registry.js";
 
 export * from "./hook-adapter.js";
 
-/** The repository key of the checkout `cwd` is in, read without recording anything; undefined when unknown. */
-function repositoryKeyOf(cwd: string, databasePath: string): string | undefined {
-  let database;
-  try {
-    database = openRerailDatabase(databasePath, { readonly: true });
-    return lookupCheckout(database, cwd)?.repositoryKey;
-  } catch {
-    return undefined;
-  } finally {
-    database?.$client.close();
-  }
+/** Records the receipt of a steer the hook's answer carried in the database at `databasePath` itself. */
+function recordLocalReceipt(session: AdapterSession, databasePath: string): (receiptId: string, ruleIds: readonly string[]) => void {
+  return (receiptId, ruleIds) => recordSteerReceipt(databasePath, { session, receiptId, ruleIds: [...ruleIds] });
 }
 
-function recordLocalReceipt(session: AdapterSession, databasePath: string): (receiptId: string, ruleIds: readonly string[]) => void {
-  return (receiptId, ruleIds) => {
-    // Attribution matters only when a reset removed the session row and this receipt restores it.
-    const repositoryKey = repositoryKeyOf(session.cwd, databasePath);
-    const store = new SqliteSessionStore(databasePath);
-    try {
-      store.recordSteer(session, receiptId, ruleIds, repositoryKey === undefined ? {} : { repositoryKey });
-    } finally {
-      store.close();
-    }
+/**
+ * Hands the receipt of a steer the hook's answer carried, once that answer is written, to the daemon that answered the
+ * hook's event, over the event's own connection: the daemon records it on its own connection, so the hook ends without
+ * opening the database or waiting for another writer's lock on it. A daemon that does not take it (one from before
+ * receipts were handed over, one gone, one not reading) leaves it to the hook to record itself.
+ */
+function handReceipt(link: EngineLink, session: AdapterSession, configuration: EngineRuntimeConfiguration, databasePath: string) {
+  return async (receiptId: string, ruleIds: readonly string[]): Promise<void> => {
+    const receipt = { session, receiptId, ruleIds: [...ruleIds] };
+    if (!await link.handReceipt(receipt, configuration)) recordSteerReceipt(databasePath, receipt);
   };
 }
 
@@ -198,18 +189,18 @@ async function runHostHookOnce(
     if (daemon.status === "absent") autostartDaemon();
     return {};
   }
-  const { endpoint } = daemon;
+  const link = engineLink(daemon.endpoint);
   const configuration = { storageRoot, databasePath, modelPath, workspaceRoot: workspace };
   return withSessionLock(storageRoot, host, sessionId, async lock => {
     // The daemon orders a session's events itself, so the lock guards only the session's files: a hook lets go of it
     // while the daemon checks its event, unless it keeps it (`SessionLock.kept`), and the hooks of a session's parallel
     // subagents, which all carry the parent's session id, do not queue behind each other's checks until one gives up.
-    const ingest = (adapterEvent: AdapterEvent) => lock.released(() => ingestEngineEvent(endpoint, adapterEvent, configuration))
+    const ingest = (adapterEvent: AdapterEvent) => lock.released(() => link.ingest(adapterEvent, configuration))
       .catch((error: unknown) => {
         throw unreachable(error);
       });
     const output = await handle({ ingest }, storageRoot, lock);
-    return bindSteerReceipt(output, recordLocalReceipt(session, databasePath));
+    return bindSteerReceipt(output, handReceipt(link, session, configuration, databasePath));
   });
 }
 

@@ -15,9 +15,11 @@ import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
 import { auditViolations, checkouts, events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import type { DroppedEvents } from "./session-state.js";
+import type { SteerReceipt } from "./event-protocol.js";
 import { conflictFooter, type ConflictFooter } from "./merge-assist/notes.js";
 import { mergeAssistExperimentEnabled } from "../engine/experimental-features.js";
 import { physicalPath, withinCheckout } from "../engine/catalog/checkout-control.js";
+import { lookupCheckout } from "../engine/catalog/repository-registry.js";
 
 /** The events that wait for the session's code-rule evaluator: a tool call, its result and a turn's end. */
 export type CodeRulesPendingBoundary = "call" | "result" | "turn-end";
@@ -659,5 +661,35 @@ export function lastObservedEventAt(databasePath: string): number | null {
     return null;
   } finally {
     database?.$client.close();
+  }
+}
+
+/** The repository key of the checkout `cwd` is in, read without recording anything; undefined when unknown. */
+function repositoryKeyOf(cwd: string, databasePath: string): string | undefined {
+  let database: RerailDatabase | undefined;
+  try {
+    database = openRerailDatabase(databasePath, { readonly: true });
+    return lookupCheckout(database, cwd)?.repositoryKey;
+  } catch {
+    return undefined;
+  } finally {
+    database?.$client.close();
+  }
+}
+
+/**
+ * Records `receipt` in the database at `databasePath` on connections of its own, crediting the repository of the
+ * checkout its session's folder is in: for a receipt whose daemon did not take it (`EngineLink.handReceipt`), and one
+ * whose session no open runtime of the daemon holds. Each open waits up to the busy timeout for another connection's
+ * write lock.
+ */
+export function recordSteerReceipt(databasePath: string, { session, receiptId, ruleIds }: SteerReceipt): void {
+  // Attribution matters only when a reset removed the session row and this receipt restores it.
+  const repositoryKey = repositoryKeyOf(session.cwd, databasePath);
+  const store = new SqliteSessionStore(databasePath);
+  try {
+    store.recordSteer(session, receiptId, ruleIds, repositoryKey === undefined ? {} : { repositoryKey });
+  } finally {
+    store.close();
   }
 }
