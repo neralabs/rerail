@@ -608,6 +608,9 @@ step 3 replaces what is under the writer.
      unread attribute left an input) and is level with it. `lower_in` is the version decoded, so a key's image has one
      encoding (the debug build queued the tree's and the version's under one key, and the store refused the second).
      ep2's 317 policies over 10 files, fresh stores, a debug build: every check passes, 0 rows, as before the slice.
+     The combine's tail too: `answers_where_documents_are` undoes its rounds on the version (by `FileLocal`), and
+     `requests_file_local` is a program pass (`file_local::RequestsFileLocal`) that writes each narrowed request from
+     its pieces, literals of several rules renamed apart, through the builder: no tree on the combine's path.
    - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.

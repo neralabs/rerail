@@ -12,7 +12,9 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 mod factorize;
 mod push;
+mod requests;
 pub use factorize::FactorizeExports;
+pub use requests::RequestsFileLocal;
 pub use push::PushLocalJoins;
 
 /// A term of `v`'s rule as a builder's term: a variable by the atom naming it (a derivation's ids are its input's).

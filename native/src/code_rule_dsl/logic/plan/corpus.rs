@@ -1418,21 +1418,34 @@ pub(crate) fn cone_on_version(
 /// run on the tree, and its image made again. One that answers none is left as it is.
 fn requests_where_documents_are<'s>(mut p: crate::code_rule_dsl::logic::program_image::manager::Pipeline<'s>) -> Result<crate::code_rule_dsl::logic::program_image::manager::Pipeline<'s>> {
     use crate::code_rule_dsl::logic::rr::lower::ON_REQUEST;
-    let v = p.current().map_err(Error::Plan)?;
+    let v = std::sync::Arc::clone(p.current().map_err(Error::Plan)?);
     let asks = ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| v.rel(a.req).is_some());
     if !asks {
         return Ok(p);
+    }
+    #[cfg(debug_assertions)]
+    let before = std::sync::Arc::clone(&v);
+    if !std::env::var("RERAIL_NODE_SOURCES").is_ok_and(|v| v == "eager") {
+        let requests: Vec<&'static str> = ON_REQUEST.iter().flat_map(|round| round.iter()).map(|a| a.req).filter(|r| v.rel(r).is_some()).collect();
+        let mut pass = crate::code_rule_dsl::typing::file_local::RequestsFileLocal { requests, narrowed: Vec::new() };
+        p.program(&mut pass);
+        p.current().map_err(Error::Plan)?;
+        for (req, how) in &pass.narrowed {
+            crate::code_rule_dsl::logic::profile::decision("on request: narrowed to the node's document", || format!("{req}: {how}"));
+        }
     }
     for d in p.decisions() {
         crate::code_rule_dsl::logic::profile::decision(&d.what, || d.detail.clone());
     }
     let (v, _) = p.finish().map_err(Error::Plan)?;
-    let v = {
-        let _s = crate::code_rule_dsl::logic::profile::span(|| "the requests narrowed, through the tree (work queue Q52)".into());
-        let mut tree = v.program(&front::Lists::default()).map_err(Error::Plan)?;
+    // The tree's narrowing beside it: the two agree.
+    #[cfg(debug_assertions)]
+    {
+        let mut tree = before.program(&front::Lists::default()).map_err(Error::Plan)?;
         requests_file_local(&mut tree);
-        crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).map_err(Error::Plan)?.0
-    };
+        let (t, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).map_err(Error::Plan)?;
+        assert_eq!((t.size(), t.digest()), (v.size(), v.digest()), "the requests narrowed on the version are the tree's: {}", crate::code_rule_dsl::logic::program_image::differences(&t, &v));
+    }
     let v = answers_where_documents_are_version(v)?;
     Ok(crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("combine", v))
 }
@@ -1795,7 +1808,8 @@ fn combine_linked_as<P: link::Part>(programs: &[&str], extra: &added::Added, rea
 
 /// The requests `sources_on_request` made, narrowed where the split finds them cross-file to the asked node's own
 /// document (`file_local::requests_file_local`): a node's attribute is its document's, answered in its chunk while
-/// the chunk's batch holds the text (O-cross-file-answers). Run on the program that runs, once its requests are made.
+/// the chunk's batch holds the text (O-cross-file-answers). The tree's form, which a debug build checks the version's
+/// (`file_local::RequestsFileLocal`) against, and `tail_tree`'s.
 fn requests_file_local(prog: &mut crate::code_rule_dsl::logic::front::ast::Program) {
     if std::env::var("RERAIL_NODE_SOURCES").is_ok_and(|v| v == "eager") {
         return;
@@ -1804,10 +1818,7 @@ fn requests_file_local(prog: &mut crate::code_rule_dsl::logic::front::ast::Progr
     if requests.is_empty() {
         return;
     }
-    let _span = crate::code_rule_dsl::logic::profile::span(|| "on request: the requests narrowed to the node's document".to_owned());
-    for (req, how) in crate::code_rule_dsl::typing::file_local::requests_file_local(prog, &requests) {
-        crate::code_rule_dsl::logic::profile::decision("on request: narrowed to the node's document", || format!("{req}: {how}"));
-    }
+    crate::code_rule_dsl::typing::file_local::requests_file_local(prog, &requests);
 }
 
 /// The relations that are one relation under two names made one, after the transforms that run after `simplify`

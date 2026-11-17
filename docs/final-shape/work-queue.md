@@ -1457,7 +1457,7 @@ pass.
   - ep2 before the merge: 0 misses per run, where every run missed 10,047. The edit's CPU is about the same: what
     an edit spends is the facts built from the tapes of files whose slice is not run (a partial hit).
 
-### Q52. Three passes still go through a tree on Typing-support's version path (the merge of e829e72a7)
+### Q52. Three passes still go through a tree on Typing-support's version path (the merge of e829e72a7) — closed
 
 - **Found** (2026-11-17, at the merge): the hub's passes that ours had on trees have no pass on the manager yet. The
   merge keeps them correct by going through the tree:
@@ -1474,6 +1474,10 @@ pass.
 - **`answers_where_documents_are`: done** (2026-11-17): on the version, by its `FileLocal` analysis, each round undone
   through `link::undone_with` over `undo_round`. Left: `requests_file_local` (its `Narrower` unfolds a cross-file
   atom into bodies drawn from the unfolded relation's rules, renamed apart: a rule written from several rules).
+- **`requests_file_local`: done; closed** (2026-11-17): `file_local::RequestsFileLocal`, a `ProgramPass` whose
+  narrowed bodies are pieces (a source rule's literal and its renames) written through `RuleBuilder::lit_with`. The
+  combine's tail decodes no tree; a debug build narrows the tree beside it and checks the images agree (the pass made
+  a no-op fails 3 tests there, the unfolding one among them). The tree form stays for `tail_tree` (the tools).
 
 - **Failing** (found 2026-11-17, after the hub's merge d1875e723; already so at 2fbc862df, since nothing on the
   combine's path changed between): the debug check "the combine's tail on the version is the tree's" stops
