@@ -1036,6 +1036,20 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(existsSync(stateFile)).toBe(false);
   });
 
+  it.each(["linux", "win32"] as const)("sends no signal once daemon.json names the pid no longer, as after a start removed it to launch a daemon (%s)", async platform => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const signals: Array<string | number | undefined> = [];
+    await holdHome(home, LIVE_PID);
+    await writeFile(stateFile, JSON.stringify(state(platform)));
+    const machine = machineWith(platform, signals, () => true);
+    const found = await lookupDaemon(home, machine);
+    if (found.status === "absent") throw new Error("the daemon that holds the home was not found");
+    // The daemon a start launched has taken the home's lock, and not yet recorded its own pid beside it.
+    await rm(stateFile);
+    expect(await stopFoundDaemon(home, found, machine)).toBe("not-daemon");
+    expect(signals).toEqual([]);
+  });
+
   it("stops waiting, and sends no SIGKILL, once the daemon it stopped lets go of the home, whoever has its pid", async () => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     const signals: Array<string | number | undefined> = [];
