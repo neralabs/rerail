@@ -677,7 +677,7 @@ function homeDaemonIs(home: string, pid: number, machine: DaemonMachine): boolea
  * What the state file in `home` says, checked against the machine. `probeTimeoutMs` bounds the engine's proof and the
  * health probe together; a hook waiting out a busy daemon passes more (`patientLookup`). A live pid whose daemon did not
  * answer as itself is kept only while it is the home's daemon ({@link homeDaemonIs}): a busy daemon is, and a process
- * that took a dead daemon's pid is not, whatever holds or answers its pipe, socket or port.
+ * that took a dead daemon's pid is not.
  */
 export async function lookupDaemon(
   home: string,

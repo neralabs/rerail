@@ -296,7 +296,7 @@ describe("Rerail daemon CLI", () => {
   }, 15_000);
 
   // A daemon killed without its cleanup leaves daemon.json and the home lock's holder record naming its pid, which the
-  // OS can give to any process since; here a process that holds the recorded engine pipe or socket and never answers.
+  // OS can give to any process since. A listener on the recorded engine pipe or socket takes the lookup to the check.
   test("ends no process a dead daemon's records name, and says the record named no daemon of the home", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-not-daemon-cli-"));
     const stateFile = join(root, "daemon.json");

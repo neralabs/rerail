@@ -277,7 +277,7 @@ describe.runIf(process.platform === "win32")("the engine proof, against an engin
     let ms = Date.now() - began;
     expect({ kept, file: existsSync(stateFile) }, `the lookup answered after ${ms} ms`).toEqual({ kept: { status: "unresponsive", state }, file: true });
     expect(ms).toBeLessThan(2_000 + SLACK_MS);
-    // Once no daemon holds the home, the busy pipe is another process's and the record is stale, read as fast.
+    // Once no daemon holds the home, the record names no daemon of it, read as fast.
     lock!.release();
     began = Date.now();
     const stale = await lookupDaemon(home);
