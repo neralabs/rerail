@@ -21,7 +21,7 @@ It is not a performance measurement of this merge: definition-based IDs are now 
 
 The survey reads branch history, design notes, and current working diffs.
 A dirty worktree shows active implementation, not a tested or accepted result.
-`packs/data-layer/upstream/benchmarks/authored/benchmark/async-family-integration/merge-b4f0aa04b/worktree-survey.json` records the observed tips, status paths, and recent commits.
+`packs/data-layer/upstream/benchmarks/authored/async-family-integration/merge-b4f0aa04b/worktree-survey.json` records the observed tips, status paths, and recent commits.
 Worktrees can change after this snapshot. No sibling working files were modified.
 
 ## Work directly related to this branch

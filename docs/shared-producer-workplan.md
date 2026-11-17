@@ -107,7 +107,7 @@ All four permutations of the 139-plan state rule now produce matching admission,
 The small guard repeats at 8,669 submissions. Matched CPU improves from 2.318 seconds to 1.617 seconds.
 The fixed 100-submission limit and broader repository acceptance remain open.
 Do not repeat the rejected authored-order or work-estimate heuristics without new evidence.
-The [wave evidence](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/shared-span-waves-20261024.json) retains all CPU controls, counts, and the frozen-frontier comparison.
+The [wave evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/shared-span-waves-20261024.json) retains all CPU controls, counts, and the frozen-frontier comparison.
 
 The initial vertical slice uses source spans because repeated demanded-span preparation already appears in captured workloads.
 The compiler binds span requests from different consumers to one named owner.
@@ -151,7 +151,7 @@ The small guard repeats at 7,733 engine submissions, compared with 8,669 before 
 The first captured frontier reduces child fills from 246 to 11 while retaining 393 temporary selector tables.
 Across nine matched pairs, median CPU changes from 1.740 to 1.708 seconds, with overlapping ranges.
 SQLite's measured heap peak remains unchanged. This result establishes no substantial CPU or process memory gain.
-The [child-demand evidence](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/shared-child-demand-recovery-20261024.json) retains all trials and limitations.
+The [child-demand evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/shared-child-demand-recovery-20261024.json) retains all trials and limitations.
 Scoped node demand, empty relations, selector ownership, and broader acceptance remain open.
 The universal node-property fill already executes once in the measured frontiers.
 
@@ -297,7 +297,7 @@ Its final evidence records the addon, sources, complete corpus coverage, and rep
 The 2026-10-24 catalog checkpoint begins WP1 after that validation. The broader recovery gate remains failing.
 
 The earlier installed baseline is addon `86846fe45e731c10b44beecb54cbfb35b7610c2eafb71f199ce3840969c07b6d`.
-The [lifetime evidence](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/sql-relation-lifetimes-20261023.json) retains its sources and trials.
+The [lifetime evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-relation-lifetimes-20261023.json) retains its sources and trials.
 
 | Existing snapshot | Median cold CPU | Median peak RSS | Diagnostic peak SQLite execution allocation |
 | --- | ---: | ---: | ---: |
@@ -305,7 +305,7 @@ The [lifetime evidence](../packs/data-layer/upstream/benchmarks/authored/fixture
 | Ten rules, two files | 13.106 s | 553.3 MiB | 98.6 MiB |
 
 SQLite allocation peaks come from separate instrumented replays. They are not process RSS or extra memory to add to RSS.
-The [discovery counts](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/shared-producer-discovery-20261023.json) describe static placements, without runtime evaluation counts.
+The [discovery counts](../packs/data-layer/upstream/benchmarks/authored/profiling/shared-producer-discovery-20261023.json) describe static placements, without runtime evaluation counts.
 
 WP2, WP3, WP4, WP5, and each WP7 extraction require a matched small-workload comparison.
 Three rotated observations per side form the initial timing set.

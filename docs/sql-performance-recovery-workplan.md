@@ -196,7 +196,7 @@ The 136-connection lifetime problem remains open. This slice does not establish 
 Authored-order and work-estimate replacements regress CPU controls and are removed.
 Allocation-dependent lowering remains a measured R4 risk. Named producer discovery must remove incidental address ordering.
 The [journal](data-layer-performance-journal.md#selected-compiler-recovery-checkpoint) records the accepted changes and rejected controls.
-The [checked evidence](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/sql-recovery-compiler-20261023.json) preserves all matched CPU trials and correctness results.
+The [checked evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-recovery-compiler-20261023.json) preserves all matched CPU trials and correctness results.
 
 The next TDD slice shares SQLite-inferred stage schemas across document compilations.
 The cache key contains exact SQL, complete ordered schemas of read relations, and deferred column names.
@@ -208,7 +208,7 @@ The final small capture records 9,095 engine submissions, including 68 compiler 
 All 136 connections remain. Runtime candidate preparation, cleanup, and relational evaluation still submit 8,675 statements.
 The 100-submission gate fails with complete findings and coverage. This remains a partial R3 checkpoint.
 Matched median CPU increases from 2,479.402 ms to 2,595.351 ms. The count reduction is not a speedup claim.
-The [stage-schema evidence](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/sql-stage-schema-recovery-20261023.json) records both control groups and the unresolved CPU requirement.
+The [stage-schema evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-stage-schema-recovery-20261023.json) records both control groups and the unresolved CPU requirement.
 
 ## R4: establish shared producers and remove repeated construction
 
@@ -221,7 +221,7 @@ Its count shortcut and CTE accessor problems remain explicit follow-up work.
 The state guard has one span binding with 117 consumer/selector references, but still submits 22 separate span fills per normal frontier.
 The guard remains failing at 9,113 engine submissions. No physical coalescing follows from the catalog alone.
 The next slice must turn ready demand under that binding into one broad fill per necessary dependency wave.
-The [foundation evidence](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/shared-producer-foundation-20261024.json) records correctness, complete counts, and matched CPU controls.
+The [foundation evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/shared-producer-foundation-20261024.json) records correctness, complete counts, and matched CPU controls.
 
 The next slice is implemented for spans. Independent live selectors share one SQL fill per necessary dependency wave.
 The two-rule, two-packet test preserves all 130 findings with one physical span-fill execution.
@@ -230,7 +230,7 @@ The planner shares generated-reference analysis with its existing pass. It adds 
 
 The complete count nevertheless increases to 9,481 because upstream lowered frontiers differ under allocation-address ordering.
 The selected CPU control has overlapping ranges and establishes no aggregate recovery.
-The [wave evidence](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/shared-span-waves-20261024.json) records the rejected extra scan, the selected controls, and a frozen-frontier comparison.
+The [wave evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/shared-span-waves-20261024.json) records the rejected extra scan, the selected controls, and a frozen-frontier comparison.
 
 Before another property extraction, make frontier construction reproducible:
 
@@ -256,7 +256,7 @@ The 256-node allowance remains unchanged. No cost-order heuristic or alternate e
 The complete small guard now repeats at 8,669 engine submissions, down from 9,481.
 Matched CPU decreases from 2,318.369 ms to 1,617.488 ms on this small workload.
 Correctness covers 309 native tests, 44 standalone SQL tests, and 120 original positive/clean observations.
-The [canonical-frontier evidence](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/canonical-frontier-recovery-20261024.json) preserves all results and qualifications.
+The [canonical-frontier evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/canonical-frontier-recovery-20261024.json) preserves all results and qualifications.
 
 Next, coalesce remaining node/child demand and repeated selector construction on this stable frontier.
 Preparation and cleanup still account for 6,468 submissions. Relational evaluation adds another 1,781.

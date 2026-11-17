@@ -41,13 +41,13 @@ the unedited corpus.
 
 ## Step 0: moving definitions keeps the answers, not the work
 
-`packs/data-layer/upstream/benchmarks/authored/benchmark/layout-invariance/move.py` moves the 8 definitions the Jedi oracle's calls target most, one per file:
+`packs/data-layer/upstream/benchmarks/authored/layout-invariance/move.py` moves the 8 definitions the Jedi oracle's calls target most, one per file:
 - Each definition goes to a new module next to its file, `_moved_<k>.py`.
 - The new module copies the file's imports, and imports from the file the names it reads.
 - The old file keeps `from <pkg>._moved_<k> import <name>` where the definition was, so importers are unchanged.
 - A map takes each new `(path, line)` back to the old one.
 
-`packs/data-layer/upstream/benchmarks/authored/benchmark/layout-invariance/compare.py` maps the moved run's answers back and compares them. An answer is a
+`packs/data-layer/upstream/benchmarks/authored/layout-invariance/compare.py` maps the moved run's answers back and compares them. An answer is a
 call site, its kind (`def`, `class` or `open`) and its target. They come from the benchmark test with
 `RERAIL_PYTHON_CALLS_ALL=<file>`.
 
@@ -94,7 +94,7 @@ state, so it belongs with 0083 §6 and O132 (freshness of library state).
 
 ```sh
 # Build the moved corpus and its map (a dev tool; Python reads only the corpus).
-python3 -I packs/data-layer/upstream/benchmarks/authored/benchmark/layout-invariance/move.py <corpus> <out>/dl-moved <jedi-recording.json> 8
+python3 -I packs/data-layer/upstream/benchmarks/authored/layout-invariance/move.py <corpus> <out>/dl-moved <jedi-recording.json> 8
 # Run the benchmark test twice, once per layout, with RERAIL_PYTHON_CALLS_ALL=<file>, then:
-python3 -I packs/data-layer/upstream/benchmarks/authored/benchmark/layout-invariance/compare.py <out>/move-map.tsv original.tsv moved.tsv
+python3 -I packs/data-layer/upstream/benchmarks/authored/layout-invariance/compare.py <out>/move-map.tsv original.tsv moved.tsv
 ```

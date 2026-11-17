@@ -113,7 +113,7 @@ Validation passes:
 - 12 profiler tests, TypeScript checks, repository structure checks, Rust formatting, and Clippy with profiling enabled.
 - Regeneration produces the same shipped quality policy.
 
-[Machine-readable evidence](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/batched-sql.json) records hashes, repeated measurements, phase totals, external stacks, and command durations.
+[Machine-readable evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/batched-sql.json) records hashes, repeated measurements, phase totals, external stacks, and command durations.
 Local raw traces and sampler output are under `.rerail/profiles/batched-sql-integration/`.
 All commands complete or stop within 113 seconds.
 

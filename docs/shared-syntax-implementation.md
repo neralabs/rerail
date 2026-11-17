@@ -88,7 +88,7 @@ Metadata differential tests compare native fields with the preceding evidence pr
 
 ## Measurements
 
-The [recorded evidence](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/shared-syntax-metrics.json) contains three matched rounds on five pinned files, totaling 1,026,452 bytes.
+The [recorded evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/shared-syntax-metrics.json) contains three matched rounds on five pinned files, totaling 1,026,452 bytes.
 All variants use the same native binary, workload, allocator, and measurement settings.
 Tracing and external sampling remain off during these rounds.
 

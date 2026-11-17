@@ -108,7 +108,7 @@ Profiling records compilation, SQLite preparation, query execution, EXPLAIN plan
 
 ## Validation and measured results
 
-The artifacts under `packs/data-layer/upstream/benchmarks/authored/benchmark/async-family-integration/composed/` contain the failing gates, final gates, profiles, SQL, and test results.
+The artifacts under `packs/data-layer/upstream/benchmarks/authored/async-family-integration/composed/` contain the failing gates, final gates, profiles, SQL, and test results.
 The baseline contains 3,849 executions and fails the hard budget.
 The first composed attempt also fails, at 114 executions.
 Its final assembly still used the old path because input lifecycle hooks excluded it from composition.

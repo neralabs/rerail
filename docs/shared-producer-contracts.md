@@ -132,7 +132,7 @@ Diagnostic JSON is an offline report format. It is not a production row store or
 
 ## Manifest contract
 
-The [example plan](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/shared-producer-plan-example.json) illustrates two consumers of one span producer.
+The [example plan](../packs/data-layer/upstream/benchmarks/authored/profiling/shared-producer-plan-example.json) illustrates two consumers of one span producer.
 It is explicitly illustrative, without a claim that the compiler already exports these contracts.
 
 The manifest format is `rerail.shared-work-plan/v1`.

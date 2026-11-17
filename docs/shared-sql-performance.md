@@ -23,7 +23,7 @@ The lower wall time does not represent another implementation improvement.
 External sampling increases elapsed time, so the unsampled run supplies the latency baseline.
 A fourth run collects denser cold-only samples and records their driver-phase windows.
 
-The [recorded evidence](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/shared-sql-next-profile.json) contains fingerprints, stage timings, SQL cardinalities, and external samples.
+The [recorded evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/shared-sql-next-profile.json) contains fingerprints, stage timings, SQL cardinalities, and external samples.
 Raw artifacts remain in `.rerail/profiles/shared-sql-next-2026-10-20/`.
 
 ## Measured CPU costs
@@ -160,7 +160,7 @@ npm run profile:code-rule-dsl -- \
   node --import tsx scripts/profiling/sql-stats.ts \
   --policy packs/data-layer/candidates/rules/data-layer-serverplan-quality.json \
   --recording .rerail/profiles/shared-sql-attributed/selected-recording.json \
-  --metrics packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/quality-sql-metrics.json \
+  --metrics packs/data-layer/upstream/benchmarks/authored/profiling/quality-sql-metrics.json \
   --output .rerail/profiles/shared-sql-statistics-result.json
 ```
 

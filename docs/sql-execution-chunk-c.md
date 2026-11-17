@@ -5,7 +5,7 @@ This meets the unchanged 1,261-removal target. The final 100 limit still fails b
 The [delivery journal](data-layer-performance-journal.md#state-syntax-domain-delivery-r5-c-2026-10-24) records the implementation and final checks.
 This specification supersedes the architecture-wide C proposal in `15930629`.
 The delivery baseline is B, commit `24998a39`, with 2,250 complete-guard engine submissions.
-The [scope evidence](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/sql-execution-chunk-c-20261024.json) records measurements, the admission model, and artifact hashes.
+The [scope evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-execution-chunk-c-20261024.json) records measurements, the admission model, and artifact hashes.
 
 ## Fixed delivery
 

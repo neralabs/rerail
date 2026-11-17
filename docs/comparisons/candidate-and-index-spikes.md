@@ -250,14 +250,14 @@ The shared host also runs other builds. The wall-time difference is descriptive,
 All three local CPU samples improve: baseline 1.059–1.091 seconds, combined spike 0.501–0.512 seconds.
 The smaller whole-job improvement agrees with the measured worker costs outside SQL.
 
-The [acceptance report](../../packs/data-layer/upstream/benchmarks/authored/benchmark/async-family-integration/candidate-spikes/gates.json) passes every gate.
+The [acceptance report](../../packs/data-layer/upstream/benchmarks/authored/async-family-integration/candidate-spikes/gates.json) passes every gate.
 It records the baseline failing the new VM and automatic-reprepare ceilings.
 The winning job uses 80 executions and 732,887 VM instructions, with zero automatic recompilations and ten published candidates.
 The positive fixture retains all 120 expected findings within the previous 80,372-VM ceiling.
 All 178 recorded Ruff edge findings remain unchanged. All nine composition tests pass with stable setup.
 The qualification-eligibility comparison and seven-case bulk-lookup matrix also pass.
 
-The [evidence bundle](../../packs/data-layer/upstream/benchmarks/authored/benchmark/async-family-integration/candidate-spikes/README.md) contains commands, environments, profiles, SQL, EXPLAIN, timings, failures, and source/binary hashes.
+The [evidence bundle](../../packs/data-layer/upstream/benchmarks/authored/async-family-integration/candidate-spikes/README.md) contains commands, environments, profiles, SQL, EXPLAIN, timings, failures, and source/binary hashes.
 
 ## Remaining whole-job cost
 

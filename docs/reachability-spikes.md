@@ -106,7 +106,7 @@ The extension remains a local experiment, outside the engine dependency graph an
 
 ## Results
 
-The [machine-readable evidence](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/reachability-spikes.json) records comparisons, source hashes, timings, and profiler stacks.
+The [machine-readable evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/reachability-spikes.json) records comparisons, source hashes, timings, and profiler stacks.
 Raw local artifacts are under `.rerail/profiles/reachability-2026-10-20/`.
 
 The five-file production capture contains 1,026,452 source bytes.

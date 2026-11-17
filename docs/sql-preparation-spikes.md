@@ -6,7 +6,7 @@ Each spike ends with a keep, revise, or remove decision supported by evidence.
 
 ## Results: 2026-10-22
 
-The [checked evidence](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/sql-preparation-20261022.json) contains individual trials, source identities, and scope limits.
+The [checked evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-preparation-20261022.json) contains individual trials, source identities, and scope limits.
 The [journal](data-layer-performance-journal.md) explains the results and remaining costs.
 
 | Spike | Result and decision |
@@ -32,7 +32,7 @@ An isolated benchmark can compare physical layouts outside the engine dependency
 Accepted changes become the normal path. Rejected changes are removed.
 
 The two current controls are the twelve-file positive recording and `quality-five.json`.
-The [current evidence](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/value-access-20261021.json) pins their workloads, policies, binaries, build settings, and trial outputs.
+The [current evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/value-access-20261021.json) pins their workloads, policies, binaries, build settings, and trial outputs.
 The positive recording currently resides at `.rerail/profiles/batch-candidates-20261021/positive-two-recording.json`.
 Spike S0 makes its reproduction independent of that local directory.
 

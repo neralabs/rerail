@@ -65,7 +65,7 @@ That comparison rebuilds scope tables per clause and includes index construction
 It is not the indexed native execution gate and does not establish the target speedup.
 A second comparison now uses the production anchor index and shares native scope tables across all four clauses.
 
-Artifacts: `packs/data-layer/upstream/benchmarks/authored/benchmark/shared-structural-execution/reference-500.json` and its manifest.
+Artifacts: `packs/data-layer/upstream/benchmarks/authored/shared-structural-execution/reference-500.json` and its manifest.
 The manifest records source hashes, binary hash, corpus commit, and compiler settings.
 This qualification build uses optimization level 3, 16 local codegen units, and no LTO.
 Apple's linker rejected the initial cached LLVM bitcode; disabling LTO resolved the local build issue.
@@ -101,7 +101,7 @@ This is evidence of excessive semantic demand and relation input, not expensive 
 The next change applies a conservative import-syntax screen before qualification-only requests.
 Binding and value requests retain their exact semantic behavior.
 
-Artifacts: `reference-v2-500.json`, `reference-v2-full.json`, and `reference-v2-manifest.json` in `packs/data-layer/upstream/benchmarks/authored/benchmark/shared-structural-execution`.
+Artifacts: `reference-v2-500.json`, `reference-v2-full.json`, and `reference-v2-manifest.json` in `packs/data-layer/upstream/benchmarks/authored/shared-structural-execution`.
 The full benchmark process peak footprint is 1,462,961,664 bytes, including both engines and common preparation.
 These results qualify an independent reference only. Generic compilation and production cutover remain pending.
 

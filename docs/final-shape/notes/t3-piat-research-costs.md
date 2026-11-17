@@ -1033,7 +1033,7 @@ Exactly one SQL-bearing clause kind, `relational`:
 ### §3 Census (AS:65-108)
 - **10 of 60** rules use `relational`, **52 clauses**; **191 evidence inputs, 431 SQL stages, ~926 KB authored SQL text**.
 - Per rule: serverplan-state-tripwires 32; serverplan-steps 7; serverplan-quality 6; 1 each: execution-authority-bypass, impl-direct-execution, internal-dead-code, legacy-execution-surfaces, public-api-triples, serverplan-dispatch-architecture, serverplan-target-architecture.
-- Also `packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/{batched-sql,evidence,native-relations-metrics}.json`, `test/scripts/test_sql_variants.py`.
+- Also `packs/data-layer/upstream/benchmarks/authored/profiling/{batched-sql,evidence,native-relations-metrics}.json`, `test/scripts/test_sql_variants.py`.
 - By primitive (per clause; one clause may be in several; counts from stage names and query features):
   | # | Primitive | Clauses (rules) | What |
   |---|---|---|---|
