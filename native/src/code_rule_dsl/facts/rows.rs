@@ -246,12 +246,14 @@ impl Rows {
         Rows { k, life, ..Rows::default() }
     }
 
-    /// `n` rows of a relation that does not grow (an `InRel` made of them): one frozen segment, shared by a
-    /// relation started from it without a copy.
-    pub fn frozen(rows: Vec<i64>, n: usize) -> Rows {
-        let mut r = Rows::default();
-        if n > 0 && !rows.is_empty() {
-            r.k = rows.len() / n;
+    /// `n` rows of `k` values of a relation that does not grow (an `InRel` made of them): one frozen segment,
+    /// shared by a relation started from it without a copy. `k` is the caller's, not `rows.len() / n`: an empty
+    /// relation's rows had no width, and a relation started from it dropped every row pushed (`extend_from_slice`
+    /// with no width), while its count went on (2026-11-17, `corpus_sql_mode_matches_native_rule_execution`).
+    pub fn frozen(rows: Vec<i64>, n: usize, k: usize) -> Rows {
+        debug_assert_eq!(rows.len(), n * k, "{n} rows of {k} values");
+        let mut r = Rows::new(k);
+        if n > 0 && k > 0 {
             r.hint = n;
             r.extend_from_slice(&rows);
         }
@@ -414,7 +416,10 @@ impl Rows {
     #[inline(always)]
     fn part_of(&self, id: u32) -> (&Part, u32) {
         if id >= self.from {
-            return (self.tail.as_ref().expect("a row of the tail"), id - self.from);
+            let Some(tail) = self.tail.as_ref() else {
+                panic!("row {id} of a relation of {} rows ({} values a row, the tail from {}, {} segments): past its rows", self.rows(), self.k, self.from, self.segs.len())
+            };
+            return (tail, id - self.from);
         }
         let (first, p) = match &self.segs[..] {
             [only] => only,
@@ -500,12 +505,24 @@ impl std::fmt::Debug for Row {
 mod tests {
     use super::*;
 
+    /// An empty kept relation keeps its width: one started from it holds the rows pushed to it (it dropped them when
+    /// the width came from the rows, none for no rows).
+    #[test]
+    fn a_relation_started_from_an_empty_one_keeps_its_rows() {
+        let kept = Rows::frozen(Vec::new(), 0, 3);
+        let mut next = kept.shared(0);
+        next.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
+        assert_eq!(next.rows(), 2);
+        assert_eq!(*next.row(1, 3), [4, 5, 6]);
+        assert_eq!(next.get(0, 2), 3);
+    }
+
     /// A frozen relation's rows are shared by one started from it, which pushes its own after them; freezing that
     /// one moves its tail into a segment, and both read every row by id.
     #[test]
     fn started_rows_share_the_kept_segments_and_freeze_their_own() {
         let k = 2;
-        let kept = Rows::frozen((0..20).collect(), 10);
+        let kept = Rows::frozen((0..20).collect(), 10, 2);
         let mut next = kept.shared(10);
         assert!(next.shares(&kept));
         next.extend_from_slice(&[100, 101]);
