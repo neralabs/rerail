@@ -64,19 +64,46 @@ interface Lane {
 /** How many lanes of other worktrees hold a workspace at once in one session; the rest wait their turn, in order. */
 const WALK_LANES_AT_ONCE = 4;
 
-/** Turns to take a workspace (`WorkspaceTurns`): at most `limit` held at once, handed on in the order asked. */
+/**
+ * Turns to take a workspace (`WorkspaceTurns`): at most `limit` held at once, handed on in the order asked. A lane that
+ * holds a turn and has nothing left to audit keeps its workspace (`idle`) until another lane waits for a turn, the lane
+ * idle longest giving its own back first: a worktree whose files keep changing is judged on one workspace from batch to
+ * batch, as an open lane is, where giving it back after each batch prepared it and applied all its edits again each time.
+ */
 class LaneTurns implements WorkspaceTurns {
   #free: number;
   readonly #waiting: Array<(giveBack: () => void) => void> = [];
+  /** Lanes holding a turn with nothing to audit, longest idle first, each with how it gives its workspace back. */
+  readonly #idle = new Map<object, () => void>();
 
   constructor(limit: number) {
     this.#free = limit;
   }
 
   async take(): Promise<() => void> {
-    if (this.#free === 0) return await new Promise(resolve => this.#waiting.push(resolve));
-    this.#free -= 1;
-    return this.#turn();
+    if (this.#free > 0) {
+      this.#free -= 1;
+      return this.#turn();
+    }
+    const turn = new Promise<() => void>(resolve => this.#waiting.push(resolve));
+    this.#reclaim();
+    return await turn;
+  }
+
+  /** `holder` holds a turn and has nothing to audit: it gives its workspace back with `release` once a lane waits. */
+  idle(holder: object, release: () => void): void {
+    this.#idle.delete(holder);
+    this.#idle.set(holder, release);
+    this.#reclaim();
+  }
+
+  /** Idle lanes give their workspaces back, longest idle first, while lanes wait; one that holds no turn hands none on. */
+  #reclaim(): void {
+    for (const [holder, release] of this.#idle) {
+      if (this.#waiting.length === 0) return;
+      this.#idle.delete(holder);
+      release();
+    }
   }
 
   /** A turn's give-back: the first waiting takes the turn, else it is free again; a second call does nothing. */
@@ -388,19 +415,30 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
 
   /**
    * A lane in another checkout that only Log batches reached (the walk's findings in another worktree, which every
-   * session watching it audits) gives its workspace back once their audits settle: a workspace holds the checkout's
-   * index, and a session kept one open in every worktree whose change it audited, so each session in a repository of
-   * many worktrees added hundreds of MB. The lane keeps what it applied and recorded, and judges its next batch as an
-   * open one would (`releaseWorkspace`). The session's own checkout, and a lane its own work reached, stay open.
+   * session watching it audits) gives its workspace back once their audits settle and another lane of the session needs
+   * a turn (`#settled`): a workspace holds the checkout's index, and a session kept one open in every worktree whose
+   * change it audited, so each session in a repository of many worktrees added hundreds of MB. The lane keeps what it
+   * applied and recorded, and judges its next batch as an open one would (`releaseWorkspace`). The session's own
+   * checkout, and a lane its own work reached, stay open.
    */
   #releaseWhenSettled(lane: Lane, mode: AuditMode | undefined): void {
     if (mode !== "log") lane.enforcer.keepWorkspace();
     if (lane.enforcer.kept) return;
     const releasing = lane.enforcer.settleGeneratedEdits()
-      .then(() => { if (this.#lanes.get(lane.root) === lane) lane.enforcer.releaseWorkspace(); })
+      .then(() => { this.#settled(lane); })
       .catch(() => undefined)
       .finally(() => this.#releasing.delete(releasing));
     this.#releasing.add(releasing);
+  }
+
+  /**
+   * A lane whose audits settled: one that holds a turn keeps its workspace until another lane waits for one
+   * (`LaneTurns.idle`); one that holds none (it opened with its workspace) gives it back now.
+   */
+  #settled(lane: Lane): void {
+    if (this.#lanes.get(lane.root) !== lane) return;
+    if (lane.enforcer.holdsTurn) this.#turns.idle(lane, () => lane.enforcer.releaseWorkspace());
+    else lane.enforcer.releaseWorkspace();
   }
 
   async settleGeneratedEdits(): Promise<void> {

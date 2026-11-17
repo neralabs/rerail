@@ -867,6 +867,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return this.#kept;
   }
 
+  /** Whether the lane holds a turn (`workspaceTurns`), which `releaseWorkspace` gives back. */
+  get holdsTurn(): boolean {
+    return this.#turn !== undefined;
+  }
+
   /**
    * Opens the lane with no workspace, as one that gave its own back: an audit takes one in its turn (`workspaceTurns`),
    * and until then a lane at the same rules answers what it reads (`readsAt`).
