@@ -23,6 +23,7 @@ import {
   type RepositoryIdentityLocation,
 } from "./repository-identity.js";
 import { checkouts, mergeAssistState, repositories, ruleSettings } from "../storage/schema.js";
+import { renewStartMark } from "../storage/start-mark.js";
 
 type Reader = Pick<RerailDatabase, "select">;
 type Writer = Pick<RerailDatabase, "select" | "insert" | "update" | "delete">;
@@ -102,8 +103,10 @@ export function recordCheckout(db: RerailDatabase, workspace: string, now = Date
   refuseUnboundedFolder(repositoryIdentityLocation(workspace));
   const { cloneId, location } = resolveCloneId(workspace);
   const checkoutPath = physicalPath(location.workspaceRoot);
-  const context = db.transaction(tx => recordCheckoutRow(tx, location, checkoutPath, cloneId, now), { behavior: "immediate" });
-  return adoptRemoteOnce(db, context, location, now);
+  const { checkout, replaced } = db.transaction(tx => recordCheckoutRow(tx, location, checkoutPath, cloneId, now), { behavior: "immediate" });
+  // A checkout recorded again for another clone lost its own start setting, so Rerail may run there now.
+  if (replaced) renewStartMark(db);
+  return adoptRemoteOnce(db, checkout, location, now);
 }
 
 /** Outside git a folder is its own checkout; a filesystem root or the home folder would claim everything below it. */
@@ -115,18 +118,21 @@ function refuseUnboundedFolder(located: RepositoryIdentityLocation): void {
   }
 }
 
-/** The checkout row at `checkoutPath` for `cloneId`, touched when it is there and written when not; a row of another clone id goes with its settings. */
+/**
+ * The checkout row at `checkoutPath` for `cloneId`, touched when it is there and written when not; a row of another
+ * clone id goes with its settings, and `replaced` says so.
+ */
 function recordCheckoutRow(
   tx: Writer,
   location: RepositoryIdentityLocation,
   checkoutPath: string,
   cloneId: string,
   now: number,
-): CheckoutContext & { readonly cloneId: string } {
+): { readonly checkout: CheckoutContext & { readonly cloneId: string }; readonly replaced: boolean } {
   const existing = tx.select().from(checkouts).where(eq(checkouts.checkoutPath, checkoutPath)).get();
   if (existing?.cloneId === cloneId) {
     tx.update(checkouts).set({ lastSeenAt: now }).where(eq(checkouts.checkoutPath, checkoutPath)).run();
-    return contextOf(location, checkoutPath, existing.repositoryKey, cloneId);
+    return { checkout: contextOf(location, checkoutPath, existing.repositoryKey, cloneId), replaced: false };
   }
   if (existing !== undefined) {
     deleteCheckoutSettings(tx, [checkoutPath]);
@@ -135,7 +141,7 @@ function recordCheckoutRow(
   // A clone joins its recorded checkouts, else the repository keyed by its clone id, else the one its remote names.
   const repositoryKey = cloneRepository(tx, cloneId) ?? remoteRepositoryCreated(tx, location, cloneId, now);
   tx.insert(checkouts).values({ checkoutPath, repositoryKey, cloneId, started: null, createdAt: now, lastSeenAt: now }).run();
-  return contextOf(location, checkoutPath, repositoryKey, cloneId);
+  return { checkout: contextOf(location, checkoutPath, repositoryKey, cloneId), replaced: existing !== undefined };
 }
 
 /** The repository of a recorded checkout of the clone, else the repository keyed by its clone id. */
@@ -313,6 +319,7 @@ export function adoptRemote(db: RerailDatabase, fromKey: RepositoryKey, toKey: R
       .where(eq(repositories.repositoryKey, fromKey)).run();
     moveRepositorySettings(tx, fromKey, toKey);
   }, { behavior: "immediate" });
+  renewStartMark(db);
 }
 
 /**
@@ -331,6 +338,7 @@ export function linkAlias(db: RerailDatabase, key: RepositoryKey, address: strin
     const aliases = [...new Set([...repository.aliases, alias, ...merged])].filter(name => name !== key);
     tx.update(repositories).set({ aliases, updatedAt: now }).where(eq(repositories.repositoryKey, key)).run();
   }, { behavior: "immediate" });
+  renewStartMark(db);
   return alias;
 }
 
@@ -566,6 +574,7 @@ export function pruneCheckouts(db: RerailDatabase): string[] {
     deleteCheckoutSettings(tx, gone);
     tx.delete(checkouts).where(inArray(checkouts.checkoutPath, gone)).run();
   }, { behavior: "immediate" });
+  renewStartMark(db);
   return gone;
 }
 

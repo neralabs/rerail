@@ -12,7 +12,8 @@
  * One file a folder, `stopped-answers/<daemon pid>-<daemon start>/<digest of the folder's real path>.json` in the Rerail
  * home. It holds no path: the repository key and the clone id the database records, how many folders up the checkout's
  * top is, the device and inode of the folder, the top and the top's `.git`, those of the database the daemon holds, its
- * WAL and the WAL's index, and when the daemon answered. A new daemon
+ * WAL and the WAL's index, the start mark the hook found before it asked the daemon (`start-mark.ts`), and when the
+ * daemon answered. A new daemon
  * places every folder again, so it removes the folders of the daemons before it once it runs (`removeEarlierAnswers`),
  * and no hook does. A link in place of the file or of either folder above it is never followed. The hook reads the file,
  * and the checkout's `.git`, `commondir` and clone id files, only as small plain files opened without waiting, so a pipe
@@ -29,13 +30,13 @@ import { storedPath } from "../engine/catalog/checkout-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { readCloneIdAt } from "../engine/catalog/repository-identity.js";
 import { recordedCheckoutStopped } from "../engine/catalog/repository-registry.js";
+import { START_MARK, STOPPED_ANSWERS_DIR, STUCK_MARK, startMarkFound, startMarkHolds } from "../engine/storage/start-mark.js";
 import { replaceFile } from "../engine/file-replace.js";
 import { openNoFollowSync } from "../engine/no-follow.js";
-import { openRerailDatabaseAsIs, type RerailDatabase } from "../engine/storage/database.js";
+import { defaultRerailDatabasePath, openRerailDatabaseAsIs, type RerailDatabase } from "../engine/storage/database.js";
 import { DAEMON_STATE_FILE, defaultRerailHome } from "../engine/storage/rerail-home.js";
 
-/** In the Rerail home: the daemon's last answer of stopped for each folder a hook asked about. */
-export const STOPPED_ANSWERS_DIR = "stopped-answers";
+export { STOPPED_ANSWERS_DIR } from "../engine/storage/start-mark.js";
 
 /**
  * How long a kept answer may be repeated. Every repeat checks all the hook can check, so this bounds only what it cannot
@@ -80,7 +81,7 @@ export interface DaemonIdentity {
 }
 
 const keptSchema = z.object({
-  v: z.literal(3),
+  v: z.literal(4),
   repository: z.string(),
   cloneId: z.string(),
   depth: z.number().int().nonnegative(),
@@ -90,14 +91,22 @@ const keptSchema = z.object({
   database: z.string(),
   wal: z.string(),
   walIndex: z.string(),
+  mark: z.string(),
   at: z.number(),
 });
 
 /**
  * What is kept of one answer of stopped. `cloneId` is the clone id the checkout's Git folder held when it was kept;
- * `folder`, `checkout`, `git`, `database`, `wal` and `walIndex` are `<device>:<inode>`.
+ * `folder`, `checkout`, `git`, `database`, `wal` and `walIndex` are `<device>:<inode>`; `mark` is the start mark the
+ * hook found before it asked the daemon (`startMarkFound`).
  */
 type KeptAnswer = z.infer<typeof keptSchema>;
+
+/** The start mark a hook found before it asked the daemon (`startMarkFound`), beside the database at `databasePath`. */
+export interface MarkBeforeAsking {
+  readonly databasePath: string;
+  readonly mark: string | undefined;
+}
 
 /** Where the checkout's top is from the folder, and the device and inode of the folder, the top and the top's own `.git`. */
 type Placement = Pick<KeptAnswer, "depth" | "folder" | "checkout" | "git">;
@@ -121,15 +130,30 @@ const daemonSchema = z.object({ pid: z.number().int(), startedAt: z.number(), da
 type RecordedDaemon = z.infer<typeof daemonSchema>;
 
 /**
- * Keeps `answer` for the hooks after this one in its folder: an answer of stopped that rests on a Git checkout the
- * daemon names, and that this folder is in as spelled, is written whole, replacing the one before; any other answer
- * removes the kept one. A failure costs only a later hook's wait.
+ * The start mark beside the Rerail database, as a hook finds it before it asks the daemon: a change to where Rerail runs
+ * that commits after this renews it, so an answer kept with it is repeated only while no such change has committed since
+ * ({@link keepStartAnswer}).
  */
-export async function keepStartAnswer(answer: StartAnswer, now = Date.now()): Promise<void> {
+export function markBeforeAsking(): MarkBeforeAsking {
+  const databasePath = defaultRerailDatabasePath();
+  return { databasePath, mark: startMarkFound(databasePath) };
+}
+
+/**
+ * Keeps `answer` for the hooks after this one in its folder: an answer of stopped that rests on a Git checkout the
+ * daemon names, and that this folder is in as spelled, is written whole with the start mark found `before` the daemon
+ * was asked, replacing the one before; any other answer removes the kept one. A failure costs only a later hook's wait.
+ */
+export async function keepStartAnswer(answer: StartAnswer, before: MarkBeforeAsking, now = Date.now()): Promise<void> {
   const file = keptFile(answer.daemon, answer.workspace);
   if (onServer(answer.workspace) || !inFoldersOfItsOwn(file)) return;
-  const placed = answer.state === "stopped" ? placedOf(answer, now) : undefined;
+  const placed = answer.state === "stopped" ? placedOf(answer, markBeside(answer.daemon.databasePath, before), now) : undefined;
   await (placed === undefined ? rm(file, { force: true }) : rewritten(file, placed, now)).catch(() => undefined);
+}
+
+/** The mark found `before` the daemon was asked, where it lies beside the database at `databasePath`, the one the daemon reads. */
+function markBeside(databasePath: string, before: MarkBeforeAsking): string | undefined {
+  return resolve(databasePath) === resolve(before.databasePath) ? before.mark : undefined;
 }
 
 /**
@@ -148,21 +172,23 @@ export function repeatsStoppedAnswer(workspace: string, now = Date.now()): boole
 }
 
 /**
- * Whether `kept` still holds for `folder`: it is recent; the folder, the checkout's top and the top's `.git` have the
- * same device and file ids, with no `.git` between the folder and the top; the top holds the clone id that was kept,
- * where the daemon reads it; the database, its WAL and the WAL's index at their names are the files the daemon held
- * when it answered ({@link sameDatabaseFiles}); and the database, read whole and at once, still places the checkout by
- * that clone id in the kept repository and reads it stopped.
+ * Whether `kept` still holds for `folder`: it is recent; the start mark is the one found before the daemon gave it, so
+ * no change to where Rerail runs has committed since, which the daemon may have read though the database file was later
+ * put back as it was ({@link startMarkHolds}); the folder, the checkout's top and the top's `.git` have the same device
+ * and file ids, with no `.git` between the folder and the top; the top holds the clone id that was kept, where the
+ * daemon reads it; the database, its WAL and the WAL's index at their names are the files the daemon held when it
+ * answered ({@link sameDatabaseFiles}); and the database, read whole and at once, still places the checkout by that
+ * clone id in the kept repository and reads it stopped.
  */
 function stillHolds(kept: KeptAnswer, folder: string, daemon: RecordedDaemon, now: number): boolean {
   const top = folderUp(folder, kept.depth);
-  return isRecent(kept, now) && sameOnDisk(kept, folder, top) && sameCloneId(top, kept.cloneId)
-    && sameDatabaseFiles(kept, daemon.databasePath) && stillStopped(daemon.databasePath, top, kept);
+  return within(kept, now, KEPT_FOR_MS) && startMarkHolds(daemon.databasePath, kept.mark) && sameOnDisk(kept, folder, top)
+    && sameCloneId(top, kept.cloneId) && sameDatabaseFiles(kept, daemon.databasePath) && stillStopped(daemon.databasePath, top, kept);
 }
 
-/** Kept less than `KEPT_FOR_MS` ago; one kept "later" than now, as after the clock was set back, is not. */
-function isRecent(kept: KeptAnswer, now: number): boolean {
-  return now >= kept.at && now - kept.at < KEPT_FOR_MS;
+/** Kept less than `ms` ago; one kept "later" than now, as after the clock was set back, is not. */
+function within(kept: Pick<KeptAnswer, "at">, now: number, ms: number): boolean {
+  return now >= kept.at && now - kept.at < ms;
 }
 
 function sameOnDisk(kept: KeptAnswer, folder: string, top: string): boolean {
@@ -171,17 +197,18 @@ function sameOnDisk(kept: KeptAnswer, folder: string, top: string): boolean {
 }
 
 /**
- * What is kept of the stopped `answer`, but its clone id: undefined where the daemon placed the folder in no checkout,
- * where the folder is not that checkout's top or a folder in it as spelled, where the top has no `.git` of its own, and
- * where a look at the database the daemon reads, its WAL or the WAL's index fails. The daemon places a folder outside
- * Git again on every answer, so an answer resting on one is not kept.
+ * What is kept of the stopped `answer` with the start `mark`, but its clone id: undefined where no mark was found beside
+ * the database the daemon reads, where the daemon placed the folder in no checkout, where the folder is not that
+ * checkout's top or a folder in it as spelled, where the top has no `.git` of its own, and where a look at the database
+ * the daemon reads, its WAL or the WAL's index fails. The daemon places a folder outside Git again on every answer, so
+ * an answer resting on one is not kept.
  */
-function placedOf({ workspace, scope, daemon }: StartAnswer, now: number): Placed | undefined {
-  if (scope === null || scope.checkoutPath === null) return undefined;
+function placedOf({ workspace, scope, daemon }: StartAnswer, mark: string | undefined, now: number): Placed | undefined {
+  if (mark === undefined || scope === null || scope.checkoutPath === null) return undefined;
   const placement = placementOf(workspace, scope.checkoutPath);
   const files = databaseFilesAt(daemon.databasePath);
   if (placement === undefined || files === undefined) return undefined;
-  return { kept: { v: 3, repository: scope.repositoryKey, ...placement, ...files, at: now }, top: scope.checkoutPath, pid: daemon.pid };
+  return { kept: { v: 4, repository: scope.repositoryKey, ...placement, ...files, mark, at: now }, top: scope.checkoutPath, pid: daemon.pid };
 }
 
 /** Where `top` is from `folder` and what each is on disk; undefined where `top` is not `folder` or above it, or one cannot be read. */
@@ -193,9 +220,9 @@ function placementOf(folder: string, top: string): Placement | undefined {
 
 /**
  * Writes the answer `placed` names at `file`, with the clone id the checkout's top holds now, unless what is there says
- * the same of the folder's placement and is younger than `REWRITE_AFTER_MS`, the top holds no clone id this hook can
- * read, which no later hook could check, or the daemon does not hold open the files at the database's names
- * ({@link daemonHolds}).
+ * the same of the folder's placement and the start mark and is younger than `REWRITE_AFTER_MS`, the top holds no clone
+ * id this hook can read, which no later hook could check, or the daemon does not hold open the files at the database's
+ * names ({@link daemonHolds}).
  */
 async function rewritten(file: string, { kept, top, pid }: Placed, now: number): Promise<void> {
   if (keptAlready(readKept(file), kept, now)) return;
@@ -206,7 +233,7 @@ async function rewritten(file: string, { kept, top, pid }: Placed, now: number):
 }
 
 function keptAlready(before: KeptAnswer | undefined, kept: Placed["kept"], now: number): boolean {
-  return before !== undefined && sameAnswer(before, kept) && now >= before.at && now - before.at < REWRITE_AFTER_MS;
+  return before !== undefined && before.mark === kept.mark && sameAnswer(before, kept) && within(before, now, REWRITE_AFTER_MS);
 }
 
 /** Whether `left` and `right` say the same of the folder's placement: the repository where both name one, and the depth and the disk ids. */
@@ -215,17 +242,20 @@ function sameAnswer(left: Placement & { repository?: string }, right: Placement 
     && left.folder === right.folder && left.checkout === right.checkout && left.git === right.git;
 }
 
+/** The files beside the daemons' folders of kept answers: the start mark and the stuck mark (`start-mark.ts`). */
+const MARKS: ReadonlySet<string> = new Set([START_MARK, STUCK_MARK]);
+
 /**
  * Removes from the Rerail home `home` the folders of answers kept from every daemon but `daemon`, whose answers are never
  * repeated: the daemon calls it once it has written `daemon.json`, off its start, so no hook pays for it. Each entry is
  * removed on its own, a link as a link and never what it leads to; one refused now (Windows holding a file in it a
- * moment) is left for the next daemon.
+ * moment) is left for the next daemon. The start mark and the stuck mark stay: a writer may be renewing them now.
  */
 export async function removeEarlierAnswers(home: string, daemon: DaemonIdentity): Promise<void> {
   const answers = join(home, STOPPED_ANSWERS_DIR);
   if (entryKind(answers) !== "folder") return;
   for (const name of await readdir(answers).catch(() => [])) {
-    if (name !== daemonFolder(daemon)) await removeEntry(join(answers, name));
+    if (name !== daemonFolder(daemon) && !MARKS.has(name)) await removeEntry(join(answers, name));
   }
 }
 

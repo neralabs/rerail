@@ -19,6 +19,7 @@ import { worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { checkouts, events, repositories, sessions } from "../engine/storage/schema.js";
 import { holdsTable } from "../engine/storage/table-probe.js";
 import { clearSetupReview } from "../engine/catalog/setup-review.js";
+import { renewStartMark } from "../engine/storage/start-mark.js";
 import { ADAPTER_CAPABILITIES, type RerailHost } from "../engine/adapter-contract.js";
 import type { SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
 
@@ -230,6 +231,7 @@ export function setRepositoryStarted(database: RerailDatabase, repositoryKey: Re
     tx.update(checkouts).set({ started: null }).where(eq(checkouts.repositoryKey, repositoryKey)).run();
     clearSetupReview(tx, repositoryKey);
   }, { behavior: "immediate" });
+  renewStartMark(database);
 }
 
 /** Turn `checkout` on or off itself, with the checkouts nested in it following it again. */
@@ -240,6 +242,7 @@ export function setCheckoutStarted(database: RerailDatabase, checkout: CheckoutC
     if (nested.length > 0) tx.update(checkouts).set({ started: null }).where(inArray(checkouts.checkoutPath, nested)).run();
     clearSetupReview(tx, checkout.repositoryKey);
   }, { behavior: "immediate" });
+  renewStartMark(database);
 }
 
 /** `setCheckoutStarted`, or (`wholeRepository`) `setRepositoryStarted` for the checkout's repository. */
@@ -264,6 +267,7 @@ export function startSetUpRepository(database: RerailDatabase, checkout: Checkou
     tx.update(checkouts).set({ started: parentStopped ? true : null }).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).run();
     clearSetupReview(tx, checkout.repositoryKey);
   }, { behavior: "immediate" });
+  renewStartMark(database);
 }
 
 /**

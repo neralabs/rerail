@@ -45,6 +45,7 @@ export {
   type RuleSetting,
 } from "./catalog/repository-model.js";
 export { adoptRemote, checkoutStatus, listRepositories, lookupCheckout, recordCheckout } from "./catalog/repository-registry.js";
+export { START_MARK, startMarkFound, STUCK_MARK } from "./storage/start-mark.js";
 export { exportRulesDump, importRulesDump, RULES_DUMP_FILE, type RulesDump } from "./catalog/rule-bootstrap.js";
 export { offerSetupReview } from "./catalog/setup-review.js";
 export {

@@ -4,7 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   openRerailDatabase,
   loadRuleCatalog,
@@ -15,6 +15,7 @@ import {
   addAttachment,
   setRuleSetting,
   loadRulePacks,
+  startMarkFound,
 } from "../../src/engine/index.js";
 import {
   DAEMON_KEEPS_RUNNING,
@@ -487,5 +488,31 @@ describe("repository start state", () => {
     } finally {
       creator.close();
     }
+  });
+
+  it("renews the start mark once set-up's start commits, after the transaction all of set-up writes in, which the start inside it cannot", async () => {
+    const root = await temporary("rerail-start-mark-");
+    const databasePath = join(root, "home", "rerail.sqlite");
+    const main = gitRepository(join(root, "acme-web"));
+    // The mark as set-up's start leaves it inside set-up's own transaction, which has not committed yet.
+    const inside: Array<string | undefined> = [];
+    vi.resetModules();
+    vi.doMock("../../src/runtime/repository-start.js", async () => {
+      const actual = await vi.importActual<typeof import("../../src/runtime/repository-start.js")>("../../src/runtime/repository-start.js");
+      const startSetUpRepository: typeof actual.startSetUpRepository = (...start) => {
+        actual.startSetUpRepository(...start);
+        inside.push(startMarkFound(databasePath));
+      };
+      return { ...actual, startSetUpRepository };
+    });
+    try {
+      const { startRerail: setUpStart } = await import("../../src/cli/index.js");
+      await setUpStart(main, recorder(), answered(databasePath, "start"));
+    } finally {
+      vi.doUnmock("../../src/runtime/repository-start.js");
+      vi.resetModules();
+    }
+    const after = startMarkFound(databasePath);
+    expect({ inside: inside.map(mark => mark !== "none"), renewedAfter: after !== inside[0] }).toEqual({ inside: [true], renewedAfter: true });
   });
 });

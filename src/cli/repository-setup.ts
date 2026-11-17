@@ -39,6 +39,7 @@ import {
 import semver from "semver";
 import { ruleAttachments, ruleSettings } from "../engine/storage/schema.js";
 import { setupReviewOffered } from "../engine/catalog/setup-review.js";
+import { renewStartMark } from "../engine/storage/start-mark.js";
 import {
   CONFIRM_PACKS_ANSWERS,
   confirmPacksAnswers,
@@ -448,7 +449,10 @@ function readDatabase<T>(run: Run, read: (database: RerailDatabase) => T): T | u
 function withCheckout<T>(run: Run, repository: Repository, action: (database: RerailDatabase, checkout: CheckoutContext) => T): T {
   const database = openRerailDatabase(run.databasePath);
   try {
-    return database.transaction(() => action(database, recordCheckout(database, repository.root)), { behavior: "immediate" });
+    const done = database.transaction(() => action(database, recordCheckout(database, repository.root)), { behavior: "immediate" });
+    // A start inside renewed the start mark before this transaction committed it: renewed again once it has.
+    renewStartMark(database);
+    return done;
   } finally {
     database.$client.close();
   }

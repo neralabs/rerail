@@ -13,7 +13,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import Database from "better-sqlite3";
 import { DrizzleQueryError } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { adoptRemote, type AdapterDelivery, defaultRerailDatabasePath, lookupCheckout, openRerailDatabase, recordCheckout, sessionStartNote } from "../../src/engine/index.js";
+import {
+  adoptRemote, type AdapterDelivery, defaultRerailDatabasePath, lookupCheckout, openRerailDatabase, recordCheckout, sessionStartNote, START_MARK, startMarkFound,
+  STUCK_MARK,
+} from "../../src/engine/index.js";
 import {
   encodeRerailEventResult,
   type EngineEndpoint,
@@ -516,20 +519,20 @@ interface CountingDaemon {
  * a running daemon does, so the database's WAL and the WAL's index stay beside it, unless `holdsDatabase` is false: a
  * test whose daemon's connection is another process's gives that. With an answer of stopped it names the checkout it
  * placed the folder in, as a live daemon does (`scopeOf`, by default `daemonScope`). `daemon.json` names it by `pid`
- * and `startedAt`, this process and 1 unless given.
+ * and `startedAt`, this process and 1 unless given, and the database it reads (`databasePath`).
  */
 async function countingDaemon(
   home: string,
   repositoryState: string | ((repository: string) => string) = "stopped",
   answerWhen?: (url: URL) => Promise<unknown>,
-  { holdsDatabase = true, pid = process.pid, startedAt = 1, scopeOf = daemonScope }: StandInOptions = {},
+  { holdsDatabase = true, pid = process.pid, startedAt = 1, scopeOf = daemonScope, databasePath = join(home, "rerail.sqlite") }: StandInOptions = {},
 ): Promise<CountingDaemon> {
   const requests: string[] = [];
   const asked: string[] = [];
   let ended = 0;
   const closing = Promise.withResolvers<void>();
   const answers: Record<string, (url: URL) => unknown> = {
-    "/healthz": () => ({ status: "ok", pid, database: { path: join(home, "rerail.sqlite"), exists: true }, native: { ok: true } }),
+    "/healthz": () => ({ status: "ok", pid, database: { path: databasePath, exists: true }, native: { ok: true } }),
     "/api/presentation": url => {
       const folder = url.searchParams.get("repository") ?? "";
       const state = typeof repositoryState === "string" ? repositoryState : repositoryState(folder);
@@ -560,7 +563,7 @@ async function countingDaemon(
   await mkdir(home, { recursive: true });
   await writeFile(join(home, "daemon.json"), JSON.stringify({
     pid, host: "127.0.0.1", port, url: `http://127.0.0.1:${port}/`, version: "test",
-    databasePath: join(home, "rerail.sqlite"), kernelSocketPath, ui: "bundled", startedAt, packageRoot: home,
+    databasePath, kernelSocketPath, ui: "bundled", startedAt, packageRoot: home,
   }));
   const database = holdsDatabase ? heldOpen(join(home, "rerail.sqlite")) : undefined;
   return {
@@ -585,6 +588,8 @@ interface StandInOptions {
   readonly pid?: number | undefined;
   readonly startedAt?: number | undefined;
   readonly scopeOf?: (folder: string) => DaemonScope;
+  /** The database `daemon.json` names; the Rerail home's unless given. */
+  readonly databasePath?: string;
 }
 
 /** The checkout a live daemon names for `folder` in its answer (`lookupCheckout`); null where it knows none. */
@@ -1913,6 +1918,14 @@ const changesSinceTheAnswer: Array<{ what: string; change: (app: string) => void
   { what: "a .git is made in the folder", change: app => git(join(app, "src"), "init", "-q") },
   { what: "the checkout is started", change: app => inDatabase(database => setCheckoutStarted(database, recordCheckout(database, app), true)) },
   {
+    // The database says stopped again, as it did; only the start mark tells the change, which a daemon may have read.
+    what: "the checkout is started and stopped again", change: app => inDatabase(database => {
+      setCheckoutStarted(database, recordCheckout(database, app), true);
+      setCheckoutStarted(database, recordCheckout(database, app), false);
+    }),
+  },
+  { what: "a renewal of the start mark could not replace it", change: () => writeFileSync(join(process.env.RERAIL_HOME!, "stopped-answers", STUCK_MARK), "") },
+  {
     what: "the checkout's repository takes the remote it gained",
     change: app => inDatabase(database => adoptRemote(database, recordCheckout(database, app).repositoryKey, "https://example.invalid/team/other.git")),
   },
@@ -2183,8 +2196,9 @@ function plantedForShare(share: string, local: string): void {
   const file = keptAnswerFile(share);
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, JSON.stringify({
-    v: 3, repository, cloneId, depth: 0, folder: id(real, statSync), checkout: id(real, statSync), git: id(join(real, ".git"), lstatSync),
-    database: id(database, lstatSync), wal: id(`${database}-wal`, lstatSync), walIndex: id(`${database}-shm`, lstatSync), at: Date.now(),
+    v: 4, repository, cloneId, depth: 0, folder: id(real, statSync), checkout: id(real, statSync), git: id(join(real, ".git"), lstatSync),
+    database: id(database, lstatSync), wal: id(`${database}-wal`, lstatSync), walIndex: id(`${database}-shm`, lstatSync), mark: startMarkFound(database),
+    at: Date.now(),
   }));
 }
 
@@ -2433,7 +2447,7 @@ describe("the hook start check", () => {
         await rm(keptAnswerFile(app), { force: true });
         const hooks = Array.from({ length: 8 }, () => host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES));
         expect(await Promise.all(hooks)).toEqual(Array.from({ length: 8 }, () => false));
-        expect(JSON.parse(readFileSync(keptAnswerFile(app), "utf8"))).toMatchObject({ v: 3, depth: 0, cloneId: readFileSync(cloneIdFile(app), "utf8").trim() });
+        expect(JSON.parse(readFileSync(keptAnswerFile(app), "utf8"))).toMatchObject({ v: 4, depth: 0, cloneId: readFileSync(cloneIdFile(app), "utf8").trim() });
         expect(readdirSync(dirname(keptAnswerFile(app)))).toEqual([basename(keptAnswerFile(app))]);
       }
     } finally {
@@ -2594,10 +2608,10 @@ describe("the hook start check", () => {
     const host = await startCheckHost();
     await keptStopped(host, app);
     expect({ removed: removed.filter(path => !path.includes(`${sep}${process.pid}-1`)), answers: readdirSync(answers).sort() })
-      .toEqual({ removed: [], answers: [`${process.pid}-1`, "7-1", "8-1"].sort() });
+      .toEqual({ removed: [], answers: [`${process.pid}-1`, "7-1", "8-1", START_MARK].sort() });
   });
 
-  it("removes, for a daemon once it runs, the folders of answers the daemons before it kept, leaving its own, and nothing a link leads to", async () => {
+  it("removes, for a daemon once it runs, the folders of answers the daemons before it kept, leaving its own, the start mark and the stuck mark, and nothing a link leads to", async () => {
     const root = await temporaryDirectory({ started: false });
     const outside = join(root, "outside");
     mkdirSync(join(outside, "7-1"), { recursive: true });
@@ -2608,6 +2622,8 @@ describe("the hook start check", () => {
       mkdirSync(join(answers, daemon), { recursive: true });
       writeFileSync(join(answers, daemon, `${"0".repeat(32)}.json`), "{}");
     }
+    // A writer may be renewing the mark as the daemon starts; one removed then reads as none, as before any renewal.
+    for (const mark of [START_MARK, STUCK_MARK]) writeFileSync(join(answers, mark), "");
     folderLink(outside, join(answers, "7-1", "linked"));
     folderLink(outside, join(answers, "8-1"));
     // A home whose folder of kept answers is itself a link: nothing in what it leads to is removed.
@@ -2615,8 +2631,8 @@ describe("the hook start check", () => {
     mkdirSync(linkedHome);
     folderLink(outside, join(linkedHome, "stopped-answers"));
     for (const each of [home, linkedHome]) await removeEarlierAnswers(each, { pid: process.pid, startedAt: 1 });
-    expect({ answers: readdirSync(answers), own: readdirSync(join(answers, `${process.pid}-1`)), outside: readdirSync(outside).sort() })
-      .toEqual({ answers: [`${process.pid}-1`], own: [`${"0".repeat(32)}.json`], outside: ["7-1", "keep.txt"] });
+    expect({ answers: readdirSync(answers).sort(), own: readdirSync(join(answers, `${process.pid}-1`)), outside: readdirSync(outside).sort() })
+      .toEqual({ answers: [`${process.pid}-1`, START_MARK, STUCK_MARK].sort(), own: [`${"0".repeat(32)}.json`], outside: ["7-1", "keep.txt"] });
   });
 
   it("keeps no answer that rests on a folder outside Git, which the daemon places again on every answer, and waits there", async () => {
@@ -3042,6 +3058,80 @@ describe("the hook start check", () => {
       }
     } finally {
       daemonHolds?.close();
+    }
+  });
+
+  it("keeps the start mark it found before it asked the daemon, so a start that commits while the daemon answers, then is undone in the file in place, leaves nothing to repeat", { timeout: 30_000 }, async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    const daemonHolds = heldOpen(defaultRerailDatabasePath());
+    try {
+      const backup = join(root, "backup.sqlite");
+      checkpointed();
+      copyFileSync(defaultRerailDatabasePath(), backup);
+      // The daemon has read its answer of stopped; the start commits before that answer reaches the hook, and an older
+      // copy written over the file in place then makes the file say stopped again.
+      const startedMeanwhile = (): Promise<void> => {
+        inDatabase(database => setCheckoutStarted(database, recordCheckout(database, app), true));
+        checkpointed();
+        copiedInPlace(backup, defaultRerailDatabasePath());
+        return Promise.resolve();
+      };
+      const answering = await countingDaemon(process.env.RERAIL_HOME!, "stopped", startedMeanwhile, { scopeOf: host.daemonScope });
+      try {
+        expect(await host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES)).toBe(false);
+      } finally {
+        await answering.close();
+      }
+      expect(existsSync(keptAnswerFile(app))).toBe(true);
+      const daemon = await daemonAnsweringAfterProof(host, "started");
+      try {
+        await startedFromLateDaemon(host, daemon, app);
+      } finally {
+        await daemon.close();
+      }
+    } finally {
+      daemonHolds?.close();
+    }
+  });
+
+  it("writes the daemon's answer of stopped again at once where the start mark changed since it kept one, so the next hook there repeats it", { timeout: 30_000 }, async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    await keptStopped(host, app);
+    // Started and stopped again: the database says stopped as it did, and the start mark is new.
+    inDatabase(database => setCheckoutStarted(database, recordCheckout(database, app), true));
+    inDatabase(database => setCheckoutStarted(database, recordCheckout(database, app), false));
+    const inTime = await countingDaemon(process.env.RERAIL_HOME!, "stopped", undefined, { scopeOf: host.daemonScope });
+    try {
+      expect(await host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES)).toBe(false);
+    } finally {
+      await inTime.close();
+    }
+    const busy = await countingDaemon(process.env.RERAIL_HOME!, "stopped", busyTheWholeTest);
+    try {
+      expect(await answeredWellBeforeReadLimit(host.hookRerailStarted("claude-code", app))).toBe(false);
+    } finally {
+      await busy.close();
+    }
+  });
+
+  it("keeps no answer where the daemon reads another database than the one beside which the hook found the start mark, whose writers never renew it, and waits there", { timeout: 30_000 }, async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    const elsewhere = join(root, "elsewhere", "rerail.sqlite");
+    mkdirSync(dirname(elsewhere));
+    checkpointed();
+    copyFileSync(defaultRerailDatabasePath(), elsewhere);
+    // The other database held open as a daemon that reads it holds it, so its WAL and the WAL's index are there.
+    const held = heldOpen(elsewhere);
+    try {
+      await notKept(host, app, { databasePath: elsewhere });
+    } finally {
+      held?.close();
     }
   });
 

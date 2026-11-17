@@ -3,7 +3,7 @@ import type { AdapterEvent, AdapterSession, RerailEventLoop, RerailHost } from "
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { readStartAnswer } from "../presentation/session-presentation.js";
 import { isRerailStarted } from "../runtime/repository-start.js";
-import { keepStartAnswer, repeatsStoppedAnswer, type StartAnswer } from "../runtime/stopped-answers.js";
+import { keepStartAnswer, markBeforeAsking, repeatsStoppedAnswer, type MarkBeforeAsking, type StartAnswer } from "../runtime/stopped-answers.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 import { ingestEngineEvent } from "../runtime/engine-service.js";
 import {
@@ -105,20 +105,26 @@ export async function hookRerailStarted(
 
 /**
  * The daemon's answer to the start check (`readStartAnswer`), kept for the hooks after this one (`keptAnswer`), null
- * where none came; or `stopped` where the daemon has not answered within `graceMs` and `knownStopped` holds.
+ * where none came; or `stopped` where the daemon has not answered within `graceMs` and `knownStopped` holds. The start
+ * mark is found before the daemon is asked (`markBeforeAsking`), so a change to where Rerail runs that commits after
+ * the daemon read its answer renews the mark after it was found.
  */
 async function daemonAnswer(host: RerailHost, workspace: string, graceMs: number): Promise<RepositoryStartState | null> {
   const request = new AbortController();
+  const before = markBeforeAsking();
   const answer = readStartAnswer(workspace, host, request.signal);
-  if (await settlesWithin(answer, graceMs) || !stoppedEndingRequest(workspace, request)) return await keptAnswer(answer);
+  if (await settlesWithin(answer, graceMs) || !stoppedEndingRequest(workspace, request)) return await keptAnswer(answer, before);
   return "stopped";
 }
 
-/** The state the daemon answered, once it is kept for the hooks after this one in its folder (`keepStartAnswer`); null where none came. */
-async function keptAnswer(pending: Promise<StartAnswer | null>): Promise<RepositoryStartState | null> {
+/**
+ * The state the daemon answered, once it is kept for the hooks after this one in its folder with the start mark found
+ * `before` it was asked (`keepStartAnswer`); null where none came.
+ */
+async function keptAnswer(pending: Promise<StartAnswer | null>, before: MarkBeforeAsking): Promise<RepositoryStartState | null> {
   const answer = await pending;
   if (answer === null) return null;
-  await keepStartAnswer(answer);
+  await keepStartAnswer(answer, before);
   return answer.state;
 }
 
