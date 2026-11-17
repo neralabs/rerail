@@ -246,12 +246,13 @@ impl Rows {
         Rows { k, life, ..Rows::default() }
     }
 
-    /// `n` rows of a relation that does not grow (an `InRel` made of them): one frozen segment, shared by a
-    /// relation started from it without a copy.
-    pub fn frozen(rows: Vec<i64>, n: usize) -> Rows {
-        let mut r = Rows::default();
+    /// `n` rows of `k` values of a relation that does not grow (an `InRel` made of them): one frozen segment, shared
+    /// by a relation started from it without a copy. `k` is given, not read off the rows: with none, a relation started
+    /// from them (kept empty, grown in a later run) had no width, and its tail took no row.
+    pub fn frozen(k: usize, rows: Vec<i64>, n: usize) -> Rows {
+        debug_assert_eq!(rows.len(), k * n, "{n} rows of {k} values");
+        let mut r = Rows::new(k);
         if n > 0 && !rows.is_empty() {
-            r.k = rows.len() / n;
             r.hint = n;
             r.extend_from_slice(&rows);
         }
@@ -505,7 +506,7 @@ mod tests {
     #[test]
     fn started_rows_share_the_kept_segments_and_freeze_their_own() {
         let k = 2;
-        let kept = Rows::frozen((0..20).collect(), 10);
+        let kept = Rows::frozen(k, (0..20).collect(), 10);
         let mut next = kept.shared(10);
         assert!(next.shares(&kept));
         next.extend_from_slice(&[100, 101]);
@@ -532,5 +533,18 @@ mod tests {
         assert_eq!(*rows.row(12, k), [1000, 2000]);
         assert_eq!(*rows.row(31, k), [1019, 2019]);
         assert_eq!(rows.len(), n * k);
+    }
+
+    /// A relation kept with no rows and started again (the cross-file part maintained from its frames in a new
+    /// process) takes the rows pushed after: its width is the relation's, not read off rows it does not have.
+    #[test]
+    fn rows_started_from_an_empty_kept_relation_take_their_pushes() {
+        let k = 3;
+        let kept = Rows::frozen(k, Vec::new(), 0);
+        let mut next = kept.shared(0);
+        next.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
+        assert_eq!(next.len(), 2 * k);
+        assert_eq!(*next.row(1, k), [4, 5, 6]);
+        assert_eq!(*next.freeze(2).row(0, k), [1, 2, 3]);
     }
 }

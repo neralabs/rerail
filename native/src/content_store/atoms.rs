@@ -1609,9 +1609,20 @@ impl Atoms {
         self.read_atoms(&ids)
     }
 
-    /// A run's end: the lease is given back with its next commit, as before the run.
+    /// A run's end: the lease is given back with its next commit, as before the run; at once when nothing is pending.
+    /// The run's last commit can come before its end (Q42): `committed` kept the lease then, the run still going, and
+    /// no commit came after to give it back, so the process held the store's lock file after its last run.
     pub fn run_over(&self) {
         let _ = self.runs.try_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
+        if self.path.is_none() || self.runs.load(Ordering::Acquire) != 0 {
+            return;
+        }
+        let mut lease = self.lease.lock();
+        let state = self.state.read();
+        if state.map.is_none() && state.atoms.pending().0 == 0 && lease.take().is_some() {
+            self.leased.store(false, Ordering::Release);
+            self.complete.store(false, Ordering::Release);
+        }
     }
 
     /// Whether a flush is due: enough pending (count, bytes or age), or another process waiting. Never inside a run

@@ -34,6 +34,9 @@
 use crate::code_rule_dsl::logic::front::{Atom, Literal, Program, Rule, Term};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+mod on_version;
+pub use on_version::DemandExports;
+
 /// The most supersets made: past it, a demand is `top` (the readers are cut by what was made).
 const MAX_KEYS: usize = 2000;
 

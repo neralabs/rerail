@@ -5529,3 +5529,14 @@ past the start.
 function taking the max itself, off the hot path), so an arm whose exits all are needs no max.
 
 **Closed 2026-11-16.** No `max` where the rule's last is never below its start (`last_below_start`; a refusal leaves the loop).
+
+## O-kept-route-after-quiet-cold. An edit after a quiet cold run skips the kept route (2026-11-16, decision 0117)
+
+Answered (2026-11-16). The stat index trusts a file only when its mtime is over `RACY_NS` (2 s) before its recording
+(git's racy rule). A corpus written just before a cold run (a benchmark's fresh copy) leaves every file racy, so the
+next run read and hashed every file. The kept route took only files the index knew by their stat, so it closed:
+every hit was decoded whole, and the cross part read about 18 M kept rows more. A cold run under load, or the
+benchmark's own steps, started over 2 s after the copy, so there the route was taken. Now a file read for its stat's
+sake whose hashed content is the one the keeper counted is read for its outputs alone too. Quiet cold then edit, M3
+Max, 4 threads: 7.29 s CPU, 6.07 s wall -> 6.46 s, 5.10 s; 299 of 300 files outputs-only; outputs equal a
+from-scratch run (660 relations, 30,453 rows).

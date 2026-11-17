@@ -486,6 +486,14 @@ pass.
   this entry's numbers are its input. ep2's edit is the measurement: `merge the programs` and `prepare`, each
   pass's share as above. This queue keeps Q18 closed here and measures it again when 0281 lands in the hub.
 
+- **Measured again** (2026-11-16, Typing-support after 0281 step 5's passes moved to the manager; ep2 on the
+  profiling build with the checkout's `docs/rule-syntax/lib`, since `rs-now`'s lib no longer loads (0263); B101's
+  body edited by one always-true literal; a new process): 150 G, 9.0–9.2 s CPU, 5.5 s wall; warm 6.1 G.
+  `combine` 0.61 s and `prepare` 0.72 s (the moved passes 0.45 s). Most of the rest is every file's file-local part
+  run again (`local` 1.9 s, `parse` and `batch` 1.7 s), because the part's digest keys each file's memo. Not
+  comparable with the 82.9 G above (another engine, another lib). Next lever: 0225 §7's per-module part; see 0281
+  step 5 (c).
+
 ### Q19. A new process reads every kept frame of the cross part, its own or not
 
 - **Found** (2026-11-15, ep2, while measuring Q18): an edit of one rule's body costs 82.9 G in a new process, of
@@ -731,6 +739,12 @@ pass.
   it). Passes, with the executor's other 13 top-level tests and the on-request tests.
 
 - **Done when**: each passes on the hub, fixed at its cause.
+- **Record** (2026-11-16, this branch at d9419e6ee): `rule_files_pass_their_own_tests` passes. `executors_are_shared`
+  failed on `crates/blocks/src/gpu.rs` alone: `Gpu::new` made its own Metal device and command queue, where decision
+  0100 §2 has the process's one (`forest`'s `gpu::shared`, handed out as `rerail_metal::device()`/`queue()`). Its only
+  caller is the `paces` example; the engine's GPU lane is `accel`'s `Gpu`, on the shared queue. Now `Gpu::on(device,
+  queue)` takes them from its caller, and the example, a process of its own, makes them. Passes; the example builds.
+  The replay sample was not run (Q21's other tests all pass now).
 
 ### Q22. Two `rr::tests` red on the branch head
 
@@ -820,6 +834,14 @@ pass.
   reads 9 rows, all `str` but one `int`, where 29 are wanted: every `int`, `float`, `bool`, `NoneType` and
   `ellipsis` value but `12` is missing. Maybe one of the 32 hub failures in Q17 ("The hub's gate failures at 692cc9772"); not checked on the hub.
 - **Done when**: it passes, traced to the commit and cause that dropped the non-string values.
+- **Record** (2026-11-16): passes with `RERAIL_CORPUS_MEMO=off`, so it is the memoised chunk's hand-on of base rows
+  (`corpus.rs`, the base rows by file). A string-keyed row (`value_type(v, t)`) is each file's whose text holds `v`,
+  found by scanning the chunk's text sources (`strings::TEXT_COLUMNS`). `value_type` is one of them, and its owner
+  was taken as its first column, `v` itself: each value's string id was read as a document, so every value seemed
+  held by a file of another chunk and was skipped. A value only some file's text also gives (`str`, `text`: `12`,
+  `"ab"`) carried its real file beside it and stayed. A value none gives (`-3`, `1e+20`, `None`) should be every file
+  of the chunk's, as a made string is. Now only a relation owned by a node or a document (`memo::owner`) names a
+  string's files. The test passes, with the corpus base tests and the text-test tests (116).
 
 ### Q29. Two of rr_aot's shape tests check shapes 0177 retired
 
@@ -859,6 +881,8 @@ pass.
   the hub's side.
 - **Record** (2026-11-16): `every_operation_runs_on_every_executor` passes too, its count traced to 27b616adc's
   pack regeneration and re-blessed (Q21). All seven pass.
+- **Also on cost-classifier** (2026-11-16, 67f64cf2b): the same, found apart: all seven pass on a farm host after the
+  phased-facts merge, and the ledger's python-main count (432 to 462) blessed to the same line.
 
 ### Q33. (Q27 on cost-classifier and on the hub) `within` read from its container is priced far under its work
 
@@ -889,6 +913,10 @@ pass.
   queue counts their pointer rows (about 100 bytes an entry), not their images. Frames are its step 5.
 - **Done when**: 0295 step 4 is merged here (through the hub), and a strict 300-file run with
   `RERAIL_WRITE_QUEUE_MB=96` completes.
+- **Record** (2026-11-16, after the phased-facts merge 871d6d684 and eb5a89e41): on a farm host, the 317 rules over
+  the 300-file corpus with `RERAIL_SQL_STRICT=1` and `RERAIL_WRITE_QUEUE_MB=96` complete cold (0 SQLite statements
+  in every phase, peak RSS 2.2 GB), and the warm run after it with `RERAIL_WARM=list` has no fault. The two runs'
+  outputs are equal, relation by relation (660 relations, as `.csv`); their `outputs.rro` files differ in bytes only.
 
 ### Q36. (Q27, then Q30, on Native-and-GPU-strata) Placement's CPU estimates miss by their planned work, so the GPU is not chosen
 
@@ -990,6 +1018,25 @@ pass.
   neighbour's: in the explain, in the observed fanouts the planner replans by (`observe`), and in the histograms of
   0203 (`step_histograms`). `rel_base`'s `docof` lookup showed as its filter's 170 µs a row. The spec now says which
   plan step made each of its items (`JoinSpec::from`), and the engine reports counts, CPU and histograms by plan step.
+- **Record, the planner's half** (2026-11-16, this branch). On fixtures/python cold (317 rules), the worst
+  underestimates were lines whose first step is a `field` lookup by a field name: `field($l, "left", $t)` priced at
+  1.00 row, 1,159 read (`p293_read_elsewhere`: 8 planned, 196,060 done; `rr_token_req` 174 for 427,709). A field's
+  name in a rule is a branded atom (decision 0270), and the corpus run's postings of the program's constants
+  (`Own::constants_of`) read integers alone, so no posting was counted, and `const_freq` read the measured column's
+  missing value as 0 rows (then 1). Now branded constants are counted as their atom's value
+  (`branded_constants_have_their_postings_counted`). The worst ratio of done to planned work (strata over 50 k
+  done) went from 24,507× to 78×. Outputs are equal as sets (660 relations).
+  - Left, the next misses: `pre_1022`/`pre_1023`/`pre_2515` (6 k planned, 0.5 M done), `rr_agg286` (9 k, 0.67 M),
+    `rr_ctx282` (31 k, 1.3 M), all among decision 0203's slow joins. Overestimates are the larger share of the
+    total (150 M planned, 55 M done). Not yet measured on hogql's pre_120.
+  - Those misses are correlations, not implications the rules prove: `pre_1023`'s `scope_node($n, $s)` and
+    `kind($n, "identifier")` after `look($n, $x, $s)` are priced as independent filters (8,694 bindings to 27) and
+    pass every row. `look`'s scope is walked up (`walk`), so `scope_node` is not implied by its rules, and the
+    simplifier's implied atoms (decision 0038) do not cover it. Decision 0203's measured pair statistics are the
+    mechanism for that, but a second cold run with the first run's costs store (`RERAIL_COSTS` kept, a fresh tape
+    store) plans the same: 150.5 M planned, 54.9 M done, the same 9 strata 10×+ under, in both. **Open**: why the
+    slow lines' pair statistics (`slow joins`, 7 lines) do not reach the next run's estimates here, where Q36's
+    hogql runs said kept costs took `pre_120` from 5 M to 0.36 M.
 
 ### Q37. (Q28, then Q31, on Native-and-GPU-strata) A rule that copies a view's columns is a stratum
 
@@ -998,6 +1045,59 @@ pass.
   estimate. A rule whose body is one view atom, binding distinct variables, is that view's columns.
 - **Whose**: lowering (a request and what its readers read, 0291), where cost-classifier works now. Not taken here.
 - **Done when**: such a rule is bound as a view of its source, and no stratum copies it.
+- **Record** (2026-11-16, this branch). The planner's views of one-atom projections (`plan_views`, read in place by
+  native joins through `view_src`) are made only in a SQL run: a native run over atoms made none (decision 0104: a
+  view is SQL), so every such rule was a stratum that copied its input. Now `native_stratum_` holds a rule of that
+  shape over an input bound in place as a view of the input's columns (`setfix::hold_view`, `InRel`'s in-place
+  `View`, which `hold_source` already was for every column), and opens no component. The shape
+  (`plan::input_view_shape`): one positive atom of an input, variables each once and wildcards, the head distinct
+  variables keeping the input's key (`node`'s node, `doc`'s and `tape`'s first column) or every column, so its rows
+  are the input's, one each. `RERAIL_COPY_VIEWS` derives them as before.
+  - A view is never kept (made again for nothing): the kept part skips it (`retain`), a session's cut counts it
+    neither run nor clean (as `RERAIL_SESSION_VIEWS`' views), and the run's kept strata hold it again, clean as its
+    input is, its digest its reads' with what it views. A program left with views alone has no planning choice to
+    keep (decision 0250's rule for an empty one: otherwise the run after a cold one wrote one).
+  - `held_source` hands out a view's source only where its columns are the source's, in order.
+  - 317 rules over fixtures/python, strict: 219 strata held as views in the cold run; the warm run writes nothing;
+    the 660 output relations are equal as sets to a cold run with `RERAIL_COPY_VIEWS=1`. Tests:
+    `a_copy_of_an_inputs_columns_is_a_view_of_it`, with the planner's, corpus, session, maintain, choices and
+    setfix tests (147). Not measured on hogql.
+  - CPU, fixtures/python cold, two rounds on m1max: at first 7.9–8.8 s of strata CPU against 5.98–6.05 s for the
+    copies. The views' readers read a source lookup's every row at each walk step: `probe_size` and `probe_sample`
+    over a source index fall back to reading the probe (`kind(l, "identifier")`, every identifier). A held view now
+    builds its own index on a column whose source lookup gives more than 64 rows (`HELD_VIEW_MATCHES`), as the
+    copy had; base inputs' views are unchanged. Each view also takes its input's column statistics
+    (`Run::view_stats`). After: 6.19–6.27 s against 5.96–6.10 s. What is left is the same work at 20–50% more CPU per
+    unit in a few strata (`ruff_safe_operand`, `type_bare`): rows read through the source, not flat.
+  - Then held as flat rows, not in place (user: the view must be a net speed improvement). Read in place, every
+    reader's row went through the source (its document located, a kind's dialect looked up), and the readers read
+    more rows than the relation holds. `hold_view` now reads the input's columns once, document by document
+    (`Source::rows_of`), into flat rows the readers read as the copy's: no stratum, component, join, set or index
+    is made for it. The 64-row index rule above is dropped with it (held views are flat; the reach index's source
+    views are as before). Kept part: such a relation is `viewed`, never kept. fixtures/python cold, two rounds on
+    m1max (load about 8): 5.68 and 5.94 s of strata CPU against the copies' 6.09 and 6.03 s; user 13.05 and 13.34
+    s against 13.44 and 13.47 s. Outputs equal as sets (660), the warm run writes nothing.
+  - **Correction** (a profile per stratum, then the 300-file corpus `bench/step-vs-main/corpus0`). On
+    fixtures/python the copy of `kind` was 0.05 s of 6.8 s (52,657 rows): the 2–7% above was the host's load, not
+    the change. On corpus0 `kind` held flat costs 0.03 s against the copy's 0.35 s (its stratum and `kind__sup0`),
+    every round, and reading every view's rows 0.10 s (316 views) — but the whole run was slower, 49.1 s of strata
+    CPU against 46.8 s, its plans moved (`node_text` 0.07 → 0.64 s). The cause: a copy's readers plan with its live
+    statistics (`live_stats`: each column's sketch and, for a column of few values, every value's exact count, the
+    complete `kind` histogram `kind_frequency` holds authoritative). The view was given the input's column
+    statistics instead (`Run::view_stats`), with `node`'s postings, which hold no constant the program tests on
+    `kind` (`kind(x, "call")`): such a probe was priced as the average kind.
+  - Now `hold_view` sketches the view's columns as a stratum's relation does its rows (`indexed_to_n`: a job a
+    column over `SPANNED_ROWS`) and the planner takes them through `live_stats`, so a view's statistics are its
+    copy's by construction; `Run::view_stats` is gone. `a_views_statistics_are_its_copys` pushes the same rows
+    into a relation as a stratum would and compares its live statistics, both sizes. corpus0, two rounds a side
+    (load 8–24): 43.5 and 48.0 s of strata CPU against 49.7 and 47.3 s; planned work 440.7 and 442.0 M against
+    443.9 and 443.6 M (the copy's own 2.3 M gone). Two copy runs differ by 2.4 s and 5% of work between
+    themselves, so the totals cannot show the 0.3 s; the per-stratum costs and equal statistics are the evidence.
+    Outputs equal as sets (660), the warm run writes nothing. `retain`'s gated-reuse test now expects the views'
+    rules (`docof`, `kind`) left in a reused program, as 6fe55cb12 made them; it had failed since then.
+  - Not done: hogql (3.5 M rows of `kind`) is not in this worktree. Lookups on the flat rows build their own
+    orders, where `node`'s source answers by node and by kind already; rows are one per source row, so the
+    source's row numbers are the view's, and its lookups could serve the view's probes.
 
 ### Q38. (Q32 on Native-and-GPU-strata at e75b66095) A kind-set axis's tape code set counted ERROR nodes as members
 
@@ -1180,6 +1280,57 @@ pass.
 - **Done when**: guests' tapes are either named by the manifest (if a later run reads them: measured) or not
   written at all, and a cold run's store holds no source its own collection deletes.
 
+### Q42. `a_second_corpus_run_deletes_and_creates_its_store_again` fails now and then beside the planner's tests
+
+- **Found** (2026-11-16, at the hub merge 8c8c832ac): one of three runs of `logic::plan::tests` (62 tests, nextest,
+  a farm host) failed it; it passes alone and in the other two runs. It runs `corpus_store_child` as a child
+  process of the test binary, whose output the failed run did not show.
+- **Done when**: the cause is found (the child's own output from a failing run) and fixed at its root, not retried.
+- **Record** (2026-11-16): the child's output, now shown on failure, said "run 0 left its store open:
+  `store.sqlite-atoms.lock`". The atoms lease is given back in `committed` only when no run is going; a run's last
+  atoms commit can land before its `run_over`, and then no commit came after to give it back, so the process held the
+  lock file past its last run. `run_over` now gives the lease back itself when the last run ends with nothing
+  pending. 10 of 10 runs of `logic::plan::tests` pass on a farm host (1 in 3 to 8 failed before). Found beside it:
+  `atoms::tests::every_stored_column_is_classified` refused six columns the hub's 0295 steps 4-5 and 0301 added
+  (pointers, a flag, a digest): classified as not atoms.
+
+### Q45. A warm run on the m3 records observer answers, where the same check on the m1max records none
+
+- **Found** (2026-11-16, at 28d25b6a8 plus a change since reverted): the 317 rules over fixtures/python, a strict cold
+  run and then a strict warm run with `RERAIL_WARM=list`, on the m3: the warm run exits 3 with "the observer recorded
+  answers in a warm run" and "a SQLite write committed to a file in a warm run" (thread `rerail-observer-writer`),
+  twice each. The same check at 28d25b6a8 passes on the m1max in four runs, so it is the host or the timing (the warm
+  run starts seconds after the cold one: the stat index's racy window is a candidate), not the commit.
+- **Done when**: the faults' detail lines from a failing run name what the observer recorded, and the cause is fixed.
+  The m3 was short of disk (38 GB free, the farm's floor 40) when this was written, so it is not reproduced yet.
+- **Record** (2026-11-16, the m3 with 133 GB free): reproduced, and named. The warm run straight after the cold one
+  re-records all 317 rule files (detail: "317 paths, first …/rules/bandit-b101-assert-used.rr"); warm runs 5 s and 20 s
+  later record nothing. The check copies the rules in just before the cold run, which reads them inside the racy
+  window (`RACY_NS`, 2 s: an answer is trusted only when recorded that long after the path changed, git's rule). The
+  answer was kept untrusted, so the next run read each file again and recorded it: a write. The m1max is slower to
+  the first read and missed the window. Correct, but the write belongs to the run that read them: the observer now
+  keeps the paths it recorded inside the window, and at the outermost run's end reads again each whose window has
+  passed (same stat, same bytes or listing): trusted then, written with that run's answers. One still inside waits for
+  a later end; one that changed is the next run's. Test: `a_racy_answer_is_settled_at_the_runs_end`. On the m3 the
+  strict warm run straight after the cold one now exits 0 with no fault (it exited 3).
+- **Seen beside it, not a fault**: a run with a tape store leaves an empty `store.sqlite` in its outputs: the run's SQL
+  scratch, whose connection is opened before the first wave (0104) and creates the file even when no statement runs.
+  Not creating it eagerly (`atoms::key` resolving a missing file by its directory) did not remove it: the connection
+  makes it. The next run removes it with the scratch files.
+
+### Q57. The warm run after a cold one asks the observer's store inside the waves (the hub, 8e4b6b68e)
+
+- **Found** (2026-11-16, django-bugs after merging the hub at 8e4b6b68e, and 8e4b6b68e alone, both on the m3):
+  `the_run_after_a_cold_one_writes_nothing` fails. Its warm child run exits 3 with "the observer's store not asked
+  inside the waves in a warm run (…/src: its answers unknown, read again)", twice. The backtrace:
+  `observe::load_under` <- `ensure` <- `watch` (observe.rs) <- `World::new` (corpus/world.rs, `o.watch(&watched)`)
+  <- the requests answered inside the fixpoint (corpus.rs, `world::World::new(root, &prog)`). So the corpus root's
+  part of the store was not read before the waves in the warm run, and the requests' world watches it inside them.
+  The hub's record of the test passing (b40d89145) is before the merges of d5cc33981 (a stat-known file's digest from
+  its text, not SQL in the waves), 05e2bbf6a and 17417fb8f (Q45: racy answers settled at a run's end), the
+  candidates for what stopped reading the root first.
+- **Done when**: the warm child run exits 0. Either the root's part is read before the waves wherever the requests'
+  world will watch it, or the world watches it before they start.
 ### Q51. (Q47 at 8bfa12af6) W's reference graph parses every file a second time (39% of internal_dead_code's CPU)
 
 - **Found** (2026-11-16, t41 §2): `references::add_file` parses again with tree-sitter and runs W's

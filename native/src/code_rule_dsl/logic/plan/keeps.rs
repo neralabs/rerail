@@ -557,6 +557,21 @@ fn weigh(own: &[(f64, Option<f64>)], copies: &[(f64, Option<f64>)], build: (f64,
 
 /// Why each derived relation that must be stored is (the module's list), over the program's version (`f`, its rules
 /// `base`'s, `rules_of` by head); a relation absent may be inlined.
+/// Whether `ks` are the lowering's projection of an input: `kind(n, k) :- node(_, n, k, _, _)`, and `docof` over nodes
+/// (decision 0141). One rule of one positive input atom, each head variable once in it: priced as any candidate, not
+/// refused as core.rr's. Inlined, a reader reads the input in place (`node`'s view, by kind). Inlined unpriced in every
+/// module of a cold PostHog run, instructions went 2,558 -> 4,734 G (a reader probing `node` by node, not `kind`'s
+/// hash index), so the pricing and its copies' bound decide.
+fn input_projection(f: &Fields<'_>, base: &Placed, ks: &[usize]) -> bool {
+    let &[k] = ks else { return false };
+    let r = base.rule(k);
+    let mut body = r.body();
+    let (Some(l), None) = (body.next(), body.next()) else { return false };
+    let Some(a) = l.atom().filter(|a| !a.neg() && f.is_input(base.v.rel_name(a.rel()))) else { return false };
+    let mut seen = Vec::new();
+    r.head().args().all(|t| t.var().is_some_and(|h| !seen.contains(&h) && { seen.push(h); a.args().filter(|t| t.var() == Some(h)).count() == 1 }))
+}
+
 fn refusals(f: &Fields<'_>, base: &Placed, n: usize, rules_of: &BTreeMap<&str, Vec<usize>>, sccs: &[BTreeSet<String>]) -> BTreeMap<String, &'static str> {
     use super::super::program_image::{Lit, NativeKind, TermRef};
     let v: &Version = &base.v;
@@ -584,7 +599,7 @@ fn refusals(f: &Fields<'_>, base: &Placed, n: usize, rules_of: &BTreeMap<&str, V
             Some("demanded or a gate")
         } else if f.answer(rel) || f.nullary(rel) {
             Some("an answer or nullary")
-        } else if super::corpus::guests::REQUESTS.contains(&rel) || core.contains(rel) || rel.contains("__") {
+        } else if super::corpus::guests::REQUESTS.contains(&rel) || (core.contains(rel) && !input_projection(f, base, ks)) || rel.contains("__") {
             Some("the engine's (a request, core.rr's, or a session's copy)")
         } else if recursive.contains(rel) || rules().any(|r| reads(r).contains(&rel)) {
             Some("recursive")
@@ -794,7 +809,7 @@ pub(in crate::code_rule_dsl) fn factors(rule: &Rule) -> Option<(String, Vec<Vec<
 }
 
 /// `factors` over a rule of a version: the key's name, and each part's literals by place.
-fn factors_of(v: &Version, r: super::super::program_image::RuleRef<'_>) -> Option<(String, Vec<Vec<usize>>)> {
+pub(in crate::code_rule_dsl) fn factors_of(v: &Version, r: super::super::program_image::RuleRef<'_>) -> Option<(String, Vec<Vec<usize>>)> {
     use super::super::program_image::Lit;
     let lits: Vec<_> = r.body().collect();
     if !lits.iter().all(|l| matches!(l.view(), Lit::Atom(_) | Lit::Cmp { .. })) {
