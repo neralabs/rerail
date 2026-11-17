@@ -1500,7 +1500,7 @@ pub fn warm() -> bool {
 /// `what`), and why each is allowed: locks against another process's collection, the timestamps by which
 /// collection judges recency, and the cost statistics. Nothing else is exempt from the warm check.
 ///
-/// Changing this list needs the user's approval (decision 0211). `scripts/check/check-warm-mode.py` holds a copy
+/// Changing this list needs the user's approval (decision 0211). `scripts/check/check_warm_mode.py` holds a copy
 /// and refuses a commit that changes one without the other.
 pub const WARM_WRITES_ALLOWED: &[(&str, &str)] = &[
     ("the run's hold on its plans", "a lock: a lease on the run's plans against a collection in another process (decision 0053)"),

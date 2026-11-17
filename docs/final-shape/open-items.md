@@ -1439,7 +1439,7 @@ include `core.rr` and their tests read T's view by name.
 ## O75. The `.rdl` copies and T's tools
 
 T's 10 programs (`typing/programs`, `plan/golden/programs`), the old parser `front::parse`, and T's
-reference scripts (`front/rdl.py`, `magic/golden/generate.py`, `plan/golden/generate.sh`) are the only
+reference scripts (`front/rdl.py`, `scripts/generate/logic/magic_goldens.py`, `plan/golden/generate.sh`) are the only
 `.rdl` left. **Closure:** step 31 (O19) removes them.
 
 ## O76. Base relations and inputs the engine does not make yet

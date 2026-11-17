@@ -334,7 +334,7 @@ into notes once the queue is done).
 
 ### Q10. The merge audit checks hunks
 
-- **Keep**: merge-audit.py's reports (dropped lines, undone removals, lost files, decision numbers).
+- **Keep**: merge_audit.py's reports (dropped lines, undone removals, lost files, decision numbers).
 - **Done when**: it also reports each side's hunk the result does not hold (tmp/merge-hunks.py's test), with renames
   and both-sides deletions not reported as lost.
 - **Record**: —

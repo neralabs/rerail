@@ -11,7 +11,7 @@ Reads the files a commit changes (the index; with --all, the working tree) under
 `#[cfg(any(test, ...))]`, or a test file), and refuses each one `run_state.rs`'s `STATE` (as it will be committed)
 does not list. `run_state`'s own tests check the whole tree; this checks a commit in well under a second.
 
-Usage: check-thread-state.py [--all]
+Usage: check_thread_state.py [--all]
 """
 import re
 import subprocess

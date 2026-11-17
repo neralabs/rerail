@@ -485,8 +485,8 @@ unknown(cp, cs) :- call_open(c), node(d, c, _, cs, _), doc(d, cp, _).
 /// names looked up from the string's scope.
 #[test]
 fn quoted_annotations_are_read_as_their_code() {
-    // fixtures/python/quoted_ann: `-> "Node"`, `Optional["Node"]`, `n: "Node"`, `"list[Node]"`, `"Node | None"`.
-    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/quoted_ann");
+    // fixtures/python/typing/quoted_ann: `-> "Node"`, `Optional["Node"]`, `n: "Node"`, `"list[Node]"`, `"Node | None"`.
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/typing/quoted_ann");
     let rule = "
 #include \"python/calls.rr\"
 .decl at(p: symbol, s: number, what: symbol)
@@ -515,10 +515,10 @@ at(p, s, \"open\") :- call_open(c), node(d, c, _, s, _), doc(d, p, _).
 
 #[test]
 fn imports_resolve_into_a_library_and_load_its_stubs() {
-    // fixtures/python/world_load: ws/main.py imports os.path, json and collections; ws/rerail.env says `lib =
+    // fixtures/python/typing/world_load: ws/main.py imports os.path, json and collections; ws/rerail.env says `lib =
     // ../ts/stdlib`, a stub tree with os/__init__.pyi, os/path.pyi, collections/__init__.pyi and a VERSIONS file. The
     // rules walk it with dir_entry and file_line and load what resolves (t21 E1, E2, E4); json is in no root.
-    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/world_load/ws");
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/typing/world_load/ws");
     let rule = r#"
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
@@ -565,11 +565,11 @@ own(n) :- imp(n, _).
 
 #[test]
 fn calls_into_the_standard_library_reach_its_stubs() {
-    // fixtures/python/world_load/ws: `python.typeshed = ../ts`, a miniature typeshed. calls.rr includes
+    // fixtures/python/typing/world_load/ws: `python.typeshed = ../ts`, a miniature typeshed. calls.rr includes
     // python/modules.rr, which resolves `import os.path` into ts/stdlib/os/path.pyi and loads it: `os.path.join("a",
     // "b")` targets the stub's `join`, and no row is about a stub. The stub defines `join` in both branches of a
     // `sys.version_info` test: only the branch the run's Python (3.13, the default) takes binds it.
-    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/world_load/ws");
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/typing/world_load/ws");
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("stdlib");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let outputs = Outputs::open(&out).unwrap();
@@ -585,14 +585,14 @@ fn calls_into_the_standard_library_reach_its_stubs() {
 
 #[test]
 fn imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order() {
-    // fixtures/python/world_site/ws: a venv, the user's declarations and a miniature typeshed (rerail.env). Each
+    // fixtures/python/typing/world_site/ws: a venv, the user's declarations and a miniature typeshed (rerail.env). Each
     // module of main.py resolves at one layer of python/modules.rr: alpha's stub package before its typed package,
     // beta's typed package from its `.py`, gamma (installed untyped, so not read) from typeshed's stubs/, delta from
     // a directory a `.pth` file names, eps from the declarations before its stub package. zeta, a single-file module
     // in site-packages, is not a typed package: its call has no target. `cv.Var("x")` targets Var's `__new__` only:
     // typeshed's `Generic: type[_Generic]` is a special form as a base, not `_Generic` and its subclasses (else Box,
     // another generic class, would be Var's base and its `__init__` a target).
-    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/world_site/ws");
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/typing/world_site/ws");
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("site");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let outputs = Outputs::open(&out).unwrap();
@@ -618,11 +618,11 @@ fn imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order
 
 #[test]
 fn declarations_and_installed_sources_type_calls_without_declared_ret_facts() {
-    // fixtures/python/world_decl/app: the inputs `typed_corpus_reads_declarations_and_dependency_summaries` gave
+    // fixtures/python/typing/world_decl/app: the inputs `typed_corpus_reads_declarations_and_dependency_summaries` gave
     // `typing::deps` and `typing::declare`, as t21 reads them (step 3): the user's declarations are `.pyi` files under
     // `python.declarations`, and the installed package `vendor` (no stubs, no `py.typed`) is read from its sources
     // with `python.untyped = read`. `make`'s declaration comes first (PEP 561's order), over vendor/core.py's int.
-    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/world_decl/app");
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/typing/world_decl/app");
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("decl");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let text = output::shown(&out, "type_of").unwrap();
@@ -1237,13 +1237,14 @@ fn a_call_is_typed_by_the_overloads_its_positional_arguments_fit() {
 }
 
 /// A rule that reads types (decision 0047, point 3): `docs/rule-syntax/data-layer/leg-083-typed.rr`, LEG-083 counting
-/// a `resolve()` as eager by its receiver's type, not its name, over `fixtures/python/leg083`. A lazy receiver is
+/// a `resolve()` as eager by its receiver's type, not its name, over the leg083 corpus (`python/typing/leg083` in the
+/// fixtures). A lazy receiver is
 /// told by a declared return (`-> LazyResult[...]`), a decorator declared to keep the function (`(fn: F) -> F`), a
 /// class attribute's annotation, a quoted annotation and a chain of them; a pathlib path and an untyped parameter
 /// are unknown, so not counted; `catalog.resolve(ref)` has an argument.
 #[test]
 fn leg_083_typed_counts_resolve_by_the_receivers_type() {
-    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/leg083");
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/typing/leg083");
     let rule_src = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer/leg-083-typed.rr")).unwrap();
     let spans = "
 .decl at(p: symbol, s: number, what: symbol)

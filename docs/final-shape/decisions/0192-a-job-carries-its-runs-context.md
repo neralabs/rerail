@@ -102,7 +102,7 @@ These tests live in `run_state/tests.rs`:
 - **A job enters its caller's context and leaves its own**, on a plain thread, through a pool job and through
   `beside`.
 
-`scripts/check/check-thread-state.py` runs before every commit, from the same hook as the cache check. It refuses an
+`scripts/check/check_thread_state.py` runs before every commit, from the same hook as the cache check. It refuses an
 added thread-local that `STATE` does not list. It reads only the files the commit changes, so it takes well under a
 second.
 

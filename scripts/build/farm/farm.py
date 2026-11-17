@@ -385,7 +385,7 @@ def variant_hint(plus, minus):
         return ("build the CLI with the tests' features: `nice -n 19 cargo build --bin rerail-engine --features "
                 "test-hooks` (AGENTS.md)")
     if "default" in changed:
-        return ("a crate's `default` differs from what the engine gives it: scripts/check/check-dev-features.py names "
+        return ("a crate's `default` differs from what the engine gives it: scripts/check/check_dev_features.py names "
                 "the manifest to fix")
     return (f"a build with other features ({', '.join(sorted(changed))}) compiles every crate below again: run it on "
             "a farm host (scripts/dev/test-remote), not in this worktree's target directory")

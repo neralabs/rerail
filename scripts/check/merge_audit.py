@@ -2,9 +2,9 @@
 """What a merge dropped: each side's work since the merge base that the result does not keep.
 
 Usage (from anywhere in the checkout):
-  scripts/check/merge-audit.py               # the merge in progress: HEAD, MERGE_HEAD, the working tree
-  scripts/check/merge-audit.py <merge>       # a merge commit
-  scripts/check/merge-audit.py --since 2026-11-11   # every two-parent merge on HEAD since a date
+  scripts/check/merge_audit.py               # the merge in progress: HEAD, MERGE_HEAD, the working tree
+  scripts/check/merge_audit.py <merge>       # a merge commit
+  scripts/check/merge_audit.py --since 2026-11-11   # every two-parent merge on HEAD since a date
 
 For each side it reports:
   - lines the side added that the result has nowhere in its tree (a dropped fix, test, check or statement);
