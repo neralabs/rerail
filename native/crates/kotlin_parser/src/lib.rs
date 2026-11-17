@@ -11,7 +11,7 @@ use rerail_compiler::{native_cpu_clusters, native_cpu_stream, native_ir, rir_asm
 use rerail_kotlin_lean as lean;
 
 /// The grammar: the ladder's last step.
-pub const GRAMMAR: &str = include_str!("../bitlex_ladder/06-lambdas.bitlex");
+pub const GRAMMAR: &str = include_str!("../bitlex_ladder/07-annotations.bitlex");
 
 /// The tape's tag: Kotlin's in the registry (`languages/kotlin.json`).
 pub const TAG: u8 = 24;
@@ -104,6 +104,12 @@ impl Compiled {
             }
         }
         out
+    }
+
+    /// Where the interpreter refuses `src`: the first byte of the token it refused at.
+    pub fn refused_at(&self, src: &str) -> Option<u32> {
+        let run = self.program.block_programs[0].run(src.as_bytes());
+        rerail_compiler::stream::run(&self.program, src.as_bytes(), &run).err().and_then(|r| r.at)
     }
 
     /// `src`'s tape image, or `None` where the grammar refuses the file.

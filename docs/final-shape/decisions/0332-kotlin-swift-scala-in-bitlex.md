@@ -167,6 +167,26 @@ Step 6 reads lambdas and trailing lambdas.
 Corpus: 32 the same, 459 refused, 0 differ. The corpus test now names, for a grammar refusal,
 the text at the furthest token the reference evaluator reached (`bitlex::tree` reports it).
 
+## Kotlin, step 7 (`07-annotations.bitlex`)
+
+Step 7 reads annotations on lines of their own, use-site targets and file annotations.
+
+- **A line break after an annotation** is the scanner's semicolon, but the lean parser reads on
+  to what the annotation applies to. The annotation takes the `semi` mark, which leaves no
+  leaf.
+- **A use-site target** (`@get:`) is a `use_site_target` in the annotation, its word and `:`
+  leaves. A token mark after `@` tells it from a type.
+- **`@file:` before the package header** is a `file_annotation`, its `@`, `file` and `:`
+  leaves. `file` is a keyword for this alone: as a name, it is the lean parser's plain
+  `simple_identifier`.
+
+Corpus: 60 the same, 431 refused, 0 differ. Most of the gain is the compiler fix below
+(item 15): `@Inject lateinit var` and its like had been refused.
+
+The corpus test now names, for a grammar refusal, the text at the token the interpreter
+refused (`stream::Refused::at`). The reference evaluator's furthest token came from paths it
+backtracked out of, and misled.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
@@ -259,6 +279,15 @@ the text at the furthest token the reference evaluator reached (`bitlex::tree` r
     an overflow panic; it is now an error that names the size, the opcodes, and the rules with
     the most words.
 
+15. **A mark not hidden ends a nested level, as in the reference.** In the reference evaluator
+    (`past_marks`), a mark that isn't hidden, met in a nested level, ends the level, and its
+    caller takes it or refuses the file. Tier 2 refused it in every state that did not take
+    it. It now ends a nested level that may end there, as an `ends` mark does (`AtMark::End`),
+    and refuses elsewhere; a mark the level refuses still refuses. `@Inject lateinit var x`
+    had been refused at `lateinit`: the called `user_type` ended there, and `modifiers`, two
+    levels up, takes the mark.
+16. **The interpreter names where it refuses** (`Refused::at`: the first byte of the token).
+
 Single-extra grammars compile as before: rr's tests and the compiler's targeted tests pass.
 
 ## Found on the way
@@ -271,8 +300,8 @@ Single-extra grammars compile as before: rr's tests and the compiler's targeted 
 
 ## Next
 
-Kotlin's ladder goes on. Next: `when`, `try`, `init` and `companion object`, file
-annotations, extension receivers, then `${…}` templates (a region whose
+Kotlin's ladder goes on. Next: `${…}` templates, numbers, `init`, `companion object`, `super`,
+`when`, `try`, extension receivers (a region whose
 code nests: a count of braces), `::`, numbers, then lambdas, `when` and `try`, then enums,
 companions, accessors and the remaining operators. Swift and Scala start the same way, in their own crates: their step 1 is
 imports and comments, with Scala's comment kinds `comment` and `block_comment`.

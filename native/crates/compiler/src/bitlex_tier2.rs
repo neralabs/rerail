@@ -837,8 +837,9 @@ impl Emit<'_> {
         // Past the `TOKEN`, where both returns land (`m=0` at it, `m=1` past it).
         self.returned_field(&st);
         // The marks, in order: each the state takes, a test and a jump to its arm; each not
-        // hidden that it does not take, and each its level refuses, a test that refuses.
-        // A mark that ends levels (`Mark::ends`), where this nested level may end and takes none.
+        // hidden that it does not take, and each its level refuses, a test that refuses. A mark
+        // that ends levels (`Mark::ends`), or one not hidden, where this nested level may end
+        // and takes none: a test that ends it.
         let tests: Vec<(usize, AtMark)> = (0..self.marks.len())
             .filter_map(|k| {
                 let m = &self.marks[k];
@@ -846,10 +847,14 @@ impl Emit<'_> {
                 if refusing(m, self.arms) {
                     return None;
                 }
+                // A mark not hidden, as one that ends levels, ends a nested level that may end
+                // here: its caller takes it or refuses the file (the reference's `past_marks`).
+                // Elsewhere, it refuses the file; so does a mark the level refuses.
                 match arm {
                     Some(a) => Some((k, AtMark::Arm(a))),
-                    None if !m.hidden || st.refuses.contains(&m.kind) => Some((k, AtMark::Refuse)),
-                    None if m.ends && nested && st.end.is_some() => Some((k, AtMark::End)),
+                    None if st.refuses.contains(&m.kind) => Some((k, AtMark::Refuse)),
+                    None if (m.ends || !m.hidden) && nested && st.end.is_some() => Some((k, AtMark::End)),
+                    None if !m.hidden => Some((k, AtMark::Refuse)),
                     None => None,
                 }
             })

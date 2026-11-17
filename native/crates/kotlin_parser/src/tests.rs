@@ -171,8 +171,21 @@ fn lambdas_are_the_lean_parsers() {
     ]);
 }
 
+/// Step 7: annotations on lines of their own, use-site targets, file annotations.
 #[test]
-fn what_step_6_does_not_read_is_refused() {
+fn annotations_are_the_lean_parsers() {
+    same(&[
+        "@file:JvmName(\"A\")\npackage a\n",
+        "@file:Suppress(\"x\")\n\nfun f() {}\n",
+        "class A {\n    @Throws(X::class)\n    private fun f() {}\n    @get:Input\n    val x: Int = 1\n    @Inject lateinit var y: Y\n}\n",
+        "fun g() {\n    @Suppress(\"x\")\n    val z = 1\n}\n",
+        "@Deprecated(\"d\")\n@JvmStatic\nfun h() {}\n",
+        "val file = 1\nfun file(file: File) = file\n",
+    ]);
+}
+
+#[test]
+fn what_step_7_does_not_read_is_refused() {
     refused(&[
         "val a = b to f<T>()\n",
         "val a = x + f<T>(1)\n",
@@ -228,14 +241,15 @@ fn corpus() {
                     let why = match ::bitlex::eval::Ev::run(&stmts, text.as_bytes(), &tables) {
                         Ok(out) => match out.errors.first() {
                             Some(e) => e.split(" (byte").next().unwrap_or(e).to_string(),
-                            // The tree's: the text at the furthest token it reached.
-                            None => match out.tree.as_ref().map(|t| ::bitlex::tree::nodes(t, &out.tokens, text.len())) {
-                                Some(Err(e)) => {
-                                    let at = e.rsplit("at byte ").next().and_then(|n| n.trim_end_matches(')').parse::<usize>().ok());
-                                    let near = at.map(|a| text[a..].chars().take(24).collect::<String>().replace('\n', "⏎")).unwrap_or_default();
-                                    format!("the grammar: `{near}`")
+                            // The interpreter's: the text at the token it refused.
+                            None => match c.refused_at(&text) {
+                                Some(a) => {
+                                    let a = a as usize;
+                                    let near = text[a..].chars().take(24).collect::<String>().replace('\n', "⏎");
+                                    let before = text[..a].chars().rev().take(24).collect::<Vec<_>>().into_iter().rev().collect::<String>().replace('\n', "⏎");
+                                    format!("the grammar: `{near}` after `{before}`")
                                 }
-                                _ => "the grammar".into(),
+                                None => "the grammar".into(),
                             },
                         },
                         Err(e) => format!("eval: {e:?}"),
@@ -267,10 +281,13 @@ fn show() {
             let stmts = ::bitlex::syntax::parse(crate::GRAMMAR).expect("parses");
             match ::bitlex::eval::Ev::run(&stmts, text.as_bytes(), &Default::default()) {
                 Ok(out) => {
-                    for t in out.tokens.iter().filter(|t| !t.mark) {
-                        eprintln!("reference token {} {}..{}", t.kind, t.start, t.end);
+                    for t in &out.tokens {
+                        eprintln!("reference {} {} {}..{}", if t.mark { "mark" } else { "token" }, t.kind, t.start, t.end);
                     }
                     eprintln!("reference errors {:?}", out.errors);
+                    if let Some(tree) = &out.tree {
+                        eprintln!("reference tree: {:?}", ::bitlex::tree::nodes(tree, &out.tokens, text.len()).map(|n| n.len()));
+                    }
                     if let Some(r) = &c.program.block_programs[0].records {
                         for rd in r.readers.iter().filter(|rd| !rd.parts.is_empty()) {
                             eprintln!("reader {:?}", rd);
@@ -325,5 +342,8 @@ fn program_size() {
     eprintln!("{} lines; by opcode: {:?}", lines.len(), &ops[..ops.len().min(12)]);
     if let Ok(out) = std::env::var("RERAIL_KOTLIN_WORDS") {
         std::fs::write(out, &c.words).expect("the words written");
+    }
+    if let Ok(out) = std::env::var("RERAIL_KOTLIN_MACHINE") {
+        std::fs::write(out, format!("{}", c.machine)).expect("the machine written");
     }
 }

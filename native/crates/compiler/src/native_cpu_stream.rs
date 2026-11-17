@@ -5774,7 +5774,7 @@ impl CompiledStream {
         };
         let r = unsafe { self.call(padded.as_ptr().wrapping_add(1), bytes.len(), view, &mut tape) };
         if r != 0 {
-            return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse" });
+            return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse", at: None });
         }
         Ok(tape.nodes())
     }
@@ -5969,7 +5969,7 @@ impl Parser {
         };
         let r = unsafe { self.tier2.call(batch.bytes.as_ptr().wrapping_add(row.bytes as usize), row.len as usize, view, tape) };
         if r != 0 {
-            return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse" });
+            return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse", at: None });
         }
         Ok(())
     }
