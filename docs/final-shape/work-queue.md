@@ -1249,6 +1249,20 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
 - **Done when**: the D416 clause's work is accounted (a limit too small for its walk, or a walk that loops), and
   the coverage test's count is explained (the pack's clauses) or met; both gates pass.
 
+### Q50. `dropping_unreached_clauses_prunes_to_the_same_program` red on this branch: `value` an input of one side only
+
+Seen 2026-11-17 on the M3 (Benchmarks-and-parity after the hub merge fd32d4d27, and the same with the request
+record's carry, 7a356124d, reversed): all seven tests of the family fail. `bandit-b112-try-except-continue.rr`
+(python pack 0): the rules, declarations, natives, outputs and facts are equal; the inputs the rules read are 12
+with the unreached clauses dropped and 11 whole, the extra one `value`. Lowered whole, `value` is answered on
+request (no longer an input); lowered without the unreached clauses it stays an input, though the pruned rules
+are the same.
+
+- **Keep**: the test's property (a program pruned whole is the program pruned without its unreached clauses),
+  strict, and the on-request lowering of `value` (0174, 0291).
+- **Done when**: the seven pass on this branch, with the cause named.
+- **Record**: —
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives

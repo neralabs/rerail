@@ -3885,3 +3885,30 @@ fn the_request_record_follows_split_merged_and_copied_rules() {
     assert_eq!(p.asked_by["q"], vec![by(&["a"]), by(&["b", "q"]), by(&["a"])]);
     assert_eq!(p.readers_of_rules().iter().flatten().count(), p.rules.iter().filter(|r| r.head.rel == "q").count());
 }
+
+/// A request gated by its readers (`front::prune`) is kept while a reader is needed, and while a reader is gone from
+/// the program (merged, renamed or inlined since the requests were made: it cannot be asked); a reader's copy under
+/// another name (hiding's, `Program::push_rule_from`) is a reader too (decision 0331).
+#[test]
+fn a_request_is_kept_for_a_gone_reader_and_for_a_readers_copy() {
+    let text = ".decl q(n: number)\n.decl a(n: number)\n.decl b(n: number)\n.decl k(n: number)\n.input k\n.output b\n\
+        q($n) :- k($n), $n < 3.\nq($n) :- k($n), $n > 5.\na($n) :- q($n).\nb($n) :- q($n).\n";
+    let by = |r: &[&str]| r.iter().map(|s| (*s).to_owned()).collect::<BTreeSet<String>>();
+    let mut p = front::parse(text).expect("parses");
+    // The first request serves `a`, which `b` does not read; the second a reader no longer in the program.
+    p.asked_by.insert("q".into(), vec![by(&["a"]), by(&["gone"])]);
+    let pruned = front::prune(p.clone());
+    let q: Vec<String> = pruned.rules.iter().filter(|r| r.head.rel == "q").map(|r| r.to_string()).collect();
+    assert_eq!(q.len(), 1, "only the gone reader's request is kept: {q:?}");
+    assert!(q[0].contains("> 5"), "{q:?}");
+    // `a` copied as `a_g`, which `b` reads in its place: `a`'s request serves the copy too.
+    p.asked_by.insert("q".into(), vec![by(&["a"]), by(&["b"])]);
+    let a = p.rules.iter().position(|r| r.head.rel == "a").expect("a rule of a");
+    let mut copy = p.rules[a].clone();
+    copy.head.rel = "a_g".into();
+    p.push_rule_from(copy, a);
+    assert_eq!(p.asked_by["q"], vec![by(&["a", "a_g"]), by(&["b"])]);
+    // The copy folded back into `a` (hiding's `fold_own`), or merged: its requests serve `a`.
+    p.rename_readers(|b| (b == "a_g").then(|| "a".to_owned()));
+    assert_eq!(p.asked_by["q"], vec![by(&["a"]), by(&["b"])]);
+}

@@ -555,6 +555,7 @@ pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
         return 0;
     }
     prog.rules.retain(|r| !folded.contains_key(r.head.rel.as_str()));
+    prog.rename_readers(|b| folded.get(b).cloned());
     // An original holds its copies' rows: its rules' bounds take the annotations in (`ANNOTATION_KEYS` to
     // `HIDDEN_KEYS`), as its copies' seeded columns did. A rule that does not reach an annotation keeps the bound.
     let originals: BTreeSet<&str> = folded.values().map(String::as_str).collect();

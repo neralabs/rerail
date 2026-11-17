@@ -1114,8 +1114,8 @@ pub fn needed(prog: &Program, roots: Vec<String>) -> BTreeSet<String> {
 }
 
 /// `needed`, and which rules are kept: every rule of a needed relation. With `gated` (`prune`), a request rule
-/// (`Program::asked_by`, decision 0174) only once a relation whose readers it serves is needed, or its relation is a
-/// root. `needed` reads every request rule: a stage that computes requests names them as its roots. A request rule is read through its
+/// (`Program::asked_by`, decision 0174) only once a relation whose readers it serves is needed (or is gone from the
+/// program), or its relation is a root. `needed` reads every request rule: a stage that computes requests names them as its roots. A request rule is read through its
 /// attribute's answer, which every reader reads; without its readers' gate an unreached reader's request would keep
 /// its body's relations alive, and lowering a program whole would prune to more than lowering it without its
 /// unreached clauses (`dropping_unreached_clauses_prunes_to_the_same_program`).
@@ -1135,6 +1135,9 @@ fn reach(prog: &Program, roots: Vec<String>, gated: bool) -> (BTreeSet<String>, 
     for (i, r) in prog.rules.iter().enumerate() {
         body_of.entry(&r.head.rel).or_default().push(i);
     }
+    // A reader the program no longer has (merged into another, renamed, inlined into its own readers since the
+    // requests were made) cannot be asked whether it is needed: its requests are kept, as an ungated rule is.
+    let has = |rel: &str| body_of.contains_key(rel) || prog.inputs.iter().any(|i| i == rel) || prog.natives.contains_key(rel) || prog.facts.contains_key(rel);
     let mut kept = vec![false; prog.rules.len()];
     let (mut need, mut todo) = (BTreeSet::new(), roots);
     loop {
@@ -1158,7 +1161,7 @@ fn reach(prog: &Program, roots: Vec<String>, gated: bool) -> (BTreeSet<String>, 
             if let Some(by) = by
                 && !kept[i]
                 && need.contains(prog.rules[i].head.rel.as_str())
-                && by.iter().any(|b| need.contains(b))
+                && by.iter().any(|b| need.contains(b) || !has(b))
             {
                 kept[i] = true;
                 todo.extend(prog.rules[i].body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()));

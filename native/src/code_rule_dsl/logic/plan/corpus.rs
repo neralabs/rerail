@@ -612,6 +612,10 @@ const GUEST_ROUNDS_KEY: [u8; 32] = *b"rerail.guest-rounds/v1\0\0\0\0\0\0\0\0\0\0
 /// program, not its file-local part, and runs over each chunk: a guest or a value is made from its chunk's
 /// documents, so a demand whose context the split would run cross-file (`q(_, x)`, a value's nodes) is still asked
 /// in the chunk.
+fn inputs_of(v: &crate::code_rule_dsl::logic::program_image::Version) -> Vec<&str> {
+    v.inputs().map(|a| v.text(a)).collect()
+}
+
 fn embed_slice(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>> {
     use crate::code_rule_dsl::logic::program_image::RuleId;
     let derives = |r: &str| v.rel(r).is_some_and(|id| v.heads(id).next().is_some());
@@ -637,6 +641,9 @@ fn embed_slice(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> 
         }
     }
     let rule_of: HashMap<RuleId, crate::code_rule_dsl::logic::program_image::RuleRef<'_>> = v.rules().map(|r| (r.id(), r)).collect();
+    let inputs = inputs_of(v);
+    let about = crate::code_rule_dsl::logic::program_image::About::of(v);
+    let has = |rel: &str| by_head.contains_key(rel) || inputs.contains(&rel) || v.rel(rel).is_some_and(|id| about.native(id).is_some());
     // `RERAIL_DUMP_SLICE=<file>`: each relation of the slice, the relation whose rule read it first, and the slice's
     // rules (`<file>.rules`), to compare one program's slice with another's (a debugging aid).
     let dump = std::env::var_os("RERAIL_DUMP_SLICE");
@@ -669,7 +676,9 @@ fn embed_slice(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> 
         }
         // The request rules of a needed relation one of whose readers is needed: their bodies are read, which may
         // need more readers.
-        let open: Vec<RuleId> = gate.iter().filter(|(id, readers)| !kept.contains(*id) && need.contains(v.rel_name(rule_of[*id].head().rel())) && readers.iter().any(|b| need.contains(b))).map(|(id, _)| *id).collect();
+        // A reader the version no longer has (merged, renamed or inlined since the requests were made) keeps them,
+        // as `prune` does.
+        let open: Vec<RuleId> = gate.iter().filter(|(id, readers)| !kept.contains(*id) && need.contains(v.rel_name(rule_of[*id].head().rel())) && readers.iter().any(|b| need.contains(b) || !has(b))).map(|(id, _)| *id).collect();
         for id in open {
             take(id, &mut kept, &mut todo, &mut by);
         }
@@ -686,6 +695,13 @@ fn embed_slice(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> 
         let mut at = path.clone();
         at.push(".gates");
         let _ = std::fs::write(at, gates);
+        // Each reader the record names: whether the version still has it (a gone one keeps its requests) and whether
+        // the slice needs it.
+        let readers: BTreeSet<&String> = asked.values().flatten().flatten().collect();
+        let text: String = readers.iter().map(|b| format!("{b}\thas {}\tneeded {}\n", has(b.as_str()), need.contains(b.as_str()))).collect();
+        let mut at = path.clone();
+        at.push(".readers");
+        let _ = std::fs::write(at, text);
         let mut rules: Vec<String> = kept.iter().map(|id| format!("{}.\n", v.show_rule(rule_of[id]))).collect();
         rules.sort();
         let mut at = path.clone();
@@ -694,7 +710,6 @@ fn embed_slice(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> 
     }
     // A part of the program's version (decision 0244, 0298's selection): the rules taken, the wanted relations its
     // outputs, every other field the program's.
-    let inputs: Vec<&str> = v.inputs().map(|a| v.text(a)).collect();
     v.part_rules(|id| kept.contains(&id), &inputs, &wanted).map(Some).map_err(Error::Plan)
 }
 

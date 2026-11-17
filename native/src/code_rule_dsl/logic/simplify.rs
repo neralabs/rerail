@@ -2158,6 +2158,7 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
     for native in prog.natives.values_mut() {
         native.rename_reads(|rel| rename.get(rel).cloned().unwrap_or_else(|| rel.to_owned()));
     }
+    prog.rename_readers(|b| rename.get(b).cloned());
     prog.rules.extend(copies);
     for (from, t) in &rename {
         let output = prog.outputs.iter().any(|o| o == from);

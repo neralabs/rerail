@@ -452,8 +452,16 @@ impl Program {
         self.set_rules_carried(&carry, rules);
     }
     /// Appends `rule`, a copy made from the rule at `from`: a copy of a request rule serves the readers its source
-    /// serves (`set_rules_from`). A copy under another name is no request rule.
+    /// serves (`set_rules_from`). A copy under another name is no request rule, but reads what its source reads: where
+    /// its source is a reader, so is it (a guest's copy of a reader, read in its place, asks what the reader asked).
     pub fn push_rule_from(&mut self, rule: Rule, from: usize) {
+        if let Some(src) = self.rules.get(from).map(|r| r.head.rel.clone())
+            && src != rule.head.rel
+        {
+            for readers in self.asked_by.values_mut().flatten().filter(|by| by.contains(src.as_str())) {
+                readers.insert(rule.head.rel.to_string());
+            }
+        }
         if self.asked_by.contains_key(rule.head.rel.as_str()) {
             let req = rule.head.rel.to_string();
             let serves = self.carry().0.get(from).cloned().flatten().filter(|_| self.rules[from].head.rel == req).unwrap_or_else(|| BTreeSet::from([req.clone()]));
@@ -464,6 +472,16 @@ impl Program {
             }
         }
         self.rules.push(rule);
+    }
+    /// Renames readers in the request record, as a pass that merges or folds relations renames their reads
+    /// (`simplify::merge_identical`, hiding's `fold_own`): a request of a merged reader serves the relation it was
+    /// merged into.
+    pub fn rename_readers(&mut self, rename: impl Fn(&str) -> Option<String>) {
+        for readers in self.asked_by.values_mut().flatten() {
+            if readers.iter().any(|b| rename(b).is_some()) {
+                *readers = std::mem::take(readers).into_iter().map(|b| rename(&b).unwrap_or(b)).collect();
+            }
+        }
     }
     /// The request record by rule (`readers_of_rules`), taken before a pass that takes the rules apart; empty when
     /// the program has no requests.
