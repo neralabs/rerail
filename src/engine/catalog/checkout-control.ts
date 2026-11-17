@@ -1,4 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
+import { realpath as realpathAsync } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 /** True when `candidate` is `root` or below it; canonicalize both first when symlinked identity matters. */
@@ -38,6 +39,22 @@ export function physicalPath(path: string, platform: NodeJS.Platform = process.p
  */
 export function storedPath(path: string): string {
   return resolvedThrough(path, realpathSync.native);
+}
+
+/**
+ * {@link storedPath} without blocking: a folder on a share that does not answer holds one of the pool's threads until
+ * it does, and never the caller's. `fs.promises.realpath` is the native realpath, as `realpathSync.native` is.
+ */
+export async function storedPathAsync(path: string): Promise<string> {
+  const missing: string[] = [];
+  for (let existing = resolve(path); ; existing = dirname(existing)) {
+    try {
+      return join(await realpathAsync(existing), ...missing);
+    } catch (error) {
+      if (dirname(existing) === existing) throw error;
+      missing.unshift(basename(existing));
+    }
+  }
 }
 
 function resolvedThrough(path: string, realpath: (existing: string) => string): string {

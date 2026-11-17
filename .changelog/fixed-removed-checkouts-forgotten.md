@@ -1,0 +1,1 @@
+Rerail now forgets a worktree once Git no longer lists it, as after `git worktree remove`, with its own settings: the daemon looks at start and hourly. A renamed clone, or one on an unplugged drive or a share that does not answer, stays with all its checkouts. Before, every checkout seen stayed, slowing each read of them.
