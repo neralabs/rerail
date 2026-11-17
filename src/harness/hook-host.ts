@@ -255,7 +255,7 @@ async function answerWith(daemon: HookDaemon, hook: HookRun): Promise<HookOutput
     }));
   }
   // A daemon that runs but left the hook's whole wait unanswered takes the event when it reads again.
-  if (daemon.status === "unresponsive" && daemon.state.takesUntakenEvents === true) return await leaveForDaemon(hook, daemon.state);
+  if (daemon.status === "unresponsive" && daemon.state.untakenFolder !== undefined) return await leaveForDaemon(hook, daemon.state);
   return lostEvent(daemon, hook);
 }
 

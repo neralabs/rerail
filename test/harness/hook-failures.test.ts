@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -16,8 +16,8 @@ vi.mock("../../src/runtime/daemon-control.js", async () => {
 
 import { HOOK_FAILURES_FILE, hookFailureLines, readHookFailures, recordHookFailure, type HookFailure, type HookFailureLog } from "../../src/harness/hook-failures.js";
 import { DaemonUnreachableError, hookRerailStarted, runHostHook } from "../../src/harness/hook-host.js";
-import { leaveUntaken, LOCKS_DIR, loadNativeBinding, UNTAKEN_EVENTS_DIR } from "../../src/engine/index.js";
-import { engineRequestBody, parseEngineRequest } from "../../src/runtime/index.js";
+import { leaveUntaken, LOCKS_DIR, loadNativeBinding, UNTAKEN_EVENTS_DIR, untakenFolderId } from "../../src/engine/index.js";
+import { daemonLeftEventUntaken, engineRequestBody, parseEngineRequest } from "../../src/runtime/index.js";
 import { listenAsEngine } from "../support/platform/engine-endpoint.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { sourceModule } from "../support/processes/lock-race.js";
@@ -540,18 +540,19 @@ describe("a hook beside a daemon that runs but does not read", () => {
   }
 
   /**
-   * This process as the home's daemon, which takes untaken events: its engine socket proving the capability daemon.json
-   * records, and `port` at its URL. Returns what ends the engine.
+   * This process as the home's daemon, which watches the home's untaken folder: its engine socket proving the capability
+   * daemon.json records, and `port` at its URL. Returns what ends the engine.
    */
   async function recordedDaemon(rerailHome: string, port: number): Promise<() => Promise<void>> {
     vi.stubEnv("RERAIL_HOME", rerailHome);
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
     const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-untaken-${process.pid}-${Date.now()}` : join(rerailHome, "engine.sock");
     const closeEngine = await listenAsEngine(socketPath, "token");
+    mkdirSync(join(rerailHome, UNTAKEN_EVENTS_DIR));
     writeFileSync(join(rerailHome, "daemon.json"), JSON.stringify({
       pid: process.pid, host: "127.0.0.1", port, url: `http://127.0.0.1:${port}/`, version: "test", ui: "bundled", startedAt: 1,
       packageRoot: rerailHome, databasePath: join(rerailHome, "rerail.sqlite"), kernelSocketPath: socketPath, accessToken: "token",
-      takesUntakenEvents: true,
+      untakenFolder: untakenFolderId(rerailHome),
     }));
     return closeEngine;
   }
@@ -588,7 +589,7 @@ describe("a hook beside a daemon that runs but does not read", () => {
       expect(await runHostHook("claude-code", rerailHome, "s", false, options, handle, "UserPromptSubmit")).toEqual({ answered: [] });
       expect(untaken(rerailHome)).toEqual(["first"]);
       expect(readFileSync(join(rerailHome, UNTAKEN_EVENTS_DIR, readdirSync(join(rerailHome, UNTAKEN_EVENTS_DIR))[0]!), "utf8")).not.toContain("sk-ant-api03-");
-      expect(readHookFailures(rerailHome, 0)).toEqual([]);
+      expect(readHookFailures(rerailHome, 0).failures).toEqual([]);
     } finally {
       await closeEngine();
     }
@@ -607,7 +608,7 @@ describe("a hook beside a daemon that runs but does not read", () => {
       expect(await hookRerailStarted("claude-code", rerailHome)).toBe(false);
       expect(front.requests()).toBe(0);
       expect(untaken(rerailHome)).toEqual(["first", "second"]);
-      expect(readHookFailures(rerailHome, 0)).toEqual([]);
+      expect(readHookFailures(rerailHome, 0).failures).toEqual([]);
     } finally {
       await Promise.all([closeFront(front.server), closeEngine()]);
     }
@@ -626,6 +627,31 @@ describe("a hook beside a daemon that runs but does not read", () => {
     } finally {
       await closeEngine();
     }
+  });
+
+  it("skips no wait for an event left in a folder the daemon does not watch: the one it watched was moved", async () => {
+    const rerailHome = await home();
+    const closeEngine = await recordedDaemon(rerailHome, await closedPort());
+    try {
+      await leaveUntaken(rerailHome, process.pid, engineRequestBody(prompt("first")), 1_000);
+      expect(await daemonLeftEventUntaken()).toBeDefined();
+      renameSync(join(rerailHome, UNTAKEN_EVENTS_DIR), join(rerailHome, "moved"));
+      await leaveUntaken(rerailHome, process.pid, engineRequestBody(prompt("second")), 2_000);
+      expect(await daemonLeftEventUntaken()).toBeUndefined();
+    } finally {
+      await closeEngine();
+    }
+  });
+
+  // On Linux a refused connect to the recorded socket says the pid belongs to another process now; macOS refuses a
+  // connect to a full queue too, and Windows asks the daemon's own pipe.
+  it.runIf(process.platform === "linux")("skips no wait for a recorded daemon whose engine socket no process listens on", async () => {
+    const rerailHome = await home();
+    const closeEngine = await recordedDaemon(rerailHome, await closedPort());
+    await leaveUntaken(rerailHome, process.pid, engineRequestBody(prompt("first")), 1_000);
+    expect(await daemonLeftEventUntaken()).toBeDefined();
+    await closeEngine();
+    expect(await daemonLeftEventUntaken()).toBeUndefined();
   });
 
   it("reads a state file it cannot read as no event left untaken, and goes on to ask as before", async () => {

@@ -2,7 +2,7 @@ import { mkdtemp, readdir, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { leaveUntaken, UNTAKEN_EVENTS_DIR, untakenEventTaker, untakenFor, type UntakenEvent } from "../../src/engine/untaken-events.js";
+import { leaveUntaken, UNTAKEN_EVENTS_DIR, untakenEventTaker, untakenFolderId, untakenFor, type UntakenEvent } from "../../src/engine/untaken-events.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 const homes: string[] = [];
@@ -22,8 +22,10 @@ describe("the home's untaken events", () => {
     await leaveUntaken(rerailHome, 41, "third", 3_000);
     await leaveUntaken(rerailHome, 41, "first", 1_000);
     await leaveUntaken(rerailHome, 42, "second", 2_000);
-    expect(untakenFor(rerailHome, 41)).toBe(true);
-    expect(untakenFor(rerailHome, 43)).toBe(false);
+    const folder = untakenFolderId(rerailHome)!;
+    expect(untakenFor(rerailHome, 41, folder)).toBe(true);
+    expect(untakenFor(rerailHome, 43, folder)).toBe(false);
+    expect(untakenFor(rerailHome, 41, `${folder}0`)).toBe(false);
     const recorded: UntakenEvent[] = [];
     untakenEventTaker(rerailHome, event => recorded.push(event)).take();
     expect(recorded).toEqual([
@@ -32,7 +34,7 @@ describe("the home's untaken events", () => {
       { body: "third", arrivedAt: 3_000 },
     ]);
     expect(await readdir(join(rerailHome, UNTAKEN_EVENTS_DIR))).toEqual([]);
-    expect(untakenFor(rerailHome, 41)).toBe(false);
+    expect(untakenFor(rerailHome, 41, folder)).toBe(false);
   });
 
   it("are taken as they are left once the daemon watches its home, with no request and no timer", async () => {
@@ -40,7 +42,7 @@ describe("the home's untaken events", () => {
     const taken = Promise.withResolvers<UntakenEvent>();
     const taker = untakenEventTaker(rerailHome, event => taken.resolve(event));
     try {
-      expect(taker.watch(() => undefined)).toBe(true);
+      expect(taker.watch(() => undefined)).toBe(untakenFolderId(rerailHome));
       await leaveUntaken(rerailHome, 7, "left later", 5_000);
       expect(await taken.promise).toEqual({ body: "left later", arrivedAt: 5_000 });
     } finally {
@@ -56,17 +58,19 @@ describe("the home's untaken events", () => {
     expect(recorded).toEqual(Array.from({ length: 11 }, (_, count) => `event ${count}`));
   });
 
-  it("are taken by a watch that follows its folder once the folder was removed or moved and made again", async () => {
+  // A watch follows its folder's change notices. On Windows a moved folder sends its watch none, and a removed one fails
+  // it; the state file's folder id then keeps hooks asking the daemon (hook-failures.test.ts).
+  it.runIf(process.platform !== "win32")("are taken by a watch that follows its folder once it was removed or moved, which names each new folder", async () => {
     const rerailHome = await home();
     const taken: string[] = [];
+    const watched: (string | undefined)[] = [];
     let next = Promise.withResolvers<void>();
-    const lost: string[] = [];
     const taker = untakenEventTaker(rerailHome, event => {
       taken.push(event.body);
       next.resolve();
     });
     try {
-      expect(taker.watch(() => lost.push("lost"))).toBe(true);
+      watched.push(taker.watch(folder => watched.push(folder)));
       await removeFolder(join(rerailHome, UNTAKEN_EVENTS_DIR));
       await leaveUntaken(rerailHome, 7, "after the removal", 1_000);
       await next.promise;
@@ -78,7 +82,8 @@ describe("the home's untaken events", () => {
       await leaveUntaken(rerailHome, 7, "later still", 3_000);
       await next.promise;
       expect(taken).toEqual(["after the removal", "after the move", "later still"]);
-      expect(lost).toEqual([]);
+      expect(watched.at(-1)).toBe(untakenFolderId(rerailHome));
+      expect(watched).not.toContain(undefined);
     } finally {
       taker.close();
     }

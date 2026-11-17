@@ -3,6 +3,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { Agent as HttpsAgent, request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
+import { connect } from "node:net";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { Readable, type Duplex } from "node:stream";
@@ -71,11 +72,11 @@ export interface DaemonState {
    */
   remoteRefused?: string;
   /**
-   * True when the daemon takes the events hooks leave in the home's untaken folder as soon as its event loop runs (a
-   * watch of the folder; `untaken-events.ts`). Only then does a hook that finds an event left for it skip its wait.
-   * Absent in a state file an older daemon wrote, or where the watch could not start.
+   * The id of the home's untaken folder (`untakenFolderId`) the daemon watches, taking each event hooks leave there as
+   * soon as its event loop runs (`untaken-events.ts`). Only for an event left in that very folder does a hook skip its
+   * wait. Absent in a state file an older daemon wrote, or while no watch runs.
    */
-  takesUntakenEvents?: boolean;
+  untakenFolder?: string;
 }
 
 /** Header a Rerail process, and the dashboard page, send the daemon's {@link DaemonState.accessToken} in. */
@@ -1008,21 +1009,42 @@ export async function runningDaemonEngineEndpoint(deadline?: number, machine: Da
 /**
  * The daemon the home records, when a hook already waited its whole wait for it and left an event it has not taken
  * since (`untakenFor`): its event loop has not run since then, so a hook asks it nothing and leaves its event behind
- * that one. Only a daemon that takes those events as its loop runs counts (`takesUntakenEvents`), and only while it may
- * still run: its pid live, and on Windows its own engine pipe listed. Reads two files and waits for nothing.
+ * that one. Only an event in the folder the daemon watches counts (`DaemonState.untakenFolder`), and only while the
+ * daemon may still run (`recordedDaemonMayRun`). Reads two files, and on Linux connects once; waits for nothing.
  */
 export async function daemonLeftEventUntaken(machine: DaemonMachine = THIS_MACHINE): Promise<DaemonState | undefined> {
   const home = defaultRerailHome(machine.env);
   // A state file that cannot be read says nothing here: the hook asks the daemon, which records why it failed.
   const state = await readDaemonState(join(home, DAEMON_STATE_FILE), machine.platform).catch(() => undefined);
-  if (state?.takesUntakenEvents !== true || !untakenFor(home, state.pid)) return undefined;
-  return recordedDaemonMayRun(state, machine) ? state : undefined;
+  if (state?.untakenFolder === undefined || !untakenFor(home, state.pid, state.untakenFolder)) return undefined;
+  return await recordedDaemonMayRun(state, machine) ? state : undefined;
 }
 
-/** Whether the daemon `state` records may still run, asked of the machine alone: its pid, and on Windows its own pipe. */
-function recordedDaemonMayRun(state: DaemonState, machine: DaemonMachine): boolean {
+/**
+ * Whether the daemon `state` records may still run, asked of the machine: its pid, then on Windows its own pipe, and on
+ * Linux its engine socket, where a refused connect says no process listens there and the pid is another's now. A full
+ * listen queue (a long silence's hooks) refuses a connect on macOS too, so there the pid alone tells.
+ */
+async function recordedDaemonMayRun(state: DaemonState, machine: DaemonMachine): Promise<boolean> {
   if (processState(state.pid, machine.kill) === "gone") return false;
-  return machine.platform !== "win32" || enginePipeExists(state, machine);
+  if (machine.platform === "win32") return enginePipeExists(state, machine);
+  return machine.platform !== "linux" || await engineSocketListens(state.kernelSocketPath);
+}
+
+/**
+ * Whether a process listens on the Unix socket at `socketPath`: false when a connect is refused or finds no file, true
+ * when it connects or fails for any other reason (a full queue answers EAGAIN). A connect to a Unix socket ends at once,
+ * so this waits for nothing.
+ */
+async function engineSocketListens(socketPath: string): Promise<boolean> {
+  const probed = Promise.withResolvers<boolean>();
+  const probe = connect(socketPath);
+  probe.once("connect", () => {
+    probe.destroy();
+    probed.resolve(true);
+  });
+  probe.once("error", (error: NodeJS.ErrnoException) => probed.resolve(error.code !== "ECONNREFUSED" && error.code !== "ENOENT"));
+  return await probed.promise;
 }
 
 /** How long, in all, a hook's second health probe waits for a busy daemon to answer as itself. */

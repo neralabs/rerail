@@ -10,6 +10,7 @@ export {
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
   daemonFetch,
+  daemonLeftEventUntaken,
   type DaemonHealth,
   type DaemonMachine,
   type DaemonLaunchOptions,

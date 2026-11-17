@@ -26,7 +26,7 @@ import {
   SESSION_EVENT_PAGE_LIMIT,
 } from "../../src/runtime/index.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
-import { leaveUntaken, openRerailDatabase, RepositoryWorktreeWalks, SqliteAuditStore, SqliteAuditControlStore, UNTAKEN_EVENTS_DIR } from "../../src/engine/index.js";
+import { leaveUntaken, openRerailDatabase, RepositoryWorktreeWalks, SqliteAuditStore, SqliteAuditControlStore, UNTAKEN_EVENTS_DIR, untakenFolderId } from "../../src/engine/index.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
 import { linkFolder } from "../support/platform/links.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -1124,7 +1124,7 @@ describe("Rerail daemon", () => {
     await expect(fetch(daemon.url)).rejects.toThrow();
   });
 
-  it("records the events hooks left untaken before its start, oldest first, before any event sent to it, and says it takes them", async () => {
+  it("records the events hooks left untaken before its start, oldest first, before any event sent to it, and names the folder it watches", async () => {
     root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));
     startTestRepository(root, join(root, "rerail.sqlite"));
     const stateFile = join(root, "daemon.json");
@@ -1136,7 +1136,7 @@ describe("Rerail daemon", () => {
     await start({ stateFile });
     // Test boundary: the state file a hook reads, parsed and asserted right after.
     const state = JSON.parse(await readFile(stateFile, "utf8")) as DaemonState;
-    expect(state.takesUntakenEvents).toBe(true);
+    expect(state.untakenFolder).toBe(untakenFolderId(root));
     const endpoint = { socketPath: state.kernelSocketPath, accessToken: ACCESS };
     await ingestEngineEvent(endpoint, { kind: "session-start", eventId: "start", session });
     await ingestEngineEvent(endpoint, prompt("third"));

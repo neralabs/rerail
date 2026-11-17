@@ -435,7 +435,11 @@ interface StartedServices {
  * database last, once nothing uses it. The start's own error is the one thrown; a close that failed too is written to
  * stderr, so a later EADDRINUSE has its cause on record.
  */
-async function closeAfterFailedStart({ engineService, nativeServer, server, worktreeWalks }: StartedServices, stores: DatabaseApiStores): Promise<void> {
+async function closeAfterFailedStart(
+  { engineService, nativeServer, server, worktreeWalks }: StartedServices, stores: DatabaseApiStores, untaken: UntakenEventTaker,
+): Promise<void> {
+  // A watch of the untaken folder holds it open, and on Windows keeps the home from being removed.
+  untaken.close();
   const failed = (what: string, reason: unknown): void => {
     process.stderr.write(`rerail daemon: could not close ${what} after a failed start: ${reason instanceof Error ? reason.message : String(reason)}\n`);
   };
@@ -469,8 +473,8 @@ function daemonMergeAssist(database: () => RerailDatabase): { mergeAssist?: Merg
  * The taker of the events hooks leave untaken in the home `stateFile` is in, which records them in `stores`; none for a
  * daemon no state file names, since no hook finds it to leave one.
  */
-function untakenTaker(stateFile: string | undefined, databasePath: string, stores: DatabaseApiStores): UntakenEventTaker | undefined {
-  if (stateFile === undefined) return undefined;
+function untakenTaker(stateFile: string | undefined, databasePath: string, stores: DatabaseApiStores): UntakenEventTaker {
+  if (stateFile === undefined) return NO_UNTAKEN;
   return untakenEventTaker(dirname(stateFile), event => recordUntakenEvent({
     databasePath,
     sessionStore: () => stores.sessionStore(),
@@ -478,10 +482,8 @@ function untakenTaker(stateFile: string | undefined, databasePath: string, store
   }, event));
 }
 
-/** The engine service's step before each event: taking what hooks left untaken first, for a daemon with a taker. */
-function takenBeforeEvents(untaken: UntakenEventTaker | undefined): { beforeEvent?: () => void } {
-  return untaken === undefined ? {} : { beforeEvent: () => untaken.take() };
-}
+/** The taker of a daemon no state file names: no hook finds it to leave an event, so there is nothing to take. */
+const NO_UNTAKEN: UntakenEventTaker = { take: () => undefined, drain: async () => undefined, watch: () => undefined, close: () => undefined };
 
 export class RerailDaemon {
   readonly host: string;
@@ -514,10 +516,10 @@ export class RerailDaemon {
   /** What this daemon wrote to the state file, which its close removes only while the file still holds it. */
   #recordText: string | undefined;
   #provenanceMove: { readonly stop: AbortController; readonly done: Promise<void> } | undefined;
-  /** The taker of the events hooks leave untaken in this daemon's home, for a daemon a state file names. */
-  readonly #untaken: UntakenEventTaker | undefined;
-  /** Whether its watch runs, so the state file says hooks may leave events for this daemon without asking it. */
-  #takesUntaken = false;
+  /** The taker of the events hooks leave untaken in this daemon's home (none to take for a daemon no state file names). */
+  readonly #untaken: UntakenEventTaker;
+  /** The id of the untaken folder its watch watches, which the state file names so hooks leave events there unasked. */
+  #untakenFolder: string | undefined;
 
   private constructor({
     server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken, mergeAssist,
@@ -538,7 +540,7 @@ export class RerailDaemon {
     accessToken: string;
     mergeAssist?: MergeAssistRuntime;
     tlsFingerprint256: string | undefined;
-    untaken: UntakenEventTaker | undefined;
+    untaken: UntakenEventTaker;
   }) {
     const address = server.address() as AddressInfo;
     this.host = address.address;
@@ -609,7 +611,7 @@ export class RerailDaemon {
         databasePath,
         workspaceRoot,
         accessToken,
-        ...takenBeforeEvents(untaken),
+        beforeEvent: () => untaken.take(),
         worktreeWalks,
         ...sharedMergeAssist,
         // On Windows any local user can create the default pipe first; the engine then listens on a random name.
@@ -635,7 +637,7 @@ export class RerailDaemon {
       daemon.#startProvenanceMove();
       return daemon;
     } catch (error) {
-      await closeAfterFailedStart(started, stores);
+      await closeAfterFailedStart(started, stores, untaken);
       throw error;
     }
   }
@@ -658,16 +660,20 @@ export class RerailDaemon {
   /**
    * Watches this daemon's home for the events hooks leave untaken (`untaken-events.ts`), taking each as soon as this
    * daemon's event loop runs. Only while the watch runs does the state file tell hooks they may leave events for it
-   * without asking it: a watch that can no longer follow the folder takes the word back (`#untakenLost`). Without one,
-   * events left by a hook that waited out this daemon are still taken at its next event and its next start.
+   * without asking it, naming the folder it watches (`#untakenFollowed`). Without one, events left by a hook that waited
+   * out this daemon are still taken at its next event and its next start.
    */
   #watchUntaken(stateFile: string): void {
-    this.#takesUntaken = this.#untaken?.watch(() => this.#untakenLost(stateFile)) ?? false;
+    this.#untakenFolder = this.#untaken.watch(folder => this.#untakenFollowed(stateFile, folder));
   }
 
-  /** The watch of the untaken folder ended for good: the state file stops telling hooks to leave events unasked. */
-  #untakenLost(stateFile: string): void {
-    this.#takesUntaken = false;
+  /**
+   * The watch followed the untaken folder to another one at its path (`folder`), or could follow it no more (undefined):
+   * the state file names that folder, or none, so hooks leave events unasked only where this daemon watches.
+   */
+  #untakenFollowed(stateFile: string, folder: string | undefined): void {
+    if (folder === this.#untakenFolder) return;
+    this.#untakenFolder = folder;
     this.#recordChecked = this.#recordChecked.then(async () => {
       if (this.#closed) return;
       await this.#writeRecord(stateFile).catch((error: unknown) => {
@@ -708,7 +714,7 @@ export class RerailDaemon {
     await this.#writeRecord(stateFile);
     // After the file, so a launcher waiting for it is not held by a long backlog; an event sent meanwhile takes the rest
     // first (the engine service's before-event step).
-    void this.#untaken?.drain();
+    void this.#untaken.drain();
     const check = this.#options.recordCheck;
     if (check === undefined) return;
     this.#recordCheck = setInterval(() => {
@@ -779,7 +785,7 @@ export class RerailDaemon {
       accessToken: this.#accessToken,
       ...(this.#tlsFingerprint256 === undefined ? {} : { tlsFingerprint256: this.#tlsFingerprint256 }),
       ...(this.#options.remoteRefused === undefined ? {} : { remoteRefused: this.#options.remoteRefused }),
-      ...(this.#takesUntaken ? { takesUntakenEvents: true } : {}),
+      ...(this.#untakenFolder === undefined ? {} : { untakenFolder: this.#untakenFolder }),
     };
   }
 
@@ -808,7 +814,7 @@ export class RerailDaemon {
     if (this.#closed) return;
     this.#closed = true;
     clearInterval(this.#recordCheck);
-    this.#untaken?.close();
+    this.#untaken.close();
     // A write in flight lands before the state file is removed below, never after.
     await this.#recordChecked;
     try {
