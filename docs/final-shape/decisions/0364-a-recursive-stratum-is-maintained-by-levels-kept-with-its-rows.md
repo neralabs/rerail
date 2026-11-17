@@ -375,18 +375,40 @@ No running program has a cross-file recursive lattice.
 
 ## Implementation
 
-- **Preparation** marks each recursive component: *proved* (one recheck a candidate, no levels) or *levelled*.
-  0328's evaluator mode (decision 3) reads the mark.
-- **The level column.** A levelled relation's block (0266) holds the level as one more column, 4 bytes a row
-  (about 1.2 MB for `calls.rr`'s 300,000 recursive rows).
-  - A derive writes it: semi-naive evaluation's round number.
-  - A maintenance run writes it for the rows it adds or rewrites. A rewrite is a kill of the old row and an add of
-    the row with its new level.
-- **Removal** is the candidate loop of decision 2: a heap by level, and a probe with the head bound that compares
-  the levels of the rows a derivation reads. Then a levelling pass over the rows gone for now and the rows added,
-  seeded with the rows present, in level order. `levels.py` is the reference, about 70 lines.
-- **0090 §4's threshold** still derives a stratum again when an edit reaches too much of it, and that derive
-  resets the levels.
+The user asked (2026-11-17) for counting and DRed's machinery to go and this design to be built, to cut the facts a
+session holds, the cost of their pages and metadata, and the work of removing outdated rows. What the engine had:
+
+- **counting** (`supports.rs`): a support relation per rule of a non-recursive stratum, kept between runs;
+- **forms** (`maintain.rs`, decisions 0117, 0241, 0298): per stratum an edit reaches, a program of rules over
+  relations `h__old`, `h__del`, `h__redo`, `h__ins`, `h__minus`, `h__plus`, `h__ins__ready`, and for a recursive
+  stratum by levels `h__cand`, `h__chk`, `h__held`, `h__gone`, `h__live`; written, stored, selected, planned and
+  placed as components of their own each edit;
+- **frames**: kept rows moved out of and back into frames each run (29–30% of `calls.rr`'s step 06), and placement,
+  spec and pricing of the form strata (17–18%).
+
+Its stages, each committed when the session tests pass:
+
+1. **Counting goes** (done, 011fc99ef): `supports.rs`, the `__sup` relations, `RERAIL_MAINTAIN`.
+2. **One relation, versioned** (0328 decision 5), in the native evaluator: a relation keeps its row count and dead
+   rows as of the run's start, so *old* (rows then), *new* (live rows), *minus* (rows killed since) and *plus* (rows
+   added since) are views of it, read in place. A join step names the view it reads.
+3. **The maintain mode** of a component (0328 decision 3): from its own rules,
+   - a removal join per rule and changed atom, driven by that atom's *minus* over *old*, gives candidates;
+   - an add join, driven by *plus* over *new*, gives rows to add;
+   - a non-recursive stratum rechecks each candidate by its rules with the head bound, over *new*: one without a
+     derivation is killed;
+   - a recursive one takes candidates in level order (decision 2 above), then levels the gone and added rows;
+   - candidates and rows to add are buffers of the run, not relations.
+4. **Plans with the program** (0328 decision 4): a rule's plan per driving atom, and its recheck plan, made with
+   the program, as the semi-naive delta plans are; a run selects those of the atoms that changed.
+5. **Relations kept in place** between a session's runs, not moved to and from frames.
+6. **The forms go**: `maintain.rs`'s writer, general forms and `StoredForms`, `Maint`/`AgainRef`, the levels lines,
+   the `__old`/`__minus`/`__plus` sources.
+
+Levels as decided: a levelled relation keeps a level per row (4 bytes a row, about 1.2 MB for `calls.rr`'s
+300,000 recursive rows), written by a derive (its round) and by maintenance. `levels.py` is the reference, about 70
+lines. 0090 §4's threshold still derives a stratum again when an edit reaches too much of it, and that derive
+resets the levels.
 
 ## Open
 
