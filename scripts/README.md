@@ -80,7 +80,9 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   interleaved on pinned cores under the same memory and time caps, and the verdict (`verdict.ts`) fails a metric (wall,
   CPU and peak RSS, cold and warm) above 1.10 times main's median, a lost true positive or a new false positive against
   the upstream recording, a run main completes that the candidate does not, and a rule main ships that the candidate
-  cannot run. `prepare` exports the baseline and the corpora anywhere; `run` measures on Linux only; `run` and
-  `verdict` write `verdict.json` and `report.md`.
+  cannot run. A pack's caps can be raised for both sides (`--pack-cap python=56G,14400`); a `.rr` pack run that does not
+  complete records how far it got and then runs in fixed chunks, whose summed figures the verdict labels chunked; each
+  `.rr` run records whether its policies ran combined or alone. `prepare` exports the baseline and the corpora anywhere;
+  `run` measures on Linux only; `run` and `verdict` write `verdict.json` and `report.md`.
 - `upstream/`: the upstream release check (`releases.ts`, `npm run upstream:releases`) and the pin bump (`bump.ts`,
   `npm run upstream:bump`) the upstream workflows run (docs/upstream.md).

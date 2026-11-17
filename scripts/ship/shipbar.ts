@@ -17,9 +17,12 @@
 //       Needs git and the pack data cache; runs anywhere.
 //   node --import tsx scripts/ship/shipbar.ts run --baseline <dir | ref> --out <dir> [--candidate <dir>] [--corpora <dir>]
 //       [--packs a,b] [--corpus fixtures|real|all] [--runs 3] [--cpus 8-11] [--mem-cap 24G] [--time-cap 2700]
-//       [--candidates ships,rr] [--gate ships,rr] [--build]
+//       [--pack-cap <pack>=<memory>,<seconds>]... [--rr-chunk 50] [--candidates ships,rr] [--gate ships,rr] [--build]
 //       Linux only (taskset, GNU time, a systemd user manager for the memory cap): prepares what is missing, measures
 //       every pack and corpus, then writes the verdict. Resumable: a run already in runs.jsonl is not made again.
+//       --pack-cap raises (or lowers) one pack's caps for both sides, say python=56G,14400 so a slow run that finishes
+//       gives a number; every run records the caps it ran under. Mind the box's memory: a 56G cap leaves no room for
+//       another heavy stream on a 64 GB box.
 //   node --import tsx scripts/ship/shipbar.ts verdict --baseline <dir> --out <dir> [--candidate <dir>] [--corpora <dir>]
 //       [--packs a,b] [--candidates ships,rr] [--gate ships,rr]
 //       verdict.json and report.md from the runs under <out>/runs (several runs' directories merged, say).
@@ -35,6 +38,12 @@
 // directory and are scored by one function (verdict.ts) against the tool's upstream recording with main's
 // divergences.json, on (rule, path, line, code) keys: the candidate keeps every true positive of main's and adds no
 // false positive main lacks. Real code has no truth: its agreement is reported and does not gate.
+//
+// A `.rr` pack run that does not complete is recorded with how far it got (policies started, elapsed, peak RSS); then
+// its rules run in fixed chunks of --rr-chunk (0: none), each chunk its own process under the same caps, cold then
+// warm, N times, and the pack's figures are the chunks' sums (peak RSS: the largest chunk's), labelled chunked in the
+// verdict; its completion still fails. Every completed `.rr` run records whether run-policies ran its policies combined
+// (groups of several, the result's `runs[].together`) or alone, and any fallback the engine printed.
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -46,12 +55,14 @@ import { parseArgs } from "node:util";
 import { renderReport } from "./report.js";
 import {
   agreement,
+  chunkSums,
   compareCompletion,
   compareFindings,
   compareMetric,
   type CompletionVerdict,
   type Divergence,
   findingKey,
+  grouping,
   type FindingsVerdict,
   type MetricVerdict,
   missingRules,
@@ -485,6 +496,14 @@ interface RunRow {
   culprit: string | null;
   /** run-policies: how many rules the run was given. */
   rules: number | null;
+  /** run-policies, failed: policies started of the run's, from its out/<k> directories. */
+  progress: { started: number; of: number } | null;
+  /** run-policies, completed: how its policies ran, from the result's `runs[].together` (null: the engine does not say). */
+  grouping: { policies: number; combined: number; alone: number; largest: number } | null;
+  /** run-policies: what the engine printed about running policies alone instead of together (fallback), if anything. */
+  fallback: string[];
+  /** A chunked run's chunk index (chunks.jsonl only). */
+  chunk?: number;
   exit: number;
   wallMs: number;
   cpuMs: number;
@@ -512,8 +531,12 @@ interface Settings {
   runs: number;
   cpus: number[];
   siblings: number[];
+  /** The default caps, and per pack overrides (`--pack-cap python=56G,14400`): both sides of a pack run under the same. */
   memCap: string;
   timeCapS: number;
+  packCaps: Record<string, { memCap: string; timeCapS: number }>;
+  /** Rules per chunk when a `.rr` pack run does not complete (0: no chunked runs). */
+  rrChunk: number;
 }
 
 function readRows(path: string): RunRow[] {
@@ -546,15 +569,23 @@ interface Process {
   tag: string;
   /** The store directory: emptied for a cold run, reused by the warm run after it. */
   store: string;
-  /** The cell file its row goes to: runs.jsonl, or alone.jsonl for a `.rr` rule's run alone. */
+  /** The cell file its row goes to: runs.jsonl, alone.jsonl for a `.rr` rule's run alone, chunks.jsonl for a chunk. */
   log: string;
   /** run-policies: the rule ids it runs, in order. */
   rules: readonly string[];
+  /** A chunked run's chunk index. */
+  chunk?: number;
+}
+
+/** The caps a pack's runs take, both sides alike: its `--pack-cap`, else the defaults. */
+function capsOf(settings: Settings, pack: string): { memCap: string; timeCapS: number } {
+  return settings.packCaps[pack] ?? { memCap: settings.memCap, timeCapS: settings.timeCapS };
 }
 
 /** One process of one side, pinned and capped, measured by GNU time; its row is appended to the cell's log. */
 function measure(settings: Settings, cell: string, p: Process, pack: string, corpus: string, rr: RrRules | undefined): RunRow {
   const { side, mode, rep, tag, store } = p;
+  const caps = capsOf(settings, pack);
   if (mode === "cold") {
     rmSync(store, { recursive: true, force: true });
     mkdirSync(join(store, "tmp"), { recursive: true });
@@ -574,8 +605,8 @@ function measure(settings: Settings, cell: string, p: Process, pack: string, cor
     "-c", settings.cpus.join(","),
     "/usr/bin/time", "-f", "%e %U %S %M", "-o", timeFile,
     // GNU time stays outside the cgroup, so a run the cap kills is still measured (time to the kill, peak RSS).
-    "systemd-run", "--user", "--scope", "--quiet", "-p", `MemoryMax=${settings.memCap}`, "-p", "MemorySwapMax=0",
-    "timeout", "-s", "KILL", String(settings.timeCapS),
+    "systemd-run", "--user", "--scope", "--quiet", "-p", `MemoryMax=${caps.memCap}`, "-p", "MemorySwapMax=0",
+    "timeout", "-s", "KILL", String(caps.timeCapS),
     ...command,
   ];
   const load = Number(readFileSync("/proc/loadavg", "utf8").split(" ")[0]);
@@ -594,35 +625,41 @@ function measure(settings: Settings, cell: string, p: Process, pack: string, cor
   let completed = exit === 0;
   let reason: string | null = null;
   let stoppedOn: string | null = null;
+  let grouped: RunRow["grouping"] = null;
   if (completed) {
     try {
-      readJson(result);
+      const parsed = readJson<{ runs?: { together?: number }[] }>(result);
+      if (side === "rr") grouped = grouping(parsed.runs ?? []);
     } catch {
       completed = false;
       reason = "exited 0 with no readable result";
     }
   }
+  // What the engine says about running policies alone instead of together (its fallback), kept from either outcome.
+  const fallback = side === "rr" ? errorText.split("\n").map((line) => line.trim()).filter((line) => /fall(s|ing)? ?back|\balone\b/i.test(line)).slice(0, 5).map((line) => line.slice(0, 300)) : [];
+  let progress: RunRow["progress"] = null;
   let culprit: string | null = null;
   if (exit !== 0) {
     reason =
       exit === 137 || exit === 128 + 9
-        ? `killed at ${wall.toFixed(0)} s, ${(rss / 1048576).toFixed(1)} GiB peak RSS (${wall >= settings.timeCapS - 1 ? `time cap ${settings.timeCapS} s` : `memory cap ${settings.memCap}`})`
+        ? `killed at ${wall.toFixed(0)} s, ${(rss / 1048576).toFixed(1)} GiB peak RSS (${wall >= caps.timeCapS - 1 ? `time cap ${caps.timeCapS} s` : `memory cap ${caps.memCap}`})`
         : `exit ${exit}: ${lastLine(errorText)}`;
     if (side === "rr") {
       const started = existsSync(rundir) ? readdirSync(rundir).filter((name) => /^\d+$/.test(name)).length : 0;
       const named = /\/([^/]+)\.rr: /.exec(errorText)?.[1];
       culprit = named !== undefined && p.rules.includes(named) ? named : (p.rules[started - 1] ?? null);
       stoppedOn = `${culprit ?? "before the first policy"} (policy ${started} of ${p.rules.length})`;
+      progress = { started, of: p.rules.length };
     } else {
       stoppedOn = [...errorText.matchAll(/^shipbar: phase (\S+)/gm)].at(-1)?.[1] ?? "start-up";
     }
   }
   const row: RunRow = {
-    tag, side, mode, rep, completed, reason, stoppedOn, culprit, rules: side === "rr" ? p.rules.length : null, exit,
+    tag, side, mode, rep, completed, reason, stoppedOn, culprit, rules: side === "rr" ? p.rules.length : null, progress, grouping: grouped, fallback, ...(p.chunk === undefined ? {} : { chunk: p.chunk }), exit,
     wallMs: Math.round(wall * 1000), cpuMs: Math.round((user + sys) * 1000), rssKB: rss,
     load, pinnedBusy: busiest(before, after, settings.cpus), siblingBusy: busiest(before, after, settings.siblings),
     cpus: settings.cpus.join(","), threads: settings.cpus.length, host: hostname(),
-    memCap: settings.memCap, timeCapS: settings.timeCapS, command: command.join(" "), started,
+    memCap: caps.memCap, timeCapS: caps.timeCapS, command: command.join(" "), started,
   };
   appendFileSync(join(cell, p.log), `${JSON.stringify(row)}\n`);
   // Kept: the first cold run's findings (and every failure's stderr). The rest is scratch.
@@ -630,6 +667,7 @@ function measure(settings: Settings, cell: string, p: Process, pack: string, cor
   rmSync(timeFile, { force: true });
   rmSync(join(cell, `${tag}.stdout`), { force: true });
   if (tag === `${side}.cold1` && p.log === "runs.jsonl" && completed) renameSync(result, join(cell, `${side}.findings.json`));
+  else if (p.chunk !== undefined && mode === "cold" && rep === 1 && completed) renameSync(result, join(cell, `rr.chunk${p.chunk}.findings.json`));
   else rmSync(result, { force: true });
   if (completed) rmSync(stderrFile, { force: true });
   console.log(`shipbar: ${pack} ${relative(settings.corpora, corpus)} ${tag}: ${completed ? "ok" : `FAILED (${reason})`} wall ${wall}s cpu ${(user + sys).toFixed(2)}s rss ${(rss / 1024).toFixed(0)}MB`);
@@ -682,6 +720,45 @@ function measureCell(settings: Settings, pack: string, corpus: Corpus, sides: re
       rmSync(store, { recursive: true, force: true });
     }
   }
+  if (sides.includes("rr") && settings.rrChunk > 0 && readRows(join(cell, "runs.jsonl")).some((row) => row.side === "rr" && !row.completed)) {
+    measureChunks(settings, cell, pack, dir, rr!);
+  }
+}
+
+/** <cell>/chunks.json: the `.rr` rules of a chunked run, chunk by chunk, fixed when the first chunk runs. */
+function readChunks(cell: string): string[][] | undefined {
+  const path = join(cell, "chunks.json");
+  return existsSync(path) ? readJson<string[][]>(path) : undefined;
+}
+
+/**
+ * A `.rr` pack run that did not complete still gets a figure: its rules in fixed chunks of --rr-chunk, in order, each
+ * chunk its own run-policies process under the same caps, cold (fresh store) then warm, N repetitions (chunks.jsonl).
+ * The verdict sums the chunks per repetition and labels the figure chunked. A chunk that fails a cold run is not run
+ * again and is listed with its reason; the sums then cover the other chunks' rules only.
+ */
+function measureChunks(settings: Settings, cell: string, pack: string, corpus: string, rr: RrRules): void {
+  let chunks = readChunks(cell);
+  if (chunks === undefined) {
+    const ids = rrIds(rr, cell);
+    chunks = [];
+    for (let i = 0; i < ids.length; i += settings.rrChunk) chunks.push(ids.slice(i, i + settings.rrChunk));
+    writeFileSync(join(cell, "chunks.json"), JSON.stringify(chunks));
+  }
+  console.log(`shipbar: ${pack} ${relative(settings.corpora, corpus)}: the .rr pack run did not complete; ${chunks.length} chunks of up to ${settings.rrChunk} rules`);
+  for (let rep = 1; rep <= settings.runs; rep += 1) {
+    chunks.forEach((rules, chunk) => {
+      const rows = readRows(join(cell, "chunks.jsonl")).filter((row) => row.chunk === chunk);
+      if (rows.some((row) => row.mode === "cold" && !row.completed)) return;
+      const store = join(cell, `rr.chunk${chunk}.store`);
+      const proc = (mode: "cold" | "warm"): Process => ({ side: "rr", mode, rep, tag: `rr.chunk${chunk}.${mode}${rep}`, store, log: "chunks.jsonl", rules, chunk });
+      // Cold then warm on its store, as a pair: a repetition resumed after its cold run is not completed with a warm one
+      // on a store that is gone.
+      if (rows.some((row) => row.tag === `rr.chunk${chunk}.cold${rep}`)) return;
+      if (measure(settings, cell, proc("cold"), pack, corpus, rr).completed) measure(settings, cell, proc("warm"), pack, corpus, rr);
+      rmSync(store, { recursive: true, force: true });
+    });
+  }
 }
 
 // ---------------------------------------------------------------- the verdict
@@ -708,6 +785,15 @@ interface CellVerdict {
   runs: { main: number; candidate: number };
   /** How many rules each side ran: main's shipped rules; the candidate's shipped rules, or the `.rr` rules that run. */
   rules: { main: number; candidate: number };
+  /** The caps the cell's runs ran under (both sides alike). */
+  caps: { memCap: string[]; timeCapS: number[] };
+  /** The candidate's whole run did not complete: its metrics and findings are the sums of a chunked run, labelled so. */
+  chunked: { size: number; chunks: number; rulesRun: number; rulesOf: number; failedChunks: { chunk: number; rules: string; reason: string }[] } | null;
+  /** `.rr`: how far the failed whole-pack run got (policies started, elapsed, peak RSS). */
+  progress: { started: number; of: number; wallMs: number; rssKB: number } | null;
+  /** `.rr`: how run-policies ran the pack's policies (from the completed runs, the chunks' summed), and any fallback it printed. */
+  grouping: { policies: number; combined: number; alone: number; largest: number } | null;
+  fallback: string[];
 }
 
 interface Counts {
@@ -747,8 +833,8 @@ export interface Verdict {
 }
 
 /** A side's findings from its first cold run, as keys: [rule, path, line, code]. */
-function sideFindings(cell: string, side: Side, rr: RrRules | undefined): Set<string> | undefined {
-  const path = join(cell, `${side}.findings.json`);
+function sideFindings(cell: string, side: Side, rr: RrRules | undefined, file = `${side}.findings.json`): Set<string> | undefined {
+  const path = join(cell, file);
   if (!existsSync(path)) return undefined;
   const keys = new Set<string>();
   if (side === "rr") {
@@ -814,7 +900,7 @@ function metricValues(rows: readonly RunRow[], metric: (typeof METRICS)[number])
 }
 
 function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpora: string; out: string; runs: number }, lock: CorporaLock, pack: string, corpus: Corpus, candidate: Candidate, rr: RrRules | undefined): CellVerdict {
-  const empty: CellVerdict = { corpus, status: "not-compared", note: "", completion: null, ruleFailures: [], metrics: [], findings: null, agreement: null, load: { main: [], candidate: [] }, siblingBusyMax: 0, runs: { main: 0, candidate: 0 }, rules: { main: 0, candidate: 0 } };
+  const empty: CellVerdict = { corpus, status: "not-compared", note: "", completion: null, ruleFailures: [], metrics: [], findings: null, agreement: null, load: { main: [], candidate: [] }, siblingBusyMax: 0, runs: { main: 0, candidate: 0 }, rules: { main: 0, candidate: 0 }, caps: { memCap: [], timeCapS: [] }, chunked: null, progress: null, grouping: null, fallback: [] };
   const fixtures = lock.fixtures[pack];
   if (corpus === "fixtures" && fixtures !== undefined && "absent" in fixtures) return { ...empty, note: `no fixtures corpus: ${fixtures.absent}` };
   const cell = join(settings.out, "runs", pack, corpus);
@@ -829,15 +915,39 @@ function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpor
   const outcome = (rows: RunRow[]): RunOutcome[] => rows.map((row) => (row.completed ? { completed: true } : { completed: false, reason: `${row.tag}: ${row.reason ?? ""}${row.stoppedOn === null ? "" : `; stopped on ${row.stoppedOn}`}` }));
   const completion = { ...compareCompletion(outcome(main), outcome(mine), 2 * settings.runs), stoppedOn: mine.find((row) => !row.completed)?.stoppedOn ?? null };
   const ruleFailures = candidate === "rr" ? [] : newRuleFailures(ruleFailuresOf(cell, "main"), ruleFailuresOf(cell, candidate));
-  const metrics = METRICS.map((metric) => compareMetric(metric, metricValues(main, metric), metricValues(mine, metric)));
+  // A `.rr` whole-pack run that did not complete: its figures from the chunked run, if one was made (measureChunks).
+  const chunks = candidate === "rr" && !mine.every((row) => row.completed) ? readChunks(cell) : undefined;
+  const chunkRows = chunks === undefined ? [] : readRows(join(cell, "chunks.jsonl"));
+  let chunked: CellVerdict["chunked"] = null;
+  let candidateValues = (metric: (typeof METRICS)[number]): number[] => metricValues(mine, metric);
+  let chunkFile: string[] | null = null;
+  if (chunks !== undefined && chunkRows.length > 0) {
+    const failedChunks = chunks.flatMap((rules, chunk) => {
+      const bad = chunkRows.find((row) => row.chunk === chunk && row.mode === "cold" && !row.completed);
+      return bad === undefined ? [] : [{ chunk, rules: `${rules[0]}…${rules.at(-1)} (${rules.length})`, reason: `${bad.reason ?? ""}${bad.stoppedOn === null ? "" : `; stopped on ${bad.stoppedOn}`}` }];
+    });
+    const okChunks = chunks.map((_, chunk) => chunk).filter((chunk) => !failedChunks.some((f) => f.chunk === chunk));
+    const sums = chunkSums(chunkRows.map((row) => ({ chunk: row.chunk!, rep: row.rep, mode: row.mode, completed: row.completed, wallMs: row.wallMs, cpuMs: row.cpuMs, rssKB: row.rssKB })), chunks.length);
+    candidateValues = (metric) => {
+      const [what, mode] = metric.split("-") as ["wall" | "cpu" | "rss", "cold" | "warm"];
+      return sums.filter((s) => s.mode === mode).map((s) => (what === "wall" ? s.wallMs : what === "cpu" ? s.cpuMs : s.rssKB));
+    };
+    chunked = { size: Math.max(...chunks.map((c) => c.length)), chunks: chunks.length, rulesRun: okChunks.reduce((n, chunk) => n + chunks[chunk]!.length, 0), rulesOf: chunks.flat().length, failedChunks };
+    chunkFile = okChunks.map((chunk) => `rr.chunk${chunk}.findings.json`);
+  }
+  const metrics = METRICS.map((metric) => {
+    const m = compareMetric(metric, metricValues(main, metric), candidateValues(metric));
+    return chunked === null || m.reason === "" ? m : { ...m, reason: `${m.reason} (chunked: the sum of ${chunked.chunks} chunk runs)` };
+  });
   // Findings are compared over the rules the candidate ran (main's shipped rules it has, and any it adds): a rule it
-  // cannot run fails coverage once, not again as every key of that rule.
+  // cannot run fails coverage once, not again as every key of that rule. A chunked run ran its completed chunks' rules.
   const mainRules = shippedRules(settings.baseline.dir, pack);
-  const ran = candidate === "rr" && rr !== undefined ? rrIds(rr, cell) : shippedRules(settings.candidate.dir, pack);
+  const ran = chunked !== null ? chunks!.filter((_, chunk) => !chunked!.failedChunks.some((f) => f.chunk === chunk)).flat() : candidate === "rr" && rr !== undefined ? rrIds(rr, cell) : shippedRules(settings.candidate.dir, pack);
   const ruleIds = new Set(ran.filter((rule) => candidate === "ships" || mainRules.includes(rule)));
   const only = (keys: Set<string> | undefined): Set<string> | undefined => (keys === undefined ? undefined : new Set([...keys].filter((key) => ruleIds.has(key.slice(0, key.indexOf("\u0000"))))));
   const mainKeys = only(sideFindings(cell, "main", undefined));
-  const candidateKeys = only(sideFindings(cell, candidate, rr));
+  const chunkKeys = chunkFile?.map((file) => sideFindings(cell, "rr", rr, file));
+  const candidateKeys = only(chunkKeys === undefined ? sideFindings(cell, candidate, rr) : chunkKeys.some((keys) => keys === undefined) ? undefined : new Set(chunkKeys.flatMap((keys) => [...keys!])));
   let findings: CellVerdict["findings"] = null;
   let agree: CellVerdict["agreement"] = null;
   if (mainKeys !== undefined && candidateKeys !== undefined) {
@@ -854,19 +964,33 @@ function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpor
     }
   }
   const statuses: Status[] = [completion.status, ...metrics.map((m) => m.status), ...(findings === null ? [] : [findings.status]), ...(ruleFailures.length > 0 ? (["fail"] as Status[]) : [])];
+  // `!= null`: rows of an earlier version of this script have no progress or grouping.
+  const failedWhole = mine.find((row) => !row.completed && row.progress != null);
+  const rrRows = [...mine, ...chunkRows].filter((row) => row.side === "rr");
+  const wholeGrouping = mine.find((row) => row.completed && row.grouping != null)?.grouping ?? null;
+  const chunkGroupings = chunkRows.filter((row) => row.mode === "cold" && row.rep === 1 && row.grouping != null).map((row) => row.grouping!);
   return {
     corpus,
     status: overall(statuses),
-    note: "",
+    note: chunked === null ? "" : `chunked: the .rr pack run did not complete; figures are the sums of ${chunked.chunks} chunks of up to ${chunked.size} rules (${chunked.rulesRun} of ${chunked.rulesOf} rules ran)`,
     completion,
     ruleFailures,
     metrics,
     findings,
     agreement: agree,
     load: { main: main.map((row) => row.load), candidate: mine.map((row) => row.load) },
-    siblingBusyMax: Math.max(0, ...all.map((row) => row.siblingBusy)),
+    siblingBusyMax: Math.max(0, ...all.map((row) => row.siblingBusy), ...chunkRows.map((row) => row.siblingBusy)),
     runs: { main: main.length, candidate: mine.length },
     rules: { main: shippedRules(settings.baseline.dir, pack).length, candidate: candidate === "rr" && rr !== undefined ? rrIds(rr, cell).length : shippedRules(settings.candidate.dir, pack).length },
+    caps: { memCap: [...new Set([...all, ...chunkRows].map((row) => row.memCap))], timeCapS: [...new Set([...all, ...chunkRows].map((row) => row.timeCapS))] },
+    chunked,
+    progress: failedWhole === undefined ? null : { ...failedWhole.progress!, wallMs: failedWhole.wallMs, rssKB: failedWhole.rssKB },
+    grouping:
+      wholeGrouping ??
+      (chunkGroupings.length === 0
+        ? null
+        : chunkGroupings.reduce((a, g) => ({ policies: a.policies + g.policies, combined: a.combined + g.combined, alone: a.alone + g.alone, largest: Math.max(a.largest, g.largest) }))),
+    fallback: [...new Set(rrRows.flatMap((row) => row.fallback ?? []))].slice(0, 5),
   };
 }
 
@@ -895,7 +1019,7 @@ function computeVerdict(settings: { baseline: Checkout; candidate: Checkout; cor
       for (const m of missing) failures.push({ pack, corpus: null, item: "coverage", reason: `${m.rule}: ${m.reason}` });
       const cells = corpusKinds.map((corpus) => cellVerdict(settings, lock, pack, corpus, candidate, rr));
       for (const cell of cells) {
-        if (cell.status === "fail" && cell.note !== "") failures.push({ pack, corpus: cell.corpus, item: "completion", reason: cell.note });
+        if (cell.status === "fail" && cell.completion === null) failures.push({ pack, corpus: cell.corpus, item: "completion", reason: cell.note });
         if (cell.completion?.status === "fail") failures.push({ pack, corpus: cell.corpus, item: "completion", reason: cell.completion.reason });
         for (const f of cell.ruleFailures) failures.push({ pack, corpus: cell.corpus, item: "rule failure", reason: `${f.rule}: ${f.reason}` });
         for (const m of cell.metrics) if (m.status === "fail") failures.push({ pack, corpus: cell.corpus, item: m.metric, reason: m.reason + (m.withinSpread ? " (within the run-to-run spread)" : "") });
@@ -952,6 +1076,8 @@ function main(): void {
       cpus: { type: "string", default: "8-11" },
       "mem-cap": { type: "string", default: "24G" },
       "time-cap": { type: "string", default: "2700" },
+      "pack-cap": { type: "string", multiple: true, default: [] },
+      "rr-chunk": { type: "string", default: "50" },
       candidates: { type: "string", default: "ships,rr" },
       gate: { type: "string" },
       build: { type: "boolean", default: false },
@@ -996,7 +1122,19 @@ function main(): void {
     requireBuilt(baseline.dir, { product: true, engine: false }, values.build);
     const { engine } = requireBuilt(candidate.dir, { product: candidates.includes("ships"), engine: candidates.includes("rr") }, values.build);
     const cpus = cpuList(values.cpus);
-    const settings: Settings = { ...settingsBase, engine, cpus, siblings: idleSiblings(cpus), memCap: values["mem-cap"], timeCapS: Number(values["time-cap"]) };
+    // This process's own work between runs (check-rr, hashing, writing) stays on the stream's cores too, so concurrent
+    // streams on one box do not spill onto each other's idle hyperthread siblings. Its children inherit the mask.
+    if (run("taskset", ["-a", "-cp", cpus.join(","), String(process.pid)]).status !== 0) fail(`could not pin this process to CPUs ${cpus.join(",")}`);
+    const packCaps: Settings["packCaps"] = {};
+    for (const spec of values["pack-cap"]) {
+      const match = /^([a-z0-9-]+)=(\d+[KMGT]?),(\d+)$/.exec(spec);
+      if (match === null) fail(`--pack-cap ${spec}: <pack>=<memory cap>,<time cap in s>, e.g. python=56G,14400`);
+      if (!packs.includes(match[1]!)) fail(`--pack-cap ${spec}: main ships no pack ${match[1]}`);
+      packCaps[match[1]!] = { memCap: match[2]!, timeCapS: Number(match[3]) };
+    }
+    const rrChunk = Number(values["rr-chunk"]);
+    if (!Number.isInteger(rrChunk) || rrChunk < 0) fail(`--rr-chunk ${values["rr-chunk"]} is not a whole number`);
+    const settings: Settings = { ...settingsBase, engine, cpus, siblings: idleSiblings(cpus), memCap: values["mem-cap"], timeCapS: Number(values["time-cap"]), packCaps, rrChunk };
     writeFileSync(join(out, "settings.json"), JSON.stringify({ ...settings, candidates, corpusKinds, packs, productBuild: PRODUCT_BUILD, engineBuild: ENGINE_BUILD }, null, 1));
     const sides: Side[] = ["main", ...candidates];
     for (const pack of packs) {

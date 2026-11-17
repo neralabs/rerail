@@ -44,10 +44,19 @@ function candidateSection(verdict: Verdict, c: CandidateVerdict): string[] {
       const metrics = new Map(cell.metrics.map((m) => [m.metric, m]));
       const metricCell = (name: string): string => {
         const m = metrics.get(name);
-        return m === undefined ? "–" : cellText(m);
+        return m === undefined ? "–" : `${cell.chunked === null || m.status === "not-compared" ? "" : "chunked "}${cellText(m)}`;
       };
       const ran = cell.rules.candidate === cell.rules.main ? "" : ` (candidate ran ${cell.rules.candidate} of main's ${cell.rules.main} rules)`;
-      const completion = (cell.completion === null ? cell.note : cell.completion.kind === "both-completed" ? "both completed" : `${cell.completion.kind}: ${cell.completion.reason}`) + (cell.completion === null ? "" : ran);
+      const notes = [
+        cell.progress === null ? "" : `whole-pack run got to policy ${cell.progress.started} of ${cell.progress.of} in ${(cell.progress.wallMs / 1000).toFixed(0)} s, ${(cell.progress.rssKB / 1048576).toFixed(1)} GiB peak RSS`,
+        c.candidate === "rr" && cell.completion !== null && cell.grouping === null ? "combined or alone: not reported by this engine" : "",
+        cell.completion !== null && cell.chunked !== null ? cell.note : "",
+        ...(cell.chunked?.failedChunks.map((f) => `chunk ${f.chunk} (${f.rules}) failed: ${f.reason}`) ?? []),
+        cell.grouping === null ? "" : cell.grouping.combined > 0 ? `ran combined: ${cell.grouping.combined} of ${cell.grouping.policies} policies in groups (largest ${cell.grouping.largest}), ${cell.grouping.alone} alone` : `ran alone: all ${cell.grouping.policies} policies one by one`,
+        ...cell.fallback.map((line) => `engine: ${line}`),
+        verdict.machine.memCap.length > 1 || verdict.machine.timeCapS.length > 1 ? `caps ${cell.caps.memCap.join("/")}, ${cell.caps.timeCapS.join("/")} s` : "",
+      ].filter((note) => note !== "");
+      const completion = (cell.completion === null ? cell.note : cell.completion.kind === "both-completed" ? "both completed" : `${cell.completion.kind}: ${cell.completion.reason}`) + (cell.completion === null ? "" : ran) + notes.map((note) => `; ${note}`).join("");
       let findings = "–";
       if (cell.findings !== null) {
         const f = cell.findings;
