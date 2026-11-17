@@ -136,16 +136,22 @@ export function startMarkHolds(databasePath: string, kept: string): boolean {
 }
 
 /**
- * Whether this user may add a file to `folder`, as a renewal and the stuck mark both must: where its permissions refuse
- * it (as 0500 does), a renewal and its stuck mark both fail and the mark would stay the one kept. Windows checks only
- * the read-only attribute here, which a folder ignores.
+ * Whether this user may add a file to `folder`, as a renewal and the stuck mark both must, or, where it is not made
+ * yet, to the folder above it, where a renewal makes it: where its permissions refuse it (as 0500 does), a renewal and
+ * its stuck mark both fail and the mark would stay the one kept. Windows checks only the read-only attribute here,
+ * which a folder ignores.
  */
 function takesNewFiles(folder: string): boolean {
+  return mayAddTo(folder) ?? mayAddTo(dirname(folder)) === true;
+}
+
+/** Whether this user may add a file to `folder`; undefined where nothing is there. */
+function mayAddTo(folder: string): boolean | undefined {
   try {
     accessSync(folder, constants.W_OK | constants.X_OK);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "ENOENT" ? undefined : false;
   }
 }
 
