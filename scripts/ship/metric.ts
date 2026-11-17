@@ -1,4 +1,3 @@
-import { engineJson } from "./engine-json.js";
 // What a cell's time is made of, beside the gross figures the 1.10× bar judges (reported, never a status):
 //
 //   fixed    each side's start-up, T0: the product path with an empty rule set over the same corpus, cold and warm;
@@ -19,6 +18,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { engineJson } from "./engine-json.js";
 import { median } from "./verdict.js";
 
 // ---------------------------------------------------------------- phases
