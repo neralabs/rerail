@@ -221,7 +221,7 @@ fn the_kept_inputs_are_known_before_the_waves_with_why_not() {
     kept_inputs_stored(&store, SPACE, KEY, &pl(&prog), &["input0".to_owned()]).unwrap().expect("the frames of its documents are stored");
 }
 
-/// Q50 (2026-11-16): the check runs before the run's own cross space is read (`preload_frames_live`), in a process
+/// Q69 (2026-11-16): the check runs before the run's own cross space is read (`preload_frames_live`), in a process
 /// whose snapshot an earlier run installed (phase 0's, the sources phase's), which leaves every root's cross space
 /// out. Through the snapshot no input had a frame, and every edit of a phased run decoded its memo hits whole.
 #[test]
@@ -253,7 +253,7 @@ fn a_kept_input_is_decoded_where_it_is_first_read() {
     let kept = kept_inputs(&store, SPACE, KEY, &pl(&prog), &Locations::new(), &rels).unwrap().expect("the inputs' tables and counts are as kept");
     let (good, read_bad) = (&kept["input0"].source, &kept["input1"].source);
     assert_eq!((good.len(), read_bad.len()), (3, 3), "each input's rows counted from its documents' table");
-    // Q51: a row read before the input is read whole decodes its granule alone, so input1's good granules read as
+    // Q70: a row read before the input is read whole decodes its granule alone, so input1's good granules read as
     // kept while its bad one is not decoded yet.
     let one = kept["input1"].ranges[&3];
     assert_eq!(read_bad.value(one.0 as usize, 0), (3 << 32) | 1, "input1's row of document 3, from its granule alone");

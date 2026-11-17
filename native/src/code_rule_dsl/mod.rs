@@ -3708,29 +3708,6 @@ mod transducer {
             #[allow(unused_imports)]
             use std::collections::HashMap as Map;
         }
-        pub mod metal_grid {
-            #[cfg(test)]
-            pub use rerail_transducer::code_rule_dsl::transducer::packed::metal_grid::*;
-            #[cfg(test)]
-            #[path = "tests.rs"]
-            pub mod tests;
-            #[allow(unused_imports)]
-            use super::execution_shape::{compile_entry_shapes, execution_class};
-            #[allow(unused_imports)]
-            use super::packed_batch::PackedBatch;
-            #[allow(unused_imports)]
-            use super::{Error, Program};
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::tape::TapeDoc;
-            #[allow(unused_imports)]
-            use std::cmp::Reverse;
-            #[allow(unused_imports)]
-            use std::collections::{BTreeMap, BinaryHeap, HashMap};
-            #[allow(unused_imports)]
-            use std::hash::{DefaultHasher, Hash, Hasher};
-            #[allow(unused_imports)]
-            use std::sync::Arc;
-        }
         // `.`: no directory `compilation/` exists to resolve `..` through.
         #[cfg_attr(test, path = ".")]
         pub mod compilation {
@@ -3830,8 +3807,6 @@ mod transducer {
             pub mod engine_tests;
         }
         #[cfg(all(test, target_os = "macos"))]
-        pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_grid_backend;
-        #[cfg(all(test, target_os = "macos"))]
         pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_join;
         #[cfg(target_os="macos")]
         #[cfg_attr(test, path = ".")]
@@ -3842,6 +3817,9 @@ mod transducer {
             #[path = "metal_tape_tests.rs"]
             pub mod tape_tests;
         }
+        // Metal's semantic fixtures parse documents: they run where the languages are registered.
+        #[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
+        pub mod metal_semantic_conformance;
         #[cfg(all(test, target_os = "macos"))]
         pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_rows;
         #[cfg(all(test, target_os = "macos"))]

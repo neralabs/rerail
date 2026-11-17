@@ -97,7 +97,7 @@ impl World {
 
     /// Watches the roots a request of `prog` may read (decision 0105), before the first wave: watching a root reads
     /// its part of the observer's store, which no wave may ask (decision 0104). A `World` made inside the waves then
-    /// finds each asked already (Q49: a warm run faulted, "the observer's store not asked inside the waves").
+    /// finds each asked already (Q68: a warm run faulted, "the observer's store not asked inside the waves").
     pub(super) fn watch(root: &Path, prog: &front::Program) {
         Self::watch_roots(root, &Self::roots(root, prog).0);
     }

@@ -16,8 +16,9 @@
 //! - **A resident document** is keyed by its tape's SHA-256 (the store's canonical hash, which
 //!   covers the format version). It holds, in one slab: the v9np image byte-identical to its
 //!   frame's content (columns at 16-byte offsets, format 11), the source's UTF-8 bytes, and what a
-//!   reader derives from them once per admission (decision 0026): each node's parent, the image's
-//!   codes at a fixed width (`tape::resident::DeviceCode`) and the source's line starts.
+//!   reader derives from them once per admission (decision 0026): the codes at a fixed width
+//!   (`tape::resident::DeviceCode`) and the source's line starts. Nothing per node is derived
+//!   beside the tape (decision 0293 §9).
 //! - **Admission** reads the misses' frames in one store read (`ContentStore::resident_frames`),
 //!   decompresses each straight into its slab and checks the bytes against the tape's and the
 //!   source's SHA-256 and the image's header against the source, once. A failed check is an
@@ -56,56 +57,44 @@ pub fn aligned(length: usize) -> usize {
     length.div_ceil(ALIGN) * ALIGN
 }
 
-rerail_blocks::structure! {
-    /// A document as the device reads it (decision 0289 §4): its first byte in the batch's chunk
-    /// block, and its parts as byte offsets from there, so a copy into another block changes `at`
-    /// alone. `node_base` is the document's first node in a batch's numbering, set by the batch's
-    /// document table (`DocTable`). Its MSL is generated (`msl`), with layout assertions. It is
-    /// `Copy`, unlike a block's own structures: it holds no span, so a copy reads the same.
+use rerail_blocks::structure;
+/// The view an entry holds past its `at` (the reads' one definition, decision 0310).
+pub use rerail_clif::view::TapeView;
+rerail_clif::tape_view_fields!(structure, [
+    /// A document as the device reads it (decisions 0289 §4, 0293, 0310): its first byte in the batch's chunk block
+    /// (`at`), then its view (`rerail_clif::view::TapeView`'s fields, from the one list): every offset of the view
+    /// counts from `at`, so a copy into another block changes `at` alone. The tape is read where it lies, format
+    /// 15's columns or format 16's arrays, by the reads written once (`metal_tape_reads.metal`, which take
+    /// `chunk + at` and the view): nothing per node is derived beside it. `node_base`, `source_base` and
+    /// `line_base` are the document's place in a batch's numbering, set by the batch's document table
+    /// (`DocTable`). Its MSL is generated (`msl`), with layout assertions. It is `Copy`, unlike a block's own
+    /// structures: it holds no span, so a copy reads the same.
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-    pub struct ChunkTape {
-    /// The document's first byte in its block: every part below is an offset from it.
+    pub struct ChunkTape
+], [
+    /// The document's first byte in its block: every offset of its view counts from it.
     pub at: u32,
-    pub nodes: u32,
-    pub node_base: u32,
-    /// `size`'s, `off`'s and `tail`'s widths in bytes, at bits 0, 4 and 8; bit 12: tails measured
-    /// from the node's own start.
-    pub widths: u32,
-    pub code: u32,
-    pub size: u32,
-    pub base: u32,
-    pub off: u32,
-    pub tail: u32,
-    /// Each node's parent (u32, `u32::MAX` at the root).
-    pub parent: u32,
-    /// The fixed-width codes (`DeviceCode`).
-    pub codes: u32,
-    pub source: u32,
-    pub source_len: u32,
-    /// Line starts (u32, document-local bytes), the first 0.
-    pub lines: u32,
-    pub line_count: u32,
-    /// The code table's length.
-    pub code_count: u32,
-    /// Each node's first entry in `kids` (u32, `nodes + 1` of them), and the children of every
-    /// node in node order (u32, document-local; `kid_count` of them, a tree's `nodes - 1`): the
-    /// child lists a reader builds at admission, for the interpreter's child by index.
-    pub kid_start: u32,
-    pub kids: u32,
-    pub kid_count: u32,
-    /// The document's place in a batch's numbering of children, source bytes and lines, as a
-    /// packed batch concatenates them (set by `DocTable`).
-    pub child_base: u32,
-    pub source_base: u32,
-    pub line_base: u32,
-    /// Each code's first entry in `by_code` (u32, `code_count + 1` of them), and the nodes of
-    /// every code in node order (u32, document-local, `nodes` of them): a pass's roots in this
-    /// document are the nodes of the codes its rule admits (`label_passes::Roots`), read in place.
-    pub code_start: u32,
-    pub by_code: u32,
+]);
+const _: () = assert!(std::mem::size_of::<ChunkTape>() == 4 + std::mem::size_of::<rerail_clif::view::TapeView>());
+
+impl ChunkTape {
+    /// The entry of a document at `at` whose view is `view`.
+    pub fn new(at: u32, view: &rerail_clif::view::TapeView) -> ChunkTape {
+        let mut entry = ChunkTape { at, ..ChunkTape::default() };
+        *entry.view_mut() = *view;
+        entry
+    }
+    /// Its view: the fields after `at`, laid out as `TapeView` (both are made of the one list, in order).
+    pub fn view(&self) -> &rerail_clif::view::TapeView {
+        // SAFETY: `ChunkTape` is `repr(C)`, `at` (a u32) then `TapeView`'s fields of the same types in the same
+        // order (`tape_view_fields!`), so they lie at `TapeView`'s offsets past 4 bytes, at u32 alignment.
+        unsafe { &*(&raw const self.nodes).cast::<rerail_clif::view::TapeView>() }
+    }
+    pub fn view_mut(&mut self) -> &mut rerail_clif::view::TapeView {
+        // SAFETY: as `view`.
+        unsafe { &mut *(&raw mut self.nodes).cast::<rerail_clif::view::TapeView>() }
+    }
 }
-}
-const _: () = assert!(std::mem::size_of::<ChunkTape>() == 96);
 
 /// The MSL of `ChunkTape`, for the kernels that read documents in place (`metal_tape.metal`).
 pub fn msl() -> String {
@@ -161,7 +150,7 @@ pub struct Resident {
     pub len: usize,
     /// Bytes per pool: `tape.resident`, `source.resident`, `tape.derived`.
     pub bytes: [usize; 3],
-    /// The tape image's length, as stored.
+    /// The tape's length where it is placed (a 16z tape's laid out as format 16).
     pub tape_length: usize,
 }
 
@@ -186,13 +175,6 @@ impl Resident {
         unsafe { std::slice::from_raw_parts(slab.host().add(offset), length) }
     }
 
-    /// Each code's first entry in the nodes by code, `code_count + 1` of them.
-    pub fn code_starts(&self) -> &[u32] {
-        let length = self.view.code_count as usize + 1;
-        let bytes = self.bytes_at(self.view.code_start, 4 * length);
-        // SAFETY: as `codes`, u32s at a 16-byte offset.
-        unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<u32>(), length) }
-    }
 
 
 }
@@ -250,6 +232,13 @@ pub struct DocTable {
 pub const MAX_SLABS: usize = 4;
 
 impl DocTable {
+    /// The format every view is in, or `None` for an empty or mixed batch: the label kernels are specialized to it
+    /// (the reads' format test made a constant, t41).
+    pub fn format(&self) -> Option<u32> {
+        let first = self.views.first()?.format;
+        self.views.iter().all(|view| view.format == first).then_some(first)
+    }
+
     /// The table of `documents`, in order, in one slab (`gather`): `None` when they cannot be.
     pub fn one_block(documents: Vec<Arc<Resident>>) -> Option<Self> {
         Self::new(gather(documents).ok()?)
@@ -263,17 +252,15 @@ impl DocTable {
         }
         let mut views = Vec::with_capacity(documents.len());
         let mut nodes = 0usize;
-        let (mut children, mut source, mut lines) = (0usize, 0usize, 0usize);
+        let (mut source, mut lines) = (0usize, 0usize);
         for document in &documents {
             views.push(ChunkTape {
                 node_base: u32::try_from(nodes).ok()?,
-                child_base: u32::try_from(children).ok()?,
                 source_base: u32::try_from(source).ok()?,
                 line_base: u32::try_from(lines).ok()?,
                 ..document.view
             });
             nodes += document.view.nodes as usize;
-            children += document.view.kid_count as usize;
             source += document.view.source_len as usize;
             lines += document.view.line_count as usize;
         }

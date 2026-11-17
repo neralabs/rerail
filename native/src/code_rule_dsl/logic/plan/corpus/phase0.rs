@@ -310,7 +310,7 @@ pub(in crate::code_rule_dsl) fn phase_lib() -> Option<PathBuf> {
 /// library and the phase programs' directory, so a bundle made where those stand elsewhere is read here too (each file
 /// is then checked by its digest, `Graph::holds`). The bootstrap run's plans are kept with it: a run that reads the
 /// graph names them in its manifest, as the run that derived it did, so a warm run's manifest is the cold run's and
-/// what the graph came from stays live while it is used (Q49).
+/// what the graph came from stays live while it is used (Q68).
 struct Images {
     lib: String,
     phases: String,

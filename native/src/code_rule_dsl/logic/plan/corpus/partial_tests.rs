@@ -134,7 +134,7 @@ fn assert_unchanged(report: &super::Report, what: &str) {
     assert_eq!(report.stats_kept, Some(Ok((0, 0))), "{what}: no file counted in or out");
 }
 
-/// A new engine build over the store an older build left (decision 0096 §3, Q52). Its first edit finds none of the
+/// A new engine build over the store an older build left (decision 0096 §3, Q71). Its first edit finds none of the
 /// old build's entries, so it evaluates every file; and it counts every file in afresh, since what the old build's
 /// keeper counted is of entries this build's plan does not hold (it could neither count the edited file out nor
 /// trust the others' counts). Its next edit is a steady one. Before, that first edit kept the old build's statistics

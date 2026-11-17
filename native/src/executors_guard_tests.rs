@@ -24,17 +24,16 @@ const MADE: [(&str, &str); 7] = [
 ];
 
 /// The sites allowed besides the owners, each with why: a file, the pattern, and how many times it may appear.
-const EXCEPTIONS: [(&str, &str, usize, &str); 6] = [
+const EXCEPTIONS: [(&str, &str, usize, &str); 5] = [
     ("native/src/code_rule_dsl/logic/costs.rs", "ThreadPoolBuilder::new(", 1, "the cost model trains at background QoS on two threads, beside the run; the one pool runs at the user's"),
     ("forest/src/mldb/plugins/jml/randomforest_procedure.rs", "ThreadPoolBuilder::new(", 2, "the forest's training bounds the bags trained at once; it runs inside the cost model's background pool"),
     ("accel/src/price_bench.rs", "ThreadPoolBuilder::new(", 1, "the price benchmark measures one core alone"),
     ("native/src/build_grammars.rs", "thread::scope(", 1, "the build script's grammars build a thread each; it runs in cargo, not in the engine's process, and links no rerail crate"),
     ("native/src/content_store/journal.rs", "dispatch_queue_create(", 2, "the journal's file events come on a GCD queue (FSEvents delivers to one): its declaration and its one call"),
-    ("native/src/code_rule_dsl/transducer/packed/metal_frontier_reduce.rs", "new_command_queue(", 1, "inside the conformance tests' module, which `cfg(test)` guards from the parent"),
 ];
 
 /// Files that are test code as a whole (their parent declares them under `cfg(test)`).
-const TEST_FILES: [&str; 3] = ["metal_frontier_conformance.rs", "metal_register_conformance.rs", "parity.rs"];
+const TEST_FILES: [&str; 1] = ["parity.rs"];
 
 pub(crate) fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
@@ -65,7 +64,23 @@ pub(crate) fn sources() -> Vec<PathBuf> {
     out
 }
 
-/// A file's lines outside its `#[cfg(test)]` modules (a module's lines end at its closing brace at its own indent).
+/// Whether a raw string (`r#"`, closed by `"#`) is still open after `line`, given whether it was open before it.
+fn raw_after(line: &str, mut raw: bool) -> bool {
+    let mut rest = line;
+    loop {
+        let next = if raw { "\"#" } else { "r#\"" };
+        match rest.find(next) {
+            Some(at) => {
+                rest = &rest[at + next.len()..];
+                raw = !raw;
+            }
+            None => return raw,
+        }
+    }
+}
+
+/// A file's lines outside its `#[cfg(test)]` modules (a module's lines end at its closing brace at its own indent,
+/// outside a raw string).
 pub(crate) fn product_lines(text: &str) -> Vec<(usize, &str)> {
     let lines: Vec<&str> = text.lines().collect();
     let mut out = Vec::new();
@@ -82,8 +97,11 @@ pub(crate) fn product_lines(text: &str) -> Vec<(usize, &str)> {
                 let item = lines[j];
                 let indent = item.len() - item.trim_start().len();
                 if item.trim_end().ends_with('{') {
+                    // A raw string's lines are not the module's: a kernel's source closes its own braces at column 0.
+                    let mut raw = false;
                     let mut k = j + 1;
-                    while k < lines.len() && !(lines[k].len() - lines[k].trim_start().len() == indent && lines[k].trim_start().starts_with('}')) {
+                    while k < lines.len() && (raw || !(lines[k].len() - lines[k].trim_start().len() == indent && lines[k].trim_start().starts_with('}'))) {
+                        raw = raw_after(lines[k], raw);
                         k += 1;
                     }
                     i = k + 1;
@@ -125,4 +143,13 @@ fn executors_are_shared() {
         }
     }
     assert!(bad.is_empty(), "made outside the one executor (decision 0100 §2, §12): use `rerail_metal::queue()`/`device()`, `rerail_accel::exec::service`/`scoped`/`drop_beside`, or the pool:\n{}", bad.join("\n"));
+}
+
+/// A test module's raw string that closes a brace at column 0 (a kernel's source) does not end the module: the lines
+/// after it, up to the module's own brace, are still test code, and the product's lines after the module are read.
+#[test]
+fn a_test_modules_raw_string_does_not_end_it() {
+    let text = "fn product() {}\n#[cfg(test)]\nmod tests {\n    const K: &str = r#\"\nkernel void k() {\n}\n\"#;\n    fn t() { make_queue(); }\n}\nfn after() {}\n";
+    let lines: Vec<&str> = product_lines(text).into_iter().map(|(_, l)| l).collect();
+    assert_eq!(lines, ["fn product() {}", "fn after() {}"]);
 }

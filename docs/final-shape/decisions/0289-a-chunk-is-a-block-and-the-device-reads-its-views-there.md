@@ -282,6 +282,12 @@ in the batch's document table.
   A label kernel binds the block at one slot (27), not four; the resident interpreter reads it at its `nodes` slot.
 - `DocTable` holds one block (`block`), and refuses documents that are not all in it. `MAX_SLABS` now bounds only a
   batch of sources (block programs, 0067).
+- **Since the merge of 0293's device half and 0310 (2026-11-16):** the entry is `rerail_clif::view::TapeView`, the
+  one view the reads written once in CLIF take (0310), with `at` as its first word (it was `slab`, a binding index).
+  Its MSL is written from it (`view::msl`), every field's offset asserted, so the generated-entry rule above holds
+  with that type in place of `ChunkTape`. Its parts are 0293's: format 15's columns or format 16's arrays, no
+  parent, child-list or by-code arrays. Each part is still an offset from `at`, and the reads take `chunk + at`
+  as their base (`TAPE_READ`).
 
 Checks: the device's tape test (`the_device_reads_resident_tapes_as_the_packed_batch_records_them`, no longer
 ignored: it is hosted in the engine, where the languages are registered), the residency's three slab tests and the
@@ -297,6 +303,13 @@ lane gave the label passes fewer documents again, and fewer of them hits:
 | Step B | 10 | 308 (33) | 16.5 ms, 54 µs a document | 11.6 ms for 12.1 MB, 0.94 µs a KB |
 
 Per document it is higher because more of them were misses. What is left of an admission is as in step A.
+
+**With 0293 step 5 (merged 2026-11-16).** 0293 §9 and §10 (the device reads the tape in place; a pass's roots a
+rule) were built against `DocView` and the four slab slots. In the merge they read through this step's entry:
+`ChunkTape` holds 0293's fields (`format`, `widths`, `columns`, `side`, `parts`, `cut`, `per`, `tape`), each an
+offset from `at`, and the readers' base is the document's start (`tape_doc`). What this section nested for the
+interim (the parent column, child lists and nodes by code) is gone, as 0293 §9 says. The entry's layout is
+`rerail_clif::view::TapeView`'s (0310), asserted field for field in `rerail_metal::slabs`.
 
 Then the image is serialized once. A document whose digest is not known yet (parsed in this run, not restored from
 the store) serialized its image to hash it and again to copy it. `TapeDoc::tape_digest_and_image` now returns the

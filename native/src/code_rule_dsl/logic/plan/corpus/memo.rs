@@ -299,7 +299,7 @@ pub(super) fn set_last_program(store: &ContentStore, space: &[u8; 32], whole: Op
 }
 
 /// Records a run of `whole` under way in `space`, one that started from what an ended run of `whole` kept: if it
-/// stops, what is kept stays valid for the next (Q52). Its entries are of `whole` and of the contents it read, and the
+/// stops, what is kept stays valid for the next (Q71). Its entries are of `whole` and of the contents it read, and the
 /// contents the kept statistics count are still in the memo (its newest `MEMO_CONTENTS` of a path); a content whose
 /// entry went gives the keeper up, as an entry dropped otherwise does.
 pub(super) fn set_under_way(store: &ContentStore, space: &[u8; 32], whole: [u8; 32]) {

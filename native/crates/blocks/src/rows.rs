@@ -82,15 +82,11 @@ pub struct ColRead {
 }
 
 impl ColRead {
-    #[inline]
+    /// Row `i`'s value: the read written once (`col_get`, decision 0325), the kernels' and the JIT's too.
+    #[inline(always)]
     pub fn get(&self, i: u32) -> i64 {
-        let (k, l) = chunk_of(i, self.min_log);
-        // SAFETY: the directory is its relation's, which outlives the reader; chunk `k` holds row `i`.
-        unsafe {
-            let d = &*self.dir;
-            let p = (self.dir as *const u8).offset(d.chunk[k].load(Relaxed) as isize);
-            if self.width == 4 { *(p as *const u32).add(l) as i64 } else { *(p as *const i64).add(l) }
-        }
+        // SAFETY: the directory is its relation's, which outlives the reader; row `i` was claimed and reserved.
+        unsafe { crate::generated_reads::col_get(self.dir.cast(), self.min_log, i) as i64 }
     }
 }
 
@@ -105,8 +101,16 @@ impl Rows {
     /// # Safety
     /// `this` is zeroed memory in `block`, which is open.
     pub unsafe fn init(this: *mut Rows, block: &Block, widths: &[u32], min_log: u32) {
+        assert!(unsafe { Rows::try_init(this, block, widths, min_log) }, "block full: {} columns' directories", widths.len());
+    }
+
+    /// `init`, or false when the block cannot hold the columns' directories.
+    ///
+    /// # Safety
+    /// As `init`.
+    pub unsafe fn try_init(this: *mut Rows, block: &Block, widths: &[u32], min_log: u32) -> bool {
         assert!(min_log >= MIN_LOG, "min_log {min_log} under {MIN_LOG}");
-        let cols: *mut ColDir = block.alloc_t(widths.len());
+        let Some(cols) = block.try_alloc_t::<ColDir>(widths.len()) else { return false };
         unsafe {
             for (c, &w) in widths.iter().enumerate() {
                 assert!(w == 4 || w == 8);
@@ -116,6 +120,7 @@ impl Rows {
             (*this).ncols = widths.len() as u32;
             Span::set(&raw mut (*this).cols, cols, widths.len());
         }
+        true
     }
 
     #[inline]
@@ -128,6 +133,12 @@ impl Rows {
         self.len() == 0
     }
 
+    /// The rows the chunks made hold.
+    #[inline]
+    pub fn reserved(&self) -> u32 {
+        self.reserved_now()
+    }
+
     #[inline]
     fn reserved_now(&self) -> u32 {
         self.reserved.load(Acquire)
@@ -138,18 +149,21 @@ impl Rows {
         &self.cols.as_slice()[c]
     }
 
+    /// Where row `i`'s value in column `c` lies, and the column's width: the reads written once (`rows_at`,
+    /// `rows_width`; decision 0325).
     #[inline]
     fn at(&self, i: u32, c: usize) -> (*mut u8, u32) {
-        let (k, l) = chunk_of(i, self.min_log);
-        let d = self.col(c);
-        let p = unsafe { (d as *const ColDir as *const u8).offset(d.chunk[k].load(Relaxed) as isize) as *mut u8 };
-        (unsafe { p.add(l * d.width as usize) }, d.width)
+        let desc = std::ptr::from_ref(self).cast::<u8>();
+        // SAFETY: a live descriptor of this block; column `c` is one of its columns (the callers' row reserved).
+        unsafe { (crate::generated_reads::rows_at(desc, i, c as u32) as usize as *mut u8, crate::generated_reads::rows_width(desc, c as u32)) }
     }
 
+    /// Row `i`'s value in column `c`: the read written once (`rows_get`, decision 0325), the kernels' and the JIT's
+    /// too.
     #[inline]
     pub fn get(&self, i: u32, c: usize) -> i64 {
-        let (p, w) = self.at(i, c);
-        unsafe { if w == 4 { *(p as *const u32) as i64 } else { *(p as *const i64) } }
+        // SAFETY: a live descriptor; row `i` was claimed and reserved, column `c` is one of its columns.
+        unsafe { crate::generated_reads::rows_get(std::ptr::from_ref(self).cast(), i, c as u32) as i64 }
     }
 
     /// # Safety
@@ -169,21 +183,35 @@ impl Rows {
 
     /// Makes chunks until `n` rows fit. The caller holds the relation's lock, or no kernel is running.
     pub fn reserve(&self, block: &Block, n: u64) {
+        assert!(self.try_reserve(block, n), "block full: rows to {n} past {} of {}", block.used(), block.reserved());
+    }
+
+    /// `reserve`, or false when the block cannot hold the chunks: the rows reserved are then as they were (a chunk
+    /// counts once every column has its room). Each chunk's room is checked for every column before any is
+    /// allocated; a writer of another relation in the block can still take it between, and then the columns'
+    /// room already taken is left unused.
+    pub fn try_reserve(&self, block: &Block, n: u64) -> bool {
         let mut nchunks = self.nchunks.load(Relaxed);
         while capacity(nchunks, self.min_log) < n {
             let k = nchunks as usize;
             assert!(k < DIRS, "rows past {DIRS} chunks");
             let rows = chunk_rows(k, self.min_log) as usize;
+            let align = |bytes: usize| if bytes >= PAGE { PAGE } else { 64 };
+            let need: usize = (0..self.ncols as usize).map(|c| rows * self.col(c).width as usize).map(|b| b + align(b)).sum();
+            if block.reserved().saturating_sub(block.used()) < need {
+                return false;
+            }
             for c in 0..self.ncols as usize {
                 let d = self.col(c);
                 let bytes = rows * d.width as usize;
-                let off = block.alloc(bytes, if bytes >= PAGE { PAGE } else { 64 });
+                let Some(off) = block.try_alloc(bytes, align(bytes)) else { return false };
                 d.chunk[k].store(block.ptr::<u8>(off) as isize as i64 - d as *const ColDir as isize as i64, Relaxed);
             }
             nchunks += 1;
+            self.nchunks.store(nchunks, Relaxed);
+            self.reserved.store(capacity(nchunks, self.min_log).min(u32::MAX as u64) as u32, Release);
         }
-        self.nchunks.store(nchunks, Relaxed);
-        self.reserved.store(capacity(nchunks, self.min_log).min(u32::MAX as u64) as u32, Release);
+        true
     }
 
     /// Claims `n` rows: one atomic add, and chunks made under `lock` only when the claim passes what is reserved.
@@ -197,6 +225,17 @@ impl Rows {
                 self.reserve(block, end);
             }
         }
+        start
+    }
+
+    /// Claims `n` rows within what is reserved: one atomic add, no chunk made.
+    ///
+    /// # Safety
+    /// The claim ends within `reserved` (the caller reserved its rows first, `try_reserve`).
+    #[inline]
+    pub unsafe fn claim_reserved(&self, n: u32) -> u32 {
+        let start = self.len.fetch_add(n, AcqRel);
+        debug_assert!(start as u64 + n as u64 <= self.reserved_now() as u64, "a claim past the rows reserved");
         start
     }
 

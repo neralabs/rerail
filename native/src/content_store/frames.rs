@@ -662,7 +662,7 @@ impl ContentStore {
 
     /// `frames`, from the store's file past the snapshot (queued writes first): asked before the first wave of a
     /// process whose snapshot an earlier run installed, which leaves every root's cross space out until
-    /// `preload_frames_live` reads the run's own (the kept route's check, Q50).
+    /// `preload_frames_live` reads the run's own (the kept route's check, Q69).
     pub fn frames_stored(&self, space: &[u8; 32], rels: &[Rel], part: i64) -> StoreResult<HashMap<Rel, Stored>> {
         let keys: Vec<_> = rels.iter().cloned().map(|r| (r, part)).collect();
         Ok(self.read_frame_parts_from(space, &keys, false, false)?.into_iter().map(|((r, _), f)| (r, f.stored.clone())).collect())

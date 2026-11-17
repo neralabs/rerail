@@ -203,7 +203,7 @@ impl Exports {
 }
 
 impl Exports {
-    /// Lets export `rel`'s rows go (Q55): the cross-file part read it for the last time. A later `source` is a
+    /// Lets export `rel`'s rows go (Q74): the cross-file part read it for the last time. A later `source` is a
     /// mistake, caught in debug builds.
     pub(super) fn release(&mut self, rel: &str) {
         if let Some(held) = self.rels.get_mut(rel) {

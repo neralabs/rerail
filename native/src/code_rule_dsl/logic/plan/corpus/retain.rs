@@ -1419,7 +1419,7 @@ pub(in crate::code_rule_dsl) fn kept_inputs_stored(store: &ContentStore, space: 
     let all: Vec<FrameRel> = rels.iter().map(|rel| FrameRel { name: rel.clone(), ident: input_ident(rel, prog, &binds) }).collect();
     // Past the snapshot: an earlier run of the process (phase 0's, the sources phase's) installed it without this
     // root's cross space, which is read after this check (`preload_frames_live`). Through it, no input had a frame,
-    // and every edit decoded its memo hits whole (Q50).
+    // and every edit decoded its memo hits whole (Q69).
     let stored = store.frames_stored(&space, &all, DOCS_PART).map_err(|e| Error::Plan(e.to_string()))?;
     Ok(match all.iter().find(|f| !stored.contains_key(f)) {
         Some(f) => Err(format!("{}: no frame of its documents ({} of {} inputs have one)", f.name, stored.len(), all.len())),
@@ -1524,7 +1524,7 @@ struct Lazy {
     /// Each granule's first row.
     starts: Vec<usize>,
     /// The granules decoded for rows read one at a time (`row_at`, `value`) before the input is read whole: an edit
-    /// reads its evaluated owners' kept rows (`patch_owners`), a few owners' ranges of an input (Q51: 8,987 rows of
+    /// reads its evaluated owners' kept rows (`patch_owners`), a few owners' ranges of an input (Q70: 8,987 rows of
     /// 13 inputs decoded whole, 312 MB, on 300 files). Each granule's rows flat, by row; let go once `made` is.
     parts: parking_lot::Mutex<HashMap<usize, Arc<Vec<i64>>>>,
     /// Its rows, once read; with why not, read as none.
@@ -2520,7 +2520,7 @@ pub(in crate::code_rule_dsl) struct InputsWritten {
 
 /// The inputs' part of `Retained::write_frames`: each input's granules whose documents' rows changed, and its digests
 /// by document, queued as each input's job makes them. They depend on the inputs alone, so a run that lets its inputs
-/// go after their last reader (Q55) writes them before it runs, and hands what it wrote to `write_frames`.
+/// go after their last reader (Q74) writes them before it runs, and hands what it wrote to `write_frames`.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &InFrames, prog: &Placed, domains: &lower::Domains, locations: &Locations, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, input_docs: &HashMap<String, Arc<DocDigests>>) -> InputsWritten {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the inputs' frames".into());
@@ -2533,7 +2533,7 @@ pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &I
     // the inputs' order.
     let phase = super::phases::current();
     let atoms_ref = &atoms;
-    // Each input's frames are queued as its job makes them (Q55), into the run's wave (`Carry`: the writer takes
+    // Each input's frames are queued as its job makes them (Q74), into the run's wave (`Carry`: the writer takes
     // the wave whole, in one transaction, with the derived relations' frames when they are written together; before
     // the run, in the wave it seals as it ends, `Boundary::CrossDerived`): placed in segments of
     // their own (decision 0295 §1), their bytes leave the run's heap then. Collected to be queued at the end, every
@@ -2668,7 +2668,7 @@ struct Whole {
 
 /// A derived relation the cross-file run handed off once no later stratum read it (`plan::Hooks::hand_off`), with
 /// its frame made then: its rows' digest and encoding, its levels. The run drops its rows, so the part's relations
-/// are not all held to its end to be written (Q55: 2,700 of them, the cross part's peak on 300 files). Not held for
+/// are not all held to its end to be written (Q74: 2,700 of them, the cross part's peak on 300 files). Not held for
 /// this process's next run either: it reads them from the frames, as a new process does.
 pub(in crate::code_rule_dsl) struct Handed {
     n: usize,

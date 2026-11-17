@@ -1031,6 +1031,14 @@ pass.
   - **`col`'s lookup in `fzk287`**: 790 rows over 17 chunks in 52 ms, 65 µs a row against `col`'s 694 ns over the
     run. Not the line index (built in projection, about 10 µs a file). It looks fixed per chunk. Next: a sample of
     that step.
+- **The estimates fixed, and placement leans to the GPU** (2026-11-16, decisions 0320 and 0321): the plan's record
+  prices filters as its search does, and the tree's counts know which kinds a field joins, so `attr_of`'s seed is
+  estimated at 4,400 rows a loop for 5,200 made (was 5). The steps' rows-weighted miss went from 8.2× to 2.0×. The GPU
+  is now chosen while priced under twice the CPU's. About 310 runs of 2,200 go to the GPU, against about 50, and the
+  same plans' GPU strata save 2.2 s of host CPU. Open:
+  - **A small stratum's device run** costs about 0.3 ms past its price (`asg`, `export_query__sup0`): refit
+    `DEVICE_SUBMISSION` for a stratum run outside a wave, on an idle machine.
+  - **`fzk287`'s `col` lookup** (above), still.
 - **The engine's steps were not the plan's** (found by the above, fixed 2026-11-16): a literal can make several
   engine steps (`$k = @sub(@strlen($dots), 1)` makes two; a head's computed term makes more), and the engine's
   counts were zipped against the plan's steps by place. From such a literal on, every step's counts were its
@@ -1080,7 +1088,7 @@ pass.
 - **Done when**: the observer's functions take what they dereference safely, or are `unsafe` with their callers'
   contract written down, and `cargo clippy -p rerail-engine --lib --tests` runs to the end.
 
-### Q21. Red tests that predate 0281 step 4
+### Q64. (a second Q21 until 2026-11-17) Red tests that predate 0281 step 4
 
 - **Found** (2026-11-16, while testing 0281 step 4's slices; both fail at 38d1272f5, before them):
   - `corpus::phases::tests::a_phase_hands_on_its_exports_and_its_reader_follows_each_edit`: phase `p1` reads
@@ -1175,6 +1183,11 @@ pass.
   work is priced at a tenth of its CPU.
 - **Whose**: the planner's statistics: the containment of a lookup after a `nearest` relation, and a lookup on two
   derived columns (0299's line of work).
+- **Progress** (2026-11-16, decision 0320): the plan's record no longer halves each filter, and a kind or field after a
+  field is priced by the tree's fielded counts. The steps that make 100+ rows miss by 2.0× on average, weighted by
+  rows (was 8.2×), 84% within 2×. Still open: `qn`'s `walk` by `(x, s)` (about 170× under), the `ask_*` stratum's
+  deltas of 1, and the kind memberships after a derived or `nearest` relation (`in_first_iter`, `tp_list`), which
+  the tree's counts do not see.
 - **Done when**: these strata's planned work is within 2× of their work.
 
 ### Q48. (Q46 at 1adc44eff) Under load, a Metal run loses findings (Native-and-GPU-strata's) — done
@@ -1260,7 +1273,7 @@ pass.
   Not creating it eagerly (`atoms::key` resolving a missing file by its directory) did not remove it: the connection
   makes it. The next run removes it with the scratch files.
 
-### Q49. `the_run_after_a_cold_one_writes_nothing` fails at the hub's 8e4b6b68e
+### Q68. (Q49 on final-rerail-shape-phased-facts at dfb0e0e02) `the_run_after_a_cold_one_writes_nothing` fails at the hub's 8e4b6b68e
 
 - **Found** (2026-11-16, merging the hub into phased-facts): the warm child run exits 3, "the observer's store not
   asked inside the waves in a warm run (<tmp>/src: its answers unknown, read again)", several times. It fails the same
@@ -1280,7 +1293,7 @@ pass.
   observe, racy and manifest tests (84/84); strict 10-file cold, warm and edit runs, outputs byte-identical, the
   warm run writing nothing.
 
-### Q50. No edit of a phased run takes the kept inputs (decision 0117 step 1)
+### Q69. (Q50 on final-rerail-shape-phased-facts at dfb0e0e02) No edit of a phased run takes the kept inputs (decision 0117 step 1)
 
 - **Found** (2026-11-16, measuring the edit's peak, t34 item 10): on 300 files × 317 rules every edit decodes the
   299 unchanged files' memo entries whole (348.5 MB of values, 454 MB live at the peak). The profile's decision:
@@ -1297,9 +1310,9 @@ pass.
   before. Outputs: the 300-file edit's 660 outputs (30,449 rows) equal a cold run's over the same corpus as row
   sets; strict 10-file cold, warm and edit byte-identical; frame, partial and kept-input tests 10/10.
 
-### Q51. A kept input's first row read decodes it whole
+### Q70. (Q51 on final-rerail-shape-phased-facts at dfb0e0e02) A kept input's first row read decodes it whole
 
-- **Found** (2026-11-16, after Q50, t34 item 10): live at the edit's peak, 312 MB under "a kept input, decoded where
+- **Found** (2026-11-16, after Q69, t34 item 10): live at the edit's peak, 312 MB under "a kept input, decoded where
   read", inside "the evaluated owners, patched". The patch read 8,987 kept rows (523 owners) of 13 inputs; `Lazy`
   decoded each input whole at its first `row_at`.
 - **Fix**: `Lazy` answers `row_at` and `value` from the row's granule alone (each decoded once, checked at its
@@ -1308,11 +1321,11 @@ pass.
   equal a cold run's (660 outputs); strict 10-file runs byte-identical; kept-input tests 8/8, the decode test
   extended to read a granule before the whole.
 - **Open**: a new build's first two edits replay every hit whole (2.12 and 1.79 GB unprofiled): the keeper fails
-  on the edited file's entry in the old build's memo space, then counts every file in. Done as Q52.
+  on the edited file's entry in the old build's memo space, then counts every file in. Done as Q71.
 
-### Q52. A new build's second edit replays every hit whole
+### Q71. (Q52 on final-rerail-shape-phased-facts at dfb0e0e02) A new build's second edit replays every hit whole
 
-- **Found** (2026-11-16, after Q51): on 300 files × 317 rules, a new engine build's first edit evaluates every file
+- **Found** (2026-11-16, after Q70): on 300 files × 317 rules, a new engine build's first edit evaluates every file
   (no entry of the old build's is a hit) and its keeper gives up ("c.py: the memo no longer holds the rows
   counted"), so the second edit counts every file in again, decoding every hit whole: 1.79 GB unprofiled.
 - **Cause**: what is kept of every file together (the keeper's blob, the space's last program, a session's and the
@@ -1330,7 +1343,7 @@ pass.
   rerun with nothing changed has every file a hit read for its outputs alone and counts none; a steady edit has the
   unchanged files read for their outputs alone, decodes none of their rows and counts the edited file alone out
   and in; a new build's first edit hits nothing and counts every file in, its second is steady.
-- **Record**: done (2026-11-17). Bench (unprofiled, the new build over the Q51 store): first edit 2.05 GB, keeper
+- **Record**: done (2026-11-17). Bench (unprofiled, the new build over the Q70 store): first edit 2.05 GB, keeper
   `in 300 out 0` (was given up); second edit 1.23 GB (was 1.79), 299 files unchanged, keeper `in 1 out 1`. Strict
   10-file cold, warm and edit byte-identical; the warm run writes nothing; warm-writes and session tests pass.
 - **Open**: a keeper given up for another reason (an entry the memo dropped within a build) still leaves the next
@@ -1353,7 +1366,7 @@ pass.
     kept inputs could give those rows if the kept part recorded which content each document's rows are of; it does
     not today (a new process's `Retained::docs` is empty).
 
-### Q53. 50 unused re-exports in the engine's `code_rule_dsl/mod.rs`
+### Q72. (Q53 on final-rerail-shape-phased-facts at dfb0e0e02) 50 unused re-exports in the engine's `code_rule_dsl/mod.rs`
 
 - **Found** (2026-11-17, a `--bin rerail-engine --features test-hooks` build): 50 `unused import` warnings for the
   language crates' re-exports in `native/src/code_rule_dsl/mod.rs` (e.g. line 9, `rerail_lang_php::…::forte::tree::*`),
@@ -1368,7 +1381,7 @@ pass.
   only their `#[cfg(test)]` child modules use. Gated on `test`, outer modules first (narrowing one showed the nested).
   The test-hooks build has no compiler warning; 61 tests across the modules touched pass.
 
-### Q54. A new build reads the old build's kept cross-file inputs
+### Q73. (Q54 on final-rerail-shape-phased-facts at dfb0e0e02) A new build reads the old build's kept cross-file inputs
 
 - **Found** (2026-11-17, profiling a new build's first edit on 300 files × 317 rules): live at the peak, 358.8 MB
   under "cross/the kept part's rows, from the frames"; the decision line "2712 of 2712 strata run (0 maintained from
@@ -1389,9 +1402,9 @@ pass.
   359 MB is gone from the live heap. Kept-input and frame tests 18/18, partial-hit tests pass; strict 10-file cold,
   warm and edit byte-identical.
 
-### Q55. A new build's first edit is a cold run, at 2.3–2.4 GB
+### Q74. (Q55 on final-rerail-shape-phased-facts at dfb0e0e02) A new build's first edit is a cold run, at 2.3–2.4 GB
 
-- **Found** (2026-11-17, after Q54): the first edit of a new build evaluates every file and derives every cross-file
+- **Found** (2026-11-17, after Q73): the first edit of a new build evaluates every file and derives every cross-file
   stratum, as a cold run does, and its peak is the cold run's. Profiled, by phase (footprint, live heap): parse
   0.70, 0.52 GB; the files' evaluation up to 1.92, 1.58 GB (chunks on 14 threads at once); the cross-file part 2.34,
   2.12 GB, its live heap the run's inputs (exports 215 MB, base rows 191 MB, held for it), the writer's transaction
@@ -1443,6 +1456,239 @@ pass.
   Next: inputs read in place (the tape, not copies of its columns) so a late reader does not pin a copy; indexes on
   derived relations let go with them; the allocator's 0.45 GB between live heap and footprint.
 
+### Q49. (Q19 at 3b6f4355b; Q55 on final-rerail-shape at 64ef54cb0) The matcher's `metal-tests` gates: one clause past its work limit, one coverage count short
+
+Found 2026-11-16 (0293 step 5): the gated tests had not compiled (`LoweredWave::roots_metal` was private to the
+transducer crate, which the engine's `waves::matches` test calls; now `pub`). Compiled, two fail, the same in 15,
+16 and 16z, and the first the same at 6afcddb0a, before the device read format 16:
+
+- `lowered_clauses_find_the_same_roots_on_the_resident_interpreter`: 114 of 122 clauses equal, 7 refused, and
+  `ruff-d416-missing-section-name-colon/missing-colon-underlined` fails on the device (`BackendFailure`): a task's
+  status is 4, the work limit (`resident_work`), with every walk on the interpreter (`INTERPRET_ONLY`).
+- `metal_catches_a_widened_walk`: Metal and the CPU agree on every widened clause, but only 2 differ from W's
+  matcher where the test wants 3.
+
+- **The cause** (2026-11-16, after 0310): the two limits differ. The CPU charges every task against
+  `MAX_WORK_PER_TASK` (2^26, `charge_task_work`). The device's limit is the task's workspace estimate:
+  - the packed batch's `workspace_work_estimate`, and the resident `resident_work`;
+  - both are the root's subtree (its file where the program repeats) × program words × 4,096, in [4,096, 2^26].
+  
+  A small root with a long text test (D416's underlined section) passes on the CPU and fails on the device. It
+  fails the same at HEAD and before 0310 step 4 (the generated reads). Seen through `label_sink`'s status codes:
+  4 on the narrow lanes and again on the wide ones.
+- **Tradeoff for the user**: (a) the device takes the CPU's limit, so the results are equal and the estimate
+  only sizes the workspace; one lane may then run up to 2^26 steps, against the launch bound and the GPU's
+  watchdog. (b) The CPU takes the device's estimate, so both fail alike: a clause the CPU answers today fails.
+  (c) A task over its estimate goes back to the CPU, or to a later launch with the full limit: equal results,
+  and no lane runs long, at the cost of a second path. Recommended: (c), if a lane's run time must stay bounded;
+  else (a).
+- **Keep**: the device's roots equal the CPU's on every clause the device takes; a refused launch stays a refusal.
+- **Done when**: the D416 clause's work is accounted (a limit too small for its walk, or a walk that loops), and
+  the coverage test's count is explained (the pack's clauses) or met; both gates pass.
+- **Also held back by it** (2026-11-16, 0324): 16 of Metal's semantic fixtures, moved from the grid to the packed
+  JIT and ignored with "Q49" (Q19 at f15aac19d, Q55 at 64ef54cb0). In each, the device stops a task at its estimate (`WorkLimit`) where the CPU
+  interpreter does not:
+  - `accepted_witness_limits_follow_shared_predicates_and_preserve_duplicate_captures`
+  - `finite_literals_filter_before_witness_limits_across_register_and_dynamic_branches`
+  - `late_failures_invalidate_only_their_evaluation_even_after_the_witness_limit`
+  - `metal_inline_text_values_compare_long_literals_and_regexes_before_capturing`
+  - `metal_inline_text_work_is_inherited_across_successful_values_before_later_errors`
+  - `mime_properties_use_source_snapshots_and_reject_missing_captures_before_witness_limits`
+  - `operand_failures_follow_logical_paths_and_source_root_order_instead_of_arrival_or_pc_order`
+  - `ordinary_capture_operators_apply_the_complete_truth_table_at_the_assertion`
+  - `query_inline_text_values_preserve_false_paths_and_inherited_work_before_later_operands`
+  - `query_predicate_counts_preserve_complete_layouts_when_entries_are_equal`
+  - `query_text_quantifiers_preserve_empty_groups_duplicate_captures_and_transform_order`
+  - `shared_capture_operators_compare_long_utf8_spans_and_chunk_crossing_needles`
+  - `shared_capture_operators_preserve_pairing_quantifiers_empty_groups_and_properties`
+  - `shared_query_capture_text_batches_programs_and_files_without_output_directives`
+  - `transformed_candidate_rejection_precedes_accepted_witness_limits`
+  - `typed_output_preserves_late_operand_failures_without_publishing_failed_evaluations`
+
+### Q51. (Q47 at 8bfa12af6) W's reference graph parses every file a second time (39% of internal_dead_code's CPU)
+
+- **Found** (2026-11-16, t41 §2): `references::add_file` parses again with tree-sitter and runs W's
+  `calls::summarize`: 39.7 s over 3,110 files, 12.6 ms a file. The hot frames are `ts_node_child_with_descendant`
+  (tree-sitter's `parent()`, a walk from the root at every call).
+- **Done when**: the reference graph is built from the tape and facts the run already has (a rule program or the
+  transducer), with no second parse and no parent climbs; internal_dead_code's CPU drops by about that much.
+
+### Q52. (Q48 at 8bfa12af6) The memory line starves chunks without lowering the peak
+
+- **Found** (2026-11-16, t41 §3): the run's footprint is past `RUN_MB` (1 GB) early, so 455 of 498 chunk sizings
+  fell to the 8k-node minimum. `RERAIL_RUN_MB=8000` gave 34 chunks in place of 457, with the same peak (2,537 MB
+  against 2,501 MB), and cut the matcher kernels' GPU time from 5.5 s to 1.28 s.
+- **Done when**: what holds the footprint past the line is named and released or budgeted; chunk size follows the
+  device's grain on a device run; the warning "chunk sizings … cut by the run's memory line" is gone on the
+  data-layer corpus.
+
+### Q56. (Q49 at a3f9c49f2) Micro walks are root-serial on the GPU
+
+- **Found** (2026-11-16, t41 §4): `label_micro` (the loop tier) runs about 2,260 threads a dispatch, at 10 ms a
+  dispatch, while `clause_patterns` runs 17.8 M threads in 3 ms. Its walks (`desc`, `child … jump`) average 420–800
+  serial steps and reach 4,280.
+- **Done when**: a `desc kind=K` is a scan of the root's subtree range, 64 codes at a time, its groups spread over
+  threads (nothing posted, 0293 §6), and a `child` loop a segmented pass, so a walk costs its output, not its
+  length; the longest walk at s1000 is under 100 steps.
+
+### Q50. A device run's matcher launches: the host's part and the GPU's in series, and prices 3× high
+
+- **Found** (2026-11-16, t41): over 32 GPU launches, 1.76 s of host CPU and 1.28 s of GPU time ran one after the
+  other on the one GPU slot. The executor estimated the batches at 16.3 s against 5.0 s run, so 38 of 70 went to
+  the CPU.
+- **Done when**: the next launch is encoded while the GPU runs this one, and the matcher's GPU price comes from
+  measured samples.
+- **Progress** (2026-11-17, after merging oscar f15aac19d, the hub at 69fcd347d and Native-and-GPU-strata at
+  004e3fddc; s1000 internal_dead_code, the wave pinned to the GPU, format 16, load about 11):
+  - Nothing on another branch pipelines a program's launches: the GPU backend's `start` overlaps joins only
+    (`space::start`), and a program's `run` is synchronous. The merges brought 0321 (placement leans to the GPU)
+    and 0325 step 3 (the device reads relations in their blocks, no uploads).
+  - The wave's clause roots are now a rule the device reads (`ClauseRoots::Rule`, `Roots::Codes`), not lists the
+    host made by testing every node (0293 §10), and the found roots are read from the label's words by their set
+    bits. Same 97,241,194 steps and 0 findings; the lane's numbers did not move (0.31 s of job CPU), so the lists
+    were not the host's cost.
+  - The lane now: 18 launches, 1,208 ms of wall = 311 ms of host CPU + 361 ms of the label passes' command
+    buffers on the GPU + about 540 ms of waiting beyond both. The host's largest part is `gpu.size` (113 ms over
+    19 runs, the workspace sized on the host); encode and the tapes' buffers take 14 ms each. The waiting looks
+    like the one queue shared with the strata 0321 now places on the GPU; this profile cannot tell which.
+  - **The waiting found and fixed** (2026-11-17, load about 21–25): it was the lane's worker. Two submissions deep
+    (0100 §11), it kept every submission in flight until it had begun the next, but a program's `start` runs the
+    whole program (`Done`). So with two chunks' waves queued, the first's outputs went back only after the second
+    had run to its end: each wave's caller waited a whole other wave, and the lane's wall counted it twice. A
+    `Pending` now says whether it is `done`; one that is (or failed to begin) is handed back at once
+    (`exec::worker`; test `a_device_hands_back_a_submission_that_ran_as_it_began_before_the_next`). Alternating
+    runs of the same engine with and without it: the lane 0.73–0.79 s of wall against 1.09–1.20 s, and the run 2.8–2.9 s
+    against 2.9–3.3 s. The lane's wall now equals the wave's own (`== Device`), about 315 ms of GPU, 320 ms of host
+    CPU and 150 ms off a core. `RERAIL_GPU_KERNEL_TIMES` (a command buffer a kernel) was not it: without it the
+    waiting was the same.
+- **Two blockers to the overlap, found**:
+  - `rerail_metal::metal_execution_guard` (a process-wide lock from the grid's launch budget, copied from Tempo)
+    is held for a whole label run, encode through readback. A launch begun on the worker (encode and commit in
+    `start`, wait and decode in `finish`) would hold it while the worker begins the next, which then waits on the
+    same lock on the same thread. The lock must end at the commit. The label passes' own process state is behind
+    mutexes (pipelines) or test-only thread-locals; the packed program backend's arenas need checking first.
+  - `label_passes::run_in_pool` loops around `encode` (more rounds, wider lanes, deeper stacks), so its loop state
+    must move into the begun run's `finish` with the plan, which the runner does not borrow (it borrows the device
+    and the tapes only).
+- **Next**: `kernel::Program::begin` (default: run now) and the GPU backend's `start` beginning a batch of programs;
+  `MatcherWave::begin` on the GPU; the lock narrowed to the encode; `gpu.size`'s host part (the text rows and the
+  root table, rebuilt every run).
+
+### Q53. On the device, a group of 64 nodes' roots run serially in one thread, and a parent is a search (this branch's, since oscar is merged)
+
+- **Found** (2026-11-16, t41's last section, measured on oscar's f51cab698 against the hub's tree at s1000): 0293
+  §10's thread per (pass, group of 64 nodes) runs the group's roots one after another. `clause_patterns` went from
+  18.1 M threads to 186 k, and the micro kernels from 139 ms of GPU time (68.7 M steps) to 474 ms (43.9 M). 0293
+  §9's device parent is a search (format 15: back 64 nodes, then a descent from the root), where the CPU kept its
+  projections' parents (0293 §6).
+- **Done when**: a group's roots are a SIMD group's (a lane a set bit of its mask, or a scan of the masks' counts),
+  a walk's frame carries its parent where its step knew it, and the micro kernels' GPU time on the same s1000
+  matches the hub's tree's or beats it, with the host still listing nothing.
+
+- **Progress** (2026-11-16, t41 "Fixing the merged device"): roots spread over the SIMD group, the walk carries its
+  parent, and the reads are narrowed, scoped and specialized to the batch's format. The label passes went from 1,235
+  to 781 ms at format 15 and to 671 ms at format 16, against the hub tree's 292. What remains is Q57.
+
+### Q57. The device's generated reads cost 1.5× hand-written ones, and its parent is a climb (this branch's)
+
+- **Found** (2026-11-16, t41 "Fixing the merged device"):
+  - `label_micro` is 322 ms with the generated reads against 211 with hand-written format 15 ones. The generated
+    reads load a document's widths from its view and decode a column of any width.
+  - `label_micro_8` is parent climbs: 430 ms at format 15, 272 at format 16, 91 on the hub's tree with its parent
+    column.
+  - The step count is bimodal (97.2 M, or 118.1 M with deep-tier retries).
+  - The device's label tests passed with MSL that did not compile, and with a walk that lost its parent.
+- **Done when**:
+  - the reads' widths cost what constants do, by per-width variants or a column form the decode needs no branch for;
+  - a parent costs a step on the device: format 16 by default (0156, the user's decision), or a parent the walk keeps;
+  - a device test fails on a walk whose steps change (uncompilable MSL fails
+    `the_label_kernels_compile_for_every_format` since 2026-11-16);
+  - the label passes at s1000 match the hub tree's 292 ms or beat it.
+- **Progress** (2026-11-17):
+  - Format 16 is the default (0340).
+  - The generated MSL is structured control flow, not a dispatch loop (t41, "The generated code as structured
+    control flow"). That took the label passes from 710 to 349 ms, and `label_micro` from 355 to 159 ms, under the
+    hand-written reads' 211.
+  - Left: `label_micro_8`'s parent climbs (171 against the hub's 91), and the walk test.
+
+### Q63. (Q54 at 64ef54cb0) Oscar's engine stops on the data-layer corpus in `step_histograms` (to check on the merged tree)
+
+- **Found** (2026-11-16, two runs of internal_dead_code with `--metal` over the whole corpus, f51cab698):
+  `setfix.rs:3043`, `RowRef::at`, index 5 of a view row's 2 columns, from `step_histograms` in
+  `Run::exact_statistics`. The hub's tree runs the same corpus.
+- **Done when**: oscar's next hub merge runs the corpus, or the cause is found and fixed there.
+
+### Q54. (Q20 at f51cab698; Q56 on final-rerail-shape at 64ef54cb0) The CPU JIT's capture pairs compare and scan a byte a step
+
+Found 2026-11-16 (0310 step 2, moving the JIT's spans onto the tape): `native_cpu_capture_pair.rs`'s `text_equal`
+compares two captures' texts a byte an iteration, and `same_line` looks for a newline between two starts a byte an
+iteration. Both are per-byte loops, which the engine's code refuses elsewhere.
+
+- **Keep**: the pair's verdicts (equal texts, same line) as now.
+- **Done when**: both compare a word at a time over the window (or `same_line` reads the document's line table,
+  as the device's does), with no loop a byte a step.
+
+Their siblings, found later the same day (0310 steps 4 and 5):
+- `metal_batch_runtime.metal`'s `text_equal`: the Metal interpreter's and JIT's copy of the same pair test,
+  also a byte an iteration.
+- `rerail_tape_format::f16::group`: it matches a format 16 code group's bytes a byte at a time
+  (`match_groups`).
+- `metal_tape.metal`'s `f16_word` is gone with the hand port (step 4): the generated reads load words.
+
+### Q58. (Q21 at f15aac19d) The farm's mirror never removes a deleted file
+
+Found 2026-11-16 (0324, retiring the grid). A checkout's changes reach a host's copy through the farm's mirror,
+which sends changed and new files and never removes one the checkout deleted. After the grid's 151 files went
+(staged `git rm`), the host's copy still held all of them. Nothing mounted them, so builds were right. But
+`executors_are_shared`, which reads every source file, failed on the stale grid files. A deleted file that is still
+mounted somewhere would build on the host and fail here.
+
+- **Keep**: the mirror's incremental sends.
+- **Done when**: a file the checkout deleted (tracked at the host's copy's last sync, now gone) is removed from the
+  host's copy before the command runs, and a test of the mirror covers it.
+
+### Q59. (Q22 at f15aac19d) Metal's semantic fixtures on the packed JIT: refusals, failures and different results
+
+Found 2026-11-16 (0324, retiring the grid). Metal's semantic fixtures (`metal_semantic_conformance` and the phase-four
+files) compare Metal with the CPU interpreter. They ran only on the grid machine. On the packed JIT, which the
+product runs, 79 of 115 pass, 18 fail on Q49's work limit, and 18 fail in the ways below. Each is ignored with
+"Q59". The JIT itself did not change with the grid's retirement, so these differences were there before.
+
+- **Refused (`BackendCapacity`)**, where the CPU runs the batch (15). Traced (2026-11-17): the refusal is the
+  device's. A task's status 2 is `reserve_shared` finding a shared arena full (`metal_batch_runtime.metal`), and
+  `packed_batch` maps it to `BackendCapacity`. None of the host's capacity checks fires. So the arenas are sized
+  short for these batches, perhaps by Q49's estimate.
+  Four of `packed::tests` refuse the same way, and their CPU parity is still asserted (`metal()`, with "Q59"):
+  `scm_quantified_runs_preserve_each_distinct_middle_capture`, `cpu_jit_compiles_general_scm_control_flow`,
+  `scm_host_predicates_filter_text_kinds_lines_and_relations` and
+  `all_backends_execute_every_verified_instruction_and_mode`.
+  - `corpus_optional_test_bodies_and_regex_injections_match_cpu`
+  - `finite_literal_register_work_stays_broad_across_programs_and_files`
+  - `inputs_absent_field_uses_shared_facts_for_wide_and_file_local_inputs`
+  - `inputs_adaptive_pages_retry_from_the_last_published_checkpoint_without_duplicates`
+  - `inputs_bounded_page_plan_continues_after_its_descriptor_ring_is_full`
+  - `inputs_bounded_paths_keep_unique_children_in_registers_and_branching_children_in_frontiers`
+  - `inputs_bounded_semantic_ranges_preserve_late_failures_limits_and_raw_order`
+  - `inputs_compact_stage_capture_predicates_use_the_correct_capture_generation`
+  - `inputs_compact_stage_capturing_sibling_closures_preserve_maximal_prefixes`
+  - `inputs_compact_stage_query_large_values_follow_maximal_capture_selection`
+  - `inputs_compact_stage_waves_match_cpu_navigation_and_control_flow`
+  - `inputs_nested_optional_type_captures_preserve_raw_candidate_ordinals`
+  - `inputs_shared_root_predicates_intern_values_and_need_no_frontier_records`
+  - `inputs_small_automata_defer_long_inputs_into_shared_value_frontiers`
+  - `shared_ancestor_sets_exclude_self_cross_scan_groups_and_file_boundaries`
+- **Failed (`BackendFailure`)** in output directives (2): transformed text snapshots, and a selection with
+  zero-length MIME values.
+  - `selection_handles_empty_groups_missing_targets_and_zero_length_mime_values`
+  - `transformed_text_snapshots_and_utf8_offsets_preserve_directive_order`
+- **Different results** (3): the same outputs up to a point, then a difference (not yet read).
+  - `bounded_body_admission_preserves_guarded_capture_identity_and_multiplicity`
+  - `inputs_captured_membership_contains_and_ancestors_yield_with_exact_quantifiers`
+  - `inputs_repeated_disjoint_alternatives_share_a_bounded_capture_tail`
+
+- **Keep**: the fixtures' CPU results as the oracle.
+- **Done when**: each fixture passes on the packed JIT, or its difference is shown to be the CPU's error.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
@@ -1476,3 +1722,19 @@ pass.
    than removing its cause; (c) leave it until the cache evicts those entries (LRU at the 100 GiB cap).
    Recommended: (a), run once at nice 19.
    **Answered (2026-11-16): (c), leave it.** The cause is fixed in the farm; the replays end as the entries age out.
+
+### Q55. Relations are blocks the CPU and GPU read in place (0325): steps 4–7
+
+Built: steps 1 and 2 (417256f3a, b84b98d3e, 061fbbfca, 640ce085c) and step 3 (8aee765b0, 71b1ff602, 27d67f1e2,
+ffed8d55b). The device reads flat relations, relations with dead rows and the vtab's relations in their blocks, and
+makes every chunk view itself. On hogql, uploads read on the host are 5.6 MB (was 160 MB of relations and 84 MB of
+views). Left, in order:
+
+1. Step 4: heads written in place by count, reserve and write, so no rows come back (`rows back into the store`
+   is 115–150 ms of the device's host CPU on hogql).
+2. Step 5: indexes are the relation's (`rel_group`), so `rel_hash` per binding goes.
+3. Step 6: placement drops the upload and row-back prices, and `GPU_BIAS` is refitted.
+4. Step 7: the output's, frames' and memo's rows, and the reach closure's (`Closed`, 5.6 MB on hogql).
+
+Open: the sources' blocks put the peak resident size up 25 MB (CPU binding) to 50 MB (Metal) on hogql. And a
+block is given back only with its last part (0325, step 2's open item).

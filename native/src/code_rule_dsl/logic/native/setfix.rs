@@ -44,6 +44,7 @@ pub mod ordered;
 pub mod runs;
 use runs::{Index, RowData};
 mod rows;
+pub use rows::{Facts, InBlock, Row};
 use rows::Rows;
 /// A column's statistics in a fixed size (decision 0112): no index is kept for them.
 pub mod sketch;
@@ -498,7 +499,7 @@ impl Rel {
     fn new(table: &str, types: &[u8]) -> Rel {
         let k = types.len();
         assert!(k <= MAX_KEY, "{table}: {k} columns, past the {MAX_KEY} an order is probed with");
-        Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Rows::default(), stored: 0, lo: 0, hi: 0, wave: 0,
+        Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Rows::new(k), stored: 0, lo: 0, hi: 0, wave: 0,
               idx: vec![Index::new((0..k).collect())], serves: vec![Vec::new()], indexed: 0, pending: HashTable::new(),
               sketches: vec![Sketch::default(); k], dead: Vec::new(), ndead: 0, summaries: Default::default(), sorted: Default::default(), from: None,
               level: Vec::new(), lbase: 0, leveled: true, stats: None, stats_dead: Vec::new(), lat: None }
@@ -543,7 +544,7 @@ impl Rel {
         let mut row = vec![0i64; k];
         for (key, agg) in lat.group(rows, k) {
             let held = lat.at.get(&key).copied();
-            let old = held.map(|id| self.data.row(id, k)[lat.keys]);
+            let old = held.map(|id| self.data.value(id, k, lat.keys));
             let mut v = match old {
                 None => agg,
                 Some(o) if o == top => top,
@@ -605,7 +606,7 @@ impl Rel {
             let mut sketches = vec![Sketch::default(); k];
             for id in (0..old.n as u32).filter(|&id| !is_dead(&old.dead, id)) {
                 for (c, sk) in sketches.iter_mut().enumerate() {
-                    sk.add(old.rows.row(id, k)[c]);
+                    sk.add(old.rows.value(id, k, c));
                 }
             }
             (ix, sketches)
@@ -675,7 +676,9 @@ impl Rel {
     fn dead(&self, id: u32) -> bool {
         is_dead(&self.dead, id)
     }
-    fn row(&self, id: usize) -> &[i64] { self.data.row(id as u32, self.k) }
+    fn row(&self, id: usize) -> Row { self.data.row(id as u32, self.k) }
+    /// Row `id`'s value in column `c`, read where it lies.
+    fn value(&self, id: usize, c: usize) -> i64 { self.data.value(id as u32, self.k, c) }
     /// A live row equal to `row`, not one of `skip`: in the first order, or pushed since the last wave (`pending`).
     fn find(&self, row: &[i64], skip: impl Fn(u32) -> bool) -> Option<u32> {
         let (data, k) = (&self.data, self.k);
@@ -797,8 +800,8 @@ impl Rel {
     fn indexed_to_n(&mut self) {
         let _s = (self.n - self.indexed >= SPANNED_ROWS).then(|| crate::code_rule_dsl::logic::profile::span(|| "rows sketched and counted (indexed_to_n)".into()));
         let (data, k, lo, hi) = (&self.data, self.k, self.indexed, self.n);
-        let sketch = |c: usize, sk: &mut Sketch| for id in lo..hi { sk.add(data.row(id as u32, k)[c]); };
-        let count = |stats: &mut Option<KeptStats>| if let Some(stats) = stats { stats.0.delta(data.range(lo, hi, k), &[], k); };
+        let sketch = |c: usize, sk: &mut Sketch| for id in lo..hi { sk.add(data.value(id as u32, k, c)); };
+        let count = |stats: &mut Option<KeptStats>| if let Some(stats) = stats { stats.0.delta(&data.to_vec(lo, hi, k), &[], k); };
         // Many rows: each column's sketch, and the statistics, a job of its own (decision 0294). A sketch takes its
         // column's values in the rows' order, as one thread gives them (its exact counts give way in that order).
         if hi - lo >= SPANNED_ROWS && crate::threads::max() > 1 {
@@ -833,7 +836,7 @@ impl Rel {
                 changed &= changed - 1;
                 if id < self.indexed {
                     let row = self.data.row(id as u32, k);
-                    if now >> (id % 64) & 1 == 1 { minus.extend_from_slice(row) } else { plus.extend_from_slice(row) }
+                    if now >> (id % 64) & 1 == 1 { minus.extend_from_slice(&row) } else { plus.extend_from_slice(&row) }
                 }
             }
         }
@@ -997,12 +1000,12 @@ impl Fresh {
         let tagged = runs::tagged(cols, k);
         let data = &self.data;
         let cmp = |a: u32, b: u32| -> std::cmp::Ordering {
-            runs::cmp_vals(cols, tagged, data.row(a, k), data.row(b, k))
+            runs::cmp_ids(data, k, cols, tagged, a, b)
         };
         let mut order: Vec<u32> = (settled as u32..n as u32).collect();
         runs::presorted::site(runs::presorted::FRESH, n - settled, |i| cmp((settled + i - 1) as u32, (settled + i) as u32).is_gt());
         let sort = |v: &mut [u32]| {
-            runs::sort_keyed(v, tagged, cols.len(), |q, i| data.row(q, k)[cols[i]], &cmp);
+            runs::sort_keyed(v, tagged, cols.len(), |q, i| data.value(q, k, cols[i]), &cmp);
         };
         if self.lost || !runs::known_beyond_runs() {
             sort(&mut order);
@@ -1027,7 +1030,7 @@ impl Fresh {
         let mut held = vec![false; order.len()];
         if rel.indexed < rel.n {
             for (h, &q) in held.iter_mut().zip(&order) {
-                *h = rel.contains(data.row(q, k));
+                *h = rel.contains(&data.row(q, k));
             }
         }
         rel.idx[0].held_sorted(&rel.data, k, data, &order, |id| !rel.dead(id), &mut held);
@@ -1040,7 +1043,7 @@ impl Fresh {
                 (s, kept) = (s + 1, kept + 1);
             }
             if !h && !(s < settled && cmp(s as u32, q).is_eq()) {
-                out.extend_from_slice(data.row(q, k));
+                out.extend_from_slice(&data.row(q, k));
                 kept += 1;
             }
         }
@@ -1300,8 +1303,8 @@ impl Levels {
             let (cand, live) = (&store.rels[ln.cand], &store.rels[ln.live]);
             ln.decided.resize(cand.n, false);
             for id in ln.seen..cand.n {
-                let level = live.id_of(cand.row(id), &ln.was_dead).filter(|_| live.level.len() == live.n).map(|lid| live.level[lid as usize]);
-                if levels_traced(cand.row(id)) { eprintln!("RERAIL_LEVELS_TRACE {} {:?}: candidate, level {level:?}, last {:?}", cand.table, cand.row(id), self.last); }
+                let level = live.id_of(&cand.row(id), &ln.was_dead).filter(|_| live.level.len() == live.n).map(|lid| live.level[lid as usize]);
+                if levels_traced(&cand.row(id)) { eprintln!("RERAIL_LEVELS_TRACE {} {:?}: candidate, level {level:?}, last {:?}", cand.table, cand.row(id), self.last); }
                 match level {
                     Some(l) if self.last.is_none_or(|last| l > last) => self.heap.push(std::cmp::Reverse((l, li, id as u32))),
                     _ => ln.decided[id] = true,
@@ -2507,7 +2510,7 @@ pub type Histogram = (u64, rustc_hash::FxHashMap<u64, u64>);
 
 /// A histogram's key for one row's key columns (`values`): the value itself for one column; for several, a 64-bit mix
 /// of them (two keys of a million rows meet once in 10^7 histograms), so a key is 8 bytes in place, not a vector of
-/// its own (Q55: 0.24 GB of `Vec` keys at a cold run's peak, 300 files). Both sides of a pair key alike.
+/// its own (Q74: 0.24 GB of `Vec` keys at a cold run's peak, 300 files). Both sides of a pair key alike.
 fn histogram_key(values: impl Iterator<Item = Option<i64>>) -> Option<u64> {
     let mut h: u64 = 0;
     let mut n = 0;
@@ -2556,7 +2559,7 @@ pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, whole: bool, 
         let stride = match src {
             Src::Delta(r) | Src::Full(r) | Src::FullMulti(r, _) => {
                 let rel = &store.rels[*r];
-                count(rel.n, &|i, c| (!rel.dead(i)).then(|| rel.row(i as usize)[c]))
+                count(rel.n, &|i, c| (!rel.dead(i)).then(|| rel.value(i as usize, c)))
             }
             Src::In(rel, _) => count(rel.len(), &|i, c| (!is_dead(&rel.dead, i)).then(|| rel.at(i as usize).read().at(c))),
         };
@@ -2970,7 +2973,7 @@ unsafe impl VTabCursor for RelCursor {
         let vals: Vec<i64> = keys.iter().map(|&(_, k)| k).collect();
         let (cands, _) = r.probe(&cols, &vals, self.delta);
         let ids = &mut self.ids;
-        cands.any(|id| { if !r.dead(id) && keys.iter().all(|&(c, k)| r.row(id as usize)[c] == k) { ids.push(id) } false });
+        cands.any(|id| { if !r.dead(id) && keys.iter().all(|&(c, k)| r.value(id as usize, c) == k) { ids.push(id) } false });
         Ok(())
     }
     fn next(&mut self) -> Result<()> { self.pos += 1; Ok(()) }
@@ -2978,7 +2981,7 @@ unsafe impl VTabCursor for RelCursor {
     fn column(&self, ctx: &mut VContext, i: c_int) -> Result<()> {
         let s = self.store.read().unwrap();
         let r = &s.rels[self.rel];
-        let v = r.row(self.ids[self.pos] as usize)[i as usize];
+        let v = r.value(self.ids[self.pos] as usize, i as usize);
         ctx.set_result(v)
     }
     fn rowid(&self) -> Result<i64> { Ok(self.ids[self.pos] as i64) }
@@ -3172,7 +3175,7 @@ impl View {
 }
 /// One row of an input relation: a slice of its flat rows, or a row of its view.
 #[derive(Clone, Copy)]
-pub enum RowRef<'a> { Flat(&'a [i64]), View(&'a View, usize), Source(&'a View, usize), Read([i64; READ], usize) }
+pub enum RowRef<'a> { Flat(&'a [i64]), Rows(&'a rows::Rows, u32, usize), View(&'a View, usize), Source(&'a View, usize), Read([i64; READ], usize) }
 /// The widest view row read whole (`RowRef::read`); a wider one is read a value at a time.
 const READ: usize = 8;
 impl<'a> RowRef<'a> {
@@ -3180,6 +3183,7 @@ impl<'a> RowRef<'a> {
     pub fn at(self, c: usize) -> i64 {
         match self {
             RowRef::Flat(r) => r[c],
+            RowRef::Rows(r, id, k) => r.value(id, k, c),
             RowRef::View(v, id) => v.src.value(v.ids.as_ref().map_or(id, |ids| ids[id] as usize), v.cols[c]),
             RowRef::Source(v, row) => v.src.value(row, v.cols[c]),
             RowRef::Read(vals, _) => vals[c],
@@ -3479,9 +3483,7 @@ pub fn retain(conn: impl Scoped, table: &str, mut rows: Vec<Vec<i64>>, types: Ve
 /// (the reach index, decision 0119) is probed through the source's own lookups, never copied into rows.
 pub fn hold_source(conn: impl Scoped, table: &str, src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, types: Vec<u8>) {
     let conn = conn.db();
-    let k = types.len();
-    let view = View { src, cols: (0..k).collect(), ids: None, eqs: Vec::new() };
-    let rel = Arc::new(InRel { k, n: 0, rows: Rows::default(), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
+    let rel = InRel::over_source(src, types);
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
     DERIVED.lock(conn.at()).insert((conn.at(), table.to_owned()), rel);
@@ -3524,7 +3526,7 @@ pub fn kept_rows(conn: &Connection, table: &str) -> Option<(Vec<u8>, Vec<i64>, u
         if rel.ndead > 0 && is_dead(&rel.dead, id) {
             continue;
         }
-        out.extend_from_slice(rel.rows.row(id, k));
+        out.extend_from_slice(&rel.rows.row(id, k));
     }
     Some((rel.types.clone(), out, rel.rows()))
 }
@@ -3543,7 +3545,7 @@ impl InRel {
     /// A relation of `rows` (flat, `types.len()` values each) an earlier run kept (decision 0077 §4), in no table.
     pub fn kept(types: Vec<u8>, rows: Vec<i64>, n: usize) -> Arc<InRel> {
         let k = types.len();
-        Arc::new(InRel { k, n, rows: Rows::frozen(rows, n), view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None })
+        Arc::new(InRel { k, n, rows: Rows::frozen(rows, n, k), view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None })
     }
     /// Its columns' value types (the engine's codes).
     pub fn types(&self) -> &[u8] {
@@ -3554,13 +3556,13 @@ impl InRel {
         let k = types.len();
         let n = rows.len();
         let flat: Vec<i64> = rows.iter().flat_map(|r| r.iter().copied()).collect();
-        Arc::new(InRel { k, n, rows: Rows::frozen(flat, n), view: None, base: false, types, stored: n, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None })
+        Arc::new(InRel { k, n, rows: Rows::frozen(flat, n, k), view: None, base: false, types, stored: n, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None })
     }
     /// A relation of `n` rows, flat (`types.len()` values each), as a stored frame gives them (t33 K4): read as a
     /// relation the run derived.
     pub fn from_flat(rows: Vec<i64>, n: usize, types: Vec<u8>) -> Arc<InRel> {
         let k = types.len();
-        Arc::new(InRel { k, n, rows: Rows::frozen(rows, n), view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None })
+        Arc::new(InRel { k, n, rows: Rows::frozen(rows, n, k), view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None })
     }
     /// `from_flat`'s relation with each row's level (decision 0090), as a frame of its levels gives them: `None` when
     /// they are not one per row.
@@ -3931,7 +3933,7 @@ impl InRel {
             for &id in &sample {
                 let r = self.row(id as usize);
                 if dedup {
-                    got_now += usize::from(find_row(&self.chains, rows, k, r, |x| is_dead(&self.dead, x)).is_some());
+                    got_now += usize::from(find_row(&self.chains, rows, k, &r, |x| is_dead(&self.dead, x)).is_some());
                     continue;
                 }
                 let exact = self.chains.iter().find(|ix| ix.cols == *shape);
@@ -4375,7 +4377,7 @@ impl InRel {
         match &self.from {
             Some(Origin::Based { at: a, n }) if *a == old.at && *n == old.n => {}
             Some(Origin::Compacted { at: a, old_n, kept, removed }) if *a == old.at && *old_n == old.n => {
-                let added = (*kept..self.n).filter(|&id| !is_dead(&self.dead, id as u32)).flat_map(|id| self.row(id).iter().copied()).collect();
+                let added = (*kept..self.n).filter(|&id| !is_dead(&self.dead, id as u32)).fold(Vec::new(), |mut v, id| { v.extend_from_slice(&self.row(id)); v });
                 return Some((added, removed.clone()));
             }
             _ => return None,
@@ -4387,14 +4389,14 @@ impl InRel {
                 let id = w * 64 + new.trailing_zeros() as usize;
                 new &= new - 1;
                 if id < old.n {
-                    removed.extend_from_slice(self.row(id));
+                    removed.extend_from_slice(&self.row(id));
                 }
             }
         }
         let mut added = Vec::with_capacity((self.n - old.n) * k);
         for id in old.n..self.n {
             if !is_dead(&self.dead, id as u32) {
-                added.extend_from_slice(self.row(id));
+                added.extend_from_slice(&self.row(id));
             }
         }
         Some((added, removed))
@@ -4415,7 +4417,7 @@ impl InRel {
         match &self.from {
             Some(Origin::Based { at: a, n }) if *a == at && *n == old.n => {}
             Some(Origin::Compacted { at: a, old_n, kept, removed }) if *a == at && *old_n == old.n => {
-                let added = (*kept..self.n).filter(|&id| !is_dead(&self.dead, id as u32)).flat_map(|id| self.row(id).iter().copied()).collect();
+                let added = (*kept..self.n).filter(|&id| !is_dead(&self.dead, id as u32)).fold(Vec::new(), |mut v, id| { v.extend_from_slice(&self.row(id)); v });
                 return Some((added, removed.clone()));
             }
             _ => return None,
@@ -4427,14 +4429,14 @@ impl InRel {
                 let id = w * 64 + new.trailing_zeros() as usize;
                 new &= new - 1;
                 if id < old.n {
-                    removed.extend_from_slice(self.row(id));
+                    removed.extend_from_slice(&self.row(id));
                 }
             }
         }
         let mut added = Vec::with_capacity((self.n - old.n) * k);
         for id in old.n..self.n {
             if !is_dead(&self.dead, id as u32) {
-                added.extend_from_slice(self.row(id));
+                added.extend_from_slice(&self.row(id));
             }
         }
         Some((added, removed))
@@ -4454,7 +4456,7 @@ impl InRel {
         ix.each_group(data, k, 1, |ids| {
             let v = data.row(ids.first(), k)[c];
             firsts.clear();
-            firsts.extend(ids.iter().filter(|&id| !is_dead(&self.dead, id)).map(|id| data.row(id, k)[0]));
+            firsts.extend(ids.iter().filter(|&id| !is_dead(&self.dead, id)).map(|id| data.value(id, k, 0)));
             if !firsts.is_empty() {
                 visit(v, &firsts);
             }
@@ -4477,14 +4479,14 @@ impl InRel {
         let mut out = Vec::with_capacity((self.n - self.ndead) * self.k);
         for id in 0..self.n {
             if !is_dead(&self.dead, id as u32) {
-                out.extend_from_slice(self.row(id));
+                out.extend_from_slice(&self.row(id));
             }
         }
         Some(out)
     }
     /// No rows, `k` columns.
     fn empty(k: usize) -> InRel {
-        InRel { k, n: 0, rows: Rows::default(), view: None, base: false, types: vec![b'i'; k], stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None }
+        InRel { k, n: 0, rows: Rows::new(k), view: None, base: false, types: vec![b'i'; k], stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None }
     }
     /// Rows, levels held, and whether it is a view (`RERAIL_LEVELS_WHY`).
     pub fn levels_shape(&self) -> (usize, usize, bool) {
@@ -4500,12 +4502,29 @@ impl InRel {
         match &self.view { Some(v) if v.ids.is_none() => v.src.len(), _ => self.n }
     }
     /// A flat relation's row (a derived one: views are base inputs, or an index's relation, `hold_source`).
-    pub fn row(&self, id: usize) -> &[i64] { self.rows.row(id as u32, self.k) }
+    pub fn row(&self, id: usize) -> Row { self.rows.row(id as u32, self.k) }
+    /// A flat relation's rows in one block, for a reader that binds its block (the device, decision 0325): none for
+    /// a view, a relation with dead rows (a reader skips no rows yet) or no columns.
+    /// A relation read in place from every row of `src`, its columns in order (`hold_source`).
+    pub fn over_source(src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, types: Vec<u8>) -> Arc<InRel> {
+        let k = types.len();
+        let view = View { src, cols: (0..k).collect(), ids: None, eqs: Vec::new() };
+        Arc::new(InRel { k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None })
+    }
+    pub fn in_block(&self) -> Option<InBlock> {
+        if self.view.is_some() || self.k == 0 {
+            return None;
+        }
+        let b = if self.ndead > 0 { self.rows.in_block_dead(&self.dead) } else { self.rows.in_block() };
+        b.filter(|b| b.rows as usize == self.n)
+    }
+    /// A flat relation's row `id`'s value in column `c`, read where it lies.
+    pub fn value(&self, id: usize, c: usize) -> i64 { self.rows.value(id as u32, self.k, c) }
     /// Row `id`'s values, flat or read from its view.
-    pub fn values(&self, id: usize) -> std::borrow::Cow<'_, [i64]> {
+    pub fn values(&self, id: usize) -> Row {
         match &self.view {
-            None => std::borrow::Cow::Borrowed(self.row(id)),
-            Some(_) => { let r = self.at(id); std::borrow::Cow::Owned((0..self.k).map(|c| r.at(c)).collect()) }
+            None => self.row(id),
+            Some(_) => { let r = self.at(id).read(); Row::from_fn(self.k, |c| r.at(c)) }
         }
     }
     /// The source a derived relation is read from in place, every row (`hold_source`); `None` for rows held flat.
@@ -4514,7 +4533,7 @@ impl InRel {
     }
     #[inline]
     pub fn at(&self, id: usize) -> RowRef<'_> {
-        match &self.view { Some(v) => RowRef::View(v, id), None => RowRef::Flat(self.rows.row(id as u32, self.k)) }
+        match &self.view { Some(v) => RowRef::View(v, id), None => RowRef::Rows(&self.rows, id as u32, self.k) }
     }
     /// For a key of several columns over a view, the most selective column the source indexes (sorted, or by its
     /// lookup) with at most `LEAD_MATCHES` rows a value: its position in `cols`, and whether sorted.
@@ -4566,7 +4585,7 @@ impl InRel {
         }
         let k = self.k;
         let data = &self.rows;
-        let doc = |id: u32| data.row(id, k)[0] >> 32;
+        let doc = |id: u32| data.value(id, k, 0) >> 32;
         let live = (self.n - self.ndead) as i64;
         let mut out = Vec::with_capacity(k);
         let mut docs: Vec<i64> = Vec::new();
@@ -4724,7 +4743,7 @@ fn input_of(conn: impl Scoped, spec: &InputKey, syms: &mut Interner) -> Result<A
     if base && (types.iter().all(|&t| t == b'i') || !table.starts_with("main.")) {
         if let Some(view) = view(conn, &table, &cols) {
             let n = view.ids.as_ref().map_or(0, Vec::len);
-            let rel = Arc::new(InRel { k: types.len(), n, rows: Rows::default(), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
+            let rel = Arc::new(InRel { k: types.len(), n, rows: Rows::new(types.len()), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
             LOADS.lock().unwrap()[0].0 += thread_cpu() - c0;
             if env_set!("RDL_PROFILE") {
                 eprintln!("      view of {n} rows in {:.1} ms: SELECT {cols} FROM {table}", t0.elapsed().as_secs_f64() * 1e3);
@@ -4740,7 +4759,7 @@ fn input_of(conn: impl Scoped, spec: &InputKey, syms: &mut Interner) -> Result<A
         for (i, &t) in types.iter().enumerate() { rows.push(read_value(r.get_ref(i)?, t, syms).map_err(|e| err(format!("{table}: {e}")))?); }
         n += 1;
     }
-    let rel = Arc::new(InRel { k: types.len(), n, rows: Rows::frozen(rows, n), view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
+    let rel = Arc::new(InRel { k: types.len(), n, rows: Rows::frozen(rows, n, types.len()), view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
     {
         let l = &mut LOADS.lock().unwrap()[usize::from(!base)];
         l.0 += thread_cpu() - c0;
@@ -6010,7 +6029,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     enum Rows<'a> { In(&'a InRel), Comp(&'a Rel), Source(&'a View) }
     impl<'a> Rows<'a> {
         fn row(self, id: u32) -> RowRef<'a> {
-            match self { Rows::In(r) => r.at(id as usize).read(), Rows::Comp(r) => RowRef::Flat(r.row(id as usize)), Rows::Source(v) => RowRef::Source(v, id as usize).read() }
+            match self { Rows::In(r) => r.at(id as usize).read(), Rows::Comp(r) => RowRef::Rows(&r.data, id, r.k), Rows::Source(v) => RowRef::Source(v, id as usize).read() }
         }
         /// A row deleted in place (`Rel::based`), which no step reads.
         #[inline]
@@ -7107,7 +7126,7 @@ pub mod posted_tests {
                 let id = (0..rel.n as u32).find(|&id| !rel.dead(id)).expect("a row");
                 assert!(kill(&mut rel.dead, id));
                 rel.ndead += 1;
-                set.remove(rel.row(id as usize));
+                set.remove(&*rel.row(id as usize));
             }
         }
         let live: std::collections::BTreeSet<Vec<i64>> = (0..rel.n).filter(|&id| !rel.dead(id as u32)).map(|id| rel.row(id).to_vec()).collect();

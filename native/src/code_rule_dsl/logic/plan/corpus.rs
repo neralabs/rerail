@@ -314,9 +314,9 @@ pub struct Report {
     /// Of those, the strata passed on as quiet, and the relations they held with no column measured (`Outcome::quiet`).
     pub cross_quiet: (usize, usize),
     /// The cross-file relations handed off as the run went, their frames made once no later stratum read them and
-    /// their rows let go (Q55): a run not driven by deltas.
+    /// their rows let go (Q74): a run not driven by deltas.
     pub cross_handed: usize,
-    /// The cross-file inputs let go after their last reader, their frames written before the run (Q55).
+    /// The cross-file inputs let go after their last reader, their frames written before the run (Q74).
     pub cross_unloaded: usize,
     /// A session's run: the cross part's inputs that changed, and why its strata derived again were (each count).
     pub cross_changed: Vec<String>,
@@ -2438,9 +2438,9 @@ const RUN_MB: f64 = 1024.0;
 /// The fewest nodes a chunk is sized to: a smaller one costs more in each chunk's fixed work than it saves.
 const MIN_CHUNK_NODES: usize = 8_192;
 /// The least a chunk evaluating beside others is sized to (`RERAIL_CHUNK_FLOOR_MB`): fewer chunks at once, not
-/// smaller ones, below it (Q55).
+/// smaller ones, below it (Q74).
 const CHUNK_FLOOR_MB: f64 = 64.0;
-/// A chunk's growth that sizes the next (Q55): a smaller one is within the pages freed before it, which it reused.
+/// A chunk's growth that sizes the next (Q74): a smaller one is within the pages freed before it, which it reused.
 const CHUNK_CREDIBLE_MB: usize = 16;
 
 #[allow(clippy::too_many_arguments)]
@@ -4188,7 +4188,7 @@ fn run_observed(
     // counts, a session's inputs), which an edit of any rule changes. Under the plan the entries are kept under
     // (`plan_digest`: the engine build, the grammar, the node ids' scheme), as what it keeps counts those entries:
     // another build's keeper counted entries this build's plan does not hold, so it could not count a file out
-    // (Q52), and its counts are of rows this build may make otherwise.
+    // (Q71), and its counts are of rows this build may make otherwise.
     let memo_whole = memo::plan_digest(&memo::with_modules(memo::with_tree_demand(memo_program, memo_tree_stats), &renamed_modules));
     // The frames' space: the plan without the program (decision 0225 §2), so an entry made before a rule's edit is
     // read for the relations the edit did not reach (`memo_ids`).
@@ -4902,7 +4902,7 @@ fn run_observed(
         }
     }
     // The roots its requests may read, watched before the first wave (`World::watch`): a `World` made inside the
-    // fixpoint would otherwise read the observer's store there (decision 0104; Q49).
+    // fixpoint would otherwise read the observer's store there (decision 0104; Q68).
     if loading.is_some() {
         world::World::watch(root, &prog);
     }
@@ -4912,7 +4912,7 @@ fn run_observed(
     let memo_rows: BTreeSet<String> = split.exports.iter().cloned()
         .chain(stored.iter().map(|(r, _)| memo::base_key(r))).collect();
     let memo_row_needed = |r: &str| r == OWN_DOCS || r == memo::COVERED || memo_rows.contains(r)
-        || (memo_tree_stats && (r == OWN_KINDS || r == OWN_EDGES || r.starts_with(OWN_POSTINGS)));
+        || (memo_tree_stats && (r == OWN_KINDS || r == OWN_EDGES || r == OWN_FIELDS || r.starts_with(OWN_POSTINGS)));
     crate::code_rule_dsl::logic::profile::decision("memo consumer projection", || format!(
         "{} demanded relations; tree distributions {}", memo_rows.len(), if memo_tree_stats { "retained" } else { "omitted" }));
     let has_base = |e: &memo::Entry| e.rows.contains_key(OWN_DOCS) && stored.iter().all(|(rel, _)| e.rows.contains_key(&memo::base_key(rel)));
@@ -5075,6 +5075,9 @@ fn run_observed(
             Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
         };
         if let Some(references) = &references {
+            // W's reference graph parses the file again with tree-sitter and summarizes it in Rust: work with no
+            // device form, named apart from the tape and facts it sits beside.
+            let _refs = crate::code_rule_dsl::logic::profile::span(|| "W's reference graph (tree-sitter again)".into());
             references.add(*d as u32, path, &file.source, &facts)?;
         }
         // The tape, in the file's context: kept only for a program that reads W's values, f-string trees or string
@@ -5222,7 +5225,7 @@ fn run_observed(
         /// At most this many documents built ahead of the next taken, and chunks projected at once beside the one
         /// waiting for the main thread.
         ahead: usize,
-        /// Chunks projected ahead at most: the chunks allowed at once (Q55), and one more.
+        /// Chunks projected ahead at most: the chunks allowed at once (Q74), and one more.
         in_flight: &'a std::sync::atomic::AtomicUsize,
         /// Without the memo, two (the one evaluating and the next); with it, the allowed count's.
         fixed_in_flight: Option<usize>,
@@ -5425,7 +5428,7 @@ fn run_observed(
             // The next document is taken unless the front of what is cut holds the builder: ready and waiting for the
             // main thread, or more than `in_flight` chunks projecting.
             let projecting = c.out.iter().filter(|o| matches!(o, Out::Projecting(..))).count();
-            // Projected ahead of the main thread at most as many as evaluate at once (Q55): before a chunk is measured
+            // Projected ahead of the main thread at most as many as evaluate at once (Q74): before a chunk is measured
             // that is one, so the chunks are not all cut to the probe's size, each a whole batch held.
             let in_flight = self.fixed_in_flight.unwrap_or_else(|| self.in_flight.load(std::sync::atomic::Ordering::Relaxed) + 1);
             let held = match c.out.front() {
@@ -5544,8 +5547,8 @@ fn run_observed(
     // How many chunks evaluate at once: `RERAIL_CHUNKS_AT_ONCE`, else the pool's threads less the main thread's (which
     // files them), at most 8. One is the main thread alone, on its own connection, as before.
     let chunks_at_once = std::env::var("RERAIL_CHUNKS_AT_ONCE").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or_else(|| crate::threads::max().saturating_sub(1).min(8)).max(1);
-    crate::code_rule_dsl::logic::profile::decision("chunks at once (decision 0254)", || format!("up to {chunks_at_once} chunks evaluate at once, each on a connection of its own, as many as the run's headroom holds (Q55); the main thread files them in order"));
-    // How many may be in flight now (Q55): one until a chunk's measured growth sizes the rest, then as many as share
+    crate::code_rule_dsl::logic::profile::decision("chunks at once (decision 0254)", || format!("up to {chunks_at_once} chunks evaluate at once, each on a connection of its own, as many as the run's headroom holds (Q74); the main thread files them in order"));
+    // How many may be in flight now (Q74): one until a chunk's measured growth sizes the rest, then as many as share
     // the run's headroom at `CHUNK_FLOOR_MB` or more each (the chunk-size decision sets it). The chunks in flight
     // together stay within it: 8 chunks each sized to the whole headroom took a cold run at 300 files to 2.3 GB.
     let at_once_allowed = std::sync::atomic::AtomicUsize::new(1);
@@ -6172,6 +6175,11 @@ fn run_observed(
             } else {
                 format!("a chunk of {chunk_nodes_built} nodes added {added} MB, under {CHUNK_CREDIBLE_MB} MB (pages freed before it reused): it sizes nothing; the next are about {next} nodes, {allowed} at once")
             });
+            // The memory line, not the chunk's own size, set it: every stratum and matcher launch runs per chunk, so
+            // a cut chunk is a smaller grain for the device and more runs for the same work (the profile's warnings).
+            if headroom < chunk / 4.0 {
+                crate::code_rule_dsl::logic::profile::decision("chunk cut by the run's memory line", || format!("under a quarter of {chunk} MB left by RERAIL_RUN_MB ({} MB)", env("RERAIL_RUN_MB", RUN_MB)));
+            }
         }
         let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
         // Per document of the chunk, what it hands on (`memo::Entry`), when the run is memoised. A row is its
@@ -6653,7 +6661,7 @@ fn run_observed(
                 bell.ring();
             });
             flight.push_back((ctx, slot));
-            // As many in flight as the run's headroom holds (Q55), at most `k`.
+            // As many in flight as the run's headroom holds (Q74), at most `k`.
             while flight.len() >= at_once_allowed.load(std::sync::atomic::Ordering::Relaxed).clamp(1, k) {
                 file_front(&mut flight, process)?;
             }
@@ -8437,7 +8445,7 @@ fn run_observed(
                     let verify_stats = std::env::var_os("RERAIL_CROSS_VERIFY").map(|_| stats.clone());
                     let s = span("plan and evaluate");
                     // A derived relation derived again (no delta: every one of a cold run's, a new build's first) is handed
-                    // off once no later stratum reads it, its frame made then, and the engine drops its rows (Q55): only
+                    // off once no later stratum reads it, its frame made then, and the engine drops its rows (Q74): only
                     // where the frames are written, and not one the caller reads after the run or a check reads. One
                     // maintained by a delta is held, and written as its delta at the end. A run that keeps nothing (no
                     // clean relation: a cold run, a new build's first) lets its inputs go too: their frames written
@@ -8553,8 +8561,8 @@ fn run_observed(
                     cross_handed += handed.len();
                     cross_unloaded += unloaded.len();
                     if hand_off {
-                        crate::code_rule_dsl::logic::profile::decision("derived relations handed off (Q55)", || format!("{} relations' frames made once no later stratum read them, their rows let go", handed.len()));
-                        crate::code_rule_dsl::logic::profile::decision("inputs let go (Q55)", || format!("{} inputs' rows and indexes let go after their last reader, their frames written before the run: {}", unloaded.len(), unloaded.join(", ")));
+                        crate::code_rule_dsl::logic::profile::decision("derived relations handed off (Q74)", || format!("{} relations' frames made once no later stratum read them, their rows let go", handed.len()));
+                        crate::code_rule_dsl::logic::profile::decision("inputs let go (Q74)", || format!("{} inputs' rows and indexes let go after their last reader, their frames written before the run: {}", unloaded.len(), unloaded.join(", ")));
                     }
                     cross_atoms_ahead(store);
                     let Binder { constants, mut measured_kept, mut bound_old, mut lazies, .. } = binder;
@@ -9407,7 +9415,7 @@ struct Driver<'d, 'k> {
     bound_olds: BTreeSet<String>,
     /// Relations that changed with no delta: derived again, their old rows not kept.
     no_delta: BTreeSet<String>,
-    /// The same, shared with the run's hand-off (Q55): a relation derived again is written whole, so it can be
+    /// The same, shared with the run's hand-off (Q74): a relation derived again is written whole, so it can be
     /// handed off once no later stratum reads it.
     derived_again: &'d std::cell::RefCell<BTreeSet<String>>,
     /// Relations of the strata maintained so far.
@@ -10579,6 +10587,7 @@ fn hex(digest: &[u8]) -> String {
 /// A memo entry's rows holding its file's tree statistics (`Own::put`).
 const OWN_KINDS: &str = "own:kinds";
 const OWN_EDGES: &str = "own:edges";
+const OWN_FIELDS: &str = "own:fields";
 pub const OWN_DOCS: &str = "own:docs";
 const OWN_POSTINGS: &str = "own:postings:";
 
@@ -10591,6 +10600,9 @@ const OWN_POSTINGS: &str = "own:postings:";
 pub struct Own {
     pub kinds: BTreeMap<i64, (i64, i64)>,
     pub edges: BTreeMap<(i64, i64), i64>,
+    /// Per (parent kind, child kind, field) its fielded edges (`field`'s rows): which kinds have a field, and which
+    /// kinds a field's children are (Q44: `kind($n, k)` after `field($n, f, _)` passes nearly every row).
+    pub fields: BTreeMap<(i64, i64, i64), i64>,
     pub docs: i64,
     pub postings: BTreeMap<(String, String, i64), i64>,
 }
@@ -10672,6 +10684,22 @@ impl Own {
             let sampled = node.len().min(STAT_SAMPLE_ROWS);
             if sampled > 0 { own = own.scaled(node.len() as f64 / sampled as f64); }
         }
+        // The fielded edges of the sampled nodes (`field`'s rows in node order, as the tape's above): each with its
+        // parent's and child's kind, scaled as the edges are. A view's rows past the sampled nodes have no kind here.
+        if let Some(field) = of("field")
+            && let (Some(p), Some(f), Some(c)) = (column(field, "p"), column(field, "f"), column(field, "c"))
+            && let Some(node) = of("node")
+        {
+            let sampled = node.len().min(STAT_SAMPLE_ROWS);
+            let scale = if sampled > 0 { node.len() as f64 / sampled as f64 } else { 1.0 };
+            let mut fields: FxHashMap<(i64, i64, i64), i64> = FxHashMap::default();
+            for r in 0..field.len().min(2 * STAT_SAMPLE_ROWS) {
+                if let (Some(&pk), Some(&ck)) = (kind_of.get(&field.value(r, p)), kind_of.get(&field.value(r, c))) {
+                    *fields.entry((pk, ck, field.value(r, f))).or_default() += 1;
+                }
+            }
+            own.fields = fields.into_iter().map(|(k, n)| (k, (n as f64 * scale).round().max(1.0) as i64)).collect();
+        }
         if let Some(doc) = of("doc") { own.docs = doc.estimated_len() as i64; }
         own.postings = Self::postings(sources, constants, |_| true);
         own
@@ -10720,6 +10748,7 @@ impl Own {
         Own {
             kinds: self.kinds.iter().map(|(k, (n, size))| (*k, (s(*n), s(*size)))).collect(),
             edges: self.edges.iter().map(|(e, n)| (*e, s(*n))).collect(),
+            fields: self.fields.iter().map(|(e, n)| (*e, s(*n))).collect(),
             docs: s(self.docs).max(1),
             postings: self.postings.iter().map(|(k, n)| (k.clone(), s(*n))).collect(),
         }
@@ -10734,6 +10763,9 @@ impl Own {
         }
         for (e, n) in &other.edges {
             *self.edges.entry(*e).or_default() += n;
+        }
+        for (e, n) in &other.fields {
+            *self.fields.entry(*e).or_default() += n;
         }
         self.docs += other.docs;
         for (key, n) in &other.postings {
@@ -10758,6 +10790,13 @@ impl Own {
                 self.edges.remove(e);
             }
         }
+        for (e, n) in &other.fields {
+            let c = self.fields.entry(*e).or_default();
+            *c -= n;
+            if *c <= 0 {
+                self.fields.remove(e);
+            }
+        }
         self.docs -= other.docs;
         for (key, n) in &other.postings {
             let c = self.postings.entry(key.clone()).or_default();
@@ -10773,6 +10812,7 @@ impl Own {
     pub fn put(&self, rows: &mut BTreeMap<String, (usize, Vec<i64>)>) {
         rows.insert(OWN_KINDS.into(), (3, self.kinds.iter().flat_map(|(k, (n, size))| [*k, *n, *size]).collect()));
         rows.insert(OWN_EDGES.into(), (3, self.edges.iter().flat_map(|((p, k), n)| [*p, *k, *n]).collect()));
+        rows.insert(OWN_FIELDS.into(), (4, self.fields.iter().flat_map(|((p, k, f), n)| [*p, *k, *f, *n]).collect()));
         rows.insert(OWN_DOCS.into(), (1, vec![self.docs]));
         for ((rel, col, v), n) in &self.postings {
             rows.entry(format!("{OWN_POSTINGS}{rel}:{col}")).or_insert_with(|| (2, Vec::new())).1.extend([*v, *n]);
@@ -10786,6 +10826,7 @@ impl Own {
             let k = self.kinds.entry(r[0]).or_default(); k.0 += r[1]; k.1 += r[2];
         }
         for r in flat(OWN_EDGES).chunks_exact(3) { *self.edges.entry((r[0], r[1])).or_default() += r[2]; }
+        for r in flat(OWN_FIELDS).chunks_exact(4) { *self.fields.entry((r[0], r[1], r[2])).or_default() += r[3]; }
         self.docs += flat(OWN_DOCS).first().copied().unwrap_or(0);
         for (key, (_, values)) in rows.range(OWN_POSTINGS.to_owned()..).take_while(|(k, _)| k.starts_with(OWN_POSTINGS)) {
             let Some((rel, col)) = key[OWN_POSTINGS.len()..].split_once(':') else { continue };
@@ -10799,6 +10840,7 @@ impl Own {
         let flat = |key: &str| rows.get(key).map(|(_, v)| v.as_slice()).unwrap_or_default();
         own.kinds = flat(OWN_KINDS).chunks(3).map(|r| (r[0], (r[1], r[2]))).collect();
         own.edges = flat(OWN_EDGES).chunks(3).map(|r| ((r[0], r[1]), r[2])).collect();
+        own.fields = flat(OWN_FIELDS).chunks_exact(4).map(|r| ((r[0], r[1], r[2]), r[3])).collect();
         own.docs = flat(OWN_DOCS).first().copied().unwrap_or(0);
         for (key, (_, values)) in rows.range(OWN_POSTINGS.to_owned()..).take_while(|(k, _)| k.starts_with(OWN_POSTINGS)) {
             let Some((rel, col)) = key[OWN_POSTINGS.len()..].split_once(':') else { continue };
@@ -10809,6 +10851,7 @@ impl Own {
 
     pub fn apply(&self, stats: &mut super::Stats) {
         stats.tree(&self.kinds, &self.edges, self.docs);
+        stats.fielded(self.fields.iter().map(|(&(p, c, f), &n)| (p.to_string(), c.to_string(), f.to_string(), n as f64)));
         let mut by: BTreeMap<&str, Vec<(String, i64, i64)>> = BTreeMap::new();
         for ((rel, col, v), n) in &self.postings {
             by.entry(rel.as_str()).or_default().push((col.clone(), *v, *n));
@@ -10938,12 +10981,15 @@ pub mod tests {
     fn memo_tree_statistics_accumulate_once_without_per_file_maps() {
         use super::*;
         let mut first = Own::default();
-        first.kinds.insert(1,(10,20)); first.edges.insert((1,2),5); first.docs=1;
+        first.kinds.insert(1,(10,20)); first.edges.insert((1,2),5); first.fields.insert((1,2,3),4); first.docs=1;
         first.postings.insert(("kind".into(),"k".into(),1),10);
         let mut rows=BTreeMap::new(); first.put(&mut rows);
         let mut totals=Own::default(); totals.add_rows(&rows); totals.add_rows(&rows);
         assert_eq!(totals.kinds[&1],(20,40)); assert_eq!(totals.edges[&(1,2)],10);
         assert_eq!(totals.docs,2); assert_eq!(totals.postings.values().sum::<i64>(),20);
+        assert_eq!(totals.fields[&(1,2,3)],8, "fielded edges sum as the edges do");
+        assert_eq!(Own::taken(&rows).fields, first.fields);
+        totals.sub(&first); totals.sub(&first); assert!(totals.fields.is_empty());
         let projected=BTreeMap::from([(OWN_DOCS.into(),(1,vec![1]))]);
         let mut narrow=Own::default(); narrow.add_rows(&projected);
         assert_eq!(narrow.docs,1); assert!(narrow.kinds.is_empty()); assert!(narrow.edges.is_empty());
