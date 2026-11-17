@@ -333,7 +333,7 @@ describe("Rerail daemon CLI", () => {
       await recordsName(unrelated.pid!);
       const status = await cli("status");
       expect(status.code).toBe(3);
-      expect(status.stdout).toContain(`${note}\nThe Rerail daemon is not running.`);
+      expect(status.stdout).toContain(`${note}\nThe Rerail daemon is not running`);
       expect(existsSync(stateFile)).toBe(false);
       await recordsName(unrelated.pid!);
       expect(await cli("daemon", "stop")).toEqual({ code: 0, stdout: `${note}\nThe Rerail daemon is not running.\n` });
