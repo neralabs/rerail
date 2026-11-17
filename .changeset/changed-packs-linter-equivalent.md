@@ -13,4 +13,4 @@
 "@neralabs/rerail-pack-vue": patch
 ---
 
-The pack's description now names the tool versions it matches. Its rules are unchanged.
+The pack's summary line and its README now name the tool versions it matches.

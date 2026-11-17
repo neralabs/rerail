@@ -1,1 +1,1 @@
-`RERAIL_AUTOSTART=false` now keeps every part of Rerail from starting the daemon, as `RERAIL_AUTOSTART=0` does. Before, a session's start honoured `false`, but a coding agent's hook and `rerail setup` still started the daemon.
+`RERAIL_AUTOSTART=false` now keeps coding agent hooks and `rerail setup` from starting the daemon, as `RERAIL_AUTOSTART=0` does. Before, they read only `0`.
