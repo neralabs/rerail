@@ -1269,7 +1269,7 @@ pub fn summarize<D: Doc>(
     let table = known.or(built.as_ref().and_then(Option::as_ref));
     let mut summary = {
         let pack = language_pack::pack(Family::of(language));
-        { language_pack::calls_summary(pack, &root, path, module, table, has_errors) }
+        language_pack::calls_summary(pack, &root, path, module, table, has_errors)
     };
     summary.bytes = u32::try_from(bytes).unwrap_or(u32::MAX);
     (summary, built.flatten())
