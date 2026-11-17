@@ -486,6 +486,31 @@ pass.
   this entry's numbers are its input. ep2's edit is the measurement: `merge the programs` and `prepare`, each
   pass's share as above. This queue keeps Q18 closed here and measures it again when 0281 lands in the hub.
 
+- **Measured again** (2026-11-16, Typing-support after 0281 step 5's passes moved to the manager; ep2 on the
+  profiling build with the checkout's `docs/rule-syntax/lib`, since `rs-now`'s lib no longer loads (0263); B101's
+  body edited by one always-true literal; a new process): 150 G, 9.0–9.2 s CPU, 5.5 s wall; warm 6.1 G.
+  `combine` 0.61 s and `prepare` 0.72 s (the moved passes 0.45 s). Most of the rest is every file's file-local part
+  run again (`local` 1.9 s, `parse` and `batch` 1.7 s), because the part's digest keys each file's memo. Not
+  comparable with the 82.9 G above (another engine, another lib). Next lever: 0225 §7's per-module part; see 0281
+  step 5 (c).
+
+- **Measured again** (2026-11-16, after 0225 §2's partial hits were made to cost their cone; same ep2 setup):
+  95.3–95.8 G, 6.4–6.6 s CPU, 3.8–4.0 s wall, from 150 G. What is left, and what each needs:
+  - **combining and preparing** (1.33 s, on the main thread, a third of the wall): each a whole-program pass over
+    about 10,000 rules, run again because the edit misses the prepared program's key. Costing the edit needs 0225 §7
+    (a prepared program kept per module), and so an input that is an edit of the last run's: 0281 steps 6–7. The
+    keyed steps (0281 §6) store the steps but reuse only an unchanged input. Pushing the joins as a rule pass alone
+    (0.15 s at most) was left out (user, 2026-11-16).
+  - **the guests of every partial hit** (0.9 s on the workers): 10,047 guest tapes parsed and written back each run,
+    since a wave reads no tape and a guest is found only in a wave (0104); and the hosts projected twice, once
+    without their guests (about 0.2 s). Reading the guests' tapes before the waves would need them named by their
+    host's content, which is a new cache, unless it is written as rules (0103).
+  - **the splits in preparation** (about 0.15 s): `FileLocal::maintain` splits whole once its cone passes half the
+    relations, and a push round's changed helpers reach most relations through their readers. A cone that stops
+    where a relation's place comes out unchanged would cost the change.
+  - **the entries read** (lookup 0.3 s, decode 0.45 s, their rows handed on 0.34 s): every file is a partial hit and
+    is read whole, so these are near what this edit must read.
+
 ### Q19. A new process reads every kept frame of the cross part, its own or not
 
 - **Found** (2026-11-15, ep2, while measuring Q18): an edit of one rule's body costs 82.9 G in a new process, of

@@ -580,3 +580,156 @@ fn a_located_rule_keeps_its_branded_atoms() {
     let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
     assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
 }
+
+/// An export read by a cross-file rule with a demand is cut on a version as the tree cuts it: the same lines, the
+/// same program (`xd_fl_later` through `dm_demand_0` and the key `xk_text_0`).
+#[test]
+fn exports_are_cut_on_a_version_as_on_the_tree() {
+    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+    let text = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl text(n: node, s: symbol)\n\
+                .decl within(c: node, n: node)\n.input node, text, within\n\
+                .decl fl_later(n: node, c: node)\nfl_later(n, c) :- within(c, n), node(_, c, \"call\", _, _).\n\
+                .decl named(n: node, s: symbol)\nnamed(n, s) :- text(n, s).\n\
+                .decl demand(n: node, m: node)\ndemand(n, m) :- named(n, s), named(m, s), node(_, n, \"function\", _, _), n != m.\n\
+                .decl later(n: node, c: node)\nlater(n, c) :- demand(n, _), fl_later(n, c), text(c, _).\n\
+                later(n, c) :- demand(n, _), fl_later(n, c), node(_, c, \"call\", 1, _).\n.output later\n";
+    let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    let mut pass = DemandExports::default();
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut pass);
+    let (out, _) = p.finish().unwrap();
+    let want = demand_exports(&mut tree);
+    assert!(want[0].starts_with("1 exports cut"), "{want:?}");
+    assert_eq!(pass.lines, want);
+    let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    let shown = out.show();
+    for made in ["xd_fl_later(", "dm_demand_0(", "xk_text_0("] {
+        assert!(shown.contains(made), "{made} in\n{shown}");
+    }
+    assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
+}
+
+/// An export joining two parts at a key its head projects away is handed on as its parts on a version as the tree
+/// hands it on: the same lines, the same program (the parts, their keys, the readers' copies and fresh names).
+#[test]
+fn exports_are_factorized_on_a_version_as_on_the_tree() {
+    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.input node, child, text
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), text(n, s).
+.decl uses(f: node, x: symbol)
+uses(f, x) :- node(_, f, "identifier", _, _), text(f, x), defined(x).
+.decl encl(f: node, p: node)
+encl(f, p) :- node(_, p, "block", _, _), child(p, f, _).
+.decl bound(p: node, x: symbol)
+bound(p, x) :- node(_, p, "block", _, _), child(p, c, _), node(_, c, "assignment", _, _), text(c, x).
+.decl fl_outer(f: node, x: symbol)
+fl_outer(f, x) :- encl(f, p), bound(p, x).
+.decl outer(f: node, x: symbol)
+.output outer
+outer(f, x) :- uses(f, x), fl_outer(f, x).
+.decl outer2(f: node)
+.output outer2
+outer2(f) :- uses(f, _), fl_outer(f, y), y != "self".
+"#;
+    let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    let mut pass = FactorizeExports::new(true);
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut pass);
+    let (out, _) = p.finish().unwrap();
+    let want = factorize_exports(&mut tree);
+    assert_eq!(want.len(), 1, "{want:?}");
+    assert!(want[0].starts_with("fl_outer: handed on as parts"), "{want:?}");
+    assert_eq!(pass.lines, want);
+    let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
+    assert!(!out.rules().any(|r| out.rel_name(r.head().rel()) == "fl_outer"), "the product is gone:\n{}", out.show());
+    // Each part and its key are named from the part's content: `fz<h>_` and `fzk<h>_`, one hash.
+    let shown = out.show();
+    let parts: std::collections::BTreeSet<&str> = shown.split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| w.starts_with("fz") && w.ends_with("_fl_outer")).collect();
+    assert_eq!(parts.len(), 4, "{parts:?}");
+    for p in parts.iter().filter(|p| !p.starts_with("fzk")) {
+        assert!(p["fz".len()..p.len() - "_fl_outer".len()].bytes().all(|b| b.is_ascii_digit()), "{p}");
+        assert!(parts.contains(format!("fzk{}", &p["fz".len()..]).as_str()), "{parts:?}");
+    }
+}
+
+/// The file-local joins of cross-file rules are pushed on a version as the tree pushes them: the same helpers
+/// (`fl<h>_<head>`, named from their content), the same program.
+#[test]
+fn local_joins_are_pushed_on_a_version_as_on_the_tree() {
+    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.decl docof(n: node, d: number)
+.decl line(n: node, l: number)
+.input node, child, text, docof, line
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), text(n, s).
+.decl uses(f: node, x: symbol)
+uses(f, x) :- node(_, f, "identifier", _, _), text(f, x), defined(x).
+.decl encl(f: node, p: node)
+encl(f, p) :- node(_, p, "block", _, _), child(p, f, _).
+.decl bound(p: node, x: symbol)
+bound(p, x) :- node(_, p, "block", _, _), child(p, c, _), node(_, c, "assignment", _, _), text(c, x).
+.decl outer(f: node, x: symbol)
+.output outer
+outer(f, x) :- uses(f, x), encl(f, p), bound(p, x).
+.decl named(f: node, s: symbol)
+.output named
+named(f, s) :- uses(f, _), child(p, f, _), text(p, s), !bound(p, s).
+.decl at(f: node, l: number)
+.output at
+at(f, l) :- uses(f, _), docof(f, d), line(f, l), d > 0.
+"#;
+    let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    let mut pass = PushLocalJoins::default();
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut pass);
+    let (out, _) = p.finish().unwrap();
+    let want = push_local_joins(&mut tree);
+    assert!(!want.is_empty(), "{want:?}");
+    assert_eq!(pass.made, want);
+    let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
+}
+
+/// A helper is named from its content: an edit of one rule renames its own helper, and no other rule's (a counter
+/// renumbered every helper after the edited rule's).
+#[test]
+fn an_edit_renames_only_its_own_rules_helpers() {
+    let program = |c: i64| {
+        format!(
+            r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.input node, child, text
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), text(n, s).
+.decl uses(f: node, x: symbol)
+uses(f, x) :- node(_, f, "identifier", _, _), text(f, x), defined(x).
+.decl first(f: node, s: symbol)
+.output first
+first(f, s) :- uses(f, _), child(p, f, {c}), text(p, s).
+.decl named(f: node, s: symbol)
+.output named
+named(f, s) :- uses(f, _), child(p, f, _), node(_, p, "call", _, _), text(p, s).
+"#
+        )
+    };
+    let made = |c: i64| push_local_joins(&mut crate::code_rule_dsl::logic::rr::parse(&program(c)).unwrap());
+    let (before, after) = (made(1), made(2));
+    let of = |m: &[String], head: &str| m.iter().find(|r| r.ends_with(&format!("_{head}"))).cloned().unwrap_or_else(|| panic!("{head} in {m:?}"));
+    assert_ne!(of(&before, "first"), of(&after, "first"), "the edited rule's helper is renamed");
+    assert_eq!(of(&before, "named"), of(&after, "named"), "another rule's is not");
+}

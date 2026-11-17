@@ -374,8 +374,9 @@ fn congruence(v: &Version, f: Fields<'_>) -> Vec<Vec<String>> {
         for &r in &cands {
             let distinct = rules(r).iter().map(|x| x.hash()).collect::<HashSet<u64>>().len();
             let n = ids.len();
-            // A library's facts may go undeclared: no types, as the tree's `prog.decls.get(rel)` gives.
-            let types = f.decl(r).map_or_else(Vec::new, |_| f.types(r));
+            // An undeclared relation (a helper a pass made without one, or a library's facts, `param_slot(…).`) has no
+            // types, as the tree's merge reads it.
+            let types = f.columns(r).map_or_else(Vec::new, |c| c.into_iter().map(|(_, t)| t).collect());
             class.push(*ids.entry((types, distinct, facts_of(r))).or_insert(n));
         }
     }

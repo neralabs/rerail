@@ -3533,27 +3533,16 @@ fn run_observed(
             let mut program: front::Program = std::mem::take(&mut lowered.program);
             bound(&program)?;
             drop(_step);
-            // The file-local part of each cross-file rule runs in the chunks, which export its rows, not their base relations.
-            let _step = crate::code_rule_dsl::logic::profile::span(|| "push the file-local joins into the chunks".into());
-            let pushed = crate::code_rule_dsl::typing::file_local::push_local_joins(&mut program);
-            drop(_step);
-            // An export that is a join of parts meeting at a key it projects away is handed on as its parts (decision 0099).
-            let _step = crate::code_rule_dsl::logic::profile::span(|| "factorize the exports".into());
-            let factorized = if factorizing { crate::code_rule_dsl::typing::file_local::factorize_exports(&mut program) } else { Vec::new() };
-            drop(_step);
-            // Each export cut to what its cross-file readers can use: their demand, made file-local.
-            let _step = crate::code_rule_dsl::logic::profile::span(|| "cut the exports to their readers' demand".into());
-            for line in crate::code_rule_dsl::typing::file_local::demand_exports(&mut program) {
-                crate::code_rule_dsl::logic::profile::decision("export demand", || line.clone());
-            }
-            drop(_step);
             // The prepared program's one image (decision 0281's path, step 4): made here, after the last pass that edits
-            // the tree; the passes after it run on the manager over the version (step 5: the rows located, the
-            // merges, the inputs the rules read, the rule order), and the run's readers read the version (`Lowered::placed`), the split's
-            // parts views of it. A program the image cannot hold is an error, not a run read from the tree.
+            // the tree; the passes after it run on the manager over the version (step 5: the file-local joins pushed,
+            // the exports factorized and cut to their demand, the rows located, the merges, the inputs the rules read,
+            // the rule order), and the run's readers read the version (`Lowered::placed`), the split's parts views of
+            // it. A program the image cannot hold is an error, not a run read from the tree.
             let _step = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's image and the passes on it".into());
             let (version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).and_then(|b| b.finish()).map_err(Error::Plan)?;
-            let (version, found) = preparation::run(version).map_err(Error::Plan)?;
+            let (version, found) = preparation::run(version, factorizing).map_err(Error::Plan)?;
+            let factorized = found.factorized.clone();
+            let pushed = found.pushed.clone();
             let merged = (found.merged, found.shared);
             let located = found.located.clone();
             drop(_step);
@@ -3568,6 +3557,10 @@ fn run_observed(
             // the tree's (the tree's inputs pruned as `preparation::InputsRead` prunes the version's).
             #[cfg(debug_assertions)]
             if std::env::var_os("RERAIL_RULE_ORDER").is_none() {
+                assert_eq!(crate::code_rule_dsl::typing::file_local::push_local_joins(&mut program), pushed, "the version's joins are pushed as the tree's");
+                let tree_factorized = if factorizing { crate::code_rule_dsl::typing::file_local::factorize_exports(&mut program) } else { Vec::new() };
+                assert_eq!(tree_factorized, factorized, "the version's exports are factorized as the tree's");
+                assert_eq!(crate::code_rule_dsl::typing::file_local::demand_exports(&mut program), found.demand, "the version's exports are cut as the tree's");
                 assert_eq!(crate::code_rule_dsl::typing::file_local::locate(&mut program), located, "the version's rows are located as the tree's");
                 let tree_merged = if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
                     crate::code_rule_dsl::logic::simplify::merge_identical(&mut program)
@@ -4374,7 +4367,9 @@ fn run_observed(
             if !last_unmarked.get() {
                 memo::set_last_program(store, &memo_program, None);
             }
-            let mut k = (last == Some(memo_whole)).then(|| store.stat_blob(memo_whole).ok().flatten()).flatten().and_then(|b| keptstats::Keeper::decode(&b)).unwrap_or_default();
+            // The last program's, whichever it was: a relation a rule's edit reached since is counted again from
+            // scratch, the others are as counted (`Keeper::begin`, by identity; decision 0225 §2).
+            let mut k = last.and_then(|w| store.stat_blob(w).ok().flatten()).and_then(|b| keptstats::Keeper::decode(&b)).unwrap_or_default();
             // Its constants are the store's atoms: this process's, mapped (decision 0170), in one call.
             let atoms = store.atoms_handle();
             if atoms.holds_by_reading() {
@@ -4415,7 +4410,7 @@ fn run_observed(
                 })
                 .collect(),
         });
-        k.begin(&rels, doc_at, keep);
+        k.begin(&rels, &memo_ids, doc_at, keep);
     }
     // Decision 0117 step 1: a run with no session keeps its cross-file part's inputs in the store's frames, so an
     // unchanged file's export and base rows are there already. Its memo hit reads only its entry's outputs (nodes,
@@ -4455,7 +4450,8 @@ fn run_observed(
         }
     };
     // The files the keeper counted, with the content and key it counted each under: one the same now is unchanged.
-    let counted_now: HashMap<String, (memo::Content, i64)> = match keeper.as_ref().filter(|_| kept_route) {
+    // None while the keeper counts some relations again: each file's entry must hold their rows.
+    let counted_now: HashMap<String, (memo::Content, i64)> = match keeper.as_ref().filter(|k| kept_route && !k.has_fresh()) {
         Some(k) => k.counted_files().into_iter().map(|(p, c, key)| (p, (c, key))).collect(),
         None => HashMap::new(),
     };
@@ -5064,10 +5060,8 @@ fn run_observed(
         let program = Arc::clone(cones.lock().entry(wanted.clone()).or_insert_with(|| Arc::new(wanted_cone(&local, wanted))));
         let v = &program.version;
         let mut reads: BTreeSet<String> = v.rules().flat_map(|r| r.reads().map(|a| v.rel_name(a.rel()).to_owned())).collect();
-        reads.extend(stored.iter().map(|(r, _)| r.clone()));
-        // The base relations the cross-file part reads (`split.base`): every chunk hands them on whole, or the cross
-        // part sees them changed (`col`, `end_line`, `doc` missing for a cut of partials) and runs its strata again.
-        reads.extend(split.base.iter().cloned());
+        // Not the base relations the memo holds for the cross-file part (`stored`): a chunk of partial hits hands on
+        // its entries' rows of them, never the batch's (`Finish`), so they are not made for its files.
         reads.extend(constants.keys().map(|(r, _)| r.clone()));
         reads.extend(["node", "child", "doc"].map(str::to_owned));
         // A text test's rows are attributed to the files whose text holds their strings (`text_sources`).
@@ -6015,7 +6009,7 @@ fn run_observed(
         };
         phase("wait", statements.count());
         statements.enter("local");
-        let Ctx { chunk_nodes_built, chunk_docs, chunk_own, start_mb, start_max_mb, at_once, chunk_partials, cone } = ctx;
+        let Ctx { chunk_nodes_built, chunk_docs, chunk_own, start_mb, start_max_mb, at_once, mut chunk_partials, cone } = ctx;
         let Evaluated { got, host_of, askers, text_sources, stored_bound, totals_add, export_rows, mut mentioned, slice_rounds } = ev;
         for (rel, rows, measured) in &totals_add {
             totals.add(rel, *rows, measured);
@@ -6225,8 +6219,11 @@ fn run_observed(
                 let width = types.len();
                 let at = split.locations.get(rel).and_then(|l| l.first().copied()).filter(|a| *a < width && unchecked);
                 let (mut own_cols, mut shared_cols): (Vec<Vec<i64>>, Vec<Vec<i64>>) = (vec![Vec::new(); width], vec![Vec::new(); width]);
-                for (d, e) in docs.iter().map(|d| (d, &chunk_partials[d])) {
-                    let Some((w, values)) = e.rows.get(rel) else { continue };
+                // Moved out of the old entry into the new one: only the cone's relations and the base rows are read
+                // of the old entry after this (`standing`, the base rows below).
+                for d in &docs {
+                    let Some((w, values)) = chunk_partials.get_mut(d).and_then(|e| e.rows.remove(rel)) else { continue };
+                    let w = &w;
                     if *w != width {
                         return Err(Error::Plan(format!("{rel}: a memo entry's rows are {w} wide, its declaration {width}")));
                     }
@@ -6237,7 +6234,7 @@ fn run_observed(
                         }
                     }
                     if let Some(entry) = entries.get_mut(d) {
-                        entry.rows.insert(rel.clone(), (width, values.clone()));
+                        entry.rows.insert(rel.clone(), (width, values));
                     }
                 }
                 let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
@@ -6263,12 +6260,16 @@ fn run_observed(
                 }
             }
             // Their outputs' rows, as a hit's are (`memo replay`): into the run's outputs, and kept in the new entries.
-            for (d, e) in docs.iter().map(|d| (d, &chunk_partials[d])) {
-                for (rel, (columns, rows)) in e.outputs.iter().filter(|(r, _)| !cone.contains(*r) && !r.starts_with(memo::GUESTS)) {
-                    outputs.entry(rel.clone()).or_default().push(Arc::new(rows.clone()));
+            for d in &docs {
+                let Some(e) = chunk_partials.get_mut(d) else { continue };
+                let moved: Vec<String> = e.outputs.keys().filter(|r| !cone.contains(*r) && !r.starts_with(memo::GUESTS)).cloned().collect();
+                for rel in moved {
+                    let (columns, rows) = e.outputs.remove(&rel).expect("listed");
+                    let rows = Arc::new(rows);
+                    outputs.entry(rel.clone()).or_default().push(Arc::clone(&rows));
                     node_columns.insert(rel.clone(), columns.clone());
                     if let Some(entry) = entries.get_mut(d) {
-                        entry.outputs.insert(rel.clone(), (columns.clone(), rows.clone()));
+                        entry.outputs.insert(rel, (columns, Arc::unwrap_or_clone(rows)));
                     }
                 }
             }
@@ -6287,8 +6288,9 @@ fn run_observed(
                 held.1[to].get_or_insert_with(Vec::new).extend(keep.iter().map(|&r| source.value(r, c)));
             }
         }
-        // Each memoised file's base rows, once the exports name the nodes a semi-join keeps.
-        if attributable {
+        // Each memoised file's base rows, once the exports name the nodes a semi-join keeps. Not for a chunk of
+        // partial hits: its documents' base rows are their entries' (below), so none is attributed again.
+        if attributable && cone.is_none() {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "base rows for the memo".into()); 
             for entry in entries.values_mut() {
                 for (rel, _) in &stored {

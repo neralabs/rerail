@@ -166,6 +166,27 @@ finding sets identical to the unchanged run's):
 Combining the 317 programs (34 G) and preparing (12 G) are now most of an edit, in a session as in a new process:
 the next lever (work queue).
 
+Measured again (2026-11-16, Typing-support; ep2 on the profiling build with the checkout's rule library, B101's
+body edited by one always-true literal, a new process, findings unchanged, 1 of 3,329 cross strata run, no input
+changed):
+
+| Step | Instructions | CPU | Wall |
+|---|---|---|---|
+| warm | 6.2 G | 0.36 s | 0.54 s |
+| one rule's body, before | 150.2–150.4 G | 9.0–9.2 s | 5.5 s |
+| the kept statistics carried across the edit | 135.9–136.0 G | — | — |
+| and partial hits' chunks made for their cone | 95.3–95.8 G | 6.4–6.6 s | 3.8–4.0 s |
+
+- **The kept statistics** were keyed by the whole program, so each edit counted all 300 files in again (0.79 s).
+  The last program's keeper is now read whichever program it was. A relation counted under another identity is
+  counted again from every file's entry, and the others stay as counted (`keptstats::Keeper::begin`).
+- **A chunk of partial hits** no longer attributes its batch's base rows to the memo, since they were replaced by
+  its entries' rows. Its projection also leaves out the base relations the memo holds for the cross part.
+- **What is left** of the file-local part (profiled, 7.2 s CPU in all): the guests made again for every partial hit
+  (0.9 s: 10,047 guest tapes parsed and written back, since a wave reads no tape a guest has; and the batch built
+  again with them), the entries decoded (0.45 s) and looked up (0.3 s), and their rows handed on (0.34 s). Whole
+  program: combining 0.62 s, preparing 0.71 s.
+
 ### 3. A message is not the program
 
 A finding's message, and the other texts only the output reads, are kept beside the program, not in the digest that
