@@ -292,6 +292,9 @@ pub struct Report {
     /// Of the files the memo held, those read for their outputs alone (decision 0117 step 1), and the values of
     /// their export and base rows decoded all the same: none, as the kept inputs hold those rows.
     pub memo_kept: (usize, usize),
+    /// The statistics keeper's end (decision 0096 §3): the files it counted in and out this run, or why it gave them
+    /// up (the next run counts every file in again). `None`: no keeper ran.
+    pub stats_kept: Option<std::result::Result<(usize, usize), String>>,
     /// The cross-file memo (decision 0076): import components found and components derived.
     pub cross: (usize, usize),
     /// Where the prepared program came from: `prepared` by this run, kept in this process's `memory`, or read from the
@@ -3530,6 +3533,8 @@ fn run_observed(
             let _step = crate::code_rule_dsl::logic::profile::span(|| "nearest sets made by the transducer".into());
             let sets = lowered.transduce_nearest();
             // The preparation passes edit the lowered tree, the last before its one image (below).
+            // Mutable for a debug build's checks of the version against the tree (below).
+            #[cfg_attr(not(debug_assertions), allow(unused_mut))]
             let mut program: front::Program = std::mem::take(&mut lowered.program);
             bound(&program)?;
             drop(_step);
@@ -4167,8 +4172,11 @@ fn run_observed(
         .any(|l| matches!(l.view(), crate::code_rule_dsl::logic::program_image::Lit::Nearest { .. }));
     let memo_rules = memo_program;
     // The whole file-local program's key: of what is kept of every file together (the kept statistics, the tree
-    // counts, a session's inputs), which an edit of any rule changes.
-    let memo_whole = memo::with_modules(memo::with_tree_demand(memo_program, memo_tree_stats), &renamed_modules);
+    // counts, a session's inputs), which an edit of any rule changes. Under the plan the entries are kept under
+    // (`plan_digest`: the engine build, the grammar, the node ids' scheme), as what it keeps counts those entries:
+    // another build's keeper counted entries this build's plan does not hold, so it could not count a file out
+    // (Q52), and its counts are of rows this build may make otherwise.
+    let memo_whole = memo::plan_digest(&memo::with_modules(memo::with_tree_demand(memo_program, memo_tree_stats), &renamed_modules));
     // The frames' space: the plan without the program (decision 0225 §2), so an entry made before a rule's edit is
     // read for the relations the edit did not reach (`memo_ids`).
     let memo_program = memo::with_modules(memo::with_tree_demand(memo_space, memo_tree_stats), &renamed_modules);
@@ -4731,15 +4739,16 @@ fn run_observed(
     // The entries the statistics keeper counted for files changed or gone since (`keptstats`), found before the
     // first wave too: it counts them out in the waves, and reads none of them from SQLite there.
     // A file looked up here and not found is kept as `None`: the waves do not ask SQLite again for what it has not.
-    // That includes a file whose content is unchanged but whose entry the run's plan does not have (a new build
-    // over an older store): the keeper counts it out against the entry it was counted under.
+    // That includes a file whose content is unchanged but whose entry the run's plan does not have (one the memo
+    // dropped): the keeper counts it out against the entry it was counted under. (Not a new build's: its keeper
+    // starts empty, `memo_whole` being of the build too.)
     let counted_before: HashMap<String, Option<memo::Found>> = match (memo, keeper.borrow().as_ref()) {
         (Some(memo @ memo::Memo::Stored(_)), Some(k)) if looking => {
             let _before = crate::code_rule_dsl::logic::profile::span(|| "memo lookup, before the first wave".into());
             let now = before.lock();
             // Each file the keeper will count out: one it counted under another content or document key than the
-            // run's (`keptstats::same`, the keeper's own test), one whose entry the run's plan does not have (a new
-            // build over an older store: `found` is none), or one the run does not have.
+            // run's (`keptstats::same`, the keeper's own test), one whose entry the run's plan does not have
+            // (`found` is none), or one the run does not have.
             let key_now: HashMap<&str, i64> = docs.iter().map(|(d, p)| (p.as_str(), *d)).collect();
             let kept = |p: &String, c: memo::Content, k: i64| match (now.get(p), key_now.get(p.as_str())) {
                 (Some(b), Some(&d)) => b.found.is_some() && b.content.is_some_and(|content| keptstats::same((c, k), (content, d))),
@@ -4763,6 +4772,7 @@ fn run_observed(
     };
     // The keeper's end, once every file of the run was seen: the files gone counted out, the statistics as kept (else
     // `None`), and the run's exports the counted ones (else the skipped hits held after all).
+    let stats_kept: std::cell::RefCell<Option<std::result::Result<(usize, usize), String>>> = std::cell::RefCell::new(None);
     let finish = || -> Result<Option<BTreeMap<String, crate::code_rule_dsl::logic::plan::statkeep::RelStats>>> {
         let kept = keeper.borrow_mut().as_mut().and_then(|k| {
             let ended = k.end(&|path, c, key| counted_entry(path, c, key));
@@ -4774,6 +4784,7 @@ fn run_observed(
                 Ok(_) => format!("{counted_in} files counted in, {counted_out} out; the base relations' statistics are read as kept, none measured"),
                 Err(why) => format!("not kept this run ({why}): measured, and every file counted in again next run"),
             });
+            *stats_kept.borrow_mut() = Some(ended.as_ref().map(|_| (counted_in, counted_out)).map_err(Clone::clone));
             ended.ok()
         });
         let skipped = held_by_count.borrow().len();
@@ -9226,7 +9237,7 @@ fn run_observed(
     if !nested && !phase0::active() {
         crate::code_rule_dsl::logic::profile::run_ends(crate::code_rule_dsl::logic::profile::snapshot());
     }
-    let report = Report { phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
+    let report = Report { phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
     handed.succeeded();
     Ok(report)
 }

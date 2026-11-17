@@ -274,6 +274,8 @@ Items 1–3 (texts read once, caches refused by construction, my statics by flow
     atoms' lease 75 MB, the kept inputs' frames 59 MB, one stratum's run 50 MB, then many below 32 MB: no one holder
     left above 100 MB. A new build's first two edits still replay every hit whole (its memo space is new: the keeper
     fails on the edited file's old entry, then counts every file in), unprofiled 2.12 and 1.79 GB.
+    Then (Q52, 2026-11-17): the keeper is kept under the build too, so a new build's first edit counts every file
+    in (2.05 GB, every file evaluated) and its second is steady: 1.23 GB unprofiled (was 1.79).
 11. **A cold run's frames write waits on the writer** (found 2026-11-12, run n48s169, load 26): the cross part's
     frames are one job of 289.6 MB, above the writer queue's cap (192 MB) alone, so it waits while the memo's
     entries (158.6 MB) are still written; `RERAIL_SQL_STRICT` ends the run at that wait (`hazards::wait_in_wave`).

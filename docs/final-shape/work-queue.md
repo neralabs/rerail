@@ -1308,7 +1308,39 @@ pass.
   equal a cold run's (660 outputs); strict 10-file runs byte-identical; kept-input tests 8/8, the decode test
   extended to read a granule before the whole.
 - **Open**: a new build's first two edits replay every hit whole (2.12 and 1.79 GB unprofiled): the keeper fails
-  on the edited file's entry in the old build's memo space, then counts every file in.
+  on the edited file's entry in the old build's memo space, then counts every file in. Done as Q52.
+
+### Q52. A new build's second edit replays every hit whole
+
+- **Found** (2026-11-16, after Q51): on 300 files × 317 rules, a new engine build's first edit evaluates every file
+  (no entry of the old build's is a hit) and its keeper gives up ("c.py: the memo no longer holds the rows
+  counted"), so the second edit counts every file in again, decoding every hit whole: 1.79 GB unprofiled.
+- **Cause**: what is kept of every file together (the keeper's blob, the space's last program, a session's and the
+  kept part's documents) was keyed by `memo_whole`, the file-local program without the engine build, while the
+  entries it counts are under `plan_digest` (the build, the grammar, the node ids' scheme). A new build read the
+  old build's keeper, trusted its counts of the unchanged files (of rows this build may make otherwise), and could
+  not count the edited file out.
+- **Fix**: `memo_whole` is under `plan_digest` too: a new build's keeper starts empty, and its first edit, which
+  evaluates every file anyway, counts every file in.
+- **Tests** (TDD: the new one failed with the production message before the fix):
+  `a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady` (a test hook,
+  `build_ids::rebuild_for_tests`, makes the next runs another build's over the same store), and
+  `a_hit_read_for_its_outputs_alone_decodes_no_export_or_base_rows` extended. Both now assert, through the report's
+  new `stats_kept` (the keeper's files counted in and out, or why it gave up): a cold run counts every file in; a
+  rerun with nothing changed has every file a hit read for its outputs alone and counts none; a steady edit has the
+  unchanged files read for their outputs alone, decodes none of their rows and counts the edited file alone out
+  and in; a new build's first edit hits nothing and counts every file in, its second is steady.
+- **Record**: done (2026-11-17). Bench (unprofiled, the new build over the Q51 store): first edit 2.05 GB, keeper
+  `in 300 out 0` (was given up); second edit 1.23 GB (was 1.79), 299 files unchanged, keeper `in 1 out 1`. Strict
+  10-file cold, warm and edit byte-identical; the warm run writes nothing; warm-writes and session tests pass.
+- **Open**: a keeper given up for another reason (an entry the memo dropped within a build) still leaves the next
+  run counting every file in by decoding every hit whole, though the kept inputs hold those rows.
+
+### Q53. 50 unused re-exports in the engine's `code_rule_dsl/mod.rs`
+
+- **Found** (2026-11-17, a `--bin rerail-engine --features test-hooks` build): 50 `unused import` warnings for the
+  language crates' re-exports in `native/src/code_rule_dsl/mod.rs` (e.g. line 9, `rerail_lang_php::…::forte::tree::*`),
+  from the crate split. Not this branch's change; left for the split's owner to sweep, with the re-exports' users.
 
 ## Questions for the user
 
