@@ -1,6 +1,7 @@
 # 0328: A rule is stored once, small; maintenance is metadata and a mode of the evaluator, not more rules
 
-Status: draft (2026-11-16), for the user's choice. It would retire the maintained forms (decisions 0117 step 3, 0241,
+Status: draft (2026-11-16; on blocks, 2026-11-17), not settled. The user agrees with the direction, and asked
+for the details on decision 0266's blocks to be worked out and explored before deciding (below, "On blocks"). It would retire the maintained forms (decisions 0117 step 3, 0241,
 0298), the support relations (`corpus/supports.rs`, 0090's counting), and the program image as the format of a
 pass's output (0173, as 0266 step 3 also plans). Nothing is built.
 
@@ -68,7 +69,7 @@ the strata, and each pays a fixed cost", and that on O125's larger steps countin
 
 Debug build, CPU binding, strict SQL, each mode on its own store; instructions retired, and CPU from profiles.
 
-### Two workloads, both modes
+### dl10 and the Python pack, both modes
 
 | Workload | Step | DRed | Counting (default) |
 |---|---|---|---|
@@ -82,6 +83,49 @@ Debug build, CPU binding, strict SQL, each mode on its own store; instructions r
 
 Every step's findings are the same in both modes. Neither mode wins everywhere: an import, which moves the
 cross-file module relations, costs DRed 43% more. So the choice is per stratum and per edit, not one switch.
+
+### Typing-support's workloads (2026-11-17)
+
+These ran once this branch had Typing-support's branch merged, with three fixes:
+- Q21, theirs, which lets `calls.rr` read a node's text from the command line;
+- the native join's lattice `top` and `@flat_bin`, which let `workload.rr` run under the strict mode;
+- the planner's heavy-key and walk samples (0209, 0233, 0245), which read a kept relation's own row ids through a
+  source that numbers its live rows. From step 05 on, every maintained run of `calls.rr` panicked there.
+
+The O125 replay (`~/orca/rerail-shared/o125-replay`, 77 files, 20 commits) was run cold, then through steps
+01–08, each mode on its own store. Instructions retired, in G:
+
+| Step | Files changed | `calls.rr`, counting | `calls.rr`, DRed | `workload.rr`, counting | `workload.rr`, DRed |
+|---|---|---|---|---|---|
+| cold | 77 | 309.7 | 288.8 | 71.0 | 66.2 |
+| 01 | 2 | 204.5 | 184.3 | 63.3 | 62.6 |
+| 02 | 1 | 193.2 | 168.2 | 63.3 | 60.6 |
+| 03 | 3 | 244.7 | 214.3 | 65.1 | 62.3 |
+| 04 | 1 | 181.4 | 157.7 | 63.4 | 60.8 |
+| 05 | 14 | 338.2 | 307.7 | 69.9 | 66.9 |
+| 06 | 2 | 204.4 | 177.2 | 64.1 | 61.5 |
+| 07 | 6 | 212.5 | 188.4 | 63.7 | 61.1 |
+| 08 | 6 | 279.2 | 245.7 | 68.7 | 65.6 |
+
+- **Findings.** Both modes give the same findings at every step (`calls.rr`: 10,475 to 10,939). Step 08's equal a
+  run from scratch on a fresh store. `workload.rr`'s rules find nothing in these files; its `cv_const` (41 rows)
+  and `type_of` (15,678) are its work.
+- **DRed is cheaper at every step**, by 9–14% on `calls.rr` and 1–5% on `workload.rr`. Both modes maintain
+  recursive strata by levels; the mode changes the others.
+- **An edit costs 55–110% of a cold run**, 14 files at step 05. Profiled at step 06 (CPU, the cross-file part):
+
+| Share of the cross-file part | `calls.rr` step 06, counting | `calls.rr` step 06, DRed |
+|---|---|---|
+| the cross-file part | 7.78 s | 6.04 s |
+| kept rows moved to and from their frames | 29% | 30% |
+| joins, and the jobs that run them | 28% | 25% |
+| placement, spec and pricing of the strata | 18% | 17% |
+| input deltas and digests | 15% | 17% |
+| forms | 5% | 5% |
+
+  Counting places 649 strata against DRed's 467, and 204 of its strata are recursive against 92 (2.0 s against
+  1.6 s of their CPU). A support relation inside a component makes more of it recursive. Recursive strata are
+  40–45% of the strata's CPU here, against 20–26% on dl10 and the Python pack. This is the workload levels are for.
 
 ### Where an edit's cross-file part goes
 
@@ -116,12 +160,8 @@ Recursive strata are 7–9% of the strata and 20–26% of their CPU. Each shape 
 - recursion: levels, or deriving the component again;
 - text tests: only the new strings.
 
-Two more workloads did not run from the command line, and are recorded here rather than worked around:
-- Typing-support's `calls.rr` over the O125 replay (`~/orca/rerail-shared/o125-replay`, remade today) fails with
-  "@rr_node_text without the run's long-text nodes bound". This is open item O-cross-file-answers: a cross-file
-  rule reads a node's text, which only the per-file part binds. `RERAIL_NODE_SOURCES=eager` does not cover it.
-- `workload.rr`, the spike's type-inference fixpoint, stops in strict mode: the native engine declines one of its
-  strata.
+Two more workloads did not run from the command line on 2026-11-16: `calls.rr` (O-cross-file-answers) and
+`workload.rr` (a stratum the native engine declined). Both run now; see "Typing-support's workloads" above.
 
 ### What is stored
 
@@ -173,8 +213,163 @@ is stored whole.
    A count is needed only where a head row can have more than one derivation: the rule projects a variable away, or
    several rules make the head. That is a property of the rule, known at preparation.
 
-   The choice is made with the program and checked against each edit's deltas (0090 §4's threshold). The import
-   edit above is where it matters: counting saves 30% there, and DRed saves 5–8% on appends and comments.
+   Counts and levels are state, kept from run to run, so a stratum cannot change to counting for one edit: its
+   counts would have to exist already. Two kinds of choice follow (amended 2026-11-17, "On blocks" below):
+   - **What a stratum keeps** (a count column, a level column, or nothing) is chosen with the program, and changes
+     only when the stratum is derived anew anyway: a rule of it edited, a derive-again, or a roll-up.
+   - **How an edit is applied** is chosen per edit, among what the kept state allows. DRed and derive-again need
+     nothing kept, so they are always open. Counting and levels are open where their column is kept. 0090 §4's
+     threshold chooses derive-again.
+
+   The import edit above is where it matters: counting saves 30% there, and DRed saves 5–8% on appends and
+   comments.
+
+## On blocks (0266): what counting and DRed keep, and where (2026-11-17)
+
+The user asked for this before the design is settled. Decision 0266 puts a phase's cross-file relations in one
+`Facts` block, and a maintained run writes a delta of it. Maintenance has to live in those structures, with no
+`__del` or `__sup` relations beside them. This section works through what is kept, what is scratch, and what each
+strategy does to a delta. It is checked against the spike's code (`native/crates/blocks`), not only 0266's text.
+
+### What the spike's relation already has
+
+`blocks::relation::Relation` holds:
+- the rows, in chunks that double;
+- `killed`, a log of the row ids a delta kills, of its base or its own;
+- `dead`, bits over the base's ids and the delta's;
+- the canonical `order`, the hash `indexes` and the statistics, all made at freeze.
+
+A delta's ids continue after its base's (`base_rows`), so no base row is renumbered. `Facts::carry` opens a run's
+delta by pushing the last delta's rows again in id order and repeating its dead bits as kills. So every id keeps
+its meaning from run to run until a roll-up. A delta is cumulative: it holds every change since its full block,
+not only this run's.
+
+### Kept, per relation, in the `Facts` block
+
+| Field | Where | Size | What it is for |
+|---|---|---|---|
+| `mark: {rows, kills}` | in a delta, set when it is carried | 8 B a relation | Where this run's changes start. A delta's rows past `mark.rows` are this run's adds, and its kills past `mark.kills` are this run's removals. These replace `x__plus` and `x__minus`: ranges, not relations. |
+| `levels` | a column, optional (0266 already lists it) | 0–4 B a row, by the column's encoding | *Levels, checked* (0090) for a recursive stratum. Written once, as a row is pushed. A row that survives an edit keeps its level, so a delta never changes a base row's level. |
+| `counts` | a column, optional | 0–4 B a row: a column of all 1s is the 16-byte descriptor alone | Counting, where the stratum keeps counts. |
+| `recount: {id, count}` | in a delta: a log, and an index made at freeze | 8 B a changed count | A base row's count changed by a delta. The base is frozen, so its column cannot be written. A delta's own rows' counts are written in place, since carry pushed them again. |
+
+The old rows (`x__old`) are not kept apart. A row was live at the run's start when its id is below `mark.rows` and
+it was not dead then: either it is not dead now, or it was killed after `mark.kills`. Those kills are few, so
+freeze makes a small hash set of them for this test. The "old" view is then the delta itself, filtered, with no
+copy.
+
+### Kept in the `Program` block
+
+All of this is versioned with the program (0266 §1), made at preparation, and read in place:
+- each rule's record (decision 1);
+- for each atom that can change, the rule's delta plan (decision 4);
+- for DRed and levels, a rederive plan: the rule probed with its head bound, so the indexes it needs are known
+  with the program;
+- each stratum's kept state (none, counts or levels), and its relations' flags;
+- whether a head row can have more than one derivation (decision 6). A relation that cannot needs no count column
+  under counting.
+
+### Scratch, made and dropped within a stratum
+
+These live in the pool's scratch region, as freeze's sort keys already do (0266 §12):
+- **Signed change rows** `(tuple, ±1)` for a counted head. A GPU claims them as it claims any rows.
+- **Candidate ids** for DRed or levels: rows that may have lost a derivation.
+- **The hash set of this run's kills** (above).
+
+None of these is a relation of the program, none is stored, and none is planned as a stratum.
+
+### A maintained stratum, step by step
+
+**When it runs.** A stratum runs when one of its reads has rows past its mark or kills past it. That is two
+comparisons per read, and it replaces today's planning of a form for the stratum.
+
+**DRed** (no kept state):
+1. Join each changed atom's removed rows over the old view of the others, using the delta plans. The heads found are
+   candidates, as ids of the head relation (a probe of its index).
+2. Probe each candidate with its rederive plan over the new view. If it still has a derivation, it is dropped from
+   the candidates.
+3. Push the inserts: each changed atom's added rows joined over the new view.
+4. Kill each candidate that remains and was not inserted again.
+5. Freeze. It drops a pushed row that is already live, as it does today.
+
+For a non-recursive stratum the candidates are checked against strata already final, so step 2 is one probe each.
+The over-deletion O125 measured comes from recursion, which levels handles.
+
+**Counting** (a count column):
+1. Join the changed atoms' removed rows (−1) and added rows (+1) over the old and new views, with the standard
+   ordering of old and new, into signed change rows.
+2. Freeze sums them per tuple instead of dropping duplicates.
+3. A tuple the relation holds gets its count changed: a `recount` entry for a base row, the cell itself for a
+   delta row.
+4. A count that reaches 0 kills the row. A new tuple is pushed with its count.
+
+There is no rederive probe. A count that changes but stays above 0 is no change of the relation: it is past
+neither mark, so no stratum after it runs.
+
+**Levels, checked** (a level column), 0090's algorithm on these structures:
+- the candidates are sorted by their level column;
+- "the live rows below level L" is the old view filtered by `level < L` and not gone: a predicate, not 0090's
+  `h__live`;
+- a new row's level is written as it is pushed (0090: the highest kept level plus the wave).
+
+**Changed groups**, for an aggregate: the groups the input's added and removed rows touch are found from their
+group columns and computed again through an index on those columns. A changed result row is killed and pushed
+again.
+
+**Derive again**: as the spike's `diff_into` does today. Derive into scratch, then walk the old and new canonical
+orders together, killing and pushing.
+
+### Details that decide whether this works
+
+- **Counting changes freeze, and the cold run.** Freeze today drops duplicates. A counted relation's freeze
+  counts them instead, so each distinct binding of the body must be pushed exactly once. A plan that stops at an
+  atom's first match cannot be used for a counted stratum. The exception is the last atom, whose probe range's
+  length is the count. A rule whose projected-away atoms come last in its plan counts at no extra cost. Any other
+  must list every binding, cold and in each edit. This is counting's real cost on blocks, and it is a property of
+  the plan, known at preparation.
+- **What counting replaces is mostly free.** `kind(n, k) :- node(_, n, k, _, _)` has a count of 1 on every row.
+  Its column is a descriptor of 16 bytes, where `kind__sup0` today is a second copy of the node table. A count
+  column also adds no relation, where today's supports make more strata recursive: on `calls.rr`, 204 against
+  DRed's 92.
+- **A row killed and pushed again in one run gets a new id.** Freeze keeps the base's dead row dead, and the pushed
+  row lives as a new delta row. That is correct, but it reports the tuple as both removed and added. DRed avoids
+  it by checking inserts against the candidates before killing (step 4). For other strategies, freeze can revive
+  the old id when the base row it finds is dead by a kill past the mark. The spike's freeze already does that
+  binary search; it would need the kill set above.
+- **A delta grows with recounts.** The roll-up rule (0266 §6) charges a delta for what it carries, and carrying
+  the recount log is part of that. A count that flips often, in a component that rows keep entering and leaving,
+  costs 8 B a run. The roll-up applies the log and writes a contiguous column.
+- **Carried state goes stale** (0090's pitfall). A stratum that one run does not maintain must leave its counts and
+  levels consistent, or drop them. Derive-again writes them as it derives: counts by its freeze, levels by its
+  waves. So no path leaves them stale. The roll-up check (the same rows before and after) should cover counts and
+  levels too.
+- **A rule edit** (0281's per-policy path) changes the derivations of its head. That stratum is derived again,
+  which recomputes its counts. Removing the old rule's derivations as a delta would mean running the whole old rule.
+- **On the GPU:**
+  - signed change rows are claimed and written like any rows;
+  - summing them is the sort freeze already does, plus a segmented sum;
+  - a base row is found by binary search of its order (`rel_probe`);
+  - a candidate probe is a join kernel with its head bound;
+  - a level filter is a compare inside it.
+
+  Nothing needs a device-side allocation beyond 0266 §5's reserve step.
+- **One more strategy the spike suggests.** The spike maintains its edge join by key: it kills the edges whose
+  columns name the edited document, then joins that document's rows again. No count and no overdelete join are
+  needed. This holds when every body atom's document column reaches the head. That is a property of the rule, and
+  could be a sixth strategy byte where it holds.
+
+### What has to be measured before deciding
+
+The spike is the place to measure, since it has every structure above:
+1. Counting against DRed against derive-again on the spike's edge join, and on a projecting rule with a large
+   fan-in. This is the case where counting must list every binding.
+2. *Levels, checked* against derive-again on its reachability stratum. This is 680 M of the 977 M an edit costs
+   at 3,000 docs today.
+3. Freeze with counts against freeze with dedup, cold.
+4. Delta growth with recounts over the spike's 40-edit runs, and where the roll-up rule fires.
+5. How often a tuple is killed and pushed again in one run, with and without reviving its old id.
+
+Each is checked against the from-scratch oracle, as the spike's runs already are.
 
 ## Sizes, today against this decision (dl10)
 
@@ -205,8 +400,7 @@ with each step's findings and rows compared with a cold run's.
 
 ## Open
 
-- O-cross-file-answers blocks `calls.rr`, the largest recursive workload, from the command line; it is the
-  workload where levels matter most (0090: 6.7–22× over-deletion under DRed).
-- `workload.rr` needs its declined stratum made native before it can be measured strictly.
+- Why an edit of `calls.rr` costs 55–110% of a cold run. The kept rows' moves and the placement are about half of
+  it, as on the other workloads, but the joins are large too: the recursive strata.
 - The kept rows' moves to and from frames (26–30%) are 0266's `Facts` block (its step 4), not this decision's; this
   decision depends on it for (5).
