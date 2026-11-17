@@ -25,6 +25,7 @@ import { startTestRepository, stopTestRepository } from "../../support/started-r
 import { symlinkOrSkip } from "../../support/platform/links.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
 import { loadNativeBinding } from "../../../src/engine/native/native.js";
+import { NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -564,6 +565,45 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     await edit(auditor, "outside-worktree", 1, absolute);
 
     expect(violations(audits)).toEqual([{ checkout: worktree, path: "api/x.py", code: "SESSION", mode: "block" }]);
+  });
+
+  it("answers a walk's questions about a worktree with the session checkout's rules without opening a lane there", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    await mkdir(join(worktree, "api"), { recursive: true });
+    await writeFile(join(worktree, "api", "x.py"), "seed\n");
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true);
+    const opened = vi.spyOn(NativeCodeRuleEnforcer.prototype, "openWorkspace");
+    cleanups.push(async () => { opened.mockRestore(); });
+
+    await auditor.openWorkspace("worktree-questions");
+    const view = auditor.walkView();
+    const asked = (path: string) => join(worktree, path);
+    expect([view.ignoresPath(asked("api"), true), view.acceptsPath(asked("api/x.py")), view.acceptsPath(asked("README.md"))]).toEqual([false, true, false]);
+    expect([auditor.acceptsPath(asked("api/x.py")), auditor.acceptsPath(asked("README.md"))]).toEqual([true, false]);
+    // A lane holds a native workspace and the checkout's index: only the session's own opened.
+    expect(opened).toHaveBeenCalledTimes(1);
+
+    // An edit there is judged by the worktree's own lane, which opens for it.
+    await edit(auditor, "worktree-questions", 1, asked("api/x.py"));
+    expect(violations(audits)).toEqual([{ checkout: worktree, path: "api/x.py", code: "SESSION", mode: "block" }]);
+    expect(opened).toHaveBeenCalledTimes(2);
+  });
+
+  it("answers a walk's questions about a worktree with rules of its own by them, opening its lane", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    // The worktree's own rules (`.rerail/rules`) read Markdown files too, which the session checkout's do not.
+    await mkdir(join(worktree, ".rerail", "rules"), { recursive: true });
+    await writeFile(join(worktree, ".rerail", "rules", "notes.json"), JSON.stringify({ ...needle("worktree:notes", "NOTES"), scope: { include: ["**/*.md"], exclude: [] } }));
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true);
+    const opened = vi.spyOn(NativeCodeRuleEnforcer.prototype, "openWorkspace");
+    cleanups.push(async () => { opened.mockRestore(); });
+
+    await auditor.openWorkspace("own-rules");
+    const view = auditor.walkView();
+    expect([view.acceptsPath("README.md"), view.acceptsPath(join(worktree, "README.md")), view.acceptsPath(join(worktree, "api", "x.py"))]).toEqual([false, true, true]);
+    expect(opened).toHaveBeenCalledTimes(2);
   });
 
   it("judges a sibling worktree from a session that started in a worktree", async () => {
