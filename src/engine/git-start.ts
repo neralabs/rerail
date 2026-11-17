@@ -1,8 +1,9 @@
 /**
- * Starts the Git processes that Rerail reads without blocking. On Linux, Node starts a child by forking the whole
- * process (libuv's `uv_spawn` calls `fork()` there, and `posix_spawn` only on macOS), and waits on the calling thread
- * until the copy has run `exec`. Copying and dropping the page tables of a daemon of several gigabytes holds its event
- * loop for tens to hundreds of milliseconds per start, and no hook of any session is answered meanwhile. In a process
+ * Starts every Git process Rerail runs: the reads that do not block ({@link startGit}) and the runs that do
+ * ({@link runGitSync}). On Linux, Node starts a child by forking the whole process (libuv's `uv_spawn` calls `fork()`
+ * there, and `posix_spawn` only on macOS), and waits on the calling thread until the copy has run `exec`. Copying and
+ * dropping the page tables of a daemon of several gigabytes holds its event loop for tens to hundreds of milliseconds
+ * per start, and no hook of any session is answered meanwhile. In a process
  * that turns it on ({@link startGitWithoutCopying}, the daemon on Linux), Git starts through the engine's `posix_spawn`,
  * which runs the child in this process's memory until `exec` and copies nothing (`native/src/git_start.rs`). Git gets
  * the same program, arguments, environment, working folder, stdio, signal state and descriptors as Node gives it, and
