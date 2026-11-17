@@ -506,7 +506,7 @@ pub(in crate::code_rule_dsl) fn after(
         // An index's relation (the reach index, decision 0119), or a view of an input's columns (Q37), is made again
         // in less than reading it back costs: not kept, so it never takes the budget from the relations whose rows
         // are work.
-        if held.view.is_some() {
+        if held.view.is_some() || held.viewed {
             continue;
         }
         let k = Kept { rel: held, width, output: outputs.get(&rel).cloned() };

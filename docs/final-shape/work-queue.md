@@ -951,6 +951,14 @@ pass.
     copy had; base inputs' views are unchanged. Each view also takes its input's column statistics
     (`Run::view_stats`). After: 6.19–6.27 s against 5.96–6.10 s. What is left is the same work at 20–50% more CPU per
     unit in a few strata (`ruff_safe_operand`, `type_bare`): rows read through the source, not flat.
+  - Then held as flat rows, not in place (user: the view must be a net speed improvement). Read in place, every
+    reader's row went through the source (its document located, a kind's dialect looked up), and the readers read
+    more rows than the relation holds. `hold_view` now reads the input's columns once, document by document
+    (`Source::rows_of`), into flat rows the readers read as the copy's: no stratum, component, join, set or index
+    is made for it. The 64-row index rule above is dropped with it (held views are flat; the reach index's source
+    views are as before). Kept part: such a relation is `viewed`, never kept. fixtures/python cold, two rounds on
+    m1max (load about 8): 5.68 and 5.94 s of strata CPU against the copies' 6.09 and 6.03 s; user 13.05 and 13.34
+    s against 13.44 and 13.47 s. Outputs equal as sets (660), the warm run writes nothing.
 
 ### Q38. (Q32 on Native-and-GPU-strata at e75b66095) A kind-set axis's tape code set counted ERROR nodes as members
 
