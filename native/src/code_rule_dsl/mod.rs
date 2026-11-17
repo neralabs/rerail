@@ -3831,8 +3831,6 @@ mod transducer {
             #[cfg(test)]
             pub mod engine_tests;
         }
-        #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-        pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_frontier_conformance;
         #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
         pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_grid_backend;
         #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]

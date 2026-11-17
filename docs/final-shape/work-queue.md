@@ -488,6 +488,13 @@ iteration. Both are per-byte loops, which the engine's code refuses elsewhere.
 - **Done when**: both compare a word at a time over the window (or `same_line` reads the document's line table,
   as the device's does), with no loop a byte a step.
 
+Their siblings, found later the same day (0310 steps 4 and 5):
+- `metal_batch_runtime.metal`'s `text_equal`: the Metal interpreter's and JIT's copy of the same pair test,
+  also a byte an iteration.
+- `rerail_tape_format::f16::group`: it matches a format 16 code group's bytes a byte at a time
+  (`match_groups`).
+- `metal_tape.metal`'s `f16_word` is gone with the hand port (step 4): the generated reads load words.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives

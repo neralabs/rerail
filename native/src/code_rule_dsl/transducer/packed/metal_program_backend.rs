@@ -281,8 +281,10 @@ impl Drop for MetalWorkspaceLease {
 }
 
 const BATCH_ENTRY: &str = include_str!("metal_batch_runtime.metal");
-/// The interpreter over resident tapes (decision 0032): `run_batch` reading the batch's documents
-/// in the slabs through the tape view, as the label passes bind it.
+/// The tape's reads and readers (decision 0310), before the runtime: every batch reads its documents in the
+/// slabs through them (decision 0032), with no node records.
+const TAPE_PREFIX: &str = concat!("#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape_reads.metal"), include_str!("metal_tape.metal"));
+/// The interpreter of resident label batches: tasks from roots, not records (decision 0033).
 const RESIDENT_PREFIX: &str = concat!("#define RERAIL_RESIDENT 1\n#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape_reads.metal"), include_str!("metal_tape.metal"));
 
 #[derive(Clone, Eq, PartialEq)]
@@ -468,15 +470,15 @@ fn opcode_bodies() -> Result<std::collections::BTreeMap<u8, &'static str>, Error
     Ok(bodies)
 }
 
-const JIT_CONTEXT: &str = "JitContext context={nodes,children,supertypes,words,longs,values,strings,nfaStates,nfaData,nfaRanges,luaInstructions,luaMembers,valueWork,stringBytes,source,assertions,assertionData,captures,cursors,repeats,queuedStates,greedyEntries,pending,results,lineStarts,task,file,program,node,&evaluation,&globalArenas,valueBase,valueCapacity,&status,&path,&pendingCount,&captureCount,&cursorCount,&repeatCount,&resultCount,&candidateHead,&localOrdinal,&keep,&advance};";
-const JIT_OUTPUT_CONTEXT: &str = "JitOutputContext outputContext={assertionData,program,task,file,nodes,captures,raw.captureStart,raw.captureCount,finalCaptures,&finalCaptureCount,&captureBefore,outputStorage,&propertyCount,&outputByteCount,source,lineStarts,values,nfaStates,nfaData,nfaRanges,valueWork,resultIndex,&resultProperties,&dynamicProperties,&outputSteps,&evaluation,&sharedEvaluation,&globalArenas,valueBase,valueCapacity};";
+const JIT_CONTEXT: &str = "JitContext context={&nodes,children,supertypes,words,longs,values,strings,nfaStates,nfaData,nfaRanges,luaInstructions,luaMembers,valueWork,stringBytes,source,assertions,assertionData,captures,cursors,repeats,queuedStates,greedyEntries,pending,results,&lineStarts,task,file,program,node,&evaluation,&globalArenas,valueBase,valueCapacity,&status,&path,&pendingCount,&captureCount,&cursorCount,&repeatCount,&resultCount,&candidateHead,&localOrdinal,&keep,&advance};";
+const JIT_OUTPUT_CONTEXT: &str = "JitOutputContext outputContext={assertionData,program,task,file,&nodes,captures,raw.captureStart,raw.captureCount,finalCaptures,&finalCaptureCount,&captureBefore,outputStorage,&propertyCount,&outputByteCount,source,&lineStarts,values,nfaStates,nfaData,nfaRanges,valueWork,resultIndex,&resultProperties,&dynamicProperties,&outputSteps,&evaluation,&sharedEvaluation,&globalArenas,valueBase,valueCapacity};";
 
 fn jit_support(
     bodies: &std::collections::BTreeMap<u8, &'static str>,
     programs: &[Program],
 ) -> Result<String, Error> {
     let mut source = String::from(
-        "struct JitContext{device const Node* nodes;device const uint* children;device const Supertype* supertypes;device const ulong* longs;device const ValueRecord* values;device const StringRecord* strings;device const NfaState* nfaStates;device const uint* nfaData;device const NfaRange* nfaRanges;device const LuaInstruction* luaInstructions;device const LuaMember* luaMembers;device uint* valueWork;device const uchar* stringBytes;device const uchar* source;device const Assertion* assertions;device const uint* assertionData;device Link* captures;device Link* cursors;device RepeatLink* repeats;device Path* pending;device Result* results;device const uint* lineStarts;Task task;File file;Program program;Node node;device Evaluation* evaluation;device GlobalArenas* globalArenas;uint valueBase;uint valueCapacity;device Status* status;thread Path* path;thread uint* pendingCount;thread uint* captureCount;thread uint* cursorCount;thread uint* repeatCount;thread uint* resultCount;thread uint* candidateHead;thread uint* localOrdinal;thread bool* keep;thread bool* advance;};template<uint OP> __attribute__((noinline)) bool jit_step(thread JitContext& context,uint mode,uint operand){device const Node* nodes=context.nodes;device const uint* children=context.children;device const Supertype* supertypes=context.supertypes;device const ulong* longs=context.longs;device const ValueRecord* values=context.values;device const StringRecord* strings=context.strings;device const NfaState* nfaStates=context.nfaStates;device const uint* nfaData=context.nfaData;device const NfaRange* nfaRanges=context.nfaRanges;device const LuaInstruction* luaInstructions=context.luaInstructions;device const LuaMember* luaMembers=context.luaMembers;device uint* valueWork=context.valueWork;device const uchar* stringBytes=context.stringBytes;device const uchar* source=context.source;device const Assertion* assertions=context.assertions;device const uint* assertionData=context.assertionData;device Link* captures=context.captures;device Link* cursors=context.cursors;device RepeatLink* repeats=context.repeats;device Path* pending=context.pending;device Result* results=context.results;device const uint* lineStarts=context.lineStarts;Task task=context.task;File file=context.file;Program program=context.program;Node node=context.node;device Evaluation& evaluation=*context.evaluation;device GlobalArenas& globalArenas=*context.globalArenas;uint valueBase=context.valueBase,valueCapacity=context.valueCapacity;device Status& status=*context.status;thread Path& path=*context.path;thread uint& pendingCount=*context.pendingCount;thread uint& captureCount=*context.captureCount;thread uint& cursorCount=*context.cursorCount;thread uint& repeatCount=*context.repeatCount;thread uint& resultCount=*context.resultCount;thread uint& candidateHead=*context.candidateHead;thread uint& localOrdinal=*context.localOrdinal;bool keep=*context.keep,advance=*context.advance;constexpr uint op=OP;",
+        "struct JitContext{thread const NodeTable* nodes;device const uchar* children;device const Supertype* supertypes;device const ulong* longs;device const ValueRecord* values;device const StringRecord* strings;device const NfaState* nfaStates;device const uint* nfaData;device const NfaRange* nfaRanges;device const LuaInstruction* luaInstructions;device const LuaMember* luaMembers;device uint* valueWork;device const uchar* stringBytes;device const uchar* source;device const Assertion* assertions;device const uint* assertionData;device Link* captures;device Link* cursors;device RepeatLink* repeats;device Path* pending;device Result* results;thread const LineTable* lineStarts;Task task;File file;Program program;Node node;device Evaluation* evaluation;device GlobalArenas* globalArenas;uint valueBase;uint valueCapacity;device Status* status;thread Path* path;thread uint* pendingCount;thread uint* captureCount;thread uint* cursorCount;thread uint* repeatCount;thread uint* resultCount;thread uint* candidateHead;thread uint* localOrdinal;thread bool* keep;thread bool* advance;};template<uint OP> __attribute__((noinline)) bool jit_step(thread JitContext& context,uint mode,uint operand){thread const NodeTable& nodes=*context.nodes;device const uchar* children=context.children;device const Supertype* supertypes=context.supertypes;device const ulong* longs=context.longs;device const ValueRecord* values=context.values;device const StringRecord* strings=context.strings;device const NfaState* nfaStates=context.nfaStates;device const uint* nfaData=context.nfaData;device const NfaRange* nfaRanges=context.nfaRanges;device const LuaInstruction* luaInstructions=context.luaInstructions;device const LuaMember* luaMembers=context.luaMembers;device uint* valueWork=context.valueWork;device const uchar* stringBytes=context.stringBytes;device const uchar* source=context.source;device const Assertion* assertions=context.assertions;device const uint* assertionData=context.assertionData;device Link* captures=context.captures;device Link* cursors=context.cursors;device RepeatLink* repeats=context.repeats;device Path* pending=context.pending;device Result* results=context.results;thread const LineTable& lineStarts=*context.lineStarts;Task task=context.task;File file=context.file;Program program=context.program;Node node=context.node;device Evaluation& evaluation=*context.evaluation;device GlobalArenas& globalArenas=*context.globalArenas;uint valueBase=context.valueBase,valueCapacity=context.valueCapacity;device Status& status=*context.status;thread Path& path=*context.path;thread uint& pendingCount=*context.pendingCount;thread uint& captureCount=*context.captureCount;thread uint& cursorCount=*context.cursorCount;thread uint& repeatCount=*context.repeatCount;thread uint& resultCount=*context.resultCount;thread uint& candidateHead=*context.candidateHead;thread uint& localOrdinal=*context.localOrdinal;bool keep=*context.keep,advance=*context.advance;constexpr uint op=OP;",
     );
     for (index, (opcode, body)) in bodies.iter().enumerate() {
         source.push_str(if index == 0 {
@@ -500,14 +502,14 @@ fn jit_support(
         }
         for capture in 0..program.capture_programs.len() {
             source.push_str(&format!(
-                "__attribute__((noinline)) bool jit_capture_{program_index}_{capture}(thread JitContext& context){{uint outcome=evaluate_assertion(context.assertions[context.program.captureStart+{capture}u],context.assertionData,context.captures,context.path->captures,context.task,context.file,context.program,context.nodes,context.source,context.strings,context.stringBytes,context.values,context.nfaStates,context.nfaData,context.nfaRanges,context.luaInstructions,context.luaMembers,context.valueWork,context.lineStarts,context.path->steps,*context.evaluation,*context.globalArenas,context.valueBase,context.valueCapacity);if(outcome==2u){{context.status->error=6u;return false;}}if(outcome==3u){{context.status->error=4u;return false;}}if(outcome==4u){{context.status->error=2u;return false;}}*context.keep=outcome==1u;return true;}}"
+                "__attribute__((noinline)) bool jit_capture_{program_index}_{capture}(thread JitContext& context){{uint outcome=evaluate_assertion(context.assertions[context.program.captureStart+{capture}u],context.assertionData,context.captures,context.path->captures,context.task,context.file,context.program,*context.nodes,context.source,context.strings,context.stringBytes,context.values,context.nfaStates,context.nfaData,context.nfaRanges,context.luaInstructions,context.luaMembers,context.valueWork,*context.lineStarts,context.path->steps,*context.evaluation,*context.globalArenas,context.valueBase,context.valueCapacity);if(outcome==2u){{context.status->error=6u;return false;}}if(outcome==3u){{context.status->error=4u;return false;}}if(outcome==4u){{context.status->error=2u;return false;}}*context.keep=outcome==1u;return true;}}"
             ));
         }
     }
-    source.push_str("struct JitOutputContext{device const uint* assertionData;Program program;Task task;File file;device const Node* nodes;device const Link* captures;uint head;uint captureCount;device FinalCapture* finalCaptures;thread uint* finalCount;thread uint* captureStart;device uchar* storage;thread uint* propertyCount;thread uint* byteCount;device const uchar* source;device const uint* lineStarts;device const ValueRecord* values;device const NfaState* nfaStates;device const uint* nfaData;device const NfaRange* nfaRanges;device uint* valueWork;uint resultIndex;thread uint* resultProperties;thread uint* dynamicProperties;thread uint* steps;device Evaluation* evaluation;device Evaluation* sharedEvaluation;device GlobalArenas* globalArenas;uint valueBase;uint valueCapacity;};");
+    source.push_str("struct JitOutputContext{device const uint* assertionData;Program program;Task task;File file;thread const NodeTable* nodes;device const Link* captures;uint head;uint captureCount;device FinalCapture* finalCaptures;thread uint* finalCount;thread uint* captureStart;device uchar* storage;thread uint* propertyCount;thread uint* byteCount;device const uchar* source;thread const LineTable* lineStarts;device const ValueRecord* values;device const NfaState* nfaStates;device const uint* nfaData;device const NfaRange* nfaRanges;device uint* valueWork;uint resultIndex;thread uint* resultProperties;thread uint* dynamicProperties;thread uint* steps;device Evaluation* evaluation;device Evaluation* sharedEvaluation;device GlobalArenas* globalArenas;uint valueBase;uint valueCapacity;};");
     for program_index in 0..programs.len() {
         source.push_str(&format!(
-            "__attribute__((noinline)) uint jit_output_{program_index}(thread JitOutputContext& c){{return apply_output(c.assertionData,c.program,c.task,c.file,c.nodes,c.captures,c.head,c.captureCount,c.finalCaptures,*c.finalCount,*c.captureStart,c.storage,*c.propertyCount,*c.byteCount,c.source,c.lineStarts,c.values,c.nfaStates,c.nfaData,c.nfaRanges,c.valueWork,c.resultIndex,*c.resultProperties,*c.dynamicProperties,*c.steps,*c.evaluation,*c.sharedEvaluation,*c.globalArenas,c.valueBase,c.valueCapacity);}}"
+            "__attribute__((noinline)) uint jit_output_{program_index}(thread JitOutputContext& c){{return apply_output(c.assertionData,c.program,c.task,c.file,*c.nodes,c.captures,c.head,c.captureCount,c.finalCaptures,*c.finalCount,*c.captureStart,c.storage,*c.propertyCount,*c.byteCount,c.source,*c.lineStarts,c.values,c.nfaStates,c.nfaData,c.nfaRanges,c.valueWork,c.resultIndex,*c.resultProperties,*c.dynamicProperties,*c.steps,*c.evaluation,*c.sharedEvaluation,*c.globalArenas,c.valueBase,c.valueCapacity);}}"
         ));
     }
     source.push_str(
@@ -573,13 +575,7 @@ fn jit_kernel_source(programs: &[Program]) -> Result<String, Error> {
         ));
     }
     dispatch.push_str("default:status.error=5u;return;}");
-    Ok(kernel_source(
-        "",
-        Some(&dispatch),
-        &jit_support(&bodies, programs)?,
-        JIT_CONTEXT,
-        JIT_OUTPUT_CONTEXT,
-    ))
+    Ok(format!("{TAPE_PREFIX}{}", kernel_source("", Some(&dispatch), &jit_support(&bodies, programs)?, JIT_CONTEXT, JIT_OUTPUT_CONTEXT)))
 }
 
 const INTERPRETER_FETCH: &str =
@@ -601,16 +597,7 @@ pub(super) fn compile_resident_interpreter_cached() -> Result<Engine, Error> {
 
 pub fn compile_interpreter() -> Result<Engine, Error> {
     Ok(Engine::Interpreter {
-        pipeline: pipeline_named(
-            &kernel_source(
-                INTERPRETER_FETCH,
-                None,
-                "",
-                "",
-                "",
-            ),
-            "run_batch",
-        )?,
+        pipeline: pipeline_named(&format!("{TAPE_PREFIX}{}", kernel_source(INTERPRETER_FETCH, None, "", "", "")), "run_batch")?,
         buffers: Arc::new(Mutex::new(None)),
     })
 }
@@ -749,7 +736,8 @@ pub fn execute_packed_with_result_limits(
     if matches!(engine, Engine::Jit { programs: count, .. } if *count != programs.len()) {
         return Err(Error::InvalidAnchor);
     }
-    let mut batch = PackedBatch::new(programs, files, anchors).map_err(|error| {
+    // The tasks with no node records: the device reads the documents in the slabs (`DocTable`).
+    let mut batch = PackedBatch::new_in_place(programs, files, anchors).map_err(|error| {
         if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
             eprintln!("TEMPO_PACKED_BATCH_ERROR stage=pack error={error:?}");
         }
@@ -793,10 +781,18 @@ pub fn execute_packed_with_result_limits(
     let program_buffers = engine.program_buffers(device, &batch)?;
     let task_buffer = MappedBuffer::from_slice(device, &batch.tasks)?;
     let header_buffer = MappedBuffer::from_slice(device, &[batch.header])?;
-    let (supertypes, files) = batch.metal_supertypes();
-    let file_buffer = MappedBuffer::from_slice(device, &files)?;
-    let node_buffer = MappedBuffer::from_slice(device, &batch.nodes)?;
-    let child_buffer = MappedBuffer::from_slice(device, &batch.children)?;
+    // The documents in the slabs, in the batch's numbering: their views where the files were, and the slabs
+    // where the node records, children, source and line starts were (the last repeated). A batch over
+    // `MAX_SLABS` slabs is over capacity.
+    let table = crate::code_rule_dsl::residency::slabs::admit_docs(files)?;
+    let table = crate::code_rule_dsl::residency::slabs::DocTable::new(table).ok_or(Error::BackendCapacity)?;
+    if table.nodes != files.iter().map(TapeDoc::transducer_len).sum::<usize>() {
+        return Err(Error::BackendFailure);
+    }
+    let file_buffer = MappedBuffer::from_slice(device, &table.views)?;
+    let slab = |slot: usize| &table.slabs.get(slot).or(table.slabs.last()).expect("a batch with tasks has a document").buffer;
+    // The derived classes alone (`has_supertype`): the classes are the codes', read on the tape.
+    let (supertypes, _) = batch.metal_supertypes();
     let supertype_buffer = MappedBuffer::from_slice(device, &supertypes)?;
     let pending_buffer = &workspace.pending;
     let capture_buffer = &workspace.captures;
@@ -831,9 +827,7 @@ pub fn execute_packed_with_result_limits(
     }
     let result_buffer = &workspace.results;
     let status_buffer = &workspace.statuses;
-    let source_buffer = MappedBuffer::from_slice(device, &batch.source)?;
     let value_state_buffer = &workspace.value_states;
-    let line_start_buffer = MappedBuffer::from_slice(device, &batch.line_starts)?;
     let final_capture_buffer = &workspace.final_captures;
     let output_storage_buffer = &workspace.output_storage;
     let allocation_elapsed = allocation_started.elapsed();
@@ -852,11 +846,11 @@ pub fn execute_packed_with_result_limits(
         &task_buffer,
         &header_buffer,
         &file_buffer,
-        &node_buffer,
+        slab(0),
         &program_buffers.programs,
         &program_buffers.words,
         &program_buffers.longs,
-        &child_buffer,
+        slab(1),
         &supertype_buffer,
         pending_buffer,
         capture_buffer,
@@ -875,9 +869,9 @@ pub fn execute_packed_with_result_limits(
         &program_buffers.assertions,
         &program_buffers.assertion_data,
         &program_buffers.string_bytes,
-        &source_buffer,
+        slab(2),
         value_state_buffer,
-        &line_start_buffer,
+        slab(3),
         final_capture_buffer,
         output_storage_buffer,
     ]
