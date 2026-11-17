@@ -53,11 +53,18 @@ fn lock_failure(action: &str, path: &str, error: std::io::Error) -> Error {
     )
 }
 
-/// Opens (creating) the lock file at `path`. On Windows the handle is opened for overlapped I/O,
-/// so a waiting `LockFileEx` returns at once and its wait can be given a bound and cancelled.
+/// Opens (creating) the lock file at `path`, as the main-instance election always has.
 fn open_lock_file(path: &str) -> Result<File> {
-    let mut options = OpenOptions::new();
-    options.read(true).write(true).create(true).truncate(false);
+    lock_file_options()
+        .open(path)
+        .map_err(|error| lock_failure("open", path, error))
+}
+
+/// Opens (creating) the lock file at `path` for a wait. On Windows the handle is opened for
+/// overlapped I/O, so a waiting `LockFileEx` returns at once and its wait can be given a bound and
+/// cancelled; a try keeps its synchronous handle.
+fn open_waiting_lock_file(path: &str) -> Result<File> {
+    let mut options = lock_file_options();
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
@@ -66,6 +73,12 @@ fn open_lock_file(path: &str) -> Result<File> {
     options
         .open(path)
         .map_err(|error| lock_failure("open", path, error))
+}
+
+fn lock_file_options() -> OpenOptions {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    options
 }
 
 /// Takes an exclusive lock on `path`, creating the file when missing. `None` when another handle
@@ -89,7 +102,7 @@ type Settle = Box<dyn FnOnce(Env) -> Result<Option<ExclusiveFileLock>> + Send>;
 /// lock. The file opens before this returns, so an open that fails throws here.
 #[napi(ts_return_type = "Promise<ExclusiveFileLock | null>")]
 pub fn lock_exclusive(env: &Env, path: String, wait_ms: u32) -> Result<Object<'_>> {
-    let file = open_lock_file(&path)?;
+    let file = open_waiting_lock_file(&path)?;
     let wait = Duration::from_millis(wait_ms.into());
     // The promise is made only once its thread runs: a promise left unsettled would keep Node's
     // event loop, and so the process, alive for ever.
@@ -311,7 +324,7 @@ mod tests {
         let (directory, path) = lock_path("handover");
         let held = try_lock_exclusive(path.clone()).unwrap().unwrap();
         let (started, waiting) = mpsc::channel();
-        let file = open_lock_file(&path).unwrap();
+        let file = open_waiting_lock_file(&path).unwrap();
         let waiter = std::thread::spawn(move || {
             started.send(()).unwrap();
             wait_for_lock(file, NEVER)
@@ -337,7 +350,10 @@ mod tests {
         let (directory, path) = lock_path("given-up");
         let held = try_lock_exclusive(path.clone()).unwrap().unwrap();
 
-        let given_up = wait_for_lock(open_lock_file(&path).unwrap(), Duration::from_millis(20));
+        let given_up = wait_for_lock(
+            open_waiting_lock_file(&path).unwrap(),
+            Duration::from_millis(20),
+        );
         assert!(
             given_up.unwrap().is_none(),
             "a wait whose holder stays ends empty at its bound"
@@ -346,7 +362,7 @@ mod tests {
 
         // Whatever the given-up wait's request does at the release, it lets go: the next waiter is
         // handed the lock, long before its own bound.
-        let next = wait_for_lock(open_lock_file(&path).unwrap(), NEVER).unwrap();
+        let next = wait_for_lock(open_waiting_lock_file(&path).unwrap(), NEVER).unwrap();
         assert!(
             next.is_some(),
             "a wait given up must leave the lock free once its holder lets go"
@@ -358,7 +374,7 @@ mod tests {
     #[test]
     fn a_free_lock_is_taken_at_once_by_a_wait() {
         let (directory, path) = lock_path("free");
-        let taken = wait_for_lock(open_lock_file(&path).unwrap(), Duration::ZERO).unwrap();
+        let taken = wait_for_lock(open_waiting_lock_file(&path).unwrap(), Duration::ZERO).unwrap();
         assert!(taken.is_some(), "a free lock is taken whatever the bound");
         drop(taken);
         std::fs::remove_dir_all(directory).unwrap();
