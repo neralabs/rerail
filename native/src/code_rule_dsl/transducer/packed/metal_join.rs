@@ -304,6 +304,17 @@ inline uint line_of(device const ChunkDoc& d, uint at) {
     return lo;
 }
 
+// The facts' lines starting at or before byte `at` (`Facts::start_line`: `LineTable::line` + 1).
+inline uint fline_of(device const ChunkDoc& d, uint at) {
+    device const uint* st = items<uint>(d.flines);
+    uint lo = 0u, hi = uint(d.flines.len);
+    while (lo < hi) {
+        uint m = (lo + hi) / 2u;
+        if (st[m] <= at) lo = m + 1u; else hi = m;
+    }
+    return lo;
+}
+
 // The document holding node row `row` (of `node`): the last whose rows start at or before it.
 inline uint doc_of_node(device const ChunkDoc* docs, uint ndocs, uint row) {
     uint lo = 0u, hi = ndocs;
@@ -333,7 +344,7 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
         }
         return;
     }
-    if (view >= 5u) {
+    if (view >= 5u && view <= 8u) {
         // core.rr's places (`View::Loc`): the document whose `Loc` rows hold `r`, then its local's span.
         uint lo = 0u, hi = root->ndocs;
         while (hi - lo > 1u) {
@@ -350,12 +361,17 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
             s = items<uint>(d.spans)[2u * (l - d.nodes)];
             e = items<uint>(d.spans)[2u * (l - d.nodes) + 1u];
         }
+        // A guest's places are its file's, found on the host (`ChunkDoc::placed`).
+        bool placed = d.placed.len > 0;
+        device const uint* pl = items<uint>(d.placed) + 3u * l;
         for (uint c = 0u; c < p[3]; c++) {
             long v;
             if (p[5 + c] == 0u) {
                 v = loc_global(d, l);
             } else if (view == 8u) {
                 v = long(d.key);
+            } else if (placed) {
+                v = long(view == 5u ? pl[0] : (view == 6u ? pl[1] : pl[2]));
             } else {
                 uint line = max(line_of(d, s), 1u);
                 if (view == 5u) v = long(line);
@@ -385,6 +401,9 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
             v = long(id);
         } else if (view == 0u && col == 2u) {
             v = kind_of(d, l);
+        } else if (view == 9u && col == 1u) {
+            // `line`'s columns are the node and its start's line, by the facts' lines (`Viewed::value_at`).
+            v = long(fline_of(d, items<uint>(d.start)[l]));
         } else if (view == 0u && col == 3u) {
             v = long(items<uint>(d.start)[l]);
         } else if (view == 0u && col == 4u) {

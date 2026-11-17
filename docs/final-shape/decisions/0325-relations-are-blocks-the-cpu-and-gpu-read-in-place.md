@@ -187,3 +187,18 @@ Step by step, each leaving the engine working (see the commits that name this de
     Metal. That is the sources' blocks' room, whose granularity the 16 MB blocks bound.
   - Left in step 3: the line views (`View::Line`, no device form), relations with dead rows, and the views the
     device makes from the chunk (111–170 MB a run), which are copies made on the device.
+- **Step 3, the chunk's views** (2026-11-17): every view of a syntax batch is made on the device from its chunk.
+  None is read on the host for an upload.
+  - A batch with a guest (decision 0055) had its `Loc` views (`line`, `end_line`, `col`) read on the host: 28 MB
+    on hogql. `fill_locs` refused the whole batch, because a guest's places are its host's lines through its
+    placement. Now `fill_locs` puts a guest's places in the chunk (`ChunkDoc::placed`: first line, last line and
+    start column per local, by `Locs::place`, as the chunk holds start, end and kind). The kernel reads them for a
+    guest, and finds the others' places in their lines as before.
+  - T's `line` view (`View::Line`) gets a device form (`VIEW_LINE`): `fill_lines` puts the facts' line starts in
+    the chunk (`ChunkDoc::flines`), and the kernel counts those at or before a node's start (`start_line`).
+  - On hogql, views read on the host for an upload are 5.4 MB in 6.5 ms (84 MB in 115 ms at step 3). What is left
+    is the native reach closure (`Closed`), its own index structure, for step 7. Instructions and peak resident
+    size are level with the sources' commit (Metal a median 87.4 B against 85.9 B in a 81–87 B spread; CPU
+    binding 92.4 B against 93.2 B).
+  - Tests: `views_made_on_the_device_are_the_hosts_rows` covers `line` and a guest placed in its host's second
+    line, whose places are that line.

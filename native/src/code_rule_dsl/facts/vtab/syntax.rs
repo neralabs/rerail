@@ -3594,6 +3594,9 @@ impl Source for Viewed {
         if matches!(self.view, View::Loc(_)) && !device_chunk::fill_locs(&self.batch, chunk) {
             return None;
         }
+        if matches!(self.view, View::Line) && !device_chunk::fill_lines(&self.batch, chunk) {
+            return None;
+        }
         Some(crate::code_rule_dsl::facts::vtab::DeviceView { block: &chunk.block, root: chunk.root, view, rows: self.len(), pairs: 0 })
     }
     fn columns(&self) -> Vec<String> {

@@ -775,8 +775,9 @@
         let all = sources(&store, docs).unwrap();
         let device = rerail_accel::gpu::join::device().expect("the device");
         let mut seen = 0;
-        for name in ["node", "child", "field", "core_node"] {
-            let src = &all.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
+        // `line` (`View::Line`, decision 0325 step 3): the view, not a relation of that name.
+        for name in ["node", "child", "field", "core_node", "line"] {
+            let src = &all.iter().find(|(n, s)| *n == name && s.python_batch().is_some()).unwrap_or_else(|| panic!("{name}")).1;
             let d = src.device_view().unwrap_or_else(|| panic!("{name}: made on the device"));
             let (n, k) = (src.len(), src.columns().len());
             assert_eq!(d.rows, n, "{name}");
@@ -794,11 +795,29 @@
                 seen += 1;
             }
         }
-        assert_eq!(seen, 8);
+        assert_eq!(seen, 10);
         // core.rr's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
         {
-            use crate::code_rule_dsl::facts::vtab::syntax::{Projection, shaped};
-            let core_views = shaped(&store, make(), &Projection::core()).unwrap();
+            use crate::code_rule_dsl::facts::vtab::syntax::{Guest, Made, Placement, Projection, shaped};
+            // With a guest (decision 0055): its places are its host's lines, through its placement, found on the
+            // host and put in the chunk (`ChunkDoc::placed`).
+            let mut docs = make();
+            let text = "y = [2,\n  3]\n";
+            let file = FileInput::new("d0.py".to_owned(), "python".to_owned(), Arc::new(text.to_owned()), None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("the guest") };
+            // At the host's second line (byte 10 of "import os\nx = f(1, y=2)\n"): the guest's two lines are the
+            // host's line 2.
+            let place = Placement::Copied { delta: 10, within: [10, 24] };
+            let guest = Guest { host: 7, at: 7 << 32, grammar: "python".to_owned(), role: "program".to_owned(), root: 0, place: place.clone(), in_file: place, made: Made::Host };
+            docs.push(Document { key: 100, core: "/w#core:d0.py#guest:python:0".to_owned(), digest: core::digest(&facts), path: "d0.py".to_owned(), facts, tape: None, guest: Some(Arc::new(guest)), module: None });
+            let core_views = shaped(&store, docs, &Projection::core()).unwrap();
+            {
+                let view = |name: &str| core_views.iter().find(|(n, _)| *n == name).unwrap().1.clone();
+                let (docof, line) = (view("docof"), view("line"));
+                let guest: Vec<usize> = (0..docof.len()).filter(|&r| docof.value(r, 1) == 100).collect();
+                assert!(!guest.is_empty(), "the guest's places are rows");
+                assert!(guest.iter().all(|&r| line.value(r, 1) == 2), "the guest's places are its host's lines");
+            }
             for name in ["line", "end_line", "col", "docof"] {
                 let src = &core_views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
                 let d = src.device_view().unwrap_or_else(|| panic!("{name}: made on the device"));
