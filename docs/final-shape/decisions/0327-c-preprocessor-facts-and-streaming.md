@@ -293,19 +293,49 @@ must not become a per-token one (history index, lesson 6).
 
 ## The compiled forms (later steps)
 
-- **Mode (a)** is a transducer program:
-  - tier 1, a block program: logical lines, a line's first non-blank `#`, `\`-newline
-    continuations, and comment and string regions by page 36's region walk;
-  - tier 2, the stream words: a directive's kind and operands;
-  - the interpreter, Cranelift and Metal, as `.rr`'s and JSON's grammars run.
+- **Mode (a)** is a Bitlex grammar compiled by the Bitlex compiler, as `.rr`'s (`rr_parser`) and
+  Kotlin's (0332, `kotlin_parser`) are: a crate of its own, `c_directives`
+  (`rerail-c-directives`), with a ladder of grammar steps (`bitlex_ladder/`) and the last step
+  compiled once a process.
+  - Tier 1, the block program: logical lines (`\`-newline continuations), a line's first
+    non-blank `#` outside comments and strings, the comment and string regions (page 36's walk on
+    the CPU, the rounds on Metal). Comments are hidden bytes, never tokens: no directive row
+    names one, so the scan needs none of 0332's comment kinds.
+  - Tier 2, the stream words: each directive a node of a directive tape (its kind by its word,
+    its operands' spans as fields), conditionals nested as brackets.
+  - The rows are read from that tape in place (0310's reads), the same relations as the lean
+    scan's (`c_directive`, `c_define`, `c_include`, `c_cond`, …).
+  - The reference is the lean scan (`rerail_c_pp::directives`). A step refuses what it does not
+    read yet, and a refused file goes to the lean scan, so a step never gives a wrong row: the
+    crate's corpus test counts the files that read the same, are refused, or differ, and
+    "differ" stays 0 (0332's rule).
+  - The interpreter, Cranelift and Metal, as `.rr`'s and JSON's grammars run.
 - **Mode (b)** needs what tier 2 does not have:
   - a macro table;
   - token buffers that replay a macro's body;
   - argument frames;
   - the conditional and include stacks.
 
-  These primitives are decided in 0328 before they are built. On Metal, a unit is one thread's
-  work over a bounded work queue.
+  These primitives are decided in a decision of their own before they are built, numbered past
+  the highest in any worktree (0339 on 2026-11-17: the "0328" first planned is another
+  branch's). On Metal, a unit is one thread's work over a bounded work queue.
+
+### Prior art in the other worktrees (surveyed 2026-11-17)
+
+| Where | What | For mode (a) compiled |
+|---|---|---|
+| Swift-Kotlin-Scala-support, 0332 | A new language's Bitlex ladder in its own crate, held to its lean parser; refusals to the lean parser; "differ" 0 on the corpus | The crate's shape, its tests and its fall-back |
+| the same, 0332's compiler additions | several comment kinds, readers merged at one first byte (`/` for `//` and `/*`), `text("…")` in masks, a part to a `last`, quiet regions | `text("…")` and a part to a `last` for the directive word and its operands; the comment kinds are not needed (comments are hidden) |
+| Parser-generators-final-shape, 0323 | A region read in parts (`read str parts { … }`) | an `#include`'s `<…>` and `"…"`, a `#define`'s parameters |
+| the same, 0335, 0337, 0338, 0339 | a prefix outside the stream; a check waits for its token; a one-byte string as a toggle (`prefix_xor`); a class as one lookup | C's `"…"` and `'…'` are toggles' shape but two kinds: the regions walk until they are merged |
+| final-rerail-shape and others, 0310 | the tape's reads written once in CLIF, for Rust, the JIT and MSL | the rows read from the directive tape on every backend |
+| serverplan-quality, 0336 | the stored tape read as stored on the CPU and GPU | the directive tape is read in place, never decoded |
+
+The step 7 build starts on this branch's compiler, which has the regions, the walk and the token
+loop the first steps need. The two compiler branches above come in by the roll-up that merges
+them, not by a merge here (Swift-Kotlin-Scala-support's language crates collide with this
+branch's in 29 files; the grammar is a crate of its own, so it rebases on the compiler they
+leave).
 
 ## Prior work consulted
 
