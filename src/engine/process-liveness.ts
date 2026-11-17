@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { spawnSync } from "./child-process.js";
+import { windowsPowerShell } from "./system-programs.js";
 
 /**
  * What `kill(pid, 0)`, which sends no signal, says of the process holding `pid`:
@@ -43,4 +45,44 @@ function isZombie(pid: number): boolean {
   }
   // `pid (comm) state …`: the command name may itself hold spaces and parentheses, so the state follows the last `)`.
   return /^\s*[ZX]/u.test(stat.slice(stat.lastIndexOf(")") + 1));
+}
+
+/**
+ * When the process holding `pid` started, in epoch milliseconds, or undefined where it cannot be read. A process keeps
+ * its pid for life, so its start time tells the process that holds a pid now from one that held it before. Linux reads
+ * `/proc` ({@link linuxStartedAt}), Windows the process's creation time ({@link windowsStartedAt}); other systems are
+ * not read.
+ */
+export function processStartedAt(pid: number, platform: NodeJS.Platform = process.platform): number | undefined {
+  if (platform === "linux") return linuxStartedAt(pid);
+  return platform === "win32" ? windowsStartedAt(pid) : undefined;
+}
+
+/**
+ * Linux: the start in `/proc/<pid>/stat`, in clock ticks since boot (USER_HZ, 100 on every architecture Node runs on
+ * there), set against the time since boot in `/proc/uptime`, both counted on the clock that goes on through a suspend.
+ * The result is on the wall clock as it reads now, to within 20 ms.
+ */
+function linuxStartedAt(pid: number): number | undefined {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    // The fields after the command name's last `)` begin with the third, the state, so the start, the 22nd, is the 20th.
+    const ticks = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]);
+    const uptimeMs = Number(readFileSync("/proc/uptime", "utf8").split(" ")[0]) * 1_000;
+    return Number.isFinite(ticks) && Number.isFinite(uptimeMs) ? Math.round(Date.now() - uptimeMs + ticks * 10) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Windows: the process's creation time, as .NET's `Process.StartTime` reads it, through Windows PowerShell, which loads
+ * no Rerail engine: the uninstall reads it before it removes `versions/`, and Windows keeps a loaded DLL from being
+ * deleted. A process this user may not query is not read.
+ */
+function windowsStartedAt(pid: number): number | undefined {
+  const read = spawnSync(windowsPowerShell(), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+    `([DateTimeOffset][Diagnostics.Process]::GetProcessById(${pid}).StartTime).ToUnixTimeMilliseconds()`], { encoding: "utf8" });
+  const text = String(read.stdout ?? "").trim();
+  return read.status === 0 && /^\d+$/u.test(text) ? Number(text) : undefined;
 }
