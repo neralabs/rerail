@@ -1319,6 +1319,16 @@ pass.
   Not creating it eagerly (`atoms::key` resolving a missing file by its directory) did not remove it: the connection
   makes it. The next run removes it with the scratch files.
 
+### Q49. A stored program image's step sources are named by no run's manifest (Typing-support's)
+
+- **Found** (2026-11-16, at the merge of Typing-support with the hub's 0306 step 4): `StoredSteps` (program_text.rs)
+  pinned the image and its step facts under the run's holder; 0306 step 4 removed pins under a holder
+  (`pin_held_sources`). The merge drops the pins: `find` checks the image's alias, `keep` stores the image
+  (`store_encoded`) and the step facts. No run's manifest names their sources yet, so a collection may drop them; a
+  later run then misses and keeps them again.
+- **Done when**: Typing-support wires the steps into runs, naming their sources in the run's record
+  (`Apply::name`), with a test that a collection between two runs keeps them.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives

@@ -531,8 +531,9 @@ impl crate::code_rule_dsl::logic::program_image::manager::Steps for StoredSteps<
         let (pass, version) = (text(&head[1])?, int(&head[2])? as u32);
         let image = unhex32(&text(&out[1])?).ok_or_else(|| bad("a step's image is not a digest"))?;
         // A step whose image the store lost is not found: the step runs again.
-        let Some(image_id) = self.0.source_by_alias(image_key(&image)).map_err(e)? else { return Ok(None) };
-        self.0.pin_held_sources(&[id, image_id]).map_err(e)?;
+        if self.0.source_by_alias(image_key(&image)).map_err(e)?.is_none() {
+            return Ok(None);
+        }
         let mut decided: Vec<(i64, Decided)> = Vec::new();
         for r in rows("pipeline_step_decision") {
             decided.push((int(&r[1])?, Decided { pass: text(&r[2])?.into(), what: text(&r[3])?.into(), detail: text(&r[4])? }));
@@ -544,7 +545,6 @@ impl crate::code_rule_dsl::logic::program_image::manager::Steps for StoredSteps<
     fn open(&self, image: &[u8; 32]) -> Result<Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>, String> {
         let e = |e: crate::content_store::StoreError| e.to_string();
         let Some(id) = self.0.source_by_alias(image_key(image)).map_err(e)? else { return Ok(None) };
-        self.0.pin_held_sources(&[id]).map_err(e)?;
         crate::code_rule_dsl::logic::program_image::Version::open(&self.0.get_source(id).map_err(e)?).map(Some)
     }
 
@@ -558,7 +558,9 @@ impl crate::code_rule_dsl::logic::program_image::manager::Steps for StoredSteps<
                 folded.base_bytes().ok_or("a folded version is a base")?
             }
         };
-        let (image, mut held) = store_image(self.0, bytes).map_err(e)?;
+        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
+        let image: [u8; 32] = Sha256::digest(bytes).into();
+        store_encoded(self.0, &image, true, bytes).map_err(e)?;
         let k = Value::Str(hex32(key).into());
         let mut facts = Facts::new();
         facts.entry("pipeline_step_key".into()).or_default().push([k.clone(), str_value(&record.pass), Value::Int(i64::from(record.version))].into());
@@ -566,13 +568,13 @@ impl crate::code_rule_dsl::logic::program_image::manager::Steps for StoredSteps<
         for (i, d) in record.decided.iter().enumerate() {
             facts.entry("pipeline_step_decision".into()).or_default().push([k.clone(), Value::Int(i as i64), str_value(&d.pass), str_value(&d.what), str_value(&d.detail)].into());
         }
+        // Not named by a run's manifest yet (no run keeps its steps here; decision 0306 names a run's sources in its
+        // record): kept until collection's next pass.
         let alias = step_alias(key);
-        let id = match self.0.source_by_alias(alias).map_err(e)? {
-            Some(id) => id,
-            None => self.0.put_source(&program_facts::encode(&facts), &[alias]).map_err(e)?,
-        };
-        held.push(id);
-        self.0.pin_held_sources(&held).map_err(e)
+        if self.0.source_by_alias(alias).map_err(e)?.is_none() {
+            self.0.put_source(&program_facts::encode(&facts), &[alias]).map_err(e)?;
+        }
+        Ok(())
     }
 }
 
