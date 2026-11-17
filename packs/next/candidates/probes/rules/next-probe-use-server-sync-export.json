@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-probe-use-server-sync-export",
-  "revision": 1,
+  "revision": 2,
   "mode": "log",
   "description": "Next pack probe. Directive + exports: in a \"use server\" file, an exported name that is not an async function (Next allows only async functions there).",
   "scope": {
@@ -47,13 +47,20 @@
                           "field": "value",
                           "any": [
                             {
-                              "kind": "arrow_function"
+                              "any": [
+                                {
+                                  "kind": "arrow_function"
+                                },
+                                {
+                                  "kind": "function_expression"
+                                }
+                              ],
+                              "regex": "^async\\s"
                             },
                             {
-                              "kind": "function_expression"
+                              "kind": "call_expression"
                             }
-                          ],
-                          "regex": "^async\\s"
+                          ]
                         }
                       },
                       "inside": {

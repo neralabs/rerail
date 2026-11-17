@@ -357,6 +357,7 @@ const PROBES = [
   },
   {
     name: "use-server-sync-export",
+    revision: 2,
     description: "Directive + exports: in a \"use server\" file, an exported name that is not an async function (Next allows only async functions there).",
     ast: {
       rule: {
@@ -365,7 +366,8 @@ const PROBES = [
           {
             any: [
               { inside: { kind: "function_declaration", not: { regex: "^async\\s" }, inside: { kind: "export_statement" } } },
-              { inside: { kind: "variable_declarator", not: { has: { field: "value", any: [{ kind: "arrow_function" }, { kind: "function_expression" }], regex: "^async\\s" } }, inside: { kind: "lexical_declaration", inside: { kind: "export_statement" } } } },
+              // Whether a call's result (a factory's, such as next-safe-action's) is a function, Next checks only at runtime.
+              { inside: { kind: "variable_declarator", not: { has: { field: "value", any: [{ any: [{ kind: "arrow_function" }, { kind: "function_expression" }], regex: "^async\\s" }, { kind: "call_expression" }] } }, inside: { kind: "lexical_declaration", inside: { kind: "export_statement" } } } },
             ],
           },
           { inside: { stopBy: "end", kind: "program", has: { kind: "expression_statement", has: { kind: "string", value: { eq: "use server" } }, ...IN_PROLOGUE } } },
@@ -402,7 +404,7 @@ for (const probe of PROBES) {
       {
         format: "rerail.policy/v1",
         id: `next-probe-${probe.name}`,
-        revision: 1,
+        revision: probe.revision ?? 1,
         mode: "log",
         description: `Next pack probe. ${probe.description}`,
         scope: SCOPE,
