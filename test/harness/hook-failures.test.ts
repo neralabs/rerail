@@ -613,6 +613,7 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
   // person's file, which has room; status counts that failure through the link. Had the step only looked and found the
   // live name free, the other hook would begin a log there, and the rename back would replace it.
   it("puts a link it took back at the live name in one step, so a hook that runs then finds it there", async context => {
+    if (process.platform === "darwin") context.skip("macOS gives a link no second name, so the link goes back in two steps, and a log a hook begins between them is replaced");
     const rerailHome = await home();
     const live = join(rerailHome, HOOK_FAILURES_FILE);
     writeFullLog(rerailHome);
