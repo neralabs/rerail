@@ -492,6 +492,8 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
         ...this.#settings,
         ...(this.#options.timingLog === undefined ? {} : { timingLog: this.#options.timingLog }),
         followGitignore: this.#options.followGitignore ?? false,
+        // The matcher a walk's questions opened for the checkout before it had a lane, so the checkout holds one index.
+        openGitIgnore: () => this.#gitIgnoreMatcher({ checkoutRoot: root, path: "" }),
         steerShell: this.#options.steerShell,
         presentPath: path => relative(this.#sessionRoot, join(root, path)).split(sep).join("/"),
         nestedCheckouts: () => this.#nestedCheckoutsOf(root),

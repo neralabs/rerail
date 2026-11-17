@@ -605,6 +605,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #nestedCheckouts: () => readonly string[];
   readonly #timingLog: ((line: string) => void) | undefined;
   readonly #followGitignore: boolean;
+  readonly #openGitIgnore: (root: string) => NativeGitIgnoreMatcher | null;
   readonly #steerShell: SteerShell | undefined;
   /** Git's exclude stack for this checkout, opened on first use; null outside Git or where it cannot be opened. */
   #gitIgnore: NativeGitIgnoreMatcher | null | undefined;
@@ -686,6 +687,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
        * repository's setting when it opens, and it holds for the session's life.
        */
       followGitignore?: boolean;
+      /**
+       * Opens `root`'s Git ignore rules (`openGitIgnoreMatcher` by default). A matcher holds the checkout's index, so a
+       * router hands the one it already holds for the checkout, and a checkout keeps one.
+       */
+      openGitIgnore?: (root: string) => NativeGitIgnoreMatcher | null;
       /** The shell the session's coding agent runs commands in, which a steer's command is written for (`steerShell`). */
       steerShell?: SteerShell | undefined;
     },
@@ -700,6 +706,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#nestedCheckouts = options.nestedCheckouts ?? (() => []);
     this.#timingLog = options.timingLog;
     this.#followGitignore = options.followGitignore ?? false;
+    this.#openGitIgnore = options.openGitIgnore ?? (root => loadNativeBinding().openGitIgnoreMatcher(root));
     this.#steerShell = options.steerShell;
     this.#ownedAudits =
       options.audits === undefined
@@ -774,7 +781,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   #askGitIgnore<T>(path: string, ask: (matcher: NativeGitIgnoreMatcher) => T): T | undefined {
     if (!this.#followGitignore) return undefined;
     try {
-      this.#gitIgnore ??= loadNativeBinding().openGitIgnoreMatcher(this.#workspaceRoot);
+      this.#gitIgnore ??= this.#openGitIgnore(this.#workspaceRoot);
       return this.#gitIgnore === null ? undefined : ask(this.#gitIgnore);
     } catch (error) {
       this.#gitIgnore ??= null;
