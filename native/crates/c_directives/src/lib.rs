@@ -57,15 +57,25 @@ pub fn compiled() -> Result<&'static Compiled, &'static str> {
     PARSER.get_or_init(|| compile_text(GRAMMAR)).as_ref().map_err(String::as_str)
 }
 
-fn kind_id(name: &str) -> Option<u16> {
-    if name == "ERROR" {
-        return Some(u16::MAX);
-    }
-    KINDS.iter().position(|&k| k == name).map(|i| i as u16)
-}
-
 /// `grammar` compiled: a ladder step's text.
 pub fn compile_text(grammar: &str) -> Result<Compiled, String> {
+    compile_kinds(grammar, KINDS, FIELDS)
+}
+
+/// `grammar` compiled with its tape's kinds and fields by id (`kinds`, `fields`: a field's id is
+/// its index plus one), the grammar's other names numbered from `OWN_IDS`.
+pub(crate) fn compile_kinds(grammar: &str, kinds: &[&str], fields: &[&str]) -> Result<Compiled, String> {
+    let (program, native, words, machine) = lower_kinds(grammar, kinds, fields)?;
+    let cut = native_cpu_clusters::by_rules(&native);
+    let parser = native_cpu_stream::Parser::with_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
+    Ok(Compiled { parser, native: native.block_programs[0].clone(), program, words, machine })
+}
+
+/// `grammar` through the Bitlex compiler, assembled and lowered to the native IR: all but
+/// Cranelift's compile (`compile_kinds`).
+#[allow(clippy::type_complexity)]
+pub(crate) fn lower_kinds(grammar: &str, kinds: &[&str], fields: &[&str]) -> Result<(rerail_compiler::program::Words, native_ir::Structure, String, String), String> {
+    let kind_id = |name: &str| if name == "ERROR" { Some(u16::MAX) } else { kinds.iter().position(|&k| k == name).map(|i| i as u16) };
     let stmts = ::bitlex::syntax::parse(grammar)?;
     let own = std::cell::RefCell::new(std::collections::HashMap::<String, u16>::new());
     let kind = |name: &str| {
@@ -78,7 +88,7 @@ pub fn compile_text(grammar: &str) -> Result<Compiled, String> {
             Some(*own.entry(name.to_owned()).or_insert(next))
         })
     };
-    let field = |name: &str| FIELDS.iter().position(|&f| f == name).map(|i| i as u16 + 1);
+    let field = |name: &str| fields.iter().position(|&f| f == name).map(|i| i as u16 + 1);
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
     let compiled = bitlex_compile::compile_shaped(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules)?;
     let program = rir::assemble(&compiled.text()).map_err(|e| format!("{e}\n{}", compiled.words))?;
@@ -86,9 +96,7 @@ pub fn compile_text(grammar: &str) -> Result<Compiled, String> {
     for b in &mut native.block_programs {
         b.pad = rerail_compiler::native_cpu_block::BACK as u16;
     }
-    let cut = native_cpu_clusters::by_rules(&native);
-    let parser = native_cpu_stream::Parser::with_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
-    Ok(Compiled { parser, native: native.block_programs[0].clone(), program, words: compiled.words.clone(), machine: compiled.machine.clone() })
+    Ok((program, native, compiled.words.clone(), compiled.machine.clone()))
 }
 
 /// A directive as the tape gives it: `c_directive`'s kind and bytes (the file's).
@@ -122,23 +130,35 @@ impl Compiled {
 
     /// The same, by the interpreter: its tier 1 and its tier 2, the program's meaning.
     pub fn interpreter_read(&self, src: &[u8]) -> Option<Read> {
+        read(&self.interpreter_image(src)?).ok()
+    }
+
+    /// `src`'s tape by the interpreter: its tier 1 and its tier 2, the program's meaning.
+    pub fn interpreter_image(&self, src: &[u8]) -> Option<Vec<u8>> {
         let run = self.program.block_programs[0].run(src);
         let nodes = rerail_compiler::stream::run(&self.program, src, &run).ok()?;
-        read(&rerail_compiler::stream::image(&nodes, &self.program.readings.extras, 0, src)).ok()
+        Some(rerail_compiler::stream::image(&nodes, &self.program.readings.extras, 0, src))
     }
 
     /// The same for each of `files`, tier 1 on Metal and tier 2 over its buffers; `None` for a
     /// file refused, and for all where the device cannot run the batch.
     #[cfg(target_os = "macos")]
     pub fn metal_read(&self, files: &[&[u8]]) -> Option<Vec<Option<Read>>> {
+        Some(self.metal_images(files)?.into_iter().map(|t| t.and_then(|t| read(&t).ok())).collect())
+    }
+
+    /// Each of `files`' tapes, tier 1 on Metal and tier 2 over its buffers; `None` for a file
+    /// refused, and for all where the device cannot run the batch.
+    #[cfg(target_os = "macos")]
+    pub fn metal_images(&self, files: &[&[u8]]) -> Option<Vec<Option<Vec<u8>>>> {
         use rerail_metal::block_program::serial::{Segments, run_resident};
         let batch: Vec<_> = files.iter().map(|f| rerail_compiler::block::BatchFile { bytes: f, program: 0 }).collect();
         match run_resident(&[&self.native], &batch, Segments { blocks: 29, warm: 1 }) {
-            Ok((_, run)) => Some((0..files.len()).map(|i| rerail_metal::tier2_on::image_on(&self.parser, &run, i).ok().and_then(|t| read(&t).ok())).collect()),
+            Ok((_, run)) => Some((0..files.len()).map(|i| rerail_metal::tier2_on::image_on(&self.parser, &run, i).ok()).collect()),
             Err(rerail_compiler::Error::BackendCapacity) if files.len() > 1 => {
                 let (a, b) = files.split_at(files.len() / 2);
-                let mut out = self.metal_read(a)?;
-                out.extend(self.metal_read(b)?);
+                let mut out = self.metal_images(a)?;
+                out.extend(self.metal_images(b)?);
                 Some(out)
             }
             Err(_) => None,
@@ -324,6 +344,7 @@ pub fn image_text(image: &[u8]) -> Result<String, String> {
 
 mod facts;
 pub use facts::Facts;
+pub mod tokens;
 
 /// `src`'s mode (a) facts: from the compiled grammar's tape where it reads the file, else (a
 /// construct the ladder does not read, or a grammar that does not compile) the lean scan's.

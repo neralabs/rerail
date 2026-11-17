@@ -139,6 +139,35 @@ exponential, so a refusal is the answer to it, not a larger budget.
 4. **Cranelift.**
 5. **Tier 2 on Metal,** then expansion on the work queue.
 
+## Stage 1, built: the whole file's tokens
+
+`rerail-c-directives`'s `bitlex_tokens/tokens.bitlex` is a grammar of its own beside the
+directives' ladder, so mode (a) keeps its lean tape.
+- **One text, two dialects.** It is C++'s grammar. C's leaves out the lines marked `C++ only`:
+  `->*`, `<=>` and `.*`, a literal's suffix, and C++'s `<::` rule. Each is compiled once a
+  process (`tokens::compiled`).
+- **The tape:** a `line` node for each line's tokens, which gives the lean lexer's `BOL`, and a
+  leaf a token: an identifier, a pp-number, a literal (its prefix and C++ suffix included),
+  `punct`, `digraph`, `hash`, `hashhash` or `other`. A token's `SPACE` is the byte before it,
+  which the reader tests (`tokens::read`). A mark takes no node on a tape, so it cannot carry a
+  flag.
+- **Operators by `munch`** (03-bitlex §3.3). Its masks were new to the compiler; they are now the
+  Bitlex parser's expansion of the statement, so the evaluator and every backend read one
+  definition. The fixed point runs four times, and a chain longer than that is refused.
+- **Refused, to the lean lexer:** what the directives' grammar refuses, plus a byte past ASCII in
+  code (an identifier's by its XID class), a `\` in code that splices no line (`\u` names), a
+  splice between two tokens' bytes, and C++'s `<::`. A configuration other than C23 or C++26
+  with GNU goes to the lean lexer as well.
+- **Corpus:** 3,058 files' tokens equal the lean lexer's, kinds, bytes and flags; 77 refused;
+  0 differ. The interpreter, Cranelift and Metal agree on every file.
+- **A backend difference found here.** A start of a token's own kind inside its run (`"a""b"`,
+  the second `"`) is a malformed grammar: Bitlex's evaluator says "token starts inside the one
+  before". The backends then differ. Metal's last-byte mask (`TokenRule::last`) stops before
+  that start, while the CPU's and the interpreter's run rule reads through it. Making the rule
+  `R & ~S` gave every backend Metal's answer, but it cost JSON's tier 2 its shape (30 calls of
+  its own, where it has none), so it was not kept. The grammar keeps its starts out of its runs
+  (`run lit_bytes & ~lit_start`). Work queue Q32 has the guard this needs.
+
 ## Open
 
 - **Header units:** a header expanded once per entry macro state (0327, open).

@@ -267,7 +267,8 @@ fn a_file_past_64_kib_is_read_at_wide_columns() {
     }
 }
 
-/// Every step of the ladder compiles (the last is `GRAMMAR`).
+/// Every step of the ladder compiles to the native IR (the last is `GRAMMAR`, which the other
+/// tests compile through Cranelift too).
 #[test]
 fn every_ladder_step_compiles() {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/bitlex_ladder");
@@ -275,7 +276,7 @@ fn every_ladder_step_compiles() {
     steps.sort();
     assert!(steps.len() >= 2);
     for p in &steps {
-        compile_text(&std::fs::read_to_string(p).unwrap()).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+        crate::lower_kinds(&std::fs::read_to_string(p).unwrap(), KINDS, FIELDS).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
     }
     assert_eq!(std::fs::read_to_string(steps.last().unwrap()).unwrap(), GRAMMAR, "the last step is the grammar");
 }

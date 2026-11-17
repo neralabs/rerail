@@ -809,6 +809,31 @@ pass.
   flagged wide at any width (`native_cpu_tape::blocks_from`, `rust_stream`'s `blocks`). Reviewed
   against reviewer-brief.md: no narrow-path change (the retry runs after a refusal only).
 
+### Q32. A token start inside its own kind's run: refuse it the same way on every backend
+
+- **Keep**: `run R`'s meaning is `TokenRule::last`, which stops before the kind's next start
+  (Metal's last-byte mask). The CPU's and the interpreter's rule reads through such a start, and
+  JSON's tier 2 shape: no own calls, no pass over the table.
+- **Done when**: a grammar whose run holds a start of its own kind gives one answer on the
+  interpreter, Cranelift and Metal, or is refused on all of them. Bitlex's evaluator already
+  errors on it ("token starts inside the one before"). A compile-time check where the masks
+  prove it cannot happen, and a test of a grammar where it does.
+- **Record** (2026-11-17): found by C's token grammar (0348 stage 1). `"a""b"` was one string on
+  the CPU and two on Metal. Making the rule `R & ~S` gave every backend Metal's answer, but cost
+  JSON 30 own calls (`json_compiled_path_equals_the_interpreters`), so it was reverted. The C
+  grammar keeps its starts out of the run.
+
+### Q33. JSON's tier 2 makes 30 calls of its own (`json_compiled_path_equals_the_interpreters` red)
+
+- **Keep**: the test's shape claim: JSON defers no leaf, so tier 2 has no own call and no pass
+  over the table at its end.
+- **Done when**: the test passes, by finding out what the 30 calls are, then either removing them
+  or, if 0177 meant them, writing the new claim with its reason.
+- **Record** (2026-11-17): it fails at this branch's head, at `b6fad73e5~1`, and on both parents
+  of `534c74dbf` (the Parser-generators merge, 0177's token-loop steps), with the compiler,
+  tape-format, Metal, rr-parser and parser-tests sources of each. So it came in with that line,
+  not with 0327's or 0348's work. Found by the farm run for 0348 stage 1.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
