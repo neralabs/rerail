@@ -1903,3 +1903,10 @@ runs, `pending` dedup table, lattice maps), `InRel`'s `Csr` and sorted orders wh
 (0325 step 5) can answer, `Exports::add`'s hash map, the base rows copied for the cross part and the memo, vtab
 `Relation::push` staging, `Rows::clone`/`shared` tail copies and `merged`; `live_rows` remains only for traces,
 tests, `read_derived`/`rows_of` (tests and outputs) and the session deltas.
+
+### Q82. Relations declare their shapes; plans come from them (0361)
+
+The user (2026-11-17): a directive giving relations enough data in the `.rr` files for good default shapes, so runs
+pay for planning only in exceptional circumstances. Designed with the user in 0361 (`.layout` lines; classes with
+optional numbers; a broken fact replans and is reported; algorithms found from the facts, with a rare override).
+Build steps 1-7 in 0361. Step 7's running aggregate is the `rr_agg56` planner fix, so that fix waits for steps 1-2.
