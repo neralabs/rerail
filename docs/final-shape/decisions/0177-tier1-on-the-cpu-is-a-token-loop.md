@@ -3605,3 +3605,17 @@ Measured, as information: a word's lookup costs 2.9 cycles, from
 
 Test: `a_words_lookup_is_leans` (the slot's bytes loaded alone, no key
 cut by a negated shift).
+
+The base loop is still open: 14.3 cycles a token on a line of words
+that look up nothing, against lean's 13.1 without its lookup. Two
+leads were checked and are not the difference:
+
+- **The masks' reload.** The run loop's first copy reloads the
+  refill's two masks with one `ldp` from the stack. On this core, an
+  `ldp` of data just stored takes about 7 cycles from store to use, and
+  two `ldr`s about 2 (a 3-instruction asm loop: single loads are
+  forwarded almost free, pairs are not). But the next block's masks do
+  not wait on this block's, so the reload is not loop-carried, and lean
+  reloads a pair the same way.
+- **The first byte's entry.** It is two instructions and a load after
+  the token's bytes, as lean's.
