@@ -2,7 +2,16 @@ import { once } from "node:events";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
-import { DAEMON_STATE_FILE, daemonEndpoint, probeDaemon, readDaemonState, recordedDaemonAlive, type DaemonEndpoint, type DaemonState } from "../runtime/daemon-control.js";
+import {
+  DAEMON_STATE_FILE,
+  daemonEndpoint,
+  probeDaemon,
+  readDaemonState,
+  recordedDaemonStatus,
+  type DaemonEndpoint,
+  type DaemonMachine,
+  type DaemonState,
+} from "../runtime/daemon-control.js";
 import { checkoutRealpath } from "../engine/catalog/checkout-control.js";
 import { CALLER_CWD_HEADER } from "../engine/catalog/repository-model.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -19,6 +28,11 @@ export interface RerailMcpBridgeOptions {
   fetch?: RerailMcpBridgeFetch;
   /** The Rerail home whose daemon state names the daemon; defaults to `defaultRerailHome()`. */
   home?: string;
+  /**
+   * The machine whose processes, pipes and engine proof say whether the recorded daemon may be sent the capability;
+   * this one unless a test passes its own, so each platform's check runs on every OS.
+   */
+  machine?: DaemonMachine;
 }
 
 type JsonRpcId = string | number;
@@ -76,6 +90,49 @@ const DAEMON_NOT_RUNNING = "Rerail daemon is not running; start it with rerail d
 /** The daemon is up but does not accept the capability its state file records: what to do, not "not running". */
 const DAEMON_REFUSED = "Rerail daemon refused the access capability in daemon.json (401); run rerail daemon stop, then rerail daemon start";
 
+/**
+ * How long one relayed call may take, from its line's arrival to its answer. The engine's proof, the health check of a
+ * newly recorded daemon and the daemon's answer each wait for what is left of it, so a daemon whose one event loop is in
+ * an audit or a long garbage collection is waited for and answers, and one that never answers fails the call here. The
+ * coding agent's own limit on an MCP call is far longer.
+ */
+const CALL_TIMEOUT_MS = 30_000;
+/** The daemon runs, and took the call, but gave no answer by the call's bound: busy or stuck, never "not running". */
+const DAEMON_NOT_ANSWERING = `Rerail daemon is running but did not answer within ${CALL_TIMEOUT_MS / 1_000} s; try again, and if it stays silent run rerail daemon stop, then rerail daemon start`;
+
+/**
+ * One relayed call's single bound, {@link CALL_TIMEOUT_MS} from its line's arrival: each wait of the call ends on its
+ * answer or at the bound, whichever comes first. Its timer ends with the call, so an idle bridge holds none.
+ */
+class CallBound {
+  readonly #ends = Date.now() + CALL_TIMEOUT_MS;
+  readonly #abort = new AbortController();
+  readonly #timer = setTimeout(() => this.#abort.abort(new Error(DAEMON_NOT_ANSWERING)), CALL_TIMEOUT_MS);
+
+  /** Aborts at the bound, with the call's answer as its reason: the signal each request of the call carries. */
+  get signal(): AbortSignal {
+    return this.#abort.signal;
+  }
+
+  /** Whether the bound has passed. */
+  get passed(): boolean {
+    return this.#abort.signal.aborted;
+  }
+
+  /**
+   * What is left of the bound in ms, for a wait that takes a duration (the engine's proof). Never 0, which a socket's
+   * idle timeout reads as no limit at all.
+   */
+  left(): number {
+    return Math.max(1, this.#ends - Date.now());
+  }
+
+  /** Ends the bound's timer once the call has its answer. */
+  end(): void {
+    clearTimeout(this.#timer);
+  }
+}
+
 function sameDaemon(left: DaemonState, right: DaemonState): boolean {
   return left.pid === right.pid && left.url === right.url && left.startedAt === right.startedAt;
 }
@@ -90,30 +147,51 @@ function sameDaemon(left: DaemonState, right: DaemonState): boolean {
 class DaemonLocator {
   #confirmed: DaemonState | undefined;
 
-  constructor(private readonly home: string, private readonly fetchImpl: RerailMcpBridgeFetch | undefined) {}
+  constructor(
+    private readonly home: string,
+    private readonly fetchImpl: RerailMcpBridgeFetch | undefined,
+    private readonly machine: DaemonMachine | undefined,
+  ) {}
 
-  /** The `/mcp` endpoint of the home's live daemon and the headers that admit a request to it. */
-  async endpoint(): Promise<DaemonEndpoint> {
-    const state = await readDaemonState(join(this.home, DAEMON_STATE_FILE));
-    // A pid that cannot be the recorded daemon (`recordedDaemonAlive`) never has its URL probed with the capability.
-    if (state === undefined || !(await recordedDaemonAlive(state))) throw new Error(DAEMON_NOT_RUNNING);
-    if (this.#confirmed === undefined || !sameDaemon(this.#confirmed, state)) await this.#confirm(state);
+  /** The `/mcp` endpoint of the home's live daemon and the headers that admit a request to it, found within `bound`. */
+  async endpoint(bound: CallBound): Promise<DaemonEndpoint> {
+    const state = await this.#recorded(bound);
+    if (this.#confirmed === undefined || !sameDaemon(this.#confirmed, state)) await this.#confirm(state, bound);
     return daemonEndpoint(state, "/mcp");
   }
 
-  /** Probes the daemon `state` records and keeps it as the confirmed one; throws when it refuses or another answers. */
-  async #confirm(state: DaemonState): Promise<void> {
+  /**
+   * The daemon the home's state file records, once it may be sent the capability. A pid that cannot be the recorded
+   * daemon (`recordedDaemonStatus`) never has its URL probed with the capability; one whose engine is still silent to
+   * the proof at the bound runs and is busy, so it is never called not running.
+   */
+  async #recorded(bound: CallBound): Promise<DaemonState> {
+    const state = await readDaemonState(join(this.home, DAEMON_STATE_FILE), this.machine?.platform);
+    if (state === undefined) throw new Error(DAEMON_NOT_RUNNING);
+    const recorded = await recordedDaemonStatus(state, this.machine, bound.left());
+    if (recorded === "silent") throw new Error(DAEMON_NOT_ANSWERING);
+    if (recorded === "gone") throw new Error(DAEMON_NOT_RUNNING);
+    return state;
+  }
+
+  /**
+   * Probes the daemon `state` records within `bound` and keeps it as the confirmed one; throws when it refuses, another
+   * pid answers, nothing listens, or it is still silent at the bound.
+   */
+  async #confirm(state: DaemonState, bound: CallBound): Promise<void> {
     this.#confirmed = undefined;
-    const probe = await probeDaemon(state, { fetchImpl: this.fetchImpl });
+    const probe = await probeDaemon(state, { fetchImpl: this.fetchImpl, signal: bound.signal });
     if (probe.status === "refused") throw new Error(DAEMON_REFUSED);
+    // Only the bound cuts a probe whose daemon took it and stays silent; a refused connection fails before it.
+    if (probe.status === "unreachable" && bound.passed) throw new Error(DAEMON_NOT_ANSWERING);
     if (probe.status !== "ok" || probe.health.pid !== state.pid) throw new Error(DAEMON_NOT_RUNNING);
     this.#confirmed = state;
   }
 
-  /** After a request failed to connect: checks the home's daemon again, and throws when none answers. */
-  async recheck(): Promise<void> {
+  /** After a request failed to connect: checks the home's daemon again within `bound`, and throws when none answers. */
+  async recheck(bound: CallBound): Promise<void> {
     this.#confirmed = undefined;
-    await this.endpoint();
+    await this.endpoint(bound);
   }
 }
 
@@ -123,8 +201,9 @@ async function relay(
   daemon: DaemonLocator,
   callerHeaders: Readonly<Record<string, string>>,
   fetchImpl: RerailMcpBridgeFetch | undefined,
+  bound: CallBound,
 ): Promise<string | undefined> {
-  const endpoint = await daemon.endpoint();
+  const endpoint = await daemon.endpoint(bound);
   let response: Response;
   try {
     response = await (fetchImpl ?? endpoint.fetch)(endpoint.url, {
@@ -132,10 +211,12 @@ async function relay(
       // The capability last: nothing the bridge was started with names another.
       headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...callerHeaders, ...endpoint.headers },
       body: request,
-      signal: AbortSignal.timeout(30_000),
+      signal: bound.signal,
     });
   } catch (error) {
-    await daemon.recheck();
+    // A daemon silent until the bound took the request: it runs. Any other failure may be a daemon that stopped or moved.
+    if (bound.passed) throw new Error(DAEMON_NOT_ANSWERING);
+    await daemon.recheck(bound);
     throw error;
   }
   const body = await response.text();
@@ -155,14 +236,17 @@ async function relayRequest(
   stderr: Writable,
   fetchImpl: RerailMcpBridgeFetch | undefined,
 ): Promise<void> {
+  const bound = new CallBound();
   try {
-    const body = await relay(request, daemon, callerHeaders, fetchImpl);
+    const body = await relay(request, daemon, callerHeaders, fetchImpl, bound);
     if (body !== undefined) await writeLine(stdout, body);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     stderr.write(`rerail: mcp bridge: ${message}\n`);
     const response = errorResponses(parseRequestLine(request), message);
     if (response !== undefined) await writeLine(stdout, response);
+  } finally {
+    bound.end();
   }
 }
 
@@ -188,7 +272,7 @@ export async function runRerailMcpBridge(options: RerailMcpBridgeOptions = {}): 
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
   const fetchImpl = options.fetch;
-  const daemon = new DaemonLocator(options.home ?? defaultRerailHome(), fetchImpl);
+  const daemon = new DaemonLocator(options.home ?? defaultRerailHome(), fetchImpl, options.machine);
   const lines = createInterface({ input: options.input ?? process.stdin, crlfDelay: Infinity });
   for await (const request of lines) {
     if (request.trim() === "") continue;

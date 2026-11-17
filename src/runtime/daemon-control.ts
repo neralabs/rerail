@@ -455,6 +455,8 @@ export interface DaemonProbeOptions {
   readonly fetchImpl?: DaemonFetch | undefined;
   /** How long it waits for the answer; a caller that can wait out a busy daemon passes more. */
   readonly timeoutMs?: number;
+  /** Ends the wait in place of `timeoutMs`: a caller whose whole call has one bound passes that bound's signal. */
+  readonly signal?: AbortSignal | undefined;
 }
 
 /**
@@ -464,11 +466,11 @@ export interface DaemonProbeOptions {
  */
 export async function probeDaemon(
   state: Pick<DaemonState, "url" | "accessToken" | "tlsFingerprint256">,
-  { fetchImpl, timeoutMs = PROBE_TIMEOUT_MS }: DaemonProbeOptions = {},
+  { fetchImpl, timeoutMs = PROBE_TIMEOUT_MS, signal }: DaemonProbeOptions = {},
 ): Promise<DaemonProbe> {
   try {
     const endpoint = daemonEndpoint(state, "/healthz");
-    const response = await (fetchImpl ?? endpoint.fetch)(endpoint.url, { headers: endpoint.headers, signal: AbortSignal.timeout(timeoutMs) });
+    const response = await (fetchImpl ?? endpoint.fetch)(endpoint.url, { headers: endpoint.headers, signal: signal ?? AbortSignal.timeout(timeoutMs) });
     // Awaited here, so a body that cannot be read is caught below as no answer.
     return await probeAnswer(response);
   } catch {
@@ -648,10 +650,15 @@ async function windowsRecordedDaemon(state: DaemonState, signalable: boolean, ma
 
 /**
  * What may be made now of the daemon `state` records ({@link recordedDaemon}), for a reader that tells a busy daemon
- * (`silent`, sent nothing) from one that is gone.
+ * (`silent`, sent nothing) from one that is gone. `timeoutMs` bounds the engine's proof on Windows; a caller that waits
+ * out a busy daemon passes what is left of its own bound.
  */
-export async function recordedDaemonStatus(state: DaemonState, machine: DaemonMachine = THIS_MACHINE): Promise<RecordedDaemon> {
-  return await recordedDaemon(state, machine, PROBE_TIMEOUT_MS);
+export async function recordedDaemonStatus(
+  state: DaemonState,
+  machine: DaemonMachine = THIS_MACHINE,
+  timeoutMs: number = PROBE_TIMEOUT_MS,
+): Promise<RecordedDaemon> {
+  return await recordedDaemon(state, machine, timeoutMs);
 }
 
 /**

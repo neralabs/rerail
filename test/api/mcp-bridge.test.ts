@@ -4,9 +4,10 @@ import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { DAEMON_STATE_FILE } from "../../src/runtime/index.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DAEMON_STATE_FILE, type DaemonMachine } from "../../src/runtime/index.js";
 import { runRerailMcpBridge } from "../../src/api/mcp-bridge.js";
+import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { holdEngineEndpoint, testEngineEndpoint } from "../support/platform/engine-endpoint.js";
 import { linkFolder } from "../support/platform/links.js";
 import { otherUserPid } from "../support/other-user-pid.js";
@@ -18,7 +19,7 @@ interface Machine {
   listeners: Map<number, number>;
 }
 
-type FetchStep = Response | Error | ((machine: Machine) => Promise<Response>);
+type FetchStep = Response | Error | ((machine: Machine, init: RequestInit) => Promise<Response>);
 
 interface BridgeRun {
   stdout: readonly string[];
@@ -49,6 +50,10 @@ interface BridgeSetup {
   daemon?: RecordedDaemon | null;
   /** The pid that answers on the recorded port; null when nothing listens there. Defaults to the recorded pid. */
   listener?: number | null;
+  /** How the listener answers `/healthz`; by default at once, as the pid it is. */
+  health?: (init: RequestInit) => Promise<Response>;
+  /** The machine the bridge asks whether the recorded daemon may be sent the capability; by default this one. */
+  machine?: DaemonMachine;
 }
 
 const NOT_RUNNING = "Rerail daemon is not running; start it with rerail daemon start";
@@ -125,14 +130,14 @@ async function runBridge(lines: readonly string[], steps: readonly FetchStep[], 
     if (endpoint.pathname === "/healthz") {
       probes.push(endpoint.href);
       if (listener === undefined) throw new TypeError("fetch failed");
-      return jsonResponse(200, { status: "ok", pid: listener });
+      return await (setup.health?.(init) ?? jsonResponse(200, { status: "ok", pid: listener }));
     }
     endpoints.push(endpoint.href);
     requests.push(String(init.body));
     if (listener === undefined) throw new TypeError("fetch failed");
     const step = remaining.shift();
     if (step === undefined) throw new Error("unexpected request");
-    if (typeof step === "function") return await step(machine);
+    if (typeof step === "function") return await step(machine, init);
     if (step instanceof Error) throw step;
     return step;
   });
@@ -146,6 +151,7 @@ async function runBridge(lines: readonly string[], steps: readonly FetchStep[], 
     stderr,
     fetch: fetchImpl,
     home,
+    ...(setup.machine === undefined ? {} : { machine: setup.machine }),
   });
   return { stdout: collectedStdout(), stderr: collectedStderr(), requests, endpoints, probes };
 }
@@ -410,5 +416,120 @@ describe("Rerail MCP bridge", () => {
     // One that stops being accepted after the check: the 401 body is no MCP answer, so the client gets the same error.
     expect(await bridge("kept", "kept", () => jsonResponse(401, { error: "access-required", message: "…" })))
       .toEqual({ sent: ["/healthz kept", "/mcp kept"], stdout: [refused] });
+  });
+});
+
+describe("Rerail MCP bridge beside a busy daemon", () => {
+  const NOT_ANSWERING = "Rerail daemon is running but did not answer within 30 s; try again, and if it stays silent run rerail daemon stop, then rerail daemon start";
+  /** A Windows engine pipe, named as an engine names its fallback pipe: its name as `\\.\pipe\` lists it, and its path. */
+  const PIPE_NAME = "rerail-0123456789abcdef01234567-1f";
+  const PIPE = String.raw`\\.\pipe\rerail-0123456789abcdef01234567-1f`;
+  const ping = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" });
+  const pong = JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} });
+  const notAnswering = JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: NOT_ANSWERING } });
+
+  // The call's bound runs on a fake clock: a test moves it, and none waits on the real one.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A Windows machine where the recorded pid is a live process of this user and its engine pipe exists; `proof` answers the engine's proof. */
+  function windows(proof: DaemonMachine["capabilityProof"]): DaemonMachine {
+    return fakeMachine("win32", { kill: () => true, pipes: () => [PIPE_NAME], capabilityProof: proof });
+  }
+  const windowsDaemon = { pid: process.pid, port: 4321, kernelSocketPath: PIPE, accessToken: "kept" };
+
+  /** An answer the test gives (`release`), or that fails as fetch fails once the request's signal aborts; `asked` has that signal. */
+  function heldAnswer(): { answer: (init: RequestInit) => Promise<Response>; asked: Promise<AbortSignal>; release: (response: Response) => void } {
+    const asked = Promise.withResolvers<AbortSignal>();
+    const released = Promise.withResolvers<Response>();
+    const answer = async (init: RequestInit): Promise<Response> => {
+      const signal = init.signal;
+      if (!(signal instanceof AbortSignal)) throw new Error("the request carries no signal");
+      asked.resolve(signal);
+      return await new Promise<Response>((resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        void released.promise.then(resolve);
+      });
+    };
+    return { answer, asked: asked.promise, release: released.resolve };
+  }
+
+  it("relays to a Windows daemon whose engine proves itself only after 2 s, its proof given the call's 30 s", async () => {
+    const proofs: number[] = [];
+    // An engine in a 3 s audit answers a proof that may take 3 s, and only that one.
+    const machine = windows(async (_socketPath, _accessToken, timeoutMs) => {
+      proofs.push(timeoutMs);
+      return timeoutMs >= 3_000 ? "proved" : "silent";
+    });
+    const run = await runBridge([ping], [new Response(pong, { status: 200 })], { daemon: windowsDaemon, machine });
+    expect(run.stdout).toEqual([pong]);
+    expect(proofs).toEqual([30_000]);
+  });
+
+  it("calls a Windows daemon whose engine stays silent for the whole bound busy, never not running, and sends it nothing", async () => {
+    const proofs: number[] = [];
+    const machine = windows(async (_socketPath, _accessToken, timeoutMs) => {
+      proofs.push(timeoutMs);
+      return "silent";
+    });
+    const run = await runBridge([ping], [new Response(pong, { status: 200 })], { daemon: windowsDaemon, machine });
+    expect(run.stdout).toEqual([notAnswering]);
+    expect(run.stderr).toEqual([`rerail: mcp bridge: ${NOT_ANSWERING}`]);
+    expect(proofs).toEqual([30_000]);
+    expect(run.probes).toEqual([]);
+    expect(run.requests).toEqual([]);
+  });
+
+  it("waits for a newly recorded daemon's health answer as long as the call's bound, then relays", async () => {
+    const health = heldAnswer();
+    const pending = runBridge([ping], [new Response(pong, { status: 200 })], { health: health.answer });
+    const signal = await health.asked;
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(signal.aborted).toBe(false);
+    health.release(jsonResponse(200, { status: "ok", pid: process.pid }));
+    const run = await pending;
+    expect(run.stdout).toEqual([pong]);
+    expect(run.requests).toEqual([ping]);
+  });
+
+  it("calls a newly recorded daemon still silent to its health check at the bound busy, and sends it nothing", async () => {
+    const health = heldAnswer();
+    const pending = runBridge([ping], [new Response(pong, { status: 200 })], { health: health.answer });
+    await health.asked;
+    await vi.advanceTimersByTimeAsync(30_000);
+    const run = await pending;
+    expect(run.stdout).toEqual([notAnswering]);
+    expect(run.requests).toEqual([]);
+  });
+
+  it("calls a daemon that took the call and stays silent until the bound busy, and reads nothing again for it", async () => {
+    const relayed = heldAnswer();
+    const pending = runBridge([ping], [async (_machine, init) => await relayed.answer(init)]);
+    await relayed.asked;
+    await vi.advanceTimersByTimeAsync(30_000);
+    const run = await pending;
+    expect(run.stdout).toEqual([notAnswering]);
+    // The daemon took the request, so the home's daemon is not looked up again: one health check, the first.
+    expect(run.probes).toEqual(["http://127.0.0.1:4321/healthz"]);
+  });
+
+  it("never gives the engine's proof 0 ms, which a socket's timeout reads as no limit", async () => {
+    const proofs: number[] = [];
+    const machine = windows(async (_socketPath, _accessToken, timeoutMs) => {
+      proofs.push(timeoutMs);
+      return "proved";
+    });
+    // The relay fails to connect at the very end of the bound, before its timer has run: the home is checked again.
+    const lateRefusal = async (): Promise<Response> => {
+      vi.setSystemTime(Date.now() + 30_000);
+      throw new TypeError("fetch failed");
+    };
+    const run = await runBridge([ping], [lateRefusal], { daemon: windowsDaemon, machine });
+    expect(run.stdout).toEqual([JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: "fetch failed" } })]);
+    expect(proofs).toEqual([30_000, 1]);
   });
 });
