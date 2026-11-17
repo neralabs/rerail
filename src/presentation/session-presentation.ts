@@ -496,8 +496,13 @@ interface StartCall {
 async function askedLive(daemon: VerifiedDaemon, host: RerailHost, { stop, ask }: StartCall): Promise<StartAnswer | null> {
   if (ask !== undefined && !ask.beforeAsking(daemon.state, daemon.workspace)) return null;
   const path = `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`;
-  const response = await get(daemon, path, presentationReadSchema, { stop, sent: ask === undefined ? undefined : () => ask.sent() });
+  const response = await get(daemon, path, presentationReadSchema, { stop, sent: sentOf(ask) });
   return { state: response.repositoryState, workspace: daemon.workspace, scope: response.scope ?? null, daemon: daemon.state };
+}
+
+/** What tells `ask` its request was handed to the OS, where it is to be told (`StartAsk.marking`). */
+function sentOf(ask: StartAsk | undefined): (() => void) | undefined {
+  return ask?.marking === true ? () => ask.sent() : undefined;
 }
 
 /** Why no daemon answered in a started checkout: none is running, or the live one gave no answer in time. */
