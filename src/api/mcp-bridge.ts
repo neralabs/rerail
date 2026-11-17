@@ -195,18 +195,17 @@ class DaemonLocator {
   }
 }
 
-/** Relays one request; returns the line to answer with, or undefined when the server answered with no body. */
-async function relay(
+/** Sends `request` to the home's daemon within `bound`; a failure to connect has the home's daemon checked again. */
+async function post(
   request: string,
   daemon: DaemonLocator,
   callerHeaders: Readonly<Record<string, string>>,
   fetchImpl: RerailMcpBridgeFetch | undefined,
   bound: CallBound,
-): Promise<string | undefined> {
+): Promise<Response> {
   const endpoint = await daemon.endpoint(bound);
-  let response: Response;
   try {
-    response = await (fetchImpl ?? endpoint.fetch)(endpoint.url, {
+    return await (fetchImpl ?? endpoint.fetch)(endpoint.url, {
       method: "POST",
       // The capability last: nothing the bridge was started with names another.
       headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...callerHeaders, ...endpoint.headers },
@@ -219,13 +218,35 @@ async function relay(
     await daemon.recheck(bound);
     throw error;
   }
-  const body = await response.text();
+}
+
+/** The line the daemon's `response` with `body` answers the call with; undefined when the server answered with no body. */
+function answerLine(response: Response, body: string): string | undefined {
   if (response.ok) return body === "" ? undefined : body;
   // A refusal is not an MCP answer: the client gets a JSON-RPC error that says what to do, not the daemon's body.
   if (response.status === 401) throw new Error(DAEMON_REFUSED);
   const json = response.headers.get("content-type")?.includes("application/json") ?? false;
   if (json || isJsonRpcBody(body)) return body;
   throw new Error(`Rerail MCP bridge request failed (${response.status}): ${body}`);
+}
+
+/** Relays one request; returns the line to answer with, or undefined when the server answered with no body. */
+async function relay(
+  request: string,
+  daemon: DaemonLocator,
+  callerHeaders: Readonly<Record<string, string>>,
+  fetchImpl: RerailMcpBridgeFetch | undefined,
+  bound: CallBound,
+): Promise<string | undefined> {
+  const response = await post(request, daemon, callerHeaders, fetchImpl, bound);
+  let body: string;
+  try {
+    body = await response.text();
+  } catch (error) {
+    // An answer cut at the bound is a daemon that runs and is slow; each transport words the cut its own way.
+    throw bound.passed ? new Error(DAEMON_NOT_ANSWERING) : error;
+  }
+  return answerLine(response, body);
 }
 
 async function relayRequest(

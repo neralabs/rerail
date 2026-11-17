@@ -517,6 +517,28 @@ describe("Rerail MCP bridge beside a busy daemon", () => {
     expect(run.probes).toEqual(["http://127.0.0.1:4321/healthz"]);
   });
 
+  it("calls a daemon whose answer is still coming at the bound busy, in whatever words its transport cuts it", async () => {
+    const relayed = Promise.withResolvers<void>();
+    const streaming = async (_machine: Machine, init: RequestInit): Promise<Response> => {
+      const signal = init.signal;
+      if (!(signal instanceof AbortSignal)) throw new Error("the request carries no signal");
+      relayed.resolve();
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"jsonrpc":"2.0",'));
+          // As the https transport ends a body it cut: with an error of its own, not the signal's reason.
+          signal.addEventListener("abort", () => controller.error(new Error("terminated")), { once: true });
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const pending = runBridge([ping], [streaming]);
+    await relayed.promise;
+    await vi.advanceTimersByTimeAsync(30_000);
+    const run = await pending;
+    expect(run.stdout).toEqual([notAnswering]);
+  });
+
   it("never gives the engine's proof 0 ms, which a socket's timeout reads as no limit", async () => {
     const proofs: number[] = [];
     const machine = windows(async (_socketPath, _accessToken, timeoutMs) => {
