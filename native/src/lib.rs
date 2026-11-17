@@ -9,6 +9,7 @@ mod build_languages;
 mod code_rule_dsl;
 pub mod content_store;
 pub mod git_ignore;
+pub mod git_start;
 pub mod git_workspace;
 mod main_instance;
 mod model;
