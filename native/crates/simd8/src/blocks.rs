@@ -139,6 +139,22 @@ impl<const N: usize> Masks<N> {
         }
     }
 
+    /// The end of the run of mask `k`'s set bits from `at` (`at` itself: none there). Most runs
+    /// end in their own block: one load and a trailing-zero count; a run on past it is scanned.
+    /// Mask `k`'s bits past the text's end must be clear (a word's), so a run ends by the length.
+    #[inline(always)]
+    pub fn run_end(&self, at: usize, k: usize) -> usize {
+        if at >= self.len {
+            return self.len;
+        }
+        let q = at % 64;
+        let r = run_len(self.at(at / 64, k), q);
+        if q + r < 64 {
+            return at + r;
+        }
+        self.next(at + r, k, false)
+    }
+
     /// The first byte in `at..end` whose bit in mask `k` is set (`None`: none). It reads the blocks
     /// of `at..end` only: a gap's line end, say, with no scan on to the next line's.
     #[inline(always)]
@@ -270,6 +286,12 @@ mod tests {
         assert_eq!(masks.next(134, 0, true), 150);
         assert_eq!(masks.next(10, 0, false), 10);
         assert_eq!(masks.next(200, 0, true), 150);
+        let words = Masks::new(150, vec![[!0u64 << 60], [!0], [0b11]]);
+        assert_eq!(words.run_end(61, 0), 130);
+        assert_eq!(words.run_end(3, 0), 3);
+        assert_eq!(words.run_end(129, 0), 130);
+        assert_eq!(words.run_end(140, 0), 140);
+        assert_eq!(words.run_end(150, 0), 150);
         assert_eq!(masks.first_in(3, 150, 0), Some(133));
         assert_eq!(masks.first_in(3, 133, 0), None);
         assert_eq!(masks.first_in(134, 400, 0), None);

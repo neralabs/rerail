@@ -85,7 +85,8 @@ pub fn class_end(src: &[u8], from: usize, class: &Class) -> usize {
     src.len().max(from)
 }
 
-/// The 8 bytes at `i` (little-endian: byte `i` the lowest), zeros past the text's end.
+/// The 8 bytes at `i` (little-endian: byte `i` the lowest), zeros past the text's end (all of
+/// them for an `i` past it).
 #[inline(always)]
 pub fn load8(src: &[u8], i: usize) -> u64 {
     match src.get(i..i + 8) {
@@ -94,13 +95,15 @@ pub fn load8(src: &[u8], i: usize) -> u64 {
     }
 }
 
-/// The 8 bytes at `i` within 8 of the text's end, zeros past it.
+/// The 8 bytes at `i` within 8 of the text's end (or past it), zeros past it.
 #[cold]
 #[inline(never)]
 fn tail(src: &[u8], i: usize) -> u64 {
     let mut w = [0u8; 8];
-    let n = src.len() - i;
-    w[..n].copy_from_slice(&src[i..]);
+    let n = src.len().saturating_sub(i);
+    if n > 0 {
+        w[..n].copy_from_slice(&src[i..]);
+    }
     u64::from_le_bytes(w)
 }
 

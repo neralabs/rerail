@@ -19,10 +19,7 @@ use rerail_simd8::Simd8x64;
 const WORD: usize = 0; // [A-Za-z0-9_]
 const BLANK: usize = 1; // ' ', '\t', '\v', '\f', '\r'
 const EOL: usize = 2; // '\n'
-const STOP: usize = 3; // an interpreted string's: '"', '\\', '\n'
-const STAR: usize = 4; // a block comment's: '*', '/'
-const TICK: usize = 5; // a raw string's: '`'
-const MASKS: usize = 6;
+const MASKS: usize = 3;
 
 // The nibble tables' bits: each is the product of a set of high nibbles and a set of low ones.
 const C_AO: u8 = 1; // high 4 or 6, low 1..=15: A-O, a-o
@@ -107,10 +104,7 @@ unsafe fn masks<S: Simd8x64>(b: &[u8; 64]) -> (Masks, u64) {
         let eol = S::to_bitmask(S::test(c, S::splat(C_EOL)));
         let word = S::to_bitmask(S::test(c, S::splat(C_WORD)));
         let blank = S::to_bitmask(S::test(c, S::splat(C_BLANK)));
-        let stop = eol | S::to_bitmask(S::or(is(b'"'), is(b'\\')));
-        let star = S::to_bitmask(S::or(is(b'*'), is(b'/')));
-        let tick = S::to_bitmask(is(b'`'));
-        ([word, blank, eol, stop, star, tick], S::to_bitmask(is(0)))
+        ([word, blank, eol], S::to_bitmask(is(0)))
     }
 }
 
@@ -197,7 +191,7 @@ impl Blocks {
     /// The end of a run of `[A-Za-z0-9_]` from `at`.
     #[inline]
     pub fn word_end(&self, at: usize) -> usize {
-        self.next(at, WORD, false)
+        self.m.run_end(at, WORD)
     }
 
     /// The end of a run of blanks (`' '`, `'\t'`, `'\v'`, `'\f'`, `'\r'`) from `at`.
@@ -212,23 +206,8 @@ impl Blocks {
         self.next(at, EOL, true)
     }
 
-    /// The first `"`, `\` or `\n` from `at`: where an interpreted string's text may end.
-    #[inline]
-    pub fn string_stop(&self, at: usize) -> usize {
-        self.next(at, STOP, true)
-    }
 
-    /// The first `*` or `/` from `at`: where a block comment may end.
-    #[inline]
-    pub fn star(&self, at: usize) -> usize {
-        self.next(at, STAR, true)
-    }
 
-    /// The first `` ` `` from `at`: a raw string's end.
-    #[inline]
-    pub fn tick(&self, at: usize) -> usize {
-        self.next(at, TICK, true)
-    }
 }
 
 #[cfg(test)]
@@ -251,9 +230,6 @@ mod tests {
                 o[WORD] |= bit(c.is_ascii_alphanumeric() || c == b'_');
                 o[BLANK] |= bit(matches!(c, b' ' | b'\t' | 0x0b | 0x0c | b'\r'));
                 o[EOL] |= bit(c == b'\n');
-                o[STOP] |= bit(matches!(c, b'"' | b'\\' | b'\n'));
-                o[STAR] |= bit(matches!(c, b'*' | b'/'));
-                o[TICK] |= bit(c == b'`');
             }
         }
         (out, src.iter().position(|&c| c == 0))
@@ -295,10 +271,6 @@ mod tests {
         let long = [b'a'; 200];
         assert_eq!(Blocks::of(&long).word_end(3), 200);
         assert_eq!(Blocks::of(b"// x\r\n").eol(0), 5);
-        assert_eq!(Blocks::of(b"ab\nc\"").string_stop(0), 2);
-        assert_eq!(Blocks::of(b"ab\"c`").tick(0), 4);
-        assert_eq!(Blocks::of(b"ab\\c\"").string_stop(0), 2);
-        assert_eq!(Blocks::of(b"/* a */").star(2), 5);
         assert_eq!(Blocks::of(b"ab").first_nul(), None);
         assert_eq!(Blocks::of(&[[b'a'; 70].as_slice(), b"\0b\0"].concat()).first_nul(), Some(70));
     }

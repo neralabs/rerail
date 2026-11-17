@@ -206,6 +206,7 @@ pub fn word(src: &[u8], i: usize, end: usize) -> u8 {
     WORDS.find(src, i, end) as u8
 }
 
+
 /// The character at `at` (a UTF-8 lead byte at or past 0x80) and its length.
 fn decode(src: &[u8], at: usize) -> Option<(char, usize)> {
     let s = std::str::from_utf8(&src[at..(at + 4).min(src.len())]).or_else(|e| std::str::from_utf8(&src[at..at + e.valid_up_to()])).ok()?;
@@ -344,19 +345,11 @@ impl<'s> Lexer<'s> {
                 }
                 Ok(Some(Extra { start: at as u32, end: i as u32 }))
             }
-            b'*' => {
-                let mut i = at + 2;
-                loop {
-                    i = self.blocks.star(i);
-                    if i >= self.src.len() {
-                        return Err(Refusal::Lex(at as u32));
-                    }
-                    if self.src[i] == b'*' && self.at(i + 1) == b'/' {
-                        break Ok(Some(Extra { start: at as u32, end: i as u32 + 2 }));
-                    }
-                    i += 1;
-                }
-            }
+            // To the first `*/` from the comment's third byte (`/*/` is open), one micro-lexer scan.
+            b'*' => match rerail_simd8::micro::find_pair(self.src, at + 2, b'*', b'/') {
+                Some(i) => Ok(Some(Extra { start: at as u32, end: i as u32 + 2 })),
+                None => Err(Refusal::Lex(at as u32)),
+            },
             _ => Ok(None),
         }
     }
@@ -655,7 +648,7 @@ impl<'s> Lexer<'s> {
         let delim = &self.src[i..k];
         let mut j = k + 1;
         loop {
-            let close = j + self.src.get(j..)?.iter().position(|&c| c == b')')?;
+            let close = rerail_simd8::micro::find(self.src, j, b')')?;
             let after = close + 1;
             if self.src.get(after..after + delim.len()) == Some(delim) && self.at(after + delim.len()) == b'"' {
                 return Some(after + delim.len() + 1);
@@ -753,7 +746,7 @@ impl<'s> Lexer<'s> {
     pub fn string_end(&self, mut i: usize) -> Option<usize> {
         loop {
             // The next `"`, `\` or `\n` (stage 1's mask): the text between is passed a block at a time.
-            i = self.blocks.string_stop(i);
+            i = rerail_simd8::micro::first_of(self.src, i, [b'"', b'\\', b'\n']);
             match self.src.get(i)? {
                 b'"' => return Some(i + 1),
                 b'\n' => return None,
@@ -851,7 +844,7 @@ impl<'s> Lexer<'s> {
         let s = at;
         let mut i = at + 1;
         loop {
-            i = self.blocks.arg_stop(i);
+            i = rerail_simd8::micro::first_of(self.src, i, [b'/', b'\\', b'\n']);
             if i >= self.src.len() {
                 return Ok(Some((s, self.src.len())));
             }

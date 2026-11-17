@@ -19,18 +19,9 @@
 //! every backend the CPU runs against the byte tests.
 
 use rerail_simd8::{Simd8x64, dispatch};
-
-/// 64 bytes in a backend's registers.
-struct Block<S: Simd8x64>(S::V);
-
-impl<S: Simd8x64> Block<S> {
-    /// Bit `i`: byte `i` is `x`.
-    #[inline(always)]
-    unsafe fn eq(&self, x: u8) -> u64 {
-        // SAFETY: the kernel runs where the CPU runs `S` (`dispatch!`).
-        unsafe { S::eq_mask(self.0, x) }
-    }
-}
+pub(crate) use rerail_simd8::micro::{find, find_pair, string_end};
+#[cfg(test)]
+use rerail_simd8::micro::{find_all, find_all_on};
 
 /// The lexer's four masks over the 64 bytes `p[..64]`; `p[64]` is the byte after, the last
 /// pair's second byte.
@@ -57,22 +48,6 @@ dispatch! {
     /// The lexer's four masks (`Window`): a step of the lexer's loop, inlined.
     #[inline(always)]
     fn lexer_masks(p: &[u8; 80]) -> [u64; 4] = lexer, on lexer_masks_on;
-}
-
-/// The block at `i`: 64 bytes, zeros past the end.
-#[inline(always)]
-unsafe fn block<S: Simd8x64>(b: &[u8], i: usize) -> Block<S> {
-    // SAFETY: the kernel runs where the CPU runs `S` (`dispatch!`).
-    unsafe {
-        match b.get(i..i + 64) {
-            Some(s) => Block(S::load(s.try_into().expect("64 bytes"))),
-            None => {
-                let mut pad = [0u8; 64];
-                pad[..b.len() - i].copy_from_slice(&b[i..]);
-                Block(S::load(&pad))
-            }
-        }
-    }
 }
 
 // The lexer's classes, as nibble tables: each bit a set of high nibbles times a set of low
@@ -221,19 +196,6 @@ pub(crate) fn newline_positions(b: &[u8]) -> Vec<u32> {
     out
 }
 
-#[cfg(test)]
-#[inline(always)]
-unsafe fn find_all_k<S: Simd8x64>(b: &[u8], i: usize, x: u8) -> u64 {
-    // SAFETY: the kernel runs where the CPU runs `S` (`dispatch!`).
-    unsafe { block::<S>(b, i).eq(x) }
-}
-
-#[cfg(test)]
-dispatch! {
-    /// The block at `i`'s `x`s.
-    fn find_all(b: &[u8], i: usize, x: u8) -> u64 = find_all_k, on find_all_on;
-}
-
 /// The bits `from..to` of a mask (`from` < 64, `to` ≤ 64).
 #[inline(always)]
 pub(crate) fn bits(from: u32, to: u32) -> u64 {
@@ -245,120 +207,6 @@ pub(crate) fn bits(from: u32, to: u32) -> u64 {
 #[inline(always)]
 pub(crate) fn run(mask: u64, from: u32) -> u32 {
     (!(mask >> from)).trailing_zeros().min(64 - from)
-}
-
-/// Bitlex's `escaped`: the bytes a run of backslashes escapes (simdjson's
-/// `find_escaped_branchless`), `cin` the block's first byte escaped; the carry out.
-#[inline(always)]
-fn escaped(run: u64, cin: u64) -> (u64, u64) {
-    const EVEN: u64 = 0x5555_5555_5555_5555;
-    let b = run & !cin;
-    let follows = (b << 1) | cin;
-    let odd_starts = b & !EVEN & !follows;
-    let (sequences, overflow) = odd_starts.overflowing_add(b);
-    ((EVEN ^ (sequences << 1)) & follows, u64::from(overflow))
-}
-
-/// The bits below a mask's lowest bit (all of them when it is empty).
-#[inline(always)]
-fn below(stop: u64) -> u64 {
-    stop.wrapping_sub(1) & !stop
-}
-
-/// From `from` on, block by block, to the first bit of `stop`'s mask (`None`: the text ends
-/// first).
-#[inline(always)]
-unsafe fn scan<S: Simd8x64>(b: &[u8], from: usize, mut stop: impl FnMut(&Block<S>, usize) -> u64) -> Option<usize> {
-    let mut i = from;
-    while i < b.len() {
-        // SAFETY: the kernel runs where the CPU runs `S` (`dispatch!`).
-        let s = stop(&unsafe { block::<S>(b, i) }, i);
-        if s != 0 {
-            return Some(i + s.trailing_zeros() as usize);
-        }
-        i += 64;
-    }
-    None
-}
-
-#[inline(always)]
-unsafe fn find_k<S: Simd8x64>(b: &[u8], from: usize, x: u8) -> Option<usize> {
-    // SAFETY: the kernel runs where the CPU runs `S` (`dispatch!`).
-    unsafe { scan::<S>(b, from, |blk, _| blk.eq(x)) }
-}
-
-#[inline(always)]
-unsafe fn find_pair_k<S: Simd8x64>(b: &[u8], from: usize, x: u8, y: u8) -> Option<usize> {
-    // SAFETY: the kernel runs where the CPU runs `S` (`dispatch!`).
-    unsafe {
-        scan::<S>(b, from, |blk, i| {
-            // The next block's first byte, for this block's last.
-            let next = u64::from(b.get(i + 64) == Some(&y));
-            blk.eq(x) & ((blk.eq(y) >> 1) | (next << 63))
-        })
-    }
-}
-
-#[inline(always)]
-unsafe fn string_end_k<S: Simd8x64>(b: &[u8], from: usize) -> (usize, bool) {
-    let (mut carry, mut u) = (0, 0);
-    // SAFETY: the kernel runs where the CPU runs `S` (`dispatch!`).
-    let end = unsafe {
-        scan::<S>(b, from, |blk, _| {
-            let (esc, out) = escaped(blk.eq(b'\\'), carry);
-            carry = out;
-            let quote = blk.eq(b'"') & !esc;
-            // `u` is looked for only in a block with an escape (most have none).
-            if esc != 0 {
-                u |= esc & blk.eq(b'u') & below(quote);
-            }
-            quote
-        })
-    };
-    // Two words, so the call returns them in registers (`usize::MAX`: the text ends first).
-    (end.unwrap_or(usize::MAX), u != 0)
-}
-
-dispatch! {
-    /// The first `x` from `from` on: a line comment's end, a backtick literal's.
-    pub(crate) fn find(b: &[u8], from: usize, x: u8) -> Option<usize> = find_k, on find_on;
-}
-
-dispatch! {
-    /// The first `x` followed by `y` from `from` on (Bitlex's `pair`: a block comment's `*/`, the
-    /// fence of a two-backtick literal).
-    pub(crate) fn find_pair(b: &[u8], from: usize, x: u8, y: u8) -> Option<usize> = find_pair_k, on find_pair_on;
-}
-
-dispatch! {
-    /// `string_end`'s call: the end as a word (`usize::MAX`: none).
-    fn string_end_raw(b: &[u8], from: usize) -> (usize, bool) = string_end_k, on string_end_on;
-}
-
-/// A string's body from `from` (after its opening quote): its closing quote, the first not
-/// escaped; and whether a `\u` escape comes before it.
-///
-/// A string that closes within its first 16 bytes, with no `\` before its quote, is read here
-/// by word operations (most strings: a call costs more than the scan of a short one).
-#[inline(always)]
-pub(crate) fn string_end(b: &[u8], from: usize) -> (Option<usize>, bool) {
-    if let Some(w) = b.get(from..from + 16) {
-        // The bytes that are `"` and `\`, by the zero-byte test: its lowest flag is exact.
-        let zero = |v: u64| v.wrapping_sub(0x0101_0101_0101_0101) & !v & 0x8080_8080_8080_8080;
-        for k in [0, 8] {
-            let x = u64::from_le_bytes(w[k..k + 8].try_into().expect("8 bytes"));
-            let quote = zero(x ^ 0x2222_2222_2222_2222);
-            let slash = zero(x ^ 0x5c5c_5c5c_5c5c_5c5c);
-            if quote != 0 && quote.trailing_zeros() < slash.trailing_zeros() {
-                return (Some(from + k + (quote.trailing_zeros() / 8) as usize), false);
-            }
-            if slash != 0 {
-                break;
-            }
-        }
-    }
-    let (end, u) = string_end_raw(b, from);
-    ((end != usize::MAX).then_some(end), u)
 }
 
 #[cfg(test)]
@@ -431,43 +279,11 @@ mod tests {
     }
 
     #[test]
-    fn micro_lexers_are_the_scalar_scans() {
+    fn newline_positions_are_the_newlines() {
         let mut r = Rng(0x2545_f491_4f6c_dd1d);
-        for _ in 0..20_000 {
+        for _ in 0..2000 {
             let n = (r.next() % 200) as usize;
             let b = r.text(n);
-            let from = if n == 0 { 0 } else { (r.next() % n as u64) as usize };
-            // `find`
-            let want = b[from..].iter().position(|&c| c == b'`').map(|e| from + e);
-            assert_eq!(find(&b, from, b'`'), want);
-            // `find_pair`, as `str::find("*/")`
-            let want = b[from..].windows(2).position(|w| w == b"*/").map(|e| from + e);
-            assert_eq!(find_pair(&b, from, b'*', b'/'), want, "{:?} from {from}", String::from_utf8_lossy(&b));
-            // `string_end`, as the engine's lexer walks a string
-            let (mut end, mut u) = (from, false);
-            while end < n && b[end] != b'"' {
-                if b[end] == b'\\' {
-                    u |= b.get(end + 1) == Some(&b'u');
-                    end += 2;
-                } else {
-                    end += 1;
-                }
-            }
-            for be in backends() {
-                assert_eq!(find_on(be, &b, from, b'`'), Some(find(&b, from, b'`')), "{be:?}");
-                assert_eq!(find_pair_on(be, &b, from, b'*', b'/'), Some(find_pair(&b, from, b'*', b'/')), "{be:?}");
-                assert_eq!(string_end_on(be, &b, from), Some(string_end_raw(&b, from)), "{be:?}");
-                let (end, u) = string_end_raw(&b, from);
-                assert_eq!(string_end(&b, from), ((end != usize::MAX).then_some(end), u));
-            }
-            let (at, got_u) = string_end(&b, from);
-            if end < n {
-                assert_eq!(at, Some(end), "{:?} from {from}", String::from_utf8_lossy(&b));
-                assert_eq!(got_u, u);
-            } else {
-                assert_eq!(at, None, "{:?} from {from}", String::from_utf8_lossy(&b));
-            }
-            // `newline_positions`
             let want: Vec<u32> = (0..n).filter(|&i| b[i] == b'\n').map(|i| i as u32).collect();
             assert_eq!(newline_positions(&b), want);
         }

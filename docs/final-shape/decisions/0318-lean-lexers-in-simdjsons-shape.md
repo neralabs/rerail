@@ -95,6 +95,54 @@ a18630f041d13f2e). The oracles are the same under Relax: C 829/0/0 and 1,161/0/1
 1,271/0/113, Go 860/0/0 (9 error texts recovered as tree-sitter does) and 1,575/0/0 (11). The
 engine's 31 lean-parser tests pass.
 
+## Then: micro-lexers shared, stage 1 cut to three masks (2026-11-16)
+
+User, on the open items below: "keep working through this … We created primitives for matching
+keywords and similar, please find them and use them where possible".
+
+**The primitives found.** Every lean parser with keywords already reads them by
+`rerail_simd8::keyword_switch!`; the C and Go parsers read every keyword by word code, never by
+text. The micro-lexers of page 31 (`find`, `find_pair`, `string_end`, and the newline scans) lived in
+`rr_syntax`, private to the `.rr` lexer.
+
+**What changed:**
+- `rerail_simd8::micro` holds the micro-lexers now; `rr_syntax` uses them from there. New:
+  `first_of(text, from, [a, b, c])`, the first of three bytes. It runs a 16-byte SWAR test first,
+  for the short string or argument, before a block scan.
+- C and Go stage 1 keep three masks (word, blank, line end), not six. Strings, block comments,
+  directive arguments, raw strings and Go's raw strings are read by the micro-lexers where they
+  start (`first_of`, `find_pair`, `find`), not from masks made for every block.
+- `blocks::Masks::run_end`: a word run's end in its own block by one load and a trailing-zero
+  count, scanning on only for a run past it.
+- `swar::load8` takes any position, past the text's end too (zeros).
+
+**Results**, this machine (load 9 to 16), instructions, digests unchanged:
+
+| | before | after |
+|---|---:|---:|
+| C, the parse | 9.77 G | 9.76 G |
+| C, the lexer alone, a token | 119 | 114 |
+| stage 1, a token | | about 35% fewer |
+| a string, a token | 197 | 234 |
+
+The string is the cost of reading its end from the bytes, not a mask. Strings are 1.4% of C's
+tokens, and stage 1 runs for every block. The oracles are the same as above, and so are the
+engine's 31 lean-parser tests.
+
+### Measured and dropped
+
+- **One path for every token** (page 31's run in full): the starts a block at a time, a
+  punctuator's kind and length from `OPS[first byte][second byte's class]` with its third byte by
+  a select, a name's keyword probed on the lanes loaded at its start, and one branch out for rare
+  starts. It was built, and it matched `token` on the random-text test. It cost far more: `(`
+  42 → 117 instructions a token, a name after a blank 129 → 183, C's parse 9.76 → 11.05 G. Each
+  token computed both the name's and the punctuator's answers. The test for a rare start took
+  about 20 instructions. Eight values spilled to the stack. The branchy run predicts well on this
+  mix (0313 found the same of the punctuation table).
+- **A keyword probe with no branch** (`Words::find_lanes`, on the two lanes as loaded): a name
+  129 → 151, C's parse 9.76 → 9.94 G. `find` returns early on a length outside the list's span,
+  and loads the second lane only past 8 bytes. Both were removed.
+
 ## Open
 
 - **Names are now the lexer's largest cost**: about 35 instructions of word hash and 30 for the
@@ -104,8 +152,10 @@ engine's 31 lean-parser tests pass.
   branches: the per-token choice between table, name, number and the rest depends on the data.
   simdjson's stage 2 branches a token too; a table of the start byte's class (one indirect jump)
   is the next form to measure.
-- **Strings and comments** (197 and 163 instructions) go through the scalar path: page 36's region
-  walk would take them off the masks.
+- **Strings and comments** (234 and 152 instructions) are read by the micro-lexers. Page 36's region
+  walk would take them off the masks, but that needs stage 1's stop masks back.
+- **Names** (129): the word hash is already `find`'s floor (above). What remains is the run's end
+  and the gap. A word code only where the parser asks for a keyword still needs counting first.
 - **The other lean parsers.** Java, Rust, C# and PHP each keep their own copy of `Blocks::next`.
   `rerail_simd8::blocks` replaces it, and `run`'s form applies to each, behind each one's digests
   and oracles.

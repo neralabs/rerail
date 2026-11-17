@@ -263,19 +263,11 @@ impl<'s> Lexer<'s> {
     pub fn comment(&self, at: usize) -> R<Option<Extra>> {
         match self.at(at + 1) {
             b'/' => Ok(Some(Extra { start: at as u32, end: self.blocks.eol(at + 2) as u32 })),
-            b'*' => {
-                let mut i = at + 2;
-                loop {
-                    i = self.blocks.star(i);
-                    if i >= self.src.len() {
-                        return Err(Refusal::Lex(at as u32));
-                    }
-                    if self.src[i] == b'*' && self.at(i + 1) == b'/' {
-                        break Ok(Some(Extra { start: at as u32, end: i as u32 + 2 }));
-                    }
-                    i += 1;
-                }
-            }
+            // To the first `*/` from the comment's third byte (`/*/` is open), one micro-lexer scan.
+            b'*' => match rerail_simd8::micro::find_pair(self.src, at + 2, b'*', b'/') {
+                Some(i) => Ok(Some(Extra { start: at as u32, end: i as u32 + 2 })),
+                None => Err(Refusal::Lex(at as u32)),
+            },
             _ => Ok(None),
         }
     }
@@ -497,7 +489,7 @@ impl<'s> Lexer<'s> {
                 };
             }
             b'`' => {
-                let end = self.blocks.tick(s + 1);
+                let end = rerail_simd8::micro::find(self.src, s + 1, b'`').unwrap_or(self.src.len());
                 if end >= self.src.len() {
                     return refuse;
                 }
@@ -668,7 +660,7 @@ impl<'s> Lexer<'s> {
         let mut i = s + 1;
         loop {
             // The next `"`, `\` or `\n` (stage 1's mask): the text between is passed a block at a time.
-            i = self.blocks.string_stop(i);
+            i = rerail_simd8::micro::first_of(self.src, i, [b'"', b'\\', b'\n']);
             match self.src.get(i)? {
                 b'"' => return Some(i + 1),
                 b'\n' => return None,
