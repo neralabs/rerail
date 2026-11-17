@@ -501,8 +501,10 @@ describe("Rerail MCP bridge beside a busy daemon", () => {
   it("calls a newly recorded daemon still silent to its health check at the bound busy, and sends it nothing", async () => {
     const health = heldAnswer();
     const pending = runBridge([ping], [new Response(pong, { status: 200 })], { health: health.answer });
-    await health.asked;
+    const signal = await health.asked;
     await vi.advanceTimersByTimeAsync(30_000);
+    // The health check's wait is the call's: it ends at the bound, not on a clock of its own.
+    expect(signal.aborted).toBe(true);
     const run = await pending;
     expect(run.stdout).toEqual([notAnswering]);
     expect(run.requests).toEqual([]);
