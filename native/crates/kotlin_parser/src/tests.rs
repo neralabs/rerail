@@ -249,8 +249,16 @@ fn try_and_as_are_the_lean_parsers() {
     ]);
 }
 
+/// Step 14: a lambda that opens a lambda.
 #[test]
-fn what_step_13_does_not_read_is_refused() {
+fn nested_lambdas_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n    Row {\n        xs.forEach { x ->\n            g(x)\n        }\n    }\n    a { b.c { d, e -> 1 } }\n}\n",
+    ]);
+}
+
+#[test]
+fn what_step_14_does_not_read_is_refused() {
     refused(&[
         "val a = b to f<T>()\n",
         "val a = x + f<T>(1)\n",

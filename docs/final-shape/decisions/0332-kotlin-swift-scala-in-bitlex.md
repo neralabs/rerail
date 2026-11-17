@@ -361,6 +361,16 @@ scanner.
 
 Corpus: 171 the same, 320 refused, 0 differ.
 
+## Kotlin, step 14 (`14-chains.bitlex`)
+
+A lambda with no parameters whose first line opens a lambda with parameters
+(`Row { xs.forEach { x -> … } }`) was read as having the inner lambda's parameters. The run of
+parameter bytes from a `{` (`lam_fill`) went on through the inner `{`, because a fill's start
+byte inside it continues the fill. Now the byte before any `{` in the run ends it (`lam_last`),
+so the search back from a `->` stops at the inner `{`.
+
+Corpus: 174 the same, 317 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
