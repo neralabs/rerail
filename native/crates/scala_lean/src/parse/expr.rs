@@ -1675,6 +1675,7 @@ impl P<'_> {
             self.t.token(if multi { K::TTripleQuote } else { K::TDQuote }, f::NONE, t.start, t.start + open);
         }
         let mut i = (t.start + open) as usize;
+        let mut interpolated = false;
         let end = loop {
             let stop = self.lx.blocks.string_stop(i);
             if stop >= self.src.len() {
@@ -1717,6 +1718,7 @@ impl P<'_> {
                             i = self.t.last_end as usize;
                             // What the look ahead lexed past the `}` is the string's.
                             self.relex_at(i);
+                            interpolated = true;
                         }
                         c if c.is_ascii_alphabetic() || c == b'_' => {
                             let e = self.lx.blocks.word_end(stop + 1);
@@ -1738,7 +1740,11 @@ impl P<'_> {
                 }
             }
         };
-        self.relex_at(end);
+        // Without an interpolation's tokens, those read after the string are those lexed from its
+        // end already.
+        if interpolated || end != t.end as usize {
+            self.relex_at(end);
+        }
         self.t.last_end = end as u32;
         self.sp = end as u32;
         self.t.close_at(s, end as u32);

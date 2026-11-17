@@ -648,6 +648,7 @@ impl<'a> P<'a> {
         let triple = src[i..].starts_with(b"\"\"\"");
         i += if triple { 3 } else { 1 };
         let at = |k: usize| src.get(k).copied().unwrap_or(0);
+        let mut interpolated = false;
         // One scanner call from `i` a step: a piece, or the end.
         let end = 'string: loop {
             let mut j = i;
@@ -687,6 +688,7 @@ impl<'a> P<'a> {
                             }
                             self.t.leaf(K::InterpolationExpressionStart, f::NONE, i as u32, j as u32 + 1);
                             i = self.interpolation(j + 1)?;
+                            interpolated = true;
                         } else {
                             self.t.leaf(K::InterpolationIdentifierStart, f::NONE, i as u32, j as u32);
                             let (e, _) = self.lx.name_end(j)?;
@@ -758,14 +760,18 @@ impl<'a> P<'a> {
                     }
                     break 'string j + 1;
                 }
-                j += char_len(src, j);
+                // Content to the next `"`, `\\` or `$` (the block masks' string stops).
+                j = self.lx.blocks.string_stop(j + 1);
                 has = true;
             }
         };
         // The interpolations' tokens out of the buffer: the string is one token, as the indices
-        // read ahead of it count it.
+        // read ahead of it count it. Without an interpolation's, the tokens read after it are
+        // those lexed from its end already.
         self.i = base;
-        self.relex_at(end);
+        if interpolated || end != t.end as usize {
+            self.relex_at(end);
+        }
         self.t.last_end = end as u32;
         self.t.close_at(n, end as u32);
         Ok(())

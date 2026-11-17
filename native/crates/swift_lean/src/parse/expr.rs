@@ -1132,6 +1132,7 @@ impl<'a> P<'a> {
         let base = self.i;
         let src = self.src;
         let at = |k: usize| src.get(k).copied().unwrap_or(0);
+        let mut interpolated = false;
         let mut i = t.start as usize;
         if at(i) == b'#' {
             // A raw string: one `raw_str_end_part` where no interpolation is in it.
@@ -1169,6 +1170,7 @@ impl<'a> P<'a> {
                     b'(' => {
                         self.t.token(K::TBackslashLParen, f::NONE, i as u32, i as u32 + 2);
                         i = self.interpolation(i + 2)?;
+                        interpolated = true;
                     }
                     b'u' if at(i + 2) == b'{' => {
                         let mut k = i + 3;
@@ -1215,8 +1217,12 @@ impl<'a> P<'a> {
         } else {
             self.t.token(K::TDQuote, f::NONE, close as u32, end as u32);
         }
+        // Without an interpolation's tokens, those read after the string are those lexed from its
+        // end already.
         self.i = base;
-        self.relex_at(end);
+        if interpolated || end != t.end as usize {
+            self.relex_at(end);
+        }
         self.t.last_end = end as u32;
         self.t.close_at(n, end as u32);
         Ok(())

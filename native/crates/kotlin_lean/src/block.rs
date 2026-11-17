@@ -214,8 +214,8 @@ impl<'s> Blocks<'s> {
     /// reads a comment (its end), or leaves the start to `slow`: the lexer's token reader from the
     /// end of the last token or comment (characters past ASCII), given whether a line end was
     /// passed since the last token (before comments), which gives a token, its end and whether it
-    /// is the text's end. Stops at a block's end once `min` tokens are made, or at the text's end;
-    /// returns where the next token is to be read from.
+    /// is the text's end. Stops once `min` tokens are made (after a token `fast` made, or at a
+    /// block's end), or at the text's end; returns where the next token is to be read from.
     #[inline(always)]
     pub fn lex_blocks<Tk, E, C>(
         &self,
@@ -266,6 +266,11 @@ impl<'s> Blocks<'s> {
                 let e = match fast(cx, base + q, run, nl)? {
                     Lexed::Tok(t, e) => {
                         out.push(t);
+                        // Enough: the rest of the block is read at the next call (a parser that
+                        // reads again from a token, `relex_at`, throws away what is read ahead).
+                        if out.len() - made >= min {
+                            return Ok(e);
+                        }
                         carry = false;
                         extra = false;
                         e
