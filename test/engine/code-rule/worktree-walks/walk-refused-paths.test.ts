@@ -19,10 +19,12 @@ import { codeRuleSchema } from "../../../../src/engine/code-rule/code-rule-schem
 import { setUpTestRepository } from "../../../support/repository-rules.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
 
-/** The paths whose realpath, and every realpath below them, fails with `EPERM`, as Windows fails one the user is denied. */
-const refused = vi.hoisted(() => new Set<string>());
-vi.mock("node:fs", async importOriginal => {
-  const fs = await importOriginal<typeof import("node:fs")>();
+/**
+ * The paths whose realpath, and every realpath below them, fails with `EPERM`, as Windows fails one the user is denied:
+ * the sync realpaths of `node:fs` and the realpath of `node:fs/promises`, which on Windows is the native one too.
+ */
+const { refused, refuse } = vi.hoisted(() => {
+  const refused = new Set<string>();
   const refuse = (path: PathLike): void => {
     const named = String(path);
     // Filled off Windows only, so the separator is `/`.
@@ -30,6 +32,19 @@ vi.mock("node:fs", async importOriginal => {
       if (named === denied || named.startsWith(`${denied}/`)) throw Object.assign(new Error(`EPERM: operation not permitted, realpath '${named}'`), { code: "EPERM" });
     }
   };
+  return { refused, refuse };
+});
+vi.mock("node:fs/promises", async importOriginal => {
+  const fs = await importOriginal<typeof import("node:fs/promises")>();
+  // The cast keeps realpath's overloads: the wrapper passes every argument on.
+  const realpath = (async (...args: Parameters<typeof fs.realpath>) => {
+    refuse(args[0]);
+    return await fs.realpath(...args);
+  }) as typeof fs.realpath;
+  return { ...fs, realpath };
+});
+vi.mock("node:fs", async importOriginal => {
+  const fs = await importOriginal<typeof import("node:fs")>();
   // The casts keep each realpath's overloads: the wrappers pass every argument on.
   const realpathSync = Object.assign(
     ((...args: Parameters<typeof fs.realpathSync>) => {
@@ -48,8 +63,18 @@ vi.mock("node:fs", async importOriginal => {
 
 const WINDOWS = process.platform === "win32";
 const cleanups: Array<() => Promise<void>> = [];
+// Each cleanup runs whatever happens to the one before it, so a close that fails still lifts the denial and removes
+// the folder: a deny rule or a mode 000 left in the system's temporary folder outlives the test run.
 afterEach(async () => {
-  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+  const failures: unknown[] = [];
+  for (const cleanup of cleanups.splice(0).reverse()) {
+    try {
+      await cleanup();
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length > 0) throw new AggregateError(failures, `Cleanups failed: ${failures.map(String).join("; ")}`);
 });
 
 const systemTool = (name: string): string => join(process.env.SystemRoot ?? "C:\\Windows", "System32", name);
