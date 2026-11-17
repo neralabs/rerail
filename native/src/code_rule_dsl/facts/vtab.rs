@@ -111,6 +111,11 @@ pub trait Source: Send + Sync {
     fn estimated_len(&self) -> usize {
         self.len()
     }
+    /// The rows whose column `g` holds a node `owned` names, where the source finds them without reading every row
+    /// (a view over a batch's documents, by its nodes): `None` when it cannot, and the caller reads them all.
+    fn rows_owned(&self, _g: usize, _owned: &dyn Fn(i64) -> bool) -> Option<Vec<usize>> {
+        None
+    }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize;
     /// A lookup on `column`'s CPU, as a multiple of a derived relation's (placement's `CPU_PER_PROBE` a row in and
     /// `CPU_PER_ROW_OUT` a row out; decision 0312): a view whose lookup walks the tree or searches the documents

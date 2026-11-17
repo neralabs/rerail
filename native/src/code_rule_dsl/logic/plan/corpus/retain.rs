@@ -330,8 +330,12 @@ pub(in crate::code_rule_dsl) fn owners_delta(rel: &str, old: &dyn Source, new: &
         return None;
     }
     let all: Vec<usize> = (0..width).collect();
-    let made: Vec<Vec<i64>> = (0..new.len())
-        .filter(|&r| is_new(super::memo::document_of(new.value(r, g))))
+    // A view over the batch's documents finds the new documents' rows itself (`Source::rows_owned`): a scan of every
+    // row made a kind-set axis's whole solve, 348 MB of a PostHog run's peak, for a round's few new documents.
+    let new_owned = |n: i64| is_new(super::memo::document_of(n));
+    let owned = new.rows_owned(g, &new_owned).unwrap_or_else(|| (0..new.len()).filter(|&r| new_owned(new.value(r, g))).collect());
+    let made: Vec<Vec<i64>> = owned
+        .into_iter()
         .map(|r| {
             let mut row = vec![0i64; width];
             new.row_at(r, &all, &mut row);
@@ -1036,6 +1040,9 @@ impl Source for Renamed {
     fn complete_rows(&self) -> bool {
         self.0.complete_rows()
     }
+    fn rows_owned(&self, g: usize, owned: &dyn Fn(i64) -> bool) -> Option<Vec<usize>> {
+        self.0.rows_owned(g, owned)
+    }
     fn expect_lookups(&self, column: usize, keys: f64) {
         self.0.expect_lookups(column, keys);
     }
@@ -1713,6 +1720,9 @@ impl Source for Lazy {
     fn complete_rows(&self) -> bool {
         self.inner().complete_rows()
     }
+    fn rows_owned(&self, g: usize, owned: &dyn Fn(i64) -> bool) -> Option<Vec<usize>> {
+        self.inner().rows_owned(g, owned)
+    }
     fn expect_lookups(&self, column: usize, keys: f64) {
         self.inner().expect_lookups(column, keys)
     }
@@ -1888,6 +1898,9 @@ impl Source for Traced {
     }
     fn complete_rows(&self) -> bool {
         self.inner.complete_rows()
+    }
+    fn rows_owned(&self, g: usize, owned: &dyn Fn(i64) -> bool) -> Option<Vec<usize>> {
+        self.inner.rows_owned(g, owned)
     }
     fn expect_lookups(&self, column: usize, keys: f64) {
         self.inner.expect_lookups(column, keys)
