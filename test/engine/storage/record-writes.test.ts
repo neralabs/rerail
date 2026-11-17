@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import { SqliteSessionStore } from "../../../src/runtime/index.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
@@ -186,6 +187,40 @@ describe("record writes while another process holds the write lock", () => {
 
     expect(writer.waiting()).toBe(false);
     await holder.release();
+  }, 30_000);
+
+  // A holder of a moment in another process gives the lock back between two calls of one turn on this thread, before
+  // the lock wait's answer can arrive here: the reads below come in that gap. Before, the claim found no session row
+  // and the session failed to open, and the verdict found no audit and called the scan unrecorded.
+  it("are made before a session's owner claim reads the session's row, when the holder gave the lock back", async () => {
+    const { path, sessions } = await stores();
+    const controls = new SqliteAuditControlStore(path);
+    closers.push(() => controls.close());
+    const holder = new Database(path);
+    closers.push(() => { holder.close(); });
+    holder.exec("BEGIN IMMEDIATE");
+    sessions.openSession(session, 1_000);
+    holder.exec("COMMIT");
+
+    const claim = controls.registerOwner(session.sessionId, "background");
+
+    expect(controls.holdsOwner(session.sessionId, claim)).toBe(true);
+    expect(rows(path, "SELECT session_id, ended_at FROM sessions")).toEqual([[session.sessionId, null]]);
+  }, 30_000);
+
+  it("are made before a scan's verdict reads its audit, when the holder gave the lock back", async () => {
+    const { path, sessions, audits } = await stores();
+    sessions.openSession(session, 1_000);
+    const holder = new Database(path);
+    closers.push(() => { holder.close(); });
+    holder.exec("BEGIN IMMEDIATE");
+    const auditId = audits.start({
+      sessionId: session.sessionId, workspaceRoot: "/work", scope: "repository", mode: "log", revision: 1, catalogRevision: "r1", ruleRevisions: [], paths: [],
+    });
+    audits.finish(auditId, { status: "completed", violations: [], failures: [] });
+    holder.exec("COMMIT");
+
+    expect(audits.get(auditId)?.status).toBe("completed");
   }, 30_000);
 
   it("throw at once a failure that is not the lock, as a write made at once did before", async () => {

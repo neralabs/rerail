@@ -4,7 +4,7 @@ import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { z } from "zod";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../storage/database.js";
 import { decodeCursor, encodeCursor } from "../storage/page-cursor.js";
-import { openRecordWriter, type RecordWriter } from "../storage/record-writes.js";
+import { flushRecordWrites, openRecordWriter, type RecordWriter } from "../storage/record-writes.js";
 import { holdsTable } from "../storage/table-probe.js";
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
 import { scrubSecrets, scrubValue } from "../secret-scrub.js";
@@ -767,7 +767,9 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
     this.#records.write(database => database.update(audits).set({ status: "interrupted", finishedAt }).where(running).run());
   }
 
+  /** The audit as written: a scan's verdict reads the audits it just made, which may still wait behind a holder of a moment. */
   get(auditId: string): AuditRecord | undefined {
+    flushRecordWrites(this.path);
     const row = this.#database.select(auditColumns(this.#database)).from(audits).where(eq(audits.auditId, auditId)).get();
     return row === undefined ? undefined : record(row);
   }
