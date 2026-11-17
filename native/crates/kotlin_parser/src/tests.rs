@@ -209,8 +209,17 @@ fn numbers_are_the_lean_parsers() {
     ]);
 }
 
+/// Step 10: a class's members.
 #[test]
-fn what_step_9_does_not_read_is_refused() {
+fn members_are_the_lean_parsers() {
+    same(&[
+        "class A : B() {\n    companion object {\n        const val X = 1\n    }\n    init {\n        super.f()\n    }\n    val y: Int\n        get() = 1\n    var z = 0\n        private set\n}\n",
+        "class A {\n    companion object F : X {\n    }\n    var z = 0\n        set(v) { field = v }\n    val w get() = 2\n    init { }\n}\nfun f(vararg x: Int) {}\n",
+    ]);
+}
+
+#[test]
+fn what_step_10_does_not_read_is_refused() {
     refused(&[
         "val a = b to f<T>()\n",
         "val a = x + f<T>(1)\n",
@@ -234,9 +243,12 @@ fn what_step_9_does_not_read_is_refused() {
         "val x = 1_\n",
         "val x = 0x\n",
         "val x = y as Z\n",
-        "class A {\n    companion object\n}\n",
         "class A { val x = 1 }\n",
         "val x: Int\n    get() = 1\n",
+        "fun f() {\n    get(1)\n}\n",
+        "fun f(noinline: Int) {}\n",
+        "val s = \"a $field b\"\n",
+        "abstract class A {\n    fun f() {}\n    /* c */\n    abstract fun g()\n}\n",
         "fun f() {\n    if (a<b.c) d\n}\n",
         "class A\n@Inject constructor(x: Int)\n",
         "fun f() {\n    a\n    /* c */ .b()\n}\n",

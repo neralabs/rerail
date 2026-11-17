@@ -257,6 +257,47 @@ After that, any suffix after an integer touches it.
 
 Corpus: 85 the same, 406 refused, 0 differ.
 
+## Kotlin, step 10 (`10-members.bitlex`)
+
+A class body's members:
+
+- companion objects;
+- initializers (`init { … }`);
+- a property's getter and setter.
+
+`super` is an expression.
+
+```text
+class A {
+    var z = 0
+        private set           a `setter` beside the property, a member of the body
+    val w get() = 2           a `getter` inside the property's declaration
+}
+```
+
+An accessor on a line of its own is the next member of the body, not a part of the property,
+as the lean parser reads it. A mark (`acc`) says where a line starts with `get` or `set`, or
+with a visibility modifier and then `get` or `set`. Elsewhere, such as a call to `get` that
+starts a line in a function, the grammar refuses. The mark replaces `param_mod`.
+`vararg`, `noinline` and `crossinline` become hard keywords of `simple_identifier`, which also
+frees a mark bit.
+
+The mark is restricted to code. Without that, a string's bytes might hold it, and the strings'
+regions were no longer quiet: Cranelift refused a region read in parts.
+
+Two of the lean parser's behaviours surfaced with these files. Each is refused for now:
+
+- **A soft keyword after `$`.** In `"$field"`, the lean parser gives the soft keyword a token
+  of its own inside `interpolated_identifier`.
+- **A swallowed block comment.** Take a block comment that starts a line and is followed by a
+  word starting with `a`, `e` or `w` (`abstract`, `external`), other than `as`, `else` or
+  `where`. The scanner swallows it into the semicolon it inserts, and the tree loses it
+  (`Asi::Swallow`).
+  - Open: right after a delegation specifier, or a property with no initializer, a word starting
+    with `b` does the same. That is not refused yet.
+
+Corpus: 124 the same, 367 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
