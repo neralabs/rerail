@@ -710,7 +710,8 @@ async function poll() {
     // Only a daemon that did not answer is asked less often. One that refused this browser is asked at the usual pace,
     // so the page that asks to connect it continues soon after `rerail manage` does.
     backoff = data.disconnected ? Math.min(MAX_BACKOFF, backoff * 2) : INTERVAL;
-    if (!data.missing) console.warn("poll failed", error);
+    // A refused browser or an unknown repository is an answer the page shows; only a daemon that did not answer warns.
+    if (data.disconnected) console.warn("poll failed", error);
     onChange(data.missing);
   }
 }
