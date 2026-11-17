@@ -256,6 +256,10 @@ impl PackedBatch {
     /// case's states is `StatesOutgrown`: unfinished, restarted with twice the states (decision 0334 §9).
     pub(super) fn task_error(&self, at: usize, status: &TaskStatus) -> Option<Error> {
         let task = &self.tasks[at];
+        // `TEMPO_PACKED_BATCH_PROFILE`: why a task stopped, with its budgets (decision 0334's restarts read it).
+        if status.error != 0 && std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+            eprintln!("TEMPO_TASK_STATUS {status:?} work_limit={} states={}", task.work_limit, self.task_state_capacity(task));
+        }
         match status_error(status, task.work_limit) {
             Some(Error::BackendCapacity)
                 if self.sizing.get(at).is_some_and(|sizing| {
@@ -1052,11 +1056,7 @@ impl PackedBatch {
             evaluation.workspace_work_estimate = match budget {
                 super::WorkBudget::Full => super::MAX_WORK_PER_TASK as u32,
                 super::WorkBudget::Replan { .. } => {
-                    let per_node = super::evaluation_costs::rate(program.plain_digest()).map_or(
-                        program.words.len().max(1) as u64 * super::evaluation_costs::PRIOR_STEPS_PER_WORD,
-                        |rate| rate.steps_per_unit.ceil().max(1.0) as u64,
-                    );
-                    budget.task_limit(per_node) | u32::from(repeats) << 31
+                    budget.task_limit(super::evaluation_costs::per_node(program)) | u32::from(repeats) << 31
                 }
             };
             start += spec[4];

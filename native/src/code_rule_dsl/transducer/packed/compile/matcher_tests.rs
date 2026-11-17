@@ -461,7 +461,7 @@ fn a_misplanned_label_sweep_runs_again_and_finds_the_full_budgets_roots() {
     let (mut checked, mut replanned) = (0, 0);
     for matcher in matchers.iter().step_by(4).take(12) {
         // SAFETY: nextest runs each test in a process of its own; nothing else reads the variable meanwhile.
-        unsafe { std::env::remove_var("RERAIL_DEVICE_BUDGET") };
+        unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "full") };
         let full = matcher.roots_metal(&tapes);
         unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "replan") };
         let replan = matcher.roots_metal(&tapes);
@@ -554,6 +554,178 @@ fn a_clause_over_its_budget_goes_to_w_where_w_costs_less_and_runs_again_where_it
     assert!(checked > 0, "no clause ran");
     assert!(overran > 0, "no evaluation ran over its budget");
     assert!(handed > 0, "no evaluation went to W where W cost less");
+}
+
+/// Decision 0334's test for `replan` as the default: every lowered Python clause of the pack, in waves of `width`, over
+/// the fixtures (`RERAIL_S1_DIR`, e.g. corpus0), with the full budget and with `replan` (its slack, a cost store
+/// empty at the start, so the priors and then the rates the run itself measures). Where `replan` leaves a clause to
+/// the transducer its roots are the full run's; where it gives the clause to W on a tape, W's matcher at the
+/// candidates finds the full run's roots. Also how often each plan was chosen.
+fn replan_finds_the_full_budgets_roots(backend: super::compile_matcher::Backend, width: usize) {
+    use super::compile_matcher::LoweredWave;
+    use crate::code_rule_dsl::transducer::packed::{WorkBudget, evaluation_costs};
+    let mut tapes = fixtures();
+    assert!(!tapes.is_empty(), "no fixtures");
+    // Ten tapes, unless `RERAIL_S1_FILES` says how many: each wave runs twice over them (the Metal check of 491
+    // clauses on 10 of corpus0's files takes about 230 s on an M3 Max).
+    if std::env::var_os("RERAIL_S1_FILES").is_none() {
+        tapes.truncate(10);
+    }
+    let compiled = clauses();
+    let mut lowered = Vec::new();
+    for (policy, compiled) in &compiled {
+        for (clause, grammar) in python_matchers(compiled) {
+            if !selected(policy, clause) {
+                continue;
+            }
+            let Ok(tree) = match_tree(grammar) else { continue };
+            if let Ok(matcher) = LoweredMatcher::lower(&tree) {
+                lowered.push((grammar, matcher));
+            }
+        }
+    }
+    evaluation_costs::install(Default::default());
+    let replan = WorkBudget::Replan { slack: crate::code_rule_dsl::transducer::packed::REPLAN_SLACK, doublings: 0 };
+    let (mut waves, mut given, mut checked, mut replanned) = (0, 0, 0, 0);
+    for chunk in lowered.chunks(width) {
+        let matchers: Vec<&LoweredMatcher> = chunk.iter().map(|(_, matcher)| matcher).collect();
+        let Ok(wave) = LoweredWave::new(&matchers) else { continue };
+        let active = vec![vec![true; tapes.len()]; matchers.len()];
+        let run = |budget: WorkBudget| {
+            // SAFETY: nextest runs each test in a process of its own; nothing else reads the variable meanwhile.
+            match budget {
+                WorkBudget::Full => unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "full") },
+                WorkBudget::Replan { .. } => unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "replan") },
+            }
+            wave.roots_batch_budgeted(backend, &tapes, &active, budget)
+        };
+        let started = std::time::Instant::now();
+        let full = match run(WorkBudget::Full) {
+            Ok(found) => found,
+            Err(Error::BackendCapacity | Error::BackendLaunchLimit) => continue,
+            Err(e) => panic!("full: {e:?}"),
+        };
+        let full_time = started.elapsed();
+        let (found, ran) = run(replan).unwrap();
+        eprintln!("wave {waves}: full {full_time:?}, replan {:?}, {} given to W, {} reruns", started.elapsed() - full_time, ran.limited.len(), ran.replanned);
+        replanned += ran.replanned;
+        for (c, per) in found.iter().enumerate() {
+            for (t, roots) in per.iter().enumerate() {
+                checked += 1;
+                let w_given = ran.limited.contains(&(c, t)) && !full.1.limited.contains(&(c, t));
+                if !w_given {
+                    if !full.1.limited.contains(&(c, t)) {
+                        assert_eq!(roots, &full.0[c][t], "clause {c} of wave {waves}, tape {t}");
+                    }
+                    continue;
+                }
+                given += 1;
+                let root = Root::doc(tapes[t].clone());
+                let mut work = usize::MAX;
+                let w: BTreeSet<u32> = roots
+                    .iter()
+                    .copied()
+                    .filter(|&ordinal| chunk[c].0.match_root(node_at(&root, ordinal), &mut work).ok().flatten().is_some())
+                    .collect();
+                assert_eq!(w, full.0[c][t], "W's roots for clause {c} of wave {waves}, tape {t}");
+            }
+        }
+        waves += 1;
+    }
+    unsafe { std::env::remove_var("RERAIL_DEVICE_BUDGET") };
+    eprintln!("{backend:?}: {} clauses in {waves} waves on {} tapes: {checked} evaluations, {given} given to W, {replanned} reruns", lowered.len(), tapes.len());
+    assert!(waves > 0);
+}
+
+#[test]
+fn replan_finds_the_full_budgets_roots_on_the_pack() {
+    replan_finds_the_full_budgets_roots(super::compile_matcher::Backend::Cpu, 16);
+}
+
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn on_metal_replan_finds_the_full_budgets_roots_on_the_pack() {
+    // Wider waves: a Metal wave's time is mostly its dispatches, not its clauses.
+    replan_finds_the_full_budgets_roots(super::compile_matcher::Backend::MetalInterpreter, 48);
+}
+
+/// Decision 0334 on Metal: the wave's passes and root walks on the device, every program priced at almost nothing, on
+/// the interpreter (no micro walks). Where W is priced higher, a run whose tasks ran over goes again with twice the
+/// budget and finds the full run's roots; where W is priced lower, the unfinished (pass, file) go to W
+/// (`WaveRun::limited`: the clause's candidates, every root the full run found among them).
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where_it_does_not() {
+    use super::compile_matcher::{Backend, LoweredWave};
+    use crate::code_rule_dsl::transducer::packed::evaluation_costs::{self, Rate};
+    use metal_program_backend::label_passes::INTERPRET_ONLY;
+    let mut sources = Vec::new();
+    files(pack().join("upstream").as_path(), "py", &mut sources);
+    sources.sort();
+    let joined: String = sources.iter().step_by(8).filter_map(|path| std::fs::read_to_string(path).ok()).collect::<Vec<_>>().join("\n");
+    let mut tapes = vec![python_tape(&joined)];
+    tapes.extend(fixtures().into_iter().take(8));
+    let mut matchers = Vec::new();
+    for (policy, compiled) in &clauses() {
+        for (clause, grammar) in python_matchers(compiled) {
+            if !selected(policy, clause) {
+                continue;
+            }
+            let Ok(tree) = match_tree(grammar) else { continue };
+            if let Ok(matcher) = LoweredMatcher::lower(&tree) {
+                matchers.push(matcher);
+            }
+        }
+    }
+    let priced = |wave: &LoweredWave, w: f64| {
+        let mut rates: std::collections::HashMap<String, Rate> = wave
+            .walked_programs()
+            .into_iter()
+            .map(|program| (program.plain_digest().to_owned(), Rate { steps_per_unit: 1e-6, samples: 1 }))
+            .collect();
+        for clause in 0..wave.clauses.len() {
+            rates.insert(wave.w_key(clause), Rate { steps_per_unit: w, samples: 1 });
+        }
+        evaluation_costs::install(rates);
+    };
+    let active = vec![vec![true; tapes.len()]];
+    INTERPRET_ONLY.set(true);
+    let (mut checked, mut handed, mut replanned) = (0, 0, 0);
+    for matcher in matchers.iter().step_by(4).take(12) {
+        let wave = LoweredWave::new(&[matcher]).unwrap();
+        // SAFETY: nextest runs each test in a process of its own; nothing else reads the variable meanwhile.
+        unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "full") };
+        evaluation_costs::install(Default::default());
+        let full = match wave.roots_batch(Backend::MetalInterpreter, &tapes, &active) {
+            Ok(found) => found,
+            Err(Error::BackendCapacity | Error::BackendLaunchLimit) => continue,
+            Err(e) => panic!("full: {e:?}"),
+        };
+        unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "replan") };
+        priced(&wave, 1e9);
+        let (again, again_run) = wave.roots_batch(Backend::MetalInterpreter, &tapes, &active).unwrap();
+        replanned += again_run.replanned;
+        assert_eq!(again, full.0, "W priced higher: the run goes again and finds the full run's roots");
+        assert_eq!(again_run.limited, full.1.limited);
+        priced(&wave, 1e-6);
+        let (cheap, cheap_run) = wave.roots_batch(Backend::MetalInterpreter, &tapes, &active).unwrap();
+        for (c, per) in cheap.iter().enumerate() {
+            for (t, roots) in per.iter().enumerate() {
+                if cheap_run.limited.contains(&(c, t)) {
+                    assert!(roots.is_superset(&full.0[c][t]), "W's candidates hold every root the full run found");
+                } else {
+                    assert_eq!(roots, &full.0[c][t]);
+                }
+            }
+        }
+        handed += cheap_run.limited.len().saturating_sub(full.1.limited.len());
+        checked += 1;
+    }
+    unsafe { std::env::remove_var("RERAIL_DEVICE_BUDGET") };
+    INTERPRET_ONLY.set(false);
+    eprintln!("{checked} clauses checked, {replanned} reruns, {handed} evaluations given to W");
+    assert!(checked > 0, "no clause ran");
+    assert!(handed > 0, "no unfinished pass went to W where W cost less");
 }
 
 /// The Metal gate's mutation check: a widened walk must differ from W's matcher on Metal too, over the CPU check's

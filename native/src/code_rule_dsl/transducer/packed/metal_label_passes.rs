@@ -22,7 +22,7 @@ use super::super::native_ir::ArenaKind;
 use super::*;
 use super::super::metal_batch_abi::MetalEvaluation;
 use metal::{Buffer, CommandBuffer};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use crate::code_rule_dsl::residency::slabs::ResidentParts as _;
 use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE;
 pub use crate::code_rule_dsl::transducer::packed::device::{Outcome, RootJobs, RootsFound};
@@ -241,6 +241,10 @@ pub(in crate::code_rule_dsl) struct Plan<'a> {
     /// Root programs walked after the passes, in the same command buffer, as match records
     /// (`root_records_*`, decision 0024 §3): `Outcome::records`.
     pub(in crate::code_rule_dsl) roots: Option<&'a RootJobs<'a>>,
+    /// W's matcher's predicted steps for what goes to it where the pass of label `l` on file `f` is unfinished (decision
+    /// 0334: its clause, and every clause that reads it, on the file): the run weighs it against the run again with
+    /// twice the budget. `None` where the caller has no W: an overrun runs again, a stop at the ceiling fails.
+    pub(in crate::code_rule_dsl) w_cost: Option<&'a (dyn Fn(u32, usize) -> u64 + Sync)>,
 }
 
 /// The root walks' kernels in `KERNELS`: 8 and 32 frames.
@@ -959,6 +963,9 @@ struct Prepared {
     lanes: Vec<MetalEvaluation>,
     task_count: usize,
     result_capacity: usize,
+    /// Per program of the batch: its pass's label, its predicted steps per node (`evaluation_costs::per_node`) and its
+    /// digest, to name and price an unfinished evaluation (`Runner::unfinished`).
+    passes: Vec<(u32, u64, String)>,
 }
 
 /// A level's micro walks (`label_micro`): per pass {word start, word count, scratch label or
@@ -1044,6 +1051,9 @@ struct Runner<'a> {
     walk_bind: Option<Buffer>,
     /// The micro walks' spill queue (`MicroQ`): slots, control, items; made on first use.
     spill: Option<[MappedBuffer; 3]>,
+    /// Each program dispatch's evaluations as they ended (copied out before the next level's image replaces them),
+    /// with their count and the batch's key: which (pass, file) a task left unfinished (decision 0334).
+    reports: Vec<(MappedBuffer, usize, usize)>,
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
@@ -1286,6 +1296,49 @@ fn mark(at: &str) {
     }
 }
 
+/// The unfinished (label, file) a run gives to W's matcher (decision 0334), or the error that runs it again
+/// (`OverBudget`: twice the budget) or fails it (`BackendFailure`). An overrun goes to W where W is predicted cheaper than
+/// the evaluation again with twice the budget (its steps per node times the file's nodes, doubled); a stop at the
+/// ceiling goes to W. Without a W (`Plan::w_cost`), or an unfinished task no evaluation names, as before.
+fn replanned(
+    plan: &Plan<'_>,
+    files: &[TapeDoc],
+    budget: super::WorkBudget,
+    unfinished: &BTreeMap<(u32, usize), (bool, bool, u64, String)>,
+    flags: u32,
+) -> Result<Vec<(u32, usize)>, Error> {
+    let (over, ceiling) = (unfinished.values().any(|u| u.0), unfinished.values().any(|u| u.1));
+    if flags & 4 != 0 && !over {
+        return Err(Error::OverBudget);
+    }
+    if flags & 8 != 0 && !ceiling {
+        return Err(Error::BackendFailure);
+    }
+    let Some(w_cost) = plan.w_cost else {
+        return Err(if over { Error::OverBudget } else { Error::BackendFailure });
+    };
+    let mut given = Vec::new();
+    let mut observations = Vec::new();
+    for (&(label, file), (overran, stopped, per_node, digest)) in unfinished {
+        let nodes = files.get(file).map_or(0, |tape| tape.transducer_len() as u64);
+        if *overran && !stopped {
+            let spent = u64::from(budget.task_limit(*per_node)).saturating_mul(nodes);
+            observations.push(super::evaluation_costs::Observation { program: digest.clone(), steps: spent, size: nodes, predicted: per_node.saturating_mul(nodes), over_budget: true });
+            let (w, again) = (w_cost(label, file), spent.saturating_mul(2));
+            crate::code_rule_dsl::logic::profile::decision("over its budget, replanned by cost (0334)", || {
+                format!("ast label pass on Metal: W {w} steps against the run again {again}: {}", if w < again { "W" } else { "again" })
+            });
+            if w >= again {
+                super::evaluation_costs::observe(observations);
+                return Err(Error::OverBudget);
+            }
+        }
+        given.push((label, file));
+    }
+    super::evaluation_costs::observe(observations);
+    Ok(given)
+}
+
 fn encode(
     device: &Device,
     plan: &Plan<'_>,
@@ -1359,6 +1412,7 @@ fn encode(
         walk_stats: Vec::new(),
         walk_bind: None,
         spill: None,
+        reports: Vec::new(),
     };
     mark("buffers");
     if crate::code_rule_dsl::prof::on() {
@@ -1416,12 +1470,15 @@ fn encode(
         crate::code_rule_dsl::prof::count("gpu.frames_overflow", 1);
         return Err(Error::WalkFrames);
     }
-    // A task over its step budget, below the ceiling (decision 0334): the run again with twice the budget.
-    if runner.flag(0) & 4 != 0 {
-        return Err(Error::OverBudget);
-    }
-    if runner.flag(0) != 0 {
+    if runner.flag(0) & 1 != 0 {
         return Err(Error::BackendFailure);
+    }
+    // Decision 0334: tasks over their budget, or stopped at the ceiling. Each unfinished (pass, file) goes to W's
+    // matcher where the caller has one and it is cheaper (at the ceiling, always); else the run again with twice the
+    // budget (`OverBudget`), and a stop at the ceiling fails as before.
+    let unfinished = runner.unfinished();
+    if runner.flag(0) & (4 | 8) != 0 || !unfinished.is_empty() {
+        runner.outcome.unfinished = replanned(plan, files, budget, &unfinished, runner.flag(0))?;
     }
     // The sweeps' words: a failure, and per group whether its last sweep still changed a label.
     let sweep_words = unsafe {
@@ -1733,9 +1790,9 @@ impl Runner<'_> {
         // its own.
         let batches = plan.steps.iter().flat_map(|(recursive, levels)| {
             if *recursive && sweeps(levels) {
-                vec![(levels.as_ptr() as usize, levels.iter().flat_map(|level| programs_of(level, false)).collect::<Vec<_>>(), Some(levels))]
+                vec![(levels.as_ptr() as usize, levels.iter().flat_map(|level| programs_of(level, false)).collect::<Vec<_>>(), Some(levels), levels.iter().flatten().collect::<Vec<_>>())]
             } else {
-                levels.iter().map(|level| (level.as_ptr() as usize, programs_of(level, true), None)).collect()
+                levels.iter().map(|level| (level.as_ptr() as usize, programs_of(level, true), None, level.iter().collect::<Vec<_>>())).collect()
             }
         });
         let bases = self.files.iter().scan(0_u32, |base, tape| {
@@ -1747,7 +1804,7 @@ impl Runner<'_> {
         // the run's levels (06 S7: per level, 58 evaluations); `None` where one failed.
         let own = TextRows::default();
         let mut evaluated = plan.rows.unwrap_or(&own).lock().map_err(|_| Error::BackendFailure)?;
-        for (key, mut passes, sweep) in batches {
+        for (key, mut passes, sweep, all) in batches {
             // A level's micro walks run as such (`label_micro`); its other programs are tasks.
             if self.micro && sweep.is_none() {
                 let mut words = Vec::new();
@@ -2018,7 +2075,22 @@ impl Runner<'_> {
                 Some(table) => MappedBuffer::from_slice(self.device, table)?,
                 None => MappedBuffer::wrap(self.root_words.as_ref().ok_or(Error::BackendFailure)?.buffer.clone()),
             };
+            // Each program's pass, by the program it runs (a pass's own: distinct labels, distinct programs).
+            let reported = passes
+                .iter()
+                .map(|&(program, ..)| {
+                    let target = all
+                        .iter()
+                        .find_map(|pass| match pass {
+                            Pass::Program { target, program: own, .. } | Pass::Count { target, program: own, .. } if std::ptr::eq(*own, program) => Some(*target),
+                            _ => None,
+                        })
+                        .unwrap_or(u32::MAX);
+                    (target, super::super::evaluation_costs::per_node(program), program.plain_digest().to_owned())
+                })
+                .collect();
             let prepared = Prepared {
+                passes: reported,
                 tasks,
                 header: MappedBuffer::from_slice(self.device, &[batch.header])?,
                 routes: MappedBuffer::from_slice(self.device, &routes)?,
@@ -2293,7 +2365,53 @@ impl Runner<'_> {
         encoder.end_encoding();
         self.encoded = true;
         self.outcome.dispatches += 1;
+        self.report(key)
+    }
+
+    /// The batch's evaluations as its dispatch left them, copied out of the scheduler's image (the next level's
+    /// replaces it): each records whether a task of it stopped (`Evaluation.outcome`, decision 0334).
+    fn report(&mut self, key: usize) -> Result<(), Error> {
+        let Some(Some(prepared)) = self.prepared.get(&key) else {
+            return Ok(());
+        };
+        let count = prepared.evaluations.len();
+        if count == 0 {
+            return Ok(());
+        }
+        let copy = MappedBuffer::untouched::<MetalEvaluation>(self.device, count)?;
+        let scheduler = self.workspace.as_ref().ok_or(Error::BackendFailure)?.lease.scheduler.buffer.clone();
+        let blit = self.command.new_blit_command_encoder();
+        blit.set_label("Rerail label pass evaluations");
+        // The image is the arenas, then the evaluations (`stage`).
+        blit.copy_from_buffer(
+            &scheduler,
+            std::mem::size_of::<super::super::metal_batch_abi::MetalGlobalArenas>() as u64,
+            &copy.buffer,
+            0,
+            (count * std::mem::size_of::<MetalEvaluation>()) as u64,
+        );
+        blit.end_encoding();
+        self.reports.push((copy, count, key));
         Ok(())
+    }
+
+    /// The (label, file) a task left unfinished, from the dispatches' evaluations (`report`), once the run is flushed:
+    /// whether one ran over its budget, whether one stopped at the ceiling, and its pass's predicted steps per node
+    /// and digest.
+    fn unfinished(&self) -> BTreeMap<(u32, usize), (bool, bool, u64, String)> {
+        let mut found = BTreeMap::new();
+        for (copy, count, key) in &self.reports {
+            let Some(Some(prepared)) = self.prepared.get(key) else { continue };
+            // SAFETY: `count` evaluations were copied in by the flushed command buffer (`report`).
+            let evaluations = unsafe { std::slice::from_raw_parts(copy.buffer.contents().cast::<MetalEvaluation>(), *count) };
+            for evaluation in evaluations.iter().filter(|evaluation| evaluation.outcome & 3 != 0) {
+                let (target, per_node, digest) = prepared.passes.get(evaluation.program as usize).cloned().unwrap_or((u32::MAX, 0, String::new()));
+                let entry = found.entry((target, evaluation.file as usize)).or_insert((false, false, per_node, digest));
+                entry.0 |= evaluation.outcome & 1 != 0;
+                entry.1 |= evaluation.outcome & 2 != 0;
+            }
+        }
+        found
     }
 
     /// A recursive group's rounds to its fixpoint as one dispatch (`label_group_*`, decision 0024
@@ -2688,7 +2806,6 @@ impl Runner<'_> {
         let prepared = self.prepared.get(&level).and_then(Option::as_ref).expect("prepared");
         let routes = prepared.routes.buffer.clone();
         let buffers = self.bound(prepared);
-        let lease = &self.workspace.as_ref().expect("a workspace").lease;
         let encoder = self.command.new_compute_command_encoder();
         encoder.set_label("Rerail label pass programs");
         crate::code_rule_dsl::prof::count(concat!("kernel.", "Rerail label pass programs"), 1);
@@ -2702,6 +2819,8 @@ impl Runner<'_> {
         encoder.end_encoding();
         self.encoded = true;
         self.outcome.dispatches += 1;
+        self.report(level)?;
+        let lease = &self.workspace.as_ref().expect("a workspace").lease;
         let (scheduler, results, captures, statuses) = (
             lease.scheduler.buffer.clone(),
             lease.results.buffer.clone(),

@@ -23,8 +23,9 @@ static void mark(device atomic_uint* bits,uint node){atomic_fetch_or_explicit(&b
 
 kernel void label_sink(device const Arena* arenas [[buffer(0)]],device const Result* results [[buffer(1)]],device const FinalCapture* captures [[buffer(2)]],device const Status* statuses [[buffer(3)]],device const Route* routes [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* counts [[buffer(6)]],device atomic_uint* flags [[buffer(7)]],constant Shape& shape [[buffer(8)]],uint tid [[thread_position_in_grid]]){
   if(atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;
-  // Bit 1: a task failed; bit 4 with it: a task ran over its budget below the ceiling (status 8, decision 0334).
-  if(tid<shape.taskCount&&statuses[tid].error!=0u)atomic_fetch_or_explicit(&flags[0],statuses[tid].error==8u?5u:1u,memory_order_relaxed);
+  // Bit 1: a task failed. Decision 0334: bit 4, a task ran over its budget below the ceiling (status 8); bit 8, a
+  // task stopped at the ceiling (status 4). Its evaluation says which (`Runner::unfinished`).
+  if(tid<shape.taskCount&&statuses[tid].error!=0u){uint error=statuses[tid].error;atomic_fetch_or_explicit(&flags[0],error==8u?4u:error==4u?8u:1u,memory_order_relaxed);}
   Arena arena=arenas[shape.resultArena];
   if(tid>=arena.cursor)return;
   Result result=results[arena.start+tid];

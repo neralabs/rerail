@@ -29,9 +29,10 @@ operand or work failure in the original evaluation."
    `work_limit`, the task's budget (`WorkBudget`). A path's and a value's steps are held to the budget and to
    `MAX_STEPS_PER_PATH`, as the CPU's (`step_limit` in the runtime).
 2. **The budget is a mode** (`RERAIL_DEVICE_BUDGET`):
-   - `full`, the default: the CPU's limits. A task runs past its estimate, and the device's results are the
-     CPU's. This is the mode the user asked for: kernels run over.
-   - `replan`: the replanning below. (`estimate`, the old stop at the estimate, which changed results, is gone.)
+   - `full`: the CPU's limits. A task runs past its estimate, and the device's results are the CPU's. This is
+     the mode the user asked for: kernels run over.
+   - `replan`, the default since 2026-11-17 (below, Progress): the replanning below. (`estimate`, the old stop at
+     the estimate, which changed results, is gone.)
    The resident label batches (`assign_resident`) take the same budget: under `full`, the evaluation's work per
    node is 2^26, which `resident_work` clamps to 2^26.
 3. **A result limit selects; it sizes nothing.** `assign_workspace_with_result_limits` keeps the limits on the batch
@@ -132,13 +133,50 @@ Done (2026-11-17):
   transducer again with twice the budget, and the cheaper runs; W through `WaveRun::limited`, as at the ceiling.
   Test: `a_clause_over_its_budget_goes_to_w_where_w_costs_less_and_runs_again_where_it_does_not`.
 
+- **Mispredictions reprice at once** (§5, "the wave's chunks not yet started"): every observation folds into the
+  in-memory sums the predictions read (`program_steps::observe`), so the next evaluation of the program, in the
+  same run, is priced from it. The store's sums are read at a run's start (`install_sums`) and written at its end.
+  Test: `an_observation_reprices_its_program_at_once`.
+- **The wave's label passes on the CPU** (`labelled_sets`): a pass on the interpreter (where its micro walk is not
+  one) is held to its prediction like a root walk (`LoweredMatcher::evaluate_budgeted`); a recursive group's sweep
+  (`sweep_with`) to the group's prediction. At an overrun W for the clauses the labels feed is weighed against the
+  pass or sweep again with twice the budget. A label set given to W is not stored: the clause that owns it, and
+  every clause that reads it (`feeds`), are W's on that tape (`WaveRun::limited`).
+- **The Metal wave** (`roots_metal_split`, the label passes, sweeps and root walks): a task over its budget, or at
+  the ceiling, marks its evaluation (`Evaluation.outcome`: 1 over, 2 at the ceiling) instead of failing the run;
+  the host copies each dispatch's evaluations out (`Runner::report`) and, per unfinished (pass, file), weighs W for
+  the clauses it feeds (`LoweredWave::label_w_cost`) against the run again with twice the budget
+  (`replanned`). W's go to `Outcome::unfinished` and from there to `WaveRun::limited`; at the ceiling always W.
+  The overruns are observed for the cost store. Without a W (a caller with none) an overrun runs again and the
+  ceiling fails, as before. Test:
+  `on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where_it_does_not`.
+- **The evaluation split by root** (§5): a root walk over its budget keeps the roots that finished before the one
+  that ran over (`Program::execute_roots_split`, `Partial`), and a rerun takes only the rest, within the doubled
+  budget less the steps kept. Not for a tree-sitter query, whose outputs are reduced across roots. Test:
+  `an_evaluation_over_its_budget_keeps_its_finished_roots`.
+- **The prefilter's plan** (§5): at a root walk's overrun the program's micro walk, where it is one with text tests,
+  is weighed with W and the transducer again (`predict_walk`: the interpreter's prior without the text, plus one
+  pass of the text layer a slot). The walk reads every text test as bits, from the term index's row where the tape
+  has it (`R[tid]`, `Micro::slot`), never a test per node: Q19's shape (a long string's regex at every node). A walk
+  that outgrows its bound leaves the rest to the transducer and W, by cost.
+
+- **`replan` is the default** (2026-11-17; `RERAIL_DEVICE_BUDGET=full` for the CPU's limits). The check, in
+  place of a corpus run (a run from this checkout stops under strict SQL, work queue Q17, whatever the budget):
+  every lowered Python clause of the pack (491), in waves, over corpus0's files, with `full` and with `replan`
+  from an empty cost store; a clause left to the transducer finds `full`'s roots, one given to W has W's matcher
+  find them at its candidates (`replan_finds_the_full_budgets_roots_on_the_pack`, CPU and Metal). On 10 files:
+  4,910 evaluations a backend, all `full`'s roots, no rerun and nothing given to W (the priors never tripped). On
+  50 files, Metal, the first 192 clauses: the same. The tests that trip on purpose cover the rest (above).
+  The switch showed one Metal bug, hidden under `full`: a task whose steps ran out in its output directives (a
+  Strip's regex) reported capacity, not a work stop (`apply_output` passed the regex's code 3, "work", where its own
+  3 is "an arena full"). The host took it for outgrown states and doubled them to the cap, then failed with
+  `BackendCapacity` (`inputs_transform_pair_cursors_resume_and_survive_history_compaction`). `apply_output` now
+  has a code of its own for a work stop (5, status 4), which restarts with twice the steps.
+
 Not yet:
-1. **`replan` as the default.** Wanted first: the corpus run under `replan` gives `full`'s findings, and the cost
-   store holds rates for the pack's programs.
-2. **The wave's label passes on the CPU** (`labelled_sets`) run at the ceiling: only the root walks are budgeted.
-   Measured on the fixtures, the root walks take at most about 2,000 steps an evaluation; the labels do the work.
-3. **The Metal wave's root walks** (`roots_metal_split`) give no `limited`, so W's matcher is never chosen there.
-4. The other plans of §5 (another anchor or driver, a prefilter, a split by subtree): only W and the doubled
-   budget are weighed today.
-5. A misprediction reprices the clause for the next run, not for the wave's chunks not yet started: the rates are
-   read once a run.
+1. **Another anchor or driver** (§5): a clause driven from a rarer kind inside its pattern, walking up to its
+   root, is a second lowering of the clause, which the matcher's compiler does not make. Labels first is the
+   lowering's own shape (every relational sub-rule is a label pass the root walk reads), and the prefilter's plan
+   is the micro walk on the term index (above).
+2. The micro walk's prediction is a prior (`predict_walk`): the walk counts no steps the cost store could learn
+   from.

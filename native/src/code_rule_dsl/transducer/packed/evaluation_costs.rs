@@ -37,6 +37,24 @@ pub fn predict_w(program: &Program, nodes: u64) -> u64 {
     }
 }
 
+/// The program's micro walk's predicted steps from roots whose subtrees hold `nodes` nodes, with `slots` text tests
+/// on a file of `bytes` bytes (decision 0334 §5, the prefilter's plan): the interpreter's prior without the text, since
+/// the walk reads each text test as bits (the term index's row, else one pass of the text layer over the file, its
+/// bytes over eight a slot), never a test per node. A walk has a bound of its own (`micro::steps`) and fails there.
+pub fn predict_walk(program: &Program, nodes: u64, slots: usize, bytes: u64) -> u64 {
+    nodes
+        .saturating_mul(program.words.len().max(1) as u64)
+        .saturating_mul(PRIOR_STEPS_PER_WORD)
+        .saturating_add((slots as u64).saturating_mul(bytes / 8))
+        .max(MIN_PREDICTED)
+}
+
+/// A resident label pass's predicted steps per node of a task's subtree (`assign_resident`): its rate, else the
+/// prior.
+pub fn per_node(program: &Program) -> u64 {
+    rate(program.plain_digest()).map_or(program.words.len().max(1) as u64 * PRIOR_STEPS_PER_WORD, |rate| rate.steps_per_unit.ceil().max(1.0) as u64)
+}
+
 /// A task's size: its subtree's nodes, and its root's bytes over eight where the program tests text.
 pub fn size(program: &Program, nodes: u32, bytes: u32) -> u64 {
     let reads_text = !program.predicates.is_empty() || !program.value_programs.is_empty();
@@ -63,5 +81,20 @@ mod tests {
         assert_eq!(predict(&program, None, 100), (100 * words * PRIOR_STEPS_PER_WORD).max(MIN_PREDICTED));
         assert_eq!(predict(&program, Some(Rate { steps_per_unit: 50.0, samples: 3 }), 100), 5_000);
         assert_eq!(predict(&program, Some(Rate { steps_per_unit: 0.1, samples: 3 }), 100), MIN_PREDICTED);
+    }
+
+    /// A misprediction reprices its program at once, for the evaluations not yet started: no store, no next run.
+    #[test]
+    fn an_observation_reprices_its_program_at_once() {
+        let program = "an_observation_reprices_its_program_at_once".to_owned();
+        install([(program.clone(), Rate { steps_per_unit: 1e-6, samples: 1 })].into_iter().collect());
+        observe([Observation { program: program.clone(), steps: 4_000, size: 99, predicted: 1, over_budget: true }]);
+        let repriced = rate(&program).unwrap();
+        assert_eq!(repriced.samples, 2);
+        assert!((repriced.steps_per_unit - 40.0).abs() < 1e-3, "{repriced:?}");
+        // A program never priced is priced from its first observation.
+        let fresh = "an_observation_reprices_its_program_at_once/fresh".to_owned();
+        observe([Observation { program: fresh.clone(), steps: 300, size: 100, predicted: 0, over_budget: false }]);
+        assert_eq!(rate(&fresh), Some(Rate { steps_per_unit: 3.0, samples: 1 }));
     }
 }

@@ -4074,7 +4074,8 @@ fn mispredict(program: &Program) {
 /// Decision 0334: a badly predicted evaluation (a long string's regex, as Q19's clause, under a rate of almost
 /// nothing) stops over its step budget, is restarted with twice the budget until it finishes, and gives the worst
 /// case's results, on the CPU JIT and on Metal. Its runs are observed for the cost store: the over-budget run as a
-/// misprediction, the finished one with its steps.
+/// misprediction (predicted below what the finished run took), the finished one with its steps. (Each run reprices
+/// the program at once, so the misprediction is set again before each misplanned run.)
 #[test]
 fn a_misplanned_evaluation_is_restarted_and_gives_the_full_budgets_results() {
     use crate::code_rule_dsl::transducer::packed::{
@@ -4093,7 +4094,6 @@ fn a_misplanned_evaluation_is_restarted_and_gives_the_full_budgets_results() {
     .unwrap()];
     let anchors = [vec![(0..files[0].transducer_len() as u32).collect::<Vec<_>>()]];
     let plan = PlanId::of_programs(&programs);
-    mispredict(&programs[0]);
     evaluation_costs::keep(true);
     let misplanned = Budget { work: WorkBudget::Replan { slack: 1, doublings: 0 }, states: Some(0) };
     for backend in [ExecutionBackend::CpuJit, ExecutionBackend::MetalJit] {
@@ -4104,15 +4104,49 @@ fn a_misplanned_evaluation_is_restarted_and_gives_the_full_budgets_results() {
         assert_eq!(full.1, [vec![None]], "{backend:?}");
         assert!(!full.0[0][0].is_empty(), "{backend:?}");
         let _ = evaluation_costs::drain();
+        mispredict(&programs[0]);
         let replanned = execute_planned_budgeted(backend, plan, &programs, &files, &anchors, None, misplanned).unwrap();
         assert!(replanned.restarted_evaluations() > 0, "{backend:?}: the misplanned evaluation stops over its budget");
         let replanned = replanned.into_outcome().map(|outcome| (outcome.outputs, outcome.errors)).unwrap();
         assert_eq!(replanned, full, "{backend:?}");
         let (observed, _) = evaluation_costs::drain();
-        assert!(observed.iter().any(|o| o.over_budget), "{backend:?}: the misprediction is observed: {observed:?}");
+        let over = observed.iter().find(|o| o.over_budget).unwrap_or_else(|| panic!("{backend:?}: the misprediction is observed: {observed:?}"));
         let finished = observed.iter().find(|o| !o.over_budget).expect("the finished run is observed");
-        assert!(finished.steps > finished.predicted, "{backend:?}: {finished:?}");
+        assert!(finished.steps > over.predicted, "{backend:?}: {over:?} {finished:?}");
     }
+}
+
+/// Decision 0334 §5, the evaluation split by root: held to half the steps the whole evaluation takes, a root walk
+/// stops over its budget with the roots that finished before it kept (their outputs and steps), and the rest run
+/// alone give the whole run's outputs. A tree-sitter query keeps nothing (its outputs are reduced across roots).
+#[test]
+fn an_evaluation_over_its_budget_keeps_its_finished_roots() {
+    use crate::code_rule_dsl::transducer::packed::{CAPTURE, EMIT, Partial, TEXT, TextPredicate};
+    let source = "x = 'a b'\n".repeat(200);
+    let files = [tape(&source)];
+    let program = Program::new(
+        vec![word(TEXT, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+        vec![b"match".to_vec(), b"b".to_vec()],
+        vec![TextPredicate::Regex { source: 1, compiled: regex::Regex::new("b").unwrap() }],
+        vec![0],
+        Vec::new(),
+    )
+    .unwrap();
+    let roots: Vec<u32> = (0..files[0].transducer_len() as u32).collect();
+    let (whole, steps) = program.execute_roots_budgeted(&files[0], roots.iter().copied(), usize::MAX).unwrap();
+    assert!(!whole.is_empty() && steps > 0);
+    let mut partial = Partial::default();
+    let stopped = program.execute_roots_split(&files[0], roots.iter().copied(), steps / 2, &mut partial);
+    assert!(matches!(stopped, Err(Error::OverBudget)), "{stopped:?}");
+    assert!(partial.finished > 0 && partial.finished < roots.len(), "{}", partial.finished);
+    assert!(partial.steps <= steps / 2);
+    let (rest, rest_steps) = program.execute_roots_budgeted(&files[0], roots[partial.finished..].iter().copied(), usize::MAX).unwrap();
+    assert_eq!(partial.steps + rest_steps, steps, "the split takes the whole run's steps, none twice");
+    // An output's ordinal is its index in the evaluation's outputs: the rest's follow the kept ones.
+    let mut split = partial.outputs;
+    let base = split.len() as u32;
+    split.extend(rest.into_iter().map(|output| crate::code_rule_dsl::transducer::packed::Output { local_ordinal: output.local_ordinal + base, ..output }));
+    assert_eq!(split, whole);
 }
 
 /// Decision 0334 §9: states sized from a task's size (`STATES_PER_UNIT` a node) run out where every node gives eight

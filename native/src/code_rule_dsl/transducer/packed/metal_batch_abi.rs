@@ -453,7 +453,7 @@ pub mod tests {
         assert_eq!(size_of::<LazyArenaBlockRecord>(), 16);
         assert_eq!(size_of::<MetalEvaluation>(), 324);
         assert_eq!(size_of::<MetalGlobalArenas>(), 184);
-        assert_eq!(size_of::<MetalTask>(), 24);
+        assert_eq!(size_of::<MetalTask>(), 28);
         assert_eq!(align_of::<MetalBatchHeader>(), 4);
         assert_eq!(align_of::<MetalTask>(), 4);
     }

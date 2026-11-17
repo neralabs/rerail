@@ -9,7 +9,7 @@ use crate::code_rule_dsl::transducer::packed::device::{Outcome, RootJobs};
 pub(in crate::code_rule_dsl) fn matcher_roots(this: &LoweredMatcher, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, Outcome), Error> {
     let no_labels = empty_sets(tapes, this.labels.defs.len());
     let roots = tapes.iter().zip(&no_labels).map(|(tape, sets)| domain(&this.domain, tape, sets).collect()).collect();
-    let (mut found, outcome) = metal(&[this], this.labels.defs.len(), tapes, &[roots], None, None)?;
+    let (mut found, outcome) = metal(&[this], this.labels.defs.len(), tapes, &[roots], None, None, None)?;
     Ok((found.pop().expect("one clause"), outcome))
 }
 
@@ -30,7 +30,7 @@ pub(in crate::code_rule_dsl) fn wave_labelled(
     roots: Option<&RootJobs<'_>>,
 ) -> Result<(Vec<TapeDoc>, Outcome), Error> {
     let active = this.spread(active);
-    let (_, outcome) = metal(&this.clauses.iter().collect::<Vec<_>>(), this.labels, tapes, &[], Some(&active), roots)?;
+    let (_, outcome) = metal(&this.clauses.iter().collect::<Vec<_>>(), this.labels, tapes, &[], Some(&active), roots, None)?;
     crate::code_rule_dsl::prof::release();
     crate::code_rule_dsl::prof::peak("3e.before_views");
     let _views = crate::code_rule_dsl::prof::Stage::start("labels.views");
@@ -42,8 +42,12 @@ pub(in crate::code_rule_dsl) fn wave_labelled(
 
 /// Each clause's matches of the batch from `roots` (per clause, per tape: the candidates its
 /// root program starts from), every clause's passes and roots in one command buffer.
+///
+/// A pass or root walk left unfinished on a file (decision 0334) goes to W's matcher where that is cheaper
+/// (`LoweredWave::label_w_cost`), in `Outcome::unfinished`.
 pub(in crate::code_rule_dsl) fn wave_roots(this: &LoweredWave, tapes: &[TapeDoc], roots: &[Vec<Vec<u32>>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error> {
-    metal(&this.clauses.iter().collect::<Vec<_>>(), this.labels, tapes, roots, None, None)
+    let w_cost = |label: u32, file: usize| tapes.get(file).map_or(0, |tape| this.label_w_cost(label, tape));
+    metal(&this.clauses.iter().collect::<Vec<_>>(), this.labels, tapes, roots, None, None, Some(&w_cost))
 }
 
 /// `clauses`' matches of the batch on Metal, in one command buffer: their labels (disjoint, `labels`
@@ -61,6 +65,7 @@ fn metal<'a>(
     clause_roots: &[Vec<Vec<u32>>],
     active: Option<&[Vec<bool>]>,
     records: Option<&metal_program_backend::label_passes::RootJobs<'_>>,
+    w_cost: Option<&(dyn Fn(u32, usize) -> u64 + Sync)>,
 ) -> Result<(Vec<Vec<BTreeSet<u32>>>, metal_program_backend::label_passes::Outcome), Error> {
     use metal_program_backend::label_passes::{Pass, Plan, Roots, run};
     let bases = tapes
@@ -198,9 +203,9 @@ fn metal<'a>(
     let outcome = match active {
         // The wave's labels: a recursive group that sweeps runs on the CPU's sweep, each file a
         // walk in node order, between the GPU's wide levels (O26).
-        Some(active) => apart(all, labels, slots as usize, patterns, steps, chains, tapes, active, records)?,
+        Some(active) => apart(all, labels, slots as usize, patterns, steps, chains, tapes, active, records, w_cost)?,
         None => {
-            run(&Plan { labels: labels + clauses.len(), counts: slots as usize, patterns, steps, chains, initial: Default::default(), rows: None, buffers: None, roots: records }, tapes)?
+            run(&Plan { labels: labels + clauses.len(), counts: slots as usize, patterns, steps, chains, initial: Default::default(), rows: None, buffers: None, roots: records, w_cost }, tapes)?
         }
     };
     let found = (0..clauses.len())
@@ -251,6 +256,7 @@ fn apart<'a>(
     tapes: &[TapeDoc],
     active: &[Vec<bool>],
     roots: Option<&metal_program_backend::label_passes::RootJobs<'_>>,
+    w_cost: Option<&(dyn Fn(u32, usize) -> u64 + Sync)>,
 ) -> Result<metal_program_backend::label_passes::Outcome, Error> {
     use metal_program_backend::label_passes::{Outcome, Plan, run};
     let (host, _) = levels(clauses, |clause, id| Ok((clause, id)))?;
@@ -316,6 +322,7 @@ fn apart<'a>(
             rows: Some(&rows),
             buffers: Some(&kept),
             roots: if last { roots } else { None },
+            w_cost,
         };
         crate::code_rule_dsl::prof::release();
         let before = crate::code_rule_dsl::prof::footprint_mb();
@@ -345,6 +352,8 @@ fn apart<'a>(
         }
         outcome.command_buffers += ran.command_buffers;
         outcome.dispatches += ran.dispatches;
+        outcome.unfinished.extend(ran.unfinished);
+        outcome.replanned += ran.replanned;
         outcome.rounds = outcome.rounds.max(ran.rounds);
         (0..3).for_each(|at| outcome.waits[at] += ran.waits[at]);
         Ok(())
@@ -381,7 +390,8 @@ fn apart<'a>(
         // A file's sweep reads and marks its own labels only, so the files sweep in parallel.
         use rayon::prelude::*;
         let _sweep = crate::code_rule_dsl::prof::Stage::start("labels.sweep");
-        tapes.par_iter().zip(sets.par_iter_mut()).enumerate().try_for_each(|(at, (tape, sets))| {
+        let budget = crate::code_rule_dsl::transducer::packed::WorkBudget::current();
+        let given = tapes.par_iter().zip(sets.par_iter_mut()).enumerate().map(|(at, (tape, sets))| {
             let levels = levels
                 .iter()
                 .map(|level| {
@@ -402,10 +412,15 @@ fn apart<'a>(
                         .map(|slot| metal_program_backend::label_passes::text_slot(Some((&rows, base)), walk, program, slot, tape))
                         .collect::<Option<Vec<_>>>()
                 };
-                sweep_with(&levels, tape, sets, &texts)?;
+                // Gone to W's matcher (decision 0334): the group's labels on this file, as far as they got.
+                if !sweep_with(&levels, tape, sets, &texts, budget, w_cost.is_some())? {
+                    return Ok(levels.iter().flatten().map(|&(_, id)| (u32::from(id - LABEL_BASE), at)).collect());
+                }
             }
-            Ok::<_, Error>(())
-        })?;
+            Ok::<_, Error>(Vec::new())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+        outcome.unfinished.extend(given.into_iter().flatten());
         drop(_sweep);
         crate::code_rule_dsl::prof::release();
         crate::code_rule_dsl::prof::peak("3d.sweep");

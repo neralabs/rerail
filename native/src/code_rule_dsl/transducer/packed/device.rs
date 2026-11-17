@@ -104,4 +104,8 @@ pub struct Outcome {
     pub device: f64,
     /// How many times the run went again with twice the step budget after a task ran over it (decision 0334).
     pub replanned: usize,
+    /// The (label, file) whose pass went to W's matcher (decision 0334): over its budget where W is predicted
+    /// cheaper, or at the ceiling. Its label there is as far as it got; the clause that owns it, and every clause that
+    /// reads it, are W's on that file. A label past the plan's (`labels + c`) is clause `c`'s roots.
+    pub unfinished: Vec<(u32, usize)>,
 }

@@ -89,14 +89,13 @@ pub fn open(path: &PathBuf) -> rusqlite::Result<rusqlite::Connection> {
 }
 
 /// A program's sums are halved past this many evaluations: its rate follows its recent runs (decision 0334).
-const RATE_EVALUATIONS: i64 = 1_024;
+const RATE_EVALUATIONS: i64 = program_steps::RATE_EVALUATIONS as i64;
 
 /// Each program's measured steps per unit of size (decision 0334), for its tasks' predictions.
-fn read_program_rates(db: &rusqlite::Connection) -> rusqlite::Result<std::collections::HashMap<String, program_steps::Rate>> {
-    use program_steps::Rate;
+fn read_program_rates(db: &rusqlite::Connection) -> rusqlite::Result<Vec<(String, f64, f64, u64)>> {
     let mut st = db.prepare("SELECT program, steps, size, evaluations FROM program_steps WHERE size > 0 AND evaluations > 0")?;
     let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?, r.get::<_, f64>(2)?, r.get::<_, i64>(3)?)))?;
-    Ok(rows.filter_map(Result::ok).map(|(program, steps, size, evaluations)| (program, Rate { steps_per_unit: steps / size, samples: evaluations as u64 })).collect())
+    Ok(rows.filter_map(Result::ok).map(|(program, steps, size, evaluations)| (program, steps, size, evaluations as u64)).collect())
 }
 
 /// The writer's store, once opened.
@@ -289,7 +288,7 @@ fn read() {
         }
         // The programs' rates (decision 0334): a store from before them has no table, and no rates.
         if let Ok(rates) = read_program_rates(&db) {
-            program_steps::install(rates);
+            program_steps::install_sums(rates);
         }
         // The saved model's age, and the samples written since it was trained (no `models` table: none).
         let saved = db

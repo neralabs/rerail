@@ -301,7 +301,7 @@ fn captured_rows(
     use rayon::prelude::*;
     // W's steps at the roots and their subtrees' nodes, for its rate in the cost store (decision 0334): what the
     // wave weighs a clause over its budget against.
-    let measure = w_key.is_some() && costs::keeping();
+    let measure = w_key.is_some();
     let per: Vec<StoreResult<(Vec<Vec<i64>>, usize, u64, u64)>> = held
         .par_iter()
         .zip(found.par_iter())

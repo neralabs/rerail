@@ -156,15 +156,30 @@ pub const MAX_FINITE_JOB_INSTRUCTIONS: usize = 256;
 pub const MAX_STEPS_PER_PATH: usize = 1 << 20;
 pub const MAX_WORK_PER_TASK: usize = 1 << 26;
 
+/// 2 to the power `times`, at most `u64::MAX`: a budget doubled that many times multiplies by it (saturating, where a
+/// shift would drop the high bits).
+fn power_of_two(times: u32) -> u64 {
+    1_u64.checked_shl(times).unwrap_or(u64::MAX)
+}
+
+/// What an evaluation split by root kept where it ran over its budget (`Program::execute_roots_split`): the roots that
+/// finished, in order, their outputs and their steps.
+#[derive(Debug, Default)]
+pub struct Partial {
+    pub finished: usize,
+    pub outputs: Vec<Output>,
+    pub steps: usize,
+}
+
 /// What a task may spend before it stops (decision 0334), on the device and on the CPU JIT alike.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorkBudget {
     /// The CPU's limits: `MAX_WORK_PER_TASK` a task, `MAX_STEPS_PER_PATH` a path. A task runs past its prediction,
-    /// and its results are the CPU's. The default.
+    /// and its results are the CPU's. `RERAIL_DEVICE_BUDGET=full`.
     Full,
     /// The task's predicted steps (`evaluation_costs::predict`) times `slack`, doubled `doublings` times, below the
     /// ceiling. A task past it stops `OverBudget`, unfinished: its evaluation is replanned (`execute_planned`), never
-    /// an error until the ceiling. Results are `Full`'s. `RERAIL_DEVICE_BUDGET=replan`.
+    /// an error until the ceiling. Results are `Full`'s. The default.
     Replan { slack: u32, doublings: u32 },
 }
 
@@ -178,22 +193,35 @@ pub const STATES_PER_UNIT: u64 = 4;
 pub const MIN_STATES: u64 = 512;
 
 impl WorkBudget {
-    /// The process's budget: `RERAIL_DEVICE_BUDGET` (`full`, the default, or `replan`).
+    /// The process's budget: `RERAIL_DEVICE_BUDGET` (`replan`, the default since decision 0334's pack check, or
+    /// `full`).
     pub fn current() -> Self {
         match std::env::var("RERAIL_DEVICE_BUDGET").as_deref() {
-            Ok("replan") => Self::Replan { slack: REPLAN_SLACK, doublings: 0 },
-            _ => Self::Full,
+            Ok("full") => Self::Full,
+            _ => Self::Replan { slack: REPLAN_SLACK, doublings: 0 },
         }
     }
 
-    /// A task's budget from its predicted steps.
+    /// An evaluation's budget on the interpreter from its predicted steps, `usize::MAX` (none) at or past `ceiling`
+    /// (where the interpreter's own limits stop it) and under the full budget.
+    pub fn evaluation_limit(self, predicted: u64, ceiling: u64) -> usize {
+        match self {
+            Self::Full => usize::MAX,
+            Self::Replan { slack, doublings } => {
+                let limit = predicted.saturating_mul(u64::from(slack.max(1))).max(1).saturating_mul(power_of_two(doublings));
+                if limit < ceiling { usize::try_from(limit).unwrap_or(usize::MAX) } else { usize::MAX }
+            }
+        }
+    }
+
+    /// A task's budget from its predicted steps: at most the ceiling.
     pub fn task_limit(self, predicted: u64) -> u32 {
         let ceiling = MAX_WORK_PER_TASK as u64;
         match self {
             Self::Full => ceiling as u32,
             Self::Replan { slack, doublings } => {
                 let base = predicted.saturating_mul(u64::from(slack.max(1))).max(1);
-                base.checked_shl(doublings).filter(|limit| *limit < ceiling).unwrap_or(ceiling) as u32
+                base.saturating_mul(power_of_two(doublings)).min(ceiling) as u32
             }
         }
     }
@@ -242,8 +270,7 @@ impl Budget {
             Some(doublings) => size
                 .saturating_mul(STATES_PER_UNIT)
                 .max(MIN_STATES)
-                .checked_shl(doublings + grown)
-                .unwrap_or(u64::MAX)
+                .saturating_mul(power_of_two(doublings.saturating_add(grown)))
                 .min(u64::from(worst)) as u32,
         }
     }
@@ -289,9 +316,8 @@ fn restarting_grown(
     once: &mut dyn FnMut(&[Vec<Vec<u32>>], Budget, &StateGrowth) -> Result<packed_batch::PackedExecution, Error>,
 ) -> Result<packed_batch::PackedExecution, Error> {
     let execution = once(anchors, budget, growth)?;
-    if evaluation_costs::keeping() {
-        evaluation_costs::observe(execution.observations(programs));
-    }
+    // Every run reprices its programs for the evaluations not yet started (decision 0334).
+    evaluation_costs::observe(execution.observations(programs));
     let unfinished = execution.unfinished();
     if unfinished.is_empty() {
         return Ok(execution);
@@ -3414,7 +3440,7 @@ impl Program {
         stats: Option<&mut ExecutionStats>,
         work_limit: usize,
     ) -> Result<Vec<Output>, Error> {
-        self.execute_roots_budgeted_from(tape, roots, initial_pc, stats, work_limit, usize::MAX).map(|(outputs, _)| outputs)
+        self.execute_roots_budgeted_from(tape, roots, initial_pc, stats, work_limit, usize::MAX, None).map(|(outputs, _)| outputs)
     }
 
     /// [`execute_roots`](Self::execute_roots) held to `budget` steps over all its roots (decision 0334): past it,
@@ -3426,7 +3452,22 @@ impl Program {
         roots: impl IntoIterator<Item = u32>,
         budget: usize,
     ) -> Result<(Vec<Output>, usize), Error> {
-        self.execute_roots_budgeted_from(tape, roots, 0, None, MAX_STEPS_PER_PATH, budget)
+        self.execute_roots_budgeted_from(tape, roots, 0, None, MAX_STEPS_PER_PATH, budget, None)
+    }
+
+    /// [`execute_roots_budgeted`](Self::execute_roots_budgeted), split by root where it runs over (decision 0334 §5,
+    /// the evaluation split by subtree): with `OverBudget`, `partial` holds the roots that finished before the one
+    /// that ran over, their outputs and steps, so a rerun need take only the rest. Only where a program's outputs
+    /// are each root's own (not a tree-sitter query, whose outputs are reduced across roots: `finalize_outputs`);
+    /// for a query `partial` stays empty.
+    pub fn execute_roots_split(
+        &self,
+        tape: &TapeDoc,
+        roots: impl IntoIterator<Item = u32>,
+        budget: usize,
+        partial: &mut Partial,
+    ) -> Result<(Vec<Output>, usize), Error> {
+        self.execute_roots_budgeted_from(tape, roots, 0, None, MAX_STEPS_PER_PATH, budget, Some(partial))
     }
 
     fn execute_roots_budgeted_from(
@@ -3439,8 +3480,11 @@ impl Program {
         >,
         work_limit: usize,
         budget: usize,
+        mut partial: Option<&mut Partial>,
     ) -> Result<(Vec<Output>, usize), Error> {
         let mut spent = 0_usize;
+        // Where the last root that finished left the outputs, and how many roots finished (`execute_roots_split`).
+        let (mut kept, mut finished) = (0_usize, 0_usize);
         let mut output = Vec::new();
         let mut pending = Vec::new();
         let mut queued_states = HashSet::new();
@@ -3580,6 +3624,10 @@ impl Program {
                     }
                     charge_task_work(&mut task_work)?;
                     if spent.saturating_add(task_work) > budget {
+                        if let Some(partial) = partial.as_deref_mut().filter(|_| !self.tree_sitter_query) {
+                            output.truncate(kept);
+                            *partial = Partial { finished, outputs: std::mem::take(&mut output), steps: spent };
+                        }
                         return Err(Error::OverBudget);
                     }
                     if has_repeats
@@ -3867,6 +3915,7 @@ impl Program {
                 }
             }
             spent = spent.saturating_add(task_work);
+            (kept, finished) = (output.len(), finished + 1);
         }
         self.finalize_outputs(tape, output, has_repeats).map(|outputs| (outputs, spent))
     }
