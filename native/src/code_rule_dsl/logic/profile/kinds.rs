@@ -13,7 +13,7 @@ use std::fmt::Write;
 use super::SpanTotal;
 
 /// The class of a span's own CPU, from its path.
-pub(super) fn kind(path: &str) -> String {
+pub fn kind(path: &str) -> String {
     let top = path.split('/').next().unwrap_or(path);
     let has = |s: &str| path.contains(s);
     let part = match top {
@@ -46,6 +46,8 @@ pub(super) fn kind(path: &str) -> String {
         "measuring sources"
     } else if top == "stats" {
         "statistics phase (preparing, measuring, binding)"
+    } else if has("W's reference graph") {
+        "W's reference graph (a second parse, in Rust: no device form)"
     } else if has("tape") || has("parse") || has("tree-sitter") {
         "parsing"
     } else if top == "write" {

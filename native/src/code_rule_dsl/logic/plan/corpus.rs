@@ -5004,6 +5004,9 @@ fn run_observed(
             Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
         };
         if let Some(references) = &references {
+            // W's reference graph parses the file again with tree-sitter and summarizes it in Rust: work with no
+            // device form, named apart from the tape and facts it sits beside.
+            let _refs = crate::code_rule_dsl::logic::profile::span(|| "W's reference graph (tree-sitter again)".into());
             references.add(*d as u32, path, &file.source, &facts)?;
         }
         // The tape, in the file's context: kept only for a program that reads W's values, f-string trees or string
@@ -6045,6 +6048,11 @@ fn run_observed(
             let chunk = env("RERAIL_CHUNK_MB", CHUNK_MB);
             chunk_target.store(next, std::sync::atomic::Ordering::Relaxed);
             crate::code_rule_dsl::logic::profile::decision("chunk size", || format!("a chunk of {chunk_nodes_built} nodes added {added} MB ({per_node:.0} bytes a node); the next are about {next} nodes ({budget} MB a chunk: the least of {chunk} MB and three quarters of the run's headroom above {start_mb} MB; at most {chunk_nodes})"));
+            // The memory line, not the chunk's own size, set it: every stratum and matcher launch runs per chunk, so
+            // a cut chunk is a smaller grain for the device and more runs for the same work (the profile's warnings).
+            if headroom < chunk / 4.0 {
+                crate::code_rule_dsl::logic::profile::decision("chunk cut by the run's memory line", || format!("under a quarter of {chunk} MB left by RERAIL_RUN_MB ({} MB)", env("RERAIL_RUN_MB", RUN_MB)));
+            }
         }
         let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
         // Per document of the chunk, what it hands on (`memo::Entry`), when the run is memoised. A row is its

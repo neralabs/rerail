@@ -730,6 +730,39 @@ pass.
   (Q21): `every_stored_table…`'s and the four others' causes were fixed on the hub's side.
 - **Done when**: each passes, traced to its cause; the hub's own fix taken at the next merge where it has one.
 
+### Q47. W's reference graph parses every file a second time (39% of internal_dead_code's CPU)
+
+- **Found** (2026-11-16, t41 §2): `references::add_file` parses again with tree-sitter and runs W's
+  `calls::summarize`: 39.7 s over 3,110 files, 12.6 ms a file. The hot frames are `ts_node_child_with_descendant`
+  (tree-sitter's `parent()`, a walk from the root at every call).
+- **Done when**: the reference graph is built from the tape and facts the run already has (a rule program or the
+  transducer), with no second parse and no parent climbs; internal_dead_code's CPU drops by about that much.
+
+### Q48. The memory line starves chunks without lowering the peak
+
+- **Found** (2026-11-16, t41 §3): the run's footprint is past `RUN_MB` (1 GB) early, so 455 of 498 chunk sizings
+  fell to the 8k-node minimum. `RERAIL_RUN_MB=8000` gave 34 chunks in place of 457, with the same peak (2,537 MB
+  against 2,501 MB), and cut the matcher kernels' GPU time from 5.5 s to 1.28 s.
+- **Done when**: what holds the footprint past the line is named and released or budgeted; chunk size follows the
+  device's grain on a device run; the warning "chunk sizings … cut by the run's memory line" is gone on the
+  data-layer corpus.
+
+### Q49. Micro walks are root-serial on the GPU
+
+- **Found** (2026-11-16, t41 §4): `label_micro` (the loop tier) runs about 2,260 threads a dispatch, at 10 ms a
+  dispatch, while `clause_patterns` runs 17.8 M threads in 3 ms. Its walks (`desc`, `child … jump`) average 420–800
+  serial steps and reach 4,280.
+- **Done when**: `desc kind=K` is a range query on the preorder tape and a `child` loop a segmented pass, so a walk
+  costs its output, not its length; the longest walk at s1000 is under 100 steps.
+
+### Q50. A device run's matcher launches: the host's part and the GPU's in series, and prices 3× high
+
+- **Found** (2026-11-16, t41): over 32 GPU launches, 1.76 s of host CPU and 1.28 s of GPU time ran one after the
+  other on the one GPU slot. The executor estimated the batches at 16.3 s against 5.0 s run, so 38 of 70 went to
+  the CPU.
+- **Done when**: the next launch is encoded while the GPU runs this one, and the matcher's GPU price comes from
+  measured samples.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives

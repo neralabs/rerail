@@ -1612,6 +1612,10 @@ impl Runner<'_> {
         };
         crate::code_rule_dsl::prof::count_named(format!("kernel_us.{label}"), ((end - start) * 1e6) as usize);
         crate::code_rule_dsl::prof::count_named(format!("kernel_n.{label}"), 1);
+        // The run's GPU time too: split off here, its buffer never reaches the flush that counts it.
+        crate::code_rule_dsl::prof::count("gpu.device_us", ((end - start) * 1e6) as usize);
+        self.outcome.device += (end - start).max(0.0);
+        self.outcome.command_buffers += 1;
         self.command = self.queue.new_command_buffer().to_owned();
         self.command.set_label("Rerail label passes");
     }

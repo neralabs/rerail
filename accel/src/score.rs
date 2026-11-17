@@ -523,8 +523,8 @@ impl Scoreboard {
         });
     }
 
-    /// The job ended, well or not: its seconds run.
-    pub fn finish(&self, mut t: Ticket, ok: bool) -> f64 {
+    /// The job ended, well or not: its seconds run, and its CPU seconds on every thread it ran on.
+    pub fn finish(&self, mut t: Ticket, ok: bool) -> (f64, f64) {
         let end = Instant::now();
         t.pause();
         let cpu = t.cpu;
@@ -626,7 +626,7 @@ impl Scoreboard {
             );
             let _ = f.lock().unwrap_or_else(|p| p.into_inner()).write_all(line.as_bytes());
         }
-        ran
+        (ran, cpu)
     }
 
     /// A batch of kind `tag` placed: per launch its lane, its cost there and the fastest lane's, and the slack used.
@@ -743,7 +743,7 @@ mod tests {
         assert_eq!(b.score().units[Lane::Gpu.index()].queued, 1);
         b.start(&mut t);
         assert_eq!((b.score().units[Lane::Gpu.index()].running, b.score().units[Lane::Gpu.index()].peak), (1, 1));
-        let ran = b.finish(t, true);
+        let (ran, _) = b.finish(t, true);
         let s = b.score();
         let u = &s.units[Lane::Gpu.index()];
         assert_eq!((u.queued, u.running, u.jobs, u.launches, u.failed), (0, 0, 1, 2, 0));
