@@ -1,0 +1,1 @@
+A session a daemon left open by ending without its stop (a machine restart, a kill) is ended by the next daemon to start on its Rerail home, 30 minutes after its last event or sooner. For this version's Claude Code, Codex and Cursor sessions, that holds even when another process now has the dead daemon's process id.

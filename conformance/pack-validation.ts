@@ -9,8 +9,6 @@ import { basename, dirname, join, matchesGlob, posix, relative, resolve, sep } f
 import semver from "semver";
 import { z } from "zod";
 import {
-  HELD_OFF_SINCE,
-  LANGUAGE_SINCE,
   languageFor,
   languageNotSupportedOf,
   codeRuleSchema,
@@ -37,6 +35,7 @@ import { CONFORMANCE_FILE, documentPath, loadPack, packSchema, RERAIL_ROOT, type
 import { reportFailures, runPack } from "./languages/runner.js";
 import { decidingPattern, inToolSubdirectory, licenceAllowed, licenceAlternatives, packFixtureAbsence, pathGlob, PUBLISH_DIRECTORY, readUpstreamSources } from "../scripts/s3/pack-fixtures.mjs";
 import { isPrivatePack } from "../scripts/release/packs.mjs";
+import { admitsRefusingCore, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, shippedLanguages } from "../scripts/release/core.mjs";
 import { capabilitiesJson } from "./engine.js";
 import { BIOME_SAME_SOURCES } from "./biome-same-sources.generated.js";
 
@@ -496,12 +495,12 @@ const repositoryUrl = (): string => rootPackage().repository.url;
  * Why a pack's core range `range` admits a core that refuses its pack.json, or undefined. Once core is at
  * `HELD_OFF_SINCE` (`coreVersion`, the Release pull request's bump), a pack holding rules off (`heldOff`) must leave out
  * every older core, which refuses the field and would drop the whole pack as invalid; before then the range stays, so
- * this checkout's core still loads the pack.
+ * this checkout's core still loads the pack. The Release pull request raises the range of a pack it releases
+ * (scripts/release/core.mjs holds the releases and the rule, for both).
  */
 export function heldOffRangeFailure(range: string, heldOff: readonly string[], coreVersion: string): string | undefined {
-  const floor = `${HELD_OFF_SINCE}-0`;
-  if (heldOff.length === 0 || semver.lt(coreVersion, floor) || !semver.intersects(range, `<${floor}`, { includePrerelease: true })) return undefined;
-  return `package.json: the core range ${range} admits Rerail older than ${HELD_OFF_SINCE}, which refuses heldOff (${heldOff.join(", ")}); raise it to >=${floor}`;
+  if (heldOff.length === 0 || !admitsRefusingCore(range, HELD_OFF_SINCE, coreVersion)) return undefined;
+  return `package.json: the core range ${range} admits Rerail older than ${HELD_OFF_SINCE}, which refuses heldOff (${heldOff.join(", ")}); raise it to ${raisedCoreRange(HELD_OFF_SINCE)}`;
 }
 
 /**
@@ -513,33 +512,11 @@ export function heldOffRangeFailure(range: string, heldOff: readonly string[], c
 export function languageRangeFailure(range: string, languages: readonly string[], coreVersion: string): string | undefined {
   const refused = languages.flatMap(language => {
     const since = LANGUAGE_SINCE.get(language);
-    const floor = `${since}-0`;
-    return since === undefined || semver.lt(coreVersion, floor) || !semver.intersects(range, `<${floor}`, { includePrerelease: true }) ? [] : [{ language, since }];
+    return since !== undefined && admitsRefusingCore(range, since, coreVersion) ? [{ language, since }] : [];
   });
-  if (refused.length === 0) return undefined;
   const since = refused.map(entry => entry.since).sort(semver.rcompare)[0];
-  return `package.json: the core range ${range} admits Rerail older than ${since}, which reads no ${refused.map(entry => entry.language).join(" or ")} rule; raise it to >=${since}-0`;
-}
-
-/** Every language the pack's shipped rule documents name: a query's, a define's or a transform's `language`, sorted. */
-function shippedLanguages(directory: string): string[] {
-  const named = new Set<string>();
-  // An array's entries are its values too, so one walk over Object.entries covers arrays and objects.
-  const collect = (value: unknown): void => {
-    if (typeof value !== "object" || value === null) return;
-    for (const [key, child] of Object.entries(value)) {
-      if (key === "language" && typeof child === "string") named.add(child);
-      else collect(child);
-    }
-  };
-  for (const file of filesUnder(directory, join(directory, "rules")).filter(file => file.endsWith(".json"))) {
-    try {
-      collect(JSON.parse(readFileSync(join(directory, file), "utf8")));
-    } catch {
-      // Check 1 reports a document that is not JSON; it names no language here.
-    }
-  }
-  return [...named].sort(compareDeterministicStrings);
+  if (since === undefined) return undefined;
+  return `package.json: the core range ${range} admits Rerail older than ${since}, which reads no ${refused.map(entry => entry.language).join(" or ")} rule; raise it to ${raisedCoreRange(since)}`;
 }
 
 /** The SPDX ids an SPDX expression names. */
@@ -1150,8 +1127,7 @@ function checkPublishedFiles({ directory, fail }: Validation, manifest: PackPack
 function checkCoreRange({ directory, options, fail }: Validation, manifest: PackPackage, pack: RulePackFile | undefined): void {
   const range = manifest.peerDependencies["@neralabs/rerail"];
   const coreVersion = options.coreVersion ?? rootPackage().version;
-  const heldOff = (pack?.rules ?? []).filter(rule => rule.heldOff !== undefined).map(rule => rule.id);
-  const heldOffRange = heldOffRangeFailure(range, heldOff, coreVersion);
+  const heldOffRange = heldOffRangeFailure(range, heldOffRules(pack), coreVersion);
   if (heldOffRange !== undefined) fail("package", heldOffRange);
   const languageRange = languageRangeFailure(range, shippedLanguages(directory), coreVersion);
   if (languageRange !== undefined) fail("package", languageRange);

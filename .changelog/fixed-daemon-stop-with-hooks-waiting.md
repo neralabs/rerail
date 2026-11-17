@@ -1,1 +1,0 @@
-`rerail daemon stop` no longer waits 10 seconds and then kills the daemon with no clean-up when a coding agent hook's request stopped arriving partway. The daemon cuts such a request off after a second or two, and still answers each event it had taken in that ends within those 10 seconds.

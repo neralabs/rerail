@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type AdapterDelivery,
@@ -286,7 +287,7 @@ describe("Rerail session startup", () => {
 });
 
 describe("A scan requested while the session's evaluator is still opening", () => {
-  /** A runtime whose evaluator's `openWorkspace` is held until `opening` settles, with one scan requested and claimed meanwhile. */
+  /** A runtime whose evaluator's `openWorkspace` is held until `opening` settles, with one scan requested meanwhile. */
   async function scanFixture() {
     const root = await mkdtemp(join(tmpdir(), "rerail-scan-opening-"));
     directories.push(root);
@@ -327,15 +328,13 @@ describe("A scan requested while the session's evaluator is still opening", () =
     await runtime.ingest({ kind: "session-start", eventId: "start", session });
     const controls = new SqliteAuditControlStore(databasePath);
     const request = controls.requestAudit(session.sessionId, { scope: "repository" });
-    // The control timer claims it within 250 ms, with the evaluator still held in its open.
+    // It waits, queued, for the evaluator: claimed at once, the scan's writes would come whenever the rules had compiled,
+    // each waiting up to 5 s for a write lock another process took meanwhile.
     const statusOf = () => controls.listAuditRequests(session.sessionId).find(item => item.id === request.id)?.status;
-    await vi.waitFor(() => expect(statusOf()).not.toBe("queued"), { timeout: 4_000 });
-    expect(statusOf()).toBe("running");
+    await delay(600);
+    expect(statusOf()).toBe("queued");
     const settled = async () => {
-      await vi.waitFor(
-        () => expect(controls.listAuditRequests(session.sessionId).find(item => item.id === request.id)?.status).not.toBe("running"),
-        { timeout: 10_000 },
-      );
+      await vi.waitFor(() => expect(statusOf()).not.toMatch(/^(queued|running)$/), { timeout: 10_000 });
       return controls.listAuditRequests(session.sessionId).find(item => item.id === request.id)!;
     };
     const close = async () => {
@@ -364,7 +363,7 @@ describe("A scan requested while the session's evaluator is still opening", () =
       test.opening.resolve();
       const request = await test.settled();
       expect(request).toMatchObject({ status: "completed", auditIds: test.scans, error: null });
-      expect(kept).toBe(false);
+      expect(kept).toEqual({ kind: "owing" });
     } finally { await test.close(); }
   });
 
@@ -564,9 +563,9 @@ describe("Rerail tool results waiting for their edit's check", () => {
       kept.push(await runtime.closeIdleSession(session.sessionId));
       const next = await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId: session.sessionId, session, text: "next" });
       expect(next.map(delivery => delivery.content)).toEqual([STEER]);
-      expect(kept).toEqual([false, false]);
-      // Delivered: nothing holds the session open any more.
-      expect(await runtime.closeIdleSession(session.sessionId)).toBe(true);
+      expect(kept).toEqual([{ kind: "owing" }, { kind: "owing" }]);
+      // Delivered: nothing holds the session in memory any more.
+      expect(await runtime.closeIdleSession(session.sessionId)).toMatchObject({ kind: "suspended" });
     } finally {
       vi.useRealTimers();
       check.resolve();
@@ -588,11 +587,11 @@ describe("Rerail tool results waiting for their edit's check", () => {
       await writeFile(join(root, "a.ts"), BAD);
       const answer = await runtime.ingest({ kind: "result", eventId: "result-t1", sessionId: session.sessionId, session, toolCallId: "t1", toolName: "Write", output: "ok" });
       expect(answer.map(delivery => delivery.content)).toEqual([STEER]);
-      expect(kept).toBe(false);
+      expect(kept).toEqual({ kind: "owing" });
       // A call the user refused gets no result: the end of its turn settles it.
       await call("t2");
       await turnEnd("turn");
-      expect(await runtime.closeIdleSession(session.sessionId)).toBe(true);
+      expect(await runtime.closeIdleSession(session.sessionId)).toMatchObject({ kind: "suspended" });
     } finally {
       check.resolve();
       await runtime.dispose();
@@ -704,7 +703,7 @@ describe("Rerail tool results waiting for their edit's check", () => {
 
       const kept = await runtime.closeIdleSession(session.sessionId);
       expect((await turnEnd("turn")).map(delivery => delivery.content)).toEqual([DIGEST]);
-      expect(kept).toBe(false);
+      expect(kept).toEqual({ kind: "owing" });
     } finally {
       vi.useRealTimers();
       check.resolve();
@@ -998,8 +997,8 @@ describe("A runtime's closed sessions", () => {
     }),
   });
 
-  // A checkout's runtime lives while any session in it does, and the idle close ends each killed session there too: after
-  // 30 quiet minutes, or after a day when the session still owed its agent a result, a steer or a held finding.
+  // A checkout's runtime lives while any session in it does, and the idle close lets each killed session there go too:
+  // after 30 quiet minutes, or after a day when the session still owed its agent a result, a steer or a held finding.
   it("are kept for late receipts only while they are among the last sixteen to close", { timeout: 20_000 }, async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-closed-sessions-")));
     directories.push(root);
@@ -1041,6 +1040,31 @@ describe("A runtime's closed sessions", () => {
     const sessionStore = new SqliteSessionStore(join(root, "rerail.sqlite"));
     try {
       expect(sessionIds.map(sessionId => sessionStore.session(sessionId)?.endedAt)).toEqual(sessionIds.map(() => 1_000_000));
+    } finally {
+      sessionStore.close();
+    }
+  });
+
+  it("stay open once suspended, though sixteen later suspensions push one out while it is still closing", { timeout: 20_000 }, async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-closed-sessions-")));
+    directories.push(root);
+    const runtime = runtimeIn(root);
+    const sessionIds = Array.from({ length: 17 }, (_, index) => `s${index}`);
+    try {
+      for (const sessionId of sessionIds) {
+        await runtime.ingest({ kind: "session-start", eventId: `${sessionId}:start`, session: { host: "claude-code", sessionId, cwd: root } });
+        await runtime.codeRulesOpened(sessionId);
+      }
+      // Every idle close begins at once; `s16`'s pushes `s0` out before `s0` finishes closing.
+      const closes = await Promise.all(sessionIds.map(sessionId => runtime.closeIdleSession(sessionId)));
+      expect(closes.map(close => close.kind)).toEqual(sessionIds.map(() => "suspended"));
+    } finally {
+      await runtime.dispose();
+    }
+
+    const sessionStore = new SqliteSessionStore(join(root, "rerail.sqlite"));
+    try {
+      expect(sessionIds.map(sessionId => sessionStore.session(sessionId)?.endedAt)).toEqual(sessionIds.map(() => null));
     } finally {
       sessionStore.close();
     }

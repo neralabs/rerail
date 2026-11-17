@@ -21,7 +21,7 @@ import {
   CODE_RULE_PLANNED_LANGUAGES,
   codeRuleDialectForPath,
 } from "../../../src/engine/code-rule/code-rule-languages.js";
-import { LANGUAGE_SINCE } from "../../../src/engine/catalog/rule-packs.js";
+import { LANGUAGE_SINCE } from "../../../scripts/release/core.mjs";
 import { EXEMPLAR, exemplarLanguageRegistry, exemplarRegistryModule } from "../support/exemplar-registry.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
