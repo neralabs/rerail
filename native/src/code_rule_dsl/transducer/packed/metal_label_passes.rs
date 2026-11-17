@@ -1760,12 +1760,14 @@ impl Runner<'_> {
     fn size(&mut self, plan: &Plan<'_>) -> Result<(), Error> {
         let mut widest_seen: Option<(WorkspaceTotals, u32, u32, usize)> = None;
         // Every pass's roots as rules, in one buffer for the run, before anything binds it.
+        let _roots = crate::code_rule_dsl::prof::Stage::start("size.root_table");
         for pass in plan.steps.iter().flat_map(|(_, levels)| levels).flatten() {
             if let Pass::Program { roots, .. } | Pass::Count { roots, .. } | Pass::Pattern { roots, .. } = pass {
                 self.root_table.of(roots, self.files)?;
             }
         }
         self.root_table.prefix(self.files);
+        drop(_roots);
         crate::code_rule_dsl::prof::count("size.root_words", self.root_table.words.len());
         self.root_words = Some(MappedBuffer::from_slice(self.device, &self.root_table.words)?);
         // A sweeping group is one batch of all its programs, by its address; a level is one by
@@ -1807,6 +1809,7 @@ impl Runner<'_> {
                 // walk (multi-target packing, t1 spec-fusion §2.6, §4.3, §4.4; the host's
                 // `matcher::Packs`): an emit marks its member's row (by emit label, `rows`).
                 let packs = {
+                    let _packs = crate::code_rule_dsl::prof::Stage::start("size.fuse");
                     let mut by = std::collections::BTreeMap::<(usize, u32), Vec<usize>>::new();
                     for (at, &(program, roots, mode, _)) in passes.iter().enumerate() {
                         if mode <= 1 && Micro::of(program).is_some() {
@@ -1835,13 +1838,15 @@ impl Runner<'_> {
                     // The rule, shared by passes of its domain; a thread a group of the batch.
                     let Ok((start, any)) = root_table.at(roots) else { return true };
                     let count = if any { root_table.groups() } else { 0 };
+                    // The profile counts the groups a walk launches, which the rule gives; the roots it visits are
+                    // the device's own count (`walk_items.*`). Counting them here walked every root node of every
+                    // file for every pass: 173 of `gpu.size`'s 217 ms on s1000 (2026-11-17).
                     if crate::code_rule_dsl::prof::on() {
-                        let count = (0..files.len()).map(|file| roots.nodes(file, &files[file]).count()).sum::<usize>();
                         let depth = walk.depth().map_or("loop".to_owned(), |depth| format!("{:02}", depth.min(64)));
                         if walk.depth().is_none() && std::env::var_os("RERAIL_DUMP_LOOP").is_some() {
                             eprintln!("LOOP {:?}", walk.ops());
                         }
-                        crate::code_rule_dsl::prof::count_named(format!("depth.{depth}"), count);
+                        crate::code_rule_dsl::prof::count_named(format!("depth_groups.{depth}"), count as usize);
                     }
                     // The walk's slots as rows of `texts`, contiguous from `text_start`; a row
                     // already computed for another pass is copied.
@@ -1867,7 +1872,7 @@ impl Runner<'_> {
                         };
                         let Some(row) = row else {
                             if crate::code_rule_dsl::prof::on() {
-                                crate::code_rule_dsl::prof::count_named(format!("unslotted.{key}"), count as usize);
+                                crate::code_rule_dsl::prof::count_named(format!("unslotted_groups.{key}"), count as usize);
                             }
                             return true;
                         };
@@ -1906,6 +1911,7 @@ impl Runner<'_> {
                     }
                     false
                 };
+                let _placing = crate::code_rule_dsl::prof::Stage::start("size.place");
                 let mut unpacked = vec![false; passes.len()];
                 let mut placed = 0_usize;
                 for (program, members, rows) in &packs {
@@ -1931,6 +1937,7 @@ impl Runner<'_> {
                     placed += usize::from(!alone);
                     alone
                 });
+                drop(_placing);
                 if !words.is_empty() {
                     if texts.is_empty() {
                         texts.push(0);

@@ -661,7 +661,11 @@ pub fn summary() -> String {
         s.push_str(&format!("  model: {}\n", state.replace('\n', "\n  ")));
     }
     for l in rerail_accel::price::learned_rates() {
-        s.push_str(&format!("  {:<4} {:<28} {:>12.3e} s a unit  ({} samples)\n", l.lane.name(), l.name, l.per_unit, l.samples));
+        let from = if l.this_run { "this run's" } else { "stored" };
+        s.push_str(&format!(
+            "  {:<4} {:<28} wall {:>9.3} ms a launch + {:>10.3e} s a unit; host CPU {:>9.3} ms + {:>10.3e} s  ({} {from} samples)\n",
+            l.lane.name(), l.name, l.per_launch * 1e3, l.per_unit, l.host_per_launch * 1e3, l.host_per_unit, l.samples
+        ));
     }
     s
 }

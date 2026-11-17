@@ -1351,7 +1351,23 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
     against 2.9–3.3 s. The lane's wall now equals the wave's own (`== Device`), about 315 ms of GPU, 320 ms of host
     CPU and 150 ms off a core. `RERAIL_GPU_KERNEL_TIMES` (a command buffer a kernel) was not it: without it the
     waiting was the same.
-- **Two blockers to the overlap, found**:
+  - **The overlap, the lock, the sizing and the price** (2026-11-17, the user: "do we really need a process-wide
+    Metal execution lock? Shouldn't we take leases on the resources instead?"):
+    - The lock is gone (0344): runs hold leases on the memory they write. The GPU backend's `start` runs a batch of
+      programs on a slot pool of its own, so the worker begins the next wave beside it. On s1000, 6 to 8 of 19 wave
+      batches began while another ran.
+    - `gpu.size` was 173 of its 217 ms in the profile's own count, which walked every root node of every file for
+      each pass. It now counts the groups each walk launches; the real sizing is about 45–60 ms, most of it text rows
+      (`size.texts`).
+    - A program's price learns from the run's own launches (`price::observe`, from 4 samples). Wall and host CPU are
+      each a robust line: a launch's fixed cost plus a unit's. The wave on the GPU: about 6 ms + 1.1–2.0e-8 s a unit of
+      wall, 4.3 ms + 4e-9 s of host CPU. The cores' samples are fitted net of their load, and the lane's host ratio
+      no longer scales a learned host price. The wave's priors are today's measurements.
+    - **Open**: with two waves in flight, a launch's wall includes the time it shares the device, so the per-launch
+      estimates sum past the lane's span (2.36 s against 1.00 s pinned). Placement still treats the GPU lane as one
+      queue, so an unpinned run sent 10 of 20 waves to the cores while the GPU lane looked busy.
+- **Two blockers to the overlap, found** (both resolved by 0344: no lock, and no begin/finish split of the label
+  passes; a program's whole run is the spawned submission):
   - `rerail_metal::metal_execution_guard` (a process-wide lock from the grid's launch budget, copied from Tempo)
     is held for a whole label run, encode through readback. A launch begun on the worker (encode and commit in
     `start`, wait and decode in `finish`) would hold it while the worker begins the next, which then waits on the
