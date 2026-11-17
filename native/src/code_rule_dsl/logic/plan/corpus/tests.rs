@@ -1331,3 +1331,41 @@ fn every_switch_lowering_reads_is_classified() {
     let unread: Vec<&str> = super::COMBINING.iter().chain(super::PREPARING).copied().filter(|s| !seen.contains(*s)).collect();
     assert!(unread.is_empty(), "switches listed as combining or preparing that nothing there reads: {unread:?}");
 }
+
+/// Q22, a guard: a run after a rule's edit parses no guest and no file the last run read. The edit makes a new
+/// lane (the programs' texts) and plan, and the tapes are found by the root's last runs (`root_sources`), read
+/// before the first wave (decision 0104). Twice this regressed unseen: guests read no stored tape at all (since
+/// 0104's waves), then the tapes were looked up by lane, which every edit changes.
+#[test]
+fn an_edit_parses_no_guest_and_no_file_the_last_run_read() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("guest-tapes");
+    let _ = std::fs::remove_dir_all(&dir);
+    let ws = dir.join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::write(ws.join("a.py"), "from typing import List, Optional\n\nx: \"List[int]\" = []\n\ndef f(a: \"Optional[Foo]\") -> \"Baz\":\n    pass\n").unwrap();
+    std::fs::write(ws.join("b.py"), "y: \"Optional[int]\" = None\n").unwrap();
+    let program = |extra: &str| format!(r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.decl names(x: symbol)
+names(x) :- string_annotation(n), parsed(n, "annotation", r), within(m, r), node(_, m, "identifier", _, _), text(m, x){extra}.
+.output names
+"#);
+    let out = dir.join("out");
+    let run = |text: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        super::run(text, &ws, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap()
+    };
+    let first = run(&program(""));
+    assert!(first.guest_tapes.1 > 0, "the first run parses its guests: {:?}", first.guest_tapes);
+    // An edited rule: a new lane and plan; the files and their guests are as they were.
+    let edited = run(&program(", x != \"q22\""));
+    assert_eq!(edited.guest_tapes.1, 0, "no guest is parsed again (found, parsed): {:?}", edited.guest_tapes);
+    assert!(edited.guest_tapes.0 > 0, "the guests' tapes are the last run's: {:?}", edited.guest_tapes);
+    assert_eq!(edited.file_tapes.1, 0, "no file is parsed again (found, parsed): {:?}", edited.file_tapes);
+    // And again: a run that found its tapes names them, so the next finds them too.
+    let again = run(&program(", x != \"q22b\""));
+    assert_eq!((again.guest_tapes.1, again.file_tapes.1), (0, 0), "guests {:?}, files {:?}", again.guest_tapes, again.file_tapes);
+    assert!(again.guest_tapes.0 > 0, "{:?}", again.guest_tapes);
+    let _ = std::fs::remove_dir_all(&dir);
+}

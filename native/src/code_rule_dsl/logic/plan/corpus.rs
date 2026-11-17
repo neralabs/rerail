@@ -299,6 +299,11 @@ pub struct Report {
     pub cross_kept: Option<(usize, usize)>,
     /// The cone of requests' strata evaluated, of all, when they are kept (t33 K3); `None` otherwise.
     pub cone_kept: Option<(usize, usize)>,
+    /// The guests whose tape the last run named (read before the first wave), and those parsed (Q22): a run over
+    /// unchanged files parses none.
+    pub guest_tapes: (usize, usize),
+    /// The files built in its waves whose tape was read before the first wave, and those parsed (Q22).
+    pub file_tapes: (usize, usize),
     /// The rounds the cone ran from the last run's final round (decision 0145); 0 when it ran the gated fixpoint.
     pub cone_rounds: usize,
     /// Of those, strata maintained from deltas, of them recursive, and strata derived again (decision 0077 §3).
@@ -1909,6 +1914,9 @@ fn wanted_cone(local: &lower::Lowered, wanted: &BTreeSet<String>) -> lower::Lowe
         local.with_version(made)
     }
 }
+
+/// The root's runs whose guests' tapes a run reads before its first wave (Q22): its own last, and the phases' between.
+const GUEST_RUNS: usize = 4;
 
 /// Records the run's manifest and relations, then starts collection if a pass is due: queued behind the run's
 /// writes (decision 0102), so the manifest names only what is written, and the lease on collection is let go
@@ -4373,6 +4381,11 @@ fn run_observed(
     // The tapes of the files the run's waves will load (a phase's, its loads'), read before the first wave (decision
     // 0104), by source: set below, once the memo's entries the waves may find are known.
     let wave_tapes: std::sync::OnceLock<HashMap<crate::content_store::SourceId, crate::content_store::TapeFrame>> = std::sync::OnceLock::new();
+    // The tapes of the guests the lane's last run named (Q22), read before the first wave with the files' (decision
+    // 0104): a guest's grammar is known only once its host is read, in a wave.
+    let mut guest_held: guests::Held = HashMap::new();
+    // The files built with a tape read before the first wave, and those parsed (`Report::file_tapes`).
+    let file_tapes = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
     // Files looked up together: stat each, find the entries of those the stat index knows in one statement, read and
     // hash the others, find their contents in one statement and their entries in one more. A few statements for any
     // number of files, and nothing written: a source found is pinned by the store's writer, a new one is stored with
@@ -4642,47 +4655,43 @@ fn run_observed(
         let preload_secs = preload_at.elapsed().as_secs_f64();
         // The run's memo entries its waves may look up (a load's files): each path's newest of its plan's space, but
         // the files looked up already (decision 0104: read before the first wave).
-        let (entries, entry_bytes, admitted) = match memo {
+        let (entries, entry_bytes, _) = match memo {
             Some(memo::Memo::Stored(_)) if memoised => {
                 let looked: std::collections::HashSet<&str> = docs.iter().map(|(_, p)| world::store_path(p)).collect();
                 store.admit_memo_entries(&crate::content_store::local_space(&memo::plan_digest(&memo_program)), &looked, &|b| memo::hold(store, b)).map_err(|e| Error::Plan(e.to_string()))?
             }
             _ => (0, 0, None),
         };
-        // The tapes of the files the waves will load and find no entry for: those the lane's last run read (whichever
-        // build ran it), but the run's own files (looked up above, their tapes read with them) and those whose
-        // entries were just admitted. One read; none when every load has its entry (a warm run).
-        if let (Some(admitted), Some(cache), Some(tag)) = (
-            admitted,
-            tapes.as_ref().filter(|_| cfg!(feature = "tape-cache")),
-            crate::code_rule_dsl::language::dialect_by_label(label).and_then(crate::code_rule_dsl::language::tape_tag),
-        ) {
-            let _tapes = crate::code_rule_dsl::logic::profile::span(|| "tapes of the waves' loads, by their sources".into());
-            let own: std::collections::HashSet<crate::content_store::SourceId> = before.lock().values().filter_map(|b| b.content.and_then(memo::Content::stored)).collect();
-            let found: std::collections::HashSet<crate::content_store::SourceId> = admitted.iter().filter_map(|p| stat_index.recorded(p)).collect();
-            let wanted: Vec<crate::content_store::SourceId> = store
-                .lane_sources(&canonical_root, &lane)
-                .map_err(|e| Error::Plan(e.to_string()))?
-                .into_iter()
-                .filter(|s| !own.contains(s) && !found.contains(s))
-                .collect();
-            let frames = cache
-                .tape_frames_for(&wanted, i64::from(tag), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION))
-                .map_err(|e| Error::Plan(e.to_string()))?;
-            let asked = wanted.len();
-            let held: HashMap<_, _> = wanted.into_iter().zip(frames).filter_map(|(s, f)| f.map(|f| (s, f))).collect();
-            if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
-                eprintln!("rerail: tapes before the first wave for its loads: {asked} sources asked, {} tapes, {:.1} MB", held.len(), held.values().map(crate::content_store::TapeFrame::len).sum::<usize>() as f64 / 1048576.0);
-            }
-            let _ = wave_tapes.set(held);
-        }
         if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() && frames + entries > 0 {
             eprintln!("rerail: frames read before the first wave: {frames} frames, {:.1} MB encoded, {preload_secs:.2} s; {entries} memo entries its waves may look up, {:.1} MB", bytes as f64 / 1048576.0, entry_bytes as f64 / 1048576.0);
         }
         if frames > 0 {
             crate::code_rule_dsl::logic::profile::decision("frames read before the first wave (decision 0104)", || format!("{frames} frames, {:.1} MB encoded", bytes as f64 / 1048576.0));
         }
+        // The tapes the root's last runs named (Q22), of any lane: a lane is the programs' texts, and a rule's edit
+        // starts a new one with no run, where the files and their guests are as they were. The last few, for the
+        // phases' runs over the root record between. One read, before the first wave (decision 0104): the files'
+        // tapes by source, in the run's grammar, for the waves' builds (a load's files, a file the memo misses); the
+        // guests' by text and grammar, for theirs (a guest's grammar is known only once its host is read).
+        if let Some(cache) = tapes.as_ref().filter(|_| cfg!(feature = "tape-cache")) {
+            let _tapes = crate::code_rule_dsl::logic::profile::span(|| "the root's tapes, by their sources (Q22)".into());
+            let wanted = store.root_sources(&canonical_root, GUEST_RUNS).map_err(|e| Error::Plan(e.to_string()))?;
+            let frames = cache
+                .tape_frames_any_grammar(&wanted, crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION))
+                .map_err(|e| Error::Plan(e.to_string()))?;
+            let tag = crate::code_rule_dsl::language::dialect_by_label(label).and_then(crate::code_rule_dsl::language::tape_tag).map(i64::from);
+            let files: HashMap<crate::content_store::SourceId, crate::content_store::TapeFrame> = frames.iter().filter(|(_, _, g, _)| Some(*g) == tag).map(|(s, _, _, f)| (*s, f.clone())).collect();
+            if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
+                eprintln!("rerail: tapes before the first wave: {} sources asked, {} tapes, {} of the run's grammar", wanted.len(), frames.len(), files.len());
+            }
+            let _ = wave_tapes.set(files);
+            guest_held = frames.into_iter().map(|(source, hash, grammar, frame)| ((hash, grammar), (source, frame))).collect();
+            if !guest_held.is_empty() {
+                crate::code_rule_dsl::logic::profile::decision("tapes read before the first wave (Q22)", || format!("{} tapes, {:.1} MB", guest_held.len(), guest_held.values().map(|(_, f)| f.len()).sum::<usize>() as f64 / 1048576.0));
+            }
+        }
     }
+    let guest_tapes = guests::Tapes::new(tapes.as_ref().filter(|_| cfg!(feature = "tape-cache")), &guest_held, &late_sources);
     let mut waves = Some(crate::code_rule_dsl::logic::profile::waves());
     // A file's memo entry when the run is memoised and the memo has it, else its document, built. An entry
     // without the base rows this run's cross-file part reads is a miss.
@@ -4825,7 +4834,25 @@ fn run_observed(
             // In the waves no SQL is read or written (decision 0104): the tape was found before the first wave, or the
             // file is parsed and its source and tape are the writer's, behind the run; the manifest names the sources
             // it stores (`late_sources`).
-            Some(cache) if cfg!(feature = "tape-cache") => core::build_in_wave_with_tape(&file, cache, digest, tape.as_ref(), Some(&late_sources), keep_tapes),
+            Some(cache) if cfg!(feature = "tape-cache") => {
+                // Else by its text and grammar, among the root's last runs' tapes (Q22): a file whose content the run
+                // has no source id for (no memo, or one named by digest in a wave) is found as a guest is.
+                let (digest, tape) = match tape {
+                    Some(t) => (digest, Some(t)),
+                    None => {
+                        use sha2::Digest as _;
+                        let d: [u8; 32] = digest.unwrap_or_else(|| sha2::Sha256::digest(file.source.as_bytes()).into());
+                        let tag = crate::code_rule_dsl::language::dialect_by_label(label).and_then(crate::code_rule_dsl::language::tape_tag).map(i64::from);
+                        let held = tag.and_then(|tag| guest_held.get(&(crate::content_store::HashKey::from_sha256_digest(d), tag)));
+                        if let Some((source, _)) = held {
+                            late_sources.lock().expect("the late sources").push(*source);
+                        }
+                        (Some(d), held.map(|(_, f)| f.clone()))
+                    }
+                };
+                if tape.is_some() { &file_tapes.0 } else { &file_tapes.1 }.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                core::build_in_wave_with_tape(&file, cache, digest, tape.as_ref(), Some(&late_sources), keep_tapes)
+            }
             Some(_) => unreachable!("no tape cache without `tape-cache`"),
             None => core::build_with_tape(&file, keep_tapes),
         };
@@ -5414,7 +5441,7 @@ fn run_observed(
                     if memoised {
                         slice_rounds.push(asked.iter().filter(|(r, _)| guests::LIBRARY.contains(&r.as_str()) || guests::DEMANDS.contains(&r.as_str())).map(|(r, l)| (r.clone(), Arc::clone(l))).collect());
                     }
-                    let new = made.make(guests::requests(&asked), &docs, tapes.as_ref()).map_err(Error::Plan)?;
+                    let new = made.make(guests::requests(&asked), &docs, &guest_tapes).map_err(Error::Plan)?;
                     if new.is_empty() {
                         break;
                     }
@@ -8901,7 +8928,8 @@ fn run_observed(
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the Git index consulted".into());
         consulted.extend(crate::code_rule_dsl::logic::strings::git::consulted(root));
     }
-    let report = Report { phases, phase_instructions, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
+    crate::code_rule_dsl::logic::profile::decision("tapes read before the first wave, and parsed (Q22)", || format!("guests: {} held, {} found, {} parsed; files: {} found, {} parsed", guest_held.len(), guest_tapes.found.load(std::sync::atomic::Ordering::Relaxed), guest_tapes.parsed.load(std::sync::atomic::Ordering::Relaxed), file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)));
+    let report = Report { phases, phase_instructions, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, guest_tapes: (guest_tapes.found.load(std::sync::atomic::Ordering::Relaxed), guest_tapes.parsed.load(std::sync::atomic::Ordering::Relaxed)), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
     handed.succeeded();
     Ok(report)
 }

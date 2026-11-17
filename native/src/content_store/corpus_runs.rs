@@ -371,19 +371,22 @@ impl ContentStore {
         Ok(rows.into_iter().filter_map(|d| d.try_into().ok()).collect())
     }
 
-    /// The sources the newest run of lane `lane` over `root` read (`record_corpus_run_lane`), whichever build ran it:
-    /// empty if the lane has no run. A run reads before its first wave the tapes of those its waves will load
-    /// (decision 0104), as it reads its own files' before.
-    pub fn lane_sources(&self, root: &str, lane: &[u8; 32]) -> StoreResult<Vec<SourceId>> {
+    /// The sources the newest `runs` runs over `root` read, of any lane. A lane is the programs' texts, so a rule's
+    /// edit starts a new one with no run: what a root's files and guests are does not change with the rules (Q22).
+    pub fn root_sources(&self, root: &str, runs: usize) -> StoreResult<Vec<SourceId>> {
         let connection = self.connection.lock().expect("content store mutex poisoned");
-        let sources: Option<Vec<u8>> = connection
+        let blobs = connection
             .prepare_cached(
                 "SELECT m.sources FROM corpus_manifests m JOIN corpus_roots r USING (root_id) \
-                 WHERE r.path = ?1 AND m.lane = ?2 ORDER BY m.last_run DESC LIMIT 1",
+                 WHERE r.path = ?1 ORDER BY m.last_run DESC LIMIT ?2",
             )?
-            .query_row(params![root, &lane[..]], |r| r.get(0))
-            .optional()?;
-        Ok(sources.map(|s| decode_ids(&s)).transpose()?.unwrap_or_default().into_iter().map(SourceId).collect())
+            .query_map(params![root, runs as i64], |r| r.get::<_, Vec<u8>>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut out = std::collections::BTreeSet::new();
+        for b in blobs {
+            out.extend(decode_ids(&b)?);
+        }
+        Ok(out.into_iter().map(SourceId).collect())
     }
 
     /// Records a run of the corpus at `root` that read `sources` (tapes of `grammar_version` and `tape_format`) under

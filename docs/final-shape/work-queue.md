@@ -596,6 +596,23 @@ pass.
     stable across runs. The hit depends on the caller's lookup (`found`), so the guests' lookup likely misses.
   - Cost over an edit (`prof-body5`): parsing 1.82 s, guests 1.19 s and most of the store writer's 1.20 s, of 10.3 s.
 - **Done when**: an edit's run finds the guest tapes the last run wrote, and parses none of an unchanged file.
+- **Fixed** (2026-11-17). Two causes, one on each path:
+  - Guests never read a stored tape. Since 0104's waves (f57e3e4c7) a guest was built with no tape found and no
+    source named: only this process's queue was asked, and the manifest never named a guest's source.
+  - The tapes read before the first wave were the lane's last run's (`lane_sources`). A lane is the programs'
+    texts, so every rule edit is a new lane with no last run, and the files' tapes were not read either.
+  - Now one read before the first wave takes the tapes of every source the root's last runs named, of any lane
+    (`ContentStore::root_sources`, `tape_frames_any_grammar`). Files find theirs by source id, or by text hash and
+    grammar; guests by text hash and grammar (`guests::Tapes`). Every source found or written is named in the
+    run's manifest, so the next run finds it too. `lane_sources` is removed. The guests' parsed trees are memoised
+    per run (`guests::Tapes::kept`), not in a process-wide static map, which also hid this in a test.
+  - Guard: `an_edit_parses_no_guest_and_no_file_the_last_run_read` (two edits after a first run: no guest and no
+    file parsed, the tapes found) and `a_roots_sources_are_its_newest_runs_of_any_lane`. The run reports both
+    counts (`Report::guest_tapes`, `file_tapes`) and the profile prints them ("tapes read before the first wave,
+    and parsed (Q22)").
+  - ep2: 10,154–10,500 hits and 0 misses per run, where every run missed 10,047. The edit's CPU is about the
+    same (10.8–11.5 s, load 40–60): the parses were cheap, and "parsing" (1.8 s) and "guests" (1.0 s) are the
+    facts built from the tapes, which an edit still rebuilds.
 
 ## Questions for the user
 

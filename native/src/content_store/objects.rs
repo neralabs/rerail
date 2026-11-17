@@ -213,6 +213,40 @@ impl ContentStore {
         Ok(out)
     }
 
+    /// The tapes of `sources` in any grammar at the given versions, each with its source's id and content hash and
+    /// its grammar: one read, nothing written. A run reads before its first wave the tapes of the guests its last run
+    /// named (decision 0104): which grammar a guest is in is known only once its host is read, in a wave.
+    pub fn tape_frames_any_grammar(&self, sources: &[SourceId], grammar_version: i64, tape_format_version: i64) -> StoreResult<Vec<(SourceId, HashKey, i64, TapeFrame)>> {
+        if sources.is_empty() {
+            return Ok(Vec::new());
+        }
+        let list = serde_json::to_string(&sources.iter().map(|s| s.0).collect::<Vec<_>>()).expect("integers");
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut statement = connection.prepare_cached(
+            "SELECT t.source_id, h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3, t.grammar_id, t.raw_length, t.codec_id, t.frame \
+             FROM json_each(?1) j JOIN tape_objects t ON t.source_id=j.value AND t.grammar_version=?2 AND t.tape_format_version=?3 \
+             JOIN source_objects s ON s.source_id=t.source_id JOIN hashes h ON h.hash_id=s.canonical_hash_id",
+        )?;
+        let rows = statement.query_map(params![list, grammar_version, tape_format_version], |row| {
+            Ok((
+                SourceId(row.get(0)?),
+                HashKey { algorithm: row.get(1)?, lanes: [row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?] },
+                row.get::<_, i64>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, Vec<u8>>(9)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (source, hash, grammar, raw_length, codec, frame) = row?;
+            if codec == CODEC_ZSTD {
+                out.push((source, hash, grammar, TapeFrame { raw_length, frame: Arc::new(frame) }));
+            }
+        }
+        Ok(out)
+    }
+
     pub fn tape_by_source(
         &self,
         source_id: SourceId,
