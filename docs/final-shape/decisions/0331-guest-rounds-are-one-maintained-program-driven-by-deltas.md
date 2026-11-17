@@ -98,5 +98,31 @@ reaching 173–219 of 256 strata, every one maintained or priced into deriving a
 `type_ctx`, `ann_root`, `rr_demand_agg_rr_agg341`, `wstart` the largest, none over 0.2 s). The 4.8 s between the
 last two rows is outside the guests (their spans differ by 0.1 s): one sample's noise.
 
-Open: why the prepared slice's rounds reach more and cost more, and whether the slice should be cut from the
-prepared program at all.
+### Why the slice grew (investigated 2026-11-17)
+
+Not the cut's source: the old slice was cut from the prepared tree too, and the hub's commit (3d7bb7c6a, 0281 step 4)
+only reads the same program from its image. The rule files are the same. What grew is the cone below the roots:
+`RERAIL_DUMP_SLICE` (each relation with the rule that read it first, and the slice's rules) shows
+
+    value <- dunder_all_at <- dunder_all <- public_name <- exports <- resolve_export <- sym_of <- typing_sym
+          <- type_root <- type_ctx <- rr_ctx349 <- rr_embed_req
+
+`dunder_all` reads `value(s, x)` (the library's `imports.rr`). `value` is answered on request (0174), and its
+request relation `rr_value_req` is one relation for the whole program: 46 rules, one per reading site anywhere
+(Ruff's C4xx, PYI0xx, Q011 and version checks among them), never inlined since 0291 (item 3). Following reads, the
+slice takes all 46 and what their bodies read: `call_kwarg`, `c4_*`, `bytes_lit`, `cmp_pair`, `pos_item`, their
+demand splits (`pre_*`) and narrowing asks (`rr_value_req_by_*`). 108 strata new against t9, 3.6 s of the guests'
+profiled CPU; the maintained rounds reach them too.
+
+`front::prune` already knows which request rule serves which reader (`Program::asked_by`, the `asked` about rows)
+and keeps a request rule only while one of its readers is reached. The slice can be cut the same way, but the
+record is by position among the relation's rules, and only lowering keeps it: the prepared program has 46
+`rr_value_req` rules against 36 recorded readers (`rr_token_req` 5 against 3, `rr_node_text_req` 4 against 1),
+since the passes after lowering (simplification, the preparation pipeline: joins pushed, rows located, repeats
+dropped) rewrite request rules and leave the record. With a record that does not match, a gate must fall back to
+taking every rule (`prune` does), so a gated slice cut (`working-data/patches/slice-request-gate.patch`) changes
+nothing today. A rule's derivation source (`R::From`) does not survive the store's fold of an edit into a base.
+
+Open, a choice: (a) the passes after lowering keep the `asked` record (each pass that drops, adds or rewrites a
+request rule states it), so the slice and `prune` both gate on it; or (b) the slice is cut before those passes,
+from the lowered program, where the record holds, and the slice prepared on its own.
