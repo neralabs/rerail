@@ -160,6 +160,8 @@ mod head {
     pub const LANGUAGE: usize = 8;
     pub const MARK: usize = 9;
     pub const CW: usize = 10;
+    /// The source's newlines, u32: its newline index's count (`newlines`).
+    pub const NEWLINES: usize = 12;
     /// The source's length, u64; the node count, u64.
     pub const SOURCE_LEN: usize = 16;
     pub const NODES: usize = 24;
@@ -186,11 +188,11 @@ fn u32_at(b: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(b[at..at + 4].try_into().expect("4 bytes"))
 }
 
-/// Where the regions of `n` nodes start when the first is at `first`, and the end: from the widths and the side
-/// lists' lengths. Each region is followed by 8 bytes of room. A tape's first region is past its header and part
+/// Where the regions of `n` nodes start when the first is at `first`, and the end: from the widths, the side
+/// lists' lengths and the newline index's. Each region is followed by 8 bytes of room. A tape's first region is past its header and part
 /// starts (`first_region`); a decoded 16z block's is at 0.
-fn layout(first: usize, n: usize, w: [usize; 3], cw: usize, sides: [usize; 4]) -> [usize; REGIONS + 1] {
-    let len = [n, n * w[0], n * w[1], n * w[2], n.div_ceil(K) * cw, sides[0], sides[1], sides[2], sides[3]];
+fn layout(first: usize, n: usize, w: [usize; 3], cw: usize, sides: [usize; 4], lines: usize) -> [usize; REGIONS + 1] {
+    let len = [n, n * w[0], n * w[1], n * w[2], n.div_ceil(K) * cw, sides[0], sides[1], sides[2], sides[3], lines];
     let mut at = [first; REGIONS + 1];
     for r in 0..REGIONS {
         at[r + 1] = at[r] + len[r] + 8;
@@ -269,13 +271,16 @@ impl Tape16 {
     /// The tape from its regions (each with its 8 bytes of room) and side lists, laid as stored. `Err` for a tape
     /// past 4 GiB, which its header's u32 starts do not reach.
     #[allow(clippy::too_many_arguments)]
-    fn laid(tag: u8, mark: u8, n: usize, cw: usize, source_len: u64, widths: [usize; 3], arrays: [Vec<u8>; 5], side: [Side; 4]) -> Result<Self, String> {
+    fn laid(tag: u8, mark: u8, n: usize, cw: usize, source_len: u64, widths: [usize; 3], arrays: [Vec<u8>; 5], side: [Side; 4], lines: &[u8]) -> Result<Self, String> {
         let vw = std::array::from_fn(|k| side[k].vw);
-        let p = Placement::of(n, cw, widths, vw, std::array::from_fn(|k| side[k].bytes.len() - 8))?;
+        let newlines = crate::newlines::count(lines).ok_or("a newline index without its count")?;
+        let p = Placement::of(n, cw, widths, vw, std::array::from_fn(|k| side[k].bytes.len() - 8), lines.len(), newlines)?;
         let mut buf = head_bytes(MAGIC16, tag, mark, &p, source_len, std::array::from_fn(|k| side[k].base.as_slice()))?;
         for region in arrays.iter().map(Vec::as_slice).chain(side.iter().map(|s| s.bytes.as_slice())) {
             buf.extend_from_slice(region);
         }
+        buf.extend_from_slice(lines);
+        buf.extend_from_slice(&[0; 8]);
         debug_assert_eq!(buf.len(), p.at[REGIONS]);
         Ok(Tape16 { mark, p, source_len, buf, frame: p.frame_of(source_len) })
     }
@@ -299,6 +304,7 @@ fn head_bytes(magic: &[u8; 8], tag: u8, mark: u8, p: &Placement, source_len: u64
     buf[head::LANGUAGE] = tag;
     buf[head::MARK] = mark;
     buf[head::CW] = p.cw as u8;
+    buf[head::NEWLINES..head::NEWLINES + 4].copy_from_slice(&p.newlines.to_le_bytes());
     buf[head::SOURCE_LEN..head::SOURCE_LEN + 8].copy_from_slice(&source_len.to_le_bytes());
     buf[head::NODES..head::NODES + 8].copy_from_slice(&(p.n as u64).to_le_bytes());
     for k in 0..4 {
@@ -335,14 +341,17 @@ pub struct Placement {
     pub parts: [usize; 4],
     pub vw: [usize; 4],
     pub widths: [usize; 3],
+    /// The source's newlines (it has one line more).
+    pub newlines: u32,
 }
 
 impl Placement {
-    /// The placement of a tape of `n` nodes with these widths and side lists `sides` bytes long.
-    fn of(n: usize, cw: usize, widths: [usize; 3], vw: [usize; 4], sides: [usize; 4]) -> Result<Self, String> {
+    /// The placement of a tape of `n` nodes with these widths, side lists `sides` bytes long and a newline index
+    /// `lines` bytes long of `newlines`.
+    fn of(n: usize, cw: usize, widths: [usize; 3], vw: [usize; 4], sides: [usize; 4], lines: usize, newlines: u32) -> Result<Self, String> {
         let first = first_region(n).ok_or("a tape length overflows")?;
         let parts = n.div_ceil(PART) + 1;
-        Ok(Placement { n, cw, at: layout(first, n, widths, cw, sides), parts: std::array::from_fn(|k| HEAD16 + 4 * k * parts), vw, widths })
+        Ok(Placement { n, cw, at: layout(first, n, widths, cw, sides, lines), parts: std::array::from_fn(|k| HEAD16 + 4 * k * parts), vw, widths, newlines })
     }
 
     /// Part `j`'s start in side list `k`'s region (one more at the end), in `buf`, the tape's bytes or its 16z
@@ -371,6 +380,8 @@ impl Placement {
             columns: [at(self.at[0])?, at(self.at[1])?, at(self.at[2])?, at(self.at[3])?, at(self.at[4])?],
             side: [at(self.at[5])?, at(self.at[6])?, at(self.at[7])?, at(self.at[8])?],
             parts: [at(self.parts[0])?, at(self.parts[1])?, at(self.parts[2])?, at(self.parts[3])?],
+            lines: at(self.at[9])?,
+            line_count: self.newlines.checked_add(1).ok_or("a source past 4 G lines")?,
             ..Default::default()
         })
     }
@@ -414,7 +425,8 @@ fn header(buf: &[u8]) -> Result<Placement, String> {
         return Err(bad());
     }
     let parts = n.div_ceil(PART) + 1;
-    Ok(Placement { n, cw, at, parts: std::array::from_fn(|k| HEAD16 + 4 * k * parts), vw, widths })
+    let newlines = u32s(buf, head::NEWLINES, 1)?[0];
+    Ok(Placement { n, cw, at, parts: std::array::from_fn(|k| HEAD16 + 4 * k * parts), vw, widths, newlines })
 }
 
 /// Each side list's part starts in `buf` (from 0, in order, the last its length) fit the region `p` gives it.
@@ -443,7 +455,17 @@ pub fn placement(buf: &[u8]) -> Result<Placement, String> {
         return Err(format!("a format 16 tape of {} bytes, its header says {}", buf.len(), p.at[REGIONS]));
     }
     check_parts(buf, &p)?;
+    check_lines(&buf[p.at[9]..p.at[10] - 8], &p, u64_at(buf, head::SOURCE_LEN)?)?;
     Ok(p)
+}
+
+/// The newline index `lines` fits its source and holds the header's count of newlines.
+fn check_lines(lines: &[u8], p: &Placement, source_len: u64) -> Result<(), String> {
+    crate::newlines::check(lines, source_len)?;
+    if crate::newlines::count(lines) != Some(p.newlines) {
+        return Err("a newline index whose count is not its header's".into());
+    }
+    Ok(())
 }
 
 /// The width in bytes a value up to `max` takes (at least 1).
@@ -518,7 +540,9 @@ fn part_into(out: &mut Vec<u8>, e: &[(u32, u64)], nb: usize, vw: usize) {
 /// The side lists' value widths come from the document's bounds (a slot is at most `4n + 3`, a gap or a length the
 /// source's length), so they are known before the first block. `Err` where a node's values break them (a start
 /// before the one before it, a span past the source): no tape is made of it.
-pub fn write(lang: &Lang, n: usize, source_len: u64, tag: u8, z: bool, mut node: impl FnMut(usize) -> Node) -> Result<Written, String> {
+pub fn write(lang: &Lang, n: usize, source: &[u8], tag: u8, z: bool, mut node: impl FnMut(usize) -> Node) -> Result<Written, String> {
+    let source_len = source.len() as u64;
+    let lines = crate::newlines::index(source);
     let w = lang.widths;
     let esc = [mask(w[0]), mask(w[1]), mask(w[2])];
     let cw = bytes_for(source_len);
@@ -657,15 +681,16 @@ pub fn write(lang: &Lang, n: usize, source_len: u64, tag: u8, z: bool, mut node:
                 k += 1;
                 Side { bytes, base, vw: vw[k - 1] }
             });
-            Written::F16(Tape16::laid(tag, mark, n, cw, source_len, w, arrays, side)?)
+            Written::F16(Tape16::laid(tag, mark, n, cw, source_len, w, arrays, side, &lines)?)
         }
         Out::Blocks { pieces, ckpt, mut base, sides, .. } => {
             for q in 0..4 {
                 base[q].push(sides[q] as u32);
             }
-            let p = Placement::of(n, cw, w, vw, sides)?;
+            let newlines = crate::newlines::count(&lines).ok_or("a newline index without its count")?;
+            let p = Placement::of(n, cw, w, vw, sides, lines.len(), newlines)?;
             let head = head_bytes(MAGIC16Z, tag, mark, &p, source_len, std::array::from_fn(|k| base[k].as_slice()))?;
-            Written::F16Z(Tape16Z::laid(head, p, mark, source_len, &ckpt, pieces))
+            Written::F16Z(Tape16Z::laid(head, p, mark, source_len, &ckpt, &lines, pieces))
         }
     })
 }
@@ -674,9 +699,9 @@ const NONE: u32 = u32::MAX;
 
 /// Format 16 (or 16z where `z`) written from another tape `t`, each node's code mapped to the language's number
 /// (`number`, by `t`'s code), in one pass (`write`): a tape a parser did not write in format 16 (decision 0293).
-pub fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source_len: u64, tag: u8, z: bool) -> Result<Written, String> {
+pub fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], tag: u8, z: bool) -> Result<Written, String> {
     let mut s = 0;
-    write(lang, t.len(), source_len, tag, z, |i| {
+    write(lang, t.len(), source, tag, z, |i| {
         s = t.start_next(i, s);
         Node { number: number[t.code(i) as usize], start: s, end: t.end_with_start(i, s), subtree_end: t.subtree_end(i) }
     })
@@ -723,6 +748,18 @@ pub struct F16<'a> {
 }
 
 impl F16<'_> {
+    /// The line (from 0) byte `x` of the source lies in: the newlines before it, by the tape's newline index.
+    pub fn line(&self, x: u32) -> u32 {
+        reads::tape_line(self.bytes, &self.view, x)
+    }
+    /// Line `k`'s first byte (`k` up to the source's newlines).
+    pub fn line_start(&self, k: u32) -> u32 {
+        reads::tape_line_start(self.bytes, &self.view, k)
+    }
+    /// The source's lines: one more than its newlines.
+    pub fn lines(&self) -> u32 {
+        self.view.line_count
+    }
     /// Each node's code byte.
     fn codes(&self) -> &[u8] {
         let at = self.view.columns[0] as usize;
@@ -786,8 +823,9 @@ impl Tape for F16<'_> {
 /// its block.
 pub const Z: usize = PART;
 
-/// The regions of a format 16 tape, in order: codes, slots, gaps, lengths, checkpoints, the four side lists.
-const REGIONS: usize = 9;
+/// The regions of a format 16 tape, in order: codes, slots, gaps, lengths, checkpoints, the four side lists, the
+/// newline index.
+const REGIONS: usize = 10;
 
 /// The pieces a 16z block is stored in, one an array: codes, slots, gaps, lengths. Each is the block's bytes of
 /// the array, then the array's side list's part for the block (0156 §2.1: one decode gives both).
@@ -863,7 +901,7 @@ impl Tape16 {
         }
         let mut head = self.buf[..self.p.at[0]].to_vec();
         head[..8].copy_from_slice(MAGIC16Z);
-        Tape16Z::laid(head, self.p, self.mark, self.source_len, &self.buf[self.p.at[4]..self.p.at[5] - 8], pieces)
+        Tape16Z::laid(head, self.p, self.mark, self.source_len, &self.buf[self.p.at[4]..self.p.at[5] - 8], &self.buf[self.p.at[9]..self.p.at[10] - 8], pieces)
     }
 }
 
@@ -871,6 +909,7 @@ impl Tape16 {
 ///
 /// - the header and side lists' part starts of the format 16 tape it decodes to, its magic `MAGIC16Z`;
 /// - the checkpoints, raw (absolute starts do not compress), with their room;
+/// - the newline index, raw, with its room (read in place: `newlines`);
 /// - the piece index: each piece's start in the payload (a u32, one more at the end), then each one's kind (a byte);
 /// - the payload.
 ///
@@ -893,21 +932,29 @@ pub struct Tape16Z {
 }
 
 /// Where a 16z tape's piece index, its kinds and its payload begin, and the number of pieces, from the placement of
-/// the tape it decodes to: past the head (up to the first region) and the checkpoints.
+/// the tape it decodes to: past the head (up to the first region), the checkpoints and the newline index.
 fn index_at(p: &Placement) -> (usize, usize, usize, usize) {
     let count = PIECES * p.n.div_ceil(Z);
-    let ix = (p.at[0] + p.at[5] - p.at[4]).next_multiple_of(4);
+    let ix = (lines_at(p) + p.at[10] - p.at[9]).next_multiple_of(4);
     let kinds = ix + 4 * (count + 1);
     (ix, kinds, (kinds + count).next_multiple_of(4), count)
 }
 
+/// Where a 16z tape's newline index lies: past its head and its checkpoints.
+fn lines_at(p: &Placement) -> usize {
+    p.at[0] + p.at[5] - p.at[4]
+}
+
 impl Tape16Z {
-    /// The tape from its head (`head_bytes`, magic `MAGIC16Z`), its checkpoints and its pieces, laid as stored.
-    fn laid(head: Vec<u8>, p: Placement, mark: u8, source_len: u64, ckpt: &[u8], pieces: Pieces) -> Self {
+    /// The tape from its head (`head_bytes`, magic `MAGIC16Z`), its checkpoints, its newline index and its pieces,
+    /// laid as stored.
+    fn laid(head: Vec<u8>, p: Placement, mark: u8, source_len: u64, ckpt: &[u8], lines: &[u8], pieces: Pieces) -> Self {
         let (ix, kinds, payload, count) = index_at(&p);
-        debug_assert_eq!((head.len(), ckpt.len() + 8, pieces.kinds.len()), (p.at[0], p.at[5] - p.at[4], count));
+        debug_assert_eq!((head.len(), ckpt.len() + 8, lines.len() + 8, pieces.kinds.len()), (p.at[0], p.at[5] - p.at[4], p.at[10] - p.at[9], count));
         let mut buf = head;
         buf.extend_from_slice(ckpt);
+        buf.extend_from_slice(&[0; 8]);
+        buf.extend_from_slice(lines);
         buf.extend_from_slice(&[0; 8]);
         buf.resize(ix, 0);
         for o in &pieces.offs {
@@ -954,7 +1001,10 @@ impl Tape16Z {
         if buf.len() < payload {
             return Err("a 16z tape's piece index does not fit it".into());
         }
-        let t = Tape16Z { id: next_id(), mark: buf[head::MARK], p, source_len: u64_at(&buf, head::SOURCE_LEN)?, buf, ix, kinds, payload };
+        let source_len = u64_at(&buf, head::SOURCE_LEN)?;
+        let l = lines_at(&p);
+        check_lines(&buf[l..l + p.at[10] - p.at[9] - 8], &p, source_len)?;
+        let t = Tape16Z { id: next_id(), mark: buf[head::MARK], p, source_len, buf, ix, kinds, payload };
         let off = |j: usize| u32_at(&t.buf, ix + 4 * j) as usize;
         if off(0) != 0 || off(count) != t.buf.len() - payload || (0..count).any(|j| off(j) > off(j + 1)) {
             return Err("a 16z tape's piece index does not fit it".into());
@@ -1021,7 +1071,7 @@ impl Tape16Z {
     }
 
     /// The format 16 tape's parts that are not in blocks, into `out` (`decoded_len` bytes): its header and part
-    /// starts, its checkpoints, and each region's room. With every block (`decode_block_into`), `out` is the format
+    /// starts, its checkpoints, its newline index, and each region's room. With every block (`decode_block_into`), `out` is the format
     /// 16 tape (`decode_into`).
     pub fn decode_head_into(&self, out: &mut [u8]) -> Result<(), String> {
         if out.len() != self.decoded_len() {
@@ -1031,6 +1081,8 @@ impl Tape16Z {
         out[..at[0]].copy_from_slice(&self.buf[..at[0]]);
         out[..8].copy_from_slice(MAGIC16);
         out[at[4]..at[5]].copy_from_slice(&self.buf[at[0]..at[0] + at[5] - at[4]]);
+        let l = lines_at(&self.p);
+        out[at[9]..at[10]].copy_from_slice(&self.buf[l..l + at[10] - at[9]]);
         for r in 0..REGIONS {
             out[at[r + 1] - 8..at[r + 1]].fill(0);
         }
@@ -1136,7 +1188,8 @@ impl F16Z<'_> {
         let t = self.t;
         let nb = Z.min(t.p.n - b * Z);
         let sides: [usize; 4] = std::array::from_fn(|k| t.p.part_start(&t.buf, k, b + 1) - t.p.part_start(&t.buf, k, b));
-        let at = layout(0, nb, t.p.widths, t.p.cw, sides);
+        // No newline index: a block's view answers no line (the whole tape's does).
+        let at = layout(0, nb, t.p.widths, t.p.cw, sides, 0);
         let end = at[REGIONS];
         slot.raw.clear();
         slot.raw.resize(end + 32, 0);
@@ -1154,7 +1207,7 @@ impl F16Z<'_> {
         for (k, &len) in sides.iter().enumerate() {
             slot.raw[end + 8 * k + 4..end + 8 * k + 8].copy_from_slice(&(len as u32).to_le_bytes());
         }
-        let p = Placement { n: nb, cw: t.p.cw, at, parts: std::array::from_fn(|k| end + 8 * k), vw: t.p.vw, widths: t.p.widths };
+        let p = Placement { n: nb, cw: t.p.cw, at, parts: std::array::from_fn(|k| end + 8 * k), vw: t.p.vw, widths: t.p.widths, newlines: 0 };
         slot.view = p.frame(0).and_then(|frame| bind(frame, self.lang)).expect("a block's view: its widths are its tape's, checked when read");
         slot.b = Some((t.id, b));
     }
@@ -1263,8 +1316,9 @@ mod tests {
 
     /// Format 16 written from `t` in one pass, and 16z written the same way, which is the format 16 tape's blocks.
     fn sixteen<T: Tape>(lang: &Lang, t: &T, number: &[u32], source_len: u64) -> Tape16 {
-        let Ok(Written::F16(plain)) = write_from(lang, t, number, source_len, 0, false) else { panic!("format 16") };
-        let Ok(Written::F16Z(z)) = write_from(lang, t, number, source_len, 0, true) else { panic!("16z") };
+        let source = source_of(source_len);
+        let Ok(Written::F16(plain)) = write_from(lang, t, number, &source, 0, false) else { panic!("format 16") };
+        let Ok(Written::F16Z(z)) = write_from(lang, t, number, &source, 0, true) else { panic!("16z") };
         assert_eq!(z.as_bytes(), plain.blocks().as_bytes(), "16z written directly is format 16's blocks");
         let mut decoded = vec![0u8; z.decoded_len()];
         z.decode_into(&mut decoded).unwrap();
@@ -1282,7 +1336,51 @@ mod tests {
         // The header holds each region's start: the placement is read, not summed.
         let starts = u32s(plain.as_bytes(), head::STARTS, REGIONS + 1).unwrap();
         assert!(starts.iter().zip(p.at).all(|(&s, a)| s as usize == a), "the header's starts are the regions'");
+        lines_answer(&plain.reader(lang).unwrap(), &source);
         plain
+    }
+
+    /// A source `len` bytes long whose newlines come both spread and in runs.
+    fn source_of(len: u64) -> Vec<u8> {
+        (0..len).map(|i| if i % 41 == 40 || ((i / 500) % 7 == 3 && i % 3 == 0) { b'\n' } else { b'x' }).collect()
+    }
+
+    /// Every byte's line and every line's start, as counting the source's newlines says.
+    fn lines_answer(t: &F16<'_>, source: &[u8]) {
+        let starts: Vec<u32> = std::iter::once(0).chain(source.iter().enumerate().filter(|(_, b)| **b == b'\n').map(|(i, _)| i as u32 + 1)).collect();
+        assert_eq!(t.lines() as usize, starts.len(), "lines");
+        for (k, &s) in starts.iter().enumerate() {
+            assert_eq!(t.line_start(k as u32), s, "line {k}'s start");
+        }
+        let mut line = 0;
+        for x in 0..=source.len() {
+            assert_eq!(t.line(x as u32), line, "byte {x}'s line");
+            if source.get(x) == Some(&b'\n') {
+                line += 1;
+            }
+        }
+    }
+
+    /// The line reads over sources whose newlines are dense, sparse, bunched and absent: a tape of one node.
+    #[test]
+    fn format_16_answers_lines() {
+        let (image, _) = crate::tape::tests::sample();
+        let (columns, table) = f15_columns(&image).unwrap();
+        let f15 = F15::new(&image, columns, &table).unwrap();
+        let lang = lang_of(&table);
+        let number = numbers(&lang, &table).unwrap();
+        let span = f15.end(0);
+        for mut source in crate::newlines::tests::sources() {
+            source.resize(source.len().max(span as usize), b'y');
+            let Ok(Written::F16(t)) = write_from(&lang, &f15, &number, &source, 0, false) else { panic!("format 16") };
+            let back = Tape16::from_bytes(t.as_bytes().to_vec()).unwrap();
+            lines_answer(&back.reader(&lang).unwrap(), &source);
+            let Ok(Written::F16Z(z)) = write_from(&lang, &f15, &number, &source, 0, true) else { panic!("16z") };
+            let z = Tape16Z::from_bytes(z.into_bytes()).unwrap();
+            let mut decoded = vec![0u8; z.decoded_len()];
+            z.decode_into(&mut decoded).unwrap();
+            assert_eq!(decoded, t.as_bytes(), "16z holds the newline index");
+        }
     }
 
     /// A language whose table is the tape's own, numbered as it is, at one byte a value.

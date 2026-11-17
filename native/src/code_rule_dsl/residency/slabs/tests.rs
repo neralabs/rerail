@@ -202,7 +202,7 @@ kernel void tape_conformance(device const ChunkTape* docs [[buffer(0)]],device c
                 let grammar = Grammar::new(*lang).unwrap();
                 // Made as a run of `format` makes it, whatever the process's run stores.
                 crate::code_rule_dsl::tape::formats::as_run(format, || {
-                    let image = crate::code_rule_dsl::tape::TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary.in_format(format);
+                    let image = crate::code_rule_dsl::tape::TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary.in_format(format, source.as_bytes());
                     crate::code_rule_dsl::tape::TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false).unwrap()
                 })
             })

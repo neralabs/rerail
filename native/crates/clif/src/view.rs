@@ -33,7 +33,8 @@ macro_rules! tape_view_fields {
     pub codes: u32,
     pub source: u32,
     pub source_len: u32,
-    /// Line starts (u32, document-local bytes), the first 0, and how many.
+    /// Format 15: line starts (u32, document-local bytes), the first 0. Format 16: its newline index
+    /// (`rerail_tape_format::newlines`). And how many lines.
     pub lines: u32,
     pub line_count: u32,
     /// The code table's length.
@@ -85,4 +86,6 @@ pub mod at {
     pub const PARTS: i32 = offset_of!(TapeView, parts) as i32;
     pub const CUT: i32 = offset_of!(TapeView, cut) as i32;
     pub const PER: i32 = offset_of!(TapeView, per) as i32;
+    pub const LINES: i32 = offset_of!(TapeView, lines) as i32;
+    pub const LINE_COUNT: i32 = offset_of!(TapeView, line_count) as i32;
 }

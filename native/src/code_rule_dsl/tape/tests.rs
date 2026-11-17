@@ -5124,7 +5124,7 @@ fn a_file_stored_in_each_format_reads_back_as_format_15() {
         assert_eq!(image.primary.format(), Format::F15, "the tests' run stores format 15");
         let reference = TapeDoc::restore(Arc::new(source.clone()), Arc::clone(&grammar), &image, &|| false).unwrap();
         for format in Format::ALL {
-            let stored = image.clone().in_format(format).round_trip(&grammar).unwrap();
+            let stored = image.clone().in_format(format, &source).round_trip(&grammar).unwrap();
             let has_table = |dialect| crate::code_rule_dsl::language::tape_tag(dialect).and_then(rerail_tape_format::f16::lang).is_some();
             let held = |tape: &TapeImage| if has_table(tape.language) { format } else { Format::F15 };
             assert_eq!(stored.primary.format(), held(&stored.primary), "{lang:?} in {}", format.name());
@@ -5190,7 +5190,7 @@ fn the_lean_parsers_write_each_format_directly() {
             direct.push(at.clone());
             assert_eq!(image.source_digest, reference.source_digest, "{at}");
             // The bytes format 15's image converts to (`in_format`): one writer, whichever way it is fed.
-            assert_eq!(image.to_bytes().unwrap(), reference.clone().in_format(format).to_bytes().unwrap(), "{at}: bytes");
+            assert_eq!(image.to_bytes().unwrap(), reference.clone().in_format(format, source.as_bytes()).to_bytes().unwrap(), "{at}: bytes");
             let (a, b) = (reference.tape(), image.tape());
             rerail_tape_format::with_tape!(a, |a| rerail_tape_format::with_tape!(b, |b| {
                 assert_eq!(a.len(), b.len(), "{at}");
@@ -5228,7 +5228,7 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
             let native = StrDoc::new(source, *lang);
             let grammar = Grammar::new(*lang).unwrap();
             let doc = as_run(format, || {
-                let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary.in_format(format);
+                let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary.in_format(format, source.as_bytes());
                 TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false).unwrap()
             });
             assert_eq!(doc.doc_tape().image().format(), format, "held as {format:?}");

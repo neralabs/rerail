@@ -340,7 +340,7 @@ fn instruction(
         let off = data.load_store_offset().unwrap_or(0);
         let address_low = dfg.inst_args(inst).first().is_some_and(|a| low.contains(&dfg.resolve_aliases(*a)));
         if off == 0 {
-            format!("{p}")
+            p.to_string()
         } else if address_low {
             format!("({p}+uint({}u))", off as i64 as u64 as u32)
         } else {
@@ -381,6 +381,8 @@ fn instruction(
         Opcode::UshrImm => set(shift(&args[0], &(imm()? as u64 & 63).to_string(), ">>", false)),
         Opcode::SshrImm => set(shift(&args[0], &(imm()? as u64 & 63).to_string(), ">>", true)),
         Opcode::Clz => set(format!("{u}(clz({}))", args[0])),
+        Opcode::Popcnt => set(format!("{u}(popcount({}))", args[0])),
+        Opcode::Ctz => set(format!("{u}(ctz({}))", args[0])),
         Opcode::Umin => set(format!("min({},{})", args[0], args[1])),
         Opcode::Umax => set(format!("max({},{})", args[0], args[1])),
         Opcode::Icmp | Opcode::IcmpImm => {

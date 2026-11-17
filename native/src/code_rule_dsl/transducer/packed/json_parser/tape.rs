@@ -21,6 +21,6 @@ impl TreeParser for Bitlex {
         };
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::SourceByte, source.len() as u64);
         // The image is tier 2's bytes, read as stored: nothing is packed again (decision 0140).
-        Some(TapeImage::parsed(&image, grammar, source, &budget).map(FileImage::single).map_err(TemplateError::Encode))
+        Some(TapeImage::parsed(&image, grammar, source, &budget).map(|image| FileImage::single(image, source)).map_err(TemplateError::Encode))
     }
 }

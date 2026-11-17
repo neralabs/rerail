@@ -1491,8 +1491,10 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 
 ### Q66. Line starts and the code table come with format 16 (0336 §1)
 
-- **Now**: the residency counts newlines byte by byte on the host at every placement and writes a `DeviceCode` table
-  per document (`residency/slabs.rs`, `resident::device_codes_of`).
+- **Now** (2026-11-17): format 16's writer writes the newline index as region 9 (`tape_format::newlines`, layout 3),
+  and the CLIF reads `tape_line` and `tape_line_start` answer from it (Rust and MSL, checked against counting the
+  source). 16z holds the index raw. The residency still counts newlines byte by byte on the host at every placement
+  and writes a `DeviceCode` table per document (`residency/slabs.rs`, `resident::device_codes_of`).
 - **Done when**: format 16's writer writes the newline index (0156 §1.6, Elias–Fano, a node's line the rank of its
   start) and the reads answer a line from it; the language's code table is placed once per batch per language and
   named by the header's tag; the placement's line count and per-document table are gone.
@@ -1501,4 +1503,5 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 
 - **Done when**: each workload runs on 15, 16 and 16z with the same finding keys (the loose findings contract) and
   its costs recorded per format; every difference is fixed; `.rr` has a format 16 table. Then format 15 is retired
-  for documents.
+  for documents, and not before: the user (2026-11-17), "I don't want to do it right now, as we still haven't proven
+  that format 16 dominates it in all of our required ways".

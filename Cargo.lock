@@ -4559,6 +4559,7 @@ name = "rerail-tape-format"
 version = "0.1.0"
 dependencies = [
  "lz4-sys",
+ "memchr",
  "rerail-clif",
  "sha2 0.10.9",
 ]

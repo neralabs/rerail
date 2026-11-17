@@ -38,7 +38,8 @@ form. This decision says which of them go and what replaces them.
 3. **Format 15 is retired for documents, after every workload has run on 15 and 16 side by side and every
    difference is fixed** (the user, 2026-11-17). Until then both formats stay, and the comparison is the gate: the
    same finding keys (the loose findings contract), and each workload's costs, for 15, 16 and 16z. `.rr` needs a
-   format 16 table first.
+   format 16 table first. Not now (the user, 2026-11-17): "I don't want to do it right now, as we still haven't
+   proven that format 16 dominates it in all of our required ways". Retiring 15 waits on that proof.
 4. **Built in part (2026-11-17): the header holds each region's start.** Format 16's header held each region's
    length (nine u64s), and every reader summed them. It now holds ten u32 starts from the tape's first byte (the
    last is the end), and the slot, gap and length widths (as 16z's did), in 80 bytes where it took 112. A reader
@@ -62,6 +63,17 @@ form. This decision says which of them go and what replaces them.
      starts, checkpoints, rooms) is copied once (`decode_head_into`).
    Stored tapes are keyed by layout (`F16_LAYOUT` = 2: keys 216 and 1216, were 16 and 1016), so a store built before
    reads cold. No dictionary yet (0156 §2.3). §2's kernel and planner step are Q65; §1 is Q66; §3's gate is Q67.
+
+6. **Format 16 holds its newline index (2026-11-17, §1's first half).** Region 9, after the side lists, is 0156
+   §1.6's Elias–Fano index of the source's `\n` offsets (`tape_format::newlines`): a header of five u32s, a sample
+   (word, count before) of every 256th zero and one of the high bits, the high bits, then the low parts. The
+   header holds the newline count (byte 12). A byte's line is the newlines before it (`tape_line`: the bucket's
+   bounds by select on the zeros, then a scan of its low parts); line `k` starts one past newline `k - 1`
+   (`tape_line_start`: select on the ones). Both are CLIF reads, so the CPU, the JIT and Metal run the same body;
+   format 15 answers them from its line-start array. The writer takes the source, not its length. 16z stores the
+   index raw after its checkpoints; a block decoded alone carries none (the whole tape's view answers lines).
+   Stores are keyed by layout 3 (316 and 1316). Still owed: the residency reading lines from the tape instead of
+   counting them, and the code table placed once per language.
 
 ## Consequences
 

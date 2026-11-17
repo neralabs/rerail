@@ -248,7 +248,13 @@ mod tests {
         type Group = extern "C" fn(*const u8, u32, u64) -> u64;
         // SAFETY: each read's signature: its descriptor's address, then its parameters.
         let (rows_get, col_get, rel_get): (Two, Two, Two) =
-            unsafe { (std::mem::transmute(reads.function("rows_get")), std::mem::transmute(reads.function("col_get")), std::mem::transmute(reads.function("rel_get"))) };
+            unsafe {
+                (
+                    std::mem::transmute::<*const u8, Two>(reads.function("rows_get")),
+                    std::mem::transmute::<*const u8, Two>(reads.function("col_get")),
+                    std::mem::transmute::<*const u8, Two>(reads.function("rel_get")),
+                )
+            };
         let rel_dead: One = unsafe { std::mem::transmute(reads.function("rel_dead")) };
         let rel_group: Group = unsafe { std::mem::transmute(reads.function("rel_group")) };
 
