@@ -3786,6 +3786,15 @@ impl Source for Viewed {
         }
         out
     }
+    fn rows_of(&self, columns: &[usize], out: &mut Vec<i64>) {
+        let offsets = self.batch.offsets(self.view);
+        out.reserve(self.len() * columns.len());
+        for (doc, p) in self.batch.docs.iter().enumerate() {
+            for i in 0..offsets[doc + 1] - offsets[doc] {
+                out.extend(columns.iter().map(|&c| self.value_at(p, i, c)));
+            }
+        }
+    }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
         let (p, i) = self.batch.locate(self.view, row);
         for (o, &c) in out.iter_mut().zip(columns) {

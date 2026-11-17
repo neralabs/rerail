@@ -97,6 +97,17 @@ pub trait Source: Send + Sync {
             *o = self.value(row, c);
         }
     }
+    /// Every row's values of `columns`, row after row, appended to `out`: `row_at` a row at a time by default; a
+    /// view of a batch's documents reads each document's rows in turn, finding no row's place.
+    fn rows_of(&self, columns: &[usize], out: &mut Vec<i64>) {
+        let k = columns.len();
+        out.reserve(self.len() * k);
+        for row in 0..self.len() {
+            let at = out.len();
+            out.resize(at + k, 0);
+            self.row_at(row, columns, &mut out[at..]);
+        }
+    }
     fn estimated_len(&self) -> usize {
         self.len()
     }

@@ -10552,7 +10552,9 @@ impl Own {
             for (i, arg) in atom.args().enumerate() {
                 // A kind, field or name is a branded term (decision 0270), its atom the column's value, as the
                 // planner reads it (`Constant::Int(a.value())`). Left out, no field name was counted: `field($fc,
-                // #f65561, $e)` was priced as absent (one row) and led `pre_115`'s plan over a cold PostHog run.
+                // #f65561, $e)` was priced as absent (one row) and led `pre_115`'s plan over a cold PostHog run, and
+                // `field($l, "left", $t)` was priced at one row a line (Q36: 1,159 read; `p293_read_elsewhere`, 8
+                // priced for 196,060 done).
                 let n = match arg {
                     TermRef::Int(n) => n,
                     TermRef::Branded(a) => a.value(),
@@ -10880,6 +10882,18 @@ pub mod tests {
         assert!(demands["alias"].contains(&(1,9)));
         assert!(demands["tags"].contains(&(1,9)));
         assert!(demands["raw"].contains(&(2,9)),"measure the actual source column before planning its consumers");
+    }
+
+    /// A kind's or a field's name in a rule is a branded atom (decision 0270): its postings are counted as an
+    /// integer constant's are (Q36: unread, `field($l, "left", $t)` was priced at one row, 1,159 read).
+    #[test]
+    fn branded_constants_have_their_postings_counted() {
+        use super::*;
+        let p = front::prune(crate::code_rule_dsl::logic::rr::parse(".decl left_name(l: node)\n.output left_name\nleft_name(l) :- field(l, \"left\", t), kind(t, \"identifier\").\n").unwrap());
+        let placed = crate::code_rule_dsl::logic::plan::body::Placed::of_program(&p).unwrap();
+        let constants = Own::constants_of(&placed.v);
+        let of = |rel: &str| constants.iter().filter(|((r, _), _)| r == rel).map(|(_, v)| v.len()).sum::<usize>();
+        assert_eq!((of("field"), of("kind")), (1, 1), "{constants:?}");
     }
 
     #[test]

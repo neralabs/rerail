@@ -52,3 +52,24 @@ counted too (111 kinds where the rows hold 78).
 - Inlining `kind` into its readers (0097's choice, 48082beb9) stays priced. Unpriced in every module, instructions
   went 2,558 -> 4,734 G.
 - A projection of another input, or one that drops `node`'s key, still runs: its rows need a dedup.
+
+## One mechanism with Q37 (2026-11-17)
+
+cost-classifier-metal-rf built the same thing at the same time (work queue Q37, 6fe55cb12 to 4085f6120): any rule that
+copies a bound input's columns and keeps its key (`input_view_shape`: `node`'s `n`, `doc`'s and `tape`'s first column,
+or every column) is held as a view, never a stratum, never kept, and a session counts it neither run nor clean. Its
+measurement: read in place through the source, each reader's row went back through it (the row's document, a kind's
+dialect), 8.4 s against the copy's 6.0 on fixtures/python, so it reads the columns once into flat rows and sketches
+them as a stratum's relation is sketched.
+
+The merge keeps one mechanism, Q37's: its detection, its handling in sessions, retain's cut and the kept choices.
+This decision is one of its two read forms, chosen by the source:
+
+- **In place** (this decision), where the source answers the view's probes from its own index and counts its columns
+  without reading its rows: a batch's `node` (`Source::sorted_rows`, the field by child off the tape, fdf391f11;
+  `syntax::node_column_counts`). The cost Q37 measured was the per-row document search those slices removed. On a
+  cold PostHog run, `kind` cost 0.8 s held so, against about 14 s copied.
+- **Flat rows** (Q37's `hold_view`), for every other source.
+
+Either way the view's statistics are a copy's: exact counts in place, sketches over the flat rows. `node_projection`
+and the run loop's own dispatch are gone; `RERAIL_COPY_VIEWS` derives every view as a stratum, both forms included.
