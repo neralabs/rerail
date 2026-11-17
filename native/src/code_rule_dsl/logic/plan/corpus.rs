@@ -3962,7 +3962,9 @@ fn run_observed(
             let last = memo::last_program(store, &memo_program);
             // Unknown until this run ends: a run that stops before leaves the next one counting every file in.
             memo::set_last_program(store, &memo_program, None);
-            let mut k = (last == Some(memo_whole)).then(|| store.stat_blob(memo_whole).ok().flatten()).flatten().and_then(|b| keptstats::Keeper::decode(&b)).unwrap_or_default();
+            // The last program's, whichever it was: a relation a rule's edit reached since is counted again from
+            // scratch, the others are as counted (`Keeper::begin`, by identity; decision 0225 §2).
+            let mut k = last.and_then(|w| store.stat_blob(w).ok().flatten()).and_then(|b| keptstats::Keeper::decode(&b)).unwrap_or_default();
             // Its constants are the store's atoms: this process's, mapped (decision 0170), in one call.
             let atoms = store.atoms_handle();
             if atoms.holds_by_reading() {
@@ -4003,7 +4005,7 @@ fn run_observed(
                 })
                 .collect(),
         });
-        k.begin(&rels, doc_at, keep);
+        k.begin(&rels, &memo_ids, doc_at, keep);
     }
     // Decision 0117 step 1: a run with no session keeps its cross-file part's inputs in the store's frames, so an
     // unchanged file's export and base rows are there already. Its memo hit reads only its entry's outputs (nodes,
@@ -4040,7 +4042,8 @@ fn run_observed(
         }
     };
     // The files the keeper counted, with the content and key it counted each under: one the same now is unchanged.
-    let counted_now: HashMap<String, (memo::Content, i64)> = match keeper.as_ref().filter(|_| kept_route) {
+    // None while the keeper counts some relations again: each file's entry must hold their rows.
+    let counted_now: HashMap<String, (memo::Content, i64)> = match keeper.as_ref().filter(|k| kept_route && !k.has_fresh()) {
         Some(k) => k.counted_files().into_iter().map(|(p, c, key)| (p, (c, key))).collect(),
         None => HashMap::new(),
     };
@@ -4628,10 +4631,8 @@ fn run_observed(
         let program = Arc::clone(cones.lock().entry(wanted.clone()).or_insert_with(|| Arc::new(wanted_cone(&local, wanted))));
         let v = &program.version;
         let mut reads: BTreeSet<String> = v.rules().flat_map(|r| r.reads().map(|a| v.rel_name(a.rel()).to_owned())).collect();
-        reads.extend(stored.iter().map(|(r, _)| r.clone()));
-        // The base relations the cross-file part reads (`split.base`): every chunk hands them on whole, or the cross
-        // part sees them changed (`col`, `end_line`, `doc` missing for a cut of partials) and runs its strata again.
-        reads.extend(split.base.iter().cloned());
+        // Not the base relations the memo holds for the cross-file part (`stored`): a chunk of partial hits hands on
+        // its entries' rows of them, never the batch's (`Finish`), so they are not made for its files.
         reads.extend(constants.keys().map(|(r, _)| r.clone()));
         reads.extend(["node", "child", "doc"].map(str::to_owned));
         // A text test's rows are attributed to the files whose text holds their strings (`text_sources`).
@@ -5809,8 +5810,9 @@ fn run_observed(
                 held.1[to].get_or_insert_with(Vec::new).extend(keep.iter().map(|&r| source.value(r, c)));
             }
         }
-        // Each memoised file's base rows, once the exports name the nodes a semi-join keeps.
-        if attributable {
+        // Each memoised file's base rows, once the exports name the nodes a semi-join keeps. Not for a chunk of
+        // partial hits: its documents' base rows are their entries' (below), so none is attributed again.
+        if attributable && cone.is_none() {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "base rows for the memo".into()); 
             for entry in entries.values_mut() {
                 for (rel, _) in &stored {
