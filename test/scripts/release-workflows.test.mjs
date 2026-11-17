@@ -73,8 +73,8 @@ describe("release-pr.yml", () => {
     expect(release.concurrency["cancel-in-progress"]).toBe("${{ github.event_name == 'push' }}");
   });
 
-  it("offers the three actions, and names the branches the scripts use", () => {
-    expect(release.on.workflow_dispatch.inputs.action.options).toEqual(["freeze", "cherry-pick", "unfreeze"]);
+  it("offers the four actions, and names the branches the scripts use", () => {
+    expect(release.on.workflow_dispatch.inputs.action.options).toEqual(["freeze", "cherry-pick", "unfreeze", "set-version"]);
     expect(release.env).toEqual({ RELEASE_BRANCH, CANDIDATE_BRANCH });
   });
 

@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { PLUGIN_PINS } from "../../scripts/release/core.mjs";
 import { linkFolder } from "../support/platform/links.ts";
 import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
@@ -66,7 +67,7 @@ const commit = ({ git }, message) => {
 const NPM_RUNS = process.platform !== "win32";
 
 function releaseVersion({ root }, env = {}) {
-  execFileSync("node", ["scripts/release/release-version.mjs", join(root, "body.md")], { cwd: root, stdio: "pipe", env: { ...process.env, RELEASE_FROZEN: "", ...env } });
+  execFileSync("node", ["scripts/release/release-version.mjs", join(root, "body.md")], { cwd: root, stdio: "pipe", env: { ...process.env, RELEASE_FROZEN: "", RELEASE_VERSION: "", ...env } });
 }
 
 describe.runIf(NPM_RUNS)("release-version.mjs, the pull request's description", () => {
@@ -113,6 +114,44 @@ describe.runIf(NPM_RUNS)("release-version.mjs, a frozen release's description", 
     expect(body).not.toContain("Frozen at");
     expect(body).toContain("`gh workflow run release.yml --ref changeset-release/main`");
     expect(body).toContain("freeze it: `gh workflow run release-pr.yml -f action=freeze`");
+  });
+});
+
+describe.runIf(NPM_RUNS)("release-version.mjs, core's version", () => {
+  /** A repository whose core 1.0.0 is released (tagged), with a shipped change and its release note since. */
+  function coreRepository() {
+    const repo = repository();
+    writePack(repo, "fresh", ["fresh-one"]);
+    repo.write("package-lock.json", `${JSON.stringify({ name: "core", version: "1.0.0", lockfileVersion: 3, packages: { "": { name: "core", version: "1.0.0" } } }, null, 2)}\n`);
+    repo.write("CHANGELOG.md", "# Changelog\n\n## 1.0.0 (2026-01-01)\n\nThe first release.\n");
+    for (const path of PLUGIN_PINS) repo.write(path, '{\n  "version": "1.0.0"\n}\nRun `npx @neralabs/rerail@1.0.0 setup`.\n');
+    commit(repo, "the release");
+    repo.git("tag", "v1.0.0");
+    repo.write("src/shipped.ts", "export {};\n");
+    repo.write(".changelog/added-shipped.md", "Something shipped.\n");
+    repo.write("CHANGELOG.md", "# Changelog\n\n## Unreleased\n\nWhat this release gives.\n\n## 1.0.0 (2026-01-01)\n\nThe first release.\n");
+    commit(repo, "a shipped change");
+    return repo;
+  }
+  const read = ({ root }, path) => readFileSync(join(root, path), "utf8");
+
+  it("takes the next patch, and says how to release it as another version", () => {
+    const repo = coreRepository();
+    releaseVersion(repo);
+    expect(JSON.parse(read(repo, "package.json")).version).toBe("1.0.1");
+    expect(read(repo, "body.md")).toContain("Core takes the next version, 1.0.1. To release it as another, such as a minor: `gh workflow run release-pr.yml -f action=set-version -f version=<version>`.");
+  });
+
+  it("releases it as the version set by hand, everywhere the version is written", () => {
+    const repo = coreRepository();
+    releaseVersion(repo, { RELEASE_VERSION: "1.1.0" });
+    expect(JSON.parse(read(repo, "package.json")).version).toBe("1.1.0");
+    expect(JSON.parse(read(repo, "package-lock.json")).packages[""].version).toBe("1.1.0");
+    expect(read(repo, "CHANGELOG.md")).toMatch(/^## 1\.1\.0 \(\d{4}-\d{2}-\d{2}\)\n\nWhat this release gives\.\n\n### Added\n\n- Something shipped\.$/mu);
+    for (const path of PLUGIN_PINS) expect(read(repo, path), path).toContain("@neralabs/rerail@1.1.0");
+    const body = read(repo, "body.md");
+    expect(body).toContain("| `@neralabs/rerail` | 1.0.0 → 1.1.0 | `v1.1.0` tag, then release.yml |");
+    expect(body).toContain("Core's version was set to 1.1.0 by hand, and stays so until this release merges.");
   });
 });
 

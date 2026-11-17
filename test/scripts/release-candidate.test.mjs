@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { actionComment, CANDIDATE_BRANCH, candidateCiVerdict, candidateMessage, candidateTrustRefusal, cherryPickRefusal, FLOW_MARKER, freezeRefusal, gitIn, parseTarget, pickedTree, pullRequestHeadRefusal, pullRequestMessage, pullRequestTree, releaseTrainRefusal, readReleaseMessage, RELEASE_BRANCH, releasedCommit, releaseTrainTag, runReleaseAction } from "../../scripts/release/candidate/candidate.mjs";
+import { actionComment, CANDIDATE_BRANCH, candidateCiVerdict, candidateMessage, candidateTrustRefusal, cherryPickRefusal, coreVersionRefusal, FLOW_MARKER, freezeRefusal, gitIn, parseTarget, pickedTree, pullRequestHeadRefusal, pullRequestMessage, pullRequestTree, releaseTrainRefusal, readReleaseMessage, RELEASE_BRANCH, releasedCommit, releaseTrainTag, runReleaseAction } from "../../scripts/release/candidate/candidate.mjs";
 import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 const SHA = "a".repeat(40);
@@ -16,8 +16,9 @@ const OTHER = "b".repeat(40);
 
 describe("release commit messages", () => {
   it("round-trips a candidate's base and cherry-picks, and a frozen pull request's candidate", () => {
-    expect(readReleaseMessage(candidateMessage({ base: SHA, picks: [OTHER] }))).toEqual({ base: SHA, picks: [OTHER] });
-    expect(readReleaseMessage(candidateMessage({ base: SHA }))).toEqual({ base: SHA, picks: [] });
+    expect(readReleaseMessage(candidateMessage({ base: SHA, picks: [OTHER] }))).toEqual({ base: SHA, picks: [OTHER], coreVersion: "" });
+    expect(readReleaseMessage(candidateMessage({ base: SHA }))).toEqual({ base: SHA, picks: [], coreVersion: "" });
+    expect(readReleaseMessage(candidateMessage({ base: SHA, coreVersion: "0.2.0" }))).toEqual({ base: SHA, picks: [], coreVersion: "0.2.0" });
     expect(readReleaseMessage(pullRequestMessage(SHA))).toEqual({ candidate: SHA });
   });
 
@@ -56,6 +57,16 @@ describe("refusals", () => {
     expect(cherryPickRefusal({ commit: SHA, frozen: false, onMain: true, included: false })).toMatch(/freeze action first/u);
     expect(cherryPickRefusal({ commit: SHA, frozen: true, onMain: false, included: false })).toMatch(/Merge the fix to main first/u);
     expect(cherryPickRefusal({ commit: SHA, frozen: true, onMain: true, included: true })).toMatch(/already in/u);
+  });
+});
+
+describe("coreVersionRefusal", () => {
+  it("takes a plain version later than the latest release", () => {
+    expect(coreVersionRefusal("0.2.0", "0.1.5")).toBeNull();
+    expect(coreVersionRefusal("1.0.0", null)).toBeNull();
+    for (const version of ["0.2", "v0.2.0", "0.2.0-next.1", "minor", ""]) expect(coreVersionRefusal(version, "0.1.5"), version).toMatch(/is not a version like 0\.2\.0/u);
+    expect(coreVersionRefusal("0.1.5", "0.1.5")).toMatch(/0\.1\.5 is not later than the latest release, 0\.1\.5/u);
+    expect(coreVersionRefusal("0.1.4", "0.1.5")).toMatch(/not later than/u);
   });
 });
 
@@ -113,6 +124,12 @@ describe("actionComment", () => {
     expect(comment).toContain("Fix cherry-picked by @someone. The release is now candidate `aaaaaaaaa`: base `bbbbbbbbb` plus `aaaaaaaaa`.");
     expect(comment).toContain("https://github.com/owner/name/actions/workflows/release.yml?query=branch%3Achangeset-release%2Fcandidate");
     expect(actionComment({ action: "unfreeze", actor: "someone", repository: "owner/name", result: { releasable: true, changed: true, frozen: false } })).toContain("follows `main` again");
+  });
+
+  it("says which version core was set to, frozen or following main", () => {
+    expect(actionComment({ action: "set-version", actor: "someone", repository: "o/n", result: { releasable: true, changed: true, frozen: false, coreVersion: "0.2.0" } })).toBe("Core's version set to 0.2.0 by @someone. The checklist was cleared, because what merging releases changed.");
+    expect(actionComment({ action: "set-version", actor: "someone", repository: "o/n", result: { releasable: true, changed: true, frozen: false } })).toMatch(/^Core's version set back to the next one by @someone\./u);
+    expect(actionComment({ action: "set-version", actor: "someone", repository: "o/n", result: { ...frozen, coreVersion: "0.2.0" } })).toMatch(/^Core's version set to 0\.2\.0 by @someone\. The release is now candidate `aaaaaaaaa`/u);
   });
 
   it("says nothing for a push to main, unless main changed an entry the frozen release ships", () => {
@@ -198,19 +215,24 @@ describe("runReleaseAction", { timeout: 120_000 }, () => {
     };
     commit("Start", { "version.txt": "1\n", "CHANGELOG.md": "# Changelog\n\n## 1\n\nFirst.\n", [FLOW_MARKER]: "// the freeze workflow\n", "src/app.txt": "app\n" });
     const ci = clone("ci");
-    /** release-version.mjs's stand-in: with entries pending, the next version and their text in CHANGELOG.md. */
-    const version = (frozen) => {
+    /**
+     * release-version.mjs's stand-in: with entries pending, the next version (the one set by hand, when one is) and
+     * their text in CHANGELOG.md. Returns the version in the checkout afterwards, as release-candidate.mjs's does.
+     */
+    const version = (frozen, coreVersion = "") => {
+      const current = readFileSync(join(ci.folder, "version.txt"), "utf8").trim();
       const entries = join(ci.folder, ".changelog");
       const pending = existsSync(entries) ? readdirSync(entries).sort() : [];
-      if (pending.length === 0) return;
-      const next = Number(readFileSync(join(ci.folder, "version.txt"), "utf8")) + 1;
+      if (pending.length === 0) return current;
+      const next = coreVersion === "" ? String(Number(current) + 1) : coreVersion;
       const notes = pending.map((name) => `- ${readFileSync(join(entries, name), "utf8").trim()}`);
       const changelog = readFileSync(join(ci.folder, "CHANGELOG.md"), "utf8").replace("# Changelog\n", `# Changelog\n\n## ${next}${frozen === null ? "" : " (frozen)"}\n\n${notes.join("\n")}\n`);
       writeFileSync(join(ci.folder, "CHANGELOG.md"), changelog);
       writeFileSync(join(ci.folder, "version.txt"), `${next}\n`);
       for (const name of pending) rmSync(join(entries, name));
+      return next;
     };
-    const run = (action, target = "", resolvePull = () => "", fixes = "") => runReleaseAction({ action, target, fixes, git: ci.git, remote: "origin", version, resolvePull });
+    const run = (action, target = "", resolvePull = () => "", fixes = "", coreVersion = "") => runReleaseAction({ action, target, fixes, coreVersion, git: ci.git, remote: "origin", version, resolvePull });
     const remoteGit = gitIn(remote);
     const tip = (branch) => {
       try {
@@ -240,7 +262,7 @@ describe("runReleaseAction", { timeout: 120_000 }, () => {
 
     const first = commit("Add a", { ".changelog/added-a.md": "A.\n" });
     expect(run("update")).toEqual({ releasable: true, changed: true, frozen: false });
-    expect(readReleaseMessage(remoteGit(["log", "-1", "--format=%B", tip(RELEASE_BRANCH)]))).toEqual({ base: first, picks: [] });
+    expect(readReleaseMessage(remoteGit(["log", "-1", "--format=%B", tip(RELEASE_BRANCH)]))).toEqual({ base: first, picks: [], coreVersion: "" });
     expect(tip(CANDIDATE_BRANCH)).toBeNull();
 
     const second = commit("Add b", { ".changelog/added-b.md": "B.\n" });
@@ -428,7 +450,7 @@ describe("runReleaseAction", { timeout: 120_000 }, () => {
 
     expect(run("unfreeze")).toEqual({ releasable: true, changed: true, frozen: false });
     expect(tip(CANDIDATE_BRANCH)).toBeNull();
-    expect(readReleaseMessage(remoteGit(["log", "-1", "--format=%B", tip(RELEASE_BRANCH)]))).toEqual({ base: later, picks: [] });
+    expect(readReleaseMessage(remoteGit(["log", "-1", "--format=%B", tip(RELEASE_BRANCH)]))).toEqual({ base: later, picks: [], coreVersion: "" });
   });
 
   it("ships a fix on top of the latest release without the rest of main", () => {
@@ -470,6 +492,64 @@ describe("runReleaseAction", { timeout: 120_000 }, () => {
     expect(() => run("freeze", "v0.0.3", undefined, `${fix} ${again}`)).toThrow(/already in the frozen release/u);
     expect(run("freeze", "v0.0.3", undefined, again)).toMatchObject({ base: first, picks: [again] });
     expect(() => run("cherry-pick", fix)).toThrow(/already in the frozen release/u);
+  });
+
+  it("releases core as the version set by hand, following main, until it is set back", () => {
+    const { commit, run, tip, show, remoteGit } = repository();
+    commit("Add a", { ".changelog/added-a.md": "A.\n" });
+    run("update");
+    expect(show(tip(RELEASE_BRANCH), "version.txt")).toBe("2");
+
+    expect(run("set-version", "", undefined, "", "0.2.0")).toEqual({ releasable: true, changed: true, frozen: false, coreVersion: "0.2.0" });
+    expect(show(tip(RELEASE_BRANCH), "version.txt")).toBe("0.2.0");
+    expect(show(tip(RELEASE_BRANCH), "CHANGELOG.md")).toContain("## 0.2.0\n\n- A.\n");
+
+    // A push to main rebuilds the release, and keeps the version.
+    const later = commit("Add b", { ".changelog/added-b.md": "B.\n" });
+    expect(run("update")).toEqual({ releasable: true, changed: true, frozen: false, coreVersion: "0.2.0" });
+    expect(show(tip(RELEASE_BRANCH), "version.txt")).toBe("0.2.0");
+    expect(readReleaseMessage(remoteGit(["log", "-1", "--format=%B", tip(RELEASE_BRANCH)]))).toEqual({ base: later, picks: [], coreVersion: "0.2.0" });
+
+    expect(run("set-version")).toEqual({ releasable: true, changed: true, frozen: false });
+    expect(show(tip(RELEASE_BRANCH), "version.txt")).toBe("2");
+  });
+
+  it("releases a frozen release as the version set by hand, through cherry-picks and an unfreeze", () => {
+    const { commit, run, tip, show } = repository();
+    commit("Add a", { ".changelog/added-a.md": "A.\n" });
+    const frozen = run("freeze");
+    const set = run("set-version", "", undefined, "", "0.2.0");
+    expect(set).toMatchObject({ changed: true, frozen: true, base: frozen.base, picks: [], coreVersion: "0.2.0" });
+    expect(show(set.candidate, "version.txt")).toBe("0.2.0");
+    expect(show(tip(RELEASE_BRANCH), "version.txt")).toBe("0.2.0");
+
+    const fix = commit("Fix the app", { "src/app.txt": "app, fixed\n" });
+    const picked = run("cherry-pick", fix);
+    expect(picked).toMatchObject({ picks: [fix], coreVersion: "0.2.0" });
+    expect(show(picked.candidate, "version.txt")).toBe("0.2.0");
+    expect(run("update")).toMatchObject({ changed: false, coreVersion: "0.2.0" });
+
+    expect(run("unfreeze")).toMatchObject({ frozen: false, coreVersion: "0.2.0" });
+    expect(show(tip(RELEASE_BRANCH), "version.txt")).toBe("0.2.0");
+    // Freezing with a version does both in one step.
+    expect(run("freeze", "", undefined, "", "0.3.0")).toMatchObject({ frozen: true, coreVersion: "0.3.0" });
+    expect(show(tip(CANDIDATE_BRANCH), "version.txt")).toBe("0.3.0");
+  });
+
+  it("refuses a version that is no version, not later than the latest release, or for a release core is not part of", () => {
+    const { commit, run, tip, remoteGit } = repository();
+    expect(() => run("set-version", "", undefined, "", "0.2.0")).toThrow(/core is not released as 0\.2\.0.*Nothing was changed/su);
+    expect(tip(RELEASE_BRANCH)).toBeNull();
+
+    const base = commit("Add a", { ".changelog/added-a.md": "A.\n" });
+    run("update");
+    const head = tip(RELEASE_BRANCH);
+    expect(() => run("set-version", "", undefined, "", "0.2")).toThrow(/is not a version like 0\.2\.0.*Nothing was changed/su);
+    remoteGit(["tag", "v0.3.0", base]);
+    expect(() => run("set-version", "", undefined, "", "0.2.0")).toThrow(/0\.2\.0 is not later than the latest release, 0\.3\.0/u);
+    expect(() => run("freeze", "", undefined, "", "0.3.0")).toThrow(/not later than the latest release/u);
+    expect([tip(RELEASE_BRANCH), tip(CANDIDATE_BRANCH)]).toEqual([head, null]);
+    expect(run("set-version", "", undefined, "", "0.3.1")).toMatchObject({ coreVersion: "0.3.1" });
   });
 
   it("a frozen candidate rebuilds to the trees it was built with, and one changed by hand does not", () => {

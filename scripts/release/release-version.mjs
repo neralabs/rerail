@@ -22,7 +22,8 @@
 // merging"). It is written unticked each time, so whatever changes what merging releases clears it: a push to main, or,
 // for a frozen release, freezing again, a cherry-pick or unfreezing. release-candidate.mjs runs this at the candidate
 // and, frozen, sets $RELEASE_FROZEN to `{ base, baseSubject, picks: [{ commit, subject }] }` as JSON: the description
-// then opens with what is frozen and the commands that change it (frozenNotice in candidate.mjs).
+// then opens with what is frozen and the commands that change it (frozenNotice in candidate.mjs). With $RELEASE_VERSION
+// set, by release-pr.yml's set-version action, core is released as that version instead of the next one.
 // Writes `releasable` (true when anything changed) to $GITHUB_OUTPUT when it is set. Needs the `v*` tags and the
 // packs' release tags fetched, with the history back to each pack's last release.
 //
@@ -44,6 +45,8 @@ import { changesetNotes, changesetTypeRefusal, listPacks, readChangesets, ROOT }
 const QUOTED_NOTES = 58_000;
 /** How many of the core paths that changed the description lists. */
 const LISTED_CHANGES = 20;
+/** The version core is released as when it was set by hand (release-pr.yml's set-version action), else empty. */
+const SET_VERSION = process.env.RELEASE_VERSION ?? "";
 /** The frozen release this runs at, from release-candidate.mjs, or null when the release follows main. */
 const frozen = (process.env.RELEASE_FROZEN ?? "") === "" ? null : JSON.parse(process.env.RELEASE_FROZEN);
 /** Where the staged release's builds are: frozen, the runs release-pr.yml started on the candidate's branch. */
@@ -165,7 +168,7 @@ function versionCore() {
     console.log(`core: nothing it ships has changed since ${tag}`);
     return null;
   }
-  const version = nextCoreVersion(current, readText("CHANGELOG.md"));
+  const version = SET_VERSION === "" ? nextCoreVersion(current, readText("CHANGELOG.md")) : SET_VERSION;
   // A version tag-core would refuse is left out, so the packs still release; the description says why.
   const tagRefusal = coreTagRefusal(version, tags);
   const pending = readChangelogEntries(ROOT);
@@ -314,6 +317,12 @@ if (rows.length === 0) {
     const listed = core.changes.slice(0, LISTED_CHANGES).map((path) => `\`${path}\``).join(", ");
     const more = core.changes.length > LISTED_CHANGES ? `, and ${core.changes.length - LISTED_CHANGES} more` : "";
     lines.push("", `Core is released because what it ships changed since \`${coreTag(core.from)}\`: ${listed}${more}.`);
+    lines.push(
+      "",
+      SET_VERSION === ""
+        ? `Core takes the next version, ${core.version}. To release it as another, such as a minor: \`gh workflow run release-pr.yml -f action=set-version -f version=<version>\`.`
+        : `Core's version was set to ${core.version} by hand, and stays so until this release merges. \`gh workflow run release-pr.yml -f action=set-version\` with no version goes back to the next one.`,
+    );
     if (!core.notes) {
       lines.push("", "> [!WARNING]", `> No changelog entry is pending in \`.changelog/\` and \`CHANGELOG.md\` has no unreleased notes, so ${core.version}'s says it has no changelog entries. To add notes, add entries in \`.changelog/\` on \`main\`: this pull request picks them up.`);
     } else if (changelogLead(changelogSection(readText("CHANGELOG.md"), core.version)) === "") {

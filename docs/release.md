@@ -35,6 +35,8 @@ is frozen ([Freezing a release](#freezing-a-release)). It also carries the rule 
 
 - **Bump:** if anything core ships changed since the last `v<version>` tag, it bumps to the next patch (`0.1.0` â†’
   `0.1.1`) and writes its `CHANGELOG.md` section.
+- **Another version:** `gh workflow run release-pr.yml -f action=set-version -f version=0.2.0` releases core as that
+  version instead, a minor or a major, say. It holds until the release merges.
 - **Core ranges:** a pack it releases that an older core cannot load, because it holds a rule off or ships a rule in
   a language added since, has its core range raised to leave those cores out, once core is at the release that first
   loads it. The description lists each.
@@ -113,6 +115,11 @@ release branch to maintain. Run the actions from the terminal, or from Actions â
 `gh workflow run release-pr.yml -f action=unfreeze` follows `main` again. Each action comments on the pull request
 with what the release now is.
 
+To release core as a version other than the next patch, frozen or not:
+`gh workflow run release-pr.yml -f action=set-version -f version=0.2.0`. Add `-f version=0.2.0` to a freeze to do both
+in one step. The version holds through pushes to `main`, cherry-picks and unfreezing until the release merges;
+`set-version` with no version goes back to the next patch.
+
 To ship a fix on top of the latest release without the rest of `main`, freeze that release's tag with the fix:
 `gh workflow run release-pr.yml -f action=freeze -f commit=v<version> -f fixes="<commit or pull request number> ..."`.
 
@@ -133,6 +140,8 @@ Every action changes the release in one push or refuses, and a refusal says what
   exactly what the pull request shows.
 - **A fix that doesn't apply changes nothing.** One that builds on later work is refused, naming it: cherry-pick what
   it builds on first, or freeze a newer commit.
+- **A version set by hand is checked.** It must be a plain version later than the latest release, and core must be
+  part of the release. A preview (`beta`, `next`) is still tagged by hand ([Tags and channels](#tags-and-channels)).
 - **Old commits are refused.** A tag's run uses the tagged commit's own workflows, so a commit from before this flow
   can't be frozen.
 - **Nothing publishes early.** A candidate's builds are unpublished. Packs publish only on a `release-*` tag's push,
@@ -158,8 +167,9 @@ Every action changes the release in one push or refuses, and a refusal says what
   a comment names the files and the command.
 - **Entries added to `main` after the freeze** stay pending for the next release. A cherry-picked fix's entry ships in
   this one and leaves `main` with the merge.
-- **State** is the pull request's head commit, which names the candidate; the candidate's message names its base and
-  cherry-picks (`scripts/release/candidate/candidate.mjs`).
+- **State** is the pull request's head commit, which names the candidate; the candidate's message names its base,
+  its cherry-picks and a version set by hand (`scripts/release/candidate/candidate.mjs`). Following `main`, the head
+  is the candidate, and carries the version itself.
 - **After the merge**, the tags hold the released commit and the candidate's branch is removed.
 
 </details>
@@ -305,8 +315,10 @@ Release notes pitch the release to people who opt into each update; the GitHub R
   `.changelog/` rather than under `## Unreleased`. A pack's notes take the same format and types, its lead and rule
   entries written from `pack.json` ([pack-format.md](pack-format.md#release)).
 - **Versions.** Below 1.0.0 a release is a patch unless it names another, and a patch can change or remove behavior,
-  which Semantic Versioning allows below 1.0.0. To release a minor or major, name it in the heading:
-  `## 0.2.0 (unreleased)`. What core promises from 1.0.0 is not set yet.
+  which Semantic Versioning allows below 1.0.0. To release a minor or major, set the version on the Release
+  pull request, `gh workflow run release-pr.yml -f action=set-version -f version=0.2.0`
+  ([Freezing a release](#freezing-a-release)), or name it in the heading on `main`: `## 0.2.0 (unreleased)`. A version
+  set on the pull request wins. What core promises from 1.0.0 is not set yet.
 
 <details>
 <summary>Why, assembly and CI checks</summary>

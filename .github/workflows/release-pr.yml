@@ -20,6 +20,9 @@ name: Release pull request
 #   gh workflow run release-pr.yml -f action=freeze [-f commit=<commit on main | v<latest release>>] [-f fixes="<commit|PR number> ..."]
 #   gh workflow run release-pr.yml -f action=cherry-pick -f commit=<commit on main | merged PR number>
 #   gh workflow run release-pr.yml -f action=unfreeze
+#   gh workflow run release-pr.yml -f action=set-version -f version=<version, such as 0.2.0>
+# set-version releases core as that version instead of the next patch, frozen or not, until the release merges; with
+# no version it goes back. `-f version=` beside freeze does both in one step.
 # Each one changes the release in one push or refuses, saying what to run instead, and comments on the pull request.
 # Freezing and cherry-picking start CI, the core build and the pack build on the candidate; the pull request's
 # "Release candidate" check (ci.yml) passes only once CI has passed on that exact commit.
@@ -36,13 +39,14 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: freeze holds the release at one commit; cherry-pick adds a fix from main to a frozen release; unfreeze follows main again
+        description: freeze holds the release at one commit; cherry-pick adds a fix from main to a frozen release; unfreeze follows main again; set-version releases core as the version given
         required: true
         type: choice
         options:
           - freeze
           - cherry-pick
           - unfreeze
+          - set-version
       commit:
         description: "freeze: the commit on main to hold the release at (main's tip when empty), or v<latest release> to ship fixes on top of it. cherry-pick: the fix's commit on main, or its merged pull request's number"
         required: false
@@ -50,6 +54,11 @@ on:
         type: string
       fixes:
         description: "freeze only: fixes to cherry-pick in the same step, as commits on main or merged pull request numbers, space-separated"
+        required: false
+        default: ""
+        type: string
+      version:
+        description: "set-version, or beside freeze: the version core releases as, such as 0.2.0, instead of the next patch. It holds until the release merges; set-version with none goes back to the next one"
         required: false
         default: ""
         type: string
@@ -145,6 +154,7 @@ jobs:
           ACTION: ${{ github.event_name == 'push' && 'update' || inputs.action }}
           TARGET: ${{ inputs.commit }}
           FIXES: ${{ inputs.fixes }}
+          CORE_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           git config user.name "$BOT"

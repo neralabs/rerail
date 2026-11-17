@@ -5,36 +5,43 @@
 //                 with $FIXES cherry-picked onto it (commits on main or merged pull request numbers)
 //   cherry-pick   adds $TARGET, a commit on main or a merged pull request's number, to the frozen release
 //   unfreeze      follows main again
+//   set-version   releases core as $CORE_VERSION (0.2.0, say) instead of the next patch, until the release merges; empty
+//                 goes back to the version release-version.mjs picks. $CORE_VERSION beside freeze does both in one step
 // It builds in the checkout, which must be clean and hold the full history, and pushes to $RELEASE_REMOTE (origin when
 // unset) in one push or not at all. The Release commit is written by the candidate's own release-version.mjs, with the
 // candidate's own dependencies when its package-lock.json is not the checkout's. It writes the pull request's
 // description to <body.md>, a comment for it to <comment.md> when the action has one, and `releasable`, `changed`,
 // `frozen`, `candidate` and `comment` to $GITHUB_OUTPUT when it is set.
 //
-//   [TARGET=<commit|tag|number>] [FIXES="<commit|number> ..."] node scripts/release/candidate/release-candidate.mjs <action> <body.md> <comment.md>
+//   [TARGET=<commit|tag|number>] [FIXES="<commit|number> ..."] [CORE_VERSION=<version>] node scripts/release/candidate/release-candidate.mjs <action> <body.md> <comment.md>
 import { execFileSync } from "node:child_process";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { actionComment, gitIn, runReleaseAction } from "./candidate.mjs";
 import { ROOT } from "../packs.mjs";
 
 const [action, bodyPath, commentPath] = process.argv.slice(2);
-if (action === undefined || bodyPath === undefined || commentPath === undefined) throw new Error("usage: release-candidate.mjs <update|freeze|cherry-pick|unfreeze> <body.md> <comment.md>");
-const { TARGET: target = "", FIXES: fixes = "", RELEASE_REMOTE: remote = "origin", GITHUB_ACTOR: actor = "someone", GITHUB_REPOSITORY: repository = "" } = process.env;
+if (action === undefined || bodyPath === undefined || commentPath === undefined) throw new Error("usage: release-candidate.mjs <update|freeze|cherry-pick|unfreeze|set-version> <body.md> <comment.md>");
+const { TARGET: target = "", FIXES: fixes = "", CORE_VERSION: coreVersion = "", RELEASE_REMOTE: remote = "origin", GITHUB_ACTOR: actor = "someone", GITHUB_REPOSITORY: repository = "" } = process.env;
 
 const git = gitIn(ROOT);
 /** The commit whose dependencies are installed: the checkout's when the action starts. */
 const installed = git(["rev-parse", "HEAD"]);
 
-/** Writes the Release commit's changes into the checkout, which is at the candidate, with the candidate's own script. */
-function version(frozen) {
+/**
+ * Writes the Release commit's changes into the checkout, which is at the candidate, with the candidate's own script,
+ * releasing core as `setVersion` when one is set by hand. Returns core's version in the checkout afterwards.
+ */
+function version(frozen, setVersion) {
   // release-version.mjs runs `changeset version` and reads semver: the candidate's lockfile decides which.
   const sameDependencies = git(["diff", "--name-only", installed, "HEAD", "--", "package-lock.json"]) === "";
   if (!sameDependencies) execFileSync("npm", ["ci"], { cwd: ROOT, stdio: "inherit" });
   const frozenAt = frozen === null ? null : { ...frozen, baseSubject: git(["log", "-1", "--format=%s", frozen.base]) };
-  const env = { ...process.env, RELEASE_FROZEN: frozenAt === null ? "" : JSON.stringify(frozenAt) };
+  const env = { ...process.env, RELEASE_FROZEN: frozenAt === null ? "" : JSON.stringify(frozenAt), RELEASE_VERSION: setVersion };
   // Its own `releasable` would be read as this action's.
   delete env.GITHUB_OUTPUT;
   execFileSync(process.execPath, ["scripts/release/release-version.mjs", bodyPath], { cwd: ROOT, stdio: "inherit", env });
+  return JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version;
 }
 
 /** The commit on main that merged pull request `number`. */
@@ -46,7 +53,7 @@ function resolvePull(number) {
 
 let result;
 try {
-  result = runReleaseAction({ action, target, fixes, git, remote, version, resolvePull });
+  result = runReleaseAction({ action, target, fixes, coreVersion: coreVersion.trim(), git, remote, version, resolvePull });
 } catch (error) {
   // The reason alone, as an annotation on the run: every refusal says what to run next.
   console.error(`::error title=Release ${action} refused::${String(error.message).replaceAll("\n", " ")}`);
