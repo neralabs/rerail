@@ -39,7 +39,7 @@ over that plain TCP connection, which costs no encryption and no ssh flow contro
 the lifeline: when it ends, the agent ends. If the connection cannot be made, it replies
 {"op": "tcp-failed", "why"} on ssh and stays there.
 """
-import ctypes, json, os, re, socket, struct, subprocess, sys, threading
+import ctypes, json, os, re, socket, struct, subprocess, sys, threading, time
 
 ROOT = os.path.join(os.path.expanduser("~"), "Library/Caches/rerail-farm/root.noindex")
 XATTR = b"org.rerail.farm.sent"
@@ -79,13 +79,20 @@ def receive():
     return header, inp.read(header.get("size", 0))
 
 
-def seen(kept):
+def seen(kept, touch=False):
     """[mtime_ns, size] of the file kept at `kept`, as the build machine had it when it was sent (its
-    attribute), while the file is as it was written; else as it is here; None when missing."""
+    attribute), while the file is as it was written; else as it is here; None when missing. `touch`
+    (the daemon asks what a run will read): its access time becomes now, so prune_root counts it as
+    used from here on, never removing it under the run that was just told it is here."""
     try:
         st = os.stat(kept)
     except OSError:
         return None
+    if touch:
+        try:
+            os.utime(kept, ns=(time.time_ns(), st.st_mtime_ns))
+        except OSError:
+            pass
     buf = ctypes.create_string_buffer(96)
     n = libc.getxattr(kept.encode(), XATTR, buf, 96, 0, 0)
     if n > 0:
@@ -255,7 +262,14 @@ def over_tcp(header):
     return True
 
 
-TARGETS = os.path.join(os.path.expanduser("~"), "Library/Caches/rerail-farm/targets.noindex")
+FARM = os.path.join(os.path.expanduser("~"), "Library/Caches/rerail-farm")
+TARGETS = os.path.join(FARM, "targets.noindex")
+# The commands' TMPDIR: the farm's, so what their runs leave (stores, scratch) is the farm's to free,
+# never the host's own temporary directory (pruned as the root is, every file counting).
+TMP = os.path.join(FARM, "tmp.noindex")
+# A lock per directory a command runs in (its checkout's copy, its trees): held shared while it runs,
+# so prune_root leaves those directories alone (`busy`).
+BUSY = os.path.join(FARM, "busy.noindex")
 # A test target directory unused this long goes; so do the least recently used ones while the disk
 # has less free than the run asks for and PRUNE_HEADROOM_GB more: pruning only to the farm's own
 # threshold left the host just above it, and the next run's build took it below (unusable).
@@ -268,7 +282,21 @@ PRUNE_HEADROOM_GB = 40
 CLEAN_SECONDS = 15 * 60
 
 
+# The free disk macOS gives an important write: what is free and what it purges for it (Time
+# Machine's hourly local snapshots, caches). statvfs leaves that out: one host showed 19 GB free
+# with 691 GB available, the snapshots holding a day of every file the farm had deleted (2026-11-17).
+AVAILABLE_JS = ('ObjC.import("Foundation"); var r = Ref(); $.NSURL.fileURLWithPath($.NSHomeDirectory())'
+                '.getResourceValueForKeyError(r, $.NSURLVolumeAvailableCapacityForImportantUsageKey, null); String(r[0].js)')
+
+
 def free_gb():
+    try:
+        out = subprocess.run(["osascript", "-l", "JavaScript", "-e", AVAILABLE_JS], capture_output=True, text=True, timeout=10)
+        b = float(out.stdout.strip())
+        if b > 0:
+            return b / (1 << 30)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        pass
     st = os.statvfs(os.path.expanduser("~"))
     return st.f_bavail * st.f_frsize / (1 << 30)
 
@@ -286,6 +314,40 @@ def target_lock(name, exclusive):
         f.close()
         return None
     return f
+
+
+def busy_lock(path):
+    """Holds `path` (a directory a command runs in) busy until the returned file closes."""
+    import fcntl, hashlib
+    os.makedirs(BUSY, exist_ok=True)
+    f = open(os.path.join(BUSY, hashlib.sha1(path.encode()).hexdigest()), "a+")
+    fcntl.flock(f, fcntl.LOCK_SH)
+    if f.tell() == 0:
+        f.write(path)
+        f.flush()
+    return f
+
+
+def busy():
+    """The directories a command runs in now (their lock is held)."""
+    import fcntl
+    out = []
+    try:
+        names = os.listdir(BUSY)
+    except OSError:
+        return out
+    for n in names:
+        try:
+            with open(os.path.join(BUSY, n), "r") as f:
+                try:
+                    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError:
+                    path = f.read().strip()
+                    if path:
+                        out.append(path)
+        except OSError:
+            pass
+    return out
 
 
 def prune(keep, min_free_gb):
@@ -326,6 +388,10 @@ def run_command(job):
     m = mapper(job.get("map", []))
     env = dict(os.environ)
     env.update({k: m(v) for k, v in job.get("env", {}).items()})
+    global BUSY_HELD
+    BUSY_HELD = [busy_lock(ROOT + os.path.normpath(p)) for p in job.get("map", []) if p.startswith("/") and p != "/"]
+    os.makedirs(TMP, exist_ok=True)
+    env["TMPDIR"] = TMP + "/"
     env["PATH"] = os.path.expanduser("~/.cargo/bin") + ":/opt/homebrew/bin:" + env.get("PATH", "")
     if job.get("target"):
         os.makedirs(TARGETS, exist_ok=True)
@@ -410,19 +476,69 @@ def tidy_root(min_free_gb):
         null = os.open(os.devnull, os.O_RDWR)
         for n in (0, 1, 2):
             os.dup2(null, n)
-        fd = os.open(os.path.join(os.path.dirname(ROOT), "root.log"), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
-        relax = ROOT + os.path.expanduser("~/Library/Caches/rerail-farm/relax-home")
-        for days in (ROOT_DAYS,) + ROOT_SHORT_DAYS:
-            if days != ROOT_DAYS and free_gb() >= min_free_gb + PRUNE_HEADROOM_GB:
-                break
-            n, b = prune_root(days, [relax])
-            os.write(fd, f"{time.strftime('%Y-%m-%d %H:%M')}: idle {days:g}+ days: {n} paths, "
-                         f"{b / 1e9:.1f} GB; {free_gb():.0f} GB free\n".encode())
+        fd = os.open(os.path.join(FARM, "root.log"), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        prune_roots(min_free_gb, (ROOT_DAYS,) + ROOT_SHORT_DAYS, lambda line: os.write(fd, (line + "\n").encode()))
     finally:
         os._exit(0)
 
 
-def prune_root(days, keep=()):
+def prune_roots(min_free_gb, days_list, say):
+    """prune_root on the root and on TMP (where every file is the commands' own): what is idle for
+    the first of `days_list`, then for each shorter one while the disk is short. Never the farm's
+    Relax home (clean-target cleans it) or a directory a command runs in (`busy`)."""
+    relax = ROOT + os.path.expanduser("~/Library/Caches/rerail-farm/relax-home")
+    for i, days in enumerate(days_list):
+        if i and free_gb() >= min_free_gb + PRUNE_HEADROOM_GB:
+            break
+        keep = [relax] + busy()
+        n, b = prune_root(days, keep)
+        n2, b2 = prune_root(days, keep, TMP, every_file=True)
+        say(f"{time.strftime('%Y-%m-%d %H:%M')}: idle {days:g}+ days: {n + n2} paths, "
+            f"{(b + b2) / 1e9:.1f} GB; {free_gb():.0f} GB free")
+
+
+def free_space(job):
+    """`farm-agent free JOB` (farm.free_host, when a host is short of disk): frees what is the
+    farm's here, least needed first, until the disk has `min_free_gb` + PRUNE_HEADROOM_GB free:
+    test targets no command runs in (least recently used first), then the rest cleaned
+    (clean-target, the job's `cleaner`), then the root and TMP down to what was used in the last
+    hour. Nothing of the host's own. Prints a JSON line: free GB before and after, and what the
+    farm still holds here."""
+    import shutil
+    min_free_gb = job.get("min_free_gb", 40)
+    want = min_free_gb + PRUNE_HEADROOM_GB
+    before = free_gb()
+    steps = []
+    say = lambda line: steps.append(line)
+    if os.path.isdir(TARGETS):
+        prune(None, min_free_gb)
+        if free_gb() < want and job.get("cleaner"):
+            home = ROOT + os.path.expanduser("~/Library/Caches/rerail-farm/relax-home")
+            for name in os.listdir(TARGETS):
+                d = os.path.join(TARGETS, name)
+                if name.startswith(".") or not os.path.isdir(d):
+                    continue
+                try:
+                    subprocess.run(["nice", "-n", "19", "/usr/bin/python3", "-c", job["cleaner"], "--relax-home", home, d],
+                                   stdin=subprocess.DEVNULL, capture_output=True, timeout=900,
+                                   env={k: v for k, v in os.environ.items() if k != "RELAX_HOME"})
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+            say(f"targets cleaned; {free_gb():.0f} GB free")
+    if free_gb() < want:
+        prune_roots(min_free_gb, (ROOT_DAYS,) + ROOT_SHORT_DAYS + (1 / 24,), say)
+    held = 0
+    for d, dirs, files in os.walk(FARM):
+        for n in files:
+            try:
+                held += os.lstat(os.path.join(d, n)).st_blocks * 512
+            except OSError:
+                pass
+    print(json.dumps({"before_gb": round(before, 1), "after_gb": round(free_gb(), 1),
+                      "farm_gb": round(held / (1 << 30), 1), "steps": steps}), flush=True)
+
+
+def prune_root(days, keep=(), root=ROOT, every_file=False):
     """Removes from ROOT what no run has used for `days`: whole directories none of whose files was
     read or written since, and, in directories still in use, the copies the mirror sent (they carry
     XATTR; the mirror sends one again when a run needs it: a compile that misses it fails once, runs
@@ -436,6 +552,25 @@ def prune_root(days, keep=()):
     keep = [os.path.realpath(k) for k in keep]
     removed = [0, 0]
 
+    def last_use(path, isdir):
+        """Asked again just before removing: the walk's view of a big tree is minutes old by then,
+        and a run may have started reading it meanwhile (it removed a checkout's Cargo.lock and
+        rust-toolchain.toml under a run that had just been told they were there, 2026-11-17)."""
+        if any(path == k or path.startswith(k + "/") or k.startswith(path + "/") for k in keep + busy()):
+            return time.time()
+        st = os.lstat(path)
+        # A directory's access time is this walk's own reading of it: only its modification counts.
+        newest = st.st_mtime if isdir else max(st.st_atime, st.st_mtime)
+        if isdir:
+            for d, dirs, files in os.walk(path):
+                for n in dirs + files:
+                    try:
+                        st = os.lstat(os.path.join(d, n))
+                        newest = max(newest, st.st_mtime if n in dirs else max(st.st_atime, st.st_mtime))
+                    except OSError:
+                        pass
+        return newest
+
     def blocks(path):
         total = 0
         for d, dirs, files in os.walk(path):
@@ -447,9 +582,11 @@ def prune_root(days, keep=()):
         return total
 
     def remove(path, isdir):
-        if not path.startswith(ROOT + "/"):
+        if not path.startswith(root + "/"):
             return
         try:
+            if last_use(path, isdir) >= cutoff:
+                return
             b = blocks(path) if isdir else os.lstat(path).st_blocks * 512
         except OSError:
             return
@@ -487,7 +624,7 @@ def prune_root(days, keep=()):
                 else:
                     st = e.stat(follow_symlinks=False)
                     used = max(st.st_atime, st.st_mtime)
-                    if used < cutoff and not e.is_symlink() and sent(e.path):
+                    if used < cutoff and (every_file or (not e.is_symlink() and sent(e.path))):
                         idle_sent.append(e.path)
             except OSError:
                 used = time.time()
@@ -501,8 +638,8 @@ def prune_root(days, keep=()):
                 remove(p, False)
         return newest
 
-    if os.path.isdir(ROOT) and not os.path.islink(ROOT):
-        walk(ROOT, True)
+    if os.path.isdir(root) and not os.path.islink(root):
+        walk(root, True)
     return removed[0], removed[1]
 
 
@@ -534,6 +671,11 @@ def clean(target, source, relax_home):
 os.makedirs(ROOT, exist_ok=True)
 if sys.argv[1:2] == ["exec"]:
     run_command(json.loads(sys.argv[2]))
+if sys.argv[1:2] == ["free"]:
+    os.setpriority(os.PRIO_PROCESS, 0, 19)
+    free_space(json.loads(sys.argv[2]))
+    sys.stdout.flush()
+    os._exit(0)
 if under_mount(ROOT):
     refused.append(f"{ROOT} is under a network mount")
 
@@ -555,7 +697,7 @@ while True:
     elif header["op"] == "same":
         send({"op": "same?", "id": header["id"], "differ": [p for p, h in header["files"].items() if sha(p) != h]})
     elif header["op"] == "have":
-        send({"op": "had", "id": header["id"], "seen": [seen(at(p)) for p in header["paths"]]})
+        send({"op": "had", "id": header["id"], "seen": [seen(at(p), touch=True) for p in header["paths"]]})
     elif header["op"] == "ping":
         send({"op": "pong", "id": header.get("id")})
 

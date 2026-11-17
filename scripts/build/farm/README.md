@@ -161,7 +161,26 @@ them; a file a command wrote stays while its directory is in use). While the hos
 `min_free_gb` + 40 GB free, the same goes at 1 day idle, then 6 hours. The farm's Relax home is left
 to the cleaner. A compile that misses a pruned copy fails once, runs on the build machine, and the
 host is asked what it holds. Before farm 18 the root kept every copy and run output (95 GB on one
-host).
+host). A file the mirror is asked about for a run counts as used from then on, each path is checked
+again just before it goes (the walk's view of a big tree is minutes old by then), and a directory a
+command runs in is never pruned (`busy.noindex` holds a lock per directory while it runs): before
+farm 22 a pass removed a checkout's `Cargo.lock` and `rust-toolchain.toml` under a run that had just
+been told they were there, and that run's cargo resolved its crates afresh on the host's default
+toolchain. The commands' `TMPDIR` is the farm's (`tmp.noindex`), pruned the same way (every file
+counts, not only the sent ones), so what their runs leave is the farm's to free.
+
+#### A host short of disk
+
+A host is never left out quietly. Under `min_free_gb` free, the probe that sees it starts
+`farm-agent free` there (at most every 10 minutes): test targets no command runs in go, least
+recently used first, then the rest are cleaned, then the root and `TMPDIR` go down to what the last
+hour used, until `min_free_gb` + 40 GB are free. It logs the result in
+`~/Library/Caches/rerail-farm/freeing/<host>.json` here, and when the host is still short the
+farm shows a notification on this machine's screen (at most every 6 hours a host): how much it
+freed, how much it still holds there, and that the rest is the host's own data. `status` and
+`test-remote` say it too. The host stays in use down to `floor_free_gb` (20 GB, left to the host's
+own work); under that it is out until the next probe finds room. Before farm 22 a host under 40 GB
+free was simply skipped, while 1.8 TB of its own data, not the farm's 18 GB, had filled it.
 
 ## Told at the build
 
@@ -198,7 +217,8 @@ hosts, and everything compiles and tests here, as without the farm.
 | `tests` | whether `scripts/dev/test-remote` runs there (default `true`) |
 | `test_slots` | how many `test-remote` commands the host runs at once (default: a third of its cores). One at a time left a 16-core host mostly idle while commands queued for 25 minutes; a command waits only when every slot of every host is taken, and goes to whichever frees first. A checkout's second command goes to another host when one has a slot (its commands on one host share a target directory, which cargo builds in one at a time) |
 | `link` | the host's network interface the farm's traffic must arrive on (its fast link); unset: any |
-| `min_free_gb` | free disk a host needs (default 40) |
+| `min_free_gb` | under this much free disk, the farm frees its own data on the host and says so (default 40) |
+| `floor_free_gb` | the free disk left to the host's own work: under it the host is not used (default 20) |
 | `max_rtt_ms` | the slowest round trip a host may have (default 150), for a host without `link` |
 | `min_mbps` | the least throughput to it, MB/s (default 8), for a host without `link`: with one, the link check catches a fall back to WiFi, and both are only reported. Both are measured through ssh: the round trip is the least of three (each starts an ssh process, which a loaded Mac delays), and the throughput is 32 MB written through a plain pipe (Python's `run(input=)` writes 512 bytes at a time and read 57 MB/s on a Thunderbolt link that does 270 through ssh and 800 raw). They still fall when either Mac is busy: a low figure is no proof of a slow link |
 | `tcp` | `false` keeps the live mirror's data on ssh (default `true`; also `RERAIL_FARM_TCP=0`) |

@@ -188,6 +188,9 @@ def main(argv):
     if host is None:
         here(argv, directory, why, remote_only)
     name = host["name"]
+    short = farm.health(host).get("short")
+    if short:
+        say(f"{name}: {short}")
     reply = mirror.compile({"host": name, "since": started, "roots": [[CHECKOUT, "checkout"]] + [[t, "tree"] for t in trees], "files": [], "verify": True,
                             "run": {"cwd": "/", "argv": ["true"], "dirs": [], "outputs": [], "depinfo": None, "env": {}}})
     if reply is None or reply.get("code") != 0:
