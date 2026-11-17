@@ -1436,11 +1436,12 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
     - The cost was the dispatch's shape: a thread a 64-node group gave `label_micro_8` about 8,800 threads a launch.
       A group's nodes are now a SIMD group's in the short tiers: `label_micro_8` 88–134 ms, the hub engine's
       75–107 ms, with the same walks.
+    - `clause_patterns`: a pass's group takes 4 threads and a fact's root one, so no lane idles for a fact. 6.8 →
+      2.1–2.5 ms, under the hub engine's 3.0–3.2.
+    - Nothing is precomputed, parents included (the user): the oracle column was a measurement bound only.
   - **Left:**
     - the walk test (a device test that fails on a walk whose steps change);
     - the reads' widths;
-    - `clause_patterns` (6.5 ms against the hub engine's 3 ms), whose fact items hold one root each, so a SIMD group
-      an item would idle 31 lanes for a fact;
     - `lowered_clauses_find_the_same_roots_on_the_resident_interpreter` fails on
       `ruff-d416-missing-section-name-colon/missing-colon-underlined` (`BackendFailure`) without this change too.
       It was hidden while the engine's `metal-tests` build did not compile (`crate::test_languages`, fixed).

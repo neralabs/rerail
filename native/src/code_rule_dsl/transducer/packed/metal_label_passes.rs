@@ -2150,13 +2150,13 @@ impl Runner<'_> {
                         }
                     }
                     let count = (constraints.len() / 2) as u32 - start;
-                    // One item for the pass: a thread a group of the batch's nodes, which finds its
-                    // roots from the rule.
+                    // One item for the pass: `LANES` threads a group of the batch's nodes, which find
+                    // its roots from the rule.
                     let (rule, any) = self.root_table.at(roots)?;
                     if any {
                         let group = *pattern / patterns::GROUP;
                         matches[group].extend([*pattern as u32, row, rule, start, count, pattern_threads[group]]);
-                        pattern_threads[group] += self.root_table.groups();
+                        pattern_threads[group] += self.root_table.groups() * patterns::LANES as u32;
                     }
                     Op {
                         target: place(target),

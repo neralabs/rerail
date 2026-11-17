@@ -22,7 +22,7 @@ tier, now printed in the profile, were identical.
 | Variant | `label_micro_8` | What it shows |
 |---|---|---|
 | This branch (a thread per 64-node group) | 172–217 ms | |
-| Every parent read from an oracle column, made by a kernel before the walks | 220 ms | No gain: the parent is not the cost |
+| A measurement bound only: every parent from an oracle column, made by a kernel before the walks | 220 ms | No gain: the parent is not the cost |
 | The window's parents from a forward pass over its slots | 170 ms | No gain |
 | The root mask made twice | +8–16 ms | Making the mask is about 10 ms |
 | A group's nodes over 8 / 16 / 32 threads | 110–112 / 94–110 / 94–97 ms | The cost is the dispatch's shape |
@@ -54,9 +54,16 @@ dispatch's end.
    - A SIMD group an item would leave most of its lanes idle.
    - At s1000, 1, 4 and 32 lanes an item measured the same within the noise.
 3. The device's parent stays format 16's climb (0340). No window table and no parent column. The tape is still read
-   in place.
-4. The clause pattern kernel keeps a thread an item. Its fact items hold one root each, and a SIMD group per fact
-   would leave 31 lanes idle. Its 6.5 ms against the hub engine's 3 ms is Q57's next item.
+   in place. Nothing is precomputed, parents included (the user, 2026-11-17): a precomputed structure is not free.
+   It costs a kernel of its own and the memory it fills. The oracle column was a bound for the measurement, never
+   an option.
+4. The clause pattern kernel's pass items take `LANES` (4) threads a group of 64 nodes, each finding the roots among
+   16 of them. Its fact items keep one thread each, for their one root.
+   - The items' threads are contiguous (`threadStart`), so a pass item takes `groups × 4` threads and a fact one.
+   - A SIMD group packs all its lanes' roots whatever items they belong to (`simd_roots`). So lanes need not line
+     up with items, and no lane is a fact's idle copy.
+   - At s1000, load 25–37: 1, 4, 8 and 32 lanes a group took 3.6–6.8, 2.1–2.5, 2.8–2.9 and 2.7–2.8 ms. The hub
+     engine (a thread a listed root, 25.8 M threads) took 3.0–3.2 ms, against 4 lanes' 1.7 M.
 
 ## Measured
 

@@ -278,7 +278,8 @@ that before building a window parent pass. Every variant was switched at compile
 alternated at load 45–96:
 
 - **An oracle parent column**, made by a kernel before the walks, which the walks read in place of the climb:
-  220 ms. No gain.
+  220 ms. No gain. It was a bound for the measurement only: nothing is precomputed, since a precomputed structure
+  costs a kernel of its own and its memory (the user).
 - **The window's parents from one forward pass** over its 64 slots, read where the node is in the start's window:
   170 ms. No gain.
 - **Counted**: 4.0 M parent climbs in 97 M steps, 1.8 hops each. 92% of them land inside the start's window, and
@@ -302,4 +303,10 @@ there.
 The spike's split had a bug: it did not scale the loop tier's dispatch, so it skipped some of that tier's walks.
 Its `label_micro` times are not valid; its `label_micro_8` times are, because that tier's walks matched exactly. The
 profile now prints each tier's walks and steps over all passes, so a run whose walks differ is seen at once.
+
+**The pattern kernel** (`clause_patterns`, 6.8 ms against the hub engine's 3 ms) had the same shape, a thread a
+64-node group, but its fact items hold one root each, so a SIMD group an item would idle 31 lanes a fact. Its items'
+threads are contiguous (`threadStart`), so a pass item now takes 4 threads a group and a fact item keeps one. A SIMD
+group packs its lanes' roots whatever items they belong to. At load 25–37, 1, 4, 8 and 32 lanes a group took
+3.6–6.8, 2.1–2.5, 2.8–2.9 and 2.7–2.8 ms. The hub engine took 3.0–3.2 ms, with 25.8 M threads against 4 lanes' 1.7 M.
 
