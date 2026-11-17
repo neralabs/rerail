@@ -486,6 +486,26 @@ describe("Rerail daemon control", () => {
       if (previous.exitCode === null && previous.signalCode === null) previous.kill("SIGKILL");
     }
   }, 30_000);
+
+  it("names RERAIL_AUTOSTART as the person set it when the daemon it finds runs another package", async () => {
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const first = await startDaemon({ home, packageRoot }, { dev: true, port: 0 });
+    const autostart = process.env.RERAIL_AUTOSTART;
+    try {
+      await writeFile(
+        join(home, DAEMON_STATE_FILE),
+        JSON.stringify({ ...first.daemon.state, packageRoot: join(home, "versions", "0.0.0-old") }),
+      );
+      process.env.RERAIL_HOME = home;
+      process.env.RERAIL_AUTOSTART = "false";
+
+      await expect(daemonEngineEndpoint(true)).rejects.toThrow("RERAIL_AUTOSTART=false requires a daemon from the active Rerail package");
+    } finally {
+      if (autostart === undefined) delete process.env.RERAIL_AUTOSTART;
+      else process.env.RERAIL_AUTOSTART = autostart;
+      await stopDaemon(home);
+    }
+  }, 15_000);
 });
 
 describe("openDashboard", () => {
@@ -608,6 +628,8 @@ describe("RERAIL_AUTOSTART", () => {
       // No state file, so no daemon runs; the fake machine's spawns fail the test, so a start would show.
       const machine = fakeMachine("linux", { env: { RERAIL_HOME: home, RERAIL_AUTOSTART: setting } });
       await expect(daemonEngineEndpoint(true, undefined, machine)).rejects.toBeInstanceOf(AutostartOffError);
+      // It names the setting as the person spelled it, wherever the error shows.
+      await expect(daemonEngineEndpoint(true, undefined, machine)).rejects.toThrow(`RERAIL_AUTOSTART=${setting} requires a running daemon`);
     } finally {
       await removeFolder(home);
     }
@@ -622,7 +644,7 @@ describe("what rerail status says of a daemon that is not running", () => {
   it("says RERAIL_AUTOSTART=0 keeps hooks from starting it, since hooks log nothing about a daemon the person turned off", () => {
     expect(daemonNotRunningMessage({})).toBe("The Rerail daemon is not running. Start it with rerail daemon start.");
     expect(daemonNotRunningMessage({ RERAIL_AUTOSTART: "0" })).toBe(
-      "The Rerail daemon is not running, and RERAIL_AUTOSTART=0 keeps hooks from starting it, so nothing is recorded. Start it with rerail daemon start.",
+      "The Rerail daemon is not running, and RERAIL_AUTOSTART=0 keeps hooks from starting it, so nothing is recorded until it runs. Start it with rerail daemon start.",
     );
     expect(daemonNotRunningMessage({ RERAIL_AUTOSTART: "false" })).toContain("and RERAIL_AUTOSTART=false keeps hooks from starting it");
   });
@@ -1022,6 +1044,24 @@ describe("the engine endpoint of a busy daemon", () => {
     // The first probe and the busy wait's: against a daemon that answers late they wait up to 2 s and 10 s, and a
     // third probe would wait 10 s more.
     expect(probes).toEqual(["http://127.0.0.1:4791/healthz", "http://127.0.0.1:4791/healthz"]);
+  });
+
+  // With autostart on, a start leaves a busy daemon alone and waits for it. One that then answers from another package
+  // takes no event, and the error says so without naming a setting the person did not set.
+  it.each([undefined, "1"])("says a daemon of another package that answered late is running (RERAIL_AUTOSTART=%s)", async autostart => {
+    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ url: "http://127.0.0.1:4791/" })));
+    let probes = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      probes += 1;
+      if (probes === 1) throw new Error("connect ECONNREFUSED 127.0.0.1:4791");
+      return Response.json({ status: "ok", pid: DEAD_PID });
+    }));
+    const env = autostart === undefined ? { RERAIL_HOME: home } : { RERAIL_HOME: home, RERAIL_AUTOSTART: autostart };
+    const machine = fakeMachine("linux", { env, kill: () => true });
+    await expect(daemonEngineEndpoint(true, undefined, machine)).rejects.toThrow(
+      new Error("the running Rerail daemon is from another Rerail package; run rerail daemon stop, then rerail daemon start"),
+    );
+    expect(probes).toBe(2);
   });
 });
 
