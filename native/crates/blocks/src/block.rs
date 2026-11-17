@@ -228,6 +228,18 @@ impl Block {
 
     /// `size` bytes at `align`, or `None` when the block's reservation cannot hold them.
     pub fn try_alloc(&self, size: usize, align: usize) -> Option<usize> {
+        let start = self.try_alloc_raw(size, align)?;
+        if self.dirty {
+            // SAFETY: `start..start + size` was just allocated to this call alone.
+            unsafe { std::ptr::write_bytes(self.base.add(start), 0, size) };
+        }
+        Some(start)
+    }
+
+    /// `try_alloc`, its bytes as the backing left them (a dirty block's earlier bytes): for what every reader finds
+    /// written first, as a relation's chunks (a value is read only below `len`, and written before it is claimed).
+    /// A device relation's chunks of a pooled block then cost no memset (decision 0325 step 5).
+    pub fn try_alloc_raw(&self, size: usize, align: usize) -> Option<usize> {
         assert!(self.writable, "alloc in a frozen block");
         let mut cur = self.top.load(Relaxed);
         loop {
@@ -237,12 +249,7 @@ impl Block {
                 return None;
             }
             match self.top.compare_exchange_weak(cur, end, AcqRel, Relaxed) {
-                Ok(_) => {
-                    if self.dirty {
-                        unsafe { std::ptr::write_bytes(self.base.add(start), 0, size) };
-                    }
-                    return Some(start);
-                }
+                Ok(_) => return Some(start),
                 Err(c) => cur = c,
             }
         }

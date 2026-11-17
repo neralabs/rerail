@@ -612,6 +612,10 @@ fn chunk_mix<'a>(docs: impl Iterator<Item = (&'a str, usize)>) -> String {
 /// `string_annotation` is made (`facts::vtab::syntax::annotation`, Ruff's table) and `parsed` is a guest (0055).
 const NOT_MADE: [(&str, &str); 0] = [];
 
+/// The key of a chunk's guest rounds' kept rows (`retain::Retained`): held for the chunk's rounds alone, never stored
+/// (decision 0331).
+const GUEST_ROUNDS_KEY: [u8; 32] = *b"rerail.guest-rounds/v1\0\0\0\0\0\0\0\0\0\0";
+
 /// The embed slice of a lowered program (decisions 0055, 0058): the rules its requests need (`embed`, `embed_value`
 /// and the demands), with those as its outputs; `None` when no rule makes a request. It is cut from the whole
 /// program, not its file-local part, and runs over each chunk: a guest or a value is made from its chunk's
@@ -3546,7 +3550,7 @@ fn run_observed(
             let _step = crate::code_rule_dsl::logic::profile::span(|| "nearest sets made by the transducer".into());
             let sets = lowered.transduce_nearest();
             // The preparation passes edit the lowered tree, the last before its one image (below).
-            // Mutable for a debug build's checks of the version against the tree (below).
+            // Edited only by the debug build's checks below, that the version's passes are the tree's.
             #[cfg_attr(not(debug_assertions), allow(unused_mut))]
             let mut program: front::Program = std::mem::take(&mut lowered.program);
             bound(&program)?;
@@ -5671,9 +5675,22 @@ fn run_observed(
                 let _guests = crate::code_rule_dsl::logic::profile::span(|| "guests".into());
                 let documents_len = documents.len();
                 let (mut docs, mut sources, mut made) = (documents, sources, guests::Guests::new(label, projection.shape));
-                // The slice's planner statistics: what it reads, measured once, in the first round's batch. A later
-                // round adds only the guests' rows, which are few beside the files' (each measurement sorts a column).
-                let mut measured: BTreeMap<String, Vec<(String, i64, i64, i64, i64)>> = BTreeMap::new();
+                // The slice's planner statistics: what it reads, measured once and scaled to each round's rows, as the
+                // run's are (`measured_once`). A relation measured with no rows is measured again once it has some:
+                // a guest relation (`parsed`) is empty in the first round, and its rows are all a later round's.
+                // Priced at none, `parsed($s, "annotation", $r)` joined every row of a delta before the literal that
+                // binds `$s` (7.5 M rows to none, decision 0331).
+                let mut measured: BTreeMap<String, (usize, Vec<(String, i64, i64, i64, i64)>)> = BTreeMap::new();
+                // The rounds are one maintained program (decision 0331): what a round derived is kept for the next,
+                // which runs from its inputs' new rows (`retain::grown_delta`). The round before's requests stand for
+                // the outputs of the strata a round does not run; the tables the rounds bound are cleared after.
+                let mut slice_kept: Option<retain::Retained> = None;
+                let mut previous: BTreeMap<String, Arc<output::Rows>> = BTreeMap::new();
+                let mut rounds_bound: BTreeSet<String> = BTreeSet::new();
+                // The documents the last round made: a round's inputs gained their rows, and lost none (`owners_delta`).
+                let mut round_new: rustc_hash::FxHashSet<i64> = Default::default();
+                let slice_placed = slice.placed()?;
+                let slice_f = slice_placed.fields()?;
                 if replay.is_some() {
                     crate::code_rule_dsl::logic::profile::decision("guests made from the entries (decision 0225 §2)", || format!("a chunk of {chunk_docs_n} partial hits: the slice not run"));
                 }
@@ -5683,31 +5700,59 @@ fn run_observed(
                         Some(rounds) => rounds.get(round_at).cloned().unwrap_or_default(),
                         None => {
                             let mut round = stats.clone();
+                            // The slice's inputs, each digested by its length: within a chunk's rounds the batch only
+                            // gains documents, so a relation's rows changed exactly when there are more of them.
+                            let mut inputs: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, u64, bool)> = Vec::new();
                             for (rel, source) in &sources {
                                 if slice_reads.contains(rel) {
-                                    // Measured once per mix and relation, then scaled to each chunk's rows, as the main
-                                    // run's statistics are (below): measured in every chunk, it was 10.5 s of a cold
-                                    // PostHog run's CPU, a measurement making the relation it sampled.
-                                    let m = measured.entry(rel.clone()).or_insert_with(|| {
-                                        let key = (format!("guest slice {mix}"), rel.clone());
-                                        let once = measured_once.lock().get(&key).cloned();
-                                        match once {
-                                            Some((first, m)) if first > 0 => scaled_statistics(&m, first, source.estimated_len()),
-                                            _ => {
-                                                let _m = crate::code_rule_dsl::logic::profile::span(|| "guest statistics".into());
-                                                let m = sampled_statistics(source.as_ref());
-                                                measured_once.lock().insert(key, (source.estimated_len(), m.clone()));
-                                                m
-                                            }
+                                    // Measured once per mix and relation (decision 0309), then scaled to each round's
+                                    // rows, as the main run's statistics are: measured in every chunk, it was 10.5 s of a
+                                    // cold PostHog run's CPU. A relation measured with no rows is measured again once it
+                                    // has some, and an empty measurement is never the mix's (decision 0331: `parsed`,
+                                    // empty in the first round, was priced at none in every later one).
+                                    let rows = source.estimated_len();
+                                    let m = match measured.get(rel) {
+                                        Some((first, m)) if *first > 0 => scaled_statistics(m, *first, rows),
+                                        Some((_, m)) if rows == 0 => m.clone(),
+                                        _ => {
+                                            let key = (format!("guest slice {mix}"), rel.clone());
+                                            let once = measured_once.lock().get(&key).cloned();
+                                            let (first, m) = match once {
+                                                Some((first, m)) if first > 0 => (first, m),
+                                                _ => {
+                                                    let _m = crate::code_rule_dsl::logic::profile::span(|| "guest statistics".into());
+                                                    let m = sampled_statistics(source.as_ref());
+                                                    if rows > 0 {
+                                                        measured_once.lock().insert(key, (rows, m.clone()));
+                                                    }
+                                                    (rows, m)
+                                                }
+                                            };
+                                            measured.insert(rel.clone(), (first, m.clone()));
+                                            if first > 0 { scaled_statistics(&m, first, rows) } else { m }
                                         }
-                                    });
-                                    round.measured(rel, m.iter().cloned().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
+                                    };
+                                    round.measured(rel, m.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
+                                    inputs.push((rel.clone(), Arc::clone(source), source.len() as u64, true));
                                 }
                                 modules.bind(db, rel, Arc::clone(source))?;
                             }
-                            texts_run(slice, db, round, BTreeSet::new(), modes, &vocabulary)?.outputs
+                            let _round = crate::code_rule_dsl::logic::profile::span(move || if round_at == 0 { "the slice's first round".into() } else { format!("a later round, maintained (round {})", round_at + 1) });
+                            let by_owner = |rel: &str, old: &dyn crate::code_rule_dsl::facts::vtab::Source, new: &dyn crate::code_rule_dsl::facts::vtab::Source| {
+                                let node = slice_f.columns(rel).and_then(|c| c.iter().position(|(_, t)| *t == "node"));
+                                node.and_then(|g| retain::owners_delta(rel, old, new, g, &|d| round_new.contains(&d))).or_else(|| retain::grown_delta(rel, old, new))
+                            };
+                            let ran = maintained::run_with(None, db, modules, slice, GUEST_ROUNDS_KEY, &inputs, slice_kept.take(), &mut round, &BTreeSet::new(), modes, &vocabulary, Some(&by_owner))?;
+                            rounds_bound.extend(ran.bound);
+                            slice_kept = Some(ran.next);
+                            let mut out = ran.outputs;
+                            for (rel, rows) in &previous {
+                                out.entry(rel.clone()).or_insert_with(|| Arc::clone(rows));
+                            }
+                            out
                         }
                     };
+                    previous = asked.clone();
                     if memoised {
                         slice_rounds.push(asked.iter().filter(|(r, _)| guests::LIBRARY.contains(&r.as_str()) || guests::DEMANDS.contains(&r.as_str())).map(|(r, l)| (r.clone(), Arc::clone(l))).collect());
                     }
@@ -5715,6 +5760,7 @@ fn run_observed(
                     if new.is_empty() {
                         break;
                     }
+                    round_new = new.iter().map(|d| i64::from(d.key)).collect();
                     docs.extend(new);
                     // Made from the entries, the batch is built once, after the last round: no slice reads it between.
                     if replay.is_none() {
@@ -5726,6 +5772,16 @@ fn run_observed(
                     let _rebuild = crate::code_rule_dsl::logic::profile::span(|| "batch with guests".into());
                     let narrowed = cone.as_ref().map(|wanted| cone_projection(wanted));
                     sources = syntax::with_matchers(&store, docs.clone(), &sets, &chunk_matchers, &vocabulary, binding, narrowed.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))?;
+                }
+                // The rounds' relations are let go of: the file-local part derives its own, and the engine's are the
+                // chunk's to its end otherwise.
+                if slice_kept.take().is_some() {
+                    for name in &rounds_bound {
+                        if let Some(b) = modules.get(name) {
+                            b.clear();
+                        }
+                    }
+                    crate::code_rule_dsl::logic::native::component::forget_derived(db);
                 }
                 host_of = std::mem::take(&mut made.host_of);
                 askers = made.askers();
@@ -5745,6 +5801,7 @@ fn run_observed(
                     for ((rel, col, v), n) in postings {
                         stats.measured(&rel, [], [(col, v, n)]);
                     }
+                    stats.estimated.extend(constants.keys().filter(|(rel, _)| guests::READS.contains(&rel.as_str())).map(|(rel, _)| rel.clone()));
                 }
                 sources
             }
@@ -6051,6 +6108,8 @@ fn run_observed(
                         }
                     };
                     chunk.apply(&mut stats);
+                    // Counted over a sample of the mix's first chunk: a constant missing there is unknown here.
+                    stats.estimated.extend(constants.keys().map(|(rel, _)| rel.clone()));
                     own_totals.add(&chunk);
                     chunk_own = Some(chunk);
                 }
@@ -8294,53 +8353,10 @@ fn run_observed(
                     let mut seeds: Vec<String> = Vec::new();
                     let mut given_rels: BTreeSet<String> = BTreeSet::new();
                     let mut maintained = if driven {
-                        let mut part = cut.program(&cross)?;
-                        let mut sources = Vec::new();
-                        // Each delta input made, and the relation it is a delta of.
-                        let mut added: Vec<(String, String)> = Vec::new();
-                        for rel in &cut.changed {
-                            let Some((plus, minus)) = answer(rel) else {
-                                seeds.push(rel.clone());
-                                continue;
-                            };
-                            if plus.len() + minus.len() > 0 {
-                                seeds.push(rel.clone());
-                            }
-                            for (suffix, source) in [("plus", plus), ("minus", minus)] {
-                                let name = format!("{rel}__{suffix}");
-                                if let Some(d) = part.domains.get(rel).cloned() {
-                                    part.domains.insert(name.clone(), d);
-                                }
-                                added.push((name.clone(), rel.clone()));
-                                sources.push((name, source, None));
-                            }
-                            given_rels.insert(rel.clone());
-                        }
-                        // The deltas' inputs, each declared as its relation (decision 0244): over the cut's version, an
-                        // overlay of fields.
-                        {
-                            let v = part.version.clone();
-                            {
-                                let placed = super::body::Placed::whole(v.clone());
-                                let f = placed.fields()?;
-                                let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&v);
-                                let (mut nullary, mut inputs): (Vec<&str>, Vec<String>) = (Vec::new(), f.inputs().map(str::to_owned).collect());
-                                for (name, rel) in &added {
-                                    if let Some(cols) = f.columns(rel) {
-                                        b.declare(name, &cols);
-                                    }
-                                    if f.nullary(rel) {
-                                        nullary.push(name.as_str());
-                                    }
-                                    inputs.push(name.clone());
-                                }
-                                b.add_nullary(&nullary);
-                                b.set_inputs(&inputs);
-                                let made = b.finish_overlay().map_err(Error::Plan)?;
-                                part.version = made;
-                            }
-                        }
-                        maintain::Maintained { program: part, sources, maintained: 0, derived_again: 0, recursive: 0, again: Vec::new(), views: BTreeSet::new() }
+                        let (m, s, g) = driven_part(&cut, cross, &mut answer)?;
+                        seeds = s;
+                        given_rels = g;
+                        m
                     } else {
                         maintain::rewrite(&cut, cell.as_ref(), &cross, &cross_sccs, &mut answer)?
                     };
@@ -8527,7 +8543,7 @@ fn run_observed(
                                 cross,
                                 cross_placed: &cross_placed,
                                 kept,
-                                store,
+                                store: Some(store),
                                 clean_reads,
                                 at_end: wanted.clone(),
                                 binder: &mut binder,
@@ -8579,7 +8595,7 @@ fn run_observed(
                         crate::code_rule_dsl::logic::profile::decision("inputs let go (Q74)", || format!("{} inputs' rows and indexes let go after their last reader, their frames written before the run: {}", unloaded.len(), unloaded.join(", ")));
                     }
                     cross_atoms_ahead(store);
-                    let Binder { constants, mut measured_kept, mut bound_old, mut lazies, .. } = binder;
+                    let Binder { constants, mut measured_kept, bound_old, lazies, .. } = binder;
                     let mut got = got;
                     // The relations whose rows are as they were (decision 0117 step 4): their frames are not written.
                     let unchanged_rels = std::mem::take(&mut got.unchanged);
@@ -8851,57 +8867,8 @@ fn run_observed(
                     let s = span("patch the maintained relations' statistics");
                     // The lazy statistics a plan made are kept as the eager ones are: by delta, or as measured. One no
                     // plan read is left to next run, which binds this run's relation lazily in turn.
-                    let mut unmade: BTreeSet<String> = BTreeSet::new();
-                    let lazy_made = lazies.len();
-                    let mut made = 0;
-                    for (rel, h, lazy) in lazies.drain(..) {
-                        let of = rel.strip_suffix("__old").map(str::to_owned);
-                        match lazy.made().map(|m| &m.2) {
-                            Some(LazyKept::Patched(p)) => {
-                                made += 1;
-                                if let Some(entry) = of.as_ref().and_then(|of| bound_old.get_mut(of)) {
-                                    entry.1 = Some(p.clone());
-                                }
-                            }
-                            Some(LazyKept::Measured(m, counts, tested)) => {
-                                made += 1;
-                                measured_kept.insert((rel.clone(), Arc::as_ptr(&h) as *const u8 as usize), (m.clone(), counts.clone(), tested.clone()));
-                            }
-                            None => unmade.extend(of),
-                        }
-                    }
+                    let (patched, made, lazy_made) = kept_statistics(lazies, bound_old, &mut measured_kept, &rows, &input_stats, &constants);
                     step(&format!("kept statistics: {made} of {lazy_made} lazy relations planned with"));
-                    let mut patched: HashMap<String, retain::Patched> = HashMap::new();
-                    for (rel, width, new) in &rows {
-                        let Some((old, kept)) = bound_old.get(rel) else { continue };
-                        // A copy of an input's columns is bound next run with the input's statistics (`projection_of`).
-                        if unmade.contains(rel) || input_stats.contains_key(rel) {
-                            continue;
-                        }
-                        let name = format!("{rel}__old");
-                        let next = match kept {
-                            Some(p) => p.after(old, new, *width),
-                            // Held on unchanged (a quiet stratum's, decision 0101 §1): nothing to count yet. Next run
-                            // finds what was measured of it by the same relation, or binds it lazily, and it is
-                            // counted once it changes (O125 step 1: 238 counts instead of 521).
-                            None if std::ptr::eq(Arc::as_ptr(old), Arc::as_ptr(new)) => None,
-                            // Kept by the engine as its rows came (`InRel::kept_stats`): read, not counted.
-                            None if let Some(stats) = new.kept_stats((0..*width).map(|c| super::sql_col(&name, c)).collect()) => {
-                                let tested = tested_of(&constants, &name).cloned().unwrap_or_default();
-                                let counts = kept_counts(&stats, &tested, new.source(stats.columns().to_vec()).as_ref());
-                                Some(retain::Patched { at: Arc::as_ptr(new) as *const u8 as usize, stats, counts, tested })
-                            }
-                            // Not counted here (decision 0123): the next run counts it from its postings when a round
-                            // requests it, and patches it by delta from then on. Before 0123 it was counted here, the
-                            // first run it was maintained, as a lazy statistic was measured (not counted) at every step
-                            // it was planned with (O125 steps 06-08: 2.5, 2.5 and 3.0 s so, against 5.6, 0.7 and 0.2 s
-                            // counted here).
-                            None => None,
-                        };
-                        if let Some(p) = next {
-                            patched.insert(name, p);
-                        }
-                    }
                     drop(s);
                     let s = span("retain");
                     let mut next = retain::after(cell.take(), ckey, digests.clone(), &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_stats, input_docs, (run_docs_held.lock().expect("the run's documents").clone(), memo_whole), patched, retain::budget());
@@ -9413,7 +9380,9 @@ struct Driver<'d, 'k> {
     /// `cross`'s version: what the run reads of it.
     cross_placed: &'d super::body::Placed,
     kept: &'k retain::Retained,
-    store: &'d ContentStore,
+    /// Where the kept part's frames are read from, when it was read from them (a session's); none when the caller
+    /// holds the whole kept part in memory, its clean reads bound before the run (`maintained::run`).
+    store: Option<&'d ContentStore>,
     /// The clean relations the part reads that are still stored (`need` binds them).
     clean_reads: BTreeSet<String>,
     /// What the caller reads after the run.
@@ -9506,7 +9475,9 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
     }
 
     fn need(&mut self, rels: &[String], model: &mut crate::code_rule_dsl::logic::plan::Model) -> Result<()> {
-        if !self.kept.admit(self.store, self.cross_placed, rels)? {
+        if let Some(store) = self.store
+            && !self.kept.admit(store, self.cross_placed, rels)?
+        {
             return Err(Error::Plan("the kept part's frames changed during the run".into()));
         }
         // A clean relation the part reads, bound as an input is, with its statistics.
@@ -9607,6 +9578,122 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
     fn seeds(&mut self) -> Vec<String> {
         std::mem::take(&mut self.seeds)
     }
+}
+
+/// The statistics a maintained run kept of the relations it bound, as the next run binds them (`retain::after`'s
+/// `measured` and `patched`): the lazy statistics a plan made, kept by delta or as measured, and each maintained
+/// relation's patched by its delta (decision 0096 step 4); `rows` the run's derived relations. Returns how many of the
+/// lazy statistics were made, too. Shared by the session's run and `maintained::run`.
+#[allow(clippy::type_complexity)]
+pub(in crate::code_rule_dsl) fn kept_statistics(
+    lazies: Vec<(String, Arc<crate::code_rule_dsl::logic::native::component::InRel>, Arc<super::LazyStats<LazyKept>>)>,
+    mut bound_old: HashMap<String, (Arc<crate::code_rule_dsl::logic::native::component::InRel>, Option<retain::Patched>)>,
+    measured_kept: &mut HashMap<(String, usize), retain::Measured>,
+    rows: &[(String, usize, Arc<crate::code_rule_dsl::logic::native::component::InRel>)],
+    input_stats: &HashMap<String, retain::InputStats>,
+    constants: &HashMap<String, BTreeSet<(usize, i64)>>,
+) -> (HashMap<String, retain::Patched>, usize, usize) {
+    let mut unmade: BTreeSet<String> = BTreeSet::new();
+    let lazy_made = lazies.len();
+    let mut made = 0;
+    for (rel, h, lazy) in lazies {
+        let of = rel.strip_suffix("__old").map(str::to_owned);
+        match lazy.made().map(|m| &m.2) {
+            Some(LazyKept::Patched(p)) => {
+                made += 1;
+                if let Some(entry) = of.as_ref().and_then(|of| bound_old.get_mut(of)) {
+                    entry.1 = Some(p.clone());
+                }
+            }
+            Some(LazyKept::Measured(m, counts, tested)) => {
+                made += 1;
+                measured_kept.insert((rel.clone(), Arc::as_ptr(&h) as *const u8 as usize), (m.clone(), counts.clone(), tested.clone()));
+            }
+            None => unmade.extend(of),
+        }
+    }
+    let mut patched: HashMap<String, retain::Patched> = HashMap::new();
+    for (rel, width, new) in rows {
+        let Some((old, kept)) = bound_old.get(rel) else { continue };
+        // A copy of an input's columns is bound next run with the input's statistics (`projection_of`).
+        if unmade.contains(rel) || input_stats.contains_key(rel) {
+            continue;
+        }
+        let name = format!("{rel}__old");
+        let next = match kept {
+            Some(p) => p.after(old, new, *width),
+            // Held on unchanged (a quiet stratum's, decision 0101 §1): nothing to count yet. Next run
+            // finds what was measured of it by the same relation, or binds it lazily, and it is
+            // counted once it changes (O125 step 1: 238 counts instead of 521).
+            None if std::ptr::eq(Arc::as_ptr(old), Arc::as_ptr(new)) => None,
+            // Kept by the engine as its rows came (`InRel::kept_stats`): read, not counted.
+            None if let Some(stats) = new.kept_stats((0..*width).map(|c| super::sql_col(&name, c)).collect()) => {
+                let tested = tested_of(constants, &name).cloned().unwrap_or_default();
+                let counts = kept_counts(&stats, &tested, new.source(stats.columns().to_vec()).as_ref());
+                Some(retain::Patched { at: Arc::as_ptr(new) as *const u8 as usize, stats, counts, tested })
+            }
+            // Not counted here (decision 0123): the next run counts it from its postings when a round
+            // requests it, and patches it by delta from then on. Before 0123 it was counted here, the
+            // first run it was maintained, as a lazy statistic was measured (not counted) at every step
+            // it was planned with (O125 steps 06-08: 2.5, 2.5 and 3.0 s so, against 5.6, 0.7 and 0.2 s
+            // counted here).
+            None => None,
+        };
+        if let Some(p) = next {
+            patched.insert(name, p);
+        }
+    }
+    (patched, made, lazy_made)
+}
+
+/// A driven maintained run's program (decision 0117 step 3): the cut's base program, each changed input's delta that
+/// `answer` gives declared as its inputs `r__plus` and `r__minus` (bound from `sources`). The seeds are the inputs that
+/// changed with a delta not empty, or with none; `given` those with one. Each stratum's form is made when the run
+/// reaches it (`Driver::form`). Shared by the session's run and `maintained::run`.
+pub(in crate::code_rule_dsl) fn driven_part(cut: &retain::Cut, cross: &lower::Lowered, answer: &mut dyn FnMut(&str) -> Option<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>) -> Result<(maintain::Maintained, Vec<String>, BTreeSet<String>)> {
+    let mut seeds: Vec<String> = Vec::new();
+    let mut given_rels: BTreeSet<String> = BTreeSet::new();
+    let mut part = cut.program(cross)?;
+    let mut sources = Vec::new();
+    // Each delta input made, and the relation it is a delta of.
+    let mut added: Vec<(String, String)> = Vec::new();
+    for rel in &cut.changed {
+        let Some((plus, minus)) = answer(rel) else {
+            seeds.push(rel.clone());
+            continue;
+        };
+        if plus.len() + minus.len() > 0 {
+            seeds.push(rel.clone());
+        }
+        for (suffix, source) in [("plus", plus), ("minus", minus)] {
+            let name = format!("{rel}__{suffix}");
+            if let Some(d) = part.domains.get(rel).cloned() {
+                part.domains.insert(name.clone(), d);
+            }
+            added.push((name.clone(), rel.clone()));
+            sources.push((name, source, None));
+        }
+        given_rels.insert(rel.clone());
+    }
+    // The deltas' inputs, each declared as its relation (decision 0244): over the cut's version, an overlay of fields.
+    let v = part.version.clone();
+    let placed = super::body::Placed::whole(v.clone());
+    let f = placed.fields()?;
+    let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&v);
+    let (mut nullary, mut inputs): (Vec<&str>, Vec<String>) = (Vec::new(), f.inputs().map(str::to_owned).collect());
+    for (name, rel) in &added {
+        if let Some(cols) = f.columns(rel) {
+            b.declare(name, &cols);
+        }
+        if f.nullary(rel) {
+            nullary.push(name.as_str());
+        }
+        inputs.push(name.clone());
+    }
+    b.add_nullary(&nullary);
+    b.set_inputs(&inputs);
+    part.version = b.finish_overlay().map_err(Error::Plan)?;
+    Ok((maintain::Maintained { program: part, sources, maintained: 0, derived_again: 0, recursive: 0, again: Vec::new(), views: BTreeSet::new() }, seeds, given_rels))
 }
 
 /// The constants the rules test `rel` by: a relation's own, or for its old rows (`r__old`) its relation's.
@@ -10634,9 +10721,17 @@ impl Own {
             }
             let rel = v.rel_name(atom.rel());
             for (i, arg) in atom.args().enumerate() {
-                if let TermRef::Int(n) = arg {
-                    out.entry((rel.to_owned(), super::sql_col(rel, i))).or_default().insert(n);
-                }
+                // A kind, field or name is a branded term (decision 0270), its atom the column's value, as the
+                // planner reads it (`Constant::Int(a.value())`). Left out, no field name was counted: `field($fc,
+                // #f65561, $e)` was priced as absent (one row) and led `pre_115`'s plan over a cold PostHog run, and
+                // `field($l, "left", $t)` was priced at one row a line (Q36: 1,159 read; `p293_read_elsewhere`, 8
+                // priced for 196,060 done).
+                let n = match arg {
+                    TermRef::Int(n) => n,
+                    TermRef::Branded(a) => a.value(),
+                    _ => continue,
+                };
+                out.entry((rel.to_owned(), super::sql_col(rel, i))).or_default().insert(n);
             }
         }
         out
@@ -10989,6 +11084,18 @@ pub mod tests {
         assert!(demands["alias"].contains(&(1,9)));
         assert!(demands["tags"].contains(&(1,9)));
         assert!(demands["raw"].contains(&(2,9)),"measure the actual source column before planning its consumers");
+    }
+
+    /// A kind's or a field's name in a rule is a branded atom (decision 0270): its postings are counted as an
+    /// integer constant's are (Q36: unread, `field($l, "left", $t)` was priced at one row, 1,159 read).
+    #[test]
+    fn branded_constants_have_their_postings_counted() {
+        use super::*;
+        let p = front::prune(crate::code_rule_dsl::logic::rr::parse(".decl left_name(l: node)\n.output left_name\nleft_name(l) :- field(l, \"left\", t), kind(t, \"identifier\").\n").unwrap());
+        let placed = crate::code_rule_dsl::logic::plan::body::Placed::of_program(&p).unwrap();
+        let constants = Own::constants_of(&placed.v);
+        let of = |rel: &str| constants.iter().filter(|((r, _), _)| r == rel).map(|(_, v)| v.len()).sum::<usize>();
+        assert_eq!((of("field"), of("kind")), (1, 1), "{constants:?}");
     }
 
     #[test]

@@ -149,9 +149,17 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
         let map = kept.lock().expect("phase 0's graphs");
         seeds.iter().map(|s| map.get(s).cloned()).collect()
     };
-    for g in found.iter_mut() {
-        if g.as_ref().is_some_and(|g| !g.holds()) {
-            *g = None;
+    // A kept graph that no longer holds leaves the process's map too: the images' step below fills a seed from the
+    // map, and found the stale graph there again, so a file edited after its graph was kept was read as it was (its
+    // include's old digest), though phase 0 derived its graph anew.
+    let stale: Vec<&Seed> = seeds.iter().zip(found.iter_mut()).filter(|(_, g)| g.as_ref().is_some_and(|g| !g.holds())).map(|(s, g)| {
+        *g = None;
+        s
+    }).collect();
+    if !stale.is_empty() {
+        let mut map = kept.lock().expect("phase 0's graphs");
+        for s in stale {
+            map.remove(s);
         }
     }
     let wanted: Vec<Seed> = {

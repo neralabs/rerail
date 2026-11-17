@@ -1045,6 +1045,25 @@ pass.
   neighbour's: in the explain, in the observed fanouts the planner replans by (`observe`), and in the histograms of
   0203 (`step_histograms`). `rel_base`'s `docof` lookup showed as its filter's 170 µs a row. The spec now says which
   plan step made each of its items (`JoinSpec::from`), and the engine reports counts, CPU and histograms by plan step.
+- **Record, the planner's half** (2026-11-16, this branch). On fixtures/python cold (317 rules), the worst
+  underestimates were lines whose first step is a `field` lookup by a field name: `field($l, "left", $t)` priced at
+  1.00 row, 1,159 read (`p293_read_elsewhere`: 8 planned, 196,060 done; `rr_token_req` 174 for 427,709). A field's
+  name in a rule is a branded atom (decision 0270), and the corpus run's postings of the program's constants
+  (`Own::constants_of`) read integers alone, so no posting was counted, and `const_freq` read the measured column's
+  missing value as 0 rows (then 1). Now branded constants are counted as their atom's value
+  (`branded_constants_have_their_postings_counted`). The worst ratio of done to planned work (strata over 50 k
+  done) went from 24,507× to 78×. Outputs are equal as sets (660 relations).
+  - Left, the next misses: `pre_1022`/`pre_1023`/`pre_2515` (6 k planned, 0.5 M done), `rr_agg286` (9 k, 0.67 M),
+    `rr_ctx282` (31 k, 1.3 M), all among decision 0203's slow joins. Overestimates are the larger share of the
+    total (150 M planned, 55 M done). Not yet measured on hogql's pre_120.
+  - Those misses are correlations, not implications the rules prove: `pre_1023`'s `scope_node($n, $s)` and
+    `kind($n, "identifier")` after `look($n, $x, $s)` are priced as independent filters (8,694 bindings to 27) and
+    pass every row. `look`'s scope is walked up (`walk`), so `scope_node` is not implied by its rules, and the
+    simplifier's implied atoms (decision 0038) do not cover it. Decision 0203's measured pair statistics are the
+    mechanism for that, but a second cold run with the first run's costs store (`RERAIL_COSTS` kept, a fresh tape
+    store) plans the same: 150.5 M planned, 54.9 M done, the same 9 strata 10×+ under, in both. **Open**: why the
+    slow lines' pair statistics (`slow joins`, 7 lines) do not reach the next run's estimates here, where Q36's
+    hogql runs said kept costs took `pre_120` from 5 M to 0.36 M.
 
 ### Q37. (Q28, then Q31, on Native-and-GPU-strata) A rule that copies a view's columns is a stratum
 
@@ -1053,6 +1072,59 @@ pass.
   estimate. A rule whose body is one view atom, binding distinct variables, is that view's columns.
 - **Whose**: lowering (a request and what its readers read, 0291), where cost-classifier works now. Not taken here.
 - **Done when**: such a rule is bound as a view of its source, and no stratum copies it.
+- **Record** (2026-11-16, this branch). The planner's views of one-atom projections (`plan_views`, read in place by
+  native joins through `view_src`) are made only in a SQL run: a native run over atoms made none (decision 0104: a
+  view is SQL), so every such rule was a stratum that copied its input. Now `native_stratum_` holds a rule of that
+  shape over an input bound in place as a view of the input's columns (`setfix::hold_view`, `InRel`'s in-place
+  `View`, which `hold_source` already was for every column), and opens no component. The shape
+  (`plan::input_view_shape`): one positive atom of an input, variables each once and wildcards, the head distinct
+  variables keeping the input's key (`node`'s node, `doc`'s and `tape`'s first column) or every column, so its rows
+  are the input's, one each. `RERAIL_COPY_VIEWS` derives them as before.
+  - A view is never kept (made again for nothing): the kept part skips it (`retain`), a session's cut counts it
+    neither run nor clean (as `RERAIL_SESSION_VIEWS`' views), and the run's kept strata hold it again, clean as its
+    input is, its digest its reads' with what it views. A program left with views alone has no planning choice to
+    keep (decision 0250's rule for an empty one: otherwise the run after a cold one wrote one).
+  - `held_source` hands out a view's source only where its columns are the source's, in order.
+  - 317 rules over fixtures/python, strict: 219 strata held as views in the cold run; the warm run writes nothing;
+    the 660 output relations are equal as sets to a cold run with `RERAIL_COPY_VIEWS=1`. Tests:
+    `a_copy_of_an_inputs_columns_is_a_view_of_it`, with the planner's, corpus, session, maintain, choices and
+    setfix tests (147). Not measured on hogql.
+  - CPU, fixtures/python cold, two rounds on m1max: at first 7.9–8.8 s of strata CPU against 5.98–6.05 s for the
+    copies. The views' readers read a source lookup's every row at each walk step: `probe_size` and `probe_sample`
+    over a source index fall back to reading the probe (`kind(l, "identifier")`, every identifier). A held view now
+    builds its own index on a column whose source lookup gives more than 64 rows (`HELD_VIEW_MATCHES`), as the
+    copy had; base inputs' views are unchanged. Each view also takes its input's column statistics
+    (`Run::view_stats`). After: 6.19–6.27 s against 5.96–6.10 s. What is left is the same work at 20–50% more CPU per
+    unit in a few strata (`ruff_safe_operand`, `type_bare`): rows read through the source, not flat.
+  - Then held as flat rows, not in place (user: the view must be a net speed improvement). Read in place, every
+    reader's row went through the source (its document located, a kind's dialect looked up), and the readers read
+    more rows than the relation holds. `hold_view` now reads the input's columns once, document by document
+    (`Source::rows_of`), into flat rows the readers read as the copy's: no stratum, component, join, set or index
+    is made for it. The 64-row index rule above is dropped with it (held views are flat; the reach index's source
+    views are as before). Kept part: such a relation is `viewed`, never kept. fixtures/python cold, two rounds on
+    m1max (load about 8): 5.68 and 5.94 s of strata CPU against the copies' 6.09 and 6.03 s; user 13.05 and 13.34
+    s against 13.44 and 13.47 s. Outputs equal as sets (660), the warm run writes nothing.
+  - **Correction** (a profile per stratum, then the 300-file corpus `bench/step-vs-main/corpus0`). On
+    fixtures/python the copy of `kind` was 0.05 s of 6.8 s (52,657 rows): the 2–7% above was the host's load, not
+    the change. On corpus0 `kind` held flat costs 0.03 s against the copy's 0.35 s (its stratum and `kind__sup0`),
+    every round, and reading every view's rows 0.10 s (316 views) — but the whole run was slower, 49.1 s of strata
+    CPU against 46.8 s, its plans moved (`node_text` 0.07 → 0.64 s). The cause: a copy's readers plan with its live
+    statistics (`live_stats`: each column's sketch and, for a column of few values, every value's exact count, the
+    complete `kind` histogram `kind_frequency` holds authoritative). The view was given the input's column
+    statistics instead (`Run::view_stats`), with `node`'s postings, which hold no constant the program tests on
+    `kind` (`kind(x, "call")`): such a probe was priced as the average kind.
+  - Now `hold_view` sketches the view's columns as a stratum's relation does its rows (`indexed_to_n`: a job a
+    column over `SPANNED_ROWS`) and the planner takes them through `live_stats`, so a view's statistics are its
+    copy's by construction; `Run::view_stats` is gone. `a_views_statistics_are_its_copys` pushes the same rows
+    into a relation as a stratum would and compares its live statistics, both sizes. corpus0, two rounds a side
+    (load 8–24): 43.5 and 48.0 s of strata CPU against 49.7 and 47.3 s; planned work 440.7 and 442.0 M against
+    443.9 and 443.6 M (the copy's own 2.3 M gone). Two copy runs differ by 2.4 s and 5% of work between
+    themselves, so the totals cannot show the 0.3 s; the per-stratum costs and equal statistics are the evidence.
+    Outputs equal as sets (660), the warm run writes nothing. `retain`'s gated-reuse test now expects the views'
+    rules (`docof`, `kind`) left in a reused program, as 6fe55cb12 made them; it had failed since then.
+  - Not done: hogql (3.5 M rows of `kind`) is not in this worktree. Lookups on the flat rows build their own
+    orders, where `node`'s source answers by node and by kind already; rows are one per source row, so the
+    source's row numbers are the view's, and its lookups could serve the view's probes.
 
 ### Q38. (Q32 on Native-and-GPU-strata at e75b66095) A kind-set axis's tape code set counted ERROR nodes as members
 
@@ -1535,6 +1607,20 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
   - `transformed_candidate_rejection_precedes_accepted_witness_limits`
   - `typed_output_preserves_late_operand_failures_without_publishing_failed_evaluations`
 
+
+### Q65. (Q57 at django-bugs 49dad1939) The warm run after a cold one asks the observer's store inside the waves (the hub, 8e4b6b68e)
+
+- **Found** (2026-11-16, django-bugs after merging the hub at 8e4b6b68e, and 8e4b6b68e alone, both on the m3):
+  `the_run_after_a_cold_one_writes_nothing` fails. Its warm child run exits 3 with "the observer's store not asked
+  inside the waves in a warm run (…/src: its answers unknown, read again)", twice. The backtrace:
+  `observe::load_under` <- `ensure` <- `watch` (observe.rs) <- `World::new` (corpus/world.rs, `o.watch(&watched)`)
+  <- the requests answered inside the fixpoint (corpus.rs, `world::World::new(root, &prog)`). So the corpus root's
+  part of the store was not read before the waves in the warm run, and the requests' world watches it inside them.
+  The hub's record of the test passing (b40d89145) is before the merges of d5cc33981 (a stat-known file's digest from
+  its text, not SQL in the waves), 05e2bbf6a and 17417fb8f (Q45: racy answers settled at a run's end), the
+  candidates for what stopped reading the root first.
+- **Done when**: the warm child run exits 0. Either the root's part is read before the waves wherever the requests'
+  world will watch it, or the world watches it before they start.
 ### Q51. (Q47 at 8bfa12af6) W's reference graph parses every file a second time (39% of internal_dead_code's CPU)
 
 - **Found** (2026-11-16, t41 §2): `references::add_file` parses again with tree-sitter and runs W's
@@ -1753,18 +1839,37 @@ product runs, 79 of 115 pass, 18 fail on Q49's work limit, and 18 fail in the wa
    Recommended: (a), run once at nice 19.
    **Answered (2026-11-16): (c), leave it.** The cause is fixed in the farm; the replays end as the entries age out.
 
-### Q55. Relations are blocks the CPU and GPU read in place (0325): steps 4–7
+### Q66. (Q55 at 004e3fddc) Relations are blocks the CPU and GPU read in place (0325): steps 4–7
 
 Built: steps 1 and 2 (417256f3a, b84b98d3e, 061fbbfca, 640ce085c) and step 3 (8aee765b0, 71b1ff602, 27d67f1e2,
 ffed8d55b). The device reads flat relations, relations with dead rows and the vtab's relations in their blocks, and
 makes every chunk view itself. On hogql, uploads read on the host are 5.6 MB (was 160 MB of relations and 84 MB of
 views). Left, in order:
 
-1. Step 4: heads written in place by count, reserve and write, so no rows come back (`rows back into the store`
-   is 115–150 ms of the device's host CPU on hogql).
-2. Step 5: indexes are the relation's (`rel_group`), so `rel_hash` per binding goes.
+1. Step 4's rest: heads a rule makes texts into and lattices still come back (on hogql about 34k of 4.54 M
+   distinct head rows). The seed heads and the fixpoint's set heads are written in place.
+2. Step 5 is built: every device relation lies in a block, and the device's probes read the relation's own index
+   (`rel_group`), built once and kept with it. Most relations a stratum probes are new each run, so most indexes
+   are still built once a run (about 920 a run on hogql, against 1,000 found).
 3. Step 6: placement drops the upload and row-back prices, and `GPU_BIAS` is refitted.
 4. Step 7: the output's, frames' and memo's rows, and the reach closure's (`Closed`, 5.6 MB on hogql).
 
 Open: the sources' blocks put the peak resident size up 25 MB (CPU binding) to 50 MB (Metal) on hogql. And a
 block is given back only with its last part (0325, step 2's open item).
+
+### Q67. Come back to step 5's performance (0325, s5f at 8f8334e3d)
+
+The user asked (2026-11-17) to come back to the performance implications of the relation's own index. What s5f
+measured on hogql (load 68–80, so noisy): instructions 67.7–76.8 B against 68.3–74.1 B, peak 730–797 MB against
+699–787 MB, indexes built 916–925 a run against 937, found 913–1,048 against 741. To look at:
+
+- **Index room in every device relation's block** (8–12 bytes a row, reserved whether or not it is probed): its
+  share of the peak and of the device budget, and whether a relation's probes can be known when it is made, so only
+  those blocks have the room.
+- **Indexes still built once a run**: most relations a stratum probes are new each run (views, fixpoint totals).
+  Which of them could keep their index across runs (the relation kept, or rebuilt only for its delta).
+- **Moved copies** for a second key (`DevIndex::moved`): how many, and their bytes.
+- **Rebinding**: `DevIndex::buffer` takes the block's buffer on every `index` call, and a wrapped block's buffer is
+  remade when it has outgrown its wrap. Count the remakes.
+- **The build itself** (bucket, radix sort, place) against the old per-binding sort, by GPU time, on quiet runs.
+- **Done when**: each has a measurement on a quiet machine, and what it shows is either fixed or recorded in 0325.

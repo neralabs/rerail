@@ -27,6 +27,7 @@ inline ulong clif_rel_get(device const uchar* t,ulong a0,uint a1,uint a2);
 inline uint clif_rel_dead(device const uchar* t,ulong a0,uint a1);
 inline ulong clif_rel_group(device const uchar* t,ulong a0,uint a1,ulong a2);
 inline uint clif_rel_group_row(device const uchar* t,ulong a0,uint a1,uint a2);
+inline ulong clif_rel_key_mix(device const uchar* t,ulong a0,ulong a1,ulong a2);
 inline ulong clif_rows_col(device const uchar* t,ulong a0,uint a1){
  ulong v0=0;
  uint v1=0;
@@ -187,18 +188,18 @@ inline ulong clif_rel_group(device const uchar* t,ulong a0,uint a1,ulong a2){
  ulong v4=v0+ulong(136ul);
  ulong v5=v4+v3;
  ulong v6=ulong(v1);
- ulong v7=v6*ulong(56ul);
+ ulong v7=v6*ulong(64ul);
  v8=v5+v7;
- ulong v9=ulong(*(device const ulong*)(t+(v8+ulong(long(32)))));
+ ulong v9=ulong(*(device const ulong*)(t+(v8+ulong(long(40)))));
  uchar v10=uchar((ulong)(v9)==(ulong)(ulong(0ul)));
  if(v10!=0){
   ulong v12=ulong(0ul);
   {ulong t0=v12;v11=t0;}
  }else{
-  ulong v13=ulong(*(device const ulong*)(t+(v8+ulong(long(16)))));
+  ulong v13=ulong(*(device const ulong*)(t+(v8+ulong(long(24)))));
   ulong v14=v2&v13;
-  ulong v15=ulong(*(device const ulong*)(t+(v8+ulong(long(24)))));
-  ulong v16=v8+ulong(24ul);
+  ulong v15=ulong(*(device const ulong*)(t+(v8+ulong(long(32)))));
+  ulong v16=v8+ulong(32ul);
   ulong v17=v16+v15;
   ulong v18=ulong((ulong)(v14)<<(uint(2)&63u));
   ulong v19=v17+v18;
@@ -224,14 +225,27 @@ inline uint clif_rel_group_row(device const uchar* t,ulong a0,uint a1,uint a2){
  ulong v4=v0+ulong(136ul);
  ulong v5=v4+v3;
  ulong v6=ulong(v1);
- ulong v7=v6*ulong(56ul);
+ ulong v7=v6*ulong(64ul);
  ulong v8=v5+v7;
- ulong v9=ulong(*(device const ulong*)(t+(v8+ulong(long(40)))));
- ulong v10=v8+ulong(40ul);
+ ulong v9=ulong(*(device const ulong*)(t+(v8+ulong(long(48)))));
+ ulong v10=v8+ulong(48ul);
  ulong v11=v10+v9;
  ulong v12=ulong(v2);
  ulong v13=v12*ulong(4ul);
  ulong v14=v11+v13;
  uint v15=uint(*(device const uint*)(t+v14));
  return v15;
+}
+inline ulong clif_rel_key_mix(device const uchar* t,ulong a0,ulong a1,ulong a2){
+ ulong v0=0;
+ ulong v1=0;
+ ulong v2=0;
+ v0=a0;
+ v1=a1;
+ v2=a2;
+ ulong v3=v1^v2;
+ ulong v4=v3*ulong(11400714819323198485ul);
+ ulong v5=ulong((ulong)(v4)>>(uint(29)&63u));
+ ulong v6=v4^v5;
+ return v6;
 }

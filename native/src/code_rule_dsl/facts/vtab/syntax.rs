@@ -1346,6 +1346,8 @@ pub trait ProducerRun {
     fn reads_guests(&self) -> bool {
         false
     }
+    /// Its name, for the profile's spans.
+    fn name(&self) -> &'static str;
 }
 
 static PRODUCERS: std::sync::OnceLock<Vec<&'static dyn Producer>> = std::sync::OnceLock::new();
@@ -1527,6 +1529,9 @@ pub struct Dialect {
     tag: u8,
     family: Family,
     pub catalog: KindCatalog,
+    /// Each kind code's name: the grammar's C string, read once (`name` was a `strlen` and a UTF-8 check per node,
+    /// 0.9 s of a cold PostHog run in string annotations' host scan alone).
+    names: Vec<&'static str>,
     classes: Vec<Class>,
     /// Each kind code's `granules::kind_flags`.
     granule_kinds: Vec<u8>,
@@ -1562,6 +1567,7 @@ impl Dialect {
         let dialect = from_tape_tag(tag).ok_or_else(|| StoreError::Invalid(format!("no dialect has tape tag {tag}")))?;
         let catalog = dialect.kinds();
         let values = crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(dialect)).reads_values();
+        let names: Vec<&'static str> = (0..catalog.kind_count()).map(|k| catalog.kind_name(k as u16).unwrap_or("")).collect();
         let classes = (0..catalog.kind_count()).map(|k| catalog.kind_name(k as u16).map_or(Class::Other, Class::of)).collect();
         let granule_kinds = (0..catalog.kind_count()).map(|k| catalog.kind_name(k as u16).map_or(0, granules::kind_flags)).collect();
         let canonical: Vec<u16> = (0..catalog.kind_count() as u16)
@@ -1576,7 +1582,7 @@ impl Dialect {
         }
         let family = Family::of(from_tape_tag(tag).and_then(crate::code_rule_dsl::language::label));
         let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(dialect);
-        Ok(Self { tag, family, catalog, classes, granule_kinds, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, codes, values, grammar })
+        Ok(Self { tag, family, catalog, names, classes, granule_kinds, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, codes, values, grammar })
     }
     /// What kind code `code` is to the granules (`granules::kind_flags`); ERROR and an unknown code are nothing.
     pub fn granule_kind(&self, code: u16) -> u8 {
@@ -1590,7 +1596,11 @@ impl Dialect {
         self.classes.get(usize::from(self.code(f, id))).copied().unwrap_or(Class::Other)
     }
     pub fn name(&self, f: &Facts, id: u32) -> &'static str {
-        self.catalog.kind_name(self.code(f, id)).unwrap_or("")
+        self.code_name(self.code(f, id))
+    }
+    /// Kind code `code`'s name; one past the grammar's kinds (ERROR's) is the catalog's.
+    fn code_name(&self, code: u16) -> &'static str {
+        self.names.get(usize::from(code)).copied().unwrap_or_else(|| self.catalog.kind_name(code).unwrap_or(""))
     }
     /// Node `id`'s kind atom as the `kind` column holds it: its name's canonical code's.
     fn kind(&self, f: &Facts, id: u32) -> i64 {
@@ -1599,7 +1609,7 @@ impl Dialect {
     }
     /// A kind atom's name (a token's, `Facts::tokens`).
     pub fn atom_name(&self, atom: u32) -> &'static str {
-        self.catalog.kind_name(crate::code_rule_dsl::facts::core::kind_code(atom)).unwrap_or("")
+        self.code_name(crate::code_rule_dsl::facts::core::kind_code(atom))
     }
     /// The child of `id` in field `field`.
     fn field_child(&self, f: &Facts, id: u32, field: &str) -> Option<u32> {
@@ -2098,6 +2108,20 @@ pub struct Batch {
     /// The batch's chunk (decision 0289): its views' arrays, made on the device's first read of a view.
     #[cfg(target_os = "macos")]
     chunk: OnceLock<device_chunk::Chunk>,
+    /// `node`'s rows by `kind` (`Batch::kinds`), made on the first probe or count of the column.
+    kinds: OnceLock<Kinds>,
+}
+
+/// `node`'s rows grouped by their `kind` value (decision 0329's held `kind`): each node's kind read once, as the
+/// column reads it (`Dialect::kind`), and its row placed by a counting pass. A probe of a kind reads its run; its
+/// count is the run's length. Before, each probe asked each document's tape for the nodes of each of the kind's codes
+/// (`Facts::of_kind`, a scan of the tape), once per value probed: 20 s of a 10-file cold run's 53 s.
+struct Kinds {
+    /// Each kind present, ascending, and where its rows start in `rows` (one more entry: the end).
+    keys: Vec<i64>,
+    starts: Vec<u32>,
+    /// The batch's node rows, by kind, each kind's ascending.
+    rows: Vec<u32>,
 }
 
 /// A span's id (core.rr's `span`: a piece of a document's text): `d << 32 | granules::extra_low(kind, i)`, in slots of
@@ -3292,11 +3316,14 @@ impl Batch {
             let document_span = crate::code_rule_dsl::logic::profile::span(|| "document rows".into());
             // A text-only document has core.rr's text rows too (its lines, `split_line`), and no tokens.
             if core && (!withheld || guest.is_none()) {
+                let s = crate::code_rule_dsl::logic::profile::span(|| "core document rows".into());
                 c.document(&p, dialect, &mut string, wants_text, wants_tokens && !withheld, wants_split_lines, wants_lf_lines, wants_source_text, wants_line_text, guest.is_none(), projection);
+                drop(s);
                 if let Some(dialect) = dialect
                     && wants_digests
                     && !withheld
                 {
+                    let _s = crate::code_rule_dsl::logic::profile::span(|| "digests".into());
                     c.digests(&p, dialect, &mut string, wants_trees, wants_units);
                 }
             }
@@ -3304,7 +3331,11 @@ impl Batch {
                 // A text document's lines split as W's `lines` regexes split any file's. A withheld document has no
                 // `rx_span` matches.
                 let rx = if withheld { &[][..] } else { &rx_spans[..] };
-                extra.document(&p, d, dialect, python == Some(tag) || tag == TEXT, rx, &span_ends[j], &mut rows.text, &mut string)?;
+                {
+                    let _s = crate::code_rule_dsl::logic::profile::span(|| "extra document rows".into());
+                    extra.document(&p, d, dialect, python == Some(tag) || tag == TEXT, rx, &span_ends[j], &mut rows.text, &mut string)?;
+                }
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "tree document rows".into());
                 tree.document(&p, dialect, python == Some(tag), &mut string);
             } else {
                 // A guest's nodes have their places in its file (`Locs::place`); W's values, f-string trees and CPython's
@@ -3320,6 +3351,7 @@ impl Batch {
             // A guest's are read only by a producer of guests' rows (string annotations); the others' are its file's.
             for (own, run) in &mut produced {
                 if d.guest.is_none() || run.reads_guests() {
+                    let _s = crate::code_rule_dsl::logic::profile::span(|| format!("produced rows: {}", run.name()));
                     run.document(&p, d, dialect, *own == Some(tag), &mut string)?;
                 }
             }
@@ -3442,10 +3474,49 @@ impl Batch {
             block,
             #[cfg(target_os = "macos")]
             chunk: OnceLock::new(),
+            kinds: OnceLock::new(),
         });
         #[cfg(any(test, feature = "test-hooks"))]
         BATCHES.lock().push((batch.docs.iter().map(|p| p.key).collect(), Arc::downgrade(&batch)));
         Ok((batch, relations, matched, (strings, atoms)))
+    }
+
+    /// `node`'s rows grouped by kind (`Kinds`), made on first use.
+    fn kinds(&self) -> &Kinds {
+        self.kinds.get_or_init(|| {
+            let total = self.nodes.last().copied().unwrap_or(0);
+            let mut of: Vec<i64> = Vec::with_capacity(total);
+            for (doc, p) in self.docs.iter().enumerate() {
+                debug_assert_eq!(of.len(), self.nodes[doc]);
+                // A text-only document has no dialect and no nodes.
+                let Some(dialect) = self.dialects.get(p.tag) else { continue };
+                of.extend((0..p.len()).map(|l| dialect.kind(&p.facts, p.core[l as usize])));
+            }
+            let mut keys: Vec<i64> = of.clone();
+            keys.sort_unstable();
+            keys.dedup();
+            let mut starts = vec![0u32; keys.len() + 1];
+            let at = |k: i64| keys.binary_search(&k).expect("a kind of the batch");
+            for &k in &of {
+                starts[at(k) + 1] += 1;
+            }
+            for i in 1..starts.len() {
+                starts[i] += starts[i - 1];
+            }
+            let mut next = starts.clone();
+            let mut rows = vec![0u32; of.len()];
+            for (row, &k) in of.iter().enumerate() {
+                let i = at(k);
+                rows[next[i] as usize] = row as u32;
+                next[i] += 1;
+            }
+            Kinds { keys, starts, rows }
+        })
+    }
+    /// The node rows of kind `kind`, ascending.
+    fn of_kind_rows(&self, kind: i64) -> &[u32] {
+        let k = self.kinds();
+        k.keys.binary_search(&kind).map_or(&[][..], |i| &k.rows[k.starts[i] as usize..k.starts[i + 1] as usize])
     }
 
     /// The batch's chunk block (decision 0289), made on first use.
@@ -3585,6 +3656,30 @@ impl Viewed {
         }
     }
 }
+/// `node`'s column `column` over `batch`, counted without reading its rows (decision 0329): its distinct values, the
+/// sum of their counts' squares, and each value's count. A kind's count is its postings' (`of_kind`), a document's its
+/// nodes; `n` is the key (each value once, no counts). `None` for another column.
+pub fn node_column_counts(batch: &Batch, column: usize) -> Option<(i64, i64, Option<Vec<(i64, i64)>>)> {
+    let squares = |counts: &[(i64, i64)]| counts.iter().map(|&(_, n)| n * n).sum::<i64>();
+    match column {
+        0 => {
+            let counts: Vec<(i64, i64)> = batch.docs.iter().map(|p| (i64::from(p.key), i64::from(p.len()))).filter(|&(_, n)| n > 0).collect();
+            Some((counts.len() as i64, squares(&counts), Some(counts)))
+        }
+        1 => {
+            let n: i64 = batch.docs.iter().map(|p| i64::from(p.len())).sum();
+            Some((n, n, None))
+        }
+        2 => {
+            // Each kind's run in the batch's kind index (`Batch::kinds`): the column's values, as it reads them.
+            let k = batch.kinds();
+            let counts: Vec<(i64, i64)> = k.keys.iter().zip(k.starts.windows(2)).map(|(&key, w)| (key, i64::from(w[1] - w[0]))).collect();
+            Some((counts.len() as i64, squares(&counts), Some(counts)))
+        }
+        _ => None,
+    }
+}
+
 impl Source for Viewed {
     fn python_batch(&self)->Option<Arc<Batch>> {Some(Arc::clone(&self.batch))}
     #[cfg(target_os = "macos")]
@@ -3661,13 +3756,25 @@ impl Source for Viewed {
         self.lookup_docs(column, values, None)
     }
     /// A field's children by parent and field (`field($a, #f, $t)`, `$a` bound): each child's field read off the
-    /// tape as the children are walked, not its row's values found again.
+    /// tape as the children are walked, not its row's values found again. By child and field (`field(_, #f, $n)`,
+    /// `$n` bound: whether `$n` is its parent's `#f`), the child's own field read off the tape: its one row or
+    /// none. Found by child and filtered, `nameref`'s `!field(_, #f65541, $n)` took 300 ns a probe, 25 M probes of a
+    /// cold PostHog run.
     fn lookup_eq(&self, column: usize, value: i64, eqs: &[(usize, i64)]) -> Option<Vec<usize>> {
         let &[(1, f)] = eqs else { return None };
-        if !matches!(self.view, View::Field) || column != 0 {
+        if !matches!(self.view, View::Field) {
             return None;
         }
         let b = &*self.batch;
+        if column == 2 {
+            let Some((doc, local)) = b.node(value) else { return Some(Vec::new()) };
+            let p = &b.docs[doc];
+            let own = i64::from(field_atom(p.tag, p.facts.field(p.core[local as usize]))) == f;
+            return Some(if own { b.row(View::Field, doc, local).into_iter().collect() } else { Vec::new() });
+        }
+        if column != 0 {
+            return None;
+        }
         let mut rows = Vec::new();
         if let Some((doc, local)) = b.node(value) {
             let p = &b.docs[doc];
@@ -3713,6 +3820,15 @@ impl Source for Viewed {
         }
         out
     }
+    fn rows_of(&self, columns: &[usize], out: &mut Vec<i64>) {
+        let offsets = self.batch.offsets(self.view);
+        out.reserve(self.len() * columns.len());
+        for (doc, p) in self.batch.docs.iter().enumerate() {
+            for i in 0..offsets[doc + 1] - offsets[doc] {
+                out.extend(columns.iter().map(|&c| self.value_at(p, i, c)));
+            }
+        }
+    }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
         let (p, i) = self.batch.locate(self.view, row);
         for (o, &c) in out.iter_mut().zip(columns) {
@@ -3752,15 +3868,14 @@ impl Viewed {
                     }
                 }
             } else if matches!(self.view, View::Node) && column == 2 {
-                let (Ok(tag), Ok(code)) = (u8::try_from(v / i64::from(KIND_STRIDE)), u16::try_from(v % i64::from(KIND_STRIDE))) else {
-                    continue;
-                };
-                let Some(dialect) = b.dialects.get(tag).filter(|_| v >= 0) else { continue };
-                let atoms: Vec<u32> = dialect.codes.get(&code).map_or(&[][..], Vec::as_slice).iter().map(|&c| kind_atom(tag, c)).collect();
-                for (doc, p) in b.docs.iter().enumerate().filter(|(doc, p)| p.tag == tag && kept(doc)) {
-                    for &kind in &atoms {
-                        rows.extend(p.facts.of_kind(kind).iter().map(|&id| p.local[id as usize]).filter(|&l| l != NONE).map(|l| b.nodes[doc] + l as usize));
+                let found = b.of_kind_rows(v);
+                match only {
+                    Some(doc) => {
+                        let (lo, hi) = (b.nodes[doc] as u32, b.nodes[doc + 1] as u32);
+                        let from = found.partition_point(|&r| r < lo);
+                        rows.extend(found[from..].iter().take_while(|&&r| r < hi).map(|&r| r as usize));
                     }
+                    None => rows.extend(found.iter().map(|&r| r as usize)),
                 }
             } else {
                 return None;

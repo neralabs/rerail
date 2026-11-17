@@ -204,7 +204,8 @@ impl Rows {
             for c in 0..self.ncols as usize {
                 let d = self.col(c);
                 let bytes = rows * d.width as usize;
-                let Some(off) = block.try_alloc(bytes, align(bytes)) else { return false };
+                // Not zeroed: a value is read only below `len`, written before its row is claimed.
+                let Some(off) = block.try_alloc_raw(bytes, align(bytes)) else { return false };
                 d.chunk[k].store(block.ptr::<u8>(off) as isize as i64 - d as *const ColDir as isize as i64, Relaxed);
             }
             nchunks += 1;

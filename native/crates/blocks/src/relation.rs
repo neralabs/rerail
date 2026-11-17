@@ -26,7 +26,10 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::*};
 
 pub const FROZEN: u32 = 1;
 pub const DELTA: u32 = 2;
-pub const MAX_KEY: usize = 4;
+/// A key's columns at most: the device's probes' (decision 0325 step 5).
+pub const MAX_KEY: usize = 8;
+/// Indexes a relation can be given after it is made (`try_add_index`): its directory's room.
+pub const ADDED_INDEXES: usize = 8;
 
 structure! {
     pub struct Index {
@@ -34,7 +37,8 @@ structure! {
         /// 1 when the key is the order key's first columns: its rows are one range of the sorted rows, found by
         /// binary search, and the index holds no buckets or rows.
         pub ordered: u32,
-        pub key: [u16; 4],
+        /// Its key's columns, `ncols` of them. An added index not yet built has `ncols` 0 (`find_index` skips it).
+        pub key: [u16; 8],
         /// Buckets less one (a power of two less one).
         pub mask: u64,
         /// Bucket `b`'s rows are `rows[offs[b]..offs[b + 1]]`: every key whose hash falls in `b`, in canonical
@@ -70,6 +74,20 @@ structure! {
         pub pending: Span<u32>,
         pub pend_used: AtomicU64,
     }
+}
+
+/// An index's room in its relation's block (`Relation::try_reserve_index`): its number, its buckets' and rows'
+/// offsets in the block, its mask, and the rows it covers.
+#[derive(Clone, Copy, Debug)]
+pub struct IndexRoom {
+    pub index: usize,
+    pub offs: usize,
+    pub rows: usize,
+    pub mask: u64,
+    pub rows_n: u32,
+    /// Its key's columns: `ncols` of `key`.
+    pub key: [u16; MAX_KEY],
+    pub ncols: usize,
 }
 
 /// What a relation is: its columns' widths, and what freeze builds for its readers.
@@ -170,6 +188,96 @@ impl Relation {
             return &[];
         }
         &self.index(i).rows.as_slice()[start..start + len]
+    }
+
+    /// The index whose key is `cols` over its rows `0..rows` (a hashed one: an ordered index holds no buckets), built.
+    /// An index of fewer rows (built before the relation grew) is not it.
+    pub fn find_index(&self, cols: &[u16], rows: u32) -> Option<usize> {
+        let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
+        let ix = self.indexes.as_slice();
+        // SAFETY: an entry's `ncols` is written once, last (`index_built`); read as written, then the index after it.
+        let built = |i: usize| unsafe { std::ptr::read_volatile(&raw const ix[i].ncols) } as usize;
+        let found = (0..n).find(|&i| ix[i].ordered == 0 && built(i) == cols.len() && ix[i].key[..cols.len()] == *cols && ix[i].rows.len() == rows as usize);
+        std::sync::atomic::fence(Acquire);
+        found
+    }
+
+    /// Room for an index on `cols` of rows `0..n` in `block`, which holds this relation: its directory's entry, its
+    /// `2^log` buckets (`n`'s power of two at least) and its rows, which a builder fills (`build_index`, or the
+    /// device's), then marks built (`index_built`). Its number, its buckets' and rows' offsets in the block, and its
+    /// mask; `None` when the block or the directory has no room.
+    ///
+    /// # Safety
+    /// No other thread adds an index to this relation meanwhile (its owner's lock), and its rows `0..n` are written.
+    pub unsafe fn try_reserve_index(&self, block: &Block, cols: &[u16], n: u32) -> Option<IndexRoom> {
+        assert!(!cols.is_empty() && cols.len() <= MAX_KEY, "a key of {} columns", cols.len());
+        // SAFETY: the caller's: this relation's descriptor is ours to change.
+        unsafe {
+            let me = std::ptr::from_ref(self).cast_mut();
+            if self.indexes.len() == 0 {
+                let dir: *mut Index = block.try_alloc_t(ADDED_INDEXES)?;
+                Span::set(&raw mut (*me).indexes, dir, ADDED_INDEXES);
+            }
+            let i = self.nindex.load(Relaxed) as usize;
+            if i >= self.indexes.len() {
+                return None;
+            }
+            let cap = (n as usize).next_power_of_two().max(1);
+            let offs: *mut u32 = block.try_alloc_t(cap + 1)?;
+            let rows: *mut u32 = block.try_alloc_t((n as usize).max(1))?;
+            let ix = std::ptr::from_ref(&self.indexes.as_slice()[i]).cast_mut();
+            (*ix).ncols = 0;
+            (*ix).ordered = 0;
+            let mut key = [0u16; MAX_KEY];
+            key[..cols.len()].copy_from_slice(cols);
+            (*ix).key = key;
+            (*ix).mask = (cap - 1) as u64;
+            Span::set(&raw mut (*ix).offs, offs, cap + 1);
+            Span::set(&raw mut (*ix).rows, rows, n as usize);
+            self.nindex.store(i as u32 + 1, Release);
+            Some(IndexRoom { index: i, offs: block.offset_of(offs), rows: block.offset_of(rows), mask: (cap - 1) as u64, rows_n: n, key: (*ix).key, ncols: cols.len() })
+        }
+    }
+
+    /// Fills index `room` on the host: each row's bucket by its key's hash, the buckets' starts, then the rows in id
+    /// order within each bucket, as the device's builder places them.
+    ///
+    /// # Safety
+    /// `room` is this relation's, reserved and not yet built, and nothing reads it meanwhile.
+    pub unsafe fn build_index(&self, room: &IndexRoom) {
+        let ix = &self.indexes.as_slice()[room.index];
+        let n = room.rows_n as usize;
+        // SAFETY: the caller's: the room's spans are ours to write.
+        let (offs, rows) = unsafe {
+            (std::slice::from_raw_parts_mut(ix.offs.as_slice().as_ptr().cast_mut(), ix.offs.len()),
+             std::slice::from_raw_parts_mut(ix.rows.as_slice().as_ptr().cast_mut(), ix.rows.len()))
+        };
+        offs.fill(0);
+        let base = self.base_rows;
+        let key = &room.key[..room.ncols];
+        let bucket: Vec<u32> = (0..n as u32).map(|i| (key.iter().fold(crate::SEED, |h, &c| crate::mix(h, self.rows.get(i, c as usize))) & room.mask) as u32).collect();
+        for &b in &bucket {
+            offs[b as usize + 1] += 1;
+        }
+        for b in 0..offs.len() - 1 {
+            offs[b + 1] += offs[b];
+        }
+        let mut at: Vec<u32> = offs[..offs.len() - 1].to_vec();
+        for (i, &b) in bucket.iter().enumerate() {
+            rows[at[b as usize] as usize] = base + i as u32;
+            at[b as usize] += 1;
+        }
+    }
+
+    /// Index `room` built (by the host or the device): `find_index` finds it from now on.
+    ///
+    /// # Safety
+    /// Its builder has finished.
+    pub unsafe fn index_built(&self, room: &IndexRoom) {
+        let ix = std::ptr::from_ref(&self.indexes.as_slice()[room.index]).cast_mut();
+        std::sync::atomic::fence(Release);
+        // SAFETY: the caller's; `ncols` is a u32 written once, after the index (the fence above).
+        unsafe { std::ptr::write_volatile(&raw mut (*ix).ncols, room.ncols as u32) };
     }
 
     /// `held_bytes` by part: values written, chunk room unwritten, order, index buckets, index rows, dead bits,
@@ -858,6 +966,41 @@ mod tests {
 
     fn rows_of(v: &View) -> Vec<Vec<i64>> {
         v.ordered_iter().map(|id| v.row(id)).collect()
+    }
+
+    /// An index added after the relation was made (`try_reserve_index`, `build_index`): found by its key once built
+    /// (not before), and each key's group, read by the read written once (`group`), holds exactly that key's rows
+    /// in id order, for a key of one column and one of eight. A full directory refuses.
+    #[test]
+    fn an_added_index_groups_each_keys_rows_in_id_order() {
+        let block = Block::anon(kind::FACTS, 16 << 20);
+        let lock = Mutex::new(());
+        let spec = Spec { widths: vec![8; 9], order: Vec::new(), indexes: Vec::new(), min_log: 4 };
+        let rel = Relation::create(&block, &spec, None);
+        let rows: Vec<[i64; 9]> = (0..2_000i64).map(|i| std::array::from_fn(|c| if c == 0 { i % 37 } else { (i * 7 + c as i64) % 5 - 2 })).collect();
+        RelW { block: &block, rel, lock: &lock }.extend(&rows.iter().flatten().copied().collect::<Vec<_>>());
+        let n = rel.rows.len();
+        for cols in [vec![0u16], (1..9).collect::<Vec<u16>>()] {
+            assert_eq!(rel.find_index(&cols, n), None);
+            // SAFETY: one thread; the rows are written.
+            let room = unsafe { rel.try_reserve_index(&block, &cols, n) }.expect("room");
+            assert_eq!(rel.find_index(&cols, n), None, "not found before it is built");
+            unsafe {
+                rel.build_index(&room);
+                rel.index_built(&room);
+            }
+            let i = rel.find_index(&cols, n).expect("found once built");
+            for probe in [0usize, 1, 5, 36, 1999] {
+                let key: Vec<i64> = cols.iter().map(|&c| rows[probe][c as usize]).collect();
+                let want: Vec<u32> = (0..n).filter(|&r| cols.iter().zip(&key).all(|(&c, &v)| rows[r as usize][c as usize] == v)).collect();
+                let got: Vec<u32> = rel.group(i, crate::key_hash(&key)).iter().copied().filter(|&r| cols.iter().zip(&key).all(|(&c, &v)| rel.rows.get(r, c as usize) == v)).collect();
+                assert_eq!(got, want, "key {key:?} on {cols:?}");
+            }
+        }
+        for c in 2..ADDED_INDEXES as u16 {
+            assert!(unsafe { rel.try_reserve_index(&block, &[c], n) }.is_some());
+        }
+        assert!(unsafe { rel.try_reserve_index(&block, &[0, 1], n) }.is_none(), "the directory is full");
     }
 
     /// Freeze keeps a set in canonical order, a delta's set being its base's less its kills plus its own rows; the
