@@ -31,9 +31,8 @@ pub struct Found {
     pub vocabulary: Vocabulary,
 }
 
-/// The text passes over `v`, for a program of `dialect`: as the tree's run in `plan::corpus`'s preparation.
-pub fn run(v: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect) -> Result<(Arc<Version>, Found)> {
-    let mut p = Pipeline::new("text", v);
+/// The text passes on `p`, for a program of `dialect`: as the tree's run in `plan::corpus`'s preparation.
+pub fn passes(p: &mut Pipeline<'_>, dialect: crate::code_rule_dsl::language::GrammarDialect) -> Result<Found> {
     if dialect == crate::code_rule_dsl::language::GrammarDialect::Python && !std::env::var("RERAIL_AST_PARTS").is_ok_and(|v| v == "off") {
         p.rules(&mut Absorb { capture: !std::env::var("RERAIL_AST_PART_CAPTURES").is_ok_and(|v| v == "off"), rewritten: 0 });
     }
@@ -50,13 +49,8 @@ pub fn run(v: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDial
     p.rules(&mut ImpliedSets { added: 0 });
     let mut relations = TextRelations::default();
     p.rules(&mut relations);
-    // The decisions in the run's profile, as the tree's passes made them.
-    for d in p.decisions() {
-        crate::code_rule_dsl::logic::profile::decision(&d.what, || d.detail.clone());
-    }
-    let (v, _) = p.finish()?;
     let vocabulary = Vocabulary::from_parts(relations.tests, relations.specs, relations.matches, relations.markers);
-    Ok((v, Found { matchers, vocabulary }))
+    Ok(Found { matchers, vocabulary })
 }
 
 fn name<'v>(v: &'v Version, r: RuleRef<'v>, s: Slot) -> &'v str {

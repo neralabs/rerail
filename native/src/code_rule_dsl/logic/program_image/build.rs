@@ -19,7 +19,7 @@
 //!
 //! A version's digest is made with it, from the parent's and the edit's hashes.
 use super::encoder::{self, CellText, Decl, Encoder, FactRel, Parts};
-use super::handles::{AtomRef, CmpOp, LitRef, RuleRef, TermRef};
+use super::handles::{AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};
 use super::version::{Made, Version, max_ranges};
 use super::{ABOUT_BIT, AtomId, Cell, RelId, RuleId, Slot, kind};
 use crate::code_rule_dsl::logic::front::{List, Program, Rule, Value};
@@ -389,6 +389,37 @@ impl<'p> Builder<'p> {
         self.parts.outputs = Some((ids, encoder::names_hash(1, names.iter().map(|n| n.as_ref()))));
         self.parts_changed = true;
     }
+    /// States the fields of `header` besides its rules (`Version::header`'s, edited by a pass that reads and writes
+    /// only those): its declarations, facts, inputs, outputs and the rest of its `.about` rows, each where it differs
+    /// from `was`, the header the pass was given. Its rules are the builder's own.
+    pub fn set_header(&mut self, was: &Program, header: &Program) {
+        for (n, c) in &header.decls {
+            if was.decls.get(n) != Some(c) {
+                self.declare_names(n, c.as_slice());
+            }
+        }
+        for n in was.decls.keys().filter(|n| !header.decls.contains_key(*n)) {
+            self.undeclare(n);
+        }
+        for (r, rows) in &header.facts {
+            if was.facts.get(r) != Some(rows) {
+                self.set_facts(r, rows);
+            }
+        }
+        for r in was.facts.keys().filter(|r| !header.facts.contains_key(*r)) {
+            self.drop_facts(r);
+        }
+        if was.inputs != header.inputs {
+            self.set_inputs(&header.inputs);
+        }
+        if was.outputs != header.outputs {
+            self.set_outputs(&header.outputs);
+        }
+        let (a, b) = (super::about_of(was), super::about_of(header));
+        if a != b {
+            self.set_about(&b);
+        }
+    }
     /// States the program's other fields (`about_of`), all of them.
     pub fn set_about(&mut self, about: &Facts) {
         self.parts.facts.retain(|k, _| k & ABOUT_BIT == 0);
@@ -623,6 +654,22 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
         self.head = true;
         self
     }
+    /// An atom of `from`'s rule `rule`, copied through `rw` as this rule's head (its variables renamed, terms replaced).
+    pub fn head_with(mut self, from: &Version, rule: RuleRef<'_>, atom: super::AtomRef<'_>, rw: &mut impl Rewrite) -> Self {
+        if self.head {
+            self.failed = Some(super::bad("a rule with two heads"));
+        }
+        let same = self.b.same(rule);
+        let vars: Vec<u32> = rule.vars().map(|a| a.0).collect();
+        let mut w = Walk { enc: &mut self.b.enc, from, im: rule.image(), vars: &vars, same, prefix: Vec::new() };
+        w.atom(atom, Site::Head(atom), rw);
+        self.head = true;
+        self
+    }
+    /// The builder the rule is written into, for its names (`atom`, `rel`).
+    pub fn builder(&mut self) -> &mut Builder<'p> {
+        self.b
+    }
     /// Records rule `id` of the derivation's input as this rule's source (§9), as `Builder::rewrite` does: for a rule
     /// written term by term from one of the input's (a maintenance rule of a source rule, decision 0258).
     pub fn source(mut self, id: RuleId) -> Self {
@@ -797,6 +844,15 @@ pub trait Rewrite {
     fn keep(&mut self, _l: LitRef<'_>) -> bool {
         true
     }
+    /// A term to write in place of argument `c` of atom `a` (a body atom, or an aggregate's), asked before `term`;
+    /// `None` leaves it to `term`.
+    fn arg(&mut self, _a: AtomRef<'_>, _c: usize, _t: TermRef<'_>) -> Option<T<'static>> {
+        None
+    }
+    /// The kind set (by name) to write a `nearest` literal over set `set` with; `None` keeps its own.
+    fn kindset(&mut self, _set: AtomId) -> Option<String> {
+        None
+    }
     /// Whether to leave out argument `c` of atom `a` (`match_all`'s regex, which its relation names instead).
     fn drop_arg(&mut self, _a: AtomRef<'_>, _c: usize) -> bool {
         false
@@ -862,7 +918,10 @@ impl Walk<'_, '_> {
         let mut k = 0;
         while c < end {
             if !rw.drop_arg(a, k) {
-                self.term(c, site, rw);
+                match (!matches!(site, Site::Head(_))).then(|| rw.arg(a, k, super::handles::term(self.im, c))).flatten() {
+                    Some(t) => write_t(self.enc, &t),
+                    None => self.term(c, site, rw),
+                }
             }
             k += 1;
             c += self.im.node(c).1;
@@ -919,6 +978,22 @@ impl Walk<'_, '_> {
                     c += self.im.node(c).1;
                 }
                 self.enc.close(at);
+            }
+            kind::NEAREST => {
+                let Lit::Nearest { kindset, .. } = l.view() else { unreachable!("a nearest literal") };
+                match rw.kindset(kindset) {
+                    Some(set) => {
+                        let a = self.enc.atom(&set);
+                        let at = self.enc.open(kd, a);
+                        let mut c = n + 1;
+                        while c < n + size {
+                            self.copy_renamed(c, rw);
+                            c += self.im.node(c).1;
+                        }
+                        self.enc.close(at);
+                    }
+                    None => self.copy_renamed(n, rw),
+                }
             }
             _ => self.copy_renamed(n, rw),
         }

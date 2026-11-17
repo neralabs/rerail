@@ -532,11 +532,24 @@ step 3 replaces what is under the writer.
        read it (each checked against the tree's answer in a debug build), the store keeps it in place of the tree's
        text, and `Prepared::prog` is deleted. From then on the source is a stage of the pipeline;
      - 6c: `strings::as_relations`, `long_text_twins`, `node_subject_tests`, `matchers`;
-     - 6d: `reach_form`, `magic`'s two demands, `undo_in_cycles`;
-     - 6e: `prune`, `simplify`, `base_inputs`, `cpython_functors`.
+     - 6d: `reach_form`, `magic`'s two demands, `undo_in_cycles` (done, with 6e);
+     - 6e: `prune`, `simplify`, `base_inputs`, `cpython_functors` (done: the image is made from the program as the
+       rule texts give it, and every pass from there runs on the version; a debug build runs the tree's passes beside
+       them, stage by stage (`preparation::STAGES`), and checks each stage's version by digest, naming the rules,
+       facts and rows only one side has; `simplify`'s `similar_relations` is ported too, profiled runs only).
    - **7a**, combining on versions: each policy's lowered image (0246 §6) renamed into the combined version, and
      combining's passes (the requests, hiding's bound, the fact spaces, the merge of identical relations) on the
-     manager.
+     manager. In two halves, each checked stage by stage against the tree in a debug build, as 6c–6e are:
+     - 7a-1, the combined program a version: made where the parts are linked, before the passes on the whole
+       (core's projections no inputs, `retype_helpers`, `sources_on_request`, hiding's bound once, the fact spaces'
+       guards, `same_relations`), which run on it; the combine's caches (the process's and the store's `combined`
+       entry) keep the version, the store its image in place of the `.rr` text; the prepared path's edits before
+       its image (`fold_own` and its merges, `cross_memo::add`, the components' output) run on it, and the
+       prepared key reads it. The run holds no combined tree.
+     - 7a-2, the parts as versions: `lower_in` hands on the stored image unread (it decodes it today), the linked
+       library's image likewise, and the per-part passes (`own_part`, the requests' units, `undo_on_request`, each
+       part's hiding when the libraries are not held once) run on them; the link renames each part's version into
+       the combined one (`Builder`), with the kind sets shared by their kinds.
    - **P**, the per-policy edit: the combined version is kept, and a run's is an overlay of the last one's (the
      edited policy's rules out, its new ones in). The preparation pipeline runs `again` from its stored run. Each
      pass reruns on the delta, or maintains what it reads, or runs whole where it must. ep2 is measured once, at the

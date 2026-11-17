@@ -3081,91 +3081,130 @@ fn run_observed(
         }
         None => {
             let mut interned: Vec<(Vec<String>, Vec<u32>)> = Vec::new();
-            // @py_unparse(n) and @ast_dump(n) read the relations the batches bind them as.
-            cpython_functors(&mut prog)?;
-            // The base relations it reads and does not derive are inputs, `.input` or not, as an authored file's are
-            // (`convert::overlay`): the batches bind them, where a relation of its own would be an empty table.
-            base_inputs(&mut prog);
-            // Only the rules an output reads, directly or through other rules: a rule that includes a library runs the part
-            // of it the rule uses, not all of it (T's front prunes the same way).
-            let preparing = crate::code_rule_dsl::logic::profile::span(|| "prune, simplify, demand".into());
-            prog = front::prune(prog);
-            // Bodies simplified first (decision 0038): implied atoms and set-member kind tests drop, identical relations merge.
-            crate::code_rule_dsl::logic::simplify::simplify(&mut prog);
-            prog = front::prune(prog);
-            // Transitive closures held as each start's bitmap, not as rows (decision 0119).
-            let (reaches, throughs) = crate::code_rule_dsl::logic::reach_form::find(&mut prog).map_err(|e| Error::Plan(format!("{e:?}")))?;
+            // The prepared program's one image (decision 0281's path, step 6): made here, from the program as the rule
+            // texts give it; every pass after it runs on the manager over the version (the functors only CPython gives,
+            // the base inputs, the prunes and `simplify`, the reach form, the demand, the text passes, steps 6c–6e; the
+            // program lowered for the dialect, `nearest` read from the transducer, the bound check, the file-local joins
+            // pushed, the exports factorized and cut to their demand, the rows located, the merges, the inputs the rules
+            // read, the rule order), and the run's readers read the version (`Lowered::placed`), the split's parts views
+            // of it. A program the image cannot hold is an error, not a run read from the tree.
+            let (version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&prog).and_then(|b| b.finish()).map_err(Error::Plan)?;
+            #[cfg(not(debug_assertions))]
+            drop(prog);
+            // A debug build runs the tree's passes beside them, stage by stage, and checks each stage's version against
+            // the tree's (their decisions are the version's passes' alone).
+            #[cfg(debug_assertions)]
+            let (mut tree_reaches, mut tree_demanded, mut tree_demand, mut tree_undone, mut tree_text) = (None, None, None, None, None);
+            #[cfg(debug_assertions)]
+            let mut check = |stage: &'static str, v: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>| {
+                crate::code_rule_dsl::logic::profile::quiet(|| {
+                    let p = std::mem::take(&mut prog);
+                    prog = match stage {
+                        "inputs" => {
+                            let mut p = p;
+                            cpython_functors(&mut p).expect("the tree's functors, as the version's");
+                            base_inputs(&mut p);
+                            p
+                        }
+                        "prune" | "prune again" => front::prune(p),
+                        "simplify" => {
+                            let mut p = p;
+                            crate::code_rule_dsl::logic::simplify::simplify(&mut p);
+                            p
+                        }
+                        "reach" => {
+                            let mut p = p;
+                            tree_reaches = Some(crate::code_rule_dsl::logic::reach_form::find(&mut p).expect("the tree's reach form, as the version's"));
+                            p
+                        }
+                        "negated demand" => {
+                            let (p, d) = crate::code_rule_dsl::logic::magic::demand_negated_tests(p);
+                            tree_demanded = Some(d);
+                            p
+                        }
+                        "demand" if !p.demand.is_empty() && std::env::var("RERAIL_DEMAND").map_or(true, |v| v != "off") => {
+                            let tree = crate::code_rule_dsl::logic::magic::demand_bound_columns(p.clone(), &Default::default());
+                            match tree {
+                                Ok(d) => {
+                                    tree_demand = Some(d.magic_report.clone().map(|t| (t.adornments, t.full_for_negation, t.magic_rules, t.full)));
+                                    front::prune(d)
+                                }
+                                Err(_) => {
+                                    tree_demand = Some(None);
+                                    p
+                                }
+                            }
+                        }
+                        "demand" => p,
+                        "undo" => {
+                            let mut p = p;
+                            tree_undone = Some(crate::code_rule_dsl::logic::reach_form::undo_in_cycles(&mut p).expect("the tree's undo, as the version's"));
+                            p
+                        }
+                        "text" => {
+                            let mut p = p;
+                            // A Python program's tree-shaped parts become matchers first (decision 0106 §4).
+                            if dialect == crate::code_rule_dsl::language::GrammarDialect::Python && !std::env::var("RERAIL_AST_PARTS").is_ok_and(|v| v == "off") {
+                                let capture = !std::env::var("RERAIL_AST_PART_CAPTURES").is_ok_and(|v| v == "off");
+                                matchers::absorb(&mut p, capture);
+                            }
+                            let rewritten_matchers = matchers::lower(&mut p);
+                            if p.decls.contains_key("text") {
+                                crate::code_rule_dsl::logic::strings::node_subject_tests(&mut p);
+                                syntax::long_text_twins(&mut p, &rewritten_matchers);
+                            }
+                            let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut p).expect("the tree's text tests, as the version's");
+                            tree_text = Some((rewritten_matchers, vocabulary));
+                            p
+                        }
+                        other => unreachable!("a stage of `preparation::front`: {other}"),
+                    };
+                });
+                let (tree_version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&prog).and_then(|b| b.finish()).expect("the tree's image");
+                assert_eq!((tree_version.size(), tree_version.digest()), (v.size(), v.digest()), "the version after `{stage}` is the tree's: {}", crate::code_rule_dsl::logic::program_image::differences(&tree_version, v));
+            };
+            #[cfg(not(debug_assertions))]
+            let mut check = |_: &'static str, _: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>| {};
+            // The functors only CPython gives, the base relations as inputs, the prunes and `simplify` (decision 0038);
+            // transitive closures held as each start's bitmap, not as rows (decision 0119); tests a rule negates of the
+            // nodes it has bound computed for those nodes only (magic sets); the program's own demand (`.pragma
+            // "magic-transform" "r, …"`, decision 0145; `RERAIL_DEMAND=off` computes the listed relations in full); a
+            // closure the demand put in a cycle of other relations rows again; the `ast` atoms as the matchers'
+            // relations, text tests as the vocabulary's (step 6c).
+            let preparing = crate::code_rule_dsl::logic::profile::span(|| "prune, simplify, reach, demand, text".into());
+            let (version, preparation::Front { reaches: (reaches, throughs), demanded, demand, undone, matchers, vocabulary }) = preparation::front(version, dialect, &mut check).map_err(Error::Plan)?;
+            drop(preparing);
+            #[cfg_attr(not(debug_assertions), allow(dropping_copy_types))]
+            drop(check);
             if reaches + throughs > 0 {
                 crate::code_rule_dsl::logic::profile::decision("reach index (decision 0119)", || format!("{reaches} closures and {throughs} relations through them held as bitmaps"));
             }
-            // Tests a rule negates of the nodes it has bound, computed for those nodes only, not every node (magic sets).
-            let (mut prog, demanded) = crate::code_rule_dsl::logic::magic::demand_negated_tests(prog);
-            // The program's own demand (`.pragma "magic-transform" "r, …"`): adornments over the columns its readers bind (decision 0145).
-            // `RERAIL_DEMAND=off` computes the listed relations in full.
-            if !prog.demand.is_empty() && std::env::var("RERAIL_DEMAND").map_or(true, |v| v != "off") {
-                let listed = prog.demand.join(", ");
-                match crate::code_rule_dsl::logic::magic::demand_bound_columns(prog.clone(), &Default::default()) {
-                    Ok(p) => {
-                        let report = p.magic_report.as_ref().map(|r| format!("adornments {}; computed in full where demand would not hold: {}; {} magic rules", r.adornments.join(", "), if r.full_for_negation.is_empty() { "none".to_owned() } else { r.full_for_negation.join(", ") }, r.magic_rules)).unwrap_or_default();
-                        crate::code_rule_dsl::logic::profile::decision("the program's demand (decision 0145)", || format!("{listed}: {report}"));
-                        prog = front::prune(p);
-                        // A measurement aid: `RERAIL_DEMAND_DUMP=<file>` writes the rules as demand left them.
-                        if let Some(path) = std::env::var_os("RERAIL_DEMAND_DUMP") {
-                            let _ = std::fs::write(path, prog.rules.iter().map(|r| format!("{r}\n")).collect::<String>());
-                        }
-                    }
+            if let Some((listed, outcome)) = &demand {
+                let listed = listed.join(", ");
+                match outcome {
+                    Ok(r) => crate::code_rule_dsl::logic::profile::decision("the program's demand (decision 0145)", || format!("{listed}: adornments {}; computed in full where demand would not hold: {}; {} magic rules", r.adornments.join(", "), if r.full_for_negation.is_empty() { "none".to_owned() } else { r.full_for_negation.join(", ") }, r.magic_rules)),
                     Err(e) => crate::code_rule_dsl::logic::profile::decision("the program's demand (decision 0145)", || format!("{listed}: not applied ({e}); computed in full")),
                 }
             }
-            // A closure the demand put in a cycle of other relations is rows again (decision 0119).
-            let undone = crate::code_rule_dsl::logic::reach_form::undo_in_cycles(&mut prog).map_err(|e| Error::Plan(format!("{e:?}")))?;
             if !undone.is_empty() {
                 crate::code_rule_dsl::logic::profile::decision("reach index (decision 0119)", || format!("{} made rows again after demand, in cycles: {}", undone.len(), undone.join(", ")));
             }
-            drop(preparing);
-            // The prepared program's one image (decision 0281's path, step 6): made here, after the last pass that edits
-            // the tree; the passes after it run on the manager over the version (the text passes, step 6c; the program
-            // lowered for the dialect, `nearest` read from the transducer, the bound check, the file-local joins pushed,
-            // the exports factorized and cut to their demand, the rows located, the merges, the inputs the rules read,
-            // the rule order), and the run's readers read the version (`Lowered::placed`), the split's parts views of
-            // it. A program the image cannot hold is an error, not a run read from the tree.
-            let (version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&prog).and_then(|b| b.finish()).map_err(Error::Plan)?;
-            // The `ast` atoms as the matchers' relations, text tests as the vocabulary's (step 6c).
-            let (version, preparation::text::Found { matchers, vocabulary }) = preparation::text::run(version, dialect).map_err(Error::Plan)?;
-            // A debug build checks them against the tree's passes, which the checks below read on.
             #[cfg(debug_assertions)]
             {
-                // The `ast` atoms become relations the transducer's matchers fill per chunk (decision 0106).
-                // A Python program's tree-shaped parts become matchers first (decision 0106 §4), unless `RERAIL_AST_PARTS=off`.
-                if dialect == crate::code_rule_dsl::language::GrammarDialect::Python && !std::env::var("RERAIL_AST_PARTS").is_ok_and(|v| v == "off") {
-                    // Parts whose field nodes the rule reads again join through the matcher's captures (decision 0107),
-                    // unless `RERAIL_AST_PART_CAPTURES=off`.
-                    let capture = !std::env::var("RERAIL_AST_PART_CAPTURES").is_ok_and(|v| v == "off");
-                    let rewritten = matchers::absorb(&mut prog, capture);
-                    if rewritten > 0 {
-                        crate::code_rule_dsl::logic::profile::decision("tree patterns as matchers (decision 0106)", || format!("{rewritten} rules' kind and field parts run as the transducer's matchers"));
-                    }
+                assert_eq!(tree_reaches, Some((reaches, throughs)), "the version's reaches are the tree's");
+                assert_eq!(tree_demanded.as_ref(), Some(&demanded), "the version's negated demand is the tree's");
+                match (&tree_demand, demand.as_ref().map(|d| &d.1)) {
+                    (Some(Some(t)), Some(Ok(r))) => assert_eq!((&t.0, &t.1, t.2, &t.3), (&r.adornments, &r.full_for_negation, r.magic_rules, &r.full), "the version's demand is the tree's"),
+                    (Some(None), Some(Err(_))) | (None, None) => {}
+                    (t, v) => panic!("the version's demand ({:?}) is not the tree's ({:?})", v.map(|v| v.as_ref().err()), t),
                 }
-                let rewritten_matchers = matchers::lower(&mut prog);
-                // Long text where no body fixes the node's kind: twin rules read it for the nodes they bind (decision 0109).
-                if prog.decls.contains_key("text") {
-                    crate::code_rule_dsl::logic::strings::node_subject_tests(&mut prog);
-                    let twins = syntax::long_text_twins(&mut prog, &rewritten_matchers);
-                    if twins > 0 {
-                        crate::code_rule_dsl::logic::profile::decision("long text twins (decision 0109)", || format!("{twins} rules read text past the inline bound for the nodes they bind"));
-                    }
-                }
-                // Text tests over text relations become relations the batches fill from their vocabulary (decision 0037).
-                let tree_vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;
-                let (tree_version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&prog).and_then(|b| b.finish()).map_err(Error::Plan)?;
-                assert_eq!(rewritten_matchers, matchers, "the version's matchers are the tree's");
+                assert_eq!(tree_undone.as_ref(), Some(&undone), "the version's reaches made rows are the tree's");
+                let (tree_matchers, tree_vocabulary) = tree_text.expect("the tree's text passes");
+                assert_eq!(tree_matchers, matchers, "the version's matchers are the tree's");
                 assert_eq!((&tree_vocabulary.specs, &tree_vocabulary.markers), (&vocabulary.specs, &vocabulary.markers), "the version's text tests are the tree's");
                 assert_eq!(tree_vocabulary.tests.iter().map(|t| &t.0).collect::<Vec<_>>(), vocabulary.tests.iter().map(|t| &t.0).collect::<Vec<_>>(), "the version's test relations are the tree's");
                 assert_eq!(tree_vocabulary.matches.iter().map(|m| m.as_str()).collect::<Vec<_>>(), vocabulary.matches.iter().map(|m| m.as_str()).collect::<Vec<_>>(), "the version's regexes are the tree's");
-                assert_eq!((tree_version.size(), tree_version.digest()), (version.size(), version.digest()), "the version's text passes are the tree's");
             }
-            #[cfg(not(debug_assertions))]
-            drop(prog);
             let lowering = crate::code_rule_dsl::logic::profile::span(|| "lower the program".into());
             // One base, the run's and the store's: the text passes leave an overlay.
             let source = if version.base_bytes().is_some() { version.clone() } else { version.fold().map_err(Error::Plan)? };

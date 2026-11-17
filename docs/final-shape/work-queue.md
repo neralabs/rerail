@@ -574,6 +574,8 @@ pass.
     the phases test's error (`@rr_node_text without the run's long-text nodes bound`): the same cause, likely.
   - `corpus::base_tests::base_relations_read_are_inputs` (red at e2c15672d, 2026-11-16): `text(sp, s)` of a
     document's `source` span fails with the same error: no phase here, so the cause is not phase-specific.
+  - `typing::oracle_tests::rust_calls_program_agrees_with_rust_analyzer` (red at 0281 step 6d, 2026-11-16, its first
+    run since): the same error, in a Rust run.
   - Also: `sql_executor` as a whole, in parallel, passes 3 GB RSS (`tmp/capped.sh 3000`); with four threads too.
 - **Done when**: each passes, the first by binding the long-text nodes before whichever part reads them (or by the
   part not reading node text), the second by classifying each switch from what it does, the third from the cause.

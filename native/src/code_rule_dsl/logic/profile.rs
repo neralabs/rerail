@@ -1518,12 +1518,25 @@ pub fn now() -> f64 {
 
 /// A run-level decision or optimization under `topic` (counted when made again, as per chunk).
 pub fn decision(topic: &str, text: impl FnOnce() -> String) {
-    if !on() {
+    if !on() || QUIET.get() {
         return;
     }
     // The text first: making it may profile too (a split's span), and the state's lock is not reentrant.
     let text = text();
     *state().decisions.entry((topic.to_owned(), text)).or_default() += 1;
+}
+
+thread_local! {
+    static QUIET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` with this thread's decisions unrecorded: a debug build's check that runs a pass's tree form beside it,
+/// whose decisions the pass itself records.
+pub fn quiet<T>(f: impl FnOnce() -> T) -> T {
+    let was = QUIET.replace(true);
+    let out = f();
+    QUIET.set(was);
+    out
 }
 
 /// The decisions made so far (none when profiling is off): `decisions_since` takes the ones made after.

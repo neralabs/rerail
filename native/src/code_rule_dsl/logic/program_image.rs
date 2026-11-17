@@ -62,7 +62,7 @@ pub use grouped::Grouped;
 pub use handles::{AggRef, AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};
 pub use strings::Strings;
 pub use tree::Tree;
-pub use version::{DeclRef, FactsRef, Made, Version, forget_trees_decoded, trees_decoded};
+pub use version::{DeclRef, FactsRef, Made, Version, differences, forget_trees_decoded, trees_decoded};
 
 pub const MAGIC: [u8; 8] = *b"RRPIMG\x00\x04";
 /// 3: every relation the program names has an id, those its declarations, facts, inputs, outputs and about rows
@@ -408,6 +408,19 @@ impl Image {
     }
     pub(crate) fn big(&self, k: u32) -> i64 {
         self.u64s(R::Ints)[k as usize] as i64
+    }
+    /// Whether the subtrees at nodes `a` and `b` are equal: node by node, a big int by its value (each is written to
+    /// the image's table of its own, so two equal ones have two entries).
+    pub(crate) fn same_nodes(&self, a: u32, b: u32) -> bool {
+        let n = self.node(a).1;
+        n == self.node(b).1
+            && (0..n).all(|k| {
+                let (x, y) = (self.node(a + k), self.node(b + k));
+                if x.0 != y.0 || x.1 != y.1 {
+                    return false;
+                }
+                if x.0 & kind::MASK == kind::INT && x.0 & kind::BIG != 0 { self.big(x.2) == self.big(y.2) } else { x.2 == y.2 }
+            })
     }
     /// The rules (local indexes) whose head is relation `rel`.
     pub(crate) fn heads(&self, rel: RelId) -> &[u32] {
