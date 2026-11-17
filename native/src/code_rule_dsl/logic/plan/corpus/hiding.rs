@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// columns, grammar column, tape column).
 /// `string_annotation(s)` is one: Ruff's strings that are type definitions, nested ones too, whose nodes are in an
 /// annotation's document (not shown, `guests::key`).
-const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 10] = [
+pub(super) const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 10] = [
     ("guest", &[0], Some(3), None),
     ("string_annotation", &[0], None, None),
     ("parsed", &[2], Some(1), None),
@@ -45,7 +45,7 @@ const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 10] = [
 ];
 
 /// Views of base relations the lowering writes as rules.
-const VIEWS: [&str; 3] = ["kind", "docof", "precedes"];
+pub(super) const VIEWS: [&str; 3] = ["kind", "docof", "precedes"];
 
 /// The grammar a guest's kinds are named in: a dialect label (`annotation` is Python's expression).
 pub(super) fn dialect_label(grammar: &str) -> &str {
@@ -65,15 +65,15 @@ pub(super) fn bound(prog: &Program) -> u32 {
 /// a guest's node, not only maybe one (O110). A variable read from a derived column that host rows fill too is
 /// scoped (no bound on it) but not definite: it is specialized to a guest grammar only in a clone of its rule.
 /// For a derived relation's column, `definite` says every rule fills it with a definite variable.
-#[derive(Clone, Default, PartialEq)]
-struct Fact {
-    scoped: bool,
-    grammar: Option<String>,
-    definite: bool,
+#[derive(Clone, Default, PartialEq, Debug)]
+pub(super) struct Fact {
+    pub(super) scoped: bool,
+    pub(super) grammar: Option<String>,
+    pub(super) definite: bool,
 }
 
 impl Fact {
-    fn join(&mut self, other: &Fact) -> bool {
+    pub(super) fn join(&mut self, other: &Fact) -> bool {
         let mut changed = (other.scoped && !self.scoped) || (other.definite && !self.definite);
         self.scoped |= other.scoped;
         self.definite |= other.definite;

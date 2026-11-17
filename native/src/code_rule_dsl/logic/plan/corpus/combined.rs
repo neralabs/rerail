@@ -71,6 +71,19 @@ fn shipped_key(key: &[u8; 32]) -> HashKey {
 /// The combined program of texts `key`, when the store keeps one whose library files all still read as recorded; or,
 /// where the store has none, the one the engine ships (decision 0264).
 pub(super) fn lookup(store: &ContentStore, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<Program>> {
+    let Some(digest) = entry_program(store, key)? else { return Ok(None) };
+    Ok(program_text::load(store, &digest, lists)?.map(|(program, _)| program))
+}
+
+/// `lookup`'s program as its version, opened from its image with no tree decoded (decision 0281's path, step 7a-1).
+pub(super) fn lookup_version(store: &ContentStore, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>> {
+    let Some(digest) = entry_program(store, key)? else { return Ok(None) };
+    Ok(program_text::load_image(store, &digest, lists)?.map(|(v, _)| v))
+}
+
+/// The digest of the program texts `key`'s entry keeps, when the store (or the engine's bundle) keeps one whose
+/// library files all still read as recorded.
+fn entry_program(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<[u8; 32]>> {
     let entry = match store.held_source_by_hash(HashKey::sha256(source_text(key).as_bytes()))? {
         Some(source) => {
             let set = plan();
@@ -98,8 +111,7 @@ pub(super) fn lookup(store: &ContentStore, key: &[u8; 32], lists: &crate::code_r
         }
     }
     let Some([Value::Str(digest)]) = facts.get(PROGRAM).and_then(|rows| rows.first()).map(|r| r.as_slice()) else { return Ok(None) };
-    let Some(digest) = unhex(&digest) else { return Ok(None) };
-    Ok(program_text::load(store, &digest, lists)?.map(|(program, _)| program))
+    Ok(unhex(digest))
 }
 
 fn unhex(text: &str) -> Option<[u8; 32]> {
@@ -117,7 +129,33 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
 /// not read back as written is not kept.
 pub(super) fn remember(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile], program: &Program, images: &[HashKey]) -> StoreResult<bool> {
     // A program that does not read back the same from its text is not kept: the next run combines it again.
-    let Some((digest, text_source)) = program_text::store(store, program)? else { return Ok(false) };
+    let Some(kept) = program_text::store(store, program)? else { return Ok(false) };
+    let image = || crate::code_rule_dsl::logic::program_image::encode(program).ok();
+    remember_kept(store, key, read, kept, images, &image)
+}
+
+/// `remember` of the program's version: its image kept as it is (`program_text::store_version`); with images off,
+/// its tree, decoded at this edge alone.
+pub(super) fn remember_version(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile], v: &crate::code_rule_dsl::logic::program_image::Version, images: &[HashKey]) -> StoreResult<bool> {
+    let kept = match program_text::store_version(store, v)? {
+        Some(kept) => kept,
+        None => {
+            let Ok(program) = v.program(&crate::code_rule_dsl::logic::front::Lists::default()) else { return Ok(false) };
+            let Some(kept) = program_text::store(store, &program)? else { return Ok(false) };
+            kept
+        }
+    };
+    let image = || match v.base_bytes() {
+        Some(bytes) => Some(bytes.to_vec()),
+        None => v.fold().ok().and_then(|f| f.base_bytes().map(<[u8]>::to_vec)),
+    };
+    remember_kept(store, key, read, kept, images, &image)
+}
+
+/// The entry of texts `key` naming the program kept as `kept` (its digest and sources); `image`, its image's bytes,
+/// for a run that builds the engine's bundle.
+fn remember_kept(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile], kept: ([u8; 32], Vec<crate::content_store::SourceId>), images: &[HashKey], image: &dyn Fn() -> Option<Vec<u8>>) -> StoreResult<bool> {
+    let (digest, text_source) = kept;
     let mut facts = Facts::new();
     facts.insert(PROGRAM.to_owned(), vec![[Value::Str(hex(&digest).into())].into()]);
     let rows = read.iter().map(|f| [Value::Str(f.path.to_string_lossy().into_owned().into()), Value::Str(f.sha256.map(|d| hex(&d)).unwrap_or_default().into())].into()).collect();
@@ -135,7 +173,7 @@ pub(super) fn remember(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile
     // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`) ships the entry and its program's image.
     if std::env::var_os("RERAIL_EXPORT_IMAGES").is_some() {
         rr::images::export(shipped_key(key), &entry);
-        if let Ok(bytes) = crate::code_rule_dsl::logic::program_image::encode(program) {
+        if let Some(bytes) = image() {
             rr::images::export(program_text::image_key(&digest), &bytes);
         }
     }

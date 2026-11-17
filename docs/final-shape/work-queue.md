@@ -569,6 +569,9 @@ pass.
   - `corpus::tests::every_switch_lowering_reads_is_classified`: `RERAIL_EXPORT_IMAGES`, `RERAIL_IMAGE_STORE`,
     `RERAIL_SHIPPED_IMAGES` (`rr/images.rs`) and `RERAIL_MODULE_IMAGES` (`combine_read`) are read in combining but
     are in neither list. Each needs classifying: does it change a prepared program (`COMBINING`) or not?
+    **Fixed** (2026-11-16, with 0281 step 7a-1): none changes a prepared program. An image is keyed by its text, its
+    scope and the format, so the store it comes from gives the same program; the export only writes it out too.
+    They and `RERAIL_VERSION_TRACE` (a measurement aid that writes each version) are in `NOT_PREPARING`.
   - `sql_executor::tests::rule_files_use_the_core_prelude_and_unused_inputs_need_no_binding` (red at aa36f9104):
     running a rule file after binding a snapshot fails with `value: SQL output already exists; rebind inputs to
     clear derived results` (`sql_executor/session.rs`): the core prelude's `value` is taken for an output that

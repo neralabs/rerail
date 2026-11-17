@@ -554,7 +554,15 @@ step 3 replaces what is under the writer.
        on the version: the bridged facts and phased inputs, the constants' rows and outputs, the inputs' rows, the
        requests' outputs (each a header edit, `Builder::set_header`), `fold_own` and its merges
        (`combining::fold_own_guests`), `cross_memo::add_to`. A debug build makes each edit on the tree beside it and
-       checks the two images agree before preparing. Left: the combine's tail on the version, and the store's entry.
+       checks the two images agree before preparing.
+       *Done (2026-11-16):* `combine_read` is split at the link (`combine_linked`, which returns the linked tree and
+       what its tail does, `Tail`). `combine_version` makes the linked tree's image and runs the tail on it
+       (`tail_version`): `whole::Projected`, `whole::RetypeHelpers`, `on_request::SourcesOnRequest` per round of
+       `ON_REQUEST` (`Widen` with it), `hide::Hide` once when the libraries are held once and a program makes
+       guests, `combining::FactSpaces` and `combining::same_relations`. A debug build runs the tree's tail
+       (`tail_tree`, what the tools keep) beside it and checks the two images agree. The store's `combined` entry
+       keeps the version's image as it is (`combined::remember_version`) and opens it with no tree decoded
+       (`combined::lookup_version`). The link itself still builds a tree from the parts: 7a-2.
      - 7a-2, the parts as versions: `lower_in` hands on the stored image unread (it decodes it today), the linked
        library's image likewise, and the per-part passes (`own_part`, the requests' units, `undo_on_request`, each
        part's hiding when the libraries are not held once) run on them; the link renames each part's version into

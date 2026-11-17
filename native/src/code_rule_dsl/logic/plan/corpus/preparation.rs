@@ -9,6 +9,9 @@ use std::sync::Arc;
 
 mod merge;
 pub(super) mod combining;
+pub(super) mod hide;
+pub(super) mod on_request;
+pub(super) mod whole;
 mod demand;
 mod magic;
 mod prune;
