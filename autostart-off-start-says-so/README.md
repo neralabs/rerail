@@ -1,6 +1,6 @@
 # Hooks: a session's start says nothing is recorded when `RERAIL_AUTOSTART` is off
 
-For [pull request #673](https://github.com/neralabs/rerail/pull/673), head a4843928b. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #673](https://github.com/neralabs/rerail/pull/673), head 2a037a75b. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -9,11 +9,11 @@ For [pull request #673](https://github.com/neralabs/rerail/pull/673), head a4843
 1. Cursor's hook asks the agent to begin its first reply with the `rerail status` line. **Changes the intent.**
 2. Claude Code and Codex show that line as the session starts. **Changes the intent.**
 
-**We recommend:** approve it once a maintainer answers in #660 and CI passes at a4843928b: 6 of 6 starts with no daemon say it, and "What is not covered" names the states left as on `main`.
+**We recommend:** approve it once a maintainer answers in #660: CI passes at 2a037a75b, 6 of 6 starts with no daemon say it, and "What is not covered" names the states left as on `main`.
 
-| Size | Lane | Waits on | Not verified |
+| Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 278 lines in 13 files: 101 ship, 177 are tests and text | Careful. A maintainer approves: it changes what a session is told. | #660, a review, CI. No maintainer answer; a Windows CI job fails. | 4 |
+| 278 lines in 13 files: 101 ship, 177 are tests and text | Careful. A maintainer approves: it changes what a session is told. | #660, a review. No maintainer answer; no person has reviewed. | 4 |
 
 ## 2. Intent, and the gap
 
@@ -48,17 +48,16 @@ Reported in #660 on 13 November 2026, from hooks started directly on Linux x64.
 
 ## 4. Risk against verification
 
-<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. A, Start says it, medium risk: independent review holds with a limit. B, Error text, low risk: independent review holds with a limit. CI at this head does not hold yet for every change.">
+<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. A, Start says it, medium risk: independent review holds with a limit. B, Error text, low risk: independent review holds with a limit. CI at this head holds for every change.">
 
-Half marks: no person's review. CI: one Windows job fails at a4843928b.
+Half marks: no person's review. CI passes at 2a037a75b.
 
-<details><summary>Each limit, and each check that does not hold yet</summary>
+<details><summary>Each half mark's limit</summary>
 
-| Change | Check | Its limit, or why it does not hold yet |
+| Change | Check | It holds with this limit |
 |---|---|---|
-| A. Start says it | independent review | A second run from a separate clone repeated the measurement at 28c23949f, and one through a real daemon repeated it at a4843928b; each took the fix lines out in turn. The automated reviewer approved 9d532d70f with no finding. The limit: no person on the team has reviewed it, and the reviewer has not reviewed the three commits since. |
+| A. Start says it | independent review | A second run from a separate clone repeated the measurement at 28c23949f, and one through a real daemon repeated it at a4843928b; each took the fix lines out in turn. The automated reviewer approved 9cc848d8d, which holds every commit of this change, with 0 blockers, 0 follow-ups and 0 nits. The limit: no person on the team has reviewed it. |
 | B. Error text | independent review | A second run from a separate clone found that 89513b9f0 printed `RERAIL_AUTOSTART=undefined` or `=1` with autostart on. The automated review found the same. fea0d916d fixes it, and the reviewer approved 9d532d70f with no finding. The limit: no person on the team has reviewed it. |
-| A and B | CI at this head | Run 43717912325 at a4843928b, read on 15 November 2026: of the 22 checks, 17 pass, 3 are skipped and 2 fail. `Unit tests (Windows, 2/2)` failed in each of three attempts, on tests in files this branch does not change: `claude-status.test.ts` and `merge-assist/runtime-notes.test.ts` in the first, `runtime-notes.test.ts` alone in the next two. `CI result` fails with it. |
 
 </details>
 
@@ -120,11 +119,11 @@ Before: At main, a session's start with autostart off finds no daemon, throws, l
 
 <details><summary><b>7. How it fits</b></summary>
 
-It stands on `main` alone and merges clean at c89f068ed. #674 and #657 conflict in one test file each. B's errors are the same setting's messages, each wrong on `main`. Tell us, and it leaves.
+It stands on `main` alone and holds it at cb5040824. #674 has merge conflicts in one test file. B's errors are the same setting's messages, each wrong on `main`. Tell us, and it leaves.
 
-Pull request #673 is based on main at f277c6e29 and merges clean with main at c89f068ed. Nothing waits on it. In trial merges the drafts #674 and #657 each conflict in one test file, the release #631 deletes the release note this edits, and #672 and nine more open pull requests that share a file merge clean.
+Pull request #673 is based on main at cb5040824, merged in at 2a037a75b. Nothing waits on it. In trial merges #674 has merge conflicts in one test file, the release #631 deletes the release note this edits, and #658 and three more open pull requests that share a doc file merge clean in it.
 
-**Shared files, and what could leave.** #672 shares `docs/reference.md` and `daemon-control.ts`: clean in either order, same tree. #674 shares `hook-host.ts`, clean; `hook-host.test.ts` conflicts where both add imports and cases. #657 shares `daemon-control.ts`, clean; `daemon-control.test.ts` conflicts where both add a case. The second to land keeps both sets of cases. If #631 merges first, this branch's words move to an entry file of their own. Nine more open pull requests share a file, #678 and #667 `daemon-control.ts` too, and merge clean. Change B can leave as three commits (bcb467316, 89513b9f0, fea0d916d) with its four cases.
+**Shared files, and what could leave.** Trial merges of 2a037a75b. #674 at 6754feb69 shares `hook-host.ts`, `daemon-control.ts` and `docs/reference.md`, clean; `hook-host.test.ts` has merge conflicts where both add imports and cases, and the second to land keeps both sets. The release #631 deletes every unreleased release-note entry; this edits `changed-hooks-start-the-daemon.md`, where #719 moved the sentence, so if #631 merges first its words move to an entry file of their own. #658, #665, #680 and #506 share one doc file each, clean. Change B can leave as three commits (bcb467316, 89513b9f0, fea0d916d) with its four cases.
 
 </details>
 
@@ -139,10 +138,10 @@ Pull request #673 is based on main at f277c6e29 and merges clean with main at c8
 
 - **CI's real-session job.** `Real Claude Code, Codex, and Cursor sessions` passed at a4843928b, on macOS. Its sessions name an engine socket (`scripts/host/host-smoke.ts` line 416 at `main`), and a hook with a named socket never reaches the new answer.
 - **A 16-thread Linux machine under a load test.** `event-adapter-parity` timed out at 5 s twice at 9d532d70f (6.1 s and 6.9 s), and the same way at 28c23949f (8.5 s). It takes 0.36 to 0.57 s on a quiet machine and runs nothing this branch changes.
-- **Hook times at the head.** Session starts with no daemon were timed at a4843928b: within `main`'s spread. Starts with a daemon and prompt hooks: at 28c23949f only. Later commits add a boolean test in a failed hook's catch, an error-path helper and new words in two strings.
+- **Hook times after 28c23949f.** Session starts with no daemon were timed at a4843928b: within `main`'s spread. Starts with a daemon and prompt hooks: at 28c23949f only. Later commits add a boolean test in a failed hook's catch, an error-path helper and new words in two strings.
 - **The OMP and Pi clause in `docs/reference.md`.** It says OMP sessions, and Pi sessions of a managed install, start their own daemon under an off autostart. Read in `createNativeSession`, not run.
 - **A test commit that fails on purpose.** ffbcc345d holds the cases for the automated review's two follow-ups before their fixes: 5 failed and 90 passed there on Linux. fea0d916d and 9d532d70f make them pass.
-- **The automated review of 28c23949f.** Two follow-ups and one nit. fea0d916d answers the first, 9d532d70f the second, and 352668892 the nit. Its review of 9d532d70f, its latest, has 0 blockers, 0 follow-ups and 0 nits. It has not reviewed the three commits since.
+- **The automated review of 28c23949f.** Two follow-ups and one nit. fea0d916d answers the first, 9d532d70f the second, and 352668892 the nit. Its latest review, of 9cc848d8d on 16 November, has 0 blockers, 0 follow-ups and 0 nits; that head holds every commit of this change.
 
 **Limits that stay**
 
@@ -170,7 +169,7 @@ The description on GitHub is the record: "How you tested it" holds the measureme
 
 | Where | What ran | Result |
 |---|---|---|
-| CI on GitHub | Run 43717912325 at a4843928b, merged by GitHub into `main` at c89f068ed, read on 15 November 2026 | Of the 22 checks on the pull request, 17 pass, 3 are skipped and 2 fail. `Unit tests (Windows, 2/2)` failed in each of three attempts, on tests in files this branch does not change: `test/hosts/claude/claude-status.test.ts` (#681) and `test/runtime/merge-assist/runtime-notes.test.ts` (#683) in the first, `runtime-notes.test.ts` alone in the second and third. `CI result` fails with it. Both failed in the first attempt at e5656482d (run 43544083164); its rerun passed. |
+| CI on GitHub | Run 44057185522 at 2a037a75b, which holds `main` at cb5040824, read on 17 November 2026 | Of the 26 checks on the pull request, 22 pass, 4 are skipped and none fails. At a4843928b (run 43717912325), `Unit tests (Windows, 2/2)` failed in each of three attempts, on tests of `main` in files this branch does not change (#681, #683). |
 | Linux x64, Windows 11 | The 21 test files that import a changed module, at a4843928b | Linux: 401 passed, 2 skipped, 0 failed. Windows 11: 21 files pass: 356 passed, 47 skipped, 0 failed. |
 | Linux x64, Windows 11 | A real daemon and each agent's registered session-start hook, at `main` (c89f068ed) and at a4843928b: no daemon; a start while `rerail daemon start` is in flight; on Linux, the daemon's restart at its heap ceiling | No daemon: 0 of 6 starts say it at `main`, 6 of 6 at a4843928b. A start while a daemon comes up gets the line that ends "until it runs", and the session's later events are recorded (7 events), as at `main`. In the restart's gap of 340 to 535 ms, 12 starts got the new words. No start waits longer than at `main` beyond the spread. |
 | Linux x64 | `integration/resident-engine`, `event-adapter-parity` and `hook-bundle-cost` at a4843928b | 18 passed. At 9d532d70f on a 16-thread machine under a load test, 17 passed and 1 failed, twice: `event-adapter-parity` timed out at 5 s, as it did there at 28c23949f. |
@@ -188,6 +187,6 @@ The description on GitHub is the record: "How you tested it" holds the measureme
 - **Claude Code's footer reads `not running` at `main`.** #660 says a person in Claude Code sees nothing. At `main`, `docs/in-session-surfaces.md` line 266 says "the footer says \`not running\`" when the daemon is down, and `withoutDaemon` in `session-presentation.ts` returns it for a started checkout, with no cause. Read, not run. Line 273 there gives Codex's `not running` line for a start with no daemon, and this pull request does not edit it.
 - **At `main` the six starts wrote the no-daemon error.** The description says that with this change none of #660's six starts prints either error. At `main` each start wrote the no-daemon error to stderr, with `=0` under `false`: the description's own table shows it for Claude Code. Read in `serveHook` (`hook-adapter.ts`) and `runCodexHook`.
 
-**Sources.** Pull request #673, its diff, CI and reviews, and issue #660, read on GitHub on 15 November 2026. Rerail at `main` (4cea86aaa) for each quoted intent and its line. The description for the runs and the timings, each at the commit it names. Each open pull request's files and head for the shared files and trial merges.
+**Sources.** Pull request #673, its diff and issue #660, read on GitHub on 15 November 2026; its CI and reviews at 2a037a75b, on 17 November. Rerail at `main` (4cea86aaa) for each quoted intent and its line. The description for the runs and the timings, each at the commit it names. Each open pull request's files and head for the shared files and trial merges.
 
 </details>
