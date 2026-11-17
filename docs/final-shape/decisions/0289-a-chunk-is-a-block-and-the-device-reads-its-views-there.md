@@ -1,6 +1,7 @@
 # 0289: A chunk is a block, and the device reads its views there
 
-Status: draft (2026-11-15), being built. 0266's path step 2 (`Chunk`), taken here at the user's choice. It is
+Status: draft (2026-11-15), being built. §3's second half was overtaken by 0293 step 4 (2026-11-16): the device's
+reads of the tape wait for 0293 step 5. 0266's path step 2 (`Chunk`), taken here at the user's choice. It is
 done in the order that removes the measured cost first. Builds on 0266 (blocks), 0254 (chunks evaluated at once)
 and 0277 (what the device reads).
 
@@ -45,13 +46,12 @@ holds:
 - the projection's arrays, by local id:
   - `core`, the tape node of each node;
   - its id's low 32 bits (`DefIds::low`, or the preorder index);
-  - its parent's local id;
+  - its parent's local id (`Projected::up`, made in the walk: the tape stores no parent, 0293 §6);
   - its index among its siblings;
   - the fielded nodes;
-- the facts' arrays the views read, by tape node:
-  - `start` and `end`;
-  - `kind`, as the atom the dialect gives it;
-  - `field`, as its atom.
+- what the views read of each node, by local id: `start` and `end`, `kind` (the atom the dialect gives it) and
+  `field` (its atom). These were the facts' arrays, by tape node; since 0293 step 4 `Facts` holds no column, and they
+  are the tape's answers, read through its API when the chunk is made (§3).
 
 The document table is a `structure!`, so the same layout is the host's Rust struct and the kernel's MSL struct
 (0266 §4). There is no hand-written copy.
@@ -166,6 +166,64 @@ the facts' `Vec`s move into the block, and the copy of §1 goes. This touches `F
 share (`Arc<Facts>`). It waits until a memo entry is a document subtree that a hit copies into the chunk
 (0266 §1, `chunk::add_hit`).
 
+Built in two halves, as their storage allows.
+
+**The projection's arrays are made in the batch's block.** A batch (`Batch::build`) opens its block before it projects
+its documents, and each projection (`Projected`) writes its arrays there as it makes them: `core` and `local` in the
+walk, `low` in the granules' numbering (`granules::number` writes into the block), the ordinals and the fielded nodes
+on first read. The host reads them as slices (`rerail_blocks::Cells`, a run of a shared block). The chunk is nested
+in the same block: its entries point at those arrays (`device_chunk::point`), and their copy goes. A projection made
+apart from a batch (`Projected::new`: one document's numbering, its definitions) has a block of its own. A batch's
+block is made whether or not the device reads it: it reserves address space, and holds only what was written.
+
+**The facts' arrays are gone (0293 step 4).** This half was to move `Facts`' `parent`, `start`, `end`, `kind` and
+`field` into the block once a memo entry was a document range a hit copies into the chunk (0266's path, steps 4 and 5).
+Since 0293 step 4 `Facts` holds no column: a node's kind, flags, field, span and parent are the tape's answers,
+through one API over every format, and the tape image is already in the chunk (§4). So nothing of `Facts` moves.
+What is left:
+
+- **The parents are the projection's.** `Projected::up`, the parent of each local id found in the walk that numbers
+  them (0293 §6: a pass over them costs 1.2 M instructions, against 54 to 120 M read off the tape), is made in the
+  batch's block with `core` and `local`, and the chunk points at it. The device's climbs (`parent_of`, the axes'
+  solve) read it by local id, and `local` (by tape node) leaves the chunk.
+- **The device reads the tape in the chunk** (§2's views and the axes' solve), with the kernels 0293 step 5 brings
+  (the lab's format-16 kernels, E30 and E31), when they land; a format-15-only reader written now would be thrown
+  away. Until then, the chunk holds what the kernels read of each projected node (`start`, `end`, `kind`, `field`,
+  by local id), read off the tape through its API once a batch on the device's first read: an interim, as 0293's
+  own (the matcher's records), and nothing is measured before step 5.
+
+Found at the merge (Native-and-GPU-strata, d8fd02e57): the tape's code set of an axis (`Within::set`, 0293 step 3)
+counted an ERROR node as a member when the set names ERROR, where `Within::member` and the device's solve did not.
+That merge left ERROR out of the set; the hub, meeting the same mismatch, had made the host and the device count
+it ("An ERROR node is a member when its atom is asked", above). The user chose the hub's form (2026-11-16): the set
+reads an entry flagged `CODE_ERROR` as slot 0, a member where the set names ERROR, and
+`the_kind_set_axes_hold_exactly_their_pairs` holds a document with ERROR nodes and a set naming ERROR and asserts an
+ERROR node is a member (work queue Q38).
+
+Checks: `views_made_on_the_device_are_the_hosts_rows` (every view's columns, read through the arrays in place);
+`definition_ids_are_pinned` (every id as it was); the projection's tests (`facts::vtab::syntax::tests`); the axes'
+oracle; the matcher wave on Metal.
+
+Measured on hogql, an A/B of the two builds, each run cold twice, alternating, the same 1,629 findings. The load was
+about 30, so time is CPU and instructions retired, not wall:
+
+| | Instructions retired | User, system CPU | Chunk block's build | Projection (`projected`) |
+|---|---|---|---|---|
+| Before, run 1 | 90.7 G | 6.61 s, 1.87 s | 4 ms, 10 batches | 98 ms |
+| §3, run 1 | 78.3 G | 6.22 s, 1.19 s | 2 ms, 10 batches | 110 ms |
+| Before, run 2 | 89.7 G | 6.40 s, 1.74 s | none built | 105 ms |
+| §3, run 2 | 76.3 G | 6.29 s, 1.14 s | 3 ms, 14 batches | 103 ms |
+
+The chunk's build lost the projection's copy (about 1 ms of its 3 to 4). The projection itself is within the runs'
+spread; its first writes into a fresh block are page faults where a `Vec` reused freed memory (`identity maps` and
+`projection fields`, a few ms higher). The 12 to 13 G fewer instructions are not §3's: a later cold run of the §3
+build took 90.7 G, as the runs before it did. They are the spread of a cold run (placement put 8 to 12 strata on
+the GPU in these runs), and §3 is not measurable in the whole run's instructions.
+
+No device reads the arrays on targets without Metal: there `cells` is a heap array with the same
+API (no address space to reserve on WASM). `rerail-accel`'s dependency on `rerail-blocks` is Metal's only (its
+`gpu` module is), so the WASM build no longer compiles `rerail-blocks`, whose blocks are `mmap`s.
+
 ### 4. Tapes and sources in the chunk
 
 The residency's slabs become chunk blocks:
@@ -239,6 +297,13 @@ lane gave the label passes fewer documents again, and fewer of them hits:
 | Step B | 10 | 308 (33) | 16.5 ms, 54 µs a document | 11.6 ms for 12.1 MB, 0.94 µs a KB |
 
 Per document it is higher because more of them were misses. What is left of an admission is as in step A.
+
+**With 0293 step 5 (merged 2026-11-16).** 0293 §9 and §10 (the device reads the tape in place; a pass's roots a
+rule) were built against `DocView` and the four slab slots. In the merge they read through this step's entry:
+`ChunkTape` holds 0293's fields (`format`, `widths`, `columns`, `side`, `parts`, `cut`, `per`, `tape`), each an
+offset from `at`, and the readers' base is the document's start (`tape_doc`). What this section nested for the
+interim (the parent column, child lists and nodes by code) is gone, as 0293 §9 says. The entry's layout is
+`rerail_clif::view::TapeView`'s (0310), asserted field for field in `rerail_metal::slabs`.
 
 Then the image is serialized once. A document whose digest is not known yet (parsed in this run, not restored from
 the store) serialized its image to hash it and again to copy it. `TapeDoc::tape_digest_and_image` now returns the

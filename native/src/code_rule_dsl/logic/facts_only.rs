@@ -59,6 +59,10 @@ const FACT_STORE: &[&str] = &[
     // packs. They replace the memo's frames (`local`, `local_out`): the same entries, no new cache.
     "memo_entries",
     "memo_packs",
+    // The mapped segment files (decision 0295 step 5) the sources, tapes and frames are read from in place: each
+    // segment's number, which the rows naming bytes in it point at. Where facts live, as `memo_packs`.
+    "object_segments",
+    "frame_segments",
     // The executor's measured jobs (decision 0100 §14), the cost model's data: kept as the measurements they are.
     "samples",
     // The SQL executor's planning observations (`costs::sql_plans`), its plan model's data: measurements, as `samples`.
@@ -317,6 +321,19 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile/roofline.rs", "ROOFS"),
     ("code_rule_dsl/logic/rr.rs", "CORE"),
     ("code_rule_dsl/logic/rr.rs", "READS"),
+    // `core_names` less 0174's on-request relations: a set of the engine's own, as `CORE`, the same for every run.
+    ("code_rule_dsl/logic/rr.rs", "SHAPE"),
+    // The library images shipped beside the executable (0264), read once: an input, as `CORE`'s core.rr, no result.
+    ("code_rule_dsl/logic/rr/images.rs", "SHIPPED"),
+    // The rule files' entries a thread read before its run (0275), taken by the run's manifest: a queue.
+    ("code_rule_dsl/logic/plan/corpus/combined.rs", "READ_BEFORE"),
+    // rerail's own files the process names to its observers (0284): a registry.
+    ("content_store/observe.rs", "OWN"),
+    // Profiling (0288): the command's clocks, the process's start, the run thread's phases, each step's decisions.
+    ("code_rule_dsl/logic/profile.rs", "COMMAND"),
+    ("code_rule_dsl/logic/profile.rs", "DECIDING"),
+    ("code_rule_dsl/logic/profile.rs", "RUN_PHASES"),
+    ("code_rule_dsl/logic/profile/life.rs", "ENTERED"),
     ("content_store/atoms.rs", "CANONICAL"),
     // Each database file's identity, read once a file: a registry, as CANONICAL is.
     ("content_store/atoms.rs", "IDENTITIES"),
@@ -368,6 +385,20 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
     ("content_store/snapshots.rs", "AFTER_GIT_TREE_TRANSACTION"),
     ("content_store/write_back.rs", "WRITERS"),
+    // The record kinds (decision 0306): each kind's apply, registered once a process, a registry of code; and a
+    // test's log of the records it applied.
+    ("content_store/record.rs", "KINDS"),
+    // The lattices a run declared (`native::declare`, its `shortlex_min<>` over its store's atoms): the run's own
+    // functions, as LATTICES holds the process's; no result kept.
+    ("code_rule_dsl/logic/native.rs", "OWN_LATTICES"),
+    // The block new relations are placed in while it has room (decision 0325): where rows go, not a result kept.
+    ("code_rule_dsl/logic/native/setfix/rows.rs", "OPEN"),
+    ("content_store/record.rs", "LOG"),
+    // The component's own columns whose values are arena texts (decision 0307), set while its plans compile: state
+    // of the compilation, not a result kept.
+    ("code_rule_dsl/logic/native/setfix/device.rs", "OWN_TEXTS"),
+    // A count of the trees this thread decoded from versions, and where the last was (0281's measure): a counter.
+    ("code_rule_dsl/logic/program_image/version.rs", "DECODED"),
     // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND"),
     // The rule files' entries read on this thread before its run, which the outermost run names in its manifest
@@ -402,7 +433,6 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     // The session a thread's runs use (decision 0204: the caller's `Handle`, bound for its runs; was `SESSION`, the
     // process's): what it keeps between runs is still a cache to move.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND", "3"),
-    ("code_rule_dsl/logic/plan/corpus/recursive_spike.rs", "CARRY", "4"),
     ("code_rule_dsl/logic/plan.rs", "PLANS", "6"),
     ("code_rule_dsl/logic/plan.rs", "SESSION_PLANS", "6"),
     ("code_rule_dsl/logic/plan.rs", "KEPT", "6"),
@@ -419,7 +449,7 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/text.rs", "NAMES", "7"),
 ];
 /// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised.
-const NOT_YET_MAPS_PIN: usize = 24;
+const NOT_YET_MAPS_PIN: usize = 23;
 
 fn src() -> PathBuf {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")

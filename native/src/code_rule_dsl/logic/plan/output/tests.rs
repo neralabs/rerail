@@ -178,6 +178,39 @@ fn a_write_replaces_the_file_whole_and_a_map_keeps_the_old() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The file holds each image as the root of a frozen block (decision 0266's shared header): blocks one after
+/// another, each read where it is. A block cut short, not frozen, or an image without its block is refused.
+#[test]
+fn the_file_holds_each_image_as_a_frozen_block() {
+    use rerail_blocks::block::{frozen_at, kind};
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("blocks");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut base = Builder::new(0, false);
+    base.rows("n", &[col::INT], vec![1, 2]);
+    let base = base.finish();
+    write(&dir, &base).unwrap();
+    let mut over = Builder::new(0, true);
+    over.rows("n", &[col::INT], vec![5]);
+    write(&dir, &over.finish()).unwrap();
+    let file = std::fs::read(dir.join(FILE)).unwrap();
+    let first = frozen_at(&file, kind::OUTPUTS).unwrap();
+    assert_eq!(&file[first.root..first.root + base.len()], &base[..], "the image is the block's root, as made");
+    let second = frozen_at(&file[first.length..], kind::OUTPUTS).unwrap();
+    assert_eq!(first.length + second.length, file.len(), "two blocks, nothing else");
+    assert_eq!(shown(&dir, "n").unwrap(), [["5"]]);
+    let refused = |bytes: &[u8]| {
+        std::fs::write(dir.join(FILE), bytes).unwrap();
+        read(&dir).is_err()
+    };
+    assert!(refused(&file[..file.len() - 64]), "a block written in part");
+    let mut open = file.clone();
+    let state = std::mem::offset_of!(rerail_blocks::Header, state);
+    open[first.length + state..first.length + state + 4].copy_from_slice(&rerail_blocks::block::OPEN.to_ne_bytes());
+    assert!(refused(&open), "a block not frozen");
+    assert!(refused(&base), "an image without its block");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A stack folded into one base (`Builder::take`, each relation from the image that holds it) reads every relation
 /// as the stack did: its strings, documents and places copied with it.
 #[test]

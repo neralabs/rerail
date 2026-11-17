@@ -127,6 +127,8 @@ pub(in crate::code_rule_dsl) const TEXTFN_ASCII_LOWER: u32 = 8;
 pub(in crate::code_rule_dsl) const TEXTFN_ASCII_UPPER: u32 = 9;
 /// X's text whole: a cat's (operand `OPND_DOT` or `OPND_PLAIN`), made for the head or a text function.
 pub(in crate::code_rule_dsl) const TEXTFN_COPY: u32 = 10;
+/// `zero_pad(n, w)`: key 5's digits zero-padded to key 6's width (0 to 64), the sign first, never truncated.
+pub(in crate::code_rule_dsl) const TEXTFN_ZERO_PAD: u32 = 11;
 pub(in crate::code_rule_dsl) const TEXTFN_FULL: u32 = 1;
 pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
 /// An operand that is an arena text (a text function's value).
@@ -176,6 +178,12 @@ pub(in crate::code_rule_dsl) const RHS_PARAM: u32 = 0x8000_0000;
 pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) key_const: [i64; MAX_KEYS],
     pub(in crate::code_rule_dsl) par_const: [i64; MAX_PARAMS],
+    /// The probed relation's descriptor's offset in its block (a `rerail_blocks` `Relation`, its ids from 0), read
+    /// where it lies through the generated reads (decision 0325); 0 for a relation in a buffer of its own,
+    /// column-major (a block's header is at 0).
+    pub(in crate::code_rule_dsl) r_at: u64,
+    /// Keeps `ops` at 16 bytes (MSL's `uint4`).
+    pub(in crate::code_rule_dsl) r_pad: u64,
     pub(in crate::code_rule_dsl) ops: [[u32; 4]; MAX_OPS],
     pub(in crate::code_rule_dsl) mode: u32,
     pub(in crate::code_rule_dsl) nslots: u32,
@@ -218,7 +226,7 @@ pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) arith: [[u32; 4]; MAX_ARITH],
 }
 
-const _: () = assert!(std::mem::size_of::<Stage>() == 2288 && std::mem::size_of::<Stage>() % 16 == 0);
+const _: () = assert!(std::mem::size_of::<Stage>() == 2304 && std::mem::size_of::<Stage>() % 16 == 0);
 
 impl Default for Stage {
     fn default() -> Self {
@@ -260,14 +268,12 @@ inline long global_of(device const ChunkDoc& d, uint l) {
 }
 // The projection's parent (`Projected::parent`): a node left out of it has the root for parent.
 inline uint parent_of(device const ChunkDoc& d, uint l) {
-    uint id = items<uint>(d.core)[l];
-    uint p = items<uint>(d.parent)[id];
-    uint q = p == CH_NONE ? CH_NONE : items<uint>(d.local)[p];
+    uint q = items<uint>(d.up)[l];
     return (q == CH_NONE && l != 0u) ? 0u : q;
 }
-// The kind column (`Dialect::kind`): the canonical code's atom.
-inline long kind_of(device const ChunkDoc& d, uint id) {
-    uint code = items<uint>(d.kind)[id] % 1024u;
+// The kind column (`Dialect::kind`) of local `l`: the canonical code's atom.
+inline long kind_of(device const ChunkDoc& d, uint l) {
+    uint code = items<uint>(d.kind)[l] % 1024u;
     if (code == 0u) return long(d.tag * 1024u);
     uint c = code < uint(d.canonical.len) ? uint(items<ushort>(d.canonical)[code]) : code;
     return long(d.tag * 1024u + (c == 0xffffu ? 0u : c));
@@ -338,9 +344,8 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
         uint l = r - d.loc_row;
         uint s, e;
         if (l < d.nodes) {
-            uint id = items<uint>(d.core)[l];
-            s = items<uint>(d.start)[id];
-            e = items<uint>(d.end)[id];
+            s = items<uint>(d.start)[l];
+            e = items<uint>(d.end)[l];
         } else {
             s = items<uint>(d.spans)[2u * (l - d.nodes)];
             e = items<uint>(d.spans)[2u * (l - d.nodes) + 1u];
@@ -379,11 +384,11 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
         } else if (view == 3u && col == 1u) {
             v = long(id);
         } else if (view == 0u && col == 2u) {
-            v = kind_of(d, id);
+            v = kind_of(d, l);
         } else if (view == 0u && col == 3u) {
-            v = long(items<uint>(d.start)[id]);
+            v = long(items<uint>(d.start)[l]);
         } else if (view == 0u && col == 4u) {
-            v = long(items<uint>(d.end)[id]);
+            v = long(items<uint>(d.end)[l]);
         } else if ((view == 1u || view == 2u) && col == 0u) {
             uint q = parent_of(d, l);
             v = q == CH_NONE ? -1 : global_of(d, q);
@@ -391,7 +396,7 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
             // `child`'s columns are parent, child, index (`Viewed::columns`).
             v = long(items<uint>(d.ord)[l]);
         } else if (view == 2u && col == 1u) {
-            v = long(d.tag << 16 | uint(items<ushort>(d.field)[id]));
+            v = long(d.tag << 16 | uint(items<ushort>(d.field)[l]));
         } else {
             v = global_of(d, l);
         }
@@ -404,7 +409,7 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
 // (`inside`, containment) or 0 for the nearest. The climb is bounded by the document's nodes.
 inline bool axis_member(device const char* B, uint bits_at, device const ChunkDoc& d, uint l) {
     if (bits_at == 0u) return true;
-    uint at = d.tag * 1024u + items<uint>(d.kind)[items<uint>(d.core)[l]] % 1024u;
+    uint at = d.tag * 1024u + items<uint>(d.kind)[l] % 1024u;
     return ((((device const uint*)(B + bits_at))[at >> 5] >> (at & 31u)) & 1u) != 0u;
 }
 
@@ -450,12 +455,18 @@ kernel void axis_write(device const char* B [[buffer(0)]], device const uint* st
 }
 "#;
 
-const SOURCE: &str = r#"#include <metal_stdlib>
+/// Every join kernel's source: `SOURCE_MAIN` with the relation's reads written once (`rerail_blocks::RELATION_READS`,
+/// decision 0325), which a stage reads a relation in its block with.
+static SOURCE: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| SOURCE_MAIN.replacen("using namespace metal;\n", &format!("using namespace metal;\n{}", rerail_blocks::RELATION_READS), 1));
+
+const SOURCE_MAIN: &str = r#"#include <metal_stdlib>
 using namespace metal;
 
 struct Stage {
     long key_const[8];
     long par_const[16];
+    ulong r_at, r_pad;
     uint4 ops[64];
     uint mode, nslots, cap_in, cap_out, in_slot, out_slot, nr, nkeys, mask, ntests, nops, nparams, nbinds, npassed, last, counter;
     uint key_kind[8]; uint key_slot[8]; uint key_rcol[8];
@@ -480,8 +491,14 @@ static inline long lane_of(long v, uint w) {
     return w == 16 ? long(short(v)) : (w == 32 ? long(int(v)) : v);
 }
 
+// A value of the probed relation: row `r`'s in column `col`, read in its block through the generated reads (`r_at`,
+// decision 0325), or column-major in a buffer of its own.
+static inline long rget(constant Stage& s, device const long* R, uint r, uint col) {
+    return s.r_at == 0ul ? R[ulong(col) * s.nr + r] : long(clif_rel_get((device const uchar*)R, s.r_at, r, col));
+}
+
 static inline long colval(constant Stage& s, uint k, device const long* L, uint t, device const long* R, uint r) {
-    long v = s.col_kind[k] == 0 ? R[ulong(s.col_idx[k]) * s.nr + r] : L[ulong(s.col_idx[k]) * s.cap_in + t];
+    long v = s.col_kind[k] == 0 ? rget(s, R, r, s.col_idx[k]) : L[ulong(s.col_idx[k]) * s.cap_in + t];
     return s.col_doc[k] != 0 ? (v >> 32) : v;
 }
 
@@ -587,8 +604,8 @@ static inline void candidates(constant Stage& s, device const long* L, uint t, d
 
 // Whether candidate place q (row r) matches the binding's keys and the relation's column tests.
 static inline bool matches(constant Stage& s, device const long* R, uint r, thread const long* kv) {
-    for (uint i = 0; i < s.nkeys && i < 8; i++) if (R[ulong(s.key_rcol[i]) * s.nr + r] != kv[i]) return false;
-    for (uint i = 0; i < s.ntests && i < 8; i++) if (R[ulong(s.test_a[i]) * s.nr + r] != R[ulong(s.test_b[i]) * s.nr + r]) return false;
+    for (uint i = 0; i < s.nkeys && i < 8; i++) if (rget(s, R, r, s.key_rcol[i]) != kv[i]) return false;
+    for (uint i = 0; i < s.ntests && i < 8; i++) if (rget(s, R, r, s.test_a[i]) != rget(s, R, r, s.test_b[i])) return false;
     return true;
 }
 
@@ -605,7 +622,7 @@ static inline uint aggregate(constant Stage& s, device const long* L, uint t, de
         if (!matches(s, R, r, kv)) continue;
         cnt++;
         if (s.agg[1] == NONE) continue;
-        long x = R[ulong(s.agg[1]) * s.nr + r];
+        long x = rget(s, R, r, s.agg[1]);
         long y = as_type<long>(as_type<ulong>(sum) + as_type<ulong>(x));
         if ((sum < 0) == (x < 0) && (y < 0) != (sum < 0)) over = true;
         sum = y;
@@ -844,7 +861,7 @@ static inline void write_row(constant Stage& s, device const long* L, uint t, de
         uint kind = s.bind_kind[b];
         long v = 0;
         if (kind == 3) arith(s, s.bind_idx[b], L, t, R, r, v);
-        else v = kind == 0 ? colval(s, s.bind_idx[b], L, t, R, r) : (kind == 1 ? parval(s, s.bind_idx[b], L, t) : R[ulong(s.bind_idx[b]) * s.nr + r]);
+        else v = kind == 0 ? colval(s, s.bind_idx[b], L, t, R, r) : (kind == 1 ? parval(s, s.bind_idx[b], L, t) : rget(s, R, r, s.bind_idx[b]));
         O[ulong(s.bind_slot[b]) * s.cap_out + at] = v;
     }
 }
@@ -903,13 +920,13 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
 
 // A witness's probe (decision 0277): whether relation R has a row of `b`'s keys (a binding's slots, constants or the
 // candidate's columns) and column tests; an anti-join's, whether it has none. One loop over the keys' run.
-static inline bool witness_probe(constant Stage& b, device const long* L, uint t, uint cap_in, device const long* RA, uint nra, uint ra,
+static inline bool witness_probe(constant Stage& b, device const long* L, uint t, uint cap_in, constant Stage& a, device const long* RA, uint ra,
                                  device const long* R, device const uint* perm, device const uint* starts, device const uint* rkeys,
                                  device const uint* nruns) {
     long kv[8];
     for (uint i = 0; i < b.nkeys && i < 8; i++) {
         uint k = b.key_kind[i];
-        kv[i] = k == 1 ? L[ulong(b.key_slot[i]) * cap_in + t] : (k == 2 ? RA[ulong(b.key_slot[i]) * nra + ra] : b.key_const[i]);
+        kv[i] = k == 1 ? L[ulong(b.key_slot[i]) * cap_in + t] : (k == 2 ? rget(a, RA, ra, b.key_slot[i]) : b.key_const[i]);
     }
     uint lo = 0, hi = b.nr;
     if (b.nkeys > 0) {
@@ -955,9 +972,9 @@ kernel void witness_count(device const long* L [[buffer(0)]], device const long*
         uint r = keyed ? perm[q] : q;
         if (!matches(s, R, r, kv)) continue;
         bool all = true;
-        if (nb > 0) all = witness_probe(bs[0], L, t, s.cap_in, R, s.nr, r, R0, p0, s0, k0, n0);
-        if (all && nb > 1) all = witness_probe(bs[1], L, t, s.cap_in, R, s.nr, r, R1, p1, s1, k1, n1);
-        if (all && nb > 2) all = witness_probe(bs[2], L, t, s.cap_in, R, s.nr, r, R2, p2, s2, k2, n2);
+        if (nb > 0) all = witness_probe(bs[0], L, t, s.cap_in, s, R, r, R0, p0, s0, k0, n0);
+        if (all && nb > 1) all = witness_probe(bs[1], L, t, s.cap_in, s, R, r, R1, p1, s1, k1, n1);
+        if (all && nb > 2) all = witness_probe(bs[2], L, t, s.cap_in, s, R, r, R2, p2, s2, k2, n2);
         if (all) { found = 1; break; }
     }
     counts[t] = found;
@@ -1290,7 +1307,7 @@ kernel void row_text(device const long* L [[buffer(0)]], device const long* R [[
         }
         Txt y = txt_of(s, L, row, R, A, 2, s.agg[1] >> 4), z = y;
         uint f = (s.agg[0] >> 16) & 255;
-        uint lx = txt_len(x), len = 0, dot = 0, from = 0, to = 0, ndig = 0;
+        uint lx = txt_len(x), len = 0, dot = 0, from = 0, to = 0, ndig = 0, pad = 0;
         ulong u = 0;
         bool neg = false;
         if (op == 0 || op == 1) {
@@ -1298,14 +1315,20 @@ kernel void row_text(device const long* L [[buffer(0)]], device const long* R [[
             len = lx + dot + txt_len(y);
         } else if (op == 2) {
             len = rx_replace_txt(G, x, y, false, (device uchar*)A, fs, lane);
-        } else if (f == 5) {
-            // to_string(n): its decimal digits, a lane each (at most 20).
+        } else if (f == 5 || f == 11) {
+            // to_string(n): its decimal digits, a lane each (at most 20). zero_pad(n, w): zeros after the sign up to
+            // w columns (0 to 64, as the host's `{:0w$}`).
             long n0 = key_value(s, L, row, 5);
             neg = n0 < 0;
             u = neg ? ulong(-(n0 + 1)) + 1 : ulong(n0);
             ndig = 1;
             while (ndig < 20 && u >= POW10[ndig]) ndig++;
             len = ndig + (neg ? 1 : 0);
+            if (f == 11) {
+                uint w = uint(clamp(key_value(s, L, row, 6), 0l, 64l));
+                pad = w > len ? w - len : 0;
+                len += pad;
+            }
         } else if (f == 6) {
             // replace_all of a literal pattern (key 2) by key 4's text.
             y = txt_of(s, L, row, R, A, 2, 0);
@@ -1335,10 +1358,11 @@ kernel void row_text(device const long* L [[buffer(0)]], device const long* R [[
             if (op == 2) rx_replace_txt(G, x, y, true, o, fs, lane);
             else if (op <= 1) for (uint i = lane; i < len; i += 32) o[i] = i < lx ? txt_byte(x, i) : (i < lx + dot ? uchar('.') : txt_byte(y, i - lx - dot));
             else if (f == 6) lit_replace_txt(x, y, z, true, o, lane);
-            else if (f == 5) {
+            else if (f == 5 || f == 11) {
+                uint sign = neg ? 1 : 0;
                 for (uint i = lane; i < len; i += 32) {
-                    uint d = i - (neg ? 1 : 0);
-                    o[i] = neg && i == 0 ? uchar('-') : uchar('0' + (u / POW10[ndig - 1 - d]) % 10);
+                    uint d = i - sign - pad;
+                    o[i] = neg && i == 0 ? uchar('-') : i < sign + pad ? uchar('0') : uchar('0' + (u / POW10[ndig - 1 - d]) % 10);
                 }
             } else {
                 for (uint i = lane; i < len; i += 32) {
@@ -1552,8 +1576,13 @@ kernel void rel_hash(device const long* R [[buffer(0)]], device uint* out [[buff
                      uint t [[thread_position_in_grid]]) {
     uint nr = p[0];
     if (t >= nr) return;
+    // The relation's descriptor's offset in its block (`p[3]`, `p[4]`: low, high), or 0 for one column-major.
+    ulong at = ulong(p[3]) | (ulong(p[4]) << 32);
     long kv[8];
-    for (uint i = 0; i < p[1] && i < 8; i++) kv[i] = R[ulong(p[3 + i]) * nr + t];
+    for (uint i = 0; i < p[1] && i < 8; i++) {
+        uint c = p[5 + i];
+        kv[i] = at == 0ul ? R[ulong(c) * nr + t] : long(clif_rel_get((device const uchar*)R, at, t, c));
+    }
     out[t] = hash_keys(kv, p[1], p[2]);
 }
 
@@ -1563,7 +1592,9 @@ kernel void rel_hash(device const long* R [[buffer(0)]], device uint* out [[buff
 // (min and max select one of their values), `flags` a flat key's conflict. A held key's row is updated in place; a
 // new key's row goes to `N` (as `R`'s columns), found next by `H` (key to `R`'s row, kept from round to round). Each
 // changed key's row (key and value) goes to `D`, the next round's delta: `counters[0]` of them, `counters[1]` new.
-struct LatP { long top; uint n; uint had; uint nkeys; uint code; uint after; uint pmask; uint hmask; uint pad; };
+// `level`: the round, written to a changed or new key's level column (`nkeys + 2`) where the relation keeps levels
+// (decision 0311); 0: no level column.
+struct LatP { long top; uint n; uint had; uint nkeys; uint code; uint after; uint pmask; uint hmask; uint level; };
 
 static inline uint lat_hash(thread const long* key, uint nk, uint mask) {
     ulong h = 0x9E3779B97F4A7C15ul;
@@ -1633,17 +1664,38 @@ static inline uint lat_place(device const long* U, device const uint* P, constan
     return 0xffffffffu;
 }
 
-// Whether value `a` (of row `ra`) is chosen over `b` (of `rb`): the top absorbs; min the least, max the greatest;
-// a tie to the first row.
-static inline bool lat_better(constant LatP& p, long a, uint ra, long b, uint rb) {
+// Code 3 (`shortlex_min`, decision 0307): whether arena text `a` is before `b`, by their characters, then their
+// bytes (as `ShortlexMin`: `(chars, bytes)`), a word of eight at a time.
+static inline bool lat_text_less(device atomic_uint* A, long a, long b) {
+    ulong ua = ulong(a), ub = ulong(b);
+    Txt x = txt_raw(arena_bytes(A) + uint((ua & 0x7ffffffffffffffful) >> 24), uint(ua & 0xfffffful));
+    Txt y = txt_raw(arena_bytes(A) + uint((ub & 0x7ffffffffffffffful) >> 24), uint(ub & 0xfffffful));
+    uint cx = txt_chars(x), cy = txt_chars(y);
+    if (cx != cy) return cx < cy;
+    uint lx = txt_len(x), ly = txt_len(y), m = min(lx, ly);
+    for (uint at = 0; at < m; at += 8) {
+        ulong u = txt_word(x, at, m), v = txt_word(y, at, m);
+        if (u != v) return u < v;
+    }
+    return lx < ly;
+}
+
+// Whether value `a` (of row `ra`) is chosen over `b` (of `rb`): the top absorbs; min the least, max the greatest,
+// shortlex the least text (code 3, over the arena `A`); a tie to the first row.
+static inline bool lat_better(constant LatP& p, device atomic_uint* A, long a, uint ra, long b, uint rb) {
     if (b == p.top) return false;
     if (a == p.top) return true;
     if (a == b) return ra < rb;
+    if (p.code == 3) {
+        if (lat_text_less(A, a, b)) return true;
+        return !lat_text_less(A, b, a) && ra < rb;
+    }
     return p.code == 0 ? a < b : a > b;
 }
 
 kernel void lat_best(device const long* U [[buffer(0)]], device const uint* P [[buffer(1)]], device atomic_uint* best [[buffer(2)]],
-                     device atomic_uint* flags [[buffer(3)]], constant LatP& p [[buffer(4)]], uint x [[thread_position_in_grid]]) {
+                     device atomic_uint* flags [[buffer(3)]], device atomic_uint* A [[buffer(4)]], constant LatP& p [[buffer(5)]],
+                     uint x [[thread_position_in_grid]]) {
     if (x >= p.n) return;
     uint s = lat_place(U, P, p, x);
     if (s == 0xffffffffu) return;
@@ -1654,20 +1706,23 @@ kernel void lat_best(device const long* U [[buffer(0)]], device const uint* P [[
     }
     uint cur = atomic_load_explicit(&best[s], memory_order_relaxed);
     for (uint k = 0; k < 4 * p.n + 8; k++) {
-        if (cur != 0xffffffffu && !lat_better(p, v, x, U[ulong(p.nkeys) * p.n + cur], cur)) return;
+        if (cur != 0xffffffffu && !lat_better(p, A, v, x, U[ulong(p.nkeys) * p.n + cur], cur)) return;
         if (atomic_compare_exchange_weak_explicit(&best[s], &cur, x, memory_order_relaxed, memory_order_relaxed)) return;
     }
 }
 
-// The join of two present values (`code`: 0 min, 1 max, 2 flat), the top absorbing.
-static inline long lat_lub(constant LatP& p, long a, long b) {
+// The join of two present values (`code`: 0 min, 1 max, 2 flat, 3 shortlex over the arena `A`, a tie to `a`), the
+// top absorbing.
+static inline long lat_lub(constant LatP& p, device atomic_uint* A, long a, long b) {
     if (a == p.top || b == p.top) return p.top;
+    if (p.code == 3) return lat_text_less(A, b, a) ? b : a;
     if (p.code == 0) return min(a, b);
     if (p.code == 1) return max(a, b);
     return a == b ? a : p.top;
 }
 
-// A key changed past `after` times: min's or max's value moving on is its top (a finite chain); flat's is kept.
+// A key changed past `after` times: min's or max's value moving on is its top (a finite chain); flat's and
+// shortlex's are kept (finite lattices: `widen` keeps the route, decision 0124).
 static inline long lat_widen(constant LatP& p, long old, long now) {
     if (p.code == 0 && now < old) return p.top;
     if (p.code == 1 && now > old) return p.top;
@@ -1677,7 +1732,7 @@ static inline long lat_widen(constant LatP& p, long old, long now) {
 kernel void lat_merge(device const long* U [[buffer(0)]], device const uint* P [[buffer(1)]], device const uint* best [[buffer(2)]],
                       device const uint* flags [[buffer(3)]], device long* R [[buffer(4)]], device atomic_uint* H [[buffer(5)]],
                       device long* N [[buffer(6)]], device long* D [[buffer(7)]], device atomic_uint* counters [[buffer(8)]],
-                      constant LatP& p [[buffer(9)]], uint s [[thread_position_in_grid]]) {
+                      device atomic_uint* A [[buffer(9)]], constant LatP& p [[buffer(10)]], uint s [[thread_position_in_grid]]) {
     if (s > p.pmask) return;
     uint rep = P[s];
     if (rep == 0xffffffffu) return;
@@ -1699,7 +1754,7 @@ kernel void lat_merge(device const long* U [[buffer(0)]], device const uint* P [
     }
     if (held != 0xffffffffu) {
         long o = R[ulong(p.nkeys) * p.had + held];
-        long m = lat_lub(p, o, v);
+        long m = lat_lub(p, A, o, v);
         if (m == o) return;
         long changes = R[ulong(k) * p.had + held];
         if (p.after != 0xffffffffu && changes >= long(p.after)) {
@@ -1708,12 +1763,14 @@ kernel void lat_merge(device const long* U [[buffer(0)]], device const uint* P [
         }
         R[ulong(p.nkeys) * p.had + held] = m;
         R[ulong(k) * p.had + held] = changes + 1;
+        if (p.level != 0) R[ulong(k + 1) * p.had + held] = long(p.level);
         v = m;
     } else {
         uint a = atomic_fetch_add_explicit(&counters[1], 1u, memory_order_relaxed);
         for (uint c = 0; c < p.nkeys && c < 8; c++) N[ulong(c) * p.n + a] = key[c];
         N[ulong(p.nkeys) * p.n + a] = v;
         N[ulong(k) * p.n + a] = 1;
+        if (p.level != 0) N[ulong(k + 1) * p.n + a] = long(p.level);
         uint id = p.had + a;
         uint place = lat_hash(key, p.nkeys, p.hmask);
         for (uint i = 0; i < 2 * (p.hmask + 1); i++) {
@@ -1830,6 +1887,9 @@ pub(in crate::code_rule_dsl) struct DevRel {
     buffer: Held,
     pub(in crate::code_rule_dsl) rows: usize,
     pub(in crate::code_rule_dsl) cols: usize,
+    /// Its descriptor's offset in the block `buffer` binds, for a relation read where it lies (`in_block`, decision
+    /// 0325); 0 for one in a buffer of its own, column-major.
+    pub(in crate::code_rule_dsl) at: u64,
 }
 
 impl DevRel {
@@ -1840,11 +1900,19 @@ impl DevRel {
         // SAFETY: the buffer holds at least `cols * rows` values, and nothing else refers to it yet.
         let values = unsafe { std::slice::from_raw_parts_mut(buffer.buffer.contents().cast::<i64>(), cols * rows) };
         fill(values);
-        Ok(DevRel { buffer, rows, cols })
+        Ok(DevRel { buffer, rows, cols, at: 0 })
     }
 
+    /// A relation the device reads where it lies (decision 0325): the relation of `rows` rows and `cols` columns
+    /// whose descriptor is `at` bytes into the block `buffer` binds. Nothing is copied.
+    pub(in crate::code_rule_dsl) fn in_block(buffer: Held, at: usize, rows: usize, cols: usize) -> DevRel {
+        assert!(at > 0, "a descriptor past the block's header");
+        DevRel { buffer, rows, cols, at: at as u64 }
+    }
+
+    /// The device memory it holds of its own: none for a relation read in its block.
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
-        8 * self.cols * self.rows
+        if self.at != 0 { 0 } else { 8 * self.cols * self.rows }
     }
 
     /// The buffer: `cols` columns of `rows` 64-bit values, column-major.
@@ -1854,11 +1922,12 @@ impl DevRel {
 
     /// A relation of `cols` columns and `rows` rows that the device fills (`Batch::copy_rows`).
     pub(in crate::code_rule_dsl) fn empty(cols: usize, rows: usize) -> Result<DevRel, Error> {
-        Ok(DevRel { buffer: Held::new((8 * cols * rows).max(8))?, rows, cols })
+        Ok(DevRel { buffer: Held::new((8 * cols * rows).max(8))?, rows, cols, at: 0 })
     }
 
     /// Column `c`'s values, once the command buffer that wrote them completed.
     pub(in crate::code_rule_dsl) fn column(&self, c: usize) -> &[i64] {
+        assert_eq!(self.at, 0, "a relation read in its block has no columns of its own");
         // SAFETY: the buffer holds `rows` values per column; the writer completed.
         unsafe { std::slice::from_raw_parts(self.buffer.buffer.contents().cast::<i64>().add(c * self.rows), self.rows) }
     }
@@ -1911,7 +1980,7 @@ impl DevText {
         let longest = offs.windows(2).map(|w| (w[1] - w[0]) as usize).max().unwrap_or(0);
         let sep = chars.contains(&0x1f);
         let nchars = chars.len();
-        Ok(DevText { packed: std::rc::Rc::new(DevRel { buffer: held, rows, cols: 1 }), terms: n, span, longest, sep, chars: nchars })
+        Ok(DevText { packed: std::rc::Rc::new(DevRel { buffer: held, rows, cols: 1, at: 0 }), terms: n, span, longest, sep, chars: nchars })
     }
 
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
@@ -1948,7 +2017,10 @@ impl Rows<'_> {
     fn of(&self) -> (&BufferRef, usize) {
         match self {
             Rows::Table(t) => (&t.buffer.buffer, t.cap),
-            Rows::Rel(r) => (&r.buffer.buffer, r.rows.max(1)),
+            Rows::Rel(r) => {
+                assert_eq!(r.at, 0, "a copy of a relation read in its block: a copy reads and writes relations of their own");
+                (&r.buffer.buffer, r.rows.max(1))
+            }
         }
     }
 }
@@ -2119,6 +2191,23 @@ impl Arena {
         unsafe { *self.buffer.buffer.contents().cast::<u32>() as usize }
     }
 
+    /// `bytes` put into the arena by the host, between batches (no command buffer writing it is pending): their
+    /// value, or none when it has no room.
+    pub(in crate::code_rule_dsl) fn put(&self, bytes: &[u8]) -> Option<i64> {
+        let off = self.wanted();
+        if off + bytes.len() > self.cap || bytes.len() > 0xff_ffff {
+            return None;
+        }
+        // SAFETY: the header's first word and `bytes.len()` bytes within `cap` past the header; no command buffer is
+        // using the arena (the caller's between batches).
+        unsafe {
+            let base = self.buffer.buffer.contents().cast::<u8>();
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), base.add(16 + off), bytes.len());
+            *base.cast::<u32>() = (off + bytes.len()) as u32;
+        }
+        Some(ARENA_TEXT | ((off as i64) << 24) | bytes.len() as i64)
+    }
+
     /// The text of arena value `v` (`ARENA_TEXT`'s), once the command buffers that made it completed.
     pub(in crate::code_rule_dsl) fn text(&self, v: i64) -> Option<&[u8]> {
         if v & ARENA_TEXT == 0 || v == -1 {
@@ -2182,6 +2271,14 @@ impl Batch {
         self.held.push(what);
     }
 
+    /// A batch whose text arena is `arena`, kept across batches: a recursive component's rounds (decision 0307),
+    /// whose texts one round makes the next reads.
+    pub(in crate::code_rule_dsl) fn with_shared_arena(arena: std::rc::Rc<Arena>) -> Result<Batch, Error> {
+        let mut b = Batch::with_arena(arena.cap)?;
+        b.arena = Some(arena);
+        Ok(b)
+    }
+
     /// Its text arena, shared by its jobs.
     pub(in crate::code_rule_dsl) fn arena(&mut self) -> Result<std::rc::Rc<Arena>, Error> {
         if self.arena.is_none() {
@@ -2218,6 +2315,12 @@ impl Batch {
         Ok(())
     }
 
+    /// Commits what is open without waiting: the work encoded so far runs before any command buffer committed after
+    /// it on the one queue (a batch that reads what this one's work writes).
+    pub(in crate::code_rule_dsl) fn commit_open(&mut self) -> Result<(), Error> {
+        self.submit_open()
+    }
+
     /// Commits what is open and waits for every command buffer.
     pub(in crate::code_rule_dsl) fn finish(&mut self) -> Result<Done, Error> {
         self.submit_open()?;
@@ -2239,7 +2342,7 @@ impl Batch {
         // A sort is at most 4 passes of three dispatches and two scans' levels, and a few more.
         let pass = self.pass(48)?;
         let words = Held::new((4 * n).max(4))?;
-        let mut p = vec![n as u32, cols.len() as u32, mask];
+        let mut p = vec![n as u32, cols.len() as u32, mask, rel.at as u32, (rel.at >> 32) as u32];
         p.extend(cols.iter().map(|&c| c as u32));
         if n > 0 {
             pass.run(&hash, &[&rel.buffer.buffer, &words.buffer], &p, &[], groups(n));
@@ -2280,6 +2383,7 @@ impl Batch {
         let (rbuf, perm, starts, rkeys, nruns) = match right {
             Some((rel, index)) => {
                 stage.nr = rel.rows as u32;
+                stage.r_at = rel.at;
                 match index {
                     Some(ix) => {
                         stage.mask = ix.mask;
@@ -2352,6 +2456,7 @@ impl Batch {
         stage.counter = NONE;
         stage.nslots = left.slots as u32;
         stage.nr = right.0.rows as u32;
+        stage.r_at = right.0.at;
         stage.agg[0] = rest.len() as u32;
         let dummy: metal::Buffer = self.dummy.buffer.to_owned();
         let parts = |rel: &DevRel, ix: Option<&DevIndex>| -> [metal::Buffer; 5] {
@@ -2369,6 +2474,7 @@ impl Batch {
         for (k, (b, rel, ix)) in rest.iter().enumerate() {
             let mut b = *b;
             b.nr = rel.rows as u32;
+            b.r_at = rel.at;
             b.cap_in = left.cap as u32;
             if let Some(ix) = ix {
                 b.mask = ix.mask;
@@ -2756,7 +2862,8 @@ pub(in crate::code_rule_dsl) struct LatKeys {
     places: usize,
 }
 
-/// A lattice the device folds by (`Batch::lattice_fold`): 0 min, 1 max, 2 flat; its top; `widen`'s count.
+/// A lattice the device folds by (`Batch::lattice_fold`): 0 min, 1 max, 2 flat, 3 shortlex (its values arena texts,
+/// decision 0307); its top; `widen`'s count.
 #[derive(Clone, Copy, Debug)]
 pub(in crate::code_rule_dsl) struct LatCode {
     pub(in crate::code_rule_dsl) code: u32,
@@ -2766,21 +2873,25 @@ pub(in crate::code_rule_dsl) struct LatCode {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct LatParams { top: i64, n: u32, had: u32, nkeys: u32, code: u32, after: u32, pmask: u32, hmask: u32, pad: u32 }
+struct LatParams { top: i64, n: u32, had: u32, nkeys: u32, code: u32, after: u32, pmask: u32, hmask: u32, level: u32 }
 
 impl Batch {
     /// A lattice relation's round (decision 0124): the `n` rows of `u` (its key's `nkeys` columns, then the value)
     /// folded by key into `total` (the relation's `nkeys + 2` columns, its last a key's changes; `had` rows): a held
     /// key's row updated in place, a new key's row into `new_keys` (as `total`'s columns), each changed key's row (key
-    /// and value) into `delta`. `counters`: `[changed, new]`.
+    /// and value) into `delta`. `counters`: `[changed, new]`. `level`: where the relation keeps levels (decision
+    /// 0311), the round, written to a changed or new key's row in a column after its changes (`total` and `new_keys`
+    /// then have one more).
     #[allow(clippy::too_many_arguments)]
+    /// Code 3 compares its values' texts in `arena`, which holds every value the fold reads.
     pub(in crate::code_rule_dsl) fn lattice_fold(&mut self, u: &Table, n: usize, total: Option<&DevRel>, nkeys: usize, lat: LatCode, keys: &mut LatKeys,
-                                                 counters: &Words, new_keys: &Table, delta: &Table) -> Result<(), Error> {
+                                                 counters: &Words, new_keys: &Table, delta: &Table, arena: Option<&Arena>, level: Option<u32>) -> Result<(), Error> {
+        assert!(lat.code != 3 || arena.is_some(), "a shortlex fold reads its values' texts");
         assert!(nkeys + 1 <= MAX_KEYS && u.cap == n && new_keys.cap == n && delta.cap == n);
         let had = total.map_or(0, |t| t.rows);
         let pplaces = (2 * n).next_power_of_two().max(16);
         let want = (2 * (had + n)).next_power_of_two().max(16);
-        let mut p = LatParams { top: lat.top, n: n as u32, had: had as u32, nkeys: nkeys as u32, code: lat.code, after: lat.after.unwrap_or(NONE), pmask: (pplaces - 1) as u32, hmask: 0, pad: 0 };
+        let mut p = LatParams { top: lat.top, n: n as u32, had: had as u32, nkeys: nkeys as u32, code: lat.code, after: lat.after.unwrap_or(NONE), pmask: (pplaces - 1) as u32, hmask: 0, level: level.unwrap_or(0) };
         let r: metal::Buffer = total.map_or_else(|| self.dummy.buffer.to_owned(), |t| t.buffer.buffer.to_owned());
         if keys.places < want {
             // Grown: every held row placed again.
@@ -2809,12 +2920,13 @@ impl Batch {
         let chosen = Held::new(4 * pplaces)?;
         let flags = Held::new(4 * pplaces)?;
         let h: metal::Buffer = keys.table.as_ref().expect("a key table").buffer.to_owned();
+        let a: metal::Buffer = arena.map_or_else(|| self.dummy.buffer.to_owned(), |a| a.buffer.buffer.to_owned());
         let pass = self.pass(4)?;
         let ub: &BufferRef = &u.buffer.buffer;
         pass.run_bytes(&clear, &[&places.buffer, &chosen.buffer, &flags.buffer], bytes, groups(pplaces));
         pass.run_bytes(&claim, &[ub, &places.buffer], bytes, groups(n));
-        pass.run_bytes(&best, &[ub, &places.buffer, &chosen.buffer, &flags.buffer], bytes, groups(n));
-        pass.run_bytes(&merge, &[ub, &places.buffer, &chosen.buffer, &flags.buffer, &r, &h, &new_keys.buffer.buffer, &delta.buffer.buffer, &counters.buffer.buffer], bytes, groups(pplaces));
+        pass.run_bytes(&best, &[ub, &places.buffer, &chosen.buffer, &flags.buffer, &a], bytes, groups(n));
+        pass.run_bytes(&merge, &[ub, &places.buffer, &chosen.buffer, &flags.buffer, &r, &h, &new_keys.buffer.buffer, &delta.buffer.buffer, &counters.buffer.buffer, &a], bytes, groups(pplaces));
         self.keep.extend([places, chosen, flags]);
         Ok(())
     }

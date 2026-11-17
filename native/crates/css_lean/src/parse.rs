@@ -52,6 +52,11 @@ const MAX_DEPTH: u32 = 200;
 
 /// `src` parsed.
 pub fn parse(src: &[u8]) -> R<Tape> {
+    parse_into(src, &mut Writer::<Widths>::finish_columns)
+}
+
+/// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
+pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out, Redo>) -> R<Out> {
     if src.contains(&0) {
         return Err(Refusal::Lex(src.iter().position(|&c| c == 0).unwrap_or(0) as u32));
     }
@@ -61,8 +66,8 @@ pub fn parse(src: &[u8]) -> R<Tape> {
         let start = if src.starts_with("\u{feff}".as_bytes()) { 3 } else { 0 };
         let mut p = P { src, at: start, pending: Vec::new(), seen: 0, w: Writer::new(0, widths, src.len() / 3 + 16), b: Blocks::of(src), last_end: 0, depth: 0 };
         p.stylesheet()?;
-        match p.w.finish_columns() {
-            Ok(columns) => return Ok(columns),
+        match finish(p.w) {
+            Ok(done) => return Ok(done),
             Err(Redo(w)) => {
                 if w == widths {
                     return Err(Refusal::TooLarge);

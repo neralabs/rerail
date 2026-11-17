@@ -39,6 +39,10 @@ pub enum Step {
     Word,
     Node,
     Return,
+    /// A token's bytes, one at a time (lean's `while digit { end += 1 }`, a split run's term
+    /// in `native_cpu_block::RunForm::Bytes`). The one byte loop allowed, and only as
+    /// `run_of_bytes` has it: one block that steps one byte while the byte it reads is in a set.
+    Bytes,
 }
 
 /// Why a function was refused.
@@ -48,6 +52,8 @@ pub enum Refusal {
     Call(String),
     /// A loop whose header the lowering did not name.
     Loop(String),
+    /// A loop named `Step::Bytes` that is not a run of bytes (`run_of_bytes`).
+    Bytes(String),
 }
 
 /// Refuse `func` unless it calls only `own` functions and each of its cycles passes one of
@@ -75,6 +81,11 @@ pub fn check_tails(func: &Function, heads: &[(Block, Step)], own: &[UserExternal
             if calls && !allowed {
                 return Err(Refusal::Call(func.dfg.display_inst(inst).to_string()));
             }
+        }
+    }
+    for &(head, step) in heads {
+        if step == Step::Bytes && !run_of_bytes(func, head) {
+            return Err(Refusal::Bytes(head.to_string()));
         }
     }
     let cfg = ControlFlowGraph::with_function(func);
@@ -108,6 +119,59 @@ pub fn check_tails(func: &Function, heads: &[(Block, Step)], own: &[UserExternal
         }
     }
     Ok(())
+}
+
+/// Whether `head` is lean's `while set.contains(b[end]) { end += 1 }` and nothing more: one
+/// block of one parameter, the position; one byte load, at the position; no store or call; and
+/// a branch, on that byte, back to itself at the position plus one. Each turn reads one byte
+/// and the loop ends at the first byte not in the set, so a turn has no other work to hide.
+fn run_of_bytes(func: &Function, head: Block) -> bool {
+    let dfg = &func.dfg;
+    let [pos] = dfg.block_params(head) else { return false };
+    let insts: Vec<_> = func.layout.block_insts(head).collect();
+    let Some((&last, body)) = insts.split_last() else { return false };
+    let loads: Vec<_> = body.iter().copied().filter(|&i| dfg.insts[i].opcode().can_load()).collect();
+    if body.iter().any(|&i| dfg.insts[i].opcode().can_store() || dfg.insts[i].opcode().is_call()) {
+        return false;
+    }
+    let [load] = loads[..] else { return false };
+    if dfg.insts[load].opcode() != Opcode::Uload8 {
+        return false;
+    }
+    // What a value is made from, in this block: the values it reads, back to the block's top.
+    let made_from = |v: cranelift_codegen::ir::Value, of: &dyn Fn(cranelift_codegen::ir::Value) -> bool| -> bool {
+        let mut stack = vec![v];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(v) = stack.pop() {
+            if of(v) {
+                return true;
+            }
+            if !seen.insert(v) {
+                continue;
+            }
+            if let cranelift_codegen::ir::ValueDef::Result(i, _) = dfg.value_def(v)
+                && func.layout.inst_block(i) == Some(head)
+            {
+                stack.extend(dfg.inst_values(i));
+            }
+        }
+        false
+    };
+    let byte = dfg.first_result(load);
+    if !dfg.inst_values(load).any(|a| made_from(a, &|v| v == *pos)) {
+        return false;
+    }
+    let InstructionData::Brif { arg, blocks, .. } = &dfg.insts[last] else { return false };
+    if !made_from(*arg, &|v| v == byte) {
+        return false;
+    }
+    let pool = &dfg.value_lists;
+    let back: Vec<_> = blocks.iter().filter(|c| c.block(pool) == head).collect();
+    let [call] = back[..] else { return false };
+    let args: Vec<_> = call.args(pool).collect();
+    let [cranelift_codegen::ir::BlockArg::Value(next)] = args[..] else { return false };
+    matches!(dfg.value_def(next), cranelift_codegen::ir::ValueDef::Result(i, _)
+        if matches!(dfg.insts[i], InstructionData::BinaryImm64 { opcode: Opcode::IaddImm, arg, imm } if arg == *pos && imm.bits() == 1))
 }
 
 /// For each block of `from`, the `exits` (a block that leaves the function, and where to) it

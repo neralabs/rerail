@@ -540,21 +540,29 @@ pub fn reference(c: &Compiled, bytes: &[u8]) -> Option<Vec<IdNode>> {
 /// makes. The outputs its form makes a zero constant (the masks the record pass and its token
 /// loop make from the bytes where they read them: `BlockNative::cpu_form`) are not made, and
 /// the gap marks tier 2 on the CPU tests itself (`native_cpu_block::lazy_marks`) are not in its
-/// codes, where the interpreter's codes have them.
+/// codes, where the interpreter's codes have them; except a lazy mark with token tests
+/// (`native_cpu_block::lazy_coded`), whose tests' hits the token loop writes in the code: there a
+/// code holds the hit where the interpreter's holds the mark.
 pub struct Contract {
     unmade: Vec<bool>,
     lazy: u32,
+    /// The lazy marks whose tests' hits are in the code (`lazy_coded`), as code bits.
+    coded: u32,
 }
 
 impl Contract {
     pub fn of(block: &crate::block_native::BlockNative) -> Self {
         let cpu = block.cpu_form();
         let unmade = cpu.outputs.iter().map(|&o| matches!(cpu.insts[usize::from(o)], crate::block_native::BlockInst::Const(0))).collect();
-        let lazy = block.records.as_ref().map_or(0, |r| {
+        let (lazy, coded) = block.records.as_ref().map_or((0, 0), |r| {
             let bytes = crate::native_cpu_bytes::Bytewise::of(block);
-            crate::native_cpu_block::lazy_marks(r, &|o| bytes.can(o)).iter().fold(0, |a, &(k, _)| a | 1 << (crate::records::MARK_SHIFT + u32::from(k)))
+            let coded = crate::native_cpu_block::lazy_coded(r);
+            crate::native_cpu_block::lazy_marks(r, &|o| bytes.can(o)).iter().fold((0, 0), |(a, c), &(k, _)| {
+                let bit = 1 << (crate::records::MARK_SHIFT + u32::from(k));
+                (a | bit, if coded >> k & 1 == 1 { c | bit } else { c })
+            })
         });
-        Self { unmade, lazy }
+        Self { unmade, lazy, coded }
     }
 }
 
@@ -564,10 +572,16 @@ impl Contract {
 /// token loop stops where it refuses, its codes from there not made.
 pub fn tier1_agrees(contract: &Contract, cpu: &crate::block::BlockRun, interp: &crate::block::BlockRun) -> bool {
     let falls = interp.totals.iter().any(|&t| t != 0);
+    // Sent to the fallback: the totals alone are owed (the token loop left at its refusal, its records from there
+    // not made, so fewer positions and codes than the interpreter's, which goes on).
+    if falls {
+        return cpu.totals == interp.totals;
+    }
     cpu.positions == interp.positions
         && cpu.totals == interp.totals
         && cpu.codes.len() == interp.codes.len()
-        && (falls || cpu.codes.iter().zip(&interp.codes).all(|(&c, &i)| c == i & !contract.lazy))
+        // A code's lazy bits: none but a coded mark's hit, where the interpreter's code has the mark.
+        && (cpu.codes.iter().zip(&interp.codes).all(|(&c, &i)| c & !contract.lazy == i & !contract.lazy && c & contract.lazy & !(contract.coded & i) == 0))
         && cpu.outputs.len() == interp.outputs.len()
         && cpu.outputs.iter().zip(&interp.outputs).zip(&contract.unmade).all(|((c, i), &unmade)| unmade || c == i)
 }
@@ -611,7 +625,7 @@ pub fn check_shape(name: &str, c: &Compiled) {
             // The table's final pass (parents, extras), and the wraps' placing.
             Step::Node => true,
             // No loop over bits: a local check (`CHECK`) is word-parallel, a loop over words.
-            Step::Bits | Step::File | Step::Round | Step::Region | Step::Word => false,
+            Step::Bits | Step::File | Step::Round | Step::Region | Step::Word | Step::Bytes => false,
         };
         assert!(ok, "{name}: tier 2 loops at {b} over {step:?}");
     }
@@ -632,6 +646,25 @@ pub fn check_shape(name: &str, c: &Compiled) {
         assert_eq!(count_transfers(asm, Transfer::Table), tables, "{name}: {tier} jumps other than by its own tables");
         assert_eq!(count_transfers(asm, Transfer::FarCall), own, "{name}: {tier} calls out: {:?}", asm.lines().filter(|l| transfers(l).iter().any(|t| matches!(t, Transfer::FarCall))).collect::<Vec<_>>());
     }
+}
+
+/// Tier 1 compiled agrees with its interpreter on a document: the same run, or, for a file both
+/// refuse, the same but for the codes past the token that refused (decision 0177, "A refusal
+/// leaves the loop"): the compiled loop leaves there and writes no code after it (each is 0), while
+/// the interpreter goes on. The stage's outputs and positions, made before the loop, are the same.
+fn refused_alike(compiled: &crate::block::BlockRun, interpreted: &crate::block::BlockRun) -> bool {
+    let refused = |r: &crate::block::BlockRun| r.totals.iter().any(|&t| t != 0);
+    if compiled == interpreted {
+        return true;
+    }
+    let left = compiled.codes.iter().zip(&interpreted.codes).position(|(a, b)| a != b).unwrap_or(compiled.codes.len());
+    refused(compiled)
+        && refused(interpreted)
+        && compiled.totals == interpreted.totals
+        && compiled.outputs == interpreted.outputs
+        && compiled.positions == interpreted.positions
+        && compiled.codes.len() == interpreted.codes.len()
+        && compiled.codes[left..].iter().all(|&c| c == 0)
 }
 
 /// A ladder's checks (`every_step_parses_as_the_reference`) over `steps`, mutations drawn from
@@ -667,7 +700,7 @@ pub fn check_ladder(
             let interp = crate::stream::run(&c.program, &bytes, &run).ok().map(as_ids);
             let compiled = c.parser.parse(&bytes).ok().map(as_ids);
             let tier1 = c.parser.tier1.extract(&bytes);
-            if !tier1_agrees(&contract, &tier1, &run) {
+            if !tier1_agrees(&contract, &tier1, &run) && !refused_alike(&tier1, &run) {
                 differ.push(format!("{}: tier 1 compiled differs from its interpreter", show()));
                 break;
             }

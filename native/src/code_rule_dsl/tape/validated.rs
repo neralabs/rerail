@@ -24,13 +24,16 @@ struct Open {
     child_end: Option<u32>,
 }
 
+/// Checks `image` against `source` and `grammar`, and gives `sink` each node in preorder with its classes, read
+/// through the tape API in whichever format the image is held (decision 0293). Returns the source's digest and the
+/// contextual aliases the nodes' `alias` numbers.
 pub fn visit(
     source: &str,
     grammar: &Grammar,
     image: &TapeImage,
     budget: &impl Fn() -> bool,
-    mut sink: impl FnMut(Node, &[u16]),
-) -> Result<[u8; 32], String> {
+    sink: impl FnMut(Node, &[u16]),
+) -> Result<([u8; 32], Vec<(String, bool)>), String> {
     checked(budget)?;
     // The source's digest, returned: a tape decoded from the wire holds none of its own (`TapeImage::source_digest`).
     let digest = source_digest(source, budget)?;
@@ -40,28 +43,48 @@ pub fn visit(
     {
         return Err("tape grammar or source revision mismatch".into());
     }
-    let count = image.node_count();
-    let widths_valid = [
-        image.widths[0],
-        image.widths[1],
-        image.widths[2] & !TAIL_FROM_START,
-    ]
-    .iter()
-    .all(|width| matches!(width, 2 | 4));
-    if count == 0
-        || count > u32::MAX as usize
-        || !widths_valid
-        || image.code.len() != count * 2
-        || image.size.len() != count * image.size_width()
-        || image.base.len() != count.div_ceil(CHECKPOINT_STRIDE) * 4
-        || image.off.len() != count * image.off_width()
-        || image.tail.len() != count * image.tail_width()
-    {
-        return Err("malformed v9np tape".into());
+    if let Some(c) = image.f15() {
+        let count = c.node_count();
+        let widths_valid = [c.widths[0], c.widths[1], c.widths[2] & !TAIL_FROM_START].iter().all(|width| matches!(width, 2 | 4));
+        if !widths_valid
+            || c.code().len() != count * 2
+            || c.size().len() != count * c.size_width()
+            || c.base().len() != count.div_ceil(CHECKPOINT_STRIDE) * 4
+            || c.off().len() != count * c.off_width()
+            || c.tail().len() != count * c.tail_width()
+        {
+            return Err("malformed v9np tape".into());
+        }
+        // Format 15's code slots: none past the count, and the unused ones zero.
+        if c.codes.iter().any(|code| {
+            usize::from(code.class_count) > MAX_NODE_SUPERTYPES || code.classes[usize::from(code.class_count)..].iter().any(|&unused| unused != 0)
+        }) {
+            return Err("invalid abstract node class entry".into());
+        }
     }
-    for code in &image.codes {
-        let kind = code.kf & 1023;
-        let field = code.kf >> 10;
+    let aliases = rerail_tape_format::with_tape!(image.tape(), |t| visit_tape(&t, source, grammar, budget, sink))?;
+    checked(budget)?;
+    Ok((digest, aliases))
+}
+
+fn visit_tape<T: rerail_tape_format::tape::Tape>(
+    t: &T,
+    source: &str,
+    grammar: &Grammar,
+    budget: &impl Fn() -> bool,
+    mut sink: impl FnMut(Node, &[u16]),
+) -> Result<Vec<(String, bool)>, String> {
+    let table = t.table();
+    // Each code the tape uses, once, at its first node: its grammar entry checked, and its alias numbered among the
+    // tape's. (A language's table lists every code its grammar allows; a tape uses a few.)
+    let mut aliases: Vec<(String, bool)> = Vec::new();
+    let mut alias_of: Vec<Option<u16>> = vec![None; table.len()];
+    let mut admit = |number: usize| -> Result<u16, String> {
+        if let Some(alias) = alias_of[number] {
+            return Ok(alias);
+        }
+        let code = table.entry(number as u32);
+        let (kind, field) = (code.kind, code.field);
         let error = code.flags & CODE_ERROR != 0;
         if code.flags & !(CODE_EXTRA | CODE_ERROR | CODE_MISSING) != 0
             || (error && (kind != ERROR_CODE || code.flags & CODE_MISSING != 0))
@@ -70,57 +93,62 @@ pub fn visit(
                     || !grammar.kinds.kind_is_visible(kind)))
             || usize::from(field) > grammar.kinds.field_count()
             || (field != 0 && grammar.kinds.field_name(field).is_none())
-            || (code.alias != SENTINEL
-                && image
-                    .kind_aliases
-                    .get(usize::from(code.alias))
-                    .is_none_or(|alias| alias.0.is_empty()))
+            || code.alias.as_ref().is_some_and(|alias| alias.0.is_empty())
         {
             return Err("unknown v9np grammar code".into());
         }
-        if usize::from(code.class_count) > MAX_NODE_SUPERTYPES
-            || code.classes().windows(2).any(|pair| pair[0] >= pair[1])
-            || code.classes[usize::from(code.class_count).min(MAX_NODE_SUPERTYPES)..]
-                .iter()
-                .any(|&unused| unused != 0)
-            || code.classes().iter().any(|&class| {
+        if code.classes.len() > MAX_NODE_SUPERTYPES
+            || code.classes.windows(2).any(|pair| pair[0] >= pair[1])
+            || code.classes.iter().any(|&class| {
                 usize::from(class) >= grammar.kinds.kind_count()
                     || !grammar.kinds.kind_is_supertype(class)
             })
         {
             return Err("invalid abstract node class entry".into());
         }
-    }
+        let alias = match &code.alias {
+            None => SENTINEL,
+            Some(alias) => {
+                let at = aliases.iter().position(|a| a == alias).unwrap_or_else(|| {
+                    aliases.push(alias.clone());
+                    aliases.len() - 1
+                });
+                u16::try_from(at).ok().filter(|&at| at != SENTINEL).ok_or("too many contextual grammar aliases")?
+            }
+        };
+        alias_of[number] = Some(alias);
+        Ok(alias)
+    };
 
-    let from_start = image.widths[2] & TAIL_FROM_START != 0;
+    let count = t.len();
+    if count == 0 || count > u32::MAX as usize {
+        return Err("malformed v9np tape".into());
+    }
     let mut open: Vec<Open> = Vec::new();
     let mut unwound = 0usize;
+    let mut s = 0u64;
     for index in 0..count {
         if index % 256 == 0 {
             checked(budget)?;
         }
-        let code = image
-            .codes
-            .get(usize::from(image.code_at(index)))
-            .ok_or("unknown v9np code")?;
-        let field = code.kf >> 10;
+        let number = t.code(index) as usize;
+        if number >= table.len() {
+            return Err("unknown v9np code".into());
+        }
+        let alias = admit(number)?;
+        let code = table.entry(number as u32);
+        let field = code.field;
         let error = code.flags & CODE_ERROR != 0;
         let missing = code.flags & CODE_MISSING != 0;
-        let kind = if error { ERROR_SYMBOL } else { code.kf & 1023 };
-        let size = image.size_at(index);
-        let until = index
-            .checked_add(size as usize)
-            .filter(|&end| size != 0 && end <= count)
-            .ok_or("invalid subtree boundary")?;
-        let start = image.start_at(index);
-        let from = if from_start {
-            start
-        } else {
-            image.start_at(until - 1)
-        };
-        let end = from
-            .checked_add(image.tail_at(index))
-            .ok_or("span end overflow")?;
+        let kind = if error { ERROR_SYMBOL } else { code.kind };
+        let until = t.subtree_end(index);
+        if until <= index || until > count {
+            return Err("invalid subtree boundary".into());
+        }
+        let size = (until - index) as u32;
+        s = t.start_next(index, s);
+        let e = t.end_with_start(index, s);
+        let (start, end) = (u32::try_from(s).map_err(|_| "span outside source")?, u32::try_from(e).map_err(|_| "span end overflow")?);
         if end < start
             || (missing && (start != end || size != 1))
             || end as usize > source.len()
@@ -158,10 +186,9 @@ pub fn visit(
             }
             p.id
         };
-        let named = if code.alias == SENTINEL {
-            grammar.kind_is_named(kind)
-        } else {
-            image.kind_aliases[code.alias as usize].1
+        let named = match &code.alias {
+            None => grammar.kind_is_named(kind),
+            Some(alias) => alias.1,
         };
         sink(
             Node {
@@ -173,13 +200,13 @@ pub fn visit(
                 size,
                 parent,
                 first_field,
-                alias: code.alias,
+                alias,
                 flags: u8::from(named)
                     | (u8::from(code.flags & CODE_EXTRA != 0) << 1)
                     | (u8::from(missing) << 2)
                     | (u8::from(error) << 3),
             },
-            code.classes(),
+            &code.classes,
         );
         open.push(Open {
             id: index as u32,
@@ -190,6 +217,5 @@ pub fn visit(
             child_end: None,
         });
     }
-    checked(budget)?;
-    Ok(digest)
+    Ok(aliases)
 }

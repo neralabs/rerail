@@ -45,7 +45,7 @@ pub mod component {
     pub use super::setfix::{DeviceReport, device_report};
     pub use super::setfix::probed;
     pub use super::setfix::{CutReport, TrialRun, symbol_id, cut_counts, cut_step, keep_trial_rows, set_budgets, take_cut, thread_cpu, trial, trial_ids, trial_over, trial_own};
-    pub use super::setfix::{InRel, RelMark, add, cat_symbols, prime, adopt, adopted, close, carry_sorted, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, hold_as, hold_empty, hold_source, held_source, live, materialize, open_spec, pending, defer, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, step_histograms, unindex, hold_rows, kept_rows, live_changed, table_source, tables_built, output_rows, source_rows, finding_rows};
+    pub use super::setfix::{InRel, RelMark, add, cat_symbols, prime, adopt, adopted, close, carry_sorted, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, hold_as, hold_empty, hold_source, held_source, live, materialize, open_spec, pending, defer, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, step_cpu, step_histograms, unindex, hold_rows, kept_rows, live_changed, table_source, tables_built, output_rows, source_rows, finding_rows};
 }
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
@@ -162,16 +162,54 @@ static LATTICES: LazyLock<Mutex<Vec<(String, Arc<dyn Lattice>)>>> = LazyLock::ne
     Mutex::new(vec![("flat".to_owned(), Arc::new(Flat) as Arc<dyn Lattice>), ("max".to_owned(), Arc::new(Max)), ("min".to_owned(), Arc::new(Min))])
 });
 
-/// Declares `lattice` under `name`, replacing an earlier declaration.
+/// The lattices declared on this thread (`declare`), and carried to its run's jobs on other threads (`carried`):
+/// looked up before the process's. A lattice over a run's own atoms (`shortlex_min<>`, decision 0108) is that run's:
+/// declared only process-wide, a run on another thread declaring its own over its store replaced it under this one,
+/// whose values it then read as the other store's atoms (the coverage probe's shortlex order, which held or not by
+/// the tests that ran beside it).
+type Declared = Arc<Vec<(String, Arc<dyn Lattice>)>>;
+
+thread_local! {
+    static OWN_LATTICES: std::cell::RefCell<Declared> = std::cell::RefCell::new(Arc::new(Vec::new()));
+}
+
+/// Declares `lattice` under `name`, replacing an earlier declaration: this thread's (and its run's jobs'), and the
+/// process's, which threads that declare none read.
 pub fn declare(name: &str, lattice: Arc<dyn Lattice>) {
+    OWN_LATTICES.with(|own| {
+        let mut list: Vec<(String, Arc<dyn Lattice>)> = own.borrow().iter().filter(|(n, _)| n != name).cloned().collect();
+        list.push((name.to_owned(), Arc::clone(&lattice)));
+        *own.borrow_mut() = Arc::new(list);
+    });
     let mut lattices = LATTICES.lock().unwrap();
     lattices.retain(|(n, _)| n != name);
     lattices.push((name.to_owned(), lattice));
 }
 
 pub(in crate::code_rule_dsl) fn lattice(name: &str) -> Result<Arc<dyn Lattice>> {
+    if let Some(l) = OWN_LATTICES.with(|own| own.borrow().iter().find(|(n, _)| n == name).map(|(_, l)| Arc::clone(l))) {
+        return Ok(l);
+    }
     LATTICES.lock().unwrap().iter().find(|(n, _)| n == name).map(|(_, l)| Arc::clone(l))
         .ok_or_else(|| user_err(format!("no lattice named {name:?}")))
+}
+
+/// Carries this thread's declared lattices to a job of its run on another thread (`run_state`).
+pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+    c.part(&["OWN_LATTICES"], crate::code_rule_dsl::logic::run_state::Shared(OWN_LATTICES.with(|own| Arc::clone(&own.borrow())), enter_lattices));
+}
+
+/// While the guard lives, this thread reads `declared` as its own lattices.
+fn enter_lattices(declared: Declared) -> impl Drop {
+    struct Entered(Option<Declared>);
+    impl Drop for Entered {
+        fn drop(&mut self) {
+            if let Some(d) = self.0.take() {
+                OWN_LATTICES.with(|own| *own.borrow_mut() = d);
+            }
+        }
+    }
+    Entered(Some(OWN_LATTICES.with(|own| std::mem::replace(&mut *own.borrow_mut(), declared))))
 }
 
 struct FlatJoin;

@@ -1,6 +1,8 @@
 # 0281: Program passes run under a pass manager: rule rewriters and program edits over cached, maintained analyses
 
-Status: accepted (2026-11-15); steps 1 and 2 built, step 3 next (see Path and Alignment).
+Status: accepted (2026-11-15); steps 1–4 built (step 4, the run reads versions, done 2026-11-16); step 5 under way:
+(a) and (b) done, step 5 (c) storage done (2026-11-16; §6's keyed steps), its use on the preparation path and the
+ep2 measurement after the remaining passes are ported (see Path and Alignment).
 Builds on 0173 §9 (a pass is an edit or a derivation, and a derived rule records its sources), 0225 §5 and 0246 §3
 (the whole-program questions are rules over the image), 0266 (blocks: a writer, a merged view, base + delta), 0269
 (a step's decisions are rows of what it made), 0275 (a step is rederived until its key hits) and 0276 (one form from
@@ -319,14 +321,207 @@ step 3 replaces what is under the writer.
    again on an input that is a delta of its last input: each rule pass visits the delta's added rules alone and
    drops what came from its removed ones (through `from`); a program pass reruns from its maintained analyses.
    Measured on ep2's edit (Q18).
-4. **0276 step 3's preparation passes** as `ProgramPass`es: `locate`, the merges, `demand_exports`,
-   `factorize_exports` and `push_local_joins` (Q18's `prepare` and `merge the programs`).
-5. **0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`, the matchers and
-   the strings. Each is checked against its `TreePass` by digest, and the `TreePass` is deleted once it agrees on
-   dl1 and the pack.
-6. **The per-clause half of `rr::lower`** as `RulePass`es over the tape's clauses (0276 step 5), with `Domains`.
-7. **Steps keyed (§6),** then analyses as rules (0225 §5), one at a time behind the trait. Morsels (§3) with the
-   first stateless pass measured to want them.
+   - Done: `Pipeline::keeping` and `done` keep a run (`Run`: each step's input and output, and for a rule pass its
+     selection, the analyses it asked for, and which of the output's rules are the input's own);
+     `Pipeline::again(run, v)` runs the same passes over `v`, an edit of the run's input. Per step, against the last
+     run's step at its place (matched by the pass's name):
+     - its input unchanged: a local rule pass's output is reused;
+     - its input an edit of the last (`Delta::of`, not a new base): the last input's analyses are carried to the new
+       input across the edit (§2), so a program pass, which runs whole, reads them at the edit's cost. A rule pass
+       reruns on the edit alone when it is local (below), its `begin` selects the same rules, and each analysis it
+       asked for is the same on the new input: it visits the added rules it selects, copies the rest, and drops what
+       came from the removed ones through the version's `from` index (`Version::derived`), or the removed rules
+       themselves where its last output held them as they were. The output is an edit of its last output, so the next
+       step's input is again an edit of its last;
+     - otherwise it runs whole.
+   - A rule pass is local when it says which changes make it run whole (`RulePass::WHOLE`, `Reads::ALL` by default):
+     it reads its rule and its `begin`'s analyses alone, keeps no state across rules, and returns its results in its
+     output. Each stage says how it ran (`Ran`: whole, on the delta, reused).
+   - Tests: `a_rule_pass_run_again_visits_the_edits_rules_alone` (two edits in a row, both as an edit of the input and
+     as a derivation, each against a run from scratch by digest, then a reuse) and
+     `a_rerun_runs_a_step_whole_when_the_edit_reaches_past_its_rules` (a program pass, a default rule pass, and a
+     local one whose `Needed` the edit changed).
+   - Not measured on ep2 yet: no pass on Q18's path (`merge the programs`, `prepare`) is on the manager, and the
+     passes that are (supports, the gate) read the whole program in `begin` (their own component graphs) and number
+     their helpers across rules, so they keep `WHOLE = ALL`. Q18's measurement moves with step 4, whose passes are
+     the first written local; a session keeps its `Run` beside its program then.
+4. **The run reads versions** (0276 step 2; the order chosen 2026-11-16, below). Every reader after `plan::lower`
+   reads the prepared program's version through `Placed` and `Fields`, so `Lowered`'s tree goes and the program
+   crosses from tree to version at one encode, never back.
+   - Done (slice 1): the prepared program's one image, made after the last pass that edits its tree and held beside
+     it (`Tree::beside`); the split's parts are views of it (`file_local::programs_over`); a program read from the
+     store is held beside its stored image. Read from the version: the declarations' widths and types (20 sites,
+     `Fields`), the relations read, the constants tested, `Own::constants`, the statistics (`Stats::of_schema` made a
+     second image of the program; `Stats::empty_of`), the cone digests, the documents check (`Needed`), the embed
+     slice (a part of the version, `Version::part`), `decode_kept`; `remember` stores the version's image bytes
+     (`program_text::store_version`) where it encoded the tree again. The guard
+     `a_maintained_run_decodes_and_copies_no_tree` now counts the prepared program's tree too, and passes.
+   - Done (slices 2–7, counted by making `Tree` not dereference and reading the compiler's errors: 159 sites before
+     slice 1, none after slice 7): the split's parts always have versions; the cross memo, the run's parts, the dump
+     and the trace, the session's cut, deltas, qualifiers and maintenance, and the diagnostics read versions; the
+     tests read versions or digests.
+   - Done (slice 8): `Lowered`'s tree is gone. `lower::Lowered` is a version, its maintained parts (`maint`) and what
+     the run reads beside them; `lower::Given` is the tree `lower::lower_tree` gives, which the preparation passes
+     edit (`transduce_nearest`, then `corpus`'s) and the SQL emitter reads (`emit::emit`), and `Given::image` makes
+     the `Lowered` (`lower::lower` is both). `lower::Tree` (given, beside, of, maintained) and its read counters are
+     deleted; the split's `Programs` holds no part trees (`assemble` no longer copies the program twice), and a
+     prepared program holds no lowered tree. A tree is made only by decoding a version (`Version::program`, counted
+     per thread: `program_image::trees_decoded`, which the guard reads). A program the image has no form for is
+     refused at `image` (its rules alone had no fields, so did not run either).
+   - Still trees, as preparation (step 5): the split's own analysis (`found`, `crossing`, `constant_relations`,
+     `cross_causes`), run once on the tree before its image; and the loader, which decodes a stored image to that
+     tree for `prepared_of` (step 7).
+5. **The preparation passes on the manager:** `locate`, the merges, `demand_exports`, `factorize_exports` and
+   `push_local_joins` as passes over the prepared program's version, before its one encode moves earlier. Written to
+   run on a delta: helper relations named from their content, not numbered across rules (`fl<k>_`), and the split's
+   file-local set an analysis a rerun compares. With them, steps kept (§6, moved up from step 8): each step's output
+   image stored under its key, so a new process finds the last run's steps and reruns on the edit. Measured on ep2's
+   edit as Q18 was (a new process).
+   - The order (2026-11-16): the passes' last reader first, as in step 4. The split reads their output tree after
+     the one image, so the image can move before a pass only once the split reads versions: (a) the split; (b) the
+     passes from the last backward (the inputs' pruning and the rule order, the merges, `locate`, `demand_exports`,
+     `factorize_exports`, `push_local_joins`), each re-splitting through (a)'s analysis maintained across its edit
+     where it split the tree again each round; (c) the steps stored, and ep2 measured.
+   - Done (a): the split is `file_local::FileLocal`, an analysis of the version (`on_version.rs`): `split_in`'s
+     fixpoints, rule forms and causes one for one, on the image's numbers (a relation its `RelId`, a variable its
+     `Slot`) where the tree's numbered relations by their names' addresses (`shape::Rels`) and variables by first
+     appearance (`shape::Form`, 0225 §4's interim numberings). `maintain` takes the place of `split_memo`'s kept
+     splits on the run's thread: the relations whose rules or declaration the edit changed, by content hash
+     (`RuleRef::hash`), and those reading them are computed again, the rest kept; an edit of half the rules or more,
+     or of what every relation's place reads besides rules (inputs, facts, `.about` rows), splits whole. `assemble`
+     and `crossing` read the version; `programs_of(version)` splits a version, and the loader opens the stored
+     lowered program's image with no tree decoded (`program_text::load_image`; `load_version` and
+     `read_stored_version` removed). While the passes split the tree too, a debug build checks the version's split
+     is the tree's on every prepared program (`programs_over`). A cause's words are the first failure a split met, so
+     a split maintained from an earlier one can word one differently from a whole split ("reads cross-file r"
+     against "reads r with no location"): which relations have a cause is compared, not the words. Test:
+     `the_split_of_a_version_is_maintained_across_an_edit`.
+   - Done (b), first slice: the image is made after the merges, and the passes after them run on the manager
+     (`corpus::preparation`): the inputs the rules read (`InputsRead`) and the measurement aid's rule order
+     (`RuleOrder`), the pipeline's output folded into a base for the store. The domains are read from the version
+     (`lower::domains_of`, `domains`' fixpoint on handles, in the tree's order), and the split from it
+     (`programs_of`); a debug build checks both against the tree's, its inputs pruned the same way. The manager's
+     "a derivation that changed nothing is its input" compared digests, a sum blind to the rules' order, so a
+     reordering derivation was taken for its input: it now compares the rules in order too. Tests:
+     `the_domains_of_a_version_are_the_trees`, `the_passes_after_the_image_prune_the_inputs_and_reorder_the_rules`.
+   - Done (b), second slice: the merges (`corpus::merge_and_drop_repeats`) are manager passes,
+     `preparation::DropRepeated` and `MergeIdentical`, and the image is made before them. `congruence` is read from
+     the version: a rule's template is a token list mirroring `template::canonical`'s text (variables by first
+     appearance, relations read a placeholder, `gated` and a count's `over` unwritten as the text leaves them), its
+     partition refinement and the classes' naming and writing `merge`'s one for one; a head is renamed through a new
+     `Rewrite::head_as`. A debug build checks the merged version's size and digest and the counts against the
+     tree's merges. Test: `the_merges_on_a_version_are_the_trees`.
+   - Done (b), third slice: `locate` is a manager pass (`file_local::Locate`, `typing/file_local/passes.rs`), the
+     image made before it. It reads the split from the analysis (`FileLocal`, `crossing` on the version) and writes a
+     derivation in the tree's rule order: a target's rules made as `<r>_at(d, …)` term by term (the document a
+     column a rule binds, one it leaves unnamed, or one through `docof` or `node`) and the cross-file read
+     `r(…) :- r_at(_, …)` appended. A debug build checks the result against the tree's `locate`. Test:
+     `rows_are_located_on_a_version_as_on_the_tree`.
+   - Done (b), fourth slice (2026-11-16): `demand_exports` is a manager pass (`file_local::DemandExports`,
+     `export_demand/on_version.rs`), the image made before it. Ported exactly first, helpers renamed from their
+     content after (the user's choice, 2026-11-16): an exact port can be checked by digest, a renaming cannot. Its
+     supersets, keys and cuts are the tree's one for one. Variables are read by name, as the tree reads them, so
+     each set and search runs in the tree's order. Each round's cut is built as a version of its own and split
+     through the `FileLocal` analysis, where the tree split its edited program again; the round that stays
+     file-local is written as the pass's derivation. That costs one extra split per prepared program, until the
+     analysis is carried from the candidate to the output. A debug build checks the lines and, through the passes
+     after it, the program's digest against the tree's `demand_exports`. On the 317 B-now rules it cuts 483 exports
+     through 166 supersets, as the tree does. Found by that run and fixed: the merge port asked an undeclared
+     helper's types (`Fields::types` panics where the tree's merge reads none), and a CLI built with
+     `--features test-hooks` panicked loading the test-only dialects' ast-grep grammars, which only the
+     dev-dependencies enabled (`crates/lang`'s `test-hooks` now enables them). Test:
+     `exports_are_cut_on_a_version_as_on_the_tree`.
+   - Done (b), fifth slice (2026-11-16): `factorize_exports` (decision 0099) is a manager pass
+     (`file_local::FactorizeExports`, `passes/factorize.rs`), the image made before it, off where the run's options
+     turn the factorized store off. `relation_keys`, `determined` and `functional` are read from the version by
+     name, and the parts from `keeps::factors_of`. The names follow the tree's counters: a part is
+     `fz<declarations>_` and a reader's open variable is `fz<copy>_`, and the readers' copies are made on the
+     tree's stack, so each copy's names are the tree's. A relation one of whose rules has an untyped part leaves
+     the rules and declarations its earlier rules made, as the tree does. Each round's program is a version split
+     through `FileLocal`. A debug build checks the lines and the digest against the tree's pass. On the 317 B-now
+     rules it factorizes 66 exports, as the tree does. Test: `exports_are_factorized_on_a_version_as_on_the_tree`.
+   - Done (b), sixth slice (2026-11-16): `push_local_joins` is a manager pass (`file_local::PushLocalJoins`,
+     `passes/push.rs`). With it, every pass after `bound` runs on the manager, and the image is made straight after
+     lowering. It follows `push_with`'s steps: the components, the narrowing tests (`independent_node_groups`,
+     `unrestricted`, `descends`, the t31 A1 composition filtered from outside) and the interfaces. Helpers are named
+     `fl<k>_<head>`, from the tree's counter and kept per (rule, component) from round to round. A rule's level rises
+     for each helper the round's split does not find file-local, and a second whole push leaves the unrestricted
+     components when the cross part reads base relations anyway. The rule-building parts the factorized store and
+     this pass share (`Made`, `BodyItem`, `Round`, `write`) are in `passes.rs`. A debug build checks the helpers
+     made and, through the passes after it, the digest against the tree's `push_local_joins`, and on the 317 B-now
+     rules they agree. Test: `local_joins_are_pushed_on_a_version_as_on_the_tree`.
+   - Done (b), seventh slice (2026-11-16): the helpers are named from their content. A pushed join is
+     `fl<h>_<head>`, a factorized part `fz<h>_<rel>` and its key `fzk<h>_<rel>`, where `h` is a stable FNV-1a hash
+     of the text of the rule that makes the helper (`file_local::helper_name`). Counters numbered them before: the
+     program's declarations for `fz`, and a counter over the rules for `fl`. A reader copy's open variables are
+     `fz<depth>_v`, numbered by how many reads that copy has had replaced, where a counter over the program renamed
+     every later reader's. The names keep the `fl<digits>_<head>` shape that the run's and the profile's readers
+     parse. A salt hashes again a name the program already declares, or one this round gave other content. The tree
+     passes name their helpers the same way. So the debug check still compares the version's program with the
+     tree's by digest, exactly, not just up to helper names as planned. On the 317 B-now rules they agree. The
+     names change once, so every prepared program and file-local part is a miss once. Tests:
+     `an_edit_renames_only_its_own_rules_helpers`, and the three ports' tests.
+   - (c), measured first (2026-11-16, ep2 on the profiling build: corpus0 × the 317 B-now rules, one store, B101's
+     body edited by one always-true literal, a new process, findings unchanged at 427, load 26–48):
+
+     | Step | Instructions | CPU | Wall |
+     |---|---|---|---|
+     | warm | 6.1 G | 0.35 s | 0.39 s |
+     | one rule's body, a new process | 150.2–150.4 G | 9.0–9.2 s | 5.5 s |
+
+     Profiled: `local` 1.9 s, `parse` and `batch` 1.7 s (workers), `prepare` 0.72 s, `combine` 0.61 s, then `wait`,
+     `stats` and `cross` 1.0 s. The edit runs every file's file-local part again: its digest keys each file's memo
+     (0225 §7, a prepared part per module), and that is most of it. In `prepare`, the passes this step moved are
+     0.45 s: push 0.21 s, demand 0.08 s, factorize 0.07 s, locate 0.04 s, merges 0.03 s.
+   - What that means for (c): storing the steps buys this edit nothing yet. The edit changes the pipeline's input,
+     so every step's input changes, and a program pass runs whole on a changed input (`Pipeline::program_step`
+     takes no prior step). Only a rule pass reruns on a delta. A stored step is reused only when its input is
+     unchanged, and then the prepared program's own key (0073) already hits.
+     - **Lever 1 (0225 §7):** key the file-local part per module, so an edit doesn't run every file again.
+     - **Lever 2:** passes that cost their delta. Push's components are per rule given the split, so it can become a
+       rule pass. Factorize and demand decide per relation, then check the split once per round.
+     - **Done meanwhile:** each round's candidate program is an overlay of the input holding the round's change,
+       not a derivation of the whole program (`passes::candidate`), and its split is carried across that edit
+       (`manager::carried`). That cut push's own time from 0.19 s to 0.13 s. The splits stay whole: round 1
+       rewrites hundreds of rules, past what `maintain` keeps. Chaining each round on the last round's candidate
+       would make rounds 2 and later cost their retries.
+   - (c), the storage (2026-11-16): §6's keyed steps, built in the manager.
+     - **The key.** `Pipeline::keyed(name, v, &steps)` keys each step by a chain: the input's identity
+       (`manager::identity`: its digest, size, and its rules' hashes in order, since the digest is blind to order
+       and `RuleOrder` changes only order), the pipeline's name and the engine build. Then for each step, its
+       pass's `NAME`, `VERSION` and `settings()`. Both pass traits gained `VERSION` (default 1, bumped when what the
+       pass makes changes) and `settings` (default none; `FactorizeExports` gives its switch). A step's input is the
+       step before's output, so the chain names it as that input's digest would, and every key is known before
+       anything runs.
+     - **A caller's key part.** `key_part(label, bytes)` adds a value to the key of every later step: what the passes
+       read that is not in the input version. 0298's general forms add their `olds_signature` this way, beside the
+       program's digest, which the chain's start already names.
+     - **Lookup.** A step whose key the store holds is not run. Its stage is `Ran::Stored`, its decisions are read
+       back, and its output is opened only when a later step runs, at `finish`, or on `current()`. So a pipeline
+       runs only the passes after the latest stored step, and one whose every step is stored opens one image. A
+       step that runs stores its output and decisions under its key. A skipped pass has not run, so what it returns
+       in itself, beside its output and decisions, is not there; `ran(i)` says which ran. A keyed pipeline is not
+       a kept one (`keeping`, `again`): one carries steps across processes by key, the other within a process by
+       place.
+     - **The store** (`program_text::StoredSteps`, behind the manager's `Steps` trait): a step is facts in 0103's
+       two-rule form: `pipeline_step_key(key, pass, version)`, the key with the pass's version as its tag, and
+       `pipeline_step(key, image, size, digest)`, the step it names, with `pipeline_step_decision(key, k, pass,
+       what, detail)` (0269). They are one source under the key's alias, and the output is a program image kept as
+       a prepared program's is (`store_image`, folded to a base first when it is a view or overlay). No cache store,
+       directive or memo map. A step whose image the store lost is not found, and runs again.
+     - **Test:** `a_new_process_reruns_only_the_passes_after_a_stored_step`: three passes, the store opened again
+       for each run. A changed setting on the last pass runs that pass alone, with the first two read back and
+       their decisions too. Nothing changed runs none. A caller's key part runs all, then none under the same part.
+       Each output is the unkeyed pipeline's, rules in order.
+     - **Not yet:** the preparation pipeline is not keyed. Its passes return results in themselves (the pushed
+       relations, the demand lines) that the run reads; they move to decisions first. ep2 is measured once the
+       remaining passes are ported.
+6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
+   the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.
+7. **The per-clause half of `rr::lower`** as `RulePass`es over the tape's clauses (0276 step 5), with `Domains`; the
+   loader writes versions, and `front::Program`, its statements and the encode are deleted.
+8. **Analyses as rules** (0225 §5), one at a time behind the trait. Morsels (§3) with the first stateless pass
+   measured to want them.
 
 ## Alignment (2026-11-15, after merging final-rerail-shape-rr-align)
 
@@ -343,6 +538,21 @@ step 3 replaces what is under the writer.
 - **0266's `Program` block holds modules whole, a delta the replaced ones.** An edit's input delta to the
   pipeline is the rules of the modules it replaced: what step 3 reruns the rule passes on.
 
+- **The blocks port is this branch's, last (final-rerail-shape, 2026-11-16).** That worktree's 0293 states the
+  target: 0173's `Version` interface stays, and 0266's blocks go underneath it. The port of the program image (about
+  7,000 lines) is handed here, after the layer has been used on `Outputs` and the memo there; meanwhile that branch
+  builds what the port needs under the layer (any frozen version usable as a parent). What decides it is the trace
+  check on dl1: whether 0266's one delta expresses 0244's views at the cost measured. The manager sits above
+  `Version` and `Builder` (its delta is read off the version an edit made, its writes go through the writer), so it
+  is unchanged by the port.
+
+- **The order to the end of the tree (the user's choice, 2026-11-16).** Readers first, then back to the loader
+  (0276's order): each step removes a consumer of `front::Program`, so the program crosses from tree to version at
+  one encode that moves earlier, and is never decoded back. The other orders were weighed: the preparation passes
+  first leave the split and the run's readers on trees, so each run would decode the passes' output whole until
+  they move; the loader first decodes the whole program for every front pass. Storing the steps is what lets ep2's
+  edits, each a new process, rerun on a delta, whatever the order.
+
 ## Agreement with prior work
 
 - **0173 §9:** keeps its two kinds of pass and its `from`; the driver turns them into incremental runs.
@@ -353,6 +563,10 @@ step 3 replaces what is under the writer.
 - **0275:** a step's key decides whether it is rederived.
 - **0276:** `ProgramW` and `Placed`.
 - **0103:** no caches beside rules; the analysis store lives as long as one pipeline.
+- **0290, 0292 §3:** the tree's passes gained these after the version passes were ported; the version passes carry
+  them too. A round of `Locate` that leaves a relation is followed by `MoveCrossFile` and another round, as
+  `file_local::locate` loops, and `PushLocalJoins` takes a node read with the component that binds its node. The
+  debug checks of the version against the tree hold the two to one result.
 
 It departs from LLVM's manual "preserves" set: invalidation comes from the recorded delta, so a pass cannot claim
 a preservation it did not keep.

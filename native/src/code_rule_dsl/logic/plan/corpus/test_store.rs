@@ -36,6 +36,12 @@ thread_local! {
     static FILLING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// Whether this thread fills the template (`make`). What its runs keep for the process (phase 0's graphs) the process's
+/// own runs would find made, and skip the work a test of them compares (`phase0::graphs`).
+pub(super) fn filling() -> bool {
+    FILLING.with(std::cell::Cell::get)
+}
+
 /// The template made, before a test's thread takes the switches (`switches::reading`, `switches::set`): no thread waits
 /// for it while it holds them, so its runs never wait behind a thread that waits for it. Off a test's thread (`own`:
 /// a pool's, or a process the tests start) nothing reads the template, so nothing makes it.
@@ -124,7 +130,7 @@ fn publish(store: &Path, path: &Path) {
 fn fill(store: &Path) -> std::result::Result<(), String> {
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.to_owned()));
     let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).map_err(|e| e.to_string())?;
-    let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rr".to_owned())] }];
+    let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rr".to_owned())], phases: Vec::new() }];
     let mut modules = Vec::new();
     rule_files(&lib, &mut modules);
     modules.sort();
@@ -412,7 +418,7 @@ mod tests {
         use crate::content_store::{ContentStore, MemoPut};
         let dir = tempfile::tempdir().unwrap();
         let space = crate::content_store::local_space(&[7u8; 32]);
-        let put = |part: i64, byte: u8| MemoPut { part, path: format!("{part}.py"), digest: [part as u8; 32], key: 1, bytes: vec![byte; 100], raw: 100, over: false };
+        let put = |part: i64, byte: u8| MemoPut { part, path: format!("{part}.py"), digest: [part as u8; 32], key: 1, bytes: vec![byte; 100], over: false };
         let staging = dir.path().join("staging.sqlite");
         ContentStore::open(&staging).unwrap().put_memo_entries(&space, (0..4).map(|p| put(p, 1)).collect(), 4).unwrap();
         let template = dir.path().join("template.sqlite");
@@ -425,7 +431,7 @@ mod tests {
         let read = store.memo_entries(&space, &(0..8).collect::<Vec<_>>(), true).unwrap();
         assert_eq!(read.len(), 8, "the template's entries and the copy's each find their bytes");
         for (part, blob) in read {
-            assert!(blob.bytes.iter().all(|&b| b == if part < 4 { 1 } else { 2 }), "part {part} reads the bytes it was put with");
+            assert!(blob.bytes.bytes().iter().all(|&b| b == if part < 4 { 1 } else { 2 }), "part {part} reads the bytes it was put with");
         }
     }
 }

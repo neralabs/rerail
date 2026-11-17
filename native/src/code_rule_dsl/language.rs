@@ -411,8 +411,6 @@ include!(concat!(env!("OUT_DIR"), "/language_registry.rs"));
 // trips over other shapes, the transducer's grammar census), each with the ast-grep language that
 // lends it pattern syntax. No file or code rule selects a test-only grammar.
 grammar_dialect! {
-    Cpp => SupportLang::Cpp,
-    C => SupportLang::C,
     Bash => SupportLang::Bash,
     Ruby => SupportLang::Ruby,
     TestRust => SupportLang::Rust,
@@ -421,7 +419,6 @@ grammar_dialect! {
     Swift => SupportLang::Swift,
     TestHtml => SupportLang::Html,
     Lua => SupportLang::Lua,
-    Go => SupportLang::Go,
 }
 
 impl Via {

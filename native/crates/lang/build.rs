@@ -44,7 +44,11 @@ fn token_automata_built(native: &std::path::Path, out: &std::path::Path) {
         std::fs::write(dir.join(format!("{variant}.bin")), token_automata::encode(&built)).expect("OUT_DIR is writable");
         let census = token_automata::census(&built.texts, built.kinds.iter().map(|(sym, automaton)| (sym, automaton)), &built.extras);
         std::fs::write(dir.join(format!("{variant}.census")), token_automata::encode_census(&census)).expect("OUT_DIR is writable");
+        // A test-only dialect's arm is built where its variant is (`TEST_ONLY`).
+        let cfg = if token_automata::TEST_ONLY.contains(&variant) { "        #[cfg(any(test, feature = \"test-hooks\"))]\n" } else { "" };
+        arms.push_str(cfg);
         arms.push_str(&format!("        GrammarDialect::{variant} => include_bytes!(concat!(env!(\"OUT_DIR\"), \"/token_automata/{variant}.bin\")),\n"));
+        census_arms.push_str(cfg);
         census_arms.push_str(&format!("        GrammarDialect::{variant} => include_bytes!(concat!(env!(\"OUT_DIR\"), \"/token_automata/{variant}.census\")),\n"));
     }
     let code = format!(

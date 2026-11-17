@@ -476,7 +476,7 @@ export interface NativeBinding {
    * the handle it kept, so a pid Windows has given to another process is no answer. A binary built before it lacks it.
    */
   detachedExitCode?(pid: number): number | null;
-  /** The content-store file name this binary's store schema owns (`content-v4.sqlite` at store floor 4). */
+  /** The content-store file name this binary's store schema owns (`content-v5.sqlite` at store floor 5). */
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
   tryLockExclusive(path: string): NativeExclusiveFileLock | null;

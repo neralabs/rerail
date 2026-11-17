@@ -15,6 +15,10 @@
 //! let (out, stages) = p.finish()?;
 //! ```
 //!
+//! A pipeline made with `keyed` (0281 §6) keys each step by its input, its pass's `NAME`, `VERSION` and `settings`,
+//! and the caller's key parts (`key_part`), and keeps each step's output under its key (`Steps`). Asked again, in
+//! this process or a new one, it runs only the passes after the latest step the store holds.
+//!
 //! The manager writes through `Builder` (0173 §6, 0276 §3): a pass never opens one, never copies the rules it
 //! keeps, and never picks a view, an overlay or a derivation.
 use super::build::{Builder, Rewrite, RuleBuilder};
@@ -221,7 +225,18 @@ impl Delta {
         if d.rebuilt || !d.removed.is_empty() || !d.added.is_empty() {
             d.touched = d.touched | Reads::RULES;
         }
-        fields_delta(input, output, &mut d);
+        // An overlay of the input whose own layer states no declaration or fact (one that removes rules or sets the
+        // inputs and outputs, a part's or a selection's) has the input's: those are not compared (each comparison
+        // reads every declaration and fact of both).
+        let states = match &**output {
+            Version::Overlay { parent, delta, .. } if Arc::ptr_eq(parent, input) => States {
+                decls: delta.decl_count() > 0 || !delta.u32s(super::R::DeclGone).is_empty(),
+                facts: delta.fact_count() > 0 || !delta.u32s(super::R::FactGone).is_empty(),
+                about: delta.owns() & 4 != 0,
+            },
+            _ => States { decls: true, facts: true, about: true },
+        };
+        fields_delta(input, output, &mut d, states);
         d
     }
 }
@@ -234,10 +249,17 @@ fn same_numbering(input: &Arc<Version>, output: &Arc<Version>) -> bool {
 
 /// The fields' part of the delta, by each part's hash: declarations by relation, facts, `.about` rows, inputs and
 /// outputs. Their count is the program's relations, never its rules.
-fn fields_delta(input: &Version, output: &Version, d: &mut Delta) {
+/// Which of the output's fields its own layer may state apart from the input's (`Delta::of`).
+struct States {
+    decls: bool,
+    facts: bool,
+    about: bool,
+}
+
+fn fields_delta(input: &Version, output: &Version, d: &mut Delta, states: States) {
     use std::collections::HashMap;
     let decls = |v: &Version| -> HashMap<String, u64> { v.decls().into_iter().map(|x| (v.text(x.name()).to_owned(), x.hash())).collect() };
-    let (a, b) = (decls(input), decls(output));
+    let (a, b) = if states.decls { (decls(input), decls(output)) } else { Default::default() };
     for (name, h) in &b {
         if a.get(name) != Some(h) {
             d.decls.insert(output.rel(name).expect("a declared relation has an id"));
@@ -256,10 +278,10 @@ fn fields_delta(input: &Version, output: &Version, d: &mut Delta) {
         x.sort_unstable();
         x
     };
-    if facts(input.all_facts(), input) != facts(output.all_facts(), output) {
+    if states.facts && facts(input.all_facts(), input) != facts(output.all_facts(), output) {
         d.touched = d.touched | Reads::FACTS;
     }
-    if facts(input.about_facts(), input) != facts(output.about_facts(), output) {
+    if (states.facts || states.about) && facts(input.about_facts(), input) != facts(output.about_facts(), output) {
         d.touched = d.touched | Reads::ABOUT;
     }
     if input.inputs_hash() != output.inputs_hash() {
@@ -300,6 +322,22 @@ struct Entry {
 fn maintain_as<A: Analysis>(v: &Value, cx: &Cx<'_>, d: &Delta) -> Option<Value> {
     v.downcast_ref::<A>()?.maintain(cx, d).map(|a| Arc::new(a) as Value)
 }
+fn get_as<A: Analysis>(cx: &Cx<'_>) -> Result<Value> {
+    cx.get::<A>().map(|a| a as Value)
+}
+fn same_as<A: Analysis>(a: &Value, b: &Value) -> bool {
+    Arc::ptr_eq(a, b) || a.downcast_ref::<A>().zip(b.downcast_ref::<A>()).is_some_and(|(a, b)| a == b)
+}
+
+/// An analysis a step asked for: what a rerun compares on its new input (`Pipeline::again`).
+#[derive(Clone, Copy)]
+struct Asked {
+    t: TypeId,
+    name: &'static str,
+    get: fn(&Cx<'_>) -> Result<Value>,
+    same: fn(&Value, &Value) -> bool,
+}
+
 fn agrees_as<A: Analysis>(v: &Value, cx: &Cx<'_>) -> Result<bool> {
     Ok(v.downcast_ref::<A>().is_some_and(|a| A::compute(cx).is_ok_and(|fresh| fresh == *a)))
 }
@@ -343,7 +381,7 @@ impl Store {
         }
         if cfg!(debug_assertions) {
             let scratch = Store::default();
-            let fresh = Cx { v: cx.v, store: &scratch, pass: cx.pass, decided: cx.decided };
+            let fresh = Cx { v: cx.v, store: &scratch, pass: cx.pass, decided: cx.decided, asked: None };
             for (_, e) in &carried {
                 if !(e.agrees)(&e.value, &fresh)? {
                     return Err(format!("analysis {} carried over {}'s edit ({:?}) is not what it computes", e.name, cx.pass, delta.touched));
@@ -361,14 +399,25 @@ impl Store {
 /// Analysis `A` of `v`, held by `v` (`Version::analyses`): for a reader outside a pipeline (a run's `Placed`).
 pub fn analysis<A: Analysis>(v: &Arc<Version>) -> Result<Arc<A>> {
     let decided = RefCell::new(Vec::new());
-    Cx { v, store: v.analyses(), pass: "reader", decided: &decided }.get::<A>()
+    Cx { v, store: v.analyses(), pass: "reader", decided: &decided, asked: None }.get::<A>()
+}
+
+/// Analysis `A` of `to`, an edit of `from` (an overlay or view of it): `from`'s analyses carried across the edit
+/// (`Delta::of`), maintained where they can be, as a pipeline's step carries them. A pass that tries a program of
+/// its own (a round's candidate) reads its analyses so at the round's cost.
+pub fn carried<A: Analysis>(from: &Arc<Version>, to: &Arc<Version>) -> Result<Arc<A>> {
+    let d = Delta::of(from, to);
+    let decided = RefCell::new(Vec::new());
+    let cx = Cx { v: to, store: to.analyses(), pass: "carried", decided: &decided, asked: None };
+    to.analyses().carry(from.analyses(), &cx, &d)?;
+    cx.get::<A>()
 }
 
 /// A decision a pass made, as a row of its step (0269): the pass, what, and its detail.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Decided {
-    pub pass: &'static str,
-    pub what: &'static str,
+    pub pass: std::borrow::Cow<'static, str>,
+    pub what: std::borrow::Cow<'static, str>,
     pub detail: String,
 }
 
@@ -378,6 +427,8 @@ pub struct Cx<'a> {
     store: &'a Store,
     pass: &'static str,
     decided: &'a RefCell<Vec<Decided>>,
+    /// Where a step records the analyses its pass asks for, when it is kept to run again.
+    asked: Option<&'a RefCell<Vec<Asked>>>,
 }
 
 impl<'a> Cx<'a> {
@@ -387,6 +438,13 @@ impl<'a> Cx<'a> {
     }
     /// Analysis `A` of the version: the one cached, else computed now and cached.
     pub fn get<A: Analysis>(&self) -> Result<Arc<A>> {
+        if let Some(asked) = self.asked {
+            let t = TypeId::of::<A>();
+            let mut asked = asked.borrow_mut();
+            if !asked.iter().any(|a| a.t == t) {
+                asked.push(Asked { t, name: A::NAME, get: get_as::<A>, same: same_as::<A> });
+            }
+        }
         if let Some(e) = self.store.of.lock().get(&TypeId::of::<A>()) {
             return Ok(e.value.clone().downcast::<A>().expect("an entry of its type"));
         }
@@ -400,7 +458,7 @@ impl<'a> Cx<'a> {
     }
     /// Records a decision of the pass.
     pub fn decide(&self, what: &'static str, detail: impl FnOnce() -> String) {
-        self.decided.borrow_mut().push(Decided { pass: self.pass, what, detail: detail() });
+        self.decided.borrow_mut().push(Decided { pass: self.pass.into(), what: what.into(), detail: detail() });
     }
 }
 
@@ -408,7 +466,7 @@ impl<'a> Cx<'a> {
 
 /// The rules a rule pass visits (0281 §3), found through the version's indexes: all of them, the rules of some
 /// heads, or the readers of some relations, or named rules. A pass costs what it selects.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Select {
     All,
     Heads(RelSet),
@@ -424,6 +482,15 @@ impl Select {
             Select::Heads(rels) => Some(rels.iter().flat_map(|r| v.heads(r).map(|x| x.id()).collect::<Vec<_>>()).collect()),
             Select::Readers(rels) => Some(rels.iter().flat_map(|r| v.readers(r).map(|(x, _)| x.id()).collect::<Vec<_>>()).collect()),
             Select::Rules(ids) => Some(ids.iter().filter(|&id| v.contains(id)).collect()),
+        }
+    }
+    /// Whether it selects rule `r`: what `ids` gives, for one rule.
+    fn picks(&self, r: RuleRef<'_>) -> bool {
+        match self {
+            Select::All => true,
+            Select::Heads(rels) => rels.has(r.head().rel()),
+            Select::Readers(rels) => r.reads().any(|a| rels.has(a.rel())),
+            Select::Rules(ids) => ids.has(r.id()),
         }
     }
 }
@@ -442,6 +509,18 @@ pub enum Step {
 /// A pass local to a rule (0173 §9): what it does to one rule, read alone.
 pub trait RulePass {
     const NAME: &'static str;
+    /// Bumped when what the pass makes of an input changes (a keyed step's key holds it, 0281 §6).
+    const VERSION: u32 = 1;
+    /// What the pass reads besides its input and analyses (its options), as bytes for a keyed step's key.
+    fn settings(&self) -> Vec<u8> {
+        Vec::new()
+    }
+    /// The kinds of change to its input that make a rerun visit every rule again (`Pipeline::again`): what it reads
+    /// of the version directly, beyond the rule it visits and the analyses it asks for (those a rerun compares).
+    /// `ALL`, the default, reruns it whole on any edit. A pass that sets less keeps no state across rules (its
+    /// `rule` reads the rule and its `begin`'s analyses alone, and its `finish` writes only what `begin` decides), and
+    /// returns its results in its output, not in itself: a rerun visits the edit's added rules alone.
+    const WHOLE: Reads = Reads::ALL;
     /// Before the first rule: the rules it visits. Analyses a pass reads for every rule are asked for here.
     fn begin(&mut self, _cx: &Cx<'_>) -> Result<Select> {
         Ok(Select::All)
@@ -538,6 +617,12 @@ fn visit<P: RulePass>(pass: &mut P, cx: &Cx<'_>, v: &Version, r: RuleRef<'_>, b:
 /// A pass over the whole program: it reads analyses and states an edit through `w`.
 pub trait ProgramPass {
     const NAME: &'static str;
+    /// As `RulePass::VERSION`.
+    const VERSION: u32 = 1;
+    /// As `RulePass::settings`.
+    fn settings(&self) -> Vec<u8> {
+        Vec::new()
+    }
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()>;
 }
 
@@ -618,8 +703,10 @@ impl<'p> ProgramW<'p> {
                 })
             }
         };
-        // A derivation that changed nothing is its input: its analyses carry, and no new base is kept.
-        if mode == Mode::Derive && v.digest() == self.input.digest() && v.size() == self.input.size() {
+        // A derivation that changed nothing is its input: its analyses carry, and no new base is kept. The digest is
+        // a sum over the rules, blind to their order, so the rules are compared in order too (a derivation that
+        // reorders them, `RuleOrder`, changes the program).
+        if mode == Mode::Derive && v.digest() == self.input.digest() && v.size() == self.input.size() && v.rules().map(|r| r.hash()).eq(self.input.rules().map(|r| r.hash())) {
             return Ok((self.input.clone(), Form::Unchanged, self.visited));
         }
         Ok((v, form, self.visited))
@@ -639,11 +726,26 @@ pub enum Form {
     Derived,
 }
 
-/// A pass's step, as the pipeline traces it: the pass, the form, the rules it visited, the versions' sizes and
-/// digests, and the delta's size.
+/// How a step ran (`Pipeline::again`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ran {
+    /// Over its whole input (a program pass's analyses carried from its last input when it has one).
+    Whole,
+    /// A rule pass over its input's edit since its last run alone: the added rules visited, what came from the
+    /// removed ones dropped through `from`, onto its last output.
+    Delta,
+    /// Not at all: its input is its last run's, so its output is too.
+    Reused,
+    /// Not at all: a keyed pipeline's store held its key (0281 §6), so its output is the stored one.
+    Stored,
+}
+
+/// A pass's step, as the pipeline traces it: the pass, how it ran, the form, the rules it visited, the versions'
+/// sizes and digests, and the size of the edit its writer wrote.
 #[derive(Clone, Debug)]
 pub struct Stage {
     pub pass: &'static str,
+    pub ran: Ran,
     pub form: Form,
     pub visited: usize,
     pub input: (usize, u64),
@@ -652,21 +754,128 @@ pub struct Stage {
     pub touched: Reads,
 }
 
-/// Passes run in order over a version (0281 §5). Each step's error stops the pipeline, named by its pass; `finish`
-/// returns it.
-pub struct Pipeline {
+/// A step as a kept run holds it: its input and output, and what a rerun of a rule pass compares.
+struct Kept {
+    pass: &'static str,
+    input: Arc<Version>,
+    output: Arc<Version>,
+    form: Form,
+    /// A rule pass's, when its output can be run again onto (`None` reruns it whole).
+    rule: Option<RuleKept>,
+}
+
+struct RuleKept {
+    select: Select,
+    /// The analyses it asked for, compared on the next input.
+    asked: Vec<Asked>,
+    /// The input's rules below this id that the output holds as themselves (an edit's output); every other rule of
+    /// the output records the input's rule it came from (`from`).
+    own_end: u32,
+}
+
+/// A pipeline's run, kept to run again over an edit of its input (`Pipeline::again`, 0281 §3): each step's input
+/// and output, and what a rerun compares. It holds versions, not a cache (0103): the caller keeps it, as a session
+/// keeps its last program, and drops it with them.
+pub struct Run {
     name: &'static str,
+    input: Arc<Version>,
+    output: Arc<Version>,
+    stages: Vec<Stage>,
+    steps: Vec<Kept>,
+    decided: Vec<Decided>,
+}
+
+impl Run {
+    /// The version it ran over.
+    pub fn input(&self) -> &Arc<Version> {
+        &self.input
+    }
+    pub fn output(&self) -> &Arc<Version> {
+        &self.output
+    }
+    pub fn stages(&self) -> &[Stage] {
+        &self.stages
+    }
+    pub fn decisions(&self) -> &[Decided] {
+        &self.decided
+    }
+}
+
+/// The last run's step at a step's place, against the step's input.
+enum Prior {
+    None,
+    /// Its input is the step's.
+    Same(Kept),
+    /// The step's input is an edit of its input (`Delta::of` reads it; not a new base).
+    Edit(Kept, Delta),
+}
+
+/// Passes run in order over a version (0281 §5). Each step's error stops the pipeline, named by its pass; `finish`
+/// returns it. A pipeline made to be kept (`keeping`, `again`) holds each step's versions to the end, for `done`; one
+/// made `keyed` stores each step under its key (0281 §6).
+pub struct Pipeline<'s> {
+    name: &'static str,
+    input: Arc<Version>,
     v: Arc<Version>,
     decided: RefCell<Vec<Decided>>,
     stages: Vec<Stage>,
     failed: Option<String>,
+    keep: bool,
+    /// The last run's steps, each taken by the step at its place that runs the same pass.
+    last: Vec<Option<Kept>>,
+    kept: Vec<Kept>,
+    /// A keyed pipeline's store and chain (0281 §6).
+    keyed: Option<Keyed<'s>>,
 }
 
-impl Pipeline {
-    pub fn new(name: &'static str, v: Arc<Version>) -> Pipeline {
-        Pipeline { name, v, decided: RefCell::new(Vec::new()), stages: Vec::new(), failed: None }
+impl<'s> Pipeline<'s> {
+    pub fn new(name: &'static str, v: Arc<Version>) -> Pipeline<'s> {
+        Pipeline { name, input: v.clone(), v, decided: RefCell::new(Vec::new()), stages: Vec::new(), failed: None, keep: false, last: Vec::new(), kept: Vec::new(), keyed: None }
     }
-    /// The current version.
+    /// A pipeline whose steps are keyed and kept in `steps` (0281 §6). A step's key is a chain: the input version's
+    /// identity (`identity`), the pipeline's name and the engine build, then for each step so far its pass's `NAME`,
+    /// `VERSION` and `settings`, and the key parts the caller added before it (`key_part`). A step's input is the step
+    /// before's output, so the chain names it as the input's digest would, and every key is known before anything
+    /// runs. A step whose key `steps` holds is not run: its decisions are the stored ones, and its output is opened
+    /// from the store only when a later step runs, or at the end; a pipeline whose every step is stored opens one
+    /// image. A step that runs stores its output under its key. A pass that is skipped so has not run: what it
+    /// returns in itself, beside its output and decisions, is not there (`ran`).
+    pub fn keyed(name: &'static str, v: Arc<Version>, steps: &'s dyn Steps) -> Pipeline<'s> {
+        let chain = chain_start(name, &v);
+        Pipeline { keyed: Some(Keyed { steps, chain, pending: None }), ..Pipeline::new(name, v) }
+    }
+    /// Adds a part to the key of each later step (a keyed pipeline's, 0281 §6): a value the passes read that is not in
+    /// the input version (a caller's state, as 0298's general forms read the kept part's old rows). A step keyed with
+    /// it is found again only by a pipeline that adds the same part at the same place.
+    pub fn key_part(&mut self, label: &str, bytes: &[u8]) -> &mut Self {
+        if let Some(k) = &mut self.keyed {
+            k.chain = chain_next(&k.chain, &[b"part", label.as_bytes(), bytes]);
+        }
+        self
+    }
+    /// Whether the step at `at` (its place in `stages`) ran, rather than being read from a keyed store.
+    pub fn ran(&self, at: usize) -> bool {
+        self.stages.get(at).is_some_and(|s| s.ran != Ran::Stored)
+    }
+    /// The current version, opened from the store first when the last steps were stored ones (`keyed`).
+    pub fn current(&mut self) -> Result<&Arc<Version>> {
+        self.load()?;
+        Ok(&self.v)
+    }
+    /// A pipeline whose run is kept (`done`), to run again over an edit of `v` (`again`).
+    pub fn keeping(name: &'static str, v: Arc<Version>) -> Pipeline<'s> {
+        Pipeline { keep: true, ..Pipeline::new(name, v) }
+    }
+    /// The same passes, run again over `v`, an edit of `last`'s input (0281 §3). Each step whose input is its last
+    /// one's reuses its output. Otherwise, over the edit (`Delta::of`) from its last input: the analyses are carried
+    /// to the new input across it (maintained, or computed again where it touches what they read); a rule pass that
+    /// reads nothing else the edit touched (`RulePass::WHOLE`), and whose selection and analyses come out the same,
+    /// visits the added rules alone and writes onto its last output; every other step runs whole. The caller passes
+    /// the same passes, in the same order: a step is matched to the last run's by its place and its pass's name.
+    pub fn again(last: Run, v: Arc<Version>) -> Pipeline<'s> {
+        Pipeline { last: last.steps.into_iter().map(Some).collect(), ..Pipeline::keeping(last.name, v) }
+    }
+    /// The current version: in a keyed pipeline, the last one run or opened (`current` opens a stored one).
     pub fn version(&self) -> &Arc<Version> {
         &self.v
     }
@@ -682,56 +891,174 @@ impl Pipeline {
     }
     /// Analysis `A` of the current version.
     pub fn get<A: Analysis>(&self) -> Result<Arc<A>> {
-        self.cx("pipeline").get::<A>()
-    }
-    fn cx(&self, pass: &'static str) -> Cx<'_> {
-        Cx { v: &self.v, store: self.v.analyses(), pass, decided: &self.decided }
+        let decided = RefCell::new(Vec::new());
+        Cx { v: &self.v, store: self.v.analyses(), pass: "pipeline", decided: &decided, asked: None }.get::<A>()
     }
 
-    /// One step: `f` writes the pass's edit; the pipeline records it and carries the analyses to its output.
-    fn step(&mut self, pass: &'static str, f: impl FnOnce(&Cx<'_>, &mut ProgramW<'_>) -> Result<()>) -> &mut Self {
+    /// The last run's step at this one's place, if it ran `pass`, against the current input. Over an edit, the
+    /// last input's analyses are carried to the current one first, so a pass reads them at the edit's cost.
+    fn prior(&mut self, pass: &'static str) -> Result<Prior> {
+        let Some(k) = self.last.get_mut(self.kept.len()).and_then(|k| k.take_if(|k| k.pass == pass)) else { return Ok(Prior::None) };
+        if Arc::ptr_eq(&k.input, &self.v) {
+            return Ok(Prior::Same(k));
+        }
+        let d = Delta::of(&k.input, &self.v);
+        if d.rebuilt {
+            return Ok(Prior::None);
+        }
+        let cx = Cx { v: &self.v, store: self.v.analyses(), pass, decided: &self.decided, asked: None };
+        self.v.analyses().carry(k.input.analyses(), &cx, &d)?;
+        Ok(Prior::Edit(k, d))
+    }
+
+    /// Records a step that made `out` by an edit of `from` (the input, or the last output a rerun wrote onto): its
+    /// stage, its analyses carried from `from`'s, and, when kept, its versions.
+    #[allow(clippy::too_many_arguments)]
+    fn record(&mut self, pass: &'static str, out: Arc<Version>, ran: Ran, form: Form, visited: usize, from: &Arc<Version>, rule: Option<RuleKept>) -> Result<()> {
+        let delta = Delta::of(from, &out);
+        let cx = Cx { v: &out, store: out.analyses(), pass, decided: &self.decided, asked: None };
+        out.analyses().carry(from.analyses(), &cx, &delta)?;
+        self.stages.push(Stage { pass, ran, form, visited, input: (self.v.size(), self.v.digest()), output: (out.size(), out.digest()), delta: delta.size(), touched: delta.touched });
+        if self.keep {
+            self.kept.push(Kept { pass, input: self.v.clone(), output: out.clone(), form, rule });
+        }
+        self.v = out;
+        Ok(())
+    }
+
+    fn fail(&mut self, pass: &'static str, r: Result<()>) -> &mut Self {
+        if let Err(e) = r {
+            self.failed = Some(format!("{}: {pass}: {e}", self.name));
+        }
+        self
+    }
+
+    /// Runs rule pass `pass` over the rules it selects: in a derivation when it selects all (the program's order
+    /// kept), else as an edit of the version; over the edit alone when it runs again (`again`).
+    pub fn rules<P: RulePass>(&mut self, pass: &mut P) -> &mut Self {
         if self.failed.is_some() {
             return self;
         }
-        let _span = crate::code_rule_dsl::logic::profile::span(|| format!("pass {}: {pass}", self.name));
-        let made = {
-            let cx = self.cx(pass);
-            let mut w = ProgramW::new(&self.v);
-            f(&cx, &mut w).and_then(|()| w.finish())
+        let _span = crate::code_rule_dsl::logic::profile::span(|| format!("pass {}: {}", self.name, P::NAME));
+        let r = match self.stored(P::NAME, P::VERSION, &pass.settings()) {
+            Ok(Some(key)) => self.load().and_then(|()| self.keep_step(key, P::NAME, P::VERSION, |p| p.rule_step(pass))),
+            Ok(None) => Ok(()),
+            Err(e) => Err(e),
         };
-        let (out, form, visited) = match made {
-            Ok(m) => m,
-            Err(e) => {
-                self.failed = Some(format!("{}: {pass}: {e}", self.name));
-                return self;
-            }
-        };
-        let delta = Delta::of(&self.v, &out);
-        let stage = Stage { pass, form, visited, input: (self.v.size(), self.v.digest()), output: (out.size(), out.digest()), delta: delta.size(), touched: delta.touched };
-        let carried = Cx { v: &out, store: out.analyses(), pass, decided: &self.decided };
-        if let Err(e) = out.analyses().carry(self.v.analyses(), &carried, &delta) {
-            self.failed = Some(format!("{}: {e}", self.name));
-            return self;
-        }
-        self.stages.push(stage);
-        self.v = out;
-        self
+        self.fail(P::NAME, r)
     }
-    /// Runs rule pass `pass` over the rules it selects: in a derivation when it selects all (the program's order
-    /// kept), else as an edit of the version.
-    pub fn rules<P: RulePass>(&mut self, pass: &mut P) -> &mut Self {
-        self.step(P::NAME, |cx, w| {
-            let select = pass.begin(cx)?;
+
+    fn rule_step<P: RulePass>(&mut self, pass: &mut P) -> Result<()> {
+        let local = P::WHOLE != Reads::ALL;
+        let prior = self.prior(P::NAME)?;
+        let prior = match prior {
+            Prior::Same(k) if local && k.rule.is_some() => {
+                let out = k.output.clone();
+                return self.record(P::NAME, out.clone(), Ran::Reused, k.form, 0, &out, k.rule);
+            }
+            p => p,
+        };
+        let v = self.v.clone();
+        let asked = RefCell::new(Vec::new());
+        let made = (|| -> Result<(Arc<Version>, Ran, Form, usize, Arc<Version>, Option<RuleKept>)> {
+            let cx = Cx { v: &v, store: v.analyses(), pass: P::NAME, decided: &self.decided, asked: self.keep.then_some(&asked) };
+            let select = pass.begin(&cx)?;
+            if let Prior::Edit(k, d) = &prior
+                && let Some(rk) = &k.rule
+                && local
+                && !P::WHOLE.meets(d.touched)
+                && rk.select == select
+                && same_analyses(&rk.asked, &k.input, &cx)?
+            {
+                let (out, form, visited, base, own_end) = rerun(pass, &cx, k, d, &select, rk.own_end)?;
+                let mut all = rk.asked.clone();
+                for a in asked.borrow().iter() {
+                    if !all.iter().any(|b| b.t == a.t) {
+                        all.push(*a);
+                    }
+                }
+                let keep = (form != Form::Folded || own_end == 0).then_some(RuleKept { select, asked: all, own_end });
+                return Ok((out, Ran::Delta, form, visited, base, keep));
+            }
+            let mut w = ProgramW::new(&v);
             if matches!(select, Select::All) {
                 w.derive()?;
             }
-            w.apply(cx, pass, &select)
-        })
+            w.apply(&cx, pass, &select)?;
+            let (out, form, visited) = w.finish()?;
+            let own_end = if form == Form::Derived { 0 } else { v.rule_end() };
+            let keep = (form != Form::Folded).then(|| RuleKept { select, asked: asked.take(), own_end });
+            Ok((out, Ran::Whole, form, visited, v.clone(), keep))
+        })();
+        let (out, ran, form, visited, from, keep) = made?;
+        self.record(P::NAME, out, ran, form, visited, &from, keep)
     }
-    /// Runs program pass `pass`.
+
+    /// Runs program pass `pass`, over the whole input (its analyses carried from the last input when run again).
     pub fn program<P: ProgramPass>(&mut self, pass: &mut P) -> &mut Self {
-        self.step(P::NAME, |cx, w| pass.run(cx, w))
+        if self.failed.is_some() {
+            return self;
+        }
+        let _span = crate::code_rule_dsl::logic::profile::span(|| format!("pass {}: {}", self.name, P::NAME));
+        let r = match self.stored(P::NAME, P::VERSION, &pass.settings()) {
+            Ok(Some(key)) => self.load().and_then(|()| self.keep_step(key, P::NAME, P::VERSION, |p| p.program_step(pass))),
+            Ok(None) => Ok(()),
+            Err(e) => Err(e),
+        };
+        self.fail(P::NAME, r)
     }
+
+    fn program_step<P: ProgramPass>(&mut self, pass: &mut P) -> Result<()> {
+        self.prior(P::NAME)?;
+        let v = self.v.clone();
+        let made = {
+            let cx = Cx { v: &v, store: v.analyses(), pass: P::NAME, decided: &self.decided, asked: None };
+            let mut w = ProgramW::new(&v);
+            pass.run(&cx, &mut w).and_then(|()| w.finish())
+        };
+        let (out, form, visited) = made?;
+        self.record(P::NAME, out, Ran::Whole, form, visited, &v, None)
+    }
+
+    /// A keyed pipeline's next step (0281 §6): its key, chained; `Ok(None)` when the store holds it (the step is
+    /// recorded as stored, its decisions read back, its output opened later by `load`), else `Ok(Some(key))` (always
+    /// `Some` for a pipeline not keyed, whose key is never read).
+    fn stored(&mut self, pass: &'static str, version: u32, settings: &[u8]) -> Result<Option<StepKey>> {
+        let Some(k) = &mut self.keyed else { return Ok(Some([0; 32])) };
+        k.chain = chain_next(&k.chain, &[b"step", pass.as_bytes(), &version.to_le_bytes(), settings]);
+        let key = k.chain;
+        let Some(found) = k.steps.find(&key)? else { return Ok(Some(key)) };
+        if found.pass != pass || found.version != version {
+            return Ok(Some(key));
+        }
+        let input = self.stages.last().map_or((self.v.size(), self.v.digest()), |s| s.output);
+        self.stages.push(Stage { pass, ran: Ran::Stored, form: Form::Unchanged, visited: 0, input, output: found.output, delta: 0, touched: Reads::default() });
+        self.decided.borrow_mut().extend(found.decided.iter().cloned());
+        k.pending = Some(found);
+        Ok(None)
+    }
+
+    /// Opens the output of the last stored step, when the pipeline has not opened it yet (`keyed`).
+    fn load(&mut self) -> Result<()> {
+        let Some(found) = self.keyed.as_mut().and_then(|k| k.pending.take()) else { return Ok(()) };
+        let steps = self.keyed.as_ref().expect("keyed").steps;
+        let v = steps.open(&found.image)?.ok_or_else(|| format!("{}: {}: its stored output is gone from the store", self.name, found.pass))?;
+        if (v.size(), v.digest()) != found.output {
+            return Err(format!("{}: {}: its stored output is not the program its step recorded", self.name, found.pass));
+        }
+        self.v = v;
+        Ok(())
+    }
+
+    /// Runs `step`, and stores its output and decisions under `key` when the pipeline is keyed.
+    fn keep_step(&mut self, key: StepKey, pass: &'static str, version: u32, step: impl FnOnce(&mut Self) -> Result<()>) -> Result<()> {
+        let from = self.decided.borrow().len();
+        step(self)?;
+        let Some(k) = &self.keyed else { return Ok(()) };
+        let decided = self.decided.borrow()[from..].to_vec();
+        k.steps.keep(&key, &StepRecord { pass: pass.to_owned(), version, image: [0; 32], output: (self.v.size(), self.v.digest()), decided }, &self.v)
+    }
+
     /// Runs `f`'s passes where `on`.
     pub fn run_if(&mut self, on: bool, f: impl FnOnce(&mut Self) -> &mut Self) -> &mut Self {
         if on { f(self) } else { self }
@@ -739,8 +1066,15 @@ impl Pipeline {
     /// Runs `f`'s passes until a round changes nothing (the digest is the round's start's), at most `rounds` times.
     pub fn until_unchanged(&mut self, rounds: usize, mut f: impl FnMut(&mut Self)) -> &mut Self {
         for _ in 0..rounds {
+            if let Err(e) = self.load() {
+                self.failed.get_or_insert(e);
+                return self;
+            }
             let before = self.v.digest();
             f(self);
+            if let Err(e) = self.load() {
+                self.failed.get_or_insert(e);
+            }
             if self.failed.is_some() || self.v.digest() == before {
                 return self;
             }
@@ -749,10 +1083,154 @@ impl Pipeline {
         self
     }
     /// The last version, or the first step's error.
-    pub fn finish(self) -> Result<(Arc<Version>, Vec<Stage>)> {
+    pub fn finish(mut self) -> Result<(Arc<Version>, Vec<Stage>)> {
+        if self.failed.is_none()
+            && let Err(e) = self.load()
+        {
+            self.failed = Some(e);
+        }
         match self.failed {
             Some(e) => Err(e),
             None => Ok((self.v, self.stages)),
         }
     }
+    /// The run, kept to run again (`again`), or the first step's error.
+    pub fn done(mut self) -> Result<Run> {
+        if self.failed.is_none()
+            && let Err(e) = self.load()
+        {
+            self.failed = Some(e);
+        }
+        if let Some(e) = self.failed {
+            return Err(e);
+        }
+        Ok(Run { name: self.name, input: self.input, output: self.v, stages: self.stages, steps: self.kept, decided: self.decided.into_inner() })
+    }
+}
+
+// ---- keyed steps (0281 §6) ----
+
+/// A step's key: the chain `Pipeline::keyed` describes.
+pub type StepKey = [u8; 32];
+
+/// What a store keeps of a step (0281 §6): its pass and version, its output's image (by the digest of its bytes) with
+/// the output's size and digest, and its decisions (0269).
+#[derive(Clone, Debug, PartialEq)]
+pub struct StepRecord {
+    pub pass: String,
+    pub version: u32,
+    /// The sha256 of the output's image bytes; `keep` is handed zeros and stores the image it is given.
+    pub image: [u8; 32],
+    pub output: (usize, u64),
+    pub decided: Vec<Decided>,
+}
+
+/// Where a keyed pipeline keeps its steps (0281 §6): facts of the store, by key, beside the program images they name
+/// (`program_text::StoredSteps`). No cache store: 0103's two rules, the key and the step it names.
+pub trait Steps {
+    /// The step stored under `key`, when the store holds it and its output's image.
+    fn find(&self, key: &StepKey) -> Result<Option<StepRecord>>;
+    /// The version whose image's bytes have sha256 `image`.
+    fn open(&self, image: &[u8; 32]) -> Result<Option<Arc<Version>>>;
+    /// Stores `record` under `key`, and `output`'s image (folded to a base when it is a view or an overlay).
+    fn keep(&self, key: &StepKey, record: &StepRecord, output: &Version) -> Result<()>;
+}
+
+struct Keyed<'s> {
+    steps: &'s dyn Steps,
+    chain: StepKey,
+    /// The last step read from the store, its output not opened yet.
+    pending: Option<StepRecord>,
+}
+
+/// A version's identity for a key: its digest (a sum, blind to the rules' order), its size, and its rules' hashes in
+/// order, so a reordering (`RuleOrder`) is a different input.
+pub fn identity(v: &Version) -> [u8; 32] {
+    use sha2::{Digest as _, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"rerail.version-identity/v1\0");
+    h.update(v.digest().to_le_bytes());
+    h.update((v.size() as u64).to_le_bytes());
+    for r in v.rules() {
+        h.update(r.hash().to_le_bytes());
+    }
+    h.finalize().into()
+}
+
+fn chain_start(name: &str, v: &Version) -> StepKey {
+    chain_next(&identity(v), &[b"pipeline", name.as_bytes(), crate::code_rule_dsl::build_ids::engine().as_bytes()])
+}
+
+/// The chain `prev` extended by `parts`, each length-prefixed.
+fn chain_next(prev: &StepKey, parts: &[&[u8]]) -> StepKey {
+    use sha2::{Digest as _, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"rerail.step/v1\0");
+    h.update(prev);
+    for p in parts {
+        h.update((p.len() as u64).to_le_bytes());
+        h.update(p);
+    }
+    h.finalize().into()
+}
+
+/// Whether each analysis in `asked` is the same on `cx`'s version as on `before`.
+fn same_analyses(asked: &[Asked], before: &Arc<Version>, cx: &Cx<'_>) -> Result<bool> {
+    let decided = RefCell::new(Vec::new());
+    let was = Cx { v: before, store: before.analyses(), pass: cx.pass, decided: &decided, asked: None };
+    for a in asked {
+        if !(a.same)(&(a.get)(&was)?, &(a.get)(cx)?) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Rule pass `pass` run again over `d`, the edit of its last input `k.input` that made `cx`'s version, onto its last
+/// output: what came from the removed rules dropped (through `from`, or as themselves below `own_end`), and the added
+/// rules visited (the selected) or kept (the rest). When the last run changed nothing, onto the new input itself.
+/// Returns the output, its form, the rules visited, the version it is an edit of, and its `own_end`.
+fn rerun<P: RulePass>(pass: &mut P, cx: &Cx<'_>, k: &Kept, d: &Delta, select: &Select, own_end: u32) -> Result<(Arc<Version>, Form, usize, Arc<Version>, u32)> {
+    let v = cx.v;
+    let on_input = Arc::ptr_eq(&k.output, &k.input);
+    let base = if on_input { v.clone() } else { k.output.clone() };
+    let mut visited = 0;
+    let made = {
+        let mut b = Builder::on(&base);
+        if !on_input {
+            for id in d.removed.iter() {
+                let came: Vec<RuleId> = base.derived(id).map(|r| r.id()).collect();
+                for c in came {
+                    b.remove(c);
+                }
+                if id.0 < own_end && base.contains(id) {
+                    b.remove(id);
+                }
+            }
+        }
+        for &id in &d.added {
+            let r = v.rule(id).ok_or_else(|| format!("rule {} of the edit is not its output's", id.0))?;
+            let step = if select.picks(r) {
+                visited += 1;
+                visit(pass, cx, v, r, &mut b)?
+            } else {
+                Step::Keep
+            };
+            match (on_input, step) {
+                (true, Step::Keep) | (false, Step::Drop | Step::Written) => {}
+                (true, _) => b.remove(id),
+                (false, Step::Keep) => {
+                    b.keep_into(v, r);
+                }
+            }
+        }
+        if b.is_empty() { None } else { Some(b.finish()?) }
+    };
+    let (out, form) = match made {
+        None => (base.clone(), Form::Unchanged),
+        Some((o, Made::View)) => (o, Form::View),
+        Some((o, Made::Overlay)) => (o, Form::Overlay),
+        Some((o, Made::Folded)) => (o, Form::Folded),
+    };
+    Ok((out, form, visited, base, if on_input { v.rule_end() } else { own_end }))
 }

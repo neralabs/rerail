@@ -14,6 +14,7 @@
 //! (`crate::f16::F16`). A caller dispatches once a document (`with_tape!`), so the per-node reads are compiled
 //! for each format.
 
+use crate::generated_reads::f15 as reads;
 use crate::{CHECKPOINT_STRIDE, HEADER_BYTES, MAGIC, FORMAT_VERSION, TAIL_FROM_START, header, padded};
 
 /// What a code is: the grammar's kind and field, the flags (`CODE_EXTRA`, `CODE_ERROR`, `CODE_MISSING`), a
@@ -129,6 +130,32 @@ pub trait Tape {
             f(base, m);
         }
     }
+    /// `i`'s ancestors, the root first, into `out`: one descent from the root, a step a sibling it passes (read
+    /// from the subtree ends), so no parent is read. A climb's whole path at the cost of one.
+    fn path(&self, i: usize, out: &mut Vec<usize>) {
+        out.clear();
+        if i == 0 || i >= self.len() {
+            return;
+        }
+        let mut at = 0;
+        loop {
+            out.push(at);
+            let end = self.subtree_end(at);
+            let mut c = at + 1;
+            loop {
+                let e = self.subtree_end(c);
+                if i < e {
+                    break;
+                }
+                debug_assert!(e < end, "node {i} is in {at}'s subtree");
+                c = e;
+            }
+            if c == i {
+                return;
+            }
+            at = c;
+        }
+    }
     /// Every node's span, in preorder.
     fn spans(&self, out: &mut Vec<(u64, u64)>) {
         out.clear();
@@ -168,28 +195,20 @@ pub struct F15Columns<'a> {
     pub from_start: bool,
 }
 
-/// Format 15, read where its columns lie. Its codes are the tape's own table (numbered by first use); its parent
-/// is not stored, so it is found back over the nodes before (the format's cost: 0156 §1.7).
+/// Format 15, read where its columns lie, through the tape's reads (decision 0310's Rust backend,
+/// `generated_reads`) over its view. Its codes are the tape's own table (numbered by first use); its parent is not
+/// stored, so it is found back over the nodes before (the format's cost: 0156 §1.7).
 #[derive(Clone, Copy)]
 pub struct F15<'a> {
-    n: usize,
-    c: F15Columns<'a>,
+    bytes: &'a [u8],
+    view: rerail_clif::view::TapeView,
     table: &'a CodeTable,
 }
 
-#[inline(always)]
-fn cell(column: &[u8], width: u8, i: usize) -> u32 {
-    if width == 2 {
-        u32::from(u16::from_le_bytes([column[2 * i], column[2 * i + 1]]))
-    } else {
-        u32::from_le_bytes(column[4 * i..4 * i + 4].try_into().expect("4 bytes"))
-    }
-}
-
 impl<'a> F15<'a> {
-    /// The tape of `columns`, whose code ids `table` names. Checked: the widths, the columns' lengths, each code
-    /// id and size in range.
-    pub fn new(columns: F15Columns<'a>, table: &'a CodeTable) -> Result<Self, String> {
+    /// The tape of `columns`, which lie in `within`, whose code ids `table` names. Checked: the widths, the
+    /// columns' lengths, each code id and size in range.
+    pub fn new(within: &'a [u8], columns: F15Columns<'a>, table: &'a CodeTable) -> Result<Self, String> {
         if columns.widths.iter().any(|&w| w != 2 && w != 4) {
             return Err("a tape column of another width".into());
         }
@@ -198,32 +217,28 @@ impl<'a> F15<'a> {
         if columns.size.len() < n * w[0] || columns.off.len() < n * w[1] || columns.tail.len() < n * w[2] || columns.base.len() < 4 * n.div_ceil(CHECKPOINT_STRIDE) {
             return Err("a short tape column".into());
         }
-        let t = F15 { n, c: columns, table };
+        let t = F15::over(within, columns.view(within, 0)?, table);
         for i in 0..n {
-            if u16::from_le_bytes([columns.code[2 * i], columns.code[2 * i + 1]]) as usize >= table.len() {
+            if t.code(i) as usize >= table.len() {
                 return Err("a node's code is not in the table".into());
             }
-            if i + t.size(i) > n {
+            if t.subtree_end(i) > n {
                 return Err("a node's size runs past the tape".into());
             }
         }
         Ok(t)
     }
-    /// The tape of columns a writer made in this process (the engine's own image, whose shape its restore
-    /// checked): not checked again, as it is read once a document a pass. A wrong column panics where it is read.
-    pub fn over(columns: F15Columns<'a>, table: &'a CodeTable) -> Self {
-        F15 { n: columns.code.len() / 2, c: columns, table }
-    }
-    #[inline(always)]
-    fn size(&self, i: usize) -> usize {
-        (cell(self.c.size, self.c.widths[0], i) as usize).max(1)
+    /// The tape `view` places in `bytes` (the engine's own image, whose shape its restore checked): not checked
+    /// again, as it is read once a document a pass. A read past `bytes` panics where it is made.
+    pub fn over(bytes: &'a [u8], view: rerail_clif::view::TapeView, table: &'a CodeTable) -> Self {
+        F15 { bytes, view, table }
     }
 }
 
 impl Tape for F15<'_> {
     #[inline(always)]
     fn len(&self) -> usize {
-        self.n
+        self.view.nodes as usize
     }
     #[inline(always)]
     fn table(&self) -> &CodeTable {
@@ -231,28 +246,59 @@ impl Tape for F15<'_> {
     }
     #[inline(always)]
     fn code(&self, i: usize) -> u32 {
-        u32::from(u16::from_le_bytes([self.c.code[2 * i], self.c.code[2 * i + 1]]))
+        reads::tape_number(self.bytes, &self.view, i as u32)
     }
     #[inline(always)]
     fn subtree_end(&self, i: usize) -> usize {
-        i + self.size(i)
+        i + reads::tape_size(self.bytes, &self.view, i as u32) as usize
     }
-    /// Not stored: the nearest node before `i` whose subtree holds it.
+    /// Not stored: the nearest node before `i` whose subtree holds it, searched back over at most 64 nodes, else
+    /// found by descending from the root over the siblings' subtree ends (`Tape::path`): a search is never longer
+    /// than the path's siblings.
     fn parent(&self, i: usize) -> Option<usize> {
-        (0..i).rev().find(|&j| j + self.size(j) > i)
+        let p = reads::tape_parent(self.bytes, &self.view, i as u32);
+        (p != u32::MAX).then_some(p as usize)
     }
     #[inline(always)]
     fn start(&self, i: usize) -> u64 {
-        u64::from(cell(self.c.base, 4, i / CHECKPOINT_STRIDE).wrapping_add(cell(self.c.off, self.c.widths[1], i)))
+        u64::from(reads::tape_start(self.bytes, &self.view, i as u32))
     }
     #[inline(always)]
     fn end(&self, i: usize) -> u64 {
-        let from = if self.c.from_start { self.start(i) } else { self.start(i + self.size(i) - 1) };
-        u64::from((from as u32).wrapping_add(cell(self.c.tail, self.c.widths[2], i)))
+        u64::from(reads::tape_end(self.bytes, &self.view, i as u32))
     }
 }
 
 /// A stored format 15 image's columns and its code table (`MAGIC`, `FORMAT_VERSION`), read where they lie.
+/// The view a format 15 tape's reads take (decision 0310), the stored tape at byte `base` of what the view's
+/// offsets count from (0: the tape's own bytes).
+pub fn f15_view(bytes: &[u8], base: usize) -> Result<rerail_clif::view::TapeView, String> {
+    f15_columns(bytes)?.0.view(bytes, base)
+}
+
+impl F15Columns<'_> {
+    /// The view the reads take (decision 0310): every column lies in `within`, which lies at byte `base` of what
+    /// the view's offsets count from.
+    pub fn view(&self, within: &[u8], base: usize) -> Result<rerail_clif::view::TapeView, String> {
+        let range = within.as_ptr_range();
+        let at = |column: &[u8]| {
+            let inside = range.start <= column.as_ptr() && column.as_ptr_range().end <= range.end;
+            if !inside {
+                return Err("a column outside the tape's bytes".to_owned());
+            }
+            u32::try_from(base + (column.as_ptr() as usize - range.start as usize)).map_err(|_| "a tape placed past 4 GiB".to_owned())
+        };
+        let widths = u32::from(self.widths[0]) | u32::from(self.widths[1]) << 4 | u32::from(self.widths[2]) << 8 | u32::from(self.from_start) << 12;
+        Ok(rerail_clif::view::TapeView {
+            nodes: u32::try_from(self.code.len() / 2).map_err(|_| "a tape past 4 G nodes".to_owned())?,
+            format: 15,
+            widths,
+            columns: [at(self.code)?, at(self.size)?, at(self.base)?, at(self.off)?, at(self.tail)?],
+            ..Default::default()
+        })
+    }
+}
+
 pub fn f15_columns(bytes: &[u8]) -> Result<(F15Columns<'_>, CodeTable), String> {
     let u64_at = |at: usize| -> Result<usize, String> {
         let b = bytes.get(at..at + 8).ok_or("a short tape header")?;
@@ -347,7 +393,7 @@ pub fn nearest_all<T: Tape>(t: &T, set: &CodeSet, keep: impl Fn(usize) -> bool, 
 
 /// A document's tape in whichever format it is held. A 16z reader keeps the blocks it decoded, so it is one
 /// thread's.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum AnyTape<'a> {
     F15(F15<'a>),
     F16(crate::f16::F16<'a>),
@@ -365,6 +411,64 @@ macro_rules! with_tape {
             $crate::tape::AnyTape::F16Z($t) => $body,
         }
     };
+}
+
+/// A read at a time, dispatched on the format: for a caller that reads a node here and there (a matcher's node).
+/// A pass over many nodes dispatches once (`with_tape!`).
+impl Tape for AnyTape<'_> {
+    #[inline]
+    fn len(&self) -> usize {
+        with_tape!(self, |t| t.len())
+    }
+    #[inline]
+    fn table(&self) -> &CodeTable {
+        with_tape!(self, |t| t.table())
+    }
+    #[inline]
+    fn code(&self, i: usize) -> u32 {
+        with_tape!(self, |t| t.code(i))
+    }
+    #[inline]
+    fn subtree_end(&self, i: usize) -> usize {
+        with_tape!(self, |t| t.subtree_end(i))
+    }
+    #[inline]
+    fn first_child(&self, i: usize) -> Option<usize> {
+        with_tape!(self, |t| t.first_child(i))
+    }
+    #[inline]
+    fn next_sibling(&self, i: usize, parent_end: usize) -> Option<usize> {
+        with_tape!(self, |t| t.next_sibling(i, parent_end))
+    }
+    #[inline]
+    fn parent(&self, i: usize) -> Option<usize> {
+        with_tape!(self, |t| t.parent(i))
+    }
+    #[inline]
+    fn start(&self, i: usize) -> u64 {
+        with_tape!(self, |t| t.start(i))
+    }
+    #[inline]
+    fn end(&self, i: usize) -> u64 {
+        with_tape!(self, |t| t.end(i))
+    }
+    #[inline]
+    fn start_next(&self, i: usize, prev_start: u64) -> u64 {
+        with_tape!(self, |t| t.start_next(i, prev_start))
+    }
+    #[inline]
+    fn end_with_start(&self, i: usize, start: u64) -> u64 {
+        with_tape!(self, |t| t.end_with_start(i, start))
+    }
+    fn match_groups(&self, set: &CodeSet, f: impl FnMut(usize, u64)) {
+        with_tape!(self, |t| t.match_groups(set, f))
+    }
+    fn path(&self, i: usize, out: &mut Vec<usize>) {
+        with_tape!(self, |t| t.path(i, out))
+    }
+    fn spans(&self, out: &mut Vec<(u64, u64)>) {
+        with_tape!(self, |t| t.spans(out))
+    }
 }
 
 impl AnyTape<'_> {
@@ -405,19 +509,57 @@ pub(crate) mod tests {
     fn nearest_all_is_the_climb() {
         let (image, _) = sample();
         let (columns, table) = f15_columns(&image).unwrap();
-        let t = F15::new(columns, &table).unwrap();
+        let t = F15::new(&image, columns, &table).unwrap();
         for k in 0..table.len() as u32 {
             let set = table.set(|e| *e == *table.entry(k) || e.kind % 3 == 0);
             let keep = |i: usize| i % 5 != 2;
             let mut out = Vec::new();
             nearest_all(&t, &set, keep, &mut out);
-            for (i, &o) in out.iter().enumerate().take(t.len()) {
+            for (i, &got) in out.iter().enumerate() {
                 let mut q = t.parent(i);
                 while let Some(a) = q.filter(|&a| !(set.contains(t.code(a)) && keep(a))) {
                     q = t.parent(a);
                 }
-                assert_eq!(o, q.map_or(NONE, |a| a as u32), "node {i}, set {k}");
+                assert_eq!(got, q.map_or(NONE, |a| a as u32), "node {i}, set {k}");
             }
+            assert_eq!(out.len(), t.len());
+        }
+    }
+
+    /// Format 15's parent past its back search (`BACK`): a root of 300 statements of two leaves each and one of 100
+    /// leaves, every parent found by the descent, as the tree has it, and every path the climb.
+    #[test]
+    fn format_15_parent_descends_past_its_back_search() {
+        let src = vec![b' '; 10_000];
+        let mut nodes = vec![(key(1, 0, 0), 0, 9_000, 0)];
+        for i in 0..300u32 {
+            nodes.push((key(2, 0, 0), i * 20, i * 20 + 15, 3));
+            nodes.push((key(3, 0, 0), i * 20, i * 20 + 5, 1));
+            nodes.push((key(3, 0, 0), i * 20 + 6, i * 20 + 15, 1));
+        }
+        nodes.push((key(2, 0, 0), 6_000, 8_000, 101));
+        for i in 0..100u32 {
+            nodes.push((key(3, 0, 0), 6_000 + i * 20, 6_000 + i * 20 + 10, 1));
+        }
+        nodes[0].3 = nodes.len() as u32;
+        let image = preorder_image(1, &src, &nodes);
+        let (columns, table) = f15_columns(&image).unwrap();
+        let t = F15::new(&image, columns, &table).unwrap();
+        let mut parents = vec![None; nodes.len()];
+        let mut open: Vec<(usize, usize)> = Vec::new();
+        for (i, &(.., size)) in nodes.iter().enumerate() {
+            while open.last().is_some_and(|&(_, end)| end <= i) {
+                open.pop();
+            }
+            parents[i] = open.last().map(|&(p, _)| p);
+            open.push((i, i + size as usize));
+        }
+        let mut path = Vec::new();
+        for (i, &p) in parents.iter().enumerate() {
+            assert_eq!(t.parent(i), p, "parent of {i}");
+            t.path(i, &mut path);
+            assert_eq!(path.last().copied(), p, "path to {i}");
+            assert!(path.windows(2).all(|w| parents[w[1]] == Some(w[0])), "path to {i}");
         }
     }
 
@@ -425,7 +567,7 @@ pub(crate) mod tests {
     fn format_15_in_place_answers_as_its_tree() {
         let (image, nodes) = sample();
         let (columns, table) = f15_columns(&image).unwrap();
-        let t = F15::new(columns, &table).unwrap();
+        let t = F15::new(&image, columns, &table).unwrap();
         assert_eq!(t.len(), nodes.len());
         let mut parents = vec![None; nodes.len()];
         let mut open: Vec<(usize, usize)> = Vec::new();
@@ -442,6 +584,16 @@ pub(crate) mod tests {
         }
         for (i, &p) in parents.iter().enumerate() {
             assert_eq!(t.parent(i), p, "parent of {i}");
+            let mut path = Vec::new();
+            t.path(i, &mut path);
+            let mut climbed = Vec::new();
+            let mut q = p;
+            while let Some(a) = q {
+                climbed.push(a);
+                q = parents[a];
+            }
+            climbed.reverse();
+            assert_eq!(path, climbed, "path to {i}");
         }
         assert_eq!(children(&t, 0).count(), 8);
         assert_eq!(children(&t, 1).collect::<Vec<_>>(), vec![2, 3, 4, 5]);

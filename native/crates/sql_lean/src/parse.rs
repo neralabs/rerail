@@ -35,6 +35,11 @@ const MAX_DEPTH: u32 = 160;
 
 /// `src` parsed.
 pub fn parse(src: &[u8]) -> R<Tape> {
+    parse_into(src, &mut Writer::<Widths>::finish_columns)
+}
+
+/// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
+pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out, Redo>) -> R<Out> {
     // Stage 1 once, for every width tried.
     let mut blocks = Blocks::of(src);
     if let Some(at) = blocks.first_nul() {
@@ -66,8 +71,8 @@ pub fn parse(src: &[u8]) -> R<Tape> {
             memo: (usize::MAX, Tok { t: T::Eof, s: 0, e: 0, w: 0 }),
         };
         p.program()?;
-        match p.w.finish_columns() {
-            Ok(columns) => return Ok(columns),
+        match finish(p.w) {
+            Ok(done) => return Ok(done),
             // A value past the guessed widths: read again at the wider ones.
             Err(Redo(nw)) => {
                 if nw == widths {

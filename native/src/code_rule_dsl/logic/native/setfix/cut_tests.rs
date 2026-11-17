@@ -350,3 +350,53 @@ fn a_join_that_reads_texts_or_makes_atoms_walks_in_morsels_and_makes_one_walks_a
     assert!(whole_atoms.iter().any(|(t, v)| t != v), "the parts are atoms");
     assert_eq!(made_atoms, whole_atoms, "the same atom for each text: interned in one walk's order");
 }
+
+/// Q36: a profiled walk times each of its steps, and last its head's rows made (`StepClock`), scaled to its
+/// thread's CPU; `step_cpu` takes them as `step_counts` takes the counts. Unprofiled, nothing is timed.
+#[test]
+fn a_profiled_walk_times_each_step_and_its_heads_rows() {
+    let edges: Vec<String> = (0..300).flat_map(|i| [format!("({i}, {})", i + 1), format!("({i}, {})", (i * 7) % 300)]).collect();
+    let setup = |db: &Connection| {
+        db.execute_batch(&format!("CREATE TABLE edge(c0, c1); INSERT INTO edge VALUES {};\nCREATE TABLE path(c0, c1); INSERT INTO path SELECT c0, c1 FROM edge;\nCREATE TABLE node(c0); INSERT INTO node SELECT DISTINCT c1 FROM edge;", edges.join(", "))).unwrap();
+    };
+    let input = format!("t:b:{}:{}:ii", hex("edge"), hex("c0, c1"));
+    closure::semi_naive_here(true);
+    let node = format!("t:b:{}:{}:i", hex("node"), hex("c0"));
+    let body = format!("pos d0 v0 v1\npos {input} v1 v2\npos {node} v2\nhead v0 v2");
+    let spec = format!("name clock\nrel path ii\njoin 0 0 {}", hex(&body));
+    for profiled in [false, true] {
+        crate::code_rule_dsl::logic::profile::set(profiled);
+        let db = connection();
+        setup(&db);
+        open(&db, &spec).unwrap();
+        assert_eq!(run(&db, "clock", 0).unwrap().split_whitespace().last(), Some("1"));
+        let counts = step_counts(&db, "clock").unwrap();
+        let cpu = step_cpu(&db, "clock").unwrap();
+        assert_eq!(cpu[0].len(), counts[0].len() + 1, "each step and the head's rows: {cpu:?}");
+        assert!(cpu[0].iter().all(|c| c.is_finite() && *c >= 0.0), "{cpu:?}");
+        if profiled {
+            assert!(cpu[0].iter().sum::<f64>() > 0.0, "a walk of {counts:?} took no time: {cpu:?}");
+            assert!(step_cpu(&db, "clock").unwrap()[0].iter().all(|&c| c == 0.0), "taken, the clocks start again");
+        } else {
+            assert!(cpu[0].iter().all(|&c| c == 0.0), "unprofiled, nothing is timed: {cpu:?}");
+        }
+        close(&db, "clock").unwrap();
+    }
+    crate::code_rule_dsl::logic::profile::set(false);
+}
+
+/// A literal that makes two steps (`$k = @sub(@strlen($d), 1)`) is one plan step: its counts are the bindings into
+/// its first step and out of its last, its CPU both steps'; the head's computed terms' steps go to the head, and a
+/// plan step that made no step passes its rows on. Zipped by place, the steps after it were their neighbours'.
+#[test]
+fn counts_and_cpu_are_reported_by_the_plan_step_that_made_the_steps() {
+    // Plan steps: 0 (an atom), 1 (two steps), 2 (none), 3 (an atom); then a head's `@pkg_up` (one step).
+    let from = [0, 1, 1, 3, 4];
+    let counts = [(1, 10), (10, 10), (10, 8), (8, 3), (3, 3)];
+    assert_eq!(plan_counts(&from, 4, &counts), vec![(1, 10), (10, 8), (8, 8), (8, 3)]);
+    let cpu = [1.0, 2.0, 4.0, 8.0, 16.0, 32.0];
+    assert_eq!(plan_cpu(&from, 4, &cpu), vec![1.0, 6.0, 0.0, 8.0, 48.0]);
+    // A spec read from text: each step its own plan step.
+    let from: Vec<usize> = (0..3).collect();
+    assert_eq!(plan_counts(&from, 3, &counts[..3]), counts[..3].to_vec());
+}

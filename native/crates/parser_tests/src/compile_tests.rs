@@ -956,7 +956,9 @@ fn only_the_compiler_reads_tier2s_states() {
             // A token reader's arms (`records::ReadArm`: `rd.arms`, `reader.arms`, or one indexed in the records'
             // `readers[i].arms`) are not the table's.
             let reader_arms = |line: &str| line.contains("rd.arms") || line.contains("reader.arms") || (line.contains("readers[") && line.contains("].arms"));
-            let table_line = |line: &str| needles.iter().any(|n| line.contains(n)) && (!reader_arms(line) || needles[1..].iter().any(|n| line.contains(n)));
+            // Nor is a count of the token loop's arms (the compiled shape's `arms`, a counter's `arms.get()`/`set`).
+            let arm_count = |line: &str| line.contains("shape.arms") || line.contains(".arms.get()") || line.contains(".arms.set(");
+            let table_line = |line: &str| needles.iter().any(|n| line.contains(n)) && (!(reader_arms(line) || arm_count(line)) || needles[1..].iter().any(|n| line.contains(n)));
             if text.lines().any(table_line) {
                 readers.push(path.display().to_string());
             }

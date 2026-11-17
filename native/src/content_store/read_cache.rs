@@ -23,6 +23,9 @@ pub(super) enum CachedBacking {
         length: usize,
     },
     Heap(Box<[u8]>),
+    /// Bytes in a segment, read in place (decision 0295 step 5): never put in the cache, which holds what was
+    /// decompressed.
+    Mapped(super::SegmentBytes),
 }
 
 pub(super) struct MmapArena {
@@ -124,6 +127,11 @@ impl CachedBytes {
         }
     }
 
+    /// Bytes read where they are in a segment.
+    pub(super) fn mapped(bytes: super::SegmentBytes) -> Self {
+        Self { backing: CachedBacking::Mapped(bytes) }
+    }
+
     fn arena(arena: Arc<MmapArena>, offset: usize, length: usize) -> Self {
         Self {
             backing: CachedBacking::Arena {
@@ -145,6 +153,7 @@ impl Deref for CachedBytes {
                 length,
             } => arena.slice(*offset, *length),
             CachedBacking::Heap(bytes) => bytes,
+            CachedBacking::Mapped(bytes) => bytes.bytes(),
         }
     }
 }

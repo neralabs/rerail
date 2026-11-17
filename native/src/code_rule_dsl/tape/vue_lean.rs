@@ -1,5 +1,5 @@
 //! A Vue file's tape from the lean parser (`rerail_vue_lean`): tree-sitter-vue's tape, written as
-//! the parse goes, with nothing packed again (`TapeImage::written`). The tape is the one
+//! the parse goes, with nothing packed again (`formats::lean`: format 15's columns, or format 16 written in one pass). The tape is the one
 //! tree-sitter-vue's tree encodes to, node for node (`vue_tapes_from_the_lean_parser_are_tree_sitters`).
 //! Its embedded program (the component's scripts and template expressions, `script-block`) is
 //! built from the tape (`FileImage::embedding`), as it is from tree-sitter's.
@@ -27,22 +27,17 @@ fn kind_ids() -> &'static [Option<u16>] {
 /// `source`'s tape from the lean parser: `Err` where it refuses the file; `Ok(Err)` where the tape
 /// cannot be made.
 pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_vue_lean::Refusal> {
-    let tape = rerail_vue_lean::tape(source.as_bytes())?;
     let ids = kind_ids();
-    let codes: Result<Vec<Code>, String> = tape
-        .keys
-        .iter()
-        .map(|&key| {
-            let (kind, _, _, extra) = rerail_vue_lean::unkey(key);
-            let kind = ids[usize::from(kind)].ok_or_else(|| format!("tree-sitter-vue lacks the lean parser's kind {kind}"))?;
-            let mut code = Code::plain(kind, 0, &[])?;
-            if extra {
-                code.flags |= CODE_EXTRA;
-            }
-            Ok(code)
-        })
-        .collect();
-    Ok(codes.and_then(|codes| TapeImage::written(tape.code, tape.size, tape.base, tape.off, tape.tail, tape.widths, codes, None, grammar, source, budget)))
+    let code_of = |&key: &u32| -> Result<Code, String> {
+        let (kind, _, _, extra) = rerail_vue_lean::unkey(key);
+        let kind = ids[usize::from(kind)].ok_or_else(|| format!("tree-sitter-vue lacks the lean parser's kind {kind}"))?;
+        let mut code = Code::plain(kind, 0, &[])?;
+        if extra {
+            code.flags |= CODE_EXTRA;
+        }
+        Ok(code)
+    };
+    rerail_vue_lean::tape_into(source.as_bytes(), &mut super::formats::lean(grammar, source, budget, &code_of))
 }
 
 /// Vue's tree parser: the lean parser, standing in for tree-sitter-vue where it reads the file.

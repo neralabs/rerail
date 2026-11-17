@@ -36,6 +36,8 @@ fn relative(path: &Path) -> String {
 /// scratch (in memory or temporary, dropped when the run ends).
 const NOT_CACHES: &[&str] = &[
     "source_objects", "source_aliases", "strings", "atom_segment", "atom_key", "atom_key_end", "hashes", "paths", "store_state", "store_identity", "object_pins",
+    // The segments sources (and tapes) are in (decision 0295 step 5).
+    "object_segments",
     "push_pending", "snapshots", "snapshot_files", "workspaces", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
     "corpus_roots", "corpus_manifests", "corpus_manifest_plans", "corpus_live", "corpus_plans", "corpus_plan_relations",
     "corpus_decided", "corpus_swept", "corpus_state",
@@ -49,7 +51,7 @@ const NOT_CACHES: &[&str] = &[
 /// frames for). A cache's rows are kept here as any relation's are, never in a table of their own.
 const RELATIONS: &[&str] = &[
     "frames", "frame_spaces", "frame_confirmed", "frame_used", "frame_part_used", "frame_program_used", "memo_entries",
-    "memo_packs",
+    "memo_packs", "frame_segments",
 ];
 
 /// Caches made before decision 0103, each to move to the two rules (§7 lists each one's). This list may only shrink.

@@ -141,6 +141,11 @@ struct Saved {
 
 /// `src` parsed.
 pub fn parse(src: &[u8]) -> R<Tape> {
+    parse_into(src, &mut Writer::<Widths>::finish_columns)
+}
+
+/// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
+pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out, Redo>) -> R<Out> {
     if let Some(at) = src.iter().position(|&c| c == 0) {
         return Err(Refusal::Lex(at as u32));
     }
@@ -154,8 +159,8 @@ pub fn parse(src: &[u8]) -> R<Tape> {
         if p.sc.unsure {
             return Err(Refusal::Parse(0));
         }
-        match p.w.finish_columns() {
-            Ok(columns) => return Ok(columns),
+        match finish(p.w) {
+            Ok(done) => return Ok(done),
             Err(Redo(w)) => {
                 if w == widths {
                     return Err(Refusal::TooLarge);

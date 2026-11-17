@@ -11,7 +11,8 @@
         let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
         let program = rr::parse(".decl e(x: int)\n.output e\ne(1).\n").unwrap();
         let key = [9u8; 32];
-        assert!(remember(&store, &key, &[], &program, &[]).unwrap());
+        record(&store, "the combined program", &key, &[], &program, &[]);
+        store.settle(&queued(&key));
         // The collection another run of the batch starts: its passes, each of which ends a generation (a source is
         // collectable once a pass has ended the generation it was made in).
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
@@ -37,7 +38,8 @@
         let program = rr::parse(".decl e(x: int)\n.output e\ne(1).\n").unwrap();
         let read = [LibraryFile { path: lib.clone(), sha256: Some(Sha256::digest(b"a").into()) }, LibraryFile { path: missing.clone(), sha256: None }];
         let key = [7u8; 32];
-        assert!(remember(&store, &key, &read, &program, &[]).unwrap());
+        record(&store, "the combined program", &key, &read, &program, &[]);
+        store.settle(&queued(&key));
         let back = lookup(&store, &key, &Default::default()).unwrap().expect("kept");
         assert_eq!(format!("{back:?}"), format!("{program:?}"));
         // The source the manifest names is the store's.

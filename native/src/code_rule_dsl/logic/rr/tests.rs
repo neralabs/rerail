@@ -3557,9 +3557,22 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
             let mut facts: Vec<String> = p.facts.iter().filter(|(r, _)| named.contains(r.as_str()) || p.outputs.contains(r)).map(|(r, rows)| mask(&format!("{r}{rows:?}"))).collect();
             facts.sort();
             // The inputs the rules read: the lowering declares one (`node_order`, `rr_inside_<set>`) for each clause
-            // that reads it, and an unreached clause's stays among the inputs after `prune`, read by none.
-            let text = format!("{:?}{:?}", p.rules, p.natives);
-            let mut inputs: Vec<String> = p.inputs.iter().filter(|i| text.contains(&format!("\"{i}\""))).cloned().collect();
+            // that reads it, and an unreached clause's stays among the inputs after `prune`, read by none. Read: an atom of
+            // a rule's body names it (an aggregate's too), or a native's text does; a string equal to its name (a
+            // field named `value`, `field($p, "value", _)`) is no read of it (decision 0174 keeps an attribute no rule
+            // reads an input, where answering it made it a relation).
+            let read: BTreeSet<String> = p
+                .rules
+                .iter()
+                .flat_map(|r| r.body.iter())
+                .filter_map(|l| match l {
+                    Literal::Atom(a) => Some(a.rel.to_string()),
+                    Literal::Agg { atom, .. } => Some(atom.rel.to_string()),
+                    _ => None,
+                })
+                .collect();
+            let native_text = format!("{:?}", p.natives);
+            let mut inputs: Vec<String> = p.inputs.iter().filter(|i| read.contains(i.as_str()) || native_text.contains(&format!("\"{i}\""))).cloned().collect();
             inputs.sort();
             let mut outputs = p.outputs.clone();
             outputs.sort();
@@ -3868,7 +3881,7 @@ vals(v) :- kind(n, "integer"), value(n, v).
 ends(l) :- kind(n, "expression_statement"), last_token(n, t), line(t, l).
 .output cv, vals, ends
 "#;
-    let [cv, vals, ends] = <[Vec<String>; 3]>::try_from(joined(guests_run("cross-value", &[("a.py", "x = 1\n"), ("b.py", "x = 2\n")], rule, &["cv", "vals", "ends"]))).unwrap();
+    let [cv, vals, ends] = <[Vec<String>; 3]>::try_from(joined(guests_run("cross-value", &[("a.py", "x = 1\n"), ("b.py", "x = 2\n")], rule, &["cv", "vals", "ends"])).into_iter().map(|mut rows| { rows.sort(); rows }).collect::<Vec<_>>()).unwrap();
     assert_eq!(vals, ["1", "2"], "the file-local reader's values");
     assert_eq!(cv, ["1", "2"], "the cross-file reader's values");
     // With `value`'s round undone the program still has core.rr's shape: its token leaves are made.

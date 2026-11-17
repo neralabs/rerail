@@ -105,7 +105,7 @@ repository's `.rerail/sessions/`.
 | Where | What |
 | --- | --- |
 | `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits, findings, steer feedback, and all agent events (prompts, replies, tool inputs and outputs). With Merge Assist on, also its in-flight conflicts (both sides' summaries and contested hunks; a dismissed one keeps everything but its hunks and evidence: its title, files, each side's branch or pull request, commit, author, link, summary and location, who dismissed it, and the hook command's last answer: its note (up to 600 characters), status line and any error (up to 300 characters of the command's output)), its last scan, your `gh` sign-in state and login, which notes each session was handed, and your Merge Assist settings; turning Merge Assist off clears the conflicts, scans and `gh` sign-in state, and `rerail reset` clears the notes of the sessions it removes. Also daemon state and log, consent answer, rule packs, managed installs |
-| `~/.cache/rerail/` (Windows: `%USERPROFILE%\AppData\Local\rerail`) | `content-v4.sqlite`: compressed source files Rerail read, with syntax trees and check results |
+| `~/.cache/rerail/` (Windows: `%USERPROFILE%\AppData\Local\rerail`) | `content-v5.sqlite`: source files Rerail read, with syntax trees and check results. Sources and syntax trees from a scan are kept uncompressed in the `content-v5.sqlite.objects` folder beside it, and the facts derived from them in the `.frames` and `.memo` folders. `content-v5.sqlite.files` records the paths, sizes and times of the files Rerail looked at, with their contents' digests, so it can tell an unchanged file without reading it |
 | `<your repository>/.rerail/sessions/` | One ledger per session: events and pre-edit file text. Its `.gitignore` of `*` keeps it out of Git |
 
 Steer feedback is the agent's one-line reason for ignoring a steer (`rerail feedback`). It is sent nowhere;
@@ -164,7 +164,7 @@ SQLite side files inherit the database's mode.
 
 On macOS and Linux, Rerail removes group and other access from these when it opens one your user owns, fixing old
 releases or loose umasks. Covered: home and cache folders, `rerail.sqlite*` (pre-update copies too),
-`content-v4.sqlite*`, `harness.sqlite*`, `daemon.json`, `access-token`, `daemon.log`. It never follows symlinks or
+`content-v5.sqlite*` (the `.objects`, `.frames` and `.memo` folders are made private to you, and the `.files` database is created private), `harness.sqlite*`, `daemon.json`, `access-token`, `daemon.log`. It never follows symlinks or
 touches other users' files.
 
 </details>

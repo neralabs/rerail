@@ -612,7 +612,7 @@ fn hash_candidate_catalog(
         HashKey::sha256(&bytes),
         grammar_set(),
         3,
-        i64::from(tape::TAPE_FORMAT_VERSION),
+        i64::from(tape::formats::stored_version()),
     )
     .map_err(|error| invalid(error.to_string()))
 }
@@ -781,7 +781,7 @@ pub(super) fn persist_files(
                     tape: tape_bytes.as_ref().map(|(bytes, _)| TapePayload {
                         grammar_id: *grammar_id,
                         grammar_version: grammar_version(),
-                        tape_format_version: i64::from(tape::TAPE_FORMAT_VERSION),
+                        tape_format_version: i64::from(tape::formats::stored_version()),
                         bytes,
                         documents,
                     }),

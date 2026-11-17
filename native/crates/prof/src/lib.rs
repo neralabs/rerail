@@ -216,6 +216,33 @@ pub mod heap {
     thread_local! {
         static SPAN: Cell<u32> = const { Cell::new(0) };
         static LEFT: Cell<i64> = const { Cell::new(INTERVAL as i64) };
+        /// This thread's number for samples taken with no span open (`THREAD`), 0 until its first.
+        static THREAD_IX: Cell<u32> = const { Cell::new(0) };
+    }
+    /// The last thread number given.
+    static THREADS: AtomicU32 = AtomicU32::new(0);
+    /// The threads' names by number, as each named itself (`name_thread`).
+    static THREAD_NAMES: std::sync::Mutex<Vec<(u32, String)>> = std::sync::Mutex::new(Vec::new());
+
+    /// This thread's number (1 on), given at its first ask without allocating.
+    fn thread_ix() -> u32 {
+        THREAD_IX
+            .try_with(|c| {
+                if c.get() == 0 {
+                    c.set(THREADS.fetch_add(1, Relaxed) + 1);
+                }
+                c.get()
+            })
+            .unwrap_or(0)
+    }
+
+    /// Names this thread for its samples taken with no span open (the profile names each thread at its first span).
+    pub fn name_thread(name: &str) {
+        let ix = thread_ix();
+        let mut names = THREAD_NAMES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !names.iter().any(|(i, _)| *i == ix) {
+            names.push((ix, name.to_owned()));
+        }
     }
 
     /// Whether heap sampling is on (`RERAIL_HEAP_SAMPLE` set): read once, without allocating.
@@ -250,6 +277,8 @@ pub mod heap {
     pub const TREE_SITTER: u32 = 1 << 30;
     /// Device buffers relational work leases (shared memory, outside jemalloc's heap).
     pub const DEVICE: u32 = 1 << 29;
+    /// An allocation with no span open: the low bits are its thread's number (`thread_ix`), not a span.
+    pub const THREAD: u32 = 1 << 28;
 
     /// An allocation of `size` bytes at `ptr`: sampled when its thread's countdown runs out, or when big.
     #[inline]
@@ -278,7 +307,11 @@ pub mod heap {
                 return;
             }
         }
-        let span = SPAN.try_with(Cell::get).unwrap_or(0) | by;
+        // With no span open, charged to the thread: "(no span open)" alone named none of 494 MB at a 300-file peak.
+        let span = match SPAN.try_with(Cell::get).unwrap_or(0) {
+            0 => THREAD | thread_ix(),
+            s => s,
+        } | by;
         let mut at = slot(ptr);
         for _ in 0..PROBES {
             let k = KEYS[at].load(Relaxed);
@@ -352,6 +385,14 @@ pub mod heap {
         }
         if id & TREE_SITTER != 0 {
             return format!("Tree-sitter's, in {}", name(id & !TREE_SITTER));
+        }
+        if id & THREAD != 0 {
+            let ix = id & !THREAD;
+            let names = THREAD_NAMES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            return match names.iter().find(|(i, _)| *i == ix) {
+                Some((_, n)) => format!("(no span open) on {n}"),
+                None => format!("(no span open) on thread #{ix}, unnamed (it opened no span)"),
+            };
         }
         if id == 0 {
             return "(no span open)".to_owned();
