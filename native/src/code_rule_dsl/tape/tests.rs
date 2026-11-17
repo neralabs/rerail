@@ -2064,6 +2064,42 @@ fn the_product_reads_json_with_simdjson() {
     assert!(TapeImage::parse(&grammar, jsonc, &|| false).unwrap().is_ok());
 }
 
+/// Each language with a lean parser has it as its top tier: the router takes it for the dialect, at
+/// rank 0, and no other implementation this host runs ranks with it (a file it refuses goes to the
+/// dialect's tree-sitter grammar, which is no registered implementation).
+#[test]
+fn the_lean_parsers_are_their_languages_top_tier() {
+    let lean = [
+        (GrammarDialect::Python, "lean Python parser"),
+        (GrammarDialect::JavaScript, "lean JavaScript parser"),
+        (GrammarDialect::TypeScript, "lean TypeScript parser"),
+        (GrammarDialect::Tsx, "lean TSX parser"),
+        (GrammarDialect::Rust, "lean Rust parser"),
+        (GrammarDialect::Java, "lean Java parser"),
+        (GrammarDialect::Go, "lean Go parser"),
+        (GrammarDialect::C, "lean C parser"),
+        (GrammarDialect::Cpp, "lean C++ parser"),
+        (GrammarDialect::CSharp, "lean C# parser"),
+        (GrammarDialect::Php, "lean PHP parser"),
+        (GrammarDialect::Html, "lean HTML parser"),
+        (GrammarDialect::Css, "lean CSS parser"),
+        (GrammarDialect::Markdown, "lean Markdown parser"),
+        (GrammarDialect::MarkdownInline, "lean Markdown inline parser"),
+        (GrammarDialect::Sql, "lean SQL parser"),
+        (GrammarDialect::Vue, "lean Vue parser"),
+    ];
+    let routes = parser_routes();
+    for (dialect, name) in lean {
+        let mine: Vec<_> = routes.iter().filter(|(r, _)| r.dialect == dialect).collect();
+        let taken: Vec<_> = mine.iter().filter(|(_, taken)| *taken).collect();
+        assert_eq!(taken.len(), 1, "{dialect:?}: one implementation taken");
+        assert_eq!(taken[0].0.name, name, "{dialect:?}: the lean parser is taken");
+        assert_eq!(taken[0].0.rank, 0, "{dialect:?}: at the top rank");
+        assert!(mine.iter().all(|(r, t)| *t || !r.runs || r.rank > 0), "{dialect:?}: another implementation ranks with the lean parser");
+        assert!(tree_parser(dialect).is_some(), "{dialect:?}: routed");
+    }
+}
+
 /// The parser router takes, for each dialect, the best implementation this host runs: for JSON the first
 /// kernel `Kernel::ALL` lists that this CPU runs; each other implementation this CPU runs writes the same
 /// tape, the DOM parser and the index writer included.
