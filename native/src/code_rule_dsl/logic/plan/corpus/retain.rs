@@ -174,8 +174,22 @@ pub(in crate::code_rule_dsl) fn each_row(source: &dyn Source, cells: &Cells, mut
         return;
     }
     const CHUNK: usize = 4096;
+    let mut keyed = Vec::with_capacity(width * CHUNK);
+    // A held relation's rows, read where they lie, part by part (in its order, as `row_at` gives them).
+    if crate::code_rule_dsl::logic::native::component::each_held_batch(source, width, |batch| {
+        keyed.clear();
+        keyed.extend_from_slice(batch);
+        cells.key(&mut keyed);
+        for (raw, key) in batch.chunks_exact(width).zip(keyed.chunks_exact(width)) {
+            f(raw, crate::code_rule_dsl::logic::plan::row_digest(key));
+        }
+    })
+    .is_some()
+    {
+        return;
+    }
     let all: Vec<usize> = (0..width).collect();
-    let (mut raw, mut keyed) = (vec![0i64; width * CHUNK], Vec::with_capacity(width * CHUNK));
+    let mut raw = vec![0i64; width * CHUNK];
     let n = source.len();
     for start in (0..n).step_by(CHUNK) {
         let m = (n - start).min(CHUNK);

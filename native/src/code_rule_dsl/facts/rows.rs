@@ -39,6 +39,7 @@ impl Life {
         match self {
             Life::Run => FACTS_BYTES,
             Life::Source => FACTS_BYTES / 4,
+            Life::Kept => FACTS_BYTES / 4,
             // Each alone in a block of its size (`try_new`).
             Life::Device => 0,
         }
@@ -72,6 +73,9 @@ pub enum Life {
     /// runs' relations, they kept those blocks alive past them: on posthog/hogql every block leased stayed, and the
     /// peak resident size rose 125 MB.
     Source,
+    /// The relations a run keeps past it (a chunk's exports, read by the cross-file part where they lie): apart from
+    /// the run's other relations, so holding them does not keep those relations' blocks.
+    Kept,
     /// A device run's own relations (decision 0325 step 5): the views it makes from a chunk, a fixpoint's totals and
     /// deltas, an upload. Leased as the device's join buffers are, within its budget (a refusal runs the stratum on
     /// the CPU), and apart from the runs' relations, which they would keep alive.
@@ -79,14 +83,14 @@ pub enum Life {
 }
 
 /// The blocks new relations go in, while they have room: one a `Life`.
-static OPEN: [Mutex<Option<Arc<Facts>>>; 3] = [Mutex::new(None), Mutex::new(None), Mutex::new(None)];
+static OPEN: [Mutex<Option<Arc<Facts>>>; 4] = [Mutex::new(None), Mutex::new(None), Mutex::new(None), Mutex::new(None)];
 
 /// Every block leased, by `Life`, while it lives: what a profile reads (`held`).
-static LIVE: Mutex<[Vec<std::sync::Weak<Facts>>; 2]> = Mutex::new([Vec::new(), Vec::new()]);
+static LIVE: Mutex<[Vec<std::sync::Weak<Facts>>; 3]> = Mutex::new([Vec::new(), Vec::new(), Vec::new()]);
 
 /// Per `Life`, the blocks held now, their bytes written and their bytes reserved: a profile's account of the rows
 /// outside the heap.
-pub fn held() -> [(usize, usize, usize); 2] {
+pub fn held() -> [(usize, usize, usize); 3] {
     let live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
     std::array::from_fn(|l| {
         live[l].iter().filter_map(std::sync::Weak::upgrade).fold((0, 0, 0), |(n, u, r), f| (n + 1, u + f.block.used(), r + f.block.reserved()))
@@ -267,6 +271,11 @@ impl Part {
         Ok(part)
     }
 
+    /// How long its rows live: the blocks it is in.
+    pub fn life(&self) -> Life {
+        self.life
+    }
+
     /// Its relation's descriptor's offset in its block: what a reader's `rel_*` reads take.
     pub fn rel_at(&self) -> usize {
         self.facts.block.offset_of(self.rel)
@@ -286,6 +295,12 @@ impl Part {
     #[inline]
     pub fn len(&self) -> u32 {
         self.rel().rows.len()
+    }
+
+    /// Its row `i`'s value in column `c`, where it lies.
+    #[inline(always)]
+    pub fn get(&self, i: u32, c: usize) -> i64 {
+        self.cols[c].get(i)
     }
 
     /// An empty relation of `k` columns in a run's block, with room for `rows` rows that a writer other than the
@@ -588,6 +603,41 @@ impl Rows {
         };
         self.segs.push((at, part));
         self.from = at + n;
+    }
+
+    /// Its relations, oldest first: the frozen segments, then the tail if it has rows. A reader that keeps them
+    /// (`append_part`) holds the rows where they lie.
+    pub fn parts(&self) -> impl Iterator<Item = &Part> {
+        self.segs.iter().map(|(_, p)| p).chain(self.tail.iter().filter(|t| t.len() > 0))
+    }
+
+    /// Rows `lo..hi`, part by part in id order: each part, the rows of it (its own row numbers `from..to`), and the
+    /// id of row `from`. A sequential reader finds each part once, not each row's (rows gathered from many relations,
+    /// `append_part`, lie in many parts).
+    pub fn each_run(&self, lo: u32, hi: u32, mut f: impl FnMut(&Part, u32, u32, u32)) {
+        let mut id = lo;
+        while id < hi {
+            let (p, i) = self.part_of(id);
+            let n = (p.len() - i).min(hi - id);
+            f(p, i, i + n, id);
+            id += n;
+        }
+    }
+
+    /// Values a row.
+    pub fn width(&self) -> usize {
+        self.k
+    }
+
+    /// These rows with the tail made a segment (moved), and no segments merged, as `freeze` merges them past
+    /// `MAX_SEGMENTS`: rows gathered from many relations (`append_part`), read where they lie.
+    pub fn sealed(mut self) -> Rows {
+        if let Some(tail) = self.tail.take().filter(|t| t.len() > 0) {
+            let n = tail.len();
+            self.segs.push((self.from, tail));
+            self.from += n;
+        }
+        self
     }
 
     /// Whether these rows share a frozen segment with `other` (a relation started from it).

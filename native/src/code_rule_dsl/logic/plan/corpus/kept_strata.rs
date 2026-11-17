@@ -419,6 +419,10 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         let n = source.len();
         // Each column read from the source a batch at a time, never copied whole.
         let bytes = FramePut::encode_columns(w, &|c, f| {
+            // A held relation's column, read where it lies, part by part.
+            if crate::code_rule_dsl::logic::native::component::each_held_column(source.as_ref(), w, c, &mut *f).is_some() {
+                return;
+            }
             let mut buf: Vec<i64> = Vec::with_capacity(LIVE_BATCH.min(n));
             for lo in (0..n).step_by(LIVE_BATCH) {
                 buf.clear();

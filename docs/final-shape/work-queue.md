@@ -1910,3 +1910,11 @@ The user (2026-11-17): a directive giving relations enough data in the `.rr` fil
 pay for planning only in exceptional circumstances. Designed with the user in 0361 (`.layout` lines; classes with
 optional numbers; a broken fact replans and is reported; algorithms found from the facts, with a rare override).
 Build steps 1-7 in 0361. Step 7's running aggregate is the `rr_agg56` planner fix, so that fix waits for steps 1-2.
+
+### Q83. Exports held where they lie (0325)
+
+Done 2026-11-17. The user's list, item "the hash map behind Exports::add". An export holds the chunks' relations as
+segments, in `Life::Kept` blocks (`keptrows` spec line), with duplicates marked dead and read part by part. 140 MB of
+heap copies gone at 300 files, peak unchanged. Next on the list: the base rows for the cross part (191 MB),
+the memo's rows, `Relation::push` staging, `Rows::clone`/`shared` tails and `merged`, the fixpoint's host indexes,
+and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q82, 0361 step 7).

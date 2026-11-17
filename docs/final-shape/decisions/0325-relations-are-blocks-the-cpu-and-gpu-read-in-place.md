@@ -302,3 +302,26 @@ Step by step, each leaving the engine working (see the commits that name this de
   - On hogql (load 68–80): indexes found the relation's own 913–1,048 a run against 741, built 916–925 against
     937. Instructions 67.7–76.8 B against 68.3–74.1 B, peak 730–797 MB against 699–787 MB. Findings 1,629 in 5
     runs, cold included.
+
+## Exports held where they lie (2026-11-17, Q83)
+
+A chunk's exports used to be copied into heap columns (`Exports::add`), with a hash set over them. The cross-file
+part then read that copy. At 300 files the copy took 140 MB at the peak ("hold the export").
+
+- **Held in place.** An export now holds the chunk's own relation: its parts are appended as segments
+  (`Rows::append_part`), not copied. A row another chunk gave first, or one dead in its relation, is marked dead in
+  the export. The set that keeps rows once is a table of row ids; the values are read where they lie. The
+  cross-file part reads the export as a held relation (`InRel::held`), and the engine binds those rows as its input
+  (no view, no reads through the source).
+- **Kept rows get blocks of their own.** Holding a chunk's relation first kept the whole run block it lay in:
+  681–795 MB of run blocks, against 141–295 MB, and the peak rose from 2.39 to 2.73 GB. The relations a run keeps
+  past it are now named in its spec (`keptrows`), and setfix makes them in `Life::Kept` blocks. Holding them keeps
+  only export rows: 12–17 blocks, 163–243 MB.
+- **Read part by part.** A value-at-a-time read of a relation made of many parts looks for its part each time. The
+  input digest, the inputs' frames and `exported/public_name` slowed 3–15× that way. `Rows::each_run` walks the
+  parts in order, and `each_live_batch`, `each_live_column`, `retain::each_row` and the frames' column reads use it.
+- **Measured** (cold, 300 files, profiling build, load 54–68):
+  - before: peak 2.39 GB, 94 s CPU;
+  - after: peak 2.38 GB, 89 s CPU, heap at the peak 1.67 GB against 1.83 GB;
+  - findings: the reference's (30,449 rows);
+  - strict 10-file outputs: byte-identical.

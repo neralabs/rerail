@@ -7902,6 +7902,12 @@ impl<'a> Run<'a, '_> {
             }
             rel_lines.push(SpecLine::Lattice { rel: ri[*r], keys: l.keys, name: f.text(l.lattice).to_owned(), widen: l.widen });
         }
+        // The relations the run keeps past it (a chunk's exports): in blocks of their own, so a reader that holds
+        // them where they lie does not keep the run's other relations' blocks.
+        let kept_rows: Vec<usize> = rels.iter().filter(|r| self.model.inputs.kept.contains(r.as_str())).map(|r| ri[*r]).collect();
+        if !kept_rows.is_empty() {
+            rel_lines.push(SpecLine::KeptRows(kept_rows));
+        }
         lines.splice(rel_at..rel_at, rel_lines);
         let nseeds = orders.len();
         for r in &rels {
