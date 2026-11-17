@@ -6,9 +6,6 @@
   "excludeFolders": ["packs/**/upstream", "packs/**/licenses", "packs/**/candidates", "skills/**/examples"],
   "excludeFiles": [
     "CHANGELOG.md",
-    "CODE_OF_CONDUCT.md",
-    "REVIEW.md",
-    "UPSTREAM.md",
     "blade-parser.md",
     "content-addressed-workspace-store.md",
     "merge-assist-v1-build.md",
