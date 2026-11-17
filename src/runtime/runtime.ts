@@ -40,12 +40,13 @@ import { CheckoutCatalogs, configurationSignatureOf, startingCheckout } from "..
 import { CheckoutOwners } from "../engine/catalog/checkout-owner.js";
 import { checkoutRealpath } from "../engine/catalog/checkout-control.js";
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
-import { defaultRerailDatabasePath } from "../engine/storage/database.js";
+import { defaultRerailDatabasePath, failWhileWriteLocked } from "../engine/storage/database.js";
 import { makeLedgerFolder, openLedgerFile, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
 import { keepFolderPrivate } from "../engine/storage/private-files.js";
 import { callNamesSecretPath, WITHHELD_OUTPUT, type Withheld } from "../engine/transcript-boundary.js";
 import { scrubSecrets, scrubValue } from "../engine/secret-scrub.js";
 import { mergeAssistEnabled, recordCheckout } from "../engine/catalog/repository-registry.js";
+import type { CheckoutContext } from "../engine/catalog/repository-model.js";
 import type { PendingNote } from "./merge-assist/notes.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "./merge-assist/service.js";
 import { RepositoryStartWatch } from "./repository-start.js";
@@ -735,6 +736,12 @@ export interface SessionSuspension {
    * (`endSuspendedSessions`), not at the stop, which can come days after the session went quiet.
    */
   readonly suspendedAt: number;
+  /**
+   * The checkout whose start state gates the session's runtime, as its start watch found it at the suspension: the
+   * engine service ends a suspended session once Rerail is stopped there. Undefined where the runtime has no start gate,
+   * or Rerail records no checkout for it.
+   */
+  readonly startGate: CheckoutContext | undefined;
 }
 
 /**
@@ -1070,6 +1077,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #catalogs: CheckoutCatalogs;
   readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
   readonly #sessions = new Map<string, RuntimeSessionState>();
+  /** The sessions `resumeSession` is opening again for a scan, whose open fails rather than wait for a write lock. */
+  readonly #resumingForScan = new Set<string>();
   /**
    * Kept past disposal for late receipts, with the repository each session was attributed to; the latest few only. A
    * suspended session's `endedAt` is null: it is still open.
@@ -1913,6 +1922,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const recordedSession = this.#sessionStore.session(session.sessionId);
     const startedAt = recordedSession?.startedAt ?? Date.now();
     const ledger = await this.#openLedger(session, recordedSession === undefined);
+    this.#failWhileWriteLockedForScan(session.sessionId);
     const checkout = this.#startingCheckout(session);
     const restored = await this.#restoreRegistry(session, ledger.entries, checkout);
     const watermarks = await JsonlWatermarkStore.open(join(ledger.directory, "watermarks.jsonl"));
@@ -2030,6 +2040,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       });
       opened.codeRuleBridge = bridge;
       await this.#beforeSessionPublish?.(session);
+      this.#failWhileWriteLockedForScan(session.sessionId);
       this.#sessionStore.openSession(session, startedAt, this.#repositoryKey(checkout));
       this.#closedSessions.delete(session.sessionId);
       this.#sessionStore.startHudTracking(session, ledger.completeTracking);
@@ -2320,20 +2331,39 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    */
   async #suspension(state: RuntimeSessionState, suspendedAt: number): Promise<SessionSuspension> {
     const walk = state.codeRuleReady ? await state.codeRuleBridge?.walkResume() : undefined;
-    return { descriptor: state.descriptor, ownerClaim: state.ownerClaim, walk, databasePath: this.#sessionStore.path, suspendedAt };
+    return {
+      descriptor: state.descriptor, ownerClaim: state.ownerClaim, walk, databasePath: this.#sessionStore.path, suspendedAt,
+      startGate: this.#startWatch?.checkout(),
+    };
   }
 
   /**
    * Opens again a session the engine service suspended, as its next event would, so it claims the scans queued for it
-   * meanwhile; nothing is recorded. It opens in a repository stopped since too, as the open session it was would have
-   * run the scan there. A session already open is left as it is.
+   * meanwhile; nothing is recorded. The engine service asks only while Rerail runs in the session's checkout: a stopped
+   * repository records no scan, so it ends such a session instead. A session already open is left as it is. While
+   * another process holds the write lock, rejects with SQLite's `SQLITE_BUSY` rather than let a write of the open wait
+   * for it (`#failWhileWriteLockedForScan`), leaving the session suspended for the service to try again.
    */
   resumeSession(session: AdapterSession): Promise<void> {
     return this.#ingestLanes.run(session.sessionId, async () => {
       if (this.#sessions.has(session.sessionId)) return;
-      await this.#router(session.host).start(session);
+      this.#resumingForScan.add(session.sessionId);
+      try {
+        await this.#router(session.host).start(session);
+      } finally {
+        this.#resumingForScan.delete(session.sessionId);
+      }
       this.#scheduleAuditRequests(session.sessionId);
     });
+  }
+
+  /**
+   * Throws SQLite's `SQLITE_BUSY` at once while another process holds the write lock and `resumeSession` is opening the
+   * session again for a scan (`failWhileWriteLocked`): asked right before each run of the open's writes, which would
+   * wait for that lock up to 5 s each on the daemon's thread.
+   */
+  #failWhileWriteLockedForScan(sessionId: string): void {
+    if (this.#resumingForScan.has(sessionId)) failWhileWriteLocked(this.#sessionStore.path);
   }
 
   /**
@@ -2569,6 +2599,14 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async #runAuditRequests(sessionId: string): Promise<void> {
     const state = this.#sessions.get(sessionId);
     if (state === undefined || state.closed || state.ownerClaim === undefined) return;
+    // Claimed once the evaluator is open, which can take seconds: a claim made at once ran the scan's writes whenever
+    // its rules had compiled, each waiting up to 5 s on the daemon's thread for a write lock another process took
+    // meanwhile. A claim itself fails at once under such a lock (it reads first), so the scan stays queued until the
+    // next commit. The next tick asks again.
+    if (state.codeRuleOpening === true) {
+      state.controlsVersion = undefined;
+      return;
+    }
     const request = this.#controls.claim(sessionId, state.ownerClaim);
     if (request === undefined) return;
     // A claim takes the oldest queued request; one queued behind it is announced by no later commit, so the next tick

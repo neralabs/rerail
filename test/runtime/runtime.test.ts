@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type AdapterDelivery,
@@ -286,7 +287,7 @@ describe("Rerail session startup", () => {
 });
 
 describe("A scan requested while the session's evaluator is still opening", () => {
-  /** A runtime whose evaluator's `openWorkspace` is held until `opening` settles, with one scan requested and claimed meanwhile. */
+  /** A runtime whose evaluator's `openWorkspace` is held until `opening` settles, with one scan requested meanwhile. */
   async function scanFixture() {
     const root = await mkdtemp(join(tmpdir(), "rerail-scan-opening-"));
     directories.push(root);
@@ -327,15 +328,13 @@ describe("A scan requested while the session's evaluator is still opening", () =
     await runtime.ingest({ kind: "session-start", eventId: "start", session });
     const controls = new SqliteAuditControlStore(databasePath);
     const request = controls.requestAudit(session.sessionId, { scope: "repository" });
-    // The control timer claims it within 250 ms, with the evaluator still held in its open.
+    // It waits, queued, for the evaluator: claimed at once, the scan's writes would come whenever the rules had compiled,
+    // each waiting up to 5 s for a write lock another process took meanwhile.
     const statusOf = () => controls.listAuditRequests(session.sessionId).find(item => item.id === request.id)?.status;
-    await vi.waitFor(() => expect(statusOf()).not.toBe("queued"), { timeout: 4_000 });
-    expect(statusOf()).toBe("running");
+    await delay(600);
+    expect(statusOf()).toBe("queued");
     const settled = async () => {
-      await vi.waitFor(
-        () => expect(controls.listAuditRequests(session.sessionId).find(item => item.id === request.id)?.status).not.toBe("running"),
-        { timeout: 10_000 },
-      );
+      await vi.waitFor(() => expect(statusOf()).not.toMatch(/^(queued|running)$/), { timeout: 10_000 });
       return controls.listAuditRequests(session.sessionId).find(item => item.id === request.id)!;
     };
     const close = async () => {

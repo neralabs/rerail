@@ -509,6 +509,40 @@ describe("the engine service's idle close", () => {
     }
   });
 
+  // Before, each write of the open waited for another process's write lock up to 5 s on the daemon's thread, then the
+  // failed open's scans waited 5 s more to fail: health, the dashboard and every hook waited 10 s with them.
+  it.each([
+    ["closed", 0],
+    ["still open", 60_000],
+  ])("opens a quiet session for a scan only once another process's write lock is free, its runtime %s, without waiting for it", async (_, idleRuntimeMs) => {
+    const { create, scans } = recordingAuditor();
+    const { clock, service, start, databasePath, ended } = await idleService({ createAuditor: create, idleRuntimeMs });
+    await start("a");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    const controls = new SqliteAuditControlStore(databasePath);
+    const writer = new Database(databasePath);
+    try {
+      const request = controls.requestAudit("a", { scope: "repository" });
+      writer.exec("BEGIN IMMEDIATE");
+      const asked = performance.now();
+      await service.resumeSession("a");
+      expect(performance.now() - asked).toBeLessThan(1_000);
+      await delay(500);
+      expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({ status: "queued" });
+      expect(ended("a")).toBeNull();
+      writer.exec("ROLLBACK");
+      await vi.waitFor(() => {
+        expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({ status: "completed", error: null });
+      }, { timeout: 10_000, interval: 50 });
+      expect(scans).toEqual(["repository"]);
+    } finally {
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      controls.close();
+    }
+  }, 30_000);
+
   it("runs a scan queued for a quiet session once its next event opens it, as the session's owner", async () => {
     const { create, scans } = recordingAuditor();
     const { clock, service, start, prompt, databasePath } = await idleService({ createAuditor: create });
@@ -530,25 +564,53 @@ describe("the engine service's idle close", () => {
     }
   });
 
-  it("runs a scan asked for a quiet session whose repository was stopped since, as the open session ran it", async () => {
+  // At base the idle close ended the session, so a scan asked for it once Rerail was stopped in its checkout failed at
+  // once. Opened again for the scan, it recorded nothing there: the scan failed with "completed scan without a recorded
+  // run", and the session stayed open and owned until the daemon stopped.
+  it("ends a quiet session whose repository was stopped since, rather than open it again for a scan, and fails the scan", async () => {
     const { create, scans } = recordingAuditor();
-    const { first, clock, service, start, databasePath } = await idleService({ createAuditor: create });
+    const { first, clock, service, start, databasePath, ended, live } = await idleService({ createAuditor: create });
     await start("a");
     clock.now += 60_000;
+    const quietAt = clock.now;
     await service.closeIdleSessions();
     stopTestRepository(first, databasePath);
     const controls = new SqliteAuditControlStore(databasePath);
     try {
       const request = controls.requestAudit("a", { scope: "repository" });
       expect(request).toMatchObject({ status: "queued", error: null });
+      clock.now += 60_000;
       await service.resumeSession("a");
-      await vi.waitFor(() => {
-        expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({ status: "completed", error: null });
-      }, { timeout: 10_000, interval: 50 });
-      expect(scans).toEqual(["repository"]);
+      expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({
+        status: "failed", error: expect.stringContaining(`Rerail is stopped in ${first}`),
+      });
+      expect(ended("a")).toBe(quietAt);
+      expect(live("a")).toBe(false);
+      expect(scans).toEqual([]);
     } finally {
       controls.close();
     }
+  });
+
+  // At base the idle close ended a quiet session. Suspended instead, one whose repository was then stopped, or whose
+  // folder was removed, got no event and could run no scan, yet read as live and owned until the daemon stopped.
+  it.each([
+    ["Rerail is stopped in its checkout", (first: string, databasePath: string) => stopTestRepository(first, databasePath)],
+    ["its folder is removed", (first: string) => removeFolder(first)],
+  ])("ends a quiet session at the next sweep once %s, at the time it went quiet", async (_, unopen) => {
+    const { first, clock, service, start, databasePath, ended, live } = await idleService();
+    await start("a");
+    clock.now += 60_000;
+    const quietAt = clock.now;
+    await service.closeIdleSessions();
+    expect(live("a")).toBe(true);
+    // The runtime's close still reads the checkout a moment after the sweep.
+    await vi.waitFor(() => expect(service.openRuntimes()).toBe(0), { timeout: 5_000, interval: 50 });
+    await unopen(first, databasePath);
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    expect(ended("a")).toBe(quietAt);
+    expect(live("a")).toBe(false);
   });
 
   // At base the idle close ended the session, so a scan asked for it once its checkout was removed failed at once, and
