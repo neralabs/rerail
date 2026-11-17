@@ -227,12 +227,9 @@ export function decodeEventPayload(payload: Uint8Array): unknown {
 /**
  * Append-only, process-safe session and event persistence. Raw event payloads remain local to the
  * configured database. Sessions are attributed to the repository key given when they open, else to the
- * store's own `repositoryId`.
- */
-/**
- * What the daemon records of each session. Every write goes through the database's record writer
- * (`openRecordWriter`): made at once, or, while another process holds the write lock, in order once it is given back,
- * never waiting on the caller's thread. Reads here see a waiting write once it is made.
+ * store's own `repositoryId`. Every write goes through the database's record writer (`openRecordWriter`): made at
+ * once, or, while another process holds the write lock, in order once it is given back, never waiting on the caller's
+ * thread. Reads here see a waiting write once it is made.
  */
 export class SqliteSessionStore {
   readonly path: string;
