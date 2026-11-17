@@ -125,4 +125,4 @@ nothing today. A rule's derivation source (`R::From`) does not survive the store
 
 Open, a choice: (a) the passes after lowering keep the `asked` record (each pass that drops, adds or rewrites a
 request rule states it), so the slice and `prune` both gate on it; or (b) the slice is cut before those passes,
-from the lowered program, where the record holds, and the slice prepared on its own.
+from the lowered program, and the slice prepared on its own. Whether the record still matches there is not yet checked: `prune` relies on it there, but simplification runs after the requests are made.
