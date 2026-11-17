@@ -135,6 +135,11 @@ export class WorktreeNotices {
     return this.#watched.size > 0;
   }
 
+  /** A watch of a session folder through the engine watch these notices come from (`SessionNotices`); undefined without one. */
+  sessionWatch(): TreeWatch | undefined {
+    return this.#watch?.another?.();
+  }
+
   /**
    * Takes the worktrees a notice counted in since the last call, and since a read of each began: each may hold a
    * change no read has seen, which a notice taken as the read began, or while it ran, would not.
@@ -305,6 +310,7 @@ export class SharedTreeWatch {
       unwatch: root => this.#unwatchFor(user, root),
       take: () => this.#takeFor(user),
       close: () => this.#closeFor(user),
+      another: () => this.user(),
     };
   }
 
@@ -426,7 +432,8 @@ export type SessionReads = { readonly whole: true } | { readonly whole: false; r
  */
 export class SessionNotices {
   readonly #root: string;
-  readonly #watch: TreeWatch | undefined;
+  /** The engine's watch the notices come through, once the session's first walk of the other worktrees gave one. */
+  #watch: TreeWatch | undefined;
   /** Whether the watch follows the folders a walk walked (Linux), rather than the whole tree. */
   readonly #byFolder: boolean;
   /** Whether the watch holds the folder now. */
@@ -440,11 +447,18 @@ export class SessionNotices {
   /** The paths notices named since the last pass began. */
   #paths = new Set<string>();
 
-  /** `root`: the session folder (physical); `watch`: the engine's watch, none when the engine has none. */
-  constructor(root: string, watch: TreeWatch | undefined, platform: NodeJS.Platform = process.platform) {
+  /** `root`: the session folder (physical). */
+  constructor(root: string, platform: NodeJS.Platform = process.platform) {
     this.#root = root;
-    this.#watch = watch;
     this.#byFolder = platform === "linux";
+  }
+
+  /**
+   * The engine's watch to take the notices through, none when the engine has none; the first one given stays. The
+   * folder is watched from the next whole pass on, which reads it whole once the watch is up.
+   */
+  use(watch: TreeWatch | undefined): void {
+    this.#watch ??= watch;
   }
 
   /**

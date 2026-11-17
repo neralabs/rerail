@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
 import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/code-rule/code-rule.js";
+import { SharedTreeWatch, WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
+import { RepositoryWorktreeWalks, WorktreeWalks } from "../../../../src/engine/code-rule/worktree-walks.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
 import { StampTreeWatch } from "./support/stamp-tree-watch.js";
 
@@ -22,9 +24,11 @@ vi.mock("node:fs/promises", async importOriginal => {
 });
 
 const bridges: CodeRuleBridge[] = [];
+const watches: SharedTreeWatch[] = [];
 const folders: string[] = [];
 afterEach(async () => {
   await Promise.all(bridges.splice(0).map(async bridge => await bridge.close()));
+  for (const watch of watches.splice(0)) watch.close();
   await Promise.all(folders.splice(0).map(async folder => await removeFolder(folder)));
   listed.folders.length = 0;
 });
@@ -40,22 +44,31 @@ async function workspace(): Promise<string> {
   return root;
 }
 
-/** A bridge over `root` whose session folder's notices come from `watch`, opened, with its first walks done. */
+/**
+ * A bridge over `root` whose walk of the other worktrees (none here) takes its notices from `watch`, as the engine
+ * service's walks share the engine's, opened, with its first walks done.
+ */
 async function opened(root: string, watch: StampTreeWatch): Promise<{ bridge: CodeRuleBridge; audits: CodeRuleEditBatch[] }> {
   const audits: CodeRuleEditBatch[] = [];
   const auditor: CodeRuleAuditor = {
     openWorkspace: async () => undefined,
     acceptsPath: () => true,
+    worktreeRoots: () => [],
     auditGeneratedEdits: async (_sessionId, batch) => {
       audits.push(batch);
       return { revision: batch.revision, disposition: "continue", violations: [], failures: [] };
     },
     close: async () => undefined,
   };
-  const bridge = new CodeRuleBridge(root, auditor, { treeWatch: () => watch });
+  const shared = new SharedTreeWatch(watch);
+  watches.push(shared);
+  const worktreeWalks = new WorktreeWalks({ gapMs: 0, notices: new WorktreeNotices({ treeWatch: shared.user() }) });
+  const bridge = new CodeRuleBridge(root, auditor, { worktreeWalks });
   bridges.push(bridge);
   await bridge.openWorkspace("session-1");
-  await bridge.checkpoint("turn");
+  // The session's first walk of the other worktrees, after its first passes, hands the folder its watch; the next pass
+  // reads the folder whole with the watch up, and on Linux one more, once the watch took up the folders it walked.
+  for (let pass = 0; pass < 3; pass += 1) await bridge.checkpoint("turn");
   listed.folders.length = 0;
   return { bridge, audits };
 }
@@ -73,6 +86,22 @@ function checked(audits: readonly CodeRuleEditBatch[]): string[][] {
 }
 
 describe("a shell command's result reads the session folder by its change notices", () => {
+  it("watches the session folder through the engine watch the repository's walk shares, and not without one", async () => {
+    const root = await workspace();
+    const watch = new StampTreeWatch();
+    const repositories = new RepositoryWorktreeWalks({ treeWatch: watch });
+    try {
+      const session = repositories.of("repository").sessionWatch();
+      expect(session?.watch(root, [""])).toBe(true);
+      expect(watch.folders.get(root)).toEqual([""]);
+      session?.close();
+      expect(watch.unwatched).toEqual([root]);
+    } finally {
+      repositories.close();
+    }
+    expect(new WorktreeWalks().sessionWatch()).toBeUndefined();
+  });
+
   it("reads only the paths a notice named, and checks the write at the result", async () => {
     const root = await workspace();
     const watch = new StampTreeWatch();

@@ -358,6 +358,11 @@ export class WorktreeWalks {
     this.#onWatching = options.onWatching;
   }
 
+  /** A watch of a session folder through the engine watch these walks take their notices from; undefined without one. */
+  sessionWatch(): TreeWatch | undefined {
+    return this.#notices.sessionWatch();
+  }
+
   watch(watcher: WorktreeWatcher): WorktreeWatch {
     const watching: Watching = {
       watcher, requested: false, asked: 0, answered: 0, nextWalkAt: 0, taking: undefined, waiting: undefined, worktrees: new Set(), closed: false,
@@ -809,14 +814,6 @@ export class RepositoryWorktreeWalks {
   /** Releases the engine watch and every handle it holds; the sessions, closed first, have let go of their worktrees. */
   close(): void {
     this.#treeWatch?.close();
-  }
-
-  /**
-   * A watch of one session folder through the same engine watch (`SessionNotices`): a root a walk of other worktrees
-   * also watches is watched once. Undefined without the engine's watch. Closing it lets go of the folder.
-   */
-  sessionWatch(): TreeWatch | undefined {
-    return this.#treeWatch?.user();
   }
 }
 

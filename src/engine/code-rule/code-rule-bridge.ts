@@ -45,7 +45,6 @@ import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
 import { SessionNotices, type SessionReads, type WorktreeRead } from "./worktree-notices.js";
 import { ToolCallWindows } from "./tool-call-windows.js";
-import type { TreeWatch } from "./tree-watch.js";
 import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
 import {
   type WatcherWalk, type WorktreeFindings, type WorktreeScan, type WorktreeScanned, type WorktreeSnapshot, WorktreeView, type WorktreeWalk, WorktreeWalks,
@@ -1103,8 +1102,6 @@ export class CodeRuleBridge {
   /** The `.gitignore` files walks found new, changed or gone since the last look at the ignore rules, session-relative. */
   readonly #walkedIgnoreChanges = new Set<string>();
   readonly #worktreeWalkGapMs: number | undefined;
-  /** The engine's watch each workspace's change notices come from (`SessionNotices`). */
-  readonly #treeWatch: (() => TreeWatch | undefined) | undefined;
   /** The most of `#texts` first-sight text may take (`FIRST_SIGHT_TEXT_BYTES`), and how much it takes now. */
   readonly #firstSightTextBytes: number;
   #firstSightBytes = 0;
@@ -1131,11 +1128,6 @@ export class CodeRuleBridge {
        * watch it.
        */
       worktreeWalks?: WorktreeWalks | (() => WorktreeWalks);
-      /**
-       * A watch of the engine's for the session folder's change notices, asked for as each workspace opens: a command's
-       * result then reads the paths they name, not every file. Without one, every pass reads the whole folder.
-       */
-      treeWatch?: () => TreeWatch | undefined;
       /** `FIRST_SIGHT_TEXT_BYTES` by default. */
       firstSightTextBytes?: number;
     } = {},
@@ -1150,7 +1142,6 @@ export class CodeRuleBridge {
     this.#onIgnoreRulesChanged = options.onIgnoreRulesChanged;
     this.#worktreeWalkGapMs = options.worktreeWalkGapMs;
     this.#worktreeWalks = options.worktreeWalks;
-    this.#treeWatch = options.treeWatch;
     this.#firstSightTextBytes = options.firstSightTextBytes ?? FIRST_SIGHT_TEXT_BYTES;
   }
 
@@ -1190,7 +1181,7 @@ export class CodeRuleBridge {
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
         heads: new Map(), git, unmerged: new Map(), passedCheckouts: new Set(), readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
         late: new Set(), askingAgain: new Map(), listingsAgain: new Set(), listingSlots: { free: LISTINGS_AGAIN_AT_ONCE, waiting: [] },
-        notices: new SessionNotices(root, this.#treeWatch?.()),
+        notices: new SessionNotices(root),
       };
       this.#unwatched = new ToolCallWindows();
       this.#discovery = discovery;
@@ -1809,11 +1800,19 @@ export class CodeRuleBridge {
    */
   #scheduleWorktreeWalk(discovery: SourceDiscovery): void {
     if (discovery.cancelled || this.#auditor.worktreeRoots === undefined) return;
-    discovery.worktrees.watch ??= this.#sharedWorktreeWalks().watch({
-      clock: filesystemClock,
-      start: () => this.#startWorktreeWalk(discovery),
-    });
+    discovery.worktrees.watch ??= this.#watchWorktrees(discovery);
     discovery.worktrees.watch.request();
+  }
+
+  /**
+   * The session's watch of the shared walk, made at its first walk. From then on the session folder's change notices
+   * come through the engine watch the walk takes its notices from (`SessionNotices`), so a command's result reads the
+   * paths they name.
+   */
+  #watchWorktrees(discovery: SourceDiscovery): WorktreeWatch {
+    const walks = this.#sharedWorktreeWalks();
+    discovery.notices.use(walks.sessionWatch());
+    return walks.watch({ clock: filesystemClock, start: () => this.#startWorktreeWalk(discovery) });
   }
 
   #sharedWorktreeWalks(): WorktreeWalks {
