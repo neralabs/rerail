@@ -1465,7 +1465,8 @@ views). Left, in order:
 2. Step 5 is built: every device relation lies in a block, and the device's probes read the relation's own index
    (`rel_group`), built once and kept with it. Most relations a stratum probes are new each run, so most indexes
    are still built once a run (about 920 a run on hogql, against 1,000 found).
-3. Step 6: placement drops the upload and row-back prices, and `GPU_BIAS` is refitted.
+3. Step 6 is built: placement prices no copies, per wave, and `GPU_BIAS` stays 2 after the refit. It is a measured
+   loss against the old prices until the CPU's price of strata like `ann_ctx` is right (Q68).
 4. Step 7: the output's, frames' and memo's rows, and the reach closure's (`Closed`, 5.6 MB on hogql).
 
 Open: the sources' blocks put the peak resident size up 25 MB (CPU binding) to 50 MB (Metal) on hogql. And a
@@ -1487,3 +1488,20 @@ measured on hogql (load 68–80, so noisy): instructions 67.7–76.8 B against 6
   remade when it has outgrown its wrap. Count the remakes.
 - **The build itself** (bucket, radix sort, place) against the old per-binding sort, by GPU time, on quiet runs.
 - **Done when**: each has a measurement on a quiet machine, and what it shows is either fixed or recorded in 0325.
+- **Also seen**: refusals at run time of an index (`an index of 715457 rows`) at the default budget. 0325 step
+  6's run-time refusals no longer lose findings (ef6c6c386), but each one still costs the stratum's device work.
+
+### Q68. The CPU's price of strata that step 6 moved to the GPU (0325 step 6)
+
+Step 6 priced the device without copies, and placement got worse on hogql: strata CPU 1.81–1.97 s against
+1.52–1.88 s with the old prices, instructions 70.1–76.5 B against 65.7–71.0 B (load 33–38). The device's prices
+fit its measured runs. The error is on the CPU side: `ann_ctx` is priced 2.45 ms a run on the CPU and measures 1.0
+ms, so it goes to the GPU (3.7 ms). `pre_118` and `pre_105` moved the same way. The old prices hid this with copy
+prices the device no longer pays.
+
+- Find why the CPU's estimate of these strata is high (`cpu_estimate_s` against `cpu_s` in `placement.tsv`,
+  per stratum): the planner's work estimate, or a per-work price (decision 0304's fit) that does not fit them.
+- A view's making cost depends on which stratum makes it first, and no per-stratum term predicts it. Pricing it
+  once per run, on the first reader placed on the device, may be the shape that fits.
+- **Done when**: on hogql the new prices are no worse than the old in strata CPU and instructions over interleaved
+  runs, with findings unchanged.

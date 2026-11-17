@@ -300,3 +300,23 @@ Step by step, each leaving the engine working (see the commits that name this de
   - On hogql (load 68–80): indexes found the relation's own 913–1,048 a run against 741, built 916–925 against
     937. Instructions 67.7–76.8 B against 68.3–74.1 B, peak 730–797 MB against 699–787 MB. Findings 1,629 in 5
     runs, cold included.
+- **Step 6, placement prices no copies** (2026-11-17): the device's price (`place`) is a run, its stages, its
+  indexes, the views it makes, and its joins' device work. `DEVICE_ROW_BACK`, `DEVICE_UPLOAD_PER_VALUE`,
+  `DEVICE_SUBMISSION` and `DEVICE_RULE` are gone.
+  - Fitted on hogql's `placement.tsv`, which now carries each stratum's GPU host time by part and its priced terms:
+    a run 0.18 ms (its share of its level's wave, one command buffer for 77% of runs), a stage 30 µs, an index 65
+    µs, a view made 0.4 ms. A relation the program derives is read in place and costs nothing to read.
+  - A view the device made stays resident for the run's later strata (`Run::device_views`), which are then priced
+    as finding it. Neither views nor their values predict a stratum's share of view making (R² under 0.3): `ann_ctx`
+    pays 2.1 ms a run when it makes its view of 1.2 M values, 0.5 ms when `ann_root` made it first.
+  - `GPU_BIAS` refitted: 2 is still the best of 1.25, 1.5, 2 and 3 for the new prices (strata CPU 2.18–2.23 s
+    against 2.33–2.58 s at 1.25 and 1.5, and 2.95–3.05 s at 3). `RERAIL_GPU_BIAS` sets it for such a refit.
+  - **A measured loss against the old prices** (three interleaved pairs, load 33–38): strata CPU 1.81–1.97 s
+    against 1.52–1.88 s, instructions 70.1–76.5 B against 65.7–71.0 B, peak 849–913 MB against 761–847 MB. Findings
+    1,629 in all six runs. The cause is on the CPU side: `ann_ctx` is priced 2.45 ms a run on the CPU and measures
+    1.0 ms, so it moves to the GPU (3.7 ms) though the device's price of it is right. The old prices hid that error
+    with a copy price the device no longer pays (Q68).
+  - Testing this at a 384 MB Metal budget found refusals at run time losing findings: a refused batch left the
+    views it encoded cached as made, so later strata read relations nothing wrote. Fixed in ef6c6c386 (`unrun`,
+    `a_view_made_in_a_refused_batch_is_made_again`), with two buffers that went back to the pool while an open
+    command buffer still wrote them.
