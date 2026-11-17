@@ -900,6 +900,86 @@ function answerEngineChallenge(challenge: unknown, accessToken: string, response
   response.end(JSON.stringify({ proof: engineProof(accessToken, challenge) }));
 }
 
+/** The path a hook posts its event to (`ingestEngineEvent`). */
+const EVENTS_PATH = "/events";
+
+/** What a request to the engine socket asks for, by its method and path. */
+type EngineRoute = "proof" | "event";
+
+/**
+ * The route of `incoming`, or undefined for a request the socket does not answer. The capability proof is answered only
+ * by a service that holds a capability.
+ */
+function engineRoute(incoming: IncomingMessage, accessToken: string | undefined): EngineRoute | undefined {
+  if (incoming.method !== "POST") return undefined;
+  if (incoming.url === ENGINE_PROOF_PATH) return accessToken === undefined ? undefined : "proof";
+  return incoming.url === EVENTS_PATH ? "event" : undefined;
+}
+
+/** Whether `incoming` carries the capability `accessToken`; any request does when the service has none. */
+function presentsAccess(incoming: IncomingMessage, accessToken: string | undefined): boolean {
+  if (accessToken === undefined) return true;
+  const presented = incoming.headers[DAEMON_ACCESS_HEADER];
+  return sameSecret(typeof presented === "string" ? presented : undefined, accessToken);
+}
+
+/** The body of `incoming`, read as JSON; refused as soon as it passes the event frame limit. */
+async function requestBody(incoming: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of incoming) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += bytes.length;
+    if (size > RERAIL_EVENT_MAX_FRAME_BYTES) throw new RangeError("Kernel event exceeds frame limit");
+    chunks.push(bytes);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Runs the event a hook posted and answers with its deliveries. */
+async function answerEvent(body: unknown, response: ServerResponse, service: Pick<EngineService, "ingest">): Promise<void> {
+  const { event, configuration } = parseEngineRequest(body);
+  const deliveries = await service.ingest(event, configuration);
+  response.end(encodeRerailEventResult({ eventId: event.eventId, deliveries: [...deliveries] }));
+}
+
+/**
+ * Answers one request to the engine socket: the capability proof, or a hook's event; anything else is not found. A
+ * request without the capability is refused before its body is read, so nothing of it reaches a runtime; a body that
+ * cannot be read or run is answered with why.
+ */
+async function answerEngineRequest(
+  incoming: IncomingMessage,
+  response: ServerResponse,
+  service: Pick<EngineService, "ingest">,
+  accessToken: string | undefined,
+): Promise<void> {
+  response.setHeader("Content-Type", "application/json");
+  const route = engineRoute(incoming, accessToken);
+  if (route === "proof") {
+    answerEngineChallenge(incoming.headers[ENGINE_CHALLENGE_HEADER], accessToken!, response);
+    incoming.resume();
+    return;
+  }
+  if (route === undefined) {
+    response.writeHead(404).end();
+    return;
+  }
+  if (!presentsAccess(incoming, accessToken)) {
+    response.writeHead(401).end(JSON.stringify({ error: "engine-access-required" }));
+    return;
+  }
+  try {
+    await answerEvent(await requestBody(incoming), response, service);
+  } catch (error) {
+    response.writeHead(400).end(JSON.stringify({ error: errorMessage(error) }));
+  }
+}
+
 /** What listening beside a held pipe needs; tests pass their own. */
 export interface HeldPipeListening {
   listen: (socketPath: string) => Promise<void>;
@@ -1005,39 +1085,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
   // Walks a caller gave are the caller's to close.
   const closeWalks = options.worktreeWalks === undefined ? () => routing.worktreeWalks.close() : () => undefined;
   const sweepIdleSessions = (): Promise<void> => sweepIdle(routing, options, databasePath);
-  const server = createServer(async (incoming, response) => {
-    response.setHeader("Content-Type", "application/json");
-    if (incoming.method === "POST" && incoming.url === ENGINE_PROOF_PATH && options.accessToken !== undefined) {
-      answerEngineChallenge(incoming.headers[ENGINE_CHALLENGE_HEADER], options.accessToken, response);
-      incoming.resume();
-      return;
-    }
-    if (incoming.method !== "POST" || incoming.url !== "/events") {
-      response.writeHead(404).end();
-      return;
-    }
-    const presented = incoming.headers[DAEMON_ACCESS_HEADER];
-    if (options.accessToken !== undefined && !sameSecret(typeof presented === "string" ? presented : undefined, options.accessToken)) {
-      // Refused before the body is read: nothing of the request reaches a runtime.
-      response.writeHead(401).end(JSON.stringify({ error: "engine-access-required" }));
-      return;
-    }
-    try {
-      const chunks: Buffer[] = [];
-      let size = 0;
-      for await (const chunk of incoming) {
-        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        size += bytes.length;
-        if (size > RERAIL_EVENT_MAX_FRAME_BYTES) throw new RangeError("Kernel event exceeds frame limit");
-        chunks.push(bytes);
-      }
-      const { event, configuration } = parseEngineRequest(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-      const deliveries = await engineService.ingest(event, configuration);
-      response.end(encodeRerailEventResult({ eventId: event.eventId, deliveries: [...deliveries] }));
-    } catch (error) {
-      response.writeHead(400).end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
-    }
-  });
+  const server = createServer((incoming, response) => void answerEngineRequest(incoming, response, engineService, options.accessToken));
   let socketPath = options.socketPath;
   const connections = trackConnections(server);
   const engineService: EngineService = {
