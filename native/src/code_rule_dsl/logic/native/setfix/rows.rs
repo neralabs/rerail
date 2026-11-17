@@ -21,7 +21,7 @@ use super::runs::RowData;
 const MAX_SEGMENTS: usize = 8;
 
 #[derive(Clone, Default)]
-pub(super) struct Rows {
+pub struct Rows {
     /// Frozen segments, oldest first: each its first row's id and its values.
     segs: Vec<(u32, Arc<Vec<i64>>)>,
     /// The first id the tail holds: every frozen segment's rows come before it.
@@ -146,6 +146,19 @@ impl Rows {
         self.segs.iter().any(|(_, a)| other.segs.iter().any(|(_, b)| Arc::ptr_eq(a, b)))
     }
 
+    /// Row `id`'s value in column `c` (`k` values a row).
+    #[inline]
+    pub(super) fn value(&self, id: u32, k: usize, c: usize) -> i64 {
+        if id >= self.from {
+            return self.tail[(id - self.from) as usize * k + c];
+        }
+        let (first, s) = match &self.segs[..] {
+            [only] => only,
+            segs => &segs[self.seg_of(id)],
+        };
+        s[(id - first) as usize * k + c]
+    }
+
     #[inline]
     fn seg_of(&self, id: u32) -> usize {
         self.segs.partition_point(|(first, _)| *first <= id) - 1
@@ -154,22 +167,97 @@ impl Rows {
 
 impl RowData for Rows {
     #[inline]
-    fn row(&self, id: u32, k: usize) -> &[i64] {
+    fn row(&self, id: u32, k: usize) -> Row {
         if id >= self.from {
-            return &self.tail[(id - self.from) as usize * k..][..k];
+            return Row::of(&self.tail[(id - self.from) as usize * k..][..k]);
         }
         let (first, s) = match &self.segs[..] {
             [only] => only,
             segs => &segs[self.seg_of(id)],
         };
-        &s[(id - first) as usize * k..][..k]
+        Row::of(&s[(id - first) as usize * k..][..k])
     }
 }
 
 impl RowData for Vec<i64> {
     #[inline]
-    fn row(&self, id: u32, k: usize) -> &[i64] {
-        &self[id as usize * k..][..k]
+    fn row(&self, id: u32, k: usize) -> Row {
+        Row::of(&self[id as usize * k..][..k])
+    }
+}
+
+/// The most columns a row holds (setfix's relations: `MAX_KEY`).
+pub(super) const MAX_ROW: usize = 64;
+
+/// One row's values, read out of the rows that hold it: on the stack, `k` of them written (a read returns it in its
+/// caller's slot). It reads as a slice.
+#[derive(Clone, Copy)]
+pub struct Row {
+    k: u8,
+    v: [std::mem::MaybeUninit<i64>; MAX_ROW],
+}
+
+impl Row {
+    /// A row of `vals` (at most `MAX_ROW`).
+    #[inline]
+    pub fn of(vals: &[i64]) -> Row {
+        let mut r = Row::empty(vals.len());
+        for (d, &x) in r.v.iter_mut().zip(vals) {
+            d.write(x);
+        }
+        r
+    }
+
+    /// A row of `k` values, each `value(c)`.
+    #[inline]
+    pub fn from_fn(k: usize, mut value: impl FnMut(usize) -> i64) -> Row {
+        let mut r = Row::empty(k);
+        for c in 0..k {
+            r.v[c].write(value(c));
+        }
+        r
+    }
+
+    #[inline]
+    fn empty(k: usize) -> Row {
+        assert!(k <= MAX_ROW, "a row of {k} columns, past {MAX_ROW}");
+        Row { k: k as u8, v: [std::mem::MaybeUninit::uninit(); MAX_ROW] }
+    }
+}
+
+impl std::ops::Deref for Row {
+    type Target = [i64];
+    #[inline]
+    fn deref(&self) -> &[i64] {
+        // SAFETY: the first `k` values were written (`of`, `from_fn`).
+        unsafe { std::slice::from_raw_parts(self.v.as_ptr().cast(), self.k as usize) }
+    }
+}
+
+impl PartialEq for Row {
+    #[inline]
+    fn eq(&self, other: &Row) -> bool {
+        **self == **other
+    }
+}
+
+impl PartialEq<[i64]> for Row {
+    #[inline]
+    fn eq(&self, other: &[i64]) -> bool {
+        **self == *other
+    }
+}
+
+impl PartialEq<&[i64]> for Row {
+    #[inline]
+    fn eq(&self, other: &&[i64]) -> bool {
+        **self == **other
+    }
+}
+
+impl std::fmt::Debug for Row {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        (**self).fmt(f)
     }
 }
 
@@ -187,12 +275,12 @@ mod tests {
         assert!(next.shares(&kept));
         next.extend_from_slice(&[100, 101]);
         next.extend_from_slice(&[102, 103]);
-        assert_eq!(next.row(3, k), &[6, 7]);
-        assert_eq!(next.row(11, k), &[102, 103]);
+        assert_eq!(*next.row(3, k), [6, 7]);
+        assert_eq!(*next.row(11, k), [102, 103]);
         assert_eq!(next.to_vec(9, 12, k), vec![18, 19, 100, 101, 102, 103]);
         let closed = next.freeze(12);
         assert!(closed.shares(&kept), "the kept segment is not copied at close");
-        assert_eq!(closed.row(10, k), &[100, 101]);
+        assert_eq!(*closed.row(10, k), [100, 101]);
         assert_eq!(closed.range(10, 12, k), &[100, 101, 102, 103]);
         // Edits add small segments; past the most held, the newest are merged and every row stays where it was.
         let mut rows = closed;
@@ -205,9 +293,9 @@ mod tests {
         }
         assert!(rows.segs.len() <= MAX_SEGMENTS);
         assert!(rows.shares(&kept), "the first segment is kept, not merged");
-        assert_eq!(rows.row(5, k), &[10, 11]);
-        assert_eq!(rows.row(12, k), &[1000, 2000]);
-        assert_eq!(rows.row(31, k), &[1019, 2019]);
+        assert_eq!(*rows.row(5, k), [10, 11]);
+        assert_eq!(*rows.row(12, k), [1000, 2000]);
+        assert_eq!(*rows.row(31, k), [1019, 2019]);
         assert_eq!(rows.len(), n * k);
     }
 }

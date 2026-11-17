@@ -459,7 +459,7 @@ pub(super) fn finish(cl: &Closure, p: Prepared, outs: Vec<Output>, store: &mut S
         if rel.dead(id as u32) {
             continue;
         }
-        row.copy_from_slice(rel.row(id));
+        row.copy_from_slice(&rel.row(id));
         into.clear();
         reach(p.index[&row[cl.col]], &mut into);
         for &z in &into {
@@ -509,7 +509,7 @@ fn by_distance(cl: &Closure, rel: &mut super::Rel, index: &HashMap<i64, u32>, no
         if rel.dead(id as u32) {
             continue;
         }
-        row.copy_from_slice(rel.row(id));
+        row.copy_from_slice(&rel.row(id));
         let base = rel.level[id];
         let s = index[&row[cl.col]];
         let reach = reach_of.entry(s).or_insert_with(|| search(s));

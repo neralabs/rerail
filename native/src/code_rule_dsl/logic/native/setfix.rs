@@ -44,6 +44,7 @@ pub mod ordered;
 pub mod runs;
 use runs::{Index, RowData};
 mod rows;
+pub use rows::Row;
 use rows::Rows;
 /// A column's statistics in a fixed size (decision 0112): no index is kept for them.
 pub mod sketch;
@@ -675,7 +676,7 @@ impl Rel {
     fn dead(&self, id: u32) -> bool {
         is_dead(&self.dead, id)
     }
-    fn row(&self, id: usize) -> &[i64] { self.data.row(id as u32, self.k) }
+    fn row(&self, id: usize) -> Row { self.data.row(id as u32, self.k) }
     /// A live row equal to `row`, not one of `skip`: in the first order, or pushed since the last wave (`pending`).
     fn find(&self, row: &[i64], skip: impl Fn(u32) -> bool) -> Option<u32> {
         let (data, k) = (&self.data, self.k);
@@ -833,7 +834,7 @@ impl Rel {
                 changed &= changed - 1;
                 if id < self.indexed {
                     let row = self.data.row(id as u32, k);
-                    if now >> (id % 64) & 1 == 1 { minus.extend_from_slice(row) } else { plus.extend_from_slice(row) }
+                    if now >> (id % 64) & 1 == 1 { minus.extend_from_slice(&row) } else { plus.extend_from_slice(&row) }
                 }
             }
         }
@@ -997,7 +998,7 @@ impl Fresh {
         let tagged = runs::tagged(cols, k);
         let data = &self.data;
         let cmp = |a: u32, b: u32| -> std::cmp::Ordering {
-            runs::cmp_vals(cols, tagged, data.row(a, k), data.row(b, k))
+            runs::cmp_vals(cols, tagged, &data.row(a, k), &data.row(b, k))
         };
         let mut order: Vec<u32> = (settled as u32..n as u32).collect();
         runs::presorted::site(runs::presorted::FRESH, n - settled, |i| cmp((settled + i - 1) as u32, (settled + i) as u32).is_gt());
@@ -1027,7 +1028,7 @@ impl Fresh {
         let mut held = vec![false; order.len()];
         if rel.indexed < rel.n {
             for (h, &q) in held.iter_mut().zip(&order) {
-                *h = rel.contains(data.row(q, k));
+                *h = rel.contains(&data.row(q, k));
             }
         }
         rel.idx[0].held_sorted(&rel.data, k, data, &order, |id| !rel.dead(id), &mut held);
@@ -1040,7 +1041,7 @@ impl Fresh {
                 (s, kept) = (s + 1, kept + 1);
             }
             if !h && !(s < settled && cmp(s as u32, q).is_eq()) {
-                out.extend_from_slice(data.row(q, k));
+                out.extend_from_slice(&data.row(q, k));
                 kept += 1;
             }
         }
@@ -1300,8 +1301,8 @@ impl Levels {
             let (cand, live) = (&store.rels[ln.cand], &store.rels[ln.live]);
             ln.decided.resize(cand.n, false);
             for id in ln.seen..cand.n {
-                let level = live.id_of(cand.row(id), &ln.was_dead).filter(|_| live.level.len() == live.n).map(|lid| live.level[lid as usize]);
-                if levels_traced(cand.row(id)) { eprintln!("RERAIL_LEVELS_TRACE {} {:?}: candidate, level {level:?}, last {:?}", cand.table, cand.row(id), self.last); }
+                let level = live.id_of(&cand.row(id), &ln.was_dead).filter(|_| live.level.len() == live.n).map(|lid| live.level[lid as usize]);
+                if levels_traced(&cand.row(id)) { eprintln!("RERAIL_LEVELS_TRACE {} {:?}: candidate, level {level:?}, last {:?}", cand.table, cand.row(id), self.last); }
                 match level {
                     Some(l) if self.last.is_none_or(|last| l > last) => self.heap.push(std::cmp::Reverse((l, li, id as u32))),
                     _ => ln.decided[id] = true,
@@ -3158,7 +3159,7 @@ impl View {
 }
 /// One row of an input relation: a slice of its flat rows, or a row of its view.
 #[derive(Clone, Copy)]
-pub enum RowRef<'a> { Flat(&'a [i64]), View(&'a View, usize), Source(&'a View, usize), Read([i64; READ], usize) }
+pub enum RowRef<'a> { Flat(&'a [i64]), Rows(&'a rows::Rows, u32, usize), View(&'a View, usize), Source(&'a View, usize), Read([i64; READ], usize) }
 /// The widest view row read whole (`RowRef::read`); a wider one is read a value at a time.
 const READ: usize = 8;
 impl<'a> RowRef<'a> {
@@ -3166,6 +3167,7 @@ impl<'a> RowRef<'a> {
     pub fn at(self, c: usize) -> i64 {
         match self {
             RowRef::Flat(r) => r[c],
+            RowRef::Rows(r, id, k) => r.value(id, k, c),
             RowRef::View(v, id) => v.src.value(v.ids.as_ref().map_or(id, |ids| ids[id] as usize), v.cols[c]),
             RowRef::Source(v, row) => v.src.value(row, v.cols[c]),
             RowRef::Read(vals, _) => vals[c],
@@ -3510,7 +3512,7 @@ pub fn kept_rows(conn: &Connection, table: &str) -> Option<(Vec<u8>, Vec<i64>, u
         if rel.ndead > 0 && is_dead(&rel.dead, id) {
             continue;
         }
-        out.extend_from_slice(rel.rows.row(id, k));
+        out.extend_from_slice(&rel.rows.row(id, k));
     }
     Some((rel.types.clone(), out, rel.rows()))
 }
@@ -3917,7 +3919,7 @@ impl InRel {
             for &id in &sample {
                 let r = self.row(id as usize);
                 if dedup {
-                    got_now += usize::from(find_row(&self.chains, rows, k, r, |x| is_dead(&self.dead, x)).is_some());
+                    got_now += usize::from(find_row(&self.chains, rows, k, &r, |x| is_dead(&self.dead, x)).is_some());
                     continue;
                 }
                 let exact = self.chains.iter().find(|ix| ix.cols == *shape);
@@ -4361,7 +4363,7 @@ impl InRel {
         match &self.from {
             Some(Origin::Based { at: a, n }) if *a == old.at && *n == old.n => {}
             Some(Origin::Compacted { at: a, old_n, kept, removed }) if *a == old.at && *old_n == old.n => {
-                let added = (*kept..self.n).filter(|&id| !is_dead(&self.dead, id as u32)).flat_map(|id| self.row(id).iter().copied()).collect();
+                let added = (*kept..self.n).filter(|&id| !is_dead(&self.dead, id as u32)).fold(Vec::new(), |mut v, id| { v.extend_from_slice(&self.row(id)); v });
                 return Some((added, removed.clone()));
             }
             _ => return None,
@@ -4373,14 +4375,14 @@ impl InRel {
                 let id = w * 64 + new.trailing_zeros() as usize;
                 new &= new - 1;
                 if id < old.n {
-                    removed.extend_from_slice(self.row(id));
+                    removed.extend_from_slice(&self.row(id));
                 }
             }
         }
         let mut added = Vec::with_capacity((self.n - old.n) * k);
         for id in old.n..self.n {
             if !is_dead(&self.dead, id as u32) {
-                added.extend_from_slice(self.row(id));
+                added.extend_from_slice(&self.row(id));
             }
         }
         Some((added, removed))
@@ -4401,7 +4403,7 @@ impl InRel {
         match &self.from {
             Some(Origin::Based { at: a, n }) if *a == at && *n == old.n => {}
             Some(Origin::Compacted { at: a, old_n, kept, removed }) if *a == at && *old_n == old.n => {
-                let added = (*kept..self.n).filter(|&id| !is_dead(&self.dead, id as u32)).flat_map(|id| self.row(id).iter().copied()).collect();
+                let added = (*kept..self.n).filter(|&id| !is_dead(&self.dead, id as u32)).fold(Vec::new(), |mut v, id| { v.extend_from_slice(&self.row(id)); v });
                 return Some((added, removed.clone()));
             }
             _ => return None,
@@ -4413,14 +4415,14 @@ impl InRel {
                 let id = w * 64 + new.trailing_zeros() as usize;
                 new &= new - 1;
                 if id < old.n {
-                    removed.extend_from_slice(self.row(id));
+                    removed.extend_from_slice(&self.row(id));
                 }
             }
         }
         let mut added = Vec::with_capacity((self.n - old.n) * k);
         for id in old.n..self.n {
             if !is_dead(&self.dead, id as u32) {
-                added.extend_from_slice(self.row(id));
+                added.extend_from_slice(&self.row(id));
             }
         }
         Some((added, removed))
@@ -4463,7 +4465,7 @@ impl InRel {
         let mut out = Vec::with_capacity((self.n - self.ndead) * self.k);
         for id in 0..self.n {
             if !is_dead(&self.dead, id as u32) {
-                out.extend_from_slice(self.row(id));
+                out.extend_from_slice(&self.row(id));
             }
         }
         Some(out)
@@ -4486,12 +4488,12 @@ impl InRel {
         match &self.view { Some(v) if v.ids.is_none() => v.src.len(), _ => self.n }
     }
     /// A flat relation's row (a derived one: views are base inputs, or an index's relation, `hold_source`).
-    pub fn row(&self, id: usize) -> &[i64] { self.rows.row(id as u32, self.k) }
+    pub fn row(&self, id: usize) -> Row { self.rows.row(id as u32, self.k) }
     /// Row `id`'s values, flat or read from its view.
-    pub fn values(&self, id: usize) -> std::borrow::Cow<'_, [i64]> {
+    pub fn values(&self, id: usize) -> Row {
         match &self.view {
-            None => std::borrow::Cow::Borrowed(self.row(id)),
-            Some(_) => { let r = self.at(id); std::borrow::Cow::Owned((0..self.k).map(|c| r.at(c)).collect()) }
+            None => self.row(id),
+            Some(_) => { let r = self.at(id).read(); Row::from_fn(self.k, |c| r.at(c)) }
         }
     }
     /// The source a derived relation is read from in place, every row (`hold_source`); `None` for rows held flat.
@@ -4500,7 +4502,7 @@ impl InRel {
     }
     #[inline]
     pub fn at(&self, id: usize) -> RowRef<'_> {
-        match &self.view { Some(v) => RowRef::View(v, id), None => RowRef::Flat(self.rows.row(id as u32, self.k)) }
+        match &self.view { Some(v) => RowRef::View(v, id), None => RowRef::Rows(&self.rows, id as u32, self.k) }
     }
     /// For a key of several columns over a view, the most selective column the source indexes (sorted, or by its
     /// lookup) with at most `LEAD_MATCHES` rows a value: its position in `cols`, and whether sorted.
@@ -5996,7 +5998,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     enum Rows<'a> { In(&'a InRel), Comp(&'a Rel), Source(&'a View) }
     impl<'a> Rows<'a> {
         fn row(self, id: u32) -> RowRef<'a> {
-            match self { Rows::In(r) => r.at(id as usize).read(), Rows::Comp(r) => RowRef::Flat(r.row(id as usize)), Rows::Source(v) => RowRef::Source(v, id as usize).read() }
+            match self { Rows::In(r) => r.at(id as usize).read(), Rows::Comp(r) => RowRef::Rows(&r.data, id, r.k), Rows::Source(v) => RowRef::Source(v, id as usize).read() }
         }
         /// A row deleted in place (`Rel::based`), which no step reads.
         #[inline]
@@ -7093,7 +7095,7 @@ pub mod posted_tests {
                 let id = (0..rel.n as u32).find(|&id| !rel.dead(id)).expect("a row");
                 assert!(kill(&mut rel.dead, id));
                 rel.ndead += 1;
-                set.remove(rel.row(id as usize));
+                set.remove(&*rel.row(id as usize));
             }
         }
         let live: std::collections::BTreeSet<Vec<i64>> = (0..rel.n).filter(|&id| !rel.dead(id as u32)).map(|id| rel.row(id).to_vec()).collect();

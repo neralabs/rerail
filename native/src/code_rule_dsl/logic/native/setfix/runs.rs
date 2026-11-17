@@ -25,16 +25,20 @@ use std::cmp::Ordering;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
+use super::rows::Row;
+
 /// A relation's rows, read by id: one flat vector (`[i64]`, `k` values a row), or the segments a maintained relation
 /// shares with the kept one it started as (`super::Rows`, smoking gun 8). Every row lies whole in one segment.
+/// Rows read by id: each read is a copy of the row's `k` values (`Row`, on the stack), never a reference into the
+/// rows, so what holds them can be a block's columns (decision 0325).
 pub(super) trait RowData {
-    fn row(&self, id: u32, k: usize) -> &[i64];
+    fn row(&self, id: u32, k: usize) -> Row;
 }
 
 impl RowData for [i64] {
     #[inline]
-    fn row(&self, id: u32, k: usize) -> &[i64] {
-        &self[id as usize * k..][..k]
+    fn row(&self, id: u32, k: usize) -> Row {
+        Row::of(&self[id as usize * k..][..k])
     }
 }
 
@@ -223,11 +227,11 @@ impl Sorted {
         if hi <= lo {
             return;
         }
-        debug_assert!((lo + 1..hi).all(|id| cmp_vals(cols, tagged(cols, k), data.row(id - 1, k), data.row(id, k)).is_le()), "rows {lo}..{hi} said sorted on {cols:?} are not");
+        debug_assert!((lo + 1..hi).all(|id| cmp_vals(cols, tagged(cols, k), &data.row(id - 1, k), &data.row(id, k)).is_le()), "rows {lo}..{hi} said sorted on {cols:?} are not");
         if let Some((_, end, c)) = self.0.last_mut()
             && *end == lo
             && **c == *cols
-            && cmp_vals(cols, tagged(cols, k), data.row(lo - 1, k), data.row(lo, k)).is_le()
+            && cmp_vals(cols, tagged(cols, k), &data.row(lo - 1, k), &data.row(lo, k)).is_le()
         {
             *end = hi;
             return;
@@ -415,7 +419,7 @@ fn gallop_on() -> bool {
 #[inline]
 fn cmp_rows<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], a: u32, b: u32) -> Ordering {
     let (ra, rb) = (data.row(a, k), data.row(b, k));
-    cmp_vals(cols, tagged(cols, k), ra, rb).then_with(|| a.cmp(&b))
+    cmp_vals(cols, tagged(cols, k), &ra, &rb).then_with(|| a.cmp(&b))
 }
 
 impl Run {
@@ -438,7 +442,7 @@ impl Run {
 
     /// This run with its ids' key prints (an order probed by whole keys): one row read an id.
     fn printed<D: RowData + ?Sized>(mut self, data: &D, k: usize, cols: &[usize]) -> Run {
-        self.prints = self.ids.iter().map(|id| print_of(data.row(id, k), cols)).collect();
+        self.prints = self.ids.iter().map(|id| print_of(&data.row(id, k), cols)).collect();
         self
     }
 
@@ -536,7 +540,7 @@ impl Run {
                 continue;
             }
             let row = &rows[q as usize * k..][..k];
-            let cmp = |id: u32| -> Ordering { cmp_vals(cols, tagged, data.row(id, k), row) };
+            let cmp = |id: u32| -> Ordering { cmp_vals(cols, tagged, &data.row(id, k), row) };
             if tagged {
                 // The row's tag span, from where the last row's search ended; within it, the rows read in order.
                 let (s, e) = tag_span(&self.tags, tag(row[lead]), at, false);
@@ -569,7 +573,7 @@ impl Run {
             let (first, second) = if ahi == blo { (a, b) } else { (b, a) };
             if let (Ids::Rows(lo, mid), Ids::Rows(mid2, hi)) = (&first.ids, &second.ids)
                 && mid == mid2
-                && (lo == mid || mid2 == hi || cmp_vals(cols, tagged(cols, k), data.row(mid - 1, k), data.row(*mid, k)).is_le())
+                && (lo == mid || mid2 == hi || cmp_vals(cols, tagged(cols, k), &data.row(mid - 1, k), &data.row(*mid, k)).is_le())
             {
                 let prints = if !first.prints.is_empty() && !second.prints.is_empty() { [first.prints.as_slice(), second.prints.as_slice()].concat() } else { Vec::new() };
                 let ids = Ids::Rows(*lo, *hi);
@@ -1084,7 +1088,7 @@ impl Index {
         if !self.printed {
             return Run::of(data, k, &self.cols, (lo..hi).collect());
         }
-        let by_row: Vec<u8> = (lo..hi).map(|id| print_of(data.row(id, k), &self.cols)).collect();
+        let by_row: Vec<u8> = (lo..hi).map(|id| print_of(&data.row(id, k), &self.cols)).collect();
         let mut run = Run::of(data, k, &self.cols, (lo..hi).collect());
         run.prints = run.ids.iter().map(|id| by_row[(id - lo) as usize]).collect();
         run
@@ -1218,7 +1222,7 @@ impl Index {
             // taken in place (decision 0187), the rest sorted.
             if r.ids.iter().max().is_some_and(|hi| (hi - lo) as usize + 1 == r.ids.len()) {
                 let hi = lo + r.ids.len() as u32;
-                presorted::site(presorted::REORDER, r.ids.len(), |i| cmp_vals(&self.cols, t, data.row(lo + i as u32 - 1, k), data.row(lo + i as u32, k)).is_gt());
+                presorted::site(presorted::REORDER, r.ids.len(), |i| cmp_vals(&self.cols, t, &data.row(lo + i as u32 - 1, k), &data.row(lo + i as u32, k)).is_gt());
                 let known = if known_beyond_runs() { sorted.within(&self.cols, k, lo, hi) } else { Vec::new() };
                 presorted::site_known(presorted::REORDER, known.iter().map(|&(a, b)| u64::from(b - a)).sum());
                 *r = Arc::new(self.run_over(data, k, lo, hi, &known));
@@ -1370,7 +1374,7 @@ pub mod presorted {
         let (mut start, mut long, mut stretches, mut whole) = (lo, 0u64, 0u64, true);
         let mut close = |start: u32, end: u32| if end - start >= 64 { long += u64::from(end - start); stretches += 1; };
         for id in lo + 1..hi {
-            if cmp_vals(cols, tagged(cols, k), data.row(id - 1, k), data.row(id, k)) == Ordering::Greater {
+            if cmp_vals(cols, tagged(cols, k), &data.row(id - 1, k), &data.row(id, k)) == Ordering::Greater {
                 close(start, id);
                 start = id;
                 whole = false;
