@@ -1,0 +1,1 @@
+`rerail packs list`, `rerail start` and the daemon's start no longer compile every rule of every pack each time they run. With the Node, TypeScript, JavaScript, Python and complexity packs, `rerail packs list` takes 2 s instead of 16 s.

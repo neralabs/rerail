@@ -6,7 +6,7 @@ Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-Before you update: every internal-testing feature, `rerail scan` included, is now off until its `RERAIL_EXPERIMENTAL_<FEATURE>` variable is set, or `RERAIL_EXPERIMENTAL=1` for all of them. A CI job that runs `rerail scan` sets `RERAIL_EXPERIMENTAL_HEADLESS_SCAN=1`; [Internal testing](docs/internal-testing.md) lists each feature and its variable.
+0.1.5 makes Rerail lighter and steadier where it was strained: on Windows, in large repositories, and with many worktrees and sessions open at once. The daemon, the hooks and the `rerail` command use far less memory and start faster, sessions stop losing events while the daemon is busy, and Windows gets a long run of fixes. Set-up now matches rule packs to the linters a repository already runs, code rules read Java, and `rerail update` shows what it is doing. Before you update: features in internal testing, `rerail scan` included, are off until their variable is set ([Internal testing](docs/internal-testing.md)), and Claude Code on Windows needs Git Bash.
 
 ## 0.1.4 (2026-11-12)
 

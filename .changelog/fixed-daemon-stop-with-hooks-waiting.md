@@ -1,1 +1,1 @@
-A stopping daemon no longer waits without limit on a coding agent hook's request that stopped arriving partway, which made `rerail daemon stop` kill it at 10 s with no clean-up. It cuts such a request off after a second or two with nothing sent, and still runs and answers every event it took in that ends before that kill.
+`rerail daemon stop` no longer waits 10 seconds and then kills the daemon with no clean-up when a coding agent hook's request stopped arriving partway. The daemon cuts such a request off after a second or two, and still answers every event it had taken in.
