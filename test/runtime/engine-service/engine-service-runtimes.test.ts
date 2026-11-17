@@ -543,6 +543,35 @@ describe("the engine service's idle close", () => {
     }
   }, 30_000);
 
+  // Before, the open was tried again on a 250 ms timer, each try opening a writer, for as long as the lock was held.
+  it("opens a quiet session for a scan when another process gives back the write lock, with no timer trying it again", async () => {
+    const { create, scans } = recordingAuditor();
+    const { clock, service, start, databasePath } = await idleService({ createAuditor: create, idleRuntimeMs: 0 });
+    await start("a");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    const controls = new SqliteAuditControlStore(databasePath);
+    const writer = new Database(databasePath);
+    try {
+      const request = controls.requestAudit("a", { scope: "repository" });
+      writer.exec("BEGIN IMMEDIATE");
+      vi.useFakeTimers({ toFake: ["setTimeout", "setInterval"] });
+      await service.resumeSession("a");
+      expect(vi.getTimerCount()).toBe(0);
+      vi.useRealTimers();
+      writer.exec("ROLLBACK");
+      await vi.waitFor(() => {
+        expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({ status: "completed", error: null });
+      }, { timeout: 10_000, interval: 50 });
+      expect(scans).toEqual(["repository"]);
+    } finally {
+      vi.useRealTimers();
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      controls.close();
+    }
+  }, 30_000);
+
   it("runs a scan queued for a quiet session once its next event opens it, as the session's owner", async () => {
     const { create, scans } = recordingAuditor();
     const { clock, service, start, prompt, databasePath } = await idleService({ createAuditor: create });
