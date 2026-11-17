@@ -289,13 +289,17 @@ session opened there as `c:\…` still finds its audit settings under that spell
 key, and the database still opens. A lookup that fails for a reason that can pass (a busy file, a share that did not
 answer) leaves the key waiting for a later open from its drive. On macOS and Linux the step reads and copies nothing.
 
-What an earlier version changes later under a spelling the step recorded reaches this version too. Triggers in the
-database (`src/engine/storage/path-key-spelling-triggers.ts`), which run inside that version's own writes, carry a start
-or a stop it makes to this version's row for the folder, and each audit setting, rule setting of the checkout,
-repository audit and presentation preference it saves, changes or deletes there, unless this version's row is newer. A
-write that leaves a row's values as they were (a session that only touches its checkout) carries nothing. Nothing else
-goes the other way: an earlier version reads its own rows, as it does beside a version without the step. Rows an earlier
-version writes under a spelling the step never saw stay under that spelling: the step runs once per database.
+What an earlier version changes later under a spelling the step recorded reaches this version's copy too. Triggers in
+the database (`src/engine/storage/path-key-spelling-triggers.ts`), which run inside that version's own writes, carry a
+start or a stop it makes, and each audit setting, rule setting of the checkout, repository audit and presentation
+preference it changes or deletes there, to the copy the step made, while the copy still holds what that version's row
+held. Once this version writes the copy, or a session of the earlier version opened in the folder as the disk spells
+it does, the copy keeps its own values, and so does a row that stood under that spelling before the step. A row the
+earlier version adds there is copied where this version has none. A presentation preference keeps no time, so one the
+earlier version saved as the disk spells the folder after saving the same choice under the other spelling follows that
+version's later change under the other. Nothing else goes the other way: an earlier version reads its own rows, as it
+does beside a version without the step. Rows an earlier version writes under a spelling the step never saw stay under
+that spelling: the step runs once per database.
 
 <details>
 <summary>Other places that compare Windows paths</summary>

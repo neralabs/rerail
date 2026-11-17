@@ -426,9 +426,12 @@ describe("path keys an earlier build stored under another spelling", () => {
     vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
     openRerailDatabase(databasePath).$client.close();
     const later = Date.now() + 60_000;
-    // The earlier build, its own statements on its own rows: `rerail stop`, the rule back to its default, Steer in the
-    // touched-files scope, the status line back to compact, and `rerail scrub` cleaning the repository audit's error.
+    // The earlier build, its own statements on its own rows: its rule setting and audit settings saved again as they
+    // were, then `rerail stop`, the rule back to its default, Steer in the touched-files scope, the status line back to
+    // compact, and `rerail scrub` cleaning the repository audit's error.
     write(databasePath, [
+      [`UPDATE rule_settings SET updated_at = ${later - 2} WHERE owner_kind = 'checkout' AND owner_id = ?`, stored],
+      [`UPDATE audit_settings SET updated_at = ${later - 2} WHERE workspace_root = ?`, stored],
       ["UPDATE checkouts SET started = 0 WHERE checkout_path = ?", stored],
       ["DELETE FROM rule_settings WHERE owner_kind = 'checkout' AND owner_id = ?", stored],
       [`INSERT INTO audit_settings (workspace_root, settings_json, updated_at) VALUES (?, '{"scope":"touched-files","mode":"steer"}', ${later})
@@ -544,6 +547,103 @@ describe("path keys an earlier build stored under another spelling", () => {
     expect([rowsUnder(databasePath, inner), rowsUnder(databasePath, stored)]).toEqual([saved.inner, saved.stored]);
     expect(spellings(databasePath)).toEqual([{ stored, current: folder }, { stored: storedInner, current: inner }]
       .sort((left, right) => (left.stored < right.stored ? -1 : 1)));
+  });
+
+  // Where the step kept a row under the key the disk stores, a trigger still wrote the earlier build's later change or
+  // removal under the other spelling over it, so that build's reader of the stored spelling read what it never saved
+  // there: a stop and a start under the other spelling started the folder it had stopped, a rule it saved off read on.
+  it("leave a row that stood under the spelling the disk stores as it is when the earlier build changes or removes its row under the other", async () => {
+    const { folder, databasePath } = await checkoutFolder();
+    onTheSystemDrive(folder);
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    // The same records under the spelling the disk stores, each saved before the one under `stored`, so two rows of a
+    // record agree but for when they were saved; there the folder is stopped, and its preference was made first.
+    write(databasePath, [
+      [`INSERT INTO rule_settings (owner_kind, owner_id, folder, target_kind, target_id, "on", updated_at)
+        VALUES ('checkout', ?, '', 'rule', 'no-debugger', 0, 1)`, stored],
+      [`INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at)
+        SELECT ?, repository_key, clone_id, 0, created_at - 1, last_seen_at - 1 FROM checkouts`, folder],
+      [`INSERT INTO rule_settings (owner_kind, owner_id, folder, target_kind, target_id, "on", mode, suppressions, config_json, updated_at)
+        SELECT owner_kind, ?, folder, target_kind, target_id, "on", mode, suppressions, config_json, updated_at - 1 FROM rule_settings
+        WHERE owner_kind = 'checkout'`, folder],
+      ["INSERT INTO audit_settings (workspace_root, settings_json, updated_at) SELECT ?, settings_json, updated_at - 1 FROM audit_settings", folder],
+      [`INSERT INTO repository_audits (workspace_root, session_id, audit_id, status, started_at, finished_at, error)
+        SELECT ?, session_id, audit_id, status, started_at - 1, finished_at, error FROM repository_audits`, folder],
+      ["DELETE FROM presentation_preferences WHERE repository = ?", stored],
+      ["INSERT INTO presentation_preferences (repository, host, presence) VALUES (?, 'claude-code', 'silent')", folder],
+      ["INSERT INTO presentation_preferences (repository, host, presence) VALUES (?, 'claude-code', 'silent')", stored],
+    ]);
+    vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
+    openRerailDatabase(databasePath).$client.close();
+    const saved = rowsUnder(databasePath, folder);
+    const later = Date.now() + 60_000;
+
+    // The earlier build under `stored`, its own statements on its own rows: one rule setting removed while the two rows
+    // agree; then a stop and a start, the other rule on, Steer, the audit failed and a compact status line.
+    write(databasePath, [
+      ["DELETE FROM rule_settings WHERE owner_kind = 'checkout' AND owner_id = ? AND target_id = 'no-debugger'", stored],
+      ["UPDATE checkouts SET started = 0 WHERE checkout_path = ?", stored],
+      ["UPDATE checkouts SET started = 1 WHERE checkout_path = ?", stored],
+      [`UPDATE rule_settings SET "on" = 1, updated_at = ${later} WHERE owner_kind = 'checkout' AND owner_id = ?`, stored],
+      [`UPDATE audit_settings SET settings_json = '{"scope":"touched-files","mode":"steer"}', updated_at = ${later} WHERE workspace_root = ?`, stored],
+      ["UPDATE repository_audits SET status = 'failed', error = 'cleaned' WHERE workspace_root = ?", stored],
+      ["UPDATE presentation_preferences SET presence = 'compact' WHERE repository = ?", stored],
+    ]);
+    expect(rowsUnder(databasePath, folder)).toEqual(saved);
+    // Then it removes the rest and saves two of them again.
+    write(databasePath, [
+      ["DELETE FROM rule_settings WHERE owner_kind = 'checkout' AND owner_id = ?", stored],
+      ["DELETE FROM audit_settings WHERE workspace_root = ?", stored],
+      ["DELETE FROM repository_audits WHERE workspace_root = ?", stored],
+      ["DELETE FROM presentation_preferences WHERE repository = ?", stored],
+      [`INSERT INTO audit_settings (workspace_root, settings_json, updated_at) VALUES (?, '{"scope":"repository","mode":"steer"}', ${later + 1})`, stored],
+      ["INSERT INTO presentation_preferences (repository, host, presence) VALUES (?, 'claude-code', 'compact')", stored],
+    ]);
+    expect(rowsUnder(databasePath, folder)).toEqual(saved);
+    expect(recordsAt(folder, databasePath)).toMatchObject({ startState: "stopped", presence: "silent", auditSettings: { mode: "log" } });
+  });
+
+  // A copy this build had written went on taking what the earlier build saved later under the other spelling: a rule
+  // this build's person turned off came back after the earlier build saved its own row again, unchanged.
+  it("keep what this build wrote to a copy when the earlier build later saves, changes or removes its own row", async () => {
+    const { folder, databasePath } = await checkoutFolder();
+    onTheSystemDrive(folder);
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    write(databasePath, [[`INSERT INTO rule_settings (owner_kind, owner_id, folder, target_kind, target_id, "on", updated_at)
+      VALUES ('checkout', ?, '', 'rule', 'no-debugger', 0, 1)`, stored]]);
+    vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
+    openRerailDatabase(databasePath).$client.close();
+    const later = Date.now() + 60_000;
+    // This build, on its copies: the folder stopped, one rule on and the other back to its default, a compact status
+    // line, a newer repository audit that completed.
+    write(databasePath, [
+      ["UPDATE checkouts SET started = 0 WHERE checkout_path = ?", folder],
+      [`UPDATE rule_settings SET "on" = 1, updated_at = ${later} WHERE owner_kind = 'checkout' AND owner_id = ? AND target_id = 'no-console'`, folder],
+      ["DELETE FROM rule_settings WHERE owner_kind = 'checkout' AND owner_id = ? AND target_id = 'no-debugger'", folder],
+      ["UPDATE presentation_preferences SET presence = 'compact' WHERE repository = ?", folder],
+      [`UPDATE repository_audits SET session_id = 'later', audit_id = 'audit-2', status = 'completed', started_at = ${later}, finished_at = ${later + 1}
+        WHERE workspace_root = ?`, folder],
+      auditRow("audit-2", folder),
+    ]);
+    const written = rowsUnder(databasePath, folder);
+    // The earlier build: its checkout back to following its repository, its rule setting and its preference saved again
+    // as they were, the other rule on, and its older repository audit cleaned.
+    write(databasePath, [
+      ["UPDATE checkouts SET started = NULL WHERE checkout_path = ?", stored],
+      [`INSERT INTO rule_settings (owner_kind, owner_id, folder, target_kind, target_id, "on", updated_at) VALUES ('checkout', ?, '', 'rule', 'no-console', 0, ${later + 2})
+        ON CONFLICT (owner_kind, owner_id, folder, target_kind, target_id) DO UPDATE SET "on" = excluded."on", updated_at = excluded.updated_at`, stored],
+      [`UPDATE rule_settings SET "on" = 1, updated_at = ${later + 2} WHERE owner_kind = 'checkout' AND owner_id = ? AND target_id = 'no-debugger'`, stored],
+      [`INSERT INTO presentation_preferences (repository, host, presence) VALUES (?, 'claude-code', 'silent')
+        ON CONFLICT (repository, host) DO UPDATE SET presence = excluded.presence`, stored],
+      ["UPDATE repository_audits SET status = 'failed', error = 'cleaned' WHERE workspace_root = ?", stored],
+    ]);
+
+    expect(rowsUnder(databasePath, folder)).toEqual(written);
+    expect(recordsAt(folder, databasePath)).toMatchObject({
+      startState: "stopped", presence: "compact", repositoryAuditList: [{ workspaceRoot: folder, status: "completed", auditId: "audit-2" }],
+    });
   });
 
   it("list a folder once where only its audit history holds the earlier spelling, and leave that history as it was", async () => {
