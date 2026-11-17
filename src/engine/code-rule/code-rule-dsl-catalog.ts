@@ -268,54 +268,75 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
 
   #build(loaded: LoadedCheckoutRules, sourceSignature: string): CatalogState {
     const quarantined = [...loaded.quarantined];
-    const codeRules: CompiledCodeRuleDslEntry[] = [];
-    const provenance: RepositoryAuditRuleProvenance[] = [];
-    const versioned: unknown[] = [];
-    const ruleSet = loaded.ruleSet;
-    const placed = ruleSet === undefined ? new Map<string, PlacedRule>() : placedRules(ruleSet, loaded.folders);
+    const built: BuiltRule[] = [];
+    const placed = loaded.ruleSet === undefined ? new Map<string, PlacedRule>() : placedRules(loaded.ruleSet, loaded.folders);
     for (const id of [...placed.keys()].sort(compareDeterministicStrings)) {
-      const { rule, decisions } = placed.get(id)!;
-      const placement = placementOf(decisions, loaded.folders);
-      if (placement.length === 0) continue;
-      if (rule.configError !== null) {
-        quarantined.push({ ruleId: id, kind: "code", owner: RERAIL_OWNER, reason: `The repository's config for this rule does not apply: ${rule.configError}` });
-        continue;
-      }
-      const source = ruleSourceText(rule.document.rule);
-      if (source === undefined) throw new Error(`Policy ${id} is not JSON representable`);
-      const sourceDigest = source.digest;
-      const outcome = compiledRules.compile(this.#capabilities, id, source.text, sourceDigest, stableJsonText(rule.config) ?? "");
-      if (!outcome.ok) {
-        // A rule naming a language the engine does not read yet is inactive by design: quarantined with that code, not reported.
-        const unsupported = languageNotSupportedOf(outcome.reason);
-        quarantined.push({
-          ruleId: id, kind: "code", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER,
-          reason: unsupported?.reason ?? outcome.reason,
-          ...(unsupported === undefined ? {} : { code: unsupported.code }),
-        });
-        continue;
-      }
-      codeRules.push({ id, executable: outcome.executable, placement });
-      provenance.push({
-        ruleId: id,
-        revision: rule.revision,
-        payloadHash: rule.payloadHash,
-        source: { ...rule.source },
-        repositoryKey: ruleSet!.checkout.repositoryKey,
-        checkoutPath: ruleSet!.checkout.checkoutPath,
-        placement: decisions,
-      });
-      versioned.push({ id, sourceDigest, placement, source: rule.source });
+      const compiled = this.#compiled(id, placed.get(id)!, loaded);
+      if (compiled === undefined) continue;
+      if ("quarantined" in compiled) quarantined.push(compiled.quarantined);
+      else built.push(compiled);
     }
-    for (const entry of quarantined) if (entry.code === undefined) reportQuarantinedRule(this.#source.label, entry);
-    const canonical = stableJsonText({ capabilitiesDigest: this.#capabilities.digest, format: "rerail.policy-dsl-catalog/v3", policies: versioned });
-    if (canonical === undefined) throw new Error("Policy catalog version is not JSON representable");
+    return catalogState({ capabilitiesDigest: this.#capabilities.digest, label: this.#source.label, sourceSignature }, built, quarantined);
+  }
+
+  /** One placed rule compiled: its entry, provenance and version line; why it is quarantined; undefined where it is placed nowhere. */
+  #compiled(id: string, { rule, decisions }: PlacedRule, loaded: LoadedCheckoutRules): BuiltRule | { readonly quarantined: QuarantinedRule } | undefined {
+    const placement = placementOf(decisions, loaded.folders);
+    if (placement.length === 0) return undefined;
+    if (rule.configError !== null)
+      return { quarantined: { ruleId: id, kind: "code", owner: RERAIL_OWNER, reason: `The repository's config for this rule does not apply: ${rule.configError}` } };
+    const source = ruleSourceText(rule.document.rule);
+    if (source === undefined) throw new Error(`Policy ${id} is not JSON representable`);
+    const outcome = compiledRules.compile(this.#capabilities, id, source.text, source.digest, stableJsonText(rule.config) ?? "");
+    if (!outcome.ok) return { quarantined: refusedRule(id, rule, outcome.reason) };
+    const checkout = loaded.ruleSet!.checkout;
     return {
-      status: { ruleCount: codeRules.length, version: digest(canonical), sourceSignature },
-      snapshot: { version: digest(canonical), codeRules, provenance },
-      quarantined,
+      entry: { id, executable: outcome.executable, placement },
+      provenance: {
+        ruleId: id, revision: rule.revision, payloadHash: rule.payloadHash, source: { ...rule.source },
+        repositoryKey: checkout.repositoryKey, checkoutPath: checkout.checkoutPath, placement: decisions,
+      },
+      versioned: { id, sourceDigest: source.digest, placement, source: rule.source },
     };
   }
+}
+
+/** A rule the catalog compiled: its entry, its provenance, and its line of the catalog's version. */
+interface BuiltRule {
+  readonly entry: CompiledCodeRuleDslEntry;
+  readonly provenance: RepositoryAuditRuleProvenance;
+  readonly versioned: unknown;
+}
+
+/**
+ * A rule the engine refused. One naming a language the engine does not read yet is inactive by design: quarantined
+ * with that code, not reported.
+ */
+function refusedRule(id: string, rule: EffectiveRule, reason: string): QuarantinedRule {
+  const unsupported = languageNotSupportedOf(reason);
+  return {
+    ruleId: id, kind: "code", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER,
+    reason: unsupported?.reason ?? reason,
+    ...(unsupported === undefined ? {} : { code: unsupported.code }),
+  };
+}
+
+/** The catalog's state from the rules it built and those it quarantined, each quarantined one without a code reported. */
+function catalogState(
+  catalog: { readonly capabilitiesDigest: string; readonly label: string; readonly sourceSignature: string },
+  built: readonly BuiltRule[],
+  quarantined: readonly QuarantinedRule[],
+): CatalogState {
+  for (const entry of quarantined) if (entry.code === undefined) reportQuarantinedRule(catalog.label, entry);
+  const policies = built.map(rule => rule.versioned);
+  const canonical = stableJsonText({ capabilitiesDigest: catalog.capabilitiesDigest, format: "rerail.policy-dsl-catalog/v3", policies });
+  if (canonical === undefined) throw new Error("Policy catalog version is not JSON representable");
+  const codeRules = built.map(rule => rule.entry);
+  return {
+    status: { ruleCount: codeRules.length, version: digest(canonical), sourceSignature: catalog.sourceSignature },
+    snapshot: { version: digest(canonical), codeRules, provenance: built.map(rule => rule.provenance) },
+    quarantined,
+  };
 }
 
 /** Whether a checkout may run rules: `ok` only when it is recorded, effectively started, and its repository set up. */
