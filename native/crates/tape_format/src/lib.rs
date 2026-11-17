@@ -143,6 +143,10 @@ impl Widths {
     pub fn guess(len: usize) -> Self {
         Widths { size: if len < SIZE_GUESS_BYTES { 2 } else { 4 }, off: 2, tail: 2, from_start: false }
     }
+
+    /// Every column at 4 bytes: the widths a file is parsed again at when 2 do not hold it
+    /// (docs/parser-generators/37). A start and an end are `u32`s, so every value fits.
+    pub const WIDE: Widths = Widths { size: 4, off: 4, tail: 4, from_start: false };
 }
 
 /// A writer's widths, as a type: `Narrow`, the widths nearly every file is written at, fixed

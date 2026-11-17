@@ -2672,8 +2672,13 @@ pub fn shared_runs(native: &Structure, pushes: &[u16]) -> SharedRuns {
 }
 
 pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
+    compile_cut(native, &one_cut(native))
+}
+
+/// `compile`'s cut: every word in one cluster, at the configured speed.
+fn one_cut(native: &Structure) -> crate::native_cpu_clusters::Cut {
     let speed = crate::native_cpu_codegen::OPTIMIZE_TIER2.load(std::sync::atomic::Ordering::Relaxed);
-    compile_cut(native, &crate::native_cpu_clusters::Cut { speed, ..crate::native_cpu_clusters::Cut::one(native.structural.len()) })
+    crate::native_cpu_clusters::Cut { speed, ..crate::native_cpu_clusters::Cut::one(native.structural.len()) }
 }
 
 /// A cluster's function, lowered: its loop heads, the places it is entered at (each with its
@@ -5548,28 +5553,108 @@ impl Tape {
 pub struct Parser {
     pub tier1: crate::native_cpu_block::CompiledBlock,
     pub tier2: CompiledStream,
+    /// Tier 2 at wider widths, each compiled the first time a file needs it, from the structure
+    /// and cut kept here (`again`). `None` for a parser made `from_parts`: such a file is refused.
+    wide: Option<Wide>,
+}
+
+/// What a parser compiles its wider tier 2s from, and those compiled: one a set of widths, by
+/// which of size, offset and tail take 4 bytes (`Wide::slot`).
+struct Wide {
+    native: Structure,
+    cut: crate::native_cpu_clusters::Cut,
+    streams: [std::sync::OnceLock<Option<CompiledStream>>; 8],
+}
+
+impl Wide {
+    fn new(native: &Structure, cut: crate::native_cpu_clusters::Cut) -> Option<Self> {
+        Some(Wide { native: native.clone(), cut, streams: Default::default() })
+    }
+
+    fn slot(w: rerail_tape_format::Widths) -> usize {
+        usize::from(w.size == 4) | usize::from(w.off == 4) << 1 | usize::from(w.tail == 4) << 2
+    }
+
+    /// Tier 2 at `w` (tails from the last descendant), compiled on first use; `None` where the
+    /// compiler refuses the structure at those widths.
+    fn at(&self, w: rerail_tape_format::Widths) -> Option<&CompiledStream> {
+        self.streams[Self::slot(w)].get_or_init(|| compile_at(&self.native, &self.cut, w, self.native.tag).ok()).as_ref()
+    }
+}
+
+/// The narrowest widths an image's values fit, as the engine's writer chooses them
+/// (`rerail_tape_format::Writer::finish`): sizes by the node count, offsets and tails by their
+/// largest. An image written at wider widths is written again at these, so that the tape's bytes
+/// are the writer's.
+pub fn least_widths(image: &[u8]) -> rerail_tape_format::Widths {
+    use rerail_tape_format::{CHECKPOINT_STRIDE, HEADER_BYTES, header, padded, width_for};
+    let n = u64::from_le_bytes(image[header::NODES..header::NODES + 8].try_into().expect("8 bytes")) as usize;
+    let w = |k: usize| usize::from(image[header::WIDTHS + k] & !rerail_tape_format::TAIL_FROM_START);
+    let (ws, wo, wt) = (w(0), w(1), w(2));
+    let size_at = padded(HEADER_BYTES + 2 * n);
+    let off_at = padded(padded(size_at + ws * n) + 4 * n.div_ceil(CHECKPOINT_STRIDE));
+    let tail_at = padded(off_at + wo * n);
+    let most = |at: usize, width: usize| -> u32 {
+        if width == 2 {
+            return 0;
+        }
+        image[at..at + 4 * n].chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().expect("4 bytes"))).max().unwrap_or(0)
+    };
+    rerail_tape_format::Widths { size: width_for(n as u32), off: width_for(most(off_at, wo)), tail: width_for(most(tail_at, wt)), from_start: false }
 }
 
 impl Parser {
     pub fn new(native: &Structure) -> Result<Self, Error> {
         let block = native.block_programs.first().ok_or(Error::UnsupportedBackend)?;
-        Ok(Parser { tier1: crate::native_cpu_block::compile(block)?, tier2: compile(native)? })
+        Ok(Parser { tier1: crate::native_cpu_block::compile(block)?, tier2: compile(native)?, wide: Wide::new(native, one_cut(native)) })
     }
 
     /// `new`, with tier 2 in the clusters of `cut` (`compile_cut`).
     pub fn with_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) -> Result<Self, Error> {
         let block = native.block_programs.first().ok_or(Error::UnsupportedBackend)?;
-        Ok(Parser { tier1: crate::native_cpu_block::compile(block)?, tier2: compile_cut(native, cut)? })
+        Ok(Parser { tier1: crate::native_cpu_block::compile(block)?, tier2: compile_cut(native, cut)?, wide: Wide::new(native, cut.clone()) })
+    }
+
+    /// Tiers 1 and 2 compiled elsewhere (a probe timing tier 2's compile): no wide tier 2.
+    pub fn from_parts(tier1: crate::native_cpu_block::CompiledBlock, tier2: CompiledStream) -> Self {
+        Parser { tier1, tier2, wide: None }
+    }
+
+    /// Tier 2 at `Widths::WIDE`, compiled on first use; `None` where it cannot be (a parser
+    /// `from_parts`, or a structure the compiler refuses at those widths).
+    pub fn wide(&self) -> Option<&CompiledStream> {
+        self.wide.as_ref()?.at(rerail_tape_format::Widths::WIDE)
+    }
+
+    /// A file the narrow tier 2 refused (`narrow`), read again (decision 0140's guess, then
+    /// docs/parser-generators/37's wider parse): by `read` at `Widths::WIDE`, then, where its
+    /// values fit narrower columns (`least_widths`), at those, so the image is the writer's.
+    /// A refusal at `WIDE` is the grammar's: the file goes to the fallback.
+    pub fn again(&self, narrow: Refused, read: impl Fn(&CompiledStream) -> Result<Vec<u8>, Refused>) -> Result<Vec<u8>, Refused> {
+        let (Some(w), Some(wide)) = (self.wide.as_ref(), self.wide()) else { return Err(narrow) };
+        let image = read(wide)?;
+        let least = least_widths(&image);
+        match w.at(least) {
+            Some(t2) if least != rerail_tape_format::Widths::WIDE => read(t2),
+            _ => Ok(image),
+        }
     }
 
     /// The engine's tape of `bytes` as tier 2 wrote it (its bytes), or the word that refused
-    /// it (the file goes to the fallback).
+    /// it (the file goes to the fallback). A file whose tape does not fit the narrow widths is
+    /// read again at wider ones, over the same tier 1 run (`again`).
     pub fn image(&self, bytes: &[u8]) -> Result<Vec<u8>, Refused> {
         let mut batch = crate::native_cpu_block::Batch::new(&self.tier1, &[bytes]);
         batch.call(&self.tier1);
         let mut tape = self.tape(&batch);
-        self.words(&batch, &mut tape)?;
-        Ok(tape.image())
+        match self.words(&batch, &mut tape) {
+            Ok(()) => Ok(tape.image()),
+            Err(narrow) => self.again(narrow, |t2| {
+                let mut tape = t2.tape(self.stream(&batch, t2.starts).1);
+                self.words_with(t2, &batch, &mut tape)?;
+                Ok(tape.image())
+            }),
+        }
     }
 
 
@@ -5579,8 +5664,15 @@ impl Parser {
         let mut batch = crate::native_cpu_block::Batch::new(&self.tier1, &[bytes]);
         batch.call(&self.tier1);
         let mut tape = self.tape(&batch);
-        self.words(&batch, &mut tape)?;
-        Ok(tape.nodes())
+        match self.words(&batch, &mut tape) {
+            Ok(()) => Ok(tape.nodes()),
+            Err(narrow) => {
+                let Some(wide) = self.wide() else { return Err(narrow) };
+                let mut tape = wide.tape(self.stream(&batch, wide.starts).1);
+                self.words_with(wide, &batch, &mut tape)?;
+                Ok(tape.nodes())
+            }
+        }
     }
 
     /// Tier 1's stream `e` in `batch` (its first file), as tier 1 wrote it: its positions (room
@@ -5604,16 +5696,21 @@ impl Parser {
     /// Tier 2's function over tier 1's buffers in `batch` (one file), into `tape`; or the word
     /// that refused the file.
     pub fn words(&self, batch: &crate::native_cpu_block::Batch, tape: &mut Tape) -> Result<(), Refused> {
+        self.words_with(&self.tier2, batch, tape)
+    }
+
+    /// `words`, by tier 2 `t2` (the narrow one or the wide one).
+    fn words_with(&self, t2: &CompiledStream, batch: &crate::native_cpu_block::Batch, tape: &mut Tape) -> Result<(), Refused> {
         let row = batch.rows[0];
         let extracts = self.tier1.extracts.len();
-        let starts = self.stream(batch, self.tier2.starts);
+        let starts = self.stream(batch, t2.starts);
         let outputs = batch.out[row.out as usize..].as_ptr();
-        let lasts = self.stream(batch, self.tier2.lasts);
+        let lasts = self.stream(batch, t2.lasts);
         // The records where tier 1's layout has them (`records::RecordLayout`): a token's start,
         // last and code, a column each or a row a token.
         let (layout, cols) = match &self.tier1.records {
             Some(t) => (t.layout, [u64::from(t.starts), u64::from(t.lasts), extracts as u64]),
-            None => (crate::records::RecordLayout::Columns, [self.tier2.starts.unwrap_or(0) as u64, self.tier2.lasts.unwrap_or(0) as u64, extracts as u64]),
+            None => (crate::records::RecordLayout::Columns, [t2.starts.unwrap_or(0) as u64, t2.lasts.unwrap_or(0) as u64, extracts as u64]),
         };
         let field = |k: usize| batch.positions[(row.positions + layout.index(k, 0, cols, row.capacity)) as usize..].as_ptr();
         let (starts_p, lasts_p, codes) = (field(crate::records::FIELD_START), field(crate::records::FIELD_LAST), field(crate::records::FIELD_CODE));
@@ -5622,14 +5719,14 @@ impl Parser {
             Some(t) if !t.is_empty() => t,
             _ => &none[..],
         };
-        debug_assert!(starts.0.len() >= starts.1 + 2 || self.tier2.starts.is_none());
+        debug_assert!(starts.0.len() >= starts.1 + 2 || t2.starts.is_none());
         // SAFETY: the file's bytes in the batch have `FRONT` zero bytes before them and 64 after
         // its blocks; each stream has `capacity` slots, at least two past its count; the tape is
         // sized for the stream.
         let view = Tier1View {
-            starts: if self.tier2.starts.is_some() { starts_p } else { starts.0.as_ptr() },
+            starts: if t2.starts.is_some() { starts_p } else { starts.0.as_ptr() },
             nstarts: starts.1.min(lasts.1),
-            lasts: if self.tier2.lasts.is_some() { lasts_p } else { lasts.0.as_ptr() },
+            lasts: if t2.lasts.is_some() { lasts_p } else { lasts.0.as_ptr() },
             codes,
             lasts_stride: 8 * self.tier1.outputs,
             outputs,
@@ -5639,7 +5736,7 @@ impl Parser {
             totals_mask: u64::MAX,
             record_stride: layout.stride() as usize,
         };
-        let r = unsafe { self.tier2.call(batch.bytes.as_ptr().wrapping_add(row.bytes as usize), row.len as usize, view, tape) };
+        let r = unsafe { t2.call(batch.bytes.as_ptr().wrapping_add(row.bytes as usize), row.len as usize, view, tape) };
         if r != 0 {
             return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse" });
         }

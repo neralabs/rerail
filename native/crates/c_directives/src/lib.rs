@@ -31,9 +31,6 @@ const OWN_IDS: u16 = 0x4000;
 /// The compiled grammar.
 pub struct Compiled {
     pub parser: native_cpu_stream::Parser,
-    /// The same at 4-byte columns, for a file whose tape does not fit 2 (a tail past 64 KiB: a
-    /// file's last directive far from its end). Decision 0140's guess, then page 37's wider parse.
-    pub wide: native_cpu_stream::Parser,
     /// Tier 1's program as lowered, for its other executors (Metal).
     pub native: rerail_compiler::block_native::BlockNative,
     /// The program as assembled: the interpreter's input.
@@ -83,12 +80,7 @@ pub fn compile_text(grammar: &str) -> Result<Compiled, String> {
     }
     let cut = native_cpu_clusters::by_rules(&native);
     let parser = native_cpu_stream::Parser::with_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
-    let widths = rerail_tape_format::Widths { size: 4, off: 4, tail: 4, from_start: false };
-    let wide = native_cpu_stream::Parser {
-        tier1: rerail_compiler::native_cpu_block::compile(&native.block_programs[0]).map_err(|e| format!("Cranelift: {e:?}"))?,
-        tier2: native_cpu_stream::compile_at(&native, &cut, widths, native.tag).map_err(|e| format!("Cranelift: {e:?}"))?,
-    };
-    Ok(Compiled { parser, wide, native: native.block_programs[0].clone(), program, words: compiled.words.clone(), machine: compiled.machine.clone() })
+    Ok(Compiled { parser, native: native.block_programs[0].clone(), program, words: compiled.words.clone(), machine: compiled.machine.clone() })
 }
 
 /// A directive as the tape gives it: `c_directive`'s kind and bytes (the file's).
@@ -102,7 +94,7 @@ pub struct Row {
 impl Compiled {
     /// `src`'s tape image, or `None` where the grammar refuses the file.
     pub fn image(&self, src: &[u8]) -> Option<Vec<u8>> {
-        self.parser.image(src).or_else(|_| self.wide.image(src)).ok()
+        self.parser.image(src).ok()
     }
 
     /// `src`'s directives, read from its tape in place, or `None` where the grammar refuses it.
@@ -124,7 +116,7 @@ impl Compiled {
         use rerail_metal::block_program::serial::{Segments, run_resident};
         let batch: Vec<_> = files.iter().map(|f| rerail_compiler::block::BatchFile { bytes: f, program: 0 }).collect();
         match run_resident(&[&self.native], &batch, Segments { blocks: 29, warm: 1 }) {
-            Ok((_, run)) => Some((0..files.len()).map(|i| rerail_metal::tier2_on::image_on(&self.parser, &run, i).or_else(|_| rerail_metal::tier2_on::image_on(&self.wide, &run, i)).ok().and_then(|t| rows(&t).ok())).collect()),
+            Ok((_, run)) => Some((0..files.len()).map(|i| rerail_metal::tier2_on::image_on(&self.parser, &run, i).ok().and_then(|t| rows(&t).ok())).collect()),
             Err(rerail_compiler::Error::BackendCapacity) if files.len() > 1 => {
                 let (a, b) = files.split_at(files.len() / 2);
                 let mut out = self.metal_rows(a)?;

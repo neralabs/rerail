@@ -337,9 +337,11 @@ otherwise). The tape's rows are read in place (`rerail_c_directives::rows`).
   directives too, so the device's tier 1 sent the file to its fallback. A directive line's tokens
   run over masks of the line (`d_word`, `s_bytes`).
 - **A tape past 2-byte columns** (a file's last directive far from its end: a root tail past
-  64 KiB) is read by a second tier 2 at 4 bytes (`Compiled::wide`); the compiler's `Parser` has
-  no wider parse yet (work queue Q31). Found with it and fixed: an offset was flagged wide at any
-  width (`native_cpu_tape::blocks_from`, `rust_stream`).
+  64 KiB) was refused by every compiled grammar: the compiler's `Parser` compiled tier 2 at the
+  narrow widths only. It now reads such a file again (`Parser::again`, on the CPU and over
+  Metal's buffers): at 4 bytes, then at the narrowest widths its values fit, so the image is the
+  writer's byte for byte (work queue Q31). Found with it and fixed: an offset was flagged wide at
+  any width (`native_cpu_tape::blocks_from`, `rust_stream`).
 - Next steps: the operands (a `#define`'s name, parameters and body; an `#include`'s form and
   spelling; `#if`'s expression), then the conditionals' chains and groups as nesting, then the
   refusals above.

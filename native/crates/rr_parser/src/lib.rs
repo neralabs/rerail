@@ -2525,7 +2525,7 @@ pub mod tests {
             let mut times = cranelift_codegen::timing::take_current();
             times.add(&rerail_compiler::native_cpu_codegen::parallel_pass_times());
             let timing = times.to_string();
-            let p = Parser { tier1: rerail_compiler::native_cpu_block::compile(&native.block_programs[0]).expect("tier 1"), tier2 };
+            let p = Parser::from_parts(rerail_compiler::native_cpu_block::compile(&native.block_programs[0]).expect("tier 1"), tier2);
             if std::env::var_os("RR_TIMING").is_some() {
                 eprintln!("{name}:\n{timing}");
             }

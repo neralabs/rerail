@@ -791,18 +791,23 @@ pass.
   - `packs/rust/clippy-double-parens.rr`: `rr_token_req_by_sole_group_0`'s rules differ.
 - **Done when**: the 8 tests pass, each remaining difference fixed in the lowering or explained.
 
-### Q31. A tape past 2-byte columns is parsed again at 4 in the compiler's `Parser`
+### Q31. A tape past 2-byte columns is parsed again at wider ones in the compiler's `Parser`
 
 - **Keep**: decision 0140's guess (2-byte columns, written once for nearly every file); page 37's
-  "parsed again at wider ones", which no caller builds: `native_cpu_stream::Parser` compiles tier 2
-  at `Narrow::WIDTHS` only, so a file whose tape needs 4 bytes (a tail past 64 KiB) is refused by
-  every compiled grammar and goes to its fallback. `rerail-c-directives` keeps a second parser at
-  4 bytes (`Compiled::wide`) and reads such a file (`a_file_past_64_kib_is_read_at_wide_columns`).
-- **Done when**: `Parser` holds the wide tier 2 (compiled when first needed) and `image` and
-  `tier2_on::image_on` retry with it, for every language; `rr_parser`, `kotlin_parser` and
-  `c_directives` read it there, and the crate's own copy goes.
-- **Found with it, fixed**: `native_cpu_tape::blocks_from` and `rust_stream`'s `blocks` flagged an
-  offset past 0xffff as wide at any width, so a 4-byte table refused too.
+  "parsed again at wider ones", which no caller built: `native_cpu_stream::Parser` compiled tier 2
+  at `Narrow::WIDTHS` only, so every compiled grammar refused a file whose tape needs 4 bytes, and
+  the file went to its fallback. The image stays the engine writer's, byte for byte.
+- **Done when**: `Parser` reads such a file again for every language, on the CPU and over Metal's
+  buffers, with an image equal to the writer's.
+- **Record** (2026-11-17): `Parser::again`: tier 2 at `Widths::WIDE`, then at `least_widths` of
+  that image (the writer's choice: sizes by node count, offsets and tails by their largest) when
+  narrower; each width set compiled on first use from the structure and cut the parser keeps.
+  `Parser::image`, `parse` and `tier2_on::image_on` use it; `Parser::from_parts` (a timing probe)
+  has none. Tests: `a_tape_past_two_byte_columns_is_read_at_four` (every ladder step, the image
+  the writer's), `.rr`'s `corpus_images_are_the_lean_tapes` (two large files now taken, equal),
+  C's `a_file_past_64_kib_is_read_at_wide_columns` on every backend. Fixed with it: an offset was
+  flagged wide at any width (`native_cpu_tape::blocks_from`, `rust_stream`'s `blocks`). Reviewed
+  against reviewer-brief.md: no narrow-path change (the retry runs after a refusal only).
 
 ## Questions for the user
 
