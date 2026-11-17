@@ -22,11 +22,11 @@ Matches any Python string constant whose decoded value is exactly `0.0.0.0`, reg
 
 ### `bandit-b108-hardcoded-tmp-directory`
 
-Matches string constants (and implicitly concatenated strings as a whole) whose decoded value starts with `/tmp`, `/var/tmp` or `/dev/shm`; strings that are bare expression statements (docstrings) are skipped.
+Matches string constants (and implicitly concatenated strings as a whole) whose decoded value starts with `/tmp`, `/var/tmp` or `/dev/shm`; strings that are bare expression statements (docstrings) are skipped. In an f-string it checks each literal run as Bandit 1.9.4 sees it under CPython 3.12 and later, where a run is a constant of its own: the text at the start of the f-string or right after a replacement field, reported where that text starts, bare f-string statements included. In an implicit concatenation with a replacement field, a piece whose previous piece ends in literal text continues that piece's run; a plain piece that starts a run is reported at its quote. Not covered: the text of a format spec (`f"{x:/tmp}"`), escapes that spell a temp directory, and a run whose temp directory is split across pieces (`"/tm" f"p{x}"`). An f-string concatenation without a replacement field is still matched as a whole, at its first piece.
 
 ### `bandit-b202-tarfile-unsafe-members`
 
-Old description claimed: allow `filter="data"`, otherwise classify missing members, members supplied by a call, and other members expressions separately. The current clause does none of that — it flags every `extractall` on a value bound from `tarfile.open`.
+Port of Bandit 1.9.4's B202, which does not trace the receiver: a call whose function name contains `extractall` (`tar.extractall()`, `tarfile.extractall(...)`, a bare `extractall()`), after an `import tarfile` (aliased or not, anywhere earlier in the file), unless it passes `filter="data"` as a string literal. So an archive bound by `with tarfile.open(...) as tar` or `tarfile.TarFile.open` is reported, and so is any other `extractall`, `zipfile`'s included, in a file that imports `tarfile`, as Bandit does. `from tarfile import open` alone is not `import tarfile` to Bandit, so it does not count. Bandit's severity levels for `members=` are not modelled; every reported call has one message. Bandit stops with an internal error on `members=` given a call whose callee is not a plain name (`members=self.pick(tar)`) and reports nothing there; the port reports it.
 
 ### `bandit-b324-hashlib-insecure-functions`
 

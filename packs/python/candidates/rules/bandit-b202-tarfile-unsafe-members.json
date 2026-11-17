@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "bandit-b202-tarfile-unsafe-members",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Validate members before calling extractall() on an archive from tarfile.open; crafted entries can write files outside the target directory.",
   "scope": {
@@ -17,29 +17,123 @@
         "ast": {
           "language": "python",
           "rule": {
-            "pattern": "$ARCHIVE.extractall($$$ARGS)"
-          },
-          "constraints": {
-            "ARCHIVE": {
-              "resolves": {
-                "binding": {
-                  "value": {
-                    "matches": "tar-open"
+            "kind": "call",
+            "has": {
+              "field": "function",
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "extractall"
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "attribute",
+                    "regex": "extractall"
                   }
+                }
+              ]
+            },
+            "not": {
+              "has": {
+                "field": "arguments",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "keyword_argument",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "name",
+                        "regex": "^filter$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "value",
+                        "matches": "data-literal"
+                      }
+                    }
+                  ]
                 }
               }
             },
-            "OPEN": {
-              "resolves": {
-                "import": [
-                  "tarfile.open"
-                ]
-              }
-            }
+            "matches": "after-tarfile-import"
           },
           "utils": {
-            "tar-open": {
-              "pattern": "$OPEN($$$)"
+            "data-literal": {
+              "any": [
+                {
+                  "kind": "string",
+                  "value": {
+                    "eq": "data"
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string_start",
+                      "regex": "(?i)^[rubft]*[ft]"
+                    }
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "value": {
+                    "eq": "data"
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "string_start",
+                      "regex": "(?i)^[rubft]*[ft]"
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "data-literal"
+                  }
+                }
+              ]
+            },
+            "tarfile-import": {
+              "kind": "import_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "dotted_name",
+                    "regex": "^tarfile$"
+                  },
+                  {
+                    "kind": "aliased_import",
+                    "has": {
+                      "field": "name",
+                      "regex": "^tarfile$"
+                    }
+                  }
+                ]
+              }
+            },
+            "after-tarfile-import": {
+              "inside": {
+                "stopBy": "end",
+                "follows": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "tarfile-import"
+                    },
+                    {
+                      "has": {
+                        "stopBy": "end",
+                        "matches": "tarfile-import"
+                      }
+                    }
+                  ]
+                }
+              }
             }
           }
         }
