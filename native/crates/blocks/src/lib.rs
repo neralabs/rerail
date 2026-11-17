@@ -36,6 +36,7 @@ pub const RELATION_READS: &str = include_str!("relation_reads.metal");
 pub mod journal;
 pub mod mem;
 pub mod packed;
+pub mod ranged;
 pub mod program;
 pub mod refs;
 pub mod relation;
