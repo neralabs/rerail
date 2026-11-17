@@ -1,0 +1,1 @@
+In internal testing, `rerail scan` runs the rule packs a repository lists in `.rerail/packs.json`, by exact version or by a folder in the repository, read from the commit its rules come from, so every machine scanning that commit runs the same rules. `--pack` is refused where the file exists, and the report names the packs it ran.

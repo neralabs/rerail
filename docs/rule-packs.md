@@ -251,6 +251,13 @@ A rule document is a `rerail.policy/v1` code rule or a conversation rule; no `pa
 
 </details>
 
+## Packs a repository lists
+
+In [internal testing](internal-testing.md): a repository can list the packs it runs in `.rerail/packs.json`, by
+published pack and exact version or by a folder in the repository, so every machine scanning a commit runs the same
+rules. Today only the headless `rerail scan` reads it ([headless scan](headless-scan.md#packs-the-repository-lists));
+a session still runs the packs its machine attaches ([design](repository-packs.md)).
+
 ## Where a pack's rules live
 
 Rule documents live only in the installed pack; the database holds people's decisions about them, by id.

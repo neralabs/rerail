@@ -1,6 +1,7 @@
 # Rule packs declared in the repository
 
-Status: a design for the Rerail owners to react to, before the change behind it. Nothing here is implemented yet.
+Status: a design for the Rerail owners to react to. In internal testing, `rerail scan` reads the file as described
+here (`src/engine/catalog/packs-file/`, `src/cli/scan-packs.ts`); sessions do not read it yet.
 
 ## Problem
 

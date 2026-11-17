@@ -5,8 +5,12 @@
  * home's configuration it opens that database as the daemon would, which applies this version's schema to it.)
  *
  * Which rules run:
- * - The Rerail home's configuration for the checkout, when Rerail is started and set up in it there (packs attached,
- *   approvals, settings), and neither `--pack` nor `--rules-ref` is given.
+ * - When the scan's tree declares its packs (`.rerail/packs.json`, in the working tree or at `--rules-ref`), exactly
+ *   those packs, fetched or read for this scan (`scan-packs.ts`), and the tree's own rules, on a throwaway database:
+ *   the Rerail home's attachments, settings and installed packs are not used, so every machine runs the same rules
+ *   for the same commit. `--pack` is then refused.
+ * - Otherwise the Rerail home's configuration for the checkout, when Rerail is started and set up in it there (packs
+ *   attached, approvals, settings), and neither `--pack` nor `--rules-ref` is given.
  * - Otherwise a throwaway database: the checkout's own `.rerail/rules/` (unapproved, so they run in Log), plus each
  *   `--pack` installed in the Rerail home. With `--rules-ref <ref>` the rules come from `.rerail/rules/` at that Git
  *   ref instead of the working tree, which the change under review cannot edit. Either way the approval policy is a
@@ -24,6 +28,7 @@ import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { rulePackPackageOf } from "../engine/catalog/rule-packs.js";
 import { setRuleSetting, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import { upsertLibraryRule } from "../engine/catalog/rule-library.js";
+import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { isWorktreePack, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
@@ -34,6 +39,8 @@ import { defaultRerailDatabasePath, openRerailDatabase, openRerailDatabaseAsIs, 
 import { repositories } from "../engine/storage/schema.js";
 import { tableColumns } from "../engine/storage/table-probe.js";
 import { setRepositoryStarted, stateOf } from "../runtime/repository-start.js";
+import type { PackStore } from "../setup/rule-pack-store.js";
+import { declaredPacksOf, declaredScanPacks, type DeclaredPacks, type DeclaredScanPacks, type ScanPack } from "./scan-packs.js";
 
 export const SCAN_SCHEMA = "rerail.scan/1";
 
@@ -87,6 +94,8 @@ export interface ScanReport {
   base: { ref: string; mergeBase: string } | null;
   paths: string[] | null;
   rulesSource: { kind: "home" } | { kind: "worktree" } | { kind: "ref"; ref: string };
+  /** The rule packs the scan ran, besides the tree's own rules: what `.rerail/packs.json` lists, else the home's. */
+  packs: ScanPack[];
   status: "completed" | "failed";
   rules: ScanRule[];
   violations: ScanViolation[];
@@ -113,6 +122,8 @@ export interface HeadlessScanOptions {
    * so a remote that receives the scan gets them from here.
    */
   ruleDocuments?: Map<string, RuleDocument>;
+  /** Installs the published packs `.rerail/packs.json` lists into a scan's own home; npm (`npmPackStore`) by default. */
+  packStore?: (home: string) => PackStore;
 }
 
 function git(cwd: string, args: readonly string[]): string {
@@ -154,7 +165,7 @@ interface RefRules {
  * keeps it) or takes the id of an installed pack's rule is left out with why, and the others load. A ref that is not a
  * commit throws: a typo must not pass as a scan with no rules.
  */
-async function rulesAtRef(root: string, ref: string, scratch: string): Promise<RefRules> {
+async function rulesAtRef(root: string, ref: string, scratch: string, installed: RuleCatalog): Promise<RefRules> {
   const resolved = gitMaybe(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
   if (resolved === null) throw new Error(`--rules-ref ${ref} is not a commit in ${root}`);
   if (runGit(root, ["cat-file", "-e", `${resolved}:${WORKTREE_RULES_FOLDER}`]).status !== 0) return { documents: [], skipped: [] };
@@ -183,7 +194,6 @@ async function rulesAtRef(root: string, ref: string, scratch: string): Promise<R
       truncateSync(target, MAX_REF_RULE_BYTES + 1);
     } else mkdirSync(target);
   }
-  const installed = loadRuleCatalog();
   const catalog = worktreeRuleCatalog(installed, copy);
   const pack = catalog.packs.get(WORKTREE_PACK_ID);
   const documents = pack === undefined || !isWorktreePack(pack)
@@ -278,6 +288,7 @@ function copyTables(home: RerailDatabase, scratch: RerailDatabase, tables: reado
 function prepareScratchDatabase(
   databasePath: string, root: string, home: RerailDatabase | undefined, useHome: boolean,
   packs: readonly string[], refRules: RefRules | undefined, ruleDocuments: Map<string, RuleDocument> | undefined,
+  catalog: RuleCatalog,
 ): Set<string> {
   const refRuleIds = new Set<string>();
   const database = openRerailDatabase(databasePath);
@@ -289,7 +300,6 @@ function prepareScratchDatabase(
     const { repositoryKey } = recordCheckout(database, root);
     const libraryRules: Array<{ sourceKind: "library_rule"; sourceId: string; folder: string }> = [];
     if (refRules !== undefined) {
-      const catalog = loadRuleCatalog();
       for (const document of refRules.documents) {
         const stored = upsertLibraryRule(database, catalog, document.rule, "code");
         const ruleId = stored.document.rule.id;
@@ -413,7 +423,7 @@ function scanTarget(options: HeadlessScanOptions, root: string): { base: ScanRep
 type ScanAudit = AuditInput & { result?: AuditResult };
 
 /** Runs the audits of one session over `paths` (or the whole repository), recording them rather than storing them. */
-async function runScanAudits(databasePath: string, root: string, sessionId: string, paths: readonly string[] | null): Promise<ScanAudit[]> {
+async function runScanAudits(databasePath: string, root: string, sessionId: string, paths: readonly string[] | null, ruleCatalog: RuleCatalog | undefined): Promise<ScanAudit[]> {
   const audits: ScanAudit[] = [];
   const recorder: AuditRecorder = {
     start(input) { audits.push({ ...input, paths: [...input.paths] }); return String(audits.length - 1); },
@@ -422,7 +432,7 @@ async function runScanAudits(databasePath: string, root: string, sessionId: stri
     progress(auditId, result) { audits[Number(auditId)]!.result = { status: "interrupted", ...result }; },
     interrupt() {},
   };
-  const catalogs = new CheckoutCatalogs(databasePath);
+  const catalogs = new CheckoutCatalogs(databasePath, ruleCatalog === undefined ? {} : { ruleCatalog });
   const owners = new CheckoutOwners();
   const router = new CheckoutCodeRuleRouter({
     sessionRoot: root,
@@ -491,22 +501,37 @@ function scanRulesSource(rulesRef: string | undefined, useHome: boolean): ScanRe
   return useHome ? { kind: "home" } : { kind: "worktree" };
 }
 
+/** The home's packs that `rules` came from, for a scan that ran the home's configuration or `--pack`. */
+function homePacks(rules: ReadonlyMap<string, ScanRule>): ScanPack[] {
+  const ids = new Set([...rules.values()].flatMap(rule => rule.source.packId === null || rule.source.packId === WORKTREE_PACK_ID ? [] : [rule.source.packId]));
+  const installed = loadRuleCatalog();
+  return [...ids].sort().flatMap(id => {
+    const pack = installed.packs.get(id);
+    return pack === undefined ? [] : [{ id, packageName: pack.packageName, version: pack.version, from: "home" as const }];
+  });
+}
+
 /** Runs the scan in its scratch folder and reports it: the scan's own database, always, with the home's only read and closed before the scan runs. */
 async function scanReport(
   scratch: string, options: HeadlessScanOptions,
-  { root, home, useHome, packs, scanId, startedAt }: { root: string; home: RerailDatabase | undefined; useHome: boolean; packs: readonly string[]; scanId: string; startedAt: number },
+  { root, home, useHome, packs, declared, scanId, startedAt }: {
+    root: string; home: RerailDatabase | undefined; useHome: boolean; packs: readonly string[]; declared: DeclaredPacks | undefined; scanId: string; startedAt: number;
+  },
 ): Promise<ScanReport> {
   const databasePath = join(scratch, "rerail.sqlite");
-  const refRules = options.rulesRef === undefined ? undefined : await rulesAtRef(root, options.rulesRef, scratch);
+  const declaredPacks: DeclaredScanPacks | undefined = declared === undefined ? undefined : await declaredScanPacks(root, declared, scratch, options.packStore);
+  const catalog = declaredPacks?.catalog ?? loadRuleCatalog();
+  const refRules = options.rulesRef === undefined ? undefined : await rulesAtRef(root, options.rulesRef, scratch, catalog);
   let refRuleIds: Set<string>;
   try {
-    refRuleIds = prepareScratchDatabase(databasePath, root, home, useHome, packs, refRules, options.ruleDocuments);
+    const attached = declaredPacks === undefined ? packs : declaredPacks.packs.map(pack => pack.id);
+    refRuleIds = prepareScratchDatabase(databasePath, root, home, useHome, attached, refRules, options.ruleDocuments, catalog);
   } finally {
     home?.$client.close();
   }
   const repository = repositoryOf(databasePath, root);
   const { base, paths } = scanTarget(options, root);
-  const audits = await runScanAudits(databasePath, root, `scan-${scanId}`, paths);
+  const audits = await runScanAudits(databasePath, root, `scan-${scanId}`, paths, declaredPacks?.catalog);
   const rules = scanRules(audits, refRuleIds, options.rulesRef);
   const violations = scanViolations(audits, rules, root);
   const failures = [...refRules?.skipped ?? [], ...audits.flatMap(audit => audit.result?.failures ?? []).map((failure): ScanFailure => ({
@@ -532,6 +557,7 @@ async function scanReport(
     base,
     paths,
     rulesSource: scanRulesSource(options.rulesRef, useHome),
+    packs: declaredPacks === undefined ? homePacks(rules) : [...declaredPacks.packs],
     status: completed ? "completed" : "failed",
     rules: [...rules.values()].sort((left, right) => left.ruleId.localeCompare(right.ruleId)),
     violations,
@@ -546,10 +572,14 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   const scanId = randomUUID();
   const root = scanRoot(options);
   const homeDatabase = options.databasePath ?? defaultRerailDatabasePath();
+  const declared = await declaredPacksOf(root, options.rulesRef);
+  if (declared !== undefined && options.packs.length > 0) {
+    throw new Error(`--pack: this repository lists its packs in ${declared.label}; add ${options.packs.join(", ")} there instead`);
+  }
   const packs = installedPackIds(options.packs);
   const home = openHomeDatabase(homeDatabase);
-  const useHome = homeIsScanConfiguration(options, home, root, packs);
-  return withScanScratch(home, scratch => scanReport(scratch, options, { root, home, useHome, packs, scanId, startedAt }));
+  const useHome = declared === undefined && homeIsScanConfiguration(options, home, root, packs);
+  return withScanScratch(home, scratch => scanReport(scratch, options, { root, home, useHome, packs, declared, scanId, startedAt }));
 }
 
 /** One line per violation, then a summary: the text `rerail scan` prints without `--json`. */
