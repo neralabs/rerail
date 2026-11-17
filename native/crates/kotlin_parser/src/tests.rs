@@ -225,6 +225,7 @@ fn when_is_the_lean_parsers() {
         "fun f(x: Int) = when (x) {\n    1, 2 -> a()\n    in r -> b\n    is T -> { c() }\n    else -> d\n}\n",
         "fun g() {\n    when {\n        x > 1 -> a()\n        !y -> b()\n    }\n    val v = when (val y = h()) {\n        else -> 0\n    }\n}\n",
         "fun g() {\n    when (x) {\n        // c\n        1 -> {\n        }\n\n        else -> {}\n    }\n}\n",
+        "fun g() {\n    when (x) {\n        1 -> a // one\n        else -> 0 // two\n    }\n}\n",
     ]);
 }
 
@@ -239,8 +240,17 @@ fn semicolons_are_the_lean_parsers() {
     ]);
 }
 
+/// Step 13: `try`, and `as`.
 #[test]
-fn what_step_12_does_not_read_is_refused() {
+fn try_and_as_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n    try {\n        a()\n    } catch (e: E) {\n        b()\n    } finally {\n        c()\n    }\n    val x = try { 1 } catch (_: Exception) { 2 }\n    val y = z as T\n    val w = (q as List<Int>).size\n}\n",
+        "fun f() {\n    try {\n    }\n    catch (e: E) {}\n    val a = -b as C * d as E + f\n}\n",
+    ]);
+}
+
+#[test]
+fn what_step_13_does_not_read_is_refused() {
     refused(&[
         "val a = b to f<T>()\n",
         "val a = x + f<T>(1)\n",
@@ -262,13 +272,13 @@ fn what_step_12_does_not_read_is_refused() {
         "val x = 1.5L\n",
         "val x = 1_\n",
         "val x = 0x\n",
-        "val x = y as Z\n",
         "class A { val x = 1 }\n",
         "val x: Int\n    get() = 1\n",
         "fun f() {\n    get(1)\n}\n",
         "fun f(noinline: Int) {}\n",
         "val s = \"a $field b\"\n",
         "abstract class A {\n    fun f() {}\n    /* c */\n    abstract fun g()\n}\n",
+        "fun f() {\n    a()\n    /* c */\n    // d\n    b()\n}\n",
         "fun f() {\n    if (a<b.c) d\n}\n",
         "class A\n@Inject constructor(x: Int)\n",
         "fun f() {\n    a\n    /* c */ .b()\n}\n",

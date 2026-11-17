@@ -328,6 +328,39 @@ token and not a mark: a mark has no width.
 
 Corpus: 144 the same, 347 refused, 0 differ.
 
+## Kotlin, step 13 (`13-try-as.bitlex`)
+
+- **`try`** is an expression: its block's statements, its catches, and its `finally`.
+- **`as`** binds tighter than `*` and looser than a prefix operator: each operator level's
+  operand chain takes `(as_op)*` after its unary.
+
+```text
+val a = -b as C * d as E + f
+  additive_expression
+    multiplicative_expression
+      as_expression (prefix_expression -b) as C
+      *
+      as_expression d as E
+    +
+    f
+```
+
+**A `when` entry holds its own semicolon.** tree-sitter's `when_entry` takes the `_semi` that
+ends it. So a comment before an entry's line break is the entry's, not the `when`'s:
+`else -> 0 // two`. The entry ends with the mark (`semi | semi_close`), and the `when` lists
+its entries with nothing between.
+
+**Block comments the scanner reads.** Take a block comment that starts a line after a token's
+line, where the lean lexer asks the scanner for a semicolon (`asked_blk`). Before another
+comment, the tree keeps a comment of no width where the next one starts. That is refused, as is
+the step 10 case (a word with `a`, `e` or `w`), now on the same narrower mask.
+
+The first mask took any line break before the comment, and refused 38 files whose header
+comments come before any token. A comment before the file's first token is never read by the
+scanner.
+
+Corpus: 171 the same, 320 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
