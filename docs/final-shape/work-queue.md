@@ -1517,6 +1517,9 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   Findings 29,747, the same hash. The cross strata's plans: the same steps and scanned rows; their planned and done
   work differ from the run before exactly as two runs of the old code differ (Q60's timing: `P__sup0` 32/33, a few
   rows of work).
+- **Done: the totals' value columns sketched** (user: HyperLogLog, 2026-11-17; decision 0096's last section): exact
+  to 64 values and for tested ones, else HyperLogLog and AMS. The totals held 0.3 MB through the chunk phase (was
+  68 MB); findings and the cross plans the same.
 - **Found, not mine:** `corpus::tests::a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test` (4 files
   held open after it) and `the_run_after_a_cold_one_writes_nothing` (a warm run records a manifest and commits a
   write) fail at 2fd15f524 too, on the M3 farm host.
