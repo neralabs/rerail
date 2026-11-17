@@ -22,10 +22,13 @@ import { commandLine, powershellLiteral, type Shell } from "../engine/command-li
 import { ENTRY_POINTS } from "../engine/package-root.js";
 import { RULES_DUMP_FILE } from "../engine/catalog/rule-bootstrap.js";
 import { INSTALLED_PACKS_DIR, installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
+import { PACK_COMPILE_CHECKS_FILE } from "../engine/catalog/pack-compile-checks.js";
+import { MACHINE_ID_FILE, REMOTE_CONFIG_FILE, REMOTE_OUTBOX_FILE, REMOTE_TOKENS_FOLDER } from "../engine/storage/rerail-home.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
 import { LOCKS_DIR } from "../engine/native/file-lock.js";
 import { contentStoreOverride, legacyWindowsContentStoreDirectory, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import {
+  AUTOSTART_CLAIM_FILE,
   autostartOff,
   browserOff,
   DAEMON_ACCESS_TOKEN_FILE,
@@ -67,6 +70,7 @@ import { colourDepth } from "../presentation/rerail-mark.js";
 import type { SetupStep } from "../harness/setup-step.js";
 import { CURRENT_LINK, LAUNCHER_DIR, LAUNCHER_HEADER, UPDATE_LOCK_DIR, UPDATE_STATE_FILE, VERSIONS_DIR, type ManagedUpdater } from "../setup/updater.js";
 import { requireLfsContent } from "../setup/lfs-pointers.js";
+import { streamProgress } from "../runtime/progress.js";
 import { SCRUB_HINT_FILE, scrubHintOnce } from "./scrub-cli.js";
 import { HOOK_FAILURES_FILE } from "../harness/hook-failures.js";
 import { runRegisteredClaudeHook } from "../setup/registered-hooks.js";
@@ -439,7 +443,9 @@ export const CONSENT_FILE = "consent.json";
 
 /**
  * What Rerail itself writes in its home, by the name its writer gives it: settings, records, locks, `rerail activate`'s
- * profiles and device secrets, `rules export`'s dump and the installation.
+ * profiles and device secrets, `rules export`'s dump, the pack verdicts a catalog read keeps, the remote sink's
+ * configuration, tokens and machine id, and the installation. A name a writer puts in the home and this list lacks is
+ * taken for someone else's file, so `--delete-data` keeps it and the home.
  */
 const RERAIL_HOME_ENTRIES: readonly string[] = [
   CONSENT_FILE,
@@ -450,11 +456,16 @@ const RERAIL_HOME_ENTRIES: readonly string[] = [
   DAEMON_ACCESS_TOKEN_FILE,
   LOCKS_DIR,
   START_LOCK_DIR,
+  AUTOSTART_CLAIM_FILE,
   RULES_DUMP_FILE,
   PROFILES_DIR,
   ACTIVE_PROFILE_FILE,
   DEVICE_SECRETS_DIR,
   INSTALLED_PACKS_DIR,
+  PACK_COMPILE_CHECKS_FILE,
+  REMOTE_CONFIG_FILE,
+  REMOTE_TOKENS_FOLDER,
+  MACHINE_ID_FILE,
   UPDATE_STATE_FILE,
   UPDATE_LOCK_DIR,
   VERSIONS_DIR,
@@ -464,7 +475,7 @@ const RERAIL_HOME_ENTRIES: readonly string[] = [
 ];
 
 /** What Rerail writes in its home under these names and longer ones: SQLite's `-wal` and `-shm`, `rerail update`'s `.pre-update` copy. */
-const RERAIL_HOME_ENTRY_PREFIXES: readonly string[] = [RERAIL_DATABASE_FILE, CLAUDE_STATUS_DATABASE_FILE, DAEMON_LOG_FILE, HOOK_FAILURES_FILE];
+const RERAIL_HOME_ENTRY_PREFIXES: readonly string[] = [RERAIL_DATABASE_FILE, CLAUDE_STATUS_DATABASE_FILE, REMOTE_OUTBOX_FILE, DAEMON_LOG_FILE, HOOK_FAILURES_FILE];
 
 /** The `.<pid>[.<uuid>].tmp` or `.old` a write cut short leaves beside what it writes. */
 const CUT_SHORT_WRITE = /\.\d+(?:\.[0-9a-f-]+)?\.(?:tmp|old)$/u;
@@ -921,7 +932,9 @@ export function setupIo(args: readonly string[] = []): SetupIo {
   const say = (text: string): void => {
     process.stdout.write(`${text}\n`);
   };
-  if (args.includes(SETUP_FLAGS.relay) || !process.stdin.isTTY || !process.stdout.isTTY) return { lane: "agent", say, close: () => {} };
+  if (args.includes(SETUP_FLAGS.relay) || !process.stdin.isTTY || !process.stdout.isTTY) {
+    return { lane: "agent", relayed: args.includes(SETUP_FLAGS.relay), say, close: () => {} };
+  }
   // One reader for the run: lines for the folder and pack prompts, keys for each question's menu. Each question drops
   // what was typed before it was on screen.
   const input = new TerminalInput(process.stdin, text => process.stdout.write(text), undefined, () => process.stdout.columns);
@@ -1215,10 +1228,16 @@ async function install(context: SetupContext, parsed: SetupArguments, cwd: strin
   ]);
   if (active === running) return undefined;
   const answering = parsed.answer !== undefined || parsed.repo !== undefined;
-  if (active !== undefined && (answering || origin === "start")) return undefined;
-  await context.updater.install();
+  if (keepsActiveInstall(active, answering, origin)) return undefined;
+  // A line per install step, never redrawn in place: set-up's questions share the terminal.
+  await context.updater.install(undefined, streamProgress({ write: text => process.stderr.write(text) }));
   if (answering || workspaceStartState(cwd, parsed.databasePath) === "started") return undefined;
   return renderInstalled(lane).replace(/\n$/u, "");
+}
+
+/** Whether a run leaves the active install as it is: an answer, or a step `rerail start --json` began, once one is in. */
+function keepsActiveInstall(active: string | undefined, answering: boolean, origin: SetupOrigin): boolean {
+  return active !== undefined && (answering || origin === "start");
 }
 
 /** The run's carry: its own arguments, with the place's configured database when it names none. */

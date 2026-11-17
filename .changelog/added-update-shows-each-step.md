@@ -1,0 +1,1 @@
+`rerail update` and set-up's install name each step as it starts and show that a long one is still running. A step that runs long warns that npm may be stuck and what to check, and a hung npm is stopped.

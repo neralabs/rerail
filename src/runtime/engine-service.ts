@@ -1,6 +1,6 @@
 import { lstat, mkdir, unlink } from "node:fs/promises";
-import { createServer, request, type Server, type ServerResponse } from "node:http";
-import { connect } from "node:net";
+import { createServer, request, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { connect, type Socket } from "node:net";
 import { dirname, resolve as resolvePath } from "node:path";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
@@ -16,12 +16,18 @@ import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
 import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./engine-proof.js";
 import { isNamedPipe } from "./engine-pipe.js";
+import { nativeTreeWatch, type TreeWatch } from "../engine/code-rule/tree-watch.js";
+import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
 import { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
 
 export interface EngineService {
   /** Where it listens: the socket path it was given, or its `pipeFallback` when another process held that pipe. */
   readonly socketPath: string;
+  /**
+   * Stops taking connections, answers every request whose body has arrived (running each one's event, queued ones too),
+   * then closes the runtimes. A request that stalls before it has all arrived is cut off ({@link cutStalledRequests}).
+   */
   close(): Promise<void>;
   ingest(
     event: AdapterEvent,
@@ -209,6 +215,12 @@ interface EngineRoutingState {
   idle: Map<string, NodeJS.Timeout>;
   /** How long a runtime no session uses stays open: `idleRuntimeMs`, or `IDLE_RUNTIME_MS`. */
   idleRuntimeMs: number;
+  /**
+   * The walk of each repository's other worktrees, shared by the sessions of every runtime: hooks name the session's
+   * folder, so sessions in different worktrees of one repository run in different runtimes, and each walking every
+   * worktree for itself held every file of every worktree once per session.
+   */
+  worktreeWalks: RepositoryWorktreeWalks;
 }
 
 /** The lane one session's work in one runtime runs in, one at a time. */
@@ -291,7 +303,7 @@ async function routeEngineEvent(
     let runtime = state.runtimes.get(runtimeKey);
     if (runtime === undefined) {
       if (runtimeOptions === undefined) throw new Error(`Kernel runtime is unavailable for session ${sessionId}`);
-      runtime = new RerailRuntime({ ...runtimeOptions, autostart: false, startGate: true });
+      runtime = new RerailRuntime({ ...runtimeOptions, autostart: false, startGate: true, worktreeWalks: state.worktreeWalks });
       state.runtimes.set(runtimeKey, runtime);
     }
     // Every event, not only a start: a session whose start was lost still uses this runtime until it ends.
@@ -413,6 +425,100 @@ function disposeRuntime(state: EngineRoutingState, runtimeKey: string): void {
   void disposal.then(() => state.pending.delete(disposal));
 }
 
+/**
+ * How far apart the close's looks for stalled requests are: a request that has not all arrived is cut off once it has
+ * sent nothing from one look to the next, so after one to two of these with nothing sent.
+ */
+const STALLED_REQUEST_MS = 1_000;
+
+/**
+ * While the service closes, cuts off each connection still sending a request ({@link awaitsRequest}) once two looks
+ * `STALLED_REQUEST_MS` apart find it has sent nothing between them. A hook writes its whole request at once,
+ * so one still arriving has stalled, and waiting for it would hold the close with no limit: `server.close()` stops the
+ * check that enforces the server's request and headers timeouts. A connection that owes an answer to a request whose
+ * body has arrived is never cut, whatever came in after that request: its event runs and its hook gets the whole
+ * answer; a next request that stalls is cut after that answer. Idle connections are left to `server.close()`, which
+ * ends them once as the close begins: Node counts a connection whose answer is ended but still being written as idle,
+ * so ending idle ones at each look would cut an answer larger than the socket's buffer. Each look runs after the event
+ * loop has read what arrived meanwhile (`setImmediate`), so a loop kept busy past the wait cuts off nothing that came
+ * in time. Returns the function that stops the looks.
+ */
+function cutStalledRequests(connections: ReadonlyMap<Socket, ConnectionState>): () => void {
+  let seen = new Map<Socket, number>();
+  const look = (): void => {
+    const now = new Map<Socket, number>();
+    for (const [socket, state] of connections) {
+      if (!awaitsRequest(socket, state)) continue;
+      if (seen.get(socket) === socket.bytesRead) socket.destroy();
+      else now.set(socket, socket.bytesRead);
+    }
+    seen = now;
+  };
+  look();
+  const looks = setInterval(() => setImmediate(look), STALLED_REQUEST_MS);
+  return () => clearInterval(looks);
+}
+
+/**
+ * What the close knows of an open connection: `undefined` until a request's headers have arrived; then the oldest
+ * request whose answer is not all written, while there is one (a client can send its next request before it has the
+ * answer to the one ahead); then the last request, or, once that request had all arrived when its answer was written,
+ * how many bytes the connection had read by then.
+ */
+export type ConnectionState = IncomingMessage | number | undefined;
+
+/**
+ * Whether `socket` is still sending a request: it has sent none yet, or one whose body has not all arrived, or, after
+ * the answer to a request that had all arrived, on a connection its client keeps open, bytes of a next request whose
+ * headers have not all arrived. So a next request that stalls in its headers is cut off as a first one is. A kept
+ * connection that sends nothing after such an answer is not: Node's keep-alive timeout ends it about 6 s after that
+ * answer, as when the close made no looks, and a whole request its client sends there meanwhile is answered. So such a
+ * connection answered more than 4 s into the close holds it past the 10 s `rerail daemon stop` gives before its kill.
+ * Part of a next request's headers that came before the answer was written (a client that sends its next request
+ * without waiting for the answer) counts with the answered request, so that connection is left to the same timeout.
+ * A request answered on its headers alone (a wrong path, a refused access token, the capability proof) keeps its
+ * entry, since the rest of its body is not a next request: it is cut while that body stalls, and once the body has
+ * come it is left to the same timeout. A connection that owes an answer to a request whose body has arrived counts as
+ * not sending one, whatever came in after that request: its entry is that request until the answer is written.
+ */
+function awaitsRequest(socket: Socket, state: ConnectionState): boolean {
+  if (typeof state === "number") return socket.bytesRead > state;
+  return state?.complete !== true;
+}
+
+/**
+ * Each open connection of `server`, with its `ConnectionState`, which `cutStalledRequests` reads. A connection leaves it
+ * when it closes, so a daemon does not keep every hook's socket for its life.
+ */
+export function trackConnections(server: Server): ReadonlyMap<Socket, ConnectionState> {
+  const connections = new Map<Socket, ConnectionState>();
+  // Each connection's requests whose answers are not all written yet, oldest first: Node writes a connection's answers
+  // in the order its requests came.
+  const unanswered = new WeakMap<Socket, IncomingMessage[]>();
+  server.on("connection", (socket: Socket) => {
+    connections.set(socket, undefined);
+    socket.once("close", () => connections.delete(socket));
+  });
+  server.on("request", (incoming: IncomingMessage, response: ServerResponse) => {
+    const { socket } = incoming;
+    const waiting = unanswered.get(socket) ?? [];
+    unanswered.set(socket, waiting);
+    waiting.push(incoming);
+    // A request that comes in while an answer is still owed on its connection waits for its turn.
+    if (waiting.length === 1) connections.set(socket, incoming);
+    response.once("finish", () => {
+      if (!connections.has(socket)) return;
+      waiting.shift();
+      const next = waiting[0];
+      if (next !== undefined) connections.set(socket, next);
+      // Left as it is when this request's body has not all arrived (an answer on its headers alone), whose rest would
+      // read as a next request.
+      else if (incoming.complete) connections.set(socket, socket.bytesRead);
+    });
+  });
+  return connections;
+}
+
 function listen(server: Server, socketPath: string): Promise<void> {
   const listening = Promise.withResolvers<void>();
   server.once("error", listening.reject);
@@ -519,6 +625,25 @@ async function listenOnSocket(
   }
 }
 
+/**
+ * The walks of the repositories' other worktrees, which read only those the engine's file-system watch says may have
+ * changed. An engine built before that watch has none: every walk then reads every worktree, and the log says so once.
+ * `close` releases the watch.
+ */
+export function engineWorktreeWalks(): RepositoryWorktreeWalks {
+  let treeWatch: TreeWatch | undefined;
+  try {
+    treeWatch = nativeTreeWatch();
+  } catch (error) {
+    process.stderr.write(`rerail: the engine's file-system watch failed to start: ${error instanceof Error ? error.message : String(error)}\n`);
+    return new RepositoryWorktreeWalks();
+  }
+  if (treeWatch === undefined) {
+    process.stderr.write("rerail: the engine is older than Rerail and has no file-system watch: every walk reads every other worktree\n");
+  }
+  return new RepositoryWorktreeWalks({ treeWatch });
+}
+
 export async function startEngineService(options: EngineServiceOptions): Promise<EngineService> {
   if (!isNamedPipe(options.socketPath)) await preparePrivateDirectory(dirname(options.socketPath));
   const routing: EngineRoutingState = {
@@ -530,7 +655,10 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     pending: new Set(),
     idle: new Map(),
     idleRuntimeMs: options.idleRuntimeMs ?? IDLE_RUNTIME_MS,
+    worktreeWalks: options.worktreeWalks ?? engineWorktreeWalks(),
   };
+  // Walks a caller gave are the caller's to close.
+  const closeWalks = options.worktreeWalks === undefined ? () => routing.worktreeWalks.close() : () => undefined;
   const sweepIdleSessions = (): Promise<void> => closeIdleSessions(routing, options.idleSessionMs ?? IDLE_SESSION_MS, options.now ?? Date.now);
   const server = createServer(async (incoming, response) => {
     response.setHeader("Content-Type", "application/json");
@@ -566,6 +694,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     }
   });
   let socketPath = options.socketPath;
+  const connections = trackConnections(server);
   const engineService: EngineService = {
     get socketPath() {
       return socketPath;
@@ -575,13 +704,26 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     closeIdleSessions: sweepIdleSessions,
     async close() {
       clearInterval(idleSweep);
-      const closed = Promise.withResolvers<void>();
-      server.close((error) => (error ? closed.reject(error) : closed.resolve()));
-      await closed.promise;
-      for (const timer of routing.idle.values()) clearTimeout(timer);
-      routing.idle.clear();
-      await Promise.allSettled(routing.pending);
-      await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
+      try {
+        // Every hook whose request has arrived gets its answer, with the block or steer in it, and its event is recorded,
+        // the ones waiting behind a running event too. The close ends once the last of those connections has: its server
+        // takes no new ones, and a request that stalls is cut off.
+        const closed = Promise.withResolvers<void>();
+        server.close((error) => (error ? closed.reject(error) : closed.resolve()));
+        const stopLooking = cutStalledRequests(connections);
+        try {
+          await closed.promise;
+          for (const timer of routing.idle.values()) clearTimeout(timer);
+          routing.idle.clear();
+          await Promise.allSettled(routing.pending);
+        } finally {
+          stopLooking();
+        }
+        await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
+      } finally {
+        // The engine's watch thread and its handles go however the sessions' close went.
+        closeWalks();
+      }
     },
   };
   server.requestTimeout = 30_000;
@@ -593,7 +735,11 @@ export async function startEngineService(options: EngineServiceOptions): Promise
   } catch (error) {
     clearInterval(idleSweep);
     server.close();
-    await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
+    try {
+      await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
+    } finally {
+      closeWalks();
+    }
     throw error;
   }
   return engineService;

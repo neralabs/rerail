@@ -4,6 +4,10 @@ Every notable change to Rerail's core package, `@neralabs/rerail`, latest first.
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. A release is a patch unless it names a later version, and a patch can change or remove what you use, so read the notes before you update.
 
+## Unreleased
+
+0.1.5 makes Rerail lighter and steadier where it was strained: on Windows, in large repositories, and with many worktrees and sessions open at once. The daemon, the hooks and the `rerail` command use far less memory and start faster, sessions keep their events while the daemon is briefly busy, and Windows gets a long run of fixes. Set-up now matches rule packs to the linters a repository already runs, code rules read Java, and `rerail update` shows what it is doing. Before you update: features in internal testing, `rerail scan` and conversation rules included, are off until their variable is set ([Internal testing](docs/internal-testing.md)). On Windows, see Changed for a TLS key other accounts can read and for going back to an older Rerail.
+
 ## 0.1.4 (2026-11-12)
 
 0.1.4 stops steering an agent for changes it did not make: a file changed by another session, your editor or a background process no longer counts as its edit. A steer found as a turn ends now reaches Claude Code then, not at your next prompt. The dashboard shows each violation under the tool call it followed, and set-up works on Linux images with no compiler. Before you update: Claude Code 2.1.196 or newer is required.

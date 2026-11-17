@@ -28,17 +28,26 @@ function accessHeaders() {
   return access === null ? {} : { "x-rerail-access": access };
 }
 
-/** The API's error code in a refusal's body (`{ error, message }`); `null` for a body that holds none. */
-async function errorCode(response) {
+/**
+ * The API's error `code` and its own `apiMessage`, the reason for a person, in a refusal's body (`{ error, message }`);
+ * each `null` when the body holds none.
+ */
+async function refusal(response) {
   try {
     const body = await response.json();
-    return typeof body?.error === "string" ? body.error : null;
+    return {
+      code: typeof body?.error === "string" ? body.error : null,
+      apiMessage: typeof body?.message === "string" && body.message.trim() !== "" ? body.message : null,
+    };
   } catch {
-    return null;
+    return { code: null, apiMessage: null };
   }
 }
 
-/** A failed read throws an Error carrying the answer's `status` and the API's error `code` (`null` without one). */
+/**
+ * A failed read throws an Error carrying the answer's `status`, and the API's error `code` and `apiMessage` (each
+ * `null` without one). Its `message` stays "<path> answered <status>", which callers match.
+ */
 export async function get(path, { etag } = {}) {
   const response = await fetch(apiUrl(path), {
     headers: { ...accessHeaders(), ...(etag === undefined ? {} : { "if-none-match": etag }) },
@@ -46,7 +55,7 @@ export async function get(path, { etag } = {}) {
   const nextEtag = response.headers.get("etag") ?? undefined;
   if (response.status === 304) return { status: 304, etag: nextEtag, body: undefined };
   if (response.status === 401) throw accessRequired();
-  if (!response.ok) throw Object.assign(new Error(`${path} answered ${response.status}`), { status: response.status, code: await errorCode(response) });
+  if (!response.ok) throw Object.assign(new Error(`${path} answered ${response.status}`), { status: response.status, ...await refusal(response) });
   return { status: response.status, etag: nextEtag, body: await response.json() };
 }
 

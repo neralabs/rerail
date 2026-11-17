@@ -8,8 +8,10 @@
  * nothing else: delivery goes on without it.
  */
 import type { ChildProcess } from "node:child_process";
+import { isAbsolute, resolve as resolvePath } from "node:path";
 import { endProcessTree, spawn, type ProcessTreeOptions } from "../../engine/child-process.js";
 import type { ConflictEvent, ConflictHookCommand, ConflictHookOutcome } from "../../engine/merge-assist/model.js";
+import { programOnPath } from "../../engine/system-programs.js";
 import type { ConflictHandler, ConflictHandlerContext } from "./conflict-hook.js";
 import type { StoredConflict } from "./conflict-store.js";
 import { isoSeconds } from "./state.js";
@@ -38,6 +40,16 @@ export interface HookPayload {
 export type HookAnswer = Pick<ConflictHookOutcome, "ok" | "error" | "note" | "status">;
 
 const failed = (error: string): HookAnswer => ({ ok: false, error, note: null, status: null });
+
+/**
+ * The program to start, as an absolute path: a path with a separator from the checkout's root, else the one PATH finds
+ * in the command's environment (on Windows a `.exe` or `.com` only, which starts without a shell); undefined when none.
+ */
+function hookProgram(program: string, cwd: string, env: NodeJS.ProcessEnv): string | undefined {
+  if (isAbsolute(program)) return program;
+  if (/[\\/]/u.test(program)) return resolvePath(cwd, program);
+  return programOnPath(program, { env });
+}
 
 /** Output fit for a person: no escape sequences or control characters, bearer and API tokens masked, the last 300 characters. */
 function sanitizeTail(text: string): string {
@@ -153,7 +165,9 @@ export function runHookCommand(command: ConflictHookCommand, payload: HookPayloa
   const [program, ...args] = command.command;
   const { promise, resolve } = Promise.withResolvers<HookAnswer>();
   if (program === undefined) return Promise.resolve(failed("no command is set"));
-  const child = spawn(program, args, {
+  const path = hookProgram(program, options.cwd, options.env);
+  if (path === undefined) return Promise.resolve(failed(`could not start ${program}: no such program on PATH`));
+  const start = () => spawn(path, args, {
     cwd: options.cwd,
     env: { ...options.env, RERAIL_CONFLICT_EVENT: payload.event, RERAIL_CONFLICT_ID: payload.conflict.id },
     stdio: ["pipe", "pipe", "pipe"],
@@ -162,6 +176,14 @@ export function runHookCommand(command: ConflictHookCommand, payload: HookPayloa
     detached: process.platform !== "win32",
     windowsHide: true,
   });
+  let child: ReturnType<typeof start>;
+  try {
+    child = start();
+  } catch (error) {
+    // Node refuses some programs before starting anything (a `.cmd` on Windows, a malformed path); recorded like any
+    // other failure to start.
+    return Promise.resolve(failed(`could not start ${program}: ${error instanceof Error ? error.message : String(error)}`));
+  }
   options.running?.add(child);
   const stdout: Buffer[] = [];
   let size = 0;

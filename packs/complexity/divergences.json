@@ -70,5 +70,21 @@
     "line": 4,
     "kind": "not-comparable",
     "evidence": "lizard 1.24.0 reads a .blade.php file as PHP, where `@php ... @endphp` is template text, so it lists no function in it; Blade compiles the block to PHP, which the rule reads (ast.embedded: compiled-view). With the block written as `<?php ... ?>` lizard scores the closure $grade 7, as Rerail does (lizard --csv, 2026-10-29)."
+  },
+  {
+    "rule": "complexity-cyclomatic-java",
+    "source": "fixtures",
+    "path": "java/Nesting.java",
+    "line": 46,
+    "kind": "not-comparable",
+    "evidence": "The anonymous class's compare, declared `@Override` on line 46 and `public int compare(...)` on line 47. A method_declaration starts at its first modifier, so the rule's finding starts on the annotation's line; lizard 1.24.0 lists a function on its name's line, 47 (lizard --csv, 2026-11-12). Both score it 7."
+  },
+  {
+    "rule": "complexity-cyclomatic-java",
+    "source": "fixtures",
+    "path": "java/Nesting.java",
+    "line": 47,
+    "kind": "not-comparable",
+    "evidence": "lizard 1.24.0's line for the anonymous class's compare, which the rule reports on line 46, where its `@Override` is (see that entry). With the annotation on the method's own line lizard and the rule both report line 46 (lizard --csv, 2026-11-12)."
   }
 ]

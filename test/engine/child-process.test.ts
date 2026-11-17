@@ -192,7 +192,8 @@ describe("Git runs with its window hidden", () => {
     expect((await readGitBlobIds(root, ["HEAD:a.txt"])).size).toBe(1);
     expect((await readGitBlobs(root, ["HEAD:a.txt"], { maxBlobBytes: 1024 })).get("HEAD:a.txt")?.toString()).toBe("a\n");
     const calls = [childProcess.spawnSync, childProcess.execFile, childProcess.spawn].map(gitCalls);
-    expect(calls.map(list => list.length)).toEqual([1, 1, 2]);
+    // gitHead's read starts its Git as the blob reads do.
+    expect(calls.map(list => list.length)).toEqual([1, 0, 3]);
     expect(calls.flat().every(hidesWindow)).toBe(true);
   });
 
