@@ -124,7 +124,8 @@ form would be right. But the check is by byte sets, and `bom_bytes` puts
 `ef`, `bb` and `bf` at offsets 0 to 2.
 
 The right form is the lean lexer's: the start of the file is a prologue,
-done once, and the loop's skip is the class. That is the next step.
+done once, and the loop's skip is the class. That is the next step. Done in 0335: a
+prefix, a construct of the language, outside the stream.
 
 **The block masks**, about 15 instructions a byte on ASCII without a BOM,
 against simdjson's 2.15. The full ASCII body makes 22 movemasks a block;

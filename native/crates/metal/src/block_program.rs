@@ -205,6 +205,13 @@ const SLAB_BUFFERS: [u64; crate::slabs::MAX_SLABS] = [0, 16, 17, 18];
 /// Launches repeated because a look-back ran out of polls.
 pub static REPEATED_LAUNCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+/// Whether a program starts a file's stream late, which Metal does not generate yet: an
+/// `early` (decision 0330), a file's first lane shifted down; or a prefix (decision 0335), the
+/// token loop's first state past it. Both are the CPU's for now.
+pub(crate) fn starts_late(p: &BlockNative) -> bool {
+    p.insts.iter().any(|i| matches!(i, BlockInst::Early(..))) || p.records.as_ref().is_some_and(|r| !r.prefix.is_empty())
+}
+
 /// Run `files` in one launch, each under `programs[file.program]` (decision 0066). `spins` is the
 /// polls of a predecessor after the first; 0 tests the repeated launch.
 pub fn run_batch(
@@ -218,7 +225,7 @@ pub fn run_batch(
     // frame, within `block::MAX_ROUNDS`, to the same values.
     // A `back_fill` likewise: a backward pass over the groups' summaries, not generated yet. An
     // `early` too (decision 0330): a file's first lane shifted down, not generated yet.
-    if programs.iter().any(|p| !p.groups.is_empty() || p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_) | BlockInst::Early(..)))) {
+    if programs.iter().any(|p| !p.groups.is_empty() || p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_))) || starts_late(p)) {
         return Err(Error::UnsupportedBackend);
     }
     METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;

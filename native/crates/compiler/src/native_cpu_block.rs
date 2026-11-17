@@ -5465,6 +5465,25 @@ struct RecPart {
     init: [Value; STATE_WORDS],
 }
 
+/// Where the stream starts in a file (`records::Records::start`): past the prefix where the file
+/// starts with it, else 0. Once a file, before the loop, as a lean lexer strips a byte order
+/// mark (decision 0335): the loop's state starts there, and no token of it reads the prefix.
+/// The file's bytes have zeros after them, so its first eight are there to read.
+fn stream_start(f: &mut FunctionBuilder<'_>, prefix: &[u8], bytes: Value, len: Value, zero: Value) -> Value {
+    if prefix.is_empty() {
+        return zero;
+    }
+    let n = prefix.len();
+    let word = f.ins().load(types::I64, MemFlags::trusted().with_readonly(), bytes, 0);
+    let low = if n == 8 { word } else { f.ins().band_imm(word, ((1u64 << (8 * n)) - 1) as i64) };
+    let want = prefix.iter().enumerate().fold(0u64, |a, (j, &b)| a | u64::from(b) << (8 * j));
+    let same = f.ins().icmp_imm(IntCC::Equal, low, want as i64);
+    let long = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, len, n as i64);
+    let both = f.ins().band(same, long);
+    let k = f.ins().iconst(types::I64, n as i64);
+    f.ins().select(both, k, zero)
+}
+
 /// A file's token loop: the whole file's (`part` none), then its end (`record_end`); or a
 /// part of it, which waits where a token reads past the ready blocks and stores its state.
 #[allow(clippy::too_many_arguments)]
@@ -5578,7 +5597,9 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         }
         _ => {
             let k0 = c.cursor(f, zero);
-            let init: Vec<BlockArg> = std::iter::once(k0).chain((1..STATE_WORDS + if walked.is_some() { 1 + runs.len() } else { 0 }).map(|_| zero)).map(BlockArg::from).collect();
+            // The end of the token before: where the stream starts (`stream_start`).
+            let from = if walked.is_some() { stream_start(f, &r.prefix, c.bytes, c.len, zero) } else { zero };
+            let init: Vec<BlockArg> = [k0, from].into_iter().chain((2..STATE_WORDS + if walked.is_some() { 1 + runs.len() } else { 0 }).map(|_| zero)).map(BlockArg::from).collect();
             f.ins().jump(head, &init);
             None
         }
@@ -7387,6 +7408,14 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         // The first block's carries and counts are zero, made here: the entry's zero, live across
         // every row, would be spilled and reloaded once per carried word.
         let zero = f.ins().iconst(types::I64, 0);
+        // The token loop's state: the end of the token before where the stream starts
+        // (`stream_start`), the rest zero.
+        let outer_zero = zero;
+        let from = match records {
+            Some((rec, _, _)) if tokened && rec.skip.is_some() => stream_start(&mut f, &rec.prefix, bytes, len, zero),
+            _ => zero,
+        };
+        let state: Vec<Value> = (0..states).map(|k| if k == 1 { from } else { zero }).collect();
         // An extract's running count is carried as where its next position goes: every store of
         // the flattening is then `[pointer, #offset]`, with no index to add.
         let first: Vec<BlockArg> = [zero.into(), bytes.into(), out.into()]
@@ -7394,7 +7423,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             .chain(std::iter::repeat_n(zero.into(), carried))
             .chain((0..counted.len()).map(|c| extract_base.get(c).copied().unwrap_or(zero).into()))
             .chain(rowed.then_some(scratch.into()))
-            .chain(std::iter::repeat_n(zero.into(), states))
+            .chain(state.iter().map(|&v| v.into()))
             .collect();
         // The row's record slot (`REC_SLOT`): its columns, and the token loop's state at zero.
         let rec_slot = (!part_calls.is_empty()).then(|| f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * REC_SLOT as u32, 3)));
@@ -7413,7 +7442,9 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             }
             let zero = f.ins().iconst(types::I64, 0);
             for k in 0..STATE_WORDS {
-                f.ins().stack_store(zero, slot, 8 * (RECORD_PARAMS + k) as i32);
+                // The end of the token before: where the stream starts (`stream_start`).
+                let v = if k == 1 && from != outer_zero { from } else { zero };
+                f.ins().stack_store(v, slot, 8 * (RECORD_PARAMS + k) as i32);
             }
         }
         // After a block (`next` the block after it), its parameters and the token loop's: the

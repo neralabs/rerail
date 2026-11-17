@@ -595,7 +595,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let kinds = line.word()?;
                 let hex = kinds.strip_prefix("kinds=").ok_or("`records S L kinds=…`")?;
                 let kinds: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<_, _>>().map_err(|_| "a bad kind")?;
-                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, untaken: Vec::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new(), retags: Vec::new(), nexts: Vec::new(), tested_only: 0, check_masks: Vec::new() });
+                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, untaken: Vec::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new(), retags: Vec::new(), nexts: Vec::new(), tested_only: 0, check_masks: Vec::new(), prefix: Vec::new() });
             } else if first == "word" {
                 let r = program.records.as_mut().ok_or(format!("block {at} word before its records"))?;
                 r.words.push(line.quoted()?);
@@ -707,6 +707,13 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             } else if first == "recskip" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recskip before its records"))?;
                 r.skip = Some(line.number("")?);
+            } else if first == "recprefix" {
+                let r = program.records.as_mut().ok_or(format!("block {at} recprefix before its records"))?;
+                let k: usize = line.number("")?;
+                if !(1..=8).contains(&k) {
+                    return Err(format!("block {at} recprefix of {k} bytes: one to eight"));
+                }
+                r.prefix = (0..k).map(|_| line.number("")).collect::<Result<_, _>>()?;
             } else if first == "recmark" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recmark before its records"))?;
                 let (o, w): (u16, u16) = (line.number("")?, line.number("")?);

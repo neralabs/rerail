@@ -1823,5 +1823,11 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         if let Some(o) = r.skip {
             let _ = writeln!(out, "  block {at} recskip {o}");
         }
+        // `block N recprefix K B…`: the prefix's K bytes (decision 0335); the loop starts past
+        // them where the file starts with them.
+        if !r.prefix.is_empty() {
+            let bytes: Vec<String> = r.prefix.iter().map(u8::to_string).collect();
+            let _ = writeln!(out, "  block {at} recprefix {} {}", r.prefix.len(), bytes.join(" "));
+        }
     }
 }

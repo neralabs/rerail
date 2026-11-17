@@ -458,6 +458,11 @@ pub enum Stmt {
     Munch { kind: String, over: Expr, lits: Vec<(Vec<u8>, Option<String>)> },
     Keywords { kind: String, words: Vec<(Vec<u8>, Option<String>)>, soft: Vec<Vec<u8>>, required: bool },
     Skip(Expr),
+    /// `prefix B …`: a file that starts with these bytes (one to eight) is read from after them,
+    /// as a lexer strips a byte order mark before its loop (decision 0335). Its bytes are outside
+    /// the stream: no class, `~` or token has them, the stream's first byte is the one after
+    /// them, and positions stay the file's.
+    Prefix(Vec<u8>),
     Error(String, Expr),
     /// `error "WHY" by tokens when E`: an error whose bytes are the ones the token loop refuses
     /// at (decision 0177): a first byte no token begins with, a reader's region open at the
@@ -1417,6 +1422,13 @@ impl P {
                 if by_tokens { Stmt::TokenError(m, self.expr()?) } else { Stmt::Error(m, self.expr()?) }
             }
             "skip" => Stmt::Skip(self.expr()?),
+            "prefix" => {
+                let items = self.class_items()?;
+                if items.len() > 8 || items.iter().any(|&(lo, hi)| lo != hi || hi > 0xff) {
+                    return self.err("a prefix of one to eight single bytes");
+                }
+                Stmt::Prefix(items.iter().map(|&(b, _)| b as u8).collect())
+            }
             "escape" => {
                 let m = String::from_utf8_lossy(&self.string()?).into_owned();
                 // `escape "WHY" by tokens when E`: the token loop's, as an error's
@@ -1805,6 +1817,33 @@ impl P {
             m.finals.push(m.start.clone())
         }
         Ok(m)
+    }
+}
+
+/// The prefix a program declares (`Stmt::Prefix`), if any; and an error where it has two, or a
+/// construct whose meaning reads bytes or positions past the stream's cleaning: a machine,
+/// `ucode`, hypotheses or a number (decision 0335). Every evaluator of the language asks this.
+pub fn prefix_of(stmts: &[Stmt]) -> Result<Option<Vec<u8>>, String> {
+    fn walk(stmts: &[Stmt], found: &mut Vec<Vec<u8>>, bad: &mut Option<&'static str>) {
+        for s in stmts {
+            match s {
+                Stmt::Prefix(b) => found.push(b.clone()),
+                Stmt::Machine(..) => *bad = Some("a machine"),
+                Stmt::Ucode { .. } => *bad = Some("`ucode`"),
+                Stmt::Hyp { .. } => *bad = Some("hypotheses"),
+                Stmt::Number(..) => *bad = Some("a number"),
+                Stmt::Block { body, .. } | Stmt::Rounds { body, .. } | Stmt::Tree { body, .. } => walk(body, found, bad),
+                _ => {}
+            }
+        }
+    }
+    let (mut found, mut bad) = (Vec::new(), None);
+    walk(stmts, &mut found, &mut bad);
+    match (found.len(), bad) {
+        (0, _) => Ok(None),
+        (1, None) => Ok(found.pop()),
+        (1, Some(what)) => Err(format!("a prefix with {what}: its meaning reads the bytes before the stream")),
+        _ => Err("more than one prefix".into()),
     }
 }
 

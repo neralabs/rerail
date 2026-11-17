@@ -137,6 +137,9 @@ pub struct Records {
     /// program's masks), and nothing else does: on the CPU, tier 2 reads each from the bytes
     /// where they make it (`native_cpu_bytes`), so the CPU's body makes none of them.
     pub check_masks: Vec<u16>,
+    /// The prefix (`prefix B …`, decision 0335): where the file starts with these bytes, the
+    /// stream, and the loop, start after them. Empty: no prefix.
+    pub prefix: Vec<u8>,
 }
 
 /// A token test (`Records::checks`): over the tokens whose first byte's end rule is `rule`,
@@ -281,6 +284,11 @@ pub enum Split {
 }
 
 impl Records {
+    /// Where the stream starts in `bytes`: past the prefix, where the file starts with it.
+    pub fn start(&self, bytes: &[u8]) -> usize {
+        if !self.prefix.is_empty() && bytes.starts_with(&self.prefix) { self.prefix.len() } else { 0 }
+    }
+
     /// Every region read in parts split where `at` says (decision 0323): a compile option, the
     /// grammar the same either way.
     pub fn split_parts_in(&mut self, at: Split) {
@@ -482,7 +490,7 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
     let blank = outputs.get(usize::from(skip)).map_or(&[][..], |v| v.as_slice());
     let held = |q: usize| !blank.get(q).copied().unwrap_or(0);
     let (mut starts, mut lasts) = (Vec::new(), Vec::new());
-    let mut at = 0usize;
+    let mut at = records.start(bytes);
     let mut untaken = false;
     let mut checked = false;
     let mut read = false;
