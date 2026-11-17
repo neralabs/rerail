@@ -1,0 +1,678 @@
+{
+  "format": "rerail.pack-provenance/v1",
+  "pack": "python",
+  "tool": "bandit",
+  "sources": {
+    "bandit": {
+      "repository": "https://github.com/PyCQA/bandit",
+      "tag": "1.9.4",
+      "commit": "92ae8b82fb422a639f0ed8d99e96cea769594e08",
+      "license": "Apache-2.0"
+    },
+    "rerail": {
+      "license": "Apache-2.0"
+    }
+  },
+  "files": {
+    "fixtures.expected.json": {
+      "source": "rerail",
+      "how": "recorded"
+    },
+    "fixtures/assert.py": {
+      "source": "bandit",
+      "from": "examples/assert.py",
+      "how": "verbatim"
+    },
+    "fixtures/binding.py": {
+      "source": "bandit",
+      "from": "examples/binding.py",
+      "how": "verbatim"
+    },
+    "fixtures/cipher-modes.py": {
+      "source": "bandit",
+      "from": "examples/cipher-modes.py",
+      "how": "verbatim"
+    },
+    "fixtures/ciphers.py": {
+      "source": "bandit",
+      "from": "examples/ciphers.py",
+      "how": "verbatim"
+    },
+    "fixtures/crypto-md5.py": {
+      "source": "bandit",
+      "from": "examples/crypto-md5.py",
+      "how": "verbatim"
+    },
+    "fixtures/dill.py": {
+      "source": "bandit",
+      "from": "examples/dill.py",
+      "how": "verbatim"
+    },
+    "fixtures/django_sql_injection_extra.py": {
+      "source": "bandit",
+      "from": "examples/django_sql_injection_extra.py",
+      "how": "verbatim"
+    },
+    "fixtures/django_sql_injection_raw.py": {
+      "source": "bandit",
+      "from": "examples/django_sql_injection_raw.py",
+      "how": "verbatim"
+    },
+    "fixtures/eval.py": {
+      "source": "bandit",
+      "from": "examples/eval.py",
+      "how": "verbatim"
+    },
+    "fixtures/exec.py": {
+      "source": "bandit",
+      "from": "examples/exec.py",
+      "how": "verbatim"
+    },
+    "fixtures/flask_debug.py": {
+      "source": "bandit",
+      "from": "examples/flask_debug.py",
+      "how": "verbatim"
+    },
+    "fixtures/ftplib.py": {
+      "source": "bandit",
+      "from": "examples/ftplib.py",
+      "how": "verbatim"
+    },
+    "fixtures/hardcoded-passwords.py": {
+      "source": "bandit",
+      "from": "examples/hardcoded-passwords.py",
+      "how": "verbatim"
+    },
+    "fixtures/hardcoded-tmp.py": {
+      "source": "bandit",
+      "from": "examples/hardcoded-tmp.py",
+      "how": "verbatim"
+    },
+    "fixtures/hashlib_new_insecure_functions.py": {
+      "source": "bandit",
+      "from": "examples/hashlib_new_insecure_functions.py",
+      "how": "verbatim"
+    },
+    "fixtures/httpoxy_cgihandler.py": {
+      "source": "bandit",
+      "from": "examples/httpoxy_cgihandler.py",
+      "how": "verbatim"
+    },
+    "fixtures/httpoxy_twisted_directory.py": {
+      "source": "bandit",
+      "from": "examples/httpoxy_twisted_directory.py",
+      "how": "verbatim"
+    },
+    "fixtures/httpoxy_twisted_script.py": {
+      "source": "bandit",
+      "from": "examples/httpoxy_twisted_script.py",
+      "how": "verbatim"
+    },
+    "fixtures/huggingface_unsafe_download.py": {
+      "source": "bandit",
+      "from": "examples/huggingface_unsafe_download.py",
+      "how": "verbatim"
+    },
+    "fixtures/imports-aliases.py": {
+      "source": "bandit",
+      "from": "examples/imports-aliases.py",
+      "how": "verbatim"
+    },
+    "fixtures/imports-from.py": {
+      "source": "bandit",
+      "from": "examples/imports-from.py",
+      "how": "verbatim"
+    },
+    "fixtures/imports-function.py": {
+      "source": "bandit",
+      "from": "examples/imports-function.py",
+      "how": "verbatim"
+    },
+    "fixtures/imports-with-importlib.py": {
+      "source": "bandit",
+      "from": "examples/imports-with-importlib.py",
+      "how": "verbatim"
+    },
+    "fixtures/imports.py": {
+      "source": "bandit",
+      "from": "examples/imports.py",
+      "how": "verbatim"
+    },
+    "fixtures/jinja2_templating.py": {
+      "source": "bandit",
+      "from": "examples/jinja2_templating.py",
+      "how": "verbatim"
+    },
+    "fixtures/jsonpickle.py": {
+      "source": "bandit",
+      "from": "examples/jsonpickle.py",
+      "how": "verbatim"
+    },
+    "fixtures/logging_config_insecure_listen.py": {
+      "source": "bandit",
+      "from": "examples/logging_config_insecure_listen.py",
+      "how": "verbatim"
+    },
+    "fixtures/mako_templating.py": {
+      "source": "bandit",
+      "from": "examples/mako_templating.py",
+      "how": "verbatim"
+    },
+    "fixtures/mark_safe.py": {
+      "source": "bandit",
+      "from": "examples/mark_safe.py",
+      "how": "verbatim"
+    },
+    "fixtures/mark_safe_insecure.py": {
+      "source": "bandit",
+      "from": "examples/mark_safe_insecure.py",
+      "how": "verbatim"
+    },
+    "fixtures/mark_safe_secure.py": {
+      "source": "bandit",
+      "from": "examples/mark_safe_secure.py",
+      "how": "verbatim"
+    },
+    "fixtures/markupsafe_markup_xss.py": {
+      "source": "bandit",
+      "from": "examples/markupsafe_markup_xss.py",
+      "how": "verbatim"
+    },
+    "fixtures/markupsafe_markup_xss_allowed_calls.py": {
+      "source": "bandit",
+      "from": "examples/markupsafe_markup_xss_allowed_calls.py",
+      "how": "verbatim"
+    },
+    "fixtures/markupsafe_markup_xss_extend_markup_names.py": {
+      "source": "bandit",
+      "from": "examples/markupsafe_markup_xss_extend_markup_names.py",
+      "how": "verbatim"
+    },
+    "fixtures/marshal_deserialize.py": {
+      "source": "bandit",
+      "from": "examples/marshal_deserialize.py",
+      "how": "verbatim"
+    },
+    "fixtures/mktemp.py": {
+      "source": "bandit",
+      "from": "examples/mktemp.py",
+      "how": "verbatim"
+    },
+    "fixtures/multiline_statement.py": {
+      "source": "bandit",
+      "from": "examples/multiline_statement.py",
+      "how": "verbatim"
+    },
+    "fixtures/new_candidates-all.py": {
+      "source": "bandit",
+      "from": "examples/new_candidates-all.py",
+      "how": "verbatim"
+    },
+    "fixtures/new_candidates-nosec.py": {
+      "source": "bandit",
+      "from": "examples/new_candidates-nosec.py",
+      "how": "verbatim"
+    },
+    "fixtures/new_candidates-some.py": {
+      "source": "bandit",
+      "from": "examples/new_candidates-some.py",
+      "how": "verbatim"
+    },
+    "fixtures/no_host_key_verification.py": {
+      "source": "bandit",
+      "from": "examples/no_host_key_verification.py",
+      "how": "verbatim"
+    },
+    "fixtures/nosec.py": {
+      "source": "bandit",
+      "from": "examples/nosec.py",
+      "how": "verbatim"
+    },
+    "fixtures/os-chmod.py": {
+      "source": "bandit",
+      "from": "examples/os-chmod.py",
+      "how": "verbatim"
+    },
+    "fixtures/os-exec.py": {
+      "source": "bandit",
+      "from": "examples/os-exec.py",
+      "how": "verbatim"
+    },
+    "fixtures/os-popen.py": {
+      "source": "bandit",
+      "from": "examples/os-popen.py",
+      "how": "verbatim"
+    },
+    "fixtures/os-spawn.py": {
+      "source": "bandit",
+      "from": "examples/os-spawn.py",
+      "how": "verbatim"
+    },
+    "fixtures/os-startfile.py": {
+      "source": "bandit",
+      "from": "examples/os-startfile.py",
+      "how": "verbatim"
+    },
+    "fixtures/os_system.py": {
+      "source": "bandit",
+      "from": "examples/os_system.py",
+      "how": "verbatim"
+    },
+    "fixtures/pandas_read_pickle.py": {
+      "source": "bandit",
+      "from": "examples/pandas_read_pickle.py",
+      "how": "verbatim"
+    },
+    "fixtures/paramiko_injection.py": {
+      "source": "bandit",
+      "from": "examples/paramiko_injection.py",
+      "how": "verbatim"
+    },
+    "fixtures/partial_path_process.py": {
+      "source": "bandit",
+      "from": "examples/partial_path_process.py",
+      "how": "verbatim"
+    },
+    "fixtures/pickle_deserialize.py": {
+      "source": "bandit",
+      "from": "examples/pickle_deserialize.py",
+      "how": "verbatim"
+    },
+    "fixtures/popen_wrappers.py": {
+      "source": "bandit",
+      "from": "examples/popen_wrappers.py",
+      "how": "verbatim"
+    },
+    "fixtures/pycrypto.py": {
+      "source": "bandit",
+      "from": "examples/pycrypto.py",
+      "how": "verbatim"
+    },
+    "fixtures/pyghmi.py": {
+      "source": "bandit",
+      "from": "examples/pyghmi.py",
+      "how": "verbatim"
+    },
+    "fixtures/pytorch_load.py": {
+      "source": "bandit",
+      "from": "examples/pytorch_load.py",
+      "how": "verbatim"
+    },
+    "fixtures/random_module.py": {
+      "source": "bandit",
+      "from": "examples/random_module.py",
+      "how": "verbatim"
+    },
+    "fixtures/requests-missing-timeout.py": {
+      "source": "bandit",
+      "from": "examples/requests-missing-timeout.py",
+      "how": "verbatim"
+    },
+    "fixtures/requests-ssl-verify-disabled.py": {
+      "source": "bandit",
+      "from": "examples/requests-ssl-verify-disabled.py",
+      "how": "verbatim"
+    },
+    "fixtures/rerail/nosec/B101.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B102.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B103.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B104.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B105.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B108.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B110.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B112.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B113.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B201.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B301.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B302.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B303.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B304.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B305.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B306.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B307.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B308.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B310.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B311.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B312.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B313.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B314.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B315.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B316.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B317.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B318.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B319.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B321.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B323.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B401.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B402.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B405.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B406.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B407.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B408.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B409.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B411.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B413.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B415.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B502.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B505.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B507.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B508.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B509.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B606.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B609.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B610.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B612.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B614.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B615.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B701.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/nosec/B702.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/probes/b104-docstring-concatenation.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/probes/b108-docstring-concatenation.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/probes/b108-parenthesized-statement.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/probes/b502-keyword-only.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/probes/b701-select-autoescape-import.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/probes/nosec-lines.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/shelve_open.py": {
+      "source": "bandit",
+      "from": "examples/shelve_open.py",
+      "how": "verbatim"
+    },
+    "fixtures/skip.py": {
+      "source": "bandit",
+      "from": "examples/skip.py",
+      "how": "verbatim"
+    },
+    "fixtures/snmp.py": {
+      "source": "bandit",
+      "from": "examples/snmp.py",
+      "how": "verbatim"
+    },
+    "fixtures/sql_multiline_statements.py": {
+      "source": "bandit",
+      "from": "examples/sql_multiline_statements.py",
+      "how": "verbatim"
+    },
+    "fixtures/sql_statements.py": {
+      "source": "bandit",
+      "from": "examples/sql_statements.py",
+      "how": "verbatim"
+    },
+    "fixtures/ssl-insecure-version.py": {
+      "source": "bandit",
+      "from": "examples/ssl-insecure-version.py",
+      "how": "verbatim"
+    },
+    "fixtures/subprocess_shell.py": {
+      "source": "bandit",
+      "from": "examples/subprocess_shell.py",
+      "how": "verbatim"
+    },
+    "fixtures/tarfile_extractall.py": {
+      "source": "bandit",
+      "from": "examples/tarfile_extractall.py",
+      "how": "verbatim"
+    },
+    "fixtures/telnetlib.py": {
+      "source": "bandit",
+      "from": "examples/telnetlib.py",
+      "how": "verbatim"
+    },
+    "fixtures/trojansource.py": {
+      "source": "bandit",
+      "from": "examples/trojansource.py",
+      "how": "verbatim"
+    },
+    "fixtures/try_except_continue.py": {
+      "source": "bandit",
+      "from": "examples/try_except_continue.py",
+      "how": "verbatim"
+    },
+    "fixtures/try_except_pass.py": {
+      "source": "bandit",
+      "from": "examples/try_except_pass.py",
+      "how": "verbatim"
+    },
+    "fixtures/unverified_context.py": {
+      "source": "bandit",
+      "from": "examples/unverified_context.py",
+      "how": "verbatim"
+    },
+    "fixtures/urlopen.py": {
+      "source": "bandit",
+      "from": "examples/urlopen.py",
+      "how": "verbatim"
+    },
+    "fixtures/weak_cryptographic_key_sizes.py": {
+      "source": "bandit",
+      "from": "examples/weak_cryptographic_key_sizes.py",
+      "how": "verbatim"
+    },
+    "fixtures/wildcard-injection.py": {
+      "source": "bandit",
+      "from": "examples/wildcard-injection.py",
+      "how": "verbatim"
+    },
+    "fixtures/xml_etree_celementtree.py": {
+      "source": "bandit",
+      "from": "examples/xml_etree_celementtree.py",
+      "how": "verbatim"
+    },
+    "fixtures/xml_etree_elementtree.py": {
+      "source": "bandit",
+      "from": "examples/xml_etree_elementtree.py",
+      "how": "verbatim"
+    },
+    "fixtures/xml_expatbuilder.py": {
+      "source": "bandit",
+      "from": "examples/xml_expatbuilder.py",
+      "how": "verbatim"
+    },
+    "fixtures/xml_expatreader.py": {
+      "source": "bandit",
+      "from": "examples/xml_expatreader.py",
+      "how": "verbatim"
+    },
+    "fixtures/xml_minidom.py": {
+      "source": "bandit",
+      "from": "examples/xml_minidom.py",
+      "how": "verbatim"
+    },
+    "fixtures/xml_pulldom.py": {
+      "source": "bandit",
+      "from": "examples/xml_pulldom.py",
+      "how": "verbatim"
+    },
+    "fixtures/xml_sax.py": {
+      "source": "bandit",
+      "from": "examples/xml_sax.py",
+      "how": "verbatim"
+    },
+    "fixtures/xml_xmlrpc.py": {
+      "source": "bandit",
+      "from": "examples/xml_xmlrpc.py",
+      "how": "verbatim"
+    },
+    "fixtures/yaml_load.py": {
+      "source": "bandit",
+      "from": "examples/yaml_load.py",
+      "how": "verbatim"
+    }
+  }
+}
