@@ -841,21 +841,28 @@ describe("the repository registry", () => {
     expect(settingOwners(database)).toEqual(recorded.map(path => ({ owner_kind: "checkout", owner_id: path })));
   });
 
-  it("forgets a removed worktree whose folder sat alone in a folder of worktrees inside a checkout, now empty", async () => {
+  it.each([
+    { when: "the checkout is recorded", recordMain: true },
+    { when: "the checkout, the clone's own, was never recorded", recordMain: false },
+  ])("forgets a removed worktree whose folder sat alone in a folder of worktrees inside a checkout, now empty, when $when", async ({ recordMain }) => {
     const root = await temporary("rerail-registry-prune-nested-");
     const database = open(join(root, "rerail.sqlite"));
     const main = gitRepository(join(root, "main"));
     const worktree = join(main, ".worktrees", "child");
+    const other = join(root, "other");
     git(main, "worktree", "add", "-q", "-b", "child", worktree);
-    recordCheckout(database, main);
+    git(main, "worktree", "add", "-q", "-b", "other", other);
+    if (recordMain) recordCheckout(database, main);
+    // Sessions that start only in worktrees record those alone; Git is asked in one that is on disk.
+    recordCheckout(database, other);
     recordCheckout(database, worktree);
     checkoutSetting(database, worktree);
     git(main, "worktree", "remove", worktree);
     expect(existsSync(join(main, ".worktrees"))).toBe(true);
 
-    // An empty folder inside a checkout is no mount point a drive was unmounted from.
+    // An empty folder inside a checkout of the clone is no mount point a drive was unmounted from.
     expect(await pruneCheckouts(database)).toEqual([worktree]);
-    expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath)).toEqual([main]);
+    expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath)).toEqual(recordMain ? [main, other] : [other]);
     expect(settingOwners(database)).toEqual([]);
   });
 

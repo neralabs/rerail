@@ -13,6 +13,7 @@ import { gitExecutable, GitUnavailableError, runGitAsync } from "../git.js";
 import { mergeAssistExperimentEnabled } from "../experimental-features.js";
 import type { CheckoutContext, CheckoutRecord, RepositoryKey, RepositoryRecord, RepositoryStatus } from "./repository-model.js";
 import {
+  GIT_IDENTITY_FILE,
   normalizeRemoteAddress,
   readCloneIdAt,
   readRemoteAddress,
@@ -559,34 +560,41 @@ interface LookedAt {
 interface Pass {
   /** Once aborted, the pass looks at nothing more and Git is ended. */
   readonly signal: AbortSignal | undefined;
-  /** The checkouts recorded when the pass began, as {@link listingKey}s ({@link insideRecordedCheckout}). */
+  /** The checkouts recorded when the pass began, as {@link listingKey}s ({@link insideCheckout}). */
   readonly recorded: ReadonlySet<string>;
-  /** Whether a folder gone from each folder was removed ({@link removedFrom}). */
+  /** Whether a folder gone from each folder was removed, for each clone ({@link removedFrom}). */
   readonly removed: Map<string, Promise<boolean>>;
   /** What `git worktree list` names, for each common Git folder ({@link worktreesListedIn}). */
   readonly listings: Map<string, ReadonlySet<string> | undefined>;
 }
 
 /**
- * What the `.git` entry at the top of `checkoutPath` makes it, read as Git reads it: a checkout of its clone while the
- * entry names a Git folder that is there; no checkout's top level once the entry, or the Git folder it names, is gone,
- * as after `git worktree prune`; unknown where the entry can't be read, since Git can't read it either. A folder there
- * without its entry decides as the nearest folder above a gone one does ({@link holdsRemovedFolders}): a drive mounted
- * at a copy of the clone's own folder leaves that folder empty once it is unplugged, and the copy may come back.
+ * What the `.git` entry at the top of `checkoutPath`, a recorded checkout of clone `cloneId`, makes it, read as Git
+ * reads it: a checkout of its clone while the entry names a Git folder that is there; no checkout's top level once the
+ * entry, or the Git folder it names, is gone, as after `git worktree prune`; unknown where the entry can't be read,
+ * since Git can't read it either. A folder there without its entry decides as the nearest folder above a gone one does
+ * ({@link holdsRemovedFolders}): a drive mounted at a copy of the clone's own folder leaves that folder empty once it
+ * is unplugged, and the copy may come back.
  */
-async function gitEntry(checkoutPath: string, pass: Pass): Promise<OnDisk> {
-  const entry = join(checkoutPath, ".git");
-  let gitFolder: string;
+async function gitEntry(checkoutPath: string, cloneId: string, pass: Pass): Promise<OnDisk> {
+  const named = await namedGitFolder(checkoutPath);
+  if (named === "missing") return (await holdsRemovedFolders(checkoutPath, cloneId, pass)) ? "unlisted" : "unknown";
+  return named === "unknown" ? "unknown" : await gitFolderClone(named.gitFolder);
+}
+
+/**
+ * The Git folder the `.git` entry at the top of `folder` names, read as Git reads it: `missing` where `folder` has no
+ * entry, `unknown` where it can't be read.
+ */
+async function namedGitFolder(folder: string): Promise<{ readonly gitFolder: string } | "missing" | "unknown"> {
+  const entry = join(folder, ".git");
   try {
     // A `.git` file holds `gitdir: <path>`, relative to the checkout or absolute; Git refuses any other.
     const named = (await stat(entry)).isDirectory() ? entry : /^gitdir: (.+)/u.exec(await readFile(entry, "utf8"))?.[1]?.trim();
-    if (named === undefined) return "unknown";
-    gitFolder = resolve(checkoutPath, named);
+    return named === undefined ? "unknown" : { gitFolder: resolve(folder, named) };
   } catch (error) {
-    if (!missing(error)) return "unknown";
-    return (await holdsRemovedFolders(checkoutPath, pass)) ? "unlisted" : "unknown";
+    return missing(error) ? "missing" : "unknown";
   }
-  return await gitFolderClone(gitFolder);
 }
 
 /**
@@ -736,15 +744,15 @@ async function storedPathOrAsGiven(path: string): Promise<string> {
 }
 
 /**
- * Whether a folder is at `path`: false where the filesystem says nothing is and the folder was removed, undefined where
- * it gives no answer (a network share that is down, a folder Rerail may not read) or the folder may be on a drive that
- * is not mounted ({@link removedFrom}). Asked without blocking, so a share that does not answer holds a pool thread and
- * not the caller's.
+ * Whether a folder is at `path`, a recorded checkout of clone `cloneId`: false where the filesystem says nothing is and
+ * the folder was removed, undefined where it gives no answer (a network share that is down, a folder Rerail may not
+ * read) or the folder may be on a drive that is not mounted ({@link removedFrom}). Asked without blocking, so a share
+ * that does not answer holds a pool thread and not the caller's.
  */
-async function folderPresent(path: string, pass: Pass): Promise<boolean | undefined> {
+async function folderPresent(path: string, cloneId: string, pass: Pass): Promise<boolean | undefined> {
   const present = await pathPresent(path);
   if (present !== false) return present;
-  return (await removedFrom(dirname(path), pass)) ? false : undefined;
+  return (await removedFrom(dirname(path), cloneId, pass)) ? false : undefined;
 }
 
 /**
@@ -757,49 +765,62 @@ const MOUNT_FOLDERS: Partial<Record<NodeJS.Platform, RegExp>> = {
 };
 
 /**
- * Whether a folder gone from `folder` was removed, as the nearest folder at or above `folder` that is there tells. An
- * unplugged drive takes every folder on it, and leaves the folder its mount point was in. So it may be off disk where no
- * folder up to the root answers (Windows answers for a drive letter nothing is mounted at as for a deleted folder), and
- * where the nearest one is a folder drives mount in ({@link MOUNT_FOLDERS}) or empty outside every recorded checkout,
- * as a mount point is once its drive is unmounted ({@link holdsRemovedFolders}). Read that way, a gone checkout is kept
- * wrongly at worst, where reading it as removed could forget the settings of one that comes back. The pass keeps each
- * folder's answer.
+ * Whether a folder gone from `folder`, a recorded checkout of clone `cloneId` or a folder above one, was removed, as the
+ * nearest folder at or above `folder` that is there tells. An unplugged drive takes every folder on it, and leaves the
+ * folder its mount point was in. So it may be off disk where no folder up to the root answers (Windows answers for a
+ * drive letter nothing is mounted at as for a deleted folder), and where the nearest one is a folder drives mount in
+ * ({@link MOUNT_FOLDERS}) or empty outside every checkout of the clone and every recorded checkout, as a mount point is
+ * once its drive is unmounted ({@link holdsRemovedFolders}). Read that way, a gone checkout is kept wrongly at worst,
+ * where reading it as removed could forget the settings of one that comes back. The pass keeps each clone's answer for
+ * each folder.
  */
-async function removedFrom(folder: string, pass: Pass): Promise<boolean> {
-  let answer = pass.removed.get(folder);
+async function removedFrom(folder: string, cloneId: string, pass: Pass): Promise<boolean> {
+  const key = `${cloneId}\n${folder}`;
+  let answer = pass.removed.get(key);
   if (answer === undefined) {
-    answer = nearestFolderRemoved(folder, pass);
-    pass.removed.set(folder, answer);
+    answer = nearestFolderRemoved(folder, cloneId, pass);
+    pass.removed.set(key, answer);
   }
   return await answer;
 }
 
 /** {@link removedFrom}, asked of the filesystem: `folder` decides when it is there, else the folder above it. */
-async function nearestFolderRemoved(folder: string, pass: Pass): Promise<boolean> {
+async function nearestFolderRemoved(folder: string, cloneId: string, pass: Pass): Promise<boolean> {
   const present = await pathPresent(folder);
-  if (present === true) return await holdsRemovedFolders(folder, pass);
-  return present === false && dirname(folder) !== folder && (await removedFrom(dirname(folder), pass));
+  if (present === true) return await holdsRemovedFolders(folder, cloneId, pass);
+  return present === false && dirname(folder) !== folder && (await removedFrom(dirname(folder), cloneId, pass));
 }
 
 /**
- * Whether `folder`, there, is one a folder gone from it was removed from: not a folder drives mount in, and not empty
- * unless it sits inside a recorded checkout. A mount point practically never sits inside one, while a folder of
- * worktrees such as `<checkout>/.worktrees` does, and is left empty once Git removes the last of them.
+ * Whether `folder`, there, is one a folder of clone `cloneId` gone from it was removed from: not a folder drives mount
+ * in, and not empty unless it sits inside a checkout ({@link insideCheckout}). A mount point practically never sits
+ * inside one, while a folder of worktrees such as `<checkout>/.worktrees` does, and is left empty once Git removes the
+ * last of them.
  */
-async function holdsRemovedFolders(folder: string, pass: Pass): Promise<boolean> {
+async function holdsRemovedFolders(folder: string, cloneId: string, pass: Pass): Promise<boolean> {
   if (MOUNT_FOLDERS[process.platform]?.test(folder) === true) return false;
-  return insideRecordedCheckout(folder, pass.recorded) || (await holdsAnything(folder));
+  return (await holdsAnything(folder)) || (await insideCheckout(folder, cloneId, pass));
 }
 
 /**
- * Whether a folder above `folder` is a checkout the pass found recorded. A `.git` entry above it would not do: a
- * repository of dotfiles at a home folder would put every mount point under it inside a checkout.
+ * Whether a folder above `folder` is a checkout the pass found recorded, or a checkout of clone `cloneId`, as the
+ * clone's own checkout around `<checkout>/.worktrees` is though no session started in it. Any `.git` entry above it
+ * would not do: a repository of dotfiles at a home folder would put every mount point under it inside a checkout.
  */
-function insideRecordedCheckout(folder: string, recorded: ReadonlySet<string>): boolean {
+async function insideCheckout(folder: string, cloneId: string, pass: Pass): Promise<boolean> {
   for (let ancestor = dirname(folder); ; ancestor = dirname(ancestor)) {
-    if (recorded.has(listingKey(ancestor))) return true;
+    if (pass.recorded.has(listingKey(ancestor)) || (await checkoutOfClone(ancestor, cloneId))) return true;
     if (dirname(ancestor) === ancestor) return false;
   }
+}
+
+/** Whether `folder` is a checkout of clone `cloneId`: its `.git` entry leads to a common Git folder holding that id. */
+async function checkoutOfClone(folder: string, cloneId: string): Promise<boolean> {
+  const named = await namedGitFolder(folder);
+  const clone = typeof named === "object" ? await gitFolderClone(named.gitFolder) : undefined;
+  if (typeof clone !== "object") return false;
+  const id = await readFile(join(clone.commonDirectory, GIT_IDENTITY_FILE), "utf8").catch(() => undefined);
+  return id?.trim() === cloneId;
 }
 
 /** Whether `folder` holds an entry, read one entry deep; false where it can't be read. */
@@ -881,7 +902,7 @@ async function goneCheckouts(rows: ReadonlyArray<{ readonly path: string; readon
   const looked: LookedAt[] = [];
   for (const row of rows) {
     if (signal?.aborted === true) return [];
-    looked.push({ ...row, onDisk: await onDiskOf(row.path, pass) });
+    looked.push({ ...row, onDisk: await onDiskOf(row, pass) });
   }
   return await unlistedByTheirClones(looked, pass);
 }
@@ -905,10 +926,10 @@ async function unlessAborted<T>(work: Promise<T>, signal: AbortSignal | undefine
   }
 }
 
-async function onDiskOf(path: string, pass: Pass): Promise<OnDisk> {
-  const present = await folderPresent(path, pass);
+async function onDiskOf({ path, cloneId }: { readonly path: string; readonly cloneId: string }, pass: Pass): Promise<OnDisk> {
+  const present = await folderPresent(path, cloneId, pass);
   if (present === undefined) return "unknown";
-  return present ? await gitEntry(path, pass) : "unlisted";
+  return present ? await gitEntry(path, cloneId, pass) : "unlisted";
 }
 
 /** Forget those of `gone` not recorded or seen again since `now`, with their own settings, and return their paths. */

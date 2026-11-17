@@ -43,12 +43,13 @@ start state and settings, so it has them when it comes back: a clone's own check
 entry is there, a folder outside Git, a folder renamed away, one on a drive that is not mounted or a share that does not
 answer, and a clone with no checkout on disk. A gone folder counts as on a drive that is not mounted when nothing above
 it is there, or when the nearest folder above it still there is one drives mount in (`/Volumes` on macOS, `/mnt` and
-`/media` on Linux) or is empty and inside no checkout Rerail recorded. A checkout's folder that is there without its
-`.git` counts the same way, as a drive mounted at the folder itself leaves it empty. While one checkout of a clone may
-be off disk that way, or its `.git` can't be read, every checkout of the clone stays: it may be a copy of the clone,
-whose worktrees Git lists there and not in the clone. Git keeps a worktree whose folder is gone listed until it prunes
-it, and so does Rerail. The checkout Git is asked in stays, so sessions recorded under the clone's id stay in its
-history. While a share has not answered a look, the daemon looks at nothing until it does.
+`/media` on Linux) or is empty and inside neither a checkout Rerail recorded nor a checkout of the same clone. A
+checkout's folder that is there without its `.git` counts the same way, as a drive mounted at the folder itself leaves
+it empty. While one checkout of a clone may be off disk that way, or its `.git` can't be read, every checkout of the
+clone stays: it may be a copy of the clone, whose worktrees Git lists there and not in the clone. Git keeps a worktree
+whose folder is gone listed until it prunes it, and so does Rerail. The checkout Git is asked in stays, so sessions
+recorded under the clone's id stay in its history. While a share has not answered a look, the daemon looks at nothing
+until it does.
 
 </details>
 
