@@ -1,0 +1,1 @@
+On Windows, Log mode and a stop saved by Rerail 0.1.4 or earlier apply again in a folder opened under another spelling, such as a mapped drive. Two stay lost: a status line hidden for one folder, and a rule turned off in a folder outside Git opened by drive letter or 8.3 name; set each again in the dashboard.

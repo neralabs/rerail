@@ -242,7 +242,7 @@ leaves it in place, so an earlier version sharing the database keeps reading and
 goes under the stored spelling, starting from the settings it read.
 
 They also recorded a folder outside Git under the JavaScript realpath of the folder as spelt, so `rerail stop` run
-through a mapped or `subst` drive letter saved the stop under that letter. Each start check made with the folder's own
+through a mapped or `subst` drive letter, or by an 8.3 name, saved the stop under that spelling. Each start check made with the folder's own
 spelling (a hook's, with a daemon or without, the daemon's check on each event, `rerail status`, `rerail start` and
 `stop`, and the status line's) reads the checkout's row under the stored spelling and under that key in one statement
 (`earlierCheckoutPath`), the stored one first. A hook and the status line ask a daemon with the folder as spelt for
@@ -251,6 +251,23 @@ another letter case, 0.1.4's next start or stop there decides, as it did before:
 letter case, so it counts the row under the stored spelling as a checkout inside its own and clears that row's on/off.
 For a session the daemon has recorded, the status line reads the start state under the session's stored spelling, so
 where 0.1.4 stops such a folder while a session is open there, that session's status line still shows Rerail on.
+
+Two settings an earlier version saved under the folder's spelling stay unread after the update, and a person who set
+one sets it again with one change in the dashboard:
+
+- **A status line hidden for one folder.** A presentation preference is keyed through `physicalPath` of the folder its
+  caller named, and nothing reads it under the earlier key. The dashboard's Settings switch, which hides the status
+  line in every folder, is saved under no folder and is kept.
+- **A rule turned off for one folder outside Git reached through a mapped or `subst` drive letter, or by an 8.3 name.**
+  That rule setting belongs to the checkout row 0.1.4 recorded under the spelling, and the rule loader reads the
+  settings of the checkout and of the recorded checkouts containing it. Under another letter case the earlier row still
+  contains the folder, so its setting is read. A rule turned off for the repository, and every rule setting and stop
+  of a Git checkout, keep applying: 0.1.4 keyed them by the repository or by Git's top level, which Git for Windows
+  gives as the disk spells it, and as the share for a mapped letter.
+
+Measured on Windows 11 with 0.1.4 from npm saving each setting in folders reached in another letter case, through a
+mapped and a `subst` drive letter and by an 8.3 name, inside and outside Git, then read by this build's daemon, hooks and
+status line.
 
 <details>
 <summary>Other places that compare Windows paths</summary>
