@@ -8,8 +8,9 @@
 //! Built one construct at a time (`docs/parser-generators/13-tape-on-the-gpu.md` §7, step 2).
 //!
 //! - **Classes.** Each class is a union of products of a set of high nibbles and a set of low
-//!   nibbles. Products are shared between classes and packed eight to a nibble table. A one-byte
-//!   class is an `eq`.
+//!   nibbles, packed eight to a nibble table. A class's products are placed together, in one
+//!   table (`place`), so a class is one lookup, as simdjson's are; a product two classes share
+//!   in one table serves both. A one-byte class is an `eq`.
 //! - **Masks** over `~ & | ^`, `empty`, `prev`, `next`, `starts`, `lasts`, `after`, `span`,
 //!   `aligned`, `toggle`, `after_odd_run` and `fill`.
 //! - **Counts** as bit-planes, and `C.frame(a)` (below).
@@ -282,8 +283,8 @@ pub struct Lowering {
     pub program: BlockProgram,
     /// Each operation's value, so an operation is emitted once.
     pub seen: HashMap<BlockOp, u16>,
-    /// Each product's table and bit.
-    pub products: HashMap<Product, (u16, u8)>,
+    /// Each table's products, bit by bit (`place`).
+    pub table_products: Vec<Vec<Product>>,
     /// Classes, lowered when first used.
     pub classes: HashMap<String, Vec<(u32, u32)>>,
     pub names: HashMap<String, Val>,
@@ -427,7 +428,7 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         shape,
         program: BlockProgram::default(),
         seen: HashMap::new(),
-        products: HashMap::new(),
+        table_products: Vec::new(),
         classes: HashMap::new(),
         names: HashMap::new(),
         fallbacks: Vec::new(),
@@ -467,9 +468,7 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
     // Every class's products first: the tables come before the operations.
     for stmt in stmts {
         if let Stmt::Class(name, ranges) = stmt {
-            for product in products(ranges) {
-                low.product(product);
-            }
+            low.place(&products(ranges));
             low.classes.insert(name.clone(), ranges.clone());
         }
     }
@@ -1041,26 +1040,45 @@ impl Lowering {
         Ok(by_delay)
     }
 
-    pub fn product(&mut self, product: Product) -> (u16, u8) {
-        if let Some(&at) = self.products.get(&product) {
-            return at;
+    /// A class's products placed together, and the bits of each table it reads: a table that
+    /// holds them all, else the one with room for the fewest missing, else a new one. So a
+    /// class of eight products or fewer is one lookup, as each of simdjson's classes is, though
+    /// a product may then be in two tables. More than eight: eight to a table.
+    pub fn place(&mut self, ps: &[Product]) -> Vec<(u16, u8)> {
+        if ps.len() > 8 {
+            return ps.chunks(8).flat_map(|c| self.place(c)).collect();
         }
-        let n = self.products.len();
-        let (table, bit) = ((n / 8) as u16, 1u8 << (n % 8));
-        if usize::from(table) == self.program.tables.len() {
-            self.program.tables.push(ClassTable::default());
-        }
-        let t = &mut self.program.tables[usize::from(table)];
-        for h in 0..16 {
-            if product.0 >> h & 1 == 1 {
-                t.hi[h] |= bit;
+        let missing = |held: &Vec<Product>| ps.iter().filter(|p| !held.contains(p)).count();
+        let room = self.table_products.iter().enumerate().filter(|(_, held)| held.len() + missing(held) <= 8).min_by_key(|(t, held)| (missing(held), *t)).map(|(t, _)| t);
+        let t = match room {
+            Some(t) => t,
+            None => {
+                self.table_products.push(Vec::new());
+                self.program.tables.push(ClassTable::default());
+                self.table_products.len() - 1
             }
-            if product.1 >> h & 1 == 1 {
-                t.lo[h] |= bit;
-            }
+        };
+        let mut bits = 0u8;
+        for &p in ps {
+            let bit = match self.table_products[t].iter().position(|&q| q == p) {
+                Some(bit) => bit,
+                None => {
+                    self.table_products[t].push(p);
+                    let (bit, table) = (self.table_products[t].len() - 1, &mut self.program.tables[t]);
+                    for h in 0..16 {
+                        if p.0 >> h & 1 == 1 {
+                            table.hi[h] |= 1 << bit;
+                        }
+                        if p.1 >> h & 1 == 1 {
+                            table.lo[h] |= 1 << bit;
+                        }
+                    }
+                    bit
+                }
+            };
+            bits |= 1 << bit;
         }
-        self.products.insert(product, (table, bit));
-        (table, bit)
+        vec![(t as u16, bits)]
     }
 
     pub fn op(&mut self, op: BlockOp) -> u16 {
@@ -1550,14 +1568,7 @@ impl Lowering {
                 _ => ranges.push((u32::from(b), u32::from(b))),
             }
         }
-        let mut per_table: Vec<(u16, u8)> = Vec::new();
-        for product in products(&ranges) {
-            let (table, bit) = self.product(product);
-            match per_table.iter_mut().find(|(t, _)| *t == table) {
-                Some((_, bits)) => *bits |= bit,
-                None => per_table.push((table, bit)),
-            }
-        }
+        let per_table = self.place(&products(&ranges));
         let mut value = None;
         for (table, bits) in per_table {
             let v = self.op(BlockOp::Class { table, bits });
