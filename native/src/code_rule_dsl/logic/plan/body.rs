@@ -208,9 +208,17 @@ impl<'v> Body<'v> {
     pub fn read_count(&self) -> usize {
         self.lits.iter().filter(|l| l.atom().is_some()).count()
     }
-    /// The demand of a demand-restricted aggregate (`rr_demand_agg_…`, a positive atom), which drives its rule.
+    /// The demand that drives its rule, whatever the statistics say: a demand-restricted aggregate's
+    /// (`rr_demand_agg_…`), or a demanded relation's own (decision 0048's `x :- demand_x, …`: it never computes more
+    /// than its readers ask for). A plan that read it later scanned the corpus per chunk (Q59: 29 M rows, not 34 k).
     pub fn demand_first(&self) -> Option<usize> {
-        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| !a.neg() && self.rel(a).contains("rr_demand_agg_")))
+        let head = self.rel(self.head());
+        (0..self.len()).find(|&i| {
+            self.plain_atom(i).is_some_and(|a| {
+                let rel = self.rel(a);
+                !a.neg() && (rel.contains("rr_demand_agg_") || rel.strip_prefix("demand_").is_some_and(|r| r == head))
+            })
+        })
     }
     /// The share of rows filter `i` passes on (decision 0297): measured by kind of filter, rows weighted, over the
     /// 300-file bench's 317 rules (`profile`'s `native.tsv`, each step's rows in and out). An equality that binds a

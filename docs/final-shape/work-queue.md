@@ -1468,6 +1468,7 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   searches again only when its work per node grows over 4x; a bad first order costs the same per node in every
   chunk, so it is kept the whole run.
 - **Not yet known**: why the first chunk's search chose it (which sizes it saw for the demand relation).
-- **Fix to make**: the guard 0048 states is structural: a demanded relation's rule is driven by its demand (it
-  never exceeds what the readers bind). Pin the demand atom as the driver of those rules, rather than leaving it to
-  the search and the cache.
+- **Fixed** (2026-11-17): the demand atom is the driver of a demanded relation's rule (`Body::demand_first`), and
+  a kept plan not led by it is searched again (`valid_live_driver`); decision 0048's last section. Test
+  `a_demanded_rule_is_driven_by_its_demand`. Two PostHog runs: every demanded plan led by its demand (the outlier
+  run: 19 of 24 not), 2,531 and 2,509 G, findings the same.

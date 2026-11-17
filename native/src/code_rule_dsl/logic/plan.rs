@@ -2697,8 +2697,10 @@ impl Model {
                 .unwrap_or_else(|| if small_batches(dr) { 0.0 } else { self.card(dr) })
     }
 
-    fn valid_live_driver(&self, order: &[Step], b: &Body<'_>, first: Option<usize>) -> bool {
-        first.is_none_or(|f| order.first().is_some_and(|s| s.at == f || self.smaller_change(b, f, s.at)))
+    /// Whether `order` starts from the line's driver: its delta (or a smaller connected change), else the rule's
+    /// demand (`Body::demand_first`), so a kept order that read its demand later is searched again (Q59).
+    pub fn valid_live_driver(&self, order: &[Step], b: &Body<'_>, first: Option<usize>) -> bool {
+        first.or_else(|| b.demand_first()).is_none_or(|f| order.first().is_some_and(|s| s.at == f || self.smaller_change(b, f, s.at)))
     }
 
     /// Records the work a rule's line did in the engine (`plan_work`, every order it ran in) on its kept plan, for
