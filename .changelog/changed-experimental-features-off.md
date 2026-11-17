@@ -1,0 +1,1 @@
+Every internal-testing feature is now off until its variable is set, `rerail scan` included. `RERAIL_EXPERIMENTAL=1` turns them all on, or `RERAIL_EXPERIMENTAL_<FEATURE>=1` one, set where it runs: the shell for a command, and the daemon, restarted with it. Internal testing in the docs lists each feature, its variable and what is off without it.

@@ -4,18 +4,17 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { mergeAssistState, openRerailDatabase } from "../../../src/engine/index.js";
 import { PULL_REQUEST_LIMIT, type PullRequestListing, type PullRequestSummary } from "../../../src/runtime/merge-assist/github.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../../../src/runtime/merge-assist/service.js";
 import { commit, git } from "../../support/merge-assist/git.js";
 import { FakeGithub, mergeAssistWorkspaces, type Workspace } from "../../support/merge-assist/workspace.js";
+import { withExperiments } from "../../support/environment/experiments.js";
 
 // Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
-beforeEach(() => {
-  vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "1");
-});
+withExperiments("MERGE_ASSIST");
 
 const workspace = mergeAssistWorkspaces();
 
@@ -116,19 +115,24 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     expect(github.readinessReads).toBe(reads + 3);
   });
 
-  it("says when gh could not tell whether it is signed in, keeps no such answer, and makes it a problem of the scan", async () => {
+  it("says when gh could not tell whether it is signed in, asks again after a minute, and makes it a problem of the scan", async () => {
     const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    let now = Date.parse("2026-11-03T14:00:00Z");
     const github = new FakeGithub({ readinessError: true });
-    const service = ws.service({ github });
+    const service = ws.service({ github, now: () => now });
     const status = await service.setEnabled(ws.repo, true);
 
     expect(status.readiness.github).toEqual({ state: "unavailable", login: null, repository: "acme/app" });
+    const reads = github.readinessReads;
+    // Status reads within the minute run no `gh` again.
     await service.status(ws.repo);
-    expect(github.readinessReads).toBe(2);
+    await service.status(ws.repo);
+    expect(github.readinessReads).toBe(reads);
     expect((await service.scan(ws.repo)).lastScan).toMatchObject({ peers: { pullRequests: 0 }, problems: [expect.any(String)] });
 
-    // Once gh answers, the next read says so: nothing kept the failure.
+    // Once gh answers, the first read after the minute says so.
     github.options.readinessError = false;
+    now += 60_000;
     expect((await service.status(ws.repo)).readiness.github.state).toBe("signed-in");
   });
 

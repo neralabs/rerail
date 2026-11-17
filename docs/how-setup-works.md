@@ -76,8 +76,8 @@ pack that fits is shown.
 
 - Each fit shows its rule count, why it matched and the folder it would be added in.
 - The agents to connect ("Will connect to: …"; `--agents` names others).
-- Pack rules that start off or take options from the repository's own lint config
-  ([The repository's own lint config](rule-scoping.md#the-repositorys-own-lint-config)).
+- Pack rules that start on, start off or take options from the repository's own lint config, so the packs run the
+  rules its linters run ([The repository's own lint config](rule-scoping.md#the-repositorys-own-lint-config)).
 - With no match, no pack is offered; the repository can still start and add packs in the dashboard later.
 
 </details>
@@ -423,7 +423,7 @@ rerail status            # whether Rerail is started here, otherwise daemon/data
 rerail version           # the installed version
 rerail manage            # opens the dashboard's Overview (--print only prints the URL)
 rerail session claude-code ID --open  # this session's status line and page URL; --open opens it
-rerail scan --session ID --scope repository --wait  # internal testing: inspect findings in Sessions
+rerail scan --session ID --scope repository --wait  # internal testing, experimental (RERAIL_EXPERIMENTAL_REPOSITORY_SCAN=1 for the daemon): findings at /api/audits?auditId=<run>, not in the dashboard
 rerail settings --session ID --mode log             # save this workspace's default
 rerail update check      # is a newer version on the channel?
 rerail update            # install it
@@ -545,6 +545,19 @@ lock however the daemon ends, `kill -9` included, so there is never a stale lock
 A second main daemon can come from another `$RERAIL_HOME`, or be an orphan its `daemon.json` no longer names.
 `rerail daemon start` prints its exit message from `daemon.log`.
 
+Within one Rerail home every build, a checkout's included, runs one daemon. The daemon holds `locks/daemon.lock` in the
+home the same way, before it opens the database or binds a port, and a second daemon started there exits with
+`Another Rerail daemon (pid …) runs in …`. The daemon checks every second that `daemon.json` holds what it wrote and
+writes the file again when it is gone or differs, so a start or a stop that finds the lock held and no `daemon.json`
+waits for it and then uses or stops that daemon, instead of starting another. It stops that check for good once its
+home was moved or removed, so a home made again at the same path never gets a `daemon.json` naming a daemon that does
+not hold it. Asking the lock loads the native engine, so a start or a stop asks it only when `locks/daemon.json`, the
+record the holder keeps beside the lock, names a process that runs, and on Windows only while the home's engine pipe
+is there too: Windows keeps a loaded engine from being deleted, and `rerail install --remove` stops the daemon before
+it removes `versions/`. Where the lock cannot be asked or taken (the engine does not load, or the lock file does not
+open), no start or stop waits on it, and the daemon runs without it, kept to one by its engine socket or pipe, as
+before the lock.
+
 </details>
 
 <details>
@@ -552,11 +565,15 @@ A second main daemon can come from another `$RERAIL_HOME`, or be an orphan its `
 
 Everything else goes through the daemon, not in-process evaluation. The Claude Code, Codex and Cursor hooks, OMP and
 Pi sessions, and `rerail events` streams (in internal testing) send events to it, starting it when it is not running,
-after a reboot too (unless `RERAIL_AUTOSTART=0`). CLI commands such as `rerail settings` and `rerail scan` (in
-internal testing) use its API.
+after a reboot too (unless `RERAIL_AUTOSTART=0`). When several of them find it down at once, one starts it: a start
+in the background first creates `autostart.claim` in the Rerail home, naming the process it launches, and the others
+leave the start to that one. The claim ends when that start ends, whether the daemon came up or not. Its launcher
+renews it every second while it runs, for 45 s at most, and a claim nothing renewed for 5 s no longer holds, so a
+launcher that was killed holds a start back for 5 s at most, whatever process gets its pid. CLI commands such as
+`rerail settings` and `rerail scan` (in internal testing) use its API.
 
 Any other process opening the machine-wide store gets an error and a failed policy run, not a second writer.
-Development builds never take the lock and never open that store.
+Development builds never take the main-instance lock and never open that store.
 
 </details>
 
@@ -591,16 +608,61 @@ A newer Rerail that first opens the file (the daemon, `rerail start`, set-up, or
 only reads) runs the pending migration steps in one transaction. A failing step leaves the file as it was. A process
 that cannot write the file gets an error naming those steps, and the file is left as it was.
 
+Moving each audit's rule provenance to one shared copy is not part of a step: the step adds two tables and a column,
+and records the last audit the database holds; the daemon moves the provenance of the audits up to that one once it
+starts, on a thread of its own, so it keeps answering hooks during the move. Each transaction moves as many audits as
+fit in about 100 ms, at most 100, with a pause between two, so the open that upgrades the file returns at once and
+other processes keep writing during the move. While another process holds the database, as `rerail scrub` does for
+seconds on a large file, or keeps it from being read, as while it recovers the database after a crash, the move waits
+and tries again every 150 ms, then goes on; stopping the daemon ends that wait at once. A daemon stopped partway goes
+on at its next start. Each check the daemon makes on the thread that answers hooks, whether audits are left to move
+and whether an older Rerail recorded one in the last 7 days, reads at most one audit through an index, however long
+the history, and one more for each audit whose damaged rule provenance the move left as it is (below): a later start
+finds nothing left to move that way and takes no write lock.
+
+The pages that held each audit's own copy are zeroed, as every delete's are, and stay in the file: new history fills
+them before the file grows again. The daemon runs no `VACUUM`, since one holds the write lock until it commits, seconds
+on a large file, and another process's write fails once it has waited 5 s. `rerail scrub` gives the space back to the
+disk when you run it. To copy the database while the daemon runs, copy `rerail.sqlite-wal` with it, or stop the daemon
+first: during the move it writes every few hundred milliseconds, and a copy of `rerail.sqlite` alone can come out
+damaged.
+
+A Rerail older than this one reads an audit's rule provenance only from the audit's own row, so the move waits while
+one may still be using the database: it starts only once the last audit an older Rerail recorded, with rules on or
+none, began 7 days ago. The new version marks every audit it records with its shared copy, an empty one included, and
+the move marks each audit it moves, so an audit without that mark is an older Rerail's. The audits recorded before the
+update count too, so with only the new version running the move starts 7 days after the last audit recorded before
+the update, and an older Rerail reads the audits recorded before the update in full that week, as before. While it
+waits, the daemon writes why and until when to `daemon.log` when the wait begins, and again when it finds another
+audit to wait for, as when an older Rerail has recorded one since. It looks again an hour later, or when the wait ends
+if that comes first, so an older Rerail that keeps recording adds at most one line an hour, and after the computer
+sleeps the move starts at most an hour late. A move that finds such an audit before its next batch stops there and
+waits the same way; the audits it has not reached keep their provenance in their row. The move takes the audits in
+the order they were recorded, up to the last one the update recorded, whatever the computer's clock read when each
+began, so it reads none of the rows an older Rerail recorded after the update. Where that audit is gone, as after
+`rerail reset` deleted its repository's history, the move takes them up to the first one that began after the update,
+and reads that one row. An audit whose rule provenance in its row is not a JSON array, which only a damaged file or a
+hand edit leaves, stays as it is and reads as before, while the others move. The move names such an audit in
+`daemon.log` when it reaches it: once when the move runs to its end, again when a move stopped partway goes on,
+which is at the next start after the daemon stopped or when the wait for an older Rerail's audit ends, and not at all
+when every audit left to move is such an audit, since no move starts then. Each daemon start reads every such audit in
+full on the thread that answers hooks: about 0.1 ms for one of 189 KB, and 0.4 ms when the file is not in the page
+cache (Linux x64).
+
 Most steps add a column or a table, which older versions read correctly: the floor stays, an older Rerail still opens
 the file, and a hook or the status line runs such steps itself. A step an older version would misread raises the
 floor. It waits for the new version's daemon or a command that writes; until then a hook or the status line says to
 run `rerail daemon start`.
 
 Storing each new audit's rule provenance once sets no floor, so coding agents on different Rerail versions keep
-sharing the file. An older Rerail reads an empty rule provenance for each audit a newer one wrote, in its
+sharing the file. An older Rerail reads an empty rule provenance for each audit a newer one wrote or moved, in its
 `audits_list`, its support bundle and what its remote sink sends. Its dashboard and steering never read the
-provenance, and work as before. The audits it writes, and those recorded before the update, keep their provenance in
-their own row, where both versions read it.
+provenance, and work as before. The audits it writes keep their provenance in their own row, where both versions read
+it, and the move leaves them there. Since the move waits while an older Rerail records audits (above), one that keeps
+running beside the new version, and records an audit at least once every 7 days, reads the audits recorded before the
+update, and its own, in full, as before. One started again after the move reads those recorded before the update
+empty, while `rerail.sqlite.pre-update`, the copy `rerail update` took before the update, holds each in full until a
+later update replaces it.
 
 An update that finds nothing newer, or fails, keeps the copy from the last version change. One that changes the
 version but cannot take a copy removes the old one, which no longer holds the database before the now-active version.

@@ -90,7 +90,7 @@ export const conflictHookOutcomeSchema = z.object({
 export type ConflictHookOutcome = z.infer<typeof conflictHookOutcomeSchema>;
 
 export const conflictSchema = z.object({
-  id: z.string().describe("Stable: \"conflict:\" + question + \":\" + a short hash of theirs.ref."),
+  id: z.string().describe("Stable: \"conflict:\" + question + \":\" + a short hash of their branch: its head branch name with any remote prefix dropped, <owner>:<branch> for a pull request from a fork."),
   shortId: z.string().describe("Six hex characters its card names it by."),
   kind: z.enum(CONFLICT_KINDS),
   status: z.enum(CONFLICT_STATUSES),

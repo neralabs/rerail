@@ -10,14 +10,14 @@ import { chmod, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi, type TestContext } from "vitest";
-import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
-import { CheckoutCodeRuleRouter } from "../../../src/engine/code-rule/checkout-code-rule-router.js";
-import { CodeRuleBridge } from "../../../src/engine/code-rule/code-rule-bridge.js";
-import { CheckoutCatalogs, startingCheckout } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
-import type { AuditInput, AuditRecorder, AuditResult } from "../../../src/engine/audit/audit.js";
-import { codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
-import { setUpTestRepository } from "../../support/repository-rules.js";
-import { removeFolder } from "../../support/platform/remove-folder.js";
+import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js";
+import { CheckoutCodeRuleRouter } from "../../../../src/engine/code-rule/checkout-code-rule-router.js";
+import { CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
+import { CheckoutCatalogs, startingCheckout } from "../../../../src/engine/code-rule/code-rule-dsl-catalog.js";
+import type { AuditInput, AuditRecorder, AuditResult } from "../../../../src/engine/audit/audit.js";
+import { codeRuleSchema } from "../../../../src/engine/code-rule/code-rule-schema.js";
+import { setUpTestRepository } from "../../../support/repository-rules.js";
+import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 /** The paths whose realpath, and every realpath below them, fails with `EPERM`, as Windows fails one the user is denied. */
 const refused = vi.hoisted(() => new Set<string>());
