@@ -1,0 +1,1 @@
+In Claude Code, Codex and Cursor, a turn end whose hook gave up waiting for Rerail's checks (after a command rewrote many files) no longer holds the session's next prompt and tool calls for 30 seconds each, and the steers those checks find now come with the next prompt or tool call instead of being lost.

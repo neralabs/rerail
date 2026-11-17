@@ -160,6 +160,26 @@ async function settledWithin(work: Promise<void>, ms: number): Promise<boolean> 
   }
 }
 
+/**
+ * Waits for `work` until `hookRequest` aborts (its hook gave up), and says whether it finished first; without a request,
+ * until it finishes. A failure of `work` before then is raised, as waiting on it raises it.
+ */
+async function settledBefore(work: Promise<void>, hookRequest: AbortSignal | undefined): Promise<boolean> {
+  if (hookRequest === undefined) {
+    await work;
+    return true;
+  }
+  if (hookRequest.aborted) return false;
+  const gaveUp = Promise.withResolvers<false>();
+  const giveUp = (): void => gaveUp.resolve(false);
+  hookRequest.addEventListener("abort", giveUp, { once: true });
+  try {
+    return await Promise.race([work.then(() => true as const), gaveUp.promise]);
+  } finally {
+    hookRequest.removeEventListener("abort", giveUp);
+  }
+}
+
 /** The strategy a session steers with: the saved one only while the experimental switch is on, else `message`. */
 function effectiveSteerStrategy(settings: Pick<CheckoutAuditSettings, "steerStrategy">): SteerStrategy {
   return steerStrategiesEnabled() ? settings.steerStrategy : "message";
@@ -857,6 +877,12 @@ export interface RerailRuntimeOptions {
   mergeAssist?: MergeAssistRuntime;
   /** The most an edit's result waits for Merge Assist where a hook command is set; {@link MERGE_ASSIST_WAIT_MS} by default. */
   mergeAssistWaitMs?: number;
+  /**
+   * The request of the hook waiting for an event's answer, which aborts once that hook stops waiting (the engine
+   * service's: the request closed before its answer was written). Such an event stops waiting for edit checks and takes
+   * none of the session's steers, which wait for its next event. Without one, every answer counts as read.
+   */
+  hookRequest?: (event: AdapterEvent) => AbortSignal | undefined;
 }
 
 export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
@@ -881,6 +907,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #nativeSession: RerailRuntimeOptions["nativeSession"];
   readonly #createAuditor: NonNullable<RerailRuntimeOptions["createAuditor"]>;
   readonly #deliverBackground: RerailRuntimeOptions["deliverBackground"];
+  readonly #hookRequest: RerailRuntimeOptions["hookRequest"];
   readonly #beforeSessionPublish: RerailRuntimeOptions["beforeSessionPublish"];
   readonly #auditSettings: CheckoutAuditSettings;
   readonly #controls: SqliteAuditControlStore;
@@ -905,6 +932,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#modelPath = options.modelPath;
     this.#nativeSession = options.nativeSession;
     this.#deliverBackground = options.deliverBackground;
+    this.#hookRequest = options.hookRequest;
     this.#mergeAssist = options.mergeAssist;
     this.#ownsMergeAssist = options.mergeAssist === undefined;
     this.#mergeAssistWaitMs = options.mergeAssistWaitMs ?? MERGE_ASSIST_WAIT_MS;
@@ -1016,7 +1044,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const yields = event.kind === "turn-end" && ADAPTER_CAPABILITIES[descriptor.host].toolSurface !== "native";
     await this.#ingestEventWork(state, bridge, event, yields);
     if (event.kind === "session-end") return [];
-    return this.#boundaryDeliveries(state, event.eventId, yields);
+    return this.#boundaryDeliveries(state, event, yields);
   }
 
   /**
@@ -1029,11 +1057,14 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     await this.#router(state.descriptor.host).ingest(event);
     noteCallsAwaitingResult(state.callsAwaitingResult, event);
     if (event.kind === "result") await this.#ingestResult(state, bridge, event);
-    if (event.kind === "turn-end") await this.#ingestTurnEnd(state, bridge, yields);
+    if (event.kind === "turn-end") await this.#ingestTurnEnd(state, bridge, yields, this.#hookRequest?.(event));
   }
 
-  /** A turn's end: the boundary waits for the source walk, then for the turn's own edit checks (all of them where it `yields`). */
-  async #ingestTurnEnd(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, yields: boolean): Promise<void> {
+  /**
+   * A turn's end: the boundary waits for the source walk, then for the turn's own edit checks (all of them where it
+   * `yields`, while its hook waits: `hookRequest`).
+   */
+  async #ingestTurnEnd(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, yields: boolean, hookRequest: AbortSignal | undefined): Promise<void> {
     const { sessionId } = state.descriptor;
     // The source walk checks the shell writes it finds as generated edits, so the boundary waits from its start.
     await this.#waitingForEditChecks(state, yields, async () => {
@@ -1046,25 +1077,32 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       // large checkout, and a turn boundary that waited for it held the session's request lane past the host's timeout.
       // A hook host's stop hook carries the turn's steers, so it waits for all of them; OMP and Pi wait within the cap.
       const settleStartedAt = performance.now();
-      if (yields) await bridge?.settleGeneratedEdits();
+      if (yields) await this.#settleWhileHookWaits(state, bridge, hookRequest);
       else await this.#awaitEditChecks(state, bridge, NATIVE_EDIT_CHECK_MS);
       this.#reportSlowTurnEndWait(sessionId, "generated-edit audits", settleStartedAt);
     });
   }
 
   /**
-   * What a boundary answers: the Merge Assist notes and steers pending for the session, the missed digest where the
-   * agent `yields`, and the deliveries held for the event itself.
+   * What a boundary answers: what the session holds for its agent (`#heldForAgent`), and the deliveries held for the
+   * event itself. An event whose hook gave up waiting (`hookRequest`) takes nothing the session holds: no one reads its
+   * answer, so its notes and steers wait for the session's next event, unmarked and unrecorded.
    */
-  async #boundaryDeliveries(state: RuntimeSessionState, eventId: string, yields: boolean): Promise<AdapterDelivery[]> {
+  async #boundaryDeliveries(state: RuntimeSessionState, event: AdapterEvent, yields: boolean): Promise<AdapterDelivery[]> {
+    const deliveries = this.#hookRequest?.(event)?.aborted === true ? [] : await this.#heldForAgent(state, yields);
+    deliveries.push(...(state.eventDeliveries.get(event.eventId) ?? []));
+    state.eventDeliveries.delete(event.eventId);
+    return deliveries;
+  }
+
+  /** The Merge Assist notes and steers pending for the session, and the missed digest where the agent `yields`. */
+  async #heldForAgent(state: RuntimeSessionState, yields: boolean): Promise<AdapterDelivery[]> {
     this.#offerMergeAssistNotes(state);
     const deliveries = await this.#collectPendingSteers(state);
     if (yields) {
       const digest = await this.#takeMissedDigest(state);
       if (digest !== undefined) deliveries.push(digest);
     }
-    deliveries.push(...(state.eventDeliveries.get(eventId) ?? []));
-    state.eventDeliveries.delete(eventId);
     return deliveries;
   }
 
@@ -1141,6 +1179,23 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (bridge === undefined || state.overdueEditChecks !== undefined) return;
     const settled = bridge.settleGeneratedEdits();
     if (await settledWithin(settled, capMs)) return;
+    this.#leaveOverdue(state, settled);
+  }
+
+  /**
+   * A hook host's stop waits for every edit check of the session, so the turn's steers ride its answer, for as long as
+   * its hook waits (`hookRequest`): once the hook gives up, the stop stops waiting and the session's next event runs at
+   * once. The checks carry on, overdue as past a cap (`#awaitEditChecks`), and their steers wait for that next event.
+   */
+  async #settleWhileHookWaits(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, hookRequest: AbortSignal | undefined): Promise<void> {
+    if (bridge === undefined) return;
+    const settled = bridge.settleGeneratedEdits();
+    if (await settledBefore(settled, hookRequest)) return;
+    this.#leaveOverdue(state, settled);
+  }
+
+  /** The checks `settled` waits for carry on past the boundary that stopped waiting for them; later boundaries do not wait. */
+  #leaveOverdue(state: RuntimeSessionState, settled: Promise<void>): void {
     const overdue: Promise<void> = settled.catch(() => undefined).finally(() => {
       if (state.overdueEditChecks === overdue) state.overdueEditChecks = undefined;
     });

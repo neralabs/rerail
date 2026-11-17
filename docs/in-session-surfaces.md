@@ -189,7 +189,7 @@ Each coding agent waits briefly after an edit for its check, so the steer lands 
 <details>
 <summary>Wait times</summary>
 
-- **Claude Code, Codex, Cursor** wait up to one second after an edit for its check, so the agent sees the steer under the edit and can act that turn. Checks usually take tens of milliseconds.
+- **Claude Code, Codex, Cursor** wait up to one second after an edit for its check, so the agent sees the steer under the edit and can act that turn. Checks usually take tens of milliseconds. At turn end they wait for all of the turn's checks while the hook waits, up to 30 seconds; once the hook gives up, the session's next prompt or tool call goes ahead at once and carries the steers those checks find.
 - **OMP and Pi** wait up to 10 seconds at a tool result and at turn end, so a shell command that wrote thousands of files does not stall the agent for minutes.
 
 Slower checks steer at the next hook, reply or poll. The waits are fixed, not per rule.

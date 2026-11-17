@@ -211,6 +211,11 @@ interface EngineRoutingState {
   lastEventAt: Map<string, number>;
   lanes: SessionLanes;
   pending: Set<Promise<readonly AdapterDelivery[]>>;
+  /**
+   * The request of the hook waiting for each event's answer (`hookRequestSignal`), which every runtime reads
+   * (`RerailRuntimeOptions.hookRequest`): an event whose hook gave up stops waiting and hands over no steer.
+   */
+  hookRequests: WeakMap<AdapterEvent, AbortSignal>;
   /** The runtimes no session uses, each with the timer that closes it. */
   idle: Map<string, NodeJS.Timeout>;
   /** How long a runtime no session uses stays open: `idleRuntimeMs`, or `IDLE_RUNTIME_MS`. */
@@ -278,6 +283,7 @@ function resolveRuntimeRoute(
   if (configuration !== undefined && options.mergeAssist !== undefined && runtimeOptions.databasePath === serviceDatabasePath) {
     runtimeOptions.mergeAssist = options.mergeAssist;
   }
+  runtimeOptions.hookRequest = routed => state.hookRequests.get(routed);
   const runtimeKey = JSON.stringify([
     runtimeOptions.storageRoot,
     runtimeOptions.modelPath,
@@ -563,6 +569,18 @@ function answerEngineChallenge(challenge: unknown, accessToken: string, response
   response.end(JSON.stringify({ proof: engineProof(accessToken, challenge) }));
 }
 
+/**
+ * Aborts once `response` closes before its answer is written: the hook that sent the request gave up waiting (its 30 s,
+ * `ingestEngineEvent`), or its process ended, and no one reads the answer.
+ */
+function hookRequestSignal(response: ServerResponse): AbortSignal {
+  const request = new AbortController();
+  response.once("close", () => {
+    if (!response.writableEnded) request.abort();
+  });
+  return request.signal;
+}
+
 /** What listening beside a held pipe needs; tests pass their own. */
 export interface HeldPipeListening {
   listen: (socketPath: string) => Promise<void>;
@@ -653,6 +671,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     lastEventAt: new Map(),
     lanes: new SessionLanes(),
     pending: new Set(),
+    hookRequests: new WeakMap(),
     idle: new Map(),
     idleRuntimeMs: options.idleRuntimeMs ?? IDLE_RUNTIME_MS,
     worktreeWalks: options.worktreeWalks ?? engineWorktreeWalks(),
@@ -678,6 +697,8 @@ export async function startEngineService(options: EngineServiceOptions): Promise
       return;
     }
     try {
+      // Watched before the body is read, so a close at any point before the answer is written counts.
+      const hookRequest = hookRequestSignal(response);
       const chunks: Buffer[] = [];
       let size = 0;
       for await (const chunk of incoming) {
@@ -687,6 +708,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
         chunks.push(bytes);
       }
       const { event, configuration } = parseEngineRequest(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      routing.hookRequests.set(event, hookRequest);
       const deliveries = await engineService.ingest(event, configuration);
       response.end(encodeRerailEventResult({ eventId: event.eventId, deliveries: [...deliveries] }));
     } catch (error) {
