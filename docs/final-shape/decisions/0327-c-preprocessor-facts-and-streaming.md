@@ -40,9 +40,13 @@ and the result from the key by the native step (0104). The preprocessor takes th
 - **Mode (a).** The request is `c_pp_file_req(path)`, and its answer is the file's directive rows.
   The key is the file's content (`file_digest`), so an unchanged file is not read again, and an
   edited one retracts only its own rows (ledger row 14).
-- **Mode (b).** The request is `c_pp_tu_req(tu, cfg)`, and its answer is the translation unit's
-  outputs. The key is a rule joining the unit, its configuration rows and the digests of the files
-  its include closure reaches.
+- **Mode (b).** The request is `c_pp_tu_req(tu, spec)`, and its answer is the translation unit's
+  outputs. `spec` is the unit's configuration as one text, which rules make from the configuration's
+  rows (`c_cfg_spec`), so a changed row is another request. The answer names every file the pass
+  looked at, found or not (`c_pp_read`), and the journal keeps it while none of them changed: an
+  edit to a header asks again for the units that read it, and for no other. (A key joining the
+  digests of the include closure was the first design. It would recurse through an aggregate: a
+  computed include found while applying grows the closure, which changes the key.)
 
 **Include resolution is rules** (`c/includes.rr`), as Python's import resolution is
 (`python/modules.rr`). The rules cover:
@@ -59,18 +63,25 @@ the rules resolve it, and the key grows by it. That is phase 1's import fixpoint
 
 | relation | what it holds |
 |---|---|
-| `c_tu(tu, lang, std)` | a translation unit, its language (`c`, `c++`, `objective-c`) and standard |
-| `c_predefine(cfg, name, body)`, `c_config_undef(cfg, name)` | the predefined macros, `-D` and `-U`, in order (`c_config_undef`: mode (a) has `c_undef`) |
-| `c_include_dir(cfg, order, dir, kind)` | the search path, by kind (`quote`, `angle`, `system`, `after`, `framework`) |
-| `c_feature(cfg, kind, name, value)` | what `__has_attribute`, `__has_builtin`, `__has_feature`, `__has_extension`, `__has_cpp_attribute`, `__has_c_attribute` and `__has_warning` answer |
+| `c_tu(tu, cfg)` | a translation unit and the configuration it is preprocessed under |
+| `c_lang(cfg, lang, std)` | the language (`c`, `c++`, `objective-c`, `objective-c++`) and standard as a driver spells it (`gnu17`, `c++2c`) |
+| `c_predefine(cfg, order, name, body)`, `c_config_undef(cfg, order, name)` | the predefined macros, `-D` and `-U`, in one order (`c_config_undef`: mode (a) has `c_undef`) |
+| `c_include_dir(cfg, order, dir, kind)` | the search path, by kind (`quote`, `angle`, `system`, `framework`, `after`) |
+| `c_feature(cfg, test, name, value)` | what `__has_attribute`, `__has_builtin`, `__has_feature`, `__has_extension`, `__has_cpp_attribute`, `__has_c_attribute` and `__has_warning` answer |
 | `c_fixed(cfg, name, value)` | `__DATE__`, `__TIME__` and `__TIMESTAMP__`, fixed so that a run is deterministic |
 
 Where the rows come from, every source through rules, so a rule can add to them or override them:
 - the run's settings (`env("c.…", v)`);
-- `compile_commands.json`, loaded as a JSON document and read from its tape. An entry's
-  `arguments` are read as they are; its `command` is split by a new `@shell_words` functor;
+- `compile_commands.json`, answered by file as mode (a)'s directives are (`c_cc_file_req(path)`:
+  `c_compile_command`, `c_compile_arg`). An entry's `arguments` are read as they are; its `command`
+  is split as a shell splits it (`shell_words`; `@shell_unquote` gives rules a word's value). A load
+  is in the run's grammar, so a C run cannot load the file as a JSON document, as first planned;
 - a compiler profile: `clang -dM -E` and `clang -v -E` output, written once by a dev script
   (`scripts/dev/c-profile`) and read with `file_line`.
+
+`lib/c/compile-commands.rr` makes each entry a unit under a configuration of its own (`-D`, `-U`,
+`-I`, `-iquote`, `-isystem`, `-idirafter`, `-F`, `-x`, `-std=`, joined or apart), the profile its
+first macros and its compiler-own search path (settings `c.compile_commands`, `c.profile.<lang>`).
 
 A configuration is a key, not a setting of the engine. Two configurations of one unit are two
 requests with their own rows.
@@ -92,16 +103,18 @@ requests with their own rows.
 | `c_guard(path, i, name)` | the file's include guard, by clang's multiple-include rule: `#ifndef X` or `#if !defined X` first, its `#endif` last, no token outside |
 | `c_pp_problem(path, i, kind)` | an unmatched `#elif`/`#else`/`#endif`, one after `#else`, an unclosed `#if`, a malformed operand, an unclosed comment |
 
-**Mode (b), per translation unit and configuration:**
+**Mode (b), per translation unit and configuration** (each row led by `tu` and `spec`; `at` is a
+directive's `#` or a call's name, in its file's bytes):
 
 | relation | a row |
 |---|---|
-| `c_pp_included(tu, from, i, to, depth)` | directive `i` of `from` entered `to` |
-| `c_pp_active(tu, path, start, end)` | a byte range of a file that survives the conditionals |
-| `c_pp_cond_taken(tu, path, i, branch)` | which group of a conditional was taken |
-| `c_pp_macro_def_used(tu, name, path, i)` | a definition that was expanded |
-| `c_pp_expansion(tu, id, name, path, off, parent)` | an expansion, where it was written, and the expansion it came from |
-| `c_pp_diag(tu, path, off, kind, text)` | `#error`, `#warning`, and what the preprocessor refused |
+| `c_pp_read(tu, spec, path)` | a file the pass looked at, found or not (always made: the journal keeps the answer by it) |
+| `c_pp_included(tu, spec, from, at, to, depth)` | the directive at `at` of `from` entered `to` |
+| `c_pp_include_wanted(tu, spec, from, at, spelled, form)` | a header not found, as spelled once expanded |
+| `c_pp_active(tu, spec, path, start, end)` | a byte range of a file that survives the conditionals |
+| `c_pp_cond_taken(tu, spec, path, at, taken)` | whether a conditional directive's group was taken |
+| `c_pp_expansion(tu, spec, id, name, def_path, def_at, path, at, parent)` | an expansion, its macro's definition, where it was called, and the expansion it came from (a definition used is a rule over it) |
+| `c_pp_diag(tu, spec, path, at, kind, text)` | `#error`, `#warning`, and what the preprocessor refused |
 | `c_pp_tape(tu, t)`, `c_pp_text(tu, x)` | the token tape and the `-E` text, stored objects named by a fact's column (0104, rule 3) |
 
 An answer produces only the relations the program reads (ledger row 13). Expansions in system
@@ -216,7 +229,7 @@ must not become a per-token one (history index, lesson 6).
   Digraphs are written in their plain spelling. Origins are run-length segments: a segment holds
   while the text follows its file byte for byte, or one expansion.
 - **Mode (a) in the engine (built).**
-  - A language registers answers to a file's request, `language::FileAnswerer`: a request
+  - A language registers answers to a file's request (`language::Answerer`, then `FileAnswerer`): a request
     relation, the relations it gives, and the rows for a file's bytes. C's is
     `language/adapter/c_pp.rs`, registered in `install_languages`.
   - `rr::WORLD` lists the file system's answers (`FILE_SYSTEM`) and then each registered one,
@@ -231,6 +244,50 @@ must not become a per-token one (history index, lesson 6).
     A request keyed by a document's path failed on missing statistics, in any language. Such a
     cone now binds the corpus's rows of them (test
     `a_request_keyed_by_an_export_needs_no_load`).
+- **Mode (b) in the engine (built).**
+  - The answer interface is `language::Answerer`: a request of one column (a path, asked by the
+    readers of its relations, as `file_line` is) or of several (made by rules). An answer reads
+    files through the runner (`Reader`), under the run's roots, so they are the run's consulted
+    record. A request of several columns names the files it read (`read_set`, `c_pp_read`), and
+    the cone's rounds keep it from the journal while none of them is named (`cone_rounds`).
+  - C's `Units` reads the configuration back from `spec` (`read_spec`), searches as a driver does
+    (`rerail_c_pp::files::Search`, every path it looks at recorded) and runs `rerail_c_pp::Pp`
+    with the fact sink.
+  - The rules: `lib/c/env.rr` (the configuration, `c_cfg_item`, `c_cfg_spec` by `join`) and
+    `lib/c/preprocess.rr` (`c_pp_tu_req(tu, s) :- c_tu(tu, c), c_cfg_spec(c, s)`).
+  - Tests: `c_units_are_preprocessed_under_their_configurations` (two configurations take other
+    branches and enter another header); `a_header_edit_asks_again_only_for_the_units_that_read_it`
+    (with the journal on: an edit asks for one unit of three, a file no unit looked at for none, and
+    the outputs are a fresh run's).
+  - **Fixed on the way**, each in any language:
+    - pruning unreached clauses dropped a request made by a rule, which nothing reads by name: an
+      answer's relation read now reaches its request (`rr::reached_statements`);
+    - the run's constants took every answer relation as given, so a rule reading only a unit's
+      answer was folded over no documents, empty: a language's answer is a constant only where its
+      request is (`constants::foldable`);
+    - the journal's carry compared a relative key with absolute roots, so no relative path was ever
+      kept: it is the run root's, as the world reads it;
+    - `rr::WORLD` was made once a process, before the languages installed where no load hook runs
+      (a test runner), and then answered no language's request: it is made once they are;
+    - a request keyed by a `match` group (`dir_entry(d, …)` with `d` from
+      `match("(?<d>.*)/[^/]*", p)`) was made by no clause, as the group's equality is written
+      later in the lowering: a positive `match` binds its groups (`rr::lower`'s world demand).
+  - `lib/c/includes.rr`: the closure as rules, for analyses (`c_reach`, `c_resolved`,
+    `c_unresolved`), by the driver's search order over `dir_entry` and mode (a)'s rows, every
+    branch taken; `#include_next` from the entry after the includer's. Test
+    `c_includes_resolve_by_the_search_order` (the closure is the files mode (b) enters).
+  - Configurations from a build: `c_configurations_come_from_compile_commands_and_a_profile`.
+  - Phase 1 (`sources.rr`): the closure's headers are loaded as documents in the run's grammar
+    and handed on as `library` rows, as Python's imports are; a program that reads
+    `sources__library` has them as its documents (test `a_c_runs_included_headers_are_its_documents`).
+    A `.h` file is C++'s by its suffix, so a library document is the grammar phase 1 loaded it in,
+    not its suffix's (`corpus::run_observed`'s `text_document`). The units: a build's record where
+    `c.compile_commands` names one, else each source file that is no header, under a configuration
+    `default` (the run's language, GNU's 17, the profile `c.profile.<lang>` where named). The
+    configuration relations are `extensible`, so a program adds to them.
+  - Not yet: `c_pp_tape` and `c_pp_text` as stored objects; the store's families still give a
+    stored document its dialect by suffix (`facts::families::dialect`), which a persisted C run's
+    header tape would need to follow.
 - **The compiled forms** are held to the lean preprocessor: the same rows and the same tokens, on
   every backend.
 
@@ -273,5 +330,8 @@ must not become a per-token one (history index, lesson 6).
 
 - **Header units.** A header could be preprocessed once per entry macro state and shared by every
   unit that enters it in that state, as clang's modules are. To be measured first.
+- **Headers outside the run's roots.** A unit's system headers are read only under a root (the
+  world's rule), so a compiler's own include directories need to be roots, or a library root, as
+  Python's typeshed is.
 - **Expansion facts at system-header scale.** They are produced only where read; a budget, as
   `load` has, may be needed.

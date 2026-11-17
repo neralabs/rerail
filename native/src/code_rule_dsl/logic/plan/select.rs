@@ -135,6 +135,7 @@ fn term(b: &Body<'_>, t: TermRef<'_>, env: &Env, atoms: Option<[i64; 3]>) -> Res
                 ("json_str", [x]) => symbol_of(atoms, call("json_quote", vec![bin(Op::Concatenate, text_of(atoms, x), string(""))])),
                 ("nfkc", [x]) => symbol_of(atoms, call("rr_nfkc", vec![text_of(atoms, x)])),
                 ("py_repr", [x]) => symbol_of(atoms, call("rr_py_repr", vec![text_of(atoms, x)])),
+                ("shell_unquote", [x]) => symbol_of(atoms, call("rr_shell_unquote", vec![text_of(atoms, x)])),
                 ("ed25519_ok", [k, m, sig]) => call("rr_ed25519_ok", vec![text_of(atoms, k), text_of(atoms, m), text_of(atoms, sig)]),
                 ("rx_replace", [s, re, by]) => symbol_of(atoms, call("rr_rx_replace", vec![text_of(atoms, s), text_of(atoms, re), text_of(atoms, by)])),
                 ("flat_bin", [o, x, y]) => {

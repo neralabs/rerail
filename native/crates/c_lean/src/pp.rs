@@ -90,7 +90,9 @@ pub struct Options {
 impl Options {
     /// C at standard year `std` (89, 99, 11, 17, 23), with GNU's extensions where `gnu`.
     pub fn c(std: u32, gnu: bool) -> Self {
-        Options { cpp: false, digit_separators: std >= 23, trigraphs: std < 23 && !gnu, raw_strings: gnu, colons: std >= 23 }
+        // A year of two digits: 89 and 99 are this century's predecessors' (C99 is before C23).
+        let std = if std < 50 { std + 2000 } else { std + 1900 };
+        Options { cpp: false, digit_separators: std >= 2023, trigraphs: std < 2023 && !gnu, raw_strings: gnu, colons: std >= 2023 }
     }
 
     /// C++ at standard year `std` (98, 11, 14, 17, 20, 23, 26), with GNU's extensions where `gnu`.

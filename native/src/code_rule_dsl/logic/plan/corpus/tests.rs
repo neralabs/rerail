@@ -606,6 +606,71 @@ fn the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Decision 0327, mode (b): a translation unit's answer is kept while the files it read are unchanged. An edit to a
+/// header asks again for the units that read it, and for no other; a header made where a unit's search looked first
+/// is one it read (its path was looked at). The outputs are those of a run with nothing kept.
+#[test]
+fn a_header_edit_asks_again_only_for_the_units_that_read_it() {
+    crate::install_store_functions();
+    // The journal names what changed (decision 0105): the engine's tests run without it, and this one turns it on
+    // (after the first observer, which turns it off once a process).
+    super::observe(|_| ());
+    crate::content_store::observe::set_journal(true);
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("c-units-kept");
+    let _ = std::fs::remove_dir_all(&dir);
+    let ws = dir.join("ws");
+    std::fs::create_dir_all(ws.join("sys")).unwrap();
+    std::fs::write(ws.join("one.c"), "#include \"h.h\"\nint one = H;\n").unwrap();
+    std::fs::write(ws.join("two.c"), "#include <g.h>\nint two = G;\n").unwrap();
+    std::fs::write(ws.join("three.c"), "int three;\n").unwrap();
+    std::fs::write(ws.join("h.h"), "#define H 1\n").unwrap();
+    std::fs::write(ws.join("sys/g.h"), "#define G 2\n").unwrap();
+    let rule = dir.join("p.rr");
+    std::fs::write(&rule, r#"
+.language c
+#include "c/preprocess.rr"
+.decl c_file(p: symbol)
+c_file(p) :- kind(n, "translation_unit"), docof(n, d), doc(d, p, _).
+c_lang("c", "c", "gnu17").
+c_include_dir("c", 0, "sys", "angle").
+c_tu(p, "c") :- c_file(p).
+.decl entered(t: symbol, p: symbol)
+entered(t, p) :- c_pp_included(t, _, _, _, p, _).
+.decl uses(t: symbol, name: symbol, at: symbol)
+uses(t, n, p) :- c_pp_expansion(t, _, _, n, p, _, _, _, _).
+.decl active(t: symbol, p: symbol, end: number)
+active(t, p, e) :- c_pp_active(t, _, p, _, e).
+.output entered, uses, active
+"#).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    let run = |store: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        let report = super::run(&text, &ws, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let mut asked: Vec<String> = report.language_asked.iter().filter(|(r, _)| r == "c_pp_tu_req").map(|(_, k)| std::path::Path::new(k).file_name().unwrap().to_string_lossy().into_owned()).collect();
+        asked.sort();
+        let shown = ["entered", "uses", "active"].map(|r| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap());
+        (asked, shown)
+    };
+    let (asked, first) = run("kept.sqlite");
+    assert_eq!(asked, ["one.c", "three.c", "two.c"], "the first run asks for every unit");
+    std::fs::write(ws.join("h.h"), "#define H 3\n#define K 4\n").unwrap();
+    let (asked, edited) = run("kept.sqlite");
+    assert_eq!(asked, ["one.c"], "an edit to h.h asks again for the unit that read it alone");
+    assert_eq!(edited, run("fresh-1.sqlite").1, "the kept answers are a fresh run's");
+    // `<g.h>` searches the search path alone, not the includer's directory: a `g.h` made there is no file a unit
+    // looked at.
+    std::fs::write(ws.join("g.h"), "#define G 5\n").unwrap();
+    let (asked, _) = run("kept.sqlite");
+    assert_eq!(asked, Vec::<String>::new(), "a file no unit looked at asks for none");
+    std::fs::write(ws.join("sys/g.h"), "#define G 6\n").unwrap();
+    let (asked, last) = run("kept.sqlite");
+    assert_eq!(asked, ["two.c"]);
+    assert_eq!(last, run("fresh-2.sqlite").1);
+    assert_ne!(first, last);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// t32 4.1: a new process maintains its cross-file part from the rows the last process kept, as a session does.
 /// After an edit that changes a cross-file row, a changed stratum is maintained from its deltas, not derived
 /// again, and the outputs are a run's with an empty store.

@@ -4674,7 +4674,7 @@ pub(crate) fn install_languages() {
     register(Family::C, &Pack::<C>::NEW);
     language::register_base(Family::C, &Pack::<C>::NEW);
     // Answers inside the fixpoint (`answers`): C's directives by file (0327 mode (a)).
-    language::install_answerers(vec![&language::adapter::c_pp::Directives]);
+    language::install_answerers(vec![&language::adapter::c_pp::Directives, &language::adapter::c_pp::Units, &language::adapter::c_pp::CompileCommands]);
     register(Family::Html, &Pack::<Html>::NEW);
     language::register_base(Family::Html, &Pack::<Html>::NEW);
     register(Family::Css, &Pack::<Css>::NEW);

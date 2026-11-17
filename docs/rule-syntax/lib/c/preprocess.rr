@@ -1,8 +1,11 @@
-// C's and C++'s directives as facts (decision 0327, mode (a)).
+// C's and C++'s preprocessor as facts (decision 0327): a file's directives (mode (a)), and a
+// translation unit preprocessed under a configuration (mode (b)).
+//
+// ---- mode (a): a file's directives ----
 //
 // A rule that reads one of these relations with its path bound asks for that file's directives
 // (`c_pp_file_req(path)`), and the runner answers inside the fixpoint, as it answers `file_line`
-// (`language::FileAnswerer`; the scan is `rerail_c_pp::directives`). The answer is every directive
+// (`language::Answerer`; the scan is `rerail_c_pp::directives`). The answer is every directive
 // of the file, whatever the configuration: each branch of a conditional is read. Only the relations
 // the program declares are made, so a program that reads `c_include` makes no `c_define` rows.
 //
@@ -39,3 +42,33 @@
 // What the file gets wrong: `unmatched`, `after_else`, `unterminated`, `malformed` (by directive),
 // and `unclosed_comment` (i = -1).
 .decl c_pp_problem(path: symbol, i: number, kind: symbol)
+
+// ---- mode (b): a translation unit applied ----
+//
+// Each unit `c_tu(tu, cfg)` names (`c/env.rr`) is preprocessed under its configuration, asked as
+// `c_pp_tu_req(tu, spec)` with the configuration's text, and answered inside the fixpoint
+// (`rerail_c_pp::Pp`). Every row is led by `tu` and `spec`; join `c_cfg_spec(cfg, spec)` for the
+// configuration's name. Only the relations the program declares are made, but `c_pp_read`, the
+// files the pass looked at (found or not), is always made: the run keeps an answer while they are
+// unchanged, so an edit to a header asks again for the units that read it, and no others.
+//
+// `at` is a directive's `#` (mode (a)'s `c_directive` start) or a macro call's name, in the bytes
+// of its file. The predefined macros are the file `<built-in>`.
+#include "c/env.rr"
+.decl c_pp_tu_req(tu: symbol, spec: symbol)
+c_pp_tu_req(tu, s) :- c_tu(tu, c), c_cfg_spec(c, s).
+.decl c_pp_read(tu: symbol, spec: symbol, path: symbol)
+// `from`'s directive at `at` entered `to`, `depth` files deep (the unit is 0).
+.decl c_pp_included(tu: symbol, spec: symbol, from: symbol, at: number, to: symbol, depth: number)
+// A header the pass did not find, as spelled once expanded (`form`: `quote`, `angle`).
+.decl c_pp_include_wanted(tu: symbol, spec: symbol, from: symbol, at: number, spelled: symbol, form: symbol)
+// Whether the group of the conditional directive at `at` was taken (1) or skipped (0).
+.decl c_pp_cond_taken(tu: symbol, spec: symbol, path: symbol, at: number, taken: number)
+// A byte range of an entered file that survives the conditionals.
+.decl c_pp_active(tu: symbol, spec: symbol, path: symbol, start: number, end: number)
+// An expansion (`id` from 1): its macro, where the macro was defined, where it was called, and the
+// expansion the call came from (0: the file's text).
+.decl c_pp_expansion(tu: symbol, spec: symbol, id: number, name: symbol, def_path: symbol, def_at: number, path: symbol, at: number, parent: number)
+// `#error`, `#warning` and what the pass refused: `kind` (`error`, `warning`, `not_found`,
+// `bad_expr`, `arg_count`, `redefined`, …) and its text.
+.decl c_pp_diag(tu: symbol, spec: symbol, path: symbol, at: number, kind: symbol, text: symbol)

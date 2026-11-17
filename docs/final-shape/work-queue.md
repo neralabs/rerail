@@ -778,6 +778,19 @@ pass.
 - **Done when**: Parser-generators states what each should check now (`a_readers_short_form_is_the_loops_arm` may
   hold the first's intent), or removes it.
 
+### Q30. The dropping test red again (Q3's, after the merges)
+
+- **Found** (2026-11-17, on Go-C-and-C-support, red at 88b3e3389 before that day's change):
+  `dropping_unreached_clauses_prunes_to_the_same_program*` failed 7 of 8. Two causes were the test's and are fixed:
+  an input counted as read when its name stood quoted anywhere in the rules' text (Python's field `"value"`), now
+  read atoms and natives only; and the lowering's inlined variables (`{v}_rr_d{k}_{i}`, numbered by definitions
+  met) were not masked. 6 of 8 pass now. Two parts stay red (`_script_packs`, `_other_packs`), each a difference
+  of the programs, not of the test:
+  - `packs/javascript/eslint-class-methods-use-this.rr`: `rr_value_req_by_static_string_0`'s rule is kept only in
+    the whole program (its reader unreached in the dropped one);
+  - `packs/rust/clippy-double-parens.rr`: `rr_token_req_by_sole_group_0`'s rules differ.
+- **Done when**: the 8 tests pass, each remaining difference fixed in the lowering or explained.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
