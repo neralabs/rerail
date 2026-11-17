@@ -384,6 +384,13 @@ export interface NativeBinding {
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
   tryLockExclusive(path: string): NativeExclusiveFileLock | null;
+  /**
+   * Locks `path` exclusively, creating the file, waiting up to `waitMs` while another handle holds it: resolves with the
+   * lock the moment the OS hands it over at its holder's release or exit, or with null when it is still held at the
+   * bound. The wait runs on a thread of its own; one given up never ends up holding the lock. Throws at once when the
+   * file does not open.
+   */
+  lockExclusive(path: string, waitMs: number): Promise<NativeExclusiveFileLock | null>;
   /** Git's exclude stack for the worktree around `root`, re-reading the index as it changes; null outside any Git worktree. */
   openGitIgnoreMatcher(root: string): NativeGitIgnoreMatcher | null;
   ConversationEngine: NativeConversationEngineConstructor;
