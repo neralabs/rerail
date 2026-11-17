@@ -1702,7 +1702,7 @@ impl TapeImage {
         use rerail_tape_format::tape::{AnyTape, F15};
         let lang = |tag: u8| rerail_tape_format::f16::lang(tag).expect("a format 16 tape is held with its language's table");
         match &self.held {
-            Held::F15(c) => AnyTape::F15(F15::over(c.columns(), self.code_table())),
+            Held::F15(c) => AnyTape::F15(F15::over(c.laid_out().0, c.view(), self.code_table())),
             Held::F16(t) => AnyTape::F16(t.reader(lang(t.tag())).expect("checked when held")),
             Held::F16Z(t) => AnyTape::F16Z(t.reader(lang(t.tag())).expect("checked when held")),
         }
@@ -1819,6 +1819,8 @@ impl Columns15 {
             bytes.extend_from_slice(column);
             bytes.resize(padded(bytes.len()), 0);
         }
+        // The reads' offsets are u32s: a source's columns are far smaller.
+        assert!(u32::try_from(bytes.len()).is_ok(), "format 15's columns past 4 GiB");
         (bytes, at)
     }
 

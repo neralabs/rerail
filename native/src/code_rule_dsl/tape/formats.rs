@@ -111,6 +111,21 @@ impl Columns15 {
             from_start: self.widths[2] & TAIL_FROM_START != 0,
         }
     }
+
+    /// The view the tape's reads take (decision 0310), its offsets from its bytes' first (`laid_out`): made from
+    /// the columns' places, as cheap as the columns' slices.
+    pub fn view(&self) -> rerail_clif::view::TapeView {
+        let (_, at) = self.laid_out();
+        let w = |k: usize| u32::from(self.widths[k]);
+        let from_start = self.widths[2] & TAIL_FROM_START != 0;
+        rerail_clif::view::TapeView {
+            nodes: (self.code().len() / 2) as u32,
+            format: 15,
+            widths: w(0) | w(1) << 4 | u32::from(self.widths[2] & !TAIL_FROM_START) << 8 | u32::from(from_start) << 12,
+            columns: at.map(|a| a as u32),
+            ..Default::default()
+        }
+    }
 }
 
 /// The run says once a language that its documents keep format 15, and why.
@@ -201,7 +216,7 @@ impl TapeImage {
             }
         };
         // One pass over format 15's columns, to format 16 or straight to 16z's blocks.
-        let held = match f16::write_from(lang, &F15::over(c.columns(), table), &number, self.source_len as u64, tag, format == Format::F16Z) {
+        let held = match f16::write_from(lang, &F15::over(c.laid_out().0, c.view(), table), &number, self.source_len as u64, tag, format == Format::F16Z) {
             Ok(f16::Written::F16(t)) => Held::F16(Arc::new(t)),
             Ok(f16::Written::F16Z(t)) => Held::F16Z(Arc::new(t)),
             Err(e) => {
@@ -335,10 +350,7 @@ impl DocTape {
         }
         let lang = self.image.lang();
         match self.image.held() {
-            Held::F15(c) => {
-                let (bytes, _) = c.laid_out();
-                Ok((bytes, c.columns().view(bytes, 0)?))
-            }
+            Held::F15(c) => Ok((c.laid_out().0, c.view())),
             Held::F16(t) => sixteen(t, lang),
             Held::F16Z(z) => {
                 let laid = self.laid.get_or_init(|| {

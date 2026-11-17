@@ -3182,6 +3182,7 @@ version = "0.1.0"
 dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
+ "cranelift-jit",
  "cranelift-module",
 ]
 
@@ -3197,6 +3198,7 @@ dependencies = [
  "cranelift-module",
  "libc",
  "rayon",
+ "rerail-clif",
  "rerail-compiler",
  "rerail-tape-format",
 ]
@@ -3342,6 +3344,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-clif",
  "rerail-compiler",
  "rerail-csharp-lean",
  "rerail-css-lean",
@@ -3541,6 +3544,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-clif",
  "rerail-compiler",
  "rerail-csharp-lean",
  "rerail-css-lean",
@@ -4102,6 +4106,7 @@ dependencies = [
  "libc",
  "metal",
  "rerail-accel",
+ "rerail-clif",
  "rerail-compiler",
  "rerail-metal",
  "rerail-prof",
@@ -4494,6 +4499,7 @@ name = "rerail-tape-format"
 version = "0.1.0"
 dependencies = [
  "lz4-sys",
+ "rerail-clif",
  "sha2 0.10.9",
 ]
 
@@ -4536,6 +4542,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-clif",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",
