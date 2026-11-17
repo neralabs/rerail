@@ -193,6 +193,17 @@ async function ingestCompleteLines(
 }
 
 /**
+ * Whether the session's text comes from its transcript at this hook (the session sent no `beforeSubmitPrompt`, and the
+ * hook names a transcript), read from the sidecar alone: what `ingestCursorTranscript` would answer, with no line read
+ * and the sidecar's mark left where it is.
+ */
+export async function transcriptCarriesText(input: HookInput, descriptor: AdapterSession, storageRoot: string): Promise<boolean> {
+  if (input.hook_event_name === "beforeSubmitPrompt") return false;
+  const state = await readState(transcriptStatePath(storageRoot, descriptor.sessionId));
+  return !state.nativeTextMode && typeof input.transcript_path === "string" && input.transcript_path.trim() !== "";
+}
+
+/**
  * Recovers Cursor's append-only JSONL transcript when the CLI does not supply text hooks.
  * The caller keeps Cursor's per-session hook lock through the whole ingest, its checks included (`SessionLock.kept`),
  * so the cursor sidecar is single-writer.

@@ -466,4 +466,10 @@ export function resultWithSteers<Block>(
 
 export interface RerailEventLoop {
   ingest(event: AdapterEvent): Promise<readonly AdapterDelivery[]>;
+  /**
+   * True when the daemon is not reading: each event given to `ingest` is left for it to record, unchecked, once it reads
+   * again, and answered with nothing. A host whose hook reads the agent's own record up to a mark (Cursor's transcript)
+   * leaves both the record and the mark alone then, so the next hook the daemon answers sends it through the rules.
+   */
+  readonly untaken?: true;
 }

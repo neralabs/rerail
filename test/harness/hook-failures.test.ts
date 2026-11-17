@@ -627,4 +627,13 @@ describe("a hook beside a daemon that runs but does not read", () => {
       await closeEngine();
     }
   });
+
+  it("reads a state file it cannot read as no event left untaken, and goes on to ask as before", async () => {
+    const rerailHome = await home();
+    vi.stubEnv("RERAIL_HOME", rerailHome);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    // A folder where daemon.json belongs: reading it fails with EISDIR on every system, as a file the user cannot read does.
+    mkdirSync(join(rerailHome, "daemon.json"));
+    await expect(hookRerailStarted("claude-code", rerailHome)).resolves.toBe(false);
+  });
 });

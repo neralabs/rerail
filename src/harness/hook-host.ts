@@ -247,10 +247,12 @@ async function answerWith(daemon: HookDaemon, hook: HookRun): Promise<HookOutput
     // The daemon orders a session's events itself, so the lock guards only the session's files: a hook lets go of it
     // while the daemon checks its event, unless it keeps it (`SessionLock.kept`), and the hooks of a session's parallel
     // subagents, which all carry the parent's session id, do not queue behind each other's checks until one gives up.
-    return await runWithIngest(hook, lock => async adapterEvent => await lock.released(() => ingestEngineEvent(endpoint, adapterEvent, hook.configuration))
-      .catch((error: unknown) => {
-        throw unreachable(error);
-      }));
+    return await runWithLoop(hook, lock => ({
+      ingest: async adapterEvent => await lock.released(() => ingestEngineEvent(endpoint, adapterEvent, hook.configuration))
+        .catch((error: unknown) => {
+          throw unreachable(error);
+        }),
+    }));
   }
   // A daemon that runs but left the hook's whole wait unanswered takes the event when it reads again.
   if (daemon.status === "unresponsive" && daemon.state.takesUntakenEvents === true) return await leaveForDaemon(hook, daemon.state);
@@ -271,10 +273,10 @@ function lostEvent(daemon: Exclude<HookDaemon, { status: "running" }>, hook: Hoo
   return {};
 }
 
-/** Runs the hook's handler under its session's lock with the `ingest` that `ingestFor` makes for that lock. */
-async function runWithIngest(hook: HookRun, ingestFor: (lock: SessionLock) => RerailEventLoop["ingest"]): Promise<HookOutput> {
+/** Runs the hook's handler under its session's lock with the event loop that `loopFor` makes for that lock. */
+async function runWithLoop(hook: HookRun, loopFor: (lock: SessionLock) => RerailEventLoop): Promise<HookOutput> {
   return withSessionLock(hook.storageRoot, hook.host, hook.session.sessionId, async lock => {
-    const output = await hook.handle({ ingest: ingestFor(lock) }, hook.storageRoot, lock);
+    const output = await hook.handle(loopFor(lock), hook.storageRoot, lock);
     return bindSteerReceipt(output, recordLocalReceipt(hook.session, hook.databasePath));
   });
 }
@@ -286,7 +288,7 @@ async function runWithIngest(hook: HookRun, ingestFor: (lock: SessionLock) => Re
  * it after; it does not check it then, since the moment its finding could reach the agent has passed.
  */
 async function leaveForDaemon(hook: HookRun, daemon: DaemonState): Promise<HookOutput> {
-  return await runWithIngest(hook, () => async adapterEvent => await leaveEvent(hook, daemon, adapterEvent));
+  return await runWithLoop(hook, () => ({ ingest: async adapterEvent => await leaveEvent(hook, daemon, adapterEvent), untaken: true }));
 }
 
 /**

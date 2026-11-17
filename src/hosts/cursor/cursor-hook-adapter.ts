@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod/v4";
 import { hookText, type AdapterDelivery, type AdapterEvent, type AdapterSession, type RerailEventLoop, type SteerRule } from "../../engine/adapter-contract.js";
 import { missedSteerDigestEnabled } from "../../engine/experimental-features.js";
-import { ingestCursorTranscript } from "./cursor-transcript.js";
+import { ingestCursorTranscript, transcriptCarriesText } from "./cursor-transcript.js";
 import {
   deliveryRuleIds,
   deliveryRules,
@@ -216,8 +216,7 @@ export async function handleCursorEvent(
   const event = cursorHookEvent(input);
   const descriptor = event.session ?? cursorSession(input);
   const path = pendingPath(storageRoot, "cursor", descriptor.sessionId);
-  const transcript = () => ingestCursorTranscript(input, descriptor, eventLoop, storageRoot);
-  const transcriptOwnsText = hook !== "sessionStart" && await keptBy(lock, transcript);
+  const transcriptOwnsText = hook !== "sessionStart" && await keptBy(lock, transcriptStep(input, descriptor, eventLoop, storageRoot));
   const deliveries = transcriptOwnsText && (hook === "afterAgentResponse" || hook === "stop")
     ? []
     : await eventLoop.ingest(event);
@@ -231,6 +230,16 @@ export async function handleCursorEvent(
     default:
       return cursorAnswer(input, { hook, descriptor, path }, deliveries);
   }
+}
+
+/**
+ * The hook's read of the transcript: its unread lines through `eventLoop`, or, while the daemon is not reading
+ * (`RerailEventLoop.untaken`), only whether the transcript carries the session's text, so its lines stay unread for the
+ * next hook the daemon answers, which sends them through the rules.
+ */
+function transcriptStep(input: CursorHookInput, descriptor: AdapterSession, eventLoop: RerailEventLoop, storageRoot: string): () => Promise<boolean> {
+  if (eventLoop.untaken === true) return async () => await transcriptCarriesText(input, descriptor, storageRoot);
+  return async () => await ingestCursorTranscript(input, descriptor, eventLoop, storageRoot);
 }
 
 /** Runs `work` while `lock` is kept, or as it is when there is no lock. */

@@ -1013,7 +1013,8 @@ export async function runningDaemonEngineEndpoint(deadline?: number, machine: Da
  */
 export async function daemonLeftEventUntaken(machine: DaemonMachine = THIS_MACHINE): Promise<DaemonState | undefined> {
   const home = defaultRerailHome(machine.env);
-  const state = await readDaemonState(join(home, DAEMON_STATE_FILE), machine.platform);
+  // A state file that cannot be read says nothing here: the hook asks the daemon, which records why it failed.
+  const state = await readDaemonState(join(home, DAEMON_STATE_FILE), machine.platform).catch(() => undefined);
   if (state?.takesUntakenEvents !== true || !untakenFor(home, state.pid)) return undefined;
   return recordedDaemonMayRun(state, machine) ? state : undefined;
 }
