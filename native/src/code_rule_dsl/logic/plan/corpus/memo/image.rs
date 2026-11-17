@@ -8,12 +8,12 @@
 //! numbered the store's atoms otherwise (a fork, decision 0170) reads it as any other. Before, the entry held the
 //! store's ids, and each read and write mapped them (`numbering`: `to_store`, `to_process`, and every entry's ids
 //! held before the waves). The image is stored as made, not compressed (decision 0295 §2), and read where it is in
-//! its segment (`MemoBytes`).
+//! its segment (`SegmentBytes`).
 
 use super::{Entry, Syms};
 use crate::code_rule_dsl::logic::plan::output::{Builder, Finished, Image, Rows, col};
 use crate::content_store::atoms::{Atoms, Sym};
-use crate::content_store::{MemoBytes, StoreError, StoreResult};
+use crate::content_store::{SegmentBytes, StoreError, StoreResult};
 use std::collections::HashMap;
 
 const NODES: &str = "#nodes";
@@ -85,7 +85,7 @@ pub(super) fn encode_parts(entry: &Entry, syms: &Syms, atoms: &Atoms) -> StoreRe
 }
 
 /// The image of `bytes` (`encode`'s), checked, read where it is.
-fn image(bytes: &MemoBytes) -> StoreResult<Image> {
+fn image(bytes: &SegmentBytes) -> StoreResult<Image> {
     let (block, at) = bytes.block();
     Image::in_block(block, at, bytes.len()).map_err(bad)
 }
@@ -113,13 +113,13 @@ fn atoms_of(image: &Image, keep: &dyn Fn(&str) -> bool, atoms: &Atoms) -> StoreR
 
 /// Holds the atoms of the entry's symbols in this process (interned, or found where the store holds them), before a
 /// run's waves: so a wave decoding the entry finds each in memory.
-pub(super) fn hold(bytes: &MemoBytes, atoms: &Atoms) -> StoreResult<()> {
+pub(super) fn hold(bytes: &SegmentBytes, atoms: &Atoms) -> StoreResult<()> {
     atoms_of(&image(bytes)?, &|_| true, atoms).map(drop)
 }
 
 /// The entry of `bytes` (`encode`'s; its key is its row's), keeping only the relations `keep` takes: the others are
 /// checked with the image, not read. Its symbols are this process's atoms of their strings.
-pub(super) fn decode(bytes: &MemoBytes, keep: &dyn Fn(&str) -> bool, atoms: &Atoms) -> StoreResult<Entry> {
+pub(super) fn decode(bytes: &SegmentBytes, keep: &dyn Fn(&str) -> bool, atoms: &Atoms) -> StoreResult<Entry> {
     let image = image(bytes)?;
     let ids = atoms_of(&image, keep, atoms)?;
     let mut entry = Entry::default();
@@ -198,12 +198,12 @@ mod tests {
         entry.outputs.insert("a name longer than one row of text holds, which is fifty-six bytes".into(), (vec![], rows_of(&[col::TEXT, col::INT], &[&[Cell::Text(""), Cell::Int(-3)], &[Cell::Text("ünïcode"), Cell::Int(i64::MAX)]])));
         entry.outputs.insert("bare".into(), (vec![], rows_of(&[], &[&[], &[]])));
         let made = encode(&entry, &syms, &atoms).unwrap();
-        let bytes = MemoBytes::of(&made);
+        let bytes = SegmentBytes::of(&made);
         assert_eq!(decode(&bytes, &|_| true, &atoms).map(|e| Entry { key: 5, ..e }).unwrap(), entry);
         let some = decode(&bytes, &|k| k == "named", &atoms).unwrap();
         assert_eq!(some.rows.keys().collect::<Vec<_>>(), ["named"]);
         assert_eq!(some.outputs, entry.outputs, "outputs are read whatever relations are taken");
-        assert!(decode(&MemoBytes::of(&made[..made.len() - 1]), &|_| true, &atoms).is_err(), "cut short");
+        assert!(decode(&SegmentBytes::of(&made[..made.len() - 1]), &|_| true, &atoms).is_err(), "cut short");
         let other = Atoms::for_connection(&db2);
         other.intern("w").unwrap();
         let z = other.intern("z").unwrap();

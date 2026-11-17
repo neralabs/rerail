@@ -9,7 +9,9 @@
 //! A language without format 16's table (`f16::lang`), or an image with a code the table lacks, keeps format 15,
 //! and the run says so once a language.
 
-use super::{Columns15, FileImage, Held, SENTINEL, TAIL_FROM_START, TapeDoc, TapeImage};
+use super::{Code, Columns15, FileImage, Grammar, Held, SENTINEL, TAIL_FROM_START, TapeDoc, TapeImage};
+use crate::code_rule_dsl::language::GrammarDialect;
+use rerail_tape_format::{Redo, Writer};
 use rerail_tape_format::f16::{self, Lang};
 use rerail_tape_format::tape::{AnyTape, CodeTable, Entry, F15, F15Columns};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -29,6 +31,10 @@ impl Format {
     /// `RERAIL_TAPE`: `15` (the default until 0156 is decided), `16` or `16z`. Another value stops the run, so a
     /// measurement never reads a format it did not ask for.
     pub fn of_run() -> Format {
+        #[cfg(any(test, feature = "test-hooks"))]
+        if let Some(format) = AS_RUN.with(std::cell::Cell::get) {
+            return format;
+        }
         static RUN: OnceLock<Format> = OnceLock::new();
         *RUN.get_or_init(|| match std::env::var("RERAIL_TAPE").as_deref() {
             Err(_) | Ok("" | "15") => Format::F15,
@@ -58,6 +64,21 @@ impl Format {
     }
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    /// The format this thread's run stores, where a test sets it (`as_run`).
+    static AS_RUN: std::cell::Cell<Option<Format>> = const { std::cell::Cell::new(None) };
+}
+
+/// `f` as a run that stores `format`, on this thread: a test's, so that one process writes every format.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn as_run<R>(format: Format, f: impl FnOnce() -> R) -> R {
+    let before = AS_RUN.with(|r| r.replace(Some(format)));
+    let out = f();
+    AS_RUN.with(|r| r.set(before));
+    out
+}
+
 /// The tape format version the store keys this run's tapes by (`Format::store_version`).
 pub fn stored_version() -> u32 {
     Format::of_run().store_version()
@@ -66,18 +87,13 @@ pub fn stored_version() -> u32 {
 impl Columns15 {
     /// Its code table as the API's: the entries format 15's reader takes from the image's bytes (`f15_columns`).
     pub fn code_table(&self) -> CodeTable {
-        let kind_mask = (1u16 << rerail_tape_format::KIND_BITS) - 1;
         CodeTable::new(
             self.codes
                 .iter()
                 .map(|c| Entry {
-                    kind: c.kf() & kind_mask,
-                    field: c.kf() >> rerail_tape_format::KIND_BITS,
-                    flags: c.flags,
                     // An alias past the table (a damaged image) reads as an empty name, which a restore refuses.
                     alias: (c.alias != SENTINEL).then(|| self.kind_aliases.get(usize::from(c.alias)).cloned().unwrap_or_default()),
-                    // A count past the slots (a damaged image) reads as that many classes, which a restore refuses.
-                    classes: c.classes.get(..usize::from(c.class_count)).map_or_else(|| vec![0; usize::from(c.class_count)], <[u16]>::to_vec),
+                    ..c.entry()
                 })
                 .collect(),
         )
@@ -98,10 +114,66 @@ impl Columns15 {
 }
 
 /// The run says once a language that its documents keep format 15, and why.
-fn keeps_15(image: &TapeImage, tag: u8, why: &str) {
+fn keeps_15(language: GrammarDialect, tag: u8, why: &str) {
     static SAID: [AtomicBool; 256] = [const { AtomicBool::new(false) }; 256];
     if !SAID[usize::from(tag)].swap(true, Ordering::Relaxed) {
-        eprintln!("rerail: RERAIL_TAPE asks for format {}; {:?} documents are read as format 15: {why}", Format::of_run().name(), image.language);
+        eprintln!("rerail: RERAIL_TAPE asks for format {}; {language:?} documents are read as format 15: {why}", Format::of_run().name());
+    }
+}
+
+impl Code {
+    /// The code as the API's entry, with no alias (a parser's code; an image's aliases are its own, `code_table`).
+    pub fn entry(&self) -> Entry {
+        let kind_mask = (1u16 << rerail_tape_format::KIND_BITS) - 1;
+        Entry {
+            kind: self.kf & kind_mask,
+            field: self.kf >> rerail_tape_format::KIND_BITS,
+            flags: self.flags,
+            alias: None,
+            // A count past the slots (a damaged image) reads as that many classes, which a restore refuses.
+            classes: self.classes.get(..usize::from(self.class_count)).map_or_else(|| vec![0; usize::from(self.class_count)], <[u16]>::to_vec),
+        }
+    }
+}
+
+/// The finish a lean parser's writer is given (`rerail_*_lean::tape_into`; decision 0293): the tape in the run's
+/// format, in one pass over the writer. Where the run stores format 16 or 16z, each code the parser's keys name
+/// (`code_of`) is numbered in the language's table and the tape written from the writer's nodes
+/// (`Writer::finish_16`): no format 15 column is made. Format 15's columns (`TapeImage::written`) where the run
+/// stores 15, the language has no format 16 table, a code is not in it, or a node breaks format 16's bounds (said
+/// once a language).
+pub fn lean<'a>(
+    grammar: &'a Grammar,
+    source: &'a str,
+    budget: &'a dyn Fn() -> bool,
+    code_of: &'a dyn Fn(&u32) -> Result<Code, String>,
+) -> impl FnMut(Writer) -> Result<Result<TapeImage, String>, Redo> + 'a {
+    move |mut w| {
+        let format = Format::of_run();
+        let language = grammar.lang;
+        if format != Format::F15
+            && let Some(tag) = crate::code_rule_dsl::language::tape_tag(language)
+        {
+            match f16::lang(tag) {
+                None => keeps_15(language, tag, "its language has no format 16 table"),
+                Some(lang) => {
+                    let codes: Vec<Code> = match w.code_keys().iter().map(code_of).collect() {
+                        Ok(codes) => codes,
+                        Err(e) => return Ok(Err(e)),
+                    };
+                    match codes.iter().map(|c| lang.number(&c.entry())).collect::<Option<Vec<u32>>>() {
+                        None => keeps_15(language, tag, "a code its format 16 table lacks"),
+                        Some(numbers) => match w.finish_16(lang, &numbers, source.len() as u64, tag, format == Format::F16Z)? {
+                            Ok(written) => return Ok(TapeImage::written_16(written, language, source, budget)),
+                            Err(e) => keeps_15(language, tag, &e),
+                        },
+                    }
+                }
+            }
+        }
+        let columns = w.finish_columns()?;
+        let codes: Result<Vec<Code>, String> = columns.keys.iter().map(code_of).collect();
+        Ok(codes.and_then(|codes| TapeImage::written(columns.code, columns.size, columns.base, columns.off, columns.tail, columns.widths, codes, None, grammar, source, budget)))
     }
 }
 
@@ -117,24 +189,37 @@ impl TapeImage {
         }
         let Some(tag) = crate::code_rule_dsl::language::tape_tag(self.language) else { return self };
         let Some(lang) = f16::lang(tag) else {
-            keeps_15(&self, tag, "its language has no format 16 table");
+            keeps_15(self.language, tag, "its language has no format 16 table");
             return self;
         };
         let table = c.table.get_or_init(|| c.code_table());
         let number = match f16::numbers(lang, table) {
             Ok(number) => number,
             Err(e) => {
-                keeps_15(&self, tag, &e);
+                keeps_15(self.language, tag, &e);
                 return self;
             }
         };
-        let mut t = f16::write_from(lang, &F15::over(c.columns(), table), &number, self.source_len as u64);
-        t.set_tag(tag);
-        let held = match format {
-            Format::F16 => Held::F16(Arc::new(t)),
-            _ => Held::F16Z(Arc::new(t.blocks(lang))),
+        // One pass over format 15's columns, to format 16 or straight to 16z's blocks.
+        let held = match f16::write_from(lang, &F15::over(c.columns(), table), &number, self.source_len as u64, tag, format == Format::F16Z) {
+            Ok(f16::Written::F16(t)) => Held::F16(Arc::new(t)),
+            Ok(f16::Written::F16Z(t)) => Held::F16Z(Arc::new(t)),
+            Err(e) => {
+                keeps_15(self.language, tag, &e);
+                return self;
+            }
         };
         Self { held, ..self }
+    }
+
+    /// A lean parser's tape written in format 16 or 16z (`lean`), with its source's digest.
+    pub fn written_16(written: f16::Written, language: GrammarDialect, source: &str, budget: &dyn Fn() -> bool) -> Result<Self, String> {
+        let digest = super::source_digest(source, &budget)?;
+        let held = match written {
+            f16::Written::F16(t) => Held::F16(Arc::new(t)),
+            f16::Written::F16Z(t) => Held::F16Z(Arc::new(t)),
+        };
+        Ok(TapeImage { held, language, source_len: source.len(), source_digest: Some(digest) })
     }
 
     /// The language's table, where the image is held in format 16.
@@ -145,6 +230,50 @@ impl TapeImage {
             Held::F16Z(t) => f16::lang(t.tag()),
         }
     }
+}
+
+/// A `.rr` file's tape from its lean parser, in the run's format: format 16 or 16z written in one pass over the
+/// writer, as `lean` writes the other languages', else format 15's image.
+pub(super) enum RrTape {
+    Image(Vec<u8>),
+    Written(f16::Written),
+}
+
+/// The finish the `.rr` parser's writer is given (`rerail_rr_syntax::lean::tape_into`): `lean`'s, for a parser whose
+/// keys are the codes (`kf | flags << 16`, no supertypes).
+struct Rr<'s>(&'s str);
+
+impl rerail_tape_format::Finish for Rr<'_> {
+    type Out = RrTape;
+    fn finish<L: rerail_tape_format::Layout>(&mut self, mut w: Writer<L>) -> Result<RrTape, Redo> {
+        let format = Format::of_run();
+        let tag = rerail_tape_format::RR_TAG;
+        if format != Format::F15 {
+            match f16::lang(tag) {
+                None => keeps_15(GrammarDialect::Rr, tag, "its language has no format 16 table"),
+                Some(lang) => {
+                    let kind_mask = (1u16 << rerail_tape_format::KIND_BITS) - 1;
+                    let entry = |key: u32| {
+                        let kf = (key & 0xffff) as u16;
+                        Entry { kind: kf & kind_mask, field: kf >> rerail_tape_format::KIND_BITS, flags: (key >> 16 & 7) as u8, alias: None, classes: Vec::new() }
+                    };
+                    match w.code_keys().iter().map(|&k| lang.number(&entry(k))).collect::<Option<Vec<u32>>>() {
+                        None => keeps_15(GrammarDialect::Rr, tag, "a code its format 16 table lacks"),
+                        Some(numbers) => match w.finish_16(lang, &numbers, self.0.len() as u64, tag, format == Format::F16Z)? {
+                            Ok(written) => return Ok(RrTape::Written(written)),
+                            Err(e) => keeps_15(GrammarDialect::Rr, tag, &e),
+                        },
+                    }
+                }
+            }
+        }
+        w.finish(self.0.as_bytes()).map(RrTape::Image)
+    }
+}
+
+/// `source`'s tape from the `.rr` parser, in the run's format (`Rr`).
+pub(super) fn rr_tape(source: &str) -> RrTape {
+    rerail_rr_syntax::lean::tape_into(source, &mut Rr(source))
 }
 
 impl FileImage {
@@ -160,13 +289,26 @@ impl FileImage {
 /// A document's tape as held (its image), shared by the document (`TapeDoc`) and the facts read off it
 /// (`Facts::tape`). A test may read it in another format (`tape_in`): written from format 15 once.
 pub struct DocTape {
+    /// The image's reader, made once (`reader`). It borrows `image`, so it is declared first: dropped before it.
+    reader: AnyTape<'static>,
     image: Arc<TapeImage>,
     other: [OnceLock<TapeImage>; 3],
 }
 
 impl DocTape {
     pub fn new(image: Arc<TapeImage>) -> Self {
-        DocTape { image, other: Default::default() }
+        let reader = image.tape();
+        // SAFETY: the reader borrows the image's bytes and code table, and the language tables (static). The image
+        // is in the `Arc`'s allocation, which does not move, and is never changed once held; this holds the `Arc`
+        // for as long as the reader, and `reader` lends it at the borrow of `self` only.
+        let reader = unsafe { std::mem::transmute::<AnyTape<'_>, AnyTape<'static>>(reader) };
+        DocTape { reader, image, other: Default::default() }
+    }
+
+    /// The tape's reader, made once: a node's reads dispatch on the format, and nothing is built a read.
+    #[inline]
+    pub fn reader(&self) -> &AnyTape<'_> {
+        &self.reader
     }
 
     pub fn image(&self) -> &TapeImage {
@@ -180,7 +322,7 @@ impl DocTape {
 
     /// The tape, read in place in the format it is held in.
     pub fn tape(&self) -> AnyTape<'_> {
-        self.image.tape()
+        self.reader
     }
 
     /// The tape in `format`: as held, or (a test's comparison of formats) written from format 15 once.

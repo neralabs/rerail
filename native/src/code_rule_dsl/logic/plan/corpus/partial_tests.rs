@@ -76,6 +76,38 @@ fn an_edited_rule_body_reads_partial_hits_as_a_full_run_would() {
     let _ = std::fs::remove_dir_all(&fresh);
 }
 
+/// Q20: an edit of one file reads the others for their outputs alone (decision 0117 step 1), their export and
+/// base rows the kept inputs'. Each such hit decodes none of those rows: since memo entries are images (decision
+/// 0240 §4) a hit was decoded whole, and its rows were then taken for the changed files' and hashed again.
+#[test]
+fn a_hit_read_for_its_outputs_alone_decodes_no_export_or_base_rows() {
+    let marker = format!("{:?}", std::time::SystemTime::now());
+    let dir = corpus("outputs-alone", &marker, FILES);
+    let program = program("try_statement");
+    // Past the stat index's racy window (git's rule), so every run finds the unchanged files by their stat.
+    std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 200_000_000));
+    let _ = run(&dir, &program, OUTPUTS);
+    let mut kept = 0;
+    let mut edits = Vec::new();
+    for (k, tail) in ["\nhelper(4)\n", "\nhelper(5)\n", "\nhelper(6)\n"].into_iter().enumerate() {
+        std::fs::write(dir.join("c.py"), format!("# {marker}\n{}{tail}", FILES[2].1)).unwrap();
+        let (edited, rows) = run(&dir, &program, OUTPUTS);
+        assert_eq!(edited.memo_kept.1, 0, "edit {k}: {} hits read for their outputs alone decoded export or base rows", edited.memo_kept.0);
+        kept += edited.memo_kept.0;
+        edits.push((tail, rows));
+    }
+    // Each edit's rows are a full run's, each over a corpus of its own.
+    for (k, (tail, rows)) in edits.into_iter().enumerate() {
+        let c = format!("{}{tail}", FILES[2].1);
+        let fresh = corpus(&format!("outputs-alone-fresh-{k}"), &format!("{marker} fresh {k}"), &[FILES[0], FILES[1], ("c.py", &c)]);
+        let (_, expected) = run(&fresh, &program, OUTPUTS);
+        let _ = std::fs::remove_dir_all(&fresh);
+        assert_eq!(rows, expected, "edit {k}: the rows of a full run");
+    }
+    assert_eq!(kept, 3 * 2, "each edit reads both unchanged files for their outputs alone");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 const COMMENTED: &[(&str, &str)] = &[
     ("a.py", "def helper(x):\n    assert x\n    return x\n\ndef other(y):\n    while y:\n        assert y\n    return y\n"),
     ("b.py", "from a import helper\n\n# helper\ndef main():\n    assert True  # other\n    return helper(1)\n\nhelper\n"),

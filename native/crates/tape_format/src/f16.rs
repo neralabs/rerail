@@ -326,191 +326,233 @@ fn mask(w: usize) -> u64 {
 
 // ---- the writer ------------------------------------------------------------------------------------------
 
-struct Open {
-    i: u32,
-    start: u64,
-    children: u32,
-    last: u32,
+/// A node's cells as `write` takes them: its code's number in the language's table, its span, and one past its
+/// subtree's last node.
+#[derive(Clone, Copy, Debug)]
+pub struct Node {
+    pub number: u32,
+    pub start: u64,
+    pub end: u64,
+    pub subtree_end: usize,
 }
 
-/// Format 16's writer (0156 §7): `open(number, start)` and `close(end)` as a parser makes nodes, in preorder, and
-/// `finish`. Every cell is written once, at its node's index: at `open` the code, the gap, every `K`-th node's
-/// checkpoint, and the slot of the leaf before it; at `close` the length and an inner node's slot.
-pub struct Writer<'a> {
-    lang: &'a Lang,
-    esc: [u64; 3],
-    cw: usize,
+/// A tape `write` made: format 16, or 16z.
+pub enum Written {
+    F16(Tape16),
+    F16Z(Tape16Z),
+}
+
+/// One block's cells as the pass writes them (`Z` nodes; the last block fewer): the five arrays, and each side
+/// list's entries as (node in the block, value), in node order.
+struct Cells {
     codes: Vec<u8>,
     arrays: [Vec<u8>; 3],
     ckpt: Vec<u8>,
-    /// Code low parts, then escaped slots, gaps, lengths, as (node, value).
     side: [Vec<(u32, u64)>; 4],
-    stack: Vec<Open>,
-    n: u32,
-    prev_start: u64,
-    source_len: u64,
+}
+
+/// Where `write` puts each finished block: format 16's regions and side lists, or 16z's compressed blocks.
+enum Out {
+    Plain { regions: [Vec<u8>; 5], side: [(Vec<u8>, Vec<u32>); 4] },
+    Blocks { comp: Vec<u8>, at: Vec<u32>, sides: Vec<[u32; 4]>, raw: Vec<u8> },
+}
+
+/// A block's side-list part as stored (`parts`, one part): for each of its `BLOCK`-node blocks a u16 end, then each
+/// entry's node offset in its block, then the values at `vw` bytes. Nothing for a part with no entries.
+fn part_into(out: &mut Vec<u8>, e: &[(u32, u64)], nb: usize, vw: usize) {
+    if e.is_empty() {
+        return;
+    }
+    let nsub = nb.div_ceil(BLOCK);
+    let mut k = 0;
+    for b in 0..nsub {
+        while k < e.len() && (e[k].0 as usize) / BLOCK == b {
+            k += 1;
+        }
+        out.extend_from_slice(&(k as u16).to_le_bytes());
+    }
+    out.extend(e.iter().map(|x| (x.0 as usize % BLOCK) as u8));
+    for x in e {
+        out.extend_from_slice(&x.1.to_le_bytes()[..vw]);
+    }
+}
+
+/// Format 16, or 16z where `z`, written in one pass over a document's `n` nodes in preorder (0156 §7; decision
+/// 0293): `node(i)` is node `i`'s cells, asked once each, in order. Each cell is written once: a node's code, gap,
+/// length, checkpoint and (an inner node's) slot as it is reached, a leaf's slot as the node after it is. A block's
+/// cells are final once the pass is past it: it is laid then (16z: compressed). No array of the nodes is made.
+///
+/// The side lists' value widths come from the document's bounds (a slot is at most `4n + 3`, a gap or a length the
+/// source's length), so they are known before the first block. `Err` where a node's values break them (a start
+/// before the one before it, a span past the source): no tape is made of it.
+pub fn write(lang: &Lang, n: usize, source_len: u64, tag: u8, z: bool, mut node: impl FnMut(usize) -> Node) -> Result<Written, String> {
+    let w = lang.widths;
+    let esc = [mask(w[0]), mask(w[1]), mask(w[2])];
+    let cw = bytes_for(source_len);
+    let vw = [lang.low_w, bytes_for(4 * n as u64 + 3), bytes_for(source_len), bytes_for(source_len)];
+    let new_cells = || Cells {
+        codes: Vec::with_capacity(Z),
+        arrays: [Vec::with_capacity(Z * w[0]), Vec::with_capacity(Z * w[1]), Vec::with_capacity(Z * w[2])],
+        ckpt: Vec::with_capacity(Z / K * cw),
+        side: Default::default(),
+    };
+    let mut out = if z {
+        Out::Blocks { comp: Vec::new(), at: vec![0], sides: Vec::with_capacity(n.div_ceil(Z)), raw: Vec::new() }
+    } else {
+        Out::Plain {
+            regions: [Vec::with_capacity(n + 8), Vec::with_capacity(n * w[0] + 8), Vec::with_capacity(n * w[1] + 8), Vec::with_capacity(n * w[2] + 8), Vec::with_capacity(n.div_ceil(K) * cw + 8)],
+            side: Default::default(),
+        }
+    };
+    // Value `v` of array `a` (0 slots, 1 gaps, 2 lengths) into the block's cell `j`, or its escape.
+    let put = |c: &mut Cells, a: usize, j: usize, v: u64| {
+        let v = if v >= esc[a] {
+            c.side[a + 1].push((j as u32, v));
+            esc[a]
+        } else {
+            v
+        };
+        c.arrays[a][j * w[a]..(j + 1) * w[a]].copy_from_slice(&v.to_le_bytes()[..w[a]]);
+    };
+    // A block's cells, laid where they go.
+    let lay = |out: &mut Out, c: &mut Cells, nb: usize| {
+        match out {
+            Out::Plain { regions, side } => {
+                regions[0].extend_from_slice(&c.codes);
+                for a in 0..3 {
+                    regions[1 + a].extend_from_slice(&c.arrays[a]);
+                }
+                regions[4].extend_from_slice(&c.ckpt);
+                for k in 0..4 {
+                    let (bytes, base) = &mut side[k];
+                    base.push(bytes.len() as u32);
+                    part_into(bytes, &c.side[k], nb, vw[k]);
+                }
+            }
+            Out::Blocks { comp, at, sides, raw } => {
+                raw.clear();
+                let mut region = |bytes: &[u8]| {
+                    raw.extend_from_slice(bytes);
+                    raw.extend_from_slice(&[0; 8]);
+                };
+                region(&c.codes);
+                for a in 0..3 {
+                    region(&c.arrays[a]);
+                }
+                region(&c.ckpt);
+                let mut lens = [0u32; 4];
+                let mut part = Vec::new();
+                for k in 0..4 {
+                    part.clear();
+                    part_into(&mut part, &c.side[k], nb, vw[k]);
+                    lens[k] = part.len() as u32;
+                    region(&part);
+                }
+                debug_assert_eq!(raw.len(), layout(nb, w, cw, lens)[REGIONS]);
+                comp.extend_from_slice(&lz4::compress(raw));
+                at.push(comp.len() as u32);
+                sides.push(lens);
+            }
+        }
+        c.codes.clear();
+        for a in &mut c.arrays {
+            a.clear();
+        }
+        c.ckpt.clear();
+        for s in &mut c.side {
+            s.clear();
+        }
+    };
+    let mut c = new_cells();
+    // The open nodes: each its index, its children so far, its last child, its subtree's end.
+    let mut open: Vec<(u32, u32, u32, usize)> = Vec::with_capacity(64);
+    let mut prev_start = 0u64;
+    for i in 0..n {
+        let x = node(i);
+        if x.start < prev_start || x.end < x.start || x.end > source_len || x.subtree_end <= i || x.subtree_end > n {
+            return Err(format!("node {i}'s cells break the tape's bounds"));
+        }
+        while open.last().is_some_and(|o| o.3 <= i) {
+            open.pop();
+        }
+        // The node before is a leaf unless it is the parent: its slot describes this node.
+        if let Some(top) = open.last_mut() {
+            let (idx, prev, p) = (top.1, top.2, top.0);
+            top.1 = idx + 1;
+            top.2 = i as u32;
+            let before = i - 1;
+            if before as u32 != p {
+                let v = if (idx as usize).is_multiple_of(K) { (u64::from(i as u32 - p) << 2) | 3 } else { (u64::from(i as u32 - prev) << 2) | 1 };
+                put(&mut c, 0, before % Z, v);
+            }
+        } else if i > 0 {
+            return Err(format!("node {i} lies outside the root's subtree"));
+        }
+        // The block before is final once its last node's slot is: laid, and this node starts the next.
+        if i > 0 && i.is_multiple_of(Z) {
+            lay(&mut out, &mut c, Z);
+        }
+        let j = i % Z;
+        let number = x.number;
+        if number < lang.cut {
+            c.codes.push(number as u8);
+        } else {
+            let t = number - lang.cut;
+            c.codes.push((lang.cut + t / lang.per) as u8);
+            c.side[0].push((j as u32, u64::from(t % lang.per)));
+        }
+        for a in 0..3 {
+            c.arrays[a].resize((j + 1) * w[a], 0);
+        }
+        put(&mut c, 1, j, if i == 0 { 0 } else { x.start - prev_start });
+        put(&mut c, 2, j, x.end - x.start);
+        prev_start = x.start;
+        if j.is_multiple_of(K) {
+            c.ckpt.extend_from_slice(&x.start.to_le_bytes()[..cw]);
+        }
+        let size = x.subtree_end - i;
+        if size > 1 {
+            put(&mut c, 0, j, (size as u64) << 1);
+        }
+        open.push((i as u32, 0, NONE, x.subtree_end));
+    }
+    if n > 0 {
+        // The last node in preorder is a leaf with nothing after it.
+        put(&mut c, 0, (n - 1) % Z, 1);
+        lay(&mut out, &mut c, n - (n - 1) / Z * Z);
+    }
+    let mark = lang.revision;
+    Ok(match out {
+        Out::Plain { regions, side } => {
+            let arrays = regions.map(|mut r| {
+                r.extend_from_slice(&[0; 8]);
+                r
+            });
+            let mut k = 0;
+            let side = side.map(|(mut bytes, mut base)| {
+                base.push(bytes.len() as u32);
+                bytes.extend_from_slice(&[0; 8]);
+                k += 1;
+                Side { bytes, base, vw: vw[k - 1] }
+            });
+            let mut t = Tape16::laid(mark, n, cw, source_len, arrays, side);
+            t.set_tag(tag);
+            Written::F16(t)
+        }
+        Out::Blocks { comp, at, sides, .. } => Written::F16Z(Tape16Z::laid(mark, tag, n, cw, source_len, w, vw, comp, at, sides)),
+    })
 }
 
 const NONE: u32 = u32::MAX;
 
-impl<'a> Writer<'a> {
-    /// A writer for one document of `source_len` bytes, with room for `nodes` nodes.
-    pub fn new(lang: &'a Lang, source_len: u64, nodes: usize) -> Self {
-        let w = lang.widths;
-        Writer {
-            lang,
-            esc: [mask(w[0]), mask(w[1]), mask(w[2])],
-            cw: bytes_for(source_len),
-            codes: Vec::with_capacity(nodes),
-            arrays: [Vec::with_capacity(nodes * w[0]), Vec::with_capacity(nodes * w[1]), Vec::with_capacity(nodes * w[2])],
-            ckpt: Vec::with_capacity(nodes.div_ceil(K) * 4),
-            side: Default::default(),
-            stack: Vec::with_capacity(64),
-            n: 0,
-            prev_start: 0,
-            source_len,
-        }
-    }
-
-    /// Value `v` of array `a` (0 slots, 1 gaps, 2 lengths) into node `i`'s cell, or its escape.
-    #[inline(always)]
-    fn put(&mut self, a: usize, i: u32, v: u64) {
-        let w = self.lang.widths[a];
-        let v = if v >= self.esc[a] {
-            self.side[a + 1].push((i, v));
-            self.esc[a]
-        } else {
-            v
-        };
-        let at = i as usize * w;
-        let dst = &mut self.arrays[a];
-        if dst.len() < at + w {
-            dst.resize(at + w, 0);
-        }
-        dst[at..at + w].copy_from_slice(&v.to_le_bytes()[..w]);
-    }
-
-    /// A node opens: its code's number in the language's table, and its start.
-    pub fn open(&mut self, number: u32, start: u64) {
-        let i = self.n;
-        self.n += 1;
-        let lang = self.lang;
-        if number < lang.cut {
-            self.codes.push(number as u8);
-        } else {
-            let t = number - lang.cut;
-            self.codes.push((lang.cut + t / lang.per) as u8);
-            self.side[0].push((i, u64::from(t % lang.per)));
-        }
-        let gap = if i == 0 { 0 } else { start.wrapping_sub(self.prev_start) };
-        self.put(1, i, gap);
-        self.prev_start = start;
-        if (i as usize).is_multiple_of(K) {
-            self.ckpt.extend_from_slice(&start.to_le_bytes()[..self.cw]);
-        }
-        if let Some(top) = self.stack.last_mut() {
-            let (idx, prev, p) = (top.children, top.last, top.i);
-            top.children = idx + 1;
-            top.last = i;
-            // The node before is a leaf unless it is the parent: its slot describes this node.
-            let before = i - 1;
-            if before != p {
-                let v = if (idx as usize).is_multiple_of(K) { (u64::from(i - p) << 2) | 3 } else { (u64::from(i - prev) << 2) | 1 };
-                self.put(0, before, v);
-            }
-        }
-        self.stack.push(Open { i, start, children: 0, last: NONE });
-    }
-
-    /// The node opened last and not yet closed closes at `end`.
-    pub fn close(&mut self, end: u64) {
-        let o = self.stack.pop().expect("a node to close");
-        self.put(2, o.i, end.wrapping_sub(o.start));
-        let size = self.n - o.i;
-        if size > 1 {
-            self.put(0, o.i, u64::from(size) << 1);
-        }
-    }
-
-    /// The tape: the last node's slot, and each side list laid in parts.
-    pub fn finish(mut self) -> Tape16 {
-        assert!(self.stack.is_empty(), "every node closed");
-        let n = self.n as usize;
-        if n > 0 {
-            // The last node in preorder is a leaf with nothing after it.
-            self.put(0, self.n - 1, 1);
-        }
-        let low_w = self.lang.low_w;
-        let side = std::array::from_fn(|k| {
-            let e = &mut self.side[k];
-            // Codes and gaps arrive in order; slots and lengths of inner nodes at their close.
-            e.sort_unstable_by_key(|x| x.0);
-            let vw = if k == 0 { low_w } else { bytes_for(e.iter().map(|x| x.1).max().unwrap_or(0)) };
-            parts(e, vw, n)
-        });
-        let pad = |mut a: Vec<u8>, len: usize| {
-            a.resize(len + 8, 0);
-            a
-        };
-        let w = self.lang.widths;
-        let [s, g, l] = self.arrays;
-        let ckpt = std::mem::take(&mut self.ckpt);
-        let arrays = [pad(self.codes, n), pad(s, n * w[0]), pad(g, n * w[1]), pad(l, n * w[2]), pad(ckpt, n.div_ceil(K) * self.cw)];
-        Tape16::laid(self.lang.revision, n, self.cw, self.source_len, arrays, side)
-    }
-}
-
-/// A side list `e` (sorted by node) laid in parts of `PART` nodes: each part a u16 end for each of its
-/// `BLOCK`-node blocks, the offsets, then the values at `vw` bytes. A part with no entries is empty.
-fn parts(e: &[(u32, u64)], vw: usize, n: usize) -> Side {
-    let blocks = n.div_ceil(BLOCK);
-    let mut start = vec![0u32; blocks + 1];
-    for x in e {
-        start[x.0 as usize / BLOCK + 1] += 1;
-    }
-    for b in 0..blocks {
-        start[b + 1] += start[b];
-    }
-    let (mut bytes, mut base) = (Vec::new(), Vec::with_capacity(n.div_ceil(PART) + 1));
-    for p in 0..n.div_ceil(PART) {
-        base.push(bytes.len() as u32);
-        let (b0, b1) = (p * SUB, ((p + 1) * SUB).min(blocks));
-        let (e0, e1) = (start[b0] as usize, start[b1] as usize);
-        if e0 == e1 {
-            continue;
-        }
-        for b in b0..b1 {
-            bytes.extend_from_slice(&((start[b + 1] - start[b0]) as u16).to_le_bytes());
-        }
-        bytes.extend(e[e0..e1].iter().map(|x| (x.0 as usize % BLOCK) as u8));
-        for x in &e[e0..e1] {
-            bytes.extend_from_slice(&x.1.to_le_bytes()[..vw]);
-        }
-    }
-    base.push(bytes.len() as u32);
-    bytes.resize(bytes.len() + 8, 0);
-    Side { bytes, base, vw }
-}
-
-/// Format 16 written from another tape `t`, each node's code mapped to the language's number (`number`, by `t`'s
-/// code): the writer driven in preorder as a parser drives it (decision 0293's interim, until the parsers call it).
-pub fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source_len: u64) -> Tape16 {
-    let n = t.len();
-    let mut w = Writer::new(lang, source_len, n);
-    let mut ends: Vec<(usize, u64)> = Vec::with_capacity(64);
+/// Format 16 (or 16z where `z`) written from another tape `t`, each node's code mapped to the language's number
+/// (`number`, by `t`'s code), in one pass (`write`): a tape a parser did not write in format 16 (decision 0293).
+pub fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source_len: u64, tag: u8, z: bool) -> Result<Written, String> {
     let mut s = 0;
-    for i in 0..n {
-        while ends.last().is_some_and(|&(e, _)| e <= i) {
-            w.close(ends.pop().expect("an open node").1);
-        }
+    write(lang, t.len(), source_len, tag, z, |i| {
         s = t.start_next(i, s);
-        w.open(number[t.code(i) as usize], s);
-        ends.push((t.subtree_end(i), t.end_with_start(i, s)));
-    }
-    while let Some((_, end)) = ends.pop() {
-        w.close(end);
-    }
-    w.finish()
+        Node { number: number[t.code(i) as usize], start: s, end: t.end_with_start(i, s), subtree_end: t.subtree_end(i) }
+    })
 }
 
 /// Each of `table`'s codes as `lang`'s number: what `write_from` maps a tape's codes with. An error names a code the
@@ -794,15 +836,23 @@ impl Tape16 {
             at.push(comp.len() as u32);
             sides.push(lens);
         }
+        Tape16Z::laid(self.mark, self.tag(), n, cw, self.source_len, w, self.vw, comp, at, sides)
+    }
+}
+
+impl Tape16Z {
+    /// The tape from its compressed blocks, its block index and its choices, laid as stored.
+    #[allow(clippy::too_many_arguments)]
+    fn laid(mark: u8, tag: u8, n: usize, cw: usize, source_len: u64, w: [usize; 3], vw: [usize; 4], comp: Vec<u8>, at: Vec<u32>, sides: Vec<[u32; 4]>) -> Self {
         let mut buf = vec![0u8; HEAD16Z];
         buf[..8].copy_from_slice(MAGIC16Z);
-        buf[head::LANGUAGE] = self.tag();
-        buf[head::MARK] = self.mark;
+        buf[head::LANGUAGE] = tag;
+        buf[head::MARK] = mark;
         buf[head::CW] = cw as u8;
-        buf[head::SOURCE_LEN..head::SOURCE_LEN + 8].copy_from_slice(&self.source_len.to_le_bytes());
+        buf[head::SOURCE_LEN..head::SOURCE_LEN + 8].copy_from_slice(&source_len.to_le_bytes());
         buf[head::NODES..head::NODES + 8].copy_from_slice(&(n as u64).to_le_bytes());
         for k in 0..4 {
-            buf[head::VW + k] = self.vw[k] as u8;
+            buf[head::VW + k] = vw[k] as u8;
         }
         for k in 0..3 {
             buf[head::WIDTHS + k] = w[k] as u8;
@@ -813,7 +863,7 @@ impl Tape16 {
         }
         let start = buf.len();
         buf.extend_from_slice(&comp);
-        Tape16Z { id: next_id(), mark: self.mark, n, cw, source_len: self.source_len, widths: w, vw: self.vw, buf, comp: start, at, sides }
+        Tape16Z { id: next_id(), mark, n, cw, source_len, widths: w, vw, buf, comp: start, at, sides }
     }
 }
 
@@ -1046,6 +1096,14 @@ mod tests {
     use super::*;
     use crate::tape::{F15, children, f15_columns};
 
+    /// Format 16 written from `t` in one pass, and 16z written the same way, which is the format 16 tape's blocks.
+    fn sixteen<T: Tape>(lang: &Lang, t: &T, number: &[u32], source_len: u64) -> Tape16 {
+        let Ok(Written::F16(plain)) = write_from(lang, t, number, source_len, 0, false) else { panic!("format 16") };
+        let Ok(Written::F16Z(z)) = write_from(lang, t, number, source_len, 0, true) else { panic!("16z") };
+        assert_eq!(z.as_bytes(), plain.blocks(lang).as_bytes(), "16z written directly is format 16's blocks");
+        plain
+    }
+
     /// A language whose table is the tape's own, numbered as it is, at one byte a value.
     fn lang_of(table: &CodeTable) -> Lang {
         Lang::new(table.clone(), [1, 1, 1], 1).unwrap()
@@ -1074,7 +1132,7 @@ mod tests {
         let f15 = F15::new(columns, &table).unwrap();
         let lang = lang_of(&table);
         let number = numbers(&lang, &table).unwrap();
-        let t = write_from(&lang, &f15, &number, 2_000);
+        let t = sixteen(&lang, &f15, &number, 2_000);
         same(&f15, &t.reader(&lang).unwrap(), &number);
         same(&f15, &t.blocks(&lang).reader(&lang).unwrap(), &number);
         // As stored, and read back where it lies.
@@ -1145,7 +1203,7 @@ mod tests {
         }
         let plain = Plain(&nodes, &table);
         let number: Vec<u32> = (0..600).collect();
-        let t = write_from(&lang, &plain, &number, pos + 2);
+        let t = sixteen(&lang, &plain, &number, pos + 2);
         assert!(t.base.iter().all(|b| b.last().copied().unwrap_or(0) > 0), "every side list has entries");
         same(&plain, &t.reader(&lang).unwrap(), &number);
         let set = table.set(|e| e.kind % 97 == 3 || e.kind > 590);
@@ -1190,7 +1248,7 @@ mod tests {
         let (columns, table) = f15_columns(&image).unwrap();
         let f15 = F15::new(columns, &table).unwrap();
         let lang = lang_of(&table);
-        let t = write_from(&lang, &f15, &numbers(&lang, &table).unwrap(), 2_000);
+        let t = sixteen(&lang, &f15, &numbers(&lang, &table).unwrap(), 2_000);
         let other = Lang::new(table.clone(), [1, 1, 1], 2).unwrap();
         assert!(t.reader(&other).is_err());
     }

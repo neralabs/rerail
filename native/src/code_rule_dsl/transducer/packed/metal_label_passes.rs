@@ -1112,8 +1112,8 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
                 .map(|tape| {
                     let mut nested = vec![0_usize; tape.transducer_len()];
                     let mut longest = 0;
-                    for node in 0..tape.transducer_len() as u32 {
-                        let above = tape.transducer_parent(node).map_or(0, |parent| nested[parent as usize]);
+                    for (node, parent) in (0..tape.transducer_len() as u32).zip(tape.transducer_parents()) {
+                        let above = parent.map_or(0, |parent| nested[parent as usize]);
                         nested[node as usize] = above + usize::from(has(tape, node));
                         longest = longest.max(nested[node as usize]);
                         if *siblings {
@@ -1612,6 +1612,10 @@ impl Runner<'_> {
         };
         crate::code_rule_dsl::prof::count_named(format!("kernel_us.{label}"), ((end - start) * 1e6) as usize);
         crate::code_rule_dsl::prof::count_named(format!("kernel_n.{label}"), 1);
+        // The run's GPU time too: split off here, its buffer never reaches the flush that counts it.
+        crate::code_rule_dsl::prof::count("gpu.device_us", ((end - start) * 1e6) as usize);
+        self.outcome.device += (end - start).max(0.0);
+        self.outcome.command_buffers += 1;
         self.command = self.queue.new_command_buffer().to_owned();
         self.command.set_label("Rerail label passes");
     }

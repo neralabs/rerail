@@ -189,10 +189,12 @@ impl Within {
             if self.mode == Mode::Tree {
                 return t.table().set(|_| true);
             }
-            // An ERROR node's kind is `ERROR_SYMBOL` (`Facts::kind`), never a member, whatever kind its entry holds.
+            // An ERROR node's kind is `ERROR_SYMBOL` (`Facts::kind`), slot 0 of its tag's stride whatever kind its entry
+            // holds: a member where the set names ERROR, as `member` and the device's bits read it (0289).
             let members = self.members.get(&self.batch.docs[doc].tag);
             t.table().set(|e| {
-                e.flags & rerail_tape_format::CODE_ERROR == 0 && members.is_some_and(|m| m.get(usize::from(e.kind)).is_some_and(|&x| x))
+                let slot = if e.flags & rerail_tape_format::CODE_ERROR != 0 { 0 } else { usize::from(e.kind) };
+                members.is_some_and(|m| m.get(slot).is_some_and(|&x| x))
             })
         })
     }
@@ -408,15 +410,15 @@ impl Within {
     /// one is registered: `None` sends it to the host's.
     #[cfg(target_os = "macos")]
     fn solved_in_chunk(&self) -> Option<Solved> {
-        use crate::code_rule_dsl::facts::core::{KIND_STRIDE, kind_code};
-        use crate::code_rule_dsl::facts::nearest::{Binding, chunk_axis};
+        use crate::code_rule_dsl::facts::core::KIND_STRIDE;
+        use crate::code_rule_dsl::facts::nearest::chunk_axis;
         let solve = chunk_axis().filter(|_| self.binding == Binding::Metal)?;
         let _span = crate::code_rule_dsl::logic::profile::span(|| "kind-set axis solved on the device in the chunk".into());
-        // Per tag and code a bit: the host's `member`, whose code 0 (an error) is never one.
+        // Per tag and slot a bit: the host's `member`, ERROR at slot 0 (`kind_atom`), as the kernel reads an atom.
         let bits = (self.mode != Mode::Tree).then(|| {
             let mut bits = vec![0u32; 256 * KIND_STRIDE as usize / 32];
             for (&tag, table) in &self.members {
-                for (code, _) in table.iter().enumerate().filter(|&(c, &m)| m && kind_code(c as u32) as usize == c) {
+                for (code, _) in table.iter().enumerate().filter(|&(_, &m)| m) {
                     let at = usize::from(tag) * KIND_STRIDE as usize + code;
                     bits[at / 32] |= 1 << (at % 32);
                 }
@@ -461,8 +463,10 @@ impl Within {
             return true;
         }
         let p = &self.batch.docs[doc];
-        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.core[local as usize]));
-        self.members.get(&p.tag).is_some_and(|t| t.get(usize::from(code)).is_some_and(|&m| m))
+        // The table's slot is the atom's place in its stride: ERROR's atom is slot 0 (`kind_atom`), as on the tape and
+        // in the device's bits. `kind_code` gives ERROR as `u16::MAX`, past the table, which left it out of every set.
+        let slot = p.facts.kind(p.core[local as usize]) % crate::code_rule_dsl::facts::core::KIND_STRIDE;
+        self.members.get(&p.tag).is_some_and(|t| t.get(slot as usize).is_some_and(|&m| m))
     }
 
     /// The document and local node of node row `row`.

@@ -146,6 +146,72 @@
         assert!(gpu_jobs() > jobs0, "the device's rounds are a job on the GPU lane's scoreboard");
     }
 
+    /// A recursive component that keeps levels (decision 0311): the device's rows and each row's level are the CPU's,
+    /// for a set head (its rows appended a round at a time) and a `min` lattice head (its values improved in place,
+    /// the level column `lat_merge` writes).
+    #[test]
+    fn a_leveled_recursion_on_the_device_has_the_cpus_levels() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        let mut x = 5u64;
+        let mut next = |m: i64| {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((x >> 33) as i64).rem_euclid(m)
+        };
+        db.execute_batch("CREATE TEMP TABLE e (c0, c1);").unwrap();
+        // Chains with shortcuts: a node is reached first by a long route, then by a shorter one in a later round.
+        for v in 0..80 {
+            db.execute("INSERT INTO e VALUES (?1, ?2)", [v, v + 1]).unwrap();
+            if next(4) == 0 {
+                db.execute("INSERT INTO e VALUES (?1, ?2)", [v, v + 2 + next(6)]).unwrap();
+            }
+        }
+        let e = format!("t:x:{}:{}:ii", hex("temp.e"), hex("c0, c1"));
+        // reach(x, y) :- e(x, y).  reach(x, z) :- reach(x, y), e(y, z).
+        let reach = (None, format!("pos {e} v0 v1\nhead v0 v1"), format!("pos d0 v0 v1\npos {e} v1 v2\nhead v0 v2"));
+        // dist(y, 1) :- e(0, y).  dist(z, d + 1) :- dist(y, d), e(y, z).  (`min` by y)
+        let dist = (Some(format!("lattice 0 1 {} -", hex("min"))), format!("pos {e} i:0 v0\nhead v0 i:1"), format!("pos d0 v0 v1\npos {e} v0 v2\nfunc rr_add v3 v1 i:1\nhead v2 v3"));
+        for (lattice, seed, join) in [reach, dist] {
+            let mut got: Vec<Vec<(i64, i64, u32)>> = Vec::new();
+            for device in [false, true] {
+                db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+                let mut spec = vec!["name dev_lev".to_owned()];
+                if device {
+                    spec.push("device".into());
+                }
+                spec.push("rel h0 ii empty".into());
+                spec.extend(lattice.clone());
+                spec.push("leveled 0".into());
+                spec.push(format!("seed 0 {}", hex(&seed)));
+                spec.push(format!("join 0 0 {}", hex(&join)));
+                super::super::open(&db, &spec.join("\n")).unwrap();
+                super::super::run(&db, "dev_lev", 0).unwrap();
+                let report = super::take_report();
+                if device {
+                    let r = report.as_ref().expect("a device report");
+                    assert!(r.refused.is_none(), "{r:?}");
+                    assert!(r.rounds > 3, "the recursion takes rounds: {r:?}");
+                }
+                super::super::close(&db, "dev_lev").unwrap();
+                let held = super::super::held(&db, "h0").expect("the relation held");
+                let rows = held.live_rows().expect("its rows");
+                let levels = held.live_levels().expect("a level per row");
+                let mut rows: Vec<(i64, i64, u32)> = rows.chunks(2).zip(levels).map(|(r, l)| (r[0], r[1], l)).collect();
+                rows.sort_unstable();
+                got.push(rows);
+            }
+            assert!(got[0].len() > 50, "{} rows", got[0].len());
+            assert!(got[0].iter().any(|r| r.2 > 3), "rows of later rounds");
+            assert_eq!(got[0], got[1], "the device's rows and levels are the CPU's ({lattice:?})");
+        }
+    }
+
     /// Text tests on the device: each test's verdicts per distinct symbol made by its automaton, the same rows as
     /// the CPU's matcher gives (names past one chunk of 32 bytes among them).
     #[test]
@@ -319,7 +385,7 @@
         assert_eq!(got[1], got[0], "the strata's rows after the wave are their own runs'");
     }
 
-    /// Q46: a stratum run on its own (its driver cannot wait) beside an open wave on its thread. The wave's stratum
+    /// Q48: a stratum run on its own (its driver cannot wait) beside an open wave on its thread. The wave's stratum
     /// made the relation's verdicts and its sort in the wave's batch, and the resident cache hands them to the next
     /// stratum at once. The stratum run apart commits its own batch before the wave is flushed: unless the wave's
     /// work goes first, it reads them unwritten (the verdicts all false: no rows).

@@ -1282,6 +1282,9 @@ mod language {
         // Java's and C#'s families: syntax only so far, their tapes from the lean parsers.
         pub mod csharp;
         pub mod java;
+        // Go's, C's and C++'s families: syntax only so far, their tapes from the lean parsers.
+        pub mod c;
+        pub mod go;
         // HTML's, CSS's and Markdown's families: syntax only so far, read by tree-sitter.
         pub mod css;
         pub mod html;
@@ -1805,8 +1808,6 @@ pub(crate) mod logic {
             use crate::code_rule_dsl::logic::front;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::rr::WORLD;
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::typing::cross_rounds;
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::plan::corpus::hiding::qualified;
             #[allow(unused_imports)]
@@ -3963,6 +3964,7 @@ mod transducer {
 // Typing's rounds run over T's facts in tests only until Phase 10 wires them.
 #[cfg_attr(any(test, feature = "test-hooks"), path = "typing")]
 mod typing {
+    #[allow(unused_imports)]
     pub use rerail_logic::code_rule_dsl::typing::*;
     // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
     #[cfg(test)]
@@ -4640,7 +4642,7 @@ pub(crate) use rule_api::CodeRuleDslEditor;
 pub(crate) fn install_languages() {
     use language::Family;
     use language::adapter::pack::{Pack, pack, register};
-    use language::adapter::{blade::Blade, css::Css, csharp::Csharp, ecma::Ecma, format::Format, html::Html, java::Java, json::Json, markdown::Markdown, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
+    use language::adapter::{blade::Blade, c::C, css::Css, csharp::Csharp, go::Go, ecma::Ecma, format::Format, html::Html, java::Java, json::Json, markdown::Markdown, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
     register(Family::Python, &Pack::<Python>::NEW);
     language::register_base(Family::Python, &Pack::<Python>::NEW);
     register(Family::Ecma, &Pack::<Ecma>::NEW);
@@ -4665,6 +4667,10 @@ pub(crate) fn install_languages() {
     language::register_base(Family::Java, &Pack::<Java>::NEW);
     register(Family::Csharp, &Pack::<Csharp>::NEW);
     language::register_base(Family::Csharp, &Pack::<Csharp>::NEW);
+    register(Family::Go, &Pack::<Go>::NEW);
+    language::register_base(Family::Go, &Pack::<Go>::NEW);
+    register(Family::C, &Pack::<C>::NEW);
+    language::register_base(Family::C, &Pack::<C>::NEW);
     register(Family::Html, &Pack::<Html>::NEW);
     language::register_base(Family::Html, &Pack::<Html>::NEW);
     register(Family::Css, &Pack::<Css>::NEW);
@@ -4838,6 +4844,21 @@ pub(crate) fn install_languages() {
             // The lean Java parser (`tape::java_lean`, decision 0195); a file it refuses goes to
             // tree-sitter-java.
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Java, name: "lean Java parser", rank: 0, runs: true, parser: &tape::java_lean::Lean });
+        }
+        if cfg!(feature = "lang-go") {
+            // The lean Go parser (`tape::go_lean`, decision 0314); a file it refuses goes to
+            // tree-sitter-go.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Go, name: "lean Go parser", rank: 0, runs: true, parser: &tape::go_lean::Lean });
+        }
+        if cfg!(feature = "lang-c") {
+            // The lean C parser (`tape::c_lean`, decision 0317); a file it refuses goes to
+            // tree-sitter-c.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::C, name: "lean C parser", rank: 0, runs: true, parser: &tape::c_lean::Lean });
+        }
+        if cfg!(feature = "lang-cpp") {
+            // The lean C++ parser (`tape::c_lean`, decision 0317); a file it refuses goes to
+            // tree-sitter-cpp.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Cpp, name: "lean C++ parser", rank: 0, runs: true, parser: &tape::c_lean::Lean });
         }
         if cfg!(feature = "lang-csharp") {
             // The lean C# parser (`tape::csharp_lean`, decision 0196); a file it refuses goes to

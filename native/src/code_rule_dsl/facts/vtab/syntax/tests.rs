@@ -584,8 +584,8 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     use crate::code_rule_dsl::facts::core::kind_atom;
     let store = ContentStore::open(&temp("axes")).unwrap();
     let mut docs: Vec<Document> = documents().into_iter().take(4).collect();
-    // A document with ERROR nodes: an ERROR node's kind is ERROR's atom (`Facts::kind`), never a member, whatever kind
-    // its tape entry holds; the tape's code set leaves it out too.
+    // A document with ERROR nodes: an ERROR node's kind is ERROR's atom (`Facts::kind`, slot 0), whatever kind its tape
+    // entry holds: a member of a set that names ERROR, on the host, the device and the tape's code set alike (0289).
     let source = "def f(:\n    return [1, 2\nclass C:\n    x = (\ny = f(1) + g(2)\n";
     let broken = facts("broken.py", source);
     assert!(broken.errors().iter().any(|&id| broken.flags(id) & 8 != 0), "broken.py has ERROR nodes");
@@ -611,10 +611,11 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     set.dedup();
     // Each row's place and membership read once: the brute force below is quadratic in the rows.
     let place: Vec<(u32, usize, usize)> = (0..nodes).map(at).collect();
-    // An ERROR node (its atom's code 0) is never a member, though the set names ERROR (`Within::member`).
+    // An ERROR node (its atom's slot 0) is a member, since the set names ERROR (`Within::member`).
     let error = |k: i64| k % i64::from(crate::code_rule_dsl::facts::core::KIND_STRIDE) == 0;
     assert!(set.iter().any(|&k| error(k)), "the set names ERROR");
-    let member: Vec<bool> = (0..nodes).map(|r| kind(r)).map(|k| set.contains(&k) && !error(k)).collect();
+    let member: Vec<bool> = (0..nodes).map(|r| kind(r)).map(|k| set.contains(&k)).collect();
+    assert!((0..nodes).any(|r| error(kind(r)) && member[r]), "an ERROR node is a member");
     let below = |n: usize, a: usize| {
         let ((dn, ln, _), (da, la, za)) = (place[n], place[a]);
         dn == da && la < ln && ln <= la + za

@@ -143,6 +143,13 @@ The check is the device test, over a `core.rr`-shaped batch: every column of the
 Measured cold, at the repriced placement (10 strata with a run on the GPU), the same findings: views made on the
 host went from 22.7 MB in 23.0 ms to 9.7 MB in 5.7 ms.
 
+**An ERROR node is a member when its atom is asked** (2026-11-16, at the hub's merge of 0293). The host's bits
+left out slot 0, after `Within::member`, which read a node's code by `kind_code`: ERROR's is `u16::MAX`, past the
+1024-slot table, so an ERROR node was in no set. ERROR's atom is slot 0 (`kind_atom`), as the kernel reads it
+(`atom % 1024`), as the tape's set reads it (0293) and as the `node` view reports it. Both now read the slot. Found
+by `views_made_on_the_device_are_the_hosts_rows`: on the CPU binding the tape's solve (0293 step 3) gave an ERROR
+parent as the nearest member, which the device skipped.
+
 ### Placement repriced
 
 Placement priced a value the device reads at 7 ns (`DEVICE_UPLOAD_PER_VALUE`), measured when every view's rows were
@@ -185,10 +192,13 @@ What is left:
   by local id), read off the tape through its API once a batch on the device's first read: an interim, as 0293's
   own (the matcher's records), and nothing is measured before step 5.
 
-Found at the merge: the tape's code set of an axis (`Within::set`, 0293 step 3) counted an ERROR node as a member
-when the set names ERROR (its entry's code 0), where `Within::member`, the device's solve and every reader before
-step 3 never do. The set now leaves ERROR entries out; `the_kind_set_axes_hold_exactly_their_pairs` holds a
-document with ERROR nodes and a set naming ERROR, and fails without the fix.
+Found at the merge (Native-and-GPU-strata, d8fd02e57): the tape's code set of an axis (`Within::set`, 0293 step 3)
+counted an ERROR node as a member when the set names ERROR, where `Within::member` and the device's solve did not.
+That merge left ERROR out of the set; the hub, meeting the same mismatch, had made the host and the device count
+it ("An ERROR node is a member when its atom is asked", above). The user chose the hub's form (2026-11-16): the set
+reads an entry flagged `CODE_ERROR` as slot 0, a member where the set names ERROR, and
+`the_kind_set_axes_hold_exactly_their_pairs` holds a document with ERROR nodes and a set naming ERROR and asserts an
+ERROR node is a member (work queue Q38).
 
 Checks: `views_made_on_the_device_are_the_hosts_rows` (every view's columns, read through the arrays in place);
 `definition_ids_are_pinned` (every id as it was); the projection's tests (`facts::vtab::syntax::tests`); the axes'

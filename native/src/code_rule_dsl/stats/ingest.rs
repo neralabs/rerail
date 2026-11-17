@@ -40,10 +40,10 @@ impl TapeStatistics {
         Self { lang, sizes: vec![0; LANG_STRIDE as usize], edges: BTreeMap::new() }
     }
 
-    /// Adds node `pre`, of kind code `kind`.
-    pub fn node(&mut self, doc: &TapeDoc, pre: u32, kind: u16) {
+    /// Adds node `pre`, of kind code `kind`, its parent `parent` (a preorder pass's, `TapeDoc::transducer_parents`).
+    pub fn node(&mut self, doc: &TapeDoc, pre: u32, kind: u16, parent: Option<u32>) {
         self.sizes[usize::from(kind)] += u64::from(doc.transducer_descendants(pre).len() as u32);
-        if let Some(parent) = doc.transducer_parent(pre) {
+        if let Some(parent) = parent {
             let atom = |code: u16| self.lang * LANG_STRIDE + u32::from(code);
             let key = (atom(kind_code(doc, parent)), atom(kind), doc.transducer_field(pre));
             *self.edges.entry(key).or_default() += 1;

@@ -335,6 +335,14 @@ fn is_cat_of_rows(v: &Version, t: TermRef<'_>) -> bool {
     call(v, t).is_some_and(|(f, args)| (f == "cat" || f == "concat") && args.len() == 2 && args.iter().all(|a| !is_call(a)))
 }
 
+/// `cat(a, b)` whose parts are variables, constants, texts the device makes (`is_text_fn_of_rows`) or such cats (a
+/// three-part `@concat` lowers to two): a text the device makes per row into its arena (`mj::ROW_CONCAT`).
+fn is_made_cat(v: &Version, t: TermRef<'_>) -> bool {
+    call(v, t).is_some_and(|(f, args)| {
+        (f == "cat" || f == "concat") && args.len() == 2 && args.iter().all(|&a| !is_call(&a) || is_text_fn_of_rows(v, a) || is_made_cat(v, a))
+    })
+}
+
 /// A text function of variables and constants (its text argument perhaps another's value): a text the device makes.
 fn is_text_fn_of_rows(v: &Version, t: TermRef<'_>) -> bool {
     match call(v, t) {
@@ -393,7 +401,9 @@ impl Shape {
     }
 
     /// Adds one planned rule: its steps in order (its head's terms the rule's) and its planned work.
-    pub(in crate::code_rule_dsl) fn add(&mut self, order: Order<'_, '_>, work: f64, recursive: bool) {
+    /// `texts_kept`: its head is a `shortlex_min` lattice, whose value its recursive rounds make into one device arena
+    /// (decision 0307).
+    pub(in crate::code_rule_dsl) fn add(&mut self, order: Order<'_, '_>, work: f64, recursive: bool, texts_kept: bool) {
         let (b, v) = (order.b, order.b.v);
         self.rules += 1;
         self.steps += order.len();
@@ -402,8 +412,10 @@ impl Shape {
             self.note(Form::Recursion, || "recursion".into());
         }
         // A cat of row terms in a head is made on the device (`mj::MAKE`), its text stored as a symbol after the run;
-        // not in a recursive stratum, whose rounds would join it before it is one.
-        // A text function's text, likewise (the device's arena; never in a recursive stratum).
+        // not in a recursive stratum, whose rounds would join it before it is one, unless the stratum keeps its texts
+        // in one arena (0307: the device's compile takes them into the lattice's value only).
+        // A text function's text, likewise (the device's arena).
+        let recursive = recursive && !texts_kept;
         let arena = |t: TermRef<'_>| if recursive { text_fn_in(v, t) } else { None };
         if let Some(op) = b.head().args().filter(|&t| recursive || !is_cat_of_rows(v, t)).find_map(|t| not_row(v, t).or_else(|| arena(t))) {
             self.note(Form::Computed, || format!("{op} in a head"));
@@ -430,10 +442,11 @@ impl Shape {
                 }
                 // A cat's text compared with a name (`=`, `!=`): the device compares the names' bytes (`CATEQ`).
                 // The other side a constant or a variable: a comparison of names, or (a variable no atom binds) the
-                // text bound, made on the device when the head alone reads it; not in a recursive stratum.
+                // text bound, made on the device when the head alone reads it; not in a recursive stratum, unless it
+                // keeps its texts (0307). A cat of made texts (`is_made_cat`) binds a variable only.
                 Lit::Cmp { l, op: CmpOp::Eq | CmpOp::Ne, r }
                     if [(l, r), (r, l)].into_iter().any(|(c, o)| {
-                        is_cat_of_rows(v, c)
+                        (is_cat_of_rows(v, c) || matches!(o, TermRef::Var(_)) && is_made_cat(v, c))
                             && match o {
                                 TermRef::Var(x) => {
                                     !recursive || order.steps.iter().any(|s| b.plain_atom(s.at).is_some_and(|a| !a.neg() && a.args().any(|t| t.var() == Some(x))))
@@ -721,7 +734,7 @@ pub mod tests {
         let head = Atom { rel: "out".into(), args: head.to_vec().into(), neg: false, gated: false };
         let made = crate::code_rule_dsl::logic::plan::body::alone(&Rule { head, body: lits.to_vec().into() }).expect("a rule");
         let b = crate::code_rule_dsl::logic::plan::body::nth(&made, 0);
-        shape.add(Order::new(&b, &steps), work, recursive);
+        shape.add(Order::new(&b, &steps), work, recursive, false);
     }
 
     #[test]

@@ -88,6 +88,20 @@
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Read off phase 0's graph (no `phase_dir`), a phase program a text names and the engine does not have is listed
+    /// where it was looked for, with no digest, as `listed` lists it (decision 0275): one written there differs.
+    #[test]
+    fn a_phase_program_the_graph_did_not_find_is_listed_as_missing() {
+        let text = "#include \"core.rr\"\n.decl nosuchphase__x(s: symbol)\n";
+        let texts = [text];
+        let given = super::super::Texts::of(&texts).unwrap();
+        assert!(given.graphs.iter().all(Option::is_some), "the text has its graph");
+        let rules = super::rule_files(&given, &serde_json::json!({})).unwrap();
+        let missing: Vec<_> = rules.iter().filter(|r| r.1.ends_with("typing/programs/nosuchphase.rr")).collect();
+        assert_eq!(missing.len(), 1, "{rules:?}");
+        assert!(missing[0].2.is_empty(), "no digest: {rules:?}");
+    }
+
     #[test]
     fn unchanged_cross_file_outputs_skip_derivation_and_changed_members_invalidate() {
         let dir = crate::code_rule_dsl::fixtures::temp().with_extension("cross-reuse");

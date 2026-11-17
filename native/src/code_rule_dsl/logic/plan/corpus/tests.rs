@@ -691,16 +691,15 @@ unused(f) :- def(f, _), !used(f).
     };
     run("kept.sqlite");
     write("c.py", "def h():\n    pass\n");
-    super::lower::forget_tree_reads();
+    crate::code_rule_dsl::logic::program_image::forget_trees_decoded();
     let (maintained, rows) = run("kept.sqlite");
-    let (decoded, copied, read) = (super::lower::trees_decoded(), super::lower::trees_copied(), super::lower::version_trees_read());
+    // The run's program is a version (`lower::Lowered`): no tree to copy or read beside it. A tree is made only by
+    // decoding one (`Version::program`), counted.
+    let decoded = crate::code_rule_dsl::logic::program_image::trees_decoded();
     let (_, fresh) = run("fresh.sqlite");
     assert_eq!(rows, fresh);
     assert!(maintained > 0, "a changed stratum maintained from the kept rows ({maintained})");
     assert_eq!(decoded.0, 0, "the maintained run decoded trees from their versions, the last at {:?}", decoded.1);
-    assert_eq!(copied.0, 0, "the maintained run copied shared trees, the last at {:?}", copied.1);
-    // Nor reads one held beside its version (t36 item 7): it reads the versions.
-    assert_eq!(read.0, 0, "the maintained run read {} versions' trees, the last at {:?}", read.0, read.1);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1224,6 +1223,10 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
             .unwrap();
         assert!(output.status.success(), "the runs' process: {}", output.status);
     };
+    // A process first keeps phase 0's graphs as images (decision 0246): every later run reads them, and so names none
+    // of the bootstrap run's plans (`phase0::Images`). Without it, the baseline's run derived the graphs and named
+    // those plans, which the runs after it, reading the images, do not.
+    run(1);
     // A process of one run: what a run names.
     run(1);
     let one = manifests();
@@ -1252,7 +1255,6 @@ fn a_handed_programs_hidden_form_is_kept_under_its_texts() {
 /// the combined program's readers; each part lowered alone made `rr_value_req` read `literal_leaf`, recursive
 /// with `value` through that negation, and the pair was refused as not stratifiable.
 #[test]
-#[ignore = "the answer rule for `value` runs in the cross-file part, which binds no batch: since decision 0268 `@rr_node_value` there is an error (open item O-cross-file-answers)"]
 fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
     use crate::code_rule_dsl::typing::file_local::Binding;
     let dir = std::env::temp_dir().join(format!("rerail-pyi062-pyi059-{}", std::process::id()));

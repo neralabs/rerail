@@ -576,6 +576,18 @@ impl Stats {
     }
 
     pub fn empty(prog: &Program) -> Self {
+        Stats::with_kindsets(prog.kindsets.clone())
+    }
+    /// `empty`, of a lowered program read through its version's fields.
+    pub fn empty_of_lowered(l: &lower::Lowered) -> Result<Self> {
+        let placed = l.placed()?;
+        Ok(Stats::empty_of(&placed.fields()?))
+    }
+    /// `empty`, of a program read through its fields (`Fields::kindsets`).
+    pub fn empty_of(f: &fields::Fields<'_>) -> Self {
+        Stats::with_kindsets(f.kindsets().iter().map(|(k, ks)| (f.text(*k).to_owned(), ks.iter().map(|&a| f.text(a).to_owned()).collect())).collect())
+    }
+    fn with_kindsets(kindsets: BTreeMap<String, Vec<String>>) -> Self {
         Stats {
             col: ColStats::default(),
             kfreq: Default::default(),
@@ -596,7 +608,7 @@ impl Stats {
             docs: None,
             memo: HashMap::new(),
             steps_cache: StepsCache::default(),
-            kindsets: Arc::new(prog.kindsets.clone()),
+            kindsets: Arc::new(kindsets),
             lookup: Default::default(),
             fields: Default::default(),
             lazy: LazyMap::default(),
@@ -1294,14 +1306,12 @@ fn plans_find(key: &PlanKey, len: usize, nodes: f64) -> Option<Option<Kept>> {
         if let Some(k) = OWN_PLANS.with(|o| o.borrow().as_ref().and_then(|m| m.get(key).cloned())) {
             return Some(Some(k));
         }
-        let (found, stored) = {
-            let g = shared.read();
-            match g.kept.get(key) {
-                Some(k) => (Some(k.clone()), false),
-                None => (g.stored_near(key, len, nodes), true),
-            }
-        };
-        if stored && let Some(k) = &found {
+        // The run's plans as last published (decision 0301): read with no lock.
+        if let Some(e) = shared.kept.load().get(key) {
+            return Some(Some(e.kept()));
+        }
+        let found = shared.stored_near(key, len, nodes);
+        if let Some(k) = &found {
             plan_cache(7);
             plans_put(shared, *key, k.clone());
         }
@@ -1314,12 +1324,25 @@ fn plans_get(key: &PlanKey) -> Option<Kept> {
     PLANS.with(|p| {
         let p = p.borrow();
         let shared = p.as_ref()?;
-        OWN_PLANS.with(|o| o.borrow().as_ref().and_then(|m| m.get(key).cloned())).or_else(|| shared.read().kept.get(key).cloned())
+        OWN_PLANS.with(|o| o.borrow().as_ref().and_then(|m| m.get(key).cloned())).or_else(|| shared.kept.load().get(key).map(|e| e.kept()))
     })
 }
 
-/// Keeps `kept` for `key`: in this thread's job's plans, else the run's.
+/// Keeps `kept` for `key` (decision 0301): where the run holds `key` with the same order, in its entry's cell, seen
+/// by every job at once; a new key or a new order in this thread's job's plans (published as it ends), else published
+/// now.
 fn plans_put(shared: &SharedPlans, key: PlanKey, kept: Kept) {
+    let kept = OWN_PLANS.with(|o| match o.borrow_mut().as_mut() {
+        Some(m) if m.contains_key(&key) => {
+            m.insert(key, kept);
+            None
+        }
+        _ => Some(kept),
+    });
+    let Some(kept) = kept else { return };
+    if shared.kept.load().get(&key).is_some_and(|e| e.set(&kept)) {
+        return;
+    }
     let kept = OWN_PLANS.with(|o| match o.borrow_mut().as_mut() {
         Some(m) => {
             m.insert(key, kept);
@@ -1328,35 +1351,47 @@ fn plans_put(shared: &SharedPlans, key: PlanKey, kept: Kept) {
         None => Some(kept),
     });
     if let Some(kept) = kept {
-        shared.write().kept.insert(key, kept);
+        shared.publish(vec![(key, kept)]);
     }
 }
 
-/// Changes the plan kept for `key`, where one is: in this thread's job's plans (taken from the run's first), else the
-/// run's.
-fn plans_update(key: &PlanKey, f: impl FnOnce(&mut Kept)) {
+/// Sets what a kept plan's runs taught of it (decision 0301): its last price (`Priced`, `Kept`'s 4th) or the work its
+/// line did (`ran`, its 5th), in this thread's job's plan where it holds `key`, else in the run's entry's cell for it.
+/// Each is a write of its own field, the last writer's: concurrent chunks run the same rules, and one cell for both,
+/// changed by compare-and-swap, retried and copied the entry under that contention (2,774 samples of a cold run).
+fn plans_learnt(key: &PlanKey, learnt: Learnt) {
     PLANS.with(|p| {
         let p = p.borrow();
         let Some(shared) = p.as_ref() else { return };
-        let f = OWN_PLANS.with(|o| {
+        let learnt = OWN_PLANS.with(|o| {
             let mut o = o.borrow_mut();
-            let Some(m) = o.as_mut() else { return Some(f) };
-            if !m.contains_key(key) {
-                let Some(k) = shared.read().kept.get(key).cloned() else { return None };
-                m.insert(*key, k);
-            }
-            if let Some(k) = m.get_mut(key) {
-                f(k);
+            let Some(k) = o.as_mut().and_then(|m| m.get_mut(key)) else { return Some(learnt) };
+            match learnt {
+                Learnt::Priced(priced) => k.4 = Some(priced),
+                Learnt::Ran(work) => k.5 = Some(work),
             }
             None
         });
-        if let Some(f) = f
-            && let Some(k) = shared.write().kept.get_mut(key)
+        if let Some(learnt) = learnt
+            && let Some(e) = shared.kept.load().get(key)
         {
-            f(k);
+            match learnt {
+                Learnt::Priced(priced) => {
+                    let old = e.priced.lock().replace(priced);
+                    drop(old);
+                }
+                Learnt::Ran(work) => e.ran.store(work.to_bits(), std::sync::atomic::Ordering::Relaxed),
+            }
         }
     });
 }
+
+/// What a kept plan's run taught of it (`plans_learnt`).
+enum Learnt {
+    Priced(Arc<Priced>),
+    Ran(f64),
+}
+
 
 /// A kept plan's key: a digest of the rule, the delta and the component solved (`derived::digest`). Not the rule's
 /// address: each chunk's program is a new value (the demand split makes one per chunk), so no address is kept between
@@ -1392,23 +1427,87 @@ fn growth(then: &[f64], now: &[f64]) -> f64 {
 
 /// A run's kept plans, shared by the threads its strata run on (decision 0113): a stratum's job enters them
 /// (`enter_plans`). Each stratum plans its own rules, so no two jobs write one key.
-type SharedPlans = Arc<parking_lot::RwLock<RunPlans>>;
+type SharedPlans = Arc<RunPlans>;
+
+/// A kept plan as the run shares it (decision 0301): its order and what its search found of it (work per node,
+/// EXPLAIN, gap), fixed until a put replaces them, and what its runs taught (its last price, the work its line did),
+/// each a cell of its own written by the last writer. A run's plans are read 1.9 M times over PostHog and get a new
+/// order a few hundred times; what changes all the time is what is learnt, and that changes a cell, not the map.
+pub struct Entry {
+    order: Arc<[Step]>,
+    found: arc_swap::ArcSwap<Found>,
+    /// Behind a mutex held to swap a pointer: written at every planning hit (330,000 times over PostHog), where an
+    /// `ArcSwapOption`'s store settled every loading thread's debts (942 samples of a cold run).
+    priced: parking_lot::Mutex<Option<Arc<Priced>>>,
+    /// The work its line did, as f64 bits; `NOT_RAN` is none.
+    ran: std::sync::atomic::AtomicU64,
+}
+
+/// `Entry::ran`'s none: a NaN's bits no run's work has.
+const NOT_RAN: u64 = u64::MAX;
+
+/// What a kept plan's search found of it (`Entry::found`).
+struct Found {
+    per_node: f64,
+    explain: Option<super::profile::RulePlan>,
+    gap: f64,
+}
+
+impl Entry {
+    fn of(k: Kept) -> Arc<Entry> {
+        let found = arc_swap::ArcSwap::from_pointee(Found { per_node: k.1, explain: k.2, gap: k.3 });
+        Arc::new(Entry { order: k.0, found, priced: parking_lot::Mutex::new(k.4), ran: std::sync::atomic::AtomicU64::new(k.5.map_or(NOT_RAN, f64::to_bits)) })
+    }
+
+    /// The plan as `Kept`.
+    fn kept(&self) -> Kept {
+        let found = self.found.load();
+        let ran = self.ran.load(std::sync::atomic::Ordering::Relaxed);
+        (Arc::clone(&self.order), found.per_node, found.explain.clone(), found.gap, self.priced.lock().clone(), (ran != NOT_RAN).then(|| f64::from_bits(ran)))
+    }
+
+    /// Takes `k` as this plan's where its order is this one's (else false: a new order is a new entry).
+    fn set(&self, k: &Kept) -> bool {
+        let same = Arc::ptr_eq(&self.order, &k.0) || *self.order == *k.0;
+        if same {
+            self.found.store(Arc::new(Found { per_node: k.1, explain: k.2.clone(), gap: k.3 }));
+            let old = std::mem::replace(&mut *self.priced.lock(), k.4.clone());
+            drop(old);
+            self.ran.store(k.5.map_or(NOT_RAN, f64::to_bits), std::sync::atomic::Ordering::Relaxed);
+        }
+        same
+    }
+}
+
+/// The run's plans by key, as published (`RunPlans::kept`).
+type Plans = rustc_hash::FxHashMap<PlanKey, Arc<Entry>>;
+
+/// Publications of new plans and of new orders (decision 0301), and the entries they carried: for the profile.
+static PUBLISHED: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
 
 /// A run's plans: those it made or took (`kept`), and those the store kept from earlier processes (`stored`,
-/// decision 0116 step 2), taken into `kept` when a rule is first planned.
-#[derive(Default)]
+/// decision 0116 step 2), taken into `kept` when a rule is first planned. Decision 0301: each part shared as it is
+/// used. `kept` is read with no lock (RCU: an immutable map, a new one published for new plans), its entries'
+/// learning in cells; the lines run and the keys planned are collected apart, under locks no planner reads under.
 pub struct RunPlans {
-    kept: rustc_hash::FxHashMap<PlanKey, Kept>,
-    stored: Arc<StoredPlans>,
-    /// The lines run since the last critical path (decision 0203 §4).
-    lines: Vec<joins::LineRun>,
+    kept: arc_swap::ArcSwap<Plans>,
+    stored: arc_swap::ArcSwap<StoredPlans>,
+    /// The lines run since the last critical path (decision 0203 §4): each stratum's sent as it ran (no lock),
+    /// received only by `lines_take`.
+    lines: (std::sync::mpsc::Sender<Vec<joins::LineRun>>, parking_lot::Mutex<std::sync::mpsc::Receiver<Vec<joins::LineRun>>>),
     /// The keys planned in this run (profiled), for the profile's account of the planning budget's misses: the run's,
     /// shared with its jobs as the plans are.
-    planned_now: rustc_hash::FxHashSet<PlanKey>,
+    planned_now: parking_lot::Mutex<rustc_hash::FxHashSet<PlanKey>>,
     /// The last order kept for each rule line (its body and delta, `line_key`), whatever component solved it: a line
     /// seen first under another key, or a maintenance rule of a rule planned before, starts from it (decision 0258).
     /// A session's, carried between its runs with its plans.
-    orders: rustc_hash::FxHashMap<u128, Arc<[Step]>>,
+    orders: arc_swap::ArcSwap<rustc_hash::FxHashMap<u128, Arc<[Step]>>>,
+}
+
+impl Default for RunPlans {
+    fn default() -> Self {
+        RunPlans::new(Default::default(), Default::default(), Default::default())
+    }
 }
 
 /// Decision 0258: a line's key apart from what solves it: its body and its delta.
@@ -1423,14 +1522,19 @@ fn line_key(b: &Body<'_>, first: Option<usize>) -> u128 {
 
 /// The order last kept for line `line` (`RunPlans::orders`).
 fn orders_get(line: u128) -> Option<Arc<[Step]>> {
-    PLANS.with(|p| p.borrow().as_ref().and_then(|s| s.read().orders.get(&line).cloned()))
+    PLANS.with(|p| p.borrow().as_ref().and_then(|s| s.orders.load().get(&line).cloned()))
 }
 
 /// Keeps `order` as line `line`'s last (`RunPlans::orders`).
 fn orders_put(line: u128, order: &[Step]) {
     PLANS.with(|p| {
         if let Some(s) = p.borrow().as_ref() {
-            s.write().orders.insert(line, order.into());
+            let order: Arc<[Step]> = order.into();
+            s.orders.rcu(|o| {
+                let mut o = rustc_hash::FxHashMap::clone(o);
+                o.insert(line, Arc::clone(&order));
+                o
+            });
         }
     });
 }
@@ -1446,7 +1550,7 @@ fn source_orders() -> bool {
 /// Whether `key` was planned in this thread's run (`RunPlans::planned_now`).
 fn planned_now(key: &PlanKey) -> bool {
     OWN_PLANNED.with(|o| o.borrow().as_ref().is_some_and(|o| o.contains(key)))
-        || PLANS.with(|p| p.borrow().as_ref().is_some_and(|s| s.read().planned_now.contains(key)))
+        || PLANS.with(|p| p.borrow().as_ref().is_some_and(|s| s.planned_now.lock().contains(key)))
 }
 
 /// Notes `key` as planned in this run (`planned_now`): in this thread's job's set, else the run's.
@@ -1461,46 +1565,74 @@ fn note_planned(key: PlanKey) {
     if let Some(key) = key {
         PLANS.with(|p| {
             if let Some(s) = p.borrow().as_ref() {
-                s.write().planned_now.insert(key);
+                s.planned_now.lock().insert(key);
             }
         });
     }
 }
 
-impl std::ops::Deref for RunPlans {
-    type Target = rustc_hash::FxHashMap<PlanKey, Kept>;
-    fn deref(&self) -> &Self::Target {
-        &self.kept
-    }
-}
-
-impl std::ops::DerefMut for RunPlans {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.kept
-    }
-}
-
 impl RunPlans {
+    fn new(kept: rustc_hash::FxHashMap<PlanKey, Kept>, orders: rustc_hash::FxHashMap<u128, Arc<[Step]>>, stored: Arc<StoredPlans>) -> Self {
+        RunPlans {
+            kept: arc_swap::ArcSwap::from_pointee(kept.into_iter().map(|(k, v)| (k, Entry::of(v))).collect()),
+            stored: arc_swap::ArcSwap::new(stored),
+            lines: {
+                let (tx, rx) = std::sync::mpsc::channel();
+                (tx, parking_lot::Mutex::new(rx))
+            },
+            planned_now: Default::default(),
+            orders: arc_swap::ArcSwap::from_pointee(orders),
+        }
+    }
+
+    /// Tests: plans with `stored` as the store's.
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn with_stored(stored: Arc<StoredPlans>) -> Self {
+        RunPlans::new(Default::default(), Default::default(), stored)
+    }
+
+    /// Publishes `plans`, new keys or new orders (decision 0301): a new map, the old one's entries shared.
+    fn publish(&self, plans: Vec<(PlanKey, Kept)>) {
+        if plans.is_empty() {
+            return;
+        }
+        let entries: Vec<(PlanKey, Arc<Entry>)> = plans.into_iter().map(|(k, v)| (k, Entry::of(v))).collect();
+        PUBLISHED[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        PUBLISHED[1].fetch_add(entries.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        self.kept.rcu(|m| {
+            let mut m = Plans::clone(m);
+            m.extend(entries.iter().map(|(k, e)| (*k, Arc::clone(e))));
+            m
+        });
+    }
+
+    /// The run's plans as `Kept`, and its orders: a session keeps them for its next run.
+    fn into_kept(self) -> (rustc_hash::FxHashMap<PlanKey, Kept>, rustc_hash::FxHashMap<u128, Arc<[Step]>>) {
+        let kept = self.kept.load().iter().map(|(k, e)| (*k, e.kept())).collect();
+        (kept, rustc_hash::FxHashMap::clone(&self.orders.load()))
+    }
+
     /// The plan the store kept for `key` at the scale of `nodes`, else at the nearest scale stored (O-replan-churn:
     /// an edit's chunk and the cross part are a bucket or two apart, and a plan of the other's is re-priced before
     /// it is kept, so a plan from another scale is a better start than a search from nothing).
     fn stored_near(&self, key: &PlanKey, len: usize, nodes: f64) -> Option<Kept> {
         let at = scale(nodes);
-        let stored = (0..=12u8).find_map(|d| {
-            [at.checked_sub(d), at.checked_add(d)].into_iter().flatten().find_map(|s| self.stored.get(&(*key, s)))
+        let stored = self.stored.load();
+        let found = (0..=12u8).find_map(|d| {
+            [at.checked_sub(d), at.checked_add(d)].into_iter().flatten().find_map(|s| stored.get(&(*key, s)))
         })?;
-        stored.kept(len)
+        found.kept(len)
     }
 
     /// The plan kept for `key`: the run's, else the store's at the scale of `nodes` or the nearest stored, its steps
     /// taken from `body` by position (the key digests the body, so its literals are the planned ones).
-    fn find(&mut self, key: &PlanKey, len: usize, nodes: f64) -> Option<Kept> {
-        if let Some(k) = self.kept.get(key) {
-            return Some(k.clone());
+    #[cfg(test)]
+    fn find(&self, key: &PlanKey, len: usize, nodes: f64) -> Option<Kept> {
+        if let Some(e) = self.kept.load().get(key) {
+            return Some(e.kept());
         }
         let k = self.stored_near(key, len, nodes)?;
-        plan_cache(7);
-        self.kept.insert(*key, k.clone());
+        self.publish(vec![(*key, k.clone())]);
         Some(k)
     }
 }
@@ -1631,7 +1763,7 @@ impl StoredPlan {
 pub fn take_stored_plans(stored: Arc<StoredPlans>) {
     PLANS.with(|p| {
         if let Some(p) = p.borrow().as_ref() {
-            p.write().stored = stored;
+            p.stored.store(stored);
         }
     });
 }
@@ -1640,16 +1772,17 @@ pub fn take_stored_plans(stored: Arc<StoredPlans>) {
 /// changed none.
 pub fn plans_to_store() -> Option<StoredPlans> {
     let plans = PLANS.with(|p| p.borrow().clone())?;
-    let plans = plans.read();
+    let (kept, stored) = (plans.kept.load(), plans.stored.load());
     let mut out: Option<StoredPlans> = None;
-    for (key, k) in &plans.kept {
+    for (key, e) in kept.iter() {
+        let k = &e.kept();
         // Its scale is the nodes its last price read (`read_sizes` and `live_sizes` start with them): a plan never
         // priced is not kept.
         let Some(nodes) = k.4.as_ref().and_then(|p| p.sizes.first().copied()) else { continue };
         let Some(s) = StoredPlan::of(k) else { continue };
         let key = (*key, scale(nodes));
-        if !plans.stored.get(&key).is_some_and(|t| t.same(&s)) {
-            out.get_or_insert_with(|| (*plans.stored).clone()).insert(key, s);
+        if !stored.get(&key).is_some_and(|t| t.same(&s)) {
+            out.get_or_insert_with(|| StoredPlans::clone(&stored)).insert(key, s);
         }
     }
     out
@@ -1666,23 +1799,27 @@ fn line_log() -> Option<&'static parking_lot::Mutex<std::fs::File>> {
     LOG.as_ref()
 }
 
-/// Adds a stratum's lines as they ran to the run's (decision 0203 §4).
+/// Adds a stratum's lines as they ran to the run's (decision 0203 §4): sent to its log (decision 0301: a channel,
+/// whose sends take no lock, that only `lines_take` reads).
 fn lines_push(runs: Vec<joins::LineRun>) {
+    if runs.is_empty() {
+        return;
+    }
     PLANS.with(|p| {
         if let Some(p) = p.borrow().as_ref() {
-            p.write().lines.extend(runs);
+            let _ = p.lines.0.send(runs);
         }
     });
 }
 
 /// The lines run since the last call.
 fn lines_take() -> Vec<joins::LineRun> {
-    PLANS.with(|p| p.borrow().as_ref().map(|p| std::mem::take(&mut p.write().lines)).unwrap_or_default())
+    PLANS.with(|p| p.borrow().as_ref().map(|p| p.lines.1.lock().try_iter().flatten().collect()).unwrap_or_default())
 }
 
 /// The plans the store kept for this thread's run, as read (the join memo's write, where no plan changed).
 pub fn stored_plans() -> Option<StoredPlans> {
-    PLANS.with(|p| p.borrow().as_ref().map(|p| (*p.read().stored).clone()))
+    PLANS.with(|p| p.borrow().as_ref().map(|p| StoredPlans::clone(&p.stored.load())))
 }
 
 /// This thread's kept plans, for a job on another thread to enter.
@@ -1691,22 +1828,25 @@ fn share_plans() -> Option<SharedPlans> {
 }
 
 /// While the guard lives, this thread plans with `plans` (another thread's, `share_plans`), into plans of its own
-/// (`OWN_PLANS`) taken into them as it ends.
+/// (`OWN_PLANS`: new keys and new orders) published as it ends, its keys planned handed on then too.
 fn enter_plans(plans: Option<SharedPlans>) -> impl Drop {
-    struct Entered(Option<SharedPlans>, Option<rustc_hash::FxHashMap<PlanKey, Kept>>, Option<rustc_hash::FxHashSet<PlanKey>>);
+    type Own = (Option<rustc_hash::FxHashMap<PlanKey, Kept>>, Option<rustc_hash::FxHashSet<PlanKey>>);
+    struct Entered(Option<SharedPlans>, Own);
     impl Drop for Entered {
         fn drop(&mut self) {
-            let own = OWN_PLANS.with(|o| std::mem::replace(&mut *o.borrow_mut(), self.1.take()));
-            let planned = OWN_PLANNED.with(|o| std::mem::replace(&mut *o.borrow_mut(), self.2.take()));
+            let own = OWN_PLANS.with(|o| std::mem::replace(&mut *o.borrow_mut(), self.1.0.take()));
+            let planned = OWN_PLANNED.with(|o| std::mem::replace(&mut *o.borrow_mut(), self.1.1.take()));
             let entered = PLANS.with(|p| std::mem::replace(&mut *p.borrow_mut(), self.0.take()));
-            let own = own.filter(|o| !o.is_empty());
-            let planned = planned.filter(|o| !o.is_empty());
-            if let Some(shared) = entered
-                && (own.is_some() || planned.is_some())
-            {
-                let mut s = shared.write();
-                s.kept.extend(own.into_iter().flatten());
-                s.planned_now.extend(planned.into_iter().flatten());
+            let Some(shared) = entered else { return };
+            // Decision 0301: the job's plans whose order the run holds go to their entries' cells; the others, new
+            // keys or new orders, are published together.
+            let new: Vec<(PlanKey, Kept)> = {
+                let kept = shared.kept.load();
+                own.into_iter().flatten().filter(|(k, v)| !kept.get(k).is_some_and(|e| e.set(v))).collect()
+            };
+            shared.publish(new);
+            if let Some(planned) = planned.filter(|p| !p.is_empty()) {
+                shared.planned_now.lock().extend(planned);
             }
         }
     }
@@ -1714,8 +1854,10 @@ fn enter_plans(plans: Option<SharedPlans>) -> impl Drop {
     let planned = plans.is_some().then(rustc_hash::FxHashSet::default);
     Entered(
         PLANS.with(|p| std::mem::replace(&mut *p.borrow_mut(), plans)),
-        OWN_PLANS.with(|o| std::mem::replace(&mut *o.borrow_mut(), own)),
-        OWN_PLANNED.with(|o| std::mem::replace(&mut *o.borrow_mut(), planned)),
+        (
+            OWN_PLANS.with(|o| std::mem::replace(&mut *o.borrow_mut(), own)),
+            OWN_PLANNED.with(|o| std::mem::replace(&mut *o.borrow_mut(), planned)),
+        ),
     )
 }
 
@@ -1771,7 +1913,7 @@ impl KeepPlans {
     pub fn start(across: Option<u64>) -> Self {
         compose::clear();
         let (kept, orders) = across.and_then(|g| SESSION_PLANS.with(|s| s.borrow_mut().take().filter(|(k, _, _)| *k == g).map(|(_, p, o)| (p, o)))).unwrap_or_default();
-        PLANS.with(|p| *p.borrow_mut() = Some(Arc::new(parking_lot::RwLock::new(RunPlans { kept, orders, ..Default::default() }))));
+        PLANS.with(|p| *p.borrow_mut() = Some(Arc::new(RunPlans::new(kept, orders, Default::default()))));
         keeps::observing(true);
         KeepPlans(across)
     }
@@ -1789,10 +1931,20 @@ impl Drop for KeepPlans {
         }
         compose::clear();
         // Every job that entered them has ended: the run's thread holds the last handle.
-        let plans = PLANS.with(|p| p.borrow_mut().take()).map(|p| Arc::try_unwrap(p).map_or_else(|p| std::mem::take(&mut *p.write()), parking_lot::RwLock::into_inner));
+        let plans = PLANS.with(|p| p.borrow_mut().take());
         keeps::observing(false);
+        let published = PUBLISHED.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect::<Vec<_>>();
+        let folds = keeps::FOLDS.swap(0, std::sync::atomic::Ordering::Relaxed);
+        let deferred = super::native::setfix::DEFERRED_WALKS.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect::<Vec<_>>();
+        super::profile::decision("a walk's new texts interned at once (decision 0315)", || format!("{} walks in one piece interned {} new texts, one write of the arena each", deferred[0], deferred[1]));
+        super::profile::decision("kept plans shared by RCU (decision 0301)", || format!("{} publications of {} new plans or orders; observed sums folded {folds} times", published[0], published[1]));
         if let (Some(g), Some(plans)) = (self.0, plans) {
-            SESSION_PLANS.with(|s| *s.borrow_mut() = Some((g, plans.kept, plans.orders)));
+            // Every job that entered them has ended: the run's thread holds the last handle, or a copy is taken.
+            let (kept, orders) = match Arc::try_unwrap(plans) {
+                Ok(p) => p.into_kept(),
+                Err(p) => (p.kept.load().iter().map(|(k, e)| (*k, e.kept())).collect(), rustc_hash::FxHashMap::clone(&p.orders.load())),
+            };
+            SESSION_PLANS.with(|s| *s.borrow_mut() = Some((g, kept, orders)));
         }
     }
 }
@@ -2237,7 +2389,7 @@ impl Model {
             note_planned(key);
         }
         let remember = |key: &PlanKey, got: &(Plan, Option<super::profile::RulePlan>)| {
-            plans_update(key, |k| k.4 = Some(Arc::new(Priced { sizes: sizes.clone(), got: got.clone() })));
+            plans_learnt(key, Learnt::Priced(Arc::new(Priced { sizes: sizes.clone(), got: got.clone() })));
         };
         // A rule whose line did less work than a search when it last ran (scaled by how much what it reads grew)
         // keeps its order as it is: neither searched nor priced (decision 0122).
@@ -2539,7 +2691,7 @@ impl Model {
     /// Records the work a rule's line did in the engine (`plan_work`, every order it ran in) on its kept plan, for
     /// the next run's planning budget (decision 0122).
     pub(in crate::code_rule_dsl) fn ran(key: PlanKey, work: f64) {
-        plans_update(&key, |k| k.5 = Some(work));
+        plans_learnt(&key, Learnt::Ran(work));
     }
 
     /// Tests: `ran`, under the key `plan_rule_reused` keeps the rule's plan under now.
@@ -4947,8 +5099,8 @@ mod complete_answer_tests {
             let mut program = super::super::front::parse(".decl seed(x:int)\n.decl req(x:int)\n.decl got(x:int)\n.decl shown(x:int)\nreq($x) :- seed($x).\nshown($x) :- got($x).\n.output shown\n").unwrap();
             program.facts.insert("seed".into(), (0..1000).map(|n| super::super::front::List::from(vec![Value::Int(n)])).collect());
             program.answers.insert("req".into(), vec!["got".into()]);
-            let lowered = lower::Lowered { domains: lower::domains(&program).unwrap(), program: lower::Tree::given(program), version: None, maint: None,
-                ops: [0; 3], dialect: crate::code_rule_dsl::language::GrammarDialect::Python };
+            let lowered = lower::Given { domains: lower::domains(&program).unwrap(), program,
+                ops: [0; 3], dialect: crate::code_rule_dsl::language::GrammarDialect::Python }.image().unwrap();
             let path = crate::code_rule_dsl::fixtures::temp();
             let _store = crate::content_store::ContentStore::open(&path).unwrap();
             let db = Connection::open(&path).unwrap();
@@ -4961,7 +5113,7 @@ mod complete_answer_tests {
                         (format!("{}req", super::super::answers::HELD_BACK), keys[immediate..].to_vec())])
                 } else { Ok(vec![("got".into(), keys.to_vec())]) }
             };
-            let result = run_atoms_native_answering(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), "program", &mut answer, None, None, None).unwrap();
+            let result = run_atoms_native_answering(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).unwrap(), BTreeSet::new(), "program", &mut answer, None, None, None).unwrap();
             assert_eq!(result.outputs["shown"].len(), 1000, "later consumers must see all deferred positives");
             assert_eq!(result.outputs["shown"].shown().iter().map(|r| r[0].parse::<i64>().unwrap()).collect::<BTreeSet<_>>(), (0..1000).collect(), "every returned value stays exact");
             assert_eq!(batches.len(), 2, "held keys resume as one batch, never one callback per key");
@@ -6790,8 +6942,13 @@ impl<'a> Run<'a, '_> {
         }
         let mut want: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
         let vs = Arc::clone(&self.versions);
+        let raised = joins::raised_all();
         for r in rules {
             let b = vs.at(r);
+            // Not raising: only a raised column is made, so a rule that reads no raised relation has none.
+            if !raise && !(0..b.len()).any(|i| matches!(b.view(i), Lit::Atom(a) if !a.neg() && raised.iter().any(|(rel, _)| rel == b.rel(a)))) {
+                continue;
+            }
             let mut held: HashMap<VarSlot, Vec<(&str, usize)>> = HashMap::new();
             for i in 0..b.len() {
                 let Lit::Atom(a) = b.view(i) else { continue };
@@ -6805,7 +6962,7 @@ impl<'a> Run<'a, '_> {
                     if self.model.stats.solving.contains(rel) || self.heavy_current(rel, c) {
                         continue;
                     }
-                    let wanted = joins::raised(rel, c) || raise && {
+                    let wanted = raised.iter().any(|(r, k)| r == rel && *k == c) || raise && {
                         let (rows, ndv) = (self.model.card(rel), self.model.ndv.at(rel, c).copied().unwrap_or(1.0));
                         let fan = self.model.stats.fan.at(rel, c).copied().unwrap_or(rows / ndv.max(1.0));
                         ndv > table::HEAVY as f64 && fan * ndv / rows.max(1.0) > 2.0
@@ -6951,8 +7108,9 @@ impl<'a> Run<'a, '_> {
     /// Decision 0203 §3: the exact pair statistics of rule `r`'s line `line` in component `name`, run in `order`:
     /// for each two positive atoms that share a variable, the rows of the first (past its constants) and the rows
     /// of the second those join, counted from the engine's histograms of both on the shared variables. Each is an
-    /// observation of the second atom bound by the first's variables, as `observe` keeps them.
-    fn exact_statistics(&self, name: &str, line: usize, b: &Body<'_>, order: &[Step]) -> Vec<(Sig, [i64; 2])> {
+    /// observation of the second atom bound by the first's variables, as `observe` keeps them. `whole`: `order` is the
+    /// line's whole plan (O168), and its steps are read there.
+    fn exact_statistics(&self, name: &str, line: usize, whole: bool, b: &Body<'_>, order: &[Step]) -> Vec<(Sig, [i64; 2])> {
         if self.model.inputs.atoms.is_none() {
             joins::log(|| format!("exact {}: symbols as text, no histograms", b.head_text()));
             return Vec::new();
@@ -6991,7 +7149,7 @@ impl<'a> Run<'a, '_> {
             joins::log(|| format!("exact {}: no two positive atoms share a variable ({} atoms: {})", b.head_text(), atoms.len(), (0..b.len()).map(|i| b.show(i)).collect::<Vec<_>>().join(", ")));
             return Vec::new();
         }
-        let hist = match super::native::component::step_histograms(self.db, name, line, &wanted, joins::HISTOGRAM_ROWS) {
+        let hist = match super::native::component::step_histograms(self.db, name, line, whole, &wanted, joins::HISTOGRAM_ROWS) {
             Ok(h) => h,
             Err(e) => {
                 joins::log(|| format!("exact {}: no histograms: {e}", b.head_text()));
@@ -7539,7 +7697,7 @@ impl<'a> Run<'a, '_> {
             let ((order, work, rows), x) = self.model.plan_rule_reused(pf, b, None)?;
             let took = if profiling { super::profile::now() - t0 } else { 0.0 };
             drop(span);
-            shape.add(Order::new(b, &order), work, false);
+            shape.add(Order::new(b, &order), work, false, false);
             shape.seeded(head, rows);
             if let Some(x) = &x {
                 shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0), |rel, col| self.model.stats.lookup_cost(rel, col));
@@ -7659,7 +7817,7 @@ impl<'a> Run<'a, '_> {
                 let took = if profiling { super::profile::now() - t0 } else { 0.0 };
                 // Its delta as the plan priced it (`atom_rows`: the relation's rows, at most its last delta's).
                 let delta = self.model.stats.delta_rows.get(a).copied().map_or(self.model.card(a), |d| d.min(self.model.card(a)));
-                shape.add(Order::new(b, &order), 0.0, true);
+                shape.add(Order::new(b, &order), 0.0, true, pf.lattice_name(head) == Some("shortlex_min"));
                 shape.probe(a, work, rows, delta);
                 if let Some(x) = &x {
                     shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0), |rel, col| self.model.stats.lookup_cost(rel, col));
@@ -8077,7 +8235,7 @@ impl<'a> Run<'a, '_> {
                     let rule = order_rules[line];
                     joins::flag_slow(key, rule, est, work);
                     super::profile::decision("slow joins (decision 0203)", || format!("{} (delta at {ai}): {work:.0} rows of work, priced {est:.0} for its {delta:.0} delta rows", b.head_text()));
-                    let exact = self.exact_statistics(&name, line, &b, &probes[k].2);
+                    let exact = self.exact_statistics(&name, line, false, &b, &probes[k].2);
                     joins::log(|| format!("slow {} (delta at {ai}): {work:.0} rows of work, priced {est:.0} for its {delta:.0} delta rows; {} exact pair statistics", b.head_text(), exact.len()));
                     joins::put_exact(key, rule, exact);
                     self.heavy_for([r], true, Some(key));
@@ -8297,13 +8455,16 @@ impl<'a> Run<'a, '_> {
                 // A seed or whole plan is checked here, at its cut (a probe was, above).
                 if led && let Some(key) = keys.get(line).copied().flatten() {
                     let running = order_now(&orders, &probes, &wholes);
+                    // The walk cut now is judged by its own work over its own rows (a line's work so far may be an
+                    // earlier walk's too: then a few rows read under a short budget stood for all of it).
+                    let ran = c.work as f64;
                     let est = if joins::check(key, work) { self.model.price_for_delta(pf, &b, Some(cut_lead), &running, c.done.max(1) as f64) } else { None };
-                    if let Some(est) = est && work > joins::slow_factor() * est.max(1.0) && positive_atoms(&b) >= 2 {
+                    if let Some(est) = est && ran > joins::slow_factor() * est.max(1.0) && positive_atoms(&b) >= 2 {
                         let rule = order_rules[line];
-                        joins::flag_slow(key, rule, est, work);
-                        super::profile::decision("slow joins (decision 0203)", || format!("{} {}: {work:.0} rows of work, priced {est:.0} for its {} rows read", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done));
-                        let exact = self.exact_statistics(&name, line, &b, &running);
-                        joins::log(|| format!("slow {} {}: {work:.0} rows of work, priced {est:.0} for its {} rows read; {} exact pair statistics; its share of a critical path {:.3}{}", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done, exact.len(), joins::note(&key).map_or(0.0, |n| n.critical), if joins::trial_due(&key) { ", trialled" } else { "" }));
+                        joins::flag_slow(key, rule, est, ran);
+                        super::profile::decision("slow joins (decision 0203)", || format!("{} {}: {ran:.0} rows of work, priced {est:.0} for its {} rows read", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done));
+                        let exact = self.exact_statistics(&name, line, whole, &b, &running);
+                        joins::log(|| format!("slow {} {}: {ran:.0} rows of work, priced {est:.0} for its {} rows read; {} exact pair statistics; its share of a critical path {:.3}{}", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done, exact.len(), joins::note(&key).map_or(0.0, |n| n.critical), if joins::trial_due(&key) { ", trialled" } else { "" }));
                         joins::put_exact(key, rule, exact);
                         self.heavy_for([r], true, Some(key));
                         joins::take_forced(&key);
@@ -9671,12 +9832,24 @@ impl<'a> Cells<'a> {
         }
     }
 
-    /// The sum of `rows`' row digests (`row_digest`), keyed (`key`) a chunk at a time: no copy of all of them.
+    /// The sum of `rows`' row digests (`row_digest`), keyed (`key`) a chunk at a time: no copy of all of them. Many
+    /// rows are summed in parts at once (a wrapping sum: the same in any order).
     fn sum(&self, rows: &[i64]) -> u64 {
         let w = self.width;
         if w == 0 {
             return 0;
         }
+        const PART: usize = 1 << 15;
+        if rows.len() / w >= 2 * PART {
+            use rayon::prelude::*;
+            return rows.par_chunks(PART * w).map(|part| self.sum_one(part)).reduce(|| 0, u64::wrapping_add);
+        }
+        self.sum_one(rows)
+    }
+
+    /// `sum` on this thread.
+    fn sum_one(&self, rows: &[i64]) -> u64 {
+        let w = self.width;
         if self.atoms.is_none() {
             return rows.chunks_exact(w).fold(0u64, |s, r| s.wrapping_add(row_digest(r)));
         }
@@ -11663,7 +11836,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             let lacking = if super::profile::on() {
                 let mut shape = placement::Shape::default();
                 for ((_, order), b) in planned.iter().zip(planned_bodies) {
-                    shape.add(Order::new(b, order), 0.0, recursive);
+                    shape.add(Order::new(b, order), 0.0, recursive, f0.lattice_name(b.rel(b.head())) == Some("shortlex_min"));
                 }
                 shape.lacking()
             } else {
@@ -12067,15 +12240,11 @@ pub fn decode_kept(
     for (rel, held) in rels.into_iter().filter(|(r, _)| names.contains(r)) {
         super::native::component::hold_as(db, &rel, held);
     }
+    // The program's inputs and declarations, read from its version.
+    let placed = lowered.placed()?;
+    let f = placed.fields()?;
     let outputs: Vec<&str> = names.iter().map(String::as_str).collect();
-    // The inputs and the outputs' column types from the program's version where it has one (t36 item 7: a maintained
-    // run decodes no tree, `a_maintained_run_decodes_and_copies_no_tree`); else from its tree, which is then held.
-    let placed = lowered.version.as_ref().map(|_| lowered.placed()).transpose()?;
-    if let Some(f) = placed.as_ref().and_then(Fields::of) {
-        return decoded_outputs(&outputs, &|r| f.is_input(r), &|r| f.columns(r).map(|c| c.into_iter().map(|(_, t)| t.to_owned()).collect()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &names);
-    }
-    let prog = &lowered.program;
-    decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.iter().map(|(_, t)| t.to_string()).collect()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &names)
+    decoded_outputs(&outputs, &|r| f.is_input(r), &|r| f.columns(r).map(|c| c.into_iter().map(|(_, t)| t.to_owned()).collect()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &names)
 }
 
 /// The program's outputs as rows (decision 0239: symbols, kinds and fields as their text, every other value as it

@@ -1,0 +1,26 @@
+{
+  "format": "rerail.language/v1",
+  "id": "c",
+  "status": "supported",
+  "family": "c",
+  "dialects": [
+    {
+      "label": "c",
+      "variant": "C",
+      "suffixes": [
+        ".c"
+      ],
+      "parser": "tree-sitter",
+      "grammar": "ast-grep:C",
+      "tapeTag": 28
+    }
+  ],
+  "capabilities": {
+    "scope": "not-supported-yet",
+    "value": "not-supported-yet",
+    "arguments": "not-supported-yet",
+    "calls": "not-supported-yet",
+    "formatArgs": "not-supported-yet"
+  },
+  "suppressions": []
+}

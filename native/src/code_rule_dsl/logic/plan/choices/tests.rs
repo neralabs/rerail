@@ -87,7 +87,7 @@
         assert!(same(&price.got.0.0, &order) && price.sizes == [3700.0, 10.0, 0.0, -2.0] && (price.got.0.1, price.got.0.2) == (12.5, 3.0));
         assert!(stored.kept(2).is_none(), "a step past the body");
         // A run at another scale takes the plan stored at the nearest one (O-replan-churn), to re-price it.
-        let mut plans = super::super::RunPlans { kept: Default::default(), stored: Arc::new([(key, stored.clone())].into_iter().collect()), ..Default::default() };
+        let plans = super::super::RunPlans::with_stored(Arc::new([(key, stored.clone())].into_iter().collect()));
         let near = plans.find(&key.0, body.len(), 55_000.0).expect("the plan stored two scales down");
         assert!(same(&near.0, &order));
         assert!(plans.find(&(key.0 ^ 1), body.len(), 3700.0).is_none(), "another rule's plan is not taken");
@@ -96,6 +96,11 @@
         let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
         let prepared = [9u8; 32];
         assert!(read_plans(&store, &prepared).unwrap().is_empty());
+        // As the run's record applies it: the entry made on the run's side.
+        let write_plans = |store: &ContentStore, prepared: &[u8; 32], rows: &[Vec<Value>], notes: &NoteRows| {
+            let entry = plans_entry(rows, notes);
+            apply_plans(&crate::content_store::record::Apply { store, bytes: &entry }, crate::content_store::record::codec::body(prepared)).map(|()| true)
+        };
         assert!(write_plans(&store, &prepared, &[row.into_iter().map(Value::Int).collect()], &Default::default()).unwrap());
         let read = read_plans(&store, &prepared).unwrap();
         assert_eq!((read.len(), read.get(&key)), (1, Some(&stored)));
