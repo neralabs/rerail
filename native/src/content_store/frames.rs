@@ -26,7 +26,7 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-mod memo_pack;
+pub(super) mod memo_pack;
 pub use memo_pack::{MemoBlob, MemoPut, MemoRow};
 pub(super) use memo_pack::drop_memo_space;
 
@@ -344,7 +344,7 @@ struct Snapshot {
     preloaded: HashSet<[u8; 32]>,
     /// A dev trace's (`RERAIL_FRAMES_TRACE`): the space read by identity, and its frames' identities left out.
     left_out: Option<([u8; 32], HashSet<Rel>)>,
-    /// The (space, program) pairs known to hold there (`hold_frames`, decision 0301): each looked up once a process.
+    /// The (space, program) pairs known to hold there (`hold_frames`, decision 0302): each looked up once a process.
     holding: HashSet<([u8; 32], [u8; 32])>,
 }
 
@@ -431,6 +431,28 @@ impl Admitted {
 
 fn frame_key(space: &[u8; 32], rel: &Rel, part: i64) -> super::write_back::Key {
     super::write_back::Key::of(&[b"frame", space, rel.name.as_bytes(), &rel.ident, &part.to_le_bytes()])
+}
+
+/// A space's frames as the writer writes them (`queue_frames`, decision 0306 §8): placed in segments where they fit.
+pub(super) struct FramesWrite {
+    space: [u8; 32],
+    frames: Vec<Encoded>,
+    delta_frames: Vec<Encoded>,
+    retags: Vec<Retag>,
+    heads: Vec<(Rel, u64, Vec<(String, u64)>)>,
+    gone: Vec<(Rel, i64)>,
+    used: Option<Used>,
+    segments: Option<super::segments::SealedSegments>,
+}
+
+impl FramesWrite {
+    pub(super) fn run(&mut self, store: &ContentStore) -> StoreResult<()> {
+        // Attempted once: a busy store leaves these frames unwritten, and the next run derives them again.
+        let rows: Vec<Framed> = self.frames.iter().chain(&self.delta_frames).filter_map(Encoded::framed).collect();
+        let used = self.used.as_ref().map(|(rels, run, program)| (rels.as_slice(), *run, *program));
+        let _ = store.write_frames_placed(&self.space, &rows, self.delta_frames.len(), &self.retags, &self.heads, &self.gone, used, self.segments.as_mut());
+        Ok(())
+    }
 }
 
 impl ContentStore {
@@ -534,7 +556,7 @@ impl ContentStore {
                 }
             }
             snapshot.confirmed = confirmed;
-            // Which programs hold which spaces (`hold_frames`, decision 0301): a few rows, read here, not in a wave.
+            // Which programs hold which spaces (`hold_frames`, decision 0302): a few rows, read here, not in a wave.
             {
                 let mut st = connection.prepare("SELECT space, program FROM frame_program_used WHERE run = 0")?;
                 let rows = st.query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?)))?;
@@ -834,7 +856,7 @@ impl ContentStore {
 
     /// `queue_frames` of frames encoded as they were made (`Put::encoded`): a caller that makes many holds each one's
     /// rows only until it is encoded.
-    /// Records, behind the run, that `program` holds `rels` in `space` (`frame_program_used`, decision 0301), when
+    /// Records, behind the run, that `program` holds `rels` in `space` (`frame_program_used`, decision 0302), when
     /// it does not hold there yet (the snapshot's, read before the first wave, and this process's writes since): a
     /// program that reuses its predecessor's frames puts nothing, and the predecessor superseded, nothing else would
     /// keep them. Whether it queued the holding. No snapshot (no run read the store): queued, and the writer writes
@@ -992,13 +1014,8 @@ impl ContentStore {
         }
         // The queue's measure: what it holds in memory, the frames not placed (the placed ones are the OS's pages).
         let held: usize = frames.iter().chain(&delta_frames).filter(|e| e.place.is_none()).map(|e| e.frame.encoded_bytes() + 64).sum::<usize>() + frames.len() * 64;
-        let mut segments = segments;
-        self.write_back_syms(syms, "frames", held, keys, Box::new(move |store| {
-            // Attempted once: a busy store leaves these frames unwritten, and the next run derives them again.
-            let rows: Vec<Framed> = frames.iter().chain(&delta_frames).filter_map(Encoded::framed).collect();
-            let _ = store.write_frames_placed(&space, &rows, delta_frames.len(), &retags, &heads, &gone, used.as_ref().map(|(rels, run, program)| (rels.as_slice(), *run, *program)), segments.as_mut());
-            Ok(())
-        }));
+        let write = FramesWrite { space, frames, delta_frames, retags, heads, gone, used, segments };
+        self.write_back_syms(syms, "frames", held, keys, super::write_back::Work(super::write_back::Kind::Frames(Box::new(write))));
     }
 
     /// The frame segments' bytes, and the bytes their rows name: what compaction would leave.
@@ -1838,7 +1855,7 @@ mod tests {
         {
             let store = ContentStore::open(&path).unwrap();
             let (release, blocked) = std::sync::mpsc::channel::<()>();
-            store.write_back("test gate", 0, vec![], Box::new(move |_| { blocked.recv().unwrap(); Ok(()) }));
+            store.write_back("test gate", 0, vec![], crate::content_store::write_back::Work::test(Box::new(move |_| { blocked.recv().unwrap(); Ok(()) })));
             store.queue_frames([1; 32], vec![put()], vec![], None);
             let queued = store.admit_frames(&[1; 32], &[r.clone()], 3).unwrap();
             assert_eq!(queued[&r].rows().unwrap().rows, values, "queued: read from its encoded bytes");
@@ -1862,7 +1879,7 @@ mod tests {
         let store = ContentStore::open(&path).unwrap();
         let reader = ContentStore::open(&path).unwrap();
         let (release, blocked) = mpsc::channel();
-        store.write_back("test gate", 0, vec![], Box::new(move |_| { blocked.recv().unwrap(); Ok(()) }));
+        store.write_back("test gate", 0, vec![], crate::content_store::write_back::Work::test(Box::new(move |_| { blocked.recv().unwrap(); Ok(()) })));
         let r = rel("empty", 1);
         store.queue_frames([1; 32], vec![Put { rel: r.clone(), part: 0, digest: 7,
             reads: vec![], rows: Rows { types: vec![0], rows: vec![], n: 0 } }], vec![], None);
@@ -1922,7 +1939,7 @@ mod tests {
             rows: Rows { types: vec![0], rows: vec![value], n: 1 } };
         store.keep_frames(&[1; 32], &[put(1)], &[], None).unwrap();
         let (release, blocked) = std::sync::mpsc::channel();
-        store.write_back("test gate", 0, vec![], Box::new(move |_| { blocked.recv().unwrap(); Ok(()) }));
+        store.write_back("test gate", 0, vec![], crate::content_store::write_back::Work::test(Box::new(move |_| { blocked.recv().unwrap(); Ok(()) })));
         store.queue_frames([1; 32], vec![put(2)], vec![], None);
         let replaced = reader.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
         store.queue_frames([1; 32], vec![], vec![(r.clone(), 0)], None);
@@ -1980,7 +1997,7 @@ mod tests {
         assert!(!again.any(), "nothing left to collect: {again:?}");
     }
 
-    /// Decision 0301: an edited program reuses its predecessor's frames and puts nothing (decision 0227: a warm run
+    /// Decision 0302: an edited program reuses its predecessor's frames and puts nothing (decision 0227: a warm run
     /// writes nothing). Its predecessor superseded and dead, only its own holding keeps them: `hold_frames` records
     /// it, queued once, and only when the store has none (a run of a program that holds queues nothing, 0197).
     #[test]

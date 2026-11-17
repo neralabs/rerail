@@ -229,6 +229,30 @@ fn a_views_filter_scan_holds_the_rows_a_per_row_read_finds() {
     assert!(tried >= 4 * 3, "the four views were tried");
 }
 
+/// A field's children by parent and field (`lookup_eq`, a join's `field($a, #f, $t)` with `$a` bound) are the rows a
+/// lookup by parent finds and a filter on the field keeps, in the same order: for every parent and each of its
+/// fields, and for a field it lacks.
+#[test]
+fn a_fields_lookup_by_parent_and_field_holds_what_a_filter_keeps() {
+    let store = ContentStore::open(&temp("lookup-eq")).unwrap();
+    let (_, field) = sources(&store, documents().into_iter().take(4).collect()).unwrap().into_iter().find(|(name, _)| *name == "field").unwrap();
+    let parents: BTreeSet<i64> = (0..field.len()).map(|r| field.value(r, 0)).collect();
+    let fields: BTreeSet<i64> = (0..field.len()).map(|r| field.value(r, 1)).collect();
+    assert!(parents.len() > 10 && fields.len() > 3, "the documents have fields");
+    let mut found = 0;
+    for &p in &parents {
+        for f in fields.iter().copied().take(6).chain([-7]) {
+            let filtered: Vec<usize> = field.lookup(0, &[p]).unwrap().into_iter().filter(|&r| field.value(r, 1) == f).collect();
+            assert_eq!(field.lookup_eq(0, p, &[(1, f)]), Some(filtered.clone()), "parent {p}, field {f}");
+            found += filtered.len();
+        }
+    }
+    assert!(found > 0, "some parent holds one of the fields tried");
+    // Any other probe is the lookup and filter's.
+    assert_eq!(field.lookup_eq(2, 1, &[(1, 1)]), None);
+    assert_eq!(field.lookup_eq(0, 1, &[(2, 1)]), None);
+}
+
 /// Two cursors on one table, joined on a column the inner one does not index, pair children by position.
 #[test]
 fn self_joins_pair_children_by_position() {

@@ -442,7 +442,7 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
     crate::code_rule_dsl::logic::profile::decision("cross-file part kept across processes (t32 4.1)", || format!("{} frames, {written} rows, written to the store", puts.len()));
     let used: Vec<FrameRel> = part.frames.into_values().map(|(f, _)| f).collect();
     // Nothing changed: nothing written (decision 0211). A program that reuses an earlier one's frames (an edit,
-    // decision 0301) holds them, once.
+    // decision 0302) holds them, once.
     if puts.is_empty() {
         store.hold_frames(part.space, used, super::run_token(), part.key);
         return;

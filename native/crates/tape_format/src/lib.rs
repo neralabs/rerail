@@ -19,6 +19,9 @@
 
 pub mod tape;
 pub mod f16;
+pub mod newlines;
+/// The tape's reads as Rust, written from their CLIF (decision 0310; `rerail_clif::reads::rust_source`).
+mod generated_reads;
 
 pub const MAGIC: &[u8; 8] = b"TMPTAP9N";
 /// 10: supertype memberships folded into the codes; 11: columns aligned (`COLUMN_ALIGN`); 12:
@@ -259,6 +262,9 @@ pub struct Checkpoint {
     held: usize,
 }
 
+/// The most nodes `Writer::insert` moves a cell at a time (more: by `copy_within`).
+const SHORT_MOVE: usize = 16;
+
 const TAIL_WIDE: u8 = 1;
 const EARLY: u8 = 2;
 
@@ -415,6 +421,21 @@ impl<L: Layout> Writer<L> {
         from.wrapping_add(tail)
     }
 
+    /// Cell `at` of a column of `width`-byte cells: a 2- or 4-byte load.
+    #[inline(always)]
+    fn get(column: &[u8], at: usize, width: u8) -> u32 {
+        debug_assert!((at + 1) * usize::from(width) <= column.len());
+        let p = column.as_ptr();
+        // SAFETY: the cell is inside the column, as the assertion says.
+        unsafe {
+            if width == 2 {
+                u32::from(u16::from_le(std::ptr::read_unaligned(p.add(2 * at).cast::<u16>())))
+            } else {
+                u32::from_le(std::ptr::read_unaligned(p.add(4 * at).cast::<u32>()))
+            }
+        }
+    }
+
     /// Cell `at` of a column of `width`-byte cells: a 2- or 4-byte store.
     #[inline(always)]
     fn put(column: &mut [u8], at: usize, width: u8, value: u32) {
@@ -549,14 +570,27 @@ impl<L: Layout> Writer<L> {
             self.grow();
         }
         let (n, ws) = (self.n, self.layout.widths());
-        let shift = |column: &mut [u8], width: u8| {
-            let w = usize::from(width);
-            column.copy_within(at * w..n * w, at * w + w);
-        };
-        shift(&mut self.size, ws.size);
-        shift(&mut self.tail, ws.tail);
-        self.keys.copy_within(at..n, at + 1);
-        self.starts.copy_within(at..n, at + 1);
+        // Most inserts wrap a leaf or a short subtree (a call's function, an operator's left
+        // operand): 58% of C++'s move one node, 93% fewer than 16. Those are moved here, a cell at
+        // a time from the end, where `copy_within` is a call to `memmove` a column.
+        if n - at <= SHORT_MOVE {
+            for j in (at..n).rev() {
+                self.keys[j + 1] = self.keys[j];
+                self.starts[j + 1] = self.starts[j];
+                let (size, tail) = (Self::get(&self.size, j, ws.size), Self::get(&self.tail, j, ws.tail));
+                Self::put(&mut self.size, j + 1, ws.size, size);
+                Self::put(&mut self.tail, j + 1, ws.tail, tail);
+            }
+        } else {
+            let shift = |column: &mut [u8], width: u8| {
+                let w = usize::from(width);
+                column.copy_within(at * w..n * w, at * w + w);
+            };
+            shift(&mut self.size, ws.size);
+            shift(&mut self.tail, ws.tail);
+            self.keys.copy_within(at..n, at + 1);
+            self.starts.copy_within(at..n, at + 1);
+        }
         self.n = n + 1;
         self.keys[at] = key;
         self.starts[at] = start;
@@ -777,7 +811,7 @@ impl<L: Layout> Writer<L> {
     /// Format 15's columns are not made. `Redo` where the writer's widths did not keep every size and end exactly
     /// (format 15's offsets do not matter here); `Ok(Err)` where a node breaks format 16's bounds, the writer kept
     /// (format 15's `finish_columns` takes it).
-    pub fn finish_16(&mut self, lang: &f16::Lang, numbers: &[u32], source_len: u64, tag: u8, z: bool) -> Result<Result<f16::Written, String>, Redo> {
+    pub fn finish_16(&mut self, lang: &f16::Lang, numbers: &[u32], source: &[u8], tag: u8, z: bool) -> Result<Result<f16::Written, String>, Redo> {
         debug_assert!(self.chains.is_empty(), "a chain not ended");
         self.commit();
         let w = self.layout.widths();
@@ -797,7 +831,7 @@ impl<L: Layout> Writer<L> {
         }
         let ids = &self.out[HEADER_BYTES..HEADER_BYTES + 2 * self.n];
         let this = &*self;
-        Ok(f16::write(lang, self.n, source_len, tag, z, |i| f16::Node {
+        Ok(f16::write(lang, self.n, source, tag, z, |i| f16::Node {
             number: numbers[usize::from(u16::from_le_bytes([ids[2 * i], ids[2 * i + 1]]))],
             start: u64::from(this.starts[i]),
             end: u64::from(this.end(i)),
@@ -1211,12 +1245,12 @@ mod tests {
         };
         let image = make().finish(&src).unwrap();
         let (columns, table) = f15_columns(&image).unwrap();
-        let f15 = F15::new(columns, &table).unwrap();
+        let f15 = F15::new(&image, columns, &table).unwrap();
         let lang = f16::Lang::new(table.clone(), [1, 1, 1], 1).unwrap();
         for z in [false, true] {
             let mut w = make();
             let numbers: Vec<u32> = (0..w.code_keys().len() as u32).collect();
-            let written = w.finish_16(&lang, &numbers, src.len() as u64, 1, z).unwrap().unwrap();
+            let written = w.finish_16(&lang, &numbers, &src, 1, z).unwrap().unwrap();
             let check = |t: &dyn Fn(usize) -> (u32, usize, Option<usize>, u64, u64), n: usize| {
                 assert_eq!(n, f15.len());
                 for i in 0..n {

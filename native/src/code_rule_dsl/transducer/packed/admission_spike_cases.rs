@@ -603,7 +603,7 @@ fn wildcard_and_missing_flags_preserve_native_node_meaning() {
         if super::super::execution_shape::register_paths(&program.words).is_some() {
             assert_eq!(
                 super::super::execute_with_backend(
-                    ExecutionBackend::Metal,
+                    ExecutionBackend::MetalJit,
                     programs,
                     tapes,
                     &anchors

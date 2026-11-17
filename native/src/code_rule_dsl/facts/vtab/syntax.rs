@@ -2062,6 +2062,15 @@ impl Projected {
     pub fn children(&self, local: u32) -> impl Iterator<Item = u32> + '_ {
         self.facts.children(self.core[local as usize]).into_iter().map(move |c| self.local[c as usize]).filter(|&c| c != NONE)
     }
+    /// `children`, each handed to `f`: a parent's probe makes no list of them.
+    pub fn each_child(&self, local: u32, mut f: impl FnMut(u32)) {
+        self.facts.each_child(self.core[local as usize], |c| {
+            let c = self.local[c as usize];
+            if c != NONE {
+                f(c);
+            }
+        });
+    }
 }
 
 /// One wave's documents, sorted by key, and the row offsets of the views.
@@ -3593,6 +3602,17 @@ impl Source for Viewed {
     fn len(&self) -> usize {
         *self.batch.offsets(self.view).last().unwrap()
     }
+    /// A node's document or column found from its id (`docof`, `col`: 4 and 3.5 derived lookups), a parent's
+    /// children listed (`child` 2, `field` 1.7): decision 0312. The rest about one.
+    fn lookup_cost(&self, column: usize) -> f64 {
+        match (self.view, column) {
+            (View::Loc(Place::Docof), 0) => 4.0,
+            (View::Loc(Place::Col), 0) => 3.5,
+            (View::Child, 0) => 2.0,
+            (View::Field, 0) => 1.7,
+            _ => 1.0,
+        }
+    }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         let per = if column == self.own() {
             1
@@ -3646,6 +3666,25 @@ impl Source for Viewed {
         let b = &*self.batch;
         let found = if matches!(self.view, View::Loc(_)) { b.loc(value) } else { b.node(value) };
         found.and_then(|(doc, local)| b.row(self.view, doc, local))
+    }
+    /// A field's children by parent and field (`field($a, #f, $t)`, `$a` bound): each child's field read off the
+    /// tape as the children are walked, not its row's values found again.
+    fn lookup_eq(&self, column: usize, value: i64, eqs: &[(usize, i64)]) -> Option<Vec<usize>> {
+        let &[(1, f)] = eqs else { return None };
+        if !matches!(self.view, View::Field) || column != 0 {
+            return None;
+        }
+        let b = &*self.batch;
+        let mut rows = Vec::new();
+        if let Some((doc, local)) = b.node(value) {
+            let p = &b.docs[doc];
+            p.each_child(local, |c| {
+                if i64::from(field_atom(p.tag, p.facts.field(p.core[c as usize]))) == f {
+                    rows.extend(b.row(View::Field, doc, c));
+                }
+            });
+        }
+        Some(rows)
     }
     fn doc_column(&self) -> Option<usize> {
         matches!(self.view, View::Node | View::Core).then_some(0)
@@ -3712,7 +3751,7 @@ impl Viewed {
                 if v == -1 && matches!(self.view, View::Tape) {
                     rows.extend((0..b.docs.len()).filter(|&doc| b.docs[doc].len() > 0).map(|doc| b.nodes[doc]));
                 } else if let Some((doc, local)) = b.node(v) {
-                    rows.extend(b.docs[doc].children(local).filter_map(|c| b.row(self.view, doc, c)));
+                    b.docs[doc].each_child(local, |c| rows.extend(b.row(self.view, doc, c)));
                 }
             } else if matches!(self.view, View::Order) && column == 1 {
                 // An order key: its document, and the node with that key (`Projected::local_of_order`).

@@ -634,22 +634,12 @@ fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json:
 }
 
 pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize, settings: &[String]) -> Result<String, String> {
-    logic_of_set(programs, None, root, t_facts, out, modes, metal, chunk_nodes, settings)
-}
-
-/// `logic`, its programs read from `policy_set` (the rules' path): its runs' lanes are the set's (decision 0301), and
-/// a run of its programs edited supersedes the set's older lanes over the root.
-#[allow(clippy::too_many_arguments)]
-pub fn logic_of_set(programs: &[String], policy_set: Option<&str>, root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize, settings: &[String]) -> Result<String, String> {
     use super::typing::file_local::Binding;
     let binding = if metal { Binding::Metal } else { Binding::Cpu };
     if programs.len() > 1 && t_facts.is_some() {
         return Err("T facts reproduce one program's run, not several".into());
     }
-    let mut options = serde_json::json!({ "env": settings, "reuse": true });
-    if let Some(set) = policy_set {
-        options["policy_set"] = serde_json::json!(set);
-    }
+    let options = serde_json::json!({ "env": settings, "reuse": true });
     let programs: Vec<&str> = programs.iter().map(String::as_str).collect();
     // A program whose language has several dialects with files in its scope (`.language typescript` over `.ts`,
     // `.tsx` and `.js` files, which main's TypeScript reads) runs once per dialect, lowered for each, as
@@ -808,16 +798,14 @@ pub fn cli(args: &[String]) -> Result<String, String> {
     crate::code_rule_dsl::logic::profile::command_begins();
     let out = cli_in(args, &mut Default::default());
     let (age, after) = crate::code_rule_dsl::logic::profile::command_ends();
-    match (out, after) {
-        (Ok(mut text), Some(c)) => {
-            text += &format!(
-                "  after the run {:.2} s wall: the command's thread {:.2} s own, {:.2} s off a core; the other threads {:.2} s; ready with no core {:.2} s\n  before the command: {age:.2} s since the process started\n",
-                c.wall, c.own + c.helped, c.off_core(), c.others(), c.no_core()
-            );
-            Ok(text)
-        }
-        (out, _) => out,
+    // On stderr: a command's output is its own (`run-rr`'s, `sql`'s: JSON), and a line after it made that unreadable.
+    if let (Ok(_), Some(c)) = (&out, after) {
+        eprint!(
+            "  after the run {:.2} s wall: the command's thread {:.2} s own, {:.2} s off a core; the other threads {:.2} s; ready with no core {:.2} s\n  before the command: {age:.2} s since the process started\n",
+            c.wall, c.own + c.helped, c.off_core(), c.others(), c.no_core()
+        );
     }
+    out
 }
 
 /// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`): the caller owns it.
@@ -1073,12 +1061,7 @@ fn translate_json_command(args: &[String]) -> Result<String, String> {
     Ok(format!("{} translated, {failed} failed", files.len() - failed))
 }
 
-/// A timeline's mark (dev, `RERAIL_TIMELINE`): where the process is, with its instructions retired so far.
-fn timeline_mark(what: &str) {
-    if std::env::var_os("RERAIL_TIMELINE").is_some() {
-        eprintln!("RERAIL_TIMELINE {what}: @{:.3} i={:.3}", crate::code_rule_dsl::logic::profile::timeline_clock(), crate::code_rule_dsl::logic::profile::retired_instructions() as f64 / 1e9);
-    }
-}
+use crate::code_rule_dsl::logic::profile::timeline_mark;
 
 fn logic_command(args: &[String]) -> Result<String, String> {
     timeline_mark("cli start");
@@ -1140,7 +1123,10 @@ fn logic_command(args: &[String]) -> Result<String, String> {
             })
             .collect();
         files.retain(|path| !path.file_name().is_some_and(|n| included.contains(n)));
-        crate::tools::program_texts(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>())?
+        timeline_mark("the program files listed");
+        let texts = crate::tools::program_texts(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>())?;
+        timeline_mark("the program texts read");
+        texts
     } else {
         vec![crate::tools::program_text(Path::new(program.as_str()))?]
     };
@@ -1148,9 +1134,7 @@ fn logic_command(args: &[String]) -> Result<String, String> {
     if programs.is_empty() {
         return Err(format!("{program} has no .rr programs"));
     }
-    // The rules' path names the runs' policy set (decision 0301).
-    let set = std::fs::canonicalize(program.as_str()).map_or_else(|_| program.clone(), |p| p.to_string_lossy().into_owned());
-    let run = || crate::tools::logic_of_set(&programs, Some(&set), Path::new(root), facts, Path::new(out), &modes, metal, chunk, &env);
+    let run = || crate::tools::logic(&programs, Path::new(root), facts, Path::new(out), &modes, metal, chunk, &env);
     if full { crate::code_rule_dsl::logic::plan::corpus::session::full(run) } else { run() }
 }
 

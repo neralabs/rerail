@@ -177,7 +177,7 @@ struct Manifest {
 /// Which manifests, met newest first, are among their lane's last `protected_runs` and their lane among the root's
 /// newest `protected_lanes`.
 ///
-/// A lane of a policy set (decision 0301) is protected only while it is its set's newest: an older one (the set's
+/// A lane of a policy set (decision 0302) is protected only while it is its set's newest: an older one (the set's
 /// programs before an edit) holds no protection and takes no place among the root's lanes.
 #[derive(Default)]
 struct Protection<'m> {
@@ -185,11 +185,22 @@ struct Protection<'m> {
     lanes: HashMap<i64, Vec<Option<&'m [u8]>>>,
     /// Each root's policy sets' newest lanes.
     newest: HashMap<(i64, &'m [u8]), Option<&'m [u8]>>,
+    /// The roots with a manifest that names its set: there, a lane with none is an older binary's (§4).
+    named: HashSet<i64>,
 }
 
 impl<'m> Protection<'m> {
+    fn over(manifests: &[Manifest]) -> Self {
+        Protection { named: manifests.iter().filter(|m| m.policy.is_some()).map(|m| m.root).collect(), ..Protection::default() }
+    }
+
     fn protects(&mut self, m: &'m Manifest, runs: usize, lanes: usize) -> bool {
         let lane = m.lane.as_deref();
+        // Decision 0302 §4: this binary names every lane's set (a lane of no set is its own), so a lane with none
+        // over a root it ran is an older binary's, which no newer lane of its set can supersede.
+        if lane.is_some() && m.policy.is_none() && self.named.contains(&m.root) {
+            return false;
+        }
         if let Some(policy) = m.policy.as_deref()
             && *self.newest.entry((m.root, policy)).or_insert(lane) != lane
         {
@@ -207,7 +218,7 @@ impl<'m> Protection<'m> {
 }
 
 /// A file's stat when its source was read: what the stat index keeps of it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FileStat {
     pub size: i64,
     pub mtime_ns: i64,
@@ -310,19 +321,15 @@ impl ContentStore {
         })
     }
 
-    /// `put_stat_blob`, queued behind the run (decision 0102).
+    /// `put_stat_blob`, behind the run (decision 0102), in its record (decision 0306): the blob in its byte area.
     pub fn queue_stat_blob(&self, plan: [u8; 32], blob: Vec<u8>) {
-        self.write_back("the kept statistics", blob.len(), vec![(stat_blob_key(&plan), None)], Box::new(move |store| store.put_stat_blob(plan, &blob)));
+        fn apply(cx: &super::record::Apply<'_>, body: super::record::codec::Body) -> StoreResult<()> {
+            let plan: [u8; 32] = super::record::codec::from_body("the kept statistics", body)?;
+            cx.store.put_stat_blob(plan, cx.bytes)
+        }
+        self.record("the kept statistics", vec![stat_blob_key(&plan)], &plan, Some(blob), apply);
     }
 
-    /// `queue_stat_blob` of statistics naming symbols: `map` gives the blob with the store's ids, in the writer's
-    /// transaction (decision 0170).
-    pub fn queue_stat_blob_mapped(&self, plan: [u8; 32], blob: Vec<u8>, map: Box<dyn Fn(&ContentStore, &[u8]) -> StoreResult<Vec<u8>> + Send>) {
-        self.write_back_syms(super::write_back::Syms::Mapped, "the kept statistics", blob.len(), vec![(stat_blob_key(&plan), None)], Box::new(move |store| {
-            let mapped = map(store, &blob)?;
-            store.put_stat_blob(plan, &mapped)
-        }));
-    }
 
     /// Memo plan `plan`'s kept statistics (`put_stat_blob`), if a run kept them; a queued write of them first.
     pub fn stat_blob(&self, plan: [u8; 32]) -> StoreResult<Option<Vec<u8>>> {
@@ -409,7 +416,7 @@ impl ContentStore {
         self.record_corpus_run_policy(root, sources, grammar_version, tape_format, plan, also, lane, None, now)
     }
 
-    /// `record_corpus_run_lane`, the lane of policy set `policy` (decision 0301): a newer lane of the set supersedes
+    /// `record_corpus_run_lane`, the lane of policy set `policy` (decision 0302): a newer lane of the set supersedes
     /// its older ones, which keep no protection (`Protection`). `None`: a lane of no set, protected as before.
     #[allow(clippy::too_many_arguments)]
     pub fn record_corpus_run_policy(&self, root: &str, sources: &[SourceId], grammar_version: i64, tape_format: i64, plan: [u8; 32], also: &[[u8; 32]], lane: Option<[u8; 32]>, policy: Option<[u8; 32]>, now: i64) -> StoreResult<bool> {
@@ -576,7 +583,7 @@ impl ContentStore {
         if displaced.is_some() {
             return Ok(true);
         }
-        // A policy set's newer lane (decision 0301): its older lanes lose their protection.
+        // A policy set's newer lane (decision 0302): its older lanes lose their protection.
         let superseded: Option<i64> = connection
             .query_row_cached(
                 "SELECT 1 FROM corpus_manifests m WHERE m.last_run > ?1 AND m.policy IS NOT NULL \
@@ -635,8 +642,8 @@ impl ContentStore {
             let mut live = HashSet::new();
             {
                 let mut rows = tx.prepare(
-                    "SELECT l.source_id, l.grammar_version, l.tape_format, coalesce(length(s.frame), 0), \
-                     coalesce((SELECT length(t.frame) FROM tape_objects t WHERE t.source_id=l.source_id \
+                    "SELECT l.source_id, l.grammar_version, l.tape_format, coalesce(CASE WHEN s.seg != 0 THEN s.seg_len ELSE length(s.frame) END, 0), \
+                     coalesce((SELECT CASE WHEN t.seg != 0 THEN t.seg_len ELSE length(t.frame) END FROM tape_objects t WHERE t.source_id=l.source_id \
                                AND t.grammar_version=l.grammar_version AND t.tape_format_version=l.tape_format), 0) \
                      FROM corpus_live l LEFT JOIN source_objects s ON s.source_id=l.source_id",
                 )?;
@@ -682,7 +689,7 @@ impl ContentStore {
             // build and the program, and its memo (decision 0146: a space of frames, the size of every file's
             // results) serves only runs of both. Manifests are kept by the bytes of their sources and tapes, which
             // a small corpus never fills, so every build's memo stayed live (1.75 GB of 1.86 GB of frames).
-            let mut protection = Protection::default();
+            let mut protection = Protection::over(&manifests);
             let protected_ids: HashSet<i64> = manifests
                 .iter()
                 .filter(|m| kept_ids.contains(&m.id))
@@ -862,6 +869,8 @@ impl ContentStore {
         pass.plan_rows += usize::from(self.compact_memo_pack(MEMO_PACK_FLOOR)? > 0);
         // The frames' segments, once frames written again or collected left most of them unnamed (decision 0295 §4).
         pass.plan_rows += usize::from(self.compact_frame_segments(MEMO_PACK_FLOOR)? > 0);
+        // The tapes' and sources' segments, once files stored again or collected left most of them unnamed (0295 step 5).
+        pass.plan_rows += usize::from(self.compact_object_segments(MEMO_PACK_FLOOR)? > 0);
         if !pass.did_work() {
             self.immediate_transaction(|tx| Ok(tx.execute_cached("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=2", [])?))?;
         }
@@ -896,7 +905,7 @@ struct Decided {
 /// The manifests to keep, `manifests` newest first (the module's rules).
 fn decide(manifests: &[Manifest], sizes: &Sizes, policy: &CorpusPolicy, now: i64) -> Decided {
     let walk = |cap: Option<u64>| -> Decided {
-        let mut protection = Protection::default();
+        let mut protection = Protection::over(manifests);
         let (mut seen_sources, mut seen_tapes) = (HashSet::new(), HashSet::new());
         let mut out = Decided { kept: Vec::new(), protected: 0, history: 0 };
         for m in manifests {
@@ -990,8 +999,8 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// What a write of plan `plan`'s statistics is queued under (`write_back`).
-fn stat_blob_key(plan: &[u8; 32]) -> super::write_back::Key {
+/// What a write of memo plan `plan`'s statistics is queued under (`stat_blob` settles it).
+pub fn stat_blob_key(plan: &[u8; 32]) -> super::write_back::Key {
     super::write_back::Key::of(&[b"stat_blob", plan])
 }
 

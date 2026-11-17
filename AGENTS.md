@@ -61,6 +61,11 @@ nice -n 19 cargo nextest run --lib --profile gate              # everything: a p
 nice -n 19 cargo nextest run --lib --ignore-default-filter NAME  # one slow test by name
 ```
 
+On a machine with the build farm (below), run these through `scripts/dev/test-remote -- cargo nextest
+run …` by default: the hosts take several test commands each at once, in a warm target directory per
+checkout, and this machine stays free for the edit loop. A build here prints when a host has a free
+test slot. Run tests here only when no host is usable (test-remote then runs them here itself).
+
 A test that takes 20 s or more belongs in the slow tier (the default profile's
 `default-filter`). Tests that read the packs' test data need it pulled first
 (`npm run fixtures:pull`); without it they fail, which says nothing about the change.
@@ -80,14 +85,11 @@ scripts/build/farm/diagnose [DIR | --all]          # why a checkout's builds mis
 scripts/dev/test-remote -- cargo nextest run --lib --profile gate
 scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'
 scripts/dev/live-test-remote PACKAGE --lib -- FILTER   # Relax's live loop on a host
-scripts/dev/quiet-run [--minutes N] -- COMMAND        # a benchmark on an idle host, 10 min at most
 ```
 
-Benchmark only through `quiet-run` (README, "Quiet runs"). It waits its turn, keeps the farm's work
-off a host, and runs COMMAND there for 10 minutes at most. When a build prints that this machine
-is leased for a benchmark, its compiles wait. Don't start tests, Relax or other heavy work here
-until the lease ends: send them with `test-remote`. Doing so is unfair to the benchmark, and the
-checkout is told so at its next builds.
+Benchmarks are ordinary commands: run them with `test-remote` (`--tree DIR` sends their inputs or a
+program built here) or here, without waiting for an idle machine, and note the machine's load with
+the result. There are no benchmark leases.
 
 `test-remote` sends this checkout's changes to a usable host and runs the command there, from
 `native/` (or `--dir`), in a warm target directory of its own on that host. A host can be asleep, gone,

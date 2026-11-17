@@ -1917,7 +1917,7 @@ pub mod tests {
             inputs.push(format!("{}=>=>=>=>", " ".repeat(pad)).into_bytes());
         }
         // A word past eight bytes (`violation`) beside words that differ from it past its eighth
-        // byte, or are it with a byte more or less (`RecordTables::second`): at a block's start,
+        // byte, or are it with a byte more or less (`RecordTables::rest`): at a block's start,
         // across its edge, and as the file's last bytes.
         for t in ["violation", "violatiox", "violationx", "violatio", "violations", "violation_x", "aviolation"] {
             for pad in [0usize, 55, 56, 58, 63] {
