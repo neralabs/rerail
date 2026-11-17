@@ -154,7 +154,7 @@ def main(argv):
     if host is None:
         here(argv, directory, why, remote_only)
     name = host["name"]
-    reply = mirror.compile({"host": name, "since": started, "roots": [[CHECKOUT, "checkout"]] + [[t, "tree"] for t in trees], "files": [], "verify": True,
+    reply = mirror.compile({"host": name, "since": started, "roots": [[CHECKOUT, "checkout"]] + [[t, "tree"] for t in trees], "files": [], "verify": True, "prune": True,
                             "run": {"cwd": "/", "argv": ["true"], "dirs": [], "outputs": [], "depinfo": None, "env": {}}})
     if reply is None or reply.get("code") != 0:
         slot.release()

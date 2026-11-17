@@ -278,6 +278,12 @@ files the same way; one scan serves every compile that started before it), sends
 compile, on the same stream: the agent writes the files before it runs the compile. The outputs
 come back on the stream.
 
+`test-remote` and `live-test-remote` also prune: after a checkout's files are sent, the agent removes
+each file under the host's copy of the checkout that the mirror wrote (it carries the mirror's
+attribute) and that the checkout no longer has, so a deleted file never lingers there (a test that
+reads every source file would read it). Files a command wrote there, `--tree` directories and `.git`
+stay. `scripts/build/farm/test-agent` runs an agent here on a root of its own and checks this.
+
 The stream starts on ssh, then moves to plain TCP: the daemon listens on a port of its own,
 sends the agent the port and a one-time token over ssh, and the agent connects back to the
 address it sees ssh arrive from (the host's `link`, which the health check confirmed) and sends

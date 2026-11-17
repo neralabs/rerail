@@ -16,6 +16,10 @@ From the daemon:
   the file (an extended attribute), and `seen` reports those while the file is as written.
 - {"op": "have", "id", "paths"}: replies {"op": "had", "id", "seen"}, each path's [mtime_ns, size]
   (null when missing): what an earlier connection already wrote.
+- {"op": "prune", "id", "root", "keep", "skip"}: removes each file under the kept copy of `root` that a
+  put wrote (it has the attribute) and that is neither in `keep` (the build machine's files of `root` now)
+  nor under a directory of `skip`, nor under a `.git`: a file the checkout deleted. A file a command wrote
+  there has no attribute and stays. Replies {"op": "pruned", "id", "removed"}, the build machine's paths.
 - {"op": "same", "id", "files"}: `files` maps paths of this host's own (a crate in its cargo
   registry, at the path it has on the build machine too) to their sha256 there. Replies {"op":
   "same?", "id", "differ"}: those missing or different here. Only read: a compile then reads that
@@ -41,7 +45,8 @@ the lifeline: when it ends, the agent ends. If the connection cannot be made, it
 """
 import ctypes, json, os, re, socket, struct, subprocess, sys, threading
 
-ROOT = os.path.join(os.path.expanduser("~"), "Library/Caches/rerail-farm/root.noindex")
+# `RERAIL_FARM_AGENT_ROOT` moves it for the agent's test (test-agent) alone.
+ROOT = os.environ.get("RERAIL_FARM_AGENT_ROOT") or os.path.join(os.path.expanduser("~"), "Library/Caches/rerail-farm/root.noindex")
 XATTR = b"org.rerail.farm.sent"
 
 out = sys.stdout.buffer
@@ -140,6 +145,30 @@ def put(header, payload):
         os.unlink(tmp)
         raise OSError(ctypes.get_errno(), "setxattr failed", kept)
     os.replace(tmp, kept)
+
+
+def marked(kept):
+    """Whether a put wrote the file kept at `kept` (its attribute is there)."""
+    return libc.getxattr(kept.encode(), XATTR, None, 0, 0, 0) > 0
+
+
+def prune_deleted(root, keep, skip):
+    """The files a put wrote under `root`'s copy that the build machine no longer has (`prune`), removed."""
+    keep = set(keep)
+    removed = []
+    for d, dirs, files in os.walk(at(root)):
+        dirs[:] = [x for x in dirs if x != ".git"]
+        for f in files:
+            kept = os.path.join(d, f)
+            path = kept[len(ROOT):]
+            if path in keep or under(path, skip) or not marked(kept):
+                continue
+            try:
+                os.unlink(kept)
+                removed.append(path)
+            except OSError as e:
+                print(f"farm-agent: {path}: {e}", file=sys.stderr, flush=True)
+    return removed
 
 
 def mapper(prefixes):
@@ -356,6 +385,8 @@ while True:
             refused.append(f"{header['path']} ({e})")
     elif header["op"] == "run":
         threading.Thread(target=run, args=(header,), daemon=True).start()
+    elif header["op"] == "prune":
+        send({"op": "pruned", "id": header["id"], "removed": prune_deleted(header["root"], header["keep"], header.get("skip", []))})
     elif header["op"] == "same":
         send({"op": "same?", "id": header["id"], "differ": [p for p, h in header["files"].items() if sha(p) != h]})
     elif header["op"] == "have":

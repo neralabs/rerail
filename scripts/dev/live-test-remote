@@ -40,7 +40,7 @@ def send(host, files=(), roots=(), verify=False):
     """Sends what changed of `files` and `roots` to the host, through the farm's mirror daemon;
     `verify` asks the host again what it holds first (it may have been cleaned)."""
     reply = mirror.compile({"host": host, "since": time.time(), "roots": [list(r) for r in roots],
-                            "files": list(files), "verify": verify,
+                            "files": list(files), "verify": verify, "prune": verify,
                             "run": {"cwd": "/", "argv": ["true"], "dirs": [], "outputs": [], "depinfo": None, "env": {}}})
     if reply is None or reply.get("code") != 0:
         sys.exit(f"live-test-remote: could not send to {host}: {(reply or {}).get('why') or (reply or {}).get('stderr')}")
