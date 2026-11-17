@@ -1409,9 +1409,27 @@ pass.
   part's peak (2.09 GB footprint), 0.51 GB is live from the local chunks' spans (strata rows, specs, guests, the
   profile's records), 0.42 GB the exports and base rows held for the cross part, 0.37 GB the cross strata (0.20 GB
   of it sorted-column indexes on its inputs, held as long as the inputs), 0.12 GB parse, 0.10 GB input frames.
-- **Open**: the local chunks' leftovers at the cross part; the input indexes let go after their last prober; the
-  inputs' frames written before the run, so the inputs go after their last reader; then the chunks' working sets
-  bounded together (the files' evaluation, 1.9 GB).
+- **Done, step 2** (2026-11-17): the chunks in flight share the run's headroom. Decision 0254 let 8 chunks evaluate at
+  once, each sized to three quarters of the whole headroom (`RUN_MB`'s invariant, written for one chunk), and the
+  builder projected 9 ahead at the probe's size before any was measured. Now one chunk until a credible measurement
+  (a rise of 16 MB or more: a smaller one is pages freed before it, reused), then as many at once as the headroom
+  holds at 64 MB each (`CHUNK_FLOOR_MB`), each sized to its share; bytes a node the most measured this run; the
+  builder projects ahead only as many as are allowed. A chunk's working set is 7–22 KB a node (rows derived,
+  guests' documents, statistics), so at 300 files one or two run at once.
+- **Done, step 3**: each input's frames are queued as its job makes them, into the run's wave (`Carry`; one
+  transaction with the derived ones), placed in segments of their own (decision 0295 §1): 270 MB of encoded frames
+  were held at once beside the inputs at the cross part's end.
+- **Measured** (300 files, cold, unprofiled, `/usr/bin/time`): 2.13 GB, 12.7 s wall, 61 s user before; 1.65 GB,
+  24.3 s wall, 55.6 s user after steps 2–3 (wall: one or two chunks at once while the base under them is 0.7–1.4
+  GB). Outputs the same relation by relation (sorted CSVs); strict 10-file outputs byte-identical.
+- **A profile's own memory**: 0.42 GB of a profiled cold peak is the profiler's records (`profile::planned`,
+  `native`, `report::placed`, `placement::record`), kept per stratum per chunk for the report: profiled peaks are
+  0.4–0.5 GB above unprofiled ones. `RERAIL_HEAP_FRAMES=1` (with `RERAIL_HEAP_SAMPLE`) writes `heap-frames.tsv`, the
+  live heap by span and allocating stack (frame-pointer walk, aarch64 macOS), for `atos`.
+- **Open**: the engine's own live heap at the cold peak (cross part, 1.51 GB): the inputs (exports 224 MB, base rows
+  201 MB) and their sorted-column indexes (about 250 MB, built lazily inside the in-memory sources, `Stored::index`),
+  held to the end for `write_frames`. Next: the inputs' frames written before the cross run (they depend on the
+  inputs alone), then each input (rows and indexes) dropped after its last reader (`Hooks::unload`).
 
 ## Questions for the user
 

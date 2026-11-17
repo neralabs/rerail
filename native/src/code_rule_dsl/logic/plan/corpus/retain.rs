@@ -2338,8 +2338,20 @@ impl Retained {
         let phase = super::phases::current();
         let input_docs = &self.input_docs;
         let atoms_ref = &atoms;
-        let one_input = |rel: &String, source: &Arc<dyn Source>| -> Option<(u64, Vec<EncodedFrame>, usize)> {
+        // Each input's frames are queued as its job makes them (Q55), into the run's wave (`Carry`: the writer takes
+        // the wave whole, in one transaction, with the derived relations' frames queued below): placed in segments of
+        // their own (decision 0295 §1), their bytes leave the run's heap then. Collected to be queued at the end, every
+        // input's encoded frames were held at once beside the inputs' rows (270 MB at a cold run's peak, 300 files).
+        let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
+        let carry = &carry;
+        let one_input = |rel: &String, source: &Arc<dyn Source>| -> Option<(u64, usize)> {
+            let _in = carry.enter();
             let _span = crate::code_rule_dsl::logic::profile::span(|| "an input's frames (job)".into());
+            let queue = |puts: Vec<EncodedFrame>| {
+                if !puts.is_empty() {
+                    store.queue_encoded_retagged(was.space, puts, Vec::new(), Vec::new(), Vec::new(), None);
+                }
+            };
             let atoms: &crate::content_store::atoms::Atoms = atoms_ref;
             let mut puts: Vec<EncodedFrame> = Vec::new();
             let mut written = 0;
@@ -2349,14 +2361,15 @@ impl Retained {
             let cells = if types.len() == width { Cells::new(&atoms, &types) } else { Cells::plain(width) };
             let digest = digests.get(rel).copied().unwrap_or_else(|| digest(source.as_ref(), &cells));
             if was.inputs.get(rel).is_some_and(|(d, _)| *d == digest) {
-                return Some((digest, puts, written));
+                return Some((digest, written));
             }
             // A relation of no columns is its count: one document's entry, its digest the input's (`digest`).
             if width == 0 {
                 let n = source.len() as u64;
                 let rows = vec![0, (digest ^ n.wrapping_mul(0xff51_afd7_ed55_8ccd)) as i64, n as i64];
                 puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: Vec::new(), rows: FrameRows { types: vec![b'i'; 3], n: 1, rows } }.encoded());
-                return Some((digest, puts, written));
+                queue(puts);
+                return Some((digest, written));
             }
             let g = group_col(prog, locations, rel).min(width - 1);
             let atom_owner = types.len() == width && atom_owners(&types, g);
@@ -2432,16 +2445,20 @@ impl Retained {
             table.sort_unstable();
             let rows: Vec<i64> = table.iter().flat_map(|(d, (s, n))| [*d, *s as i64, *n as i64]).collect();
             puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: Vec::new(), rows: FrameRows { types: docs_types(atom_owner), n: table.len(), rows } }.encoded());
-            Some((digest, puts, written))
+            queue(puts);
+            Some((digest, written))
         };
-        let framed_inputs: Vec<Option<(u64, Vec<EncodedFrame>, usize)>> = {
+        let framed_inputs: Vec<Option<(u64, usize)>> = {
             use rayon::prelude::*;
             inputs.par_iter().map(|(rel, source)| one_input(rel, source)).collect()
         };
+        // Whether an input's frames were queued: then the derived relations' are queued with the program's hold even
+        // when none of theirs changed.
+        let mut inputs_queued = false;
         for ((rel, _), done) in inputs.iter().zip(framed_inputs) {
-            let Some((digest, frames, n)) = done else { continue };
+            let Some((digest, n)) = done else { continue };
             now.insert(rel.clone(), digest);
-            puts.extend(frames);
+            inputs_queued |= was.inputs.get(rel).is_none_or(|(d, _)| *d != digest);
             written += n;
         }
         // Every input the run bound, framed or not (an option's `env`, an earlier phase's export): its digest is
@@ -2606,7 +2623,7 @@ impl Retained {
         // Nothing changed: nothing written (decision 0227; the program's relations are kept by reachability). A
         // program that reuses an earlier one's frames (an edit, decision 0302) holds them, once: the earlier one
         // superseded, nothing else keeps them.
-        if puts.is_empty() && retags.is_empty() && delta_out.is_empty() {
+        if puts.is_empty() && retags.is_empty() && delta_out.is_empty() && !inputs_queued {
             store.hold_frames(was.space, was.names.values().cloned().collect(), super::run_token(), self.key);
             return Ok(written);
         }

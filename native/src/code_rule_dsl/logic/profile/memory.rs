@@ -156,6 +156,8 @@ pub(super) struct Sampled {
     /// `RERAIL_HEAP_SAMPLE`: the live heap by allocating span at the peak (`rerail_prof::heap::snapshot`), and the
     /// footprint it was taken at.
     pub(super) heap: Vec<(u32, u64)>,
+    /// The same by allocating call stack (`RERAIL_HEAP_FRAMES`).
+    pub(super) heap_frames: Vec<((u32, Vec<usize>), u64)>,
     pub(super) heap_at: u64,
 }
 
@@ -215,8 +217,10 @@ pub(super) fn sample() {
                         s.heap_at = now;
                         drop(s);
                         let heap = rerail_prof::heap::snapshot();
+                        let heap_frames = rerail_prof::heap::snapshot_frames();
                         s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                         s.heap = heap;
+                        s.heap_frames = heap_frames;
                     }
                 }
                 if keep {
@@ -308,6 +312,19 @@ pub fn heap_tsv() -> String {
     let mut t = String::from("bytes\tspan\n");
     for (id, bytes) in &s.heap {
         let _ = writeln!(t, "{bytes}\t{}", rerail_prof::heap::name(*id));
+    }
+    t
+}
+
+/// The live heap by allocating call stack (`RERAIL_HEAP_FRAMES`), taken with the span snapshot near the peak, as
+/// TSV: bytes, then the return addresses innermost first; the header gives the executable's load address for
+/// `atos -o <binary> -l <load> <addresses>`. Empty when stacks were not recorded.
+pub fn heap_frames_tsv() -> String {
+    use std::fmt::Write as _;
+    let s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut t = format!("# load {:#x}\nbytes\tframes\tspan\n", rerail_prof::heap::load_address());
+    for ((span, frames), bytes) in &s.heap_frames {
+        let _ = writeln!(t, "{bytes}\t{}\t{}", frames.iter().map(|f| format!("{f:#x}")).collect::<Vec<_>>().join(" "), rerail_prof::heap::name(*span));
     }
     t
 }

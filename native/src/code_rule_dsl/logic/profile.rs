@@ -1337,6 +1337,7 @@ pub fn peaks() -> String {
     if let Some(dir) = directory() {
         let _ = std::fs::write(dir.join("memory.tsv"), memory::sampled_tsv());
         let _ = std::fs::write(dir.join("heap.tsv"), memory::heap_tsv());
+        if !rerail_prof::heap::snapshot_frames().is_empty() || std::env::var_os("RERAIL_HEAP_FRAMES").is_some() { let _ = std::fs::write(dir.join("heap-frames.tsv"), memory::heap_frames_tsv()); }
     }
     r
 }

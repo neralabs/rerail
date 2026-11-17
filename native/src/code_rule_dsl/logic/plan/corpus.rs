@@ -2435,6 +2435,11 @@ const CHUNK_MB: f64 = 384.0;
 const RUN_MB: f64 = 1024.0;
 /// The fewest nodes a chunk is sized to: a smaller one costs more in each chunk's fixed work than it saves.
 const MIN_CHUNK_NODES: usize = 8_192;
+/// The least a chunk evaluating beside others is sized to (`RERAIL_CHUNK_FLOOR_MB`): fewer chunks at once, not
+/// smaller ones, below it (Q55).
+const CHUNK_FLOOR_MB: f64 = 64.0;
+/// A chunk's growth that sizes the next (Q55): a smaller one is within the pages freed before it, which it reused.
+const CHUNK_CREDIBLE_MB: usize = 16;
 
 #[allow(clippy::too_many_arguments)]
 pub fn run_with_options(
@@ -5215,7 +5220,10 @@ fn run_observed(
         /// At most this many documents built ahead of the next taken, and chunks projected at once beside the one
         /// waiting for the main thread.
         ahead: usize,
-        in_flight: usize,
+        /// Chunks projected ahead at most: the chunks allowed at once (Q55), and one more.
+        in_flight: &'a std::sync::atomic::AtomicUsize,
+        /// Without the memo, two (the one evaluating and the next); with it, the allowed count's.
+        fixed_in_flight: Option<usize>,
         resolve: &'a parking_lot::Mutex<R>,
         build: &'a B,
         project: &'a P,
@@ -5415,13 +5423,16 @@ fn run_observed(
             // The next document is taken unless the front of what is cut holds the builder: ready and waiting for the
             // main thread, or more than `in_flight` chunks projecting.
             let projecting = c.out.iter().filter(|o| matches!(o, Out::Projecting(..))).count();
+            // Projected ahead of the main thread at most as many as evaluate at once (Q55): before a chunk is measured
+            // that is one, so the chunks are not all cut to the probe's size, each a whole batch held.
+            let in_flight = self.fixed_in_flight.unwrap_or_else(|| self.in_flight.load(std::sync::atomic::Ordering::Relaxed) + 1);
             let held = match c.out.front() {
                 None => false,
                 Some(Out::Ready(_)) => true,
-                Some(Out::Projecting(id, _)) => projecting > self.in_flight || self.projected.lock().contains_key(id),
+                Some(Out::Projecting(id, _)) => projecting > in_flight || self.projected.lock().contains_key(id),
             };
             if held {
-                self.doing.set(if matches!(c.out.front(), Some(Out::Projecting(..))) && projecting > self.in_flight { "wait for a chunk's projection" } else { "hand on (a chunk)" });
+                self.doing.set(if matches!(c.out.front(), Some(Out::Projecting(..))) && projecting > in_flight { "wait for a chunk's projection" } else { "hand on (a chunk)" });
                 return progress;
             }
             if c.next < len {
@@ -5531,7 +5542,14 @@ fn run_observed(
     // How many chunks evaluate at once: `RERAIL_CHUNKS_AT_ONCE`, else the pool's threads less the main thread's (which
     // files them), at most 8. One is the main thread alone, on its own connection, as before.
     let chunks_at_once = std::env::var("RERAIL_CHUNKS_AT_ONCE").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or_else(|| crate::threads::max().saturating_sub(1).min(8)).max(1);
-    crate::code_rule_dsl::logic::profile::decision("chunks at once (decision 0254)", || format!("{chunks_at_once} chunks evaluate at once, each on a connection of its own; the main thread files them in order"));
+    crate::code_rule_dsl::logic::profile::decision("chunks at once (decision 0254)", || format!("up to {chunks_at_once} chunks evaluate at once, each on a connection of its own, as many as the run's headroom holds (Q55); the main thread files them in order"));
+    // How many may be in flight now (Q55): one until a chunk's measured growth sizes the rest, then as many as share
+    // the run's headroom at `CHUNK_FLOOR_MB` or more each (the chunk-size decision sets it). The chunks in flight
+    // together stay within it: 8 chunks each sized to the whole headroom took a cold run at 300 files to 2.3 GB.
+    let at_once_allowed = std::sync::atomic::AtomicUsize::new(1);
+    // The most a node was measured to add this run: a chunk whose growth the pages freed before it hid (22 bytes a
+    // node, beside 9 KB measured next) sizes no chunk.
+    let per_node_most = std::cell::Cell::new(0.0f64);
     let builders = crate::threads::max().max(2);
     let builder = Builder {
         cut: parking_lot::Mutex::new(Cut {
@@ -5562,7 +5580,8 @@ fn run_observed(
         ready_hits: 0.into(),
         ahead: builders * 8,
         // Beside the one waiting for the main thread, as many projecting as the chunks evaluating at once.
-        in_flight: if memoised { chunks_at_once + 1 } else { 2 },
+        in_flight: &at_once_allowed,
+        fixed_in_flight: (!memoised).then_some(2),
         resolve: &resolver,
         build: &build,
         project: &project,
@@ -6130,14 +6149,27 @@ fn run_observed(
             // What this chunk added at its peak (the lifetime peak, when it rose here; else the footprint now).
             let (now, max) = (crate::code_rule_dsl::prof::footprint_mb(), crate::code_rule_dsl::prof::max_footprint_mb());
             let added = if max > start_max_mb { max } else { now }.saturating_sub(start_mb).max(1);
-            let per_node = added as f64 * 1048576.0 / (chunk_nodes_built * at_once) as f64;
+            let measured = added as f64 * 1048576.0 / (chunk_nodes_built * at_once) as f64;
+            // Credible only above the noise of pages reused: until one is, one chunk at a time, of the probe's size.
+            let credible = added >= CHUNK_CREDIBLE_MB;
+            if credible {
+                per_node_most.set(per_node_most.get().max(measured));
+            }
+            let per_node = per_node_most.get();
             let env = |k: &str, d: f64| std::env::var(k).ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(d);
+            // Three quarters of what is left of the run's budget, shared by the chunks in flight together.
             let headroom = (env("RERAIL_RUN_MB", RUN_MB) - start_mb as f64).max(0.0) * 0.75;
-            let budget = env("RERAIL_CHUNK_MB", CHUNK_MB).min(headroom).round();
-            let next = ((budget * 1048576.0 / per_node) as usize).clamp(MIN_CHUNK_NODES.min(chunk_nodes), chunk_nodes);
             let chunk = env("RERAIL_CHUNK_MB", CHUNK_MB);
+            let allowed = if per_node > 0.0 { ((headroom / env("RERAIL_CHUNK_FLOOR_MB", CHUNK_FLOOR_MB)).floor() as usize).clamp(1, chunks_at_once) } else { 1 };
+            let budget = chunk.min(headroom / allowed as f64).round();
+            let next = if per_node > 0.0 { ((budget * 1048576.0 / per_node) as usize).clamp(MIN_CHUNK_NODES.min(chunk_nodes), chunk_nodes) } else { chunk_nodes.min(PROBE_NODES) };
             chunk_target.store(next, std::sync::atomic::Ordering::Relaxed);
-            crate::code_rule_dsl::logic::profile::decision("chunk size", || format!("a chunk of {chunk_nodes_built} nodes added {added} MB ({per_node:.0} bytes a node); the next are about {next} nodes ({budget} MB a chunk: the least of {chunk} MB and three quarters of the run's headroom above {start_mb} MB; at most {chunk_nodes})"));
+            at_once_allowed.store(allowed, std::sync::atomic::Ordering::Relaxed);
+            crate::code_rule_dsl::logic::profile::decision("chunk size", || if credible {
+                format!("a chunk of {chunk_nodes_built} nodes added {added} MB ({measured:.0} bytes a node, {per_node:.0} the most this run); the next are about {next} nodes, {allowed} at once ({budget} MB a chunk: the least of {chunk} MB and three quarters of the run's headroom above {start_mb} MB shared by the chunks at once; at most {chunk_nodes})")
+            } else {
+                format!("a chunk of {chunk_nodes_built} nodes added {added} MB, under {CHUNK_CREDIBLE_MB} MB (pages freed before it reused): it sizes nothing; the next are about {next} nodes, {allowed} at once")
+            });
         }
         let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
         // Per document of the chunk, what it hands on (`memo::Entry`), when the run is memoised. A row is its
@@ -6619,7 +6651,8 @@ fn run_observed(
                 bell.ring();
             });
             flight.push_back((ctx, slot));
-            while flight.len() >= k {
+            // As many in flight as the run's headroom holds (Q55), at most `k`.
+            while flight.len() >= at_once_allowed.load(std::sync::atomic::Ordering::Relaxed).clamp(1, k) {
                 file_front(&mut flight, process)?;
             }
         })();
