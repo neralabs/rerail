@@ -445,7 +445,10 @@ pass.
   `rule_files_use_the_core_prelude…` ("SQL output already exists"), `every_operation_runs_on_every_executor`
   (packs.tsv), `executors_are_shared` (blocks/src/gpu.rs:199 makes a command queue), `the_gate_catches_a_widened_walk`,
   `spilled_walks_find_the_cpus_roots`, `the_backends_find_the_same_keys_on_real_files`, and the replay sample
-  (63 of 268 events).
+  (63 of 268 events). `spilled_walks_find_the_cpus_roots` (2026-11-17): without the pack's test data its fixtures are
+  one tape, under its 1,000 roots; on corpus0 (`RERAIL_S1_DIR`) it compared one backend's candidates for W
+  (`WaveRun::limited`) with the other's roots. It now compares what W confirms there, and passes on 24 of corpus0's
+  files (41 waves, 1,665 roots).
 - **A run stops under strict SQL too** (2026-11-16, 93b9e0f31 and after): the bench's 317 rules (`rules/B-now`)
   with this checkout's `docs/rule-syntax/lib` over 10 of corpus0's files abort with "SQL inside the waves: `SELECT
   n, v FROM main.value`", from `setfix::input_of` under `plan::Run::native_stratum` (a native step's input read as a
