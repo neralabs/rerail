@@ -1654,8 +1654,10 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   it improves. Three steps: shadow, then in place of exact pair statistics at a slow flag, then every round's choice.
 - **Step 1 done** (decision 0354): samples per joined step in the cost store, the model trained and compared on the
   newest fifth. hogql: weighted miss ×1.65 to ×1.42, median ×1.02 to ×1.04 (the gate wants no worse a median).
-- **Next**: train on other corpora and ask on hogql (and back); report membership apart; one sample per line and
-  place with counts. Then step 2.
+- **Across corpora done** (0354, second part): trained on corpus0 and asked on hogql ×1.93 to ×1.83, the other way
+  ×1.81 to ×1.64; median worse (×1.05, ×1.08). Membership tests and the orders not kept are where it is weakest.
+- **Next**: the offline generator of unkept orders' steps over captured components; the first step's samples
+  (delta and seed sizes); one sample per line and place with counts. Then step 2.
 - **Found along the way**: `facts_only::every_table_is_facts_or_listed` and `every_kept_map_is_state_or_listed` fail
   on HEAD, on tables and maps the hub's merges brought (`frame_segments`, `object_segments`, `OWN_TEXTS`, setfix
   rows' `OPEN`, `CARRY`, `DECODED`, the record's `KINDS` and `LOG`): each to be listed, with a reason, by the branch

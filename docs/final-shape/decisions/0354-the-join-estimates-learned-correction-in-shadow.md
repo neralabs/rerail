@@ -62,10 +62,41 @@ hogql (437 files, 317 rules, cold, profiled, m3): 336,397 steps from one run (1.
 By the gate (item 5) it does not win yet: its median miss is ×1.04 against ×1.02. It misses less weighted by work
 (×1.42 against ×1.65) and on every basis but membership.
 
+## Across corpora, and the orders not kept (2026-11-17)
+
+Asked (the user): does the model know what kind of estimate it corrects (a membership), and can samples be made where
+it is wrong?
+
+- **What it knows.** The basis names the planner's rule, the access a membership test. Added: the bound key's most
+  distinct values (`key_ndv`, the relation's statistics over the columns bound when the step reads), and the
+  literal's identity (rule digest and place). The literal is kept in the table, not a feature (below).
+- **The orders not kept.** A line whose order was replaced (0206's handoffs) gives each order it ran, by its own
+  plan record and counts (origin `replaced`); a trial that ran to its end gives its order's steps (origin `trial`,
+  `TrialRun::steps`). Each step's origin is stored, and the run (`run`: the process), so a run is held out whole.
+- **Across corpora.** corpus0 (300 files) and hogql (437), cold, profiled, on the m3, each pair into one store in
+  both orders; the model trained on the first corpus's steps and asked on the second's (`COSTS_HOLD=run`):
+
+| trained on, asked on | planner | model | without the literal | without either | median, planner / model |
+|---|---|---|---|---|---|
+| corpus0, hogql (341,091 steps) | ×1.93 | ×1.83 | ×1.81 | ×1.84 | ×1.02 / ×1.05 |
+| hogql, corpus0 (106,933 steps) | ×1.81 | ×1.64 | ×1.59 | ×1.61 | ×1.02 / ×1.08 |
+
+  It misses less across corpora, both ways, weighted by work; the median is still worse. Between two runs of the
+  same pair the model's figure moved by up to ×0.3 (an earlier run: ×2.15 asked on hogql): the forest's draws.
+- **The literal does not carry across**, and a new rule's literals are unseen: it is not a feature.
+- **Membership.** As an access (every column bound), the planner's median miss is ×2.05 to ×2.15: it assumes a key
+  is present, and half the time the step passes under half its rows. The model halves its weighted miss asked on
+  corpus0 (×3.68 to ×2.36), not on hogql (×5.05 to ×4.77). With the membership *basis* (a fanout of 1 assumed) it is
+  worse than the planner both ways (×1.32 to ×1.61; ×2.17 to ×2.68).
+- **The orders not kept are where it is worse**: on the replaced orders' steps ×1.92 to ×2.07 and ×2.13 to ×2.25,
+  against better on the orders kept. Trained only on the orders a plan kept, it learns their misses, not those of
+  the orders it would choose instead: what step 3 needs. A cold run gives few of them: 1,482 replaced steps of
+  341,091, and 8 to 10 trial steps (trials run on a previous run's critical path, decision 0274).
+
 ## Not done
 
-- **Across corpora.** Trained and held out on one corpus (the held-out fifth is its later strata, other rules). The
-  test that counts is a model trained on other corpora and asked on a new one.
+- **Samples of orders not kept, made on purpose**: an offline generator running each line's other orders over the
+  captured components (the lab loop), so the model sees the orders it would pick, not only those picked.
 - **The step's first rows.** A probe's delta and a seed's anchor (step 0) are not samples: their estimates are a
   relation's size, not a fanout. The largest stratum misses on hogql are there (a recursive stratum's delta, the
   rounds of a closure), and stay the planner's.

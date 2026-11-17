@@ -700,15 +700,37 @@ pub mod tests {
         let path = super::path().expect("RERAIL_COSTS");
         let db = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
         let limit: i64 = std::env::var("COSTS_READ").ok().and_then(|v| v.parse().ok()).unwrap_or(super::join_steps::READ);
-        let steps = super::join_steps::read(&db, &super::machine(), limit).unwrap();
+        let read = super::join_steps::read(&db, &super::machine(), limit).unwrap();
+        // `COSTS_HOLD=run`: the newest run's steps are held out whole, the runs before it trained on (another
+        // corpus's run, where they are); else the newest fifth.
+        let newest = read.last().map_or(0, |r| r.0);
+        let by_run = std::env::var("COSTS_HOLD").is_ok_and(|v| v == "run");
+        let (train, held): (Vec<_>, Vec<_>) = if by_run {
+            let (h, t): (Vec<_>, Vec<_>) = read.into_iter().partition(|r| r.0 == newest);
+            (t.into_iter().map(|r| r.1).collect(), h.into_iter().map(|r| r.1).collect())
+        } else {
+            let cut = read.len() - read.len() / 5;
+            let all: Vec<_> = read.into_iter().map(|r| r.1).collect();
+            (all[..cut].to_vec(), all[cut..].to_vec())
+        };
+        // `COSTS_DROP=literal,key_ndv`: those features blanked, to measure what each adds.
+        let drop = std::env::var("COSTS_DROP").unwrap_or_default();
+        let blank = |mut v: Vec<rerail_accel::join_model::StepSample>| {
+            for s in &mut v {
+                if drop.contains("literal") { s.literal.clear(); }
+                if drop.contains("key_ndv") { s.key_ndv = 0.0; }
+            }
+            v
+        };
+        let (train, held) = (blank(train), blank(held));
+        if !drop.is_empty() { eprintln!("features dropped: {drop}"); }
         let config = rerail_accel::cost_model::CostConfig::default().forest;
         let (cpu, t) = (rerail_accel::exec::process_cpu(), std::time::Instant::now());
-        let (c, model) = rerail_accel::join_model::compare(&steps, &config).unwrap();
-        eprintln!("{} steps; trained in {:.2} s wall {:.2} s CPU; {model:?}", steps.len(), t.elapsed().as_secs_f64(), rerail_accel::exec::process_cpu() - cpu);
+        let (c, model) = rerail_accel::join_model::compare_on(&train, &held, &config).unwrap();
+        eprintln!("{} steps trained on, {} held out ({}); trained in {:.2} s wall {:.2} s CPU; {model:?}", train.len(), held.len(), if by_run { "the newest run" } else { "the newest fifth" }, t.elapsed().as_secs_f64(), rerail_accel::exec::process_cpu() - cpu);
         eprintln!("{c}");
         eprintln!("model wins: {}", c.model_wins());
-        // By basis, over the held-out steps: the planner's and the model's weighted misses.
-        let held = &steps[steps.len() - steps.len() / 5..];
+        let held = &held[..];
         let mut by: std::collections::BTreeMap<&str, (Vec<rerail_accel::join_model::StepSample>, Vec<f64>)> = Default::default();
         for s in held {
             let e = by.entry(s.basis.as_str()).or_default();
@@ -718,6 +740,19 @@ pub mod tests {
         for (basis, (ss, cs)) in by {
             let c = rerail_accel::join_model::compared(&ss, &cs, 0);
             eprintln!("  {basis:<22} {:>6} steps, {:>12.0} rows of work: planner ×{:.2}, model ×{:.2}", ss.len(), ss.iter().map(|s| s.work()).sum::<f64>(), c.planner_weighted, c.model_weighted);
+        }
+        // By access, and by origin: membership tests apart (Q82), and the orders the planner did not keep.
+        for key in [|s: &rerail_accel::join_model::StepSample| s.access.clone(), |s: &rerail_accel::join_model::StepSample| format!("origin {}", s.origin)] {
+            let mut by: std::collections::BTreeMap<String, (Vec<rerail_accel::join_model::StepSample>, Vec<f64>)> = Default::default();
+            for s in held {
+                let e = by.entry(key(s)).or_default();
+                e.0.push(s.clone());
+                e.1.push(model.correction(s).unwrap());
+            }
+            for (k, (ss, cs)) in by {
+                let c = rerail_accel::join_model::compared(&ss, &cs, 0);
+                eprintln!("  {k:<22} {:>6} steps, {:>12.0} rows of work: planner ×{:.2}, model ×{:.2}; median ×{:.2} / ×{:.2}", ss.len(), ss.iter().map(|s| s.work()).sum::<f64>(), c.planner_weighted, c.model_weighted, c.planner.median_log.exp(), c.model.median_log.exp());
+            }
         }
     }
 

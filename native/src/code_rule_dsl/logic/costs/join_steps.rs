@@ -45,16 +45,29 @@ pub fn create(db: &Connection) -> rusqlite::Result<()> {
            at REAL, machine TEXT, basis TEXT, access TEXT, source TEXT, bound INTEGER, step INTEGER, steps INTEGER,
            est_in REAL, est_fan REAL, card REAL, solving INTEGER, seed INTEGER, actual_in REAL, actual_out REAL);
          CREATE INDEX IF NOT EXISTS join_steps_by_machine ON join_steps(machine, at);",
-    )
+    )?;
+    // Columns added after the table was first made: a store written before them gets them, empty.
+    let has: Vec<String> = db.prepare("SELECT name FROM pragma_table_info('join_steps')")?.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+    for (col, ty) in [("literal", "TEXT"), ("key_ndv", "REAL"), ("origin", "TEXT"), ("run", "INTEGER")] {
+        if !has.iter().any(|h| h == col) {
+            db.execute_batch(&format!("ALTER TABLE join_steps ADD COLUMN {col} {ty}"))?;
+        }
+    }
+    Ok(())
 }
 
 pub fn insert(tx: &rusqlite::Transaction<'_>, machine: &str, at: f64, steps: &[StepSample]) -> rusqlite::Result<()> {
     if steps.is_empty() {
         return Ok(());
     }
-    let mut ins = tx.prepare_cached("INSERT INTO join_steps VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)")?;
+    let mut ins = tx.prepare_cached(
+        "INSERT INTO join_steps(at, machine, basis, access, source, bound, step, steps, est_in, est_fan, card, solving, seed,
+           actual_in, actual_out, literal, key_ndv, origin, run) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+    )?;
+    // The run: this process (a comparison holds out a run's steps whole).
+    let run = std::process::id() as i64;
     for s in steps {
-        ins.execute(rusqlite::params![at, machine, s.basis, s.access, s.source, s.bound, s.step, s.steps, s.est_in, s.est_fan, s.card, s.solving, s.seed, s.actual_in, s.actual_out])?;
+        ins.execute(rusqlite::params![at, machine, s.basis, s.access, s.source, s.bound, s.step, s.steps, s.est_in, s.est_fan, s.card, s.solving, s.seed, s.actual_in, s.actual_out, s.literal, s.key_ndv, s.origin, run])?;
     }
     Ok(())
 }
@@ -67,14 +80,15 @@ pub fn trim(db: &Connection, machine: &str) {
     }
 }
 
-/// `machine`'s most recent steps, at most `limit`, oldest first.
-pub fn read(db: &Connection, machine: &str, limit: i64) -> rusqlite::Result<Vec<StepSample>> {
+/// `machine`'s most recent steps, at most `limit`, oldest first, each with its run (0 where not kept).
+pub fn read(db: &Connection, machine: &str, limit: i64) -> rusqlite::Result<Vec<(i64, StepSample)>> {
     let mut st = db.prepare(
-        "SELECT basis, access, source, bound, step, steps, est_in, est_fan, card, solving, seed, actual_in, actual_out FROM
+        "SELECT basis, access, source, bound, step, steps, est_in, est_fan, card, solving, seed, actual_in, actual_out,
+           coalesce(literal, ''), coalesce(key_ndv, 0), coalesce(origin, 'ran'), coalesce(run, 0) FROM
            (SELECT rowid, * FROM join_steps WHERE machine = ?1 ORDER BY at DESC, rowid DESC LIMIT ?2) ORDER BY at, rowid",
     )?;
     let rows = st.query_map(rusqlite::params![machine, limit], |r| {
-        Ok(StepSample {
+        Ok((r.get(16)?, StepSample {
             basis: r.get(0)?,
             access: r.get(1)?,
             source: r.get(2)?,
@@ -88,7 +102,10 @@ pub fn read(db: &Connection, machine: &str, limit: i64) -> rusqlite::Result<Vec<
             seed: r.get(10)?,
             actual_in: r.get(11)?,
             actual_out: r.get(12)?,
-        })
+            literal: r.get(13)?,
+            key_ndv: r.get(14)?,
+            origin: r.get(15)?,
+        }))
     })?;
     rows.collect()
 }

@@ -39,9 +39,19 @@ pub struct StepSample {
     pub solving: bool,
     /// Whether the line is a seed (else a probe, led by its delta).
     pub seed: bool,
+    /// Which literal of which rule: the rule's digest and the literal's place in its body. Kept, not a feature:
+    /// across corpora (corpus0 and hogql, Q82) the model asked a new corpus missed as much with it as without
+    /// (×1.83 against ×1.81; ×1.64 against ×1.59), and a new rule's literals are unseen.
+    pub literal: String,
+    /// The most distinct values of a bound column of the relation it reads (0: none bound, or not measured): how many
+    /// keys a probe can hit, of which a membership's or a lookup's share follows.
+    pub key_ndv: f64,
     /// The rows the step read and made.
     pub actual_in: f64,
     pub actual_out: f64,
+    /// Where the sample came from, not a feature: "ran" (the order a line ran throughout), "replaced" (an order of a
+    /// line that ran more than one, decision 0206's handoffs: the orders the planner did not keep).
+    pub origin: String,
 }
 
 impl StepSample {
@@ -64,7 +74,7 @@ impl StepSample {
 }
 
 /// The features, in the feature space's column order.
-pub const STEP_FEATURES: [&str; 11] = ["basis", "access", "source", "bound", "step", "steps", "est_in", "est_fan", "card", "solving", "seed"];
+pub const STEP_FEATURES: [&str; 12] = ["basis", "access", "source", "bound", "step", "steps", "est_in", "est_fan", "card", "solving", "seed", "key_ndv"];
 
 /// The planner's estimates and the model's corrected ones, on the held-out steps.
 #[derive(Clone, Copy, Debug, Default)]
@@ -123,7 +133,7 @@ pub fn compared(held: &[StepSample], corrections: &[f64], trained_on: usize) -> 
 }
 
 #[cfg(target_os = "macos")]
-pub use on::{JoinModel, compare};
+pub use on::{JoinModel, compare, compare_on};
 
 #[cfg(target_os = "macos")]
 mod on {
@@ -166,6 +176,7 @@ mod on {
             c[8].push(CellValue::Float(ln1(s.card)));
             c[9].push(CellValue::Integer(s.solving as i64));
             c[10].push(CellValue::Integer(s.seed as i64));
+            c[11].push(CellValue::Float(ln1(s.key_ndv)));
         }
         c
     }
@@ -200,6 +211,7 @@ mod on {
                 r.bucket_of_number(8, ln1(s.card)),
                 r.bucket_of_number(9, s.solving as u8 as f64),
                 r.bucket_of_number(10, s.seed as u8 as f64),
+                r.bucket_of_number(11, ln1(s.key_ndv)),
             ];
             Ok(self.scale.from_unit(self.forest.predict_row(&b)?[1]))
         }
@@ -210,6 +222,11 @@ mod on {
     pub fn compare(samples: &[StepSample], config: &RandomForestProcedureConfig) -> Result<(JoinComparison, JoinModel), String> {
         let cut = samples.len() - samples.len() / 5;
         let (train, held) = samples.split_at(cut);
+        compare_on(train, held, config)
+    }
+
+    /// Trains on `train` and compares on `held`: another run's steps, another corpus's.
+    pub fn compare_on(train: &[StepSample], held: &[StepSample], config: &RandomForestProcedureConfig) -> Result<(JoinComparison, JoinModel), String> {
         let model = JoinModel::train(train, config)?;
         let corrections = held.iter().map(|s| model.correction(s)).collect::<Result<Vec<f64>, String>>()?;
         Ok((super::compared(held, &corrections, train.len()), model))
@@ -233,8 +250,11 @@ mod tests {
             card: 1000.0,
             solving: false,
             seed: true,
+            literal: "r:1".into(),
+            key_ndv: 100.0,
             actual_in,
             actual_out,
+            origin: "ran".into(),
         }
     }
 

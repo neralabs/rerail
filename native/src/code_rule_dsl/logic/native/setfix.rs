@@ -2559,8 +2559,16 @@ pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, whole: bool, 
 /// A trial of an order (decision 0207): its work over the sample, the sample's rows, the rows it made, and whether it
 /// passed its budget (its work is then a lower bound). `done`: the sample's rows finished before a cut (all of them
 /// where it was not cut).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TrialRun { pub work: u64, pub rows: u64, pub done: u64, pub made: u64, pub cut: bool }
+#[derive(Clone, Debug, PartialEq)]
+pub struct TrialRun {
+    pub work: u64,
+    pub rows: u64,
+    pub done: u64,
+    pub made: u64,
+    pub cut: bool,
+    /// Each step's rows in and out over the trial (decision 0354: an order the planner did not keep, as samples).
+    pub steps: Vec<(u64, u64)>,
+}
 
 /// Decision 0207: runs probe `probe`'s body, or `spec` in its place, over a sample of at most `sample` rows of its
 /// first atom (the rows its cut left, where it was cut; else every row its first step reads), under `budget` steps.
@@ -2652,15 +2660,16 @@ pub fn trial_over(conn: impl Scoped, name: &str, probe: usize, spec: Option<&Joi
     let mut limited = Limited { limit: Some(Limit { budget, only: Some((at, rows)) }), spent: None };
     let got = run_join_in_each(j, 0, &store, &mut syms, &mut [], &[], Some(&mut out), None, None, Some(&mut limited));
     let spent = limited.spent;
+    let steps: Vec<(u64, u64)> = j.counts.iter().zip(&counts).map(|(c, [a, b])| (c[0].get().saturating_sub(*a), c[1].get().saturating_sub(*b))).collect();
     for (c, [a, b]) in j.counts.iter().zip(counts) { c[0].set(a); c[1].set(b); }
     for (c, t) in j.step_ns.iter().zip(step_ns) { c.set(t); }
     let made_rows = got?;
     syms.check()?;
     drop(store);
     CUTS[3].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let run = spent.map(|s| TrialRun { work: s.work, rows: n, done: if s.left.is_some() { s.done.min(n) } else { n }, made: made_rows, cut: s.left.is_some() });
+    let run = spent.map(|s| TrialRun { work: s.work, rows: n, done: if s.left.is_some() { s.done.min(n) } else { n }, made: made_rows, cut: s.left.is_some(), steps });
     // O169: the first trial to finish over the rows a cut left keeps its rows, to be the wave's (`keep_trial_rows`).
-    if from_cut && run.is_some_and(|r| !r.cut) && comp.trial_rows.as_ref().is_none_or(|t| t.0 != probe) {
+    if from_cut && run.as_ref().is_some_and(|r| !r.cut) && comp.trial_rows.as_ref().is_none_or(|t| t.0 != probe) {
         comp.trial_rows = Some((probe, kept, out));
         let _ = head;
     }
@@ -2704,10 +2713,11 @@ pub fn trial_own(conn: impl Scoped, name: &str, spec: &JoinSpec, size: &dyn Fn(u
     let got = run_join_in_each(&j, 0, &store, &mut syms, &mut [], &[], Some(&mut out), None, None, Some(&mut limited));
     drop(out);
     let spent = limited.spent;
+    let steps: Vec<(u64, u64)> = j.counts.iter().map(|[a, b]| (a.get(), b.get())).collect();
     let made = got?;
     syms.check()?;
     CUTS[3].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    Ok(spent.map(|s| (TrialRun { work: s.work, rows: n, done: if s.left.is_some() { s.done.min(n) } else { n }, made, cut: s.left.is_some() }, all, picked)))
+    Ok(spent.map(|s| (TrialRun { work: s.work, rows: n, done: if s.left.is_some() { s.done.min(n) } else { n }, made, cut: s.left.is_some(), steps }, all, picked)))
 }
 
 /// O169: the rows the cut probe's first finished trial made join its wave, and its sample's rows leave the rows the
