@@ -602,12 +602,6 @@ fn unmaintainable_over(f: Fields<'_>, scc: &BTreeSet<String>, rules: &[Named<'_>
             return Some("its own old rows not kept");
         }
     }
-    if super::supports::counting()
-        && std::env::var("RERAIL_COUNT_RECURSIVE").is_ok_and(|v| v == "again")
-        && rules.iter().any(|r| r.lits.iter().any(|l| l.atom().is_some_and(|a| scc.contains(r.rel(a)))))
-    {
-        return Some("recursive, under counting");
-    }
     for rule in rules {
         if !rule.plain_head() {
             return Some("a head term");
@@ -746,11 +740,7 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
         }
         maintained += 1;
         let start = rules.len();
-        let exact = scc.iter().all(|r| super::supports::is_support(r));
-        let projection = !exact
-            && scc.len() == 1
-            && mine.iter().all(|r| r.len() == 1 && matches!(r.lit(0), Some(PLit::Atom(a)) if !a.neg() && super::supports::is_support(r.rel(a))));
-        let lost = |h: &str| if projection { named(h, "lost") } else { named(h, "del") };
+        let lost = |h: &str| named(h, "del");
         let is_recursive = mine.iter().any(|r| r.lits.iter().any(|l| l.atom().is_some_and(|a| scc.contains(r.rel(a)))));
         if is_recursive {
             recursive += 1;
@@ -893,33 +883,15 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
                     olds.insert(n.rel(b).to_owned());
                 }
             }
-            if exact {
-                continue;
-            }
-            if projection {
-                let mut held = vec![L::HeadArgs { rel: named(h, "lost"), neg: false }];
-                held.extend(body.iter().cloned());
-                rules.push(Ir::Rule { src: Some(k), head: H::Named(named(h, "held")), body: held });
-                continue;
-            }
             let mut red = vec![L::HeadArgs { rel: named(h, gone), neg: false }];
             red.extend(body.iter().cloned());
             rules.push(Ir::Rule { src: Some(k), head: H::Named(named(h, "redo")), body: red });
         }
-        let exact = exact || projection;
         for rel in scc {
             let width = f.arity(rel).unwrap_or_else(|| panic!("no declaration of {rel}"));
             let v = row_tm(width);
             let a = |s: &str, neg: bool| atom_tm(named(rel, s), v.clone(), neg);
             olds.insert(rel.clone());
-            if projection {
-                rules.push(Ir::Rule { src: None, head: H::Terms(named(rel, "del"), v.clone()), body: vec![a("lost", false), a("held", true)] });
-                fresh.push((rel.clone(), named(rel, "lost")));
-                fresh.push((rel.clone(), named(rel, "held")));
-            }
-            if exact {
-                exact_rels.insert(rel.clone());
-            }
             rules.push(Ir::Rule { src: None, head: H::Terms(rel.clone(), v.clone()), body: vec![a("old", false), a(gone, true)] });
             if lv {
                 let gated = |s: &str| L::Atom { rel: named(rel, s), args: v.clone(), neg: true, gated: true };
@@ -932,16 +904,12 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
                 gone_of.insert(rel.clone());
             }
             rules.push(Ir::Rule { src: None, head: H::Terms(rel.clone(), v.clone()), body: vec![a("ins", false)] });
-            if !exact {
-                rules.push(Ir::Rule { src: None, head: H::Terms(rel.clone(), v.clone()), body: vec![a("redo", false)] });
-            }
+            rules.push(Ir::Rule { src: None, head: H::Terms(rel.clone(), v.clone()), body: vec![a("redo", false)] });
             if !lv {
                 fresh.push((rel.clone(), named(rel, "del")));
             }
             fresh.push((rel.clone(), named(rel, "ins")));
-            if !exact {
-                fresh.push((rel.clone(), named(rel, "redo")));
-            }
+            fresh.push((rel.clone(), named(rel, "redo")));
         }
         maint.extend(scc.iter().cloned());
         changed.extend(scc.iter().cloned());
@@ -1540,7 +1508,7 @@ impl Olds for Holds<'_> {
 /// stored general form's key.
 fn writer_settings() -> Vec<u8> {
     let mut out = Vec::new();
-    for name in ["RERAIL_SESSION_VIEWS", "RERAIL_RECURSIVE", "RERAIL_COUNT_RECURSIVE", "RERAIL_CROSS_MAINTAIN_ONLY", "RERAIL_PIECES_APART"] {
+    for name in ["RERAIL_SESSION_VIEWS", "RERAIL_RECURSIVE", "RERAIL_CROSS_MAINTAIN_ONLY", "RERAIL_PIECES_APART"] {
         out.extend(name.as_bytes());
         out.push(b'=');
         if let Some(v) = std::env::var_os(name) {
@@ -1548,7 +1516,6 @@ fn writer_settings() -> Vec<u8> {
         }
         out.push(0);
     }
-    out.push(super::supports::counting() as u8);
     out
 }
 

@@ -779,7 +779,7 @@ impl Retained {
             }
         }
         let mut lines = Vec::new();
-        let mut totals = [("supports", 0usize, 0usize, 0usize, 0usize), ("other", 0, 0, 0, 0)];
+        let mut totals = [("kept", 0usize, 0usize, 0usize, 0usize)];
         let mut dedup_only = (0usize, 0usize, 0usize, 0usize);
         let mut by_size: Vec<(&String, &Kept)> = self.rels.iter().collect();
         by_size.sort_by_key(|(_, k)| std::cmp::Reverse(k.rel.held_bytes().2));
@@ -797,7 +797,7 @@ impl Retained {
             let probed = shapes.get(rel.as_str());
             let sets = probed.map_or(0, BTreeMap::len);
             let proposed = sets * n * 9 / 2 + if sets == 0 { n * 6 } else { 0 } + k * 256;
-            let t = &mut totals[usize::from(!super::supports::is_support(rel))];
+            let t = &mut totals[0];
             t.1 += n;
             t.2 += now;
             t.3 += proposed;
@@ -896,14 +896,13 @@ impl Retained {
         out.sort();
         out
     }
-    /// What the kept relations hold, by kind of relation (a counting support, `h__sup…`, or any other): rows,
+    /// What the kept relations hold: rows,
     /// values, levels, and indexes and sets, in bytes (`InRel::held_bytes`). `RERAIL_KEPT_BYTES` prints it.
-    pub(in crate::code_rule_dsl) fn held(&self) -> [(&'static str, usize, usize, usize, usize); 2] {
-        let mut out = [("supports", 0, 0, 0, 0), ("other", 0, 0, 0, 0)];
-        for (rel, k) in &self.rels {
-            let at = usize::from(!super::supports::is_support(rel));
+    pub(in crate::code_rule_dsl) fn held(&self) -> [(&'static str, usize, usize, usize, usize); 1] {
+        let mut out = [("kept", 0, 0, 0, 0)];
+        for k in self.rels.values() {
             let (values, levels, index) = k.rel.held_bytes();
-            let o = &mut out[at];
+            let o = &mut out[0];
             o.1 += k.rel.rows();
             o.2 += values;
             o.3 += levels;

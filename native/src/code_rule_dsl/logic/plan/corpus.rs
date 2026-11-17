@@ -64,7 +64,6 @@ pub fn install_cross_file(make: MakeCrossFile) {
 }
 pub mod prepared;
 pub mod maintain;
-pub mod supports;
 pub mod retain;
 pub mod keptstats;
 pub mod input_delta;
@@ -936,7 +935,7 @@ pub struct Prepared {
     pub(in crate::code_rule_dsl) cone: std::sync::OnceLock<std::result::Result<Arc<Cone>, String>>,
     /// The cross-file part as a session maintains it (`maintained_cross`), made by the first run that keeps it, for
     /// the part it was made of (by digest) and the process's settings of it: a later run of the same part shares it.
-    pub(in crate::code_rule_dsl) maintained: std::sync::OnceLock<(MaintainedOf, (lower::Lowered, Option<(usize, usize)>))>,
+    pub(in crate::code_rule_dsl) maintained: std::sync::OnceLock<(MaintainedOf, lower::Lowered)>,
     /// The run's file-local and cross-file parts, and its constants' program (`run_constants`), made by the first run
     /// for the constants it found (`once`): a later run finding the same ones shares them.
     pub(in crate::code_rule_dsl) parts: std::sync::OnceLock<(BTreeSet<String>, RunParts)>,
@@ -959,7 +958,7 @@ impl Prepared {
 type RunParts = (lower::Lowered, lower::Lowered, Option<(lower::Lowered, Vec<String>)>);
 
 /// What `Prepared::maintained` is made of: the cross-file part's digest and `maintained_cross`'s settings.
-type MaintainedOf = (u64, [bool; 3]);
+type MaintainedOf = (u64, [bool; 2]);
 
 /// The cross-file part's requests answered inside the fixpoint (decision 0065 §2a, `cone_of`): the cone's program
 /// (`load`) and the relations it reads, the rest of the part, and each one's version (decision 0244).
@@ -4461,13 +4460,13 @@ fn run_observed(
     // And only when the cross part kept its inputs (decision 0104: the waves read no entry of the store): its first
     // run, or the first after a rule edit, decodes its hits whole as it finds them. The maintained cross program the
     // kept inputs' key is made of is made once, here, and handed to them.
-    let mut early_maintained: Option<(lower::Lowered, Option<(usize, usize)>)> = None;
+    let mut early_maintained: Option<lower::Lowered> = None;
     let kept_route = kept_route && {
         let maintained = maintained_cross_of(shared_maintained, &cross)?;
-        let (ckey, binds) = retain::keys(&prepared_key, maintained.0.digest()?);
+        let (ckey, binds) = retain::keys(&prepared_key, maintained.digest()?);
         part_keys.lock().expect("the parts' keys").push(ckey);
         let rels: Vec<String> = split.exports.iter().cloned().chain(stored.iter().map(|(r, _)| r.clone())).collect();
-        let found = retain::kept_inputs_stored(store, kept_strata::space(root), binds, &maintained.0.placed()?, &rels)?;
+        let found = retain::kept_inputs_stored(store, kept_strata::space(root), binds, &maintained.placed()?, &rels)?;
         early_maintained = Some(maintained);
         match found {
             Ok(()) => true,
@@ -4496,7 +4495,7 @@ fn run_observed(
     let mut given_deltas: HashMap<String, (Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = HashMap::new();
     let mut kept_input_docs: HashMap<String, Arc<retain::DocDigests>> = HashMap::new();
     let mut base_layered: HashMap<String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> = HashMap::new();
-    let maintained_early: std::cell::RefCell<Option<(lower::Lowered, Option<(usize, usize)>)>> = std::cell::RefCell::new(None);
+    let maintained_early: std::cell::RefCell<Option<lower::Lowered>> = std::cell::RefCell::new(None);
     // The memo hits' exports are not measured while the keeper counts them: their statistics are its (after the chunks).
     let mut hits_unmeasured = false;
     // The hits whose export rows the counted exports hold, not held again (0096 step 3); not skipped once the cone of
@@ -4813,8 +4812,8 @@ fn run_observed(
         let cross_rels = match early_maintained.as_ref().filter(|_| by_identity) {
             Some(maintained) => {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "the cross part's frames, by identity".into());
-                let (_, binds) = retain::keys(&prepared_key, maintained.0.digest()?);
-                Some(retain::frame_rels(&[&cross.placed()?, &maintained.0.placed()?], &binds)?)
+                let (_, binds) = retain::keys(&prepared_key, maintained.digest()?);
+                Some(retain::frame_rels(&[&cross.placed()?, &maintained.placed()?], &binds)?)
             }
             None => None,
         };
@@ -7251,9 +7250,9 @@ fn run_observed(
                     Some(m) => m,
                     None => maintained_cross_of(shared_maintained, &cross).map_err(|e| e.to_string())?,
                 };
-                let (_, binds) = retain::keys(&prepared_key, maintained.0.digest().map_err(|e| e.to_string())?);
+                let (_, binds) = retain::keys(&prepared_key, maintained.digest().map_err(|e| e.to_string())?);
                 // The run reads the program's version, not its tree (t36 item 7).
-                let placed = maintained.0.placed().map_err(|e| e.to_string())?;
+                let placed = maintained.placed().map_err(|e| e.to_string())?;
                 let prog = &placed;
                 let fields = prog.fields().map_err(|e| e.to_string())?;
                 let rels: Vec<String> = split.exports.iter().cloned().chain(stored.iter().map(|(r, _)| r.clone())).collect();
@@ -7353,7 +7352,7 @@ fn run_observed(
                     // `RERAIL_KEPT_INPUTS_TRACE`: each input's old and new rows of the changed files, and its patch.
                     let trace_rows = std::env::var_os("RERAIL_KEPT_INPUTS_TRACE").is_some().then(|| (old.clone(), new.clone()));
                     let atoms = store.atoms_handle();
-                    let cells = retain::cells_of(&atoms, prog, &maintained.0.domains, rel, width);
+                    let cells = retain::cells_of(&atoms, prog, &maintained.domains, rel, width);
                     let mut patch = patch_owners(rel, k, g, holders, &evaluated, &old, new, &cells)?;
                     if let Some((o, n)) = trace_rows.filter(|(o, n)| !o.iter().all(Vec::is_empty) || !n.is_empty() || !patch.changed.is_empty()) {
                         eprintln!("rerail: kept input {rel} (owner column {g}, {} kept rows): old {o:?}; new {n:?}; owners changed {:?}; minus {:?}; plus {:?}", k.source.len(), patch.changed.iter().map(|(o, r)| (*o, r.len())).collect::<Vec<_>>(), patch.minus, patch.plus);
@@ -7886,13 +7885,7 @@ fn run_observed(
                         Some(m) => m,
                         None => maintained_cross_of(shared_maintained, &cross)?,
                     };
-                    if let Some((through, kept)) = maintained_part.1 {
-                        crate::code_rule_dsl::logic::profile::decision("maintenance by counting (supports)", || format!("{through} rules through support relations, {kept} kept their form"));
-                        if std::env::var_os("RERAIL_SPIKE_DELTA").is_some() {
-                            eprintln!("O125 counting: {through} rules through supports, {kept} kept their form");
-                        }
-                    }
-                    let cross = &maintained_part.0;
+                    let cross = &maintained_part;
                     // The run reads its version, not its tree (t36 item 7).
                     let cross_placed = cross.placed()?;
                     let cross_f = cross_placed.fields()?;
@@ -9555,7 +9548,7 @@ fn kept_counts(stats: &super::statkeep::RelStats, tested: &BTreeSet<(usize, i64)
 }
 
 /// A relation the cross-file part makes as a copy of some columns of one input, or of such a copy
-/// (`kind__sup0(n, k, a, b, c) :- node(a, n, k, b, c)`, `kind(n, k) :- kind__sup0(n, k, _, _, _)`): that input, and
+/// (`kind(n, k) :- node(_, n, k, _, _)`): that input, and
 /// for each of the relation's columns the input's column it copies. When it holds as many rows as the input, its
 /// rows are the input's one for one, so its statistics are the input's by column: kept with the input's, never
 /// counted (a full count of `kind` and `docof` was 0.32 s of a one-file edit's 0.38 s of statistics).
@@ -10909,8 +10902,8 @@ fn set_qualifiers(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>, 
 
 /// `maintained_cross(cross)`, made once for a prepared program (`Prepared::maintained`) and shared: made again only
 /// for another part than the one kept (another digest) or other settings, and then not kept.
-fn maintained_cross_of(slot: &std::sync::OnceLock<(MaintainedOf, (lower::Lowered, Option<(usize, usize)>))>, cross: &lower::Lowered) -> Result<(lower::Lowered, Option<(usize, usize)>)> {
-    let settings = [std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on"), maintain::levels_wanted(), supports::counting()];
+fn maintained_cross_of(slot: &std::sync::OnceLock<(MaintainedOf, lower::Lowered)>, cross: &lower::Lowered) -> Result<lower::Lowered> {
+    let settings = [std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on"), maintain::levels_wanted()];
     let digest = cross.digest()?;
     if let Some((of, made)) = slot.get() {
         if *of == (digest, settings) {
@@ -10925,14 +10918,12 @@ fn maintained_cross_of(slot: &std::sync::OnceLock<(MaintainedOf, (lower::Lowered
 /// The cross-file part as a run that keeps it maintains it (decision 0077): each derived relation stored, not
 /// inlined (decision 0099), so the next run has its old rows, unless the program declares it `inline`
 /// (`RERAIL_SESSION_INLINE=on` inlines as a full run does); its recursive relations with their levels where wanted
-/// (decision 0090); and, under counting (the default; `RERAIL_MAINTAIN=dred` compares), each rule's derivations
-/// held as its support relation (`supports`), with the counts of rules through supports and kept in their form.
+/// (decision 0090). No rule's derivations are kept (decision 0364: counting and its support relations are gone).
 /// Made where a run first needs it: the kept inputs' key at the waves' end (decision 0117 step 1), else the cross
 /// part.
 ///
-/// The supports are made first, then the qualifiers set on the cross part's own heads (`qualify`): neither reads the
-/// other, and so each is made on the version where the part has one, copying no tree.
-fn maintained_cross(cross: &lower::Lowered) -> Result<(lower::Lowered, Option<(usize, usize)>)> {
+/// The qualifiers are set on the cross part's own heads (`qualify`), on its version, copying no tree.
+fn maintained_cross(cross: &lower::Lowered) -> Result<lower::Lowered> {
     let inline_too = std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on");
     // Read from the part's version, not its tree.
     let (declared_inline, heads) = {
@@ -10942,12 +10933,7 @@ fn maintained_cross(cross: &lower::Lowered) -> Result<(lower::Lowered, Option<(u
         (declared_inline, p.v.rules().map(|r| p.v.rel_name(r.head().rel()).to_owned()).collect::<BTreeSet<String>>())
     };
     let levels = maintain::levels_wanted();
-    let (mut stored, counts) = if supports::counting() {
-        let (counted, through, kept) = supports::supports(cross);
-        (counted, Some((through, kept)))
-    } else {
-        (cross.clone(), None)
-    };
+    let mut stored = cross.clone();
     qualify(&mut stored, |_, qualifiers| {
         for rel in heads {
             if levels {
@@ -10961,7 +10947,7 @@ fn maintained_cross(cross: &lower::Lowered) -> Result<(lower::Lowered, Option<(u
     if crate::code_rule_dsl::logic::version_trace::on() {
         crate::code_rule_dsl::logic::version_trace::note_versions("session.maintained", &cross.version, &stored.version);
     }
-    Ok((stored, counts))
+    Ok(stored)
 }
 
 /// An input's change by owner (decision 0117 step 2, `patch_owners`): each changed owner's rows now, the rows the
