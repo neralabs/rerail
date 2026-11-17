@@ -1960,14 +1960,13 @@ describe("CodeRuleBridge and a call it takes up only after its tool wrote the fi
 
   // A call taken up only after its tool wrote, its file written again before the result (a formatter, the next edit),
   // whose result has no line diff: its capture holds what the tool wrote, in whatever form the file had when the call
-  // read it, so a Write that made the file is read against an empty file.
+  // read it, so a Write that made the file is read against an empty file where that capture is its `content`.
   const madeFile = (content: string) => (path: string) => ({ type: "create", filePath: path, content, structuredPatch: [], originalFile: null });
   it.each([
     { says: "a Write made the file", before: undefined, atCall: "mine = 1\n", previous: {}, output: madeFile("mine = 1\n") },
     { says: "a Write made the file, held with CRLF line endings", before: undefined, atCall: "mine = 1\r\n", previous: {}, output: madeFile("mine = 1\n") },
     { says: "a Write made the file, held with a byte order mark", before: undefined, atCall: "﻿mine = 1\n", previous: {}, output: madeFile("mine = 1\n") },
     { says: "a Write made the file, held with a last line feed", before: undefined, atCall: "mine = 1\n", previous: {}, output: madeFile("mine = 1") },
-    { says: "a Write made the file, which a formatter changed", before: undefined, atCall: "mine = 1  # fmt\n", previous: {}, output: madeFile("mine = 1\n") },
     {
       says: "a Write replaced the text it gives", before: "one\n", atCall: "one\nmine = 1\n", previous: { previousText: "one\n" },
       output: (path: string) => ({ type: "update", filePath: path, content: "one\nmine = 1\n", originalFile: "one\n" }),
@@ -1987,6 +1986,36 @@ describe("CodeRuleBridge and a call it takes up only after its tool wrote the fi
     await bridge.finish("write-1", false, { reported: claudeCodeReportedPreimage(output(path)) });
     expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([
       { path: "src/a.py", language: "python", ...previous, generatedText: `${atCall}x = 2\n` },
+    ]);
+  });
+
+  // A Write whose result says it made the file, where the call's capture holds other text than its `content`: the call
+  // read the file before the tool ran and another process removed it between the call and the tool, or the call was
+  // taken up only after a formatter changed the made file. No result tells the two apart, so once the file changed again
+  // the edit is read against that capture, as an edit whose result says nothing is, and the lines the file held before
+  // the Write are not read as the Write's.
+  it.each([
+    { capture: "the file before another process removed it after the call", before: "one\n", atTool: "one\nTWO\n", early: true },
+    { capture: "the made file once a formatter changed it", before: undefined, atTool: "mine = 1  # fmt\n", early: false },
+  ])("reads a Write that made its file against its capture where that capture is $capture and the file changed again", async ({ before, atTool, early }) => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    if (before !== undefined) {
+      await writeFile(path, before);
+      await awaitClockAfter(path);
+    }
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    if (early) {
+      await bridge.begin("write-1", "Write", { file_path: path, content: atTool });
+      await rm(path);
+    }
+    await writeFile(path, atTool);
+    if (!early) await bridge.begin("write-1", "Write", { file_path: path, content: atTool });
+    await awaitClockAfter(path);
+    await writeFile(path, `${atTool}x = 2\n`);
+    await bridge.finish("write-1", false, { reported: claudeCodeReportedPreimage(madeFile(early ? atTool : "mine = 1\n")(path)) });
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([
+      { path: "src/a.py", language: "python", previousText: before ?? atTool, generatedText: `${atTool}x = 2\n` },
     ]);
   });
 

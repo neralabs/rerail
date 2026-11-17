@@ -44,7 +44,7 @@ import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
 import { ToolCallWindows } from "./tool-call-windows.js";
-import { madeAfterCapture, placesBeforeWrite, type ReportedPreimage, reportedText, textBeforeWrite, unprovenCaptureBefore } from "./tool-result/reported-preimage.js";
+import { capturedOtherThanMade, placesBeforeWrite, type ReportedPreimage, reportedText, textBeforeWrite, unprovenCaptureBefore } from "./tool-result/reported-preimage.js";
 import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
 import {
   type WatcherWalk, type WorktreeFindings, type WorktreeScan, type WorktreeScanned, type WorktreeSnapshot, WorktreeView, type WorktreeWalk, WorktreeWalks,
@@ -441,8 +441,8 @@ function unchangedSinceWrite(source: Source, captured: Preimage, reported: Repor
  * that capture where the diff fits it, which only a capture taken after the tool wrote does (`textBeforeWrite`), with
  * whatever changed the file since (a formatter, the next edit), as an edit whose call came on time is read. Otherwise
  * the capture, where the line diff places it before the tool (`placesBeforeWrite`), as it places every on-time capture,
- * or where the tool made a file the call read before it ran (`madeAfterCapture`): the file was removed between the call
- * and the tool. Otherwise, the capture not being the file before the tool, what the result says the file held
+ * or where the tool made a file the call read with other text than the tool wrote (`capturedOtherThanMade`).
+ * Otherwise, the capture not being the file before the tool, what the result says the file held
  * (`unprovenCaptureBefore`): nothing, for a file the tool made; the text the tool replaced; or the text the diff
  * rebuilds from the capture, which then holds the tool's lines where the diff places them. A result that says none of
  * these shows nothing about the capture, which another writer between the call and the tool may have left as it is, so
@@ -453,7 +453,7 @@ function changedSinceWrite(source: Source, captured: Preimage, reported: Reporte
   if (text === undefined) return captured;
   const before = textBeforeWrite(reported, text, source.text);
   if (before !== undefined) return keptPreimage(source.path, before);
-  if (placesBeforeWrite(reported, text) || madeAfterCapture(reported, text, source.text)) return captured;
+  if (placesBeforeWrite(reported, text) || capturedOtherThanMade(reported, text)) return captured;
   const said = unprovenCaptureBefore(reported, text, source.text);
   return said === undefined ? captured : keptPreimage(source.path, said);
 }

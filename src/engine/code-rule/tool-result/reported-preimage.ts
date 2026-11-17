@@ -58,15 +58,17 @@ function claudeCodeCreated({ filePath: path, content }: ClaudeCodeEditResult): R
 }
 
 /**
- * Whether the call read the file the tool made, as `reported` says, before the tool ran, so the file was removed
- * between the call and the tool: the file now, `after`, is the text the tool wrote (`content`, in the file's form), and
- * the call's capture, `captured`, is not, in any form. A call taken up only after the tool wrote read that text, in the
- * form the file had then; its capture could differ from it while the file still holds the write only if a change to
- * the file were undone exactly before `after` was read. Never where the result does not say what the tool wrote.
+ * Whether the call's capture, `captured`, holds other text than the tool wrote, where `reported` says the tool made the
+ * file: not its `content` in any form the file may hold it (`inFileForm`, with or without a last line ending). A call
+ * taken up only after the tool wrote read that content. One that read other text read the file before the tool ran, the
+ * file being removed between the call and the tool, or after a formatter changed the made file; no result tells the two
+ * apart, so the edit is read against the capture, as an edit whose result says nothing is. Never where the result does
+ * not say what the tool wrote.
  */
-export function madeAfterCapture(reported: ReportedPreimage, captured: string, after: string | undefined): boolean {
-  if (reported.kind !== "created" || reported.content === undefined || after === undefined) return false;
-  return after === inFileForm(reported.content, after) && captured !== inFileForm(reported.content, captured);
+export function capturedOtherThanMade(reported: ReportedPreimage, captured: string): boolean {
+  if (reported.kind !== "created" || reported.content === undefined) return false;
+  const made = inFileForm(reported.content, captured);
+  return captured !== made && captured !== `${made}${lineEnding(captured)}`;
 }
 
 /** What the result of an Edit, or of a Write that replaced the file, gives: the line diff, the text it replaced, or both. */
