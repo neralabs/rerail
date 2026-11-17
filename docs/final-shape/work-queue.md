@@ -1263,12 +1263,17 @@ iteration. Both are per-byte loops, which the engine's code refuses elsewhere.
    `a_cross_file_reader_finds_the_text_of_another_files_node`; `a_cross_file_text_test_is_maintained_as_a_filter`
    runs again.
 
-### Q55. Relations are blocks the CPU and GPU read in place (0325): steps 3–7
+### Q55. Relations are blocks the CPU and GPU read in place (0325): the rest of steps 3–7
 
-Steps 1 and 2 are built (417256f3a, b84b98d3e, 061fbbfca, 640ce085c): a relation's reads are written once in
-CLIF for the host, the kernels and the JIT, and setfix's rows are `rerail_blocks` relations in shared FACTS blocks.
-On posthog/hogql the CPU binding is level with step 1 (about 90 B instructions). Metal is about 10% over: the
-device's uploads (`DevRel::upload`) and rows back still copy, now value by value through the blocks. Steps 3 and 4
-remove those copies, then the indexes (5), placement's prices (6) and the other row stores (7). The design of step
-3 is in 0325's "Built".
+Built: steps 1 and 2 (417256f3a, b84b98d3e, 061fbbfca, 640ce085c), and step 3 for flat relations (8aee765b0).
+The device reads a flat input in its block, so flat relations upload 0 MB. On posthog/hogql Metal retires 7%
+fewer instructions than step 1, and the CPU binding is level. Left, in order:
 
+1. Step 3 for a relation with dead rows: its bits move into the block beside its rows, and the kernels skip them.
+2. Step 4: heads written in place by count, reserve and write, so no rows come back (`rows back into the store`
+   is 160 ms of the device's host CPU on hogql).
+3. Step 5: indexes are the relation's (`rel_group`), so `rel_hash` per binding goes.
+4. Step 6: placement drops the upload and row-back prices, and `GPU_BIAS` is refitted.
+5. Step 7: the output's, frames' and memo's rows.
+
+The views (source views over a batch, 88 MB on hogql) are not relations in blocks, and still upload.
