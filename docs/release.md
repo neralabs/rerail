@@ -88,15 +88,6 @@ A push to `main` rewrites the description and clears the boxes, because what was
 releases. Nothing in CI reads them: the checklist is the merger's word (`BEFORE_MERGING` in
 `scripts/release/release-version.mjs`).
 
-### The reviewer's Rerail
-
-Once a version is published under `latest` (or put back there), `release.yml` opens a pull request that moves the
-automated reviewer's Rerail module to it: `rerail_package` in `.github/workflows/reviewer.yml`, on the branch
-`auto/bump-reviewer-rerail`. A later release rewrites that pull request rather than opening another. Approve it once
-the release's notes show nothing that changes how the reviewer installs Rerail or runs its scan. The pull request
-changes a workflow, so the job pushes with the neralabs-ci app's token with `workflows` write, and the app's installation
-must grant Workflows: write.
-
 ### Installer plugins
 
 The same bump re-pins the installer plugins (`plugins/claude`, `plugins/codex`, `plugins/cursor`) to the version just

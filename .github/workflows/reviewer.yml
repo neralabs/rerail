@@ -111,10 +111,9 @@ jobs:
       # rule pack (packs/rerail, taken from the base branch only and approved there) and the complexity rule pack,
       # with the rules from the base branch, and marks each violation new or existing. A separate rules pass
       # recommends which new violations to post; a new violation of a steer rule can be a blocker that names its
-      # rule. The review itself never sees the scan. Rerail is a published npm release: each `latest` release opens a
-      # pull request that moves rerail_package to it (release.yml's reviewer-rerail job; docs/release.md). The scan
-      # result is sent to the Rerail remote (send_results), in a job that holds only the remote's URL and token. To
-      # turn it off, remove these five inputs and the two RESULTS_SINK secrets.
+      # rule. The review itself never sees the scan. Rerail is the published npm release; the scan result is sent
+      # to the Rerail remote (send_results), in a job that holds only the remote's URL and token. To turn it off,
+      # remove these five inputs and the two RESULTS_SINK secrets.
       modules: rerail
       rerail_package: "@neralabs/rerail@0.1.5"
       rerail_packs: complexity
