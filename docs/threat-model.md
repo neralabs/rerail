@@ -300,10 +300,14 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
   the clone it names, the database places the checkout by that clone id in its repository and records it as stopped,
   the folder, the checkout's top and its `.git` keep the device and file ids it names, and the database, its WAL and
   the WAL's index are still the files it names by device and file id, those the hook found at their names when it kept
-  the answer (on Linux, only files the daemon held open then). So a file planted or swapped at one of those names
-  cannot turn Rerail off in a checkout the daemon reads as started. A copy written over the live database file in place
-  can, for up to 30 minutes, where the daemon still answers from what it read before; `docs/reference.md` lists what a
-  kept answer leaves unseen.
+  the answer (on Linux, only files the daemon held open then). It also repeats one only while the start mark
+  (`stopped-answers/start-mark`, `src/engine/storage/start-mark.ts`), which each change to where Rerail runs renews once
+  it commits, is the file it found before it asked the daemon for that answer, by device, file id, change time and write
+  time, and no `start-mark-stuck` is beside it. So a copy written over the live database file in place, which the daemon
+  may answer past from what it read, brings no answer of stopped back. A mark planted, replaced or linked at that name,
+  or held open so that a renewal cannot replace it, reads as another mark or as stuck, and the hook waits; nothing is
+  written or read through a link at the folder's name. So a file planted or swapped at one of those names cannot turn
+  Rerail off in a checkout the daemon reads as started; `docs/reference.md` lists what a kept answer leaves unseen.
 - Session directories are created 0700 and explicitly chmod 0700; ledgers append 0600 (`src/runtime/runtime.ts`).
 - Windows ignores modes. A Rerail home or `.rerail\sessions` folder made outside the profile folder, whose ACL would
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
