@@ -323,13 +323,14 @@ export interface RunningDaemon {
  * - `refused`: the listener answered `401`: it does not accept the capability the state file records (edited, or
  *   written by another daemon). It is running; `start` refuses and says to restart it.
  * - `absent`: no state, or a stale file (pid dead, or a different process
- *   answering on that URL) which has been cleared.
+ *   answering on that URL) which has been cleared. `notDaemon` is the live pid a cleared file named that is not the
+ *   home's daemon ({@link homeDaemonIs}).
  */
 export type DaemonLookup =
   | { status: "running"; state: DaemonState; health: DaemonHealth }
   | { status: "unresponsive"; state: DaemonState }
   | { status: "refused"; state: DaemonState }
-  | { status: "absent" };
+  | { status: "absent"; notDaemon?: number };
 
 /** What the daemon at a recorded URL answered a health probe: its health, a refusal of the capability, or nothing usable. */
 export type DaemonProbe = { status: "ok"; health: DaemonHealth } | { status: "refused" } | { status: "unreachable" };
@@ -663,8 +664,20 @@ export async function recordedDaemonAlive(state: DaemonState, machine: DaemonMac
 }
 
 /**
+ * Whether the process `pid` is the daemon of `home`, as the OS tells it: a daemon holds the home's lock from before
+ * daemon.json names it until it ends, the OS lets go of the lock however it ends, and the holder records its pid beside
+ * it. A record a daemon killed without its cleanup left names a pid the OS may have given to any process since, and that
+ * process holds no lock. A lock that cannot be asked proves nothing.
+ */
+function homeDaemonIs(home: string, pid: number, machine: DaemonMachine): boolean {
+  return homeDaemonHolder(home) === pid && machine.homeDaemonLockHeld(home) === true;
+}
+
+/**
  * What the state file in `home` says, checked against the machine. `probeTimeoutMs` bounds the engine's proof and the
- * health probe together; a hook waiting out a busy daemon passes more (`patientLookup`).
+ * health probe together; a hook waiting out a busy daemon passes more (`patientLookup`). A live pid whose daemon did not
+ * answer as itself is kept only while it is the home's daemon ({@link homeDaemonIs}): a busy daemon is, and a process
+ * that took a dead daemon's pid is not, whatever holds or answers its pipe, socket or port.
  */
 export async function lookupDaemon(
   home: string,
@@ -674,6 +687,14 @@ export async function lookupDaemon(
   const stateFile = join(home, DAEMON_STATE_FILE);
   const state = await readDaemonState(stateFile, machine.platform);
   if (state === undefined) return { status: "absent" };
+  const found = await checkedLookup(stateFile, state, machine, probeTimeoutMs);
+  if (found.status === "running" || found.status === "absent" || homeDaemonIs(home, state.pid, machine)) return found;
+  await rm(stateFile, { force: true });
+  return { status: "absent", notDaemon: state.pid };
+}
+
+/** What the pid, the engine's proof and the health probe make of the daemon `state` records, within `probeTimeoutMs`. */
+async function checkedLookup(stateFile: string, state: DaemonState, machine: DaemonMachine, probeTimeoutMs: number): Promise<DaemonLookup> {
   const deadline = Date.now() + probeTimeoutMs;
   const recorded = await recordedDaemon(state, machine, probeTimeoutMs);
   // Another user's process cannot be this user's daemon, and on Windows no daemon lives without its engine pipe or
@@ -797,13 +818,12 @@ function homeHolderMayRun(home: string, pid: number, machine: DaemonMachine): bo
 
 /**
  * Whether a daemon holds `home`, its daemon.json or not. As for the main instance ({@link mainInstanceHolderRuns}), a
- * rule that loads nothing answers first ({@link homeHolderMayRun}): the holder records its pid beside the lock and
- * removes the record when it lets go, so a home whose daemon stopped, was killed or never ran is answered without the
- * engine. Asking the lock loads the engine from the running version's folder, and Windows keeps a loaded DLL from being
- * deleted: the uninstall, which stops the daemon before it removes `versions/`, could not have removed it. Only a holder
- * that may run is asked about by its lock, which tells it from a process that took its pid since. A lock that cannot be
- * asked (the engine does not load, or the lock file does not open) counts as free, so no start or stop waits on it: the
- * daemon a start launches asks the lock itself and exits, naming the holder, when another daemon holds it.
+ * rule that asks nothing of the lock answers first ({@link homeHolderMayRun}): the holder records its pid beside the lock
+ * and removes the record when it lets go, so a home whose daemon stopped, was killed or never ran is answered from that
+ * record. Only a holder that may run is asked about by its lock, which tells it from a process that took its pid since,
+ * and loads the engine on macOS and Linux (`homeDaemonLockHeld`). A lock that cannot be asked (the engine does not
+ * load, or the lock file does not open) counts as free, so no start or stop waits on it: the daemon a start launches
+ * asks the lock itself and exits, naming the holder, when another daemon holds it.
  */
 function homeDaemonRuns(home: string, machine: DaemonMachine): boolean {
   const pid = homeDaemonHolder(home);
@@ -890,6 +910,9 @@ export function autostartOff(env: NodeJS.ProcessEnv = process.env): boolean {
 export class AutostartOffError extends Error {
   override readonly name = "AutostartOffError";
 }
+
+/** What `rerail status` and `rerail daemon stop` say when daemon.json named a live process that is not the home's daemon. */
+export const NOT_HOME_DAEMON_NOTE = "The process daemon.json named is not a Rerail daemon of this home, so Rerail ended nothing and removed that record.";
 
 /**
  * What `rerail status`, and a session's start (`answerAutostartOff`), say when no daemon runs. Under `RERAIL_AUTOSTART=0`
@@ -1319,7 +1342,11 @@ export function autostartDaemon(machine: DaemonMachine = THIS_MACHINE): void {
   }
 }
 
-export type StopDaemonResult = "stopped" | "not-running";
+/**
+ * What a stop did: stopped the home's daemon; found none; or found a record naming a live process that is not the home's
+ * daemon, which it removed, ending nothing (`not-daemon`, said with {@link NOT_HOME_DAEMON_NOTE}).
+ */
+export type StopDaemonResult = "stopped" | "not-running" | "not-daemon";
 
 /**
  * What to tell the person when the daemon outlives the kill, with a check that runs where they are: Windows has no
@@ -1363,9 +1390,13 @@ async function requestDaemonShutdown(state: DaemonState, machine: DaemonMachine)
   }
 }
 
-/** Asks the daemon `state` records to shut down: SIGTERM, or on Windows a shutdown request, SIGTERM only if it is refused. */
-async function askDaemonToStop(state: DaemonState, machine: DaemonMachine): Promise<void> {
-  if (machine.platform !== "win32" || !(await requestDaemonShutdown(state, machine))) signalDaemon(state.pid, "SIGTERM", machine);
+/**
+ * Asks the daemon `state` records to shut down: SIGTERM, or on Windows a shutdown request, SIGTERM only if it is refused.
+ * The signal goes only while `there` says the pid is still the daemon, read just before it is sent.
+ */
+async function askDaemonToStop(state: DaemonState, there: () => boolean, machine: DaemonMachine): Promise<void> {
+  if (machine.platform === "win32" && (await requestDaemonShutdown(state, machine))) return;
+  if (there()) signalDaemon(state.pid, "SIGTERM", machine);
 }
 
 /** Whether the process `alive` watches is gone within `ms`, polling while it runs. */
@@ -1382,32 +1413,52 @@ async function goneWithin(alive: () => boolean, ms: number): Promise<boolean> {
  */
 export async function stopDaemon(home: string, machine: DaemonMachine = THIS_MACHINE): Promise<StopDaemonResult> {
   const lookup = await lookupHomeDaemon(home, machine);
-  if (lookup.status === "absent") return "not-running";
-  await stopFoundDaemon(home, lookup, machine);
-  return "stopped";
+  if (lookup.status === "absent") return lookup.notDaemon === undefined ? "not-running" : "not-daemon";
+  return await stopFoundDaemon(home, lookup, machine);
 }
 
 /** A daemon a lookup found alive: running, unresponsive or refusing the capability. */
 export type FoundDaemon = Exclude<DaemonLookup, { status: "absent" }>;
 
-/** Stops the daemon `found`, which a {@link lookupDaemon} of `home` returned, as {@link stopDaemon} does. */
-export async function stopFoundDaemon(home: string, found: FoundDaemon, machine: DaemonMachine = THIS_MACHINE): Promise<void> {
+/**
+ * Whether the daemon `found` names is still there to stop, asked again at each step of a stop: its pid holds the home's
+ * lock ({@link homeDaemonIs}), which the OS lets go however the daemon ends, so a pid given to another process since reads
+ * as gone. A daemon from before the home's lock, found answering its health probe as itself, is watched by its pid.
+ * Undefined when neither holds: the record names a process that is not the home's daemon, which is never signalled.
+ */
+function stopWatch(home: string, found: FoundDaemon, machine: DaemonMachine): (() => boolean) | undefined {
   const pid = found.state.pid;
-  const alive = (): boolean => processAlive(pid, machine.kill);
-  await askDaemonToStop(found.state, machine);
-  if (!(await goneWithin(alive, STOP_TIMEOUT_MS))) {
+  const holdsHome = (): boolean => homeDaemonIs(home, pid, machine);
+  if (holdsHome()) return () => processAlive(pid, machine.kill) && holdsHome();
+  return found.status === "running" ? () => processAlive(pid, machine.kill) : undefined;
+}
+
+/**
+ * Stops the daemon `found`, which a {@link lookupDaemon} of `home` returned, as {@link stopDaemon} does: `not-daemon`,
+ * and its record removed, when the pid it names is not the home's daemon by then ({@link stopWatch}).
+ */
+export async function stopFoundDaemon(home: string, found: FoundDaemon, machine: DaemonMachine = THIS_MACHINE): Promise<StopDaemonResult> {
+  const pid = found.state.pid;
+  const there = stopWatch(home, found, machine);
+  if (there === undefined) {
+    await rm(join(home, DAEMON_STATE_FILE), { force: true });
+    return "not-daemon";
+  }
+  await askDaemonToStop(found.state, there, machine);
+  if (!(await goneWithin(there, STOP_TIMEOUT_MS))) {
     signalDaemon(pid, "SIGKILL", machine);
     // The state file stays, so a later stop can find the process again.
-    if (!(await goneWithin(alive, KILL_TIMEOUT_MS))) throw new Error(stillRunningMessage(pid, machine.platform));
+    if (!(await goneWithin(there, KILL_TIMEOUT_MS))) throw new Error(stillRunningMessage(pid, machine.platform));
   }
   // The daemon removes its own state file, main-instance record and home lock record on a clean shutdown; one killed, as
   // Windows always does, leaves them behind. A record naming a pid Windows reuses would keep the uninstall from the
-  // cache, or have a later stop ask the home's lock, which loads the engine.
+  // cache, or have a later stop ask the home's lock.
   await rm(join(home, DAEMON_STATE_FILE), { force: true });
   if (machine.platform === "win32") {
     machine.forgetMainInstanceHolder(pid);
     forgetHomeDaemonHolder(home, pid);
   }
+  return "stopped";
 }
 
 /**

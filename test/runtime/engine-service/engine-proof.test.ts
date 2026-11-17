@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { connect, createServer as createSocketServer, type Socket } from "node:net";
@@ -11,6 +11,7 @@ import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { loadNativeBinding, LOCKS_DIR } from "../../../src/engine/index.js";
 import { DAEMON_STATE_FILE, lookupDaemon, type DaemonState } from "../../../src/runtime/daemon-control.js";
 import { engineCapabilityProof, engineHoldsCapability, engineProof } from "../../../src/runtime/engine-proof.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
@@ -256,19 +257,32 @@ describe.runIf(process.platform === "win32")("the engine proof, against an engin
     expect(answers.filter(({ answer, ms }) => answer !== "silent" || ms > 1_000 + SLACK_MS)).toEqual([]);
   }, 45_000);
 
-  it("leaves a lookup the state of a daemon whose engine pipe has no free instance, which it reads as not answering", async () => {
+  // The daemon here is this process, which holds the home's lock and records itself beside it, as a daemon does, while
+  // the stuck listener holds the recorded pipe.
+  it("leaves a lookup the state of a daemon whose engine pipe has no free instance while it holds the home, within its limit", async () => {
     const path = pipePath("lookup");
-    const engine = await stuckListener(path);
+    await stuckListener(path);
     expect(await takeEveryInstance(path)).toBeGreaterThan(0);
     const home = await mkdtemp(join(tmpdir(), "rerail-proof-home-"));
     folders.push(home);
     const stateFile = join(home, DAEMON_STATE_FILE);
-    const state = daemonState(engine.pid!, path);
+    const state = daemonState(process.pid, path);
     await writeFile(stateFile, JSON.stringify(state));
-    const began = Date.now();
-    const lookup = await lookupDaemon(home);
-    const ms = Date.now() - began;
-    expect({ lookup, kept: existsSync(stateFile) }, `the lookup answered after ${ms} ms`).toEqual({ lookup: { status: "unresponsive", state }, kept: true });
+    await mkdir(join(home, LOCKS_DIR), { recursive: true });
+    const lock = loadNativeBinding().tryLockExclusive(join(home, LOCKS_DIR, "daemon.lock"));
+    expect(lock).not.toBeNull();
+    await writeFile(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: process.pid }));
+    let began = Date.now();
+    const kept = await lookupDaemon(home);
+    let ms = Date.now() - began;
+    expect({ kept, file: existsSync(stateFile) }, `the lookup answered after ${ms} ms`).toEqual({ kept: { status: "unresponsive", state }, file: true });
+    expect(ms).toBeLessThan(2_000 + SLACK_MS);
+    // Once no daemon holds the home, the busy pipe is another process's and the record is stale, read as fast.
+    lock!.release();
+    began = Date.now();
+    const stale = await lookupDaemon(home);
+    ms = Date.now() - began;
+    expect({ stale, file: existsSync(stateFile) }, `the lookup answered after ${ms} ms`).toEqual({ stale: { status: "absent", notDaemon: process.pid }, file: false });
     expect(ms).toBeLessThan(2_000 + SLACK_MS);
   }, 45_000);
 
