@@ -1476,6 +1476,11 @@ pass.
   version's tail keeps `rr_node_text_req`, `rr_token_req`, `rr_token_named`, `rr_token_anon` and an `about asked` row
   of `rr_node_text_req` the tree's has not, and the tree's `rr_value_req` rules are bounded where the version's differ.
   To fix with the passes above (0281 step 7b).
+- **Fixed** (2026-11-17): the cause was not the tree passes above but the version's `on_request::SourcesOnRequest`,
+  written before two changes to the tree's `sources_on_request`: an attribute no rule reads stays an input
+  (734317304), and a request is narrowed by its reader's readers' asks, its witnesses wildcards (decision 0291,
+  f015b1360). Both ported (`Widen::demand_of`, `joined`, `wild_singletons` over the version's items; a demand's asks
+  renamed apart through a `Rewrite`). The two tests pass; the combine's tail check compares them on every debug run.
 
 ### Q42. `a_second_corpus_run_deletes_and_creates_its_store_again` fails now and then beside the planner's tests
 
