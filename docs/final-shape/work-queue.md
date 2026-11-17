@@ -1510,3 +1510,19 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   its costs recorded per format; every difference is fixed; `.rr` has a format 16 table. Then format 15 is retired
   for documents, and not before: the user (2026-11-17), "I don't want to do it right now, as we still haven't proven
   that format 16 dominates it in all of our required ways".
+
+### Q68. The shared cache returns a crate built against another version of a vendored crate
+
+- **Seen** (2026-11-17, three times in this worktree): an edit to `native/vendor/cranelift-codegen-0.125.4`
+  (a line added to `src/opts/remat.isle`), then the edit taken back. `rerail-clif` then fails with E0463,
+  "can't find crate for `cranelift_frontend`". `RUSTC_LOG=rustc_metadata::locator` shows the `.rmeta` at
+  `libcranelift_frontend-07f6dc4d375062f6` was rejected: it names `cranelift_codegen`'s hash `bff3b16d…`,
+  and the `libcranelift_codegen-0c39364acc0c618e` in `target/` has another. The vendored crates' file names
+  (`-C extra-filename`) don't change with their sources, so both builds of `cranelift_codegen` have one
+  name, and the cache gave back a `cranelift_frontend` compiled against the other.
+- **Way round**: move `target/debug/deps/*cranelift_frontend-07f6…*` and its `.fingerprint` directory out,
+  then build once with `SCCACHE_RECACHE=1 RERAIL_FARM_LOCAL=1`. Moving it out alone isn't enough: the
+  cache returns the same file.
+- **Done when**: a dependent's cache key includes the metadata hash of each `--extern` it reads (or the
+  wrapper refuses a hit whose dependencies' hashes differ), shown by the reproduction above. This is the
+  farm owner's.
