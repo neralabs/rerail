@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
 import { CheckoutCodeRuleRouter } from "../../../src/engine/code-rule/checkout-code-rule-router.js";
@@ -537,6 +537,9 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     return { root, databasePath, session, worktree: await realpath(place(root, session)) };
   }
 
+  /** `path` in `worktree` as a walk of the session's folder names it: relative to the session folder, with `/`. */
+  const walked = (session: string, worktree: string, path: string) => relative(session, join(worktree, path)).split(sep).join("/");
+
   const nested = (_root: string, session: string) => join(session, ".claude", "worktrees", "w");
   const outside = (root: string) => join(root, "elsewhere", "w");
 
@@ -579,7 +582,8 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     await auditor.openWorkspace("worktree-questions");
     const view = auditor.walkView();
     const asked = (path: string) => join(worktree, path);
-    expect([view.ignoresPath(asked("api"), true), view.acceptsPath(asked("api/x.py")), view.acceptsPath(asked("README.md"))]).toEqual([false, true, false]);
+    const named = (path: string) => walked(session, worktree, path);
+    expect([view.ignoresPath(named("api"), true), view.acceptsPath(named("api/x.py")), view.acceptsPath(named("README.md"))]).toEqual([false, true, false]);
     expect([auditor.acceptsPath(asked("api/x.py")), auditor.acceptsPath(asked("README.md"))]).toEqual([true, false]);
     // A lane holds a native workspace and the checkout's index: only the session's own opened.
     expect(opened).toHaveBeenCalledTimes(1);
@@ -602,7 +606,7 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
 
     await auditor.openWorkspace("own-rules");
     const view = auditor.walkView();
-    expect([view.acceptsPath("README.md"), view.acceptsPath(join(worktree, "README.md")), view.acceptsPath(join(worktree, "api", "x.py"))]).toEqual([false, true, true]);
+    expect([view.acceptsPath("README.md"), view.acceptsPath(walked(session, worktree, "README.md")), view.acceptsPath(walked(session, worktree, "api/x.py"))]).toEqual([false, true, true]);
     expect(opened).toHaveBeenCalledTimes(2);
   });
 
@@ -615,7 +619,7 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     cleanups.push(async () => { opened.mockRestore(); });
 
     await auditor.openWorkspace("one-matcher");
-    expect(auditor.walkView().ignoresPath(join(worktree, "api"), true)).toBe(false);
+    expect(auditor.walkView().ignoresPath(walked(session, worktree, "api"), true)).toBe(false);
     await edit(auditor, "one-matcher", 1, join(worktree, "api", "x.py"));
     expect(violations(audits)).toEqual([{ checkout: worktree, path: "api/x.py", code: "SESSION", mode: "block" }]);
     // A matcher holds its checkout's index: the lane the edit opened takes the one the question opened.
@@ -703,7 +707,7 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
 
     // A walk's questions there are answered by the session checkout's lane, at the same rules, and take no workspace.
     const view = auditor.walkView();
-    expect([view.acceptsPath(join(worktree, "api", "x.py")), view.acceptsPath(join(worktree, "README.md"))]).toEqual([true, false]);
+    expect([view.acceptsPath(walked(session, worktree, "api/x.py")), view.acceptsPath(walked(session, worktree, "README.md"))]).toEqual([true, false]);
     await auditor.close();
     expect(closed).toHaveBeenCalledTimes(3);
   });
