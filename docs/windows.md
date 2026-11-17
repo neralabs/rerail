@@ -453,7 +453,11 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   exists and the engine there proves it holds the capability `daemon.json` records, the challenge the engine start
   uses: Windows soon reuses a pid, often for another of this user's processes, and anyone can create the pipe's name.
   Nothing goes to the recorded URL before that. An engine that does not answer the proof in time is taken for a busy
-  daemon: its state file is kept and the lookup reports it unresponsive. The proof's limit counts from the ask and
+  daemon: its state file is kept and the lookup reports it unresponsive, unless a fact proves the pid is another
+  process (`recordedProcess`): another daemon holds `locks/daemon.lock` as its recorded holder, or the process started
+  more than 10 s after the `startedAt` that `daemon.json` records. Where the lock does not decide, as for a daemon of
+  Rerail 0.1.4 or earlier, which holds none, the process's creation time is read through Windows PowerShell, which
+  loads no Rerail engine. The proof's limit counts from the ask and
   covers the connect (`engineCapabilityProof`, `src/runtime/engine-proof.ts`). It connects to the pipe spelled
   `\\?\pipe\<name>`: Node's wait for a free instance (`WaitNamedPipe`, up to 30 s, in a thread that keeps the asking
   process alive) takes only `\\.\pipe\` names, so while a busy engine's pipe instances are all taken that connect fails
@@ -477,7 +481,9 @@ capability, refused every start as "alive but not answering", and `rerail daemon
 - `stopDaemon` sends `POST /native/shutdown` on Windows, with the capability and the native token only `daemon.json`
   holds, and waits up to 10 s for the daemon to close: requests other sessions have in flight finish, and the daemon
   removes its state file and main-instance record. It kills only a daemon still running after that. macOS and Linux
-  keep `SIGTERM`. [threat-model.md](threat-model.md) covers the route's access rules.
+  keep `SIGTERM`. A daemon that does not answer is signalled only while it is proven the one that wrote `daemon.json`
+  (it holds the home's lock as its recorded holder, or started no later than the recorded `startedAt`), asked again
+  before each signal; where neither proves it, the stop ends nothing, keeps the file and says how to check the process. [threat-model.md](threat-model.md) covers the route's access rules.
 
 </details>
 
