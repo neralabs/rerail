@@ -461,7 +461,8 @@ function requireBuilt(checkout: string, needs: { product: boolean; engine: boole
   if (steps.length > 0 && !build) fail(`${checkout} is not built; run there (both release profile): ${steps.join(" && ")}\n  or pass --build`);
   for (const step of steps) {
     console.log(`shipbar: building ${checkout}: ${step}`);
-    if (spawnSync("bash", ["-c", step], { cwd: checkout, stdio: "inherit" }).status !== 0) fail(`build failed in ${checkout}: ${step}`);
+    // The platform's shell (cmd.exe on Windows, /bin/sh elsewhere): Windows hosts have no bash on PATH.
+    if (spawnSync(step, { cwd: checkout, stdio: "inherit", shell: true }).status !== 0) fail(`build failed in ${checkout}: ${step}`);
   }
   return { engine: needs.engine ? engineBinary(checkout) : undefined };
 }
