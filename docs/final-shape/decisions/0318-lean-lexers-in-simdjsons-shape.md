@@ -129,6 +129,44 @@ The string is the cost of reading its end from the bytes, not a mask. Strings ar
 tokens, and stage 1 runs for every block. The oracles are the same as above, and so are the
 engine's 31 lean-parser tests.
 
+### Then: the gap, the start byte, the name's probe
+
+- **A gap** that ends in its own block (nearly all) is one run of its block's blank and line-end
+  masks (`Masks::run_in_block`): the next token starts at the run's end, and the gap's line ends
+  are the line-end bits inside it. The start cursor and the line-end scan are left for gaps that
+  run past their block.
+- **The start byte's class** is one load (`LEAD`): a one-byte punctuator with its kind, a name,
+  a byte for `token` (a comment's `/`, C's `\`, a NUL, or the text's end read as a 0), or the rest.
+  This replaces two table loads and three compares. With no gap, the byte already read for the gap
+  test is the start byte. A gap's one-blank and comment tests are `FIRST` bits.
+- **The token's write** is a field at a time. A write of the whole `Tok` copied its padding from a
+  stack slot.
+- **The name's probe.** `words.rs` kept its own copy of the 8-byte load. Both copies checked the
+  load's end with an overflow test as well. Now there is one load (`swar::load8`, one compare in a
+  loop). The direct shape's key takes the length by an xor, not a multiply by a constant: the slot's
+  multiply carries the low bits up. Two words with the same first 8 bytes still differ by their
+  lengths, and two words of different lengths up to 8 bytes differ in their highest byte. C and Go
+  assert at compile time that their lists keep the direct shape.
+
+**Results** on the M1 Max (load 2 before the run, 5 to 8 during it), the best of three rounds,
+interleaved, against `81d1d4fe7` (0318 as first built):
+
+| | instructions | | cycles | |
+|---|---:|---:|---:|---:|
+| C, the parse | 9.77 → 9.31 G | −4.7% | 2.59 → 2.47 G | −4.8% |
+| C++, the parse | 14.72 → 14.16 G | −3.8% | 3.70 → 3.58 G | −3.5% |
+| Go, the parse | 12.56 → 12.03 G | −4.3% | 3.34 → 3.21 G | −3.7% |
+| C, the lexer alone, a token | 119.3 → 102.7 | | 44.3 → 38.8 | |
+| Go, the lexer alone, a token | 117.4 → 105.6 | | 40.7 → 36.4 | |
+
+By shape, C's lexer, this machine: `(` 42 → 34 instructions a token; other operators 75 → 66;
+a name after a blank 129 → 115; after a line end and indent 188 → 150. The digests, the oracles,
+the engine's 31 lean-parser tests and the tests of every lean parser that shares `Words` are
+unchanged.
+
+On this machine (an M5, often at loads of 30 to 100) the lexer's instruction counts moved by up
+to 5% between runs, the fixed cost of a run most of all. Only the farm's figures are taken.
+
 ### Measured and dropped
 
 - **One path for every token** (page 31's run in full): the starts a block at a time, a
@@ -148,14 +186,15 @@ engine's 31 lean-parser tests.
 - **Names are now the lexer's largest cost**: about 35 instructions of word hash and 30 for the
   run's end, for every name. A name's word code could be computed only where the parser asks for
   a keyword. The parser asks often, so this needs counting first.
-- **Cycles: 44 a token against the floor's 4.** At about 2.7 instructions a cycle, the gap is
+- **Cycles: 39 a token against the floor's 4** (44 before the steps above). At about 2.7 instructions a cycle, the gap is
   branches: the per-token choice between table, name, number and the rest depends on the data.
   simdjson's stage 2 branches a token too; a table of the start byte's class (one indirect jump)
   is the next form to measure.
 - **Strings and comments** (234 and 152 instructions) are read by the micro-lexers. Page 36's region
   walk would take them off the masks, but that needs stage 1's stop masks back.
-- **Names** (129): the word hash is already `find`'s floor (above). What remains is the run's end
-  and the gap. A word code only where the parser asks for a keyword still needs counting first.
+- **Names** (115). Every identifier's code is read (`is_name` asks `reserved(t.word)`), so a code
+  made only where the parser asks would save nothing. What remains is the run's end, the check of
+  the byte after it (a `\` or a byte past ASCII), the length mask and the probe.
 - **The other lean parsers.** Java, Rust, C# and PHP each keep their own copy of `Blocks::next`.
   `rerail_simd8::blocks` replaces it, and `run`'s form applies to each, behind each one's digests
   and oracles.
