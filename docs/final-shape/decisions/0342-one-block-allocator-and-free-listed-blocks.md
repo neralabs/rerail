@@ -93,3 +93,23 @@ Findings 29,747, the same hash. Median footprint 1,849 and 1,837 MB. The host bl
   bump-allocated and never given back.
 - About 110 G more instructions than 0325's run; not yet attributed (a reused chunk is zeroed, where a fresh page
   came zero from the OS).
+
+## Descriptors given back; rows not zeroed; the instructions traced (2026-11-17)
+
+- A relation's descriptor and both row sets' column directories are one chunk, given back whole by `release`.
+- A relation's rows are written before they are read (claimed, then put), so a chunk taken again for them is not
+  zeroed (`try_alloc_chunk_any`), nor a dirty slab's allocation for them. A descriptor still is. The bytes zeroed
+  are counted (`block::zeroed_bytes`, in the profile's memory report): 33–34 MB a PostHog run, a few million
+  instructions at most.
+- The 110 G more instructions than 0325's recorded run were not the zeroing. Measured alternated on the M3, same
+  build of each, the memory line lifted (load 26–40):
+
+| | instructions | user CPU | page faults | peak | median footprint |
+|---|---|---|---|---|---|
+| 0325 (49dad1939) | 2,407, 2,489 G | 190.8, 198.0 s | 2.33, 2.40 M | 2,872, 2,683 MB | 1,983, 2,133 MB |
+| now (4947193ba) | 2,428, 2,620 G | 194.5, 223.2 s | 2.90, 2.46 M | 2,489, 2,360 MB | 1,818, 1,859 MB |
+
+  The first pair, at the same load, differs by 21 G (1%); the second by 131 G, with the load rising to 40 and the
+  run's wall to 68 s. The same build's two runs differ by 82 G and 192 G: at this load a difference under about
+  5% is not measurable from two runs, and none is shown. The memory is: the peak 300–500 MB under 0325's, the
+  median footprint 150–300 MB under.
