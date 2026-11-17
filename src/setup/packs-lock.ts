@@ -13,8 +13,6 @@ export const PACKS_LOCK_WAIT_MS = 5 * 60_000;
 export interface PacksLockOptions {
   /** How long to wait for another holder: `PACKS_LOCK_WAIT_MS` unless given. */
   readonly waitMs?: number;
-  /** Waits between tries. */
-  readonly sleep?: (ms: number) => Promise<void>;
 }
 
 /**
@@ -27,7 +25,6 @@ export async function withPacksLock<T>(home: string, action: () => Promise<T>, o
   return await withHomeLock(home, {
     name: "packs",
     waitMs: options.waitMs ?? PACKS_LOCK_WAIT_MS,
-    sleep: options.sleep,
     busy: holder => new Error(
       `Another Rerail process (${holder === undefined ? "starting" : `pid ${holder.pid}`}) is changing the rule packs in ${prefix}; try again once it is done.`,
     ),

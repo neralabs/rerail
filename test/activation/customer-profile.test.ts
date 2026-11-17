@@ -308,10 +308,12 @@ describe("an activation finding its profile's lock taken", () => {
       events.push("the other lets go");
     });
     await otherHolds.promise;
-    // This activation finds the lock held; its first wait lets the other end. No real time passes.
-    const store = new CustomerProfileStore(setup.home, { sleep: async () => { otherMayEnd.resolve(); await other; } });
+    // This activation finds the lock held, or takes it once the other lets go: either way it runs after the other.
+    const store = new CustomerProfileStore(setup.home);
+    const mine = store.activate("acme", envelope, setup.trustRoots, thumbprint, NOW, async () => { events.push("this one holds the lock"); });
+    otherMayEnd.resolve();
 
-    await store.activate("acme", envelope, setup.trustRoots, thumbprint, NOW, async () => { events.push("this one holds the lock"); });
+    await Promise.all([other, mine]);
     expect(events).toEqual(["the other holds the lock", "the other lets go", "this one holds the lock"]);
   });
 });

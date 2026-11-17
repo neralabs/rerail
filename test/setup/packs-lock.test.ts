@@ -30,10 +30,9 @@ describe("withPacksLock", () => {
       events.push("first ends");
     });
     await firstHolds.promise;
-    // The second finds the lock held; its first wait lets the first end. No real time passes.
-    const second = withPacksLock(home, async () => { events.push("second runs"); }, {
-      sleep: async () => { firstMayEnd.resolve(); await first; },
-    });
+    // The second finds the lock held, or takes it once the first lets go: either way it runs after the first.
+    const second = withPacksLock(home, async () => { events.push("second runs"); });
+    firstMayEnd.resolve();
 
     await Promise.all([first, second]);
 

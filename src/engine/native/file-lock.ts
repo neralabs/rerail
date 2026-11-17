@@ -21,17 +21,13 @@ import { randomUUID } from "node:crypto";
 import { readFileSync, rmdirSync, rmSync, unlinkSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import { heldOnWindows, removeWithRetry, renameWithRetry, replaceFile } from "../file-replace.js";
 import { processState } from "../process-liveness.js";
 import { keepFolderPrivate, type PrivateMachine } from "../storage/private-files.js";
-import { loadNativeBinding, type NativeBinding } from "./native.js";
+import { loadNativeBinding, type NativeBinding, type NativeExclusiveFileLock } from "./native.js";
 
 /** In the Rerail home: the lock files. */
 export const LOCKS_DIR = "locks";
-
-/** How often a process waiting for a lock tries it again. */
-const POLL_MS = 50;
 
 /** Who holds a lock, as its holder recorded itself. */
 export interface LockHolder {
@@ -41,7 +37,7 @@ export interface LockHolder {
 }
 
 /** What the OS lock comes from: the engine, which tests stand in for or make fail to load. */
-export type LockEngine = Pick<NativeBinding, "tryLockExclusive">;
+export type LockEngine = Pick<NativeBinding, "tryLockExclusive" | "lockExclusive">;
 
 export interface LockRequest {
   /** The lock file is `locks/<name>.lock`. */
@@ -49,12 +45,11 @@ export interface LockRequest {
   /** The error for a lock another process still holds after the wait, given who holds it if that is known. */
   readonly busy: (holder: LockHolder | undefined) => Error;
   /**
-   * How long to wait while another process holds the OS lock; 0, the default, tries once. The folder lock, which only an
-   * update takes and never waits for, tries once.
+   * How long to wait while another process holds the OS lock; 0, the default, tries once. The OS hands the lock to the
+   * waiter the moment its holder lets go or ends. The folder lock, which only an update takes and never waits for,
+   * tries once.
    */
   readonly waitMs?: number | undefined;
-  /** Waits between tries. */
-  readonly sleep?: ((ms: number) => Promise<void>) | undefined;
   /** Loads the engine; `loadNativeBinding` unless given. */
   readonly engine?: (() => LockEngine) | undefined;
   /** Where the engine does not load, take the folder lock rather than fail: the update lock only. */
@@ -144,33 +139,36 @@ const holderText = (): string => `${JSON.stringify({ pid: process.pid, since: ne
 async function takeOsLock(engine: LockEngine, locks: string, request: LockRequest): Promise<Taken> {
   const path = join(locks, `${request.name}.lock`);
   const record = join(locks, `${request.name}.json`);
-  const deadline = Date.now() + (request.waitMs ?? 0);
-  for (;;) {
-    const lock = engine.tryLockExclusive(path);
-    if (lock !== null) {
-      await writeRecord(record);
-      return {
-        kind: "held",
-        release() {
-          try {
-            // Still the holder here, so the record is this process's own. On Windows a waiter reading it may hold it
-            // past the removal; left behind, it names a process that is gone, and must never replace the work's result.
-            rmSync(record, { force: true });
-          } catch {
-            // As `forget`: the OS lock below is released all the same.
-          } finally {
-            lock.release();
-          }
-        },
-        async forget() {
-          await rm(record, { force: true }).catch(() => undefined);
-          await rm(path, { force: true }).catch(() => undefined);
-        },
-      };
-    }
-    if (Date.now() >= deadline) return { kind: "busy", holder: runningHolder(record) };
-    await (request.sleep ?? sleep)(POLL_MS);
-  }
+  const lock = await lockOrWait(engine, path, request.waitMs ?? 0);
+  if (lock === null) return { kind: "busy", holder: runningHolder(record) };
+  await writeRecord(record);
+  return {
+    kind: "held",
+    release() {
+      try {
+        // Still the holder here, so the record is this process's own. On Windows a waiter reading it may hold it past
+        // the removal; left behind, it names a process that is gone, and must never replace the work's result.
+        rmSync(record, { force: true });
+      } catch {
+        // As `forget`: the OS lock below is released all the same.
+      } finally {
+        lock.release();
+      }
+    },
+    async forget() {
+      await rm(record, { force: true }).catch(() => undefined);
+      await rm(path, { force: true }).catch(() => undefined);
+    },
+  };
+}
+
+/**
+ * The lock on `path`: one try, as a free lock always cost; while another process holds it, the engine's wait for up to
+ * `waitMs`, which ends the moment the OS hands the lock over at that holder's release or exit. No clock paces the take.
+ */
+async function lockOrWait(engine: LockEngine, path: string, waitMs: number): Promise<NativeExclusiveFileLock | null> {
+  const lock = engine.tryLockExclusive(path);
+  return lock !== null || waitMs <= 0 ? lock : await engine.lockExclusive(path, waitMs);
 }
 
 /**

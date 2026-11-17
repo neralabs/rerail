@@ -30,10 +30,9 @@ describe("a daemon start taking the start lock", () => {
       events.push("the other start ends");
     });
     await otherHolds.promise;
-    // This start finds the lock held; its first wait lets the other end. No real time passes.
-    const start = withStartLock(home, async () => { events.push("this start runs"); }, {
-      sleep: async () => { otherMayEnd.resolve(); await other; },
-    });
+    // This start finds the lock held, or takes it once the other lets go: either way it runs after the other.
+    const start = withStartLock(home, async () => { events.push("this start runs"); });
+    otherMayEnd.resolve();
 
     await Promise.all([other, start]);
     expect(events).toEqual(["the other start runs", "the other start ends", "this start runs"]);

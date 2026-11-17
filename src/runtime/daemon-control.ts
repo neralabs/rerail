@@ -706,11 +706,6 @@ export async function findRunningDaemon(home: string, machine: DaemonMachine = T
   return lookup.status === "running" ? { state: lookup.state, health: lookup.health } : undefined;
 }
 
-export interface StartLockOptions {
-  /** Waits between tries while another start holds the lock. */
-  sleep?: (ms: number) => Promise<void>;
-}
-
 /**
  * Serialize the check-then-spawn window per home. Two sessions starting at
  * once would otherwise both see "absent" and each launch a daemon; the loser
@@ -718,11 +713,10 @@ export interface StartLockOptions {
  * fight over the state file. The lock is the OS lock `locks/start.lock`
  * (`withHomeLock`), free the moment a start holding it ends, however it ends.
  */
-export async function withStartLock<T>(home: string, operation: () => Promise<T>, options: StartLockOptions = {}): Promise<T> {
+export async function withStartLock<T>(home: string, operation: () => Promise<T>): Promise<T> {
   return await withHomeLock(home, {
     name: START_LOCK,
     waitMs: START_TIMEOUT_MS,
-    sleep: options.sleep,
     busy: holder => new Error(`Another Rerail start (${holder === undefined ? "starting" : `pid ${holder.pid}`}) is still in progress`),
   }, operation);
 }

@@ -5,7 +5,8 @@ import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LOCKS_DIR, withHomeLock, type LockHolder, type LockRequest } from "../../../src/engine/native/file-lock.js";
+import { LOCKS_DIR, withHomeLock, type LockEngine, type LockHolder, type LockRequest } from "../../../src/engine/native/file-lock.js";
+import { loadNativeBinding } from "../../../src/engine/native/native.js";
 import { processState } from "../../../src/engine/process-liveness.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
@@ -103,7 +104,7 @@ const take = inside => withHomeLock(${JSON.stringify(home)}, { ...lock, waitMs: 
 });
 
 describe("the OS lock", () => {
-  it("waits while another holds it, then takes it", async () => {
+  it("waits while another holds it, and is handed it at the holder's release, with no try after its first", async () => {
     const home = await temporaryHome();
     const events: string[] = [];
     const firstHolds = Promise.withResolvers<void>();
@@ -115,13 +116,31 @@ describe("the OS lock", () => {
       events.push("first ends");
     });
     await firstHolds.promise;
-    // The second finds the lock held; its first wait lets the first end. No real time passes.
-    const second = withHomeLock(home, { ...request, waitMs: 60_000, sleep: async () => { firstMayEnd.resolve(); await first; } }, async () => {
-      events.push("second runs");
+    // The engine itself, counting tries; the first lets go only once the second waits on the engine.
+    const native = loadNativeBinding();
+    let tries = 0;
+    const engine = (): LockEngine => ({
+      tryLockExclusive: path => { tries += 1; return native.tryLockExclusive(path); },
+      lockExclusive: (path, waitMs) => {
+        const waiting = native.lockExclusive(path, waitMs);
+        firstMayEnd.resolve();
+        return waiting;
+      },
     });
+    const second = withHomeLock(home, { ...request, waitMs: 60_000, engine }, async () => { events.push("second runs"); });
 
     await Promise.all([first, second]);
     expect(events).toEqual(["first runs", "first ends", "second runs"]);
+    expect(tries).toBe(1);
+  });
+
+  it("names the holder when the lock is still held at the end of the wait", async () => {
+    const home = await temporaryHome();
+
+    const refused = await withHomeLock(home, request, async () => await withHomeLock(home, { ...request, waitMs: 20 }, async () => "ran").catch((error: unknown) => error));
+
+    expect(refused).toBeInstanceOf(Busy);
+    expect((refused as Busy).holder).toMatchObject({ pid: process.pid });
   });
 
   it("records its holder while it holds the lock, and keeps the lock file once it lets go", async () => {
