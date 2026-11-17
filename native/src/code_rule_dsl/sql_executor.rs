@@ -498,7 +498,7 @@ impl CodeRuleSqlExecutor {
     ) -> Result<String> {
         self.profiled("run", |this| {
             this.run_program(
-                producers::prune(rr::parse(&program).map_err(error)?),
+                session_program(rr::parse(&program).map_err(error)?),
                 &dialect,
                 max_waves.unwrap_or(1024),
             )
@@ -515,7 +515,7 @@ impl CodeRuleSqlExecutor {
     ) -> Result<String> {
         self.profiled("run_file", |this| {
             this.run_program(
-                producers::prune(rr::parse_file(Path::new(&path)).map_err(error)?),
+                session_program(rr::parse_file(Path::new(&path)).map_err(error)?),
                 &dialect,
                 max_waves.unwrap_or(1024),
             )
@@ -612,6 +612,15 @@ impl CodeRuleSqlExecutor {
                 "submissions":result.submissions,"vmSteps":result.vm_steps})).map_err(error)
         })
     }
+}
+
+/// A program as a session runs it: its node attributes (`value`, `node_text`, `token`) the inputs the snapshot binds
+/// for every node, not answered on request (decision 0174's rewrite undone, `lower::undo_on_request`). Answered, each
+/// is a relation of the program beside the session's input of that name, though no rule reads it ("value: SQL output
+/// already exists"). Then pruned (`producers::prune`).
+fn session_program(mut program: front::Program) -> front::Program {
+    rr::lower::undo_on_request(&mut program);
+    producers::prune(program)
 }
 
 fn reserved(name: &str) -> bool {

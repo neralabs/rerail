@@ -139,7 +139,16 @@ pub fn simplify(prog: &mut Program) -> Report {
     }
     report.existentials = project_existentials(prog);
     report.climbs = climbs_as_axes(prog);
-    if merge(prog, &mut report) {
+    let mut merged = merge(prog, &mut report);
+    // A request's widened copy left with the request's own rules is read as the request (`request_copies`), which may
+    // make more relations equal.
+    while request_copies(prog, &mut report) {
+        merged = true;
+        if !merge(prog, &mut report) {
+            break;
+        }
+    }
+    if merged {
         // A merge can leave a literal twice (`!m1($n), !m2($n)` became `!m1($n), !m1($n)`).
         report.implied += prog.rules.iter_mut().map(drop_implied).sum::<usize>();
         if super::profile::on() {
@@ -413,52 +422,76 @@ fn unit_columns(prog: &mut Program) {
 /// facts and no rules (`guest_policy("library", "off")`, a library's setting) holds or not. A positive one that holds,
 /// or a negated one that does not, is dropped from its body; a rule with one that cannot hold goes. The rows are the
 /// facts only when some are stated and no rule, input or engine relation adds to them.
+///
+/// A relation whose every rule went so (`spq_…_file36(d) :- doc(d, _, _), option_value("entryPoint", "all")` under
+/// another entry point) has no rows: an atom over it is decided too, to a fixpoint. Left read, it was a relation of
+/// no rule, fact or input, which the split reads as another file's (`file_local::split`): its readers, and a node
+/// attribute their requests ask for, went to the cross-file part (decision 0174 §6).
 fn decided_fact_tests(prog: &mut Program) -> usize {
     let constant = |t: &Term| match t {
         Term::Int(i) => Some(Value::Int(*i)),
         Term::Str(s) => Some(Value::Str(s.clone())),
         _ => None,
     };
-    let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
-    let stated = |rel: &str| {
-        // Facts stated: a relation of none may be filled from outside the program (a later phase's input).
-        prog.facts.get(rel).is_some_and(|f| !f.is_empty()) && !derived.contains(rel) && !fixed(prog, rel) && !kept_by_engine(prog, rel)
-    };
-    let mut decided: Vec<Option<Vec<usize>>> = Vec::with_capacity(prog.rules.len());
-    for rule in &prog.rules {
-        let mut drop = Vec::new();
-        let mut holds = true;
-        for (i, l) in rule.body.iter().enumerate() {
-            let Literal::Atom(a) = l else { continue };
-            if !stated(&a.rel) {
-                continue;
-            }
-            let Some(row) = a.args.iter().map(constant).collect::<Option<Vec<Value>>>() else { continue };
-            let present = prog.facts.get(a.rel.as_str()).is_some_and(|f| f.iter().any(|r| *r == row));
-            if present != a.neg {
-                drop.push(i);
-            } else {
-                holds = false;
-                break;
-            }
-        }
-        decided.push(holds.then_some(drop));
-    }
+    let before: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
     let mut n = 0;
-    let rules = std::mem::take(&mut prog.rules);
-    for (mut rule, d) in rules.into_iter().zip(decided) {
-        match d {
-            None => n += 1,
-            Some(drop) => {
-                n += drop.len();
-                for i in drop.into_iter().rev() {
-                    rule.body.remove(i);
+    loop {
+        let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
+        let stated = |rel: &str| {
+            // Facts stated: a relation of none may be filled from outside the program (a later phase's input).
+            prog.facts.get(rel).is_some_and(|f| !f.is_empty()) && !derived.contains(rel) && !fixed(prog, rel) && !kept_by_engine(prog, rel)
+        };
+        // No rows: its rules all gone, and nothing else fills it.
+        let emptied = |rel: &str| {
+            before.contains(rel) && !derived.contains(rel) && prog.facts.get(rel).is_none_or(|f| f.is_empty()) && !fixed(prog, rel) && !kept_by_engine(prog, rel)
+        };
+        let mut decided: Vec<Option<Vec<usize>>> = Vec::with_capacity(prog.rules.len());
+        for rule in &prog.rules {
+            let mut drop = Vec::new();
+            let mut holds = true;
+            for (i, l) in rule.body.iter().enumerate() {
+                let Literal::Atom(a) = l else { continue };
+                if emptied(&a.rel) {
+                    if a.neg {
+                        drop.push(i);
+                        continue;
+                    }
+                    holds = false;
+                    break;
                 }
-                prog.rules.push(rule);
+                if !stated(&a.rel) {
+                    continue;
+                }
+                let Some(row) = a.args.iter().map(constant).collect::<Option<Vec<Value>>>() else { continue };
+                let present = prog.facts.get(a.rel.as_str()).is_some_and(|f| f.iter().any(|r| *r == row));
+                if present != a.neg {
+                    drop.push(i);
+                } else {
+                    holds = false;
+                    break;
+                }
+            }
+            decided.push(holds.then_some(drop));
+        }
+        let mut round = 0;
+        let rules = std::mem::take(&mut prog.rules);
+        for (mut rule, d) in rules.into_iter().zip(decided) {
+            match d {
+                None => round += 1,
+                Some(drop) => {
+                    round += drop.len();
+                    for i in drop.into_iter().rev() {
+                        rule.body.remove(i);
+                    }
+                    prog.rules.push(rule);
+                }
             }
         }
+        if round == 0 {
+            return n;
+        }
+        n += round;
     }
-    n
 }
 
 /// A relation whose rows come from outside the program's rules and facts: an input, a lattice, a native relation, a
@@ -2165,6 +2198,55 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
     true
 }
 
+/// Each lowering's widened copy of a request (`rr_wide_node_text_rr_token_req`, decision 0174) whose rules are the
+/// request's own, read as the request: its rules dropped, its readers reading the request. A request never merges
+/// (`request`), so `merge` leaves such a copy apart, and an unreached reader's request rules that read the attribute,
+/// pruned, left the copy and its request computing the same rows (`dropping_unreached_clauses_prunes_to_the_same_program`'s
+/// widened-copy check). The request keeps its name and rules. Whether any copy went.
+fn request_copies(prog: &mut Program, report: &mut Report) -> bool {
+    let copy_of = |w: &str| -> Option<String> {
+        let r = super::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).find_map(|a| w.strip_prefix(format!("rr_wide_{}_", a.rel).as_str()))?;
+        request(r).then(|| r.to_owned())
+    };
+    let mut rename: BTreeMap<String, String> = BTreeMap::new();
+    loop {
+        let label = |n: &str| Name::new(rename.get(n).map_or(n, String::as_str));
+        let rules_as = |rel: &str| -> BTreeSet<String> { prog.rules.iter().filter(|x| x.head.rel == rel).map(|x| canonical_rule(x, &label)).collect() };
+        let found: Vec<(String, String)> = prog
+            .decls
+            .keys()
+            .filter(|w| !rename.contains_key(w.as_str()) && !prog.outputs.iter().any(|o| o == w.as_str()))
+            .filter_map(|w| copy_of(w.as_str()).filter(|r| rules_as(w.as_str()) == rules_as(r)).map(|r| (w.to_string(), r)))
+            .collect();
+        if found.is_empty() {
+            break;
+        }
+        rename.extend(found);
+    }
+    if rename.is_empty() {
+        return false;
+    }
+    prog.rules.retain(|r| !rename.contains_key(r.head.rel.as_str()));
+    for rule in &mut prog.rules {
+        for l in &mut rule.body {
+            if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
+                && let Some(t) = rename.get(a.rel.as_str())
+            {
+                a.rel = Name::new(t);
+            }
+        }
+    }
+    for native in prog.natives.values_mut() {
+        native.rename_reads(|rel| rename.get(rel).cloned().unwrap_or_else(|| rel.to_owned()));
+    }
+    for (from, to) in rename {
+        prog.decls.remove(from.as_str());
+        prog.asked_by.remove(&from);
+        report.merged.push((to, from));
+    }
+    true
+}
+
 /// Relations equal up to their constants (not merged: one relation keyed by the constant would serve them), into
 /// the report a profiled run writes. A congruence of its own over the whole program, so made only when profiled.
 fn similar_relations(prog: &Program, report: &mut Report) {
@@ -2372,6 +2454,38 @@ pub mod tests {
         let out = prog.rules.iter().find(|r| r.head.rel == "out").unwrap();
         let reads: Vec<&str> = out.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str()).collect();
         assert!(reads.contains(&"cmp_same_q") && !reads.contains(&"same_q"), "{reads:?}");
+    }
+
+    /// A request never merges (`request`), but its widened copy left with the request's own rules is read as the
+    /// request: once pruned, `eslint-yoda`'s `rr_wide_node_text_rr_token_req` held `rr_token_req`'s rules and rows.
+    /// A copy whose rules differ stays.
+    #[test]
+    fn a_requests_copy_with_its_own_rules_is_read_as_the_request() {
+        let mut prog = super::super::rr::parse(
+            r#"
+            .decl base(n: number)
+            .input base
+            .decl other(n: number)
+            .input other
+            .decl rr_token_req(n: number)
+            .decl rr_wide_node_text_rr_token_req(n: number)
+            rr_token_req(n) :- base(n).
+            rr_wide_node_text_rr_token_req(n) :- base(n).
+            .decl rr_value_req(n: number)
+            .decl rr_wide_node_text_rr_value_req(n: number)
+            rr_value_req(n) :- base(n).
+            rr_wide_node_text_rr_value_req(n) :- other(n).
+            .decl out(n: number)
+            .output out
+            out(n) :- rr_wide_node_text_rr_token_req(n), rr_token_req(n), rr_wide_node_text_rr_value_req(n), rr_value_req(n).
+            "#,
+        )
+        .unwrap();
+        let report = simplify(&mut prog);
+        assert!(report.merged.contains(&("rr_token_req".to_owned(), "rr_wide_node_text_rr_token_req".to_owned())), "{:?}", report.merged);
+        let text: Vec<String> = prog.rules.iter().map(ToString::to_string).collect();
+        assert!(!text.iter().any(|r| r.contains("rr_wide_node_text_rr_token_req")), "{text:?}");
+        assert!(text.iter().any(|r| r.starts_with("rr_token_req(")) && text.iter().any(|r| r.contains("rr_wide_node_text_rr_value_req(")), "{text:?}");
     }
 
     /// Two atoms of one keyed row merge by renaming the later's variable, in the head's computed terms too: the
@@ -2859,6 +2973,43 @@ pub mod tests {
         let text: Vec<String> = prog.rules.iter().map(|r| r.to_string()).collect();
         assert!(!text.iter().any(|r| r.starts_with("gated(") || r.starts_with("lost(")), "{text:?}");
         assert!(text.iter().any(|r| r.starts_with("kept(") && !r.contains("setting")), "{text:?}");
+    }
+
+    /// A relation whose every rule a stated fact decided against has no rows, so an atom over it is decided too: a
+    /// positive one drops its rule (`selected`, then `asked` in turn), a negated one leaves its body (`unselected`). Left
+    /// read, `entry_file` was a relation of no rule, fact or input, which the split reads as another file's: `asked`
+    /// and `value`'s answer to it went to the cross-file part, and the run was refused (decision 0174 §6).
+    #[test]
+    fn reads_of_a_relation_the_stated_facts_emptied_are_decided() {
+        let mut prog = super::super::rr::parse(
+            r#"
+            .decl node(d: number, n: node, kind: symbol, start: number, end: number)
+            .input node
+            .decl doc(d: number, path: symbol, module: symbol)
+            .input doc
+            .decl option_value(k: symbol, v: symbol)
+            option_value("entryPoint", "one").
+            .decl entry_file(d: number)
+            .decl selected(n: node)
+            .decl asked(n: node)
+            .decl unselected(n: node)
+            .output asked
+            .output unselected
+            entry_file(d) :- doc(d, _, _), option_value("entryPoint", "all").
+            entry_file(d) :- doc(d, _, _), option_value("entryPoint", "two").
+            selected(n) :- node(d, n, "call", _, _), entry_file(d).
+            asked(n) :- selected(n).
+            asked(n) :- node(_, n, "string", _, _).
+            unselected(n) :- node(d, n, "call", _, _), !entry_file(d).
+            "#,
+        )
+        .unwrap();
+        simplify(&mut prog);
+        let text: Vec<String> = prog.rules.iter().map(|r| r.to_string()).collect();
+        assert!(!text.iter().any(|r| r.contains("entry_file") || r.starts_with("selected(") || r.contains(" selected(")), "{text:?}");
+        assert!(text.iter().any(|r| r.starts_with("asked(") && r.contains("\"string\"")), "{text:?}");
+        assert!(text.iter().any(|r| r.starts_with("unselected(")), "{text:?}");
+        assert!(crate::code_rule_dsl::typing::file_local::split(&prog).contains("asked"), "{text:?}");
     }
 
     /// `count : { r(…) } = 0` is `!r(…)`, and `> 0` is `r(…)`: a plain read for demand, inlining and projection.
