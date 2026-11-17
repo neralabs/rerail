@@ -3637,6 +3637,16 @@ impl Source for Viewed {
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         self.lookup_docs(column, values, None)
     }
+    fn keys_rows(&self, column: usize) -> bool {
+        column == self.own()
+    }
+    /// `lookup_docs`' own column, for one value.
+    fn key_row(&self, column: usize, value: i64) -> Option<usize> {
+        debug_assert_eq!(column, self.own());
+        let b = &*self.batch;
+        let found = if matches!(self.view, View::Loc(_)) { b.loc(value) } else { b.node(value) };
+        found.and_then(|(doc, local)| b.row(self.view, doc, local))
+    }
     fn doc_column(&self) -> Option<usize> {
         matches!(self.view, View::Node | View::Core).then_some(0)
     }

@@ -977,9 +977,29 @@ pass.
     themselves, so the totals cannot show the 0.3 s; the per-stratum costs and equal statistics are the evidence.
     Outputs equal as sets (660), the warm run writes nothing. `retain`'s gated-reuse test now expects the views'
     rules (`docof`, `kind`) left in a reused program, as 6fe55cb12 made them; it had failed since then.
-  - Not done: hogql (3.5 M rows of `kind`) is not in this worktree. Lookups on the flat rows build their own
-    orders, where `node`'s source answers by node and by kind already; rows are one per source row, so the
-    source's row numbers are the view's, and its lookups could serve the view's probes.
+  - **hogql, and probes by a view's key** (2026-11-17, PostHog's `posthog/hogql`, 437 files, the same 317 rules,
+    cold). The run is chunked: `kind` is held once a chunk (119 views of 60–105 k rows). Measured first, with every
+    lazy order named (`RERAIL_SPIKE_INDEX` now prints the relation and whether it is a view): the flat views built
+    426 orders, 0.68 s (`kind`'s 0.60 s), on node and kind together (`[0, 1]`), node alone and kind alone. A
+    probe by node needs no order: each node is one row, and the view's rows are its source's, row for row. Node ids
+    are not in row order within a document (definition ids, decision 0083), so the rows themselves do not serve;
+    the source's own index does. `Source::keys_rows`/`key_row` (new, default none) give a node's row without
+    allocating (`syntax::Viewed`: the own column, through the batch's document and `local_of`, as `lookup` does).
+    `hold_view` keys the view by it (`InRel::keyed`, `Keyed`); where a source has no key, a column checked on the
+    rows to be one in ascending runs that do not overlap (`Keyed::of`) serves by two binary searches. A probe whose
+    columns hold the key (`[0]`, `[0, 1]`) is that key's row (`Csr::keyed`), candidates `Range(r, r + 1)`; a probe
+    by kind alone keeps its counted order, whose positions sampling and sizing read. Test:
+    `a_views_probes_by_its_key_are_its_copys` (both keys; probes, sizes and samples equal to a copy's orders).
+  - Then on hogql (m3, two rounds a side, load 9–25): every `kind` view keyed; orders on views 162 and 135, 0.18 s
+    and 0.19 s (before: 426, 0.68 s), those on `kind` its kind-only ones (0.12 s); `kind` 0.06–0.07 s against the
+    copy's 0.75–0.78 s. Strata CPU 115.6 and 118.6 s against the copies' 130.9 and 138.8 s, planned work 1.296 and
+    1.295 G against 1.402 and 1.318 G; user 178 and 180 s against 193 and 200 s. The copy runs differ by 8 s
+    between themselves and their per-stratum moves go both ways (plans vary run to run), so the 12–23 s is the
+    direction, not a measured saving; what the change removes is the copy (0.7 s) and the views' orders (0.5 s).
+    Outputs equal as sets (660 relations), the warm run writes nothing. `scope_node`'s views are not keyed (no
+    column of theirs is a key): their 19–24 orders remain.
+  - `retain`'s gated-reuse test removed the first kept relation by hash order and expected every stratum to run;
+    a view's relation is not kept, so removing it changed nothing, now and then. It removes a non-view now.
 
 ### Q38. (Q32 on Native-and-GPU-strata at e75b66095) A kind-set axis's tape code set counted ERROR nodes as members
 
@@ -1052,6 +1072,23 @@ pass.
   scratch, whose connection is opened before the first wave (0104) and creates the file even when no statement runs.
   Not creating it eagerly (`atoms::key` resolving a missing file by its directory) did not remove it: the connection
   makes it. The next run removes it with the scratch files.
+
+### Q68. A join's morsel making a lazy order on the pool waited for itself (a hang)
+
+- **Found** (2026-11-17, Q37's hogql runs on the m3, load 25–43): four of about twenty cold runs hung, at 1–4 CPU-minutes
+  and then none, until killed; any mode, intermittently. A sample of a hung engine: a join's morsel
+  (`run_join_in_each`'s `morsels`) probed a derived input whose lazy order (decision 0186, `Csr::runs`, a `OnceLock`)
+  it was the first to need; the build sorted on the pool (`sort_unstable_par`, decision 0294); the wait for the
+  sort's parts ran another queued morsel of the same join on the same thread (`threads::scope`, rayon's
+  `in_place_scope`), which probed the same order and waited for the `OnceLock` its own thread was filling. Never
+  returns.
+- **Fix**: a build other jobs may wait for runs its sorts and merges on its own thread (`runs::inline`, a
+  thread-local depth the pool's sort and merge read: `on_pool`); `Csr::runs` builds its order so. Other jobs
+  waiting for it block on the `OnceLock` (not the pool), so the parts had no free thread to gain from there. Test:
+  `a_build_others_wait_for_sorts_on_its_own_thread` (nested, a panic, the result). The other lazy builds under a
+  `OnceLock` sort on their thread already (`Derived::order`, `sorted`). After: seven hogql runs (six cold, one warm), none hung.
+- **Seen beside it**: the measurement script's watchdog killed its shell, not the engine: four hung engines ran on
+  for hours on the m3. Scripts kill the engine by name now.
 
 ## Questions for the user
 

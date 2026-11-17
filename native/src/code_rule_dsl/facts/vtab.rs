@@ -198,6 +198,15 @@ pub trait Source: Send + Sync {
     }
     /// The rows whose `column` is one of `values`; `None` scans.
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>>;
+    /// Whether each value of `column` is at most one row, which `key_row` finds without allocating (a node's own
+    /// column): a reader of the source's rows in its row order probes by it (`setfix::hold_view`).
+    fn keys_rows(&self, _column: usize) -> bool {
+        false
+    }
+    /// The row whose `column` (a `keys_rows` column) is `value`, if there is one: `lookup`'s answer, not allocated.
+    fn key_row(&self, _column: usize, _value: i64) -> Option<usize> {
+        None
+    }
     fn value(&self, row: usize, column: usize) -> i64;
     /// The rows whose `column` is `value`, as a slice of the source's own sorted index (no allocation); `None`
     /// where the source keeps none.

@@ -1231,7 +1231,8 @@ pub mod tests {
         for (candidate,rows) in [(key,changed),([2;32],inputs.clone())] {
             assert_eq!(cut(Some(&kept),candidate,&pl(&p),&st(&p),&rows).unwrap().strata,(strata.len(),strata.len()));
         }
-        let missing=kept.rels.keys().next().unwrap().clone();
+        // A kept relation missing (not a view's: those are not kept, so their absence changes nothing).
+        let missing=kept.rels.keys().find(|r| !left.contains(r.as_str())).unwrap().clone();
         kept.rels.remove(&missing);
         assert_eq!(cut(Some(&kept),key,&pl(&p),&st(&p),&inputs).unwrap().strata,(strata.len(),strata.len()));
     }
