@@ -4972,6 +4972,15 @@ fn run_observed(
     let build_doc = |d: &i64, path: &String, module: Option<Arc<str>>, unbuilt: Unbuilt| -> Result<(Option<memo::Content>, Option<[u8; 32]>, syntax::Document)> {
         let Unbuilt { text: source, content: source_id, digest, tape, partial } = unbuilt;
         // The content's digest, which names its memo entry: the writer is given it, not left to read it (decision 0104).
+        // A stored source's, from its text where it was not hashed to look it up (a file the stat index knew): handed
+        // to the tape's build, which hashed it there.
+        let digest = match (digest, source_id) {
+            (None, Some(memo::Content::Stored(_))) => {
+                use sha2::{Digest as _, Sha256};
+                Some(Sha256::digest(source.as_bytes()).into())
+            }
+            (d, _) => d,
+        };
         let content_digest = digest;
         if let Some(entry) = partial {
             partials.lock().insert(*d, entry);
@@ -6302,17 +6311,16 @@ fn run_observed(
             let mut string_files: HashMap<i64, BTreeSet<i64>> = HashMap::new();
             if !wanted.is_empty() {
                 for (rel, source) in &text_sources {
-                    // A row kept by its string (`value_type`, a text test) names no file: it is one of the rows
-                    // being attributed, not a holder. Read as one, each value was held by itself, no file of the
-                    // chunk, and its rows were dropped (since 0174, `value` no longer names the file for a value
-                    // that is no literal string).
-                    if matches!(memo::owner(rel), memo::Owner::Text(_)) {
-                        continue;
-                    }
                     let (Some(columns), Some((_, texts))) = (super::super::sql::select::input_columns(rel), crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(r, _)| r == rel)) else { continue };
                     let have = source.columns();
                     let at = |name: &str| have.iter().position(|h| h == name);
-                    let Some(owner) = columns.first().and_then(|c| at(c)) else { continue };
+                    // Only a relation whose rows are a node's or a document's names the files holding a string: a
+                    // string-keyed one's owner column is a string (`value_type(v, t)`, a text test), which read as a
+                    // document made each value its own file, and a value no file's text holds was then dropped as
+                    // another chunk's, not kept as a made one (Q27; since 0174, `value` no longer names the file for a
+                    // value that is no literal string).
+                    let memo::Owner::Node(o) = memo::owner(rel) else { continue };
+                    let Some(owner) = columns.get(o).and_then(|c| at(c)) else { continue };
                     let texts: Vec<usize> = texts.iter().filter_map(|&c| columns.get(c).and_then(|c| at(c))).collect();
                     for r in 0..source.len() {
                         for &c in &texts {
