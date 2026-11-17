@@ -66,6 +66,11 @@ cached!(critical_share, "RERAIL_JOIN_CRITICAL", 0.05);
 // The chance a noted line tries an untried order, and how far over the best's price that order may be.
 cached!(explore_rate, "RERAIL_JOIN_EXPLORE", 0.1);
 cached!(margin, "RERAIL_JOIN_MARGIN", 2.0);
+// Decision 0354: the learned model's choices explore only on lines it prices under this many rows of work (a
+// wrong order there costs little; on hogql an explored 59 M-row line ran 230 M), and price only the candidates
+// the statistics price within this many times the best's.
+cached!(explore_rows, "RERAIL_JOIN_EXPLORE_ROWS", 1_000_000.0);
+cached!(feature_span, "RERAIL_JOIN_FEATURE_SPAN", 16.0);
 // Decision 0207's trials: the rows of a sample, an order's cutoff as a multiple of the best measured so far, the
 // share of the line's work so far each may spend, and by how much a trialled order must beat the one running.
 cached!(trial_rows, "RERAIL_JOIN_TRIAL_ROWS", 256.0);
@@ -617,7 +622,12 @@ impl Rng {
 /// - A noted line that matters (on the critical path, or slow) tries, at `explore_rate`, an order not tried yet
 ///   whose corrected price is within `margin` of the best's.
 pub fn choose(round: &mut [Choice]) {
-    let predicted = PRICER.read().clone().and_then(|p| p.price(round));
+    // Nothing to choose between: the pricer is not asked (decision 0354: rounds of no choice were three in four).
+    let choosing = round.iter().any(|c| c.candidates.len() >= 2);
+    let predicted = PRICER.read().clone().filter(|_| choosing).and_then(|p| {
+        let _span = super::super::profile::span(|| "join model: prediction".into());
+        p.price(round)
+    });
     let memo = if NOTED.load(Relaxed) { Some(MEMO.read()) } else { None };
     for (k, c) in round.iter_mut().enumerate() {
         c.chosen = 0;
@@ -662,7 +672,7 @@ pub fn choose(round: &mut [Choice]) {
         if note.is_none() && predicted.is_some() {
             let near: Vec<usize> = (0..costs.len()).filter(|&i| i != best && costs[i] <= margin() * costs[best].max(1.0)).collect();
             let mut rng = Rng::new(c.key as u64 ^ 0x6a6f_696e);
-            if !near.is_empty() && rng.unit() < explore_rate() {
+            if !near.is_empty() && costs[best] <= explore_rows() && rng.unit() < explore_rate() {
                 c.chosen = near[rng.below(near.len())];
                 c.why = "explored: a candidate within the margin of the model's least";
                 COUNTS[EXPLORED].fetch_add(1, Relaxed);

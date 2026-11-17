@@ -157,12 +157,19 @@ pub fn compared(held: &[StepSample], predicted: &[f64], trained_on: usize) -> Jo
 #[cfg(target_os = "macos")]
 pub use on::{JoinModel, compare, compare_on};
 
+/// The GPU seconds of every forest command buffer awaited so far in this process.
+#[cfg(target_os = "macos")]
+pub fn gpu_seconds_awaited() -> f64 {
+    rerail_forest::compute_kernel_metal::gpu_seconds_awaited()
+}
+
 #[cfg(target_os = "macos")]
 mod on {
     use super::{JoinComparison, STEP_FEATURES, StepSample};
     use rerail_forest::bucket::CellValue;
     use rerail_forest::dataset_feature_space::{DatasetFeatureSpace, FeatureType};
-    use rerail_forest::randomforest_predict::{BucketRules, FlatForest};
+    use rerail_forest::dataset_feature_space::ColumnData;
+    use rerail_forest::randomforest_predict::{BucketRules, DeviceBucketizer, DeviceForest, FlatForest};
     use rerail_forest::randomforest_procedure::{RandomForestProcedureConfig, TargetScale, train_regression_flat};
     use std::sync::Arc;
 
@@ -171,6 +178,8 @@ mod on {
         rules: BucketRules,
         forest: FlatForest,
         scale: TargetScale,
+        /// The forest resident on the device and its bucket rules (`None` without a Metal device).
+        device: Option<(DeviceForest, DeviceBucketizer)>,
         pub trained_on: usize,
     }
 
@@ -225,12 +234,26 @@ mod on {
             if samples.is_empty() {
                 return Err("no steps to train on".into());
             }
-            let named: Vec<(String, Vec<CellValue>)> = STEP_FEATURES.iter().map(|n| n.to_string()).zip(cells(samples)).collect();
-            let fs = Arc::new(DatasetFeatureSpace::from_columns(&named, FeatureType::Real)?);
+            // The feature space's buckets made on the device where there is one (`from_columns_device`, the host's
+            // buckets), from the columns prediction sends it.
+            let fs = match rerail_forest::gpu::shared::get() {
+                Some(_) => {
+                    let all: Vec<&StepSample> = samples.iter().collect();
+                    let named: Vec<(String, ColumnData)> = STEP_FEATURES.iter().map(|n| n.to_string()).zip(device_columns(&all)).collect();
+                    DatasetFeatureSpace::from_columns_device(&named, FeatureType::Real)?
+                }
+                None => {
+                    let named: Vec<(String, Vec<CellValue>)> = STEP_FEATURES.iter().map(|n| n.to_string()).zip(cells(samples)).collect();
+                    DatasetFeatureSpace::from_columns(&named, FeatureType::Real)?
+                }
+            };
+            let fs = Arc::new(fs);
             let targets: Vec<f32> = samples.iter().map(|s| s.target() as f32).collect();
             let weights: Vec<f32> = samples.iter().map(|s| ln1(s.work()).max(1.0) as f32).collect();
             let (forest, scale) = train_regression_flat(fs.clone(), &targets, None, Some(&weights), config)?;
-            Ok(JoinModel { rules: BucketRules::new(&fs)?, forest, scale, trained_on: samples.len() })
+            let rules = BucketRules::new(&fs)?;
+            let device = DeviceForest::new(&forest).ok().zip(DeviceBucketizer::from_rules(&rules).ok());
+            Ok(JoinModel { rules, forest, scale, device, trained_on: samples.len() })
         }
 
         /// A step's predicted target (its rows out over the statistics' estimate, on the log scale), from its features.
@@ -255,6 +278,81 @@ mod on {
                 r.bucket_of_number(15, s.steps as f64),
             ];
             Ok(self.scale.from_unit(self.forest.predict_row(&b)?[1]))
+        }
+    }
+
+    impl JoinModel {
+        /// Whether the forest is on the device.
+        pub fn on_device(&self) -> bool {
+            self.device.is_some()
+        }
+
+        /// Every step's predicted target on the device, in one dispatch: the host copies the features' values and
+        /// maps each categorical column's names; the device buckets them and walks the forest.
+        pub fn fanouts_device(&self, steps: &[&StepSample]) -> Result<Vec<f64>, String> {
+            let (forest, bucketizer) = self.device.as_ref().ok_or("no forest on the device")?;
+            if steps.is_empty() {
+                return Ok(Vec::new());
+            }
+            let got = forest.predict_values(bucketizer, &device_columns(steps))?;
+            Ok(got.iter().map(|p| self.scale.from_unit(p[1])).collect())
+        }
+
+        /// Every step's predicted target, in one call: on the device from [`DEVICE_ROWS`] steps (a dispatch costs
+        /// the host about what walking ten steps does), else walked on the host.
+        pub fn fanouts(&self, steps: &[&StepSample]) -> Result<Vec<f64>, String> {
+            if self.device.is_some() && steps.len() >= DEVICE_ROWS {
+                return self.fanouts_device(steps);
+            }
+            steps.iter().map(|s| self.fanout(s)).collect()
+        }
+    }
+
+    /// The steps a call predicts on the device from (`JoinModel::fanouts`). Measured on the M3 (Q82): a dispatch
+    /// costs the host about 60 µs and 0.24 µs a step, a walk on the host about 9 µs a step.
+    pub const DEVICE_ROWS: usize = 8;
+
+    /// The steps' features as the device takes them, in [`STEP_FEATURES`]' order: numbers, or categories as codes
+    /// into their names (mapped here, a name at a time; the device buckets the rows).
+    fn device_columns(steps: &[&StepSample]) -> Vec<ColumnData> {
+        {
+            let names = |f: &dyn Fn(&StepSample) -> &str| {
+                let mut names: Vec<String> = Vec::new();
+                let codes = steps
+                    .iter()
+                    .map(|s| {
+                        let n = f(s);
+                        match names.iter().position(|x| x == n) {
+                            Some(i) => i as u32,
+                            None => {
+                                names.push(n.to_owned());
+                                (names.len() - 1) as u32
+                            }
+                        }
+                    })
+                    .collect();
+                ColumnData::Categorical { codes, names }
+            };
+            let num = |f: &dyn Fn(&StepSample) -> f64| ColumnData::Numeric(steps.iter().map(|s| f(s)).collect());
+            let columns = [
+                names(&|s| &s.relation),
+                names(&|s| &s.access),
+                names(&|s| &s.source),
+                num(&|s| s.bound as f64),
+                num(&|s| s.bound_mask as f64),
+                num(&|s| s.cols as f64),
+                num(&|s| ln1(s.card)),
+                num(&|s| ln1(s.key_ndv)),
+                num(&rows_per_key),
+                num(&|s| s.solving as u8 as f64),
+                num(&|s| s.seed as u8 as f64),
+                names(&|s| &s.basis),
+                num(&prior),
+                num(&|s| ln1(s.est_in)),
+                num(&|s| s.step as f64),
+                num(&|s| s.steps as f64),
+            ];
+            columns.into()
         }
     }
 
@@ -324,6 +422,53 @@ mod tests {
         assert!(c.planner_weighted > 50.0, "the big step's 100× miss dominates: {c}");
         assert!(c.model_wins());
         assert!(!compared(&held, &[0.0, 0.0], 8).model_wins());
+    }
+
+    /// The device's predictions are the host's, and what each costs the host per call, by batch size.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_device_predicts_as_the_host_and_its_cost() {
+        let samples: Vec<StepSample> = (0..4000)
+            .map(|i| {
+                let wide = i % 2 == 0;
+                let n = 100.0 + (i % 17) as f64 * 50.0;
+                let mut s = step(1.0 + (i % 5) as f64, n, if wide { 30.0 * n } else { n / 30.0 });
+                s.relation = if wide { "calls" } else { "defines" }.into();
+                s.step = 1 + (i % 4) as u32;
+                s
+            })
+            .collect();
+        let config = crate::cost_model::CostConfig::default().forest;
+        let model = JoinModel::train(&samples, &config).unwrap();
+        if !model.on_device() {
+            eprintln!("no Metal device: the device's predictions are not compared");
+            return;
+        }
+        let all: Vec<&StepSample> = samples.iter().collect();
+        let device = model.fanouts_device(&all).unwrap();
+        for (s, d) in samples.iter().zip(&device) {
+            let h = model.fanout(s).unwrap();
+            assert!((h - d).abs() < 1e-4, "host {h}, device {d}");
+        }
+        // The process's CPU: the driver's threads count too (nextest runs a test in a process of its own).
+        let cpu = crate::exec::process_cpu;
+        for batch in [1usize, 10, 100, 1000, 4000] {
+            let calls = (20_000 / batch).clamp(4, 2000);
+            let rows = &all[..batch];
+            let (c0, t0) = (cpu(), std::time::Instant::now());
+            for _ in 0..calls {
+                for s in rows {
+                    std::hint::black_box(model.fanout(s).unwrap());
+                }
+            }
+            let host = ((cpu() - c0) / calls as f64, t0.elapsed().as_secs_f64() / calls as f64);
+            let (c0, t0) = (cpu(), std::time::Instant::now());
+            for _ in 0..calls {
+                std::hint::black_box(model.fanouts_device(rows).unwrap());
+            }
+            let dev = ((cpu() - c0) / calls as f64, t0.elapsed().as_secs_f64() / calls as f64);
+            eprintln!("{batch:>5} rows a call: host {:>8.1} µs CPU {:>8.1} µs wall; device {:>8.1} µs CPU {:>8.1} µs wall", host.0 * 1e6, host.1 * 1e6, dev.0 * 1e6, dev.1 * 1e6);
+        }
     }
 
     /// The forest learns a fanout that follows the relation read, where the planner priced both alike.

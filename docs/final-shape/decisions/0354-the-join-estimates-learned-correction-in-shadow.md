@@ -139,6 +139,52 @@ planner's last run: weighted ×1.88 to ×1.76, rms ×3.60 to ×2.31, median ×1.
 Findings: corpus0 planned twice by the planner and twice by the model (other exploration seeds) gives the same 660
 relations and 30,449 rows, byte for byte (`rerail-engine csv`).
 
+## The model's planning on the GPU (2026-11-17)
+
+The user: the model's planning must cost much less than the work it saves; what it does on the CPU for its
+predictions goes to the GPU. Measured first (hogql, a model-planned run against the planner's, profiled spans):
+
+| on the host | CPU | calls |
+|---|---|---|
+| prediction: the forest walked per step, a choice at a time | 3.98 s | 133,747 (102,324 of them rounds with nothing to choose) |
+| features: each candidate's plan record (`explain_order`, its text read back) | 1.6 s | 33,314 |
+| training: the feature space's buckets made on the host, the forest on the device | about 0.5 s of its thread | once |
+
+A dispatch costs the host about 60 µs and 0.24 µs a step (M3, `the_device_predicts_as_the_host_and_its_cost`),
+a walk on the host about 9 µs a step: a choice at a time (3 to 15 steps) the device would cost more. So:
+
+1. **One prediction a round, on the device.** The pricer predicts every step of every candidate of a round in one
+   call (`JoinModel::fanouts`): on the device from `DEVICE_ROWS` (8) steps, where the device buckets the values and
+   walks the forest (`DeviceForest::predict_values`, resident from training), else on the host. Rounds with
+   nothing to choose do not ask it.
+2. **A stratum's first plans in one round** (`choose_first_plans`): the seeds', then the probes' lines that will be
+   searched (no kept plan, at least two) are planned first with a round open (`plan_rule_reused_in`); their
+   choices are made after one prediction and kept under their keys (`keep_choice`), which the spec's loop then
+   takes. 21,026 predictions a line at a time became a few per stratum.
+3. **Fewer features.** A candidate the statistics price over `RERAIL_JOIN_FEATURE_SPAN` (16) times the best's is not
+   explained or predicted; the search's best reuses its own record.
+4. **Training's buckets on the device** (`from_columns_device`, the host's buckets: the device's predictions match
+   the host's on 4,000 steps).
+5. **Exploration only where cheap**: the model explores lines it prices under `RERAIL_JOIN_EXPLORE_ROWS` (1 M): an
+   explored 59 M-row line (`p299_attempt`) ran 230 M.
+
+hogql, one store, cold, profiled (m3; the host's load 25 to 53):
+
+| | planner | planner | model | model |
+|---|---|---|---|---|
+| a stratum's planning (`spec`, inclusive) | 4.01 s | 3.84 s | 6.45 s | 3.73 s |
+| prediction | | | 0.94 s (13,168) | 0.50 s (10,904) |
+| features | | | 0.94 s | 0.67 s |
+| the round itself | | | 0.29 s | 0.15 s |
+| rows of work | 1.39 G | 1.41 G | 1.44 G | 1.40 G |
+
+The model's planning overhead fell from about 6 s to 1.3 to 2.2 s of CPU. Training: 2.4 s (7.1 s under load),
+0.5 s of its thread's CPU. Its work is the planner's within the runs' spread (the first model run's −3.1% was
+within it too). corpus0, planner and model twice each: the same 660 relations and 30,449 rows.
+
+What stays on the host: the features (each candidate's plan record: the planner's statistics read per step, not
+device work), and a dispatch's 60 µs where rounds are small (the driver's per-wave rounds, live replans).
+
 ## Not done
 
 - **Samples of orders not kept, made on purpose**: an offline generator running each line's other orders over the

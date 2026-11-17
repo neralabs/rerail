@@ -152,15 +152,13 @@ pub fn model_wanted() -> bool {
 }
 
 /// A candidate order's price by the model: the planner's price, scaled by the rows the model predicts over the
-/// rows the statistics estimate, each step's rows the step before's times its fanout, corrected. An order whose
-/// steps could not be read keeps its price.
-#[cfg(target_os = "macos")]
-pub fn model_price(model: &rerail_accel::join_model::JoinModel, est: f64, steps: &[StepSample]) -> Option<f64> {
+/// rows the statistics estimate, each step's rows the step before's times its fanout, corrected by its predicted
+/// target (`targets`, one a step). An order whose steps could not be read keeps its price.
+pub fn model_price(est: f64, steps: &[StepSample], targets: &[f64]) -> Option<f64> {
     let first = steps.first()?;
     let (mut planned, mut predicted) = (first.est_in.max(0.0), first.est_in.max(0.0));
     let (mut sum_planned, mut sum_predicted) = (planned, predicted);
-    for s in steps {
-        let t = model.fanout(s).ok()?;
+    for (s, &t) in steps.iter().zip(targets) {
         let fan = s.est_fan.max(0.0);
         planned *= fan;
         predicted *= fan * t.exp();
@@ -175,8 +173,30 @@ struct ModelPricer(rerail_accel::join_model::JoinModel);
 
 #[cfg(target_os = "macos")]
 impl crate::code_rule_dsl::logic::plan::joins::Pricer for ModelPricer {
+    /// Every step of every candidate of the round in one prediction (on the device, past a few steps), then each
+    /// candidate's price from its steps' targets.
     fn price(&self, round: &[crate::code_rule_dsl::logic::plan::joins::Choice]) -> Option<Vec<Vec<f64>>> {
-        Some(round.iter().map(|c| c.candidates.iter().map(|k| model_price(&self.0, k.est, &k.steps).unwrap_or(k.est)).collect()).collect())
+        let steps: Vec<&StepSample> = round.iter().flat_map(|c| c.candidates.iter().flat_map(|k| &k.steps)).collect();
+        if steps.is_empty() {
+            return None;
+        }
+        let targets = self.0.fanouts(&steps).ok()?;
+        let mut at = 0;
+        Some(
+            round
+                .iter()
+                .map(|c| {
+                    c.candidates
+                        .iter()
+                        .map(|k| {
+                            let t = &targets[at..at + k.steps.len()];
+                            at += k.steps.len();
+                            model_price(k.est, &k.steps, t).unwrap_or(k.est)
+                        })
+                        .collect()
+                })
+                .collect(),
+        )
     }
 }
 
@@ -185,6 +205,8 @@ impl crate::code_rule_dsl::logic::plan::joins::Pricer for ModelPricer {
 #[cfg(target_os = "macos")]
 pub fn install_model(db: &Connection, machine: &str) {
     let t = std::time::Instant::now();
+    let cpu = rerail_accel::exec::thread_cpu();
+    let gpu = rerail_forest_gpu_seconds();
     let steps: Vec<StepSample> = match read(db, machine, READ) {
         Ok(r) => r.into_iter().map(|r| r.1).collect(),
         Err(e) => return eprintln!("rerail: join model: steps not read: {e}"),
@@ -195,9 +217,15 @@ pub fn install_model(db: &Connection, machine: &str) {
     let config = rerail_accel::cost_model::CostConfig::default().forest;
     match rerail_accel::join_model::JoinModel::train(&steps, &config) {
         Ok(m) => {
-            eprintln!("rerail: join model in place: trained on {} steps in {:.2} s", steps.len(), t.elapsed().as_secs_f64());
+            eprintln!("rerail: join model in place: trained on {} steps in {:.2} s: {:.2} s of this thread's CPU, {:.2} s of the GPU (the forest's device: {})", steps.len(), t.elapsed().as_secs_f64(), rerail_accel::exec::thread_cpu() - cpu, rerail_forest_gpu_seconds() - gpu, m.on_device());
             crate::code_rule_dsl::logic::plan::joins::set_pricer(Some(std::sync::Arc::new(ModelPricer(m))));
         }
         Err(e) => eprintln!("rerail: join model: not trained: {e}"),
     }
+}
+
+/// The GPU seconds of every command buffer the forests awaited so far (training's and prediction's).
+#[cfg(target_os = "macos")]
+fn rerail_forest_gpu_seconds() -> f64 {
+    rerail_accel::join_model::gpu_seconds_awaited()
 }
