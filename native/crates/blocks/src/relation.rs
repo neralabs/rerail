@@ -113,6 +113,17 @@ impl Relation {
         }
     }
 
+    /// Gives its chunks back to the block's free list (decision 0342), when the block keeps one.
+    ///
+    /// # Safety
+    /// It lies in `block`, and no one reads or writes it after (its last holder's).
+    pub unsafe fn release(&self, block: &Block) {
+        unsafe {
+            self.rows.release(block);
+            self.killed.release(block);
+        }
+    }
+
     #[inline]
     pub fn is_frozen(&self) -> bool {
         self.flags.load(Acquire) & FROZEN != 0
@@ -838,6 +849,34 @@ impl<A: Iterator<Item = u32>, B: Iterator<Item = u32>> Iterator for Merge<'_, A,
 
 #[cfg(test)]
 mod tests {
+    /// A relation released in a free-listed block (decision 0342) gives its chunks back: the next relation of its
+    /// shape takes them, so the block grows by the descriptors alone, and reads its own rows.
+    #[test]
+    fn a_released_relations_chunks_are_taken_by_the_next() {
+        let block = Block::anon(kind::FACTS, 64 << 20).with_free_list();
+        let spec = Spec { widths: vec![8, 8, 8], order: Vec::new(), indexes: Vec::new(), min_log: crate::rows::MIN_LOG };
+        let fill = |r: &Relation, base: i64| {
+            assert!(r.rows.try_reserve(&block, 50_000));
+            unsafe {
+                r.rows.claim_reserved(50_000);
+                for i in 0..50_000u32 {
+                    for c in 0..3 {
+                        r.rows.put(i, c, base + i as i64 * 3 + c as i64);
+                    }
+                }
+            }
+        };
+        let a = Relation::try_create(&block, &spec, None).unwrap();
+        fill(a, 0);
+        let after_one = block.used();
+        unsafe { a.release(&block) };
+        assert!(block.free_bytes() >= 50_000 * 24, "its chunks are free: {}", block.free_bytes());
+        let b = Relation::try_create(&block, &spec, None).unwrap();
+        fill(b, 1_000_000);
+        assert!(block.used() - after_one < 64 << 10, "the next took them: grew {} bytes", block.used() - after_one);
+        assert_eq!(b.rows.get(49_999, 2), 1_000_000 + 49_999 * 3 + 2);
+    }
+
     use super::*;
     use crate::block::kind;
     use std::collections::BTreeSet;

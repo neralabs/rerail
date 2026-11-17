@@ -25,6 +25,7 @@ pub mod col;
 #[cfg(unix)]
 pub mod deferrable;
 pub mod facts;
+pub mod free;
 /// A relation's reads, generated from their CLIF (decision 0325; `rerail_clif::relation`): what `Rows` and
 /// `Relation` read through, the same reads the kernels' MSL (`relation_reads.metal`) and the JIT make.
 #[rustfmt::skip]

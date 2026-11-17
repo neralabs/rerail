@@ -73,6 +73,12 @@ pub struct Block {
     backing: Option<Box<dyn Backing>>,
     /// Its memory is not fresh (a recycled slab): every allocation is zeroed as it is made.
     dirty: bool,
+    /// The offset of its free list's heads (`free`, decision 0342), when it keeps one: 0 for a bump block.
+    free: usize,
+    /// The bytes on its free list.
+    free_bytes: AtomicUsize,
+    /// It kept a free list until its freeze: its reservation past its length is released then.
+    was_free_listed: bool,
     /// The device buffer this block is read through, kept: a buffer's first use maps it into the GPU's address
     /// space at about 20 ms a GiB (0266 §12), so it is made once and remade only when the block outgrows it.
     #[cfg(target_os = "macos")]
@@ -130,9 +136,64 @@ impl Block {
             writable,
             backing,
             dirty,
+            free: 0,
+            free_bytes: AtomicUsize::new(0),
+            was_free_listed: false,
             #[cfg(target_os = "macos")]
             gpu: std::sync::Mutex::new(None),
         }
+    }
+
+    /// This block, keeping a free list (decision 0342): chunks given back (`free_chunk`) are taken again by the
+    /// next of their size (`try_alloc_chunk`). Its heads are allocated in it, so they are mapped with it.
+    pub fn with_free_list(mut self) -> Block {
+        if self.free == 0 {
+            let heads = self.alloc(crate::free::CLASSES * 8, 64);
+            self.free = heads;
+        }
+        self
+    }
+
+    fn heads(&self) -> *const std::sync::atomic::AtomicU64 {
+        self.ptr::<std::sync::atomic::AtomicU64>(self.free)
+    }
+
+    /// Whether it keeps a free list.
+    pub fn has_free_list(&self) -> bool {
+        self.free != 0
+    }
+
+    /// The bytes its free list holds.
+    pub fn free_bytes(&self) -> usize {
+        self.free_bytes.load(Relaxed)
+    }
+
+    /// A chunk of `bytes` at `align`: in a block with a free list, of `bytes`' class (a power of two of at least
+    /// 64), taken from the list when one is there (zeroed); else from the front.
+    pub fn try_alloc_chunk(&self, bytes: usize, align: usize) -> Option<usize> {
+        if self.free == 0 {
+            return self.try_alloc(bytes, align);
+        }
+        let (class, size) = crate::free::class_of(bytes);
+        // SAFETY: the block's own heads; its chunks lie in it.
+        if let Some(at) = unsafe { crate::free::pop(self.base, self.heads(), class) } {
+            self.free_bytes.fetch_sub(size, Relaxed);
+            unsafe { std::ptr::write_bytes(self.base.add(at), 0, size) };
+            return Some(at);
+        }
+        self.try_alloc(size, align.max(64))
+    }
+
+    /// Gives back a chunk `try_alloc_chunk` gave (`bytes` as asked): to the free list, when the block keeps one;
+    /// else nothing. Nothing may read it after.
+    pub fn free_chunk(&self, at: usize, bytes: usize) {
+        if self.free == 0 || !self.writable {
+            return;
+        }
+        let (class, size) = crate::free::class_of(bytes);
+        // SAFETY: the block's own heads; the chunk is the caller's, of this class.
+        unsafe { crate::free::push(self.base, self.heads(), class, at) };
+        self.free_bytes.fetch_add(size, Relaxed);
     }
 
     /// A block in memory it does not own: `backing`'s, which may be dirty. Freezing it does not protect it (a
@@ -323,7 +384,8 @@ impl Block {
 
     /// Freezes: the length, then the state, written last. A file block is truncated to its length. An anonymous
     /// block is made read-only, so a write after freeze faults instead of changing what readers see.
-    pub fn freeze(self) -> Frozen {
+    pub fn freeze(mut self) -> Frozen {
+        self.drop_free_list();
         let len = self.used();
         unsafe {
             let h = self.header_mut();
@@ -334,11 +396,42 @@ impl Block {
         if let Some(f) = &self.file {
             f.set_len(len as u64).expect("truncate a journal block");
         } else if self.backing.is_none() {
+            // A free-listed block's reservation past its length goes back: nothing is written there now.
+            // Whole MBs, and never under a device buffer made over it (`gpu_buffer`'s extent).
+            #[allow(unused_mut)]
+            let mut keep = round_up(len.max(1 << 20), 1 << 20);
+            #[cfg(target_os = "macos")]
+            if let Some((_, l)) = self.gpu.lock().unwrap().as_ref() {
+                keep = keep.max(*l);
+            }
+            if self.was_free_listed && keep < self.reserved {
+                unsafe { crate::mem::release(self.base.add(keep), self.reserved - keep) };
+                self.reserved = keep;
+            }
             unsafe { crate::mem::protect_read(self.base, self.reserved) };
         }
         let mut b = self;
         b.writable = false;
         Frozen(Arc::new(b))
+    }
+
+    /// Drops the free list (a freeze's): its chunks of whole pages are given back to the OS, and none is taken
+    /// again.
+    fn drop_free_list(&mut self) {
+        if self.free == 0 {
+            return;
+        }
+        for class in 0..crate::free::CLASSES {
+            let size = 1usize << (crate::free::MIN_LOG as usize + class);
+            if size < PAGE || self.backing.is_some() {
+                continue;
+            }
+            // SAFETY: the block's own heads, and no one takes or gives chunks during a freeze (its one owner's).
+            unsafe { crate::free::each(self.base, self.heads(), class, |at| crate::mem::free_pages(self.base.add(at), size)) };
+        }
+        self.free = 0;
+        self.free_bytes.store(0, Relaxed);
+        self.was_free_listed = true;
     }
 
     /// Seals a block whose state is written later, by someone else (a deferrable slab, decision 0295 §1): its length
