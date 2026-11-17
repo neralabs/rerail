@@ -270,9 +270,83 @@ function behindLauncher(path: string, trust: GitTrust, probe: GitProbe): string 
   const root = win32.dirname(folder);
   if (!probe.runnable(win32.join(root, "cmd", "git.exe"))) return path;
   const real = GIT_FOR_WINDOWS_BUILDS.find(build => probe.runnable(win32.join(root, build, "bin", "git.exe"))
-    && (probe.exists(win32.join(root, "etc", "gitconfig")) || probe.exists(win32.join(root, build, "share", "git")))
+    && gitForWindowsFiles(root, build, probe)
     && trustedFolder(win32.join(root, build, "bin"), trust));
   return real === undefined ? path : win32.join(root, real, "bin", "git.exe");
+}
+
+/** Whether `root` holds what a Git for Windows install of `build` holds beside its git.exe: `etc\gitconfig` or `<build>\share\git`. */
+function gitForWindowsFiles(root: string, build: string, probe: GitProbe): boolean {
+  return probe.exists(win32.join(root, "etc", "gitconfig")) || probe.exists(win32.join(root, build, "share", "git"));
+}
+
+/** A Git for Windows install and the build folder ({@link GIT_FOR_WINDOWS_BUILDS}) whose own git.exe Rerail starts. */
+interface GitForWindowsBuild {
+  readonly root: string;
+  readonly build: string;
+}
+
+/**
+ * The install and build of `path` when it is a Git for Windows build's own git.exe, `<Git>\<build>\bin\git.exe`, in an
+ * install whose launcher `<Git>\cmd\git.exe` runs ({@link behindLauncher}'s checks); else undefined.
+ */
+function gitForWindowsBuild(path: string, probe: GitProbe): GitForWindowsBuild | undefined {
+  const bin = win32.dirname(path);
+  const root = win32.dirname(win32.dirname(bin));
+  const build = win32.basename(win32.dirname(bin)).toLowerCase();
+  if (win32.basename(path).toLowerCase() !== "git.exe" || win32.basename(bin).toLowerCase() !== "bin" || !GIT_FOR_WINDOWS_BUILDS.includes(build)) return undefined;
+  return probe.runnable(win32.join(root, "cmd", "git.exe")) && gitForWindowsFiles(root, build, probe) ? { root, build } : undefined;
+}
+
+/**
+ * The environment a start of the Git at `path` gets from `env`: as it is, unless `path` is a Git for Windows build's own
+ * git.exe ({@link gitForWindowsBuild}). Rerail starts that one without the launcher that would start it
+ * ({@link gitBehindLauncher}), so it gets what the launcher gives it, `git-wrapper.c`'s `setup_environment`: `HOME` set
+ * when unset ({@link launcherHome}), `PLINK_PROTOCOL` set to `ssh` when unset, `MSYSTEM` named for the build, and `PATH`
+ * led by the build's `bin`, the install's `usr\bin` and the home's `bin`, in that order. Git looks on that `PATH` for
+ * every program it runs: `sh.exe` for a command it runs through its shell (a filter, a textconv, an alias, a credential
+ * helper), then the programs that command names. Started with `MSYSTEM` set and no `sh.exe` on `PATH`, Git for
+ * Windows' git.exe crashes there; with `MSYSTEM` unset it puts its own folders first, but not the home's `bin`.
+ */
+export function gitStartEnvironment(path: string, env: NodeJS.ProcessEnv = process.env, probe: GitProbe = machine): NodeJS.ProcessEnv {
+  const install = gitForWindowsBuild(path, probe);
+  return install === undefined ? env : launcherEnvironment(install, env, probe);
+}
+
+/** {@link gitStartEnvironment}'s environment for `install`. */
+function launcherEnvironment({ root, build }: GitForWindowsBuild, env: NodeJS.ProcessEnv, probe: GitProbe): NodeJS.ProcessEnv {
+  const home = launcherHome(env, probe);
+  const system = build.toUpperCase();
+  const first = [win32.join(root, system, "bin"), win32.join(root, "usr", "bin"), ...(home === undefined ? [] : [win32.join(home, "bin")])];
+  const plink = variable(env, "PLINK_PROTOCOL");
+  return withVariables(env, {
+    MSYSTEM: system,
+    PLINK_PROTOCOL: plink === undefined || plink === "" ? "ssh" : plink,
+    ...(home === undefined ? {} : { HOME: home }),
+    PATH: [...first, variable(env, "PATH") ?? ""].join(";"),
+  });
+}
+
+/**
+ * The `HOME` Git for Windows' launcher gives Git: `HOME` when set, else `HOMEDRIVE` followed by `HOMEPATH` when that
+ * folder exists, else `USERPROFILE`; undefined when none is set. {@link gitHome} is the same rule as Git reads it.
+ */
+function launcherHome(env: NodeJS.ProcessEnv, probe: GitProbe): string | undefined {
+  const home = variable(env, "HOME");
+  if (home !== undefined && home !== "") return home;
+  const share = variable(env, "HOMEPATH") === undefined ? undefined : `${variable(env, "HOMEDRIVE") ?? ""}${variable(env, "HOMEPATH")}`;
+  return share !== undefined && probe.exists(share) ? share : variable(env, "USERPROFILE");
+}
+
+/** The value of `name` in `env`, whatever case `env` spells it in, as Windows reads it. */
+function variable(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  return Object.entries(env).find(([key]) => key.toUpperCase() === name)?.[1];
+}
+
+/** `env` with each of `values` set, under the spelling `env` already has for it (Windows keeps `Path` as `Path`). */
+function withVariables(env: NodeJS.ProcessEnv, values: Record<string, string>): NodeJS.ProcessEnv {
+  const spelled = new Map(Object.keys(env).map(key => [key.toUpperCase(), key]));
+  return { ...env, ...Object.fromEntries(Object.entries(values).map(([name, value]) => [spelled.get(name) ?? name, value])) };
 }
 
 /** The Git a search found, undefined when none runs, and every place it looked, in order. */
@@ -432,12 +506,24 @@ const SAFE_CONFIG: readonly string[] = ["-c", "core.fsmonitor=false", "-c", `cor
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 /**
- * The environment of every Git process Rerail starts: no optional locks, and no lazy fetch of a partial clone's missing
- * objects. Git honours `GIT_NO_LAZY_FETCH` from 2.45.0 and in the 2024-04-19 security releases 2.39.4, 2.40.2, 2.41.1,
- * 2.42.2, 2.43.4 and 2.44.1; an older Git ignores it and may fetch from the remote.
+ * The environment of every Git process Rerail starts, a start of the Git at `executable`: this process's, as Git for
+ * Windows' launcher would hand it to that Git ({@link gitStartEnvironment}), with no optional locks, and no lazy fetch
+ * of a partial clone's missing objects. Git honours `GIT_NO_LAZY_FETCH` from 2.45.0 and in the 2024-04-19 security
+ * releases 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4 and 2.44.1; an older Git ignores it and may fetch from the remote.
  */
-function gitEnvironment(): NodeJS.ProcessEnv {
-  return { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
+function gitEnvironment(executable: string): NodeJS.ProcessEnv {
+  return { ...startEnvironment(executable), GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
+}
+
+/** The Git for Windows builds whose git.exe this process has started ({@link gitForWindowsBuild}), each looked up once. */
+const startedBuilds = new Map<string, GitForWindowsBuild>();
+
+/** {@link gitStartEnvironment} of `executable` in this process's environment. */
+function startEnvironment(executable: string): NodeJS.ProcessEnv {
+  const install = startedBuilds.get(executable) ?? gitForWindowsBuild(executable, machine);
+  if (install === undefined) return process.env;
+  startedBuilds.set(executable, install);
+  return launcherEnvironment(install, process.env, machine);
 }
 
 /**
@@ -460,7 +546,7 @@ function runGitWith(executable: string, args: readonly string[], options: RunGit
     encoding: "utf8",
     timeout: DEFAULT_TIMEOUT_MS,
     ...options,
-    env: gitEnvironment(),
+    env: gitEnvironment(executable),
   });
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
 }
@@ -490,7 +576,7 @@ async function runGitAsyncWith(executable: string, args: readonly string[], opti
   const { maxBuffer = 1024 * 1024, timeout = DEFAULT_TIMEOUT_MS, signal } = options;
   if (signal?.aborted === true) return { status: null, stdout: "", stderr: "", error: new Error("Git was not started: the read was stopped") };
   const { promise, resolve: settle } = Promise.withResolvers<GitResult>();
-  const child = startGit(() => spawn(executable, args, { env: gitEnvironment(), stdio: ["pipe", "pipe", "pipe"] }));
+  const child = startGit(() => spawn(executable, args, { env: gitEnvironment(executable), stdio: ["pipe", "pipe", "pipe"] }));
   if (child instanceof Error) return { status: null, stdout: "", stderr: "", error: child };
   const printed = { stdout: [] as string[], stderr: [] as string[] };
   let failure: Error | undefined;
@@ -679,7 +765,7 @@ async function readGit(cwd: string, args: readonly string[], signal: AbortSignal
   const read = await readWithGit<GitRead>(signal, async executable => {
     const { promise, resolve: settle } = Promise.withResolvers<GitRead>();
     const child = startGit(() => spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" },
+      env: { ...gitEnvironment(executable), GIT_TERMINAL_PROMPT: "0" },
       stdio: ["pipe", "pipe", "ignore"],
     }));
     if (child instanceof Error) return { answer: { ended: "failed" }, missing: false };
@@ -1123,7 +1209,7 @@ async function streamGit(cwd: string, args: readonly string[], stream: GitStream
   await readWithGit(stream.signal, async executable => {
     const { promise, resolve: settle } = Promise.withResolvers<void>();
     const child = startGit(() => spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
-      env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
+      env: { ...gitEnvironment(executable), GIT_TERMINAL_PROMPT: "0" },
       stdio: ["pipe", "pipe", "ignore"],
     }));
     if (child instanceof Error) return { answer: undefined, missing: false };

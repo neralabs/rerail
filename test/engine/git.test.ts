@@ -14,7 +14,7 @@ import { endProcessTree } from "../../src/engine/child-process.js";
 import {
   findGit, gitBehindLauncher, gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitCrlfPaths, gitExcludeFiles, gitExecutable, gitHead, gitHome,
   gitInstalled, gitLook, gitModifiedOrUntrackedListing, gitModifiedOrUntrackedPaths, GitReads, GitUnavailableError, gitUnmergedReader,
-  headMovedOnlyByCommits, ProcessGit, readGitBlobIds, readGitBlobs, runGit, runGitAsync, searchGitFrom,
+  gitStartEnvironment, headMovedOnlyByCommits, ProcessGit, readGitBlobIds, readGitBlobs, runGit, runGitAsync, searchGitFrom,
 } from "../../src/engine/git.js";
 import { processState } from "../../src/engine/process-liveness.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
@@ -777,6 +777,49 @@ describe("gitBehindLauncher", () => {
     skip(!existsSync(machineLauncher), "this machine's Git is not a Git for Windows install");
     const build = win32.dirname(win32.dirname(execPath(machineLauncher)));
     expect(gitBehindLauncher(machineLauncher)).toBe(win32.join(build, "bin", "git.exe"));
+  });
+});
+
+describe("gitStartEnvironment", () => {
+  const git = String.raw`C:\Program Files\Git`;
+  const ucrt = win32.join(git, "ucrt64", "bin", "git.exe");
+  const share = String.raw`H:\people\me`;
+  const install = (...paths: string[]) => {
+    const files = [win32.join(git, "cmd", "git.exe"), win32.join(git, "etc", "gitconfig"), ...paths];
+    return { exists: (path: string) => files.includes(path), runnable: (path: string) => files.includes(path), developerDir: () => undefined };
+  };
+  const person = { Path: String.raw`C:\WINDOWS\system32;C:\Program Files\Git\cmd`, USERPROFILE: String.raw`C:\Users\me`, HOMEDRIVE: "H:", HOMEPATH: String.raw`\people\me` };
+
+  it("gives a Git for Windows build's own git.exe what its launcher gives it: MSYSTEM, PATH led by Git's folders, HOME and PLINK_PROTOCOL", () => {
+    // MSYSTEM set by the person's own MSYS2 set-up, and no sh.exe on PATH: the launcher's child gets its build's MSYSTEM.
+    expect(gitStartEnvironment(ucrt, { ...person, MSYSTEM: "MINGW64", HOME: String.raw`D:\home` }, install(ucrt))).toEqual({
+      ...person, HOME: String.raw`D:\home`, MSYSTEM: "UCRT64", PLINK_PROTOCOL: "ssh",
+      Path: String.raw`C:\Program Files\Git\UCRT64\bin;C:\Program Files\Git\usr\bin;D:\home\bin;C:\WINDOWS\system32;C:\Program Files\Git\cmd`,
+    });
+    const mingw = win32.join(git, "mingw64", "bin", "git.exe");
+    const started = gitStartEnvironment(mingw, { PATH: "C:\\WINDOWS", HOME: "C:\\h", PLINK_PROTOCOL: "plink" }, install(mingw));
+    expect(started).toEqual({ PATH: String.raw`C:\Program Files\Git\MINGW64\bin;C:\Program Files\Git\usr\bin;C:\h\bin;C:\WINDOWS`, HOME: "C:\\h", PLINK_PROTOCOL: "plink", MSYSTEM: "MINGW64" });
+  });
+
+  it("sets HOME as the launcher does when it is unset: HOMEDRIVE and HOMEPATH when that folder exists, else USERPROFILE", () => {
+    const first = String.raw`C:\Program Files\Git\UCRT64\bin;C:\Program Files\Git\usr\bin`;
+    const onShare = gitStartEnvironment(ucrt, person, install(ucrt, share));
+    expect([onShare.HOME, onShare.Path]).toEqual([share, `${first};${share}\\bin;${person.Path}`]);
+    const inProfile = gitStartEnvironment(ucrt, person, install(ucrt));
+    expect([inProfile.HOME, inProfile.Path]).toEqual([person.USERPROFILE, `${first};${person.USERPROFILE}\\bin;${person.Path}`]);
+    const { USERPROFILE: _profile, HOMEPATH: _path, ...bare } = person;
+    expect(gitStartEnvironment(ucrt, bare, install(ucrt))).toEqual({ ...bare, MSYSTEM: "UCRT64", PLINK_PROTOCOL: "ssh", Path: String.raw`C:\Program Files\Git\UCRT64\bin;C:\Program Files\Git\usr\bin;${bare.Path}` });
+  });
+
+  it("gives any other Git the environment as it is: the launcher, a git.exe outside a Git for Windows install, a Git elsewhere", () => {
+    const env = { ...person, MSYSTEM: "MINGW64" };
+    for (const path of [win32.join(git, "cmd", "git.exe"), win32.join(git, "bin", "git.exe"), String.raw`C:\msys64\ucrt64\bin\git.exe`, "/usr/bin/git"]) {
+      expect(gitStartEnvironment(path, env, install(ucrt)), path).toBe(env);
+    }
+    // A build's git.exe whose install has neither etc\gitconfig nor its share\git, or whose launcher is gone.
+    const files = [win32.join(git, "cmd", "git.exe"), ucrt];
+    expect(gitStartEnvironment(ucrt, env, { exists: path => files.includes(path), runnable: path => files.includes(path), developerDir: () => undefined })).toBe(env);
+    expect(gitStartEnvironment(ucrt, env, { exists: () => true, runnable: path => path === ucrt, developerDir: () => undefined })).toBe(env);
   });
 });
 
