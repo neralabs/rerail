@@ -12,7 +12,7 @@ use rerail_compiler::bitlex_masks as bitlex_compile;
 use rerail_compiler::{native_cpu_clusters, native_cpu_stream, native_ir, rir_asm as rir};
 
 /// The grammar: the ladder's last step.
-pub const GRAMMAR: &str = include_str!("../bitlex_ladder/04-facts.bitlex");
+pub const GRAMMAR: &str = include_str!("../bitlex_ladder/05-crlf.bitlex");
 
 /// The tape's kinds, by id: the root, the directives' kinds (their names the lean scan's
 /// `Kind::name`), then the tokens' leaves and the operands' nodes.

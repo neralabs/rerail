@@ -404,7 +404,13 @@ source.
   their `\`-newlines removed. A `\`, blanks and a line break (GCC's and clang's splice) is
   refused.
 - **Corpus**: `Facts` equal to the lean scan's on all 3,016 files read (119 refused).
-- Next: the refusals (carriage returns first: CRLF files), then step 8.
+
+### Mode (a) compiled, step 5 (`05-crlf.bitlex`): `\r\n` line ends
+
+A `\r` before a `\n` is a blank and `\` before `\r\n` a splice, as phase 2 reads them; a `\r`
+alone is still refused. Corpus: 3,040 the same, 95 refused, 0 differ (the 24 CRLF files now
+read). Of the refusals left, raw strings are most (59 files have one); then digit separators,
+quotes a line break closes, trigraphs and `%:`.
 
 ### Prior art in the other worktrees (surveyed 2026-11-17)
 

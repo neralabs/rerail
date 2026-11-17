@@ -230,16 +230,23 @@ fn guard(r: &Read, src: &[u8], f: &Facts) -> Option<(u32, Vec<u8>)> {
     .map(|n| (0, n))
 }
 
-/// `b` with its `\`-newlines removed (phase 2; the grammar refuses the other splices): the
+/// `b` with its `\`-newlines removed (`\` then `\n` or `\r\n`, phase 2; the grammar refuses the
+/// other splices): the
 /// runs between them copied, found a `\` at a time.
 fn unsplice(b: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(b.len());
     let mut from = 0;
     let mut at = 0;
     while let Some(k) = rerail_simd8::micro::find(b, at, b'\\') {
-        if b.get(k + 1) == Some(&b'\n') {
+        // `\` and `\n`, or `\` and `\r\n`.
+        let past = match b.get(k + 1..k + 3) {
+            Some([b'\r', b'\n']) => Some(k + 3),
+            _ if b.get(k + 1) == Some(&b'\n') => Some(k + 2),
+            _ => None,
+        };
+        if let Some(past) = past {
             out.extend_from_slice(&b[from..k]);
-            from = k + 2;
+            from = past;
         }
         at = k + 1;
     }
