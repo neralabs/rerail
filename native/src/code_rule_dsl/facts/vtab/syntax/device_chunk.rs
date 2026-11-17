@@ -21,7 +21,7 @@
 //! is already in the chunk (0289 §4). Until the kernels read it there, the chunk holds those four answers for the
 //! projected nodes, made once per batch on the device's first read. The canonical tables are copied in once a batch.
 
-use super::{Batch, Place, View};
+use super::{Batch, Item, Place, View};
 use crate::code_rule_dsl::facts::core::NONE;
 use rerail_blocks::{Block, Cells, Span, structure};
 use std::sync::Arc;
@@ -179,8 +179,8 @@ fn point<T: Copy + rerail_blocks::Pod>(b: &Arc<Block>, span: *const Span<T>, cel
 }
 
 /// The batch's chunk, in the batch's block: every document's arrays the views read.
-// copy (0353 step 4): the node columns (`core`, `up`, `start`, `end`, `kind`, `field`), the canonical codes and
-// the projection's arrays copied or made here. They go: the kernels read the placed tapes (decision 0353).
+// copy (0353 step 4): the node columns (`core`, `up`, `fielded`, `start`, `end`, `kind`, `field`), the canonical codes
+// and the projection's arrays copied or made here. They go: the kernels read the placed tapes (decision 0353).
 pub fn build(batch: &Batch) -> Chunk {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "a batch's chunk block".into());
     let b = Arc::clone(&batch.block);
@@ -205,8 +205,7 @@ pub fn build(batch: &Batch) -> Chunk {
             (*d).node_row = batch.nodes[i] as u32;
             (*d).child_row = batch.children[i] as u32;
             (*d).field_row = batch.fields[i] as u32;
-            let fielded = p.fielded();
-            (*d).nfielded = fielded.len() as u32;
+            (*d).nfielded = p.fielded();
             (*d).preorder = u32::from(p.defs.is_none());
             // The tape node and the parent of each local id, made from the rank index and the tape (the host reads
             // them there, decision 0353 step 2): node columns, as `start` and `end` are, until the kernels read the
@@ -222,7 +221,7 @@ pub fn build(batch: &Batch) -> Chunk {
                 None => put(&b, &raw const (*d).low, &[]),
             }
             point(&b, &raw const (*d).ord, p.ordinals());
-            point(&b, &raw const (*d).fielded, fielded);
+            made_in_order(&b, &raw const (*d).fielded, p.fielded() as usize, p.nodes().filter(|&(_, x)| p.ranks().is(Item::Field, x)).map(|(l, _)| l));
             made(&b, &raw const (*d).start, n, |l| f.start(ids(l)));
             made(&b, &raw const (*d).end, n, |l| f.end(ids(l)));
             made(&b, &raw const (*d).kind, n, |l| f.kind(ids(l)));

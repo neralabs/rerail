@@ -658,6 +658,8 @@ impl Table {
         match item {
             Item::Node => own - (self.nodes[j + 1] - self.nodes[g + 1]),
             Item::Token => self.nodes[g + 1] - self.nodes[g] + own - (self.tokens[j + 1] - self.tokens[g + 1]),
+            // `id` numbers nodes and tokens; a fielded node's id is its node's.
+            Item::Field => unreachable!("ids number nodes and tokens"),
         }
     }
 
@@ -682,6 +684,7 @@ impl Table {
         let all = match item {
             Item::Node => own,
             Item::Token => self.tokens[g + 1] - self.tokens[g],
+            Item::Field => unreachable!("ids number nodes and tokens"),
         };
         if k >= all {
             return None;

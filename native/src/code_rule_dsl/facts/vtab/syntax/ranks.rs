@@ -1,7 +1,8 @@
 //! A projection's numbered nodes and tokens as a rank index over the tape (decision 0353 step 2): no per-node array.
 //!
 //! A projection numbers some of a document's tape nodes: its nodes (a local id each, in preorder) and, in `Shape::Core`,
-//! its tokens (the anonymous children with text of its nodes). Which ones is a function of the codes and the parents,
+//! its tokens (the anonymous children with text of its nodes). Its nodes below the root that hang from their parent
+//! under a field are marked too: the `field` view's rows. Which ones is a function of the codes and the parents,
 //! derived once by the projection's walk. It is kept as bits, 64 tape nodes a group, with the counts before each group,
 //! so:
 //! - a local id is a node's rank among the numbered nodes (`rank`), and a tape node's local id is its rank when its bit
@@ -10,9 +11,9 @@
 //!   there;
 //! - a pass over the nodes walks the set bits (`iter`).
 //!
-//! Each group is three words: the nodes' bits, the tokens' bits, and the nodes and tokens before it (low and high 32
-//! bits). 24 bytes for 64 tape nodes, in the batch's block beside the projection's other cells. `local`, `core` and `up`
-//! were 12 bytes a node.
+//! Each group is five words: the nodes', the tokens' and the fielded nodes' bits, the nodes and tokens before it (low
+//! and high 32 bits), and the fielded nodes before it. 40 bytes for 64 tape nodes, in the batch's block beside the
+//! projection's other cells. `local`, `core`, `up` and `fielded` were up to 16 bytes a node.
 
 use super::cells::{Block, Cells};
 use std::sync::Arc;
@@ -22,6 +23,23 @@ use std::sync::Arc;
 pub enum Item {
     Node = 0,
     Token = 1,
+    /// A node below the root that hangs from its parent under a field (the `field` view's rows).
+    Field = 2,
+}
+
+/// The items, as `Item`'s numbers.
+const ITEMS: usize = 3;
+/// A group's words: one of bits a kind of item, then the counts before it.
+const WORDS: usize = ITEMS + 2;
+
+/// Item `item`'s count before group `g` (the words after the bits).
+#[inline]
+fn before_of(g: &[u64; WORDS], item: Item) -> u32 {
+    match item {
+        Item::Node => g[ITEMS] as u32,
+        Item::Token => (g[ITEMS] >> 32) as u32,
+        Item::Field => g[ITEMS + 1] as u32,
+    }
 }
 
 /// Items a select sample stands for.
@@ -30,18 +48,18 @@ const SAMPLE: u32 = 64;
 pub struct Ranks {
     /// The first group's number (its first tape node over 64).
     first: u32,
-    /// Three words a group: bits of the nodes, bits of the tokens, the nodes before | the tokens before << 32. One
-    /// group past the last numbered item, so a rank at the end reads a group.
-    groups: Cells<[u64; 3]>,
+    /// Five words a group: the bits of each item, the nodes before | the tokens before << 32, the fielded nodes
+    /// before. One group past the last numbered item, so a rank at the end reads a group.
+    groups: Cells<[u64; WORDS]>,
     /// The group of item `SAMPLE * k`, by item.
-    samples: [Cells<u32>; 2],
-    count: [u32; 2],
+    samples: [Cells<u32>; ITEMS],
+    count: [u32; ITEMS],
 }
 
 /// The bits being set by a projection's walk: `mark`, and `has` for a tape node marked before.
 pub struct Marks<'a> {
     first: u32,
-    groups: &'a mut [[u64; 3]],
+    groups: &'a mut [[u64; WORDS]],
 }
 
 impl Marks<'_> {
@@ -60,13 +78,15 @@ impl Ranks {
     pub fn build(block: &Arc<Block>, a: u32, b: u32, walk: impl FnOnce(&mut Marks<'_>)) -> Self {
         let first = a / 64;
         let n = (b.div_ceil(64).max(first) - first) as usize + 1;
-        let mut count = [0u32; 2];
+        let mut count = [0u32; ITEMS];
         let groups = Cells::build(block, n, |groups| {
             walk(&mut Marks { first, groups });
             for g in groups.iter_mut() {
-                g[2] = u64::from(count[0]) | u64::from(count[1]) << 32;
-                count[0] += g[0].count_ones();
-                count[1] += g[1].count_ones();
+                g[ITEMS] = u64::from(count[0]) | u64::from(count[1]) << 32;
+                g[ITEMS + 1] = u64::from(count[2]);
+                for (c, bits) in count.iter_mut().zip(&g[..ITEMS]) {
+                    *c += bits.count_ones();
+                }
             }
             n
         })
@@ -75,7 +95,7 @@ impl Ranks {
             Cells::build(block, count[item as usize].div_ceil(SAMPLE) as usize, |out| {
                 let mut k = 0;
                 for (i, g) in groups.iter().enumerate() {
-                    let before = (g[2] >> (32 * item as u32)) as u32;
+                    let before = before_of(g, item);
                     let after = before + g[item as usize].count_ones();
                     while k < out.len() && (SAMPLE * k as u32) < after {
                         out[k] = i as u32;
@@ -86,7 +106,7 @@ impl Ranks {
             })
             .expect("a batch's block holds its projection")
         };
-        let samples = [sample(Item::Node), sample(Item::Token)];
+        let samples = [sample(Item::Node), sample(Item::Token), sample(Item::Field)];
         Ranks { first, groups, samples, count }
     }
 
@@ -98,7 +118,7 @@ impl Ranks {
 
     #[inline]
     fn before(&self, g: usize, item: Item) -> u32 {
-        (self.groups[g][2] >> (32 * item as u32)) as u32
+        before_of(&self.groups[g], item)
     }
 
     /// Whether tape node `x` is a numbered `item`.
@@ -141,22 +161,8 @@ impl Ranks {
     }
 
     /// Every `item`, in order: `(number, tape node)`.
-    pub fn iter(&self, item: Item) -> impl Iterator<Item = (u32, u32)> + '_ {
-        let first = self.first;
-        self.groups.iter().enumerate().flat_map(move |(g, group)| {
-            let base = (first + g as u32) * 64;
-            let before = (group[2] >> (32 * item as u32)) as u32;
-            let mut m = group[item as usize];
-            let mut k = before;
-            std::iter::from_fn(move || {
-                (m != 0).then(|| {
-                    let x = base + m.trailing_zeros();
-                    m &= m - 1;
-                    k += 1;
-                    (k - 1, x)
-                })
-            })
-        })
+    pub fn iter(&self, item: Item) -> Iter<'_> {
+        Iter { groups: &self.groups, item: item as usize, g: 0, base: self.first * 64, bits: 0, k: 0 }
     }
 
     /// Both items in tape order: `(tape node, item)`.
@@ -177,12 +183,45 @@ impl Ranks {
 
     /// The bytes the index takes.
     pub fn bytes(&self) -> usize {
-        24 * self.groups.len() + 4 * (self.samples[0].len() + self.samples[1].len())
+        8 * WORDS * self.groups.len() + 4 * self.samples.iter().map(|s| s.len()).sum::<usize>()
     }
 
     /// The block the index is in.
     pub fn block(&self) -> &Arc<Block> {
         self.groups.block()
+    }
+}
+
+/// `Ranks::iter`: the set bits of one item, group by group.
+pub struct Iter<'a> {
+    groups: &'a [[u64; WORDS]],
+    item: usize,
+    /// The next group to read.
+    g: usize,
+    /// The tape node of the current group's bit 0.
+    base: u32,
+    /// The current group's bits not yet given.
+    bits: u64,
+    /// The next item's number.
+    k: u32,
+}
+
+impl Iterator for Iter<'_> {
+    type Item = (u32, u32);
+    #[inline]
+    fn next(&mut self) -> Option<(u32, u32)> {
+        while self.bits == 0 {
+            let group = self.groups.get(self.g)?;
+            if self.g > 0 {
+                self.base += 64;
+            }
+            self.bits = group[self.item];
+            self.g += 1;
+        }
+        let x = self.base + self.bits.trailing_zeros();
+        self.bits &= self.bits - 1;
+        self.k += 1;
+        Some((self.k - 1, x))
     }
 }
 

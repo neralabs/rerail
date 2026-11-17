@@ -877,7 +877,7 @@ fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
     let f = facts("a.py", "f(a + 1)\ng(b)\n");
     let dialect = Dialect::new(tape_tag(GrammarDialect::Python).unwrap()).unwrap();
     let p = Projected::new(7, Arc::clone(&f), Some(&dialect), Shape::Core, false, None);
-    assert!(p.idx.get().is_none() && p.depth.get().is_none() && p.fielded.get().is_none());
+    assert!(p.idx.get().is_none() && p.depth.get().is_none());
     assert!(p.extra.as_ref().unwrap().token_spans.get().is_none());
     // Independent eager reference: the named nodes' tokens in preorder (by start: they do not overlap), then source
     // and lines.
@@ -911,7 +911,10 @@ fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
         let subtree_end=f.subtree_end(p.node(l as u32));
         assert_eq!(p.size(l),p.nodes().skip(l+1).filter(|&(_,id)|id<subtree_end).count() as u32);
     }
-    assert!(p.fielded.get().is_none(),"reading other axes must not build field rows");
+    // The `field` view's rows: the nodes below the root under a field, in order, from the rank index.
+    let fielded: Vec<u32> = p.nodes().skip(1).filter(|&(_, x)| f.field(x) != 0).map(|(l, _)| l).collect();
+    assert!(!fielded.is_empty());
+    assert_eq!((0..p.fielded()).map(|i| p.fielded_local(i)).collect::<Vec<_>>(), fielded);
 }
 
 /// `Extra`'s span ids (`granules::ExtraSpan`) never equal a node's or a position's: each kind's slots are neither the

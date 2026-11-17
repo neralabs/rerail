@@ -1648,8 +1648,8 @@ impl Dialect {
 
 /// A document's nodes, numbered in preorder: its named nodes other than comments (T's), or every named node
 /// (`core.rr`'s).
-// copy (0353 step 2): the per-node arrays left (`idx`, `fielded`, `depth`) are copies of the tape's answers.
-// They go: readers read the tape and the rank index in place (decision 0353).
+// copy (0353 step 3): `idx` and `depth` are derived values held as per-node arrays. Step 3 makes them rules computed
+// on demand, written once into relations (decision 0353).
 pub struct Projected {
     pub module: Option<crate::code_rule_dsl::module_path::ModulePath>,
     pub key: u32,
@@ -1660,8 +1660,6 @@ pub struct Projected {
     ranks: ranks::Ranks,
     pub idx: OnceLock<Cells<u32>>,
     pub depth: OnceLock<Vec<u32>>,
-    /// The nodes hanging from their parent under a field, ascending.
-    pub fielded: OnceLock<Cells<u32>>,
     /// `core.rr`'s lines and spans; `None` in T's shape.
     pub extra: Option<Box<Locs>>,
     /// Node ids numbered per definition (`DefIds`), when the run asks for them; else a node's id is its preorder.
@@ -1874,6 +1872,9 @@ impl Projected {
                     continue;
                 }
                 marks.mark(Item::Node, id);
+                if n != 0 && f.field(id) != 0 {
+                    marks.mark(Item::Field, id);
+                }
                 n += 1;
             }
         });
@@ -1885,7 +1886,6 @@ impl Projected {
             ranks,
             idx: OnceLock::new(),
             depth: OnceLock::new(),
-            fielded: OnceLock::new(),
             extra: None,
             defs: None,
             facts: Arc::clone(&facts),
@@ -2006,18 +2006,14 @@ impl Projected {
             out
         })
     }
-    fn fielded(&self) -> &Cells<u32> {
-        self.fielded.get_or_init(|| {
-            let _span = crate::code_rule_dsl::logic::profile::span(|| "projection fields".into());
-            let count = self.nodes().skip(1).filter(|&(_, id)| self.facts.field(id) != 0).count();
-            Cells::build(self.block(), count, |out| {
-                for (slot, l) in out.iter_mut().zip(self.nodes().skip(1).filter_map(|(l, id)| (self.facts.field(id) != 0).then_some(l))) {
-                    *slot = l;
-                }
-                count
-            })
-            .expect("a batch's block holds its projection")
-        })
+    /// The `field` view's rows: the nodes below the root that hang from their parent under a field, in order.
+    pub fn fielded(&self) -> u32 {
+        self.ranks.count(Item::Field)
+    }
+    /// The local id of the `field` view's row `i`.
+    pub fn fielded_local(&self, i: u32) -> u32 {
+        let x = self.ranks.select(Item::Field, i).expect("a field row");
+        self.ranks.rank(Item::Node, x)
     }
     /// The tokens (`Locs::tokens`: the anonymous children with text of the included nodes) in preorder, each with its
     /// node's local id: the order their ids and spans follow.
@@ -3387,7 +3383,7 @@ impl Batch {
             })
             .collect();
         crate::code_rule_dsl::logic::profile::decision("input payload", || {
-            let identities: usize = docs.iter().map(|p| p.ranks().bytes() + ([&p.idx, &p.fielded].iter().map(|v| v.get().map_or(0, |v| v.len())).sum::<usize>() + p.depth.get().map_or(0, |v| v.capacity())) * 4).sum();
+            let identities: usize = docs.iter().map(|p| p.ranks().bytes() + (p.idx.get().map_or(0, |v| v.len()) + p.depth.get().map_or(0, |v| v.capacity())) * 4).sum();
             let extras: usize = docs.iter().filter_map(|p| p.extra.as_ref()).map(|x| x.token_spans.get().map_or(0, |v| v.capacity()) * 8).sum();
             serde_json::json!({"documents": docs.len(), "coreColumnBytes": docs.iter().map(|p| p.facts.bytes()).sum::<usize>(), "identityCapacityBytes": identities, "extraSpanCapacityBytes": extras}).to_string()
         });
@@ -3462,7 +3458,7 @@ impl Batch {
         };
         let nodes = offsets(&|p| p.len() as usize);
         let children = offsets(&|p| (p.len() as usize).saturating_sub(1));
-        let fields = offsets(&|p| if projection.wants("field") { p.fielded().len() } else { 0 });
+        let fields = offsets(&|p| if projection.wants("field") { p.fielded() as usize } else { 0 });
         let locs = OnceLock::new();
         // W's values on request (decision 0174): the tapes of the documents W reads values of.
         let valued: Vec<Option<Valued>> = if projection.derived.contains(VALUE_REQ) {
@@ -3559,11 +3555,17 @@ impl Batch {
     }
     /// The view's row of node `local` of document `doc`, if it has one.
     fn row(&self, view: View, doc: usize, local: u32) -> Option<usize> {
-        let p = &self.docs[doc];
+        match view {
+            View::Field => self.row_of_node(view, doc, local, self.docs[doc].node(local)),
+            _ => self.row_of_node(view, doc, local, NONE),
+        }
+    }
+    /// `row`, the node's tape node `x` known (read only by the `field` view: its rows are the fielded nodes).
+    fn row_of_node(&self, view: View, doc: usize, local: u32, x: u32) -> Option<usize> {
         let within = match view {
             View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order | View::Loc(_) => Some(local as usize),
             View::Child => (local > 0).then(|| local as usize - 1),
-            View::Field => p.fielded().binary_search(&local).ok(),
+            View::Field => self.docs[doc].ranks().local(Item::Field, x).map(|r| r as usize),
         }?;
         Some(self.offsets(view)[doc] + within)
     }
@@ -3766,8 +3768,9 @@ impl Source for Viewed {
         if column == 2 {
             let Some((doc, local)) = b.node(value) else { return Some(Vec::new()) };
             let p = &b.docs[doc];
-            let own = i64::from(field_atom(p.tag, p.facts.field(p.node(local as u32)))) == f;
-            return Some(if own { b.row(View::Field, doc, local).into_iter().collect() } else { Vec::new() });
+            let x = p.node(local);
+            let own = i64::from(field_atom(p.tag, p.facts.field(x))) == f;
+            return Some(if own { b.row_of_node(View::Field, doc, local, x).into_iter().collect() } else { Vec::new() });
         }
         if column != 0 {
             return None;
@@ -3777,7 +3780,7 @@ impl Source for Viewed {
             let p = &b.docs[doc];
             p.each_child_node(local, |c, x| {
                 if i64::from(field_atom(p.tag, p.facts.field(x))) == f {
-                    rows.extend(b.row(View::Field, doc, c));
+                    rows.extend(b.row_of_node(View::Field, doc, c, x));
                 }
             });
         }
@@ -3846,8 +3849,11 @@ impl Source for Viewed {
             }
             return;
         }
-        let local = self.local_of_row(p, i);
+        let (local, x) = self.local_of_row(p, i);
         let node = std::cell::OnceCell::new();
+        if x != NONE {
+            let _ = node.set(x);
+        }
         let up = std::cell::OnceCell::new();
         for (o, &c) in out.iter_mut().zip(columns) {
             *o = self.value_of(p, local, &|| *node.get_or_init(|| p.node(local)), &|| *up.get_or_init(|| p.parent(local as usize)), c);
@@ -3915,13 +3921,12 @@ impl Viewed {
     fn each_row(&self, p: &Projected, n: usize, columns: impl Iterator<Item = usize>, mut row: impl FnMut(usize, &dyn Fn(usize) -> i64)) {
         let up = |l: u32| p.parent(l as usize);
         let walked = self.parent().is_some_and(|q| columns.into_iter().any(|c| c == q));
-        let visit = |row: &mut dyn FnMut(usize, &dyn Fn(usize) -> i64), skip: usize, only: Option<&[u32]>| {
+        // `only`: the item a row's node must be (the `field` view's rows are the fielded nodes).
+        let visit = |row: &mut dyn FnMut(usize, &dyn Fn(usize) -> i64), skip: usize, only: Option<Item>| {
             let mut i = 0;
             let mut each = |l: u32, x: u32, q: &dyn Fn() -> u32| {
-                if let Some(only) = only {
-                    if only.get(i) != Some(&l) {
-                        return;
-                    }
+                if only.is_some_and(|item| !p.ranks().is(item, x)) {
+                    return;
                 }
                 row(i, &|c| self.value_of(p, l, &|| x, q, c));
                 i += 1;
@@ -3940,7 +3945,7 @@ impl Viewed {
             View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order => visit(&mut row, 0, None),
             View::Child => visit(&mut row, 1, None),
             // The nodes below the root with a field, in order (`fielded`).
-            View::Field => visit(&mut row, 1, Some(&p.fielded()[..])),
+            View::Field => visit(&mut row, 1, Some(Item::Field)),
             View::Loc(_) => {
                 for i in 0..n {
                     row(i, &|c| self.value_at(p, i, c));
@@ -3965,16 +3970,20 @@ impl Viewed {
                 Place::Docof => i64::from(p.key),
             };
         }
-        let local = self.local_of_row(p, i);
-        self.value_of(p, local, &|| p.node(local), &|| p.parent(local as usize), column)
+        let (local, x) = self.local_of_row(p, i);
+        self.value_of(p, local, &|| if x != NONE { x } else { p.node(local) }, &|| p.parent(local as usize), column)
     }
 
-    /// The local id of document `p`'s row `i` in this view.
-    fn local_of_row(&self, p: &Projected, i: usize) -> u32 {
+    /// The local id of document `p`'s row `i` in this view, and its tape node where finding the row read it (the
+    /// `field` view's: a select among the fielded nodes), else `NONE`.
+    fn local_of_row(&self, p: &Projected, i: usize) -> (u32, u32) {
         match self.view {
-            View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order | View::Loc(_) => i as u32,
-            View::Child => i as u32 + 1,
-            View::Field => p.fielded()[i],
+            View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order | View::Loc(_) => (i as u32, NONE),
+            View::Child => (i as u32 + 1, NONE),
+            View::Field => {
+                let x = p.ranks().select(Item::Field, i as u32).expect("a field row");
+                (p.ranks().rank(Item::Node, x), x)
+            }
         }
     }
 

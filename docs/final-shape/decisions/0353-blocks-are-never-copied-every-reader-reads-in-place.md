@@ -213,12 +213,20 @@ time is 6.34 s against 6.35 s.
 
 The first build without the arrays was 7% more instructions. Sampled call stacks showed where: each loop that went
 `0..len` and selected a node a step (`Ranks::select`), a scan that read the tape parent a row (`Facts::parent`), and
-the vtab's reads selecting once per column. Those are now the passes above. What still costs, by the span profile:
-- `idx` and `depth`, each one walk of a projection (0.04 s a run each), still held as arrays;
-- `open: input load` (+0.09 s): `setfix::view`'s filter reads each candidate row's values by point reads.
+the vtab's reads selecting once per column. Those are now the passes above. What still costs, by the span profile: `open: input load` (+0.09 s), where `setfix::view`'s filter reads each
+candidate row's values by point reads.
+
+`fielded` is gone too: the `field` view's rows are a third bit set in the rank index (`Item::Field`: the nodes
+below the root under a field), five words a group. A scan tests the bit; a row's point read is a select among
+them, which brings the tape node with it. Four interleaved pairs at load 26–62: 315.6 B instructions with the
+array, 312.8 B without.
+
+`idx` (a node's index among its siblings) and `depth` are not the tape's data: no tape stores them, and a read
+in place would climb the parents (a search back on format 15) every time. They are derived values, and go as
+step 3 makes the other derived values go: rules computed on demand, written once into relations. Until then they
+are computed once a projection, on first read, into its block (row 1 below, now marked step 3).
 
 Still to do in step 2:
-- `idx`, `depth` and `fielded` read in place;
 - `DefIds`' `low`, `order` and `back` replaced by the table (`order` needs each document's run starts);
 - place the table and its rank index in the batch's block beside the tape;
 - write the reads once in CLIF, for Rust and MSL;
@@ -230,9 +238,9 @@ Each row is marked in the code with `copy (0353 step N)`.
 
 | # | Copy | Where | Size or cost (hogql) | Removed by |
 |---|---|---|---|---|
-| 1 | The projection's per-node arrays: `idx`, `fielded`, `depth` (`core`, `local`, `up` and `size` are gone: the rank index) | `syntax.rs`, `Projected` | 4 bytes a node each | Step 2 |
+| 1 | The projection's derived per-node arrays: `idx`, `depth` (`core`, `local`, `up`, `size` and `fielded` are gone: the rank index) | `syntax.rs`, `Projected` | 4 bytes a node each | Step 3 |
 | 2 | Definition ids by node: `DefIds::low`, `order`, `back` | `syntax.rs`, `DefIds` | 4 + 4 + 8 bytes a node | Step 2 |
-| 3 | The chunk block's node columns: `core`, `up`, `start`, `end`, `kind`, `field`, and the canonical code copy. `core` and `up` are made here from the rank index and the walk, now that the host holds no arrays of them. | `device_chunk.rs`, `build` (`made`, `made_in_order`, `put`) | 22 bytes a node; 0.07 s a run | Step 4 |
+| 3 | The chunk block's node columns: `core`, `up`, `fielded`, `start`, `end`, `kind`, `field`, and the canonical code copy. `core`, `up` and `fielded` are made here from the rank index and the walk, now that the host holds no arrays of them. | `device_chunk.rs`, `build` (`made`, `made_in_order`, `put`) | 22 bytes a node; 0.07 s a run | Step 4 |
 | 4 | Views expanded into device relations | `metal_join.rs`, `expand_view`; `device.rs`, `resident` | 660.8 MB, 111.5 ms a run | Step 4 |
 | 5 | Views, flat relations and names uploaded from the host | `metal_join.rs`, `DevRel::upload`; `device.rs`, `resident`, `texts` | 7.4 MB, 22.1 ms a run | Steps 4, 6 |
 | 6 | An axis's pairs copied into the chunk, then expanded to ids | `within.rs`; `device_chunk.rs`, `put_pairs`; `VIEW_AXIS` | 8 bytes a pair, then the expansion | Step 5 |
