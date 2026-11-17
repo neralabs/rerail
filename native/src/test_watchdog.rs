@@ -36,8 +36,9 @@ type Key = String;
 /// The calling thread's key.
 #[cfg(target_os = "linux")]
 fn mine() -> Option<Key> {
-    // SAFETY: no arguments, no failure.
-    Some(unsafe { libc::gettid() } as u64)
+    // SAFETY: no arguments, no failure. The system call, not glibc's `gettid` (2.30): the Linux engine links against
+    // 2.17.
+    Some(unsafe { libc::syscall(libc::SYS_gettid) } as u64)
 }
 #[cfg(not(target_os = "linux"))]
 fn mine() -> Option<Key> {

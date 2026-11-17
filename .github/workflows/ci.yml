@@ -732,8 +732,8 @@ jobs:
         run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
 
       # The release engine depends only on the engine's sources, the language registry (build.rs generates
-      # its tables from languages/), the lockfile, the workspace profile, the toolchain and the napi CLI.
-      # Most pull requests change none of them and reuse main's build.
+      # its tables from languages/), the lockfile, the workspace profile, the toolchain, the napi CLI and the
+      # release build's script. Most pull requests change none of them and reuse main's build.
       - id: napi
         name: Read the napi CLI version
         run: echo "version=$(node -p "require('./package.json').devDependencies['@napi-rs/cli']")" >> "$GITHUB_OUTPUT"
@@ -746,7 +746,7 @@ jobs:
             native/*.node
             native/index.js
             native/index.d.ts
-          key: rerail-native-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-napi${{ steps.napi.outputs.version }}-${{ hashFiles('native/**', '!native/*.node', '!native/index.js', '!native/index.d.ts', 'languages/**', 'Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml') }}
+          key: rerail-native-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-napi${{ steps.napi.outputs.version }}-${{ hashFiles('native/**', '!native/*.node', '!native/index.js', '!native/index.d.ts', 'languages/**', 'Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', 'scripts/build/release-engine.mjs') }}
 
       - name: Install pinned Rust toolchain
         if: steps.native-cache.outputs.cache-hit != 'true'
@@ -768,9 +768,15 @@ jobs:
 
       - uses: ./.github/actions/node-deps
 
+      # As package.yml builds it for a release: through napi-rs's cross toolchain, against glibc 2.17. A host build
+      # links against the runner's glibc and C++ runtime, so only this form shows a pull request whose engine a
+      # release could not link, or one that needs more than the oldest supported Linux has.
       - name: Build the native engine
         if: steps.native-cache.outputs.cache-hit != 'true'
-        run: npm run build:native
+        run: node scripts/build/release-engine.mjs x86_64-unknown-linux-gnu
+
+      - name: Check the native engine loads on glibc 2.28
+        run: node scripts/check/check-linux-engine.mjs native/rerail_engine.*.node
 
       - name: Build the package
         run: npm run build:js
