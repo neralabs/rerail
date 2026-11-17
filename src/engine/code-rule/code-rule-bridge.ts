@@ -1178,6 +1178,8 @@ export class CodeRuleBridge {
   readonly #heldTexts = Promise.withResolvers<void>();
   /** The calls the runtime answered while the evaluator opened (`unwatchedCall`), until the workspace opens and takes them. */
   #unwatched = new ToolCallWindows();
+  /** The checkout the session folder is in (`#restOfCheckout`), once asked: the folder never moves to another. */
+  #folderCheckout: string | undefined;
   #lastResponse = emptyResponse(0);
   #sessionId: string | undefined;
   #revision = 0;
@@ -2197,7 +2199,9 @@ export class CodeRuleBridge {
       const written = { stamp: change.after?.modifiedAt, deleted: change.after === undefined, since, until: findings.readFrom };
       if (await this.#callRanAsWritten(discovery, counted, path, written)) claimed.add(change.path);
     }
-    // The session's checkout outside its folder is read by this walk alone, which has answered for its calls there.
+    // This read of the session's checkout answers for its calls outside the session folder. It comes only while another
+    // session watches the checkout and a read of it finds a change: else such a call waits for the oldest calls to go
+    // (`MAX_FINISHED_CALLS`), which costs only its memory, and comes only of a session opened below its checkout's top.
     if (!watched && findings.failedRoots.size === 0) {
       discovery.toolCalls.answered(findings.readFrom, { place: REST_OF_CHECKOUT, placesOf: call => this.#callPlaces(discovery, call) });
     }
@@ -2565,14 +2569,25 @@ export class CodeRuleBridge {
    * The places a call's writes are to be found in, each answered for by the walk that reads it (`ToolCallWindows`): the
    * other worktree that holds the folder it ran in, else the session folder (undefined); and for each file it named, the
    * other worktree that holds it, else the rest of the session's checkout outside its folder (`REST_OF_CHECKOUT`), else
-   * the session folder. A shell write there is no claim of the session's (`#claimsIn`), so the folder needs no mark.
+   * the session folder, which holds the rest: a file outside the repository is no walk's. A shell write outside the
+   * folder is no claim of the session's (`#claimsIn`), so the folder needs no mark.
    */
   #callPlaces(discovery: SourceDiscovery, call: CallPlace): CallWalkPlace[] {
-    const outside = (path: string) => path === ".." || path.startsWith("../");
     return [
       this.#worktreeHolding(discovery, call.folder),
-      ...call.paths.map(path => this.#worktreeHolding(discovery, path) ?? (outside(path) ? REST_OF_CHECKOUT : undefined)),
+      ...call.paths.map(path => this.#worktreeHolding(discovery, path) ?? (this.#restOfCheckout(discovery, path) ? REST_OF_CHECKOUT : undefined)),
     ];
+  }
+
+  /**
+   * Whether `path` (session-relative) is in the session's checkout but outside its folder. None is for a session opened
+   * at its checkout's top, the usual case.
+   */
+  #restOfCheckout(discovery: SourceDiscovery, path: string): boolean {
+    if (path !== ".." && !path.startsWith("../")) return false;
+    this.#folderCheckout ??= this.#owningCheckout(discovery.root, "") ?? discovery.root;
+    const absolute = resolve(discovery.root, path);
+    return absolute === this.#folderCheckout || absolute.startsWith(`${this.#folderCheckout}${sep}`);
   }
 
   /** The other worktree that holds `path` (session-relative), or is it; undefined for one in the session's own checkout. */
