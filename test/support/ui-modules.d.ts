@@ -321,7 +321,7 @@ declare module "*/ui/render/rule-sheet-model.js" {
   export function splitPath(path: string | null | undefined): { file: string; dir: string };
 }
 
-declare module "*/ui/views/merge.js" {
+declare module "*/ui/views/merge/settings.js" {
   interface Patched { hidden: boolean; textContent: string; getAttribute(name: string): string | null; hasAttribute(name: string): boolean; setAttribute(name: string, value: string): void; removeAttribute(name: string): void }
   export function patchProblem(form: { querySelector(selector: string): Patched | null }, fields: { problem: string | null; field: "command" | "timeout" | null }): void;
 }

@@ -26,7 +26,9 @@ daemon's `/api` operations and `/healthz` (`data/api.js`).
   conflicts with work in flight: open ones as cards, those not quiet first and then the newest, a quiet one saying it
   is quiet, with Dismiss (not a conflict) as the one action, then the dismissed ones folded with who dismissed each
   and when. It renders other people's titles, summaries, hunks, names and links as text nodes only, and links a pull
-  request only when `safePeerUrl` accepts it.
+  request only when `safePeerUrl` accepts it. `merge.js` builds the page, sends its writes and keeps the focus on the
+  control the person used; its parts in `views/merge/` draw it: `status.js` the notice, the consent card while off and
+  the status strip, `settings.js` the Settings form, and `conflicts.js` the conflict cards and the dismissed list.
 - `render/` holds what several views or the sheet share: a pack page's rule table and its controls (`rules.js`,
   `rule-controls.js`), the range control, the repository choices (`repos.js`), the rule sheet (`panel.js`, its
   state and clicks in `rule-sheet-actions.js`, its pure text and prompts in `rule-sheet-model.js`), a rule pack in the

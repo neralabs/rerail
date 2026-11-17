@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { patchProblem } from "../../ui/views/merge.js";
+import { patchProblem } from "../../ui/views/merge/settings.js";
 
 /** An element as `patchProblem` patches it, noting each text change made while it was hidden. */
 class StubElement {

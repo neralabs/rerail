@@ -8,6 +8,34 @@
  */
 import { fmt, plural } from "../format.js";
 
+/** `url` parsed when it is a string starting `https://` that `URL` can parse; `null` otherwise. */
+function parseHttps(url) {
+  if (typeof url !== "string" || !url.startsWith("https://")) return null;
+  try { return new URL(url); } catch { return null; }
+}
+
+/** Whether a parsed URL is not plain `https:`: another protocol, or credentials or a port. */
+function notPlainHttps(parsed) {
+  return parsed.protocol !== "https:" || parsed.username !== "" || parsed.password !== "" || parsed.port !== "";
+}
+
+/** Whether `host` is a GitHub Enterprise host: two labels or more, the first `github`, each of `[a-z0-9-]` only. */
+function isEnterpriseHost(host) {
+  const labels = host.split(".");
+  return labels.length >= 2 && labels[0] === "github" && labels.every(label => /^[a-z0-9-]+$/u.test(label));
+}
+
+/**
+ * Whether `host` (lower case) is this repository's GitHub host: `github.com`, or a GitHub Enterprise host that the
+ * repository key names.
+ */
+function isRepositoryHost(host, repositoryKey) {
+  if (host !== "github.com" && !isEnterpriseHost(host)) return false;
+  // A key from a GitHub remote names its host; an ssh alias names something else, and then only github.com passes.
+  const keyHost = /^remote:([^/]+)\//u.exec(repositoryKey)?.[1] ?? null;
+  return host === "github.com" || host === keyHost;
+}
+
 /**
  * A peer's pull request link, only when it is an `https:` URL with no credentials or port, on a GitHub host that is
  * this repository's (`github.com`, or a GitHub Enterprise host whose first label is `github`, as `githubRepositoryOf`
@@ -15,17 +43,9 @@ import { fmt, plural } from "../format.js";
  * its `/<owner>/<name>/pull/`. `null` for anything else: the page then shows the pull request as text.
  */
 export function safePeerUrl(url, { repositoryKey = "", repository = null } = {}) {
-  if (typeof url !== "string" || !url.startsWith("https://")) return null;
-  let parsed;
-  try { parsed = new URL(url); } catch { return null; }
-  if (parsed.protocol !== "https:" || parsed.username !== "" || parsed.password !== "" || parsed.port !== "") return null;
-  const host = parsed.hostname.toLowerCase();
-  const labels = host.split(".");
-  const enterprise = labels.length >= 2 && labels[0] === "github" && labels.every(label => /^[a-z0-9-]+$/u.test(label));
-  if (host !== "github.com" && !enterprise) return null;
-  // A key from a GitHub remote names its host; an ssh alias names something else, and then only github.com passes.
-  const keyHost = /^remote:([^/]+)\//u.exec(repositoryKey)?.[1] ?? null;
-  if (host !== "github.com" && host !== keyHost) return null;
+  const parsed = parseHttps(url);
+  if (parsed === null || notPlainHttps(parsed)) return null;
+  if (!isRepositoryHost(parsed.hostname.toLowerCase(), repositoryKey)) return null;
   if (repository !== null && !parsed.pathname.toLowerCase().startsWith(`/${repository.toLowerCase()}/pull/`)) return null;
   return parsed.href;
 }
