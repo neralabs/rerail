@@ -357,7 +357,8 @@ fs.writeSync(1, JSON.stringify(readHookFailures(${JSON.stringify(rerailHome)}, 0
     }));
     let output = "";
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => { output += chunk; });
-    await once(child, "close");
+    const [code] = await once(child, "close") as [number | null];
+    expect(code).toBe(0);
     expect(JSON.parse(output)).toEqual([1_000, 2_000, 3_000]);
   });
 
