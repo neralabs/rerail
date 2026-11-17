@@ -2,7 +2,7 @@
 .description "Remove the future annotations import from stub files; stubs are never executed and already treat annotations as forward references."
 .language python
 .mode steer
-.scope include "**/*"
+.scope include "**/*.pyi"
 
 // Ruff PYI044 (flake8-pyi), stubs only: `from __future__ import annotations`, alone or with other features,
 // aliased or not. Stubs already read annotations lazily.

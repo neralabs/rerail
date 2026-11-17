@@ -29,11 +29,15 @@ key(n, i, v, v) :- kind(n, "subscript_expression"), field(n, "index", x), depare
     (kind(i, "true") ; kind(i, "false") ; kind(i, "null")), text(i, v).
 key(n, i, v, cat("`", cat(v, "`"))) :- kind(n, "subscript_expression"), field(n, "index", x), deparen(x, i),
     kind(i, "template_string"), static_string(i, v).
-.decl allowed(v: symbol)  // keys the options keep in brackets
-allowed(v) :- key(_, _, v, _), option("allowKeywords", "false"), es3_reserved(v).
-allowed(v) :- key(_, _, v, _), option("allowPattern", p), p != "", match(cat(".*(?:", cat(p, ").*")), v).
+// allowed(n): the options keep key n's value in brackets. Keyed by the member expression, and the identifier test
+// (dot-notation's validIdentifier, /^[a-zA-Z_$][\w$]*$/u) written in the rule: a relation of names only has no
+// file, and the engine evaluates a rule reading one across files.
+.decl allowed(n: node)
+allowed(n) :- key(n, _, v, _), option("allowKeywords", "false"), es3_reserved(v).
+allowed(n) :- key(n, _, v, _), option("allowPattern", p), p != "", match(cat(".*(?:", cat(p, ").*")), v).
 
-dot_notation(i, cat(dot, cat(v, cat(" instead of [", cat(s, "]"))))) :- key(n, i, v, s), ident_name(v), !allowed(v),
+dot_notation(i, cat(dot, cat(v, cat(" instead of [", cat(s, "]"))))) :- key(n, i, v, s),
+    match("[a-zA-Z_$][a-zA-Z0-9_$]*", v), !allowed(n),
     (field(n, "optional_chain", _), dot = "?." ; !field(n, "optional_chain", _), dot = ".").
 dot_notation(p, cat("[\"", cat(x, cat("\"] instead of .", cat(x, ", a syntax error in ES3"))))) :-
     option("allowKeywords", "false"), dotted_member(_, _, p), text(p, x), es3_reserved(x).

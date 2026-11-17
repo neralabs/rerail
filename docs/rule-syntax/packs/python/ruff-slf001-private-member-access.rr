@@ -17,15 +17,18 @@
 //   def g(self, other: Self): other._x                        not reported
 #include "python/misc2-self.rr"
 //   slf_super(o), slf_receiver_name(o), slf_own_class(o), slf_same_instance(o, e)
+#include "python/typing.rr"
+//   pyi_sym(e, q): `os._exit` through this file's imports, as Ruff resolves it
 
 .violation SLF001(at: node, attr: symbol) code "SLF001"
     "Use the class's public interface instead of this private member; keep it only where the class is yours to change or the access is deliberate."
     suppress ruff "SLF001"
-SLF001(e, a) :- attr_of(e, v, a), prefix("_", a), !glob("__*__", a), !slf_sunder(a), !slf_ignored(a),
-    !annotation(e), !sym_of(e, "os._exit"), !slf_in_operator(e), unparen(v, o), !slf_super(o),
+SLF001(e, a) :- attr_of(e, v, a), prefix("_", a), !glob("__*__", a), !slf_sunder(e), !slf_ignored(a),
+    !annotation(e), !pyi_sym(e, "os._exit"), !slf_in_operator(e), unparen(v, o), !slf_super(o),
     !slf_receiver_name(o), !slf_own_class(o), !slf_same_instance(o, e).
-.decl slf_sunder(a: symbol)
-slf_sunder(a) :- attr_of(_, _, a), glob("_*_", a), !prefix("__", a), !suffix("__", a).
+// slf_sunder(e): e's attribute is a sunder, `_x_`. Keyed by the access, so the rule stays within its file.
+.decl slf_sunder(e: node)
+slf_sunder(e) :- attr_of(e, _, a), glob("_*_", a), !prefix("__", a), !suffix("__", a).
 .decl slf_ignored(a: symbol)
 slf_ignored(a) :- option_item("flake8-self.ignore-names", _, a).
 slf_ignored(a) :- !slf_names_set(), (a = "_make" ; a = "_asdict" ; a = "_replace" ; a = "_fields" ;

@@ -2,7 +2,7 @@
 .description "Remove docstrings from stub files; stubs exist to carry type information, not documentation."
 .language python
 .mode steer
-.scope include "**/*"
+.scope include "**/*.pyi"
 
 // Ruff PYI021 (flake8-pyi), stubs only: a docstring of the module, a class or a def. Reported at the string.
 //   def f():

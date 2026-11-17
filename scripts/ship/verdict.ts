@@ -211,3 +211,47 @@ export function missingRules(mainRules: readonly string[], candidate: ReadonlyMa
   }
   return missing;
 }
+
+// ---------------------------------------------------------------- chunked runs
+
+/** One process of a chunked run: the pack's rules split into fixed chunks, each chunk its own run-policies process. */
+export interface ChunkRun {
+  chunk: number;
+  rep: number;
+  mode: "cold" | "warm";
+  completed: boolean;
+  wallMs: number;
+  cpuMs: number;
+  rssKB: number;
+}
+
+/**
+ * Per repetition and mode, the pack's figure from its chunks: wall and CPU summed, peak RSS the largest chunk's. A chunk
+ * that failed any cold run is left out of every repetition (listed by the caller); a repetition counts only when every
+ * other chunk completed it, so each sum covers the same rules.
+ */
+export function chunkSums(runs: readonly ChunkRun[], chunks: number): { mode: "cold" | "warm"; rep: number; wallMs: number; cpuMs: number; rssKB: number }[] {
+  const failed = new Set(runs.filter((r) => r.mode === "cold" && !r.completed).map((r) => r.chunk));
+  const kept = [...Array(chunks).keys()].filter((chunk) => !failed.has(chunk));
+  const sums = [];
+  for (const mode of ["cold", "warm"] as const) {
+    for (const rep of [...new Set(runs.map((r) => r.rep))].sort((a, b) => a - b)) {
+      const these = kept.map((chunk) => runs.find((r) => r.chunk === chunk && r.rep === rep && r.mode === mode && r.completed));
+      if (kept.length === 0 || these.some((r) => r === undefined)) continue;
+      const done = these as ChunkRun[];
+      sums.push({ mode, rep, wallMs: done.reduce((s, r) => s + r.wallMs, 0), cpuMs: done.reduce((s, r) => s + r.cpuMs, 0), rssKB: Math.max(...done.map((r) => r.rssKB)) });
+    }
+  }
+  return sums;
+}
+
+/**
+ * How run-policies ran a pack's policies, from its result's `runs` (each with `together`: how many policies ran in its
+ * group, 1 for a policy run alone): combined when any group holds several. An engine that reports no `together` leaves
+ * it unknown.
+ */
+export function grouping(runs: readonly { together?: number }[]): { policies: number; combined: number; alone: number; largest: number } | null {
+  if (runs.length === 0 || runs.some((r) => typeof r.together !== "number")) return null;
+  const sizes = runs.map((r) => r.together!);
+  return { policies: runs.length, combined: sizes.filter((n) => n > 1).length, alone: sizes.filter((n) => n === 1).length, largest: Math.max(...sizes) };
+}

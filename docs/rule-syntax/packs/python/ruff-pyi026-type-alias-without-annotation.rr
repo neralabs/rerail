@@ -2,7 +2,7 @@
 .description "Annotate type alias assignments in stub files with TypeAlias; it marks the line as an alias declaration instead of an ordinary variable."
 .language python
 .mode steer
-.scope include "**/*"
+.scope include "**/*.pyi"
 
 // Ruff PYI026 (flake8-pyi), stubs only: `X = <type>` with one plain-name target and no `TypeAlias`
 // annotation, where the value can only be a type: a subscript, a PEP 604 union, None or `typing.Any`. A bare

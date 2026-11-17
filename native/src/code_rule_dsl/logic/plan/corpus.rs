@@ -1450,6 +1450,8 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
     let axis = crate::code_rule_dsl::logic::front::AXIS;
     let mut all = Program::default();
     let mut sets: BTreeMap<Vec<String>, String> = BTreeMap::new();
+    // The library part's names for its kind sets, as the merge renamed them.
+    let mut library_sets: BTreeMap<String, String> = BTreeMap::new();
     let core = crate::code_rule_dsl::logic::rr::core_names();
     let mut policies: Vec<scoping::Policy> = Vec::new();
     // A library's rule may ask for guests too (`vue/view.rr`'s view, decision 0222): read once, it is no program's.
@@ -1486,13 +1488,18 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
                 all.text_globs.push(g);
             }
         }
-        // Kind sets by their kinds: this program's name for each, and the shared one.
-        let mut set_of: BTreeMap<String, String> = BTreeMap::new();
+        // Kind sets by their kinds: this program's name for each, and the shared one. A set the program reads but
+        // does not hold (a library rule its request copied, `rr::with_cone`) is the library's: named as the library
+        // part names it, not left on a name the merge renamed.
+        let mut set_of: BTreeMap<String, String> = if unit.is_some() { library_sets.clone() } else { BTreeMap::new() };
         for (name, kinds) in std::mem::take(&mut prog.kindsets) {
             let n = sets.len();
             let shared = sets.entry(kinds.clone()).or_insert_with(|| format!("ks{n}")).clone();
             all.kindsets.insert(shared.clone(), kinds);
             set_of.insert(name, shared);
+        }
+        if unit.is_none() {
+            library_sets = set_of.clone();
         }
         // The library's relations keep their names (decision 0089 §2). Named repository readers belong to their
         // policy (`own_names`): equal relation names alone do not mean equal input files or selectors.

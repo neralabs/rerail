@@ -789,9 +789,11 @@ fn lone_capture(term: &AstMatcher) -> Option<&str> {
 }
 
 /// Whether matching `matcher` reads nothing but the node's tree and values, and spends no utility
-/// step but those decoding a value: patterns, kinds, regexes and `value`, through composites,
-/// relations, constraints and `nthChild` without `ofRule`. A value reads the node and the file's
-/// bindings, never the environment.
+/// step but those decoding a value: patterns, kinds, regexes, gap tests and `value`, through
+/// composites, relations, constraints and `nthChild` without `ofRule`. A value reads the node and
+/// the file's bindings, never the environment; a gap test reads the stored children of the node or
+/// its parent and the grammar's automata (`gap::GapTest`), what a relation to the token reads on a
+/// full tree, and its walk's stop rule.
 fn node_local(matcher: &AstMatcher) -> bool {
     let stop_local = |stop: &StopBy| stop_rule(stop).is_none_or(node_local);
     match matcher {
@@ -800,6 +802,7 @@ fn node_local(matcher: &AstMatcher) -> bool {
         | AstMatcher::Regex(_)
         | AstMatcher::Never
         | AstMatcher::Semantic(Semantic::Value(_)) => true,
+        AstMatcher::Semantic(Semantic::Gap(test)) => test.past.as_deref().is_none_or(node_local),
         AstMatcher::All(items) | AstMatcher::Any(items) => items.iter().all(node_local),
         AstMatcher::Not(inner) => node_local(inner),
         AstMatcher::Inside(related, stop)

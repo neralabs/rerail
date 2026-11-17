@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { LINUX_METHOD } from "../../../scripts/ship/platform.js";
 import { attribute, buildReport, drillHint, metricStatus, type RunMeta } from "../../../scripts/ship/report-model.js";
+import { renderReport } from "../../../scripts/ship/report.js";
 import type { CellVerdict, MeasuredMetric, RuleTiming, Verdict } from "../../../scripts/ship/shipbar.js";
 import { compareMetric } from "../../../scripts/ship/verdict.js";
 
@@ -79,6 +80,11 @@ describe("the report", () => {
     rules: { main: 3, candidate: 3 },
     drill,
     cost: null,
+    caps: { memCap: ["24G"], timeCapS: [2700] },
+    chunked: null,
+    progress: null,
+    grouping: null,
+    fallback: [],
   });
   const verdict = (packs: Verdict["candidates"][number]["packs"]): Verdict => ({
     tolerancePercent: 10,
@@ -133,5 +139,27 @@ describe("the report", () => {
     const report = buildReport(verdict([{ pack: "blade", noBaseline: false, missing: [{ rule: "blade-x", reason: "no .rr counterpart" }], extra: [], cells: [cell("real", [measured("wall-cold", [700], [700])])] }]), meta);
     expect(report.candidates[0]?.status).toBe("FAIL");
     expect(report.candidates[0]?.failures.map((f) => f.item)).toEqual(["coverage"]);
+  });
+
+  it("labels a .rr cell's chunked figures and says how the whole-pack run got on", () => {
+    const rr: CellVerdict = {
+      ...cell("real", [measured("wall-cold", [700], [900])]),
+      completion: { status: "fail", kind: "candidate-failed", reason: "rr.cold1: killed at 2700 s", stoppedOn: "r9 (policy 9 of 20)" },
+      caps: { memCap: ["56G"], timeCapS: [14400] },
+      chunked: { size: 10, chunks: 2, rulesRun: 20, rulesOf: 20, failedChunks: [] },
+      progress: { started: 9, of: 20, wallMs: 2_700_000, rssKB: 2 * 1048576 },
+      grouping: { policies: 20, combined: 18, alone: 2, largest: 6 },
+      fallback: [],
+    };
+    const v = verdict([{ pack: "python", noBaseline: false, missing: [], extra: [], cells: [rr] }]);
+    const report = buildReport({ ...v, candidates: [{ candidate: "rr", description: "the .rr rewrites", packs: v.candidates[0]!.packs }], gate: ["rr"], machine: { ...v.machine, memCap: ["24G", "56G"], timeCapS: [2700, 14400] } }, meta);
+    const cellItem = report.candidates[0]!.packs[0]!.cells[0]!;
+    expect(cellItem.chunked).toMatchObject({ chunks: 2, rules_run: 20 });
+    expect(report.candidates[0]!.failures.find((f) => f.item === "wall-cold")?.reason).toMatch(/chunked: the sum of 2 chunk runs/);
+    const md = renderReport(report);
+    expect(md).toContain("chunked 700 ms → 900 ms");
+    expect(md).toContain("whole-pack run got to policy 9 of 20 in 2700 s, 2.0 GiB peak RSS");
+    expect(md).toContain("ran combined: 18 of 20 policies in groups (largest 6), 2 alone");
+    expect(md).toContain("caps 56G, 14400 s");
   });
 });

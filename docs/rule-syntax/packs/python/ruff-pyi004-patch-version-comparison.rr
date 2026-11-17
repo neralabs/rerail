@@ -2,7 +2,7 @@
 .description "Compare sys.version_info in a stub file against major and minor versions only; type checkers do not understand patch versions."
 .language python
 .mode steer
-.scope include "**/*"
+.scope include "**/*.pyi"
 
 // Ruff PYI004 (flake8-pyi), stubs only: an `if` test comparing sys.version_info (or a slice of it) with a
 // tuple of more than two ints. Type checkers read major and minor versions only. The `if` test is checked, or
