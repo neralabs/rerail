@@ -97,7 +97,7 @@ function pathKeyOf(open: MigrationOpen | undefined): (stored: string) => string 
 }
 
 /** No key looked up before the lock: under it every key the file holds then waits (`respellPathKeys`). */
-const NOTHING_LOOKED_UP: PathKeyLookups = { keys: new Map(), historyThrough: new Map() };
+const NOTHING_LOOKED_UP: PathKeyLookups = { keys: new Map(), historyThrough: new Map(), failed: new Map() };
 
 /**
  * On Windows this build keys a checkout, its settings, its audit settings and audit, and its presentation

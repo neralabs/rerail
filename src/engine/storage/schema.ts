@@ -701,6 +701,11 @@ export const pathKeySpellings = sqliteTable("path_key_spellings", {
    * one from a row that stood under `current` before by this: only a row made past it can be a copy.
    */
   preferencesBefore: integer("preferences_before"),
+  /**
+   * When a lookup of this waiting key first failed for a reason that can pass (epoch ms): once its lookups have failed
+   * that long the key keeps its spelling and its row goes (`noteFailedLookup` in `path-key-spelling.ts`).
+   */
+  failedSince: integer("failed_since"),
 });
 
 /**

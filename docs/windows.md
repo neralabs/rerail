@@ -291,7 +291,11 @@ briefly it waited for the answer, so no open starts it, and the daemon reads a d
 on it. A folder that is gone from a drive that is there keeps its key: the file system holds no spelling for it, and a
 session opened there as `c:\…` still finds its audit settings under that spelling. A folder Rerail cannot read keeps its
 key, and the database still opens. A lookup that fails for a reason that can pass (a busy file, a share that did not
-answer) leaves the key waiting for a later open from its drive. On macOS and Linux the step reads and copies nothing.
+answer) leaves the key waiting for a later open from its drive. Once a key's lookups have failed for an hour, it keeps
+its spelling, as beside a version without the step, so no read from its drive opens the database for writing for it
+again; the process whose open gave up says so once (the daemon in its log), and what the earlier version saved under
+that spelling is not read here. A lookup that fails with no answer from the file system, a fault in this version, fails
+the open. On macOS and Linux the step reads and copies nothing.
 
 What an earlier version changes later under a spelling the step recorded reaches this version's copy too. Triggers in
 the database (`src/engine/storage/path-key-spelling-triggers.ts`), which run inside that version's own writes, carry

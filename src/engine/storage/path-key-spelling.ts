@@ -37,6 +37,8 @@ export interface PathKeyLookups {
   readonly keys: ReadonlyMap<string, string | undefined>;
   /** The last rowid of each audit history table as it was read; a table not listed is read whole under the lock. */
   readonly historyThrough: ReadonlyMap<string, number>;
+  /** Each key whose lookup ran and failed for a reason that can pass, with the file system's code for it (`keyOrStored`). */
+  readonly failed: ReadonlyMap<string, string>;
 }
 
 /**
@@ -84,7 +86,15 @@ const PATH_HISTORY: readonly PathColumn[] = [
 
 /** `path_key_spellings` as `path-keys-as-stored` introduced it. */
 const PATH_KEY_SPELLINGS_TABLE =
-  "CREATE TABLE IF NOT EXISTS `path_key_spellings` (\n\t`stored` text PRIMARY KEY NOT NULL,\n\t`current` text,\n\t`preferences_before` integer\n)";
+  "CREATE TABLE IF NOT EXISTS `path_key_spellings` (\n\t`stored` text PRIMARY KEY NOT NULL,\n\t`current` text,\n\t`preferences_before` integer,\n\t`failed_since` integer\n)";
+
+/**
+ * How long a waiting key's lookups may go on failing for a reason that can pass, from the first that failed, before the
+ * key keeps its spelling. Some such failures repeat at every attempt (a link that leads to itself, a broken reparse
+ * point), and while a key waits on a drive every reader from that drive first makes a writable open that looks it up
+ * again; a share that does not answer for a while comes back well within it.
+ */
+const LOOKUPS_FAIL_FOR_MS = 60 * 60 * 1000;
 
 /**
  * The key this build looks a folder up by, for a key an earlier build stored as `stored`. On Windows, for a folder that
@@ -205,8 +215,9 @@ export function lookUpPathKeys(database: RerailDatabase, keyOf: PathKeyOf): Path
     keys: storedPathKeys(database, new Map()),
     historyThrough: new Map(PATH_HISTORY.map(column => [column.table, lastRowid(database, column.table)])),
   }));
-  const respelled = onceEach(keyOf);
-  return { keys: new Map([...keys].map(key => [key, respelled(key)])), historyThrough };
+  const failed = new Map<string, string>();
+  const respelled = onceEach(keyOf, failed);
+  return { keys: new Map([...keys].map(key => [key, respelled(key)])), historyThrough, failed };
 }
 
 /**
@@ -216,8 +227,9 @@ export function lookUpPathKeys(database: RerailDatabase, keyOf: PathKeyOf): Path
  */
 export function lookUpWaitingKeys(database: RerailDatabase, keyOf: PathKeyOf): PathKeyLookups {
   const waiting = holdsTable(database.$client, "path_key_spellings") ? waitingKeys(database) : [];
-  const respelled = onceEach(keyOf);
-  return { keys: new Map(waiting.map(stored => [stored, respelled(stored)])), historyThrough: new Map() };
+  const failed = new Map<string, string>();
+  const respelled = onceEach(keyOf, failed);
+  return { keys: new Map(waiting.map(stored => [stored, respelled(stored)])), historyThrough: new Map(), failed };
 }
 
 /**
@@ -233,20 +245,48 @@ export function lookUpWaitingKeys(database: RerailDatabase, keyOf: PathKeyOf): P
 export function respellPathKeys(database: RerailDatabase, lookups: PathKeyLookups): void {
   database.run(sql.raw(PATH_KEY_SPELLINGS_TABLE));
   const keys = new Set([...lookups.keys.keys(), ...storedPathKeys(database, lookups.historyThrough)]);
-  for (const stored of keys) moveKey(database, stored, lookedUp(lookups, stored));
+  for (const stored of keys) {
+    moveKey(database, stored, lookedUp(lookups, stored));
+    noteFailedLookup(database, stored, lookups.failed.get(stored));
+  }
 }
 
 /**
  * Under the lock: copies the rows of each waiting key whose folder `lookups` found back to its key; one that is back and
- * keeps its spelling waits no more. A key that began to wait after the lookups waits for the next open.
+ * keeps its spelling waits no more, and so does one whose lookups have failed for {@link LOOKUPS_FAIL_FOR_MS}
+ * ({@link noteFailedLookup}). A key that began to wait after the lookups waits for the next open.
  */
 export function respellReturnedKeys(database: RerailDatabase, lookups: PathKeyLookups): void {
   if (lookups.keys.size === 0) return;
   for (const stored of waitingKeys(database)) {
     const key = lookups.keys.get(stored);
-    if (key === stored) database.run(sql`DELETE FROM path_key_spellings WHERE stored = ${stored}`);
+    if (key === stored) keepSpelling(database, stored);
     else if (key !== undefined) moveKey(database, stored, key);
+    else noteFailedLookup(database, stored, lookups.failed.get(stored));
   }
+}
+
+/** A waiting key that keeps its spelling: no open looks it up again, and its rows stay where they are. */
+function keepSpelling(database: RerailDatabase, stored: string): void {
+  database.run(sql`DELETE FROM path_key_spellings WHERE stored = ${stored}`);
+}
+
+/**
+ * Records when the lookups of the waiting key `stored` began to fail, with `code` the file system's answer to this one
+ * (none when it did not fail). At the first failed lookup {@link LOOKUPS_FAIL_FOR_MS} or more after that, the key keeps
+ * its spelling, so no reader from its drive makes a writable open for it any more, and this is said once, on the
+ * standard error of the process whose open gave up (the daemon's log for the daemon): what the earlier build saved
+ * under that spelling is not read here, as at a version without the step.
+ */
+function noteFailedLookup(database: RerailDatabase, stored: string, code: string | undefined): void {
+  if (code === undefined) return;
+  const now = Date.now();
+  const since = database.get<{ since: number }>(sql`UPDATE path_key_spellings SET failed_since = coalesce(failed_since, ${now})
+    WHERE stored = ${stored} AND current IS NULL RETURNING failed_since AS since`)?.since;
+  if (since === undefined || now - since < LOOKUPS_FAIL_FOR_MS) return;
+  keepSpelling(database, stored);
+  process.stderr.write(`rerail: the folder an earlier version stored as ${stored} keeps that spelling: looking it up has failed `
+    + `since ${new Date(since).toISOString()} (${code}), so this version does not read what that version saved for it under that spelling\n`);
 }
 
 function waitingKeys(database: RerailDatabase): string[] {
@@ -308,11 +348,11 @@ function copyToKey(database: RerailDatabase, rows: { from: string; to: string })
   }
 }
 
-/** `keyOf` behind {@link looksUp}, run once per distinct key, each answer kept. */
-function onceEach(keyOf: PathKeyOf): PathKeyOf {
+/** `keyOf` behind {@link looksUp}, run once per distinct key, each answer kept and each failure that can pass in `failed`. */
+function onceEach(keyOf: PathKeyOf, failed: Map<string, string>): PathKeyOf {
   const keys = new Map<string, string | undefined>();
   return stored => {
-    if (!keys.has(stored)) keys.set(stored, looksUp(stored) ? keyOrStored(keyOf, stored) : stored);
+    if (!keys.has(stored)) keys.set(stored, looksUp(stored) ? keyOrStored(keyOf, stored, failed) : stored);
     return keys.get(stored);
   };
 }
@@ -329,14 +369,26 @@ function looksUp(stored: string): boolean {
 /**
  * `keyOf`'s key for `stored`. A lookup that fails where the folder is gone or may not be read keeps `stored`, so the open
  * never fails on one folder; one that fails otherwise (a busy file, a network error) is undefined, so the key waits for
- * a later open from its drive rather than reading as one that keeps its spelling.
+ * a later open from its drive rather than reading as one that keeps its spelling, and its code goes in `failed`
+ * ({@link noteFailedLookup}). An error that carries no file system code is no answer about the folder but a fault in
+ * this build, and is thrown, as a fault elsewhere in an open is.
  */
-function keyOrStored(keyOf: PathKeyOf, stored: string): string | undefined {
+function keyOrStored(keyOf: PathKeyOf, stored: string, failed: Map<string, string>): string | undefined {
   try {
     return keyOf(stored);
   } catch (error) {
-    return keepsSpelling(error) ? stored : undefined;
+    if (keepsSpelling(error)) return stored;
+    const code = systemCode(error);
+    if (code === undefined) throw error;
+    failed.set(stored, code);
+    return undefined;
   }
+}
+
+/** The code a file system call gives its error (`ETIMEDOUT`, `EBUSY`); undefined for an error that has none. */
+function systemCode(error: unknown): string | undefined {
+  const code = (error as { code?: unknown } | undefined)?.code;
+  return typeof code === "string" ? code : undefined;
 }
 
 function storedKeys(database: RerailDatabase, column: PathColumn): string[] {

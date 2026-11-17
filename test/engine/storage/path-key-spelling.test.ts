@@ -1270,6 +1270,56 @@ describe("path keys an earlier build stored under another spelling", () => {
     expect(earlierBuildReads(databasePath, stored)).toEqual(EARLIER_BUILD_READS);
   });
 
+  // A key whose lookup failed every time for a reason that can pass (a link that leads to itself) waited for good, and
+  // every reader from its drive made a writable open to look it up again.
+  it("keep the spelling of a key whose lookups have failed for an hour, say so once, and look it up no more", async () => {
+    const { folder, databasePath } = await checkoutFolder();
+    onTheSystemDrive(folder);
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    vi.mocked(currentPathKey).mockImplementation(path => {
+      if (path === stored) throw Object.assign(new Error("ELOOP: too many symbolic links encountered, access"), { code: "ELOOP" });
+      return path;
+    });
+    const log = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const clock = vi.spyOn(Date, "now");
+    ends.push(() => { log.mockRestore(); clock.mockRestore(); });
+    const said = (): string[] => log.mock.calls.map(([line]) => String(line)).filter(line => line.includes("keeps that spelling"));
+    const firstFailed = Date.UTC(2026, 10, 17, 9);
+    const readAt = (minutes: number): void => {
+      clock.mockReturnValue(firstFailed + minutes * 60_000);
+      workspaceStartState(folder, databasePath);
+    };
+
+    clock.mockReturnValue(firstFailed);
+    openRerailDatabase(databasePath).$client.close();
+    readAt(59);
+    expect({ spellings: spellings(databasePath), said: said() }).toEqual({ spellings: [{ stored, current: null }], said: [] });
+    readAt(60);
+    expect({ spellings: spellings(databasePath), said: said() }).toEqual({ spellings: [], said: [
+      `rerail: the folder an earlier version stored as ${stored} keeps that spelling: looking it up has failed since 2026-11-17T09:00:00.000Z `
+        + "(ELOOP), so this version does not read what that version saved for it under that spelling\n",
+    ] });
+    const lookups = vi.mocked(currentPathKey).mock.calls.length;
+    readAt(61);
+    expect({ lookups: vi.mocked(currentPathKey).mock.calls.length, said: said().length }).toEqual({ lookups, said: 1 });
+  });
+
+  // A lookup that threw for a fault in this build, not a file system's answer, left the key waiting as if a share had
+  // not answered.
+  it("fail an open whose lookup of a key fails for a fault in this build, rather than leave the key waiting", async () => {
+    const { folder, databasePath } = await checkoutFolder();
+    onTheSystemDrive(folder);
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    vi.mocked(currentPathKey).mockImplementation(path => {
+      if (path === stored) throw new TypeError("a fault in this build");
+      return path;
+    });
+
+    expect(() => openRerailDatabase(databasePath)).toThrow("a fault in this build");
+  });
+
   // A key that waited could keep the watermark of the open that first met it, so a preference saved as the disk spells
   // the folder while the key waited would read as a copy and take the earlier build's later change under its spelling.
   it("keep a preference saved as the disk spells the folder while its earlier spelling waited, when the earlier build changes its own later", async () => {
