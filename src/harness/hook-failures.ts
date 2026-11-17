@@ -119,7 +119,9 @@ function movedAside(home: string, path: string): boolean {
   const lock = moveLock(home);
   if (lock === "busy") return false;
   try {
-    if (sizeOf(path) <= MAX_FAILURE_BYTES) return false;
+    // A size that cannot be told now (a stat that failed for a moment) moves nothing: that log may be the small one.
+    const size = sizeOf(path);
+    if (!Number.isFinite(size) || size <= MAX_FAILURE_BYTES) return false;
     renameWithRetrySync(path, join(home, MOVED_ASIDE_FILE));
     return true;
   } catch {
@@ -241,7 +243,9 @@ function readPart(path: string): LogPart | undefined {
 
 /** The time of the oldest failure in `part`, epoch ms; undefined when it holds none. */
 function oldestOf(part: LogPart): number | undefined {
-  return part.failures.length === 0 ? undefined : Math.min(...part.failures.map(failure => failure.at));
+  let oldest: number | undefined;
+  for (const { at } of part.failures) if (oldest === undefined || at < oldest) oldest = at;
+  return oldest;
 }
 
 /** One line of a log file: a failure or a part's start; null when it is neither. */
