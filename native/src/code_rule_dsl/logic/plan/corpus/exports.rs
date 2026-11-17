@@ -181,57 +181,47 @@ impl Exports {
     }
 
     /// Export `rel` as a source of columns `c0…`: its rows, or none when no chunk added any. Made once. The rows
-    /// move into it, and the set that kept them distinct is dropped.
+    /// are packed into it (`packed`), and the set that kept them distinct is dropped.
     pub(super) fn source(&mut self, rel: &str, width: usize) -> Arc<dyn Source> {
         let held = self.rels.entry(rel.to_owned()).or_insert_with(|| Held::new(width));
         if let Some(s) = &held.source {
             return Arc::clone(s);
         }
         let columns = std::mem::take(&mut held.columns);
-        if std::env::var_os("RERAIL_EXPORT_ENCODINGS").is_some() {
-            encodings(rel, &columns);
-        }
         held.set = HashTable::new();
         held.unset.clear();
         held.unset_docs.clear();
-        let names = (0..width).map(|c| format!("c{c}")).collect();
-        let values = if columns.is_empty() { vec![Some(Vec::new()); width] } else { columns.into_iter().map(Some).collect() };
-        let source = crate::code_rule_dsl::logic::native::component::columns_source(names, values);
+        let source = if columns.first().is_some_and(|c| !c.is_empty()) {
+            packed(rel, columns)
+        } else {
+            let names = (0..width).map(|c| format!("c{c}")).collect();
+            crate::code_rule_dsl::logic::native::component::columns_source(names, vec![Some(Vec::new()); width])
+        };
         held.source = Some(Arc::clone(&source));
         source
     }
 }
 
-/// `RERAIL_EXPORT_ENCODINGS=1` (a measurement aid, Q61): what export `rel`'s columns would take packed by
-/// `rerail_blocks::col` (MLDB's `RawMappedIntTable` choices), one profile line a column, in bytes a row: chosen whole,
-/// per range of 4,096 rows (MLDB's `MappedIntTable` ranges, a 64-byte descriptor each), and with the rows in
-/// canonical order (as `rerail_blocks::packed` holds a relation) per range of 4,096, a node column split into its
-/// granule (`x >> 18`: document and slot, `syntax::DefIds`) and its index there, each packed apart.
-fn encodings(rel: &str, columns: &[Vec<i64>]) {
-    use rerail_blocks::col::choose;
-    const DESCRIPTOR: usize = 64;
-    let ranged = |v: &[i64]| v.chunks(4096).map(|c| choose(c).bytes() + DESCRIPTOR).sum::<usize>();
+/// Export `rel`'s rows (`columns`, each held once) packed for the cross-file part (Q61): in canonical order (by
+/// every column, first to last), each column packed per range of 4,096 rows (`rerail_blocks::ranged`), a column
+/// of node ids split at its granule (`document << 32 | slot << 18 | index`, `syntax::DefIds`), so it is runs of
+/// its granule and a small index. Each column held as given is dropped as its sorted copy is made.
+fn packed(rel: &str, columns: Vec<Vec<i64>>) -> Arc<dyn Source> {
+    use rayon::prelude::*;
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "pack an export".into());
     let n = columns.first().map_or(0, Vec::len);
+    let width = columns.len();
     let mut order: Vec<u32> = (0..n as u32).collect();
-    order.sort_unstable_by(|&a, &b| columns.iter().map(|col| col[a as usize].cmp(&col[b as usize])).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal));
-    for (c, v) in columns.iter().enumerate() {
-        let per = |b: usize| b as f64 / n.max(1) as f64;
-        let nodes = v.iter().filter(|&&x| x >= 1 << 32).count();
-        let sorted: Vec<i64> = order.iter().map(|&i| v[i as usize]).collect();
-        let split = (nodes * 2 > n).then(|| {
-            let (granule, index): (Vec<i64>, Vec<i64>) = sorted.iter().map(|&x| (x >> 18, x & 0x3_ffff)).unzip();
-            ranged(&granule) + ranged(&index)
-        });
-        crate::code_rule_dsl::logic::profile::decision("export encodings (Q61)", || {
-            format!(
-                "{rel}.c{c}: {n} rows, {nodes} nodes; B/row: held 8, whole {:.2}, ranges of 4096 {:.2}; sorted: ranges of 4096 {:.2}{}",
-                per(choose(v).bytes() + DESCRIPTOR),
-                per(ranged(v)),
-                per(ranged(&sorted)),
-                split.map_or(String::new(), |b| format!(", granule and index apart {:.2}", per(b)))
-            )
-        });
-    }
+    order.par_sort_unstable_by(|&a, &b| columns.iter().map(|col| col[a as usize].cmp(&col[b as usize])).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal));
+    let sorted: Vec<Vec<i64>> = columns.into_iter().map(|col| order.iter().map(|&i| col[i as usize]).collect()).collect();
+    drop(order);
+    // A column most of whose values are node ids (`d << 32 | …`) splits at the granule; a split never changes a
+    // value read, only its size.
+    let split: Vec<u32> = sorted.iter().map(|col| if col.iter().filter(|&&x| x >= 1 << 32).count() * 2 > col.len() { 18 } else { 0 }).collect();
+    let names = (0..width).map(|c| format!("c{c}")).collect();
+    let (source, bytes) = crate::code_rule_dsl::logic::native::component::packed_source(names, &sorted.iter().map(Vec::as_slice).collect::<Vec<_>>(), &split);
+    crate::code_rule_dsl::logic::profile::decision("exports packed (Q61)", || format!("{rel}: {n} rows of {width} columns, {:.1} MB packed, {:.2} B a value (held as columns: 8)", bytes as f64 / 1e6, bytes as f64 / (n * width).max(1) as f64));
+    source
 }
 
 impl Exports {

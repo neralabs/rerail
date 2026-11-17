@@ -4941,26 +4941,78 @@ struct Stored {
     statistics: Option<std::sync::OnceLock<Vec<(String, i64, i64, i64, i64)>>>,
     /// Its rows' runs by document, as `carry_sorted` reads them: made once, then read by the next run's carry.
     runs: std::sync::OnceLock<Vec<((i64, u32), usize, usize)>>,
+    /// Its columns packed in one block, every one held (`packed_source`), in place of `values`: read in place, by
+    /// row (`ColRef`).
+    packed: Option<rerail_blocks::block::Block>,
+}
+/// One of a `Stored`'s columns as it is held: a slice, or packed per range (`rerail_blocks::ranged`).
+#[derive(Clone, Copy)]
+enum ColRef<'a> {
+    Plain(&'a [i64]),
+    Packed(&'a rerail_blocks::ranged::RangedCol),
+}
+/// Values read by position: a slice, or a column as held (`ColRef`), so `Sorted::of` is one code for both.
+trait Vals {
+    fn n(&self) -> usize;
+    fn at(&self, i: usize) -> i64;
+}
+impl Vals for [i64] {
+    #[inline]
+    fn n(&self) -> usize { self.len() }
+    #[inline]
+    fn at(&self, i: usize) -> i64 { self[i] }
+}
+impl Vals for Vec<i64> {
+    #[inline]
+    fn n(&self) -> usize { self.len() }
+    #[inline]
+    fn at(&self, i: usize) -> i64 { self[i] }
+}
+impl Vals for ColRef<'_> {
+    #[inline]
+    fn n(&self) -> usize {
+        match self { ColRef::Plain(v) => v.len(), ColRef::Packed(p) => p.len() }
+    }
+    #[inline]
+    fn at(&self, i: usize) -> i64 {
+        match self { ColRef::Plain(v) => v[i], ColRef::Packed(p) => p.get(i) }
+    }
 }
 impl Stored {
+    /// Its packed columns (`packed_source`), if it is held so.
+    fn packed(&self) -> Option<&rerail_blocks::ranged::Columns> {
+        self.packed.as_ref().map(|b| b.root())
+    }
+    /// Whether column `c` is held (a packed source holds all of them).
+    fn held(&self, c: usize) -> bool {
+        self.packed.is_some() || self.values[c].get().is_some()
+    }
+    /// Column `c` as it is held.
+    fn col_ref(&self, c: usize) -> ColRef<'_> {
+        match self.packed() {
+            Some(p) => ColRef::Packed(p.col(c)),
+            None => ColRef::Plain(self.col(c)),
+        }
+    }
     /// The runs of its rows of one document: ((document, which of its runs), start, end). A row's document is the one
     /// its first column names, as `memo::document_of` reads it: a node `d << 32 | i`, else the document key itself. A
     /// document's rows are mostly one run; one whose rows come in several (its own node apart) has each counted.
     fn runs(&self) -> &[((i64, u32), usize, usize)] {
         self.runs.get_or_init(|| {
-            let first = self.col(0);
+            let first = self.col_ref(0);
+            let n = first.n();
             let mut out: Vec<((i64, u32), usize, usize)> = Vec::new();
             let mut seen: rustc_hash::FxHashMap<i64, u32> = rustc_hash::FxHashMap::default();
             let mut at = 0;
-            while at < first.len() {
-                let v = first[at];
+            while at < n {
+                let v = first.at(at);
                 let d = if v >= 1 << 32 { v >> 32 } else { v };
                 // The run's end: the rows of a node of `d` (`d << 32 ..= d << 32 | u32::MAX`), or of the value itself.
                 let end = if v >= 1 << 32 {
                     let (lo, hi) = (d << 32, (d << 32) | 0xffff_ffff);
-                    at + first[at..].iter().position(|&x| !(lo..=hi).contains(&x) && x != d).unwrap_or(first.len() - at)
+                    (at..n).find(|&i| { let x = first.at(i); !(lo..=hi).contains(&x) && x != d }).unwrap_or(n)
                 } else {
-                    at + first[at..].iter().position(|&x| x != d && !(x >= 1 << 32 && x >> 32 == d)).unwrap_or(first.len() - at)
+                    (at..n).find(|&i| { let x = first.at(i); x != d && !(x >= 1 << 32 && x >> 32 == d) }).unwrap_or(n)
                 };
                 let k = seen.entry(d).or_default();
                 out.push(((d, *k), at, end));
@@ -4972,20 +5024,20 @@ impl Stored {
     }
     fn new(columns: Vec<String>, values: Vec<std::sync::OnceLock<Vec<i64>>>) -> Self {
         let k = columns.len();
-        Stored { columns, n: std::sync::OnceLock::new(), values, index: (0..k).map(|_| std::sync::OnceLock::new()).collect(), distinct: (0..k).map(|_| std::sync::OnceLock::new()).collect(), orders: Mutex::default(), statistics: None, runs: std::sync::OnceLock::new() }
+        Stored { columns, n: std::sync::OnceLock::new(), values, index: (0..k).map(|_| std::sync::OnceLock::new()).collect(), distinct: (0..k).map(|_| std::sync::OnceLock::new()).collect(), orders: Mutex::default(), statistics: None, runs: std::sync::OnceLock::new(), packed: None }
     }
     /// `syntax::measured`'s statistics, from each column's sorted index (which joins read too): a value's rows are
     /// one run of it, in row order, and their documents (`id >> 32` of the first column) are counted within it. A
     /// column held nowhere (no rule reads it) is stated as a key.
     fn measured(&self) -> Vec<(String, i64, i64, i64, i64)> {
         let n = self.n.get().copied().unwrap_or(0);
-        let first = self.col(0);
-        let doc = |id: u32| first.get(id as usize).copied().unwrap_or(0) >> 32;
+        let first = self.col_ref(0);
+        let doc = |id: u32| if (id as usize) < first.n() { first.at(id as usize) >> 32 } else { 0 };
         let mut docs: Vec<i64> = Vec::new();
         (0..self.columns.len())
             .map(|c| {
                 let name = self.columns[c].clone();
-                if self.values[c].get().is_none() || n == 0 {
+                if !self.held(c) || n == 0 {
                     return (name, n as i64, n as i64, n as i64, n as i64);
                 }
                 let sorted = self.sorted(c);
@@ -5028,22 +5080,27 @@ impl Stored {
         if let Some((o, ids)) = orders.iter().find(|(o, _)| fits(o)) { return (o.clone(), Arc::clone(ids)); }
         let mut by = cols.to_vec();
         by.sort_by_key(|&c| std::cmp::Reverse(self.distinct(c)));
-        let cols_v: Vec<&[i64]> = by.iter().map(|&c| self.col(c)).collect();
+        let cols_v: Vec<ColRef> = by.iter().map(|&c| self.col_ref(c)).collect();
         let mut ids: Vec<u32> = (0..self.n.get().copied().unwrap_or(0) as u32).collect();
-        ids.sort_by(|&a, &b| cols_v.iter().map(|v| v[a as usize].cmp(&v[b as usize])).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal));
+        ids.sort_by(|&a, &b| cols_v.iter().map(|v| v.at(a as usize).cmp(&v.at(b as usize))).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal));
         let ids = Arc::new(ids);
         orders.push((by.clone(), Arc::clone(&ids)));
         (by, ids)
     }
-    fn col(&self, c: usize) -> &[i64] { self.values[c].get().map_or(&[], Vec::as_slice) }
+    /// Column `c` held as a slice (never for a packed source, whose columns are read through `col_ref`).
+    fn col(&self, c: usize) -> &[i64] {
+        debug_assert!(self.packed.is_none(), "a packed source's column read as a slice");
+        self.values[c].get().map_or(&[], Vec::as_slice)
+    }
     /// Column `c`'s rows ordered by value (4 bytes a row, no allocation per key); a value's rows are one run.
     fn index(&self, c: usize) -> &[u32] {
         &self.sorted(c).ids
     }
     fn sorted(&self, c: usize) -> &Sorted {
         self.index[c].get_or_init(|| {
-            let _s = crate::code_rule_dsl::logic::profile::span(|| format!("sort a stored column ({} rows)", self.col(c).len()));
-            Sorted::of(self.col(c))
+            let col = self.col_ref(c);
+            let _s = crate::code_rule_dsl::logic::profile::span(|| format!("sort a stored column ({} rows)", col.n()));
+            Sorted::of(&col)
         })
     }
     /// The rows whose column `c` is `v`: a search of the column's distinct values (contiguous, one per value), not of
@@ -5057,6 +5114,7 @@ impl Stored {
     }
     /// Loads the columns among `need` not yet loaded, in one statement. False if one holds a non-integer value.
     fn load(&self, conn: &Connection, table: &str, need: &[usize]) -> bool {
+        if self.packed.is_some() { return true; }
         let missing: Vec<usize> = need.iter().copied().filter(|&c| self.values[c].get().is_none()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
         if missing.is_empty() { return true; }
         let names: Vec<&str> = missing.iter().map(|&c| self.columns[c].as_str()).collect();
@@ -5086,25 +5144,26 @@ impl Stored {
 /// and 12 a distinct value.
 struct Sorted { ids: Vec<u32>, keys: Vec<i64>, starts: Vec<u32> }
 impl Sorted {
-    fn of(col: &[i64]) -> Sorted {
-        charge(Unit::IndexEntry, col.len() as u64);
+    fn of<V: Vals + ?Sized>(col: &V) -> Sorted {
+        let n = col.n();
+        charge(Unit::IndexEntry, n as u64);
         // In each case the rows of a value are in row order, as a stable sort by value leaves them.
         // A column already in order (a node column of rows in document order): its runs, nothing sorted.
-        if col.is_sorted() {
+        if (1..n).all(|i| col.at(i - 1) <= col.at(i)) {
             let (mut keys, mut starts) = (Vec::new(), Vec::new());
-            for (i, &v) in col.iter().enumerate() {
+            for (i, v) in (0..n).map(|i| (i, col.at(i))) {
                 if keys.last() != Some(&v) {
                     keys.push(v);
                     starts.push(i as u32);
                 }
             }
-            starts.push(col.len() as u32);
-            return Sorted { ids: (0..col.len() as u32).collect(), keys, starts };
+            starts.push(n as u32);
+            return Sorted { ids: (0..n as u32).collect(), keys, starts };
         }
         // Few values (a kind, a name): counted, the values alone sorted, and each row placed at its value's next slot.
         let mut counts: rustc_hash::FxHashMap<i64, u32> = rustc_hash::FxHashMap::default();
-        let few = col.len() / 8;
-        for &v in col {
+        let few = n / 8;
+        for v in (0..n).map(|i| col.at(i)) {
             *counts.entry(v).or_default() += 1;
             if counts.len() > few {
                 break;
@@ -5123,9 +5182,9 @@ impl Sorted {
                 at += n;
             }
             starts.push(at);
-            let mut ids = vec![0u32; col.len()];
-            for (r, v) in col.iter().enumerate() {
-                let slot = counts.get_mut(v).expect("counted");
+            let mut ids = vec![0u32; n];
+            for (r, v) in (0..n).map(|i| (i, col.at(i))) {
+                let slot = counts.get_mut(&v).expect("counted");
                 ids[*slot as usize] = r as u32;
                 *slot += 1;
             }
@@ -5133,7 +5192,7 @@ impl Sorted {
         }
         // Sorted as (value, row) pairs in place: the same order as rows sorted stably by value, without reading a
         // value through its row id at each comparison.
-        let mut pairs: Vec<(i64, u32)> = col.iter().enumerate().map(|(r, &v)| (v, r as u32)).collect();
+        let mut pairs: Vec<(i64, u32)> = (0..n).map(|r| (col.at(r), r as u32)).collect();
         pairs.sort_unstable();
         let mut keys = Vec::new();
         let mut starts = Vec::new();
@@ -5162,11 +5221,11 @@ impl crate::code_rule_dsl::facts::vtab::Source for Stored {
     fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> {
         // Omitted columns read as zero, just as `value` does. They have no array to sort or probe.
         // Remove their satisfied predicates before using an order over the columns that are held.
-        if equal.iter().any(|&(c, _)| self.values[c].get().is_none()) {
-            if equal.iter().any(|&(c, v)| self.values[c].get().is_none() && v != 0) {
+        if equal.iter().any(|&(c, _)| !self.held(c)) {
+            if equal.iter().any(|&(c, v)| !self.held(c) && v != 0) {
                 return Some(Vec::new());
             }
-            let held: Vec<_> = equal.iter().copied().filter(|&(c, _)| self.values[c].get().is_some()).collect();
+            let held: Vec<_> = equal.iter().copied().filter(|&(c, _)| self.held(c)).collect();
             return self.lookup_all(&held);
         }
         if equal.is_empty() {
@@ -5174,8 +5233,8 @@ impl crate::code_rule_dsl::facts::vtab::Source for Stored {
         }
         let cols: Vec<usize> = equal.iter().map(|e| e.0).collect();
         let (on, order) = self.order(&cols);
-        let by: Vec<(&[i64], i64)> = on[..cols.len()].iter().map(|&c| (self.col(c), equal.iter().find(|e| e.0 == c).map_or(0, |e| e.1))).collect();
-        let cmp = |r: u32| by.iter().map(|&(v, x)| v[r as usize].cmp(&x)).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal);
+        let by: Vec<(ColRef, i64)> = on[..cols.len()].iter().map(|&c| (self.col_ref(c), equal.iter().find(|e| e.0 == c).map_or(0, |e| e.1))).collect();
+        let cmp = |r: u32| by.iter().map(|(v, x)| v.at(r as usize).cmp(x)).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal);
         let lo = order.partition_point(|&r| cmp(r).is_lt());
         let hi = order.partition_point(|&r| cmp(r).is_le());
         let mut out: Vec<usize> = order[lo..hi.max(lo)].iter().map(|&r| r as usize).collect();
@@ -5186,7 +5245,7 @@ impl crate::code_rule_dsl::facts::vtab::Source for Stored {
     /// (`sorted_rows`), or builds its own over a filtered view.
     fn indexed(&self, _: usize) -> bool { true }
     fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
-        if self.values[c].get().is_none() {
+        if !self.held(c) {
             return Some(if values.contains(&0) { (0..self.len()).collect() } else { Vec::new() });
         }
         let mut out: Vec<usize> = values.iter().flat_map(|&v| self.rows_of(c, v).iter().map(|&r| r as usize)).collect();
@@ -5194,9 +5253,14 @@ impl crate::code_rule_dsl::facts::vtab::Source for Stored {
         Some(out)
     }
     /// A column held nowhere (no rule names it, `columns_source`) reads as 0.
-    fn value(&self, row: usize, c: usize) -> i64 { self.col(c).get(row).copied().unwrap_or(0) }
-    fn sorted_rows(&self, c: usize, v: i64) -> Option<&[u32]> { self.values[c].get().map(|_| self.rows_of(c, v)) }
-    fn sorts_rows(&self, c: usize) -> bool { self.values[c].get().is_some() }
+    fn value(&self, row: usize, c: usize) -> i64 {
+        match self.packed() {
+            Some(p) => if row < p.len() { p.get(row, c) } else { 0 },
+            None => self.col(c).get(row).copied().unwrap_or(0),
+        }
+    }
+    fn sorted_rows(&self, c: usize, v: i64) -> Option<&[u32]> { self.held(c).then(|| self.rows_of(c, v)) }
+    fn sorts_rows(&self, c: usize) -> bool { self.held(c) }
 }
 /// A relation held in memory as columns (`None`: a column no rule reads, which reads as 0), read in place: a
 /// probe on a column is a slice of its sorted index, built on first use.
@@ -5208,6 +5272,18 @@ pub fn columns_source(columns: Vec<String>, values: Vec<Option<Vec<i64>>>) -> Ar
     t.statistics = Some(std::sync::OnceLock::new());
     let _ = t.n.set(n);
     Arc::new(t)
+}
+/// `columns_source`, its columns packed in one block (`rerail_blocks::ranged`, Q61): the rows in the order given,
+/// column `c` split at bit `split[c]` (0: whole; a node id at its granule, 18). Every column held; read in place.
+/// Also the bytes its block holds.
+pub fn packed_source(columns: Vec<String>, cols: &[&[i64]], split: &[u32]) -> (Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, usize) {
+    let block = rerail_blocks::ranged::pack(cols, split, rerail_blocks::block::kind::FACTS);
+    let bytes = block.used();
+    let mut t = Stored::new(columns.clone(), columns.iter().map(|_| std::sync::OnceLock::new()).collect());
+    let _ = t.n.set(block.root::<rerail_blocks::ranged::Columns>().len());
+    t.packed = Some(block);
+    t.statistics = Some(std::sync::OnceLock::new());
+    (Arc::new(t), bytes)
 }
 /// `columns_source`, its statistics given (kept by delta, decision 0096): read as they are, never measured.
 pub fn columns_source_measured(columns: Vec<String>, values: Vec<Option<Vec<i64>>>, statistics: Vec<(String, i64, i64, i64, i64)>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
@@ -5236,6 +5312,10 @@ pub fn carry_sorted(old: &dyn crate::code_rule_dsl::facts::vtab::Source, new: &d
 /// `carry_sorted`, for a source of at least `at` rows.
 fn carry_sorted_at(old: &dyn crate::code_rule_dsl::facts::vtab::Source, new: &dyn crate::code_rule_dsl::facts::vtab::Source, at: usize) -> (Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>, usize) {
     let (Some(old), Some(new)) = (old.as_any().and_then(|a| a.downcast_ref::<Stored>()), new.as_any().and_then(|a| a.downcast_ref::<Stored>())) else { return (None, 0) };
+    // A packed source's columns are read by row, not carried (its rows were sorted when it was packed).
+    if old.packed.is_some() || new.packed.is_some() {
+        return (None, 0);
+    }
     let k = new.columns.len();
     let held = |t: &Stored| (0..k).map(|c| t.values[c].get().is_some()).collect::<Vec<_>>();
     if k == 0 || old.columns != new.columns || held(old) != held(new) || !held(new)[0] {
@@ -7570,6 +7650,34 @@ pub mod carry_sorted_tests {
 
     fn of(s: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>) -> &Stored {
         s.as_any().and_then(|a| a.downcast_ref::<Stored>()).expect("stored")
+    }
+
+    /// A source packed per range (`packed_source`) reads as the same rows held as slices: values, lookups by one
+    /// column and several, sorted rows, statistics and its runs by document.
+    #[test]
+    fn a_packed_source_reads_as_its_plain_columns() {
+        let n = 3 * rerail_blocks::ranged::RANGE + 11;
+        let mut rows: Vec<[i64; 3]> = (0..n as i64).map(|i| [(7 + i / 500) << 32 | ((i * 31) % 13) << 18 | (i % 50), (i * 7919) % 97, i % 5]).collect();
+        rows.sort_unstable();
+        rows.dedup();
+        let cols: Vec<Vec<i64>> = (0..3).map(|c| rows.iter().map(|r| r[c]).collect()).collect();
+        let names: Vec<String> = ["n", "a", "b"].map(str::to_owned).to_vec();
+        let plain = columns_source(names.clone(), cols.iter().cloned().map(Some).collect());
+        let packed = packed_source(names, &cols.iter().map(Vec::as_slice).collect::<Vec<_>>(), &[18, 0, 0]).0;
+        assert_eq!(packed.len(), plain.len());
+        for r in 0..plain.len() {
+            for c in 0..3 {
+                assert_eq!(packed.value(r, c), plain.value(r, c), "row {r} column {c}");
+            }
+        }
+        for (c, v) in [(0, cols[0][1234]), (1, 40), (2, 3), (1, -1)] {
+            assert_eq!(packed.lookup(c, &[v]), plain.lookup(c, &[v]), "lookup of column {c}");
+            assert_eq!(packed.sorted_rows(c, v), plain.sorted_rows(c, v), "sorted rows of column {c}");
+        }
+        assert_eq!(packed.lookup_all(&[(1, 40), (2, 3)]), plain.lookup_all(&[(1, 40), (2, 3)]));
+        assert_eq!(packed.statistics(), plain.statistics());
+        assert_eq!(of(&packed).runs(), of(&plain).runs());
+        assert_eq!(carry_sorted(packed.as_ref(), plain.as_ref()).1, 0, "a packed source is not carried");
     }
 
     /// Each index carried is the one built over the new rows: a document gone, one changed, one added.
