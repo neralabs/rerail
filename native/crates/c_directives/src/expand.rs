@@ -65,19 +65,36 @@ pub fn tape(src: &[u8], toks: &[tokens::Tok], file: u32, spelled: &mut Vec<u8>, 
 /// An output token: its kind, `BOL` and `SPACE` (the words'), and its spelling.
 pub type Out = (u8, u8, Vec<u8>);
 
-/// `src` (a TU of one file, no includes) expanded by the words; `Err` where its tokens or the
-/// words refuse it.
-pub fn expand(src: &[u8], cpp: bool) -> Result<Vec<Out>, String> {
-    expand_tokens(src, cpp, tokens::tokens(src, cpp))
+/// A file's conditionals' chains on its token tape (`File::chains`): each conditional's `#` and
+/// its chain's next directive's, by mode (a)'s `c_cond_next`; `None` where a directive's `#` is
+/// no token's start.
+pub fn chains(read: &crate::Read, toks: &[Tok]) -> Option<Vec<(u32, u32)>> {
+    let at = |row: u32| -> Option<u32> {
+        let start = read.rows.get(row as usize)?.start;
+        let k = toks.binary_search_by_key(&start, |t| t.start).ok()?;
+        (toks[k].kind == pp_words::HASH).then_some(k as u32)
+    };
+    let mut out = read.next.iter().map(|&(a, b)| Some((at(a)?, at(b)?))).collect::<Option<Vec<_>>>()?;
+    out.sort_unstable();
+    Some(out)
 }
 
-/// `src` expanded over its tokens `toks` (`None`: the token grammar refused it).
-pub fn expand_tokens(src: &[u8], cpp: bool, toks: Option<Vec<tokens::Tok>>) -> Result<Vec<Out>, String> {
+/// `src` (a TU of one file, no includes) expanded by the words; `Err` where its tokens, its
+/// directives or the words refuse it.
+pub fn expand(src: &[u8], cpp: bool) -> Result<Vec<Out>, String> {
+    expand_with(src, cpp, tokens::tokens(src, cpp), crate::compiled().ok().and_then(|c| c.read(src)))
+}
+
+/// `src` expanded over its tokens `toks` and its directives `read` (`None`: their grammar
+/// refused it).
+pub fn expand_with(src: &[u8], cpp: bool, toks: Option<Vec<tokens::Tok>>, read: Option<crate::Read>) -> Result<Vec<Out>, String> {
     let program = program(cpp)?;
     let toks = toks.ok_or("the token grammar refuses the file")?;
+    let read = read.ok_or("the directives' grammar refuses the file")?;
     let mut spelled = Vec::new();
     let tape = tape(src, &toks, 0, &mut spelled, 1);
-    let files = [File { bytes: src, toks: &tape }, File { bytes: &spelled, toks: &[] }];
+    let chains = chains(&read, &tape).ok_or("a directive's `#` is no token's")?;
+    let files = [File { bytes: src, toks: &tape, chains: &chains }, File { bytes: &spelled, toks: &[], chains: &[] }];
     let e = pp_words::run(program, &files, &Bounds::of(&files)).map_err(|r| format!("refused at word {}: {}", r.pc, r.why))?;
     Ok(e.toks.iter().map(|t| (t.kind, t.flags & (pp_words::BOL | pp_words::SPACE), e.text(&files, t).to_vec())).collect())
 }

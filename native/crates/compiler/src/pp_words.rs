@@ -16,7 +16,10 @@
 //!   expansion once it is made (`PRE`), in the order the substitution first asks for it.
 //! - **levels**, one per argument being expanded: the tokens it gave so far (`KEEP`), moved to the
 //!   arena when it ends, so an argument's expansion is one range however deep its calls nest.
-//! - the registers: `T`, the token read last, and `D`, the macro found last.
+//! - **the conditional stack** of each file source: a group's chain taken, its `#else` seen. A group
+//!   not taken is passed by mode (a)'s chains (`File::chains`), never read.
+//! - the registers: `T`, the token read last, `D`, the macro found last, and whether an `#if`'s
+//!   line is being expanded (`defined` is an operator there).
 //!
 //! Every store has a bound from the work (`Bounds::of`); past one the TU is refused, to the lean
 //! pass. Expansion's worst case is exponential, and a refusal is the answer to it.
@@ -27,7 +30,7 @@ use std::collections::HashMap;
 
 /// Whether a word is one of the preprocessing words.
 pub fn is_pp(opcode: u8) -> bool {
-    (READ..=SKIPLINE).contains(&opcode)
+    (READ..=DEFINED).contains(&opcode)
 }
 
 // A token's kind.
@@ -69,10 +72,12 @@ pub struct Tok {
     pub end: u32,
 }
 
-/// A file of the TU: its bytes, and its token tape (`buf` its index + 1).
+/// A file of the TU: its bytes, its token tape (`buf` its index + 1), and its conditionals'
+/// chains: each conditional's `#` (a token's index) and its chain's next directive's, rising.
 pub struct File<'a> {
     pub bytes: &'a [u8],
     pub toks: &'a [Tok],
+    pub chains: &'a [(u32, u32)],
 }
 
 /// The stores' bounds.
@@ -125,7 +130,7 @@ const VA_OPT: &[u8] = b"__VA_OPT__";
 
 /// Whether a word is a test (it runs the next word where it holds, skips it where not).
 fn is_test(opcode: u8, mode: u8) -> bool {
-    matches!(opcode, LINE | IS | PEEK | LOOKUP | MACRO) || (opcode == ARG && (mode == 2 || mode == 4)) || (opcode == PRE && mode == 0)
+    matches!(opcode, LINE | IS | PEEK | LOOKUP | MACRO | DEFINED) || (opcode == ARG && (mode == 2 || mode == 4)) || (opcode == PRE && mode == 0) || (opcode == COND && (mode == 2 || mode == 3)) || (opcode == IF && mode == 1)
 }
 
 /// A preprocessing program's rules: only these words, `GOTO`, `PUSH` (each followed by its
@@ -139,13 +144,15 @@ pub fn validate(program: &Words) -> Result<(), Error> {
     for (pc, &w) in words.iter().enumerate() {
         let (op, mode, operand) = split(w);
         let ok = match op {
-            READ | LINE | LOOKUP | PAINT | PUT | FRAME | KEEP | SUBST | DEFINE | UNDEF | SKIPLINE => mode == 0 && operand == 0,
+            READ | LINE | LOOKUP | PAINT | PUT | FRAME | KEEP | SUBST | DEFINE | UNDEF | SKIPLINE | SKIP | DEFINED => mode == 0 && operand == 0,
             IS => match mode {
                 0 => operand < u16::from(KINDS),
                 1 => string(operand),
-                3 => operand == 0,
+                3 | 4 => operand == 0,
                 _ => false,
             },
+            COND => mode <= 6 && operand == 0,
+            IF => mode <= 1 && operand == 0,
             PEEK => mode == 1 && string(operand),
             MACRO => mode <= 1 && operand == 0,
             ARG => mode <= 5 && operand == 0,
@@ -206,6 +213,8 @@ fn after(words: &[u32], pc: usize, memo: &mut HashMap<usize, Option<bool>>) -> V
     let (op, mode, operand) = split(words[pc]);
     match op {
         READ | LINE | RETURN | ACCEPT | STOP => vec![],
+        // `defined` reads its operand; an `#if`'s line is read into its source.
+        DEFINED => vec![],
         GOTO => vec![usize::from(operand)],
         PUSH => {
             let callee = usize::from(split(words[pc + 1]).2);
@@ -259,6 +268,8 @@ struct Src {
     /// The macro enabled again where it is left, or `NONE`.
     def: u32,
     stop: bool,
+    /// A file's: the token index of the `#` of the directive read last.
+    hash: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -321,6 +332,10 @@ struct Machine<'a> {
     d: u32,
     /// `T` was read from a file.
     from_file: bool,
+    /// The open conditionals: the file source's index, the chain taken, its `#else` seen.
+    conds: Vec<(u32, bool, bool)>,
+    /// An `#if`'s line is being expanded.
+    in_if: bool,
 }
 
 type R<T> = Result<T, &'static str>;
@@ -353,7 +368,7 @@ pub fn run(program: &Words, files: &[File], bounds: &Bounds) -> Result<Expanded,
         bounds,
         arena: Vec::new(),
         scratch: Vec::new(),
-        sources: vec![Src { file: 0, pos: 0, end: files.first().map_or(0, |f| f.toks.len() as u32), def: NONE, stop: false }],
+        sources: vec![Src { file: 0, pos: 0, end: files.first().map_or(0, |f| f.toks.len() as u32), def: NONE, stop: false, hash: NONE }],
         defs: Vec::new(),
         marks: Vec::new(),
         uses: Vec::new(),
@@ -368,6 +383,8 @@ pub fn run(program: &Words, files: &[File], bounds: &Bounds) -> Result<Expanded,
         t: eof(0),
         d: NONE,
         from_file: false,
+        conds: Vec::new(),
+        in_if: false,
     };
     let words = &program.words;
     let mut returns: Vec<usize> = Vec::new();
@@ -412,8 +429,20 @@ pub fn run(program: &Words, files: &[File], bounds: &Bounds) -> Result<Expanded,
             IS => Some(match mode {
                 0 => m.t.kind == operand as u8,
                 1 => m.text(&m.t) == &program.strings[usize::from(operand)][..],
-                _ => m.t.kind == HASH && m.t.flags & BOL != 0 && m.from_file,
+                3 => m.t.kind == HASH && m.t.flags & BOL != 0 && m.from_file,
+                _ => m.in_if,
             }),
+            SKIP => {
+                m.skip().map_err(fail)?;
+                None
+            }
+            COND => m.cond(mode).map_err(fail)?,
+            IF if mode == 0 => {
+                m.if_open().map_err(fail)?;
+                None
+            }
+            IF => Some(m.if_close().map_err(fail)?),
+            DEFINED => Some(m.defined().map_err(fail)?),
             PEEK => Some(m.peek(&program.strings[usize::from(operand)])),
             LOOKUP => Some(m.lookup().map_err(fail)?),
             MACRO => Some(if mode == 0 { m.defs[m.d as usize].disabled } else { m.defs[m.d as usize].fnlike }),
@@ -484,7 +513,11 @@ impl Machine<'_> {
             if s.pos < s.end {
                 self.t = self.src_tok(&s, s.pos);
                 self.from_file = s.file != NONE;
-                self.sources.last_mut().unwrap().pos += 1;
+                let top = self.sources.last_mut().unwrap();
+                if s.file != NONE && self.t.kind == HASH && self.t.flags & BOL != 0 {
+                    top.hash = s.pos;
+                }
+                top.pos += 1;
                 return;
             }
             // A stop source's end, and (until includes) the main file's, are read again and again.
@@ -689,7 +722,7 @@ impl Machine<'_> {
             if self.sources.len() >= self.bounds.depth || self.levels.len() >= self.bounds.depth {
                 return Err("past the sources' bound");
             }
-            self.sources.push(Src { file: NONE, pos: a, end: b, def: NONE, stop: true });
+            self.sources.push(Src { file: NONE, pos: a, end: b, def: NONE, stop: true, hash: NONE });
             self.levels.push((p as u16, self.kept.len() as u32));
             return Ok(true);
         }
@@ -977,8 +1010,107 @@ impl Machine<'_> {
             return Err("past the sources' bound");
         }
         self.defs[f.def as usize].disabled = true;
-        self.sources.push(Src { file: NONE, pos: a, end: self.arena.len() as u32, def: f.def, stop: false });
+        self.sources.push(Src { file: NONE, pos: a, end: self.arena.len() as u32, def: f.def, stop: false, hash: NONE });
         Ok(())
+    }
+
+    // The conditionals.
+
+    /// The top source, a file's index.
+    fn file_src(&self) -> R<usize> {
+        let i = self.sources.len().checked_sub(1).ok_or("a directive with no file")?;
+        if self.sources[i].file == NONE {
+            return Err("a directive's line not in a file");
+        }
+        Ok(i)
+    }
+
+    fn skip(&mut self) -> R<()> {
+        let i = self.file_src()?;
+        let s = self.sources[i];
+        let chains = self.files[s.file as usize].chains;
+        let next = chains.binary_search_by_key(&s.hash, |c| c.0).ok().map(|k| chains[k].1);
+        self.sources[i].pos = next.filter(|&n| n > s.hash).unwrap_or(s.end);
+        Ok(())
+    }
+
+    fn cond(&mut self, mode: u8) -> R<Option<bool>> {
+        let i = self.file_src()? as u32;
+        let top = self.conds.last().copied().filter(|c| c.0 == i);
+        match mode {
+            0 | 1 => {
+                if self.conds.len() >= self.bounds.depth * 16 {
+                    return Err("past the conditionals' bound");
+                }
+                self.conds.push((i, mode == 1, false));
+            }
+            2 => return Ok(Some(top.is_some())),
+            3 => return Ok(Some(top.is_none_or(|c| c.1 || c.2))),
+            4 | 5 => {
+                if let Some(c) = self.conds.last_mut().filter(|c| c.0 == i) {
+                    if mode == 4 {
+                        c.1 = true;
+                    } else {
+                        c.2 = true;
+                    }
+                }
+            }
+            _ => {
+                if top.is_some() {
+                    self.conds.pop();
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    fn if_open(&mut self) -> R<()> {
+        let a = self.arena.len() as u32;
+        while self.line()? {
+            let t = self.t;
+            self.push_arena(t)?;
+        }
+        if self.sources.len() >= self.bounds.depth || self.levels.len() >= self.bounds.depth {
+            return Err("past the sources' bound");
+        }
+        self.sources.push(Src { file: NONE, pos: a, end: self.arena.len() as u32, def: NONE, stop: true, hash: NONE });
+        self.levels.push((u16::MAX, self.kept.len() as u32));
+        self.in_if = true;
+        Ok(())
+    }
+
+    fn if_close(&mut self) -> R<bool> {
+        let (_, at) = self.levels.pop().ok_or("no level open")?;
+        if !self.sources.pop().is_some_and(|s| s.stop) {
+            return Err("an #if's source not on top");
+        }
+        self.in_if = false;
+        let toks: Vec<Tok> = self.kept.drain(at as usize..).collect();
+        let items: Vec<crate::pp_expr::Item> = toks.iter().map(|t| crate::pp_expr::item(t.kind, self.text(t), self.program.pp.cpp)).collect();
+        Ok(crate::pp_expr::eval(&items, self.program.pp.cpp).is_ok_and(|v| v.is_true()))
+    }
+
+    /// `defined X` or `defined ( X )`: `T` its value, a number.
+    fn defined(&mut self) -> R<bool> {
+        let t = self.t;
+        if t.kind != IDENT || t.flags & NOEXP != 0 || self.text(&t) != b"defined" {
+            return Ok(false);
+        }
+        self.read();
+        let paren = self.spelled(&self.t, b"(");
+        if paren {
+            self.read();
+        }
+        let n = self.t;
+        let v = n.kind == IDENT && {
+            let b = self.text(&n).to_vec();
+            matches!(self.find(&b)?, Ok(i) if self.table[i].unwrap().def != NONE)
+        };
+        if paren {
+            self.read();
+        }
+        self.t = self.scratch_tok(NUMBER, if v { b"1" } else { b"0" }, t.flags & (BOL | SPACE))?;
+        Ok(true)
     }
 
     // The directives.

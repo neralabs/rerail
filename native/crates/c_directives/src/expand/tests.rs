@@ -3,7 +3,7 @@ use super::*;
 /// The words over the token tape by the interpreter (the same tape as every backend's,
 /// `tokens::tests`), so a test compiles no grammar through Cranelift.
 fn expand(src: &[u8], cpp: bool) -> Result<Vec<Out>, String> {
-    expand_tokens(src, cpp, tokens::interpreted(src, cpp))
+    expand_with(src, cpp, tokens::interpreted(src, cpp), crate::interpreted_read(src))
 }
 
 /// The words' tokens equal the lean preprocessor's, kinds, spellings and flags, in C and C++.
@@ -132,8 +132,35 @@ H5C(H5A())
         ),
     ),
     ("stringizing", "#define s(x) #x\n#define t(...) #__VA_ARGS__\ns(  a  +  b ) s(\"q\\\"\" 'c' \\n) s() t(a,  b , c) s(\n  x\n  y)\n"),
+    (
+        "#ifdef, #ifndef, #else, #endif, nested",
+        "#define A\n#ifdef A\na1\n#ifdef B\nb1\n#else\nb2\n#endif\n#else\na2\n#ifdef A\nx\n#endif\n#endif\n#ifndef B\nnb\n#endif\n#ifndef A\nna\n#else\nya\n#endif\n#ifdef\nm1\n#endif\n#ifndef\nm2\n#endif\n",
+    ),
+    (
+        "#if, #elif and their expressions",
+        concat!(
+            "#define N 3\n#define F(x) (x * 2)\n",
+            "#if N > 2 && F(N) == 6\nyes1\n#elif 1\nno1\n#else\nno2\n#endif\n",
+            "#if 0\nno3\n#elif N - 3\nno4\n#elif defined(N) && !defined M\nyes2\n#elif 1\nno5\n#endif\n",
+            "#if (1 ? 2 : 1/0) == 2 && -1 < 0u == 0 && 0x10 >> 2 == 4 && '\\n' == 10 && 1, 1\nyes3\n#endif\n",
+            "#if\nno6\n#elif 1/0\nno7\n#else\nyes4\n#endif\n",
+            "#if undefined_name || true\nmaybe\n#endif\n",
+            "#if 1 and 2\nalt\n#endif\n",
+            "#if 0\n#if 1\nno8\n#else\nno9\n#endif\n#elif 2\nyes5\n#endif\n",
+            "#define D defined(N)\n#if D\nyes6\n#endif\n",
+        ),
+    ),
+    ("#elifdef, #elifndef", "#define A\n#ifdef Z\n#elifdef A\nyes\n#elifndef A\nno\n#endif\n#ifdef Z\n#elifndef Z\nyes2\n#else\nno\n#endif\n"),
+    ("unmatched", "a\n#endif\nb\n#else\nc\n#elif 1\nd\n"),
     ("undefines and redefinitions", "#define A 1\nA\n#undef A\nA\n#define A 2\nA\n#undef B\n#define F(x) x\n#undef F\nF(1)\n# \n#pragma x\nA\n"),
 ];
+
+/// A group open at the file's end: mode (a) refuses the file, so the TU goes to the lean pass.
+#[test]
+fn an_unterminated_group_is_refused() {
+    let e = expand(b"#define A\n#ifdef A\nopen\n#else\nnever\n", false).err().unwrap();
+    assert!(e.contains("directives' grammar"), "{e}");
+}
 
 #[test]
 fn the_examples_expand_as_the_lean_pass_does() {
@@ -141,16 +168,16 @@ fn the_examples_expand_as_the_lean_pass_does() {
     assert!(failed.is_empty(), "differ: {failed:?}");
 }
 
-/// Why stage 2 does not run `src`, where it does not: conditionals, `#embed` and the built-ins come
-/// in stage 3. (An `#include` finds nothing here, in both passes: the TU is one file.)
+/// Why the words do not run `src` yet, where they do not: `#embed` and the built-ins (stage 3).
+/// (An `#include` finds nothing here, in both passes: the TU is one file.)
 fn outside_stage_2(src: &[u8], cpp: bool) -> Option<&'static str> {
     let toks = tokens::interpreted(src, cpp)?;
     let text = |t: &tokens::Tok| &src[t.start as usize..t.end as usize];
     for (k, t) in toks.iter().enumerate() {
         if t.kind == "hash" && t.flags & BOL != 0 {
             let name = toks.get(k + 1).filter(|n| n.flags & BOL == 0).map(text).unwrap_or(b"");
-            if !matches!(name, b"define" | b"undef" | b"" | b"error" | b"warning" | b"ident" | b"sccs" | b"include" | b"include_next" | b"import" | b"pragma" | b"line") {
-                return Some("a directive of stage 3");
+            if !matches!(name, b"define" | b"undef" | b"" | b"error" | b"warning" | b"ident" | b"sccs" | b"include" | b"include_next" | b"import" | b"pragma" | b"line" | b"if" | b"ifdef" | b"ifndef" | b"elif" | b"elifdef" | b"elifndef" | b"else" | b"endif") {
+                return Some("a directive the words do not read yet");
             }
         }
         if t.kind == "identifier" && rerail_c_pp::macros::BUILTINS.iter().any(|b| b.0.as_bytes() == text(t)) {
@@ -173,6 +200,10 @@ fn the_corpus_expands_as_the_lean_pass_does() {
         paths.sort();
         for p in paths {
             let src = std::fs::read(&p).unwrap();
+            if crate::interpreted_read(&src).is_none() {
+                *out.entry("the directives' grammar refuses it".into()).or_default() += 1;
+                continue;
+            }
             if tokens::interpreted(&src, cpp).is_none() {
                 *out.entry("the token grammar refuses it".into()).or_default() += 1;
                 continue;

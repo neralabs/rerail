@@ -141,6 +141,21 @@ pub const DEFINE: u8 = 0x74;
 pub const UNDEF: u8 = 0x75;
 /// The directive line's tokens left unread.
 pub const SKIPLINE: u8 = 0x76;
+/// The file source to the next directive of the chain of the conditional whose `#` it read last
+/// (mode (a)'s `c_cond_next`, `pp_words::File::chains`): a group not taken passed unread. No
+/// next: the file's end.
+pub const SKIP: u8 = 0x77;
+/// The file's conditional stack: `m=0` a group opened, not taken; `m=1` opened, taken; `m=2` a
+/// test, a group is open in this file; `m=3` a test, its chain was taken or had its `#else`;
+/// `m=4` its chain taken; `m=5` its `#else` seen; `m=6` closed.
+pub const COND: u8 = 0x78;
+/// `m=0`: an `#if`'s line (the rest of it) pushed as a stop source, a level opened for its
+/// expansion, `defined` an operator; `m=1`, a test: the level closed and its expression's value
+/// true (`pp_expr`).
+pub const IF: u8 = 0x79;
+/// A test: `T` is `defined` (not painted), its operand (`X` or `( X )`) read unexpanded, and
+/// `T` the number `1` or `0`.
+pub const DEFINED: u8 = 0x7a;
 
 pub const NAMED: u8 = 1;
 pub const GREEDY: u8 = 1;
@@ -218,6 +233,8 @@ pub struct PpTables {
     /// A literal pastes with an identifier after it into one literal, its suffix (`ppsuffix`,
     /// C++'s user-defined literals).
     pub suffix: bool,
+    /// `#if` reads C++'s alternative tokens as operators and `true` as 1 (`ppcpp`).
+    pub cpp: bool,
 }
 
 /// A local check (`Words::local_checks`): at each byte `j` of mask `mask`, `ops`' last value at

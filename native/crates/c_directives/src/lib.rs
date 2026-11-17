@@ -57,6 +57,17 @@ pub fn compiled() -> Result<&'static Compiled, &'static str> {
     PARSER.get_or_init(|| compile_text(GRAMMAR)).as_ref().map_err(String::as_str)
 }
 
+static LOWERED: std::sync::OnceLock<Result<rerail_compiler::program::Words, String>> = std::sync::OnceLock::new();
+
+/// `src`'s directives by the interpreter, the grammar lowered once a process (no Cranelift), or
+/// `None` where the grammar refuses it.
+pub fn interpreted_read(src: &[u8]) -> Option<Read> {
+    let program = LOWERED.get_or_init(|| lower_kinds(GRAMMAR, KINDS, FIELDS).map(|l| l.0)).as_ref().ok()?;
+    let run = program.block_programs[0].run(src);
+    let nodes = rerail_compiler::stream::run(program, src, &run).ok()?;
+    read(&rerail_compiler::stream::image(&nodes, &program.readings.extras, 0, src)).ok()
+}
+
 /// `grammar` compiled: a ladder step's text.
 pub fn compile_text(grammar: &str) -> Result<Compiled, String> {
     compile_kinds(grammar, KINDS, FIELDS)

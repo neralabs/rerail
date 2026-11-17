@@ -77,6 +77,10 @@ pub const OPCODES: &[(u8, &str)] = &[
     (DEFINE, "DEFINE"),
     (UNDEF, "UNDEF"),
     (SKIPLINE, "SKIPLINE"),
+    (SKIP, "SKIP"),
+    (COND, "COND"),
+    (IF, "IF"),
+    (DEFINED, "DEFINED"),
 ];
 
 /// How an opcode's operand prints.
@@ -435,6 +439,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
         "reading" => reading_row(parts, line)?,
         "ppop" => parts.pp.ops.push(line.number("s")?),
         "ppsuffix" => parts.pp.suffix = true,
+        "ppcpp" => parts.pp.cpp = true,
         "rule" => {
             index(line, parts.rules.len(), "rule")?;
             parts.rules.push(line.number("@")?);
@@ -868,6 +873,9 @@ pub fn head_rows(out: &mut String, program: &Words) {
     }
     if program.pp.suffix {
         let _ = writeln!(out, "  ppsuffix");
+    }
+    if program.pp.cpp {
+        let _ = writeln!(out, "  ppcpp");
     }
 }
 

@@ -209,6 +209,25 @@ lines).
   flags. Corpus: of the 3,135 files, 1,681 are in stage 2's reach (no conditionals, `#embed` or
   built-ins), and all 1,681 expand as the lean pass does.
 
+## Stage 3, first part: conditionals and `#if`
+
+- **A group not taken is never read.** Mode (a)'s chains (`c_cond_next`) are mapped onto the
+  token tape once per file (`expand::chains`: each conditional's `#` and its chain's next one's).
+  `SKIP` moves the file's cursor from the `#` it read last to the next of its chain. The lean
+  pass's `skip_group` lexes every skipped line; the words jump.
+- **The words:** `COND` (the file's conditional stack: open taken or not, the chain taken, its
+  `#else` seen, closed, and two tests), `IF` (an `#if`'s line as a stop source and a level, then
+  its value), `DEFINED` (the operator, live only while an `#if`'s line is expanded, `IS m=4`).
+- **`EVAL`'s meaning is `pp_expr`,** the lean pass's evaluator over the words' tokens (kinds and
+  spellings, C++'s alternative tokens and `true` with `ppcpp`). It is recursive descent in the
+  interpreter; the generated code needs its explicit stack (Cranelift, stage 4).
+- **The program** is `expand/expand.lab`, labeled; `gen.py` numbers it into `expand.rir` (208
+  words).
+- **Refused:** a file mode (a) refuses (60 of the corpus: a group open at the file's end among
+  them) goes to the lean pass.
+- **Corpus:** 3,002 of 3,135 files expand as the lean pass does, 0 differ. Not run: 57 use a
+  built-in macro, 1 a directive not read yet (`#embed`), 75 a grammar refuses.
+
 ## Open
 
 - **Header units:** a header expanded once per entry macro state (0327, open).
