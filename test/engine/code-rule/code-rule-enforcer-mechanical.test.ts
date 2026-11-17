@@ -1693,18 +1693,27 @@ describe("mechanical code rule regressions", () => {
   });
 });
 
-/** Every workspace the binding makes runs its repository index chunks through `onChunk`; the rest is the engine's own. */
-function aroundIndexChunks(onChunk: (chunk: () => Promise<string>) => Promise<string>) {
+/**
+ * Every workspace the binding makes runs its repository index chunks through `onChunk` and its buffered applies through
+ * `onApply`, which learns the workspace's number in the order they were made (1 first); the rest is the engine's own.
+ */
+function aroundIndexChunks(
+  onChunk: (chunk: () => Promise<string>) => Promise<string>,
+  onApply: (workspace: number, apply: () => Promise<string>) => Promise<string> = (_workspace, apply) => apply(),
+) {
   const real = native.loadNativeBinding();
+  let made = 0;
   class Workspace {
     constructor() {
       const inner = new real.CodeRuleDslWorkspace();
+      const number = ++made;
       return new Proxy(inner, {
         get(target, key) {
           const value: unknown = Reflect.get(target, key, target);
           if (typeof value !== "function") return value;
           if (key === "indexRepositoryAsync")
             return (options: NativeRepositoryIndexOptions) => onChunk(() => target.indexRepositoryAsync(options));
+          if (key === "applyBufferAsync") return (request: Buffer) => onApply(number, () => target.applyBufferAsync(request));
           return value.bind(target);
         },
       });
@@ -1876,6 +1885,80 @@ describe("the engine's evaluation slot", () => {
       expect(evaluationSlot.idle).toBe(true);
     } finally {
       held.resolve();
+      line.mockRestore();
+      binding.mockRestore();
+      await checker.enforcer.close();
+      await scanner.enforcer.close();
+    }
+  });
+
+  it("serves another session's waiting check when the scan's chunk in progress ends, before the scan's next chunk", async () => {
+    // Workspaces in the order they are made: the scanning session's, the checking session's, then the scan's own.
+    const checkerWorkspace = 2;
+    // A stand-in for the engine's slot over the real engine: from the second chunk on, a chunk keeps it until the check
+    // reaches for the engine (refused by it, or waiting in the line), so the call served after that chunk follows from
+    // the order of the calls alone, never from how long each takes.
+    let held: PromiseWithResolvers<void> | undefined;
+    let chunks = 0;
+    let chunksBeforeCheck = -1;
+    let issueCheck: (() => void) | undefined;
+    const binding = aroundIndexChunks(
+      async chunk => {
+        chunks += 1;
+        if (chunks === 1 || chunksBeforeCheck >= 0) return chunk();
+        const hold = Promise.withResolvers<void>();
+        held = hold;
+        try {
+          const pending = chunk();
+          issueCheck?.();
+          const result = await pending;
+          await hold.promise;
+          return result;
+        } finally {
+          held = undefined;
+        }
+      },
+      (workspace, apply) => {
+        if (workspace !== checkerWorkspace) return apply();
+        if (held !== undefined) {
+          held.resolve();
+          return Promise.reject(new Error(native.loadNativeBinding().WORKSPACE_BUSY));
+        }
+        chunksBeforeCheck = chunks;
+        return apply();
+      },
+    );
+    const run = evaluationSlot.run.bind(evaluationSlot);
+    const line = vi.spyOn(evaluationSlot, "run").mockImplementation((task, signal) => {
+      held?.resolve();
+      return run(task, signal);
+    });
+    const { recorder, audits } = recordingAudits();
+    const scanner = await fixture({ audits: recorder });
+    const checker = await fixture();
+    const steered = Promise.withResolvers<void>();
+    checker.requestSteer.mockImplementation(async () => {
+      steered.resolve();
+      return undefined;
+    });
+    try {
+      await chunkedCheckout(scanner.root, 6, "ordered check");
+      await scanner.enforcer.openWorkspace("ordered-scan");
+      await checker.enforcer.openWorkspace("ordered-check");
+      // Too large to apply inline, so the check reaches the engine through the buffered apply.
+      const generatedText = `NEEDLE\n${"# padding\n".repeat(500)}`;
+      issueCheck = () => {
+        issueCheck = undefined;
+        void checker.enforcer.auditGeneratedEdits("ordered-check", { revision: 1, checkpoints: ["edit"], edits: [{ path: "api/a.py", language: "python", generatedText }] });
+      };
+      const [auditId] = await scanner.enforcer.audit("ordered-scan", { scope: "repository", mode: "log" });
+      await steered.promise;
+      expect(audits.get(auditId!)?.result?.status).toBe("completed");
+      // Asked during the second chunk: served when it ends. A check that lost the engine to each next chunk would come
+      // after all six.
+      expect(chunksBeforeCheck).toBe(2);
+    } finally {
+      held?.resolve();
       line.mockRestore();
       binding.mockRestore();
       await checker.enforcer.close();

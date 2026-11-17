@@ -2,11 +2,11 @@ import { isWorkspaceBusy } from "./native.js";
 
 /**
  * The native engine evaluates one workspace apply or repository index chunk at a time across the whole process (its
- * CPU slot), and refuses a call that finds the slot held. The calls of this process take turns here first, in the
- * order they ask, so each reaches the engine once the call before it has finished: a check that arrives during another
- * session's repository scan runs after the scan's chunk in progress, never after the whole scan. A call waiting its
- * turn is a pending promise: it holds no libuv pool thread, and its turn comes from the end of the call before it,
- * never from a clock.
+ * CPU slot), and refuses a call that finds the slot held. The calls of this process wait in one line here first, in
+ * the order they ask, so each reaches the engine once the call before it has finished: a check that arrives during
+ * another session's repository scan runs after the scan's chunk in progress, never after the whole scan. A call
+ * waiting in the line is a pending promise: it holds no libuv pool thread, and it moves to the front when the call
+ * before it settles, never on a clock.
  *
  * A scan's first chunk first plans the whole index (a walk of the checkout and the store's reuse) without the engine's
  * slot, so it runs beside the line (`runBeside`): a check that arrives while the scan plans runs at once, as it would
@@ -33,11 +33,11 @@ export class EvaluationSlot {
 
   /**
    * Runs `task` once every call that asked before it has finished, and frees the slot when it settles. A `signal`
-   * aborted before the turn comes takes the call out of the line: it rejects with the signal's reason and never runs.
+   * aborted while the call waits takes it out of the line: it rejects with the signal's reason and never runs.
    */
   async run<T>(task: () => Promise<T>, signal: AbortSignal): Promise<T> {
     signal.throwIfAborted();
-    await this.#turn(signal);
+    await this.#front(signal);
     try {
       return await this.#untilBesideEnds(task);
     } finally {
@@ -47,7 +47,7 @@ export class EvaluationSlot {
 
   /**
    * Runs `task` at once, beside the line, for an engine call that first works without the engine's slot; refused the
-   * slot after that work, it asks again at its turn in the line.
+   * slot after that work, it asks again from its place in the line.
    */
   async runBeside<T>(task: () => Promise<T>, signal: AbortSignal): Promise<T> {
     signal.throwIfAborted();
@@ -91,7 +91,8 @@ export class EvaluationSlot {
     return this.#refused(error) && (this.#beside.size > 0 || this.#besideEnded !== ended);
   }
 
-  #turn(signal: AbortSignal): Promise<void> {
+  /** Settles when the call reaches the front of the line; rejects if `signal` aborts first. */
+  #front(signal: AbortSignal): Promise<void> {
     if (!this.#held) {
       this.#held = true;
       return Promise.resolve();

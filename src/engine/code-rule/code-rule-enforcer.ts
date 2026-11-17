@@ -1516,9 +1516,9 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   }
 
   /**
-   * One index chunk, at its turn for the engine's evaluation slot: a check that asked first runs before it. A scan's
-   * workspace is its own, and its first chunk plans the index without the slot, so that one runs beside the line
-   * (`EvaluationSlot.runBeside`).
+   * One index chunk, from its place in the line for the engine's evaluation slot: a check that asked first runs before
+   * it. A scan's workspace is its own, and its first chunk plans the index without the slot, so that one runs beside
+   * the line (`EvaluationSlot.runBeside`).
    */
   #indexChunk(workspace: NativeCodeRuleDslWorkspace, nested: NestedCheckoutWalk): Promise<string> {
     const options = { ...REPOSITORY_INDEX_OPTIONS, nestedCheckouts: [...nested.pruned], followGitignore: this.#followGitignore };
@@ -1999,7 +1999,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
 
   /**
    * One apply of `request` at `revision`: inline when it is small, on the session's own workspace and no call holds or
-   * waits for the evaluation slot, else buffered at its turn for the slot.
+   * waits for the evaluation slot, else buffered from its place in the line for the slot.
    */
   async #applyOnce(workspace: NativeCodeRuleDslWorkspace, revision: number, request: ApplyRequest): Promise<WorkspaceResult> {
     const inline = evaluationSlot.idle && this.#appliesInline(workspace, request) ? workspace.tryApply(JSON.stringify({ revision, ...request })) : undefined;
