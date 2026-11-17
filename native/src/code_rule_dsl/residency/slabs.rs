@@ -322,8 +322,9 @@ fn place(
     let tape = region(tape_at, plan.tape);
     let source = region(source_at, plan.source);
     match parts {
-        // Decompressed straight into the slab, to the frames' raw lengths exactly (a 16z tape is read whole when
-        // planned), then checked: the store's bytes are the tape's and the source's whose digests the store holds.
+        // Decompressed straight into the slab, to the frames' raw lengths exactly (a 16z tape is laid out
+        // below, once checked), then checked: the store's bytes are the tape's and the source's whose digests
+        // the store holds.
         Parts::Frames(frames) => {
             if plan.z.is_none() {
                 frames.tape_frame.copy_into(tape).map_err(|error| invalid(format!("tape frame: {error}")))?;
@@ -360,11 +361,17 @@ fn place(
     if std::str::from_utf8(source).is_err() {
         return Err(invalid("a resident source that is not UTF-8"));
     }
-    // The view's offsets count from the document's first byte (`ChunkTape`, decision 0289 §4): a copy into another
-    // block moves `at` alone. Counts are u32s too.
-    let at = |part: usize| u32::try_from(part - offset).map_err(|_| invalid("a part past 4 GiB of its document"));
     let count = |n: usize| u32::try_from(n).map_err(|_| invalid("a count past u32"));
-    let mut view = TapeView { nodes: count(plan.nodes)?, node_base: 0, tape: at(tape_at)?, ..TapeView::default() };
+    // Parts as offsets from the document's start (`at`, decision 0289 §4): a copy into another block moves `at`
+    // alone.
+    let at = |part: usize| u32::try_from(part - offset).map_err(|_| invalid("a part past 4 GiB of its document"));
+    let mut view = DocView {
+        at: u32::try_from(offset).map_err(|_| invalid("a slab offset past 4 GiB"))?,
+        nodes: count(plan.nodes)?,
+        node_base: 0,
+        tape: at(tape_at)?,
+        ..DocView::default()
+    };
     let mut new_table = None;
     match plan.stored {
         resident::Stored::F15 => {
@@ -427,7 +434,6 @@ fn place(
     view.source = at(source_at)?;
     view.source_len = count(plan.source)?;
     view.code_count = count(plan.codes)?;
-    let view = ChunkTape::new(u32::try_from(offset).map_err(|_| invalid("a slab offset past 4 GiB"))?, &view);
     crate::code_rule_dsl::prof::count("residency.decompressed_kb", (plan.tape + plan.source) >> 10);
     let document = Resident {
         digest: *digest,

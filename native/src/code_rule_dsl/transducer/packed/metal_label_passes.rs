@@ -770,8 +770,7 @@ static TAPE_VIEW: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     format!(
         "#include <metal_stdlib>\nusing namespace metal;\n{}constant uint tape_format [[function_constant(0)]];\n#define clif_view(v,a) ((tape_format!=0u&&(a)=={}u)?tape_format:(v)[(a)/4u])\n{}{}",
         crate::code_rule_dsl::residency::slabs::msl(),
-        // The view's own offset: a read's `v` is the entry past its `at` (`metal_tape.metal`'s `TAPE_READ`).
-        std::mem::offset_of!(crate::code_rule_dsl::residency::slabs::TapeView, format),
+        std::mem::offset_of!(crate::code_rule_dsl::residency::slabs::DocView, format),
         include_str!("metal_tape_reads.metal"),
         include_str!("metal_tape.metal")
     )
@@ -779,7 +778,7 @@ static TAPE_VIEW: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
 /// The label kernels over the tape view.
 static SOURCE: std::sync::LazyLock<String> =
     std::sync::LazyLock::new(|| format!("{}{}{}", *TAPE_VIEW, include_str!("metal_work_queue.metal"), include_str!("metal_label_passes.metal")));
-/// Where a label kernel binds the batch's chunk block (`ChunkTape`'s `at`): past every other buffer.
+/// Where a label kernel binds the batch's chunk block (`DocView`'s `at`): past every other buffer.
 const SLAB_SLOT: u64 = 27;
 const KERNELS: [&str; 14] = [
     "label_sink",
@@ -970,7 +969,7 @@ fn bytes_of<T: Copy>(values: &[T]) -> &[u8] {
 /// The batch's tape buffers, shared by every level.
 struct Tapes {
     /// The batch's documents, resident (decision 0032): the label kernels read their tapes in
-    /// place, `docs` holding each one's `ChunkTape`.
+    /// place, `docs` holding each one's `DocView`.
     table: crate::code_rule_dsl::residency::slabs::DocTable,
     docs: MappedBuffer,
     /// The label state: the prefix (head, labels, the sweeps' words), the scratch rows and the
@@ -1558,7 +1557,7 @@ fn tapes(
         return Err(Error::BackendFailure);
     }
     let docs = if table.views.is_empty() {
-        MappedBuffer::zeroed::<crate::code_rule_dsl::residency::slabs::ChunkTape>(device, 1)?
+        MappedBuffer::zeroed::<crate::code_rule_dsl::residency::slabs::DocView>(device, 1)?
     } else {
         MappedBuffer::from_slice(device, &table.views)?
     };

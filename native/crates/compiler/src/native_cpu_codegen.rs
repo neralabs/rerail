@@ -78,9 +78,9 @@ pub fn define_functions(module: &mut JITModule, items: Vec<(FuncId, Context)>, n
     use cranelift_module::{Module, ModuleReloc};
     let mut items = items;
     for (_, context) in &mut items {
-        // The tape's hot reads each calls, inlined (decision 0310).
+        // The tape's hot reads each calls, inlined (decision 0310); then the flow graph made again, as the function
+        // changed since it was made (`clif_fold`, and the inlining).
         rerail_clif::inline::reads(module, context)?;
-        // The function changed since its flow graph was made (`clif_fold`, the inlining above): made again.
         context.cfg.clear();
         context.domtree.clear();
         for (_, function) in context.func.dfg.ext_funcs.iter_mut() {

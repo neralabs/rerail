@@ -4,7 +4,7 @@ use crate::code_rule_dsl::facts::core::{self, Built};
 use crate::code_rule_dsl::language::{GrammarDialect, dialect_by_label, tape_tag};
 use crate::code_rule_dsl::model::FileInput;
 use crate::content_store::Binding;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 fn root() -> PathBuf {
@@ -232,6 +232,33 @@ fn a_views_filter_scan_holds_the_rows_a_per_row_read_finds() {
 /// A field's children by parent and field (`lookup_eq`, a join's `field($a, #f, $t)` with `$a` bound) are the rows a
 /// lookup by parent finds and a filter on the field keeps, in the same order: for every parent and each of its
 /// fields, and for a field it lacks.
+/// The statistics of a relation held as a view of `node` (decision 0329) are its rows' counts, made without reading
+/// them: per column, the distinct values, the squares of their counts and each value's count, as counting every row
+/// gives (`n`, the key: each value once, no counts).
+#[test]
+fn a_node_columns_counts_are_its_rows_counts() {
+    let store = ContentStore::open(&temp("node-counts")).unwrap();
+    let (_, node) = sources(&store, documents().into_iter().take(4).collect()).unwrap().into_iter().find(|(name, _)| *name == "node").unwrap();
+    let batch = node.python_batch().expect("a batch's view");
+    assert!(node.len() > 50, "the documents have nodes");
+    for column in 0..3 {
+        let mut by: BTreeMap<i64, i64> = BTreeMap::new();
+        for r in 0..node.len() {
+            *by.entry(node.value(r, column)).or_default() += 1;
+        }
+        let counts: Vec<(i64, i64)> = by.into_iter().collect();
+        let (ndv, sq, got) = node_column_counts(&batch, column).expect("node's column");
+        assert_eq!(ndv, counts.len() as i64, "column {column}'s distinct values");
+        assert_eq!(sq, counts.iter().map(|&(_, n)| n * n).sum::<i64>(), "column {column}'s squares");
+        if column == 1 {
+            assert!(counts.iter().all(|&(_, n)| n == 1) && got.is_none(), "n is node's key");
+        } else {
+            assert_eq!(got, Some(counts), "column {column}'s counts");
+        }
+    }
+    assert!(node_column_counts(&batch, 3).is_none());
+}
+
 #[test]
 fn a_fields_lookup_by_parent_and_field_holds_what_a_filter_keeps() {
     let store = ContentStore::open(&temp("lookup-eq")).unwrap();
@@ -248,8 +275,21 @@ fn a_fields_lookup_by_parent_and_field_holds_what_a_filter_keeps() {
         }
     }
     assert!(found > 0, "some parent holds one of the fields tried");
+    // By child and field: the child's one row where its field is the one asked, for every child, each field and one
+    // no row has, and for a node of no document.
+    let children: BTreeSet<i64> = (0..field.len()).map(|r| field.value(r, 2)).collect();
+    let mut kept = 0;
+    for &c in &children {
+        for f in fields.iter().copied().take(6).chain([-7]) {
+            let filtered: Vec<usize> = field.lookup(2, &[c]).unwrap().into_iter().filter(|&r| field.value(r, 1) == f).collect();
+            assert_eq!(field.lookup_eq(2, c, &[(1, f)]), Some(filtered.clone()), "child {c}, field {f}");
+            kept += filtered.len();
+        }
+    }
+    assert!(kept > 0, "some child is one of the fields tried");
+    assert_eq!(field.lookup_eq(2, i64::MAX, &[(1, 1)]), Some(Vec::new()));
     // Any other probe is the lookup and filter's.
-    assert_eq!(field.lookup_eq(2, 1, &[(1, 1)]), None);
+    assert_eq!(field.lookup_eq(1, 1, &[(2, 1)]), None);
     assert_eq!(field.lookup_eq(0, 1, &[(2, 1)]), None);
 }
 
@@ -1136,7 +1176,7 @@ fn definition_ids_census() {
                         let f = &*facts;
                         let tokens: Vec<u32> = p.core.iter().enumerate().flat_map(|(l, &id)| f.children(id).into_iter().filter(|&c| !f.named(c) && f.end(c) > f.start(c)).map(move |_| l as u32)).collect();
                         let t0 = cpu_now();
-                        let _ = granules::number(&p, &dialect, &tokens, &mut vec![0; p.core.len() + tokens.len()]);
+                        let _ = granules::number(&p, &dialect, &tokens, &mut vec![0; p.core.len() + tokens.len()], false);
                         row.cpu += cpu_now() - t0;
                         let (g, cont, biggest, fold) = granules::census(&p, &dialect, &tokens);
                         row.nodes += p.core.len() + tokens.len();
@@ -1455,7 +1495,10 @@ fn definition_ids_are_pinned() {
         }
     }
     let got: String = h.finalize()[..16].iter().map(|b| format!("{b:02x}")).collect();
-    assert_eq!(got, "f280acef04fbe4f44e98f401f7f7d4f8", "the definition ids moved");
+    // Moved once by decision 0353 step 2: a granule's tokens are numbered in preorder of the tokens, not by their
+    // nodes' order, so the granule table counts them off a rank index (was f280acef04fbe4f44e98f401f7f7d4f8; the
+    // nodes' and spans' ids are unchanged).
+    assert_eq!(got, "a181683bc9d837ac82beba26e6ff7057", "the definition ids moved");
 }
 
 /// What a kind is to the granules (a definition, a wrapper, a body, a container's owner) is a table by kind code,
@@ -1475,5 +1518,65 @@ fn granule_kinds_are_a_table_by_kind_code() {
             assert_eq!(dialect.granule_kind(code as u16), want, "{label}: {name}");
         }
         assert!(seen > 0, "{label}: no kind starts or holds a granule");
+    }
+}
+
+/// Decision 0353 step 2: the granule table answers every node's and token's id, equal to `DefIds::low`'s, in formats
+/// 15, 16 and 16z, in both shapes, for every language with a granule rule and a document folded past the slots;
+/// `Table::node` inverts it; the scan gives the same ids in preorder; and no other tape node has one.
+#[test]
+fn node_ids_in_place_equal_the_numbered_ones() {
+    use crate::code_rule_dsl::lines::{LineTable, Terminators};
+    use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
+    use granules::Item;
+    if !definition_ids() {
+        return;
+    }
+    let many: String = (0..17_000).map(|i| format!("def f{i}():\n    return {i}\n")).collect();
+    let cases: &[(&str, &str)] = &[
+        ("python", "if a is not b and c not in d:\n    pass\n"),
+        ("python", "import os\nX = 1\n\n# c\n@dec\ndef f(a, b=2):\n    '''doc'''\n    return [x for x in a if x]  # t\n\nclass C(B):\n    y: int = 3\n    def m(self):\n        def inner():\n            pass\n        return inner\n\nif X:\n    print(f(1))\n"),
+        ("python", &many),
+        ("typescript", "import { a } from 'b';\nexport const App = () => 1;\nclass K { x = 1; m(): number { return this.x; } }\ninterface I { y: string }\nfunction g(n: number) { if (n) { return n; } }\n"),
+        ("tsx", "export function A() { return <div className=\"x\">{[1].map(v => <B key={v} />)}</div>; }\nconst y = 2;\n"),
+        ("javascript", "const a = 1;\nexport default class Z extends Y { static s = 1; get g() { return 1 } }\nfunction* h() { yield 1 }\n"),
+        ("rust", "use std::fmt;\nconst N: u32 = 1;\nstruct S { a: u32 }\nimpl fmt::Display for S {\n    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, \"{}\", self.a) }\n}\nmod m { pub fn g() -> u32 { 1 } }\nfn main() { let x = S { a: N }; println!(\"{x}\"); }\n"),
+        ("php", "<?php\nnamespace N;\nuse A\\B;\nclass C { private $p = 1; public function m() { return $this->p; } }\nfunction g($x) { return $x + 1; }\n"),
+        ("sql", "CREATE TABLE t (a int, b text);\nCREATE VIEW v AS SELECT a FROM t WHERE b = 'x';\nSELECT 1;\n"),
+    ];
+    for &(label, source) in cases {
+        let lang = dialect_by_label(label).unwrap_or_else(|| panic!("no dialect {label}"));
+        let grammar = Grammar::new(lang).unwrap();
+        let source = Arc::new(source.to_owned());
+        let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
+        for format in Format::ALL {
+            let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
+            let f = &*facts;
+            let dialect = Dialect::new(core::facts_tag(f)).unwrap();
+            for shape in [Shape::Core, Shape::T] {
+                let p = Projected::new(1, Arc::clone(&facts), Some(&dialect), shape, false, None);
+                let (low, table) = p.numbered().expect("ids by definition");
+                let table = table.expect("a granule table");
+                let at = format!("{label} {} {shape:?}", format.name());
+                // Every item the projection numbers, by tape node: nodes, then (Core) tokens in preorder.
+                let mut want: Vec<(u32, u32, Item)> = p.core.iter().enumerate().map(|(l, &x)| (x, low[l], Item::Node)).collect();
+                if shape == Shape::Core {
+                    want.extend(p.token_order().into_iter().enumerate().map(|(i, (x, _))| (x, low[p.core.len() + i], Item::Token)));
+                }
+                assert_eq!(want.len(), low.len(), "{at}: an id for each node and token");
+                let by_node: HashMap<u32, (u32, Item)> = want.iter().map(|&(x, low, item)| (x, (low, item))).collect();
+                for x in 0..f.len() as u32 {
+                    assert_eq!(table.id(x), by_node.get(&x).copied(), "{at}: tape node {x} ({})", dialect.name(f, x));
+                }
+                for &(x, low, item) in &want {
+                    assert_eq!(table.node(low), Some((x, item)), "{at}: the node of {low:#x}");
+                }
+                let mut scanned = Vec::new();
+                table.scan(|x, low, item| scanned.push((x, low, item)));
+                want.sort_unstable();
+                assert_eq!(scanned, want, "{at}: the scan");
+            }
+        }
     }
 }

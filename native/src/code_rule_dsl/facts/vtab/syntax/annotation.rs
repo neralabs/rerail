@@ -81,7 +81,7 @@ pub(super) struct Annotations {
 }
 
 /// String nodes by their range in a text.
-type ByRange = HashMap<(u32, u32), i64>;
+type ByRange = rustc_hash::FxHashMap<(u32, u32), i64>;
 
 impl Annotations {
     pub(super) fn new(reads: &BTreeSet<String>) -> Self {
@@ -191,6 +191,9 @@ impl super::Producer for Producer {
 }
 
 impl super::ProducerRun for Annotations {
+    fn name(&self) -> &'static str {
+        "string annotations"
+    }
     fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, own: bool, _: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
         Annotations::document(self, p, d, dialect, own)
     }

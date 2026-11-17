@@ -25,12 +25,10 @@ pub fn rust_source(parser: &crate::native_cpu_stream::Parser) -> Result<String, 
 
 #[cfg(test)]
 mod tests {
-    use super::translate;
     use cranelift_codegen::ir::{AbiParam, InstBuilder, Signature, types::I64};
     use cranelift_codegen::isa::CallConv;
     use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 
-    // The translator's own tests are `rerail_clif::rust`'s; this one reads the compiler's block helpers.
     /// A 16-byte compare's mask by NEON's narrowing shift (`native_cpu_block::short_mask`) is
     /// written as one `vshrn_n_u16`, its shift, `and` and casts not besides; and the lanes'
     /// count after it reads the nibbles (`lanes_set`).
@@ -59,7 +57,7 @@ mod tests {
         b.ins().return_(&[n]);
         b.seal_all_blocks();
         b.finalize();
-        let src = translate(&[(0, f)], &[(0, "short")], &[]).expect("translates");
+        let src = rerail_clif::rust::translate(&[(0, f)], &[(0, "short")], &[]).expect("translates");
         assert_eq!(src.matches("vshrn_n_u16::<4>").count(), 1, "{src}");
         for not in ["vandq_u16", "vshrq_n_u16", "vqmovn_u16", "vpaddq_u8", "vpadd_u8"] {
             assert!(!src.contains(not), "{not}: {src}");

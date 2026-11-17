@@ -83,7 +83,7 @@ pub struct ColRead {
 
 impl ColRead {
     /// Row `i`'s value: the read written once (`col_get`, decision 0325), the kernels' and the JIT's too.
-    #[inline]
+    #[inline(always)]
     pub fn get(&self, i: u32) -> i64 {
         // SAFETY: the directory is its relation's, which outlives the reader; row `i` was claimed and reserved.
         unsafe { crate::generated_reads::col_get(self.dir.cast(), self.min_log, i) as i64 }
@@ -204,7 +204,8 @@ impl Rows {
             for c in 0..self.ncols as usize {
                 let d = self.col(c);
                 let bytes = rows * d.width as usize;
-                let Some(off) = block.try_alloc(bytes, align(bytes)) else { return false };
+                // Not zeroed: a value is read only below `len`, written before its row is claimed.
+                let Some(off) = block.try_alloc_raw(bytes, align(bytes)) else { return false };
                 d.chunk[k].store(block.ptr::<u8>(off) as isize as i64 - d as *const ColDir as isize as i64, Relaxed);
             }
             nchunks += 1;

@@ -48,7 +48,7 @@ struct Task { uint evaluation,ordinal,file,program,root,workLimit; };
 // are hops over their elder siblings' subtrees (`descendantEnd`): no child list is read. The chunk is
 // bound where the node records were (`nodes`).
 // `RERAIL_RESIDENT` (the label passes) chooses the task model alone: tasks from roots, not records.
-struct NodeTable { device const uchar* s; ChunkTape d;
+struct NodeTable { device const uchar* s; DocView d;
   Node operator[](uint g) const {return Node{this,g};}
   bool has_class(uint g,uint kind) const {return tape_has_class(s,d,g-d.node_base,kind);}
 };
@@ -66,12 +66,12 @@ inline uint node_field(thread const NodeTable& t,uint g){return tape_field(t.s,t
 inline uint node_next(thread const NodeTable& t,uint g,bool named){uint i=g-t.d.node_base,p=tape_parent(t.s,t.d,i);if(p==TAPE_NONE)return NONE;uint end=tape_end_of(t.s,t.d,p);uint j=named?tape_next_named_in(t.s,t.d,i,end):tape_next_in(t.s,t.d,i,end);return j==TAPE_NONE?NONE:j+t.d.node_base;}
 // The task's document's lines in the batch's numbering of source bytes, read off its tape (`tape_line`): a byte's
 // line (from 0, past the end the last), and a line's first byte.
-struct LineTable { device const uchar* s; ChunkTape d;
+struct LineTable { device const uchar* s; DocView d;
   uint line(uint byte) const {return tape_line(s,d,min(byte-min(byte,d.source_base),d.source_len));}
   uint start(uint k) const {return d.source_base+tape_line_start(s,d,k);}
 };
-struct FileTable { device const ChunkTape* docs;
-  File operator[](uint i) const {ChunkTape d=docs[i];File f;f.nodeStart=d.node_base;f.nodeCount=d.nodes;f.sourceStart=d.source_base;f.source_length=d.source_len;f.lineStart=d.line_base;f.line_count=d.line_count;f.superStart=0u;f.superCount=0u;return f;}
+struct FileTable { device const DocView* docs;
+  File operator[](uint i) const {DocView d=docs[i];File f;f.nodeStart=d.node_base;f.nodeCount=d.nodes;f.sourceStart=d.source_base;f.source_length=d.source_len;f.lineStart=d.line_base;f.line_count=d.line_count;f.superStart=0u;f.superCount=0u;return f;}
 };
 
 bool reserve_atomic(device atomic_uint* cursor,uint capacity,uint count,thread uint& start){uint old=atomic_load_explicit(cursor,memory_order_relaxed);while(true){if(old>capacity||count>capacity-old)return false;uint next=old+count;if(atomic_compare_exchange_weak_explicit(cursor,&old,next,memory_order_relaxed,memory_order_relaxed)){start=old;return true;}}}
@@ -183,27 +183,27 @@ void run_task_in(Task task,constant BatchHeader& header,thread const FileTable& 
 // A resident task's work limit, as `PackedBatch` computes a task's (`MAX_WORK_PER_TASK`): the
 // root's subtree (its file, where the program repeats) times the evaluation's work per node (its
 // program's words times 4096; bit 31: the program repeats), within [4096, 2^26].
-inline uint resident_work(device const uchar* chunk,ChunkTape doc,uint perNode,uint local){
+inline uint resident_work(device const uchar* chunk,DocView doc,uint perNode,uint local){
  ulong nodes=(perNode&0x80000000u)!=0u?doc.nodes:tape_size(chunk,doc,local);
  return uint(clamp(nodes*ulong(perNode&0x7fffffffu),ulong(4096u),ulong(1u<<26u)));
 }
 // A resident label batch's task (decision 0033): no task records. Its evaluation names its
 // program, its document and its roots' rule in `roots` (the run's, bound in place of the tasks);
 // task `index` is a group of 64 of the document's nodes, and a root of it (`root_mask`) is `local`.
-inline Task resident_task(device const uchar* chunk,ChunkTape doc,device const Evaluation& evaluation,uint evaluationIndex,uint index,uint local){
+inline Task resident_task(device const uchar* chunk,DocView doc,device const Evaluation& evaluation,uint evaluationIndex,uint index,uint local){
  return Task{evaluationIndex,index,evaluation.file,evaluation.program,doc.node_base+local,resident_work(chunk,doc,evaluation.workLimit,local)};
 }
 // The evaluation holding task `index`: tasks are numbered through the evaluations in order.
 inline uint resident_evaluation(device const Evaluation* evaluations,uint count,uint index){uint low=0u,high=count;while(high-low>1u){uint middle=(low+high)/2u;if(evaluations[middle].taskStart<=index)low=middle;else high=middle;}return low;}
 #endif
 
-void run_task(Task task,constant BatchHeader& header,device const ChunkTape* files,device const uchar* nodes,device const Program* programs,device const uint* words,device const ulong* longs,device const uchar* children,device const Supertype* supertypes,device Pending* pending,device Link* captures,device Link* cursors,device RepeatLink* repeats,device uchar* schedulerStorage,device Result* results,device Status& status,device const ValueRecord* values,device const StringRecord* strings,device const NfaState* nfaStates,device const uint* nfaData,device const NfaRange* nfaRanges,device const LuaInstruction* luaInstructions,device const LuaMember* luaMembers,device const Assertion* assertions,device const uint* assertionData,device const uchar* stringBytes,device const uchar* source,device uint* valueWork,device const uchar* lineStarts,device FinalCapture* finalCaptures,device uchar* outputStorage,device Evaluation& evaluation,device Evaluation& sharedEvaluation){
- ChunkTape doc=files[task.file];device const uchar* chunk=nodes;
+void run_task(Task task,constant BatchHeader& header,device const DocView* files,device const uchar* nodes,device const Program* programs,device const uint* words,device const ulong* longs,device const uchar* children,device const Supertype* supertypes,device Pending* pending,device Link* captures,device Link* cursors,device RepeatLink* repeats,device uchar* schedulerStorage,device Result* results,device Status& status,device const ValueRecord* values,device const StringRecord* strings,device const NfaState* nfaStates,device const uint* nfaData,device const NfaRange* nfaRanges,device const LuaInstruction* luaInstructions,device const LuaMember* luaMembers,device const Assertion* assertions,device const uint* assertionData,device const uchar* stringBytes,device const uchar* source,device uint* valueWork,device const uchar* lineStarts,device FinalCapture* finalCaptures,device uchar* outputStorage,device Evaluation& evaluation,device Evaluation& sharedEvaluation){
+ DocView doc=files[task.file];device const uchar* chunk=nodes;
  NodeTable nodeTable={chunk,doc};LineTable lineTable={chunk,doc};FileTable fileTable={files};
  run_task_in(task,header,fileTable,nodeTable,programs,words,longs,children,supertypes,pending,captures,cursors,repeats,schedulerStorage,results,status,values,strings,nfaStates,nfaData,nfaRanges,luaInstructions,luaMembers,assertions,assertionData,stringBytes,tape_doc(chunk,doc)+doc.source-doc.source_base,valueWork,lineTable,finalCaptures,outputStorage,evaluation,sharedEvaluation);
 }
 
-kernel void run_batch(device const Task* tasks [[buffer(0)]],constant BatchHeader& header [[buffer(1)]],device const ChunkTape* files [[buffer(2)]],device const uchar* nodes [[buffer(3)]],device const Program* programs [[buffer(4)]],device const uint* words [[buffer(5)]],device const ulong* longs [[buffer(6)]],device const uchar* children [[buffer(7)]],device const Supertype* supertypes [[buffer(8)]],device Pending* pending [[buffer(9)]],device Link* captures [[buffer(10)]],device Link* cursors [[buffer(11)]],device RepeatLink* repeats [[buffer(12)]],device uchar* schedulerStorage [[buffer(13)]],device Result* results [[buffer(14)]],device Status* statuses [[buffer(15)]],device const ValueRecord* values [[buffer(16)]],device const StringRecord* strings [[buffer(17)]],device const NfaState* nfaStates [[buffer(18)]],device const uint* nfaData [[buffer(19)]],device const NfaRange* nfaRanges [[buffer(20)]],device const LuaInstruction* luaInstructions [[buffer(21)]],device const LuaMember* luaMembers [[buffer(22)]],device const Assertion* assertions [[buffer(23)]],device const uint* assertionData [[buffer(24)]],device const uchar* stringBytes [[buffer(25)]],device const uchar* source [[buffer(26)]],device uint* valueWork [[buffer(27)]],device const uchar* lineStarts [[buffer(28)]],device FinalCapture* finalCaptures [[buffer(29)]],device uchar* outputStorage [[buffer(30)]],uint tid [[thread_position_in_grid]]){
+kernel void run_batch(device const Task* tasks [[buffer(0)]],constant BatchHeader& header [[buffer(1)]],device const DocView* files [[buffer(2)]],device const uchar* nodes [[buffer(3)]],device const Program* programs [[buffer(4)]],device const uint* words [[buffer(5)]],device const ulong* longs [[buffer(6)]],device const uchar* children [[buffer(7)]],device const Supertype* supertypes [[buffer(8)]],device Pending* pending [[buffer(9)]],device Link* captures [[buffer(10)]],device Link* cursors [[buffer(11)]],device RepeatLink* repeats [[buffer(12)]],device uchar* schedulerStorage [[buffer(13)]],device Result* results [[buffer(14)]],device Status* statuses [[buffer(15)]],device const ValueRecord* values [[buffer(16)]],device const StringRecord* strings [[buffer(17)]],device const NfaState* nfaStates [[buffer(18)]],device const uint* nfaData [[buffer(19)]],device const NfaRange* nfaRanges [[buffer(20)]],device const LuaInstruction* luaInstructions [[buffer(21)]],device const LuaMember* luaMembers [[buffer(22)]],device const Assertion* assertions [[buffer(23)]],device const uint* assertionData [[buffer(24)]],device const uchar* stringBytes [[buffer(25)]],device const uchar* source [[buffer(26)]],device uint* valueWork [[buffer(27)]],device const uchar* lineStarts [[buffer(28)]],device FinalCapture* finalCaptures [[buffer(29)]],device uchar* outputStorage [[buffer(30)]],uint tid [[thread_position_in_grid]]){
  // A lowered matcher's round already settled (`metal_label_passes`): the label prefix head says skip.
  if(header.supertypeCount!=0u&&(supertypes[0].node&0x80000000u)!=0u)return;
  device GlobalArenas& globalArenas=*((device GlobalArenas*)schedulerStorage);
@@ -239,7 +239,7 @@ kernel void run_batch(device const Task* tasks [[buffer(0)]],constant BatchHeade
 #ifdef RERAIL_RESIDENT
   uint evaluationIndex=resident_evaluation(evaluations,header.evaluationCount,task);
   device Evaluation& evaluation=evaluations[evaluationIndex];
-  ChunkTape rootDoc=files[evaluation.file];
+  DocView rootDoc=files[evaluation.file];
   uint rootGroup=task-evaluation.taskStart;
   ulong rootMask=root_mask(chunk,rootDoc,(device const uint*)tasks,evaluation.rootRule,evaluation.file,rootGroup);
   device Status& status=statuses[tid];

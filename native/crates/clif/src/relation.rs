@@ -230,6 +230,17 @@ pub fn rel_group_row(b: &mut B<'_, '_>) -> Value {
     b.word_at(I32, p, 0)
 }
 
+/// `rel_key_mix(rel, h, v)`: a key's hash `h` with its next value `v` mixed in (`rerail_blocks::mix`; a key's
+/// hash is its values mixed in order into `rerail_blocks::SEED`). The one hash of a key: the host's index builder,
+/// the device's and every probe's (decision 0325 step 5). It reads nothing of the relation.
+pub fn rel_key_mix(b: &mut B<'_, '_>) -> Value {
+    let (h, v) = (b.arg(0), b.arg(1));
+    let h = b.f.ins().bxor(h, v);
+    let h = b.f.ins().imul_imm(h, 0x9E37_79B9_7F4A_7C15_u64 as i64);
+    let s = b.f.ins().ushr_imm(h, 29);
+    b.f.ins().bxor(h, s)
+}
+
 #[cfg(test)]
 mod tests {
     use rerail_blocks::block::{Block, kind};

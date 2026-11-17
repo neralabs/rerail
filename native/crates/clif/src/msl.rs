@@ -2,8 +2,8 @@
 //! `metal_tape.metal`'s hand port.
 //!
 //! A read's function takes the tape (`device const uchar* t`, where the view's offsets count from: the
-//! document's first byte in its batch's block) and its view as u32s (`thread const uint* v`, the device's `ChunkTape` past its `at`), then its own
-//! parameters. In the body the tape and the view are byte offsets from those pointers, 0 where they come in, so
+//! document's first byte in its batch's block) and its view as u32s (`thread const uint* v`, the device's
+//! `DocView`), then its own parameters. In the body the tape and the view are byte offsets from those pointers, 0 where they come in, so
 //! an address the read computes is an offset: a load of the view (marked aligned: its fields) reads `v`, a load of
 //! the tape reads `t`, at any alignment (two aligned words shifted together where it is not aligned to its size;
 //! a slab lays the document's source after its tape, so the second word lies in it).
@@ -21,7 +21,6 @@
 //! tape or the view is below 4 GiB on the device (a document's parts are offsets from its first byte, u32 in its
 //! view), so a 64-bit value whose every use reads only its low 32 bits (`low_words`: an address, a modular step to
 //! another such value) is computed as a `uint`, with the same low bits, and a 64-bit load of it reads 32 bits.
-//! A relation's read keeps its values whole: its descriptor is a 64-bit offset into its block.
 
 use cranelift_codegen::ir::{self, InstructionData, Opcode, condcodes::IntCC, types};
 use crate::reads::Family;
@@ -38,10 +37,9 @@ fn ty(t: ir::Type) -> Result<(&'static str, &'static str), String> {
     })
 }
 
-/// The loads every read's body uses: of the tape at any alignment, by a 32-bit address (a tape read's narrowed
-/// offsets, `low_words`) or a 64-bit one, and of the view (`clif_view`, which a kernel source may define before the
-/// reads, as the label passes' does to make the format a constant). Guarded, so a kernel may include the reads of
-/// several families.
+/// The loads every read's body uses: of the tape at any alignment, and of the view (`clif_view`, which a
+/// kernel source may define before the reads, as the label passes' does to make the format a constant). Guarded,
+/// so a kernel may include the reads of several families.
 pub const HELPERS: &str = "\
 #ifndef CLIF_HELPERS
 #define CLIF_HELPERS 1
@@ -91,10 +89,14 @@ fn pointers(family: Family) -> (&'static str, &'static str) {
 /// a load's address, the operand of an add, subtract, multiply, bitwise operation or left shift whose result is one,
 /// a shift's amount, a reduction's operand, a select's arm that is one, a branch's argument to a block parameter that
 /// is one, a call's tape and view (passed on as pointers). A comparison, a right shift, a division, a minimum, a
-/// call's own argument or a return reads the whole value.
-fn low_words(f: &ir::Function) -> std::collections::HashSet<ir::Value> {
+/// call's own argument or a return reads the whole value. The tape's reads only: a relation's (decision 0325)
+/// compute every value whole.
+fn low_words(f: &ir::Function, family: Family) -> std::collections::HashSet<ir::Value> {
     let dfg = &f.dfg;
     let mut low: std::collections::HashSet<ir::Value> = std::collections::HashSet::new();
+    if family != Family::Tape {
+        return low;
+    }
     for b in f.layout.blocks() {
         for &v in dfg.block_params(b).iter().chain(f.layout.block_insts(b).flat_map(|i| dfg.inst_results(i))) {
             if dfg.value_type(v) == types::I64 {
@@ -165,9 +167,7 @@ fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String
     let dfg = &f.dfg;
     let name = |v: ir::Value| format!("v{}", dfg.resolve_aliases(v).as_u32());
     let entry = f.layout.entry_block().ok_or("no entry block")?;
-    // A tape read's offsets are under 4 GiB on the device (u32 in its view); a relation's descriptor is a 64-bit
-    // offset into its block, so its values stay whole.
-    let low = if family == Family::Tape { low_words(f) } else { std::collections::HashSet::new() };
+    let low = low_words(f, family);
     // A value set and read in one block only is declared where it is set, in that block's case: its life ends there,
     // which a local of the whole body (live round the loop, as far as the compiler sees) does not show. Block
     // parameters and values read in another block are the body's.

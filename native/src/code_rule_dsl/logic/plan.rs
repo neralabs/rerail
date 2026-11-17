@@ -491,6 +491,12 @@ pub struct Stats {
     /// Exact postings of the program's constants: table → (column, value) → n. By table first: a relation's are
     /// read without a pass over every table's (`of_relation`, once per input of a session's run).
     pub memo: HashMap<String, HashMap<(String, Constant), i64>>,
+    /// The relations whose constants' postings in `memo` are estimates: counted over a sample of one chunk of a mix
+    /// and scaled to the others (`corpus::Own`). A constant missing from them is unknown, not absent: the chunk
+    /// measured may lack a value every other chunk holds. Priced as absent (one row), `#f65561` (a comprehension's
+    /// field) led `pre_115`'s plan in every chunk of a cold PostHog run: 14.5 M rows into three anti-joins, and 47
+    /// slow-plan checks measuring exact pair statistics that the kept plan never used.
+    pub estimated: BTreeSet<String>,
     steps_cache: StepsCache,
     kindsets: std::sync::Arc<BTreeMap<String, Vec<String>>>,
     /// (relation, column) → a lookup's CPU as a multiple of a derived relation's, where its source says it is not
@@ -607,6 +613,7 @@ impl Stats {
             indexes: Default::default(),
             docs: None,
             memo: HashMap::new(),
+            estimated: BTreeSet::new(),
             steps_cache: StepsCache::default(),
             kindsets: Arc::new(kindsets),
             lookup: Default::default(),
@@ -812,6 +819,7 @@ impl Stats {
             solving_digest: 0,
             indexes: Default::default(),
             docs: meta.get("docs").copied(),
+            estimated: BTreeSet::new(),
             memo: of("val").filter_map(|r| Some((text(&r[0]), (text(&r[1]), sql_constant(&r[3])?), int(&r[2])))).fold(HashMap::new(), |mut m, (t, k, n)| {
                 m.entry(t).or_insert_with(HashMap::new).insert(k, n);
                 m
@@ -825,10 +833,14 @@ impl Stats {
         })
     }
 
-    /// Exact postings for a constant probe on an input column; `None` if the column has no statistics.
+    /// Exact postings for a constant probe on an input column; `None` if the column has no statistics, or the value
+    /// is missing from postings that are estimates (`estimated`).
     pub fn const_freq(&self, rel: &str, cname: &str, v: &Constant) -> Option<i64> {
         if let Some(&n) = self.memo.get(rel).and_then(|m| m.get(&(cname.to_owned(), v.clone()))) {
             return Some(n);
+        }
+        if self.estimated.contains(rel) {
+            return None;
         }
         self.col.of(rel).is_some_and(|c| c.contains_key(cname)).then_some(0)
     }
@@ -974,6 +986,7 @@ impl Model {
             indexes: st.indexes.clone(),
             docs: st.docs,
             memo: HashMap::default(),
+            estimated: rels.iter().filter(|r| st.estimated.contains(*r)).cloned().collect(),
             steps_cache: StepsCache::default(),
             kindsets: st.kindsets.clone(),
             lookup: st.lookup.clone(),
@@ -5020,6 +5033,10 @@ pub struct Run<'a, 'b> {
     keyless: HashSet<String>,
     /// Relations held only by the native set engine (`program`) until `materialize`.
     native_rels: BTreeSet<String>,
+    /// The inputs this run's strata placed on the device read (decision 0325 step 6): the views the device made of
+    /// them stay resident on this thread for the run's later strata, which placement then prices as found, not made.
+    /// A strand's run is on another thread, with residency of its own: it starts with none.
+    device_views: HashSet<String>,
     /// Immutable unary demand snapshots, shared only within this run.
     demands: native_demand::Demands,
     /// Why the native engine declined the last stratum it was offered (EXPLAIN's `why`).
@@ -5179,6 +5196,51 @@ fn add_answers(db: &Connection, answered: &mut BTreeMap<String, Vec<Vec<i64>>>, 
         }
     }
     Ok(())
+}
+
+/// Rule `rule` (of version `v`) as a view of an input's columns (Q37), the input bound or not: its body one positive
+/// atom of an input (`input`), no constants and each variable once, its head distinct variables of it, and its rows
+/// the input's, one each: the head keeps the input's key (`node`'s node, `doc`'s and `tape`'s first column) or every
+/// column. The input, and the atom's column of each head column. A run holds such a relation in place
+/// (`Run::input_view`); a session neither keeps nor counts it run (`retain::cut`).
+pub(crate) fn input_view_shape(v: &super::program_image::Version, rule: super::program_image::RuleRef<'_>, input: impl Fn(&str) -> bool) -> Option<(String, Vec<usize>)> {
+    if std::env::var_os("RERAIL_COPY_VIEWS").is_some() {
+        return None;
+    }
+    let mut body = rule.body();
+    let (Some(only), None) = (body.next(), body.next()) else { return None };
+    let Lit::Atom(a) = only.view() else { return None };
+    let base = v.rel_name(a.rel());
+    if a.neg() || !input(base) {
+        return None;
+    }
+    let args: Vec<TermRef<'_>> = a.args().collect();
+    let mut vars = HashSet::new();
+    if !args.iter().all(|t| match t {
+        TermRef::Var(x) => vars.insert(*x),
+        TermRef::Wild => true,
+        _ => false,
+    }) {
+        return None;
+    }
+    let at: Vec<usize> = rule.head().args().map(|t| t.var().and_then(|x| args.iter().position(|y| y.var() == Some(x)))).collect::<Option<_>>()?;
+    if at.iter().collect::<HashSet<_>>().len() != at.len() {
+        return None;
+    }
+    let key = match base {
+        "node" if args.len() == 5 => Some(1),
+        "doc" | "tape" => Some(0),
+        _ => None,
+    };
+    (key.is_some_and(|k| at.contains(&k)) || at.len() == args.len()).then(|| (base.to_owned(), at))
+}
+
+/// The strata the process held as views of a bound input's columns (`Run::input_view`, Q37), not derived.
+static INPUT_VIEWS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many strata the process held as views of an input's columns, for tests and profiles.
+pub fn input_views() -> u64 {
+    INPUT_VIEWS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The relations of `prog` whose one rule's body is a single atom of distinct variables and wildcards.
@@ -5485,6 +5547,7 @@ impl<'a> Run<'a, '_> {
         let was: Vec<(String, Option<f64>)> = sizes.into_iter().map(|(r, n)| (r.clone(), self.model.stats.card.insert(r, n.max(1.0)))).collect();
         // The form's rules are planned as the run's are, read by their handles.
         // A local copy: the run's versions are not grown by a pricing.
+        let placing = super::profile::span(|| "derive again or maintain: the forms placed".into());
         let mut vs = (*self.versions).clone();
         let keys = |vs: &mut body::Versions, deltas: bool| -> Vec<RuleKey> {
             let n = if deltas { again.deltas.len() } else { again.rules.len() };
@@ -5509,8 +5572,15 @@ impl<'a> Run<'a, '_> {
             let calls = rules.iter().map(|&r| vs.head_at(r)).collect::<BTreeSet<_>>().len();
             Some(total + CALL * calls as f64)
         };
-        let again_cost = price(&again_rules, false);
-        let kept = price(&kept_rules, true);
+        drop(placing);
+        let again_cost = {
+            let _s = super::profile::span(|| format!("derive again or maintain: derived again planned ({} rules)", again_rules.len()));
+            price(&again_rules, false)
+        };
+        let kept = {
+            let _s = super::profile::span(|| format!("derive again or maintain: maintained planned ({} rules)", kept_rules.len()));
+            price(&kept_rules, true)
+        };
         for (r, n) in was {
             match n {
                 Some(n) => self.model.stats.card.insert(r, n),
@@ -5810,6 +5880,31 @@ impl<'a> Run<'a, '_> {
             freq: Vec::new(),
         });
         Ok(Some(source.len()))
+    }
+
+    /// A view of `node`'s columns `cols` (`input_view`) held in place (decision 0329, `hold_view_in_place`), where `src`
+    /// is a batch's: its statistics each column's exact ones, counted from the batch without reading its rows
+    /// (`syntax::node_column_counts`), as a copy's sketches gave them (`live_of`). `None`: `src` is not a batch's, and
+    /// the view is read into flat rows (`hold_view`).
+    fn hold_view_in_place(&mut self, rel: &str, src: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: &[usize], types: Vec<u8>) -> Option<LiveRel> {
+        if src.columns().len() != 5 {
+            return None;
+        }
+        let batch = src.python_batch()?;
+        let n = src.len() as i64;
+        let mut ndv = Vec::new();
+        let mut sq = Vec::new();
+        let mut freq: Vec<(usize, HashMap<Constant, i64>)> = Vec::new();
+        for (j, &c) in cols.iter().enumerate() {
+            let (d, s, counts) = crate::code_rule_dsl::facts::vtab::syntax::node_column_counts(&batch, c)?;
+            ndv.push(d);
+            sq.push(s);
+            if let Some(counts) = counts {
+                freq.push((j, counts.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect()));
+            }
+        }
+        super::native::component::hold_view_in_place(self.db, rel, Arc::clone(src), cols.to_vec(), types);
+        Some(LiveRel { n, delta: n, ndv, sq, freq })
     }
 
     /// The reach index (decision 0119, `front::Native::Reach` and `ReachThrough`) over relations the engine holds:
@@ -6681,6 +6776,9 @@ impl<'a> Run<'a, '_> {
         if rules.iter().any(|&r| self.versions.rule_at(r).1.body().any(|l| matches!(l.view(), Lit::Ast { .. }))) {
             return Err("an Ast literal");
         }
+        if self.input_view_stratum(scc, rules).is_some() {
+            return Err("a view of an input's columns, held on the run's thread");
+        }
         let mut reads: BTreeSet<String> = scc.clone();
         for &r in rules {
             let (v, rule) = self.versions.rule_at(r);
@@ -6716,6 +6814,7 @@ impl<'a> Run<'a, '_> {
             model,
             views: Arc::clone(&self.views),
             made: HashSet::new(),
+            device_views: HashSet::new(),
             orders: HashMap::new(),
             keyless: HashSet::new(),
             native_rels: reads.iter().filter(|r| self.native_rels.contains(*r)).cloned().collect(),
@@ -6754,6 +6853,7 @@ impl<'a> Run<'a, '_> {
             model,
             views: Arc::clone(&self.views),
             made: HashSet::new(),
+            device_views: HashSet::new(),
             orders: HashMap::new(),
             keyless: HashSet::new(),
             native_rels: reads.iter().filter(|r| self.native_rels.contains(*r)).cloned().collect(),
@@ -7308,6 +7408,36 @@ impl<'a> Run<'a, '_> {
         out
     }
 
+    /// Rule `r` as a view of a bound input (Q37): its body one positive atom of an input bound in place (no
+    /// constants, each variable once), its head distinct variables of it, and its rows the input's, one each: the
+    /// head keeps the input's key (`node`'s node, `doc`'s and `tape`'s first column) or every column. The input, its
+    /// source, and the source's column of each head column.
+    fn input_view(&self, r: RuleKey) -> Option<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<usize>)> {
+        let (v, rule) = self.versions.rule_at(r);
+        let (base, at) = input_view_shape(v, rule, |rel| self.inputs.contains(rel))?;
+        let base = base.as_str();
+        let args_len = rule.body().next().and_then(|l| l.atom()).map_or(0, |a| a.args().count());
+        let src = crate::code_rule_dsl::facts::vtab::bound_source(self.db, base)?;
+        let src = src.frozen().unwrap_or(src);
+        let names = crate::code_rule_dsl::facts::vtab::named(base, src.as_ref());
+        if names.len() != args_len {
+            return None;
+        }
+        let cols: Vec<usize> = at.iter().map(|&c| names.iter().position(|n| *n == self.model.col(base, c))).collect::<Option<_>>()?;
+        Some((base.to_owned(), src, cols))
+    }
+
+    /// Stratum `scc` (`rules`) as a view of an input's columns (`input_view`): its relation, and what it views.
+    fn input_view_stratum(&self, scc: &BTreeSet<String>, rules: &[RuleKey]) -> Option<(String, String)> {
+        let f = self.fields();
+        let (Some(rel), 1, [r]) = (scc.iter().next(), scc.len(), rules) else { return None };
+        if f.has_facts(rel) || f.native(rel).is_some() || f.lattice(rel) || f.request(rel) || f.produced(rel) || f.gate(rel) {
+            return None;
+        }
+        let (base, _, cols) = self.input_view(*r)?;
+        Some((rel.clone(), format!("{rel} = {base}{cols:?}")))
+    }
+
     /// T's `native_stratum`: plans with the stratum as the component being solved when a rule reads it. The stratum
     /// may come back waiting on its device wave (`Native::Waiting`); `native_resume` finishes it once the wave ran.
     /// Whether a native join reads the view `r` from its input in place (`projections`): no SQL view is made for it
@@ -7540,6 +7670,30 @@ impl<'a> Run<'a, '_> {
             self.native_rels.extend(scc.iter().cloned());
             return Ok(Native::Ran);
         }
+        // A copy of a bound input's columns (Q37: `kind(n, k) :- node(_, n, k, _, _)`, 3.5 M rows a cold run of
+        // hogql): its relation is the input's columns read once into flat rows (`hold_view`), and no component
+        // copies it. `RERAIL_COPY_VIEWS` derives it as before (to measure what the view saves).
+        if let ([rel], [r]) = (rels.as_slice(), rules.as_slice())
+            && based.is_empty() && gates.is_empty() && levels.is_empty() && !asks && !facts
+            && let Some((base, src, cols)) = self.input_view(*r)
+        {
+            // Held in place where the source answers the view's probes and counts its columns itself (a batch's
+            // `node`, decision 0329): no row read. Else read once into flat rows (`hold_view`). Either way its
+            // statistics are a copy's, exact or sketched: its readers plan as they did when a stratum copied it.
+            let (form, live) = match self.hold_view_in_place(rel, &src, &cols, types(rel).into_bytes()) {
+                Some(live) => ("held in place", live),
+                None => {
+                    let _span = super::profile::span(|| "a view of an input's columns: its rows".into());
+                    let l = super::native::component::hold_view(self.db, rel, src, cols.clone(), types(rel).into_bytes());
+                    ("read into flat rows", LiveRel { n: l.n, delta: l.delta, ndv: l.ndv, sq: l.sq, freq: l.freq.into_iter().map(|(c, v)| (c, v.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect())).collect() })
+                }
+            };
+            live_stats(&mut self.model, rel, live);
+            INPUT_VIEWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            super::profile::stratum(&stratum_key(scc), "native set engine", || format!("a view of {base}'s columns {cols:?}: {form}, no component opened"));
+            self.native_rels.extend(scc.iter().cloned());
+            return Ok(Native::Ran);
+        }
         // A quiet stratum (decision 0101 §1): only survivors are left, and each `h__del` is empty. Each `h` is then
         // its kept `h__old`, the same relation with its indexes; nothing is specified, planned or opened. A kept
         // relation whose rows are partly in a table (`stored`) is opened as before, so its readers see them all.
@@ -7700,7 +7854,7 @@ impl<'a> Run<'a, '_> {
             shape.add(Order::new(b, &order), work, false, false);
             shape.seeded(head, rows);
             if let Some(x) = &x {
-                shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0), |rel, col| self.model.stats.lookup_cost(rel, col));
+                shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0), |rel, col| self.model.stats.lookup_cost(rel, col), |rel| !self.model.derived.contains(rel));
             }
             let Some(spec) = self.whole_join_spec(b, &order, None, &ri, scc, &native_rels) else {
                 if answering {
@@ -7820,7 +7974,7 @@ impl<'a> Run<'a, '_> {
                 shape.add(Order::new(b, &order), 0.0, true, pf.lattice_name(head) == Some("shortlex_min"));
                 shape.probe(a, work, rows, delta);
                 if let Some(x) = &x {
-                    shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0), |rel, col| self.model.stats.lookup_cost(rel, col));
+                    shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0), |rel, col| self.model.stats.lookup_cost(rel, col), |rel| !self.model.derived.contains(rel));
                 }
                 let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
                 let Some(spec) = self.whole_join_spec(b, &order, Some(at), &ri, scc, &native_rels) else {
@@ -7904,7 +8058,14 @@ impl<'a> Run<'a, '_> {
         // (`device::fixpoint`), unless the device refuses one of them, which the profile then names. Gates and
         // requests are forms the device lacks.
         shape.close_rounds();
+        // An input whose view a device stratum of this run made already is found resident: no view made for it.
+        for r in &mut shape.reads {
+            r.3 &= !self.device_views.contains(&r.0);
+        }
         let placed = placement::place(&shape);
+        if placed.gpu {
+            self.device_views.extend(shape.reads.iter().filter(|r| r.3).map(|r| r.0.clone()));
+        }
         // Placed there but a shape the device's run does not take: named, as a refusal.
         let not_taken = if !placed.gpu {
             None
@@ -10310,7 +10471,10 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     // run or chunk made for the same program at its scale or more (`choices`, decision 0090 §5).
     // A program of no rules (a cross part whose every stratum is kept) has no choice to make, so none is kept for it:
     // keeping one wrote to the store in the run after a cold one, for a program no other run plans (decision 0250).
-    let chosen_key = (corpus && program.len() > 0).then(|| choices::key(&normal_v));
+    // So too a program whose every rule is a view of an input's columns (Q37): held in place, never kept, it is what
+    // is left of a cross part kept whole otherwise.
+    let choosing = program.len() > 0 && normal_v.fields().ok().is_none_or(|f| normal_v.v.rules().any(|r| input_view_shape(&normal_v.v, r, |x| f.is_input(x)).is_none()));
+    let chosen_key = (corpus && choosing).then(|| choices::key(&normal_v));
     let reused = chosen_key.as_ref().and_then(|k| choices::lookup(k, model.stats.nodes));
     // The program's version as the passes chose it (t36 item 6): their overlay, or the kept choice's, which the run
     // reads its rules from as it is; the program's own where nothing was rewritten.
@@ -10467,7 +10631,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     // What each issued form's job did, from its component's retire to its own slot.
     let mut form_ran: HashMap<usize, (usize, Option<Result<(Option<String>, Option<String>)>>)> = HashMap::new();
     let projections0: HashMap<String, Vec<(usize, i64)>> = super::program_image::analyses::projections(&p0.v).into_iter().map(|(r, eqs)| (p0.v.rel_name(r).to_owned(), eqs)).collect();
-    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default() };
+    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, device_views: HashSet::new(), demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default() };
     // A native run makes no views: a projection of an input is a stratum like any, run from the input where it is
     // held (decision 0104: no SQL in the run's waves). A SQL run reads its inputs through views in place.
     let planned_views = if atoms && !native.is_empty() { Vec::new() } else { plan_views(f0, &Arc::clone(&run.versions), &mut run.model, &rules_by)? };
@@ -11392,6 +11556,22 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
         let key = scc.iter().cloned().collect::<Vec<_>>().join("/");
         if let Some(ks) = strata_kept.as_deref_mut() {
             let reads = stratum_reads(f0, &run_vs, scc, &rules);
+            // A view of an input's columns (Q37) is never kept: it is held again in place, which is no work, so it
+            // is clean as its input is. Its digest is its reads' with what it views (as a SQL view's, `view_digest`).
+            if let Some((rel, view)) = run.input_view_stratum(scc, &rules) {
+                let nows: Option<Vec<(String, u64)>> = reads
+                    .iter()
+                    .map(|r| {
+                        let now = if fresh.contains_key(r) { fresh[r] } else if input_set.contains(r.as_str()) { ks.input(r) } else { None };
+                        now.map(|d| (r.clone(), d))
+                    })
+                    .collect();
+                if run.native_stratum_now(scc, &rules)? {
+                    fresh.insert(rel, view_digest(nows.as_deref(), &[(view, Some(0))]));
+                    clean_strata += 1;
+                    continue;
+                }
+            }
             // A stratum the engine makes otherwise (a native operator, a lattice, a view, a produced request, a
             // tree pattern read off the documents) always runs.
             // A request this stratum makes and answers inside its fixpoint (decision 0065 §2a) is its native step:

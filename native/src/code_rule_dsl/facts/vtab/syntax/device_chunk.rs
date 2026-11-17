@@ -57,6 +57,13 @@ structure! {
         /// The spans past the nodes, `[start, end]` each, and the line starts, for the `Loc` views (`fill_locs`).
         pub spans: Span<u32>,
         pub lines: Span<u32>,
+        /// A guest's places (decision 0055), per `Loc` local: its first line, last line and start column in its
+        /// file, `Locs::place`'s, through its placement and its host's lines. Empty for a file's own tree, whose
+        /// places the kernel finds in `lines`.
+        pub placed: Span<u32>,
+        /// The facts' line starts (`LineTable::starts`), for the `line` view (`fill_lines`): a node's line is the
+        /// number of them at or before its start (`Facts::start_line`).
+        pub flines: Span<u32>,
     }
 }
 
@@ -84,6 +91,8 @@ pub const VIEW_LOC_LINE: u32 = 5;
 pub const VIEW_LOC_END: u32 = 6;
 pub const VIEW_LOC_COL: u32 = 7;
 pub const VIEW_LOC_DOCOF: u32 = 8;
+/// The `line` view (`View::Line`): each node's id and the line its start is on, by the facts' own lines.
+pub const VIEW_LINE: u32 = 9;
 
 /// The device's code of `view`, for the views it makes.
 pub fn device_view(view: View) -> Option<u32> {
@@ -96,11 +105,14 @@ pub fn device_view(view: View) -> Option<u32> {
         View::Loc(Place::EndLine) => VIEW_LOC_END,
         View::Loc(Place::Col) => VIEW_LOC_COL,
         View::Loc(Place::Docof) => VIEW_LOC_DOCOF,
+        View::Line => VIEW_LINE,
         _ => return None,
     })
 }
 
 /// `pairs` copied into the chunk: their offset in the block, or `None` when its reservation cannot hold them.
+// copy (0353 step 5): an axis's pairs copied into the chunk. It goes: the solve writes its answer once,
+// as ids, into a relation in the chunk block (decision 0353).
 pub fn put_pairs(chunk: &Chunk, pairs: &[u64]) -> Option<usize> {
     let p: *mut u64 = chunk.block.try_alloc_t(pairs.len().max(1))?;
     // SAFETY: `p` holds `pairs.len()` items, just allocated in the block.
@@ -115,6 +127,8 @@ pub struct Chunk {
     pub root: usize,
     /// Whether the `Loc` views' arrays are in the block (`fill_locs`), once asked.
     locs: std::sync::OnceLock<bool>,
+    /// Whether the facts' line starts are in the block (`fill_lines`), once asked.
+    lines: std::sync::OnceLock<bool>,
 }
 
 /// Copies `src` into the block and points `span` at it.
@@ -151,6 +165,8 @@ fn point<T: Copy + rerail_blocks::Pod>(b: &Arc<Block>, span: *const Span<T>, cel
 }
 
 /// The batch's chunk, in the batch's block: every document's arrays the views read.
+// copy (0353 step 4): the node columns (`start`, `end`, `kind`, `field`), the canonical codes and the
+// projection's arrays copied or made here. They go: the kernels read the placed tapes (decision 0353).
 pub fn build(batch: &Batch) -> Chunk {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "a batch's chunk block".into());
     let b = Arc::clone(&batch.block);
@@ -208,16 +224,43 @@ pub fn build(batch: &Batch) -> Chunk {
     }
     let at = b.offset_of(root);
     b.set_root(root);
-    Chunk { block: b, root: at, locs: std::sync::OnceLock::new() }
+    Chunk { block: b, root: at, locs: std::sync::OnceLock::new(), lines: std::sync::OnceLock::new() }
+}
+
+/// Puts each document's facts' line starts into `batch`'s chunk, once, for the `line` view made on the device (decision
+/// 0325 step 3: it was read on the host, a row at a time, for an upload). False when the block cannot hold them: the
+/// view is then made on the host.
+pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
+    *chunk.lines.get_or_init(|| {
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "the facts' lines in the chunk block".into());
+        let b = &chunk.block;
+        // SAFETY: the root `build` wrote; its document table.
+        let docs = unsafe { (*b.ptr::<ChunkRoot>(chunk.root)).docs.as_ptr() as *mut ChunkDoc };
+        for (i, p) in batch.docs.iter().enumerate() {
+            let starts = p.facts.lines.starts();
+            let Some(ls) = b.try_alloc_t::<u32>(starts.len().max(1)) else { return false };
+            // SAFETY: `ls` holds the starts, just allocated in the block; entry `i` of the table, whose `flines` no
+            // reader reads before this returns.
+            unsafe {
+                for (j, &s) in starts.iter().enumerate() {
+                    *ls.add(j) = u32::try_from(s).expect("a line start within 4 GB");
+                }
+                Span::set(&raw const (*docs.add(i)).flines, ls, starts.len());
+            }
+        }
+        true
+    })
 }
 
 /// Puts the `Loc` views' arrays into `batch`'s chunk, once: each document's first row in them, its spans past its
-/// nodes and its line starts. False when a document's places are not its own lines' (a guest placed in its host
-/// file, decision 0055) or the block cannot hold them: the views are then made on the host.
+/// nodes and its line starts; a guest's places too (decision 0055: its host's lines, through its placement), as the
+/// host finds them. False when a document has no places (no `core.rr` extra) or the block cannot hold them: the views
+/// are then made on the host. A batch with a guest was refused, and its views read on the host for an upload (28 MB
+/// on posthog/hogql).
 pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
     *chunk.locs.get_or_init(|| {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "core.rr's places in the chunk block".into());
-        if batch.docs.iter().any(|p| p.extra.as_ref().is_none_or(|x| x.host.is_some())) {
+        if batch.docs.iter().any(|p| p.extra.is_none()) {
             return false;
         }
         let rows = batch.offsets(View::Loc(Place::Line));
@@ -245,6 +288,18 @@ pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
                 (*d).locs = locs;
                 Span::set(&raw const (*d).spans, sp, 2 * (locs - len) as usize);
                 Span::set(&raw const (*d).lines, ls, starts.len());
+            }
+            if x.host.is_some() {
+                let Some(pl) = b.try_alloc_t::<u32>(3 * locs as usize + 1) else { return false };
+                // SAFETY: `pl` holds `3 * locs` values, just allocated in the block; entry `i` of the table, as above.
+                unsafe {
+                    for local in 0..locs {
+                        let (line, last, col) = x.place(p.span(local));
+                        let at = pl.add(3 * local as usize);
+                        (*at, *at.add(1), *at.add(2)) = (line, last, col);
+                    }
+                    Span::set(&raw const (*docs.add(i)).placed, pl, 3 * locs as usize);
+                }
             }
         }
         true
