@@ -4673,11 +4673,21 @@ impl CodeRuleDslRuntime {
 
     /// The tests the `.rr` files under `paths_json` (a JSON array of files and directories) carry, each run (decision
     /// 0130, `rerail-engine test-rr`): `[{file, test, line, status, failures, findings}]` as JSON. `rerail rules test`
-    /// calls it for a `.rr` file.
+    /// calls it for a `.rr` file. The runs read the `.rr` library (`logic::rr::library`), which a checkout holds and the
+    /// package does not ship: without it, an error that says so.
     #[napi(catch_unwind)]
     pub fn test_rr(paths_json: String, filter: Option<String>) -> Result<String> {
         let paths: Vec<std::path::PathBuf> =
             serde_json::from_str(&paths_json).map_err(json::json_error)?;
+        let library = logic::rr::library();
+        if !library.join("core.rr").is_file() {
+            return Err(json::invalid(format!(
+                "a .rr file's tests run against the .rr rule library, which is not at {}: Rerail's package does not \
+                 ship it, so run the tests from a Rerail checkout, or set RERAIL_RR_LIB to the library's folder \
+                 (docs/rule-syntax/lib in a checkout)",
+                library.display()
+            )));
+        }
         let report =
             logic::rr::testing::report(&paths, filter.as_deref()).map_err(json::invalid)?;
         serde_json::to_string(&report).map_err(json::json_error)
