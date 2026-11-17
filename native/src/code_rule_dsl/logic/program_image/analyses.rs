@@ -9,7 +9,7 @@ use super::about::{About, NativeKind};
 use super::handles::{AggRef, Lit, TermRef};
 use super::version::Version;
 use super::RelId;
-use crate::code_rule_dsl::logic::front::Error;
+use crate::code_rule_dsl::logic::front::{Error, Value};
 use std::collections::BTreeSet;
 
 /// Dependency edges, head → dependency, with whether each is negative (an aggregate's is, a gated negation's is
@@ -285,6 +285,7 @@ pub fn projections(v: &Version) -> Vec<(RelId, Vec<(usize, i64)>)> {
                 TermRef::Var(s) => vars.push(s),
                 TermRef::Wild => {}
                 TermRef::Int(i) => eqs.push((c, i)),
+                TermRef::Branded(a) => eqs.push((c, a.value())),
                 _ => plain = false,
             }
         }
@@ -342,6 +343,38 @@ impl Analysis for Strata {
     fn compute(cx: &Cx<'_>) -> Result<Strata, String> {
         strata(cx.v(), &*cx.get::<About>()?).map_err(|e| e.to_string())
     }
+    /// Its components, `(0, k, rel)` in order, and its edges, `(1, head, dependency, negative)` (decision 0333 §4).
+    fn rows(&self, _v: &Version) -> Option<Vec<super::manager::Row>> {
+        let int = |n: u32| Value::Int(i64::from(n));
+        let mut out: Vec<super::manager::Row> = Vec::new();
+        for (k, scc) in self.sccs.iter().enumerate() {
+            out.extend(scc.iter().map(|r| vec![Value::Int(0), Value::Int(k as i64), int(r.0)]));
+        }
+        out.extend(self.edges.iter().map(|(h, d, neg)| vec![Value::Int(1), int(h.0), int(d.0), Value::Int(i64::from(neg))]));
+        Some(out)
+    }
+    fn of_rows(_v: &Version, rows: &[super::manager::Row]) -> Option<Strata> {
+        let id = |v: &Value| match v {
+            Value::Int(n) => u32::try_from(*n).ok().map(RelId),
+            _ => None,
+        };
+        let mut sccs: Vec<Vec<RelId>> = Vec::new();
+        let mut edges = Vec::new();
+        for r in rows {
+            match r.as_slice() {
+                [Value::Int(0), Value::Int(k), rel] => {
+                    let k = usize::try_from(*k).ok()?;
+                    if k >= sccs.len() {
+                        sccs.resize_with(k + 1, Vec::new);
+                    }
+                    sccs[k].push(id(rel)?);
+                }
+                [Value::Int(1), h, d, Value::Int(neg)] => edges.push((id(h)?, id(d)?, *neg != 0)),
+                _ => return None,
+            }
+        }
+        Some(Strata { sccs, edges: Edges { edges } })
+    }
 }
 
 /// The relations the outputs read, directly or through rules and natives, the outputs included (`needed`).
@@ -356,6 +389,19 @@ impl Analysis for Needed {
         let roots: Vec<RelId> = v.outputs().filter_map(|a| v.rel_of(a)).collect();
         let need = needed(v, &*cx.get::<About>()?, roots);
         Ok(Needed(need.iter().enumerate().filter(|(_, n)| **n).map(|(k, _)| RelId(k as u32)).collect()))
+    }
+    /// One row per relation needed, by id (decision 0333 §4).
+    fn rows(&self, _v: &Version) -> Option<Vec<super::manager::Row>> {
+        Some(self.0.iter().map(|r| vec![crate::code_rule_dsl::logic::front::Value::Int(i64::from(r.0))]).collect())
+    }
+    fn of_rows(_v: &Version, rows: &[super::manager::Row]) -> Option<Needed> {
+        rows.iter()
+            .map(|r| match r.as_slice() {
+                [crate::code_rule_dsl::logic::front::Value::Int(k)] => u32::try_from(*k).ok().map(RelId),
+                _ => None,
+            })
+            .collect::<Option<_>>()
+            .map(Needed)
     }
 }
 
@@ -376,5 +422,21 @@ impl Analysis for Components {
     const READS: Reads = Reads::RULES.or(Reads::ABOUT);
     fn compute(cx: &Cx<'_>) -> Result<Components, String> {
         components_by_name(cx.v(), &*cx.get::<About>()?, &[]).map(Components).map_err(|e| e.to_string())
+    }
+    /// One row per member, `(k, name)`, components in order (decision 0333 §4).
+    fn rows(&self, _v: &Version) -> Option<Vec<super::manager::Row>> {
+        Some(self.0.iter().enumerate().flat_map(|(k, c)| c.iter().map(move |n| vec![Value::Int(k as i64), Value::Str(n.clone().into())])).collect())
+    }
+    fn of_rows(_v: &Version, rows: &[super::manager::Row]) -> Option<Components> {
+        let mut out: Vec<BTreeSet<String>> = Vec::new();
+        for r in rows {
+            let [Value::Int(k), Value::Str(n)] = r.as_slice() else { return None };
+            let k = usize::try_from(*k).ok()?;
+            if k >= out.len() {
+                out.resize_with(k + 1, BTreeSet::new);
+            }
+            out[k].insert(n.to_string());
+        }
+        Some(Components(out))
     }
 }

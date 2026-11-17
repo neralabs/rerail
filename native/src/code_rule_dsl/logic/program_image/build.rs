@@ -35,6 +35,8 @@ pub enum T<'a> {
     Wild,
     Top,
     Int(i64),
+    /// A branded atom (decision 0270).
+    Branded(crate::code_rule_dsl::logic::front::Branded),
     Str(&'a str),
     StrAtom(AtomId),
     Call(&'a str, Vec<T<'a>>),
@@ -49,6 +51,7 @@ pub fn t_of<'v>(v: &'v Version, r: RuleRef<'v>, t: TermRef<'v>) -> T<'v> {
         TermRef::Wild => T::Wild,
         TermRef::Top => T::Top,
         TermRef::Int(i) => T::Int(i),
+        TermRef::Branded(b) => T::Branded(b),
         TermRef::Str(a) => T::StrAtom(a),
         TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| t_of(v, r, a)).collect()),
     }
@@ -295,12 +298,14 @@ impl<'p> Builder<'p> {
         rows.iter().map(|row| row.iter().map(|v| match v {
             Value::Int(i) => Cell::Int(*i),
             Value::Str(s) => Cell::Str(AtomId(self.enc.atom(s))),
+            Value::Branded(b) => Cell::Branded(*b),
         }).collect()).collect()
     }
     fn hash_rows(rel: &str, about: bool, rows: &[List<Value>]) -> u64 {
         encoder::facts_hash(rel, about, rows.iter().map(|row| row.iter().map(|v| match v {
             Value::Int(i) => CellText::Int(*i),
             Value::Str(s) => CellText::Str(s.as_str()),
+            Value::Branded(b) => CellText::Branded(*b),
         })))
     }
     /// States relation `rel`'s facts, replacing the parent's.
@@ -337,6 +342,7 @@ impl<'p> Builder<'p> {
         encoder::facts_hash(rel, about, rows.iter().map(|row| row.iter().map(|c| match *c {
             Cell::Int(i) => CellText::Int(i),
             Cell::Str(x) => CellText::Str(enc.text(x.0)),
+            Cell::Branded(b) => CellText::Branded(b),
         })))
     }
     /// The rows of about relation `name` this edit states, or its parent's (`about.rs` reads and writes them by type).
@@ -497,7 +503,7 @@ impl<'p> Builder<'p> {
 
 /// The view of `parent` less rules `removed` (its rules), if it is few enough ranges (`max_ranges`). A view of a view
 /// is of that view's parent, its ranges that view's less `removed`.
-fn view(parent: &Arc<Version>, removed: &[u32]) -> Option<Arc<Version>> {
+pub(super) fn view(parent: &Arc<Version>, removed: &[u32]) -> Option<Arc<Version>> {
     let (over, ranges): (&Arc<Version>, Vec<(u32, u32)>) = match &**parent {
         Version::View { parent: over, ranges, .. } => (over, ranges.clone()),
         _ => (parent, vec![(0, parent.rule_end())]),
@@ -610,6 +616,42 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
             self.b.enc.leaf(kind::STR, a);
             self.term(var);
         }
+        self.b.enc.close(at);
+        self
+    }
+    /// An aggregate `var = op over : { rel(args) }`, written as the encoder writes a tree's (`over` `None` for a
+    /// count); `var` a variable. A join's separator and keys are not written term by term: refused.
+    pub fn agg(mut self, var: T<'_>, op: &crate::code_rule_dsl::logic::front::AggOp, over: Option<T<'_>>, rel: impl Into<Rel<'b>>, args: &[T<'_>]) -> Self {
+        use crate::code_rule_dsl::logic::front::AggOp;
+        self.body();
+        let code: u8 = match op {
+            AggOp::Count => 0,
+            AggOp::Min => 1,
+            AggOp::Max => 2,
+            AggOp::Sum => 3,
+            AggOp::Product => 4,
+            AggOp::Join { .. } => {
+                self.failed = Some(super::bad("a join aggregate written term by term"));
+                return self;
+            }
+        };
+        let s = match var {
+            T::Var(v) => {
+                let a = self.b.enc.atom(v);
+                self.b.enc.slot_of(a)
+            }
+            T::VarAtom(a) => self.b.enc.slot_of(a.0),
+            _ => {
+                self.failed = Some(super::bad("an aggregate's result that is not a variable"));
+                return self;
+            }
+        };
+        let at = self.b.enc.open(kind::AGG | code << 5, s);
+        match over {
+            Some(t) => self.term(&t),
+            None => self.b.enc.leaf(kind::WILD, 0),
+        }
+        self.atom_node(rel.into(), args, 0);
         self.b.enc.close(at);
         self
     }
@@ -798,6 +840,7 @@ fn write_t(e: &mut Encoder<'_>, t: &T<'_>) {
         T::Wild => e.leaf(kind::WILD, 0),
         T::Top => e.leaf(kind::TOP, 0),
         T::Int(i) => e.int(*i),
+        T::Branded(b) => e.leaf(kind::BRANDED | super::brand_code(b.class) << 5, b.atom),
         T::Str(s) => {
             let a = e.atom(s);
             e.leaf(kind::STR, a);

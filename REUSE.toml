@@ -138,6 +138,34 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2017 Josh Vera, GitHub", "2019 Max Brunsfeld, Amaan Qureshi, Christian Frøystad, Caleb White"]
 SPDX-License-Identifier = "MIT"
 
+# tree-sitter-kotlin-sg 0.4.1, tree-sitter-swift 0.7.4 and tree-sitter-scala 0.26.2 grammar.json (with each
+# crate's LICENSE), byte-identical to the crates': the named-only tapes' token automata and the lean parsers' kinds.
+[[annotations]]
+path = "native/grammars/token-grammars/kotlin/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2019 fwcd"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "native/grammars/token-grammars/swift/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2021 alex-pinkus"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "native/grammars/token-grammars/scala/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2018 Max Brunsfeld and GitHub"
+SPDX-License-Identifier = "MIT"
+
+# tree-sitter-go 0.25.0, tree-sitter-c 0.24.2 and tree-sitter-cpp 0.23.4 grammar.json, byte-identical to the
+# crates': the named-only tapes' token automata are built from them.
+[[annotations]]
+path = ["native/grammars/token-grammars/go/**", "native/grammars/token-grammars/c/**", "native/grammars/token-grammars/cpp/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "2014 Max Brunsfeld"
+SPDX-License-Identifier = "MIT"
+
 # zstd dictionaries trained on CPython's standard library (native/dictionaries/README.md).
 [[annotations]]
 path = ["native/dictionaries/python-source.zdict", "native/dictionaries/python-tape.zdict"]

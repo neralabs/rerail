@@ -54,7 +54,7 @@
     #[test]
     fn a_seeds_graph_is_its_own_whatever_run_derived_it() {
         let lib = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).unwrap();
-        let text = super::Seed::Text { t_shape: false, includes: vec![(0, "python/env.rr".to_owned())] };
+        let text = super::Seed::Text { t_shape: false, includes: vec![(0, "python/env.rr".to_owned())], phases: Vec::new() };
         let alone = super::derive(std::slice::from_ref(&text)).unwrap().of(&text, 0);
         let seeds = vec![super::Seed::File(lib.join("python/env.rr")), super::Seed::File(lib.join("python/imports.rr")), text.clone()];
         let shared = super::derive(&seeds).unwrap();
@@ -65,4 +65,23 @@
             let alone = super::derive(std::slice::from_ref(seed)).unwrap().of(seed, 0);
             assert_eq!(shared.of(seed, k).digest(), alone.digest(), "{seed:?}");
         }
+    }
+
+    /// A rule's include beside it whose directory lies outside phase 0's roots (`rules/../packs/…`, a benchmark's
+    /// copy of a pack's tables): the loader refused it, so the graph does not hold it absent, and the graph holds while
+    /// the file is there. Held absent, the graph never held, and phase 0 ran again on every run.
+    #[test]
+    fn a_candidate_outside_the_roots_is_not_held_absent() {
+        let dir = std::env::temp_dir().join(format!("rerail-p0-absent-{}", std::process::id()));
+        let (rules, packs) = (dir.join("rules"), dir.join("packs"));
+        std::fs::create_dir_all(&rules).unwrap();
+        std::fs::create_dir_all(&packs).unwrap();
+        std::fs::write(packs.join("rerail-p0-absent-table.rr"), "t(1).\n").unwrap();
+        std::fs::write(rules.join("r.rr"), "#include \"../packs/rerail-p0-absent-table.rr\"\n.decl x(a: number)\nx(1).\n.output x\n").unwrap();
+        let rule = std::fs::canonicalize(rules.join("r.rr")).unwrap();
+        let graph = super::graphs(&[super::Seed::File(rule.clone())]).unwrap().remove(0);
+        let described = graph.describe();
+        assert!(!described.contains("rules/../packs/rerail-p0-absent-table.rr"), "{described}");
+        assert!(graph.holds_now(), "{described}");
+        let _ = std::fs::remove_dir_all(&dir);
     }

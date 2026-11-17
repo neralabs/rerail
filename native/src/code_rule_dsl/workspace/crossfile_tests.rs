@@ -177,7 +177,7 @@ fn stored_workspace(
             root_tree,
             1,
             HashKey::sha256(b"rerail-grammars-v1"),
-            i64::from(tape::TAPE_FORMAT_VERSION),
+            i64::from(tape::formats::stored_version()),
         )
         .unwrap();
     let owner = format!("crossfile-test:{root}:{}", std::process::id());

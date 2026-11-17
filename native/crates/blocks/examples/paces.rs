@@ -31,6 +31,7 @@ use rerail_blocks::facts::{Facts, FrozenFacts, RelDef, Schema};
 use rerail_blocks::journal::{self, Journal};
 use rerail_blocks::program::{ModuleIn, Program};
 use rerail_blocks::relation::{Spec, View};
+use rerail_blocks::{col, packed};
 use rerail_blocks::{footprint, retired};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -101,8 +102,11 @@ fn make_doc(d: u32, ver: u32) -> Src {
     Src { key: d + 1, kind, parent, name, digest: h }
 }
 
+/// A node's atom: its document's key and its place in it, in 4 bytes (a document has under 4,096 nodes, a run under
+/// 2^20 documents).
 fn nid(doc: u32, i: u32) -> i64 {
-    ((doc as i64) << 32) | i as i64
+    debug_assert!(i < 1 << 12 && doc < 1 << 20);
+    ((doc as i64) << 12) | i as i64
 }
 
 // ---- schemas ----
@@ -146,9 +150,9 @@ struct Schemas {
 
 fn schemas() -> Schemas {
     let pair = |ml| spec(&[4, 4], &[&[0], &[1]], ml);
-    let doc_node = |ml| spec(&[4, 8], &[&[0]], ml);
+    let doc_node = |ml| spec(&[4, 4], &[&[0]], ml);
     let chunk = schema(&[
-        ("node", 0, spec(&[4, 8, 4, 8], &[&[1]], 12)),
+        ("node", 0, spec(&[4, 4, 4, 4], &[&[1]], 12)),
         ("assert_at", 1, doc_node(8)),
         ("call_in_assert", 1, doc_node(8)),
         ("defines", 1, pair(8)),
@@ -759,6 +763,114 @@ fn maybe_rollup(cx: &Ctx, name: &str, f: &mut FrozenFacts, log: &mut Vec<String>
     *f = rolled;
 }
 
+
+// ---- packing: every relation written again, exactly sized, in the fewest bits ----
+
+#[derive(Default)]
+struct PackTotals {
+    rows: usize,
+    in_place: usize,
+    packed: usize,
+    parts: [usize; 7],
+}
+
+fn pack_facts(cx: &Ctx, what: &str, f: &FrozenFacts, show: bool, t: &mut PackTotals) {
+    for r in 0..f.schema.rels.len() {
+        let v = f.view(r);
+        let spec = &f.schema.rels[r].spec;
+        let (pb, st) = cx.time("pack (from the frozen view)", || packed::pack(&v, spec, kind::FACTS));
+        let pk: &packed::Packed = pb.root();
+        let mut held = f.rel(r).held_bytes();
+        if let Some(b) = &f.base {
+            held += b.rel(r).held_bytes();
+        }
+        cx.check(pk.digest() == v.digest(), format!("{what}.{}: packed reads the same ({} rows)", f.schema.rels[r].name, pk.len()));
+        if f.base.is_none() {
+            // Frozen in place, a full relation's rows are in canonical order, so its ids are the packed form's
+            // positions: a delta's kills name the same rows in either form.
+            let same_ids = (0..pk.len()).all(|p| (0..v.arity()).all(|c| v.get(p as u32, c) == pk.get(p, c)));
+            cx.check(same_ids && v.total() as usize == pk.len(), format!("{what}.{}: in-place ids = packed positions", f.schema.rels[r].name));
+        }
+        // Probes: every index, on keys drawn from the rows, the same rows in the same order.
+        let mut same = true;
+        let ord = v.ordered();
+        for (i, ix) in spec.indexes.iter().enumerate() {
+            for k in (0..ord.len()).step_by((ord.len() / 64).max(1)) {
+                let key: Vec<i64> = ix.iter().map(|&c| v.get(ord[k], c as usize)).collect();
+                let a: Vec<Vec<i64>> = v.probe(i, &key).into_iter().map(|id| v.row(id)).collect();
+                let b: Vec<Vec<i64>> = pk.probe(ix, &key).map(|p| (0..v.arity()).map(|c| pk.get(p, c)).collect()).collect();
+                same &= a == b;
+            }
+        }
+        cx.check(same, format!("{what}.{}: packed probes = in-place probes", f.schema.rels[r].name));
+        t.rows += st.rows;
+        for (x, y) in t.parts.iter_mut().zip(f.rel(r).held_parts()) {
+            *x += y;
+        }
+        t.in_place += held;
+        t.packed += st.bytes;
+        if show {
+            let encs: Vec<String> = st.cols.iter().map(|(n, b, _)| format!("{n}/{b}")).collect();
+            println!(
+                "  {:<18} {:>9} rows  in place {:>10} B ({:>5.1} B/row)  packed {:>9} B ({:>5.1} B/row, index {:>8} B)  cols {}",
+                format!("{what}.{}", f.schema.rels[r].name),
+                st.rows,
+                held,
+                held as f64 / st.rows.max(1) as f64,
+                st.bytes,
+                st.bytes as f64 / st.rows.max(1) as f64,
+                st.index_bytes,
+                encs.join(" ")
+            );
+        }
+    }
+}
+
+/// Packs the cold run's blocks: the phases' facts, and a chunk evaluation's file-local relations and documents.
+fn pack_paces(cx: &Ctx, kept: &Kept, srcs: &[Src]) {
+    println!("packing (in-place frozen -> packed):");
+    let mut t = PackTotals::default();
+    pack_facts(cx, "p1", &kept.p1, true, &mut t);
+    pack_facts(cx, "p2", &kept.p2, true, &mut t);
+    pack_facts(cx, "out", &kept.out, true, &mut t);
+    let refs: Vec<&Src> = srcs.iter().collect();
+    let chunks = eval_chunks(cx.sc, &refs, None, None);
+    let mut ct = PackTotals::default();
+    let (mut doc_plain, mut doc_packed, mut nodes) = (0usize, 0usize, 0usize);
+    for (i, c) in chunks.iter().enumerate() {
+        pack_facts(cx, "chunk", c, false, &mut ct);
+        // Documents: kind, parent and name per node, plain (2 + 4 + 4 bytes) and as columns; the parent also as
+        // its distance back from the node, which is small.
+        for d in chunk::docs(&c.block) {
+            let n = d.nodes as usize;
+            nodes += n;
+            doc_plain += n * 10;
+            let kind: Vec<i64> = d.kind.as_slice().iter().map(|&x| x as i64).collect();
+            let back: Vec<i64> = d.parent.as_slice().iter().enumerate().map(|(j, &p)| j as i64 - p as i64).collect();
+            let name: Vec<i64> = d.name.as_slice().iter().map(|&x| x as i64).collect();
+            doc_packed += [kind, back, name].iter().map(|v| col::encode(v).bytes() + size_of::<col::IntCol>()).sum::<usize>();
+        }
+        let _ = i;
+    }
+    println!(
+        "  {:<18} {:>9} rows  in place {:>10} B ({:>5.1} B/row)  packed {:>9} B ({:>5.1} B/row)",
+        "chunk relations", ct.rows, ct.in_place, ct.in_place as f64 / ct.rows.max(1) as f64, ct.packed, ct.packed as f64 / ct.rows.max(1) as f64
+    );
+    println!(
+        "  {:<18} {:>9} nodes plain    {:>10} B ({:>5.1} B/node) packed {:>9} B ({:>5.1} B/node)",
+        "chunk documents", nodes, doc_plain, doc_plain as f64 / nodes.max(1) as f64, doc_packed, doc_packed as f64 / nodes.max(1) as f64
+    );
+    for (what, t) in [("phase facts", &t), ("chunk relations", &ct)] {
+        let names = ["values", "chunk room", "order", "buckets", "index rows", "dead bits", "descriptors"];
+        let parts: Vec<String> = names.iter().zip(t.parts).map(|(n, b)| format!("{n} {:.1}", b as f64 / t.rows.max(1) as f64)).collect();
+        println!("  {what}, in place by part (B/row): {}", parts.join(", "));
+    }
+    println!(
+        "  {:<18} {:>9} rows  in place {:>10} B  packed {:>9} B  ({:.1}x smaller)",
+        "phase facts", t.rows, t.in_place, t.packed, t.in_place as f64 / t.packed.max(1) as f64
+    );
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let ndocs: u32 = args.get(1).and_then(|a| a.parse().ok()).unwrap_or(300);
@@ -768,7 +880,13 @@ fn main() {
     let sc = schemas();
 
     #[cfg(target_os = "macos")]
-    let gpu = match if std::env::var_os("PACES_NO_GPU").is_some() { Err("PACES_NO_GPU".to_string()) } else { rerail_blocks::gpu::Gpu::new() } {
+    let gpu = match if std::env::var_os("PACES_NO_GPU").is_some() { Err("PACES_NO_GPU".to_string()) } else { {
+        // A benchmark of its own process: it makes the device and queue the engine's owner would hand it.
+        metal::Device::system_default().ok_or_else(|| "no Metal device".to_string()).and_then(|d| {
+            let q = d.new_command_queue();
+            rerail_blocks::gpu::Gpu::on(d, q)
+        })
+    } } {
         Ok(g) => Some(g),
         Err(e) => {
             println!("no GPU: {e}");
@@ -798,6 +916,7 @@ fn main() {
     println!("footprint after the cold run: {} MB", footprint() >> 20);
     println!("cold: p1 {} bytes, p2 {}, outputs {}, journal {} bytes", kept.p1.block.used(), kept.p2.block.used(), kept.out.block.used(), j0len);
     let mut journals = vec![jpath(0)];
+    pack_paces(&cx, &kept, &srcs);
 
     // 2. Memo-warm cold: every document hits, from the journal reopened from disk.
     let store = cx.time("journal reopen + index", || Store::open(&journals));
@@ -926,4 +1045,6 @@ fn residency(cx: &Ctx) {
     let fb = b.freeze();
     let buf = gpu.wrap(&fb);
     cx.check(buf.length() == (fb.used().div_ceil(1 << 20) << 20) as u64, "a frozen (read-only) block wraps for the GPU, its used extent only".into());
+    let again = gpu.wrap(&fb);
+    cx.check(again.gpu_address() == buf.gpu_address(), "a block's device buffer is kept: the second wrap is the first".into());
 }

@@ -1,5 +1,5 @@
 //! A PHP file's tape from the lean parser (`rerail_php_lean`): tree-sitter-php's tape (its `php_only`
-//! grammar), written as the parse goes, with nothing packed again (`TapeImage::written`). The tape is
+//! grammar), written as the parse goes, with nothing packed again (`formats::lean`: format 15's columns, or format 16 written in one pass). The tape is
 //! the one tree-sitter-php's tree encodes to, node for node (`php_tapes_from_the_lean_parser_are_tree_sitters`).
 //!
 //! The parser reads the file's view (`parse_input`: the text outside `<?php … ?>` blanked), the
@@ -59,25 +59,20 @@ pub fn encode_program(grammar: &Grammar, text: &str, budget: &dyn Fn() -> bool) 
 
 /// The tape of `input`, which has `source`'s length and offsets, reading `source`.
 fn encode_input(grammar: &Grammar, input: &[u8], source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_php_lean::Refusal> {
-    let tape = rerail_php_lean::tape(input)?;
     let ids = ids();
     let lacks = |what: &str, i: usize| format!("tree-sitter-php lacks the lean parser's {what} {i}");
-    let codes: Result<Vec<Code>, String> = tape
-        .keys
-        .iter()
-        .map(|&key| {
-            let (kind, field, class, extra) = rerail_php_lean::unkey(key);
-            let kind = ids.kinds[usize::from(kind)].ok_or_else(|| lacks("kind", usize::from(kind)))?;
-            let field = ids.fields[usize::from(field)].ok_or_else(|| lacks("field", usize::from(field)))?;
-            let classes: &[u16] = if extra { &[] } else { ids.classes[usize::from(class)].as_deref().ok_or_else(|| lacks("supertype set", usize::from(class)))? };
-            let mut code = Code::plain(kind, field, classes)?;
-            if extra {
-                code.flags |= CODE_EXTRA;
-            }
-            Ok(code)
-        })
-        .collect();
-    Ok(codes.and_then(|codes| TapeImage::written(tape.code, tape.size, tape.base, tape.off, tape.tail, tape.widths, codes, None, grammar, source, budget)))
+    let code_of = |&key: &u32| -> Result<Code, String> {
+        let (kind, field, class, extra) = rerail_php_lean::unkey(key);
+        let kind = ids.kinds[usize::from(kind)].ok_or_else(|| lacks("kind", usize::from(kind)))?;
+        let field = ids.fields[usize::from(field)].ok_or_else(|| lacks("field", usize::from(field)))?;
+        let classes: &[u16] = if extra { &[] } else { ids.classes[usize::from(class)].as_deref().ok_or_else(|| lacks("supertype set", usize::from(class)))? };
+        let mut code = Code::plain(kind, field, classes)?;
+        if extra {
+            code.flags |= CODE_EXTRA;
+        }
+        Ok(code)
+    };
+    rerail_php_lean::tape_into(input, &mut super::formats::lean(grammar, source, budget, &code_of))
 }
 
 /// PHP's tree parser: the lean parser, standing in for tree-sitter-php where it reads the file.
@@ -93,7 +88,7 @@ impl TreeParser for Lean {
             Ok(image) => {
                 drop(span);
                 crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::SourceByte, source.len() as u64);
-                Some(image.map(FileImage::single).map_err(TemplateError::Encode))
+                Some(image.map(|image| FileImage::single(image, source)).map_err(TemplateError::Encode))
             }
             Err(why) => {
                 crate::code_rule_dsl::logic::profile::decision("PHP parse", || format!("a file the lean parser refused ({why:?}): tree-sitter-php"));

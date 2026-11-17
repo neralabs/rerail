@@ -16,6 +16,20 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use super::memo;
 use crate::code_rule_dsl::logic::plan::statkeep::RelStats;
 
+/// `RERAIL_KEPT_DOCS=<export>,…` (a debugging aid, Q20): the rows of those exports this process counted in and out,
+/// by the document their location column names.
+static KEPT_DOCS: std::sync::Mutex<BTreeMap<String, HashMap<i64, i64>>> = std::sync::Mutex::new(BTreeMap::new());
+/// `RERAIL_KEPT_DOCS`: each counted row of those exports, with the file whose entry gave it and its sign.
+static KEPT_ROWS: std::sync::Mutex<Vec<(String, String, i64, Vec<i64>)>> = std::sync::Mutex::new(Vec::new());
+/// The file whose entry `count` is counting (for `KEPT_ROWS`).
+static COUNTING: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// Whether `RERAIL_KEPT_DOCS` names export `key`.
+pub(super) fn kept_docs_listed(key: &str) -> bool {
+    static LISTED: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    LISTED.get_or_init(|| std::env::var("RERAIL_KEPT_DOCS").map(|v| v.split(',').map(str::to_owned).collect()).unwrap_or_default()).iter().any(|k| k == key)
+}
+
 /// One memoised program's statistics, and which content of each file they count.
 #[derive(Default)]
 pub(super) struct Keeper {
@@ -186,6 +200,9 @@ impl Keeper {
             return self.fail(format!("{path}: no memo content"));
         };
         self.seen.insert(path.to_owned());
+        if std::env::var_os("RERAIL_KEPT_DOCS").is_some() {
+            *COUNTING.lock().expect("the file counted") = path.to_owned();
+        }
         let now = (content, key);
         match self.docs.get(path).copied() {
             Some(was) if same(was, now) => {
@@ -354,7 +371,19 @@ impl Keeper {
             }
             if let Some((width, values)) = entry.rows.get(key) {
                 match (self.doc_at.get(key), self.from.get(key)) {
-                    (Some(at), _) => stats.rows_by(values, *width, sign, *at),
+                    (Some(at), _) => {
+                        if kept_docs_listed(key) {
+                            let mut traced = KEPT_DOCS.lock().expect("the kept documents' trace");
+                            let by = traced.entry(key.clone()).or_default();
+                            let path = COUNTING.lock().expect("the file counted").clone();
+                            let mut rows = KEPT_ROWS.lock().expect("the kept rows' trace");
+                            for row in values.chunks_exact((*width).max(1)) {
+                                *by.entry(at.map_or(-1, |c| row[c] >> 32)).or_default() += sign;
+                                rows.push((key.clone(), path.clone(), sign, row.to_vec()));
+                            }
+                        }
+                        stats.rows_by(values, *width, sign, *at)
+                    }
                     (None, Some(from)) => stats.documents_at(values, *width, from, sign),
                     (None, None) => stats.documents(values, *width, sign),
                 }
@@ -458,6 +487,12 @@ impl Keeper {
     /// (by its key and width); a relation it does not know keeps no exact maps when `strict`, so its constants are
     /// counted from the rows held. The sketches hash the values as they are counted, and stay as they are: a run
     /// across numberings perturbs their estimates, never a finding.
+    /// What `syms` says of each relation's columns (`map_symbols`'s first argument), asked now: for a write that maps
+    /// them later, where `syms` is not at hand (the store's writer, decision 0306).
+    pub(super) fn symbol_columns(&self, syms: &dyn Fn(&str, &[String]) -> Option<Vec<bool>>) -> BTreeMap<String, Option<Vec<bool>>> {
+        self.rels.iter().map(|(rel, stats)| (rel.clone(), syms(rel, stats.columns()))).collect()
+    }
+
     pub(super) fn map_symbols(&mut self, syms: &dyn Fn(&str, &[String]) -> Option<Vec<bool>>, strict: bool, f: impl FnOnce(&mut [i64]) -> crate::content_store::StoreResult<()>) -> crate::content_store::StoreResult<()> {
         let mut taken: Vec<(String, usize, Vec<i64>)> = Vec::new();
         let mut values: Vec<i64> = Vec::new();
@@ -490,6 +525,39 @@ impl Keeper {
             }
         }
         Ok(())
+    }
+
+    /// `RERAIL_KEPT_DOCS`: export `key`'s rows as this process counted them, by document, against `held`'s (each row
+    /// `held` holds, `width` columns): the documents whose counts differ, with the file each is kept under. A run
+    /// that counts every file in (a new build's first) counts all of them.
+    pub(super) fn compare_documents(&self, key: &str, held: &super::exports::Exports, width: usize) -> Vec<String> {
+        let at = self.doc_at.get(key).copied().flatten();
+        let mut have: HashMap<i64, i64> = HashMap::new();
+        held.each_row(key, width, |row| *have.entry(at.map_or(-1, |c| row[c] >> 32)).or_default() += 1);
+        let counted = KEPT_DOCS.lock().expect("the kept documents' trace").get(key).cloned().unwrap_or_default();
+        let mut docs: Vec<i64> = have.keys().chain(counted.keys()).copied().collect();
+        docs.sort_unstable();
+        docs.dedup();
+        let path = |d: i64| self.docs.iter().find(|(_, (_, k))| *k == d).map_or("(no file kept under it)", |(p, _)| p.as_str());
+        docs.into_iter()
+            .filter_map(|d| {
+                let (c, h) = (counted.get(&d).copied().unwrap_or(0), have.get(&d).copied().unwrap_or(0));
+                (c != h).then(|| {
+                    let mut out = format!("document {d} {}: {c} counted, {h} held", path(d));
+                    for (k, p, sign, row) in KEPT_ROWS.lock().expect("the kept rows' trace").iter() {
+                        if k == key && at.is_some_and(|c| row[c] >> 32 == d) {
+                            out.push_str(&format!("\n  counted {sign:+} from {p}: {row:?}"));
+                        }
+                    }
+                    held.each_row(key, width, |row| {
+                        if at.is_some_and(|c| row[c] >> 32 == d) {
+                            out.push_str(&format!("\n  held: {row:?}"));
+                        }
+                    });
+                    out
+                })
+            })
+            .collect()
     }
 
     /// Export `key`'s value documents and how many counted files hold each (`holders`).

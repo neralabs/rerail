@@ -488,136 +488,15 @@ pub mod code_rule_dsl {
             #[cfg(target_os="macos")]
             pub mod metal_backend;
             #[cfg(target_os="macos")]
-            pub mod metal_bulk_closure;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_bulk_closure_tests;
-            #[cfg(target_os="macos")]
-            pub mod metal_candidate_batch;
-            #[cfg(target_os="macos")]
-            pub mod metal_capture_arguments;
-            #[cfg(target_os="macos")]
-            pub mod metal_capture_groups;
-            #[cfg(target_os="macos")]
-            pub mod metal_capture_literals;
-            #[cfg(target_os="macos")]
-            pub mod metal_capture_predicates;
-            #[cfg(target_os="macos")]
-            pub mod metal_closure_continuation;
-            #[cfg(target_os="macos")]
-            pub mod metal_closure_prepare;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_closure_prepare_tests;
-            #[cfg(target_os="macos")]
-            pub mod metal_constant_output;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            #[path = "metal_cutover_architecture.rs"]
-            pub mod metal_cutover_architecture;
-            #[cfg(target_os="macos")]
-            pub mod metal_dynamic_execution;
-            #[cfg(target_os="macos")]
-            pub mod metal_failure_records;
-            #[cfg(target_os="macos")]
-            pub mod metal_frame_identity;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_frame_identity_tests;
-            #[cfg(all(any(test, feature = "test-hooks"),target_os="macos",feature="metal-tests"))]
-            pub mod metal_frontier_conformance;
-            #[cfg(target_os="macos")]
-            pub mod metal_frontier_reduce;
-            #[cfg(target_os="macos")]
-            pub mod metal_frontier_seed;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_frontier_seed_tests;
-            #[cfg(target_os="macos")]
-            pub mod metal_frontier_validation;
-            #[cfg(target_os="macos")]
-            pub mod metal_grid_backend;
-            #[cfg(target_os="macos")]
-            pub mod metal_grid_contract;
-            #[cfg(target_os="macos")]
-            pub mod metal_grid_executor;
-            #[cfg(target_os="macos")]
-            pub mod metal_grid_plan;
-            #[cfg(target_os="macos")]
-            pub mod metal_initial_prefix;
-            #[cfg(target_os="macos")]
-            pub mod metal_initial_range_codegen;
-            #[cfg(target_os="macos")]
-            pub mod metal_inline_predicates;
-            #[cfg(target_os="macos")]
             pub mod metal_join;
-            #[cfg(target_os="macos")]
-            pub mod metal_named_order;
-            #[cfg(target_os="macos")]
-            pub mod metal_output_contract;
-            #[cfg(target_os="macos")]
-            pub mod metal_output_dispatch;
-            #[cfg(target_os="macos")]
-            pub mod metal_output_mime;
-            #[cfg(target_os="macos")]
-            pub mod metal_output_pages;
-            #[cfg(target_os="macos")]
-            pub mod metal_output_selection;
-            #[cfg(target_os="macos")]
-            pub mod metal_output_strip;
             #[cfg(target_os="macos")]
             pub mod metal_parallel;
             #[cfg(target_os="macos")]
-            pub mod metal_position_order;
-            #[cfg(target_os="macos")]
             pub mod metal_program_backend;
-            #[cfg(target_os="macos")]
-            pub mod metal_ready_batch;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_ready_batch_tests;
-            #[cfg(target_os="macos")]
-            pub mod metal_ready_proof;
-            #[cfg(target_os="macos")]
-            pub mod metal_regex_code;
-            #[cfg(target_os="macos")]
-            pub mod metal_regex_frontier;
-            #[cfg(target_os="macos")]
-            pub mod metal_register_codegen;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_register_conformance;
-            #[cfg(target_os="macos")]
-            pub mod metal_register_execution;
             #[cfg(target_os="macos")]
             pub mod metal_rows;
             #[cfg(target_os="macos")]
-            pub mod metal_semantic_columns;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_semantic_conformance;
-            #[cfg(target_os="macos")]
             pub mod metal_sort;
-            #[cfg(target_os="macos")]
-            pub mod metal_state_values;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_state_values_tests;
-            #[cfg(target_os="macos")]
-            pub mod metal_successor;
-            #[cfg(target_os="macos")]
-            pub mod metal_successor_branch_codegen;
-            #[cfg(target_os="macos")]
-            pub mod metal_successor_codegen;
-            #[cfg(target_os="macos")]
-            pub mod metal_successor_prepare;
-            #[cfg(target_os="macos")]
-            pub mod metal_successor_repeat_codegen;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_successor_tests;
-            #[cfg(target_os="macos")]
-            pub mod metal_terminal;
-            #[cfg(target_os="macos")]
-            pub mod metal_terminal_capture_order;
-            #[cfg(target_os="macos")]
-            pub mod metal_terminal_repeat;
-            #[cfg(target_os="macos")]
-            pub mod metal_typed_output;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_unique_child_tests;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
-            pub mod metal_value_prefix_tests;
             #[cfg(all(any(test, feature = "test-hooks"),target_os="macos",target_arch="aarch64"))]
             pub mod regex_relocation_tests;
             #[allow(unused_imports)]
@@ -774,3 +653,17 @@ pub use rerail_w::git_ignore;
 pub use rerail_w::panic_boundary;
 pub use rerail_logic::threads;
 // cratify: mounts end
+
+/// The language packs this crate's tests read through the load-time registry (`language::base`), registered once:
+/// the engine registers them as it loads (`install_languages`), and a test of this crate runs without it (work
+/// queue Q23). The first registration holds, so a test may call it at any point.
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) fn test_languages() {
+    use crate::code_rule_dsl::language::{self, Family, adapter::pack::{Pack, register}};
+    use rerail_lang_python::code_rule_dsl::language::adapter::python::Python;
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        register(Family::Python, &Pack::<Python>::NEW);
+        language::register_base(Family::Python, &Pack::<Python>::NEW);
+    });
+}

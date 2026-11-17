@@ -76,6 +76,38 @@ fn an_edited_rule_body_reads_partial_hits_as_a_full_run_would() {
     let _ = std::fs::remove_dir_all(&fresh);
 }
 
+/// Q20: an edit of one file reads the others for their outputs alone (decision 0117 step 1), their export and
+/// base rows the kept inputs'. Each such hit decodes none of those rows: since memo entries are images (decision
+/// 0240 §4) a hit was decoded whole, and its rows were then taken for the changed files' and hashed again.
+#[test]
+fn a_hit_read_for_its_outputs_alone_decodes_no_export_or_base_rows() {
+    let marker = format!("{:?}", std::time::SystemTime::now());
+    let dir = corpus("outputs-alone", &marker, FILES);
+    let program = program("try_statement");
+    // Past the stat index's racy window (git's rule), so every run finds the unchanged files by their stat.
+    std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 200_000_000));
+    let _ = run(&dir, &program, OUTPUTS);
+    let mut kept = 0;
+    let mut edits = Vec::new();
+    for (k, tail) in ["\nhelper(4)\n", "\nhelper(5)\n", "\nhelper(6)\n"].into_iter().enumerate() {
+        std::fs::write(dir.join("c.py"), format!("# {marker}\n{}{tail}", FILES[2].1)).unwrap();
+        let (edited, rows) = run(&dir, &program, OUTPUTS);
+        assert_eq!(edited.memo_kept.1, 0, "edit {k}: {} hits read for their outputs alone decoded export or base rows", edited.memo_kept.0);
+        kept += edited.memo_kept.0;
+        edits.push((tail, rows));
+    }
+    // Each edit's rows are a full run's, each over a corpus of its own.
+    for (k, (tail, rows)) in edits.into_iter().enumerate() {
+        let c = format!("{}{tail}", FILES[2].1);
+        let fresh = corpus(&format!("outputs-alone-fresh-{k}"), &format!("{marker} fresh {k}"), &[FILES[0], FILES[1], ("c.py", &c)]);
+        let (_, expected) = run(&fresh, &program, OUTPUTS);
+        let _ = std::fs::remove_dir_all(&fresh);
+        assert_eq!(rows, expected, "edit {k}: the rows of a full run");
+    }
+    assert_eq!(kept, 3 * 2, "each edit reads both unchanged files for their outputs alone");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 const COMMENTED: &[(&str, &str)] = &[
     ("a.py", "def helper(x):\n    assert x\n    return x\n\ndef other(y):\n    while y:\n        assert y\n    return y\n"),
     ("b.py", "from a import helper\n\n# helper\ndef main():\n    assert True  # other\n    return helper(1)\n\nhelper\n"),
@@ -208,4 +240,73 @@ fn a_file_local_edit_finds_the_cross_parts_inputs_kept() {
         assert!(edited.cross_changed.is_empty(), "edit {k}: no input of the cross part changed: {:?}", edited.cross_changed);
     }
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Files with string annotations (guests, decision 0055): `Foo` and `Bar` are named only inside annotations.
+const ANNOTATED: &[(&str, &str)] = &[
+    ("a.py", "from typing import List, Optional\n\nx: \"List[Foo]\" = []\n\ndef f(a: \"Optional[Bar]\") -> None:\n    assert a\n"),
+    ("b.py", "def g(b: \"Foo\"):\n    assert b\n    while b:\n        assert b\n"),
+];
+
+/// `names` reads the annotations' identifiers through `parsed` and `idents` (so the run makes guests, and hiding
+/// copies `idents` for them, folded back into it: `fold_own`); `flagged` and `ids` are the rules an edit changes.
+fn annotated(names_edit: &str, flagged_edit: &str, ids_edit: &str) -> String {
+    format!(
+        r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.decl idents(m: node, x: symbol)
+idents(m, x) :- node(_, m, "identifier", _, _), text(m, x).
+.decl names(x: symbol)
+names(x) :- string_annotation(n), parsed(n, "annotation", r), within(m, r), idents(m, x), x != "{names_edit}".
+.decl flagged(n: node)
+flagged(n) :- kind(n, "assert_statement"), !kind(n, "{flagged_edit}").
+.decl flag_col(k: number, l: number)
+flag_col(k, l) :- flagged(n), col(n, k), line(n, l).
+.decl ids(m: node, x: symbol)
+ids(m, x) :- idents(m, x), x != "{ids_edit}".
+.output names, flag_col, ids
+"#
+    )
+}
+
+const ANNOTATED_OUTPUTS: &[&str] = &["names", "flag_col", "ids"];
+
+/// An edit's chunks of partial hits run its cone alone, and make only the guests the cone can see
+/// (`guests::guests_seen`): an edit of `flagged`, which names no guest and reads no relation an annotation reaches,
+/// makes no annotation guest; one of `names`, which reads them through `parsed`, makes them all. Either way the rows
+/// are a full run's. Before, every chunk made every guest its entries asked for (27,373 on an edit of ep2, 1.6 s).
+#[test]
+fn a_partial_hit_makes_only_the_guests_its_cone_can_see() {
+    let marker = format!("{:?}", std::time::SystemTime::now());
+    let dir = corpus("guests-seen", &marker, ANNOTATED);
+    let (first, _) = run(&dir, &annotated("n0", "f0", "i0"), ANNOTATED_OUTPUTS);
+    assert_eq!((first.memo_partial, first.guests_unseen), (0, 0), "a first run makes every guest");
+    let fresh = |k: &str, program: &str| {
+        let fresh = corpus(&format!("guests-seen-fresh-{k}"), &format!("{marker} fresh {k}"), ANNOTATED);
+        let (_, rows) = run(&fresh, program, ANNOTATED_OUTPUTS);
+        let _ = std::fs::remove_dir_all(&fresh);
+        rows
+    };
+    // `flagged`'s edit: its cone names no guest.
+    let program = annotated("n0", "while_statement", "i0");
+    let (edited, rows) = run(&dir, &program, ANNOTATED_OUTPUTS);
+    assert_eq!(edited.memo_partial, ANNOTATED.len(), "every file is a partial hit");
+    assert!(edited.guests_unseen > 0, "the cone of `flagged` sees no annotation: none is made");
+    assert_eq!(rows, fresh("flagged", &program), "the rows of a full run");
+    // `names`' edit: its cone reads the annotations.
+    let program = annotated("n1", "while_statement", "i0");
+    let (edited, rows) = run(&dir, &program, ANNOTATED_OUTPUTS);
+    assert_eq!(edited.memo_partial, ANNOTATED.len(), "every file is a partial hit");
+    assert_eq!(edited.guests_unseen, 0, "the cone of `names` reads every annotation");
+    assert!(rows[0].iter().any(|r| r[0] == "Foo"), "the annotations' names: {:?}", rows[0]);
+    assert_eq!(rows, fresh("names", &program), "the rows of a full run");
+    // `ids`' edit: it names no guest, but reads `idents`, which hiding widened to the annotations it copied it for
+    // (`fold_own`): it sees them, as a full run's does.
+    let program = annotated("n1", "while_statement", "i1");
+    let (edited, rows) = run(&dir, &program, ANNOTATED_OUTPUTS);
+    assert_eq!(edited.memo_partial, ANNOTATED.len(), "every file is a partial hit");
+    assert!(rows[2].iter().any(|r| r[1] == "Bar"), "`ids` sees the annotations' identifiers: {:?}", rows[2]);
+    assert_eq!(rows, fresh("ids", &program), "the rows of a full run");
+    let _ = std::fs::remove_dir_all(&dir);
 }

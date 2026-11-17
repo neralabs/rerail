@@ -1,1 +1,0 @@
-The content store's file is now `content-v4.sqlite`: names and strings are stored once each, and each corpus run's record names its policy, so several policies over one repository keep their own work. The old `content-v1.sqlite` (with its `-wal` and `-shm`) is no longer read and can be deleted once no earlier version runs.

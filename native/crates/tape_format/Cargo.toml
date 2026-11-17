@@ -3,11 +3,21 @@ name = "rerail-tape-format"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The engine's tape (v9np, format 15) as bytes: its constants, and a writer a parser writes the tape with as it parses."
+description = "The engine's tape as bytes: format 15 (v9np), its constants and a writer a parser writes it with; format 16 and its fixed blocks; one API over them, read in place (0293)."
 
 [dependencies]
+# The view a tape's reads are told where it lies by (decision 0310), without the reads' IR.
+rerail-clif = { path = "../clif", default-features = false }
 sha2 = "0.10"
+# Format 16 in fixed blocks (16z), at the version the lab measured it with.
+lz4-sys = "=1.11.1"
+# The newlines of a document, a chunk at a time, for its newline index (0156 §1.6).
+memchr = "=2.8.3"
 
 # SHA-256 on the CPU's SHA instructions, as the engine has it (its Cargo.toml says why).
 [target.'cfg(all(target_arch = "aarch64", not(windows)))'.dependencies]
 sha2 = { version = "0.10", features = ["asm"] }
+
+[dev-dependencies]
+# The reads in Cranelift's IR, JIT-compiled and run against this crate's readers (decision 0310).
+rerail-clif = { path = "../clif" }

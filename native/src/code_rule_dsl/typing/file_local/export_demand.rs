@@ -282,7 +282,7 @@ fn one_group(head: &str, alias: &BTreeMap<String, String>, kept: Vec<Literal>, f
     items.extend(filters.iter().map(|(_, v)| Some(BTreeSet::from([find(alias, v)]))));
     let cuts = |i: usize| -> usize {
         match kept.get(i) {
-            Some(Literal::Atom(a)) => a.args.iter().filter(|t| matches!(t, Term::Int(_) | Term::Str(_))).count(),
+            Some(Literal::Atom(a)) => a.args.iter().filter(|t| matches!(t, Term::Int(_) | Term::Branded(_) | Term::Str(_))).count(),
             Some(_) => 0,
             None => 2,
         }
@@ -384,7 +384,7 @@ enum Filter {
 /// per parent) enumerates them all for every row it filters.
 fn key_rel(a: &Atom, at: usize) -> (String, Rule) {
     use std::hash::{Hash, Hasher};
-    let constants: Vec<String> = a.args.iter().enumerate().filter(|(j, t)| *j != at && matches!(t, Term::Int(_) | Term::Str(_))).map(|(j, t)| format!("{j}={t:?}")).collect();
+    let constants: Vec<String> = a.args.iter().enumerate().filter(|(j, t)| *j != at && matches!(t, Term::Int(_) | Term::Branded(_) | Term::Str(_))).map(|(j, t)| format!("{j}={t:?}")).collect();
     let name = if constants.is_empty() {
         format!("xk_{}_{at}", a.rel)
     } else {
@@ -392,7 +392,7 @@ fn key_rel(a: &Atom, at: usize) -> (String, Rule) {
         constants.hash(&mut h);
         format!("xk_{}_{at}_{:08x}", a.rel, h.finish() as u32)
     };
-    let args = a.args.iter().enumerate().map(|(j, t)| if j == at { Term::Var("v".into()) } else if matches!(t, Term::Int(_) | Term::Str(_)) { t.clone() } else { Term::Wild }).collect();
+    let args = a.args.iter().enumerate().map(|(j, t)| if j == at { Term::Var("v".into()) } else if matches!(t, Term::Int(_) | Term::Branded(_) | Term::Str(_)) { t.clone() } else { Term::Wild }).collect();
     let rule = Rule { head: Atom { rel: name.as_str().into(), args: [Term::Var("v".into())].into(), neg: false, gated: false }, body: [Literal::Atom(Atom { rel: a.rel.clone(), args, neg: false, gated: false })].into() };
     (name, rule)
 }
@@ -465,7 +465,7 @@ pub fn demand_exports(prog: &mut Program) -> Vec<String> {
                             continue;
                         }
                         if pass.usable(&a.rel) && pass.same(&a.rel, j) {
-                            let args = a.args.iter().enumerate().map(|(k, t)| if k == j { t.clone() } else if matches!(t, Term::Int(_) | Term::Str(_)) { t.clone() } else { Term::Wild }).collect();
+                            let args = a.args.iter().enumerate().map(|(k, t)| if k == j { t.clone() } else if matches!(t, Term::Int(_) | Term::Branded(_) | Term::Str(_)) { t.clone() } else { Term::Wild }).collect();
                             filters.push(Filter::Atom(Atom { rel: a.rel.clone(), args, neg: false, gated: false }, j, v.to_string()));
                         } else if !pass.usable(&a.rel) && pass.located(&a.rel, j) {
                             filters.push(Filter::Key((a.rel.to_string(), j), v.to_string()));
@@ -504,7 +504,7 @@ pub fn demand_exports(prog: &mut Program) -> Vec<String> {
             !uncut.contains(*rel)
                 && !excluded.contains(*rel)
                 && rs.iter().all(|(ri, li, fs)| {
-                    let constant = matches!(&original.rules[*ri].body[*li], Literal::Atom(e) if e.args.iter().any(|t| matches!(t, Term::Int(_) | Term::Str(_))));
+                    let constant = matches!(&original.rules[*ri].body[*li], Literal::Atom(e) if e.args.iter().any(|t| matches!(t, Term::Int(_) | Term::Branded(_) | Term::Str(_))));
                     constant || fs.iter().any(&useful)
                 })
         })

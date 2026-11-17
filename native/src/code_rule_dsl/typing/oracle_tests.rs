@@ -1938,17 +1938,18 @@ fn spike_o125_replay() {
         crate::code_rule_dsl::logic::profile::set(true);
     }
     // `O125_DECISIONS=<topic text>`: each step's decisions under topics holding the text, with how often.
-    let decided = std::cell::RefCell::new(crate::code_rule_dsl::logic::profile::decisions());
+    // The profile's decisions are the process's; this measurement runs alone, so a step's are those made since the
+    // last step took them.
+    crate::code_rule_dsl::logic::profile::take_decisions();
     let show_spans = |step: usize| {
         if !spans_on {
             return;
         }
         if let Ok(topic) = std::env::var("O125_DECISIONS") {
-            let now = crate::code_rule_dsl::logic::profile::decisions_since(&decided.borrow());
+            let now = crate::code_rule_dsl::logic::profile::take_decisions();
             for ((t, text), n) in now.iter().filter(|((t, _), _)| t.contains(topic.as_str())) {
                 println!("o125d {step:02} {n:>7} {t}: {text}");
             }
-            *decided.borrow_mut() = crate::code_rule_dsl::logic::profile::decisions();
         }
         let spans = crate::code_rule_dsl::logic::profile::spans();
         // `O125_SPANS_TSV=<dir>`: the step's whole session tree, `<dir>/spans-<step>.tsv` (path, calls, CPU s).

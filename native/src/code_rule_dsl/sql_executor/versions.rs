@@ -493,6 +493,9 @@ impl Source for Mutable {
     fn estimated_matches(&self, c: usize, b: bool) -> usize {
         self.state.read().estimated_matches(c, b)
     }
+    fn lookup_cost(&self, c: usize) -> f64 {
+        self.state.read().lookup_cost(c)
+    }
     fn indexed(&self, c: usize) -> bool {
         self.state.read().indexed(c)
     }

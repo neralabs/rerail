@@ -645,7 +645,9 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
     // `.tsx` and `.js` files, which main's TypeScript reads) runs once per dialect, lowered for each, as
     // `run_program` runs one. The first run writes `out`; each other dialect's writes `out/<dialect>`, and its
     // findings are added to `out`'s.
+    let dialects = crate::code_rule_dsl::logic::profile::span(|| "the dialects in the corpus".into());
     let runs = if t_facts.is_some() { vec![(None, programs.iter().map(|p| (*p).to_owned()).collect())] } else { dialect_runs(&programs, root, &options)? };
+    drop(dialects);
     let mut report = None;
     for (i, (label, texts)) in runs.iter().enumerate() {
         let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
@@ -698,8 +700,24 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
             "  {phase:<6} {user:.2} s user + {sys:.2} s sys; peak RSS {rss:.0} MB; {statements} SQLite statements\n"
         );
     }
+    // Decision 0288: the run's thread per phase, at the phase's bounds: what of its wall it ran, helped the pool or
+    // spent off a core, and how parallel the process was meanwhile.
+    for (phase, c) in &report.phase_clock {
+        text += &format!(
+            "  {phase:<6} {:.2} s wall: the run's thread {:.2} s own, {:.2} s helping, {:.2} s off a core; the other threads {:.2} s; parallel {:.2}; ready with no core {:.2} s; {} involuntary switches\n",
+            c.wall, c.own, c.helped, c.off_core(), c.others(), c.process_cpu / c.wall.max(1e-9), c.no_core(), c.involuntary
+        );
+    }
+    if !report.phase_clock.is_empty() {
+        let run: f64 = report.phase_clock.iter().map(|(_, c)| c.wall).sum();
+        let age = crate::code_rule_dsl::logic::profile::process_age();
+        if age > 0.0 {
+            text += &format!("  the phases above {run:.2} s of the process's {age:.2} s so far\n");
+        }
+    }
     // Retired instructions and cycles of the whole process: steadier than CPU time on a loaded machine, so a change
     // is compared by them (macOS; nothing elsewhere).
+    timeline_mark("report");
     if let Some((instructions, cycles)) = process_counters() {
         text += &format!("  process {:.2} G instructions, {:.2} G cycles\n", instructions as f64 / 1e9, cycles as f64 / 1e9);
         for (phase, n) in &report.phase_instructions {
@@ -772,7 +790,22 @@ const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine du
 /// `RERAIL_SESSION` (a directory) keeps a corpus session across them (decision 0063): `cli_in`, with the session
 /// it keeps.
 pub fn cli(args: &[String]) -> Result<String, String> {
-    cli_in(args, &mut Default::default())
+    // Decision 0272 (O167): the process ends with its command, before any idle time, so each run serves its waiting
+    // join searches at its end, within a share of its CPU (decision 0243). A long-lived caller of `cli_in` leaves
+    // them to the idle job.
+    crate::code_rule_dsl::logic::plan::joins::drain_at_end(true);
+    // Decision 0288: the command's clocks, for its time before its run and after it.
+    crate::code_rule_dsl::logic::profile::command_begins();
+    let out = cli_in(args, &mut Default::default());
+    let (age, after) = crate::code_rule_dsl::logic::profile::command_ends();
+    // On stderr: a command's output is its own (`run-rr`'s, `sql`'s: JSON), and a line after it made that unreadable.
+    if let (Ok(_), Some(c)) = (&out, after) {
+        eprint!(
+            "  after the run {:.2} s wall: the command's thread {:.2} s own, {:.2} s off a core; the other threads {:.2} s; ready with no core {:.2} s\n  before the command: {age:.2} s since the process started\n",
+            c.wall, c.own + c.helped, c.off_core(), c.others(), c.no_core()
+        );
+    }
+    out
 }
 
 /// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`): the caller owns it.
@@ -817,9 +850,6 @@ pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::cor
         }
         // Several policies over one repository, each over its own language's files (O105).
         Some("run-policies") if args.len() > 3 => {
-            // Decision 0243: the process ends with the run, before any idle time: its join searches are served at the
-            // run's end.
-            crate::code_rule_dsl::logic::plan::joins::drain_at_end(true);
             let paths = args[3..].iter().map(std::path::PathBuf::from).collect::<Vec<_>>();
             serde_json::to_string(&crate::tools::run_policies(&paths, Path::new(&args[1]), Path::new(&args[2]), &serde_json::Value::Null)?).map_err(|e| e.to_string())
         }
@@ -1031,7 +1061,10 @@ fn translate_json_command(args: &[String]) -> Result<String, String> {
     Ok(format!("{} translated, {failed} failed", files.len() - failed))
 }
 
+use crate::code_rule_dsl::logic::profile::timeline_mark;
+
 fn logic_command(args: &[String]) -> Result<String, String> {
+    timeline_mark("cli start");
     let (mut positional, mut modes, mut metal, mut chunk) = (Vec::new(), None, false, 1_usize << 18);
     let (mut sql, mut env, mut full) = (false, Vec::new(), false);
     let mut args = args.iter();
@@ -1067,6 +1100,7 @@ fn logic_command(args: &[String]) -> Result<String, String> {
     };
     // A directory: every `.rr` in it, run as one program (each file parsed once for all of them); each file's
     // `#include`s are read in.
+    let reading = crate::code_rule_dsl::logic::profile::span(|| "read the rule files".into());
     let programs = if Path::new(program.as_str()).is_dir() {
         let mut files: Vec<_> = std::fs::read_dir(program)
             .map_err(|e| format!("{program}: {e}"))?
@@ -1089,10 +1123,14 @@ fn logic_command(args: &[String]) -> Result<String, String> {
             })
             .collect();
         files.retain(|path| !path.file_name().is_some_and(|n| included.contains(n)));
-        crate::tools::program_texts(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>())?
+        timeline_mark("the program files listed");
+        let texts = crate::tools::program_texts(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>())?;
+        timeline_mark("the program texts read");
+        texts
     } else {
         vec![crate::tools::program_text(Path::new(program.as_str()))?]
     };
+    drop(reading);
     if programs.is_empty() {
         return Err(format!("{program} has no .rr programs"));
     }

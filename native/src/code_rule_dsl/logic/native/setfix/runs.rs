@@ -25,16 +25,26 @@ use std::cmp::Ordering;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
+use super::rows::Row;
+
 /// A relation's rows, read by id: one flat vector (`[i64]`, `k` values a row), or the segments a maintained relation
 /// shares with the kept one it started as (`super::Rows`, smoking gun 8). Every row lies whole in one segment.
+/// Rows read by id: each read is a copy of the row's `k` values (`Row`, on the stack), never a reference into the
+/// rows, so what holds them can be a block's columns (decision 0325).
 pub(super) trait RowData {
-    fn row(&self, id: u32, k: usize) -> &[i64];
+    fn row(&self, id: u32, k: usize) -> Row;
+    /// Row `id`'s value in column `c`: what a compare, a tag or a fence reads, not the row.
+    fn value(&self, id: u32, k: usize, c: usize) -> i64;
 }
 
 impl RowData for [i64] {
     #[inline]
-    fn row(&self, id: u32, k: usize) -> &[i64] {
-        &self[id as usize * k..][..k]
+    fn row(&self, id: u32, k: usize) -> Row {
+        Row::of(&self[id as usize * k..][..k])
+    }
+    #[inline]
+    fn value(&self, id: u32, k: usize, c: usize) -> i64 {
+        self[id as usize * k + c]
     }
 }
 
@@ -223,11 +233,11 @@ impl Sorted {
         if hi <= lo {
             return;
         }
-        debug_assert!((lo + 1..hi).all(|id| cmp_vals(cols, tagged(cols, k), data.row(id - 1, k), data.row(id, k)).is_le()), "rows {lo}..{hi} said sorted on {cols:?} are not");
+        debug_assert!((lo + 1..hi).all(|id| cmp_ids(data, k, cols, tagged(cols, k), id - 1, id).is_le()), "rows {lo}..{hi} said sorted on {cols:?} are not");
         if let Some((_, end, c)) = self.0.last_mut()
             && *end == lo
             && **c == *cols
-            && cmp_vals(cols, tagged(cols, k), data.row(lo - 1, k), data.row(lo, k)).is_le()
+            && cmp_ids(data, k, cols, tagged(cols, k), lo - 1, lo).is_le()
         {
             *end = hi;
             return;
@@ -264,12 +274,6 @@ impl Sorted {
 fn print_vals(vals: impl Iterator<Item = i64>) -> u8 {
     let h = vals.fold(0x2545_F491_4F6C_DD1Du64, |h, v| (h ^ v as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93));
     (h >> 56) as u8
-}
-
-/// A row's print in an order on `cols`.
-#[inline]
-fn print_of(row: &[i64], cols: &[usize]) -> u8 {
-    print_vals(cols.iter().map(|&c| row[c]))
 }
 
 /// A whole key's print (its values in the order's column order), as its rows' are.
@@ -351,9 +355,21 @@ pub(super) fn tagged(cols: &[usize], k: usize) -> bool {
 /// turn.
 #[inline]
 pub(super) fn cmp_vals(cols: &[usize], tagged: bool, ra: &[i64], rb: &[i64]) -> Ordering {
+    cmp_with(cols, tagged, |c| ra[c], |c| rb[c])
+}
+
+/// `cmp_vals` over two rows' values as read (`a(c)`, `b(c)`): only the columns compared are read.
+#[inline]
+pub(super) fn cmp_with(cols: &[usize], tagged: bool, a: impl Fn(usize) -> i64, b: impl Fn(usize) -> i64) -> Ordering {
     let Some(&lead) = cols.first() else { return Ordering::Equal };
-    (if tagged { tag(ra[lead]).cmp(&tag(rb[lead])) } else { Ordering::Equal })
-        .then_with(|| cols.iter().map(|&c| ra[c].cmp(&rb[c])).find(|o| o.is_ne()).unwrap_or(Ordering::Equal))
+    (if tagged { tag(a(lead)).cmp(&tag(b(lead))) } else { Ordering::Equal })
+        .then_with(|| cols.iter().map(|&c| a(c).cmp(&b(c))).find(|o| o.is_ne()).unwrap_or(Ordering::Equal))
+}
+
+/// Rows `a` and `b` of `data` compared on `cols` (`cmp_vals`), each value read where it lies.
+#[inline]
+pub(super) fn cmp_ids<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], tagged: bool, a: u32, b: u32) -> Ordering {
+    cmp_with(cols, tagged, |c| data.value(a, k, c), |c| data.value(b, k, c))
 }
 
 /// The span of `tags` (sorted) equal to `t`, searched from `from`: a galloping search forward from there, or (with
@@ -414,18 +430,17 @@ fn gallop_on() -> bool {
 
 #[inline]
 fn cmp_rows<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], a: u32, b: u32) -> Ordering {
-    let (ra, rb) = (data.row(a, k), data.row(b, k));
-    cmp_vals(cols, tagged(cols, k), ra, rb).then_with(|| a.cmp(&b))
+    cmp_ids(data, k, cols, tagged(cols, k), a, b).then_with(|| a.cmp(&b))
 }
 
 impl Run {
     fn fenced<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], ids: Ids) -> Run {
         if tagged(cols, k) {
-            let tags = ids.iter().map(|id| tag(data.row(id, k)[cols[0]])).collect();
+            let tags = ids.iter().map(|id| tag(data.value(id, k, cols[0]))).collect();
             return Run { ids, fences: Vec::new(), tags, prints: Vec::new() };
         }
         let fences = match cols.first() {
-            Some(&lead) => ids.iter().step_by(FENCE).map(|id| data.row(id, k)[lead]).collect(),
+            Some(&lead) => ids.iter().step_by(FENCE).map(|id| data.value(id, k, lead)).collect(),
             None => Vec::new(),
         };
         Run { ids, fences, tags: Vec::new(), prints: Vec::new() }
@@ -438,7 +453,7 @@ impl Run {
 
     /// This run with its ids' key prints (an order probed by whole keys): one row read an id.
     fn printed<D: RowData + ?Sized>(mut self, data: &D, k: usize, cols: &[usize]) -> Run {
-        self.prints = self.ids.iter().map(|id| print_of(data.row(id, k), cols)).collect();
+        self.prints = self.ids.iter().map(|id| print_vals(cols.iter().map(|&c| data.value(id, k, c)))).collect();
         self
     }
 
@@ -446,7 +461,7 @@ impl Run {
     /// they sort (`sort_keyed`).
     fn of<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], mut ids: Vec<u32>) -> Run {
         let tagged = tagged(cols, k);
-        let tags = sort_keyed(&mut ids, tagged, cols.len(), |id, i| data.row(id, k)[cols[i]], |a, b| cmp_rows(data, k, cols, a, b));
+        let tags = sort_keyed(&mut ids, tagged, cols.len(), |id, i| data.value(id, k, cols[i]), |a, b| cmp_rows(data, k, cols, a, b));
         if tagged {
             return Run { ids: Ids::List(ids), fences: Vec::new(), tags, prints: Vec::new() };
         }
@@ -459,8 +474,7 @@ impl Run {
         // No columns: every row (a relation of no columns holds one row at most).
         let Some(&lead) = key.first() else { return self.ids.part(0, self.ids.len()) };
         let cmp = |id: u32| -> Ordering {
-            let r = data.row(id, k);
-            cols.iter().zip(key).map(|(&c, v)| r[c].cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
+            cols.iter().zip(key).map(|(&c, v)| data.value(id, k, c).cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
         };
         let (lo, hi) = if !self.tags.is_empty() {
             // The leading value's tag among the tags: only its ids are read.
@@ -489,8 +503,7 @@ impl Run {
         let Some(&lead) = key.first() else { return self.ids.part(0, self.ids.len()) };
         let n = self.ids.len();
         let cmp = |id: u32| -> Ordering {
-            let r = data.row(id, k);
-            cols.iter().zip(key).map(|(&c, v)| r[c].cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
+            cols.iter().zip(key).map(|(&c, v)| data.value(id, k, c).cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
         };
         let (lo, hi) = if !self.tags.is_empty() {
             let t = tag(lead);
@@ -536,7 +549,7 @@ impl Run {
                 continue;
             }
             let row = &rows[q as usize * k..][..k];
-            let cmp = |id: u32| -> Ordering { cmp_vals(cols, tagged, data.row(id, k), row) };
+            let cmp = |id: u32| -> Ordering { cmp_with(cols, tagged, |c| data.value(id, k, c), |c| row[c]) };
             if tagged {
                 // The row's tag span, from where the last row's search ended; within it, the rows read in order.
                 let (s, e) = tag_span(&self.tags, tag(row[lead]), at, false);
@@ -569,7 +582,7 @@ impl Run {
             let (first, second) = if ahi == blo { (a, b) } else { (b, a) };
             if let (Ids::Rows(lo, mid), Ids::Rows(mid2, hi)) = (&first.ids, &second.ids)
                 && mid == mid2
-                && (lo == mid || mid2 == hi || cmp_vals(cols, tagged(cols, k), data.row(mid - 1, k), data.row(*mid, k)).is_le())
+                && (lo == mid || mid2 == hi || cmp_ids(data, k, cols, tagged(cols, k), mid - 1, *mid).is_le())
             {
                 let prints = if !first.prints.is_empty() && !second.prints.is_empty() { [first.prints.as_slice(), second.prints.as_slice()].concat() } else { Vec::new() };
                 let ids = Ids::Rows(*lo, *hi);
@@ -671,7 +684,7 @@ impl Run {
 
     /// Calls `f` on each group of ids equal on the first `m` columns of `cols`, in order.
     fn each_group<D: RowData + ?Sized>(&self, data: &D, k: usize, cols: &[usize], m: usize, mut f: impl FnMut(Part<'_>)) {
-        let same = |a: u32, b: u32| cols[..m].iter().all(|&c| data.row(a, k)[c] == data.row(b, k)[c]);
+        let same = |a: u32, b: u32| cols[..m].iter().all(|&c| data.value(a, k, c) == data.value(b, k, c));
         let (n, mut at) = (self.ids.len(), 0);
         while at < n {
             let mut end = at + 1;
@@ -759,9 +772,13 @@ fn gallop<T>(v: &[T], start: usize, less: impl Fn(&T) -> bool) -> usize {
 /// `v`, sorted pieces one after another (`bounds`: each piece's start, then the end), merged into one sorted
 /// sequence: adjacent pieces two at a time, a pass at a time, through one buffer of `v`'s length, `le(a, b)` saying
 /// `a` may come before `b` (ties keep the left piece's first). Each item moves about log(pieces) times; one piece
-/// moves nothing (decision 0187: rows known sorted are merged, not sorted again).
-pub(super) fn merge_pieces(v: &mut Vec<u32>, mut bounds: Vec<usize>, le: impl Fn(u32, u32) -> bool) {
-    let mut buf: Vec<u32> = Vec::new();
+/// moves nothing (decision 0187: rows known sorted are merged, not sorted again). From `PAR_ROWS` items, on the pool
+/// (`merge_pieces_par`).
+pub(super) fn merge_pieces<T: Copy + Send + Sync>(v: &mut Vec<T>, mut bounds: Vec<usize>, le: impl Fn(T, T) -> bool + Sync) {
+    if v.len() >= PAR_ROWS && crate::threads::max() > 1 {
+        return merge_pieces_par(v, bounds, le);
+    }
+    let mut buf: Vec<T> = Vec::new();
     while bounds.len() > 2 {
         buf.clear();
         buf.reserve(v.len());
@@ -784,9 +801,91 @@ pub(super) fn merge_pieces(v: &mut Vec<u32>, mut bounds: Vec<usize>, le: impl Fn
     }
 }
 
+/// From this many items a sort or a merge of pieces runs on the pool (decision 0294); below it, a job costs more
+/// than it saves.
+pub(super) const PAR_ROWS: usize = 1 << 16;
+
+/// The parts a level of a merge, or a sort, is cut into for each of the pool's threads.
+const PARTS_PER_THREAD: usize = 4;
+
+/// The fewest items a merge's part puts out: smaller pieces merge whole, a job each.
+const PART_LEAST: usize = 1 << 13;
+
+/// How many of `x`'s items are among the first `t` a merge of `x` and `y` puts out, where a tie takes `x`'s first
+/// (merge path): the least `i` whose `x[i]` does not go before `y[t - i - 1]`.
+fn co_rank<T: Copy>(x: &[T], y: &[T], t: usize, le: &impl Fn(T, T) -> bool) -> usize {
+    let (mut lo, mut hi) = (t.saturating_sub(y.len()), t.min(x.len()));
+    while lo < hi {
+        let i = (lo + hi) / 2;
+        let j = t - i;
+        if j > 0 && le(x[i], y[j - 1]) { lo = i + 1 } else { hi = i }
+    }
+    lo
+}
+
+/// `merge_pieces` on the pool (decision 0294): each level's merges cut into parts by their outputs' places, each
+/// part's inputs found by where its first and last outputs come from (`co_rank`), so a level spreads over the
+/// threads whatever its pieces' sizes, its last one merge as well. The same order as one thread's.
+fn merge_pieces_par<T: Copy + Send + Sync>(v: &mut Vec<T>, mut bounds: Vec<usize>, le: impl Fn(T, T) -> bool + Sync) {
+    let n = v.len();
+    let all = crate::threads::max() * PARTS_PER_THREAD;
+    let mut buf: Vec<T> = v.clone();
+    while bounds.len() > 2 {
+        // (a, b, c, t0, t1): pieces `a..b` and `b..c` merged, its outputs `t0..t1` (from `a`), in output order.
+        let mut parts: Vec<(usize, usize, usize, usize, usize)> = Vec::new();
+        let mut next = vec![0];
+        let mut p = 0;
+        while p + 1 < bounds.len() {
+            let (a, b) = (bounds[p], bounds[p + 1]);
+            let c = if p + 2 < bounds.len() { bounds[p + 2] } else { b };
+            let k = ((c - a) * all).div_ceil(n.max(1)).min((c - a) / PART_LEAST).max(1);
+            parts.extend((0..k).map(|q| (a, b, c, (c - a) * q / k, (c - a) * (q + 1) / k)));
+            next.push(c);
+            p += 2;
+        }
+        let (src, le) = (&v[..], &le);
+        let mut rest: &mut [T] = &mut buf[..];
+        crate::threads::scope(|jobs| {
+            for &(a, b, c, t0, t1) in &parts {
+                let (out, tail) = std::mem::take(&mut rest).split_at_mut(t1 - t0);
+                rest = tail;
+                jobs.spawn("a merge's part", move |_| {
+                    let (x, y) = (&src[a..b], &src[b..c]);
+                    let (mut i, i1) = (co_rank(x, y, t0, le), co_rank(x, y, t1, le));
+                    let (mut j, j1) = (t0 - i, t1 - i1);
+                    for o in out.iter_mut() {
+                        if i < i1 && (j >= j1 || le(x[i], y[j])) { *o = x[i]; i += 1 } else { *o = y[j]; j += 1 }
+                    }
+                });
+            }
+        });
+        std::mem::swap(v, &mut buf);
+        bounds = next;
+    }
+}
+
+/// `v.sort_unstable()`, on the pool from `PAR_ROWS` items (decision 0294): parts sorted at once, then merged
+/// (`merge_pieces`). Distinct keys (the packed sorts' hold their id) come out as one thread sorts them.
+fn sort_unstable_par<T: Ord + Copy + Send + Sync>(v: &mut Vec<T>) {
+    let n = v.len();
+    let threads = crate::threads::max();
+    if n < PAR_ROWS || threads < 2 {
+        v.sort_unstable();
+        return;
+    }
+    let size = n.div_ceil(threads * PARTS_PER_THREAD).max(PAR_ROWS / PARTS_PER_THREAD);
+    crate::threads::scope(|jobs| {
+        for part in v.chunks_mut(size) {
+            jobs.spawn("a sort's part", move |_| part.sort_unstable());
+        }
+    });
+    let bounds: Vec<usize> = (0..n).step_by(size).chain(std::iter::once(n)).collect();
+    merge_pieces(v, bounds, |a, b| a <= b);
+}
+
 /// `v` sorted, where the pieces `known` (position ranges, in order) are sorted already: the stretches between them
 /// sorted by `sort` (each alone), then every piece merged (`merge_pieces`). The positions taken as known.
-pub(super) fn sort_pieces(v: &mut Vec<u32>, known: &[(usize, usize)], mut sort: impl FnMut(&mut [u32]), le: impl Fn(u32, u32) -> bool) -> usize {
+pub(super) fn sort_pieces(v: &mut Vec<u32>, known: &[(usize, usize)], mut sort: impl FnMut(&mut [u32]), le: impl Fn(u32, u32) -> bool + Sync) -> usize {
     let n = v.len();
     let mut bounds = vec![0];
     let (mut at, mut taken) = (0, 0);
@@ -873,7 +972,7 @@ fn sort_packed(ids: &mut [u32], tagged: bool, ncols: usize, val: &impl Fn(u32, u
         for (k, &id) in f.iter_mut().zip(ids.iter()) {
             *k = (*k - lo) << wid | u64::from(id);
         }
-        f.sort_unstable();
+        sort_unstable_par(&mut f);
         let mask = (1u64 << wid) - 1;
         for (slot, k) in ids.iter_mut().zip(&f) {
             *slot = (k & mask) as u32;
@@ -917,7 +1016,7 @@ fn sort_packed(ids: &mut [u32], tagged: bool, ncols: usize, val: &impl Fn(u32, u
     let keys: Vec<u128> = if total <= 64 {
         let mut narrow: Vec<u64> = f.chunks_exact(nf).zip(ids.iter()).map(|(row, &id)| pack(row, id) as u64).collect();
         drop(f);
-        narrow.sort_unstable();
+        sort_unstable_par(&mut narrow);
         for (slot, &k) in ids.iter_mut().zip(&narrow) {
             *slot = (u128::from(k) & mask) as u32;
         }
@@ -928,7 +1027,7 @@ fn sort_packed(ids: &mut [u32], tagged: bool, ncols: usize, val: &impl Fn(u32, u
     } else {
         let mut keys: Vec<u128> = f.chunks_exact(nf).zip(ids.iter()).map(|(row, &id)| pack(row, id)).collect();
         drop(f);
-        keys.sort_unstable();
+        sort_unstable_par(&mut keys);
         for (slot, k) in ids.iter_mut().zip(&keys) {
             *slot = (k & mask) as u32;
         }
@@ -960,7 +1059,7 @@ fn sort_tupled(ids: &mut [u32], tagged: bool, ncols: usize, val: impl Fn(u32, us
             (if tagged { tag(v0) } else { 0 }, v0, if ncols > 1 { val(id, 1) } else { 0 }, id)
         })
         .collect();
-    keys.sort_unstable();
+    sort_unstable_par(&mut keys);
     for (slot, key) in ids.iter_mut().zip(&keys) {
         *slot = key.3;
     }
@@ -998,7 +1097,7 @@ impl Index {
         if !self.printed {
             return Run::of(data, k, &self.cols, (lo..hi).collect());
         }
-        let by_row: Vec<u8> = (lo..hi).map(|id| print_of(data.row(id, k), &self.cols)).collect();
+        let by_row: Vec<u8> = (lo..hi).map(|id| print_vals(self.cols.iter().map(|&c| data.value(id, k, c)))).collect();
         let mut run = Run::of(data, k, &self.cols, (lo..hi).collect());
         run.prints = run.ids.iter().map(|id| by_row[(id - lo) as usize]).collect();
         run
@@ -1132,7 +1231,7 @@ impl Index {
             // taken in place (decision 0187), the rest sorted.
             if r.ids.iter().max().is_some_and(|hi| (hi - lo) as usize + 1 == r.ids.len()) {
                 let hi = lo + r.ids.len() as u32;
-                presorted::site(presorted::REORDER, r.ids.len(), |i| cmp_vals(&self.cols, t, data.row(lo + i as u32 - 1, k), data.row(lo + i as u32, k)).is_gt());
+                presorted::site(presorted::REORDER, r.ids.len(), |i| cmp_ids(data, k, &self.cols, t, lo + i as u32 - 1, lo + i as u32).is_gt());
                 let known = if known_beyond_runs() { sorted.within(&self.cols, k, lo, hi) } else { Vec::new() };
                 presorted::site_known(presorted::REORDER, known.iter().map(|&(a, b)| u64::from(b - a)).sum());
                 *r = Arc::new(self.run_over(data, k, lo, hi, &known));
@@ -1284,7 +1383,7 @@ pub mod presorted {
         let (mut start, mut long, mut stretches, mut whole) = (lo, 0u64, 0u64, true);
         let mut close = |start: u32, end: u32| if end - start >= 64 { long += u64::from(end - start); stretches += 1; };
         for id in lo + 1..hi {
-            if cmp_vals(cols, tagged(cols, k), data.row(id - 1, k), data.row(id, k)) == Ordering::Greater {
+            if cmp_ids(data, k, cols, tagged(cols, k), id - 1, id) == Ordering::Greater {
                 close(start, id);
                 start = id;
                 whole = false;
@@ -1345,6 +1444,52 @@ pub mod presorted {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+
+    /// Decision 0294: a merge of pieces on the pool puts out what one thread's does, ties included (the left piece's
+    /// first: items equal by `le` and told apart by their ids), whatever the pieces' sizes; and a sort on the pool is
+    /// one thread's.
+    #[test]
+    fn merges_and_sorts_on_the_pool_are_one_threads() {
+        let mut x = 0x9E37_79B9u64;
+        let mut next = move || { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x };
+        // Ids whose key (`id / 3 % 1000`) ties often; pieces of very different sizes, each sorted by key.
+        for sizes in [vec![200_000, 3, 70_000, 1], vec![1 << 17; 5], vec![90_000]] {
+            let mut v: Vec<u32> = Vec::new();
+            let mut bounds = vec![0];
+            for &n in &sizes {
+                let mut piece: Vec<u32> = (0..n).map(|_| (next() % 4_000_000) as u32).collect();
+                piece.sort_by_key(|&id| id / 3 % 1000);
+                v.extend(piece);
+                bounds.push(v.len());
+            }
+            let le = |a: u32, b: u32| a / 3 % 1000 <= b / 3 % 1000;
+            let mut serial = v.clone();
+            let mut b = bounds.clone();
+            // One thread's merge: the loop `merge_pieces` runs below `PAR_ROWS`.
+            while b.len() > 2 {
+                let mut buf = Vec::new();
+                let mut nb = vec![0];
+                for p in (0..b.len() - 1).step_by(2) {
+                    let (lo, mid) = (b[p], b[p + 1]);
+                    let hi = if p + 2 < b.len() { b[p + 2] } else { mid };
+                    let (mut i, mut j) = (lo, mid);
+                    while i < mid && j < hi { if le(serial[i], serial[j]) { buf.push(serial[i]); i += 1 } else { buf.push(serial[j]); j += 1 } }
+                    buf.extend_from_slice(&serial[i..mid]);
+                    buf.extend_from_slice(&serial[j..hi]);
+                    nb.push(hi);
+                }
+                serial = buf;
+                b = nb;
+            }
+            merge_pieces_par(&mut v, bounds, le);
+            assert_eq!(v, serial, "pieces {sizes:?}");
+        }
+        let mut keys: Vec<u64> = (0..300_000).map(|_| next()).collect();
+        let mut one = keys.clone();
+        one.sort_unstable();
+        sort_unstable_par(&mut keys);
+        assert_eq!(keys, one);
+    }
 
     #[test]
     fn orders_find_prefixes_merge_and_delta() {

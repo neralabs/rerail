@@ -120,6 +120,8 @@ pub struct Body<'v> {
     lits: Vec<LitRef<'v>>,
     vars: OnceCell<Vec<VarSet>>,
     args: OnceCell<Vec<Vec<TermRef<'v>>>>,
+    /// The rule's digest (`key`), made at the first ask: a plan call reads it for each of its keys.
+    key: OnceCell<u128>,
     /// The version the rule's source (`RuleRef::source`) is a rule of: the run's version 0, for a rule of a
     /// maintained form (`Versions::at`); `None` for every other rule.
     sources: Option<&'v Version>,
@@ -127,7 +129,7 @@ pub struct Body<'v> {
 
 impl<'v> Body<'v> {
     pub fn of(v: &'v Version, rule: RuleRef<'v>) -> Body<'v> {
-        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new(), args: OnceCell::new(), sources: None }
+        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: None }
     }
     /// The rule this one was written from (decision 0258): for a maintenance rule of a session's form (`h__del`,
     /// `h__ins`, `h__redo`, …), its source rule `h :- …` of the run's version. `None` for a rule not written from one.
@@ -182,6 +184,7 @@ impl<'v> Body<'v> {
             (TermRef::Var(a), TermRef::Var(b)) => self.var(a) == o.var(b),
             (TermRef::Wild, TermRef::Wild) | (TermRef::Top, TermRef::Top) => true,
             (TermRef::Int(a), TermRef::Int(b)) => a == b,
+            (TermRef::Branded(a), TermRef::Branded(b)) => a == b,
             (TermRef::Str(a), TermRef::Str(b)) => self.v.text(a) == o.v.text(b),
             (TermRef::Call(f, xs), TermRef::Call(g, ys)) => {
                 self.v.text(f) == o.v.text(g) && xs.clone().count() == ys.clone().count() && xs.zip(ys).all(|(x, y)| self.same_term(x, o, y))
@@ -209,10 +212,33 @@ impl<'v> Body<'v> {
     pub fn demand_first(&self) -> Option<usize> {
         (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| !a.neg() && self.rel(a).contains("rr_demand_agg_")))
     }
-    /// Whether literal `i` assigns rather than filters: an equality or an aggregate (the search halves rows by every
-    /// other filter).
-    pub fn assigns(&self, i: usize) -> bool {
-        matches!(self.view(i), Lit::Cmp { op: CmpOp::Eq, .. } | Lit::Agg { .. })
+    /// The share of rows filter `i` passes on (decision 0297): measured by kind of filter, rows weighted, over the
+    /// 300-file bench's 317 rules (`profile`'s `native.tsv`, each step's rows in and out). An equality that binds a
+    /// variable no join of the body binds passes every row; one that tests passes as a test of its kind does.
+    pub fn filter_pass(&self, i: usize) -> f64 {
+        match self.view(i) {
+            Lit::Atom(a) if a.neg() => 0.95,
+            Lit::Cmp { l, op, r } => {
+                let joined = |t: TermRef<'_>| t.var().is_some_and(|v| (0..self.len()).any(|j| self.is_join(j) && self.vars(j).contains(v)));
+                let free = |t: TermRef<'_>| t.var().is_some() && !joined(t);
+                let call = matches!(l, TermRef::Call(..)) || matches!(r, TermRef::Call(..));
+                // A kind, field or name is branded (decision 0270): a constant like any other.
+                let constant = |t: TermRef<'_>| matches!(t, TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_));
+                match op {
+                    CmpOp::Eq if free(l) || free(r) => 1.0,
+                    CmpOp::Eq if call => 0.4,
+                    CmpOp::Eq if constant(l) || constant(r) => 0.6,
+                    CmpOp::Eq => 0.9,
+                    CmpOp::Ne => 0.97,
+                    // A bound of an id's range (`$n < 6917529027641081856`, `$d < 1610612736`), as lowering writes
+                    // it: every row of the right kind of id passes.
+                    _ if [l, r].iter().any(|t| matches!(t, TermRef::Int(c) if c.unsigned_abs() >= 1 << 30)) => 0.98,
+                    _ if constant(l) || constant(r) => 0.7,
+                    _ => 1.0 / 3.0,
+                }
+            }
+            _ => 1.0,
+        }
     }
     /// Whether literals `i` and `j` read equal atoms (`front::Atom`'s equality: relation, flags and arguments).
     pub fn same_atom(&self, i: usize, j: usize) -> bool {
@@ -293,6 +319,7 @@ impl<'v> Body<'v> {
     pub fn constant(&self, t: TermRef<'_>) -> Option<Constant> {
         match t {
             TermRef::Int(i) => Some(Constant::Int(i)),
+            TermRef::Branded(a) => Some(Constant::Int(a.value())),
             TermRef::Str(a) => Some(Constant::Str(self.v.text(a).to_owned())),
             _ => None,
         }
@@ -358,9 +385,14 @@ impl<'v> Body<'v> {
             self.digest_lit(d, l);
         }
     }
+    /// The rule's digest (`digest`), made once: what every key of the rule writes (`plan_key`, `line_key`,
+    /// `observed_key`) in place of the rule's text.
+    pub fn key(&self) -> u128 {
+        *self.key.get_or_init(|| super::super::derived::digest(|d| self.digest(d)))
+    }
     /// The key observations of this rule's steps are kept under (`plan::obs_rule`).
     pub fn observed_key(&self) -> u64 {
-        let d = super::super::derived::digest(|d| self.digest(d));
+        let d = self.key();
         (d as u64) ^ ((d >> 64) as u64)
     }
     fn digest_term(&self, d: &mut super::super::derived::Inputs, t: TermRef<'_>) {
@@ -373,6 +405,11 @@ impl<'v> Body<'v> {
             TermRef::Int(i) => {
                 d.u64(2);
                 d.u64(i as u64);
+            }
+            TermRef::Branded(b) => {
+                d.u64(6);
+                d.u64(b.class as u64);
+                d.u64(u64::from(b.atom));
             }
             TermRef::Str(a) => {
                 d.u64(3);
@@ -475,7 +512,7 @@ pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &Var
     let TermRef::Var(y) = r else { return None };
     let ready = match l {
         TermRef::Var(x) => bound.contains(x),
-        TermRef::Int(_) | TermRef::Str(_) => true,
+        TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => true,
         _ => false,
     };
     (ready && !bound.contains(y)).then_some(y)

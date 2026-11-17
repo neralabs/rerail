@@ -37,15 +37,32 @@ pub fn define_function(
     id: FuncId,
     context: &mut Context,
 ) -> Result<(), Box<ModuleError>> {
+    // The tape's hot reads it calls, inlined (decision 0310).
+    rerail_clif::inline::reads(module, context)?;
     // JIT code mappings can be farther apart than a direct branch can reach.
     // Local linkage proves symbol ownership, not physical code proximity.
     // Ask Cranelift for long-range calls before it selects instructions.
     for (_, function) in context.func.dfg.ext_funcs.iter_mut() {
         function.colocated = false;
     }
-    module.define_function(id, context)?;
+    // The function may have changed since its flow graph was made (`clif_fold`): made again.
+    context.cfg.clear();
+    context.domtree.clear();
+    if let Err(e) = module.define_function(id, context) {
+        if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
+            eprintln!("define {}: {e:?}\n{}", context.func.name, context.func.display());
+        }
+        return Err(Box::new(e));
+    }
     #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos", target_arch = "aarch64"))]
     relocations::record(id, context);
+    Ok(())
+}
+
+/// The tape's cold reads (decision 0310), defined once in `module` as every function is
+/// (`define_function`): what a call the pass leaves calls.
+pub fn define_reads(module: &mut JITModule) -> Result<(), Box<ModuleError>> {
+    rerail_clif::inline::define_cold(module, &mut |module, id, context| define_function(module, id, context).map_err(|error| *error))?;
     Ok(())
 }
 
@@ -61,6 +78,11 @@ pub fn define_functions(module: &mut JITModule, items: Vec<(FuncId, Context)>, n
     use cranelift_module::{Module, ModuleReloc};
     let mut items = items;
     for (_, context) in &mut items {
+        // The tape's hot reads each calls, inlined (decision 0310).
+        rerail_clif::inline::reads(module, context)?;
+        // The function changed since its flow graph was made (`clif_fold`, the inlining above): made again.
+        context.cfg.clear();
+        context.domtree.clear();
         for (_, function) in context.func.dfg.ext_funcs.iter_mut() {
             function.colocated = near && matches!(function.name, cranelift_codegen::ir::ExternalName::User(_));
         }

@@ -7,6 +7,9 @@ use crate::code_rule_dsl::tape::TapeDoc;
 #[allow(unused_imports)]
 pub use rerail_metal::runtime::*;
 pub use rerail_metal::launch;
+/// The Metal tests' allocation counter, where they name it (it moved into `rerail-metal` with the runtime).
+#[cfg(any(test, feature = "metal-tests"))]
+pub(super) use rerail_metal::buffer_observation::BufferObservation;
 use launch::{CheckedComputeEncoder, commit_checked, wait_checked};
 use metal::{CommandQueue, ComputePipelineState, Device, MTLSize};
 use std::collections::BTreeMap;

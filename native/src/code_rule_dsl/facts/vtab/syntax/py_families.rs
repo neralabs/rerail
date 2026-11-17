@@ -87,7 +87,7 @@ impl Py {
     /// Document `p`'s imports' screen, made on its first read.
     pub(crate) fn imports(&self, batch: &Batch, p: &Projected) -> &crate::code_rule_dsl::facts::producers::python::import_screen::Imports {
         self.imports[Self::at(batch, p)].get_or_init(|| {
-            crate::code_rule_dsl::facts::producers::python::import_screen::Imports::from_core(&p.facts, &batch.dialects[&p.tag].catalog, p.module.as_ref())
+            crate::code_rule_dsl::facts::producers::python::import_screen::Imports::from_core(&p.facts, &batch.dialects[p.tag].catalog, p.module.as_ref())
         })
     }
 }

@@ -157,11 +157,11 @@ impl About {
         let mut about = About::default();
         let rel = |c: Cell| match c {
             Cell::Str(a) => v.rel_of(a),
-            Cell::Int(_) => None,
+            Cell::Int(_) | Cell::Branded(_) => None,
         };
         let atom = |c: Cell| match c {
             Cell::Str(a) => Some(a),
-            Cell::Int(_) => None,
+            Cell::Int(_) | Cell::Branded(_) => None,
         };
         let mut merges: Vec<(RelId, AtomId)> = Vec::new();
         let mut widens: Vec<(RelId, u32)> = Vec::new();

@@ -202,9 +202,9 @@ enum Fold {
     All,
 }
 
-/// The ids of `p`'s nodes and of `tokens` (each token's node, in order): the low 32 bits; and each node's order key
-/// (`order`).
-pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> (Vec<u32>, Vec<u32>) {
+/// The ids of `p`'s nodes and of `tokens` (each token's node, in order): the low 32 bits, written to `low` (as many
+/// as nodes and tokens); and each node's order key (`order`), returned.
+pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32], low: &mut [u32]) -> Vec<u32> {
     let mut fold = Fold::None;
     loop {
         let cut = cut(p, dialect, fold);
@@ -223,7 +223,8 @@ pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> (Vec<u32>, Ve
             continue;
         }
         let _span = crate::code_rule_dsl::logic::profile::span(|| "granule slots".into());
-        return (place(&cut, &nodes, tokens), order(&cut.of));
+        place(&cut, &nodes, tokens, low);
+        return order(&cut.of);
     }
 }
 
@@ -395,18 +396,18 @@ fn own_digest(p: &Projected, of: &[u32], starts: &[u32], g: usize) -> String {
     let f = &*p.facts;
     let l = starts[g] as usize;
     let id = p.core[l] as usize;
-    let (start, end) = (f.start[id] as usize, f.end[id] as usize);
+    let (start, end) = (f.start(id as u32) as usize, f.end(id as u32) as usize);
     let mut h = Sha256::new();
     let mut at = start;
     // Core IDs retain preorder. Find this subtree without materializing projection sizes.
-    let until = p.core.partition_point(|&node| node < f.subtree_end[id]);
+    let until = p.core.partition_point(|&node| node < f.subtree_end(id as u32));
     for x in l + 1..until {
         // A nested granule's start whose parent is in this one: cut it out.
         if of[x] as usize != g && of[p.parent(x) as usize] as usize == g {
             let c = p.core[x] as usize;
-            h.update(&f.source.as_bytes()[at..f.start[c] as usize]);
+            h.update(&f.source.as_bytes()[at..f.start(c as u32) as usize]);
             h.update([0]);
-            at = f.end[c] as usize;
+            at = f.end(c as u32) as usize;
         }
     }
     h.update(&f.source.as_bytes()[at.min(end)..end]);
@@ -435,7 +436,7 @@ fn settle(keys: &[(usize, String)], taken: &mut [bool], out: &mut HashMap<usize,
 }
 
 /// The low bits of every node and token: granules placed, then their continuations.
-fn place(cut: &Cut, nodes: &[u32], tokens: &[u32]) -> Vec<u32> {
+fn place(cut: &Cut, nodes: &[u32], tokens: &[u32], low: &mut [u32]) {
     let g = cut.starts.len();
     let mut ntok = vec![0u32; g];
     for &t in tokens {
@@ -472,13 +473,12 @@ fn place(cut: &Cut, nodes: &[u32], tokens: &[u32]) -> Vec<u32> {
     }
     let mut next = vec![0u32; g];
     let owners = cut.of.iter().copied().chain(tokens.iter().map(|&t| cut.of[t as usize]));
-    owners
-        .map(|o| {
-            let i = next[o as usize];
-            next[o as usize] += 1;
-            slots[o as usize][(i / INDEX) as usize] << INDEX_BITS | (i % INDEX)
-        })
-        .collect()
+    assert_eq!(low.len(), cut.of.len() + tokens.len(), "a low id for each node and token");
+    for (slot, o) in low.iter_mut().zip(owners) {
+        let i = next[o as usize];
+        next[o as usize] += 1;
+        *slot = slots[o as usize][(i / INDEX) as usize] << INDEX_BITS | (i % INDEX);
+    }
 }
 
 /// The low bits of span `i` (past the nodes and tokens): the top slots, down from the last.

@@ -116,10 +116,10 @@ pub(in crate::code_rule_dsl) fn input_views(p: &Placed) -> Result<BTreeMap<Strin
                 return None;
             }
             let head: BTreeSet<_> = rule.head().args().filter_map(|t| t.var()).collect();
-            let terms_ok = rule.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_)));
+            let terms_ok = rule.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_)));
             let one_to_one = a.args().all(|t| match t {
                 TermRef::Var(s) => head.contains(&s),
-                TermRef::Int(_) | TermRef::Str(_) => true,
+                TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => true,
                 _ => false,
             });
             (terms_ok && one_to_one).then(|| (rel.to_owned(), input.to_owned()))
@@ -378,7 +378,7 @@ impl<'v> Named<'v> {
     }
     /// Whether its (named) head is of variables and constants only.
     fn plain_head(&self) -> bool {
-        self.r.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_) | TermRef::Call(..)))
+        self.r.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) | TermRef::Call(..)))
     }
 }
 
@@ -520,7 +520,7 @@ fn head_ir(src: &Part<'_>, ir: &Ir) -> String {
 /// rule unguarded.
 fn insert_ir(rules: &mut Vec<Ir>, n: &Named<'_>, k: usize, h: &str, body: Vec<L>, gone: &str) {
     let head = H::Named(named(h, "ins"));
-    if !n.r.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_) | TermRef::Call(..))) {
+    if !n.r.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) | TermRef::Call(..))) {
         rules.push(Ir::Rule { src: Some(k), head, body });
         return;
     }
@@ -577,10 +577,10 @@ fn input_views_over(src: &Part<'_>) -> BTreeMap<String, usize> {
                 return None;
             }
             let head: BTreeSet<_> = n.r.head().args().filter_map(|t| t.var()).collect();
-            let terms_ok = n.r.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_)));
+            let terms_ok = n.r.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_)));
             let one_to_one = a.args().all(|t| match t {
                 TermRef::Var(s) => head.contains(&s),
-                TermRef::Int(_) | TermRef::Str(_) => true,
+                TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => true,
                 _ => false,
             });
             (terms_ok && one_to_one).then(|| (rel.to_owned(), *k))
@@ -1780,8 +1780,32 @@ pub(in crate::code_rule_dsl) struct StoredForms<'s> {
 
 /// The alias a general form's source is kept under: its step's key, in the image format its layers are written in.
 fn form_alias(key: &StepKey) -> crate::content_store::HashKey {
+    alias_of(key.as_slice())
+}
+
+/// `form_alias` of a key's bytes.
+fn alias_of(key: &[u8]) -> crate::content_store::HashKey {
     let format = crate::code_rule_dsl::logic::program_image::FORMAT;
-    crate::content_store::HashKey::sha256(&[format!("rerail general form {format}\0").as_bytes(), key.as_slice()].concat())
+    crate::content_store::HashKey::sha256(&[format!("rerail general form {format}\0").as_bytes(), key].concat())
+}
+
+/// The general forms a run read, named by its record (decision 0306), so collection keeps them.
+fn apply_read(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+    let held: Vec<crate::content_store::SourceId> = crate::content_store::record::codec::from_body("the general forms read", body)?;
+    cx.name(held);
+    Ok(())
+}
+
+/// A general form a run wrote (its key's bytes; its source the item's bytes), stored once under its alias and named.
+fn apply_form(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+    let key: Vec<u8> = crate::content_store::record::codec::from_body("a general form", body)?;
+    let alias = alias_of(&key);
+    let id = match cx.store.source_by_alias(alias)? {
+        Some(id) => id,
+        None => cx.store.put_source(cx.bytes, &[alias])?,
+    };
+    cx.name([id]);
+    Ok(())
 }
 
 impl<'s> StoredForms<'s> {
@@ -1800,7 +1824,7 @@ impl<'s> StoredForms<'s> {
         let atoms = self.atoms.get().ok_or("a general form stored before its atoms")?;
         let mut layers = Vec::new();
         let mut at = v;
-        while let Some((bytes, parent)) = at.layer() {
+        while let crate::code_rule_dsl::logic::program_image::Layer::Overlay(parent, bytes) = at.layer() {
             layers.push(bytes);
             at = parent;
         }
@@ -1838,7 +1862,7 @@ impl Drop for StoredForms<'_> {
     fn drop(&mut self) {
         let held = std::mem::take(self.held.get_mut());
         if !held.is_empty() {
-            self.store.write_back("the pins of the general forms read (decision 0298)", 0, Vec::new(), Box::new(move |s| s.pin_held_sources(&held)));
+            self.store.record("the general forms read", Vec::new(), &held, None, apply_read);
         }
     }
 }
@@ -1867,19 +1891,8 @@ impl Steps for StoredForms<'_> {
     fn keep(&self, key: &StepKey, _: &StepRecord, output: &Version) -> std::result::Result<(), String> {
         let record = self.writing.borrow_mut().take().ok_or("a general form kept without its record")?;
         let bytes = self.source(&record, output)?;
-        let alias = form_alias(key);
-        self.store.write_back(
-            "a general form (decision 0298)",
-            bytes.len(),
-            Vec::new(),
-            Box::new(move |s| {
-                let id = match s.source_by_alias(alias)? {
-                    Some(id) => id,
-                    None => s.put_source(&bytes, &[alias])?,
-                };
-                s.pin_held_sources(&[id])
-            }),
-        );
+        // In the run's record (decision 0306): stored once under its alias, and named so collection keeps it.
+        self.store.record("a general form", Vec::new(), &key.as_slice().to_vec(), Some(bytes), apply_form);
         Ok(())
     }
 }

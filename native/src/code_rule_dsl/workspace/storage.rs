@@ -168,7 +168,7 @@ impl rerail_accel::upkeep::Job for SearchIndex {
         use rerail_accel::upkeep::Due;
         let Some(store) = self.store.upgrade() else { return Due::No };
         // From the start: a backlog below the cursor is the backlog too.
-        match store.tapes_without_search_index_after(grammar_version(), i64::from(tape::TAPE_FORMAT_VERSION), None, 1) {
+        match store.tapes_without_search_index_after(grammar_version(), i64::from(tape::formats::stored_version()), None, 1) {
             Ok(b) if !b.is_empty() => Due::Idle { starve: Duration::from_secs(60) },
             _ => Due::No,
         }
@@ -211,7 +211,7 @@ pub fn index_stored_tapes_until(
     while Instant::now() < until && !stop.load(Ordering::Acquire) && !over() {
         let Ok(backlog) = store.tapes_without_search_index_after(
             grammar_version(),
-            i64::from(tape::TAPE_FORMAT_VERSION),
+            i64::from(tape::formats::stored_version()),
             *cursor,
             64,
         ) else {
@@ -281,10 +281,11 @@ fn decode_stored_tape(
     let source = String::from_utf8(unindexed.source).ok()?;
     let image = tape::TapeImage::from_bytes(&unindexed.image, &grammar).ok()?;
     let lines = Arc::new(LineTable::new(&source, Terminators::of(language)));
+    let image = tape::FileImage::single(image, &source);
     tape::TapeDoc::restore_with_lines(
         Arc::new(source),
         grammar,
-        &tape::FileImage::single(image),
+        &image,
         lines,
         &|| stop.load(Ordering::Acquire),
     )
@@ -394,7 +395,7 @@ pub(super) fn attach_storage(
         &store,
         1,
         grammar_set(),
-        i64::from(tape::TAPE_FORMAT_VERSION),
+        i64::from(tape::formats::stored_version()),
         &WorkspaceRegistration {
             root: discovered.worktree_root.to_string_lossy().as_ref(),
             repository: discovered.common_directory.to_string_lossy().as_ref(),

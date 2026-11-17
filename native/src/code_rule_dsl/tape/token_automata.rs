@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// The grammars built with the build: a dialect's variant name and its `grammar.json`'s directory under
 /// `native/grammars` (as `tokens::grammar_json` reads it).
-pub(crate) const GRAMMARS: [(&str, &str); 15] = [
+pub(crate) const GRAMMARS: [(&str, &str); 21] = [
     ("Python", "tree-sitter-python/src"),
     ("JavaScript", "tree-sitter-javascript/src"),
     ("TypeScript", "tree-sitter-typescript/typescript/src"),
@@ -25,7 +25,17 @@ pub(crate) const GRAMMARS: [(&str, &str); 15] = [
     ("CSharp", "token-grammars/csharp"),
     ("Html", "token-grammars/html"),
     ("Css", "token-grammars/css"),
+    ("Kotlin", "token-grammars/kotlin"),
+    ("Swift", "token-grammars/swift"),
+    ("Scala", "token-grammars/scala"),
+    ("Go", "token-grammars/go"),
+    ("C", "token-grammars/c"),
+    ("Cpp", "token-grammars/cpp"),
 ];
+
+/// The grammars of `GRAMMARS` only tests parse (`GrammarDialect`'s test-only dialects): their arms are built
+/// under `cfg(any(test, feature = "test-hooks"))`, as the dialects are. Their lean parsers' oracles read them.
+pub(crate) const TEST_ONLY: [&str; 3] = ["Kotlin", "Swift", "Scala"];
 
 /// An interned name (a kind or a field; 0 is "no field").
 pub(crate) type Sym = u32;

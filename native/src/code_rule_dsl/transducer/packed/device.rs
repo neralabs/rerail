@@ -5,10 +5,10 @@
 //! The backends stay data (`ExecutionBackend`, `Backend::MetalInterpreter`, `RanOn`): a backend with no device to
 //! run it is refused (`Error::UnsupportedBackend`), or falls back to the CPU where it did before the split.
 use std::collections::BTreeSet;
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 
 use super::{BatchOutcome, Error, ExecutionBackend, LoweredMatcher, LoweredWave, PackedExecution, Program};
-use crate::code_rule_dsl::tape::{TapeDoc, TapeSource};
+use crate::code_rule_dsl::tape::TapeDoc;
 
 /// Which of the device's program engines runs a batch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -23,7 +23,7 @@ pub enum Engine {
 pub trait MatcherDevice: Send + Sync {
     /// The batch's programs on `engine`, from `anchors` (per file, per program), at most `result_limits` results each.
     fn execute_packed(&self, engine: Engine, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>) -> Result<PackedExecution, Error>;
-    /// The batch's outcomes on `backend` (one of the device's: `MetalInterpreter`, `MetalJit` or `Metal`).
+    /// The batch's outcomes on `backend` (one of the device's: `MetalInterpreter` or `MetalJit`).
     fn execute_outcomes(&self, backend: ExecutionBackend, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>]) -> Result<BatchOutcome, Error>;
     /// The production programs compiled, so the first batch need not wait for them.
     fn warm(&self, programs: &[Program]) -> Result<(), Error>;
@@ -33,10 +33,6 @@ pub trait MatcherDevice: Send + Sync {
     fn compile_interpreter(&self) -> Result<(), Error>;
     /// The sweep and the batch's programs compiled: the background compilation of `MetalBackground`.
     fn compile_background(&self, programs: &[Program]) -> Result<(), Error>;
-    /// The production corpus in one grid, sharing its files' anchors.
-    fn execute_shared_corpus(&self, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Arc<[u32]>>], result_limits: &[u32]) -> Result<PackedExecution, Error>;
-    /// [`execute_shared_corpus`](Self::execute_shared_corpus) by pages of restored tapes, each page to `consumer`.
-    fn execute_shared_corpus_pages(&self, programs: &[Program], files: &[TapeSource], anchors: &[Vec<Arc<[u32]>>], result_limits: &[u32], consumer: &mut PageConsumer<'_>) -> Result<(), Error>;
     /// A matcher's roots over the batch, every pass in one command buffer, pattern leaves included.
     fn matcher_roots(&self, matcher: &LoweredMatcher, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, Outcome), Error>;
     /// Each clause's matches of the batch from `roots` (per clause, per tape), every pass and root in one command
@@ -106,5 +102,3 @@ pub struct Outcome {
     /// The command buffers' seconds on the GPU (`GPUStartTime` to `GPUEndTime`), summed.
     pub device: f64,
 }
-
-pub type PageConsumer<'a> = dyn FnMut(PackedExecution, usize) -> Result<(), Error> + 'a;

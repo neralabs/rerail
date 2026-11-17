@@ -202,8 +202,7 @@ impl ProgramPass for Hide {
                                 changed = true;
                                 continue;
                             }
-                            // Negated as well, as the tree's (`hiding.rs`): `kind(s, k), !def_or_class(k)` over a guest's node
-                            // reads the set's qualified copy; the bare set holds none of the guest's kinds.
+                            // Read negated too (`!def_or_class(k)`), as the tree's: the host's rows name the host's kinds.
                             L::Atom(a)
                                 if !a.rel.starts_with("rr_in_")
                                     && !ruled.contains_key(a.rel.as_str())

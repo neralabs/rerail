@@ -347,6 +347,22 @@ hit(n, l) :- pick(n), line(n, l).
     }
 }
 
+/// A climb up the tree (`inside`, `has`, a nearest over a derived set: lower.rs `climb`) reads the tape's parent
+/// column, which `need_tape` declares over numbers. A node's parent is in its document, so the climb is file-local:
+/// cross-file, every climb of a pack joined the corpus on one worker (O-cold-seed-join).
+#[test]
+fn a_climb_over_the_tapes_parent_column_is_file_local() {
+    use crate::code_rule_dsl::logic::rr::parse;
+    let text = ".decl kind(n: node, k: number)\n.input kind\n.decl tape(n: int, par: int, size: int, depth: int)\n.input tape\n\
+        .decl stop(n: node)\nstop(n) :- kind(n, 7).\n\
+        .decl up(n: node, a: int)\nup(n, p) :- kind(n, 3), tape(n, p, _, _), p >= 0.\nup(n, q) :- up(n, p), !stop(p), tape(p, q, _, _), q >= 0.\n\
+        .decl under(n: node)\nunder(n) :- up(n, a), stop(a).\n.output under\n";
+    let program = parse(text).unwrap();
+    let (local, locations, _) = split_located(&program);
+    assert!(local.contains("up") && local.contains("under"), "{local:?}");
+    assert!(locations["up"].contains(&0), "{locations:?}");
+}
+
 /// `boot-python.rr`'s `deco_word`: a disjunction's branch `(e0 = d ; …)` leaves `e0 = d` between two per-file pieces.
 /// The equality names one value, so the pieces are one join, pushed into the chunks whole; apart, the split pushed each
 /// and left their join to the cross-file part (decision 0093 §4, O140).
@@ -530,6 +546,41 @@ fn rows_are_located_on_a_version_as_on_the_tree() {
     assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
 }
 
+/// A located rule keeps its branded atoms (decision 0270, a lowered program's atoms): `named`'s `node(_, n,
+/// "function", _, _)`, its kind branded as lowering brands it, is the atom whose unnamed document column the located
+/// rule names, its other terms copied (`passes::t_of`): the kind stays the same branded atom. The same program as the
+/// tree's `locate`.
+#[test]
+fn a_located_rule_keeps_its_branded_atoms() {
+    use crate::code_rule_dsl::logic::front::{Branded, Class, Literal, Term};
+    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+    let text = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl text(n: node, s: symbol)\n.input node, text\n\
+                .decl named(s: symbol)\nnamed(s) :- node(_, n, \"function\", _, _), text(n, s).\n\
+                .decl all(s: symbol)\nall(s) :- named(s).\n.output all\n";
+    let kind = Branded { class: Class::Kind, atom: 7 };
+    let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    for r in &mut tree.rules {
+        for l in &mut r.body {
+            if let Literal::Atom(a) = l {
+                a.args.iter_mut().filter(|t| matches!(t, Term::Str(_))).for_each(|t| *t = Term::Branded(kind));
+            }
+        }
+    }
+    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    assert!(!v.show().contains("\"function\""), "branded: {}", v.show());
+    let mut pass = Locate::default();
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut pass);
+    let (out, _) = p.finish().unwrap();
+    let want = locate(&mut tree);
+    assert_eq!(want, Ok(vec!["named".to_owned()]));
+    assert_eq!(pass.result(), want);
+    let keeps = |l: &Literal| matches!(l, Literal::Atom(a) if a.rel.as_str() == "node" && a.args.iter().any(|t| *t == Term::Branded(kind)));
+    assert!(tree.rules.iter().any(|r| r.head.rel.as_str() == "named_at" && r.body.iter().any(keeps)), "the tree's located rule keeps it");
+    let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
+}
+
 /// An export read by a cross-file rule with a demand is cut on a version as the tree cuts it: the same lines, the
 /// same program (`xd_fl_later` through `dm_demand_0` and the key `xk_text_0`).
 #[test]
@@ -681,4 +732,23 @@ named(f, s) :- uses(f, _), child(p, f, _), node(_, p, "call", _, _), text(p, s).
     let of = |m: &[String], head: &str| m.iter().find(|r| r.ends_with(&format!("_{head}"))).cloned().unwrap_or_else(|| panic!("{head} in {m:?}"));
     assert_ne!(of(&before, "first"), of(&after, "first"), "the edited rule's helper is renamed");
     assert_eq!(of(&before, "named"), of(&after, "named"), "another rule's is not");
+}
+
+/// A base relation read before it is declared (a tree axis, `rr_inside_<set>`, which lowering declares) has no
+/// location columns of its own, in the version's split as in the tree's: the version's asked for its columns'
+/// types and stopped, on any program with `inside(n, a, "kind")` (ep2's combine).
+#[test]
+fn the_split_of_a_version_reads_an_undeclared_axis_as_the_tree_does() {
+    let text = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.input node\n\
+                .decl out(n: node)\n.output out\nout(n) :- node(_, n, \"call\", _, _), inside(n, a, \"assignment\").\n";
+    let mut program = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    // The axis as the combine's link hands it on: read, and not declared.
+    let axes: Vec<String> = program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom())).filter(|a| crate::code_rule_dsl::logic::front::is_axis(&a.rel)).map(|a| a.rel.to_string()).collect();
+    assert!(!axes.is_empty(), "the program reads an axis: {:?}", program.rules);
+    for a in &axes {
+        program.decls.remove(a.as_str());
+    }
+    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).unwrap().finish().unwrap();
+    let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<FileLocal>(&v).unwrap();
+    assert_eq!(split.local, split_located(&program).0, "the version's file-local relations are the tree's");
 }

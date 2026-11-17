@@ -71,6 +71,46 @@ impl Analysis for FileLocal {
         let _span = crate::code_rule_dsl::logic::profile::span(|| format!("split: all {} relations", p.rels.derived_count));
         Ok(p.split(None, None))
     }
+    /// Its fields as rows, each tagged by its field (decision 0333 §4): `(0, rel)` file-local, `(1, rel)` constant,
+    /// `(2, rel, columns)` locations, `(3, rel)` filters, `(4, rel, cause)`, `(5, rel, columns)` same-document,
+    /// `(6, no document)`, and its keys, `(7, global)` and `(8, head, key)`.
+    fn rows(&self, _v: &Version) -> Option<Vec<crate::code_rule_dsl::logic::program_image::manager::Row>> {
+        use crate::code_rule_dsl::logic::front::Value;
+        let str = |s: &str| Value::Str(s.to_owned().into());
+        let cols = |c: &[usize]| str(&c.iter().map(usize::to_string).collect::<Vec<_>>().join(","));
+        let tag = |k: i64| Value::Int(k);
+        let mut out = Vec::new();
+        out.extend(self.local.iter().map(|r| vec![tag(0), str(r)]));
+        out.extend(self.constants.iter().map(|r| vec![tag(1), str(r)]));
+        out.extend(self.locations.iter().map(|(r, c)| vec![tag(2), str(r), cols(c)]));
+        out.extend(self.filters.iter().map(|r| vec![tag(3), str(r)]));
+        out.extend(self.causes.iter().map(|(r, c)| vec![tag(4), str(r), str(c)]));
+        out.extend(self.same_doc.iter().map(|(r, c)| vec![tag(5), str(r), cols(c)]));
+        out.push(vec![tag(6), Value::Int(i64::from(self.no_document))]);
+        out.push(vec![tag(7), Value::Int(self.keys.global as i64)]);
+        out.extend(self.keys.heads.iter().map(|(h, k)| vec![tag(8), str(h), Value::Int(*k as i64)]));
+        Some(out)
+    }
+    fn of_rows(_v: &Version, rows: &[crate::code_rule_dsl::logic::program_image::manager::Row]) -> Option<FileLocal> {
+        use crate::code_rule_dsl::logic::front::Value;
+        let cols = |s: &str| -> Option<Vec<usize>> { if s.is_empty() { Some(Vec::new()) } else { s.split(',').map(|x| x.parse().ok()).collect() } };
+        let mut f = FileLocal::default();
+        for r in rows {
+            match r.as_slice() {
+                [Value::Int(0), Value::Str(n)] => drop(f.local.insert(n.to_string())),
+                [Value::Int(1), Value::Str(n)] => drop(f.constants.insert(n.to_string())),
+                [Value::Int(2), Value::Str(n), Value::Str(c)] => drop(f.locations.insert(n.to_string(), cols(c)?)),
+                [Value::Int(3), Value::Str(n)] => drop(f.filters.insert(n.to_string())),
+                [Value::Int(4), Value::Str(n), Value::Str(c)] => drop(f.causes.insert(n.to_string(), c.to_string())),
+                [Value::Int(5), Value::Str(n), Value::Str(c)] => drop(f.same_doc.insert(n.to_string(), cols(c)?)),
+                [Value::Int(6), Value::Int(b)] => f.no_document = *b != 0,
+                [Value::Int(7), Value::Int(k)] => f.keys.global = *k as u64,
+                [Value::Int(8), Value::Str(h), Value::Int(k)] => drop(f.keys.heads.insert(h.to_string(), *k as u64)),
+                _ => return None,
+            }
+        }
+        Some(f)
+    }
     /// The split of the edit's output from the input's: the relations whose rules or declaration changed and every
     /// relation reading one, transitively (the cone), computed again, every other relation keeping its place. Exact
     /// (outside the cone no relation reads one inside); `None`, a whole split, where what every relation's place
@@ -218,21 +258,23 @@ impl<'v> Program<'v> {
         if matches!(rel, "reference_edge" | "reference_open") {
             return Vec::new();
         }
-        // As the tree's (`file_local::base_locations`): an undeclared relation has no node columns. A pass after the
-        // program's check makes tree axes it does not declare (the Python pack's `rr_inside_rr_kind_assignment`),
-        // where `Fields::types` panicked.
-        let mut columns: Vec<usize> = match self.f.decl(rel) {
-            Some(_) => self.f.types(rel).iter().enumerate().filter(|(_, t)| **t == "node").map(|(i, _)| i).collect(),
-            None => Vec::new(),
-        };
+        // An undeclared one (a tree axis before lowering declares it) has none of its own, as the tree's.
+        let mut columns: Vec<usize> = self.f.columns(rel).unwrap_or_default().iter().enumerate().filter(|(_, (_, t))| *t == "node").map(|(i, _)| i).collect();
         if let Some(column) = document_column(rel) {
             columns.push(column);
         }
         if rel == "docof" && !columns.contains(&1) {
             columns.push(1);
         }
-        if rel == "docof" {
-            columns.push(1);
+        // The tape's `tape(n, par, size, depth)` (the climbs' parent column, lower.rs `need_tape`) is declared over
+        // numbers, but a node's parent is a node of its document: both are locations (decision 0267,
+        // O-cold-seed-join).
+        if rel == "tape" {
+            for column in [0, 1] {
+                if !columns.contains(&column) {
+                    columns.push(column);
+                }
+            }
         }
         columns
     }
@@ -341,8 +383,8 @@ impl<'v> Program<'v> {
                 _ => true,
             })
         };
-        // A relation `locate` moved (`CROSS_FILE`, decision 0290): its rows name no document, so it is derived once
-        // over every file.
+        // A relation `locate` moved (`CROSS_FILE`): its rows name no document, so it is derived once over every file
+        // (decision 0290).
         let moved = |rel: &str| self.f.qualified(rel, super::CROSS_FILE);
         let mut local_now: Vec<bool> = (0..n)
             .map(|r| {

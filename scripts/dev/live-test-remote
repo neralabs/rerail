@@ -16,6 +16,7 @@ import ctypes
 import ctypes.util
 import json
 import os
+import resource
 import shlex
 import signal
 import subprocess
@@ -120,12 +121,20 @@ def main(argv):
     t = send(host, files=[relax], roots=roots, verify=True)
     print(f"live-test-remote: {host}: checkout, Relax sent ({t.get('files')} files, {t.get('sync')} s)", flush=True)
 
-    env = {"RUSTC_WRAPPER": "", "RELAX_ALLOW_C": "1"} | ({"RELAX_STD": os.path.realpath(std)} if std else {})
-    # Relax, its std and the checkout are kept under the host's farm root: farm-agent's `exec` maps
-    # their paths there, and stops Relax when this connection's input ends.
+    # As AGENTS.md runs Relax here: every checkout's runs on the host share one run dir, capped.
+    # Relax's home is the farm's too, never the host's own ~/.relax: a path named here that the
+    # host keeps under its farm root (this machine never makes it).
+    home = os.path.expanduser("~/Library/Caches/rerail-farm/relax-home")
+    env = {"RUSTC_WRAPPER": "", "RELAX_ALLOW_C": "1", "RELAX_SHARED_OPEN": "1", "RELAX_SHARE": "rerail",
+           "RELAX_CACHE_MAX": "8192", "RELAX_HOME": home} | ({"RELAX_STD": os.path.realpath(std)} if std else {})
+    # Relax, its std, its home and the checkout are kept under the host's farm root: farm-agent's
+    # `exec` maps their paths there, and stops Relax when this connection's input ends.
+    # (and this terminal's open-file limit: a command over ssh starts with 256, which the engine's
+    # parallel tests run out of, as test-remote's do)
     job = {"cwd": os.path.join(CHECKOUT, "native"), "argv": [relax, "test", "--live"] + argv, "env": env, "nice": 10,
-           "map": [CHECKOUT, relax] + ([os.path.realpath(std)] if std else [])}
-    remote = farm.on_host("farm-agent") + " exec " + shlex.quote(json.dumps(job))
+           "map": [CHECKOUT, relax, home] + ([os.path.realpath(std)] if std else []),
+           "nofile": resource.getrlimit(resource.RLIMIT_NOFILE)[0]}
+    remote = farm.agent_exec(job)
     proc = subprocess.Popen(farm.ssh(host, remote, "live"), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, bufsize=1)
     pushed = [None]

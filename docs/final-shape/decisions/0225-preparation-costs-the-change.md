@@ -292,6 +292,14 @@ then the split (§5), then the other questions, then §7.
   document's nodes again: one stratum went from 1,422 to 7.9 M rows. Fixed in 2ff9ffe8e: the factorized parts' keys
   and export demand's keys are never inlined. Now 300 files cold: 75 s wall, 847 G, and 50 files' violations
   identical to 5de418d7a's.
+- **A partial hit read rows made under another projection** (found merging the hub into benchmarks-on-integration,
+  2026-11-15). A relation's identity digested its rules and the value inputs they reach, not what the documents' base
+  rows were made of: the projection (decision 0046) the program's facts and rules choose, beside its rules. Two runs
+  on one store with the same rules and `.on guest_error skip` then `partial` gave the second the first's `roots`, the
+  broken guest's tree withheld (`guests_that_do_not_parse_follow_the_policy`, red whenever its two runs shared a
+  store). Every identity now digests the projection's rows (`Projection::rows_digest`: shape, patterns, text bounds,
+  narrowed nodes, guest policy; not which relations are made), so an edit that changes text demand misses the
+  relations it changes the rows of, as it must.
 - **Peak memory on corpus0 is 2.5 GB**, over decision 0126's 1 GB overall budget (cold, and the edits 1.6–2.9 GB). 50
   files cold: 1.0 GB, as 5de418d7a's 991 MB. Open (O-corpus0-peak-memory).
 

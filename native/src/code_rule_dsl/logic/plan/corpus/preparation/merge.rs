@@ -336,6 +336,10 @@ impl<'v> Canon<'v> {
                 args.for_each(|a| self.term(a));
                 self.out.push(Tok::K(15));
             }
+            // A branded atom (decision 0270), as `canonical` keeps it: its class and atom.
+            TermRef::Branded(b) => {
+                self.out.extend([Tok::K(16), Tok::I(i64::from(crate::code_rule_dsl::logic::program_image::brand_code(b.class))), Tok::I(i64::from(b.atom))])
+            }
         }
     }
 }
@@ -377,7 +381,8 @@ pub(super) fn congruence(v: &Version, f: Fields<'_>, abstract_constants: bool) -
         for &r in &cands {
             let distinct = rules(r).iter().map(|x| x.hash()).collect::<HashSet<u64>>().len();
             let n = ids.len();
-            // An undeclared relation (a helper a pass made without one) has no types, as the tree's merge reads it.
+            // An undeclared relation (a helper a pass made without one, or a library's facts, `param_slot(…).`) has no
+            // types, as the tree's merge reads it.
             let types = f.columns(r).map_or_else(Vec::new, |c| c.into_iter().map(|(_, t)| t).collect());
             class.push(*ids.entry((types, distinct, facts_of(r))).or_insert(n));
         }
@@ -466,6 +471,62 @@ mod tests {
         let (want, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
         assert_eq!((out.size(), out.digest()), (want.size(), want.digest()), "{}\n---\n{}", out.show(), want.show());
         assert!(out.rules().any(|r| out.rel_name(r.head().rel()) == "s_q"), "{}", out.show());
+    }
+
+    /// A library's facts may go undeclared (`param_slot("datetime.datetime", "tzinfo", 7).`): such relations merge by
+    /// their facts as the tree's do, and the merge does not ask for a declaration they lack.
+    #[test]
+    fn undeclared_fact_relations_merge_as_the_trees() {
+        let text = ".decl e(x: number)\n.input e\nf1(\"a\", 1).\nf2(\"a\", 1).\n\
+                    .decl uses(x: number, k: symbol)\nuses(x, k) :- e(x), f1(k, _).\nuses(x, k) :- e(x), f2(k, _).\n\
+                    .output uses\n";
+        let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        let mut p = Pipeline::new("test", v);
+        let mut merge = super::MergeIdentical::default();
+        p.program(&mut merge);
+        p.finish().unwrap();
+        let (m, _, _) = crate::code_rule_dsl::logic::plan::corpus::merge_and_drop_repeats(&mut tree);
+        assert_eq!(merge.merged, m);
+    }
+
+    /// A rule's branded atoms (decision 0270, a lowered program's names) compare as `canonical` writes them, the atom
+    /// itself: `a1` and `a2` read the same branded atom and merge, `b` reads another and stays apart, though the three
+    /// rules differ in nothing else. The same program, the same counts as the tree's.
+    #[test]
+    fn rules_merge_only_on_the_same_branded_atom() {
+        use crate::code_rule_dsl::logic::front::{Branded, Literal, Term};
+        let text = ".decl e(x: number, k: symbol)\n.input e\n\
+                    .decl a1(x: number)\n.decl a2(x: number)\n.decl b(x: number)\n\
+                    a1(x) :- e(x, \"p\").\na2(x) :- e(x, \"p\").\nb(x) :- e(x, \"q\").\n\
+                    .decl uses(x: number)\nuses(x) :- a1(x), a2(x), b(x).\n.output uses\n";
+        let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        // As lowering brands them: each string constant the name atom it became.
+        let brand = |t: &mut Term| {
+            if let Term::Str(s) = t {
+                *t = Term::Branded(Branded::name(if s.as_str() == "p" { 1 } else { 2 }));
+            }
+        };
+        for r in &mut tree.rules {
+            for l in &mut r.body {
+                if let Literal::Atom(a) = l {
+                    a.args.iter_mut().for_each(brand);
+                }
+            }
+        }
+        let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        assert!(v.show().matches("e($x, ").count() == 3 && !v.show().contains("\"p\""), "branded: {}", v.show());
+        let mut p = Pipeline::new("test", v);
+        let mut merge = super::MergeIdentical::default();
+        p.program(&mut merge);
+        let (out, _) = p.finish().unwrap();
+        let (m, s, _) = crate::code_rule_dsl::logic::plan::corpus::merge_and_drop_repeats(&mut tree);
+        assert_eq!((merge.merged, merge.shared), (m, s));
+        assert_eq!(m, 1, "a1 and a2 alone: {}", out.show());
+        let heads: std::collections::BTreeSet<&str> = out.rules().map(|r| out.rel_name(r.head().rel())).collect();
+        assert!(heads.contains("b") && !(heads.contains("a1") && heads.contains("a2")), "{}", out.show());
+        let (want, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        assert_eq!((out.size(), out.digest()), (want.size(), want.digest()), "{}\n---\n{}", out.show(), want.show());
     }
 }
 

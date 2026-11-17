@@ -12,6 +12,7 @@
 //! not the program's: they are left out (`python/calls.rr`'s).
 
 pub use rerail_rr::code_rule_dsl::logic::rr::check;
+// Its files are its test modules alone.
 #[cfg_attr(any(test, feature = "test-hooks"), path = "rr/aggregate_demand")]
 pub mod aggregate_demand {
     pub use rerail_rr::code_rule_dsl::logic::rr::aggregate_demand::*;
@@ -95,6 +96,7 @@ pub fn setting_template(text: &str) -> Option<(String, String)> {
     Some((clause.to_owned(), syntax::unescape(body).ok()?))
 }
 
+// Its files are its test modules alone.
 #[cfg_attr(any(test, feature = "test-hooks"), path = "rr")]
 pub mod tape_type {
     pub use rerail_rr::code_rule_dsl::logic::rr::tape_type::*;
@@ -135,6 +137,13 @@ pub fn core_names() -> &'static std::collections::BTreeSet<String> {
     CORE.get_or_init(|| {
         std::fs::read_to_string(library().join("core.rr")).ok().and_then(|src| parse(&src).ok()).map(|p| p.decls.into_keys().map(String::from).collect()).unwrap_or_default()
     })
+}
+
+/// `core_names` less the relations decision 0174's rewrite adds (`lower::made_on_request`): what a program in
+/// `core.rr`'s shape declares whichever attributes it answers on request (a round may be undone, `lower::undo_round`).
+pub fn core_shape() -> &'static std::collections::BTreeSet<String> {
+    static SHAPE: std::sync::OnceLock<std::collections::BTreeSet<String>> = std::sync::OnceLock::new();
+    SHAPE.get_or_init(|| core_names().iter().filter(|r| !lower::made_on_request(r)).cloned().collect())
 }
 
 /// The library `#include` reads from.
@@ -268,31 +277,42 @@ impl Text {
     /// copied from the linked library (`with_cone`). `None` for a text that includes nothing. `store` holds it as a program
     /// image (decision 0246 §6) under its text `src` and its scope's keys: a store that holds it reads it, and the
     /// text is not lowered.
+    ///
+    /// The version's program decoded (`lower_in_version`): a key's image has one encoding, the version's. Lowered here
+    /// on the tree as well, a debug build's tree check and the run queued two images of one program under one key,
+    /// the encoded tree's bytes and the folded version's, and the store refused the second.
     pub fn lower_in(self, src: &str, library: &Library, scoped: &Scoped, store: Option<&crate::content_store::ContentStore>) -> Result<Option<Program>, Error> {
-        if !matches!(self.0, Read::Modular { .. }) {
-            return Ok(None);
-        }
-        let key = program_key(src, &scoped.keys);
-        if let Some((bytes, id)) = images::read(store, key)
-            && let Ok(program) = super::program_image::Version::open(&bytes).and_then(|v| v.program(&Default::default()))
-        {
-            if let (Some(store), Some(id)) = (store, id) {
-                renew_image(store, id);
-            }
-            crate::code_rule_dsl::prof::count("rr.program_image_read", 1);
-            return Ok(Some(program));
-        }
-        let Some(program) = self.lowered_in(library, scoped)? else { return Ok(None) };
-        if let Ok(bytes) = encode_program(&program)
-            && keep_image(store, "a program image", key, bytes)
-        {
-            crate::code_rule_dsl::prof::count("rr.program_image_written", 1);
-        }
-        Ok(Some(program))
+        let Some(v) = self.lower_in_version(src, library, scoped, store)? else { return Ok(None) };
+        v.program(&Default::default()).map(Some).map_err(Error::Syntax)
     }
 
-    /// `lower_in`'s lowering, for a text no store holds.
-    fn lowered_in(self, library: &Library, scoped: &Scoped) -> Result<Option<Program>, Error> {
+    /// The text's own program as a version, with the library's cone it asks for. A text that asks nothing of the
+    /// library is its own version; one that asks has its cone copied on the version (`plan::corpus::cone_on_version`),
+    /// the library's tree never decoded. A debug build copies the tree's cone beside it (the attributes on request
+    /// undone, `with_cone`, made again over both, decision 0174) and checks the two images agree.
+    fn lowered_in_version(self, library: &Library, scoped: &Scoped) -> Result<Option<std::sync::Arc<super::program_image::Version>>, Error> {
+        let Some(Own { version: own, asked, declared }) = self.lowered_own(scoped)? else { return Ok(None) };
+        if asked.is_empty() {
+            return Ok(Some(own));
+        }
+        let v = super::plan::corpus::cone_on_version(&own, &library.version, &asked, &declared).map_err(Error::Syntax)?;
+        #[cfg(debug_assertions)]
+        {
+            let mut tree = own.program(&Default::default()).map_err(Error::Syntax)?;
+            lower::undo_on_request(&mut tree);
+            with_cone(&mut tree, library.program(), &asked, &declared);
+            for round in lower::ON_REQUEST {
+                lower::sources_on_request(&mut tree, round);
+            }
+            let t = version_of(&tree)?;
+            assert_eq!((t.size(), t.digest()), (v.size(), v.digest()), "the cone copied on the version is the tree's: {}", super::program_image::differences(&t, &v));
+        }
+        Ok(Some(v))
+    }
+
+    /// The text's own program, lowered and linked in its libraries' scope, and what it asks of the library: the
+    /// library relations it adds to (decision 0089 §3), and every relation the library's files declare.
+    fn lowered_own(self, scoped: &Scoped) -> Result<Option<Own>, Error> {
         let Read::Modular { files, own } = self.0 else { return Ok(None) };
         let checked: Vec<syntax::Statement> = own.iter().filter(|(item, _)| !matches!(item, syntax::Item::Clause { body, .. } if body.is_empty())).cloned().collect();
         let reads_core = files.first().is_some_and(|(path, _, _)| path.ends_with("core.rr"));
@@ -300,7 +320,7 @@ impl Text {
         closed_program(&files, &own)?;
         let own: Vec<syntax::Statement> = own.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect();
         let m = lower::lower_module_seeded(own, &scoped.seeds)?;
-        let mut program = lower::link_seeded(m, &scoped.seeds, core_names())?;
+        let version = link_seeded_version(m, scoped, core_names())?;
         // A text that adds to library relations asks of the library (decision 0089 §3): its request's cone, the library
         // relations that read what it adds, and the helpers they read, are copied from the linked library, made once
         // (decision 0246 §2: a cone is made at link time). The run's `own_part` then holds them as the request.
@@ -308,11 +328,8 @@ impl Text {
             syntax::Item::Decl { name, .. } | syntax::Item::Violation { name, .. } => Some(name.clone()),
             _ => None,
         }).collect();
-        let asked: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.to_string()).filter(|h| declared.contains(h) && !core_names().contains(h)).collect();
-        if !asked.is_empty() {
-            with_cone(&mut program, library.program(), &asked, &declared);
-        }
-        Ok(Some(program))
+        let asked: BTreeSet<String> = version.rules().map(|r| version.rel_name(r.head().rel()).to_owned()).filter(|h| declared.contains(h) && !core_names().contains(h)).collect();
+        Ok(Some(Own { version, asked, declared }))
     }
 
     /// `lower_in` as a version: the stored image handed on unread (decision 0281's path, step 7a-2); else the text
@@ -331,8 +348,12 @@ impl Text {
             crate::code_rule_dsl::prof::count("rr.program_image_read", 1);
             return Ok(Some(version));
         }
-        let Some(program) = self.lowered_in(library, scoped)? else { return Ok(None) };
-        kept_version(store, "a program image", key, &program, "rr.program_image_written").map(Some)
+        let Some(version) = self.lowered_in_version(library, scoped)? else { return Ok(None) };
+        let version = if version.base_bytes().is_some() { version } else { version.fold().map_err(Error::Syntax)? };
+        if keep_image(store, "a program image", key, version.base_bytes().expect("a folded version is a base").to_vec()) {
+            crate::code_rule_dsl::prof::count("rr.program_image_written", 1);
+        }
+        Ok(Some(version))
     }
 
     /// The text's program, as `parse` (`clauses`) or `parse_own` reads it.
@@ -416,9 +437,21 @@ impl Text {
 pub struct Scoped {
     pub keys: Vec<crate::content_store::HashKey>,
     seeds: lower::Seeds,
+    /// The scope's program as a version (its seeds' header), made once: each program lowered in the scope starts from
+    /// it (`link_seeded_version`).
+    version: std::sync::OnceLock<std::sync::Arc<super::program_image::Version>>,
 }
 
 impl Scoped {
+    /// The scope's program as a version, made on first use.
+    fn version(&self) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+        if let Some(v) = self.version.get() {
+            return Ok(std::sync::Arc::clone(v));
+        }
+        let v = version_of(self.seeds.program())?;
+        Ok(std::sync::Arc::clone(self.version.get_or_init(|| v)))
+    }
+
     /// The alias a program of text `src` lowered in this scope is kept under as its image.
     pub fn program_image(&self, src: &str) -> crate::content_store::HashKey {
         program_key(src, &self.keys)
@@ -450,7 +483,7 @@ impl Library {
     /// The scope of a program whose library files are `files`, seeded.
     pub fn scoped(&self, files: &[PathBuf]) -> Scoped {
         let (scope, keys) = self.scope(files);
-        Scoped { keys, seeds: lower::seeds(&scope) }
+        Scoped { keys, seeds: lower::seeds(&scope), version: Default::default() }
     }
 
     /// The modules a program whose library files are `files` reads: those all of whose files it includes, in order,
@@ -462,7 +495,7 @@ impl Library {
 
 /// The library files `paths` (canonical, includes first, as `Modules::files` lists them) as one program, lowered
 /// once for every program of a run that includes them (decision 0089). Kept for the process by the files' digests.
-pub(in crate::code_rule_dsl) fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::ContentStore>) -> Result<std::sync::Arc<Library>, Error> {
+pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::ContentStore>) -> Result<std::sync::Arc<Library>, Error> {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, OnceLock};
     static LIBRARIES: OnceLock<Mutex<HashMap<Vec<(PathBuf, [u8; 32])>, Arc<Library>>>> = OnceLock::new();
@@ -687,7 +720,7 @@ pub(in crate::code_rule_dsl) fn image_store() -> Option<std::sync::Arc<crate::co
 
 /// How long a module's or program's image stays in the store after the last run that read or wrote it
 /// (`keep_image`): collection keeps a source while a pin's lease runs, as it keeps the combined program's entry before
-/// a run names it (`combined::remember`). Naming the images in the run's record is decision 0246 §6's.
+/// a run names it (`combined::record`). Naming the images in the run's record is decision 0246 §6's.
 const IMAGE_LEASE_SECS: i64 = 7 * 24 * 3600;
 
 /// The owner of the images' pins.
@@ -704,40 +737,120 @@ fn keep_image(store: Option<&crate::content_store::ContentStore>, what: &'static
     use crate::content_store::write_back::{Key, Syms};
     images::export(key, &bytes);
     let Some(store) = store else { return false };
-    let n = bytes.len();
-    store.write_back_unless_full(Syms::None, what, n, vec![(Key::of(&[what.as_bytes(), &key.sha256_bytes().unwrap_or_default()]), None)], Box::new(move |store| {
-        let id = store.put_source(&bytes, &[key])?;
-        store.pin_source(id, IMAGE_OWNER, image_lease())
-    }))
+    // A record of its own (decision 0306), dropped where the queue is full: the image in its byte area.
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+        let key: crate::content_store::HashKey = crate::content_store::record::codec::from_body("an image", body)?;
+        let id = cx.store.put_source(cx.bytes, &[key])?;
+        cx.store.pin_source(id, IMAGE_OWNER, image_lease())
+    }
+    let queued = Key::of(&[what.as_bytes(), &key.sha256_bytes().unwrap_or_default()]);
+    store.queue_record(Syms::None, what, vec![queued], &key, Some(bytes), apply, true)
 }
 
-/// The lease of image `id`, read by this run, renewed (`keep_image`).
+/// The text tests' compiled groups of automata as images (decisions 0075, 0264): each under its key, read from the
+/// shipped bundle, else the engine build's image store (`image_store`), so a project's first run reads the groups the
+/// bundle or an earlier project determinized. A group's DFA is the build's (its bytes are regex-automata's, in the
+/// build's byte order), as the other images are. An entry is a tag (1: a DFA follows; 0: the group does not
+/// determinize within the limit) and the DFA's bytes.
+pub struct ImageDfas(pub Option<std::sync::Arc<crate::content_store::ContentStore>>);
+
+impl ImageDfas {
+    fn key(group: &str) -> crate::content_store::HashKey {
+        crate::content_store::HashKey::sha256(format!("rerail dfa group image 1\0{}\0{group}", crate::code_rule_dsl::build_ids::engine()).as_bytes())
+    }
+}
+
+impl crate::code_rule_dsl::text::vocabulary::DfaCache for ImageDfas {
+    fn get(&self, group: &str) -> Option<Option<Vec<u8>>> {
+        let (bytes, id) = images::read(self.0.as_deref(), Self::key(group))?;
+        if let (Some(store), Some(id)) = (self.0.as_deref(), id) {
+            renew_image(store, id);
+        }
+        crate::code_rule_dsl::prof::count("rr.dfa_image_read", 1);
+        match bytes.split_first() {
+            Some((1, dfa)) => Some(Some(dfa.to_vec())),
+            Some((0, _)) => Some(None),
+            _ => None,
+        }
+    }
+
+    fn put(&self, group: &str, dfa: Option<&[u8]>) {
+        let mut entry = vec![u8::from(dfa.is_some())];
+        entry.extend_from_slice(dfa.unwrap_or_default());
+        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, entry.len() as u64);
+        keep_image(self.0.as_deref(), "a group of automata", Self::key(group), entry);
+    }
+}
+
+/// Phase 0's graph of a seed as an image (decision 0246): read from the shipped bundle, else `store` (the engine
+/// build's, `image_store`, opened once by the caller for all its seeds), its lease renewed; `phase0::graphs` checks it
+/// holds before it takes it.
+pub(in crate::code_rule_dsl) fn graph_image(store: Option<&crate::content_store::ContentStore>, key: crate::content_store::HashKey) -> Option<Vec<u8>> {
+    let (bytes, id) = images::read(store, key)?;
+    if let (Some(store), Some(id)) = (store, id) {
+        renew_image(store, id);
+    }
+    Some(bytes.into_owned())
+}
+
+/// Keeps a graph's image (`graph_image`) where none is kept under its key yet. A seed's key names the seed, not the
+/// files its graph reached, so an edited library gives the same key another graph: the store's alias holds one
+/// image, and the first stays. A run then finds it does not hold (`Graph::holds`) and derives the graph, as without
+/// images. The shipped bundle's graphs are its library's; exported, the last derived is the one written.
+pub(in crate::code_rule_dsl) fn keep_graph_image(store: Option<&crate::content_store::ContentStore>, key: crate::content_store::HashKey, bytes: Vec<u8>) -> bool {
+    use crate::content_store::write_back::{Key, Syms};
+    const WHAT: &str = "phase 0's graph of a seed";
+    images::export(key, &bytes);
+    let Some(store) = store else { return false };
+    // A record of its own (decision 0306), dropped where the queue is full, as `keep_image`'s: the graph in its byte
+    // area, the first kept under its key staying.
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+        let key: crate::content_store::HashKey = crate::content_store::record::codec::from_body(WHAT, body)?;
+        if cx.store.source_by_alias(key)?.is_some() {
+            return Ok(());
+        }
+        let id = cx.store.put_source(cx.bytes, &[key])?;
+        cx.store.pin_source(id, IMAGE_OWNER, image_lease())
+    }
+    let queued = Key::of(&[WHAT.as_bytes(), &key.sha256_bytes().unwrap_or_default()]);
+    store.queue_record(Syms::None, WHAT, vec![queued], &key, Some(bytes), apply, true)
+}
+
+/// The lease of image `id`, read by this run, renewed (`keep_image`) once more than half of it has run: a run that reads
+/// images an earlier run kept or renewed within that writes nothing (decision 0250), and an image read at least
+/// every half lease is never collected.
 fn renew_image(store: &crate::content_store::ContentStore, id: crate::content_store::SourceId) {
     use crate::content_store::write_back::Syms;
-    store.write_back_unless_full(Syms::None, "an image's lease", 0, Vec::new(), Box::new(move |store| store.pin_source(id, IMAGE_OWNER, image_lease())));
+    let now = image_lease() - IMAGE_LEASE_SECS;
+    if store.source_lease(id, IMAGE_OWNER).ok().flatten().is_some_and(|until| until - now > IMAGE_LEASE_SECS / 2) {
+        return;
+    }
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+        let id: crate::content_store::SourceId = crate::content_store::record::codec::from_body("an image's lease", body)?;
+        cx.store.pin_source(id, IMAGE_OWNER, image_lease())
+    }
+    store.queue_record(Syms::None, "an image's lease", Vec::new(), &id, None, apply, true);
 }
 
-/// Adds to `program`, which derives library relations `asked`, the linked library's part a request copies (decision
-/// 0089 §3): the library relations reading `asked`, through any rule or native, with `asked` themselves; and the
-/// relations their rules read that no library file declares (lowering's helpers), with their own. Their rules,
-/// declarations, natives, facts and lattices, as the library has them.
-fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<String>, declared: &BTreeSet<String>) {
-    use super::front::Literal;
-    fn reads(r: &super::front::Rule) -> Vec<&str> {
-        r.body.iter().filter_map(|l| match l {
-            Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.as_str()),
-            _ => None,
-        }).collect()
-    }
+/// A text's own program lowered (`Text::lowered_own`), and what it asks of the library.
+struct Own {
+    version: std::sync::Arc<super::program_image::Version>,
+    asked: BTreeSet<String>,
+    declared: BTreeSet<String>,
+}
+
+/// The relations of `library`'s cone for `asked` (`with_cone`'s): those reading what `asked` reaches, and the helpers
+/// they read that `declared` and core leave the library's. Over the library's rules' heads and reads and its natives.
+fn cone_of<'a>(heads_reads: &[(&'a str, Vec<&'a str>)], natives: &'a std::collections::BTreeMap<String, super::front::Native>, asked: &BTreeSet<String>, declared: &BTreeSet<String>) -> BTreeSet<String> {
     let mut cone: BTreeSet<String> = asked.clone();
     loop {
         let before = cone.len();
-        for r in &library.rules {
-            if !cone.contains(r.head.rel.as_str()) && reads(r).iter().any(|b| cone.contains(*b)) {
-                cone.insert(r.head.rel.to_string());
+        for (head, reads) in heads_reads {
+            if !cone.contains(*head) && reads.iter().any(|b| cone.contains(*b)) {
+                cone.insert((*head).to_owned());
             }
         }
-        for (rel, n) in &library.natives {
+        for (rel, n) in natives {
             if !cone.contains(rel) && n.reads().iter().any(|b| cone.contains(*b)) {
                 cone.insert(rel.clone());
             }
@@ -750,17 +863,85 @@ fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<String>,
     let mut take = cone;
     let mut work: Vec<String> = take.iter().cloned().collect();
     while let Some(rel) = work.pop() {
-        let read: Vec<String> = library.rules.iter().filter(|r| r.head.rel.as_str() == rel).flat_map(|r| reads(r).into_iter().map(str::to_owned)).chain(library.natives.get(&rel).into_iter().flat_map(|n| n.reads().into_iter().map(str::to_owned))).collect();
+        let read: Vec<String> = heads_reads.iter().filter(|(h, _)| *h == rel).flat_map(|(_, r)| r.iter().map(|x| (*x).to_owned())).chain(natives.get(&rel).into_iter().flat_map(|n| n.reads().into_iter().map(str::to_owned))).collect();
         for b in read {
-            if !declared.contains(&b) && !core.contains(&b) && !take.contains(&b) && (library.rules.iter().any(|r| r.head.rel.as_str() == b) || library.natives.contains_key(&b)) {
+            if !declared.contains(&b) && !core.contains(&b) && !take.contains(&b) && (heads_reads.iter().any(|(h, _)| *h == b) || natives.contains_key(&b)) {
                 take.insert(b.clone());
                 work.push(b);
             }
         }
     }
-    for r in library.rules.iter().filter(|r| take.contains(r.head.rel.as_str())) {
+    take
+}
+
+/// Adds to `program`, which derives library relations `asked`, the linked library's part a request copies (decision
+/// 0089 §3): the library relations reading `asked`, through any rule or native, with `asked` themselves; and the
+/// relations their rules read that no library file declares (lowering's helpers), with their own. Their rules,
+/// declarations, natives, facts and lattices, as the library has them.
+/// `with_cone` on versions (decision 0281's path, step 7b): the cone's relations by `cone_of` over the library
+/// version's heads and reads, its rules copied (`Builder::copy`), and their declarations, natives, facts and lattices
+/// set in the header.
+pub(crate) fn with_cone_version(program: &std::sync::Arc<super::program_image::Version>, library: &std::sync::Arc<super::program_image::Version>, asked: &BTreeSet<String>, declared: &BTreeSet<String>) -> Result<std::sync::Arc<super::program_image::Version>, String> {
+    use super::program_image::Lit;
+    let lists = super::front::Lists::default();
+    let lib = library.header(&lists)?;
+    // The library as written: the on-request rewrite's rules are the program's to make again over its cone (`with_cone`).
+    let written = |r: &super::program_image::RuleRef<'_>| !lower::on_request_rule(library.rel_name(r.head().rel()));
+    let heads_reads: Vec<(&str, Vec<&str>)> = library
+        .rules()
+        .filter(written)
+        .map(|r| {
+            (
+                library.rel_name(r.head().rel()),
+                r.body()
+                    .filter_map(|l| match l.view() {
+                        Lit::Atom(a) | Lit::Agg { atom: a, .. } => Some(library.rel_name(a.rel())),
+                        _ => None,
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+    let take = cone_of(&heads_reads, &lib.natives, asked, declared);
+    let mut b = super::program_image::Builder::on(program);
+    // A rule the program holds is not copied again: by its contents' hash (`RuleRef::hash`, of its texts), as
+    // `manager::rebase` matches rules, where the tree's `contains` compares them.
+    let mut held: std::collections::HashSet<u64> = program.rules().map(|r| r.hash()).collect();
+    for r in library.rules().filter(written).filter(|r| take.contains(library.rel_name(r.head().rel()))) {
+        if held.insert(r.hash()) {
+            b.copy(library, r);
+        }
+    }
+    let was = program.header(&lists)?;
+    let mut header = was.clone();
+    for (rel, cols) in lib.decls.iter().filter(|(r, _)| take.contains(r.as_str())) {
+        header.decls.entry(rel.clone()).or_insert_with(|| cols.clone());
+    }
+    for (rel, n) in lib.natives.iter().filter(|(r, _)| take.contains(*r)) {
+        header.natives.entry(rel.clone()).or_insert_with(|| n.clone());
+    }
+    for (rel, rows) in lib.facts.iter().filter(|(r, _)| take.contains(*r)) {
+        header.facts.entry(rel.clone()).or_insert_with(|| rows.clone());
+    }
+    for (rel, d) in lib.lattice.iter().filter(|(r, _)| take.contains(*r)) {
+        header.lattice.entry(rel.clone()).or_insert_with(|| d.clone());
+    }
+    b.set_header(&was, &header);
+    b.finish_overlay()
+}
+
+pub fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<String>, declared: &BTreeSet<String>) {
+    use super::front::Literal;
+    // The library as written: the on-request rewrite's rules are the program's to make again over its cone.
+    let rules: Vec<&super::front::Rule> = library.rules.iter().filter(|r| !lower::on_request_rule(r.head.rel.as_str())).collect();
+    let heads_reads: Vec<(&str, Vec<&str>)> = rules.iter().map(|r| (r.head.rel.as_str(), r.body.iter().filter_map(|l| match l {
+        Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.as_str()),
+        _ => None,
+    }).collect())).collect();
+    let take = cone_of(&heads_reads, &library.natives, asked, declared);
+    for r in rules.iter().filter(|r| take.contains(r.head.rel.as_str())) {
         if !program.rules.contains(r) {
-            program.rules.push(r.clone());
+            program.rules.push((*r).clone());
         }
     }
     for (rel, cols) in library.decls.iter().filter(|(r, _)| take.contains(r.as_str())) {
@@ -779,6 +960,81 @@ fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<String>,
 
 /// A lowered program's image (decision 0173): its rules, declarations, facts and `.about` rows.
 /// `program` as a version, opened from the image the store keeps of it (`encode_program`).
+/// `lower::link_seeded` as a version (decision 0281's path, step 7b): the module's program appended onto the scope's
+/// version (made once, `Scoped`), then its three-valued relations, findings, core.rr's declarations, its span patterns, grammar names, `builtins_out`, `kind_sets`,
+/// `unit`, `whole_back`,
+/// `front::finish` and `whole()`'s tail (`lower::link_seeded_front`), the tail run on it as program passes (`preparation::lowering_tail` and
+/// `DropRepeated`: aggregate demand, `unit`, the sets, then the widened contexts), then the
+/// scope's declarations taken out of its header (`lower::unseed`). A debug build runs the tree's tail beside it and
+/// checks the two images agree.
+fn link_seeded_version(m: lower::Module, scoped: &Scoped, core: &BTreeSet<String>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+    use super::program_image::{Builder, manager::Pipeline};
+    let seeds = &scoped.seeds;
+    let lower::Linked { lowered, own, stated, own_stated } = lower::link_seeded_parts(m, seeds)?;
+    let lower::Lowered { sets, rewritten, docof_of_locs, findings, three, modal, .. } = lowered;
+    let mut p = Pipeline::new("the lowering's tail", scoped.version()?);
+    {
+        use super::plan::corpus::preparation::{lowering_tail, on_request::SourcesOnRequest};
+        // The module linked onto the scope's version, and checked declared.
+        p.program(&mut lowering_tail::AppendModule { own: version_of(&own)?, stated, own_stated }).program(&mut lowering_tail::Declared);
+        p.program(&mut lowering_tail::ThreeValued { three: three.clone(), modal: modal.clone() });
+        p.program(&mut lowering_tail::Findings { pending: findings.clone() });
+        p.program(&mut lowering_tail::CoreDecls { docof_of_locs }).program(&mut lowering_tail::SpanPatterns).program(&mut lowering_tail::GrammarNames).program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
+        p.program(&mut lowering_tail::KindSets { sets: sets.clone() }).program(&mut lowering_tail::Unit);
+        p.program(&mut lowering_tail::BooleanRelations).program(&mut lowering_tail::ScopeGlobs);
+        for round in lower::ON_REQUEST {
+            p.program(&mut SourcesOnRequest { round });
+        }
+        p.program(&mut lowering_tail::OrderNodes).program(&mut lowering_tail::DeclareAxes);
+        // `finish`'s checks, through the tree (work queue Q83): `cycles::check` reads a tree.
+        let finished = p.current().map_err(Error::Syntax)?.program(&Default::default()).map_err(Error::Syntax)?;
+        super::front::finish_checks(&finished)?;
+    }
+    {
+        use super::plan::corpus::preparation::{DropRepeated, lowering_tail};
+        let _demand = crate::code_rule_dsl::logic::profile::span(|| "aggregate demand and sets".to_owned());
+        p.program(&mut lowering_tail::AggregateDemand).program(&mut lowering_tail::Unit).program(&mut lowering_tail::LiteralsOnce).program(&mut lowering_tail::DropSelfRules).program(&mut DropRepeated::default()).program(&mut lowering_tail::FactsOnce);
+    }
+    for _ in 0..16 {
+        let mut widen = super::plan::corpus::preparation::lowering_tail::WidenCyclicContexts::default();
+        p.program(&mut widen);
+        p.current().map_err(Error::Syntax)?;
+        if !widen.changed {
+            break;
+        }
+    }
+    let (v, _) = p.finish().map_err(Error::Syntax)?;
+    let was = v.header(&Default::default()).map_err(Error::Syntax)?;
+    let mut head = was.clone();
+    lower::unseed(&mut head, seeds, core);
+    let mut b = Builder::on(&v);
+    b.set_header(&was, &head);
+    let (v, _) = b.finish().map_err(Error::Syntax)?;
+    #[cfg(debug_assertions)]
+    {
+        let mut tree = seeds.program().clone();
+        lower::append_parts(&mut tree, own, &mut stated.clone(), own_stated);
+        super::front::declared(&tree)?;
+        lower::three_valued(&mut tree, &three, &modal);
+        lower::findings(&mut tree, &findings)?;
+        lower::core_and_projections(&mut tree, docof_of_locs)?;
+        lower::span_patterns_into(&mut tree)?;
+        lower::builtins_out(&mut tree, &rewritten);
+        lower::kind_sets(&mut tree, sets)?;
+        lower::unit(&mut tree);
+        lower::whole_back(&mut tree);
+        let mut tree = super::front::finish(tree)?;
+        super::rr::aggregate_demand::optimize(&mut tree);
+        lower::unit(&mut tree);
+        lower::sets(&mut tree);
+        lower::widen_cyclic_contexts(&mut tree);
+        lower::unseed(&mut tree, seeds, core);
+        let t = version_of(&tree)?;
+        assert_eq!((t.size(), t.digest()), (v.size(), v.digest()), "the lowering's tail on the version is the tree's: {}", super::program_image::differences(&t, &v));
+    }
+    Ok(v)
+}
+
 fn version_of(program: &Program) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     let bytes = encode_program(program).map_err(Error::Syntax)?;
     super::program_image::Version::open(&bytes).map_err(Error::Syntax)
@@ -869,7 +1125,7 @@ pub fn read_seed(src: &str) -> Result<TextRead, Error> {
         .collect();
     let seed = (!includes.is_empty() && !phase0::active()).then(|| {
         let t_shape = statements.iter().any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
-        phase0::Seed::Text { t_shape, includes }
+        phase0::Seed::Text { t_shape, includes, phases: phases_named(&statements) }
     });
     Ok(TextRead { seed, statements })
 }
@@ -955,7 +1211,7 @@ fn resolve_shared(statements: Vec<syntax::Statement>) -> Result<(SharedFiles, Ve
             _ => None,
         })
         .collect();
-    let g = phase0::graph(&phase0::Seed::Text { t_shape, includes: names.iter().map(|(k, n, _)| (*k, n.clone())).collect() })?;
+    let g = phase0::graph(&phase0::Seed::Text { t_shape, includes: names.iter().map(|(k, n, _)| (*k, n.clone())).collect(), phases: phases_named(&own) })?;
     if let Some((_, at, name)) = g.missing.iter().find(|(f, _, _)| f == phase0::TEXT) {
         let line = names.iter().find(|(k, _, _)| k == at).map_or(0, |(_, _, l)| *l);
         return Err(Error::Syntax(format!("line {line}: #include {name:?}: no such file in the library")));
@@ -973,6 +1229,33 @@ fn resolve_shared(statements: Vec<syntax::Statement>) -> Result<(SharedFiles, Ve
 }
 
 /// Each module's statements, without its includes (the graph placed them), read off its stored tape.
+
+/// The phase programs a text's own declarations name (`<phase>__<export>`, as `phases::phase_files` reads them): not
+/// its own phase (`.phase`), a typing program's or the engine's (`typing_`, `rr_`). Phase 0 resolves them with its
+/// includes (`p0_text_phase`), so the run's rule files are listed without reading a module again (decision 0246).
+pub fn phases_named(statements: &[syntax::Statement]) -> Vec<String> {
+    let own = statements.iter().find_map(|(item, _)| match item {
+        syntax::Item::Setting { key, text } if key == "phase" => Some(text.trim().to_owned()),
+        _ => None,
+    });
+    let mut out: Vec<String> = statements
+        .iter()
+        .filter_map(|(item, _)| match item {
+            syntax::Item::Decl { name, .. } => name.split_once("__"),
+            _ => None,
+        })
+        .filter(|(phase, export)| !phase.is_empty() && !export.is_empty() && own.as_deref() != Some(*phase) && !phase.starts_with("typing_") && !phase.starts_with("rr_"))
+        .map(|(phase, _)| phase.to_owned())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The engine's own library programs a run is given besides its includes (`TextNames::included`), canonical.
+pub fn engine_files() -> Vec<PathBuf> {
+    ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()).collect()
+}
 
 /// The seed phase 0 starts from for a program text: whether it is in T's shape, and the names it includes. `None`
 /// for a text that includes nothing, or while phase 0 itself runs.
@@ -1009,7 +1292,7 @@ fn read_text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>
         return Ok(None);
     }
     let t_shape = statements.iter().any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
-    Ok(Some(phase0::Seed::Text { t_shape, includes: names }))
+    Ok(Some(phase0::Seed::Text { t_shape, includes: names, phases: phases_named(&statements) }))
 }
 
 /// The program's module graph's digest (`phase0::Graph::digest`): what its text is a function of besides itself.
@@ -1178,8 +1461,7 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     let program = lower_files_dropping(path, statements, false)?;
     // Kept behind the run (the store's writer), with what it read: the next run's check above.
     if let Some((entry, Some(store), None)) = kept {
-        let (read, program) = (files.clone(), program.clone());
-        store.write_back_syms(crate::content_store::write_back::Syms::None, "a rule file's program", 0, vec![(super::plan::corpus::combined::queued(&entry), None)], Box::new(move |store| super::plan::corpus::combined::remember(store, &entry, &read, &program, &[]).map(drop)));
+        super::plan::corpus::combined::record(&store, "a rule file's program", &entry, &files, &program, &[]);
         super::plan::corpus::combined::read_before_the_run(entry);
     }
     cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
@@ -1206,8 +1488,7 @@ pub fn text_header(src: &str) -> Result<Program, Error> {
     };
     let program = text.header()?;
     if let Some(store) = store {
-        let kept = program.clone();
-        store.write_back_syms(crate::content_store::write_back::Syms::None, "a text's header", 0, vec![(combined::queued(&key), None)], Box::new(move |store| combined::remember(store, &key, &read, &kept, &[]).map(drop)));
+        combined::record(&store, "a text's header", &key, &read, &program, &[]);
         combined::read_before_the_run(key);
     }
     Ok(program)

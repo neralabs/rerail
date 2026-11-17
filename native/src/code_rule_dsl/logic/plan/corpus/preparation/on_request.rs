@@ -5,17 +5,17 @@
 
 use super::simplify::Tm;
 use crate::code_rule_dsl::logic::front::{List, Value};
-use crate::code_rule_dsl::logic::program_image::build::T;
+use crate::code_rule_dsl::logic::program_image::build::{Rewrite, Site, T};
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
-use crate::code_rule_dsl::logic::program_image::{Builder, CmpOp, Lit, LitRef, RuleId, RuleRef, Slot, TermRef, Version};
+use crate::code_rule_dsl::logic::program_image::{AtomId, Builder, CmpOp, Lit, LitRef, RuleId, RuleRef, Slot, TermRef, Version};
 use crate::code_rule_dsl::logic::rr::lower::{Answer, OnRequest};
 use std::collections::{BTreeMap, BTreeSet};
 
 type Result<T> = std::result::Result<T, String>;
 
 /// `sources_on_request` of one round of `ON_REQUEST`.
-pub(in crate::code_rule_dsl::logic::plan::corpus) struct SourcesOnRequest {
-    pub(in crate::code_rule_dsl::logic::plan::corpus) round: &'static [OnRequest],
+pub(crate) struct SourcesOnRequest {
+    pub(crate) round: &'static [OnRequest],
 }
 
 /// A literal of a rule made from a reader: one of the reader's own, or an atom read through its widened copy on
@@ -26,13 +26,19 @@ enum Item {
     Wide { node: u32, rel: String, cols: Vec<usize> },
 }
 
-/// A rule made from rule `src`: a request (`req(n)`) or a widened copy (its head's columns `cols`), and its body.
+/// A rule made from rule `src`: a request (`req(n)`), a demand's ask (`req_by_r_c(rr_dn)`, decision 0291) or a widened
+/// copy (its head's columns `cols`), and its body. Its variables `wild` are written as wildcards in its positive atoms
+/// (`wild_singletons`); a demand's ask is written with its variables renamed apart (`rename`: the reading rule's
+/// index and literal's, and the variable that is `rr_dn`); a request narrowed by a demand ends in its atom.
 #[derive(Clone)]
 struct New {
     src: RuleId,
     head: String,
     args: Head,
     body: Vec<Item>,
+    wild: BTreeSet<Slot>,
+    rename: Option<(usize, usize, Slot)>,
+    demand: Option<String>,
 }
 
 #[derive(Clone)]
@@ -78,7 +84,97 @@ fn lit_vars(l: LitRef<'_>) -> BTreeSet<Slot> {
     out
 }
 
+/// A demand's ask's variables renamed apart, and a rule's wildcards in its positive atoms (`New::write`).
+struct Names<'a> {
+    wild: &'a BTreeSet<Slot>,
+    names: &'a BTreeMap<Slot, AtomId>,
+}
+
+impl Rewrite for Names<'_> {
+    fn term(&mut self, site: Site<'_>, t: TermRef<'_>) -> Option<T<'static>> {
+        match (site, t) {
+            (Site::Atom(a), TermRef::Var(s)) if !a.neg() && self.wild.contains(&s) => Some(T::Wild),
+            _ => None,
+        }
+    }
+    fn var(&mut self, s: Slot) -> Option<AtomId> {
+        self.names.get(&s).copied()
+    }
+}
+
+/// An item's atom as written: its relation, whether negated, and its arguments, `None` for a wildcard (one of `wild`,
+/// in a positive atom). `None` for a literal that is no atom.
+fn written(v: &Version, r: RuleRef<'_>, item: &Item, wild: &BTreeSet<Slot>) -> Option<(String, bool, Vec<Option<String>>)> {
+    let arg = |t: TermRef<'_>, neg: bool| match t {
+        TermRef::Wild => None,
+        TermRef::Var(s) if !neg && wild.contains(&s) => None,
+        t => Some(v.show_term(r, t)),
+    };
+    match item {
+        Item::Own(node) => {
+            let Lit::Atom(a) = lit_at(r, *node).view() else { return None };
+            Some((v.rel_name(a.rel()).to_owned(), a.neg(), a.args().map(|t| arg(t, a.neg())).collect()))
+        }
+        Item::Wide { node, rel, cols } => {
+            let Lit::Atom(a) = lit_at(r, *node).view() else { unreachable!("a widened atom") };
+            Some((rel.clone(), false, cols.iter().map(|&c| arg(a.args().nth(c).expect("a column"), false)).collect()))
+        }
+    }
+}
+
+/// `rr::lower::wild_singletons` over items: the variables, other than `head`, that only one atom reads, once (its
+/// written columns: a widened atom's kept ones), as wildcards; and without each positive atom another positive one of
+/// the same relation is an instance of. To a fixpoint (decision 0291).
+fn wild_singletons(v: &Version, r: RuleRef<'_>, mut body: Vec<Item>, head: Slot) -> (Vec<Item>, BTreeSet<Slot>) {
+    fn count(t: TermRef<'_>, n: &mut BTreeMap<Slot, usize>) {
+        match t {
+            TermRef::Var(s) => *n.entry(s).or_default() += 1,
+            TermRef::Call(_, args) => args.for_each(|a| count(a, n)),
+            _ => {}
+        }
+    }
+    loop {
+        let mut n: BTreeMap<Slot, usize> = BTreeMap::new();
+        for item in &body {
+            match item {
+                Item::Own(node) => match lit_at(r, *node).view() {
+                    Lit::Atom(a) => a.args().for_each(|t| count(t, &mut n)),
+                    // Any other literal's variables are read where they are, never wildcards.
+                    _ => lit_vars(lit_at(r, *node)).into_iter().for_each(|s| *n.entry(s).or_default() += 2),
+                },
+                Item::Wide { node, cols, .. } => {
+                    let Lit::Atom(a) = lit_at(r, *node).view() else { unreachable!("a widened atom") };
+                    cols.iter().for_each(|&c| count(a.args().nth(c).expect("a column"), &mut n));
+                }
+            }
+        }
+        let wild: BTreeSet<Slot> = n.into_iter().filter(|&(s, c)| s != head && c == 1).map(|(s, _)| s).collect();
+        let atoms: Vec<Option<(String, bool, Vec<Option<String>>)>> = body.iter().map(|i| written(v, r, i, &wild)).collect();
+        let instance = |a: &(String, bool, Vec<Option<String>>), b: &(String, bool, Vec<Option<String>>)| {
+            a.0 == b.0 && !b.1 && a.2.len() == b.2.len() && a.2.iter().zip(&b.2).all(|(x, y)| x.is_none() || x == y)
+        };
+        let Some(i) = (0..body.len()).find(|&i| {
+            matches!(&atoms[i], Some(a) if !a.1 && (0..body.len()).any(|j| j != i && matches!(&atoms[j], Some(b) if instance(a, b) && !(instance(b, a) && j > i))))
+        }) else {
+            return (body, wild);
+        };
+        body.remove(i);
+    }
+}
+
 impl New {
+    /// A rule with its body as it is: no wildcards, no renames, no demand.
+    fn plain(src: RuleId, head: String, args: Head, body: Vec<Item>) -> New {
+        New { src, head, args, body, wild: BTreeSet::new(), rename: None, demand: None }
+    }
+    /// A variable's name as written.
+    fn name(&self, v: &Version, r: RuleRef<'_>, s: Slot) -> String {
+        match self.rename {
+            Some((_, _, u)) if s == u => "rr_dn".to_owned(),
+            Some((k, i, _)) => format!("{}_rr_d{k}_{i}", v.text(r.var(s))),
+            None => v.text(r.var(s)).to_owned(),
+        }
+    }
     fn src<'v>(&self, v: &'v Version) -> RuleRef<'v> {
         v.rule(self.src).expect("a rule of the input")
     }
@@ -86,20 +182,20 @@ impl New {
     fn key(&self, v: &Version) -> String {
         let r = self.src(v);
         let head = match &self.args {
-            Head::Node(n) => v.text(r.var(*n)).to_owned(),
+            Head::Node(n) => self.name(v, r, *n),
             Head::Cols(cols) => cols.iter().map(|&c| v.show_term(r, r.head().args().nth(c).expect("a head column"))).collect::<Vec<_>>().join(", "),
         };
-        let body: Vec<String> = self
+        let mut body: Vec<String> = self
             .body
             .iter()
-            .map(|i| match i {
-                Item::Own(node) => v.show_lit(r, lit_at(r, *node)),
-                Item::Wide { node, rel, cols } => {
-                    let Lit::Atom(a) = lit_at(r, *node).view() else { unreachable!("a widened atom") };
-                    format!("{rel}({})", cols.iter().map(|&c| v.show_term(r, a.args().nth(c).expect("a column"))).collect::<Vec<_>>().join(", "))
-                }
+            .map(|i| match written(v, r, i, &self.wild) {
+                Some((rel, neg, args)) => format!("{}{rel}({})", if neg { "!" } else { "" }, args.iter().map(|a| a.as_deref().unwrap_or("_")).collect::<Vec<_>>().join(", ")),
+                None => v.show_lit(r, lit_at(r, match i { Item::Own(node) => *node, Item::Wide { node, .. } => *node })),
             })
             .collect();
+        if let (Some(dem), Head::Node(n)) = (&self.demand, &self.args) {
+            body.push(format!("{dem}({})", self.name(v, r, *n)));
+        }
         format!("{}({head}) :- {}", self.head, body.join(", "))
     }
     /// The relations its body reads.
@@ -115,8 +211,25 @@ impl New {
     }
     fn write(&self, v: &Version, b: &mut Builder<'_>) -> Result<()> {
         let r = self.src(v);
+        // The variables renamed, interned before the rule is opened.
+        let mut names: BTreeMap<Slot, AtomId> = BTreeMap::new();
+        if self.rename.is_some() {
+            for i in &self.body {
+                let node = match i {
+                    Item::Own(node) | Item::Wide { node, .. } => *node,
+                };
+                for s in lit_vars(lit_at(r, node)) {
+                    let name = self.name(v, r, s);
+                    names.entry(s).or_insert_with(|| b.atom(&name));
+                }
+            }
+        }
+        let demand = match (&self.demand, &self.args) {
+            (Some(dem), Head::Node(n)) => Some((dem.as_str(), b.atom(&self.name(v, r, *n)))),
+            _ => None,
+        };
         let head: Vec<T<'static>> = match &self.args {
-            Head::Node(n) => vec![T::VarAtom(b.atom(v.text(r.var(*n))))],
+            Head::Node(n) => vec![T::VarAtom(b.atom(&self.name(v, r, *n)))],
             Head::Cols(cols) => cols.iter().map(|&c| Tm::of(v, r, r.head().args().nth(c).expect("a head column")).write(b)).collect(),
         };
         let wide: Vec<Option<Vec<T<'static>>>> = self
@@ -126,17 +239,30 @@ impl New {
                 Item::Own(_) => None,
                 Item::Wide { node, cols, .. } => {
                     let Lit::Atom(a) = lit_at(r, *node).view() else { unreachable!("a widened atom") };
-                    Some(cols.iter().map(|&c| Tm::of(v, r, a.args().nth(c).expect("a column")).write(b)).collect())
+                    Some(
+                        cols.iter()
+                            .map(|&c| match a.args().nth(c).expect("a column") {
+                                TermRef::Var(s) if self.wild.contains(&s) => T::Wild,
+                                t => Tm::of(v, r, t).write(b),
+                            })
+                            .collect(),
+                    )
                 }
             })
             .collect();
+        let plain = self.wild.is_empty() && names.is_empty();
+        let mut rw = Names { wild: &self.wild, names: &names };
         let mut out = b.rule().head(self.head.as_str(), &head);
         for (i, args) in self.body.iter().zip(&wide) {
             out = match (i, args) {
-                (Item::Own(node), _) => out.lit(v, r, lit_at(r, *node)),
+                (Item::Own(node), _) if plain => out.lit(v, r, lit_at(r, *node)),
+                (Item::Own(node), _) => out.lit_with(v, r, lit_at(r, *node), &mut rw),
                 (Item::Wide { rel, .. }, Some(args)) => out.atom_with(rel.as_str(), args, false, false),
                 (Item::Wide { .. }, None) => unreachable!("a widened atom's arguments"),
             };
+        }
+        if let Some((dem, n)) = demand {
+            out = out.atom(dem, &[T::VarAtom(n)]);
         }
         out.finish()?;
         Ok(())
@@ -306,6 +432,74 @@ impl<'v> Widen<'v> {
         (kept.into_iter().map(|(i, _, _)| i).collect(), bound, dropped)
     }
 
+    /// `Widen::demand_of` (decision 0291): what the rules reading `rule`'s relation ask of its column holding `n`, where
+    /// every one asks: the column, and per reading site an ask (its head left to the caller), its other literals
+    /// widened and joined to the column's variable, renamed apart with that variable as `rr_dn`. None where the
+    /// relation is an output or an input, is read in an aggregate, by name (a kind set) or by its own rules, or is read
+    /// with that column a constant or bound by nothing its reader keeps.
+    fn demand_of(&self, rule: RuleRef<'_>, n: Slot) -> Option<(usize, Vec<New>)> {
+        let v = self.v;
+        let rel = v.rel_name(rule.head().rel());
+        let col = rule.head().args().position(|t| t.var() == Some(n))?;
+        if v.outputs().any(|o| v.text(o) == rel) || v.inputs().any(|i| v.text(i) == rel) {
+            return None;
+        }
+        let mut asks = Vec::new();
+        for (k, r) in v.rules().enumerate() {
+            for (i, l) in r.body().enumerate() {
+                let a = match l.view() {
+                    Lit::Atom(a) if v.rel_name(a.rel()) == rel => a,
+                    Lit::Agg { atom, .. } if v.rel_name(atom.rel()) == rel => return None,
+                    Lit::Nearest { kindset, .. } if v.text(kindset) == rel => return None,
+                    _ => continue,
+                };
+                if v.rel_name(r.head().rel()) == rel {
+                    return None;
+                }
+                let Some(TermRef::Var(u)) = a.args().nth(col) else { return None };
+                let (body, ..) = self.widen(r, Some(i), &BTreeSet::new(), Some(u));
+                // No widened copy: a copy of a recursive relation can lose what bounds it. Its atoms are left out,
+                // which only widens the ask; what is left must still bind the column and stay joined to it.
+                let body = Self::joined(r, body.into_iter().filter(|it| matches!(it, Item::Own(_))).collect(), u);
+                let binds = |it: &Item| matches!(it, Item::Own(node) if matches!(lit_at(r, *node).view(), Lit::Atom(_)) && lit_vars(lit_at(r, *node)).contains(&u));
+                if !body.iter().any(binds) {
+                    return None;
+                }
+                let (body, wild) = wild_singletons(v, r, body, u);
+                asks.push(New { src: r.id(), head: String::new(), args: Head::Node(u), body, wild, rename: Some((k, i, u)), demand: None });
+            }
+        }
+        (!asks.is_empty()).then_some((col, asks))
+    }
+
+    /// The atoms (and matchers) of `items` joined to `n` through atoms, then the comparisons over what they bind.
+    fn joined(r: RuleRef<'_>, items: Vec<Item>, n: Slot) -> Vec<Item> {
+        let lit = |it: &Item| match it {
+            Item::Own(node) | Item::Wide { node, .. } => lit_at(r, *node),
+        };
+        let (atoms, rest): (Vec<Item>, Vec<Item>) = items.into_iter().partition(|it| matches!(lit(it).view(), Lit::Atom(_) | Lit::Ast { .. }));
+        let mut reach: BTreeSet<Slot> = BTreeSet::from([n]);
+        let mut keep = vec![false; atoms.len()];
+        loop {
+            let mut grew = false;
+            for (it, k) in atoms.iter().zip(keep.iter_mut()) {
+                let vars = lit_vars(lit(it));
+                if !*k && !vars.is_disjoint(&reach) {
+                    *k = true;
+                    reach.extend(vars);
+                    grew = true;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        let mut keep = keep.into_iter();
+        let mut out: Vec<Item> = atoms.into_iter().filter(|_| keep.next().unwrap_or(false)).collect();
+        out.extend(rest.into_iter().filter(|it| matches!(lit(it).view(), Lit::Cmp { .. }) && lit_vars(lit(it)).is_subset(&reach)));
+        out
+    }
+
     /// The widened copies `rules` read, and those they read in turn.
     fn rules(&self, rules: &[New], prog: &crate::code_rule_dsl::logic::front::Program) -> Widened {
         let v = self.v;
@@ -331,7 +525,7 @@ impl<'v> Widen<'v> {
             let mut readers: Vec<BTreeSet<String>> = Vec::new();
             for (k, rule) in of.iter().enumerate() {
                 let (body, ..) = self.widen(*rule, None, &BTreeSet::new(), None);
-                let r = New { src: rule.id(), head: wide.clone(), args: Head::Cols(cols.clone()), body };
+                let r = New::plain(rule.id(), wide.clone(), Head::Cols(cols.clone()), body);
                 let key = r.key(v);
                 let by = asked.map_or_else(|| BTreeSet::from([wide.clone()]), |a| a[k].clone());
                 match keys.iter().position(|m| *m == key) {
@@ -371,6 +565,8 @@ impl ProgramPass for SourcesOnRequest {
         let mut all: Vec<New> = Vec::new();
         let mut answered: Vec<OnRequest> = Vec::new();
         let mut asked: BTreeMap<String, Vec<BTreeSet<String>>> = BTreeMap::new();
+        // The readers' asks that narrow requests (decision 0291), by relation: each its rules, one per reading site.
+        let mut demands: BTreeMap<String, Vec<New>> = BTreeMap::new();
         'attr: for &attr in &attrs {
             let (rel, req) = (attr.rel, attr.req);
             let topic = format!("{rel} on request");
@@ -423,10 +619,19 @@ impl ProgramPass for SourcesOnRequest {
                         eager(&format!("reads `{}`, and no literal it keeps binds ${}{}", shown(), v.text(rule.var(n)), Widen::left_out(&dropped)));
                         continue 'attr;
                     }
-                    let request = New { src: rule.id(), head: req.to_owned(), args: Head::Node(n), body };
+                    // Narrowed by what the reader's own readers ask of it (decision 0291): where `n` is a column of the
+                    // reader's head that every rule reading it binds, the request joins those rules' asks.
+                    let narrowed = wd.demand_of(rule, n).map(|(col, asks)| {
+                        let dem = format!("{req}_by_{reader}_{col}");
+                        demands.entry(dem.clone()).or_insert_with(|| asks.into_iter().map(|a| New { head: dem.clone(), ..a }).collect());
+                        dem
+                    });
+                    // A variable the request reads once, outside its head, is a witness: a wildcard.
+                    let (body, wild) = wild_singletons(v, rule, body, n);
+                    let request = New { src: rule.id(), head: req.to_owned(), args: Head::Node(n), body, wild, rename: None, demand: narrowed.clone() };
                     let key = request.key(v);
                     if on() {
-                        explained.push(format!("{reader} reads `{}`: asks `{key}`{}", shown(), Widen::left_out(&dropped)));
+                        explained.push(format!("{reader} reads `{}`: asks `{key}`{}{}", shown(), Widen::left_out(&dropped), narrowed.map_or(String::new(), |d| format!("; narrowed by its readers' asks, `{d}`"))));
                     }
                     match keys.iter().position(|k| *k == key) {
                         Some(k) => {
@@ -441,9 +646,13 @@ impl ProgramPass for SourcesOnRequest {
                 }
             }
             decision(&topic, || match explained.len() {
-                0 => "yes: no rule reads it, so no node's is made".to_owned(),
+                0 => "no rule reads it: it stays an input, which a run that reads nothing of it binds for no node".to_owned(),
                 n => format!("{}: {n} readers ask, by {} request rules", if applied { "yes" } else { "possible (RERAIL_NODE_SOURCES=eager)" }, requests.len()),
             });
+            // Read by no rule, an attribute has nothing to answer, and stays an input (`sources_on_request`).
+            if requests.is_empty() {
+                continue;
+            }
             for e in explained {
                 decision(&format!("{rel} on request: readers"), || e);
             }
@@ -453,6 +662,8 @@ impl ProgramPass for SourcesOnRequest {
             }
             answered.push(attr);
         }
+        let demanded: Vec<String> = demands.keys().cloned().collect();
+        all.extend(std::mem::take(&mut demands).into_values().flatten());
         let wide = wd.rules(&all, &prog);
         for (rel, cols) in &wide.copies {
             decision("on request: widened copies", || format!("{} of {rel}, columns {cols:?} of {}{}", wd.wide(rel), wd.arity(rel), if cols.len() < wd.arity(rel) { " (the others are bound only by what the copy leaves out)" } else { "" }));
@@ -493,6 +704,9 @@ impl ProgramPass for SourcesOnRequest {
             prog.inputs.retain(|i| i != rel);
         }
         prog.decls.extend(wide.decls.into_iter().map(|(r, cols)| (r.into(), cols.into_iter().map(|(n, t)| (n.into(), t.into())).collect())));
+        for dem in demanded {
+            prog.decls.insert(dem.as_str().into(), vec![("n".into(), "node".into())].into());
+        }
         for (rel, rows) in wide.facts {
             prog.facts.entry(rel).or_default().extend(rows.into_iter().map(List::from));
         }

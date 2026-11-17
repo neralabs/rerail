@@ -151,6 +151,12 @@ fn source(name: &str, dir: Option<&Path>) -> Result<Option<String>> {
     crate::code_rule_dsl::logic::settings::program_text(&path).map(Some).map_err(Error::Plan)
 }
 
+/// The engine's own phase programs' directory: where a phase is found when no `phase_dir` is given (`locate`), and
+/// where phase 0 finds the phases a program names (`phase0::phase_lib`).
+pub(super) fn builtin_dir() -> PathBuf {
+    rerail_store::source_tree::native().join("src/code_rule_dsl/typing/programs")
+}
+
 /// The file of phase program `name` (`source`).
 fn locate(name: &str, dir: Option<&Path>) -> Option<PathBuf> {
     candidates(name, dir).into_iter().find(|p| p.exists())
@@ -158,7 +164,7 @@ fn locate(name: &str, dir: Option<&Path>) -> Option<PathBuf> {
 
 /// Where a phase program `name` is looked for, in order: `dir`, then the engine's own programs.
 fn candidates(name: &str, dir: Option<&Path>) -> Vec<PathBuf> {
-    let builtin = rerail_store::source_tree::native().join("src/code_rule_dsl/typing/programs");
+    let builtin = builtin_dir();
     dir.into_iter().chain([builtin.as_path()]).map(|d| d.join(format!("{name}.rr"))).collect()
 }
 
@@ -465,6 +471,8 @@ pub(super) fn sources_path() -> PathBuf {
 /// the later phases' documents.
 pub(super) fn sources(
     files: &[(String, String, String, String)],
+    // The texts the run read for `files`' digests, which this phase's builder borrows (decision 0300).
+    texts: &super::texts::Sources,
     label: &str,
     root: &Path,
     scratch: &Path,
@@ -519,12 +527,13 @@ pub(super) fn sources(
     let out = scratch.join(format!("phase-{NAME}"));
     let report = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: run"));
-        super::run_read(&handed, root, &out, modes, binding, chunk_nodes, typing, &options)?
+        super::run_read_handing(&handed, Some(texts), root, &out, modes, binding, chunk_nodes, typing, &options)?
     };
     let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: its exports read")); read_exports(NAME, &program, &declared, &out)? };
     let text = |v: &Value| match v {
         Value::Str(s) => Some(s.to_string()),
-        Value::Int(_) => None,
+        // A path is text: an atom (decision 0270) is none.
+        Value::Int(_) | Value::Branded(_) => None,
     };
     let made: std::collections::HashSet<String> = rows.get("document").into_iter().flatten().filter_map(|r| r.first().and_then(text)).collect();
     let documents: Vec<(String, String, String)> = files.iter().filter(|(p, _, _, _)| made.contains(p)).map(|(p, _, g, c)| (p.clone(), g.clone(), c.clone())).collect();

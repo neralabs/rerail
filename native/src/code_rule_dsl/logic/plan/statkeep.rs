@@ -327,7 +327,9 @@ impl RelStats {
         // kept relation's count (O125's cold run: 13% of its CPU). Only an exact map is a map.
         for (flat, sign) in [(minus, -1i64), (plus, 1)] {
             self.rows += sign * (flat.len() / width) as i64;
-            for (c, col) in self.cols.iter_mut().enumerate().take(width) {
+        }
+        let one = |c: usize, col: &mut Column| {
+            for (flat, sign) in [(minus, -1i64), (plus, 1)] {
                 for row in flat.chunks_exact(width) {
                     col.sketch.add(row[c], sign);
                     if let Some(p) = &mut col.pairs {
@@ -348,6 +350,18 @@ impl RelStats {
                         col.exact = None;
                     }
                 }
+            }
+        };
+        // Many rows: a job a column (decision 0294); each column takes its rows in the same order either way.
+        if (plus.len() + minus.len()) / width >= 1 << 16 && crate::threads::max() > 1 {
+            crate::threads::scope(|jobs| {
+                for (c, col) in self.cols.iter_mut().enumerate().take(width) {
+                    jobs.spawn("a column's statistics", move |_| one(c, col));
+                }
+            });
+        } else {
+            for (c, col) in self.cols.iter_mut().enumerate().take(width) {
+                one(c, col);
             }
         }
     }

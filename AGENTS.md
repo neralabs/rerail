@@ -24,7 +24,28 @@ its test target compiles the whole crate a second time:
 So a run of the CLI builds `--bin rerail-engine` only, and the test target is built when
 tests are run, not with every build.
 
-The farm's wrapper runs `scripts/dev/clean-target` on each target directory hourly: it removes the
+Build the CLI for development with the tests' features:
+
+```
+nice -n 19 cargo build --bin rerail-engine --features test-hooks
+```
+
+The tests turn on `test-hooks` in every dependency crate (and a few registry features). A CLI
+build without it compiles each of those crates a second time, apart from the tests' build, and
+keeps a second set of incremental state: twice the CPU per edit, and about 2 GB of disk per crate
+variant. With it, an edit compiles each dependency crate once for both, and a crate's own tests
+(`cargo test -p rerail-logic`) build the crates below it the same way too. Product builds (release,
+wasm, the Node addon) and measurement builds (`--profile profiling`) stay without it.
+
+Keep to that one feature set in this worktree's target. The farm's wrapper tells any build that
+compiles a workspace crate with other features than a build of the last 2 hours did, names the
+features and the earlier command, and repeats it at the checkout's next builds for 3 hours. Run a
+build with other features (`metal-tests`, `headless`, `code-rule-profile`, `--no-default-features`)
+on a farm host with `scripts/dev/test-remote`. `scripts/check/check-dev-features.py` (pre-commit)
+keeps the manifests' features in line: a crate's `test-hooks` and `default` turn on those of the
+crates below it.
+
+The farm's wrapper runs `scripts/dev/clean-target` on each target directory every 15 minutes: it removes the
 builds no current build was made from, debug objects no binary names, and stale incremental state.
 Never run a full `cargo clean`.
 
@@ -39,6 +60,11 @@ nice -n 19 cargo nextest run --lib                             # the quick tier:
 nice -n 19 cargo nextest run --lib --profile gate              # everything: a phase gate only
 nice -n 19 cargo nextest run --lib --ignore-default-filter NAME  # one slow test by name
 ```
+
+On a machine with the build farm (below), run these through `scripts/dev/test-remote -- cargo nextest
+run …` by default: the hosts take several test commands each at once, in a warm target directory per
+checkout, and this machine stays free for the edit loop. A build here prints when a host has a free
+test slot. Run tests here only when no host is usable (test-remote then runs them here itself).
 
 A test that takes 20 s or more belongs in the slow tier (the default profile's
 `default-filter`). Tests that read the packs' test data need it pulled first
@@ -61,6 +87,10 @@ scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'
 scripts/dev/live-test-remote PACKAGE --lib -- FILTER   # Relax's live loop on a host
 ```
 
+Benchmarks are ordinary commands: run them with `test-remote` (`--tree DIR` sends their inputs or a
+program built here) or here, without waiting for an idle machine, and note the machine's load with
+the result. There are no benchmark leases.
+
 `test-remote` sends this checkout's changes to a usable host and runs the command there, from
 `native/` (or `--dir`), in a warm target directory of its own on that host. A host can be asleep, gone,
 on a slow link, or short of disk, or its copy can have been cleaned. The scripts check for this
@@ -82,7 +112,7 @@ compile ran.
 
 ### Relax: the live test loop
 
-[Relax](https://github.com/makepad/relax) runs the engine's tests from source and patches each
+[Relax](https://github.com/makepad/relax) (our fork and its setup: `scripts/dev/relax/README.md`) runs the engine's tests from source and patches each
 saved function body into the running tests: a body edit reaches a verdict in 2–9 s, against
 about 48 s for a cargo rebuild (t37, §3). Use it for the inner loop of one area's tests. Keep
 cargo for everything else: builds, the quick tier, the gate, wasm, release and CI. Commit only
@@ -90,7 +120,7 @@ after the same tests pass under cargo, because Relax's std is its own.
 
 ```
 scripts/dev/relax/build        # once, and after it changes: the pinned, patched Relax, into ~/.local/share/rerail-relax
-cd native && RUSTC_WRAPPER= RELAX_ALLOW_C=1 RELAX_SHARED_OPEN=1 RELAX_STD=~/.local/share/rerail-relax/src/libs/relax/compiler/std \
+cd native && RUSTC_WRAPPER= RELAX_ALLOW_C=1 RELAX_SHARED_OPEN=1 RELAX_SHARE=rerail RELAX_CACHE_MAX=8192 RELAX_STD=~/.local/share/rerail-relax/src/libs/relax/compiler/std \
   nice -n 19 ~/.local/share/rerail-relax/bin/relax test --live rerail-engine --lib -- FILTER
 scripts/dev/live-test-remote rerail-engine --lib -- FILTER    # the same, on a farm host
 ```
@@ -100,10 +130,15 @@ and the build script applies it. When a Relax run stops on a missing std item, a
 the patch, not to the engine. `scripts/dev/relax/rerail.patch` lets a run share registry crates'
 compiled code with every worktree's runs (`RELAX_SHARED_OPEN=1`, in `~/.relax/code`), and makes
 build-script stubs plain scripts: as hard links of Relax's binary, cargo's replacing them got
-Relax killed by macOS ("Malware rejection"). The workspace's own crates are not shared between
-worktrees (Relax keys them by the worktree's path), so a worktree's first run is cold. The build
-script does not switch versions while a Relax session runs. A live session holds about 6 GB, and `target/relax` grows to
-about 13 GB per worktree, so run `relax clean` when a worktree's work ends.
+Relax killed by macOS ("Malware rejection"). `RELAX_SHARE=rerail` mounts the worktree at one
+path, `~/.relax/vfs/share/rerail`, so every worktree's runs share the workspace's crates too: a
+worktree's first run of code another has run takes about 15 s, and runs in two worktrees
+whose code differs take turns at 25–40 s. Without it a worktree's first run is cold (5–10 min). The patch
+keys a build script's rerun on the native outputs it reaches, not the whole native receipt, so
+an engine edit no longer reruns every script and drops the stores of every crate above them. The build
+script does not switch versions while a Relax session runs. A live session holds about 6 GB. The shared run dir's stores
+stay under `RELAX_CACHE_MAX` (8 GB), and `clean-target` removes a run dir no run has used for 6
+hours (scripts/dev/relax/README.md, "How the caches stay bounded").
 
 ### Special builds
 

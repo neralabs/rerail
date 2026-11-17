@@ -72,6 +72,7 @@ fn as_is(v: &Version, r: RuleRef<'_>, t: TermRef<'_>) -> T<'static> {
         TermRef::Top => T::Top,
         TermRef::Int(i) => T::Int(i),
         TermRef::Str(a) => T::StrAtom(a),
+        TermRef::Branded(b) => T::Branded(b),
         TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| as_is(v, r, a)).collect()),
     }
 }
@@ -228,8 +229,9 @@ impl Rw<'_, '_> {
     /// function's domains.
     fn lowered(&mut self, t: TermRef<'_>, d: Option<Domain>) -> T<'static> {
         match t {
-            TermRef::Str(a) => match self.k.of(self.v.text(a), d.unwrap_or(Domain::Name)) {
-                Ok(i) => T::Int(i),
+            // Branded by its domain, as the tree's lowering brands it (decision 0270): `-1` for none.
+            TermRef::Str(a) => match self.k.sym(self.v.text(a), d.unwrap_or(Domain::Name)) {
+                Ok(b) => b.map_or(T::Int(-1), T::Branded),
                 Err(e) => {
                     self.err.get_or_insert(e);
                     T::Int(0)
@@ -330,10 +332,10 @@ impl ProgramPass for FactsAndSets<'_> {
                     lowered.push(match cell {
                         Cell::Str(a) => {
                             let d = self.domains.get(rel).and_then(|ds| ds.get(c)).copied().unwrap_or(Domain::Name);
-                            Cell::Int(self.k.of(v.text(a), d).map_err(|e| match e {
+                            self.k.sym(v.text(a), d).map_err(|e| match e {
                                 Error::Plan(m) => format!("fact of {rel}, column {c}: {m}"),
                                 e => e.to_string(),
-                            })?)
+                            })?.map_or(Cell::Int(-1), Cell::Branded)
                         }
                         c => c,
                     });

@@ -992,6 +992,28 @@ pub fn qualified(s: &str) -> Option<(&str, &str)> {
 pub mod tests {
     use super::*;
 
+    /// The version's hide is the tree's on a guest's kind tested against a host relation's rows, read negated too:
+    /// the port copied only a positive read (`!def_or_class(k)` kept the host's rows, so no guest kind was one), and
+    /// the combine's check stopped on the 317 rules of ep2.
+    #[test]
+    fn a_negated_read_of_a_kinds_rows_is_copied_for_the_guest_as_the_tree_copies_it() {
+        let text = concat!(
+            ".decl parsed(s: node, g: symbol, r: node)\n.input parsed\n",
+            ".decl def_or_class(k: symbol)\ndef_or_class(\"class_definition\").\n",
+            ".decl out(n: node)\n.output out\nout(r) :- parsed(_, \"python\", r), kind(r, k), !def_or_class(k).\n",
+        );
+        let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).unwrap();
+        hide(&mut tree, 1 << 30);
+        let out = tree.rules.iter().find(|r| r.head.rel == "out").unwrap().to_string();
+        assert!(out.contains("!rr_in_python_rows_def_or_class("), "{out}");
+        let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("hide", v);
+        p.program(&mut super::super::preparation::hide::Hide { bound: 1 << 30 });
+        let (v, _) = p.finish().unwrap();
+        let (tv, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).unwrap();
+        assert_eq!((tv.size(), tv.digest()), (v.size(), v.digest()), "{}", crate::code_rule_dsl::logic::program_image::differences(&tv, &v));
+    }
+
     /// A relation read with guest variables in two columns its rules bind apart is copied once, with both seeded:
     /// copying the copy lost the first seed, so its reader read it at that column again, and schema-architecture's
     /// `rr_agg36` nested `rr_in_annotation_1_rr_in_annotation_0_…` without end.

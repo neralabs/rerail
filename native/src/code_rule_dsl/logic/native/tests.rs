@@ -586,3 +586,26 @@ fn shortlex_min_orders_symbols_by_length_then_bytes() {
     drop(store);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// A split (`t = @cat(m, x)` with `t` bound) whose parts are only looked up: each text is cut at every "." with a
+/// part before it, and at its start (`"" . t`). A part that is no atom ends that cut, read under the same read of the
+/// arena as the whole (decision 0279 §6). Only the cuts whose two parts are a row of `p` make one.
+#[test]
+fn a_split_looks_its_parts_up_and_skips_those_that_are_no_atom() {
+    let db = connection();
+    super::register_symbols(&db).unwrap();
+    db.execute_batch("CREATE TABLE w(c0); INSERT INTO w VALUES ('a.b.c'), ('x.y'), ('u.v'), ('q'), ('.z');
+        CREATE TABLE p(c0, c1); INSERT INTO p VALUES ('a', 'b.c'), ('a.b', 'c'), ('x', 'y'), ('', 'q'), ('a', 'zz');
+        CREATE TEMP TABLE result(c0, c1);").unwrap();
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    let (w, p) = (format!("t:b:{}:{}:s", hex("w"), hex("c0")), format!("t:b:{}:{}:ss", hex("p"), hex("c0, c1")));
+    let seed = format!("pos {w} v0\ncat v0 v1 v2\npos {p} v1 v2\nhead v1 v2");
+    super::setfix::open(&db, &format!("name split\nrel result ss empty\nseed 0 {}", hex(&seed))).unwrap();
+    super::setfix::run(&db, "split", 0).unwrap();
+    let text = |c: &str| format!("CASE typeof({c}) WHEN 'integer' THEN sym_text({c}) ELSE {c} END");
+    let rows: Vec<(String, String)> = db.prepare(&format!("SELECT {}, {} FROM result ORDER BY 1, 2", text("c0"), text("c1"))).unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+    super::setfix::close(&db, "split").unwrap();
+    let want: Vec<(String, String)> = [("", "q"), ("a", "b.c"), ("a.b", "c"), ("x", "y")].iter().map(|&(a, b)| (a.to_owned(), b.to_owned())).collect();
+    assert_eq!(rows, want);
+}

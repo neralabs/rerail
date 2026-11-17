@@ -51,6 +51,8 @@ pub(super) enum Tm {
     Top,
     Int(i64),
     Str(String),
+    /// A branded atom (decision 0270), the store's: written as it is.
+    Branded(crate::code_rule_dsl::logic::front::Branded),
     Call(String, Vec<Tm>),
 }
 
@@ -62,6 +64,7 @@ impl Tm {
             TermRef::Top => Tm::Top,
             TermRef::Int(i) => Tm::Int(i),
             TermRef::Str(a) => Tm::Str(v.text(a).to_owned()),
+            TermRef::Branded(b) => Tm::Branded(b),
             TermRef::Call(f, args) => Tm::Call(v.text(f).to_owned(), args.map(|a| Tm::of(v, r, a)).collect()),
         }
     }
@@ -73,6 +76,7 @@ impl Tm {
             Tm::Top => T::Top,
             Tm::Int(i) => T::Int(*i),
             Tm::Str(s) => T::StrAtom(b.atom(s)),
+            Tm::Branded(x) => T::Branded(*x),
             Tm::Call(f, args) => T::CallAtom(b.atom(f), args.iter().map(|a| a.write(b)).collect()),
         }
     }
@@ -86,7 +90,7 @@ impl Tm {
         }
     }
     fn is_const(&self) -> bool {
-        matches!(self, Tm::Int(_) | Tm::Str(_))
+        matches!(self, Tm::Int(_) | Tm::Str(_) | Tm::Branded(_))
     }
     /// Each variable `to` names renamed at once.
     fn renamed(&self, to: &dyn Fn(&str) -> Option<String>) -> Tm {
@@ -106,6 +110,7 @@ fn own(v: &Version, r: RuleRef<'_>, t: TermRef<'_>) -> T<'static> {
         TermRef::Top => T::Top,
         TermRef::Int(i) => T::Int(i),
         TermRef::Str(a) => T::StrAtom(a),
+        TermRef::Branded(b) => T::Branded(b),
         TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| own(v, r, a)).collect()),
     }
 }
@@ -362,14 +367,22 @@ impl Rewrite for Dyn<'_> {
 
 // ---- what keeps a relation ----
 
-/// `simplify::kept`: outputs, inputs, lattices, natives and what they read, relations with facts, demand, gates.
+/// `simplify::kept`: outputs, inputs, lattices, natives and what they read, relations with facts, demand, gates, and
+/// an attribute's request.
 fn kept(f: &Fields<'_>, rel: &str) -> bool {
-    f.is_output(rel) || f.is_input(rel) || f.lattice(rel) || f.native(rel).is_some() || f.natives_read().contains(rel) || f.has_facts(rel) || f.demanded(rel) || f.gate(rel)
+    f.is_output(rel) || f.is_input(rel) || f.lattice(rel) || f.native(rel).is_some() || f.natives_read().contains(rel) || f.has_facts(rel) || f.demanded(rel) || f.gate(rel) || request(rel)
 }
 
-/// `simplify::fixed`: inputs, natives, lattices, demand, gates, and relations the program qualifies.
+/// `simplify::request`: an attribute's request (decision 0174) is read by name (`syntax::VALUE_REQ`), so neither
+/// inlined nor merged into another relation: inlined into its one reader, a request over one node left `value` empty.
+fn request(rel: &str) -> bool {
+    crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| a.req == rel)
+}
+
+/// `simplify::fixed`: inputs, natives, lattices, demand, gates, relations the program qualifies, and an attribute's
+/// request.
 fn fixed(f: &Fields<'_>, rel: &str) -> bool {
-    f.is_input(rel) || f.native(rel).is_some() || f.lattice(rel) || f.demanded(rel) || f.gate(rel) || !f.qualifiers_of(rel).is_empty()
+    f.is_input(rel) || f.native(rel).is_some() || f.lattice(rel) || f.demanded(rel) || f.gate(rel) || !f.qualifiers_of(rel).is_empty() || request(rel)
 }
 
 fn fields<'v>(cx: &Cx<'v>) -> Result<(&'v Arc<Version>, Arc<FieldsData>)> {
@@ -522,6 +535,7 @@ impl ProgramPass for GroundRules {
 enum Value {
     Int(i64),
     Str(String),
+    Branded(crate::code_rule_dsl::logic::front::Branded),
 }
 
 impl Value {
@@ -529,6 +543,7 @@ impl Value {
         match t {
             TermRef::Int(i) => Some(Value::Int(i)),
             TermRef::Str(a) => Some(Value::Str(v.text(a).to_owned())),
+            TermRef::Branded(b) => Some(Value::Branded(b)),
             _ => None,
         }
     }
@@ -536,12 +551,14 @@ impl Value {
         match c {
             Cell::Int(i) => Value::Int(i),
             Cell::Str(a) => Value::Str(v.text(a).to_owned()),
+            Cell::Branded(b) => Value::Branded(b),
         }
     }
     fn write(&self, b: &mut Builder<'_>) -> Cell {
         match self {
             Value::Int(i) => Cell::Int(*i),
             Value::Str(s) => Cell::Str(b.atom(s)),
+            Value::Branded(x) => Cell::Branded(*x),
         }
     }
 }

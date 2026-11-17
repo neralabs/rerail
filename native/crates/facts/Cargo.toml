@@ -8,13 +8,16 @@ publish = false
 description = "The engine's facts: the virtual tables, text, strings, producers, SQL profiles."
 
 [features]
-default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache"]
-all-languages = ["lang-blade", "lang-csharp", "lang-css", "lang-html", "lang-java", "lang-javascript", "lang-json", "lang-markdown", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue", "rerail-lang/all-languages"]
+default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache", "rerail-lang/default"]
+all-languages = ["lang-blade", "lang-c", "lang-cpp", "lang-csharp", "lang-css", "lang-go", "lang-html", "lang-java", "lang-javascript", "lang-json", "lang-markdown", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue", "rerail-lang/all-languages"]
 lang-blade = ["rerail-lang/lang-blade"]
 lang-csharp = ["ast-grep-language/tree-sitter-c-sharp", "rerail-lang/lang-csharp"]
 lang-css = ["ast-grep-language/tree-sitter-css", "rerail-lang/lang-css"]
 lang-html = ["ast-grep-language/tree-sitter-html", "rerail-lang/lang-html"]
 lang-java = ["ast-grep-language/tree-sitter-java", "rerail-lang/lang-java"]
+lang-go = ["ast-grep-language/tree-sitter-go", "rerail-lang/lang-go"]
+lang-c = ["ast-grep-language/tree-sitter-c", "rerail-lang/lang-c"]
+lang-cpp = ["ast-grep-language/tree-sitter-cpp", "rerail-lang/lang-cpp"]
 lang-javascript = ["rerail-lang/lang-javascript"]
 lang-json = ["ast-grep-language/tree-sitter-json", "rerail-lang/lang-json"]
 lang-markdown = ["rerail-lang/lang-markdown"]
@@ -34,7 +37,7 @@ system-allocator = ["rerail-lang/system-allocator"]
 code-rule-profile = ["rerail-lang/code-rule-profile"]
 p-anchor-corpus = ["rerail-lang/p-anchor-corpus"]
 metal-tests = ["rerail-lang/metal-tests"]
-test-hooks = ["rerail-lang/test-hooks", "dep:tempfile"]
+test-hooks = ["rerail-lang/test-hooks", "dep:tempfile", "rerail-compiler/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-rr-parser/test-hooks"]
 
 [dependencies]
 base64 = "=0.22.1"
@@ -82,6 +85,7 @@ unicode-normalization = "=0.1.26"
 zstd = "=0.14.3"
 tempfile = { version = "=3.27.0", optional = true }
 rerail-lang = { path = "../lang", default-features = false }
+rerail-tape-format = { path = "../tape_format" }
 rerail-prof = { path = "../prof" }
 rerail-rr-syntax = { path = "../rr_syntax" }
 rerail-store = { path = "../store" }
@@ -109,6 +113,8 @@ tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Memory", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# A batch's chunk block (decision 0289).
+rerail-blocks = { path = "../blocks" }
 block = "0.1.6"
 metal = "0.33.0"
 

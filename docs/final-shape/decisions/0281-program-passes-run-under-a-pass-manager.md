@@ -580,7 +580,105 @@ step 3 replaces what is under the writer.
      edited policy's rules out, its new ones in). The preparation pipeline runs `again` from its stored run. Each
      pass reruns on the delta, or maintains what it reads, or runs whole where it must. ep2 is measured once, at the
      end.
+     *Done (2026-11-17, decision 0333):* a pipeline's run, its versions and its step inputs' analyses are stored
+     facts; the next process opens them through the root's newest manifest, rebases its input onto the last one's
+     (`manager::rebase`), and runs `again`. `preparation::front` and `preparation::run` do. ep2's edit: preparation
+     2.24 s, the run 10.3 s CPU (0333's Measured section). A rerun is an edit of the last run only up to its first
+     program pass, which runs whole and breaks the chain: the gain waits on the program passes writing onto the last
+     run's outputs. Two version passes found differing from the tree's on the 317 rules, and fixed (the split over
+     an undeclared axis; hide's copy of a negated rows read).
    - **7b–7c**: `rr::lower`'s per-clause half as rule passes, the loader writing versions; `front::Program` deleted.
+     The order, as 7a's (2026-11-17): the version made earlier one pass at a time, from the last reader back, each
+     checked against the tree in a debug build: the library's cone (`with_cone`); `whole()`'s tail (the widened
+     contexts, the sets of rules and facts, `unit`, aggregate demand); `front::finish`; the rest of `whole()`
+     (`sources_on_request` is a pass already, 7a-1); the link of modules (`append`); then each clause written
+     through the builder in the tape walk, form by form; then `front::Program` deleted.
+     *Done, first slice (2026-11-17):* the cone is copied on the version (`rr::with_cone_version`): the cone's
+     relations found over the library version's heads and reads (`cone_of`, one definition with the tree's), its
+     rules copied (`Builder::copy`, a rule the program holds matched by its content hash), and their declarations,
+     natives, facts and lattices set in the header. `lower_in_version` lowers the text's own program
+     (`lowered_own`), makes its image, and copies the cone onto it: the library's tree is never decoded on the
+     run's path. A debug build copies the tree's cone beside it. Test: `a_cone_copied_onto_the_version_is_the_trees`;
+     ep2's 317 policies lowered on fresh stores under a debug build give the same 427 rows.
+     *Again (2026-11-17), after the merges of the hub and rr-align:* the merge had put the cone back on the tree, as
+     0174 makes the attributes on request again over a program with its cone, which then read a tree. Now on the
+     version: the program's answers undone (`link::undone_on_request`), the cone copied (`with_cone_version`, the
+     library's own on-request rules left out, as the hub's `with_cone` does), and `on_request::SourcesOnRequest` per
+     round over both (`corpus::cone_on_version`). The version pass had fallen behind the tree's (0291's narrowing, an
+     unread attribute left an input) and is level with it. `lower_in` is the version decoded, so a key's image has one
+     encoding (the debug build queued the tree's and the version's under one key, and the store refused the second).
+     ep2's 317 policies over 10 files, fresh stores, a debug build: every check passes, 0 rows, as before the slice.
+     The combine's tail too: `answers_where_documents_are` undoes its rounds on the version (by `FileLocal`), and
+     `requests_file_local` is a program pass (`file_local::RequestsFileLocal`) that writes each narrowed request from
+     its pieces, literals of several rules renamed apart, through the builder: no tree on the combine's path.
+     `whole()`'s tail, its last pass first: a text's program is made a version before `widen_cyclic_contexts`
+     (`lower::link_seeded_front`), which runs on it as `preparation::lowering_tail::WidenCyclicContexts`, a round per
+     run of the pass as the tree's loop has them; the scope's declarations come out of its header after
+     (`lower::unseed`, `rr::link_seeded_version`). The version half lives in the logic crate, as `rr::lower` is
+     compiled below the program image. ep2's 317 policies over 10 files, fresh stores, debug: 0 rows, every check
+     passes. Then the sets (`lower::sets` on the tree): `lowering_tail::LiteralsOnce`, `DropSelfRules`, the
+     preparation's `DropRepeated` and `FactsOnce`, so the version is made after `unit`. Test:
+     `the_lowerings_sets_are_made_on_the_version` (each of the three new passes left out fails it). ep2's 317 policies
+     again: 0 rows, every check passes. Then `unit` (`lowering_tail::Unit`), so the version is made after aggregate
+     demand. Test: `a_rule_left_reading_no_relation_reads_the_unit_on_the_version` (fails with the pass left out).
+     Then aggregate demand (`lowering_tail::AggregateDemand`, `aggregate_demand::optimize` one for one: helpers
+     placed in name order, each candidate that may close a cycle stratified on an overlay of what is placed so far
+     and taken out where refused; the helpers' rules gain their demand where they stand and the demand rules follow,
+     the tree's order; then a count of zero read once an anti-join). `whole()`'s tail is all on the version, which is
+     made right after `front::finish`. Test: `aggregate_demand_is_placed_on_the_version` (fails with placement off);
+     ep2's 317 policies, 60 of them aggregating: 0 rows, every check passes. Then `front::finish`: its rewrites on
+     the version (`lowering_tail::OrderNodes`, nodes compared by `node_order` and a `min`/`max` over nodes through a
+     helper, with `RuleBuilder::agg` to write the helper's aggregate; `DeclareAxes`), its checks through a decoded
+     tree for now (`front::finish_checks`; work queue Q83: `cycles::check` reads a tree). A text's version is made
+     from the lowerer's program as `whole()` leaves it. Test: `finishs_rewrites_run_on_the_version` (each pass left
+     out fails it); ep2's 317 policies: 0 rows, every check passes. Then `whole()`'s last passes before `finish`
+     (`lower::whole_back` on the tree): `lowering_tail::BooleanRelations` (a nullary relation's unit column, through
+     a `Rewrite`'s `prefix`), `ScopeGlobs`, and `on_request::SourcesOnRequest` per round, so the version is made
+     right after the lowerer's analyses (`Lowerer::unit`). Test: `nullary_relations_and_the_scope_are_made_on_the_version`
+     (each of the three left out fails it); ep2's 317 policies: 0 rows, every check passes. Then the kind sets and
+     `unit`: `lower::kind_sets` (with `members`, `kinds_of`, `derived_axes`) is a function of the program and the
+     sets the clauses named, no longer a lowerer method; on the version `lowering_tail::KindSets { sets }` (the
+     lowerer's sets as the pass's settings) and `Unit`. `whole_front` hands on its program with those sets. Test:
+     `kind_sets_are_made_on_the_version` (a set of facts, a derived set read through its axes; fails with the pass
+     left out); ep2's 317 policies: 0 rows, every check passes. Then the grammar names and the built-ins'
+     declarations: `lower::grammar_names` and `lower::builtins_out` are functions of the program (the rewritten
+     core relations, which only the lowerer knows, handed on in `lower::Lowered`); on the version
+     `lowering_tail::GrammarNames` and `BuiltinsOut { rewritten }`. Tests: `grammar_names_and_builtins_are_checked_on_the_version`
+     (fails without `GrammarNames`), and `builtins_out_on_a_version_is_the_trees` on its own, since on a modular
+     text's path the unseeding hides it (the library declares every built-in); each fails with its pass left out.
+     ep2's 317 policies: 0 rows. Then the span patterns: `lower::span_patterns` is one analysis over a borrowed view
+     (`SpanProgram`: rules as atoms of names, variables and strings; the declared arities, inputs, natives and
+     outputs), which the tree (`SpanProgram::of_tree`) and the version (`lowering_tail::SpanPatterns`, reading the
+     image's rules and header) each build, so the analysis stays one definition. Test:
+     `span_patterns_are_found_on_the_version` (fails with the pass left out); ep2's 317 policies: 0 rows. Then
+     core.rr's declarations and `node`'s projections: `lower::core::declare_core` and `lower::projections` work on a
+     header given what the rules read (`lower::reads`), `projections` returning its rules and `projection_at` where
+     they go, so the tree (`core_and_projections`) and the version (`lowering_tail::CoreDecls { docof_of_locs }`,
+     the lowerer's flag handed on in `Lowered`) share them; `base_relation_derived` is `base_relation` for a header
+     (`KindSets` uses it too). Test: `core_declarations_and_projections_are_made_on_the_version` (fails with the
+     pass left out); ep2's 317 policies: 0 rows. Then the findings: `Lowerer::findings` sees no rules, what it read of
+     them given as `lower::RulesSeen` (a rule makes a `@place`; a rule reads `guest_policy`), and the widening of a
+     program's own five-column `violation` heads is its caller's (`widen_violation_heads`); `findings_on_header` runs
+     it on a header with the lowerer's pending `.violation`s and fresh-name count (`PendingFindings`, handed on in
+     `Lowered`) and returns the rules it appends. The tree (`lower::findings`) and the version
+     (`lowering_tail::Findings { pending }`) both call it. Test: `findings_are_written_on_the_version` (a
+     `.violation` with a message, `.on syntax_error`, an own five-column `violation` rule; fails with the pass left
+     out, and with the version's widening left out); ep2's 317 policies: 0 rows. Then the three-valued relations:
+     `lower::three_valued` is a function of the program, the relations declared `must, may` and the rules' prefixes
+     by index (`Lowered` hands both on), built of `three_closure`, `must_name`, `reads_must` and
+     `three_valued_header`, which `lowering_tail::ThreeValued { three, modal }` builds of too (each side a `Rewrite`'s
+     `atom_as` and `head_as`). Test: `three_valued_relations_are_written_on_the_version` (fails with the pass left
+     out); ep2's 317 policies: 0 rows. `whole_front` is now the clauses alone: every analysis of `whole()` after them
+     runs on the text's version. Then the link of modules: `Lowerer::append` is `link` (what the lowerer knows, and
+     the module's helpers renamed after the modules before it) and `append_parts` (the union of two programs, which
+     may be headers alone). `lower::link_seeded_parts` returns the module's linked program apart from the scope's;
+     the scope's program (its seeds' header: no rules) is a version made once per scope (`Scoped::version`), and
+     `lowering_tail::AppendModule` appends the module's version onto it, then `lowering_tail::Declared` checks it
+     (`front::declared`, now built of `read_declared` and `columns_declared`, which the pass uses too). So a text's
+     own program is the only part encoded per text. Tests: `a_module_is_linked_and_checked_declared_on_the_version`,
+     and `declared_on_a_version_is_the_trees` on its own (a debug build's tree check refuses the same, so only there
+     does the pass left out show); ep2's 317 policies: 0 rows. Next: each clause written through the builder, so
+     the module's program is a version from the tape walk.
    - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.
@@ -629,6 +727,10 @@ step 3 replaces what is under the writer.
 - **0275:** a step's key decides whether it is rederived.
 - **0276:** `ProgramW` and `Placed`.
 - **0103:** no caches beside rules; the analysis store lives as long as one pipeline.
+- **0290, 0292 §3:** the tree's passes gained these after the version passes were ported; the version passes carry
+  them too. A round of `Locate` that leaves a relation is followed by `MoveCrossFile` and another round, as
+  `file_local::locate` loops, and `PushLocalJoins` takes a node read with the component that binds its node. The
+  debug checks of the version against the tree hold the two to one result.
 
 It departs from LLVM's manual "preserves" set: invalidation comes from the recorded delta, so a pass cannot claim
 a preservation it did not keep.

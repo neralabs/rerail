@@ -1,12 +1,7 @@
-#![expect(
-    dead_code,
-    reason = "the SQL AST is exhaustive; individual physical plans construct only their required variants"
-)]
-
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl) enum SqlAstNodeKind {
+pub enum SqlAstNodeKind {
     RelationScan,
     DemandScan,
     Select,
@@ -26,7 +21,7 @@ pub(in crate::code_rule_dsl) enum SqlAstNodeKind {
 }
 
 impl SqlAstNodeKind {
-    pub(in crate::code_rule_dsl) const ALL: [Self; 16] = [
+    pub const ALL: [Self; 16] = [
         Self::RelationScan,
         Self::DemandScan,
         Self::Select,
@@ -50,7 +45,7 @@ impl SqlAstNodeKind {
 pub struct SqlRelationRef(u32);
 
 impl SqlRelationRef {
-    pub(in crate::code_rule_dsl) const fn new(value: u32) -> Self {
+    pub const fn new(value: u32) -> Self {
         Self(value)
     }
 
@@ -60,7 +55,7 @@ impl SqlRelationRef {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) enum PhysicalRelation {
+pub enum PhysicalRelation {
     BatchStatus,
     ProducerStatus,
     TerminalMatch,
@@ -177,7 +172,7 @@ fn quote_identifier(identifier: &str) -> String {
 }
 
 impl SqlColumn {
-    pub(in crate::code_rule_dsl) fn render(&self) -> String {
+    pub fn render(&self) -> String {
         self.relation.as_ref().map_or_else(
             || quote_identifier(&self.name),
             |relation| {
@@ -340,19 +335,19 @@ impl SqlExpression {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct SqlProjection {
-    pub(in crate::code_rule_dsl) expression: SqlExpression,
-    pub(in crate::code_rule_dsl) alias: Option<String>,
+pub struct SqlProjection {
+    pub expression: SqlExpression,
+    pub alias: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct SqlOrderTerm {
-    pub(in crate::code_rule_dsl) expression: SqlExpression,
-    pub(in crate::code_rule_dsl) descending: bool,
+pub struct SqlOrderTerm {
+    pub expression: SqlExpression,
+    pub descending: bool,
 }
 
 impl SqlProjection {
-    pub(in crate::code_rule_dsl) fn render(&self) -> String {
+    pub fn render(&self) -> String {
         self.alias.as_ref().map_or_else(
             || self.expression.render(),
             |alias| {
@@ -367,7 +362,7 @@ impl SqlProjection {
 }
 
 impl SqlOrderTerm {
-    pub(in crate::code_rule_dsl) fn render(&self) -> String {
+    pub fn render(&self) -> String {
         format!(
             "{} {}",
             self.expression.render(),
@@ -377,7 +372,7 @@ impl SqlOrderTerm {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) enum SqlAggregateFunction {
+pub enum SqlAggregateFunction {
     Count,
     Minimum,
     Maximum,
@@ -386,15 +381,15 @@ pub(in crate::code_rule_dsl) enum SqlAggregateFunction {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct SqlAggregate {
-    pub(in crate::code_rule_dsl) function: SqlAggregateFunction,
-    pub(in crate::code_rule_dsl) expression: Option<SqlExpression>,
-    pub(in crate::code_rule_dsl) distinct: bool,
-    pub(in crate::code_rule_dsl) alias: String,
+pub struct SqlAggregate {
+    pub function: SqlAggregateFunction,
+    pub expression: Option<SqlExpression>,
+    pub distinct: bool,
+    pub alias: String,
 }
 
 impl SqlAggregate {
-    pub(in crate::code_rule_dsl) fn render(&self) -> String {
+    pub fn render(&self) -> String {
         let function = match self.function {
             SqlAggregateFunction::Count => "count",
             SqlAggregateFunction::Minimum => "min",
@@ -416,7 +411,7 @@ impl SqlAggregate {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) enum SqlAstNode {
+pub enum SqlAstNode {
     RelationScan {
         source: PhysicalRelation,
         projection: Vec<SqlProjection>,
@@ -561,7 +556,7 @@ fn render_ordering(ordering: &[SqlOrderTerm]) -> String {
 }
 
 impl SqlAstNode {
-    pub(in crate::code_rule_dsl) const fn kind(&self) -> SqlAstNodeKind {
+    pub const fn kind(&self) -> SqlAstNodeKind {
         match self {
             Self::RelationScan { .. } => SqlAstNodeKind::RelationScan,
             Self::DemandScan { .. } => SqlAstNodeKind::DemandScan,
@@ -582,7 +577,7 @@ impl SqlAstNode {
         }
     }
 
-    pub(in crate::code_rule_dsl) fn inputs(&self) -> Vec<SqlRelationRef> {
+    pub fn inputs(&self) -> Vec<SqlRelationRef> {
         match self {
             Self::RelationScan { .. } | Self::DemandScan { .. } => Vec::new(),
             Self::Select { input, .. }
@@ -857,7 +852,7 @@ impl SqlAstNode {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) enum SqlAstError {
+pub enum SqlAstError {
     DuplicateRelation(SqlRelationRef),
     MissingRelation {
         relation: SqlRelationRef,
@@ -874,17 +869,17 @@ pub(in crate::code_rule_dsl) enum SqlAstError {
 }
 
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct SqlAst {
+pub struct SqlAst {
     nodes: BTreeMap<SqlRelationRef, SqlAstNode>,
     outputs: Vec<SqlRelationRef>,
 }
 
 impl SqlAst {
-    pub(in crate::code_rule_dsl) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
-    pub(in crate::code_rule_dsl) fn insert(
+    pub fn insert(
         &mut self,
         relation: SqlRelationRef,
         node: SqlAstNode,
@@ -895,18 +890,18 @@ impl SqlAst {
         Ok(())
     }
 
-    pub(in crate::code_rule_dsl) fn set_outputs(&mut self, outputs: Vec<SqlRelationRef>) {
+    pub fn set_outputs(&mut self, outputs: Vec<SqlRelationRef>) {
         self.outputs = outputs;
     }
 
-    pub(in crate::code_rule_dsl) fn node(
+    pub fn node(
         &self,
         relation: SqlRelationRef,
     ) -> Option<&SqlAstNode> {
         self.nodes.get(&relation)
     }
 
-    pub(in crate::code_rule_dsl) fn validate(&self) -> Result<(), SqlAstError> {
+    pub fn validate(&self) -> Result<(), SqlAstError> {
         if self.outputs.is_empty() {
             return Err(SqlAstError::NoOutputs);
         }
@@ -1071,7 +1066,7 @@ impl SqlAst {
         Ok((recursive, ctes, outputs))
     }
 
-    pub(in crate::code_rule_dsl) fn render(&self) -> Result<String, SqlAstError> {
+    pub fn render(&self) -> Result<String, SqlAstError> {
         let (recursive, ctes, outputs) = self.render_parts()?;
         Ok(format!(
             "WITH{} {ctes}\n{outputs}",
@@ -1080,14 +1075,14 @@ impl SqlAst {
     }
 }
 
-pub(in crate::code_rule_dsl) struct ClauseMergeAst {
+pub struct ClauseMergeAst {
     ast: SqlAst,
     sources: Vec<PhysicalRelation>,
     outputs: bool,
 }
 
 impl ClauseMergeAst {
-    pub(in crate::code_rule_dsl) fn new(
+    pub fn new(
         ordinals: &[usize],
         outputs: bool,
     ) -> Result<Self, String> {
@@ -1167,7 +1162,7 @@ impl ClauseMergeAst {
         })
     }
 
-    pub(in crate::code_rule_dsl) fn render(&self) -> Result<(String, String), String> {
+    pub fn render(&self) -> Result<(String, String), String> {
         self.ast
             .validate()
             .map_err(|error| format!("invalid clause merge AST: {error:?}"))?;
