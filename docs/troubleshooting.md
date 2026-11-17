@@ -330,7 +330,7 @@ Codex runs only hooks you have trusted. Run `/hooks` in Codex, trust Rerail's ho
 <summary>Set-up's hint, skills, and Windows</summary>
 
 After connecting Codex, set-up's summary says `Open Codex and run /hooks once to trust Rerail’s hooks.` Codex asks
-again whenever an update changes the hook, as this release does on Windows.
+again whenever an update changes the hook.
 
 In Codex the commands are skills: `$rerail`, `$rerail-show-me` and so on. Set-up's summary uses that form when Codex
 is the only connected agent; with several, it adds `In Codex, type $rerail-show-me.`
@@ -345,9 +345,22 @@ On Windows, the hook works from a profile folder with a space or non-ASCII lette
 Unexpected token '"C:\Users\me\.rerail\current\dist\cli\cli.js"' in expression or statement.
 ```
 
-Codex and Cursor run commands in PowerShell on Windows. Rerail 0.1.3 and earlier wrote their commands as
+Codex and Cursor run commands in PowerShell on Windows. Rerail 0.1.4 and earlier wrote their commands as
 `"<node>" "<cli.js>" …`, which PowerShell reads as a string followed by a word it refuses. Later releases write
 `& '<node>' '<cli.js>' …`. Run `rerail update`, then open a new session.
+
+### `Couldn’t connect Claude Code: Claude Code's Rerail hook …`
+
+```text
+  △ Couldn’t connect Claude Code: Claude Code's Rerail hook did not answer within 30 s
+    Rerail’s hooks are written, but they fail. Fix that, then run rerail setup again to connect Claude Code.
+```
+
+After connecting Claude Code, set-up runs the hook it registered once, as Claude Code will. A hook that cannot run
+records nothing and says nothing in a session, so set-up reports the connection as failed, though the hooks stay in
+Claude Code's `settings.json`. The message ends with what happened: `did not answer within 30 s`, `exited <code>: <its
+output>`, `failed: rerail hook: <reason>`, `answered with no JSON object` or `could not run: <reason>`. Fix what it
+names, then run `rerail setup` again.
 
 ### `Couldn’t connect …: … is not plain JSON`
 
@@ -446,8 +459,10 @@ shape Rerail did not expect. The failures are kept in `hook-failures.jsonl` in t
 `rerail update`; if the line stays, report it with `rerail support-bundle`.
 
 With `RERAIL_AUTOSTART=0` (or `false`) hooks start no daemon, and a hook that finds none logs nothing, since that is
-what you asked for. `rerail status` then says the daemon is not running and that `RERAIL_AUTOSTART=0` keeps hooks from
-starting it.
+what you asked for. A session that starts with no daemon running says so as it starts: Claude Code and Codex
+show the line under the session's start, and Cursor's agent is asked to begin its first reply with it. The line, which
+`rerail status` prints too, says the daemon is not running, that `RERAIL_AUTOSTART=0` keeps hooks from starting it, so
+nothing is recorded until it runs, and to start it with `rerail daemon start`.
 
 If `rerail status` instead names Claude Code hook scripts that are missing, Claude Code's settings point at a Rerail
 that is gone, and every hook fails before Rerail runs. Run `rerail install --refresh` and open a new session.
@@ -483,8 +498,8 @@ The daemon is the background process every checkout and coding agent on the comp
 While a coding agent works, a Windows Terminal window opens every few seconds and takes the keyboard focus. With
 several sessions busy it opens almost without pause.
 
-Rerail 0.1.3 and earlier start the daemon with no console. Each Git command the daemon runs then gets a console window
-of its own, which Windows 11 opens in Windows Terminal. The release after 0.1.3 starts the daemon with a console that
+Rerail 0.1.4 and earlier start the daemon with no console. Each Git command the daemon runs then gets a console window
+of its own, which Windows 11 opens in Windows Terminal. The release after 0.1.4 starts the daemon with a console that
 has no window, and every program the daemon runs shares it. Update while no coding agent session is working, since a
 session's next event starts the daemon again:
 
@@ -748,9 +763,9 @@ A `bin`, `versions` or `packs` folder that also holds other files, as when `RERA
 is kept too; only Rerail's files go.
 
 1. Disconnects every coding agent.
-2. Takes `~/.rerail/bin` off `PATH`, and deletes the `<file>.rerail.bak` it kept.
-3. Stops the daemon.
-4. Moves your database into a backup, `~/.rerail-clean-YYYYMMDD/`.
+2. Stops the daemon.
+3. Moves your database into a backup, `~/.rerail-clean-YYYYMMDD/`.
+4. Takes `~/.rerail/bin` off `PATH`, and deletes the `<file>.rerail.bak` it kept.
 5. Deletes `~/.rerail/current`, `~/.rerail/bin`, `~/.rerail/versions`, the rule packs and `~/.cache/rerail` (on Windows
    `%USERPROFILE%\AppData\Local\rerail`, and the `~/.cache/rerail` an earlier release used there).
 

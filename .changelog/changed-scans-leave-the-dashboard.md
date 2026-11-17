@@ -1,1 +1,0 @@
-What `rerail scan --session` or the first repository audit finds no longer shows as the session's violations in the dashboard: no violation card, no logged or steered count, no rule activity. Its findings are at `/api/audits?origin=scan`. Scans recorded before you update are left out too, except a first repository audit that a later scan or retry replaced.

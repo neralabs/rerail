@@ -35,7 +35,8 @@ function nonGitLocation(requested: string): RepositoryIdentityLocation {
   return { git: false, workspaceRoot: requested, identityPath: join(requested, ".rerail", "repository-id"), main: true };
 }
 
-const IDENTITY_FILE = "rerail-repository-id";
+/** The file in Git's common metadata directory that holds a clone's id, shared by every linked worktree. */
+export const GIT_IDENTITY_FILE = "rerail-repository-id";
 
 /** A kept answer, and the generation of {@link checkOwnersAgain} its folders' owners were last read at. */
 interface HeldTopLevel {
@@ -105,7 +106,7 @@ function gitPlaced(common: string): boolean {
 }
 
 /**
- * Where `workspace`'s clone id lives: `rerail-repository-id` in Git's common metadata directory, shared by every
+ * Where `workspace`'s clone id lives: {@link GIT_IDENTITY_FILE} in Git's common metadata directory, shared by every
  * linked worktree, or `.rerail/repository-id` outside Git (or when Git is not installed). A folder that holds a `.git`
  * entry is answered as Git last answered while what Git reads there is unchanged, and a linked worktree of a repository
  * Git placed a checkout of is answered from its files ({@link linkedWorktreeFromFiles}); every other folder, and every
@@ -135,7 +136,7 @@ function locatedByGit(requested: string): { location: RepositoryIdentityLocation
 function linkedLocation(inputs: PlacementInputs): RepositoryIdentityLocation | undefined {
   const placed = linkedWorktreeFromFiles(inputs, gitPlaced);
   if (placed === undefined) return undefined;
-  return { git: true, workspaceRoot: placed.top, identityPath: join(placed.commonDirectory, IDENTITY_FILE), main: false };
+  return { git: true, workspaceRoot: placed.top, identityPath: join(placed.commonDirectory, GIT_IDENTITY_FILE), main: false };
 }
 
 /**
@@ -175,7 +176,7 @@ function gitLocation(requested: string, stdout: string): RepositoryIdentityLocat
   if (top === undefined || commonDirectory === undefined || gitDirectory === undefined) {
     throw new Error(`could not resolve Git common directory for ${requested}`);
   }
-  return { git: true, workspaceRoot: top, identityPath: join(commonDirectory, IDENTITY_FILE), main: commonDirectory === gitDirectory };
+  return { git: true, workspaceRoot: top, identityPath: join(commonDirectory, GIT_IDENTITY_FILE), main: commonDirectory === gitDirectory };
 }
 
 /**

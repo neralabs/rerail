@@ -1,4 +1,5 @@
-function isBusy(error: unknown): boolean {
+/** Whether `error`, or the error it wraps, is SQLite's answer that another connection holds what the statement needed. */
+export function isBusy(error: unknown): boolean {
   const cause = error instanceof Error && "cause" in error ? error.cause : error;
   return typeof cause === "object" && cause !== null
     && (("code" in cause && (cause.code === "SQLITE_BUSY" || cause.code === "SQLITE_LOCKED"))
