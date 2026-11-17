@@ -1341,6 +1341,16 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
     buffers on the GPU + about 540 ms of waiting beyond both. The host's largest part is `gpu.size` (113 ms over
     19 runs, the workspace sized on the host); encode and the tapes' buffers take 14 ms each. The waiting looks
     like the one queue shared with the strata 0321 now places on the GPU; this profile cannot tell which.
+  - **The waiting found and fixed** (2026-11-17, load about 21–25): it was the lane's worker. Two submissions deep
+    (0100 §11), it kept every submission in flight until it had begun the next, but a program's `start` runs the
+    whole program (`Done`). So with two chunks' waves queued, the first's outputs went back only after the second
+    had run to its end: each wave's caller waited a whole other wave, and the lane's wall counted it twice. A
+    `Pending` now says whether it is `done`; one that is (or failed to begin) is handed back at once
+    (`exec::worker`; test `a_device_hands_back_a_submission_that_ran_as_it_began_before_the_next`). Alternating
+    runs of the same engine with and without it: the lane 0.73–0.79 s of wall against 1.09–1.20 s, and the run 2.8–2.9 s
+    against 2.9–3.3 s. The lane's wall now equals the wave's own (`== Device`), about 315 ms of GPU, 320 ms of host
+    CPU and 150 ms off a core. `RERAIL_GPU_KERNEL_TIMES` (a command buffer a kernel) was not it: without it the
+    waiting was the same.
 - **Two blockers to the overlap, found**:
   - `rerail_metal::metal_execution_guard` (a process-wide lock from the grid's launch budget, copied from Tempo)
     is held for a whole label run, encode through readback. A launch begun on the worker (encode and commit in
@@ -1351,8 +1361,8 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
     must move into the begun run's `finish` with the plan, which the runner does not borrow (it borrows the device
     and the tapes only).
 - **Next**: `kernel::Program::begin` (default: run now) and the GPU backend's `start` beginning a batch of programs;
-  `MatcherWave::begin` on the GPU; the lock narrowed to the encode; then the queue's waiting measured by itself
-  (the command buffers' scheduled and start times).
+  `MatcherWave::begin` on the GPU; the lock narrowed to the encode; `gpu.size`'s host part (the text rows and the
+  root table, rebuilt every run).
 
 ### Q53. On the device, a group of 64 nodes' roots run serially in one thread, and a parent is a search (this branch's, since oscar is merged)
 
