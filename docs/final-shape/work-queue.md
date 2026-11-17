@@ -925,6 +925,13 @@ pass.
     the 660 output relations are equal as sets to a cold run with `RERAIL_COPY_VIEWS=1`. Tests:
     `a_copy_of_an_inputs_columns_is_a_view_of_it`, with the planner's, corpus, session, maintain, choices and
     setfix tests (147). Not measured on hogql.
+  - CPU, fixtures/python cold, two rounds on m1max: at first 7.9–8.8 s of strata CPU against 5.98–6.05 s for the
+    copies. The views' readers read a source lookup's every row at each walk step: `probe_size` and `probe_sample`
+    over a source index fall back to reading the probe (`kind(l, "identifier")`, every identifier). A held view now
+    builds its own index on a column whose source lookup gives more than 64 rows (`HELD_VIEW_MATCHES`), as the
+    copy had; base inputs' views are unchanged. Each view also takes its input's column statistics
+    (`Run::view_stats`). After: 6.19–6.27 s against 5.96–6.10 s. What is left is the same work at 20–50% more CPU per
+    unit in a few strata (`ruff_safe_operand`, `type_bare`): rows read through the source, not flat.
 
 ### Q38. (Q32 on Native-and-GPU-strata at e75b66095) A kind-set axis's tape code set counted ERROR nodes as members
 

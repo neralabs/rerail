@@ -4543,8 +4543,14 @@ impl InRel {
                 Csr { chain: Some(i), ..empty(false, false) }
             } else if let (Some(v), [c]) = (&self.view, cols) && v.ids.is_none() && v.eqs.is_empty() && v.src.sorts_rows(v.cols[*c]) {
                 empty(false, true)
-            } else if let (Some(v), [c]) = (&self.view, cols) && v.src.indexed(v.cols[*c]) && !v.src.sorts_rows(v.cols[*c]) {
+            } else if let (Some(v), [c]) = (&self.view, cols) && v.src.indexed(v.cols[*c]) && !v.src.sorts_rows(v.cols[*c])
+                && (self.base || v.src.made_on_lookup() || v.src.estimated_matches(v.cols[*c], false) <= HELD_VIEW_MATCHES)
+            {
                 // (A source's lookup allocates each probe's rows; over a sorted source a filtered view builds its own.)
+                // A view a stratum is held as (Q37: `kind`, of `node`'s columns) by a column the source's lookup does
+                // not narrow builds its own index below, as the relation it replaces had: a walk's size test and a
+                // sample read the lookup's every row (`probe_size`, `probe_sample`), `kind(l, "identifier")` every
+                // identifier at each step.
                 empty(true, false)
             } else if let Some(v) = &self.view && cols.len() > 1 && v.ids.is_none() && v.eqs.is_empty() && v.src.composite() {
                 // The source answers every key column at once (the reach index's bitmap test).
@@ -4591,6 +4597,9 @@ impl InRel {
         }).clone()
     }
 }
+/// The matches a held view's source lookup may give a probe by one column (`InRel::index`).
+const HELD_VIEW_MATCHES: usize = 64;
+
 /// Input relations loaded for joins, by connection (its scope) and spec, for the run that loaded them: the base
 /// relations are vtabs rebound per batch, so a load is not reused across runs (`forget_inputs`). A connection's, not
 /// its database's: connections on one database bind sources of their own (a run's chunks evaluating at once, decision

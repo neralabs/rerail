@@ -7057,6 +7057,18 @@ impl<'a> Run<'a, '_> {
         Some((base.to_owned(), src, cols))
     }
 
+    /// Gives view `rel` of `base`'s source columns `cols` (`input_view`) those columns' statistics, and its rows.
+    fn view_stats(&mut self, rel: &str, base: &str, src: &dyn crate::code_rule_dsl::facts::vtab::Source, cols: &[usize]) -> Result<()> {
+        self.model.stats.card.insert(rel.to_owned(), src.len().max(1) as f64);
+        let f = self.versions.whole(self.version);
+        self.model.resolve(f, [base])?;
+        let names = crate::code_rule_dsl::facts::vtab::named(base, src);
+        let Some((stats, vals)) = self.model.stats.of_columns(base, &names, cols) else { return Ok(()) };
+        let width = stats.len();
+        self.model.stats.measured(rel, stats.into_iter().enumerate().map(|(c, m)| (sql_col(rel, c), m)), vals.into_iter().map(|(c, v, n)| (sql_col(rel, c), v, n)));
+        input_stats(&mut self.model.stats, &mut self.model.ndv, Some(width), rel)
+    }
+
     /// Stratum `scc` (`rules`) as a view of an input's columns (`input_view`): its relation, and what it views.
     fn input_view_stratum(&self, scc: &BTreeSet<String>, rules: &[RuleKey]) -> Option<(String, String)> {
         let f = self.fields();
@@ -7307,8 +7319,9 @@ impl<'a> Run<'a, '_> {
             && based.is_empty() && gates.is_empty() && levels.is_empty() && !asks && !facts
             && let Some((base, src, cols)) = self.input_view(*r)
         {
-            // Its rows are the input's, one each.
-            self.model.stats.card.insert((*rel).clone(), src.len().max(1) as f64);
+            // Its rows are the input's, one each, so each column's statistics are the input column's: without them
+            // each column read as one value, and its readers' plans probed it as all its rows.
+            self.view_stats(rel, &base, src.as_ref(), &cols)?;
             super::native::component::hold_view(self.db, rel, src, cols.clone(), types(rel).into_bytes());
             INPUT_VIEWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             super::profile::stratum(&stratum_key(scc), "native set engine", || format!("a view of {base}'s columns {cols:?}: held in place, no component opened"));
