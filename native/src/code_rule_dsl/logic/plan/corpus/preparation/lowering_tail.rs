@@ -226,3 +226,40 @@ impl ProgramPass for FactsOnce {
         Ok(())
     }
 }
+
+/// `Lowerer::unit`'s rule over the program (`lower::unit`): each rule that reads no relation reads `rr_unit(0)`
+/// first, and `rr_unit` is declared with its one fact. A matcher atom or a walk reads the tree itself; an aggregate
+/// reads its atom.
+pub struct Unit;
+
+impl ProgramPass for Unit {
+    const NAME: &'static str = "a rule reading no relation reads the unit";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        const UNIT: &str = "rr_unit";
+        let v = cx.v();
+        let reads = |l: L<'_>| matches!(l, L::Atom(a) if !a.neg()) || matches!(l, L::Ast { .. } | L::Nearest { .. } | L::Agg { .. });
+        let lone: BTreeSet<RuleId> = v.rules().filter(|r| !r.body().any(|l| reads(l.view()))).map(|r| r.id()).collect();
+        if lone.is_empty() {
+            return Ok(());
+        }
+        let was = v.header(&Default::default())?;
+        let mut head = was.clone();
+        head.decls.insert(UNIT.to_owned().into(), [("x".into(), "int".into())].into());
+        head.facts.insert(UNIT.to_owned(), vec![[crate::code_rule_dsl::logic::front::Value::Int(0)].into()]);
+        let input = std::sync::Arc::clone(w.input());
+        let b = w.derive()?;
+        b.set_header(&was, &head);
+        for rule in input.rules() {
+            if !lone.contains(&rule.id()) {
+                b.keep(&input, rule);
+                continue;
+            }
+            let mut rb = b.rule().source(rule.id()).head_from(&input, rule, rule.head()).atom(UNIT, &[T::Int(0)]);
+            for l in rule.body() {
+                rb = rb.lit(&input, rule, l);
+            }
+            rb.finish()?;
+        }
+        Ok(())
+    }
+}

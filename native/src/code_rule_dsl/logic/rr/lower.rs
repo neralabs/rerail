@@ -966,7 +966,7 @@ pub fn unseed(program: &mut Program, seeds: &Seeds, core: &BTreeSet<String>) {
     program.qualifiers.retain(|r, _| !(seeded.qualifiers.contains(r) && gone(r)));
 }
 
-/// `link_seeded` up to `whole()`'s tail (`sets`, `widen_cyclic_contexts`): the program `rr::link_seeded_version`
+/// `link_seeded` up to `whole()`'s tail (`unit`, `sets`, `widen_cyclic_contexts`): the program `rr::link_seeded_version`
 /// makes a version of, `declared` checked. The tail drops repeats (a literal or rule another copy keeps), a rule
 /// whose body is its own head, and literals of relations the program derives, and adds `node` only where it is
 /// declared: the check before it refuses what the check after it does, but for a relation read only by its own
@@ -983,6 +983,8 @@ pub fn link_seeded_front(m: Module, seeds: &Seeds) -> Result<Program, Error> {
 /// The lowering's whole-program half (decision 0246 §1), over the modules appended into `l`.
 fn whole(l: Lowerer) -> Result<Program, Error> {
     let mut program = whole_front(l)?;
+    // The demand's rules, and the rules whose aggregate it made an existence test, read no relation either.
+    unit(&mut program);
     sets(&mut program);
     widen_cyclic_contexts(&mut program);
     Ok(program)
@@ -1036,7 +1038,8 @@ pub fn sets(program: &mut Program) {
     }
 }
 
-/// `whole` up to its tail (`sets`, `widen_cyclic_contexts`), which `rr::link_seeded_version` runs on the version.
+/// `whole` up to its tail (`unit`, `sets`, `widen_cyclic_contexts`), which `rr::link_seeded_version` runs on the
+/// version.
 fn whole_front(mut l: Lowerer) -> Result<Program, Error> {
     let analyses = crate::code_rule_dsl::logic::profile::span(|| "the program's analyses (findings, spans, kinds)".to_owned());
     l.three_valued();
@@ -1079,8 +1082,6 @@ fn whole_front(mut l: Lowerer) -> Result<Program, Error> {
     let mut program = crate::code_rule_dsl::logic::front::finish(l.prog)?;
     let demand = crate::code_rule_dsl::logic::profile::span(|| "aggregate demand and sets".to_owned());
     super::aggregate_demand::optimize(&mut program);
-    // The demand's rules, and the rules whose aggregate it made an existence test, read no relation either.
-    unit(&mut program);
     drop(demand);
     Ok(program)
 }
@@ -1164,7 +1165,7 @@ pub fn widen_cyclic_contexts(program: &mut Program) {
 }
 
 /// [`Lowerer::unit`]'s rule over a program: each rule that reads no relation reads `rr_unit(0)`.
-fn unit(prog: &mut Program) {
+pub fn unit(prog: &mut Program) {
     const UNIT: &str = "rr_unit";
     let mut used = false;
     for rule in &mut prog.rules {

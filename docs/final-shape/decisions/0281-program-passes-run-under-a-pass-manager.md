@@ -619,7 +619,9 @@ step 3 replaces what is under the writer.
      passes. Then the sets (`lower::sets` on the tree): `lowering_tail::LiteralsOnce`, `DropSelfRules`, the
      preparation's `DropRepeated` and `FactsOnce`, so the version is made after `unit`. Test:
      `the_lowerings_sets_are_made_on_the_version` (each of the three new passes left out fails it). ep2's 317 policies
-     again: 0 rows, every check passes. Next: `unit`, then aggregate demand.
+     again: 0 rows, every check passes. Then `unit` (`lowering_tail::Unit`), so the version is made after aggregate
+     demand. Test: `a_rule_left_reading_no_relation_reads_the_unit_on_the_version` (fails with the pass left out).
+     Next: aggregate demand.
    - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.

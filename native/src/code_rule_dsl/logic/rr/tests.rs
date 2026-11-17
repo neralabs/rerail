@@ -3946,3 +3946,21 @@ fn the_lowerings_sets_are_made_on_the_version() {
     let head = v.header(&Default::default()).unwrap();
     assert_eq!(head.facts.get("a").map(|rows| rows.len()), Some(2), "a's facts once each: {:?}", head.facts.get("a"));
 }
+
+/// `unit` after aggregate demand runs on a modular text's version (decision 0281's path, step 7b): `count : { b(_) }
+/// = 0` made an existence test reads no relation, so its rule reads `rr_unit(0)`, as the tree's `lower::unit`
+/// makes it; a debug build checks the image against the tree's (`link_seeded_version`).
+#[test]
+fn a_rule_left_reading_no_relation_reads_the_unit_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl b(x: number)\n.input b\n.decl r(x: number)\n.output r\n",
+        "r(1) :- count : { b(_) } = 0.\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let r: Vec<String> = v.rules().filter(|x| v.rel_name(x.head().rel()) == "r").map(|x| v.show_rule(x)).collect();
+    assert!(r.iter().all(|x| x.contains("rr_unit(0)")), "{r:?}");
+}

@@ -950,7 +950,7 @@ pub fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<Stri
 /// `program` as a version, opened from the image the store keeps of it (`encode_program`).
 /// `lower::link_seeded` as a version (decision 0281's path, step 7b): the program made a version before `whole()`'s
 /// tail (`lower::link_seeded_front`), the tail run on it as program passes (`preparation::lowering_tail` and
-/// `DropRepeated`: the sets, then the widened contexts), then the
+/// `DropRepeated`: `unit`, the sets, then the widened contexts), then the
 /// scope's declarations taken out of its header (`lower::unseed`). A debug build runs the tree's tail beside it and
 /// checks the two images agree.
 fn link_seeded_version(m: lower::Module, seeds: &lower::Seeds, core: &BTreeSet<String>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
@@ -960,7 +960,7 @@ fn link_seeded_version(m: lower::Module, seeds: &lower::Seeds, core: &BTreeSet<S
     let mut p = Pipeline::new("the lowering's tail", v);
     {
         use super::plan::corpus::preparation::{DropRepeated, lowering_tail};
-        p.program(&mut lowering_tail::LiteralsOnce).program(&mut lowering_tail::DropSelfRules).program(&mut DropRepeated::default()).program(&mut lowering_tail::FactsOnce);
+        p.program(&mut lowering_tail::Unit).program(&mut lowering_tail::LiteralsOnce).program(&mut lowering_tail::DropSelfRules).program(&mut DropRepeated::default()).program(&mut lowering_tail::FactsOnce);
     }
     for _ in 0..16 {
         let mut widen = super::plan::corpus::preparation::lowering_tail::WidenCyclicContexts::default();
@@ -980,6 +980,7 @@ fn link_seeded_version(m: lower::Module, seeds: &lower::Seeds, core: &BTreeSet<S
     #[cfg(debug_assertions)]
     {
         let mut tree = program;
+        lower::unit(&mut tree);
         lower::sets(&mut tree);
         lower::widen_cyclic_contexts(&mut tree);
         lower::unseed(&mut tree, seeds, core);
