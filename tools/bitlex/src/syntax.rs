@@ -507,7 +507,12 @@ pub enum Stmt {
     /// before) stay in the nodes its arm closes, and those after it go after them, as
     /// tree-sitter-kotlin's scanner makes a line break the statement's semicolon: a comment on a
     /// statement's line is the statement's.
-    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool },
+    ///
+    /// `, ends`: a hidden mark that a level which may end where it holds, and does not take it,
+    /// ends at, for its caller to take: tree-sitter's scanner gives its semicolon wherever one is
+    /// valid, before the token after it, which the level might read on (`a` then `b` on the next
+    /// line is two statements, not an infix call).
+    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool, ends: bool },
     /// `mark KIND = tokens [after E] E …` (decision 0129): a mark before a token that begins a
     /// run of tokens, each one of an element's choices (`|`): a token kind (a name) or a word
     /// (a string), the extras between them skipped. `after`: the token before is one of
@@ -1607,11 +1612,13 @@ impl P {
                         }
                     }
                 }
-                let (mut end, mut unplaced, mut checks, mut settles) = (false, None, vec![], false);
+                let (mut end, mut unplaced, mut checks, mut settles, mut ends) = (false, None, vec![], false, false);
                 while self.eat_p(",") {
                     self.nls();
                     if self.eat_kw("settles") {
                         settles = true;
+                    } else if self.eat_kw("ends") {
+                        ends = true;
                     } else if self.eat_kw("else") {
                         self.want_kw("escape")?;
                         unplaced = Some(String::from_utf8_lossy(&self.string()?).into_owned());
@@ -1629,7 +1636,7 @@ impl P {
                         end = true;
                     }
                 }
-                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles }
+                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends }
             }
             "token" => {
                 let kind = self.kind()?;

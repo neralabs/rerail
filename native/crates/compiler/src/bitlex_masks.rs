@@ -229,6 +229,8 @@ pub struct Lowering {
     /// The marks that settle the extras before their bit (`, settles`), by their index in
     /// `marks` (`program::SETTLE`).
     pub settles: Vec<usize>,
+    /// The marks a level that may end ends at (`, ends`), by their index in `marks`.
+    pub ends: Vec<usize>,
     /// Each token test (`Stmt::TokenEscape`): its kind, whether a count, its mask and count
     /// (`Records::checks`).
     pub token_escapes: Vec<(String, bool, Val, u32, crate::records::CheckThen)>,
@@ -336,6 +338,7 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         unless: HashMap::new(),
         unplaced: Vec::new(),
         settles: Vec::new(),
+        ends: Vec::new(),
         token_escapes: Vec::new(),
         tested_only: Vec::new(),
         mark_tests: Vec::new(),
@@ -694,9 +697,12 @@ impl Lowering {
                 Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
                 Stmt::Extra(kinds) => self.extra.extend(kinds.iter().cloned()),
                 Stmt::Hidden(kinds) => self.hidden.extend(kinds.iter().cloned()),
-                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles } => {
+                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends } => {
                     if *settles {
                         self.settles.push(self.marks.len());
+                    }
+                    if *ends {
+                        self.ends.push(self.marks.len());
                     }
                     // Its token tests (decision 0177): the token loop's, each a bit of the mark.
                     let k = self.marks.len();
@@ -1422,6 +1428,22 @@ impl Lowering {
                     let ge = self.at_least(&b, &a)?;
                     self.not(ge)
                 }
+            }
+            // The bytes at `i`, `i + 1`, …: each byte's class, from the byte that far ahead.
+            "text" => {
+                let Some(Arg::S(bytes)) = args.first() else { return Err("text: a string".into()) };
+                let mut out: Option<Val> = None;
+                for (k, &b) in bytes.iter().enumerate() {
+                    let mut one: ByteSet = [0; 4];
+                    one[usize::from(b) / 64] |= 1 << (b % 64);
+                    let c = self.class_set(one);
+                    let c = if k == 0 { c } else { self.next(c, k as u64)? };
+                    out = Some(match out {
+                        Some(o) => self.and(o, c)?,
+                        None => c,
+                    });
+                }
+                out.ok_or_else(|| "text: an empty string".into())
             }
             _ => Err(format!("not compiled yet: {f}")),
         }
@@ -2277,7 +2299,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 [TokenElem::Word(w)] => Some(w.clone()),
                 _ => None,
             };
-            marks.push(bitlex_tier2::Mark { settle: None, kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: Some((before, seq)), unless: vec![] });
+            marks.push(bitlex_tier2::Mark { settle: None, ends: false, kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: Some((before, seq)), unless: vec![] });
             continue;
         }
         let mut expr = low.mark_exprs[k].clone();
@@ -2471,7 +2493,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             }
         }
         let unless = low.unless.get(&k).cloned().unwrap_or_default();
-        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: None, unless, settle: None });
+        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: None, unless, settle: None, ends: low.ends.contains(&k) });
         if low.settles.contains(&k) {
             // From each bit up to the next grammar token's start: an extra that starts there is
             // after the mark's bit. Its mask after the marks' (below).

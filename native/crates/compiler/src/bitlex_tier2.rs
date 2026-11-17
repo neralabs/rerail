@@ -143,6 +143,17 @@ pub struct Mark {
     /// `, settles`: its mask from each bit to the next grammar token's start, which its arms
     /// settle the pending extras before (`SETTLE`).
     pub settle: Option<u16>,
+    /// `, ends`: hidden, and a level that may end where it holds and does not take it ends
+    /// there, its caller to take it.
+    pub ends: bool,
+}
+
+/// What a state does at a mark it tests: its arm, a refusal, or its level's end (`Mark::ends`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum AtMark {
+    Arm(usize),
+    Refuse,
+    End,
 }
 
 struct Emit<'a> {
@@ -736,8 +747,12 @@ impl Emit<'_> {
     }
 
     /// A state's mark tests (`state`): each a `MARK` and its arm's jump, or a refusal.
-    fn mark_tests_here(&mut self, tests: &[(usize, Option<usize>)], mark_arms: &mut Vec<(u16, usize)>) {
-        for &(k, arm) in tests {
+    fn mark_tests_here(&mut self, tests: &[(usize, AtMark)], mark_arms: &mut Vec<(u16, usize)>, to_end: &mut Vec<u16>) {
+        for &(k, at) in tests {
+            let arm = match at {
+                AtMark::Arm(a) => Some(a),
+                _ => None,
+            };
             if let Some(w) = self.marks[k].word.clone() {
                 let s = self.string(&w);
                 self.mark_words.insert(k as u8, s);
@@ -745,14 +760,19 @@ impl Emit<'_> {
             let m = &self.marks[k];
             // Its order, and 32 when the end has it.
             // An arm that calls: the mark kept, for the callee, which tests it again and takes it.
-            let keep = arm.is_some_and(|a| self.arms[a].call);
+            // At a level's end, kept: the caller takes it.
+            let keep = arm.is_some_and(|a| self.arms[a].call) || at == AtMark::End;
             self.push("MARK", k as u8 | if m.end { 32 } else { 0 } | if keep { MARK_KEEP } else { 0 }, Arg::Num(m.mask));
-            match arm {
-                Some(a) => {
+            match at {
+                AtMark::Arm(a) => {
                     mark_arms.push((self.pc(), a));
                     self.push("GOTO", 0, Arg::Pc(0));
                 }
-                None => self.push("STOP", 0, Arg::None),
+                AtMark::End => {
+                    to_end.push(self.pc());
+                    self.push("GOTO", 0, Arg::Pc(0));
+                }
+                AtMark::Refuse => self.push("STOP", 0, Arg::None),
             }
         }
     }
@@ -799,11 +819,20 @@ impl Emit<'_> {
         self.returned_field(&st);
         // The marks, in order: each the state takes, a test and a jump to its arm; each not
         // hidden that it does not take, and each its level refuses, a test that refuses.
-        let tests: Vec<(usize, Option<usize>)> = (0..self.marks.len())
+        // A mark that ends levels (`Mark::ends`), where this nested level may end and takes none.
+        let tests: Vec<(usize, AtMark)> = (0..self.marks.len())
             .filter_map(|k| {
                 let m = &self.marks[k];
                 let arm = mine.iter().copied().find(|&a| self.arms[a].token == m.kind);
-                (!refusing(m, self.arms) && (arm.is_some() || !m.hidden || st.refuses.contains(&m.kind))).then_some((k, arm))
+                if refusing(m, self.arms) {
+                    return None;
+                }
+                match arm {
+                    Some(a) => Some((k, AtMark::Arm(a))),
+                    None if !m.hidden || st.refuses.contains(&m.kind) => Some((k, AtMark::Refuse)),
+                    None if m.ends && nested && st.end.is_some() => Some((k, AtMark::End)),
+                    None => None,
+                }
             })
             .collect();
         // A refusal tested on its token's bytes only (`Mark::first`), in the switch's arms for
@@ -811,12 +840,13 @@ impl Emit<'_> {
         // after it refuses too (refusals commute; a jump to a mark's arm must stay after it), and
         // not a mark the end has (the switch's end is not a byte's).
         let moved: Vec<usize> = (0..tests.len())
-            .filter(|&i| tests[i..].iter().all(|&(_, a)| a.is_none()) && !self.marks[tests[i].0].end)
+            .filter(|&i| tests[i..].iter().all(|&(_, a)| a == AtMark::Refuse) && !self.marks[tests[i].0].end)
             .map(|i| tests[i].0)
             .collect();
-        let tests: Vec<(usize, Option<usize>)> = tests.into_iter().filter(|(k, _)| !moved.contains(k)).collect();
+        let tests: Vec<(usize, AtMark)> = tests.into_iter().filter(|(k, _)| !moved.contains(k)).collect();
         let mut mark_arms = Vec::new();
-        self.mark_tests_here(&tests, &mut mark_arms);
+        let mut to_end = Vec::new();
+        self.mark_tests_here(&tests, &mut mark_arms, &mut to_end);
         let t = self.switches.len();
         self.switches.push(ByteSwitch::refusing(0));
         self.switch_at[s] = self.pc();
@@ -835,6 +865,9 @@ impl Emit<'_> {
             }
         };
         self.switches[t].end = end;
+        for jump in to_end {
+            self.words[usize::from(jump)].2 = Arg::Pc(end);
+        }
         let default = if nested { end } else { REFUSE };
         self.default = default;
         // Each byte's candidates: the arms whose token can begin with it.
@@ -919,8 +952,8 @@ impl Emit<'_> {
                     return pc;
                 }
                 let at = e.pc();
-                let tests: Vec<(usize, Option<usize>)> = these.iter().map(|&k| (k, None)).collect();
-                e.mark_tests_here(&tests, &mut Vec::new());
+                let tests: Vec<(usize, AtMark)> = these.iter().map(|&k| (k, AtMark::Refuse)).collect();
+                e.mark_tests_here(&tests, &mut Vec::new(), &mut Vec::new());
                 e.push("GOTO", 0, Arg::Pc(old));
                 made.insert((old, these), at);
                 at
@@ -976,7 +1009,7 @@ fn tests_of(states: &[StateRow], arms: &[ArmRow], marks: &[Mark]) -> Vec<Vec<usi
     states
         .iter()
         .enumerate()
-        .map(|(s, st)| (0..marks.len()).filter(|&k| !refusing(&marks[k], arms) && (takes[s].contains(&marks[k].kind) || !marks[k].hidden || st.refuses.contains(&marks[k].kind))).collect())
+        .map(|(s, st)| (0..marks.len()).filter(|&k| !refusing(&marks[k], arms) && (takes[s].contains(&marks[k].kind) || !marks[k].hidden || st.refuses.contains(&marks[k].kind) || marks[k].ends && st.end.is_some())).collect())
         .collect()
 }
 

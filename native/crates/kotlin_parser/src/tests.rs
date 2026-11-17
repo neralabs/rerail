@@ -52,15 +52,61 @@ fn a_comment_on_a_headers_line_is_the_headers() {
     ]);
 }
 
+/// Step 2: declarations, types, statements and the core of expressions.
 #[test]
-fn what_step_1_does_not_read_is_refused() {
+fn declarations_are_the_lean_parsers() {
+    same(&[
+        "fun f() {}\n",
+        "fun g(a: Int, b: String): Int = a\n",
+        "class A\n",
+        "class B(val x: Int) : C(), D {\n    fun h() { return }\n}\n",
+        "val x = 1\n",
+        "private var y: Int? = null\n",
+        "object O\n",
+        "interface I\n",
+        "data class P(private val a: List<String>, var b: Map<K, V>?)\n",
+        "abstract class Q<T : Any> : R<T>() {\n    abstract fun f(x: T): T\n    override fun g() {}\n}\n",
+        "@Suppress(x) @A.B fun f() {}\n",
+        "fun f(vararg xs: Int, g: (Int) -> Unit) {}\n",
+        "class C {\n    val a = 1 // one\n\n    fun b() = a\n}\n",
+        "val data = 1\nfun get(value: Int) = value.inner\n",
+        "class A(val value: Data<value>) : open()\n",
+        "fun f() {\n    a.get(0)\n    data = 1\n    x.set += 2\n    enum[3] = where\n}\n",
+    ]);
+}
+
+#[test]
+fn statements_and_expressions_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n    val a = 1 + 2 * 3\n    b.c(d, e)\n    f[g] = h\n    if (a) b else c\n    x?.y ?: z\n    !a && b || c\n    for (i in 0..10) {}\n    while (true) {}\n}\n",
+        "fun f() {\n    x = 1\n    x += y\n    a.b.c = d\n    a[1][2] = 3\n    a.b().c = 4\n}\n",
+        "fun f() {\n    if (a < b && c >= d) return\n    else throw e\n}\n",
+        "fun f() {\n    a\n        .b()\n        ?.c\n    -d\n    e !in f\n    g is H\n    i++\n    j!!\n}\n",
+        "fun f() = g(a = 1, b)\n",
+        "fun f() {\n    val l = listOf<Int>(1, 2)\n    val m: Map<String, List<Int>> = emptyMap<String, List<Int>>()\n}\n",
+        "fun f() {\n    do { x-- } while (x > 0)\n    a to b\n    break\n    continue\n    this.x = null\n}\n",
+        "fun f() {\n    // lead\n    a() // after a\n    /* b */ b()\n    c(/* in */ 1) // after c\n}\n",
+    ]);
+}
+
+#[test]
+fn what_step_2_does_not_read_is_refused() {
     refused(&[
         "package a; import b\n",
         "import a.b import c\n",
-        "package a\nfun f() {}\n",
         "val s = \"x\"\n",
         "/* /* nested */ */\npackage a\n",
         "/* open\n",
+        "fun f() { a.forEach { it } }\n",
+        "val x = when (y) { else -> 1 }\n",
+        "val x = 1L\n",
+        "val x = y as Z\n",
+        "class A {\n    companion object\n}\n",
+        "class A { val x = 1 }\n",
+        "val x: Int\n    get() = 1\n",
+        "fun f() {\n    if (a<b.c) d\n}\n",
+        "class A\n@Inject constructor(x: Int)\n",
+        "fun f() {\n    a\n    /* c */ .b()\n}\n",
     ]);
 }
 
@@ -93,4 +139,30 @@ fn corpus() {
     }
     eprintln!("kotlin corpus: {same} the same, {refused} refused, {differ} differ ({lean_refused} the lean parser refuses)");
     assert_eq!(differ, 0);
+}
+
+/// The lean parser's tape for each file in `RERAIL_KOTLIN_SHOW` (paths, `:`-separated), and the
+/// grammar's or why it refuses: the reference a ladder step is written against.
+#[test]
+#[ignore = "a tool: set RERAIL_KOTLIN_SHOW"]
+fn show() {
+    let c = compiled().expect("compiles");
+    for p in std::env::var("RERAIL_KOTLIN_SHOW").expect("set RERAIL_KOTLIN_SHOW").split(':') {
+        let text = std::fs::read_to_string(p).expect("a file");
+        let lean = lean_text(&text).unwrap_or_else(|| "refused".into());
+        match c.parser.image(text.as_bytes()) {
+            Ok(image) => {
+                let got = image_text(&image).unwrap_or_default();
+                if got == lean {
+                    eprintln!("== {p}: the same");
+                } else {
+                    eprintln!("== {p}: DIFFERS\n-- lean\n{lean}-- grammar\n{got}");
+                }
+            }
+            Err(why) => {
+                let words: String = c.explain(&text).lines().filter(|l| !l.contains("token ")).map(|l| format!("{l}\n")).collect();
+                eprintln!("== {p}: refused {why:?}\n-- lean\n{lean}-- words\n{words}");
+            }
+        }
+    }
 }

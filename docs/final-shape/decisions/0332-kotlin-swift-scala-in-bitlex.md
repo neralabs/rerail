@@ -45,6 +45,37 @@ for every file that is not handed over.
 A comment on a header's own line belongs to the header in tree-sitter's tree, because the
 scanner's semicolon is the line break after it. The `line` mark `settles` (below).
 
+## Kotlin, step 2 (`02-declarations.bitlex`)
+
+Step 2 reads declarations, types, statements and the core of expressions:
+
+- **Declarations:** functions, properties, classes, interfaces and objects, with modifiers,
+  annotations, type parameters, primary constructors and delegation specifiers.
+- **Types:** user types, nullable types and function types.
+- **Statements:** `for`, `while`, `do … while`, assignments (to a name, or to a chain of
+  navigations and indexings, through a reading), and expressions.
+- **Expressions:** tree-sitter-kotlin's precedence levels, each a chain of `wrap`s; calls,
+  navigations, indexings, `if`, jumps and literals.
+
+The scanner's automatic semicolon is a mask (`semi_at`). It is a line break in code, except before
+a token the scanner lets go on the line: one of `, . : * % > < = { [ ( ? | & /`, `!=`, `as`,
+`where`, `catch`, `finally`, `else` (but not before `->`), `by` or `constructor`. Before a `}` it
+is a second mark, `semi_close`. A block's statements may end with it; a class body's members must.
+
+A word in the lean parser's soft-keyword table is a soft keyword here too. Where it is a name,
+tree-sitter keeps it as a leaf under `simple_identifier` (or `type_identifier`): the `name` and
+`type_name` choices take it through a retagged node. `by` and `constructor` are hard keywords
+here, so a file that names something with them is handed over.
+
+What step 2 does not read is handed over:
+
+- by an escape: strings, `;`, numbers with letters, reals, three-byte operators, and a line
+  that starts with `get` or `set` (an accessor);
+- or by the grammar's refusal: lambdas, `when`, `try`, enums, companions, `as`, labels and
+  object literals.
+
+Corpus (491 files): 9 the same, 482 refused, 0 differ (step 1: 5 the same).
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
@@ -78,6 +109,17 @@ scanner's semicolon is the line break after it. The `line` mark `settles` (below
      have it. The reference evaluator (`tools/bitlex`) parses the option and does not model it
      yet; no ladder it checks uses it.
 
+4. **`text("…")` in masks.** The bytes of the string from each position, compiled as each byte's
+   class shifted back by its offset (`next(c, k)`), and the results ANDed. The reference evaluator
+   already had it.
+5. **A mark that ends levels (`mark … , ends`).** tree-sitter's scanner gives its semicolon
+   wherever one is valid, before the token after it. So `a` and then `b` on the next line are two
+   statements, not the start of an infix call.
+   - A nested level that may end where an `ends` mark holds, and has no arm for it, tests the mark
+     and goes to its end, keeping the mark (`MARK_KEEP`).
+   - Its caller then takes the mark.
+   - Before this, a hidden mark there was skipped, the level read on, and the file was refused.
+
 Single-extra grammars compile as before: rr's tests and the compiler's targeted tests pass.
 
 ## Found on the way
@@ -90,7 +132,6 @@ Single-extra grammars compile as before: rr's tests and the compiler's targeted 
 
 ## Next
 
-Kotlin's ladder goes on. Next: declarations, then expressions (in
-precedence order, as `wrap`s), then strings with templates (regions read in parts), then
-Kotlin's semicolon rules. Swift and Scala start the same way, in their own crates: their step 1 is
+Kotlin's ladder goes on. Next: strings with templates (regions read in parts), then lambdas,
+`when` and `try`, then enums, companions, accessors and the remaining operators. Swift and Scala start the same way, in their own crates: their step 1 is
 imports and comments, with Scala's comment kinds `comment` and `block_comment`.

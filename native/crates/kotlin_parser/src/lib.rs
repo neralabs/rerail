@@ -11,7 +11,7 @@ use rerail_compiler::{native_cpu_clusters, native_cpu_stream, native_ir, rir_asm
 use rerail_kotlin_lean as lean;
 
 /// The grammar: the ladder's last step.
-pub const GRAMMAR: &str = include_str!("../bitlex_ladder/01-headers.bitlex");
+pub const GRAMMAR: &str = include_str!("../bitlex_ladder/02-declarations.bitlex");
 
 /// The tape's tag: Kotlin's in the registry (`languages/kotlin.json`).
 pub const TAG: u8 = 24;
