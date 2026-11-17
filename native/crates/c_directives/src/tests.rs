@@ -8,7 +8,7 @@ fn lean(src: &[u8], cpp: bool) -> Vec<Row> {
         .iter()
         .map(|x| {
             let (start, end) = d.file(x.span);
-            Row { kind: x.kind.name(), start, end }
+            Row { kind: x.kind.name(), start, end, parent: x.parent }
         })
         .collect()
 }
@@ -90,6 +90,21 @@ fn normal(src: &[u8], ops: &[Operand]) -> Vec<Operand> {
     out
 }
 
+/// The lean scan's chains: each conditional and the next of its chain.
+fn lean_next(src: &[u8], cpp: bool) -> Vec<(u32, u32)> {
+    let opts = if cpp { rerail_c_pp::Options::cpp(17, true) } else { rerail_c_pp::Options::c(17, true) };
+    let mut out: Vec<(u32, u32)> = rerail_c_pp::directives::scan(src, opts).conds.iter().filter_map(|c| Some((c.i, c.next?))).collect();
+    out.sort();
+    out
+}
+
+/// What `read` gives, the lean scan's: rows (with parents), operands, chains.
+fn same(r: &Read, src: &[u8], cpp: bool) -> bool {
+    let mut next = r.next.clone();
+    next.sort();
+    r.rows == lean(src, cpp) && normal(src, &r.operands) == lean_operands(src, cpp) && next == lean_next(src, cpp)
+}
+
 fn compiled_or_panic() -> &'static Compiled {
     compiled().unwrap_or_else(|e| panic!("the grammar compiles: {e}"))
 }
@@ -118,6 +133,9 @@ fn directives_read_as_the_lean_scan_reads_them() {
         "#line 42\n#line 7 \"f.c\"\n# 33 \"g.c\" 1 3\n#line X \"h.c\"\n#line\n",
         "#error a b\n#warning\n#ident \"x\"\n#foo bar baz\n#! x\n#define include 1\n#undef define\n",
         "#define LONG(a, \\\n  b) \\\n  ((a) \\\n + (b))\n",
+        "#ifndef G\n#define G\n#if A\n#define X\n#elif B\n#ifdef C\n#endif\n#else\n#undef X\n#endif\nint x;\n#endif\n",
+        "#if 0\n#if 1\n#elifdef Z\n#elifndef Y\n#else\n#endif\n#endif\n#define Q #x ## y\n# if 1\n#  endif\n",
+        "#endif\n#else\n#define A\n",
     ];
     for src in cases {
         let b = src.as_bytes();
@@ -125,6 +143,9 @@ fn directives_read_as_the_lean_scan_reads_them() {
         let text = || image_text(&c.image(b).unwrap()).unwrap();
         assert_eq!(got.rows, lean(b, false), "{src:?}\n{}", text());
         assert_eq!(normal(b, &got.operands), lean_operands(b, false), "{src:?}\n{}", text());
+        let mut next = got.next.clone();
+        next.sort();
+        assert_eq!(next, lean_next(b, false), "{src:?}\n{}", text());
         assert_eq!(c.interpreter_read(b).as_ref(), Some(&got), "the interpreter, {src:?}");
     }
     #[cfg(target_os = "macos")]
@@ -141,8 +162,8 @@ fn directives_read_as_the_lean_scan_reads_them() {
 #[test]
 fn what_the_step_does_not_read_is_refused() {
     let c = compiled_or_panic();
-    for src in ["#define X 1\r\n", "auto s = R\"(x)\";\n", "int n = 1'000;\n", "#define X \"open\n", "/* open\n", "??=define X\n", "%:define X\n", "#error don't\n"] {
-        assert!(c.rows(src.as_bytes()).is_none(), "{src:?}");
+    for src in ["#if A\n#define X\n", "#define X 1\r\n", "auto s = R\"(x)\";\n", "int n = 1'000;\n", "#define X \"open\n", "/* open\n", "??=define X\n", "%:define X\n", "#error don't\n"] {
+        assert!(c.read(src.as_bytes()).is_none(), "{src:?}");
     }
 }
 
@@ -153,7 +174,7 @@ fn what_the_step_does_not_read_is_refused() {
 fn the_corpus_reads_the_same_or_is_refused() {
     let c = compiled_or_panic();
     let root = std::env::var("RERAIL_C_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"));
-    let (mut same, mut refused, mut differ) = (0, 0, Vec::new());
+    let (mut same_n, mut refused, mut differ) = (0, 0, Vec::new());
     // The other backends', against Cranelift's: files whose rows differ.
     let (mut interp, mut metal) = (Vec::new(), Vec::new());
     for (dir, cpp) in [("c", false), ("cpp", true)] {
@@ -172,12 +193,16 @@ fn the_corpus_reads_the_same_or_is_refused() {
             }
             match cl {
                 None => refused += 1,
-                Some(r) if r.rows == lean(&src, cpp) && normal(&src, &r.operands) == lean_operands(&src, cpp) => same += 1,
+                Some(r) if same(&r, &src, cpp) => same_n += 1,
                 Some(r) => {
                     let (rows, want) = (r.rows, lean(&src, cpp));
                     let at = rows.iter().zip(&want).position(|(a, b)| a != b).unwrap_or(rows.len().min(want.len()));
+                    let mut next = r.next.clone();
+                    next.sort();
                     if rows != want {
                         differ.push(format!("{}: at {at}: {:?} against {:?}", p.display(), rows.get(at), want.get(at)));
+                    } else if next != lean_next(&src, cpp) {
+                        differ.push(format!("{}: chains {:?} against {:?}", p.display(), next.iter().take(8).collect::<Vec<_>>(), lean_next(&src, cpp).iter().take(8).collect::<Vec<_>>()));
                     } else {
                         let (ops, want) = (normal(&src, &r.operands), lean_operands(&src, cpp));
                         let at = ops.iter().zip(&want).position(|(a, b)| a != b).unwrap_or(ops.len().min(want.len()));
@@ -188,7 +213,7 @@ fn the_corpus_reads_the_same_or_is_refused() {
             }
         }
     }
-    eprintln!("the same {same}, refused {refused}, differ {}; the interpreter differs on {}, Metal on {}", differ.len(), interp.len(), metal.len());
+    eprintln!("the same {same_n}, refused {refused}, differ {}; the interpreter differs on {}, Metal on {}", differ.len(), interp.len(), metal.len());
     for p in interp.iter().chain(&metal).take(10) {
         eprintln!("  backend: {p}");
     }
@@ -208,7 +233,7 @@ fn a_file_past_64_kib_is_read_at_wide_columns() {
         let src = format!("{head}{}{tail}", "int x;\n".repeat(12_000));
         let got = c.read(src.as_bytes()).unwrap_or_else(|| panic!("refused: {head:?} … {tail:?}"));
         assert_eq!(got.rows, lean(src.as_bytes(), false));
-        assert_eq!(normal(src.as_bytes(), &got.operands), lean_operands(src.as_bytes(), false));
+        assert!(same(&got, src.as_bytes(), false));
         assert_eq!(c.interpreter_read(src.as_bytes()), Some(got.clone()), "the interpreter");
         #[cfg(target_os = "macos")]
         assert_eq!(c.metal_read(&[src.as_bytes()]).expect("the device runs it")[0], Some(got), "Metal");

@@ -12,14 +12,14 @@ use rerail_compiler::bitlex_masks as bitlex_compile;
 use rerail_compiler::{native_cpu_clusters, native_cpu_stream, native_ir, rir_asm as rir};
 
 /// The grammar: the ladder's last step.
-pub const GRAMMAR: &str = include_str!("../bitlex_ladder/02-operands.bitlex");
+pub const GRAMMAR: &str = include_str!("../bitlex_ladder/03-groups.bitlex");
 
 /// The tape's kinds, by id: the root, the directives' kinds (their names the lean scan's
 /// `Kind::name`), then the tokens' leaves and the operands' nodes.
 pub const KINDS: &[&str] = &[
     "directives", "null", "unknown", "line_marker", "define", "undef", "include", "include_next", "import", "embed", "if", "ifdef", "ifndef", "elif", "elifdef",
     "elifndef", "else", "endif", "line", "error", "warning", "pragma", "ident", "sccs", "assert", "unassert", "hash", "identifier", "number", "punct", "string",
-    "char_lit", "fn_open", "ellipsis", "header", "params", "operands", "plain_body", "macro_header", "pragma_text", "line_rest", "marker_rest",
+    "char_lit", "fn_open", "ellipsis", "header", "params", "operands", "plain_body", "macro_header", "pragma_text", "line_rest", "marker_rest", "group",
 ];
 
 /// The operands' fields, by id less one (0: no field).
@@ -97,6 +97,10 @@ pub struct Row {
     pub kind: &'static str,
     pub start: u32,
     pub end: u32,
+    /// The conditional directive that opened the group it sits in (`c_cond_parent`): the chain's
+    /// directive before it; an `#if`'s, `#elif`'s, `#else`'s or `#endif`'s, the group around
+    /// its own chain's.
+    pub parent: Option<u32>,
 }
 
 impl Compiled {
@@ -106,10 +110,6 @@ impl Compiled {
     }
 
     /// `src`'s directives, read from its tape in place, or `None` where the grammar refuses it.
-    pub fn rows(&self, src: &[u8]) -> Option<Vec<Row>> {
-        rows(&self.image(src)?).ok()
-    }
-
     /// `src`'s directives and their operands (`read`), or `None` where the grammar refuses it.
     pub fn read(&self, src: &[u8]) -> Option<Read> {
         read(&self.image(src)?).ok()
@@ -141,33 +141,92 @@ impl Compiled {
     }
 }
 
-/// A file's directives and their operands, as its tape gives them.
+/// A file's directives, their operands and their conditionals' chains, as its tape gives them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Read {
     pub rows: Vec<Row>,
     pub operands: Vec<Operand>,
+    /// Each conditional directive and the next of its chain (`c_cond_next`), in order.
+    pub next: Vec<(u32, u32)>,
 }
 
-/// `rows` and `operands` of a tape image.
+/// A tape image read in place, in one walk: each directive (a node of a directive's kind, at the
+/// root or in a `group`), each field's node below it, and each group's chain (its own
+/// directives) and the parent it gives the directives inside it.
 pub fn read(image: &[u8]) -> Result<Read, String> {
-    Ok(Read { rows: rows(image)?, operands: operands(image)? })
-}
-
-/// The directives of a tape image: each node below the root of a directive's kind.
-pub fn rows(image: &[u8]) -> Result<Vec<Row>, String> {
     let v = rerail_tape_format::View::new(image)?;
-    let mut out = Vec::new();
+    let kind = |k: usize| KINDS.get((v.key(k) & 0x3ff) as usize).copied().unwrap_or("");
+    let field = |k: usize| FIELDS.get((((v.key(k) & 0xffff) >> rerail_tape_format::KIND_BITS) as usize).wrapping_sub(1)).copied();
+    let mut out = Read { rows: Vec::new(), operands: Vec::new(), next: Vec::new() };
+    // The open groups: each its end (a node index) and its chain's last directive (`None` before
+    // its opener).
+    let mut groups: Vec<(usize, Option<u32>)> = Vec::new();
     let mut i = 1;
     while i < v.len() {
-        let kind = v.key(i) & 0x3ff;
-        if kind >= LEAVES as u32 {
-            return Err(format!("node {i}: {} below the root", KINDS.get(kind as usize).unwrap_or(&"?")));
+        while groups.last().is_some_and(|g| g.0 <= i) {
+            groups.pop();
         }
-        out.push(Row { kind: KINDS[kind as usize], start: v.start(i) as u32, end: v.end(i) as u32 });
-        i += v.size(i);
+        let k = kind(i);
+        if k == "group" {
+            groups.push((i + v.size(i), None));
+            i += 1;
+            continue;
+        }
+        let id = (v.key(i) & 0x3ff) as u16;
+        if id >= LEAVES {
+            return Err(format!("node {i}: {k} where a directive is"));
+        }
+        let d = out.rows.len() as u32;
+        // A group's own directive: its opener (none yet), or a conditional at its level (a
+        // nested `#if` opens a group of its own).
+        let own = groups.last().is_some_and(|g| g.1.is_none() || matches!(k, "elif" | "elifdef" | "elifndef" | "else" | "endif"));
+        let parent = if own {
+            let below = groups.len() - 1;
+            if let Some(last) = groups[below].1 {
+                out.next.push((last, d));
+            }
+            groups[below].1 = Some(d);
+            below.checked_sub(1).and_then(|b| groups[b].1)
+        } else {
+            groups.last().and_then(|g| g.1)
+        };
+        out.rows.push(Row { kind: k, start: v.start(i) as u32, end: v.end(i) as u32, parent });
+        let end = i + v.size(i);
+        let mut last_param = false;
+        for n in i + 1..end {
+            let what = match field(n) {
+                Some("name") => What::Name,
+                Some("params") => What::Params,
+                Some("param") => What::Param,
+                // GNU's `name...`: the parameter's leaf right before it (a `,` is a leaf of none).
+                Some("variadic") if last_param => What::NamedVariadic,
+                Some("variadic") => What::Variadic,
+                Some("body") => What::Body,
+                Some("spelled") => match kind(n) {
+                    "string" => What::Quote,
+                    "header" => What::Angle,
+                    _ => What::Macro,
+                },
+                Some("expr") => What::Expr,
+                Some("text") => What::Text,
+                Some("first") => What::First,
+                Some("second") => What::Second,
+                Some("n") => What::Number,
+                Some("file") => What::File,
+                Some("rest") => What::Rest,
+                _ => {
+                    last_param = false;
+                    continue;
+                }
+            };
+            last_param = what == What::Param;
+            out.operands.push(Operand { i: d, what, start: v.start(n) as u32, end: v.end(n) as u32 });
+        }
+        i = end;
     }
     Ok(out)
 }
+
 
 /// An operand of directive `i` (its index among the file's directives): what it is and its
 /// bytes in the file, as `c_define`, `c_include` and the rest of 0327's mode (a) relations take
@@ -204,51 +263,6 @@ pub enum What {
     Rest,
 }
 
-/// The operands of a tape image's directives, in order: each field's node below a directive,
-/// read in place.
-pub fn operands(image: &[u8]) -> Result<Vec<Operand>, String> {
-    let v = rerail_tape_format::View::new(image)?;
-    let field = |k: usize| FIELDS.get((((v.key(k) & 0xffff) >> rerail_tape_format::KIND_BITS) as usize).wrapping_sub(1)).copied();
-    let kind = |k: usize| KINDS.get((v.key(k) & 0x3ff) as usize).copied().unwrap_or("");
-    let mut out = Vec::new();
-    let (mut i, mut d) = (1, 0u32);
-    while i < v.len() {
-        let end = i + v.size(i);
-        let mut last_param = false;
-        for k in i + 1..end {
-            let what = match field(k) {
-                Some("name") => What::Name,
-                Some("params") => What::Params,
-                Some("param") => What::Param,
-                // GNU's `name...`: the parameter's leaf right before it (a `,` is a leaf of none).
-                Some("variadic") if last_param => What::NamedVariadic,
-                Some("variadic") => What::Variadic,
-                Some("body") => What::Body,
-                Some("spelled") => match kind(k) {
-                    "string" => What::Quote,
-                    "header" => What::Angle,
-                    _ => What::Macro,
-                },
-                Some("expr") => What::Expr,
-                Some("text") => What::Text,
-                Some("first") => What::First,
-                Some("second") => What::Second,
-                Some("n") => What::Number,
-                Some("file") => What::File,
-                Some("rest") => What::Rest,
-                _ => {
-                    last_param = false;
-                    continue;
-                }
-            };
-            last_param = what == What::Param;
-            out.push(Operand { i: d, what, start: v.start(k) as u32, end: v.end(k) as u32 });
-        }
-        i = end;
-        d += 1;
-    }
-    Ok(out)
-}
 
 /// A tape image as text: a node a line, indented by depth, with its span.
 pub fn image_text(image: &[u8]) -> Result<String, String> {

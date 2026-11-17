@@ -362,8 +362,31 @@ string; any other directive's `text` after its word.
 - **The grammar's own ids stay below 0x400**: a tape's kind is 10 bits, and an id past them
   (`0x4000` on, as `.rr`'s parser numbers its own) read as another kind on Cranelift and lost
   its field in the interpreter's image. Unseen in step 1, whose nodes had no fields.
-- Next steps: the conditionals' chains and groups as nesting (`c_cond_next`, `c_cond_parent`,
-  the guard), each directive's line, then the refusals above.
+
+### Mode (a) compiled, step 3 (`03-groups.bitlex`): conditional groups
+
+A group is a node from its `#if`, `#ifdef` or `#ifndef` to its `#endif`, nested as the file
+nests them. Token marks on a `#` and its word (`tokens hash "if" | "ifdef" | "ifndef"`, and the
+same for a chain's `#elif…`/`#else` and for `#endif`) open a group, go on with its chain, and end
+it. A group's own directives are its chain (`c_cond_next`); a directive's parent is the chain's
+directive before it, an opener's or a chain directive's the enclosing group's
+(`c_cond_parent`); an `#elif…`, `#else` or `#endif` with no group open is a directive of its
+level, as the lean scan records it. A group the file does not close is refused (the lean scan's
+unterminated `#if`). Every `#` is a `hash` token: a token mark tells kinds by first byte.
+
+- **Corpus**: 3,016 the same (rows with parents, operands, chains), 119 refused, 0 differ, every
+  backend's images equal.
+- **The compiler, fixed on the way** (the first grammar with token marks and no extras):
+  - token marks needed one extra kind (`bitlex_masks`, the verifier); with none, the executors
+    took mark bit 0 for the extra's and would skip tokens with it. Each executor (the
+    interpreter, Cranelift's tier 2, the Rust AOT's) now takes the extra's bit as an `Option`:
+    with none, no record is an extra.
+  - Cranelift's tier 1 made no start mask where its token loop walks the starts
+    (`walked_starts`), but a mark the loop does not set read its bits from it: every token
+    mark's bit was 0, so no group opened. The starts stay made where such a mark reads them
+    (`BlockNative::records_made`).
+- Left for the engine's wiring: each directive's line (from the file's line starts, not the
+  tape) and the include guard (a rule over the rows and chains); then the refusals above.
 
 ### Prior art in the other worktrees (surveyed 2026-11-17)
 

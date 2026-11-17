@@ -2668,7 +2668,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     }
     // The token marks, their kinds the records' (`Words::token_marks`).
     if !lowered.token_marks.is_empty() {
-        if !token_extras {
+        // Extras between a mark's tokens are placed in the token step only; a grammar with none
+        // has nothing to place.
+        if !token_extras && !low.extra.is_empty() {
             return Err("token marks with extras not taken in the token step".into());
         }
         let mut tms = Vec::new();

@@ -331,7 +331,22 @@ impl BlockNative {
     /// The extracts' outputs the CPU's record pass makes, not a mask (`ruled_lasts`,
     /// `walked_starts`).
     pub fn records_made(&self) -> Vec<usize> {
-        self.ruled_lasts().into_iter().chain(self.walked_starts()).chain(self.loops_errors()).chain(self.readers_tags()).chain(self.read_at_tokens()).collect()
+        // The starts the loop walks stay made where a mark reads them from its row (one the loop
+        // does not set itself): a token mark's mask is the starts (`tokens K …`).
+        let stored = self.marks_stored();
+        let walked = self.walked_starts().filter(|o| !stored.contains(o));
+        self.ruled_lasts().into_iter().chain(walked).chain(self.loops_errors()).chain(self.readers_tags()).chain(self.read_at_tokens()).collect()
+    }
+
+    /// The outputs the marks the token loop does not set read from their rows.
+    fn marks_stored(&self) -> Vec<usize> {
+        let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some()) else {
+            return Vec::new();
+        };
+        let bytes = crate::native_cpu_bytes::Bytewise::of(self);
+        let (lift, at) = crate::native_cpu_block::loop_marks(r, &|o| bytes.can(o));
+        let looped: u32 = lift.iter().chain(&at).fold(0, |a, &(k, _)| a | 1 << k);
+        r.marks.iter().enumerate().filter(|&(k, m)| looped >> k & 1 == 0 && m.0 != crate::records::WORD_ALONE).map(|(_, m)| usize::from(m.0)).collect()
     }
 
     /// The outputs the CPU's token loop makes from the file's bytes where it reads them

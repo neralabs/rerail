@@ -213,7 +213,7 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
         reread(out, i, r);
     }
     for (i, m) in n.token_marks.iter().enumerate() {
-        pattern(out, i, m, n.extras.first().map_or(0, |e| e.0));
+        pattern(out, i, m, n.extras.first().map(|e| e.0));
     }
     // The refusing token marks' tests, at a token whose code has a bit of theirs.
     let refusing: Vec<String> = n
@@ -1182,9 +1182,14 @@ fn reread(out: &mut String, i: usize, r: &crate::stream_ir::Reading) {
 }
 
 /// A token mark's tokens (`Words::token_marks`): each element at its offset among the records
-/// that are no extra. A step a record.
-fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: u8) {
-    let shift = crate::records::MARK_SHIFT + u32::from(extra_bit);
+/// that are no extra (`extra_bit`: none for a grammar without extras). A step a record.
+fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: Option<u8>) {
+    // A record is an extra where its code has the extra's bit; with no extras, none is.
+    let no_extra = |c: &str| match extra_bit {
+        Some(b) => format!("{c} >> {} & 1 == 0", crate::records::MARK_SHIFT + u32::from(b)),
+        None => "true".into(),
+    };
+    let free = no_extra("c");
     let mut body = String::new();
     let test = |el: &crate::program::TokenElem| -> String {
         let mut t = Vec::new();
@@ -1205,13 +1210,13 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: u8) {
             0 => writeln!(body, "        let c = unsafe {{ *self.codes.add(here * self.rs) }};\n        if !({}) {{ return false; }}", test(el)).unwrap(),
             o if o < 0 => {
                 // The record before, past the extras (an offset of -1).
-                writeln!(body, "        let mut j = here;\n        let c = loop {{\n            if j == 0 {{ return false; }}\n            j -= 1;\n            let c = unsafe {{ *self.codes.add(j * self.rs) }};\n            if c >> {shift} & 1 == 0 {{ break c; }}\n        }};\n        if !({}) {{ return false; }}", test(el)).unwrap();
+                writeln!(body, "        let mut j = here;\n        let c = loop {{\n            if j == 0 {{ return false; }}\n            j -= 1;\n            let c = unsafe {{ *self.codes.add(j * self.rs) }};\n            if {free} {{ break c; }}\n        }};\n        if !({}) {{ return false; }}", test(el)).unwrap();
             }
             o => {
                 // No record left: an `end` element holds there (it is the last), any other fails.
                 let past = if el.end { "true" } else { "false" };
                 for _ in ahead..o {
-                    writeln!(body, "        let c = loop {{\n            at += 1;\n            if at >= self.n {{ return {past}; }}\n            let c = unsafe {{ *self.codes.add(at * self.rs) }};\n            if c >> {shift} & 1 == 0 {{ break c; }}\n        }};").unwrap();
+                    writeln!(body, "        let c = loop {{\n            at += 1;\n            if at >= self.n {{ return {past}; }}\n            let c = unsafe {{ *self.codes.add(at * self.rs) }};\n            if {free} {{ break c; }}\n        }};").unwrap();
                 }
                 ahead = o;
                 writeln!(body, "        if !({}) {{ return false; }}", test(el)).unwrap();

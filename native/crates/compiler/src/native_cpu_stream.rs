@@ -1320,7 +1320,7 @@ fn local_classes(f: &mut FunctionBuilder<'_>, e: &mut LocalWords<'_>, ti: usize,
 /// The token marks that refuse (`TokenMark::refuses`), at a token of code `c`: their bits, one
 /// test; where one is set (cold), each set bit's tokens, to `refused` where they follow. Then
 /// on, in a new block.
-fn refusal_tests(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: Value, marks: &[crate::program::TokenMark], extra_bit: u8, refused: Block, heads: &mut Vec<(Block, Step)>) {
+fn refusal_tests(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: Value, marks: &[crate::program::TokenMark], extra_bit: Option<u8>, refused: Block, heads: &mut Vec<(Block, Step)>) {
     let refusing: Vec<&crate::program::TokenMark> = marks.iter().filter(|m| m.refuses).collect();
     if refusing.is_empty() {
         return;
@@ -1347,7 +1347,7 @@ fn refusal_tests(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: Value, marks: 
     f.switch_to_block(on);
 }
 
-fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::program::TokenMark, extra_bit: u8, heads: &mut Vec<(Block, Step)>) -> Value {
+fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::program::TokenMark, extra_bit: Option<u8>, heads: &mut Vec<(Block, Step)>) -> Value {
     let flags = MemFlags::trusted();
     let codes = (e.ctx)(f, CODES);
     let n = (e.ctx)(f, NSTARTS);
@@ -1360,7 +1360,14 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
         let a = f.ins().iadd(codes, off);
         f.ins().uload32(flags, a, 0)
     };
-    let shift = i64::from(crate::records::MARK_SHIFT) + i64::from(extra_bit);
+    // 1 where a record is an extra (its code has the extra's bit); with no extras, none is.
+    let is_extra = |f: &mut FunctionBuilder<'_>, c: Value| match extra_bit {
+        Some(b) => {
+            let x = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT) + i64::from(b));
+            f.ins().band_imm(x, 1)
+        }
+        None => f.ins().iconst(types::I64, 0),
+    };
     // The element's test on a code: a kind of its set, or a word of its; a `not` element, none.
     let test = |f: &mut FunctionBuilder<'_>, c: Value, el: &crate::program::TokenElem| {
         let (ok, miss) = (f.create_block(), f.create_block());
@@ -1420,8 +1427,7 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
                 f.switch_to_block(on);
                 let j = f.ins().iadd_imm(j, -1);
                 let c = code_at(f, j);
-                let x = f.ins().ushr_imm(c, shift);
-                let x = f.ins().band_imm(x, 1);
+                let x = is_extra(f, c);
                 let found = f.create_block();
                 f.ins().brif(x, head, &[BlockArg::from(j)], found, &[]);
                 f.switch_to_block(found);
@@ -1441,8 +1447,7 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
                 f.ins().brif(past, if el.end { yes } else { no }, &[], on, &[]);
                 f.switch_to_block(on);
                 let c = code_at(f, j);
-                let x = f.ins().ushr_imm(c, shift);
-                let x = f.ins().band_imm(x, 1);
+                let x = is_extra(f, c);
                 let found = f.create_block();
                 f.ins().brif(x, head, &[BlockArg::from(j)], found, &[]);
                 f.switch_to_block(found);
@@ -2150,7 +2155,7 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
         let at = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, MemFlags::trusted(), ctx, at);
         let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a token mark does not refuse");
         let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
-        refusal_tests(f, &env, c, refusals, t.extra.map_or(0, |e| e.0), refused, heads);
+        refusal_tests(f, &env, c, refusals, t.extra.map(|e| e.0), refused, heads);
         let on = f.current_block().expect("in a block");
         f.switch_to_block(refused);
         f.set_cold_block(refused);
@@ -3552,7 +3557,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     // A token mark that refuses, at this token: refused at this word.
                     if native.token_marks.iter().any(|m| m.refuses) {
                         let refused = f.create_block();
-                        refusal_tests(&mut f, &env, c, &native.token_marks, extra.map_or(0, |e| e.0), refused, &mut heads);
+                        refusal_tests(&mut f, &env, c, &native.token_marks, native.extras.first().map(|e| e.0), refused, &mut heads);
                         let on = f.current_block().expect("in a block");
                         f.switch_to_block(refused);
                         f.set_cold_block(refused);
@@ -3795,7 +3800,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                         // A token mark (decision 0129): its tokens follow, from the records.
                         if let Some(i) = pattern {
                             let m = native.token_marks[usize::from(i)].clone();
-                            let bit = native.extras.first().ok_or(Error::UnsupportedBackend)?.0;
+                            let bit = native.extras.first().map(|e| e.0);
                             let r = if outlined {
                                 let key = WordFn::TokenMark { index: i };
                                 if !word_fns.contains_key(&key) {
