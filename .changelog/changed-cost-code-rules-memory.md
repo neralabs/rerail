@@ -1,0 +1,1 @@
+Code rules take far less memory once compiled: the on-by-default rules of the JavaScript, TypeScript, Node.js, React and complexity packs together go from about 760 MiB to 150 MiB. The largest, the Node.js pack's `n-no-unsupported-features-node-builtins`, compiles in half the time.

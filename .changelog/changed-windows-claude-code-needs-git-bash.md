@@ -1,0 +1,1 @@
+On Windows, Rerail supports Claude Code only with Git Bash, from Git for Windows. Without it Claude Code uses PowerShell, where Rerail's status line, `/rerail` commands and set-up's answers fail, as they did in 0.1.4; hooks still record and steer.

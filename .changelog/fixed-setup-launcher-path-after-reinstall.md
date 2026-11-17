@@ -1,0 +1,1 @@
+Installing Rerail again from the terminal or coding agent session that removed it now puts `~/.rerail/bin` back on `PATH`. Before, set-up skipped it because that shell's `PATH` still had the folder, so new terminals could not find `rerail`.
