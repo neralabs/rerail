@@ -119,14 +119,13 @@ mod tests {
 #[doc(hidden)]
 pub fn lex_only(src: &[u8]) -> usize {
     let lx = lex::Lexer::new(src);
-    let mut extras = Vec::new();
-    let (mut at, mut n) = (0, 0);
-    while let Ok(t) = lx.token(at, &mut extras) {
-        if t.kind == lex::T::Eof {
-            break;
+    let (mut extras, mut toks) = (Vec::new(), Vec::with_capacity(src.len() / 4));
+    let mut at = 0;
+    while let Ok(next) = lx.lex_run(at, &mut toks, 16, &mut extras) {
+        if toks.last().is_some_and(|t| t.kind == lex::T::Eof) {
+            return toks.len() - 1;
         }
-        n += 1;
-        at = t.end as usize;
+        at = next;
     }
-    n
+    toks.len()
 }

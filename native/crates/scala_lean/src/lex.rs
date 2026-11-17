@@ -11,7 +11,7 @@
 //! comment), its code the reserved spelling it is (`=`, `=>`, `<-`, …) or 0, and its precedence
 //! class the one its first and last characters give (`op_class`, SLS 6.12.3).
 
-use crate::block::Blocks;
+use crate::block::{Blocks, Lexed};
 
 /// Why the parser left a file to tree-sitter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -183,9 +183,67 @@ pub fn word(src: &[u8], i: usize, end: usize) -> u8 {
     WORDS.find(src, i, end) as u8
 }
 
+/// Bytes that start a name (`[A-Za-z_]`; `$` and one past ASCII go the long way).
+static NAME_START: [bool; 256] = {
+    let mut t = [false; 256];
+    let mut c = 0;
+    while c < 256 {
+        t[c] = (c as u8).is_ascii_alphabetic() || c == b'_' as usize;
+        c += 1;
+    }
+    t
+};
+
+// The bytes after a one-byte token that make it longer, or another (`FOLLOW`'s bits, a token's
+// `ONE`): an operator character, a byte past ASCII, a digit.
+const F_OP: u8 = 1;
+const F_WIDE: u8 = 2;
+const F_DIGIT: u8 = 4;
+
+static FOLLOW: [u8; 256] = {
+    let mut t = [0u8; 256];
+    let mut c = 0;
+    while c < 256 {
+        t[c] = if c >= 0x80 {
+            F_WIDE
+        } else if op_char(c as u8) {
+            F_OP
+        } else if (c as u8).is_ascii_digit() {
+            F_DIGIT
+        } else {
+            0
+        };
+        c += 1;
+    }
+    t
+};
+
+/// A one-byte token by its byte (`token_at`'s, an operator of one byte): its kind, and the next
+/// bytes that make it another (`u8::MAX`: no one-byte token, or one read the long way).
+static ONE: [(T, u8); 256] = {
+    let mut t = [(T::Eof, u8::MAX); 256];
+    t[b'(' as usize] = (T::LParen, 0);
+    t[b')' as usize] = (T::RParen, 0);
+    t[b'[' as usize] = (T::LBracket, 0);
+    t[b']' as usize] = (T::RBracket, 0);
+    t[b'{' as usize] = (T::LBrace, 0);
+    t[b'}' as usize] = (T::RBrace, 0);
+    t[b',' as usize] = (T::Comma, 0);
+    t[b';' as usize] = (T::Semi, 0);
+    t[b'.' as usize] = (T::Dot, F_DIGIT);
+    let mut c = 0;
+    while c < 128 {
+        if op_char(c as u8) {
+            t[c] = (T::Op, F_OP | F_WIDE);
+        }
+        c += 1;
+    }
+    t
+};
+
 /// An ASCII operator character (`/` included: the caller decides whether it opens a comment).
 #[inline(always)]
-pub fn op_char(c: u8) -> bool {
+pub const fn op_char(c: u8) -> bool {
     matches!(c, b'-' | b'!' | b'#' | b'%' | b'&' | b'*' | b'+' | b'/' | b'\\' | b':' | b'<' | b'=' | b'>' | b'?' | b'@' | b'^' | b'|' | b'~')
 }
 
@@ -357,6 +415,69 @@ impl<'s> Lexer<'s> {
                 _ => i += 1,
             }
         }
+    }
+
+    /// Tokens from `at` on into `out`, a block at a time (`Blocks::lex_blocks`): names and
+    /// one-byte punctuation and operators straight from the block's masks and two tables,
+    /// comments in place, every other token by `token_at` from its start (by `token` where a
+    /// character past ASCII starts it). Returns where the next is to be read from; at least `min`
+    /// tokens are made unless the text ends.
+    pub fn lex_run(&self, at: usize, out: &mut Vec<Tok>, min: usize, extras: &mut Vec<(u32, u32, u32)>) -> R<usize> {
+        let src = self.src;
+        self.blocks.lex_blocks(
+            at,
+            out,
+            min,
+            extras,
+            #[inline(always)]
+            |extras, pos, run, nl| {
+                let c = src[pos];
+                let tok = |kind, code, e: usize| Ok(Lexed::Tok(Tok { kind, code, nl, start: pos as u32, end: e as u32 }, e));
+                if NAME_START[c as usize] {
+                    // A name of ASCII bytes (past the block too), ended before ASCII other than
+                    // `$`, and not before an operator suffix (`foo_+`: `name_end`).
+                    let e = if run == usize::MAX { self.blocks.word_end(pos) } else { pos + run };
+                    let d = self.at(e);
+                    if d < 0x80 && d != b'$' && !(src[e - 1] == b'_' && op_char(d)) {
+                        return tok(T::Id, word(src, pos, e), e);
+                    }
+                } else {
+                    let (kind, bad) = ONE[c as usize];
+                    if bad != u8::MAX && FOLLOW[self.at(pos + 1) as usize] & bad == 0 {
+                        let code = if kind == T::Op { op::code(&src[pos..pos + 1]) } else { 0 };
+                        return tok(kind, code, pos + 1);
+                    }
+                    if c >= 0x80 {
+                        // White space past ASCII is refused (`skip`): the long way.
+                        return Ok(Lexed::Slow);
+                    }
+                    if c == b'/' {
+                        match self.comment(pos)? {
+                            None => {}
+                            Some((end, true)) => {
+                                extras.push((crate::tw::key(crate::K::BlockComment, 0, true), pos as u32, end as u32));
+                                return Ok(Lexed::Extra(end));
+                            }
+                            Some((end, false)) => {
+                                self.line_comment(pos, end, extras)?;
+                                return Ok(Lexed::Extra(end));
+                            }
+                        }
+                    }
+                }
+                // Any other token from its first byte, as `token` reads it there.
+                let (kind, code, e) = self.token_at(pos)?;
+                if e <= pos {
+                    return Err(Refusal::Lex(pos as u32));
+                }
+                tok(kind, code, e)
+            },
+            |extras, gap, nl| {
+                let mut t = self.token(gap, extras)?;
+                t.nl |= nl;
+                Ok((t, t.end as usize, t.kind == T::Eof))
+            },
+        )
     }
 
     /// The token at or after `at` (white space and comments passed, the comments pushed to
@@ -708,4 +829,74 @@ fn letter_sure(c: char) -> bool {
         && u != 0xf7
         && u != 0x37e
         && u != 0x387
+}
+
+#[cfg(test)]
+mod block_lexer_tests {
+    use super::*;
+
+    type Run = (Vec<String>, Vec<(u32, u32, u32)>, Option<Refusal>);
+
+    /// The tokens, the comments and the refusal from `at`, by the token loop (`token` a token at
+    /// a time) and by the block lexer (`lex_run`).
+    fn both(src: &[u8], at: usize) -> [Run; 2] {
+        let lx = Lexer::new(src);
+        let one = {
+            let (mut toks, mut extras, mut at) = (Vec::new(), Vec::new(), at);
+            let r = loop {
+                match lx.token(at, &mut extras) {
+                    Ok(t) => {
+                        toks.push(format!("{t:?}"));
+                        if t.kind == T::Eof {
+                            break None;
+                        }
+                        at = t.end as usize;
+                    }
+                    Err(e) => break Some(e),
+                }
+            };
+            (toks, extras, r)
+        };
+        let run = {
+            let (mut toks, mut extras, mut at) = (Vec::new(), Vec::new(), at);
+            let r = loop {
+                match lx.lex_run(at, &mut toks, 3, &mut extras) {
+                    Ok(next) => {
+                        if toks.last().is_some_and(|t: &Tok| t.kind == T::Eof) {
+                            break None;
+                        }
+                        at = next;
+                    }
+                    Err(e) => break Some(e),
+                }
+            };
+            (toks.iter().map(|t| format!("{t:?}")).collect(), extras, r)
+        };
+        [one, run]
+    }
+
+    #[test]
+    fn the_block_lexer_is_the_token_loop() {
+        // Texts of the bytes the lexer treats apart, long enough to cross blocks.
+        let alphabet: &[&[u8]] = &[b"a", b"bc", b"_x9", b"def", b"val", b"foo_", b"x_=", b"a$b", b"$a", b"_", b"0", b"12", b"1.5", b"0x1F", b"1L", b" ", b"  ", b"\n", b"\r\n", b"\t", b"//c\n", b"//> using x\n", b"/*c*/", b"/*\n*/", b"/* /* */ */", b"\"s\"", b"\"\"\"t\"\"\"", b"'c'", b"'a", b"`n`", b".", b".5", b":", b"::", b"=", b"==", b"=>", b"<-", b"!", b"+", b"++", b"-", b"->", b"*", b"/", b"%", b"&", b"&&", b"|", b"^", b"~", b"<", b">", b"<:", b"#", b"@", b"?", b"\\", b"(", b")", b"[", b"]", b"{", b"}", b";", b",", b"\xc3\xa9", b"\xe2\x80\x83", b"\xe2\x86\x92", b"\xe2\x8a\xa5", b"\xe3\x81\x82"];
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for round in 0..3000 {
+            let n = (next() % 200) as usize;
+            let mut src = Vec::new();
+            while src.len() < n {
+                src.extend_from_slice(alphabet[(next() % alphabet.len() as u64) as usize]);
+            }
+            let starts: Vec<usize> = if round % 10 == 0 { (0..=src.len()).collect() } else { vec![0] };
+            for at in starts {
+                let [one, run] = both(&src, at);
+                assert_eq!(one, run, "{:?} from {at}", String::from_utf8_lossy(&src));
+            }
+        }
+    }
 }
