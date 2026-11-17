@@ -161,6 +161,29 @@ fn decode(src: &[u8], at: usize) -> Option<(char, usize)> {
     Some((c, c.len_utf8()))
 }
 
+/// `FIRST`'s bits for a byte: what may follow a token before the next one starts (a blank, a line
+/// end, a comment's `/`)...
+const GAP: u8 = 1;
+/// ...and what does not start an ASCII name, so that a 0 bit is a name's first byte.
+const NAME: u8 = 2;
+
+/// A byte's `GAP` and `NAME` bits, by one load.
+static FIRST: [u8; 256] = {
+    let mut t = [NAME; 256];
+    let mut c = 0;
+    while c < 256 {
+        let b = c as u8;
+        if matches!(b, b' ' | b'\t' | b'\x0b' | b'\x0c' | b'\r' | b'\n' | b'/') {
+            t[c] |= GAP;
+        }
+        if b.is_ascii_alphabetic() || b == b'_' {
+            t[c] &= !NAME;
+        }
+        c += 1;
+    }
+    t
+};
+
 pub struct Lexer<'s> {
     pub src: &'s [u8],
     pub blocks: Blocks<'s>,
@@ -180,6 +203,11 @@ impl<'s> Lexer<'s> {
     /// token starts, and the first `\n` passed outside comments (`NO_NL`: none).
     #[inline]
     pub fn skip(&self, mut at: usize, extras: &mut Vec<Extra>) -> R<(usize, u32, u32)> {
+        // Most tokens follow the one before at once (`f(`, `a.b`): no blank, line end or comment to
+        // pass. Past the text's end the byte read is 0, which starts none.
+        if FIRST[usize::from(self.at(at))] & GAP == 0 {
+            return Ok((at, NO_NL, NO_NL));
+        }
         let (mut nl, mut last, mut closed) = (NO_NL, NO_NL, false);
         loop {
             at = self.blocks.blank_end(at);
@@ -243,6 +271,13 @@ impl<'s> Lexer<'s> {
         let c = self.src[s];
         let refuse = Err(Refusal::Lex(s as u32));
         let next = self.at(s + 1);
+        // An ASCII name: its end is where its word bytes stop, unless a character past ASCII goes
+        // on there.
+        if FIRST[usize::from(c)] & NAME == 0 {
+            let end = self.blocks.word_end(s + 1);
+            let end = if self.at(end) < 0x80 { end } else { self.name_end(s)? };
+            return Ok((Name, end, word(self.src, s, end)));
+        }
         let (kind, len) = match c {
             b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
                 let end = self.name_end(s)?;

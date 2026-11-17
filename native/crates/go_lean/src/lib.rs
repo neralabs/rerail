@@ -70,6 +70,22 @@ pub fn tape(src: &[u8]) -> Result<Tape, Refusal> {
     parse::parse(src)
 }
 
+/// The tokens of `src`, lexed alone (no parse), as the parser's buffer lexes them: their count,
+/// and comments; `None` where the lexer refuses one. For the cost examples (`*_costs lex`).
+#[doc(hidden)]
+pub fn lex_only(src: &[u8]) -> Option<(usize, usize)> {
+    let lx = lex::Lexer::new(src);
+    let (mut at, mut n, mut extras) = (0, 0, Vec::new());
+    loop {
+        let t = lx.token(at, &mut extras).ok()?;
+        n += 1;
+        if t.kind == lex::T::Eof {
+            return Some((n, extras.len()));
+        }
+        at = t.end as usize;
+    }
+}
+
 /// A tape as plain text, as the engine's `python_tape_plain` writes one (the oracle's form): a node
 /// a line, indented by depth, its kind, field, flags, supertypes and span.
 pub fn tape_text(tape: &Tape) -> String {
