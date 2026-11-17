@@ -129,6 +129,7 @@ pub mod phase0;
 pub mod cross_memo;
 pub mod switches;
 pub mod matchers;
+pub mod preparation;
 /// The prefix of an `ast` matcher's relation (decision 0106).
 pub(in crate::code_rule_dsl) const AST_MATCHES: &str = matchers::PREFIX;
 pub use matchers::columns as ast_columns;
@@ -3345,69 +3346,50 @@ fn run_observed(
             let mut program: front::Program = std::mem::take(&mut lowered.program);
             bound(&program)?;
             drop(_step);
-            // The file-local part of each cross-file rule runs in the chunks, which export its rows, not their base relations.
-            let _step = crate::code_rule_dsl::logic::profile::span(|| "push the file-local joins into the chunks".into());
-            let pushed = crate::code_rule_dsl::typing::file_local::push_local_joins(&mut program);
+            // The prepared program's one image (decision 0281's path, step 4): made here, after the last pass that edits
+            // the tree; the passes after it run on the manager over the version (step 5: the file-local joins pushed,
+            // the exports factorized and cut to their demand, the rows located, the merges, the inputs the rules read,
+            // the rule order), and the run's readers read the version (`Lowered::placed`), the split's parts views of
+            // it. A program the image cannot hold is an error, not a run read from the tree.
+            let _step = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's image and the passes on it".into());
+            let (version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).and_then(|b| b.finish()).map_err(Error::Plan)?;
+            let (version, found) = preparation::run(version, factorizing).map_err(Error::Plan)?;
+            let factorized = found.factorized.clone();
+            let pushed = found.pushed.clone();
+            let merged = (found.merged, found.shared);
+            let located = found.located.clone();
             drop(_step);
-            // An export that is a join of parts meeting at a key it projects away is handed on as its parts (decision 0099).
-            let _step = crate::code_rule_dsl::logic::profile::span(|| "factorize the exports".into());
-            let factorized = if factorizing { crate::code_rule_dsl::typing::file_local::factorize_exports(&mut program) } else { Vec::new() };
-            drop(_step);
-            // Each export cut to what its cross-file readers can use: their demand, made file-local.
-            let _step = crate::code_rule_dsl::logic::profile::span(|| "cut the exports to their readers' demand".into());
-            for line in crate::code_rule_dsl::typing::file_local::demand_exports(&mut program) {
-                crate::code_rule_dsl::logic::profile::decision("export demand", || line.clone());
-            }
-            drop(_step);
-            // Every relation the chunks hand on names its document per row, so a file's rows can be memoised (decision 0052).
-            let _step = crate::code_rule_dsl::logic::profile::span(|| "locate the chunks' rows".into());
-            let located = crate::code_rule_dsl::typing::file_local::locate(&mut program);
-            drop(_step);
-            // The joins pushed are made per rule, so two programs' copies of one library rule made two: merged again, and so
-            // are the relations over them, before the program splits.
-            let _step = crate::code_rule_dsl::logic::profile::span(|| "merge identical relations again".into());
-            let merged = if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
-                crate::code_rule_dsl::logic::simplify::merge_identical(&mut program)
-            } else {
-                let (m, s, _) = merge_and_drop_repeats(&mut program);
-                (m, s)
-            };
-            drop(_step);
-            let read: BTreeSet<String> = program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string())).collect();
-            // An input no rule reads is never bound or measured: it is not an input of what runs.
-            let outputs = program.outputs.clone();
-            program.inputs.retain(|rel| read.contains(rel) || outputs.contains(rel));
-            // A measurement aid (decision 0173, open question 4): `RERAIL_RULE_ORDER=reverse|shuffle|head` reorders the
-            // prepared program's rules, to find what depends on their order.
-            if let Ok(order) = std::env::var("RERAIL_RULE_ORDER") {
-                let rules = &mut program.rules;
-                match order.as_str() {
-                    "reverse" => rules.reverse(),
-                    "head" => rules.sort_by(|a, b| a.head.rel.as_str().cmp(b.head.rel.as_str())),
-                    "shuffle" => {
-                        let mut x: u64 = 0x0173;
-                        for i in (1..rules.len()).rev() {
-                            x ^= x << 13;
-                            x ^= x >> 7;
-                            x ^= x << 17;
-                            rules.swap(i, (x % (i as u64 + 1)) as usize);
-                        }
-                    }
-                    _ => {}
-                }
-            }
             // The domains of the program as it now is: those `lower` found are of the program before the rewrites above
             // (pushed joins, factorized and demanded exports, merged rules), which rename and combine relations
             // (`fl256_P`). Every part takes them from here: the split's, the frames' and the memo's symbol columns
             // (`lower::atom_columns`, decision 0170).
-            lowered.domains = lower::domains(&program)?;
+            lowered.domains = lower::domains_of(&version)?;
             let _step = crate::code_rule_dsl::logic::profile::span(|| "split the file-local and cross-file parts".into());
-            // The prepared program's one image (decision 0281's path, step 4): made here, after the last pass that edits
-            // the tree, and held beside it, so its readers read the version (`Lowered::placed`) and the split's parts
-            // are views of it.
-            // A program the image cannot hold is an error, not a run read from the tree.
-            let (version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).and_then(|b| b.finish()).map_err(Error::Plan)?;
-            let split = crate::code_rule_dsl::typing::file_local::programs_over(&program, version.clone()).map_err(Error::Plan)?;
+            let split = crate::code_rule_dsl::typing::file_local::programs_of(version.clone()).map_err(Error::Plan)?;
+            // While passes before the image edit the tree, a debug build checks the version's split and domains are
+            // the tree's (the tree's inputs pruned as `preparation::InputsRead` prunes the version's).
+            #[cfg(debug_assertions)]
+            if std::env::var_os("RERAIL_RULE_ORDER").is_none() {
+                assert_eq!(crate::code_rule_dsl::typing::file_local::push_local_joins(&mut program), pushed, "the version's joins are pushed as the tree's");
+                let tree_factorized = if factorizing { crate::code_rule_dsl::typing::file_local::factorize_exports(&mut program) } else { Vec::new() };
+                assert_eq!(tree_factorized, factorized, "the version's exports are factorized as the tree's");
+                assert_eq!(crate::code_rule_dsl::typing::file_local::demand_exports(&mut program), found.demand, "the version's exports are cut as the tree's");
+                assert_eq!(crate::code_rule_dsl::typing::file_local::locate(&mut program), located, "the version's rows are located as the tree's");
+                let tree_merged = if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
+                    crate::code_rule_dsl::logic::simplify::merge_identical(&mut program)
+                } else {
+                    let (m, s, _) = merge_and_drop_repeats(&mut program);
+                    (m, s)
+                };
+                assert_eq!(tree_merged, merged, "the version's merges are the tree's");
+                let read: BTreeSet<String> = program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string())).collect();
+                let outputs = program.outputs.clone();
+                program.inputs.retain(|rel| read.contains(rel) || outputs.contains(rel));
+                let (tree_version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).and_then(|b| b.finish()).map_err(Error::Plan)?;
+                assert_eq!((tree_version.size(), tree_version.digest()), (version.size(), version.digest()), "the version's program is the tree's after the merges");
+                assert_eq!(lower::domains(&program)?, lowered.domains, "the version's domains are the tree's");
+                crate::code_rule_dsl::typing::file_local::programs_over(&program, version.clone()).map_err(Error::Plan)?;
+            }
             drop(program);
             // The run's program: the image alone; no tree is kept.
             let lowered = lower::Lowered::of_placed(super::body::Placed::whole(version), lowered.domains, lowered.ops, lowered.dialect);
