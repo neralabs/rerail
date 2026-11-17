@@ -22,6 +22,10 @@
 
 use crate::Error;
 
+/// The bits of a file's start an `Early` may move: Metal's narrowest lane has 16 bytes, so its
+/// word 16 bits; the CPU's word is 64.
+pub const EARLY_BITS: u32 = 16;
+
 /// An operation. Operands are earlier values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum BlockOp {
@@ -46,6 +50,11 @@ pub enum BlockOp {
     /// Each byte's bit from `k` bytes before (`1..=63`), across blocks: simdjson's `follows`
     /// (`a << k` with the previous word's top `k` bits). Carry: a halo, the 64 bits before.
     Prev(u16, u8),
+    /// Each byte's bit from `k` bytes after (`1..=63`), within the word: `a >> k`, no carry.
+    /// Exact only for a value whose bits all lie in each file's first bytes, fewer than the
+    /// narrowest word of any executor (`EARLY_BITS`): a file's start brought to an earlier delay
+    /// without the lookahead a delay is for (`bitlex_masks`' `first_bits`, decision 0330).
+    Early(u16, u8),
     /// Each byte's bit is the XOR of `a`'s bits up to and including it, across the stream:
     /// simdjson's `prefix_xor` (the inside-string mask). Carry: parity.
     Toggle(u16),
@@ -240,6 +249,7 @@ impl BlockOp {
             BlockOp::Xor(a, b) => two("xor", a, b),
             BlockOp::AndNot(a, b) => two("andnot", a, b),
             BlockOp::Prev(a, k) => format!("prev %{a}, {k}"),
+            BlockOp::Early(a, k) => format!("early %{a}, {k}"),
             BlockOp::Toggle(a) => format!("toggle %{a}"),
             BlockOp::Escaped(a) => format!("escaped %{a}"),
             BlockOp::Fill(a, b) => two("fill", a, b),
@@ -264,7 +274,7 @@ impl BlockOp {
     pub fn operands(&self) -> Vec<u16> {
         match *self {
             BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) | BlockOp::Position(_) | BlockOp::Cmp { .. } | BlockOp::Bit { .. } => vec![],
-            BlockOp::Not(a) | BlockOp::Prev(a, _) | BlockOp::Toggle(a) | BlockOp::Escaped(a) | BlockOp::Carry(a) => vec![a],
+            BlockOp::Not(a) | BlockOp::Prev(a, _) | BlockOp::Early(a, _) | BlockOp::Toggle(a) | BlockOp::Escaped(a) | BlockOp::Carry(a) => vec![a],
             BlockOp::And(a, b) | BlockOp::Or(a, b) | BlockOp::Xor(a, b) | BlockOp::AndNot(a, b) | BlockOp::Fill(a, b) | BlockOp::BackFill(a, b) => {
                 vec![a, b]
             }
@@ -277,6 +287,7 @@ impl BlockOp {
             BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) | BlockOp::Position(_) | BlockOp::Cmp { .. } | BlockOp::Bit { .. } => *self,
             BlockOp::Not(a) => BlockOp::Not(f(a)),
             BlockOp::Prev(a, k) => BlockOp::Prev(f(a), k),
+            BlockOp::Early(a, k) => BlockOp::Early(f(a), k),
             BlockOp::Toggle(a) => BlockOp::Toggle(f(a)),
             BlockOp::Escaped(a) => BlockOp::Escaped(f(a)),
             BlockOp::Carry(a) => BlockOp::Carry(f(a)),
@@ -334,6 +345,7 @@ impl BlockOp {
             ["xor", a, b] => Ok(BlockOp::Xor(value(a)?, value(b)?)),
             ["andnot", a, b] => Ok(BlockOp::AndNot(value(a)?, value(b)?)),
             ["prev", a, k] => Ok(BlockOp::Prev(value(a)?, k.parse().map_err(|_| format!("a bad distance `{k}`"))?)),
+            ["early", a, k] => Ok(BlockOp::Early(value(a)?, k.parse().map_err(|_| format!("a bad distance `{k}`"))?)),
             ["toggle", a] => Ok(BlockOp::Toggle(value(a)?)),
             ["escaped", a] => Ok(BlockOp::Escaped(value(a)?)),
             ["fill", a, b] => Ok(BlockOp::Fill(value(a)?, value(b)?)),
@@ -412,6 +424,7 @@ impl BlockOp {
                 out.extend_from_slice(&set.to_le_bytes());
                 out.extend_from_slice(&col.to_le_bytes());
             }
+            BlockOp::Early(a, k) => two(out, 21, a, u16::from(k)),
         }
     }
 }
@@ -726,6 +739,7 @@ impl BlockProgram {
             }
             // Up to 63 bytes: the halo is one 64-bit word on every executor.
             BlockOp::Prev(_, k) => (1..=63).contains(&k),
+            BlockOp::Early(_, k) => (1..=63).contains(&k),
             BlockOp::Phase(k, r) => (1..=63).contains(&k) && r < k,
             BlockOp::Position(j) => j < 64,
             _ => true,
@@ -1126,6 +1140,7 @@ impl BlockProgram {
                 BlockOp::Or(a, b) => two(a, b, |x, y| x | y),
                 BlockOp::Xor(a, b) => two(a, b, |x, y| x ^ y),
                 BlockOp::AndNot(a, b) => two(a, b, |x, y| x & !y),
+                BlockOp::Early(a, k) => v(a).iter().map(|&x| x >> k).collect(),
                 // The carried operations: one pass over the blocks, the carry in a register.
                 BlockOp::Prev(a, k) => carried(one(a), &first, 0u64, |x, _, previous| (carry::prev(x, previous, k), x)),
                 BlockOp::Toggle(a) => carried(one(a), &first, 0u64, |x, _, c| carry::toggle(x, c)),
@@ -1251,6 +1266,7 @@ impl BlockProgram {
                         BlockOp::Or(a, b) => (get(a) | get(b), 0),
                         BlockOp::Xor(a, b) => (get(a) ^ get(b), 0),
                         BlockOp::AndNot(a, b) => (get(a) & !get(b), 0),
+                        BlockOp::Early(a, k) => (get(a) >> k, 0),
                         BlockOp::Prev(a, d) => (carry::prev(get(a), state[k], d), get(a)),
                         BlockOp::Toggle(a) => carry::toggle(get(a), state[k]),
                         BlockOp::Escaped(a) => carry::escaped(get(a), state[k]),
@@ -1758,6 +1774,9 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                 for p in &rd.parts {
                     let _ = writeln!(out, "  block {at} recpart {k} {} {}", p.start, p.bytes);
                 }
+                if rd.split == crate::records::Split::Tier2 {
+                    let _ = writeln!(out, "  block {at} recsplit {k} tier2");
+                }
             }
         }
         // `block N recretag O KIND MARKS`: a reader's kind and marks by its start mask.
@@ -1804,6 +1823,12 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         // `block N recskip O`: the bytes between tokens, the loop's (stage 2a).
         if let Some(o) = r.skip {
             let _ = writeln!(out, "  block {at} recskip {o}");
+        }
+        // `block N recprefix K B…`: the prefix's K bytes (decision 0335); the loop starts past
+        // them where the file starts with them.
+        if !r.prefix.is_empty() {
+            let bytes: Vec<String> = r.prefix.iter().map(u8::to_string).collect();
+            let _ = writeln!(out, "  block {at} recprefix {} {}", r.prefix.len(), bytes.join(" "));
         }
     }
 }

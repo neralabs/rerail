@@ -70,6 +70,8 @@ pub enum BlockInst {
     /// The carried operations (`block::carry`): on the CPU the carry passes in a register from
     /// block to block; on Metal by a scan of lane summaries (`metal_block_program`).
     Prev(u16, u8),
+    /// `block::BlockOp::Early`: `a >> k` in the word, no carry; a file's first bytes only.
+    Early(u16, u8),
     Toggle(u16),
     Escaped(u16),
     /// `fill(s, e)` (`block::BlockOp::Fill`): one add per word, its carry a borrow.
@@ -111,7 +113,7 @@ impl BlockInst {
     /// The values the instruction reads.
     pub fn operands(&self) -> Vec<usize> {
         match *self {
-            BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) | BlockInst::Carry(a) | BlockInst::Walk { args: a, .. } => vec![usize::from(a)],
+            BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Early(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) | BlockInst::Carry(a) | BlockInst::Walk { args: a, .. } => vec![usize::from(a)],
             BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) | BlockInst::Fill(a, b) | BlockInst::BackFill(a, b) | BlockInst::Args(a, b) => {
                 vec![usize::from(a), usize::from(b)]
             }
@@ -137,6 +139,7 @@ impl BlockNative {
                 BlockOp::Xor(a, b) => BlockInst::Xor(a, b),
                 BlockOp::AndNot(a, b) => BlockInst::AndNot(a, b),
                 BlockOp::Prev(a, k) => BlockInst::Prev(a, k),
+                BlockOp::Early(a, k) => BlockInst::Early(a, k),
                 BlockOp::Toggle(a) => BlockInst::Toggle(a),
                 BlockOp::Escaped(a) => BlockInst::Escaped(a),
                 BlockOp::Fill(a, b) => BlockInst::Fill(a, b),
@@ -174,6 +177,7 @@ impl BlockNative {
             BlockInst::Xor(a, b) => BlockInst::Xor(m(a), m(b)),
             BlockInst::AndNot(a, b) => BlockInst::AndNot(m(a), m(b)),
             BlockInst::Prev(a, k) => BlockInst::Prev(m(a), k),
+            BlockInst::Early(a, k) => BlockInst::Early(m(a), k),
             BlockInst::Toggle(a) => BlockInst::Toggle(m(a)),
             BlockInst::Escaped(a) => BlockInst::Escaped(m(a)),
             BlockInst::Fill(a, b) => BlockInst::Fill(m(a), m(b)),
@@ -427,6 +431,7 @@ impl BlockNative {
                 BlockInst::Xor(a, b) => f.push(BlockInst::Xor(m(a), m(b))),
                 BlockInst::AndNot(a, b) => f.push(BlockInst::AndNot(m(a), m(b))),
                 BlockInst::Prev(a, k) => f.push(BlockInst::Prev(m(a), k)),
+                BlockInst::Early(a, k) => f.push(BlockInst::Early(m(a), k)),
                 BlockInst::Toggle(a) => f.push(BlockInst::Toggle(m(a))),
                 BlockInst::Escaped(a) => f.push(BlockInst::Escaped(m(a))),
                 BlockInst::Fill(a, b) => f.push(BlockInst::Fill(m(a), m(b))),
@@ -513,7 +518,7 @@ impl BlockNative {
         for x in 0..n {
             pure[x] = match self.insts[x] {
                 BlockInst::Const(_) | BlockInst::Within(_) | BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_) | BlockInst::Pair { .. } => true,
-                BlockInst::Not(_) | BlockInst::And(..) | BlockInst::Or(..) | BlockInst::Xor(..) | BlockInst::AndNot(..) | BlockInst::Prev(..) => self.insts[x].operands().into_iter().all(|o| pure[o]),
+                BlockInst::Not(_) | BlockInst::And(..) | BlockInst::Or(..) | BlockInst::Xor(..) | BlockInst::AndNot(..) | BlockInst::Prev(..) | BlockInst::Early(..) => self.insts[x].operands().into_iter().all(|o| pure[o]),
                 _ => false,
             };
         }
@@ -668,6 +673,7 @@ impl BlockNative {
                     BlockInst::Xor(a, b) => BlockInst::Xor(m(a), m(b)),
                     BlockInst::AndNot(a, b) => BlockInst::AndNot(m(a), m(b)),
                     BlockInst::Prev(a, k) => BlockInst::Prev(m(a), k),
+                    BlockInst::Early(a, k) => BlockInst::Early(m(a), k),
                     BlockInst::Toggle(a) => BlockInst::Toggle(m(a)),
                     BlockInst::Escaped(a) => BlockInst::Escaped(m(a)),
                     BlockInst::Fill(a, b) => BlockInst::Fill(m(a), m(b)),

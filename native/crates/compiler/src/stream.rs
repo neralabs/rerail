@@ -363,6 +363,11 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
     // `keep`: while leaves are pending, the end of the token before them, where a node closed
     // then ends.
     let (mut need, mut live, mut pending, mut keep) = (true, 0u32, 0usize, 0u32);
+    // A region read in parts that tier 2 splits (`Split::Tier2`, decision 0323): where a record
+    // is a whole region (at its opener, past its byte), its tokens (`records::read_parts`) with
+    // their codes (`records::pass`), taken one a `TOKEN` before the next record.
+    let late = records.and_then(|r| r.readers.iter().find(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2).map(|rd| (r, rd, crate::records::WordTable::new(&r.words).expect("verified: the words fit a table"))));
+    let mut parts: std::collections::VecDeque<(u32, u32, u32)> = std::collections::VecDeque::new();
     let block = program.block_programs.first();
     let mask_bit = |m: u16, at: u32| -> bool {
         block.is_some_and(|b| {
@@ -407,6 +412,10 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     last_end = end;
                     // The record pass checked the records (the totals' flag, `EMPTY`): as many
                     // lasts as starts, each token after the one before.
+                    if let Some((s, l, c)) = parts.pop_front() {
+                        (start, end, rec_end, code) = (s, s, l + 1, c);
+                        break;
+                    }
                     if next == starts.len().min(lasts.len()) {
                         at_end = true;
                         break;
@@ -415,6 +424,19 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     rec_end = lasts[next] + 1;
                     code = tier1.codes.get(next).copied().unwrap_or(0);
                     next += 1;
+                    if let Some((r, rd, table)) = &late {
+                        let opens = rd.arms.first().is_some_and(|a| tier1.outputs.get(usize::from(a.opener)).and_then(|w| w.get(start as usize / 64)).is_some_and(|w| w >> (start % 64) & 1 == 1));
+                        if opens && rec_end > start + 1 {
+                            let Ok(tokens) = crate::records::read_parts(rd, start as usize, &tier1.outputs) else {
+                                return refuse(pc - 1, "a region with no closer");
+                            };
+                            let (s, l): (Vec<u32>, Vec<u32>) = tokens.iter().map(|&(a, b)| (a as u32, b as u32)).unzip();
+                            let (codes, _) = crate::records::pass(r, table, bytes, &s, &l, &tier1.outputs);
+                            parts.extend(s.iter().zip(&l).zip(&codes).map(|((&a, &b), &c)| (a, b, c)));
+                            let (s, l, c) = parts.pop_front().expect("the opener");
+                            (start, end, rec_end, code) = (s, s, l + 1, c);
+                        }
+                    }
                     // An extra (`TOKEN_EXTRAS`): its bytes taken and its leaf deferred, as
                     // `SPAN m=1; LEAF m=1 #K`; then the next token.
                     let extra = if mode & TOKEN_EXTRAS == 0 { None } else { extra_kind(&program.extras, code) };

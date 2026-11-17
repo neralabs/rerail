@@ -3184,4 +3184,326 @@ mod json_probe {
         eprintln!("{ok} parsed the same, {refused} refused by both, {bad} differ");
         assert_eq!(bad, 0);
     }
+
+    /// JSON's files: the probe's, and JSONTestSuite's and the corpus's under 1 MB where
+    /// `RERAIL_JSON_SUITE` and `RERAIL_JSON_CORPUS` name them.
+    fn json_files() -> Vec<Vec<u8>> {
+        let mut out: Vec<Vec<u8>> = Vec::new();
+        for var in ["RERAIL_JSON_SUITE", "RERAIL_JSON_CORPUS"] {
+            let Ok(dir) = std::env::var(var) else { continue };
+            let mut paths: Vec<_> = std::fs::read_dir(&dir).expect("the directory").flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+            paths.sort();
+            out.extend(paths.iter().map(|p| std::fs::read(p).expect("reads")).filter(|b| b.len() < 1 << 20));
+        }
+        out
+    }
+
+    /// JSON's parser with tier 2 a function a grammar rule, as rr's (`by_rules`, optimized).
+    fn json_parser(n: &rerail_compiler::native_ir::Structure) -> rerail_compiler::native_cpu_stream::Parser {
+        let cut = rerail_compiler::native_cpu_clusters::Cut { near: true, unsigned: true, speed: true, ..rerail_compiler::native_cpu_clusters::by_rules(n) };
+        rerail_compiler::native_cpu_stream::Parser::with_cut(n, &cut).expect("JSON's parser")
+    }
+
+    /// Lowering A against B (decision 0323): tier 1 and tier 2 over JSON's corpus
+    /// (`RERAIL_JSON_CORPUS`), each the least of `RR_ROUNDS` rounds, instructions and cycles.
+    #[test]
+    #[ignore = "a benchmark: run by hand"]
+    fn json_a_against_b() {
+        use rerail_compiler::records::Split;
+        let retired = rerail_compiler::native_cpu_codegen::retired;
+        let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(7);
+        let lower = |at: Split| {
+            let mut n = rerail_compiler::native_ir::lower(&json_split(at), 0, 0).expect("lowers");
+            for p in &mut n.block_programs {
+                p.pad = rerail_compiler::native_cpu_block::BACK as u16;
+            }
+            n
+        };
+        let (pa, pb) = (json_parser(&lower(Split::Tier1)), json_parser(&lower(Split::Tier2)));
+        let files: Vec<Vec<u8>> = json_files().into_iter().filter(|f| pa.image(f).is_ok()).collect();
+        let bytes: usize = files.iter().map(Vec::len).sum();
+        let mut rows = Vec::new();
+        for (name, p) in [("A (tier 1 splits)", &pa), ("B (tier 2 splits)", &pb)] {
+            let mut batches: Vec<_> = files.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_slice()])).collect();
+            for b in &mut batches {
+                b.call(&p.tier1);
+            }
+            let mut tapes: Vec<_> = batches.iter().map(|b| p.tape(b)).collect();
+            let mut best = [(u64::MAX, u64::MAX); 2];
+            for _ in 0..rounds {
+                let (i0, c0) = retired();
+                for b in &mut batches {
+                    b.call(&p.tier1);
+                }
+                let (i1, c1) = retired();
+                for (b, t) in batches.iter().zip(&mut tapes) {
+                    let _ = p.words(b, t);
+                }
+                let (i2, c2) = retired();
+                best[0] = (best[0].0.min(i1 - i0), best[0].1.min(c1 - c0));
+                best[1] = (best[1].0.min(i2 - i1), best[1].1.min(c2 - c1));
+            }
+            rows.push((name, best));
+        }
+        eprintln!("{} files, {bytes} bytes; least of {rounds} rounds", files.len());
+        for (name, [t1, t2]) in rows {
+            let per = |x: u64| x as f64 / bytes as f64;
+            eprintln!("{name:>18}: tier 1 {:.3} instructions {:.3} cycles a byte; tier 2 {:.3} / {:.3}; both {:.3} cycles a byte ({:.2}M cycles)", per(t1.0), per(t1.1), per(t2.0), per(t2.1), per(t1.1 + t2.1), (t1.1 + t2.1) as f64 / 1e6);
+        }
+    }
+
+    /// JSON's tier 1 by pass (decision 0323's next measure): over JSON's corpus
+    /// (`RERAIL_JSON_CORPUS`) under B, each pass's instructions and cycles a byte, the least of
+    /// `RR_ROUNDS`, against simdjson's stage 1 on the same files. `RERAIL_JSON_RUST=<path>`:
+    /// tier 1 written as Rust there (`clif_rust`, the ahead-of-time form), to read its shape.
+    #[test]
+    #[ignore = "a benchmark: run by hand"]
+    fn json_tier1_by_pass() {
+        use rerail_compiler::records::Split;
+        let retired = rerail_compiler::native_cpu_codegen::retired;
+        let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(9);
+        let mut n = rerail_compiler::native_ir::lower(&json_split(Split::Tier2), 0, 0).expect("lowers");
+        for p in &mut n.block_programs {
+            p.pad = rerail_compiler::native_cpu_block::BACK as u16;
+        }
+        let p = json_parser(&n);
+        // `RERAIL_JSON_PROGRAM=<path>`: the block program as text (its operations, outputs and
+        // records), to read what each word of the masks is.
+        if let Ok(path) = std::env::var("RERAIL_JSON_PROGRAM") {
+            let mut text = String::new();
+            rerail_compiler::block::block_rows(&mut text, 0, &json_split(Split::Tier2).block_programs[0]);
+            std::fs::write(&path, text).expect("writes");
+        }
+        if let Ok(path) = std::env::var("RERAIL_JSON_RUST") {
+            rerail_compiler::native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
+            let bit = rerail_compiler::native_cpu_lanes::BIT_TEST.swap(true, std::sync::atomic::Ordering::Relaxed);
+            let kept = json_parser(&n);
+            rerail_compiler::native_cpu_lanes::BIT_TEST.store(bit, std::sync::atomic::Ordering::Relaxed);
+            let src = rerail_compiler::clif_rust::rust_source(&kept).unwrap_or_else(|e| panic!("to Rust: {e}"));
+            std::fs::write(&path, &src).expect("writes");
+            eprintln!("tier 1 as Rust: {path}, {} bytes", src.len());
+        }
+        let files: Vec<Vec<u8>> = json_files().into_iter().filter(|f| p.image(f).is_ok()).collect();
+        let bytes: usize = files.iter().map(Vec::len).sum();
+        let passes = p.tier1.pass_count();
+        let mut batches: Vec<_> = files.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_slice()])).collect();
+        for b in &mut batches {
+            b.call(&p.tier1);
+        }
+        let mut best = vec![(u64::MAX, u64::MAX); passes + 1];
+        let kernel = rerail_simdjson_native::Kernel::best().expect("a simdjson kernel");
+        for _ in 0..rounds {
+            for k in 0..passes {
+                let (i0, c0) = retired();
+                for b in &mut batches {
+                    b.call_pass(&p.tier1, k);
+                }
+                let (i1, c1) = retired();
+                best[k] = (best[k].0.min(i1 - i0), best[k].1.min(c1 - c0));
+            }
+            let (i0, c0) = retired();
+            let mut n = 0i64;
+            for f in &files {
+                n += kernel.stage1(f, false);
+            }
+            std::hint::black_box(n);
+            let (i1, c1) = retired();
+            best[passes] = (best[passes].0.min(i1 - i0), best[passes].1.min(c1 - c0));
+        }
+        eprintln!("{} files, {bytes} bytes; least of {rounds} rounds; simdjson's kernel {}", files.len(), kernel.name());
+        let per = |x: u64| x as f64 / bytes as f64;
+        for (k, &(i, c)) in best.iter().enumerate() {
+            let name = if k == passes { "simdjson stage 1".to_string() } else { format!("tier 1 pass {k}{}", if k + 1 == passes { " (records)" } else { "" }) };
+            eprintln!("{name:>24}: {:7.3} instructions {:6.3} cycles a byte", per(i), per(c));
+        }
+        // Inputs that part the block's masks from the token loop: strings of 5,000 bytes (a few
+        // tokens: the masks alone), the same of two-byte UTF-8, white space, and dense tokens.
+        // Each input is cut into files under the tape's 16-bit widths: 16 files of about 60 KB.
+        let n = 60_000;
+        let synth: [(&str, Vec<u8>); 5] = [
+            ("long ASCII strings", [b"[".as_slice(), &format!("\"{}\",", "a".repeat(5_000)).repeat(n / 5_000).into_bytes(), b"0]"].concat()),
+            ("long UTF-8 strings", [b"[".as_slice(), &format!("\"{}\",", "\u{e9}".repeat(2_500)).repeat(n / 5_000).into_bytes(), b"0]"].concat()),
+            ("white space", [b"[".as_slice(), &vec![b' '; n], b"]"].concat()),
+            ("numbers", [b"[".as_slice(), &"1234,".repeat(n / 5).into_bytes(), b"0]"].concat()),
+            ("short strings", [b"[".as_slice(), &"\"ab\",".repeat(n / 5).into_bytes(), b"0]"].concat()),
+        ];
+        for (name, f) in &synth {
+            p.image(f).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+            let mut bs: Vec<_> = (0..16).map(|_| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_slice()])).collect();
+            for b in &mut bs {
+                b.call(&p.tier1);
+            }
+            let mut best = (u64::MAX, u64::MAX);
+            for _ in 0..rounds {
+                let (i0, c0) = retired();
+                for b in &mut bs {
+                    b.call_pass(&p.tier1, passes - 1);
+                }
+                let (i1, c1) = retired();
+                best = (best.0.min(i1 - i0), best.1.min(c1 - c0));
+            }
+            let mut s = (u64::MAX, u64::MAX);
+            for _ in 0..rounds {
+                let (i0, c0) = retired();
+                for _ in 0..16 {
+                    std::hint::black_box(kernel.stage1(f, false));
+                }
+                let (i1, c1) = retired();
+                s = (s.0.min(i1 - i0), s.1.min(c1 - c0));
+            }
+            let per = |x: u64| x as f64 / (16 * f.len()) as f64;
+            eprintln!("{name:>24}: tier 1 {:7.3} instructions {:6.3} cycles a byte; simdjson {:6.3} {:6.3}", per(best.0), per(best.1), per(s.0), per(s.1));
+        }
+    }
+
+    /// JSON's program with its strings split where `at` says (decision 0323).
+    fn json_split(at: rerail_compiler::records::Split) -> rerail_compiler::program::Words {
+        // `RERAIL_JSON_BITLEX` names another grammar file, for a probe's variants.
+        let text = std::env::var("RERAIL_JSON_BITLEX").map(|p| std::fs::read_to_string(p).expect("the grammar")).unwrap_or_else(|_| include_str!("../../json_parser/json.bitlex").to_owned());
+        let mut w = program(&text).unwrap_or_else(|e| panic!("json.bitlex: {e}"));
+        w.block_programs[0].records.as_mut().expect("records").split_parts_in(at);
+        w
+    }
+
+    /// Lowering B (decision 0323): tier 1 reads a string whole and tier 2's `TOKEN` splits it.
+    /// The nodes are A's: by the interpreter both ways, and by Cranelift's tier 2 over the CPU's
+    /// tier 1 under B, and over A's records (split already, as Metal's masks give them).
+    #[test]
+    fn jsons_tier2_split_is_tier1s() {
+        use rerail_compiler::records::Split;
+        let (a, b) = (json_split(Split::Tier1), json_split(Split::Tier2));
+        let lower = |w: &rerail_compiler::program::Words| {
+            let mut n = rerail_compiler::native_ir::lower(w, 0, 0).expect("lowers");
+            for p in &mut n.block_programs {
+                p.pad = rerail_compiler::native_cpu_block::BACK as u16;
+            }
+            n
+        };
+        let (na, nb) = (lower(&a), lower(&b));
+        let (t1a, t1b) = (rerail_compiler::native_cpu_block::compile(&na.block_programs[0]).expect("A's tier 1"), rerail_compiler::native_cpu_block::compile(&nb.block_programs[0]).expect("B's tier 1"));
+        let t2b = rerail_compiler::native_cpu_stream::compile(&nb).expect("B's tier 2");
+        let t2a = rerail_compiler::native_cpu_stream::compile(&na).expect("A's tier 2");
+        // And tier 2 a function a grammar rule (`by_rules`, rr's), its `TOKEN` a function of
+        // its own (`take_token`): the tapes, A's and B's.
+        let (pa, pb) = (json_parser(&na), json_parser(&nb));
+        let mut inputs: Vec<Vec<u8>> = vec![
+            br#"{"a": [1, -2.5e3, true, null], "b\n": {"c": "dAx"}}"#.to_vec(),
+            br#"["", "\\", "a\"b", "\\\"", "x", "\n\t", "true"]"#.to_vec(),
+            br#""open"#.to_vec(),
+            br#"["\q"]"#.to_vec(),
+        ];
+        for pad in [0usize, 1, 61, 62, 63, 64, 65, 127] {
+            for n in [0usize, 1, 62, 63, 64, 130] {
+                inputs.push(format!("{}[\"{}\\n{}\", \"\\\\\\\"{}\"]", " ".repeat(pad), "s".repeat(n), "t".repeat(n), "u".repeat(n)).into_bytes());
+            }
+        }
+        inputs.extend(json_files());
+        let nodes = |r: Result<Vec<rerail_compiler::stream::Node>, rerail_compiler::stream::Refused>| r.ok().map(|n| n.iter().map(|x| (x.kind, x.start, x.end, x.size)).collect::<Vec<_>>());
+        let (mut parsed, mut strings, mut wide) = (0usize, 0usize, 0usize);
+        let se = usize::from(a.block_programs[0].records.as_ref().expect("records").starts);
+        for (k, f) in inputs.iter().enumerate() {
+            let want = nodes(rerail_compiler::stream::run(&a, f, &a.block_programs[0].run(f)));
+            let by_b = nodes(rerail_compiler::stream::run(&b, f, &b.block_programs[0].run(f)));
+            let show = || String::from_utf8_lossy(&f[..f.len().min(100)]).into_owned();
+            assert_eq!(by_b, want, "file {k} ({:?}): the interpreter under B", show());
+            let (ra, rb) = (t1a.run_files(&[f])[0].clone(), t1b.run_files(&[f])[0].clone());
+            let refused = |t: &[u64]| t.iter().any(|&x| x != 0);
+            assert_eq!(refused(&rb.totals), refused(&ra.totals), "file {k}: B's tier 1 refusal");
+            if refused(&ra.totals) {
+                continue;
+            }
+            assert!(rb.positions[se].len() <= ra.positions[se].len(), "file {k}: B's tier 1 has a record a string");
+            strings += ra.positions[se].len() - rb.positions[se].len();
+            let why = |r: &Result<Vec<rerail_compiler::stream::Node>, rerail_compiler::stream::Refused>| r.as_ref().err().map(|e| (e.pc, e.why));
+            let (gb, ga) = (t2b.run(f, &rb), t2b.run(f, &ra));
+            // A's own tier 2 refuses what its tape's widths cannot hold (a size past 16 bits):
+            // B's then refuses it too.
+            let gaa = t2a.run(f, &ra);
+            if gaa.is_ok() {
+                assert_eq!(nodes(gaa.clone()), want, "file {k} ({:?}): A's Cranelift tier 2 over A's records", show());
+            } else if want.is_some() {
+                wide += 1;
+                let most = want.iter().flatten().map(|n| n.3).max().unwrap_or(0);
+                assert!(most > 0xffff || f.len() > 0xffff, "file {k} ({:?}, {} bytes): A's Cranelift tier 2 refuses ({:?}), its tape's widths would hold it", show(), f.len(), why(&gaa));
+            }
+            let want = if gaa.is_ok() { want } else { None };
+            assert_eq!(pb.image(f).ok(), pa.image(f).ok(), "file {k} ({:?}): the tapes by rules, B's and A's", show());
+            assert_eq!(nodes(gb.clone()), want, "file {k} ({:?}): Cranelift's tier 2 over B's tier 1 ({:?}; over A's records {:?})", show(), why(&gb), why(&ga));
+            assert_eq!(nodes(ga.clone()), want, "file {k} ({:?}): Cranelift's tier 2 over A's records ({:?})", show(), why(&ga));
+            parsed += 1;
+        }
+        eprintln!("{} files, {parsed} parsed by both tier 1s ({wide} past the tape's widths); B's tier 1 wrote {strings} records fewer", inputs.len());
+    }
+
+    /// A region read in parts on the CPU (decision 0323, lowering A): tier 1's token loop
+    /// writes a string's quote, contents, escapes and closer as the interpreter's records
+    /// (`records::read_parts`), with their codes, on strings with escapes at every offset of a
+    /// block's edge, over blocks, open at the file's end, and on JSON's files.
+    #[test]
+    fn jsons_cpu_records_are_the_interpreters() {
+        let program = program(include_str!("../../json_parser/json.bitlex")).unwrap_or_else(|e| panic!("json.bitlex: {e}"));
+        let block = &program.block_programs[0];
+        let r = block.records.as_ref().expect("records");
+        assert!(r.readers.iter().any(|rd| !rd.parts.is_empty()), "a reader in parts");
+        let mut native = rerail_compiler::native_ir::lower(&program, 0, 0).expect("lowers");
+        for b in &mut native.block_programs {
+            b.pad = rerail_compiler::native_cpu_block::BACK as u16;
+        }
+        let cpu = rerail_compiler::native_cpu_block::compile(&native.block_programs[0]).expect("the token loop compiles");
+        let mut inputs: Vec<Vec<u8>> = [
+            &br#"{"a": [1, -2.5e3, true, null], "b\n": {"c": "dAx"}}"#[..],
+            br#""""#,
+            br#""\\""#,
+            br#"["a\"b", "\\\"", "x"]"#,
+            br#"["\\\\", "\"\"", "a\\", "\\a", "true", "\n\t\r"]"#,
+            br#"{"k":"v"}"#,
+            br#""open"#,
+            br#""open\"#,
+            br#"["\q"]"#,
+        ].iter().map(|x| x.to_vec()).collect();
+        for pad in [0usize, 1, 30, 58, 59, 60, 61, 62, 63, 64, 65, 126, 127] {
+            for t in [r#""\n""#, r#""ab\"cd""#, r#""x\\""#, r#""AB""#, r#""\\\\\\\"""#, r#""true""#, r#"["a",1,"\"",{"b":"c\nd"}]"#] {
+                inputs.push(format!("{}{t}", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("[{}{t}, 1]", "1,".repeat(pad / 2)).into_bytes());
+            }
+            // A string over blocks, its escapes on each side of their edges.
+            for n in [60usize, 63, 64, 65, 130, 200] {
+                inputs.push(format!("{}\"{}\\n{}\"", " ".repeat(pad), "s".repeat(n), "t".repeat(n)).into_bytes());
+                inputs.push(format!("{}[\"{}\", \"{}\\\\\"]", " ".repeat(pad), "s".repeat(n), "\\\"".repeat(n / 2)).into_bytes());
+                inputs.push(format!("{}\"{}", " ".repeat(pad), "s".repeat(n)).into_bytes());
+            }
+        }
+        // A byte order mark, whole or cut, at the start and not (an `early`, decision 0330), in
+        // short files and before a value over a block's edge.
+        for head in [&b"\xef\xbb\xbf"[..], b"\xef\xbb", b"\xef", b" \xef\xbb\xbf", b"\xef\xbb\xbf\xef\xbb\xbf"] {
+            for t in ["", "1", "[1]", "\"a\"", "  {\"k\": 12}", &*format!("[{}0]", "1,".repeat(40))] {
+                inputs.push([head, t.as_bytes()].concat());
+            }
+        }
+        let files = json_files();
+        inputs.extend(files);
+        let refs: Vec<&[u8]> = inputs.iter().map(|f| f.as_slice()).collect();
+        let got = cpu.run_files(&refs);
+        let refusal = |t: &[u64]| t.iter().any(|&x| x != 0);
+        let (mut strings, mut parts) = (0usize, 0usize);
+        for (k, (f, g)) in refs.iter().zip(&got).enumerate() {
+            let want = block.run(f);
+            let refused = refusal(&want.totals);
+            assert_eq!(refusal(&g.totals), refused, "file {k} ({:?}): the refusal", String::from_utf8_lossy(&f[..f.len().min(80)]));
+            let upto = |x: usize, y: usize| if refused { x.min(y) } else { x.max(y) };
+            let (gs, gl) = (&g.positions[usize::from(r.starts)], &g.positions[usize::from(r.lasts)]);
+            let (ws, wl) = (&want.positions[usize::from(r.starts)], &want.positions[usize::from(r.lasts)]);
+            let n = upto(gs.len(), ws.len());
+            if let Some(i) = (0..n).find(|&i| gs.get(i) != ws.get(i) || gl.get(i) != wl.get(i) || g.codes.get(i) != want.codes.get(i)) {
+                let around = |s: &Vec<u32>, l: &Vec<u32>, c: &Vec<u32>| (i.saturating_sub(2)..(i + 3).min(s.len())).map(|j| (s[j], l.get(j).copied(), c.get(j).map(|x| format!("{x:#x}")))).collect::<Vec<_>>();
+                panic!("file {k} ({:?}): token {i}: the CPU's (start, last, code) {:?}, the interpreter's {:?}", String::from_utf8_lossy(&f[..f.len().min(120)]), around(gs, gl, &g.codes), around(ws, wl, &want.codes));
+            }
+            if !refused {
+                assert_eq!(g.totals, want.totals, "file {k}: the totals");
+                strings += f.iter().filter(|&&b| b == b'"').count();
+                parts += ws.len();
+            }
+        }
+        eprintln!("{} files, {strings} quotes, {parts} tokens the same", refs.len());
+    }
 }
