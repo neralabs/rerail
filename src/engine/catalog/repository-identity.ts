@@ -123,8 +123,14 @@ export function repositoryIdentityLocation(workspace: string): RepositoryIdentit
   if (held !== undefined && stillAnswers(held, inputs)) return { ...held.location };
   const fromFiles = linkedLocation(inputs);
   const located = fromFiles === undefined ? locatedByGit(requested) : { location: fromFiles, byGit: false };
-  holdTopLevel(requested, inputs.stamp, located);
+  holdTopLevel(requested, inputs, located);
   return { ...located.location };
+}
+
+/** An answer for a folder, and whether Git gave it (else the folder's files did). */
+interface Located {
+  readonly location: RepositoryIdentityLocation;
+  readonly byGit: boolean;
 }
 
 function locatedByGit(requested: string): { location: RepositoryIdentityLocation; byGit: boolean } {
@@ -140,20 +146,36 @@ function linkedLocation(inputs: PlacementInputs): RepositoryIdentityLocation | u
 }
 
 /**
- * Keeps `located` for `folder` when it names the folder as its own top level: what makes that so is read at the folder
- * and the Git folders it names, all in its stamp. Any other answer depends on the folders above too, and is not kept.
+ * Keeps `located` for `folder` under the stamp of `inputs`, read before it was placed, when it names the folder as its
+ * own top level ({@link answersInputs}): what makes that so is read at the folder and the Git folders it names, all in
+ * the stamp. Any other answer depends on the folders above too, and is not kept.
  */
-function holdTopLevel(folder: string, stamp: string, located: { location: RepositoryIdentityLocation; byGit: boolean }): void {
+function holdTopLevel(folder: string, inputs: PlacementInputs, located: Located): void {
   heldTopLevels.delete(folder);
-  const { location } = located;
   try {
-    if (!location.git || physicalPath(location.workspaceRoot) !== physicalPath(folder)) return;
-    const common = located.byGit ? storedPath(dirname(location.identityPath)) : undefined;
-    heldTopLevels.set(folder, { stamp, location, ownersRead: ownersGeneration });
-    if (common !== undefined) rememberGitPlaced(common);
+    if (!answersInputs(folder, inputs, located)) return;
+    heldTopLevels.set(folder, { stamp: inputs.stamp, location: located.location, ownersRead: ownersGeneration });
+    if (located.byGit) rememberGitPlaced(storedPath(dirname(located.location.identityPath)));
   } catch {
     // A folder whose real path cannot be read now is asked of Git again next time.
   }
+}
+
+/**
+ * Whether `located` names `folder` as its own top level, and is the answer `inputs` describe. An answer read from the
+ * files is. Git reads the files again as it runs, so a file rewritten while Git ran and back before the next read
+ * would keep Git's answer about the other text under this stamp: Git's answer is kept only when it names the common
+ * Git folder the inputs name, as a main checkout exactly when they name no other.
+ */
+function answersInputs(folder: string, inputs: PlacementInputs, located: Located): boolean {
+  const { location } = located;
+  if (!location.git || physicalPath(location.workspaceRoot) !== physicalPath(folder)) return false;
+  return !located.byGit || namesInputsCommon(location, inputs);
+}
+
+function namesInputsCommon(location: RepositoryIdentityLocation, inputs: PlacementInputs): boolean {
+  const main = inputs.linkedCommon === undefined;
+  return storedPath(dirname(location.identityPath)) === inputs.realCommon && location.main === main;
 }
 
 function rememberGitPlaced(common: string): void {

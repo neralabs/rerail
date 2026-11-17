@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, realpathSync } from "node:fs";
+import { closeSync, ftruncateSync, mkdirSync, openSync, realpathSync, writeSync } from "node:fs";
 import { mkdtemp, open, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -309,6 +309,31 @@ describe("a kept answer is placed again once Git's answer can move, whatever fil
     await rename(join(main, ".git", "objects-away"), join(main, ".git", "objects"));
     expectGitsAnswers(main, join(root, "w"));
   });
+
+  it("a .git file rewritten while Git answers, and back before the next ask, is placed as Git places it then", async () => {
+    const root = await temporaryRoot();
+    const mine = repository(join(root, "mine"));
+    const your = repository(join(root, "your"));
+    git(mine, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    git(your, "worktree", "add", "--quiet", "-b", "o", join(root, "o"));
+    const worktree = join(root, "w");
+    const dotGit = join(worktree, ".git");
+    const own = await readFile(dotGit, "utf8");
+    // Git reads the other repository's worktree in the file while it runs; the file names its own again before
+    // Rerail reads it next, as a second rewrite within one Git process leaves it.
+    const actual = vi.mocked(runGit).getMockImplementation()!;
+    vi.mocked(runGit).mockImplementationOnce((cwd, args, options) => {
+      rewriteInPlaceNow(dotGit, `gitdir: ${join(your, ".git", "worktrees", "o")}\n`);
+      try {
+        return actual(cwd, args, options);
+      } finally {
+        rewriteInPlaceNow(dotGit, own);
+      }
+    });
+
+    expect(repositoryIdentityLocation(worktree)).not.toEqual(gitsAnswer(worktree));
+    expect(repositoryIdentityLocation(worktree)).toEqual(gitsAnswer(worktree));
+  });
 });
 
 describe.runIf(process.platform === "win32")("on Windows, where Node reads no owner, the engine reads it as Git does", () => {
@@ -409,6 +434,17 @@ function expectGitsRegistries(...checkouts: string[]): void {
  * Writes `text` over the file at `path` in place, as Git rewrites a `.git` file. Git for Windows hides a worktree's
  * `.git` file, and Windows refuses to make a file anew over a hidden one.
  */
+/** {@link rewriteInPlace} without waiting, for a rewrite made while a Git process Rerail started runs. */
+function rewriteInPlaceNow(path: string, text: string): void {
+  const descriptor = openSync(path, "r+");
+  try {
+    ftruncateSync(descriptor, 0);
+    writeSync(descriptor, text, 0);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
 async function rewriteInPlace(path: string, text: string): Promise<void> {
   const file = await open(path, "r+");
   try {
