@@ -5995,7 +5995,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // The starts after the run (`rest`) are in a slot of their own, stored once a run and read
     // where it ends (0356): live across the inner loop, Cranelift's allocator split them and
     // loaded and stored them each token, a chain through memory.
-    let mut runs_loop: Option<(cranelift_codegen::ir::Block, cranelift_codegen::ir::StackSlot, cranelift_codegen::ir::Block)> = None;
+    let mut runs_loop: Option<(cranelift_codegen::ir::Block, Value, cranelift_codegen::ir::Block)> = None;
     // The rare starts' head, where the runs loop has one: its token block, the state, the
     // block's registers, as the run loop's (`Side::Rare`).
     let mut rare_part: Option<(cranelift_codegen::ir::Block, Vec<Value>, BlockRegs)> = None;
@@ -6348,9 +6348,9 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 let below = f.ins().iadd_imm(rare, -1);
                 let below = f.ins().band_not(below, rare);
                 let run = f.ins().band(cand, below);
+                // The starts after the run, live across it as the lean lexer's `starts`: `mid`
+                // dominates the run's loop, so they are read there as they are.
                 let rest = f.ins().bxor(cand, run);
-                let rest_slot = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8, 3));
-                f.ins().stack_store(rest, rest_slot, 0);
                 // The run's end (`run_done`, with the starts after the run and the state): the
                 // rare start found here, as the lean lexer's `if rare == 0 { break }` after its
                 // run; none, the refill. `mid` comes to it with no run.
@@ -6377,7 +6377,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 let s0 = f.ins().iadd(q64, tz);
                 let args: Vec<BlockArg> = [s0, left].iter().chain(st).map(|&v| v.into()).collect();
                 f.ins().jump(rare_word.expect("with mid"), &args);
-                runs_loop = Some((mid, rest_slot, run_done));
+                runs_loop = Some((mid, rest, run_done));
                 // The rare head: the state and the block's words as the run loop's, its token
                 // block its own.
                 let rw = rare_word.expect("with mid");
@@ -6894,10 +6894,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             // With the runs (`runs_loop`), the starts left are the run's and those after it; a
             // rare start's are those after the run already (`run_done`'s).
             let cand = match runs_loop {
-                Some((_, rest_slot, _)) if !matches!(side, Side::Rare(_)) => {
-                    let rest = f.ins().stack_load(types::I64, rest_slot, 0);
-                    f.ins().bor(g.cand, rest)
-                }
+                Some((_, rest, _)) if !matches!(side, Side::Rare(_)) => f.ins().bor(g.cand, rest),
                 _ => g.cand,
             };
             let mut left = f.ins().band(cand, m);
@@ -6950,10 +6947,10 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         if let Some(p) = reread {
             back[3] = p.into();
         }
-        if let (Some(inner), Some((mid, rest_slot, run_done))) = (inner, runs_loop) {
+        if let (Some(inner), Some((mid, rest, run_done))) = (inner, runs_loop) {
             // A fused token: the run's next start, in the inner loop, as the lean lexer's
-            // `while run != 0`; the run done, the starts after it (`mid`), read from their slot
-            // there (`run_end`). Another rule's token: the starts left, by `mid`, out of the
+            // `while run != 0`; the run done, the starts after it (`mid`'s, as they are), at
+            // `run_end`. Another rule's token: the starts left, by `mid`, out of the
             // inner loop.
             if common && lean.is_some() {
                 // The block's base (`BlockRegs::base`): starts are left only where the cursor is
@@ -6968,7 +6965,6 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 }
                 f.ins().brif(left, inner, &on, run_end, &back);
                 f.switch_to_block(run_end);
-                let rest = f.ins().stack_load(types::I64, rest_slot, 0);
                 let after: Vec<BlockArg> = std::iter::once(rest).chain(f.block_params(run_end).to_vec()).map(BlockArg::from).collect();
                 f.ins().jump(run_done, &after);
             } else {
@@ -7859,15 +7855,10 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
 
         f.switch_to_block(entry);
         let entry_params = f.block_params(entry).to_vec();
-        // The pass's arguments and the row's index, in a slot: read where a row's work needs
-        // them, before and after its blocks. Held through the block loop, which reads none of
-        // them, they took its registers (or were spilled and reloaded in it).
-        let outer = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * 8, 3));
-        for (k, &v) in entry_params.iter().enumerate() {
-            f.ins().stack_store(v, outer, 8 * k as i32);
-        }
-        let reload = |f: &mut FunctionBuilder<'_>, k: i32| f.ins().stack_load(types::I64, outer, 8 * k);
-        const ROW_INDEX: i32 = 7;
+        // The pass's arguments, read where a row's work needs them as they are, as the lean
+        // lexer's locals (0367): where they live through the blocks' loop, which reads none of
+        // them, is the register allocator's choice, not a slot of the generator's.
+        let reload = |_: &mut FunctionBuilder<'_>, k: i32| entry_params[k as usize];
         let nrows = entry_params[2];
         let zero = f.ins().iconst(types::I64, 0);
         // The constants every block uses, made once. (Others are made where used, decision 0069.)
@@ -7878,7 +7869,6 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         // A row: the file's blocks, length, outputs, positions and counts.
         f.switch_to_block(row);
         let r = f.block_params(row)[0];
-        f.ins().stack_store(r, outer, 8 * ROW_INDEX);
         let (arena, rows, out_all, pos_all, scratch_all) = (reload(&mut f, 0), reload(&mut f, 1), reload(&mut f, 3), reload(&mut f, 4), reload(&mut f, 6));
         let at = f.ins().imul_imm(r, std::mem::size_of::<Row>() as i64);
         let at = f.ins().iadd(rows, at);
@@ -7934,19 +7924,14 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true })
         };
         let parts = rec_slot.map(|slot| (slot, callee_of(&mut f, 0)));
-        if let (Some((slot, _)), Some((rec, t, _))) = (parts, records) {
-            let counts_all = reload(&mut f, 5);
-            let cols = file_cols(&mut f, rec, t, native.extracts.len(), r, rows, arena, out_all, pos_all, counts_all);
-            for (k, v) in cols.values().into_iter().enumerate() {
-                f.ins().stack_store(v, slot, 8 * k as i32);
+        // The file's columns, made once a row and read by each token part as they are (0367).
+        let file_values: Option<[Value; RECORD_PARAMS]> = match (parts, records) {
+            (Some(_), Some((rec, t, _))) => {
+                let counts_all = reload(&mut f, 5);
+                Some(file_cols(&mut f, rec, t, native.extracts.len(), r, rows, arena, out_all, pos_all, counts_all).values())
             }
-            let zero = f.ins().iconst(types::I64, 0);
-            for k in 0..STATE_WORDS {
-                // The end of the token before: where the stream starts (`stream_start`).
-                let v = if k == 1 && from != outer_zero { from } else { zero };
-                f.ins().stack_store(v, slot, 8 * (RECORD_PARAMS + k) as i32);
-            }
-        }
+            _ => None,
+        };
         // After a block (`next` the block after it), its parameters and the token loop's: the
         // blocks before it are final (an output's delayed bits go into the row before).
         let to_tokens = |f: &mut FunctionBuilder<'_>, block: &[BlockArg], st: &[Value]| -> Vec<BlockArg> {
@@ -8050,10 +8035,9 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
 
         // The token loop over the final blocks, from the file's columns in the record slot;
         // then the next block, or at the file's end (every block final) its end.
-        if let (Some((slot, end)), Some((rec, t, outputs))) = (parts, records) {
+        if let (Some((slot, end)), Some((rec, t, outputs)), Some(vals)) = (parts, records, file_values) {
             f.switch_to_block(tokens);
             let tp = f.block_params(tokens).to_vec();
-            let vals: Vec<Value> = (0..RECORD_PARAMS).map(|k| f.ins().stack_load(types::I64, slot, 8 * k as i32)).collect();
             let cols = FileCols::of_tables(&mut f, &vals, t);
             let ready = tp[params + STATE_WORDS];
             let init: [Value; STATE_WORDS] = std::array::from_fn(|k| tp[params + k]);
@@ -8078,11 +8062,24 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
                 f.ins().jump(head, &args);
             }
 
-            // The file's end: the loop's count and refusal for the end's function.
+            // The file's end: its columns, and the loop's count and refusal, for the end's
+            // function, which reads them by the slot's address.
             f.switch_to_block(row_end);
             let st = f.block_params(row_end).to_vec();
-            f.ins().stack_store(st[0], slot, 8 * RECORD_PARAMS as i32);
-            f.ins().stack_store(st[2], slot, 8 * (RECORD_PARAMS + 2) as i32);
+            for (k, &v) in vals.iter().enumerate() {
+                f.ins().stack_store(v, slot, 8 * k as i32);
+            }
+            let zero = f.ins().iconst(types::I64, 0);
+            for k in 0..STATE_WORDS {
+                // The end of the token before: where the stream starts (`stream_start`).
+                let v = match k {
+                    0 => st[0],
+                    2 => st[2],
+                    1 if from != outer_zero => from,
+                    _ => zero,
+                };
+                f.ins().stack_store(v, slot, 8 * (RECORD_PARAMS + k) as i32);
+            }
             let pointer = f.func.dfg.value_type(st[0]);
             let address = f.ins().stack_addr(pointer, slot, 0);
             f.ins().call(end, &[address]);
@@ -8101,8 +8098,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             let down = f.ins().ushr_imm(last, i64::from(native.output_delays[k]));
             f.ins().store(stores, down, dst, at);
         }
-        // The row's places again, from the slot: none is held through its blocks.
-        let r = reload(&mut f, ROW_INDEX);
+        // The row's places, as the row made them.
         let (rows, pos_all, counts_all) = (reload(&mut f, 1), reload(&mut f, 4), reload(&mut f, 5));
         let at = f.ins().imul_imm(r, std::mem::size_of::<Row>() as i64);
         let at = f.ins().iadd(rows, at);
@@ -8152,7 +8148,6 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         }
 
         f.switch_to_block(exit);
-        let (r, nrows) = (reload(&mut f, ROW_INDEX), reload(&mut f, 2));
         let next_row = f.ins().iadd_imm(r, 1);
         let more_rows = f.ins().icmp(IntCC::UnsignedLessThan, next_row, nrows);
         f.ins().brif(more_rows, row, &[next_row.into()], done, &[]);
