@@ -18,7 +18,7 @@ import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
 import { engineCapabilityProof, type EngineProofAnswer } from "./engine-proof.js";
 import { databasePipeListed, enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./engine-pipe.js";
-import { processState, type ProcessSignal } from "../engine/process-liveness.js";
+import { processStartedAt, processState, type ProcessSignal } from "../engine/process-liveness.js";
 import {
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
@@ -324,7 +324,7 @@ export interface RunningDaemon {
  *   written by another daemon). It is running; `start` refuses and says to restart it.
  * - `absent`: no state, or a stale file (pid dead, or a different process
  *   answering on that URL) which has been cleared. `notDaemon` is the live pid a cleared file named that is not the
- *   home's daemon ({@link homeDaemonIs}).
+ *   home's daemon ({@link recordedProcess}).
  */
 export type DaemonLookup =
   | { status: "running"; state: DaemonState; health: DaemonHealth }
@@ -542,6 +542,8 @@ export interface DaemonMachine {
    * lock cannot be asked.
    */
   homeDaemonLockHeld(home: string): boolean | undefined;
+  /** When the process holding `pid` started, in epoch ms, or undefined where it cannot be read (`processStartedAt`). */
+  processStartedAt(pid: number): number | undefined;
   /** The Node binary Rerail's own processes run under ({@link nodeExecutable}). */
   nodeExecutable(): string;
   /** Windows: starts a process through the native module's spawn ({@link launchDetached} says why). */
@@ -569,6 +571,7 @@ const THIS_MACHINE: DaemonMachine = {
   forgetMainInstanceHolder: pid => forgetMainInstanceHolder(pid),
   mainInstanceLockHeld: directory => mainInstanceLockHeld(directory),
   homeDaemonLockHeld: home => homeDaemonLockHeld(home),
+  processStartedAt: pid => processStartedAt(pid),
   nodeExecutable: () => nodeExecutable(),
   spawnDetached: nativeSpawnDetached,
   spawn: (command, args, options) => spawn(command, args, options),
@@ -664,20 +667,57 @@ export async function recordedDaemonAlive(state: DaemonState, machine: DaemonMac
 }
 
 /**
- * Whether the process `pid` is the daemon of `home`, as the OS tells it: a daemon holds the home's lock from before
- * daemon.json names it until it ends, the OS lets go of the lock however it ends, and the holder records its pid beside
- * it. A record a daemon killed without its cleanup left names a pid the OS may have given to any process since, and that
- * process holds no lock. A lock that cannot be asked proves nothing.
+ * What the facts the OS keeps say of the live process daemon.json names, when it did not answer as the daemon that wrote
+ * the record ({@link recordedProcess}):
+ * - `ours`: it is that daemon: it holds the home's lock and is the holder recorded beside it, or it started no later
+ *   than the record's `startedAt` (a process keeps its pid for life, so the one that ran with that pid then wrote it).
+ * - `not-ours`: it cannot be: another process holds the home's lock as its recorded holder, or it started after
+ *   `startedAt` by more than {@link START_CLOCK_SLACK_MS}, as a process that took a dead daemon's pid did.
+ * - `unknown`: nothing decides: no lock held, no holder record, a lock that cannot be asked, and a start time that cannot
+ *   be read or falls within the slack; a daemon of a release before the home's lock holds none.
  */
-function homeDaemonIs(home: string, pid: number, machine: DaemonMachine): boolean {
-  return homeDaemonHolder(home) === pid && machine.homeDaemonLockHeld(home) === true;
+type RecordedProcess = "ours" | "not-ours" | "unknown";
+
+/**
+ * How much later than the record's `startedAt` a process must have started to count as another process. A daemon starts
+ * before it stamps `startedAt`, so its own start is never later; a process that took its pid started after it died. The
+ * slack covers a wall clock set forward since the daemon started, which Linux reads its start against.
+ */
+const START_CLOCK_SLACK_MS = 10_000;
+
+/**
+ * {@link RecordedProcess} for the process daemon.json in `home` names (`state`). The home's lock answers first
+ * ({@link lockVerdict}); only where it cannot is the start time read ({@link startVerdict}), which costs a process on
+ * Windows.
+ */
+function recordedProcess(home: string, state: DaemonState, machine: DaemonMachine): RecordedProcess {
+  const byLock = lockVerdict(home, state.pid, machine);
+  return byLock === "unknown" ? startVerdict(state, machine) : byLock;
+}
+
+/**
+ * {@link RecordedProcess} from the home's lock, which a daemon holds from before daemon.json names it until it ends and
+ * the OS lets go of however it ends: it decides only while a live process recorded as its holder holds it.
+ */
+function lockVerdict(home: string, pid: number, machine: DaemonMachine): RecordedProcess {
+  const holder = homeDaemonHolder(home);
+  if (holder === undefined || !processAlive(holder, machine.kill) || machine.homeDaemonLockHeld(home) !== true) return "unknown";
+  return holder === pid ? "ours" : "not-ours";
+}
+
+/** {@link RecordedProcess} from when the process `state.pid` started, against the record's `startedAt`. */
+function startVerdict(state: DaemonState, machine: DaemonMachine): RecordedProcess {
+  const started = machine.processStartedAt(state.pid);
+  if (started === undefined) return "unknown";
+  if (started <= state.startedAt) return "ours";
+  return started > state.startedAt + START_CLOCK_SLACK_MS ? "not-ours" : "unknown";
 }
 
 /**
  * What the state file in `home` says, checked against the machine. `probeTimeoutMs` bounds the engine's proof and the
  * health probe together; a hook waiting out a busy daemon passes more (`patientLookup`). A live pid whose daemon did not
- * answer as itself is kept only while it is the home's daemon ({@link homeDaemonIs}): a busy daemon is, and a process
- * that took a dead daemon's pid is not.
+ * answer as itself is kept unless it is proven not to be the daemon that wrote the record ({@link recordedProcess}):
+ * a busy daemon is kept, and a process that took a dead daemon's pid is not.
  */
 export async function lookupDaemon(
   home: string,
@@ -688,7 +728,7 @@ export async function lookupDaemon(
   const state = await readDaemonState(stateFile, machine.platform);
   if (state === undefined) return { status: "absent" };
   const found = await checkedLookup(stateFile, state, machine, probeTimeoutMs);
-  if (found.status === "running" || found.status === "absent" || homeDaemonIs(home, state.pid, machine)) return found;
+  if (found.status === "running" || found.status === "absent" || recordedProcess(home, state, machine) !== "not-ours") return found;
   await rm(stateFile, { force: true });
   return { status: "absent", notDaemon: state.pid };
 }
@@ -1436,16 +1476,34 @@ export async function stopDaemon(home: string, machine: DaemonMachine = THIS_MAC
 export type FoundDaemon = Exclude<DaemonLookup, { status: "absent" }>;
 
 /**
- * Whether the pid the daemon `found` names may be signalled now, asked again just before each signal: while it holds the
- * home's lock ({@link homeDaemonIs}), which the OS lets go however the daemon ends, so a pid given to another process
- * since may not be. A daemon from before the home's lock, found answering its health probe as itself, may be while its
- * pid runs. Undefined when neither holds: the record names a process that is not the home's daemon, never signalled.
+ * Whether the pid the daemon `found` names may be signalled now, asked again just before each signal. A daemon that
+ * answered its health probe as itself may be while it holds the home's lock ({@link lockVerdict}), or, holding none, while
+ * its pid runs. One that did not answer may be while it is proven the daemon that wrote the record
+ * ({@link recordedProcess}): a pid given to another process since may not be. Otherwise the verdict, and nothing is
+ * signalled: `not-ours`, or `unknown` when no fact proves it either way.
  */
-function signalCheck(home: string, found: FoundDaemon, machine: DaemonMachine): (() => boolean) | undefined {
+function signalCheck(home: string, found: FoundDaemon, machine: DaemonMachine): (() => boolean) | Exclude<RecordedProcess, "ours"> {
   const pid = found.state.pid;
-  const holdsHome = (): boolean => homeDaemonIs(home, pid, machine);
-  if (holdsHome()) return holdsHome;
-  return found.status === "running" ? () => processAlive(pid, machine.kill) : undefined;
+  if (found.status === "running") {
+    const holdsHome = (): boolean => lockVerdict(home, pid, machine) === "ours";
+    return holdsHome() ? holdsHome : () => processAlive(pid, machine.kill);
+  }
+  const verdict = recordedProcess(home, found.state, machine);
+  return verdict === "ours" ? () => recordedProcess(home, found.state, machine) === "ours" : verdict;
+}
+
+/**
+ * What to tell the person when a stop cannot prove that the live process daemon.json names is the home's daemon, and so
+ * ends nothing ({@link RecordedProcess}): how to see what it is, and what to do either way.
+ */
+function unprovenDaemonMessage(home: string, pid: number, platform: NodeJS.Platform = process.platform): string {
+  const record = join(home, DAEMON_STATE_FILE);
+  const check = platform === "win32"
+    ? `powershell -NoProfile -Command "(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine"`
+    : `ps -p ${pid} -o command=`;
+  return `Rerail could not prove that pid ${pid}, which ${record} names, is this home's daemon, so it ended nothing. `
+    + `See its command line with ${check}: if it runs Rerail's daemon-entry.js for this home, end it; if not, delete ${record}. `
+    + "Then run rerail daemon start.";
 }
 
 /**
@@ -1463,12 +1521,14 @@ async function endWhenStopped(pid: number, mayEnd: () => boolean, machine: Daemo
 
 /**
  * Stops the daemon `found`, which a {@link lookupDaemon} of `home` returned, as {@link stopDaemon} does: `not-daemon`,
- * and its record removed, when the pid it names is not the home's daemon by then ({@link signalCheck}).
+ * and its record removed, when the pid it names is proven not the home's daemon by then ({@link signalCheck}); it
+ * throws {@link unprovenDaemonMessage}, ending nothing and keeping the record, when nothing proves it either way.
  */
 export async function stopFoundDaemon(home: string, found: FoundDaemon, machine: DaemonMachine = THIS_MACHINE): Promise<StopDaemonResult> {
   const pid = found.state.pid;
   const mayEnd = signalCheck(home, found, machine);
-  if (mayEnd === undefined) {
+  if (mayEnd === "unknown") throw new Error(unprovenDaemonMessage(home, pid, machine.platform));
+  if (mayEnd === "not-ours") {
     await rm(join(home, DAEMON_STATE_FILE), { force: true });
     return "not-daemon";
   }

@@ -296,7 +296,8 @@ describe("Rerail daemon CLI", () => {
   }, 15_000);
 
   // A daemon killed without its cleanup leaves daemon.json and the home lock's holder record naming its pid, which the
-  // OS can give to any process since. A listener on the recorded engine pipe or socket takes the lookup to the check.
+  // OS can give to any process started since. A listener on the recorded engine pipe or socket takes the lookup to the
+  // check.
   test("ends no process a dead daemon's records name, and says the record named no daemon of the home", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-not-daemon-cli-"));
     const stateFile = join(root, "daemon.json");
@@ -322,8 +323,9 @@ describe("Rerail daemon CLI", () => {
       await once(silent.stdout!, "data");
       const unrelated = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], { stdio: "ignore" });
       others.push(unrelated);
+      // The records as the daemon wrote them an hour before the process that has its pid now started.
       const recordsName = async (pid: number): Promise<void> => {
-        await writeFile(stateFile, JSON.stringify({ ...state, pid }));
+        await writeFile(stateFile, JSON.stringify({ ...state, pid, startedAt: state.startedAt - 3_600_000 }));
         await writeFile(join(root, "locks", "daemon.json"), JSON.stringify({ pid }));
       };
       const cli = async (...args: string[]): Promise<{ code: number; stdout: string }> => await promisify(execFile)(process.execPath, [join(process.cwd(), "dist", "cli", "cli.js"), ...args], { env })
