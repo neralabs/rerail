@@ -259,6 +259,9 @@ pub struct Checkpoint {
     held: usize,
 }
 
+/// The most nodes `Writer::insert` moves a cell at a time (more: by `copy_within`).
+const SHORT_MOVE: usize = 16;
+
 const TAIL_WIDE: u8 = 1;
 const EARLY: u8 = 2;
 
@@ -408,6 +411,21 @@ impl<L: Layout> Writer<L> {
         from.wrapping_add(tail)
     }
 
+    /// Cell `at` of a column of `width`-byte cells: a 2- or 4-byte load.
+    #[inline(always)]
+    fn get(column: &[u8], at: usize, width: u8) -> u32 {
+        debug_assert!((at + 1) * usize::from(width) <= column.len());
+        let p = column.as_ptr();
+        // SAFETY: the cell is inside the column, as the assertion says.
+        unsafe {
+            if width == 2 {
+                u32::from(u16::from_le(std::ptr::read_unaligned(p.add(2 * at).cast::<u16>())))
+            } else {
+                u32::from_le(std::ptr::read_unaligned(p.add(4 * at).cast::<u32>()))
+            }
+        }
+    }
+
     /// Cell `at` of a column of `width`-byte cells: a 2- or 4-byte store.
     #[inline(always)]
     fn put(column: &mut [u8], at: usize, width: u8, value: u32) {
@@ -542,14 +560,27 @@ impl<L: Layout> Writer<L> {
             self.grow();
         }
         let (n, ws) = (self.n, self.layout.widths());
-        let shift = |column: &mut [u8], width: u8| {
-            let w = usize::from(width);
-            column.copy_within(at * w..n * w, at * w + w);
-        };
-        shift(&mut self.size, ws.size);
-        shift(&mut self.tail, ws.tail);
-        self.keys.copy_within(at..n, at + 1);
-        self.starts.copy_within(at..n, at + 1);
+        // Most inserts wrap a leaf or a short subtree (a call's function, an operator's left
+        // operand): 58% of C++'s move one node, 93% fewer than 16. Those are moved here, a cell at
+        // a time from the end, where `copy_within` is a call to `memmove` a column.
+        if n - at <= SHORT_MOVE {
+            for j in (at..n).rev() {
+                self.keys[j + 1] = self.keys[j];
+                self.starts[j + 1] = self.starts[j];
+                let (size, tail) = (Self::get(&self.size, j, ws.size), Self::get(&self.tail, j, ws.tail));
+                Self::put(&mut self.size, j + 1, ws.size, size);
+                Self::put(&mut self.tail, j + 1, ws.tail, tail);
+            }
+        } else {
+            let shift = |column: &mut [u8], width: u8| {
+                let w = usize::from(width);
+                column.copy_within(at * w..n * w, at * w + w);
+            };
+            shift(&mut self.size, ws.size);
+            shift(&mut self.tail, ws.tail);
+            self.keys.copy_within(at..n, at + 1);
+            self.starts.copy_within(at..n, at + 1);
+        }
         self.n = n + 1;
         self.keys[at] = key;
         self.starts[at] = start;
