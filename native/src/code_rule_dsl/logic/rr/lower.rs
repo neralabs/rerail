@@ -965,6 +965,29 @@ pub fn link_seeded(m: Module, seeds: &Seeds, core: &BTreeSet<String>, library: O
     let seeded = &seeds.seeded;
     l.violations.clear();
     l.append(m);
+    // A kind set the module reads from its library (`nearest(f, s, scope)` over python/names.rr's `scope`) has its
+    // kinds there: the scope seeds its declaration, not its facts, so `kind_sets` found it empty here, and the
+    // program's `nearest` climbed to no kind in a pack (ruff-n807, RUF033, AIR303, F406 found nothing). It is the
+    // library's set, with the kinds the module adds to it, as the whole program read alone has it.
+    if let Some(library) = library {
+        let given: Vec<(String, Vec<String>)> = l
+            .sets
+            .iter()
+            .filter(|set| !l.prog.kindsets.contains_key(*set))
+            .filter_map(|set| {
+                let mut kinds = library.kindsets.get(set)?.clone();
+                if let Ok(Members::Kinds(own)) = l.members(set) {
+                    for k in own {
+                        if !kinds.contains(&k) {
+                            kinds.push(k);
+                        }
+                    }
+                }
+                Some((set.clone(), kinds))
+            })
+            .collect();
+        l.prog.kindsets.extend(given);
+    }
     let mut program = whole(l, library)?;
     crate::code_rule_dsl::logic::front::declared(&program)?;
     let gone = |r: &str| !core.contains(r);

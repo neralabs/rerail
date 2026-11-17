@@ -946,6 +946,45 @@ fn a_programs_facts_of_a_library_relation_ask_of_the_library() {
     assert_eq!(prog.facts.get(&threshold).map(Vec::len), Some(1), "{threshold}: {:?}", prog.facts.keys().filter(|k| k.contains("threshold")).collect::<Vec<_>>());
 }
 
+/// A library's kind set that a program reads by `nearest` (ruff-n807's `nearest(f, s, scope)` over python/names.rr's
+/// `scope`) has the library's kinds in a pack, as alone. Lowered in its library's scope, the program was seeded the
+/// set's declaration but not its facts, so it held `scope` empty, and its `nearest` climbed to nothing: ruff-n807,
+/// RUF033, AIR303 and F406 found nothing in the python pack. The library's rules a request copies (`rotgt`'s
+/// readers) name the library's sets as the library part does.
+#[test]
+fn a_programs_nearest_over_a_library_kind_set_finds_in_a_pack_what_it_finds_alone() {
+    let near = ".language python\n#include \"python/names.rr\"\n.decl top(x: symbol)\n\
+                top(x) :- kind(f, \"function_definition\"), field(f, \"name\", c), text(c, x), nearest(f, s, scope), kind(s, \"module\").\n.output top\n";
+    let other = ".language python\n#include \"python/names.rr\"\nrotgt(s, \"zz\") :- kind(s, \"module\").\n\
+                 .decl bound(x: symbol)\nbound(x) :- bound_in(_, x).\n.output bound\n";
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("library-kind-set");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def f():\n    def g():\n        pass\nclass C:\n    def m(self):\n        pass\n").unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let run = |programs: &[&str], out: &str| {
+        let out = dir.join(out);
+        super::run_all(programs, &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+        let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
+        let rows = read("p0_top");
+        if rows.is_empty() { read("top") } else { rows }
+    };
+    let alone = run(&[near], "alone");
+    let together = run(&[near, other], "together");
+    // Every set a rule climbs to, the library's, a request's copy of its rules (`rotgt`'s readers) and the
+    // programs', is a set of the combined program, with its kinds.
+    let prog = super::combine_texts(&[near, other]).unwrap_or_else(|e| panic!("{e}"));
+    for rule in &prog.rules {
+        for l in &rule.body {
+            if let crate::code_rule_dsl::logic::front::Literal::Nearest { kindset, .. } = l {
+                assert!(prog.kindsets.get(kindset).is_some_and(|k| !k.is_empty()), "{rule}: {kindset} is no set of the pack: {:?}", prog.kindsets.get(kindset));
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(alone, [["f"]], "f's nearest scope is the module; g's is f, m's is C");
+    assert_eq!(together, alone);
+}
+
 /// Each test's store is its own: a copy of the template (the library's phase 0 in it), with an identity of its own,
 /// and closed and removed when the test ends (`test_store`). Two tests at once have two stores.
 #[test]
