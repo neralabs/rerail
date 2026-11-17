@@ -84,7 +84,7 @@ pub fn accepts(p: &Placed) -> Result<bool> {
     {
         return Ok(false);
     }
-    for scc in p.components()? {
+    for scc in p.components()?.iter() {
         if scc.len() != 1 {
             return Ok(false);
         }
@@ -271,7 +271,7 @@ pub(super) fn compile(p: &Placed, model: &mut Model) -> Result<Compiled> {
             BTreeMap::new(),
         );
     }
-    for scc in p.components()? {
+    for scc in p.components()?.iter() {
         let rel = scc.iter().next().unwrap();
         if !needed.contains(rel) || pf.is_input(rel) {
             continue;

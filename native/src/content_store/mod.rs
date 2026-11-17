@@ -17,12 +17,14 @@ mod connection;
 pub use compression::set_language_tags;
 pub use connection::set_connection_functions;
 mod corpus_runs;
-pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex, live_fact_schema};
+pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex, live_fact_schema, stat_blob_key};
 #[cfg(not(any(windows, target_family = "wasm")))]
 pub use connection::sqlite_on_jemalloc;
 mod cross_rows;
 mod derivation;
 mod frames;
+mod object_segments;
+mod segments;
 mod facts_memo;
 mod objects;
 pub mod journal;
@@ -44,6 +46,7 @@ mod private_files;
 mod publication;
 mod read_cache;
 mod reclamation;
+pub mod record;
 mod relationships;
 mod results;
 mod rows;
@@ -68,7 +71,9 @@ pub mod hazards;
 
 pub use compression::compress;
 pub use frames::forget_snapshot as forget_frames_snapshot;
-pub use frames::{Unreachable as UnreachableFrames, Admitted as AdmittedFrame, Encoded as EncodedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, MemoBlob, MemoPut, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
+pub use segments::{SealedSegments, SegmentBytes, SegmentWriter};
+pub use object_segments::{ObjectBytes, ObjectFrame, ObjectMaps, QueuedTape};
+pub use frames::{CrossSpace as FramesCrossSpace, Unreachable as UnreachableFrames, Admitted as AdmittedFrame, Encoded as EncodedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, MemoBlob, MemoPut, MemoRow, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
 pub use connection::BusyRetries;
 pub use connection::OperationDeadline;
 pub use atoms::{ProcessIds, StoreIds, Sym};
@@ -195,7 +200,7 @@ pub(super) fn take_write_lock_hash_counts() -> (usize, usize) {
     )
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
 pub struct HashKey {
     algorithm: i64,
     lanes: [i64; 4],
@@ -356,7 +361,9 @@ impl From<std::io::Error> for StoreError {
 
 pub type StoreResult<T> = std::result::Result<T, StoreError>;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+/// Serialized as its number (a run's record names a source this store holds by it, decision 0306).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct SourceId(i64);
 
 impl SourceId {
@@ -653,8 +660,8 @@ pub struct ContentStore {
     atoms: std::sync::Arc<atoms::Atoms>,
     /// What pushes wrote, held for the waves that read it (`working_set`, decision 0024 §5).
     working_set: working_set::WorkingSet,
-    /// The owner and lease under which this handle pins each source it stores or finds (`hold_sources`, O95).
-    holder: parking_lot::Mutex<Option<(String, i64)>>,
+    /// On the writer's handle, the run whose wave it applies (`write_back::Wave`; 0: none): decision 0306's named sources.
+    applying: parking_lot::Mutex<(u64, Option<std::sync::Arc<write_back::Writer>>)>,
     /// The store's writer, shared by its handles in this process (`write_back`, decision 0102); `None` for the
     /// writer's own handle, which writes at once.
     write_back: Option<std::sync::Arc<write_back::Writer>>,
@@ -677,12 +684,12 @@ impl Drop for ContentStore {
     fn drop(&mut self) {
         // With a writer, the atoms are its to write: every handle shares them, and its batch's commit appends them (a
         // handle dropped inside a wave writes nothing). The queued writes first: they may name atoms this handle holds.
-        if self.atoms.pending() && self.write_back.is_some() {
-            self.write_back_syms(crate::content_store::write_back::Syms::None, "the atoms at a handle's close", 0, Vec::new(), Box::new(|store| store.flush_atoms()));
+        if self.atoms.flush_wanted() && self.write_back.is_some() {
+            self.queue_atoms("the atoms at a handle's close");
             self.end_writer();
         } else {
             self.end_writer();
-            if self.atoms.pending()
+            if self.atoms.flush_wanted()
                 && let Err(error) = self.immediate_transaction(|_| Ok(()))
             {
                 eprintln!("rerail: atoms: writing the pending atoms at close failed: {error}");
@@ -717,7 +724,7 @@ impl ContentStore {
             facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
             atoms: std::sync::Arc::clone(&self.atoms),
             working_set: working_set::WorkingSet::default(),
-            holder: parking_lot::Mutex::new(None),
+            applying: parking_lot::Mutex::new((0, None)),
             write_back: None,
             #[cfg(not(target_family = "wasm"))]
             lease: Default::default(),
@@ -777,7 +784,7 @@ impl ContentStore {
             // A store created again at its path, by this process or another, has atoms of its own.
             atoms: atoms::Atoms::for_database(path, Some(identity)),
             working_set: working_set::WorkingSet::default(),
-            holder: parking_lot::Mutex::new(None),
+            applying: parking_lot::Mutex::new((0, None)),
             // A store created again at its path has a writer of its own too.
             write_back: Some(write_back::register_store(path, identity)),
             #[cfg(not(target_family = "wasm"))]

@@ -351,34 +351,45 @@ impl PackedBatch {
             if !tape.transducer_labels().is_empty() {
                 derived.push((node_start, tape.transducer_labels_shared()));
             }
+            // One pass over the tape in preorder (decision 0293): a node's children, read off its subtree, set
+            // their parent and next siblings, so no parent or sibling is searched for.
             let mut local_children = Vec::new();
-            for node in 0..tape.transducer_len() as u32 {
+            let base = batch.nodes.len();
+            let count = tape.transducer_len();
+            batch.nodes.resize(base + count, BatchNode { parent: NONE, next_any: NONE, next_named: NONE, ..BatchNode::default() });
+            for node in 0..count as u32 {
                 let child_start = checked_u32(navigation[1] + local_children.len())?;
                 let first_child = local_children.len();
                 for child in tape.transducer_children(node) {
                     local_children
                         .push(node_start.checked_add(child).ok_or(Error::BackendFailure)?);
                 }
+                let (mut next_any, mut next_named) = (NONE, NONE);
+                for &child in local_children[first_child..].iter().rev() {
+                    let local = child - node_start;
+                    let record = &mut batch.nodes[base + local as usize];
+                    (record.parent, record.next_any, record.next_named) = (node_start + node, next_any, next_named);
+                    next_any = child;
+                    if tape.transducer_is_named(local) {
+                        next_named = child;
+                    }
+                }
                 let span = tape.transducer_span(node);
-                batch.nodes.push(BatchNode {
-                    parent: global_node(node_start, tape.transducer_parent(node))?,
-                    next_any: global_node(node_start, tape.transducer_next_sibling(node, false))?,
-                    next_named: global_node(node_start, tape.transducer_next_sibling(node, true))?,
-                    child_start,
-                    child_count: checked_u32(local_children.len() - first_child)?,
-                    descendant_end: node_start
-                        .checked_add(tape.transducer_descendants(node).end)
-                        .ok_or(Error::BackendFailure)?,
-                    source_start: source_start
-                        .checked_add(checked_u32(span.start)?)
-                        .ok_or(Error::BackendFailure)?,
-                    source_end: source_start
-                        .checked_add(checked_u32(span.end)?)
-                        .ok_or(Error::BackendFailure)?,
-                    kind: u32::from(tape.transducer_kind(node)),
-                    field: u32::from(tape.transducer_field(node)),
-                    flags: u32::from(tape.transducer_flags(node)),
-                });
+                let record = &mut batch.nodes[base + node as usize];
+                record.child_start = child_start;
+                record.child_count = checked_u32(local_children.len() - first_child)?;
+                record.descendant_end = node_start
+                    .checked_add(tape.transducer_descendants(node).end)
+                    .ok_or(Error::BackendFailure)?;
+                record.source_start = source_start
+                    .checked_add(checked_u32(span.start)?)
+                    .ok_or(Error::BackendFailure)?;
+                record.source_end = source_start
+                    .checked_add(checked_u32(span.end)?)
+                    .ok_or(Error::BackendFailure)?;
+                record.kind = u32::from(tape.transducer_kind(node));
+                record.field = u32::from(tape.transducer_field(node));
+                record.flags = u32::from(tape.transducer_flags(node));
             }
             navigation[0] += tape.transducer_len();
             navigation[1] += local_children.len();
@@ -1049,8 +1060,8 @@ impl PackedBatch {
     }
 
     /// A resident label batch's evaluations (decision 0033): one per `spec` {program, file, its
-    /// rule's segment header, its first root's index in the rule, its roots}, whose tasks are
-    /// those roots, with no task records (the device takes each from its evaluation). Each
+    /// roots' rule, 0, its file's groups of 64 nodes}, whose tasks are those groups, with no task
+    /// records (the device finds each group's roots from the rule, `root_mask`). Each
     /// evaluation is sized by a stand-in task whose root spans its file's source (a bound on any
     /// root's) and whose work estimate is the most, so its states are the state cap: the lanes'
     /// workspace is lanes times that, whatever the roots.
@@ -1083,8 +1094,8 @@ impl PackedBatch {
             evaluation.task_count = spec[4];
             evaluation.program = spec[0];
             evaluation.file = spec[1];
-            evaluation.root_segment = spec[2];
-            evaluation.root_base = spec[3];
+            evaluation.root_rule = spec[2];
+            evaluation.root_reserved = spec[3];
             // The work per node of a task's subtree (`resident_work` on the device).
             evaluation.workspace_work_estimate =
                 checked_u32(program.words.len().saturating_mul(4_096).min(0x7fff_ffff))? | u32::from(repeats) << 31;

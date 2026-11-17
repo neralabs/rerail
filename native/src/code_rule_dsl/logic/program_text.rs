@@ -313,69 +313,99 @@ pub fn read_stored(stored: &Stored, lists: &crate::code_rule_dsl::logic::front::
     }
 }
 
-/// The program `stored` holds, as `read_stored` reads it, and its version where it is kept as an image (decision
-/// 0244: the parts of a prepared program are made from it).
-pub fn read_stored_version(stored: &Stored, lists: &crate::code_rule_dsl::logic::front::Lists) -> Result<(Program, Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>), String> {
-    match stored {
-        Stored::Image(bytes) => {
-            let v = crate::code_rule_dsl::logic::program_image::Version::open(bytes)?;
-            Ok((v.program(lists)?, Some(v)))
-        }
-        Stored::Text(text) => Ok((read_in(text, lists)?, None)),
-    }
+/// A program as the store keeps it, made where the program is (the run's thread, decision 0306), kept by the store's
+/// writer (`store_encoded`): its image (decision 0173), or with `RERAIL_PROGRAM_IMAGE=off` its text, checked to read
+/// back as the program. The digest is of its bytes, which is the source's own hash.
+pub struct Encoded {
+    pub digest: [u8; 32],
+    /// Its image's bytes (else its text's).
+    pub image: bool,
+    pub bytes: Vec<u8>,
 }
 
-/// Keeps `prog` in `store` as its image (decision 0173), a source by its bytes' sha256 and by `image_key`, held so the
-/// run keeps it (O95): the digest, and the sources written, which the caller names so collection keeps them. With
-/// `RERAIL_PROGRAM_IMAGE=off`, as its text, checked to read back as `prog` (`None` when it does not: nothing is kept),
-/// alone.
-pub fn store(store: &ContentStore, prog: &Program) -> StoreResult<Option<([u8; 32], Vec<SourceId>)>> {
-    // The stored form is the image (decision 0246 §6): encoded once, kept under the digest of its bytes, which is the
-    // source's own hash. Not printed, read back, encoded and decoded again, and digested by `{:?}` to check each.
+/// A program held as a base image already (a prepared program's version, `Version::base_bytes`), as the store keeps it:
+/// its bytes as they are, with no encode of a tree (decision 0281); `None` where images are off (a version has no
+/// text form) or `v` is no base.
+pub fn encode_version(v: &crate::code_rule_dsl::logic::program_image::Version) -> Option<Encoded> {
+    if images() == "off" {
+        return None;
+    }
+    let bytes = v.base_bytes()?;
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
+    let digest: [u8; 32] = Sha256::digest(bytes).into();
+    // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`, decision 0264) ships it.
+    crate::code_rule_dsl::logic::rr::images::export(image_key(&digest), bytes);
+    Some(Encoded { digest, image: true, bytes: bytes.to_vec() })
+}
+
+/// `prog` encoded as the store keeps it (`Encoded`); `None` where its text does not read back as it (nothing is kept).
+pub fn encode(prog: &Program) -> Option<Encoded> {
+    // The stored form is the image (decision 0246 §6): encoded once, kept under the digest of its bytes. Not printed,
+    // read back, encoded and decoded again, and digested by `{:?}` to check each.
     if images() != "off" {
-        let Ok(bytes) = crate::code_rule_dsl::logic::program_image::encode(prog) else { return Ok(None) };
+        let bytes = crate::code_rule_dsl::logic::program_image::encode(prog).ok()?;
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
         let digest: [u8; 32] = Sha256::digest(&bytes).into();
-        let key = image_key(&digest);
         // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`, decision 0264) ships it.
-        crate::code_rule_dsl::logic::rr::images::export(key, &bytes);
-        let id = match store.source_by_alias(key)? {
-            Some(id) => id,
-            None => store.put_source(&bytes, &[key])?,
-        };
-        store.pin_held_sources(&[id])?;
-        return Ok(Some((digest, vec![id])));
+        crate::code_rule_dsl::logic::rr::images::export(image_key(&digest), &bytes);
+        return Some(Encoded { digest, image: true, bytes });
     }
-    let Ok(text) = print(prog) else { return Ok(None) };
+    let text = print(prog).ok()?;
     let want = program_facts::debug_digest(prog);
     if !read(&text).is_ok_and(|back| program_facts::debug_digest(&back) == want) {
-        return Ok(None);
+        return None;
     }
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, text.len() as u64);
-    let hash = HashKey::sha256(text.as_bytes());
-    let source = match store.held_source_by_hash(hash)? {
-        Some(id) => id,
-        None => store.put_source_hashed(text.as_bytes(), hash, &[])?,
-    };
-    let digest: [u8; 32] = Sha256::digest(text.as_bytes()).into();
-    let mut sources = vec![source];
-    if images() != "off" {
-        let key = image_key(&digest);
-        if let Some(id) = store.source_by_alias(key)? {
-            store.pin_held_sources(&[id])?;
-            sources.push(id);
-        } else if let Ok(bytes) = crate::code_rule_dsl::logic::program_image::encode(prog)
-            && crate::code_rule_dsl::logic::program_image::decode(&bytes, &crate::code_rule_dsl::logic::front::Lists::default()).is_ok_and(|back| program_facts::debug_digest(&back) == want)
-        {
-            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
-            // An image the store refuses (its alias taken by other bytes) is not kept; the text is.
-            if let Ok(id) = store.put_source(&bytes, &[key]) {
-                store.pin_held_sources(&[id])?;
-                sources.push(id);
-            }
-        }
+    Some(Encoded { digest: Sha256::digest(text.as_bytes()).into(), image: false, bytes: text.into_bytes() })
+}
+
+/// Programs `encode` made, and a facts entry after them, as a record's item carries them (decision 0306): their
+/// digests and kinds in its body, their bytes, then the entry's, in its byte area.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct Packed {
+    programs: Vec<([u8; 32], bool, usize)>,
+}
+
+/// Packs `programs` and `entry` (`Packed`): the body and the byte area.
+pub fn pack(programs: Vec<Encoded>, entry: Vec<u8>) -> (Packed, Vec<u8>) {
+    let mut bytes = Vec::with_capacity(programs.iter().map(|p| p.bytes.len()).sum::<usize>() + entry.len());
+    let mut packed = Packed { programs: Vec::with_capacity(programs.len()) };
+    for p in programs {
+        packed.programs.push((p.digest, p.image, p.bytes.len()));
+        bytes.extend_from_slice(&p.bytes);
     }
-    Ok(Some((digest, sources)))
+    bytes.extend_from_slice(&entry);
+    (packed, bytes)
+}
+
+/// Keeps the programs `pack` packed (`store_encoded`): the sources written, and the entry's bytes.
+pub fn store_packed<'b>(store: &ContentStore, packed: &Packed, bytes: &'b [u8]) -> StoreResult<(Vec<SourceId>, &'b [u8])> {
+    let (mut at, mut sources) = (0, Vec::new());
+    for (digest, image, len) in &packed.programs {
+        let program = bytes.get(at..at + len).ok_or_else(|| crate::content_store::StoreError::Invalid("a record's program: past its bytes".into()))?;
+        sources.extend(store_encoded(store, digest, *image, program)?);
+        at += len;
+    }
+    Ok((sources, &bytes[at..]))
+}
+
+/// Keeps a program `encode` made in `store`, a source by its bytes' sha256 (an image by `image_key` too): the sources
+/// written, which the caller names so collection keeps them.
+pub fn store_encoded(store: &ContentStore, digest: &[u8; 32], image: bool, bytes: &[u8]) -> StoreResult<Vec<SourceId>> {
+    if image {
+        let key = image_key(digest);
+        let id = match store.source_by_alias(key)? {
+            Some(id) => id,
+            None => store.put_source(bytes, &[key])?,
+        };
+        return Ok(vec![id]);
+    }
+    let hash = HashKey::sha256(bytes);
+    let source = match store.source_by_hash(hash)? {
+        Some(id) => id,
+        None => store.put_source_hashed(bytes, hash, &[])?,
+    };
+    Ok(vec![source])
 }
 
 /// What `store` keeps of the programs of sha256 `digests` (`store`), by digest, with their sources, in two reads: for
@@ -384,14 +414,13 @@ pub fn store(store: &ContentStore, prog: &Program) -> StoreResult<Option<([u8; 3
 pub fn texts(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<std::collections::HashMap<[u8; 32], (Stored, Vec<SourceId>)>> {
     let mode = images();
     let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
-    let text_ids = store.held_sources_by_hash(&hashes)?;
+    let text_ids = store.sources_by_hashes(&hashes)?;
     let mut out = std::collections::HashMap::new();
     let mut want_text = Vec::new();
     for (k, d) in digests.iter().enumerate() {
         let image = if mode == "off" { None } else { store.source_by_alias(image_key(d))? };
         match image {
             Some(id) => {
-                store.pin_held_sources(&[id])?;
                 let bytes = store.get_source(id)?;
                 // The image's digest is its bytes' (`store`), so it is its own text's source too: named once.
                 out.insert(*d, (Stored::Image(bytes), text_ids[k].into_iter().filter(|t| *t != id).chain([id]).collect()));
@@ -417,15 +446,153 @@ pub fn texts(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<std::col
 /// The program `store` keeps of sha256 `digest` (`store`), from its image where it has one, else its text, and the
 /// sources it is kept as; `None` when the store has lost it, or it no longer reads. Its lists are taken from the
 /// run's `lists`.
+/// The sources `texts` names for `digests` (each program's text and image), with none read: a run that holds the
+/// programs in memory names what it would have read (the manifest's), so collection keeps them while it keeps the run.
+pub fn sources(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<Vec<SourceId>> {
+    let mode = images();
+    let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
+    let mut out: Vec<SourceId> = store.sources_by_hashes(&hashes)?.into_iter().flatten().collect();
+    if mode != "off" {
+        for d in digests {
+            if let Some(id) = store.source_by_alias(image_key(d))? {
+                out.push(id);
+            }
+        }
+    }
+    Ok(out)
+}
+
 pub fn load(store: &ContentStore, digest: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Program, Vec<SourceId>)>> {
     let mut found = texts(store, &[*digest])?;
     let Some((stored, sources)) = found.remove(digest) else { return Ok(None) };
     Ok(read_stored(&stored, lists).ok().map(|p| (p, sources)))
 }
 
-/// `load`, with the program's version where it is kept as an image (`read_stored_version`).
-pub fn load_version(store: &ContentStore, digest: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Program, Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>, Vec<SourceId>)>> {
+/// The version of the program `store` keeps of sha256 `digest`, opened from its image with no tree decoded (a
+/// program kept as text, with images off, imaged from it), and the sources it is kept as; `None` as `load` gives.
+pub fn load_image(store: &ContentStore, digest: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Vec<SourceId>)>> {
     let mut found = texts(store, &[*digest])?;
     let Some((stored, sources)) = found.remove(digest) else { return Ok(None) };
-    Ok(read_stored_version(&stored, lists).ok().map(|(p, v)| (p, v, sources)))
+    let version = match &stored {
+        Stored::Image(bytes) => crate::code_rule_dsl::logic::program_image::Version::open(bytes),
+        Stored::Text(text) => read_in(text, lists).and_then(|p| crate::code_rule_dsl::logic::program_image::Builder::of_program(&p)?.finish().map(|(v, _)| v)),
+    };
+    Ok(version.ok().map(|v| (v, sources)))
+}
+
+
+/// A keyed pipeline's steps (decision 0281 §6), kept in `store` as facts beside the program images they name. A
+/// step is two relations in 0103's form, its key and the step it names: `pipeline_step_key(key, pass, version)` (the
+/// pass's version is the tag) and `pipeline_step(key, image, size, digest)`, with its decisions
+/// (`pipeline_step_decision(key, k, pass, what, detail)`, 0269). They are one source under its key's alias, and the
+/// output is an image as a prepared program's is (`store_image`), so a step whose output another step or program
+/// stored already shares its image. A run's collection lease keeps what it reads and writes (decision 0306 step 4), and
+/// a step is written by the store's writer, an item of the run's record (0306 step 2).
+pub struct StoredSteps<'s>(pub &'s ContentStore);
+
+/// The alias a step's facts are kept under: its key, with the image format, so another format's step is not found.
+fn step_alias(key: &[u8; 32]) -> HashKey {
+    let format = crate::code_rule_dsl::logic::program_image::FORMAT;
+    HashKey::sha256(&[format!("rerail pipeline step {format}\0").as_bytes(), key.as_slice()].concat())
+}
+
+fn hex32(bytes: &[u8; 32]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn unhex32(text: &str) -> Option<[u8; 32]> {
+    let mut out = [0u8; 32];
+    if text.len() != 64 {
+        return None;
+    }
+    for (i, o) in out.iter_mut().enumerate() {
+        *o = u8::from_str_radix(text.get(2 * i..2 * i + 2)?, 16).ok()?;
+    }
+    Some(out)
+}
+
+impl crate::code_rule_dsl::logic::program_image::manager::Steps for StoredSteps<'_> {
+    fn find(&self, key: &[u8; 32]) -> Result<Option<crate::code_rule_dsl::logic::program_image::manager::StepRecord>, String> {
+        use crate::code_rule_dsl::logic::program_image::manager::{Decided, StepRecord};
+        let e = |e: crate::content_store::StoreError| e.to_string();
+        let Some(id) = self.0.source_by_alias(step_alias(key)).map_err(e)? else { return Ok(None) };
+        let facts = program_facts::decode(&self.0.get_source(id).map_err(e)?)?;
+        let k = hex32(key);
+        let rows = |rel: &str| facts.get(rel).into_iter().flatten().filter(|r| matches!(r.first(), Some(Value::Str(s)) if **s == *k));
+        let int = |v: &Value| match v {
+            Value::Int(n) => Ok(*n),
+            _ => Err(bad("a step's number is not one")),
+        };
+        let text = |v: &Value| match v {
+            Value::Str(s) => Ok(s.to_string()),
+            _ => Err(bad("a step's text is not one")),
+        };
+        let Some(head) = rows("pipeline_step_key").next() else { return Ok(None) };
+        let Some(out) = rows("pipeline_step").next() else { return Ok(None) };
+        let (pass, version) = (text(&head[1])?, int(&head[2])? as u32);
+        let image = unhex32(&text(&out[1])?).ok_or_else(|| bad("a step's image is not a digest"))?;
+        // A step whose image the store lost is not found: the step runs again.
+        if self.0.source_by_alias(image_key(&image)).map_err(e)?.is_none() {
+            return Ok(None);
+        }
+        let mut decided: Vec<(i64, Decided)> = Vec::new();
+        for r in rows("pipeline_step_decision") {
+            decided.push((int(&r[1])?, Decided { pass: text(&r[2])?.into(), what: text(&r[3])?.into(), detail: text(&r[4])? }));
+        }
+        decided.sort_by_key(|(k, _)| *k);
+        Ok(Some(StepRecord { pass, version, image, output: (int(&out[2])? as usize, int(&out[3])? as u64), decided: decided.into_iter().map(|(_, d)| d).collect() }))
+    }
+
+    fn open(&self, image: &[u8; 32]) -> Result<Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>, String> {
+        let e = |e: crate::content_store::StoreError| e.to_string();
+        let Some(id) = self.0.source_by_alias(image_key(image)).map_err(e)? else { return Ok(None) };
+        crate::code_rule_dsl::logic::program_image::Version::open(&self.0.get_source(id).map_err(e)?).map(Some)
+    }
+
+    fn keep(&self, key: &[u8; 32], record: &crate::code_rule_dsl::logic::program_image::manager::StepRecord, output: &crate::code_rule_dsl::logic::program_image::Version) -> Result<(), String> {
+        let folded;
+        let bytes = match output.base_bytes() {
+            Some(b) => b,
+            None => {
+                folded = output.fold()?;
+                folded.base_bytes().ok_or("a folded version is a base")?
+            }
+        };
+        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
+        let image: [u8; 32] = Sha256::digest(bytes).into();
+        // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`, decision 0264) ships it.
+        crate::code_rule_dsl::logic::rr::images::export(image_key(&image), bytes);
+        let k = Value::Str(hex32(key).into());
+        let mut facts = Facts::new();
+        facts.entry("pipeline_step_key".into()).or_default().push([k.clone(), str_value(&record.pass), Value::Int(i64::from(record.version))].into());
+        facts.entry("pipeline_step".into()).or_default().push([k.clone(), Value::Str(hex32(&image).into()), Value::Int(record.output.0 as i64), Value::Int(record.output.1 as i64)].into());
+        for (i, d) in record.decided.iter().enumerate() {
+            facts.entry("pipeline_step_decision".into()).or_default().push([k.clone(), Value::Int(i as i64), str_value(&d.pass), str_value(&d.what), str_value(&d.detail)].into());
+        }
+        // An item of the run's record (decision 0306): the image's bytes, then the step's facts, in its byte area;
+        // each stored by the writer unless the store holds it already (an image another step or program stored).
+        fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
+            let (key, image, at): ([u8; 32], [u8; 32], usize) = crate::content_store::record::codec::from_body(STEP, body)?;
+            let (image_bytes, facts) = cx.bytes.split_at_checked(at).ok_or_else(|| crate::content_store::StoreError::Invalid("a step's record: past its bytes".into()))?;
+            if cx.store.source_by_alias(image_key(&image))?.is_none() {
+                cx.store.put_source(image_bytes, &[image_key(&image)])?;
+            }
+            let alias = step_alias(&key);
+            if cx.store.source_by_alias(alias)?.is_none() {
+                cx.store.put_source(facts, &[alias])?;
+            }
+            Ok(())
+        }
+        let mut area = bytes.to_vec();
+        area.extend_from_slice(&program_facts::encode(&facts));
+        self.0.record(STEP, Vec::new(), &(*key, image, bytes.len()), Some(area), apply);
+        Ok(())
+    }
+}
+
+/// A pipeline step's item of the run's record (`StoredSteps::keep`).
+const STEP: &str = "a pipeline step";
+
+fn str_value(s: &str) -> Value {
+    Value::Str(s.to_owned().into())
 }

@@ -378,6 +378,7 @@ fn native_capture_operators_preserve_the_complete_group_truth_table() {
 
 #[test]
 fn shared_capture_operators_compare_long_utf8_spans_and_chunk_crossing_needles() {
+    crate::test_languages();
     let text = format!("{}é{}tail", "a".repeat(71), "b".repeat(87));
     let source = format!("{text}\n");
     let needle = format!("{}é{}", "a".repeat(12), "b".repeat(75));

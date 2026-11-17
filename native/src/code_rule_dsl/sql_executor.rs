@@ -203,7 +203,7 @@ impl CodeRuleSqlExecutor {
             }
             let documents =
                 super::facts::families::stored_documents(&this.store, &scope, &paths).map_err(error)?;
-            if documents.len() != paths.len() || documents.iter().any(|d| d.facts.syntax_errors) {
+            if documents.len() != paths.len() || documents.iter().any(|d| d.facts.syntax_errors()) {
                 return Err(error(
                     "requested stored documents have missing or incomplete core facts",
                 ));

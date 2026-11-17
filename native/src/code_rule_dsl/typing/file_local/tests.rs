@@ -21,6 +21,26 @@ fn source_relations_keep_their_document_location() {
     }
 }
 
+/// A relation whose rows name no document (`aware()`, as data-layer's `ma_branch_aware`), handed on to a cross-file
+/// reader (`found`, as `MA033` over `ma_owner(_)`), is moved to the cross-file part with its file-local readers
+/// (decision 0290), so `locate` leaves every row the chunks hand on located.
+#[test]
+fn a_relation_naming_no_document_moves_to_the_cross_file_part() {
+    use crate::code_rule_dsl::logic::rr::parse;
+    let text = ".decl doc(d: number, p: symbol, x: number)\n.input doc\n.decl owner(d: number)\nowner(d) :- doc(d, \"a.py\", _).\n\
+                .decl aware()\naware() :- owner(d), d > 0.\n.decl found(k: number)\nfound(1) :- owner(_), !aware().\n.output found\n";
+    let mut program = parse(text).unwrap();
+    assert!(split(&program).contains("aware"), "the case: aware is file-local before the move");
+    let located = locate(&mut program).expect("every row the chunks hand on located");
+    assert_eq!(moved(&program), ["aware"]);
+    let parts = split(&program);
+    assert!(!parts.contains("aware") && !parts.contains("found") && parts.contains("owner"), "{parts:?}, located {located:?}");
+    assert_eq!(cross_causes(&program)["aware"], "its rows name no document (moved by `locate`)");
+    // Located again, nothing more moves.
+    locate(&mut program).unwrap();
+    assert_eq!(moved(&program), ["aware"]);
+}
+
 /// Two trees in one chunk (kinds 1 = module, 2 = function, 3 = other):
 ///
 /// ```text
@@ -201,7 +221,7 @@ finding(n, s) :- node(_, n, "call", _, _), field(n, "function", f), text(f, s), 
     // What is left of the rule: the join and the cross-file negation.
     let reads: Vec<&str> = finding[0].body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str()).collect();
     assert_eq!(reads, [made[0].as_str(), "defined"]);
-    let split = programs(&prog);
+    let split = programs(&prog).unwrap();
     assert!(split.exports.contains(&made[0]));
     assert!(!split.base.iter().any(|b| b == "field" || b == "text" || b == "op"), "{:?}", split.base);
     // The join takes the comparison and the negated base read along.
@@ -269,8 +289,9 @@ named(n) :- node(_, n, "identifier", _, _), text(n, x), side(x).
     assert_eq!(locations["root"], [0, 1], "{locations:?}");
     assert!(local.contains("under") && local.contains("named"), "{local:?}");
     assert!(constant_relations(&program).contains("side"));
-    let parts = programs(&program);
-    assert!(parts.local.rules.iter().any(|r| r.head.rel == "side"), "the chunks derive side for named");
+    let parts = programs(&program).unwrap();
+    let lv = &parts.versions.local;
+    assert!(lv.rules().any(|r| lv.rel_name(r.head().rel()) == "side"), "the chunks derive side for named");
     assert!(cross_causes(&program).get("under").is_none(), "{:?}", cross_causes(&program));
 }
 
@@ -298,32 +319,48 @@ hit(n, l) :- pick(n), line(n, l).
     let split = |text: &str| {
         let mut program = parse(text).unwrap();
         push_local_joins(&mut program);
-        programs(&program)
+        programs(&program).unwrap()
     };
     let parts = split(&source(""));
     assert!(parts.base.iter().any(|b| b == "line"), "{:?}", parts.base);
-    let held = semijoin_bases(&parts.versions.as_ref().expect("the parts' versions").cross, &parts.base).expect("every lookup is of a node an export holds");
+    let held = semijoin_bases(&parts.versions.cross, &parts.base).expect("every lookup is of a node an export holds");
     assert!(held.contains("line"), "{held:?}");
     // `child(p, c, _)` reaches nodes no export holds: their lines would be missing. So would a cross-file rule's
     // own enumeration of nodes (`node(_, n, "identifier", _, _), text(n, x), names(x)`).
     let parts = split(&source(".decl kid(c: node, l: number)\nkid(c, l) :- pick(p), child(p, c, _), line(c, l).\n.output kid"));
     assert!(parts.base.iter().any(|b| b == "child"), "{:?}", parts.base);
-    assert!(!semijoin_bases(&parts.versions.as_ref().expect("the parts' versions").cross, &parts.base).unwrap().contains("line"));
-    let parts = programs(&parse(&source(".decl own(n: node)\nown(n) :- node(_, n, \"identifier\", _, _), text(n, x), names(x).\n.decl seen(n: node, l: number)\nseen(n, l) :- own(n), line(n, l).\n.output seen")).unwrap());
-    let held = semijoin_bases(&parts.versions.as_ref().expect("the parts' versions").cross, &parts.base).unwrap();
+    assert!(!semijoin_bases(&parts.versions.cross, &parts.base).unwrap().contains("line"));
+    let parts = programs(&parse(&source(".decl own(n: node)\nown(n) :- node(_, n, \"identifier\", _, _), text(n, x), names(x).\n.decl seen(n: node, l: number)\nseen(n, l) :- own(n), line(n, l).\n.output seen")).unwrap()).unwrap();
+    let held = semijoin_bases(&parts.versions.cross, &parts.base).unwrap();
     assert!(!held.contains("line") && !held.contains("node") && !held.contains("text"), "{held:?}");
     // Per relation: a walk of `child` that looks up no attribute leaves `line` a semi-join for the other rules.
     let parts = split(&source(".decl kid(c: node, i: number)\nkid(c, i) :- pick(p), child(p, c, i).\n.decl kidline(p: node, l: number)\nkidline(p, l) :- kid(c, _), pick(p), child(p, c, _), line(p, l).\n.output kid, kidline"));
     assert!(parts.base.iter().any(|b| b == "child"), "{:?}", parts.base);
-    let held = semijoin_bases(&parts.versions.as_ref().expect("the parts' versions").cross, &parts.base).unwrap();
+    let held = semijoin_bases(&parts.versions.cross, &parts.base).unwrap();
     assert!(held.contains("line"), "{held:?}");
     // A tainted output's findings are decoded through `node`: kept whole.
     assert!(!held.contains("node"), "{held:?}");
     // `tape(n, par, ..)`'s parent is a node though a number: a walk up it reaches nodes no export holds.
     let parts = split(&source(".decl tape(n: node, par: number, size: number, depth: number)\n.input tape\n.decl up(n: node, p: number)\nup(n, p) :- hit(n, _), names(_), tape(n, p, _, _).\nup(n, q) :- up(n, p), names(_), tape(p, q, _, _).\n.output up"));
     if parts.base.iter().any(|b| b == "tape") {
-        assert!(!semijoin_bases(&parts.versions.as_ref().expect("the parts' versions").cross, &parts.base).unwrap().contains("tape"));
+        assert!(!semijoin_bases(&parts.versions.cross, &parts.base).unwrap().contains("tape"));
     }
+}
+
+/// A climb up the tree (`inside`, `has`, a nearest over a derived set: lower.rs `climb`) reads the tape's parent
+/// column, which `need_tape` declares over numbers. A node's parent is in its document, so the climb is file-local:
+/// cross-file, every climb of a pack joined the corpus on one worker (O-cold-seed-join).
+#[test]
+fn a_climb_over_the_tapes_parent_column_is_file_local() {
+    use crate::code_rule_dsl::logic::rr::parse;
+    let text = ".decl kind(n: node, k: number)\n.input kind\n.decl tape(n: int, par: int, size: int, depth: int)\n.input tape\n\
+        .decl stop(n: node)\nstop(n) :- kind(n, 7).\n\
+        .decl up(n: node, a: int)\nup(n, p) :- kind(n, 3), tape(n, p, _, _), p >= 0.\nup(n, q) :- up(n, p), !stop(p), tape(p, q, _, _), q >= 0.\n\
+        .decl under(n: node)\nunder(n) :- up(n, a), stop(a).\n.output under\n";
+    let program = parse(text).unwrap();
+    let (local, locations, _) = split_located(&program);
+    assert!(local.contains("up") && local.contains("under"), "{local:?}");
+    assert!(locations["up"].contains(&0), "{locations:?}");
 }
 
 /// `boot-python.rr`'s `deco_word`: a disjunction's branch `(e0 = d ; …)` leaves `e0 = d` between two per-file pieces.
@@ -407,7 +444,7 @@ named(f, s) :- uses(f, _), child(p, f, _), text(p, s).
         let rule = prog.rules.iter().find(|r| r.head.rel == *part).unwrap();
         assert!(rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel.starts_with("fzk"))), "{rule}");
     }
-    let split = programs(&prog);
+    let split = programs(&prog).unwrap();
     for part in &parts {
         assert!(split.exports.iter().any(|e| e == part), "{part} is exported: {:?}", split.exports);
     }
@@ -445,4 +482,254 @@ outer(f, x) :- wanted(f, x), field(p, "body", f), bound_in(p, x).
     let outer: Vec<_> = prog.rules.iter().filter(|r| r.head.rel == "outer").collect();
     let reads: Vec<&str> = outer[0].body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str()).collect();
     assert_eq!(reads, ["wanted", "field", "bound_in"]);
+}
+
+/// The split read from the version (`FileLocal`) is maintained across an edit of a few rules: computed again only
+/// for the relations the edit changed and those reading them, not split whole, and the same as a whole split (a debug
+/// build checks each carried analysis against a fresh one). Dropping the rule of `q` that joins two documents makes
+/// `q`, and `reads_q` with it, file-local.
+#[test]
+fn the_split_of_a_version_is_maintained_across_an_edit() {
+    use crate::code_rule_dsl::logic::program_image::manager::{Cx, Pipeline, ProgramPass, ProgramW};
+    let mut text = String::from(
+        ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.input node\n\
+         .decl q(n: node)\nq(n) :- node(_, n, \"a\", _, _).\nq(n) :- node(_, n, \"a\", _, _), node(_, m, \"b\", _, _), m != n.\n\
+         .decl reads_q(n: node)\nreads_q(n) :- q(n).\n.output reads_q\n",
+    );
+    // Relations the edit does not reach: the cone stays under half of them.
+    for k in 0..6 {
+        text.push_str(&format!(".decl other{k}(n: node)\nother{k}(n) :- node(_, n, \"k{k}\", _, _).\n.output other{k}\n"));
+    }
+    let program = crate::code_rule_dsl::logic::rr::parse(&text).unwrap();
+    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).unwrap().finish().unwrap();
+    let mut p = Pipeline::new("test", v.clone());
+    let before = p.get::<FileLocal>().unwrap();
+    assert!(!before.local.contains("q") && !before.local.contains("reads_q") && before.local.contains("other0"), "{:?}", before.local);
+    struct DropJoin;
+    impl ProgramPass for DropJoin {
+        const NAME: &'static str = "drop the join";
+        fn run(&mut self, _: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+            w.keep(|r| r.body().count() < 3)
+        }
+    }
+    p.program(&mut DropJoin);
+    let after = p.get::<FileLocal>().unwrap();
+    assert!(after.local.contains("q") && after.local.contains("reads_q"), "{:?}", after.local);
+    assert_eq!(p.store().computed("file-local split"), 0, "maintained from the input's split, not computed again");
+    let (out, _) = p.finish().unwrap();
+    let whole = crate::code_rule_dsl::logic::program_image::manager::analysis::<FileLocal>(&crate::code_rule_dsl::logic::program_image::Builder::of_program(&out.program(&Default::default()).unwrap()).unwrap().finish().unwrap().0).unwrap();
+    assert_eq!(*after, *whole, "the maintained split is a whole split's");
+}
+
+/// Rows located on the version (`Locate`) as the tree's `locate` locates them: each export with no location column
+/// derived as `<r>_at(d, …)`, its document a column a rule binds (`named2`), one it leaves unnamed (`named`), or one
+/// through a node it binds (`named3`, by `node`; not a lone input atom, which the cross-file part derives itself), and
+/// read back by the cross-file part. The same program.
+#[test]
+fn rows_are_located_on_a_version_as_on_the_tree() {
+    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+    let text = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl text(n: node, s: symbol)\n.input node, text\n\
+                .decl named(s: symbol)\nnamed(s) :- node(_, n, \"function\", _, _), text(n, s).\n\
+                .decl named2(s: symbol)\nnamed2(s) :- node(d, n, \"class\", _, _), text(n, s), d > 0.\n\
+                .decl named3(s: symbol)\nnamed3(s) :- text(n, s), s != \"x\".\n\
+                .decl all(s: symbol)\nall(s) :- named(s), named2(s), named3(s).\n.output all\n";
+    let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    let mut pass = Locate::default();
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut pass);
+    let (out, _) = p.finish().unwrap();
+    let want = locate(&mut tree);
+    assert_eq!(want, Ok(vec!["named".to_owned(), "named2".to_owned(), "named3".to_owned()]));
+    assert_eq!(pass.result(), want);
+    let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
+}
+
+/// A located rule keeps its branded atoms (decision 0270, a lowered program's atoms): `named`'s `node(_, n,
+/// "function", _, _)`, its kind branded as lowering brands it, is the atom whose unnamed document column the located
+/// rule names, its other terms copied (`passes::t_of`): the kind stays the same branded atom. The same program as the
+/// tree's `locate`.
+#[test]
+fn a_located_rule_keeps_its_branded_atoms() {
+    use crate::code_rule_dsl::logic::front::{Branded, Class, Literal, Term};
+    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+    let text = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl text(n: node, s: symbol)\n.input node, text\n\
+                .decl named(s: symbol)\nnamed(s) :- node(_, n, \"function\", _, _), text(n, s).\n\
+                .decl all(s: symbol)\nall(s) :- named(s).\n.output all\n";
+    let kind = Branded { class: Class::Kind, atom: 7 };
+    let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    for r in &mut tree.rules {
+        for l in &mut r.body {
+            if let Literal::Atom(a) = l {
+                a.args.iter_mut().filter(|t| matches!(t, Term::Str(_))).for_each(|t| *t = Term::Branded(kind));
+            }
+        }
+    }
+    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    assert!(!v.show().contains("\"function\""), "branded: {}", v.show());
+    let mut pass = Locate::default();
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut pass);
+    let (out, _) = p.finish().unwrap();
+    let want = locate(&mut tree);
+    assert_eq!(want, Ok(vec!["named".to_owned()]));
+    assert_eq!(pass.result(), want);
+    let keeps = |l: &Literal| matches!(l, Literal::Atom(a) if a.rel.as_str() == "node" && a.args.iter().any(|t| *t == Term::Branded(kind)));
+    assert!(tree.rules.iter().any(|r| r.head.rel.as_str() == "named_at" && r.body.iter().any(keeps)), "the tree's located rule keeps it");
+    let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
+}
+
+/// An export read by a cross-file rule with a demand is cut on a version as the tree cuts it: the same lines, the
+/// same program (`xd_fl_later` through `dm_demand_0` and the key `xk_text_0`).
+#[test]
+fn exports_are_cut_on_a_version_as_on_the_tree() {
+    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+    let text = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl text(n: node, s: symbol)\n\
+                .decl within(c: node, n: node)\n.input node, text, within\n\
+                .decl fl_later(n: node, c: node)\nfl_later(n, c) :- within(c, n), node(_, c, \"call\", _, _).\n\
+                .decl named(n: node, s: symbol)\nnamed(n, s) :- text(n, s).\n\
+                .decl demand(n: node, m: node)\ndemand(n, m) :- named(n, s), named(m, s), node(_, n, \"function\", _, _), n != m.\n\
+                .decl later(n: node, c: node)\nlater(n, c) :- demand(n, _), fl_later(n, c), text(c, _).\n\
+                later(n, c) :- demand(n, _), fl_later(n, c), node(_, c, \"call\", 1, _).\n.output later\n";
+    let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    let mut pass = DemandExports::default();
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut pass);
+    let (out, _) = p.finish().unwrap();
+    let want = demand_exports(&mut tree);
+    assert!(want[0].starts_with("1 exports cut"), "{want:?}");
+    assert_eq!(pass.lines, want);
+    let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    let shown = out.show();
+    for made in ["xd_fl_later(", "dm_demand_0(", "xk_text_0("] {
+        assert!(shown.contains(made), "{made} in\n{shown}");
+    }
+    assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
+}
+
+/// An export joining two parts at a key its head projects away is handed on as its parts on a version as the tree
+/// hands it on: the same lines, the same program (the parts, their keys, the readers' copies and fresh names).
+#[test]
+fn exports_are_factorized_on_a_version_as_on_the_tree() {
+    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.input node, child, text
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), text(n, s).
+.decl uses(f: node, x: symbol)
+uses(f, x) :- node(_, f, "identifier", _, _), text(f, x), defined(x).
+.decl encl(f: node, p: node)
+encl(f, p) :- node(_, p, "block", _, _), child(p, f, _).
+.decl bound(p: node, x: symbol)
+bound(p, x) :- node(_, p, "block", _, _), child(p, c, _), node(_, c, "assignment", _, _), text(c, x).
+.decl fl_outer(f: node, x: symbol)
+fl_outer(f, x) :- encl(f, p), bound(p, x).
+.decl outer(f: node, x: symbol)
+.output outer
+outer(f, x) :- uses(f, x), fl_outer(f, x).
+.decl outer2(f: node)
+.output outer2
+outer2(f) :- uses(f, _), fl_outer(f, y), y != "self".
+"#;
+    let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    let mut pass = FactorizeExports::new(true);
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut pass);
+    let (out, _) = p.finish().unwrap();
+    let want = factorize_exports(&mut tree);
+    assert_eq!(want.len(), 1, "{want:?}");
+    assert!(want[0].starts_with("fl_outer: handed on as parts"), "{want:?}");
+    assert_eq!(pass.lines, want);
+    let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
+    assert!(!out.rules().any(|r| out.rel_name(r.head().rel()) == "fl_outer"), "the product is gone:\n{}", out.show());
+    // Each part and its key are named from the part's content: `fz<h>_` and `fzk<h>_`, one hash.
+    let shown = out.show();
+    let parts: std::collections::BTreeSet<&str> = shown.split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| w.starts_with("fz") && w.ends_with("_fl_outer")).collect();
+    assert_eq!(parts.len(), 4, "{parts:?}");
+    for p in parts.iter().filter(|p| !p.starts_with("fzk")) {
+        assert!(p["fz".len()..p.len() - "_fl_outer".len()].bytes().all(|b| b.is_ascii_digit()), "{p}");
+        assert!(parts.contains(format!("fzk{}", &p["fz".len()..]).as_str()), "{parts:?}");
+    }
+}
+
+/// The file-local joins of cross-file rules are pushed on a version as the tree pushes them: the same helpers
+/// (`fl<h>_<head>`, named from their content), the same program.
+#[test]
+fn local_joins_are_pushed_on_a_version_as_on_the_tree() {
+    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.decl docof(n: node, d: number)
+.decl line(n: node, l: number)
+.input node, child, text, docof, line
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), text(n, s).
+.decl uses(f: node, x: symbol)
+uses(f, x) :- node(_, f, "identifier", _, _), text(f, x), defined(x).
+.decl encl(f: node, p: node)
+encl(f, p) :- node(_, p, "block", _, _), child(p, f, _).
+.decl bound(p: node, x: symbol)
+bound(p, x) :- node(_, p, "block", _, _), child(p, c, _), node(_, c, "assignment", _, _), text(c, x).
+.decl outer(f: node, x: symbol)
+.output outer
+outer(f, x) :- uses(f, x), encl(f, p), bound(p, x).
+.decl named(f: node, s: symbol)
+.output named
+named(f, s) :- uses(f, _), child(p, f, _), text(p, s), !bound(p, s).
+.decl at(f: node, l: number)
+.output at
+at(f, l) :- uses(f, _), docof(f, d), line(f, l), d > 0.
+"#;
+    let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    let mut pass = PushLocalJoins::default();
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut pass);
+    let (out, _) = p.finish().unwrap();
+    let want = push_local_joins(&mut tree);
+    assert!(!want.is_empty(), "{want:?}");
+    assert_eq!(pass.made, want);
+    let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
+}
+
+/// A helper is named from its content: an edit of one rule renames its own helper, and no other rule's (a counter
+/// renumbered every helper after the edited rule's).
+#[test]
+fn an_edit_renames_only_its_own_rules_helpers() {
+    let program = |c: i64| {
+        format!(
+            r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.input node, child, text
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), text(n, s).
+.decl uses(f: node, x: symbol)
+uses(f, x) :- node(_, f, "identifier", _, _), text(f, x), defined(x).
+.decl first(f: node, s: symbol)
+.output first
+first(f, s) :- uses(f, _), child(p, f, {c}), text(p, s).
+.decl named(f: node, s: symbol)
+.output named
+named(f, s) :- uses(f, _), child(p, f, _), node(_, p, "call", _, _), text(p, s).
+"#
+        )
+    };
+    let made = |c: i64| push_local_joins(&mut crate::code_rule_dsl::logic::rr::parse(&program(c)).unwrap());
+    let (before, after) = (made(1), made(2));
+    let of = |m: &[String], head: &str| m.iter().find(|r| r.ends_with(&format!("_{head}"))).cloned().unwrap_or_else(|| panic!("{head} in {m:?}"));
+    assert_ne!(of(&before, "first"), of(&after, "first"), "the edited rule's helper is renamed");
+    assert_eq!(of(&before, "named"), of(&after, "named"), "another rule's is not");
 }

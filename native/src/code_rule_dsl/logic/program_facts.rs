@@ -1038,6 +1038,10 @@ pub mod tests {
                             want.push(0);
                             want.extend_from_slice(&i.to_le_bytes());
                         }
+                        Value::Branded(b) => {
+                            want.push(2 + b.class as u8);
+                            want.extend_from_slice(&u64::from(b.atom).to_le_bytes());
+                        }
                         Value::Str(x) => {
                             want.push(1);
                             u(&mut want, id(x));

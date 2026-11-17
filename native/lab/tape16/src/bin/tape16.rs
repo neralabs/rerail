@@ -180,7 +180,7 @@ fn cmd_grid_streamed(path: &str, full: bool, axis: &str, check: bool, shards: u6
     let rate: BTreeMap<u8, u64> = train_nodes.iter().map(|(t, n)| (*t, n.div_ceil(TRAIN_NODES).max(1))).collect();
     let mut train = Vec::new();
     capture::stream(p, |f| {
-        if !f.is_test() && capture::path_hash(&f.path, 1) % rate[&f.tag] == 0 {
+        if !f.is_test() && capture::path_hash(&f.path, 1).is_multiple_of(rate[&f.tag]) {
             train.push(f);
         }
         Ok(())
@@ -515,11 +515,11 @@ fn cmd_scan(path: &str) {
                 for p in &test {
                     let t = &p.tree(&corpus);
                     let depth = t.depth();
-                    for i in 0..t.len() {
+                    for (i, &di) in depth.iter().enumerate().take(t.len()) {
                         let g = base + i;
                         let parent = if t.parent[i] == u32::MAX { u32::MAX } else { t.parent[i] + base as u32 };
                         let sub = (g + t.size[i] as usize) as u32;
-                        if d.start[g] != t.nodes[i].start || d.end[g] != t.nodes[i].end || d.depth[g] != depth[i] || d.parent[g] != parent || d.sub[g] != sub {
+                        if d.start[g] != t.nodes[i].start || d.end[g] != t.nodes[i].end || d.depth[g] != di || d.parent[g] != parent || d.sub[g] != sub {
                             ok = false;
                         }
                     }
@@ -578,7 +578,8 @@ fn cmd_columns(path: &str, cut: Cut, lang: Option<&str>) {
         counts: Vec<(u32, u32)>,
         lens: Vec<usize>,
     }
-    let mut per: Vec<(Vec<u8>, std::sync::Arc<(rerail_tape_lab::huff::Table, rerail_tape_lab::huff::Table)>)> = Vec::new();
+    type Tables = std::sync::Arc<(rerail_tape_lab::huff::Table, rerail_tape_lab::huff::Table)>;
+    let mut per: Vec<(Vec<u8>, Tables)> = Vec::new();
     let (mut all, mut all_test, mut all_cpu, mut max_all) = (Vec::<F>::new(), Vec::<&solution::Prepared>::new(), 0u64, 0usize);
     for (li, &tag) in tags.iter().enumerate() {
         let dict = dicts.get(&corpus, tag, &s);
@@ -802,7 +803,7 @@ fn cmd_base(path: &str, dump: Option<&str>) {
         probe[2][1] += t.elapsed().as_nanos();
         // line by node: the rows are dense by node (an index); the columns' line table searched by start.
         let t = std::time::Instant::now();
-        for i in 0..n { got[3][0] += decoded[3][1][i]; }
+        for v in &decoded[3][1][..n] { got[3][0] += v; }
         probe[3][0] += t.elapsed().as_nanos();
         let t = std::time::Instant::now();
         for i in 0..n { got[3][1] += i64::from(cols.line[i]); }
@@ -840,7 +841,7 @@ fn cmd_base(path: &str, dump: Option<&str>) {
             got[0][1] += k;
         }
         probe[0][1] += t.elapsed().as_nanos();
-        for r in 0..5 { probes[r] += n; }
+        for p in &mut probes { *p += n; }
         base_id += n as i64;
     }
     std::hint::black_box(sink);
@@ -962,7 +963,7 @@ fn cmd_textrel(path: &str) {
         let k: &[u8] = b"self";
         let ka = leaves.get(k).copied().unwrap_or(-1);
         let t0 = std::time::Instant::now();
-        let a = tl.chunks_exact(2).filter(|r| r[1] == ka).count();
+        let a = tl.as_chunks::<2>().0.iter().filter(|r| r[1] == ka).count();
         eq_rows += t0.elapsed().as_nanos();
         let t0 = std::time::Instant::now();
         let b = leaf_ids.iter().filter(|&&(i, _)| text(i) == k).count();
@@ -1621,8 +1622,8 @@ fn cmd_prim(path: &str) {
             for i in 1..n {
                 depth[i] = depth[tree.parent[i] as usize] + 1;
             }
-            for i in 0..n {
-                let open = 2 * i - depth[i];
+            for (i, &di) in depth.iter().enumerate() {
+                let open = 2 * i - di;
                 let close = open + 2 * tree.size[i] as usize - 1;
                 let g = (close >> 11) - (open >> 11);
                 if g >= 2 {
@@ -1779,6 +1780,34 @@ fn cmd_gcodes(path: &str) {
     }
 }
 
+/// Decision 0293 §3: each language's format 16 choices, from every capture given, written for the engine to ship.
+#[cfg(feature = "grammar")]
+fn cmd_table(caps: &[&str], out: &str) {
+    let mut files = Vec::new();
+    for c in caps {
+        files.extend(capture::read(std::path::Path::new(c)).unwrap_or_else(|e| die(&e)));
+    }
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    let scratch = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tmp/e25");
+    let out = std::path::Path::new(out);
+    println!("| language | tag | files | nodes | codes | seen | seen, not in the grammar's list (nodes) | widths |");
+    println!("|---|---|---|---|---|---|---|---|");
+    let mut written = Vec::new();
+    for (tag, fs) in &by_tag {
+        match rerail_tape_lab::table::run(*tag, fs, &scratch, out) {
+            Ok(r) => {
+                println!("| {}{} | {tag} | {} | {} | {} | {} | {} ({}) | {:?} |", capture::language(*tag), if r.bound { " (bound)" } else { "" }, r.files, r.nodes, r.codes, r.seen, r.holes, r.hole_nodes, r.widths);
+                written.push(*tag);
+            }
+            Err(e) => println!("| {} | {tag} | {} | | | | {e} | |", capture::language(*tag), fs.len()),
+        }
+    }
+    rerail_tape_lab::table::index(&written, out).unwrap_or_else(|e| die(&e));
+}
+
 /// E26 (t39 step 18): format 16's fixed blocks decoded on Metal (`f16_gpu.rs`).
 #[cfg(target_os = "macos")]
 fn cmd_f16_gpu(path: &str) {
@@ -1898,6 +1927,12 @@ fn main() {
         "f16-gpu" => cmd_f16_gpu(path),
         #[cfg(feature = "grammar")]
         "gcodes" => cmd_gcodes(path),
+        #[cfg(feature = "grammar")]
+        "table" => {
+            let out = args.iter().position(|a| a == "--out").and_then(|i| args.get(i + 1)).map_or("../../crates/tape_format/tables", String::as_str);
+            let caps: Vec<&str> = args[1..].iter().take_while(|a| *a != "--out").map(String::as_str).collect();
+            cmd_table(&caps, out)
+        }
         #[cfg(target_os = "macos")]
         "inplace-gpu" => cmd_inplace_gpu(path),
         #[cfg(target_os = "macos")]

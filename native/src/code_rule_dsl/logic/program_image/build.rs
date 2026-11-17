@@ -151,6 +151,11 @@ impl<'p> Builder<'p> {
         self.removed.len() + self.enc.rules() as usize + self.parts.decls.len() + self.parts.decls_gone.len() + self.rows + self.parts.facts_gone.len()
     }
 
+    /// Whether the edit states nothing: no rule removed or added, no part stated.
+    pub fn is_empty(&self) -> bool {
+        self.removed.is_empty() && self.enc.rules() == 0 && !self.parts_changed
+    }
+
     // -- names --
 
     /// The atom of `text`: the parent's, or a new one.
@@ -188,7 +193,7 @@ impl<'p> Builder<'p> {
         }
     }
     /// The id the next added rule gets.
-    fn next_id(&self) -> RuleId {
+    pub(crate) fn next_id(&self) -> RuleId {
         RuleId(self.enc.rule_base() + self.enc.rules())
     }
     /// Adds `rule`, from the tree.
@@ -207,6 +212,22 @@ impl<'p> Builder<'p> {
         let vars: Vec<u32> = rule.vars().map(|a| a.0).collect();
         self.enc.copy_nodes(from, rule.image(), n.start + 1..n.end, &vars, same);
         self.enc.end_rule(at);
+        id
+    }
+    /// Adds a copy of `rule`, one of a derivation's input's, recording it as the copy's source (§9): a rule a pass
+    /// kept as it was (`manager`'s derivations).
+    pub fn keep(&mut self, from: &Version, rule: RuleRef<'_>) -> RuleId {
+        let id = self.copy(from, rule);
+        if self.parent.is_none() {
+            self.enc.set_from(id.0 - self.enc.rule_base(), rule.id());
+        }
+        id
+    }
+    /// Adds a copy of `rule`, one of `from`'s, recording it as the copy's source in an edit too: a rule a pass kept,
+    /// when a pipeline runs it again over an edit of its input onto its last output (`manager`, 0281 §3).
+    pub(crate) fn keep_into(&mut self, from: &Version, rule: RuleRef<'_>) -> RuleId {
+        let id = self.copy(from, rule);
+        self.enc.set_from(id.0 - self.enc.rule_base(), rule.id());
         id
     }
     fn same(&self, rule: RuleRef<'_>) -> bool {
@@ -613,14 +634,20 @@ impl Version {
     /// the part's own fields, never folded: `inputs` and `outputs`, and the natives, lattices and gates of the relations
     /// `fields` takes (`keep_relation_fields`). It costs its range list and its fields, never a copy of the program.
     pub fn part<S: AsRef<str>>(self: &Arc<Self>, rules: impl Fn(&str) -> bool, inputs: &[S], outputs: &[S], fields: PartFields<'_>) -> Result<Arc<Version>, String> {
-        let mut b = Builder::on(self);
-        b.retain(|r| rules(self.rel_name(r.head().rel())));
-        let (rules, _) = b.finish()?;
-        let mut b = Builder::on(&rules);
-        b.set_inputs(inputs);
-        b.set_outputs(outputs);
-        b.keep_relation_fields(fields.natives, fields.lattice, fields.gates);
-        b.finish_overlay()
+        use super::manager::Pipeline;
+        use super::passes::{PartOf, Retain};
+        let mut p = Pipeline::new("part", self.clone());
+        p.program(&mut Retain(rules)).program(&mut PartOf { inputs, outputs, fields });
+        Ok(p.finish()?.0)
+    }
+
+    /// A part of this version whose rules are those whose id `rules` takes, with its own inputs and outputs (a
+    /// selection from a general form, decision 0298): one overlay, its relations' other fields this version's.
+    pub fn part_rules<S: AsRef<str>, T: AsRef<str>>(self: &Arc<Self>, rules: impl Fn(RuleId) -> bool, inputs: &[S], outputs: &[T]) -> Result<Arc<Version>, String> {
+        use super::manager::Pipeline;
+        let mut p = Pipeline::new("part", self.clone());
+        p.program(&mut super::passes::SelectPart { keep: rules, inputs, outputs });
+        Ok(p.finish()?.0)
     }
 
     /// `to` as an edit of this version: its rules matched by hash, its parts by relation. For a caller that holds
@@ -740,6 +767,11 @@ pub trait Rewrite {
     fn atom_as(&mut self, _a: AtomRef<'_>) -> Option<(String, bool, bool)> {
         None
     }
+    /// The relation (by name) to write the head `a` with; `None` keeps its own (a relation merged into another,
+    /// `preparation::merge`).
+    fn head_as(&mut self, _a: AtomRef<'_>) -> Option<String> {
+        None
+    }
     /// Whether to keep body literal `l`.
     fn keep(&mut self, _l: LitRef<'_>) -> bool {
         true
@@ -786,7 +818,7 @@ impl Walk<'_, '_> {
         }
     }
     fn atom(&mut self, a: AtomRef<'_>, site: Site<'_>, rw: &mut impl Rewrite) {
-        let renamed = if matches!(site, Site::Head(_)) { None } else { rw.atom_as(a) };
+        let renamed = if matches!(site, Site::Head(_)) { rw.head_as(a).map(|rel| (rel, a.neg(), a.gated())) } else { rw.atom_as(a) };
         let at = match renamed {
             Some((rel, neg, gated)) => {
                 let r = self.enc.rel(&rel);

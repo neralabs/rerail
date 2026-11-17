@@ -317,7 +317,7 @@ pub fn run_batch(
     ];
     // The slabs, each bound as it is (no copy); unused bindings repeat the first.
     for (k, &at) in SLAB_BUFFERS.iter().enumerate() {
-        buffers.push((at, &slabs.get(k).unwrap_or(&slabs[0]).buffer.buffer, 0));
+        buffers.push((at, slabs.get(k).unwrap_or(&slabs[0]).buffer(), 0));
     }
     let interpreter;
     let pipeline = match executor {

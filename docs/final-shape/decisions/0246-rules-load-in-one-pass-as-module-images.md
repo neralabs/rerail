@@ -444,8 +444,11 @@ output matches the export run's.
 The 0.94 G of reading the 317 texts was not parsing. Split: the lean parser's tape 0.023 G (46 instructions a
 byte), the text's seed (lex, tape, statements) 0.089 G, writing includes in 0.12 G, and `keep_text` 0.77 G, of
 which 0.6 G was `source_tree::root()` searching for the checkout again on every call (the loader's lookup, a
-canonical path, a walk up the directories: 1.9 M instructions a call), through `phase_lib()`. The root is now found
-once a process; the stretch is 0.40 G, and the run 17.7–18.1 G over four runs against 18.1–18.9 G.
+canonical path, a walk up the directories: 1.9 M instructions a call), through `phase_lib()`. Found once a process
+(a static, on benchmarks-on-integration, 575e5916f), the stretch was 0.40 G, and the run 17.7–18.1 G over four runs
+against 18.1–18.9 G. In the hub the reader of many texts finds the two directories once and hands them on
+(`phase0::Dirs`, to `keep_text` and `module_text`): no process-wide memo, and the root is still looked for where the
+working directory or `RERAIL_SOURCE_ROOT` may have changed.
 
 ## Aligned with django-bugs (decisions 0239, 0240)
 

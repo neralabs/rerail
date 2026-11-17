@@ -35,6 +35,8 @@ Run over the same sample, two orders of one rule make the same rows. Only their 
 
 At a line's check (0206 §2), for a rule of two positive atoms or more:
 
+- **Only on the critical path** (decision 0274, 2026-11-15): a line is trialled only where it was observed on a run's
+  critical path.
 - **Once per process.** A line is trialled at its first check where the sample is worth having, and once more after
   it is flagged slow.
 - **What it may spend.** Each trial may spend `RERAIL_JOIN_TRIAL_SHARE` (10%) of the line's work so far. That is

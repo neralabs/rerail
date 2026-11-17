@@ -93,7 +93,7 @@ pub struct LatticeRef {
 }
 
 /// A version's other fields, read once from its about rows.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct About {
     /// Each request and a relation it produces, by request then in order (`Program::answers`).
     pub answers: Vec<(RelId, RelId)>,

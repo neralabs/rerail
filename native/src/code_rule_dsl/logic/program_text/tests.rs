@@ -67,6 +67,7 @@ fn pack_programs_read_back_from_their_text() {
     let mut files: Vec<_> = std::fs::read_dir(&packs).unwrap().flatten().filter(|d| d.path().is_dir()).flat_map(|d| std::fs::read_dir(d.path()).unwrap().flatten().map(|f| f.path())).filter(|p| p.extension().is_some_and(|e| e == "rr")).collect();
     files.sort();
     let mut read_back = 0;
+    crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(files.iter().step_by(7));
     for path in files.iter().step_by(7) {
         let Ok(prog) = crate::code_rule_dsl::logic::rr::parse_file(path) else { continue };
         let text = print(&prog).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
@@ -136,7 +137,10 @@ fn a_stored_program_is_read_from_its_image() {
     prog.outputs = vec!["p".into()];
     prog.facts.insert("e".into(), vec![[Value::Int(1)].into()]);
     prog.rules.push(Rule { head: atom("p", vec![v("x")]), body: vec![Literal::Atom(atom("e", vec![v("x")])), Literal::Cmp { l: v("x"), op: "<", r: Term::Int(3) }].into() });
-    let (digest, sources) = super::store(&store, &prog).unwrap().expect("kept");
+    let encoded = super::encode(&prog).expect("kept");
+    assert!(encoded.image, "an image");
+    let digest = encoded.digest;
+    let sources = super::store_encoded(&store, &digest, encoded.image, &encoded.bytes).unwrap();
     assert_eq!(sources.len(), 1, "its image alone");
     assert!(store.source_by_alias(super::image_key(&digest)).unwrap().is_some());
     let found = super::texts(&store, &[digest]).unwrap();

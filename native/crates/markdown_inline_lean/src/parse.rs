@@ -375,6 +375,11 @@ struct P<'a> {
 }
 
 pub fn parse(src: &[u8]) -> R<Tape> {
+    parse_into(src, &mut Writer::<Widths>::finish_columns)
+}
+
+/// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
+pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out, Redo>) -> R<Out> {
     if src.is_empty() {
         return Err(Refusal::Parse(0));
     }
@@ -387,7 +392,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
     }
     let mut p = P { src, b, evs: Vec::new(), groups: 0, done: Vec::new(), merges: 0, merged_at: 0 };
     let best = p.run()?;
-    p.write(&best)
+    p.write_into(&best, finish)
 }
 
 impl<'a> P<'a> {
@@ -1261,7 +1266,13 @@ impl<'a> P<'a> {
 
     /// The tape of version `v`'s tree: its events, each node's tokens as the engine's automata
     /// store them.
+    #[cfg(test)]
     fn write(&self, v: &V) -> R<Tape> {
+        self.write_into(v, &mut Writer::<Widths>::finish_columns)
+    }
+
+    /// [`write`](Self::write), the writer finished by `finish`.
+    fn write_into<Out>(&self, v: &V, finish: &mut dyn FnMut(Writer) -> Result<Out, Redo>) -> R<Out> {
         let mut evs = Vec::new();
         let mut at = v.ev;
         while at != 0 {
@@ -1334,8 +1345,8 @@ impl<'a> P<'a> {
             while let Some((n, e, _)) = stack.pop() {
                 w.close(n, e);
             }
-            match w.finish_columns() {
-                Ok(columns) => return Ok(columns),
+            match finish(w) {
+                Ok(done) => return Ok(done),
                 Err(Redo(nw)) => {
                     if nw == widths {
                         return Err(Refusal::TooLarge);

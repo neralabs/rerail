@@ -19,6 +19,7 @@ fn grammar(id: i64) -> Result<Arc<Grammar>, String> {
     Grammar::new(lang)
 }
 
+#[allow(dead_code)]
 fn u32s(document: &Resident, offset: u32, count: usize) -> Vec<u32> {
     document.bytes_at(offset, 4 * count).chunks_exact(4).map(|word| u32::from_le_bytes(word.try_into().unwrap())).collect()
 }
@@ -30,8 +31,6 @@ use std::sync::Mutex;
 static SERIAL: Mutex<()> = Mutex::new(());
 
 #[test]
-
-#[ignore = "open (decision 0128): parses files whose language only the engine registers; to be hosted by rerail-engine"]
 fn stored_tapes_are_admitted_into_slabs_and_read_in_place() {
     if metal::Device::system_default().is_none() {
         return;
@@ -46,7 +45,7 @@ fn stored_tapes_are_admitted_into_slabs_and_read_in_place() {
         // The device reads the stored image in place.
         let (tape, stored) = document(source, lang);
         assert!(resident::layout(&stored).is_ok(), "a stored image is read in place");
-        let bytes = tape.resident_parts().unwrap().0;
+        let bytes = tape.resident_parts(None).unwrap().0;
         let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
         store.put_tape(source_id, i64::from(language::tape_tag(lang).unwrap()), 1, i64::from(TAPE_FORMAT_VERSION), &bytes).unwrap();
         digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));
@@ -58,15 +57,10 @@ fn stored_tapes_are_admitted_into_slabs_and_read_in_place() {
         // The image is the stored bytes, the source the file's.
         assert_eq!(document.image(), bytes.as_slice());
         assert_eq!(document.bytes_at(document.view.source, document.view.source_len as usize), source.as_bytes());
-        for offset in [document.view.code, document.view.size, document.view.base, document.view.off, document.view.tail, document.view.parent, document.view.codes, document.view.source, document.view.lines] {
+        for offset in document.view.columns.into_iter().chain([document.view.codes, document.view.source, document.view.lines]) {
             assert_eq!(offset % 16, 0, "every part at 16 bytes in its slab");
         }
-        let nodes = document.view.nodes as usize;
-        assert_eq!(nodes, tape.transducer_len());
-        let parents = u32s(document, document.view.parent, nodes);
-        for node in 0..nodes as u32 {
-            assert_eq!((parents[node as usize] != u32::MAX).then_some(parents[node as usize]), tape.transducer_parent(node));
-        }
+        assert_eq!(document.view.nodes as usize, tape.transducer_len());
         let lines = u32s(document, document.view.lines, document.view.line_count as usize);
         let expected = std::iter::once(0).chain(source.bytes().enumerate().filter(|(_, byte)| *byte == b'\n').map(|(at, _)| at as u32 + 1)).collect::<Vec<_>>();
         assert_eq!(lines, expected);
@@ -76,7 +70,7 @@ fn stored_tapes_are_admitted_into_slabs_and_read_in_place() {
     assert!(again.iter().zip(&documents).all(|(a, b)| Arc::ptr_eq(a, b)));
     // One table over them: one slab, the documents numbered one after another.
     let table = DocTable::new(again).unwrap();
-    assert_eq!(table.slabs.len(), 1);
+    assert!(table.block.is_some());
     assert_eq!(table.views.iter().map(|view| view.node_base).collect::<Vec<_>>(), {
         let mut base = 0;
         tapes
@@ -115,7 +109,7 @@ fn sources_are_admitted_once_and_read_in_place() {
     for (source, file) in first.iter().zip(&files) {
         assert_eq!(source.offset % 16, 0);
         assert_eq!(source.bytes(), &file[..]);
-        assert!(source.offset + source.len.max(16) <= source.slab.buffer.byte_length());
+        assert!(source.offset + source.len.max(16) <= source.slab.byte_length());
     }
     // The same bytes are one source.
     assert!(Arc::ptr_eq(&first[0], &first[3]));
@@ -127,5 +121,156 @@ fn sources_are_admitted_once_and_read_in_place() {
     assert!(slabs.len() <= MAX_SLABS);
     for (source, &k) in again.iter().zip(&at) {
         assert_eq!(slabs[k as usize].id, source.slab.id);
+    }
+}
+
+/// Decision 0289 §4: a batch reads one block. Documents admitted into two slabs (a source past a slab's size between
+/// them) are copied into one, each read as before; the residency finds them there, so the next batch over them copies
+/// nothing.
+#[test]
+fn a_batch_over_several_slabs_is_gathered_into_one_block() {
+    if metal::Device::system_default().is_none() {
+        return;
+    }
+    let _serial = SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    drop_all();
+    let docs: Vec<crate::code_rule_dsl::tape::TapeDoc> = SOURCES.iter().map(|(source, lang)| document(source, *lang).0).collect();
+    let first = admit_docs(&docs[..1]).unwrap();
+    // A source larger than a slab takes one of its own; the next document goes to another.
+    let big = vec![b'x'; SLAB_BYTES + (1 << 20)];
+    let held_big = admit_sources(&[&big]).unwrap();
+    let rest = admit_docs(&docs[1..]).unwrap();
+    assert_ne!(first[0].slab.id, rest[0].slab.id, "the documents are in two slabs");
+    let documents: Vec<Arc<Resident>> = first.iter().chain(&rest).cloned().collect();
+    let table = DocTable::one_block(documents.clone()).unwrap();
+    let block = table.block.as_ref().expect("one block bound");
+    for (document, gathered) in documents.iter().zip(&table.documents) {
+        assert_eq!(gathered.slab.id, block.id);
+        assert_eq!(gathered.image(), document.image());
+        let v = &gathered.view;
+        assert_eq!(gathered.bytes_at(v.source, v.source_len as usize), document.bytes_at(document.view.source, document.view.source_len as usize));
+        assert_eq!(u32s(gathered, v.lines, v.line_count as usize), u32s(document, document.view.lines, document.view.line_count as usize));
+        // Every part an offset from `at`: the copy moved `at` alone (decision 0289 §4).
+        assert_eq!(ChunkTape { at: 0, ..*v }, ChunkTape { at: 0, ..document.view });
+        assert_eq!(gathered.codes().len(), document.codes().len());
+    }
+    // Asked again, the residency gives the gathered documents: one slab already, nothing copied.
+    let again = admit_docs(&docs).unwrap();
+    assert!(again.iter().all(|document| document.slab.id == block.id));
+    let twice = gather(again.clone()).unwrap();
+    assert!(twice.iter().zip(&again).all(|(a, b)| Arc::ptr_eq(a, b)));
+    drop((table, held_big, twice, again));
+    drop_all();
+}
+
+/// The device reads a resident tape as its document reads it (decision 0293), in every format the run may store:
+/// format 15's columns, format 16's arrays, and a 16z tape laid out as format 16 where it is placed, with no parent
+/// column, child list or index of nodes by code beside them. Every node's code (kind, field, flags, classes), its
+/// parent, next and next named siblings, children, subtree and span. One document of more than a side-list part
+/// (1,024 nodes), with gaps and lengths past a byte, reads the side lists and the parts' starts.
+#[test]
+fn the_device_reads_every_format_as_the_document_does() {
+    use crate::code_rule_dsl::tape::formats::Format;
+    use crate::code_rule_dsl::transducer::packed::metal_backend::{MappedBuffer, pipeline_named};
+    use metal::MTLSize;
+    const TAPE: &str = include_str!("../../transducer/packed/metal_tape.metal");
+    const FIELDS: usize = 12;
+    const KERNEL: &str = r#"
+inline uint tape_global(ChunkTape d,uint i){return i==TAPE_NONE?TAPE_NONE:d.node_base+i;}
+kernel void tape_conformance(device const ChunkTape* docs [[buffer(0)]],device const uint* nodeDoc [[buffer(1)]],device uint* out [[buffer(2)]],device const uchar* s [[buffer(3)]],constant uint& count [[buffer(7)]],uint g [[thread_position_in_grid]]){
+ if(g>=count)return;
+ ChunkTape d=docs[nodeDoc[g]];
+ uint i=g-d.node_base;
+ device uint* o=out+g*12u;
+ o[0]=tape_kind(s,d,i);o[1]=tape_field(s,d,i);o[2]=tape_flags(s,d,i);
+ o[3]=tape_global(d,tape_parent(s,d,i));o[4]=tape_global(d,tape_next(s,d,i));o[5]=tape_global(d,tape_next_named(s,d,i));
+ o[6]=tape_child_count(s,d,i);o[7]=d.node_base+i+tape_size(s,d,i);o[8]=tape_start(s,d,i);o[9]=tape_end(s,d,i);
+ o[10]=tape_global(d,tape_first_child(s,d,i));o[11]=tape_code(s,d,i).classCount;
+}
+"#;
+    let Some(device) = metal::Device::system_default() else { return };
+    let _serial = SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let long = format!("# {}\n", "x".repeat(300))
+        + &(0..300).map(|i| format!("v{i} = [{i}, \"{}\", f(a, b=c)]  # {}\n", "s".repeat(i % 40), "c".repeat(260 * usize::from(i % 50 == 0)))).collect::<String>();
+    let mut sources = SOURCES.iter().map(|&(source, lang)| (source.to_owned(), lang)).collect::<Vec<_>>();
+    sources.push((long, GrammarDialect::Python));
+    for format in [Format::F15, Format::F16, Format::F16Z] {
+        let docs = sources
+            .iter()
+            .map(|(source, lang)| {
+                let native = ast_grep_core::tree_sitter::StrDoc::new(source, *lang);
+                let grammar = Grammar::new(*lang).unwrap();
+                // Made as a run of `format` makes it, whatever the process's run stores.
+                crate::code_rule_dsl::tape::formats::as_run(format, || {
+                    let image = crate::code_rule_dsl::tape::TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary.in_format(format);
+                    crate::code_rule_dsl::tape::TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false).unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        assert!(docs.last().unwrap().transducer_len() > 2 * 1024, "a document of several parts");
+        // Stored as the run stores them, and admitted from the store: each read from its frames.
+        let path = temp();
+        let store = ContentStore::open(&path).unwrap();
+        let mut digests = Vec::new();
+        for ((source, lang), doc) in sources.iter().zip(&docs) {
+            let bytes = doc.resident_parts(None).unwrap().0;
+            let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
+            store.put_tape(source_id, i64::from(language::tape_tag(*lang).unwrap()), 1, i64::from(format.store_version()), &bytes).unwrap();
+            digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));
+        }
+        let table = DocTable::one_block(admit(&store, &digests, &grammar).unwrap()).unwrap();
+        let expected_format = if format == Format::F15 { 15 } else { 16 };
+        assert!(table.views.iter().all(|view| view.format == expected_format), "{format:?} placed as format {expected_format}");
+        let node_doc = table.views.iter().enumerate().flat_map(|(doc, view)| std::iter::repeat_n(doc as u32, view.nodes as usize)).collect::<Vec<_>>();
+        let views = MappedBuffer::from_slice::<ChunkTape>(&device, &table.views).unwrap();
+        let node_doc = MappedBuffer::from_slice(&device, &node_doc).unwrap();
+        let out = MappedBuffer::zeroed::<u32>(&device, table.nodes * FIELDS).unwrap();
+        let pipeline = pipeline_named(&format!("#include <metal_stdlib>\nusing namespace metal;\n{}{TAPE}{KERNEL}", msl()), "tape_conformance").unwrap();
+        let queue = device.new_command_queue();
+        let command = queue.new_command_buffer();
+        let encoder = command.new_compute_command_encoder();
+        encoder.set_compute_pipeline_state(&pipeline);
+        encoder.set_buffer(0, Some(&views.buffer), 0);
+        encoder.set_buffer(1, Some(&node_doc.buffer), 0);
+        encoder.set_buffer(2, Some(&out.buffer), 0);
+        // The batch's chunk block, as the kernels bind it (decision 0289 §4).
+        encoder.set_buffer(3, Some(table.block.as_ref().expect("one block").buffer()), 0);
+        let count = table.nodes as u32;
+        encoder.set_bytes(7, 4, std::ptr::from_ref(&count).cast());
+        encoder.dispatch_threads(MTLSize::new(table.nodes as u64, 1, 1), MTLSize::new(64, 1, 1));
+        encoder.end_encoding();
+        command.commit();
+        command.wait_until_completed();
+        // SAFETY: the kernel wrote `nodes * FIELDS` u32s, and the command finished.
+        let read = unsafe { std::slice::from_raw_parts(out.buffer.contents().cast::<u32>(), table.nodes * FIELDS) };
+        for (doc, (tape, view)) in docs.iter().zip(&table.views).enumerate() {
+            let global = |node: Option<u32>| node.map_or(u32::MAX, |node| node + view.node_base);
+            let mut classes = vec![0u32; tape.transducer_len()];
+            for (node, _) in tape.transducer_supertypes() {
+                classes[node as usize] += 1;
+            }
+            for node in 0..tape.transducer_len() as u32 {
+                let span = tape.transducer_span(node);
+                let expected = [
+                    u32::from(tape.transducer_kind(node)),
+                    u32::from(tape.transducer_field(node)),
+                    u32::from(tape.transducer_flags(node)),
+                    global(tape.transducer_parent(node)),
+                    global(tape.transducer_next_sibling(node, false)),
+                    global(tape.transducer_next_sibling(node, true)),
+                    tape.transducer_children(node).count() as u32,
+                    tape.transducer_descendants(node).end + view.node_base,
+                    span.start as u32,
+                    span.end as u32,
+                    global(tape.transducer_children(node).next()),
+                    classes[node as usize],
+                ];
+                let g = (view.node_base + node) as usize;
+                assert_eq!(&read[g * FIELDS..][..FIELDS], &expected, "{format:?}: document {doc} node {node}");
+            }
+        }
+        drop(table);
+        drop(store);
+        let _ = std::fs::remove_file(path);
     }
 }

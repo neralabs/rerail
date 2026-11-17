@@ -3132,32 +3132,29 @@ impl P<'_> {
         if ws.iter().any(|&(_, k)| matches!(k, K::KeywordSchema | K::KeywordNames | K::KeywordTime | K::KeywordRole | K::KeywordTransaction | K::KeywordConstraints | K::KeywordAuthorization | K::KeywordCharacteristics)) {
             return self.refuse();
         }
-        loop {
-            if self.object_reference(Ctx::Sure(&[&[K::KeywordSchema, K::KeywordNames, K::KeywordTime, K::KeywordRole, K::KeywordTransaction, K::KeywordSession, K::KeywordLocal, K::KeywordConstraints]]), 0)?.is_none() {
+        if self.object_reference(Ctx::Sure(&[&[K::KeywordSchema, K::KeywordNames, K::KeywordTime, K::KeywordRole, K::KeywordTransaction, K::KeywordSession, K::KeywordLocal, K::KeywordConstraints]]), 0)?.is_none() {
+            return self.refuse();
+        }
+        if self.kw(K::KeywordTo)?.is_none() {
+            if self.is(K::KeywordFrom)? {
                 return self.refuse();
             }
-            if self.kw(K::KeywordTo)?.is_none() {
-                if self.is(K::KeywordFrom)? {
-                    return self.refuse();
-                }
-                self.expect_punct(b"=", K::TEq)?;
+            self.expect_punct(b"=", K::TEq)?;
+        }
+        loop {
+            self.set_value()?;
+            if self.punct(b",", K::TComma)?.is_none() {
+                break;
             }
-            loop {
-                self.set_value()?;
-                if self.punct(b",", K::TComma)?.is_none() {
-                    break;
-                }
-                // `,` then the next name and its `to`/`=`, or the next value.
-                let save = (self.at, self.last_end, self.look);
-                let t = self.peek()?;
-                self.take(t);
-                let assignment = self.is(K::KeywordTo)? || self.at_punct(b"=")? || self.at_punct(b".")?;
-                (self.at, self.last_end, self.look) = save;
-                if assignment {
-                    return self.refuse();
-                }
+            // `,` then the next name and its `to`/`=`, or the next value.
+            let save = (self.at, self.last_end, self.look);
+            let t = self.peek()?;
+            self.take(t);
+            let assignment = self.is(K::KeywordTo)? || self.at_punct(b"=")? || self.at_punct(b".")?;
+            (self.at, self.last_end, self.look) = save;
+            if assignment {
+                return self.refuse();
             }
-            break;
         }
         self.close(m);
         Ok(())

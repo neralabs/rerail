@@ -159,8 +159,13 @@ pub(super) fn builtin_dir() -> PathBuf {
 
 /// The file of phase program `name` (`source`).
 fn locate(name: &str, dir: Option<&Path>) -> Option<PathBuf> {
+    candidates(name, dir).into_iter().find(|p| p.exists())
+}
+
+/// Where a phase program `name` is looked for, in order: `dir`, then the engine's own programs.
+fn candidates(name: &str, dir: Option<&Path>) -> Vec<PathBuf> {
     let builtin = builtin_dir();
-    dir.into_iter().chain([builtin.as_path()]).map(|d| d.join(format!("{name}.rr"))).find(|p| p.exists())
+    dir.into_iter().chain([builtin.as_path()]).map(|d| d.join(format!("{name}.rr"))).collect()
 }
 
 /// The files of every phase program `programs` may read, and of the phases those may read: each phase's `.rr` and
@@ -172,8 +177,11 @@ fn locate(name: &str, dir: Option<&Path>) -> Option<PathBuf> {
 /// a superset of what `wanted` finds (it also counts one a rule of the reader makes), so the record names as many
 /// files or more, and the record and its check list them the same way.
 /// `read`: the programs' texts, read once by the run (`Texts::names`); a phase program found here is read here.
-pub(super) fn phase_files(read: &[crate::code_rule_dsl::logic::rr::TextNames], dir: Option<&Path>) -> Result<Vec<PathBuf>> {
-    let (mut seen, mut out) = (BTreeSet::new(), Vec::new());
+/// With the places looked in before each one found (or every place, for a phase found nowhere): a phase program
+/// appearing there is another run (decision 0275: the whole-run cutoff checks them as files that must still be
+/// missing).
+pub(super) fn phase_files(read: &[crate::code_rule_dsl::logic::rr::TextNames], dir: Option<&Path>) -> Result<(Vec<PathBuf>, Vec<PathBuf>)> {
+    let (mut seen, mut out, mut missed) = (BTreeSet::new(), Vec::new(), Vec::new());
     let mut todo: Vec<(Vec<String>, Option<String>)> = read.iter().map(|t| (t.names.clone(), t.phase.clone())).collect();
     while let Some((names, own)) = todo.pop() {
         let phases: BTreeSet<&str> = names
@@ -183,10 +191,13 @@ pub(super) fn phase_files(read: &[crate::code_rule_dsl::logic::rr::TextNames], d
             .map(|(phase, _)| phase)
             .collect();
         for name in phases {
-            let Some(path) = locate(name, dir) else { continue };
             if !seen.insert(name.to_owned()) {
                 continue;
             }
+            let looked = candidates(name, dir);
+            let found = looked.iter().position(|p| p.exists());
+            missed.extend(looked[..found.unwrap_or(looked.len())].iter().cloned());
+            let Some(path) = found.map(|k| looked[k].clone()) else { continue };
             let raw = std::fs::read_to_string(&path).map_err(|e| Error::Plan(format!("{}: {e}", path.display())))?;
             out.extend(crate::code_rule_dsl::logic::rr::included_files(&raw)?);
             out.push(path);
@@ -195,7 +206,7 @@ pub(super) fn phase_files(read: &[crate::code_rule_dsl::logic::rr::TextNames], d
             }
         }
     }
-    Ok(out)
+    Ok((out, missed))
 }
 
 /// The relations `prog` reads from earlier phases, by phase: `(the reader's relation, the export)`. A relation named
@@ -265,8 +276,8 @@ impl Drop for Batch {
     }
 }
 
-/// While one is held, the reads made outside a run (a rule file's tape, `rr::stored_statements`; a combined program,
-/// `combine_stored`) share one handle on the tape cache (`reading_store`): each had opened the store and closed it,
+/// While one is held, the reads made outside a run (a combined program, `combine_stored`; a rule file's tape was one
+/// too until the lean parser read it, decision 0275) share one handle on the tape cache (`reading_store`): each had opened the store and closed it,
 /// and the close of the store's last handle closes every thread's connection to it (`ContentStore`'s drop). A warm
 /// batch spent 514 of 7,850 samples so, a file at a time. A batch holds one; so does a program's reading.
 pub struct Reading(());
@@ -457,6 +468,8 @@ pub(super) fn sources_path() -> PathBuf {
 /// the later phases' documents.
 pub(super) fn sources(
     files: &[(String, String, String, String)],
+    // The texts the run read for `files`' digests, which this phase's builder borrows (decision 0300).
+    texts: &super::texts::Sources,
     label: &str,
     root: &Path,
     scratch: &Path,
@@ -511,7 +524,7 @@ pub(super) fn sources(
     let out = scratch.join(format!("phase-{NAME}"));
     let report = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: run"));
-        super::run_read(&handed, root, &out, modes, binding, chunk_nodes, typing, &options)?
+        super::run_read_handing(&handed, Some(texts), root, &out, modes, binding, chunk_nodes, typing, &options)?
     };
     let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: its exports read")); read_exports(NAME, &program, &declared, &out)? };
     let text = |v: &Value| match v {

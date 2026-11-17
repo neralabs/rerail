@@ -282,8 +282,10 @@ impl Drop for MetalWorkspaceLease {
 
 const BATCH_ENTRY: &str = include_str!("metal_batch_runtime.metal");
 /// The interpreter over resident tapes (decision 0032): `run_batch` reading the batch's documents
-/// in the slabs through the tape view, as the label passes bind it.
-const RESIDENT_PREFIX: &str = concat!("#define RERAIL_RESIDENT 1\n#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape.metal"));
+/// in the batch's chunk block through the tape view, as the label passes bind it.
+static RESIDENT_PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    format!("#define RERAIL_RESIDENT 1\n#include <metal_stdlib>\nusing namespace metal;\n{}{}", crate::code_rule_dsl::residency::slabs::msl(), include_str!("metal_tape.metal"))
+});
 
 #[derive(Clone, Eq, PartialEq)]
 pub(super) struct ProgramBufferKey {
@@ -593,7 +595,7 @@ pub(super) fn compile_resident_interpreter_cached() -> Result<Engine, Error> {
     if let Some(engine) = &*cached {
         return Ok(engine.clone());
     }
-    let source = format!("{RESIDENT_PREFIX}{}", kernel_source(INTERPRETER_FETCH, None, "", "", ""));
+    let source = format!("{}{}", *RESIDENT_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", ""));
     let engine = Engine::Interpreter { pipeline: pipeline_named(&source, "run_batch")?, buffers: Arc::new(Mutex::new(None)) };
     *cached = Some(engine.clone());
     Ok(engine)
@@ -625,7 +627,7 @@ pub(in crate::code_rule_dsl) fn compile_sweep_cached() -> Result<ComputePipeline
         return Ok(pipeline.clone());
     }
     // The label passes' sweep, over resident tapes as their interpreter.
-    let source = format!("{RESIDENT_PREFIX}{}", kernel_source(INTERPRETER_FETCH, None, "", "", ""));
+    let source = format!("{}{}", *RESIDENT_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", ""));
     let edit = |source: String, from: &str, to: &str| {
         assert_eq!(source.matches(from).count(), 1, "the runtime has one {from}");
         source.replacen(from, to, 1)

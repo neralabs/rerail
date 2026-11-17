@@ -6,8 +6,8 @@ The warm check only watches a run: it never changes how the run computes, or wha
 
 - Who reads the mode. Only the places in READERS may call `warm()` or `warm_mode()`, name `Warm::`, or read the
   `RERAIL_WARM` variable, each as many times as it says. A comment naming the mode is not a read.
-- What a warm run may still write. `profile::WARM_WRITES_ALLOWED` must be ALLOWED below, entry for entry: locks
-  and timestamps, approved by the user. Changing either needs the user's approval; the two copies make a change
+- What a warm run may still write. `profile::WARM_WRITES_ALLOWED` must be ALLOWED below, entry for entry: locks,
+  timestamps and the cost statistics, approved by the user. Changing either needs the user's approval; the two copies make a change
   to one alone fail here.
 
 Usage: check-warm-mode.py [--all]   (the flag is accepted for the commit hook, which passes it; the tree is read)
@@ -25,7 +25,8 @@ READERS = {
     "native/src/code_rule_dsl/logic/plan/corpus/reuse.rs": (1, "`NOT_OUTPUTS`: the mode is left out of the cutoff's key"),
 }
 
-# The writes a warm run may make (`profile::WARM_WRITES_ALLOWED`): approved by the user (decision 0211).
+# The writes a warm run may make (`profile::WARM_WRITES_ALLOWED`): approved by the user (decision 0211; the cost
+# statistics 2026-11-15).
 ALLOWED = [
     "the run's hold on its plans",
     "the run's hold released",
@@ -33,11 +34,13 @@ ALLOWED = [
     "the combined program's pins released",
     "the run's manifest",
     "the journal's aged cursor",
+    "the cost statistics",
 ]
 
 READ = re.compile(r"(?<![A-Za-z0-9_.])(?:profile::)?warm(?:_mode)?\(\)|\bWarm::|\"RERAIL_WARM\"")
-# Functions of the same name that are not the mode: GPU pipelines warmed before a timed run.
-NOT_THE_MODE = re.compile(r"\bfn warm\(\)|(?:matcher_metal|metal_label_passes|label_passes)::warm\(\)")
+# Not the mode: functions of the same name (GPU pipelines warmed before a timed run), and a test setting the variable
+# for a child process it runs (`.env("RERAIL_WARM", …)`), which reads nothing in this one.
+NOT_THE_MODE = re.compile(r"\bfn warm\(\)|(?:matcher_metal|metal_label_passes|label_passes)::warm\(\)|\.env\(\s*\"RERAIL_WARM\"")
 
 
 def git(*args):

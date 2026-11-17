@@ -52,6 +52,11 @@ pub(in crate::code_rule_dsl) fn part_space(root: &Path, part: &str) -> [u8; 32] 
     h.finalize().into()
 }
 
+/// `root`'s cross part's space (`part_space(root, "cross")`).
+pub(in crate::code_rule_dsl) fn cross_space(root: &Path) -> [u8; 32] {
+    part_space(root, "cross")
+}
+
 /// Metadata and payload may be admitted separately. Accept only the exact metadata snapshot used by the cut.
 pub(super) fn admission_matches<'a, K: Eq + std::hash::Hash>(
     keys: &[K],
@@ -281,13 +286,14 @@ fn cones(prog: &crate::code_rule_dsl::logic::plan::body::Placed, sccs: &[std::co
     Ok(out)
 }
 
-/// What the store keeps of program `prog` (of `key`, `retain::key`) at `root`, as a `Retained`; `inputs` the run's,
+/// What the store keeps of program `prog` (of `key` and `binds`, `retain::keys`) at `root`, as a `Retained`; `inputs` the run's,
 /// whose columns an input's kept rows are read under; `sccs` its strata, computed once by the caller.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::code_rule_dsl) fn load(
     store: &ContentStore,
     root: &Path,
     key: [u8; 32],
+    binds: [u8; 32],
     prog: &crate::code_rule_dsl::logic::plan::body::Placed,
     domains: &super::lower::Domains,
     sccs: &[std::collections::BTreeSet<String>],
@@ -307,12 +313,13 @@ pub(in crate::code_rule_dsl) fn load(
         .map(|(name, ident)| (name.clone(), (FrameRel { name, ident }, None)))
         .collect();
     // An input's rows are its program's: programs over the same root bind inputs of the same name to other rows
-    // (P3's cross part and its loading cone, a phase), so its frame is under the program's key too.
+    // (P3's cross part and its loading cone, a phase), so its frame is under the program's key too: the key of
+    // the part's program alone (`binds`, `retain::keys`), which an edit of a file-local rule leaves.
     for (rel, _) in inputs {
         let leaf = leaves.identity(rel).ok_or_else(|| super::Error::Plan("the program has no image: its leaves are read from its version".into()))?;
         let mut h = Sha256::new();
         h.update(b"rerail.kept-input/v1\0");
-        h.update(key);
+        h.update(binds);
         h.update(leaf);
         frames.insert(rel.clone(), (FrameRel { name: rel.clone(), ident: h.finalize().into() }, None));
     }
@@ -433,10 +440,12 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         puts.push(FramePut { rel: f.clone(), part: 0, digest, reads, rows: FrameRows { types, rows, n } });
     }
     crate::code_rule_dsl::logic::profile::decision("cross-file part kept across processes (t32 4.1)", || format!("{} frames, {written} rows, written to the store", puts.len()));
-    // Nothing changed: nothing written (decision 0211).
+    let used: Vec<FrameRel> = part.frames.into_values().map(|(f, _)| f).collect();
+    // Nothing changed: nothing written (decision 0211). A program that reuses an earlier one's frames (an edit,
+    // decision 0302) holds them, once.
     if puts.is_empty() {
+        store.hold_frames(part.space, used, super::run_token(), part.key);
         return;
     }
-    let used: Vec<FrameRel> = part.frames.into_values().map(|(f, _)| f).collect();
     store.queue_frames(part.space, puts, Vec::new(), Some((used, super::run_token(), part.key)));
 }

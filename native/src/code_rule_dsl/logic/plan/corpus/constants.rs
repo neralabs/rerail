@@ -135,12 +135,13 @@ pub(super) fn fold(
     let key = key(programs, added, root, options, &wanted);
     let was_kept = kept(&key, root, prog)?;
     let reused = was_kept.is_some();
-    // The plans the constants' run used, for the outer run's record (`Report::plans`): none when they were kept.
+    // The plans the constants' run used, for the outer run's record (`Report::plans`): kept with the constants, so a
+    // run that reuses them names the plans the run that derived them did, and records the same manifest (0252).
     let ((image, consulted), plans) = match was_kept {
-        Some(kept) => (kept, Vec::new()),
+        Some(kept) => kept,
         None => {
             let (derived, plans) = derive(programs, read, root, scratch, modes, binding, chunk_nodes, typing, options, &wanted)?;
-            keep(&key, &derived.0, &derived.1)?;
+            keep(&key, &derived.0, &derived.1, &plans)?;
             (derived, plans)
         }
     };
@@ -196,7 +197,7 @@ fn derive(
     own[OWN] = serde_json::Value::Array(wanted.iter().map(|r| serde_json::Value::String(r.clone())).collect());
     own["inputFiles"] = serde_json::json!([]);
     let out = scratch.join("constants");
-    let report: Report = super::run_handed(programs, read, root, None, &out, modes, binding, chunk_nodes, typing, &own)?;
+    let report: Report = super::run_handed(programs, read, None, root, None, &out, modes, binding, chunk_nodes, typing, &own)?;
     let copies: Vec<String> = wanted.iter().map(|rel| copy(rel)).collect();
     let image = crate::code_rule_dsl::logic::plan::output::base_of(&out, copies.iter().map(String::as_str)).map_err(|e| super::super::Error::Plan(format!("the run's constants: {e}")))?;
     let _ = std::fs::remove_dir_all(&out);
@@ -207,8 +208,9 @@ fn derive(
 fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &serde_json::Value, wanted: &BTreeSet<String>) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
-    // v4: the rows the run adds (its settings, decision 0249) are keyed as rows, the texts as the files'.
-    h.update(b"rerail.constants/v4\0");
+    // v5: the rows the run adds (its settings, decision 0249) are keyed as rows, the texts as the files'; the record
+    // names its run's plans (decision 0252).
+    h.update(b"rerail.constants/v5\0");
     for p in programs {
         h.update(p.as_bytes());
         h.update([0]);
@@ -237,18 +239,24 @@ fn record_key(key: &str) -> String {
     format!("constants:{key}")
 }
 
-/// The constants kept under `key`, when what their run consulted is as it was.
-fn kept(key: &str, root: &Path, prog: &Program) -> Result<Option<Derived>> {
+/// The constants kept under `key`, when what their run consulted is as it was, with the plans their run used: the
+/// record's `plan` lines, for collection (`observe::collect` drops the record once none is live) and for the outer
+/// run's manifest.
+fn kept(key: &str, root: &Path, prog: &Program) -> Result<Option<(Derived, Vec<[u8; 32]>)>> {
     let Some((consulted, rows)) = super::observe(|o| o.run_record(&record_key(key))) else { return Ok(None) };
     let Some(consulted) = super::reuse::decode_consulted(&consulted) else { return Ok(None) };
+    let (plans, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == "plan");
+    let plans: Vec<[u8; 32]> = plans.iter().filter_map(|c| crate::content_store::observe::unhex(&c.2)).collect();
     if !super::world::World::new(root, prog).still(&consulted) {
         return Ok(None);
     }
-    Ok(Some((rows, consulted)))
+    Ok(Some(((rows, consulted), plans)))
 }
 
-fn keep(key: &str, image: &[u8], consulted: &[(String, String, String)]) -> Result<()> {
-    let consulted = super::reuse::encode_consulted(consulted);
+fn keep(key: &str, image: &[u8], consulted: &[(String, String, String)], plans: &[[u8; 32]]) -> Result<()> {
+    let mut record = consulted.to_vec();
+    record.extend(plans.iter().map(|p| ("plan".to_owned(), String::new(), crate::content_store::observe::hex(p))));
+    let consulted = super::reuse::encode_consulted(&record);
     super::observe(|o| o.put_run_record(&record_key(key), &consulted, image));
     Ok(())
 }

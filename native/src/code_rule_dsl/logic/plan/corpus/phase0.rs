@@ -209,35 +209,53 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
             eprintln!("rerail: phase 0 derives {} seeds (images {})", wanted.len(), if Images::here().is_some() { "on" } else { "off" });
         }
         let whole = derive(&wanted).map_err(|e| Error::Syntax(format!("phase 0: {e}")))?;
-        let images = Images::here();
-        let mut map = kept.lock().expect("phase 0's graphs");
-        for (k, seed) in wanted.iter().enumerate() {
-            let g = whole.of(seed, k);
-            if let Some(images) = &images {
-                crate::code_rule_dsl::logic::rr::keep_graph_image(images.store.as_deref(), images.key(seed), images.encode(&g));
+        let made: HashMap<Seed, Arc<Graph>> = wanted.iter().enumerate().map(|(k, seed)| (seed.clone(), Arc::new(whole.of(seed, k)))).collect();
+        // Kept as images (decision 0246) whichever process derived them: an image is the engine build's, not the
+        // process's.
+        if let Some(images) = Images::here() {
+            for (seed, g) in &made {
+                crate::code_rule_dsl::logic::rr::keep_graph_image(images.store.as_deref(), images.key(seed), images.encode(g));
             }
-            map.insert(seed.clone(), Arc::new(g));
+        }
+        // A test store's template is filled in whichever test process asks first (`test_store`): its graphs are not
+        // kept for the process, whose own runs then derived none, and prepared one program fewer than a process that
+        // found the template made (the identity test's first child after a rebuild).
+        #[cfg(any(test, feature = "test-hooks"))]
+        let keep = !super::test_store::filling();
+        #[cfg(not(any(test, feature = "test-hooks")))]
+        let keep = true;
+        if keep {
+            let mut map = kept.lock().expect("phase 0's graphs");
+            map.extend(made.iter().map(|(s, g)| (s.clone(), Arc::clone(g))));
         }
         for (g, seed) in found.iter_mut().zip(seeds) {
             if g.is_none() {
-                *g = map.get(seed).cloned();
+                *g = made.get(seed).cloned();
             }
         }
     }
     Ok(found.into_iter().map(|g| g.expect("each seed's graph")).collect())
 }
 
+/// The include graphs of program files `paths`, derived by one run of `bootstrap.rr` and kept: files read one by one
+/// after it find theirs (`rr::read_file`, `parse_file`), as a pack's programs do in a run (`settings::program_texts`).
+/// Read one by one with none kept, each file is a run of its own: a test over a pack's programs was hundreds of corpus
+/// runs, most of its time spent waiting on the pool. A file that does not canonicalize, or a run that fails, is left
+/// to its read, which derives its graph again and reports the error.
+pub fn keep_files<'p>(paths: impl IntoIterator<Item = &'p std::path::PathBuf>) {
+    let seeds: Vec<Seed> = paths.into_iter().filter_map(|p| p.canonicalize().ok()).map(Seed::File).collect();
+    let _ = graphs(&seeds);
+}
+
 /// Keeps the graph of a text made from a program file (`tools::program_texts`), taken from the file's graph rather
 /// than from another run of `bootstrap.rr`: each name the text includes is a library module the file's graph holds,
 /// found as `bootstrap.rr` finds a text's names (the library alone). The graph is the one that run would give, so
 /// its digest is too. False when a name is not such a module (the text then gets its own run when asked).
-pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph) -> bool {
+pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph, dirs: &Dirs) -> bool {
     let Seed::Text { t_shape, includes, phases } = seed else {
         return false;
     };
-    let Ok(lib) = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()) else {
-        return false;
-    };
+    let lib = &dirs.lib;
     let mut asks: Vec<(i64, String, PathBuf)> = Vec::with_capacity(includes.len() + 1);
     let names = includes.iter().cloned().chain((!t_shape).then(|| (-1, "core.rr".to_owned())));
     for (at, name) in names {
@@ -251,9 +269,7 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph) -> bool {
     asks.sort();
     // The phases the text names are the file's (its declarations are the text's): their candidates, as
     // `bootstrap.rr` makes them, each one the file's graph holds an answer for.
-    let Some(phase_lib) = phase_lib() else {
-        return false;
-    };
+    let phase_lib = &dirs.phases;
     let mut named: Vec<(String, PathBuf)> = Vec::with_capacity(phases.len());
     for p in phases {
         let path = PathBuf::from(format!("{}/{p}.rr", phase_lib.display()));
@@ -270,6 +286,19 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph) -> bool {
     let graph = whole.of(seed, 0);
     KEPT.get_or_init(Default::default).lock().expect("phase 0's graphs").insert(seed.clone(), Arc::new(graph));
     true
+}
+
+/// The rule library and the engine's phase programs' directory, canonical, as `bootstrap.rr` is handed them: found
+/// once by a caller that keeps many texts (`keep_text`).
+pub(in crate::code_rule_dsl) struct Dirs {
+    pub(in crate::code_rule_dsl) lib: PathBuf,
+    pub(in crate::code_rule_dsl) phases: PathBuf,
+}
+
+impl Dirs {
+    pub(in crate::code_rule_dsl) fn here() -> Option<Dirs> {
+        Some(Dirs { lib: std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok()?, phases: phase_lib()? })
+    }
 }
 
 /// The engine's phase programs' directory (`phases::locate`'s builtin), canonical, as `bootstrap.rr` is handed it.
@@ -537,6 +566,10 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     }
     // No corpus: an empty root, and the library a root the loader may read (`env`).
     // Canonical (`/private/var/...`, not `/var/...` on macOS), as the run's world names its roots: one journal root.
+    // Both are rerail's own (decision 0284), as the family `rerail-phase-0-…`: answered, never kept, and nothing above
+    // them watched for them. Canonicalizing the root had watched the whole temporary directory, whose news (other
+    // programs' files, the last process's outputs) the run after a cold one stored.
+    crate::content_store::observe::own(&std::env::temp_dir().join("rerail-phase-0"));
     let root = std::env::temp_dir().join("rerail-phase-0-root");
     std::fs::create_dir_all(&root).map_err(|e| PlanError::Plan(format!("{}: {e}", root.display())))?;
     let root = std::fs::canonicalize(&root).unwrap_or(root);

@@ -42,6 +42,9 @@ pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> 
     let graphs = phase0::graphs(&seeds).map_err(|e| e.to_string())?;
     crate::code_rule_dsl::logic::profile::timeline_mark("the program files' graphs");
     let mut graphs = graphs.into_iter();
+    // The library and the phase programs' directories, found once for every text: each was a search for the checkout
+    // (`source_tree::root`, 1.9 M instructions), 0.6 G of a 317-file pack's texts when asked per text.
+    let dirs = phase0::Dirs::here();
     let mut out = Vec::with_capacity(texts.len());
     for ((path, text), j) in paths.iter().zip(texts).zip(json) {
         if j || !includes(&text) {
@@ -52,11 +55,12 @@ pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> 
         // The program as modules (decision 0089): the library files it includes stay `#include`s, read once by a
         // run however many of its programs include them; a file beside it is written in. A policy reads `core.rr`.
         let canonical = path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?;
-        let own = module_text(&canonical, &text, &graph, &mut Vec::new(), &read)?;
+        let library = dirs.as_ref().map(|d| d.lib.as_path()).ok_or_else(|| "the rule library does not canonicalize".to_owned())?;
+        let own = module_text(&canonical, &text, &graph, library, &mut Vec::new(), &read)?;
         let own = if policy(&text) && !includes(&own) { format!("#include \"core.rr\"\n{own}") } else { own };
         // The text's own graph is the file's, cut to what the text includes: kept, so no second run derives it.
-        if let Ok(Some(seed)) = crate::code_rule_dsl::logic::rr::text_seed(&own) {
-            phase0::keep_text(&seed, &graph);
+        if let (Ok(Some(seed)), Some(dirs)) = (crate::code_rule_dsl::logic::rr::text_seed(&own), &dirs) {
+            phase0::keep_text(&seed, &graph, dirs);
         }
         out.push(own);
     }
@@ -98,10 +102,10 @@ fn module_text(
     path: &std::path::Path,
     text: &str,
     graph: &crate::code_rule_dsl::logic::plan::corpus::phase0::Graph,
+    library: &std::path::Path,
     seen: &mut Vec<std::path::PathBuf>,
     read: &dyn Fn(&std::path::Path) -> Result<String, String>,
 ) -> Result<String, String> {
-    let library = crate::code_rule_dsl::logic::rr::library().canonicalize().map_err(|e| e.to_string())?;
     let from = path.to_string_lossy().into_owned();
     let mut out = String::with_capacity(text.len());
     for line in text.lines() {
@@ -117,7 +121,7 @@ fn module_text(
                 } else if !seen.contains(&found) {
                     seen.push(found.clone());
                     let inner = read(&found)?;
-                    out.push_str(&module_text(&found, &inner, graph, seen, read)?);
+                    out.push_str(&module_text(&found, &inner, graph, library, seen, read)?);
                 }
             }
             None => out.push_str(line),

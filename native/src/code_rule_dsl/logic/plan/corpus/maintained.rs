@@ -150,7 +150,7 @@ pub(in crate::code_rule_dsl) fn run_with(
             q.remove("inline");
             q.insert("no_inline".to_owned());
         }
-    });
+    })?;
     drop(q);
     drop(s);
     let s = span("bind and measure");
@@ -197,6 +197,9 @@ pub(in crate::code_rule_dsl) fn run_with(
         Some(k) => {
             let mut driver = super::Driver {
                 cross: prog,
+                // The slice's strata get their forms as they are reached: no general forms are written for it (0298
+                // writes the cross-file part's).
+                general: None,
                 cross_placed: &placed,
                 kept: k,
                 store: None,
