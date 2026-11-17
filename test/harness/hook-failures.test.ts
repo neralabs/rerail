@@ -644,6 +644,51 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     });
   });
 
+  // A hook finds the Rerail home's own log full, takes it, cannot move it to `.1` (a folder there) and gives it back; a
+  // person makes the live name a link to a file of their own as the hook opens the live log to write its failure.
+  // `main`'s hook, whose rename to `.1` failed, writes nothing; this hook opens the live log without following a link,
+  // finds the link, and moves it as `main`'s rename moves what it finds at the live name, which fails here: it writes
+  // nothing, and nothing reaches the person's file.
+  it("writes nothing through a link a person makes at the live name as a hook that could not move the full log writes", async context => {
+    const rerailHome = await home();
+    const live = join(rerailHome, HOOK_FAILURES_FILE);
+    writeFullLog(rerailHome);
+    mkdirSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`));
+    const { elsewhere, text, made } = await linkMadeLater(context, rerailHome, 3);
+    const linkFirst = (call: string): string => `${call} => (path, ...rest) => {
+      if (String(path) === ${JSON.stringify(live)} && !globalThis.made) {
+        globalThis.made = true;
+        fs.renameSync(${JSON.stringify(made)}, path);
+      }
+      return ${call}(path, ...rest);
+    }`;
+    await recordWithWrapped(rerailHome, 2, { openSync: linkFirst("open"), appendFileSync: linkFirst("append") });
+    expect(leftInPlace(rerailHome, elsewhere, text)).toEqual({
+      live: "link", leadsTo: elsewhere, files: [HOOK_FAILURES_FILE, `${HOOK_FAILURES_FILE}.1`], counted: 3, leftAsItWas: true,
+    });
+  });
+
+  // As above with no link: another hook moves the live log away and begins a new one as this hook opens it. On Windows
+  // the open looks at the name first and refuses the file it opened when it is not the one it looked at; the hook opens
+  // the live log again and writes into the new one, keeping its failure.
+  it("keeps the failure of a hook that could not move the full log when another hook replaces the live log as it opens it", async () => {
+    const rerailHome = await home();
+    const live = join(rerailHome, HOOK_FAILURES_FILE);
+    writeFullLog(rerailHome);
+    mkdirSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`));
+    await recordWithWrapped(rerailHome, 2, {
+      openSync: `open => (path, ...rest) => {
+        if (String(path) === ${JSON.stringify(live)} && !globalThis.moved) {
+          globalThis.moved = true;
+          fs.renameSync(path, path + ".elsewhere");
+          fs.appendFileSync(path, ${lineSource(3, "began a live log")});
+        }
+        return open(path, ...rest);
+      }`,
+    });
+    expect(readHookFailures(rerailHome, 0).failures.map(entry => entry.reason)).toEqual(["the daemon did not answer", "began a live log"]);
+  });
+
   // As above with `.1` free, and another hook, which finds no live log while this one holds the link, begins one. The
   // hook moves the link on to `.1` from its own name, as `main`'s rename moves it from the live name, and the log the
   // other hook began stays, with both hooks' failures. Put back to the live name first, the link would replace that log

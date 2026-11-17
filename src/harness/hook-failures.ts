@@ -78,19 +78,15 @@ export function recordHookFailure(
   try {
     makeRerailHome(home);
     const path = join(home, HOOK_FAILURES_FILE);
-    const moved = sizeOf(path) > MAX_FAILURE_BYTES && moveAside(path, join(home, MOVED_ASIDE_FILE));
+    const { moved, into } = placeFor(path, join(home, MOVED_ASIDE_FILE));
     const rerail = rerailVersion();
     // Read after the move. Every failure in the part this hook moved was stamped before the hook took it, by the clock
     // of the hook that wrote it, which can run up to one clock step ahead of this one: past this clock by that and a
     // millisecond is later than all of them. The hook's own failure carries the same time, so it counts in its part.
     const at = now ?? Date.now() + (moved ? PART_START_PAST_CLOCK_MS : 0);
     const line = `${JSON.stringify({ at, ...failure, agent: env.AI_AGENT ?? null, rerail } satisfies HookFailure)}\n`;
-    if (!moved) {
-      appendFileSync(path, line, { mode: 0o600 });
-      return;
-    }
-    appendFileSync(path, `${JSON.stringify({ startedAt: at } satisfies PartStart)}\n${line}`, { mode: 0o600 });
-    removeStrandedLogs(home, at);
+    writeInto(into, path, moved ? `${JSON.stringify({ startedAt: at } satisfies PartStart)}\n${line}` : line);
+    if (moved) removeStrandedLogs(home, at);
   } catch {
     // Nowhere left to say it. A full log a person linked at the live name that cannot move to `.1` ends here too, with
     // nothing written through the link, as on `main` ({@link moveLink}).
@@ -102,6 +98,76 @@ function sizeOf(path: string): number {
     return statSync(path).size;
   } catch {
     return 0;
+  }
+}
+
+/**
+ * Where a hook writes its failure: `into`, the live log it opened without following a link, or {@link BY_NAME}; and
+ * whether it moved the log aside first, `moved`.
+ */
+interface Place {
+  moved: boolean;
+  into: number | typeof BY_NAME;
+}
+
+/** The live log by its name, following a link there, as `main`'s hook appends after its size check and its move. */
+const BY_NAME = "by name";
+
+/**
+ * Where a hook writes its failure ({@link Place}) once it has moved the log at the live name `path` aside to `movedAside`
+ * when its size check, which follows a link as `main`'s does, found it full.
+ */
+function placeFor(path: string, movedAside: string): Place {
+  if (sizeOf(path) <= MAX_FAILURE_BYTES) return { moved: false, into: BY_NAME };
+  if (moveAside(path, movedAside)) return { moved: true, into: BY_NAME };
+  return placeAfterFull(path, movedAside);
+}
+
+/**
+ * Where a hook that found the log full and did not move it writes: as when another hook took it first, or `.1` refused
+ * it and the hook gave it back. `main`'s hook in that state saw its rename to `.1` fail and writes nothing; this one
+ * keeps its failure in the log it opens at the live name `path`, without following a link. A link there by then is one
+ * a person made since the size check, or one another hook took and put back ({@link putBackLink}): `main`'s rename,
+ * which comes after its size check, moves whatever it finds at the live name, so this hook moves the link to
+ * `movedAside` as `main` does ({@link moveLink}) and writes into a new log. It never writes through the link: when that
+ * move fails, as `main`'s does, it writes nothing.
+ */
+function placeAfterFull(path: string, movedAside: string): Place {
+  const into = openLive(path);
+  if (into !== BY_NAME) return { moved: false, into };
+  return { moved: moveLink(path, movedAside), into: BY_NAME };
+}
+
+/**
+ * The live log at `path`, opened to append without following a link, and begun when there is none; {@link BY_NAME} when
+ * the name is a link. On Windows the open looks at the name first and refuses a file other than the one it looked at
+ * ({@link openNoFollowSync}), as when another hook moved the log on and began a new one in that moment: the open is
+ * then tried again, up to {@link OPEN_TRIES} times in all.
+ */
+function openLive(path: string, tries = OPEN_TRIES): number | typeof BY_NAME {
+  try {
+    return openNoFollowSync(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT, 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ELOOP") throw error;
+    if (isLink(path)) return BY_NAME;
+    if (tries <= 1) throw error;
+    return openLive(path, tries - 1);
+  }
+}
+
+/** How many times a hook opens the live log before it gives up ({@link openLive}). */
+const OPEN_TRIES = 4;
+
+/** Appends `text` to the live log at `path` where `into` says ({@link Place}), and closes what the hook opened. */
+function writeInto(into: Place["into"], path: string, text: string): void {
+  if (into === BY_NAME) {
+    appendFileSync(path, text, { mode: 0o600 });
+    return;
+  }
+  try {
+    appendFileSync(into, text);
+  } finally {
+    closeSync(into);
   }
 }
 
@@ -126,13 +192,11 @@ const TAKEN_LOG = new RegExp(`^${HOOK_FAILURES_FILE.replaceAll(".", "\\.")}\\.(\
  * name, leaving it to the hook that holds it last.
  *
  * A live name that is a link, as a person can make it to keep the log elsewhere, is never taken: it moves as `main` moves
- * the log ({@link moveLink}), and throws where `main`'s move fails. So does a link a person makes there while this hook
- * moves the log it found full and does not move it on: `main`'s rename, which comes after its size check, moves whatever
- * it finds at the live name, and its hook writes nothing when that rename fails.
+ * the log ({@link moveLink}), and throws where `main`'s move fails. A link a person makes there while this hook moves
+ * the log it found full and does not move it on is met when the hook opens the live log ({@link placeAfterFull}).
  */
 function moveAside(path: string, movedAside: string): boolean {
-  if (isLink(path)) return moveLink(path, movedAside);
-  return moveFile(path, movedAside) || (isLink(path) && moveLink(path, movedAside));
+  return isLink(path) ? moveLink(path, movedAside) : moveFile(path, movedAside);
 }
 
 /** Moves the regular file at the live name `path` on to `movedAside` through a name of this hook's own, as {@link moveAside} says. */
@@ -316,7 +380,7 @@ function giveBack(taken: string, path: string): void {
 /**
  * Appends the lines of the log taken as `taken` to the live log at `path`, and removes it. The live name is a link only
  * when a person made it one while this hook held the log: the lines then stay under the hook's name, where status
- * counts them, and the hook moves the link as `main`'s rename would ({@link moveAside}).
+ * counts them, and the hook moves the link as `main`'s rename would ({@link placeAfterFull}).
  */
 function copyBack(taken: string, path: string): void {
   assertNoLink(taken);
