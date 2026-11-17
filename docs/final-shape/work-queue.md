@@ -1475,3 +1475,30 @@ fewer instructions than step 1, and the CPU binding is level. Left, in order:
 5. Step 7: the output's, frames' and memo's rows.
 
 The views (source views over a batch, 88 MB on hogql) are not relations in blocks, and still upload.
+
+### Q65. The GPU decodes 16z blocks as it reads; a whole decode is a planner step, on the GPU (0336 §2)
+
+- **Now** (2026-11-17): 16z is stored as 0156 §2.1 lays it (one piece per array per block of 1,024 nodes, raw, LZ4 HC
+  or a repeat; checkpoints raw), and each block decodes in place into the format 16 tape (`Tape16Z::decode_block_into`).
+  The residency still decodes a 16z tape whole on the host when it is placed (`residency/slabs.rs`, `decode_into`),
+  and no dictionary is used yet (0156 §2.3).
+- **Done when**:
+  - a 16z tape is resident as stored, and a kernel decodes the blocks a job's reads reach (a SIMD group a block,
+    E26's shape), with the same CLIF reads over each decoded block;
+  - decoding a document whole is a plan step on the GPU, priced by device memory (4.5 B a node decoded against
+    1.2–2.4), the decode's work and the job's reads, and the host's `decode_into` at placement is gone;
+  - the language's dictionaries (0156 §2.3) are trained and named by the revision.
+
+### Q66. Line starts and the code table come with format 16 (0336 §1)
+
+- **Now**: the residency counts newlines byte by byte on the host at every placement and writes a `DeviceCode` table
+  per document (`residency/slabs.rs`, `resident::device_codes_of`).
+- **Done when**: format 16's writer writes the newline index (0156 §1.6, Elias–Fano, a node's line the rank of its
+  start) and the reads answer a line from it; the language's code table is placed once per batch per language and
+  named by the header's tag; the placement's line count and per-document table are gone.
+
+### Q67. Every workload on formats 15, 16 and 16z side by side, before format 15 is retired (0336 §3)
+
+- **Done when**: each workload runs on 15, 16 and 16z with the same finding keys (the loose findings contract) and
+  its costs recorded per format; every difference is fixed; `.rr` has a format 16 table. Then format 15 is retired
+  for documents.

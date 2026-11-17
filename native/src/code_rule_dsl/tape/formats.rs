@@ -25,6 +25,10 @@ pub enum Format {
     F16Z,
 }
 
+/// Format 16's and 16z's stored layout: 2 since decision 0336 (the header holds each region's start; 16z's blocks
+/// are one piece an array, raw, LZ4 or a repeat, its checkpoints raw). Layout 1 had keys 16 and 1016.
+const F16_LAYOUT: u32 = 2;
+
 impl Format {
     pub const ALL: [Format; 3] = [Format::F15, Format::F16, Format::F16Z];
 
@@ -46,12 +50,13 @@ impl Format {
 
     /// The tape format version the store keys a tape by when a run stores this format: a store holds each
     /// document once per format, and a run finds only its own. (A language that keeps format 15 in a run of
-    /// format 16 is stored under 16, as format 15's bytes: the bytes say what they hold.)
+    /// format 16 is stored under 16, as format 15's bytes: the bytes say what they hold.) Format 16's and 16z's
+    /// carry their layout (`F16_LAYOUT`): a store built before a layout changed reads cold, not wrong.
     pub fn store_version(self) -> u32 {
         match self {
             Format::F15 => super::TAPE_FORMAT_VERSION,
-            Format::F16 => 16,
-            Format::F16Z => 1016,
+            Format::F16 => 16 + 100 * F16_LAYOUT,
+            Format::F16Z => 1016 + 100 * F16_LAYOUT,
         }
     }
 
@@ -354,8 +359,8 @@ impl DocTape {
             Held::F16(t) => sixteen(t, lang),
             Held::F16Z(z) => {
                 let laid = self.laid.get_or_init(|| {
-                    let mut bytes = vec![0; z.unblocked_len()];
-                    z.unblock_into(&mut bytes)?;
+                    let mut bytes = vec![0; z.decoded_len()];
+                    z.decode_into(&mut bytes)?;
                     f16::Tape16::from_bytes(bytes)
                 });
                 sixteen(laid.as_ref().map_err(Clone::clone)?, lang)

@@ -1,6 +1,7 @@
 # 0336. The tape reaches every reader as stored: blocks decompressed on the GPU as it goes, full decompression the planner's choice, format 15 retired after a side-by-side run
 
-Status: decided in part (the user, 2026-11-17): §2 and §3 decided, §1 settled by 0156, §4 open. Survey and
+Status: decided in part (the user, 2026-11-17): §2 and §3 decided, §1 settled by 0156, §4 open but for the header's
+starts (built), §5 built. Survey and
 scenarios: notes/t42. Builds on 0156 (format 16), 0293 (one tape API, read in place), 0310 (the reads written once
 in CLIF for Rust, MSL and the JIT) and 0289 §4 (a document's offsets count from its place in its block).
 
@@ -38,11 +39,29 @@ form. This decision says which of them go and what replaces them.
    difference is fixed** (the user, 2026-11-17). Until then both formats stay, and the comparison is the gate: the
    same finding keys (the loose findings contract), and each workload's costs, for 15, 16 and 16z. `.rr` needs a
    format 16 table first.
-4. **Open: whether the stored header is the view** (t42 axis A). Today `TapeView` is built from the header at
+4. **Built in part (2026-11-17): the header holds each region's start.** Format 16's header held each region's
+   length (nine u64s), and every reader summed them. It now holds ten u32 starts from the tape's first byte (the
+   last is the end), and the slot, gap and length widths (as 16z's did), in 80 bytes where it took 112. A reader
+   reads the placement; it checks each fixed region's length against the node count and the widths. A tape past
+   4 GiB is not written (the reads' offsets are u32s already). **Still open: whether the stored header is the
+   view** (t42 axis A). Today `TapeView` is built from the header at
    load (a prefix sum of the regions' lengths and the language's numbers). The alternative stores the region
    starts in the header in the layout the reads take, the language's numbers stay the language's (placed once
    with its table, checked by the revision mark), and the batch's per-document entry holds the batch's own facts
    (where the document lies, its first byte and line in the batch's numbering).
+
+5. **16z is 0156 §2.1's blocking (2026-11-17).** It compressed all nine regions of a block's nodes as one LZ4
+   block, checkpoints too, and a full decode scattered each block's regions into the tape's. Now:
+   - a 16z tape is the header and part starts of the format 16 tape it decodes to (its magic apart), its
+     checkpoints raw, a piece index (a u32 start and a kind byte a piece), and the payload;
+   - a block is four pieces, one an array (codes, slots, gaps, lengths), each the block's bytes of the array and
+     then its side list's part for the block, so one decode gives both;
+   - a piece is stored raw, as one LZ4 block (HC 9) when that shrinks it by a tenth, or as a repeat (the index of
+     an earlier piece with the same bytes, at least 8 of them);
+   - a block decodes in place, alone, into the format 16 tape (`decode_block_into`), whose head (header, part
+     starts, checkpoints, rooms) is copied once (`decode_head_into`).
+   Stored tapes are keyed by layout (`F16_LAYOUT` = 2: keys 216 and 1216, were 16 and 1016), so a store built before
+   reads cold. No dictionary yet (0156 §2.3). §2's kernel and planner step are Q65; §1 is Q66; §3's gate is Q67.
 
 ## Consequences
 

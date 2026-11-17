@@ -49,7 +49,7 @@ fn invalid(message: impl std::fmt::Display) -> Error {
 
 /// Sizes of a document's parts, from its frames' raw lengths, the image's header and the source's
 /// newlines (read by one streamed decode that keeps nothing). A 16z tape is laid out as format 16
-/// where it is placed (`Tape16Z::unblock_into`): `tape` is that length, and `z` its stored bytes,
+/// where it is placed (`Tape16Z::decode_into`): `tape` is that length, and `z` its stored bytes,
 /// read once (a store's frame) to plan and place it.
 struct Plan {
     tape: usize,
@@ -88,7 +88,7 @@ fn planned(head: &[u8], tape: usize, source: usize, lines: usize, z: Option<Vec<
         }
         resident::Stored::F16Z => {
             let z = resident::Tape16Z::from_bytes(z.ok_or_else(|| invalid("a 16z tape not read whole"))?).map_err(invalid)?;
-            (z.unblocked_len(), z.len(), resident::lang_of(head).map_err(invalid)?.table().len(), Some(z))
+            (z.decoded_len(), z.len(), resident::lang_of(head).map_err(invalid)?.table().len(), Some(z))
         }
     };
     Ok(Plan { tape, source, nodes, codes, lines, stored, z })
@@ -223,7 +223,7 @@ fn place(
     }
     // A 16z tape, checked as stored, is laid out as format 16 where it is placed.
     if let Some(z) = &plan.z {
-        z.unblock_into(tape).map_err(invalid)?;
+        z.decode_into(tape).map_err(invalid)?;
     }
     let tape = &*tape;
     let source = &*source;
@@ -250,10 +250,10 @@ fn place(
             let p = resident::placement(tape).map_err(invalid)?;
             let lang = resident::lang_of(tape).map_err(invalid)?;
             let source_len = u64::from_le_bytes(tape[16..24].try_into().expect("8 bytes"));
-            if p.n != plan.nodes || p.n == 0 || source_len != source.len() as u64 || tape[9] != lang.revision() {
+            let (cut, per, w) = lang.device();
+            if p.n != plan.nodes || p.n == 0 || source_len != source.len() as u64 || tape[9] != lang.revision() || p.widths != w {
                 return Err(invalid("a tape and its source or language disagree"));
             }
-            let (cut, per, w) = lang.device();
             view.format = 16;
             view.widths = (w[0] | w[1] << 4 | w[2] << 8 | p.cw << 12 | p.vw[0] << 16 | p.vw[1] << 20 | p.vw[2] << 24 | p.vw[3] << 28) as u32;
             view.columns = [at(tape_at + p.at[0])?, at(tape_at + p.at[1])?, at(tape_at + p.at[2])?, at(tape_at + p.at[3])?, at(tape_at + p.at[4])?];
