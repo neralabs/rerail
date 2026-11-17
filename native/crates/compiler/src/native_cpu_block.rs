@@ -1863,8 +1863,8 @@ impl RecordTables {
             let tested = r.rules.iter().enumerate().any(|(k, e)| matches!(e, crate::records::EndRule::Read(i) if r.readers[usize::from(*i)].parts_in_tier1()) && r.checks.iter().any(|c| usize::from(c.rule) == k));
             // A quiet region (`Reader::quiet`): no mark or retag holds in it, so its parts' codes
             // are plain whatever the grammar's marks.
-            let marked = !parted[0].quiet && (!r.marks.is_empty() || !r.retags.is_empty() || r.gaps != 0);
-            if parted.len() > 1 || parted[0].arms.len() != 1 || marked || tested {
+            let marked = parted.iter().any(|rd| !rd.quiet) && (!r.marks.is_empty() || !r.retags.is_empty() || r.gaps != 0);
+            if parted.iter().any(|rd| rd.arms.len() != 1) || marked || tested {
                 return Err(Error::UnsupportedFeature("a region read in parts, on the CPU, with this grammar's marks or tests"));
             }
         }
@@ -3192,11 +3192,11 @@ impl Reads<'_> {
 
 /// The rule of the region read in parts (`Reader::parts`, decision 0323) and its reader, where
 /// one is (`RecordTables::new` refuses more than one).
-fn parted_rule(r: &crate::records::Records) -> Option<(usize, &crate::records::Reader)> {
-    r.rules.iter().enumerate().find_map(|(k, e)| match e {
+fn parted_rules(r: &crate::records::Records) -> Vec<(usize, &crate::records::Reader)> {
+    r.rules.iter().enumerate().filter_map(|(k, e)| match e {
         crate::records::EndRule::Read(i) => Some((k, &r.readers[usize::from(*i)])).filter(|(_, rd)| rd.parts_in_tier1()),
         _ => None,
-    })
+    }).collect()
 }
 
 /// A region read in parts (decision 0323), after its opener's record (`rule_last` ends its
@@ -6507,8 +6507,9 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let mut k1 = c.step(f, cv[0]);
     // A region read in parts (decision 0323): its parts' and closer's records after its
     // opener's, and the loop on past its closer. In its rule's own tail, or a tail it may
-    // reach; never the fused rules'.
-    if let Some(pr) = parted_rule(r).filter(|_| walked.is_some() && ruled) {
+    // reach; never the fused rules'. Each reader in parts in turn: a token that opens none of
+    // its regions passes its walk as it came (Kotlin's strings and characters).
+    for pr in parted_rules(r).into_iter().filter(|_| walked.is_some() && ruled) {
         let known = match side {
             Side::Rare(Some(x)) => (x.rule == pr.0).then_some(true),
             Side::Fused => None,

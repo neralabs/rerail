@@ -103,6 +103,23 @@ Corpus: 11 the same, 480 refused, 0 differ. The refusals, by the reference evalu
 reason: characters and backtick names 112, the grammar 93, `${…}` 73, `::` 71, numbers with a
 letter or a dot 65, `;` 29, accessors 15, raw strings 13.
 
+## Kotlin, step 4 (`04-characters.bitlex`)
+
+Step 4 reads characters and backtick names.
+
+- A character is a second region read in parts (`chr = sq .. sq_close`). tree-sitter's
+  `character_literal` spans the quotes and the content, and keeps no leaf for either: both are
+  implied, the content by its kind (`implied character_literal "'" char_content`).
+- An escape is a `character_escape_seq`. `\uXXXX` keeps its `\u` as a token under the escape's
+  node and its digits as none: a part `"\\u"` of two bytes, then an implied `uni_digits` of four,
+  retagged together as the escape.
+- A backtick name is a region read whole, a `simple_identifier` (or a `type_identifier` where a
+  type is named).
+- None of the three runs over a line: one that does is refused.
+
+Corpus: 12 the same, 479 refused, 0 differ. The refusals: `::` 110, the grammar 108, `${…}` 90,
+numbers 80, raw strings 31, `;` 30, accessors 18, three-byte operators 5, others 7.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
@@ -173,6 +190,17 @@ letter or a dot 65, `;` 29, accessors 15, raw strings 13.
      delay. The program's delay grows to match.
    - The masks and the records still find an output by its operation.
 
+10. **`implied` takes a token kind** (`implied R K`) beside a token's text: a part's token the
+    node spans but tree-sitter keeps no leaf for.
+11. **Several regions read in parts on the CPU.** A's walk is made once for each reader in parts,
+    each gated on its own opener; a token that opens none of its regions passes it unchanged.
+    Its refusal of marks now asks that every such reader be quiet.
+12. **The prover tries each group of position bytes once.** `first_bytes` searched each of the
+    256 bytes at the position, and `never` searched all of them even after one was not proved.
+    A byte's answer is that of every byte its readers do not tell apart, so it now searches
+    one byte per group, and `never` stops at the first byte not proved. Kotlin's step 4 had
+    `row_modes` at 46 s, almost all of it here; it compiles in about 2 s again.
+
 Single-extra grammars compile as before: rr's tests and the compiler's targeted tests pass.
 
 ## Found on the way
@@ -185,7 +213,7 @@ Single-extra grammars compile as before: rr's tests and the compiler's targeted 
 
 ## Next
 
-Kotlin's ladder goes on. Next: characters and backtick names, `${…}` templates (a region whose
+Kotlin's ladder goes on. Next: `${…}` templates (a region whose
 code nests: a count of braces), `::`, numbers, then lambdas, `when` and `try`, then enums,
 companions, accessors and the remaining operators. Swift and Scala start the same way, in their own crates: their step 1 is
 imports and comments, with Scala's comment kinds `comment` and `block_comment`.

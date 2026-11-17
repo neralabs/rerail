@@ -571,11 +571,14 @@ pub enum Stmt {
 
 /// The kind `implied` gives a token (`A as IMPLIED`): it makes no leaf.
 pub const IMPLIED: &str = "\u{0}implied";
+/// An `implied` token written as its kind (`implied R K`), not its text: this before the kind.
+const IMPLIED_KIND: &str = "\u{1}";
 /// The kind `drop` gives the node just made at this level (`relabel _ as GONE`): it goes.
 pub const GONE: &str = "\u{0}gone";
 
-/// Each `implied RULE 'A' …` of a tree's body, applied: its tokens in `RULE`'s own body marked
-/// `A as IMPLIED`. A token not written there is an error.
+/// Each `implied RULE 'A' … K …` of a tree's body, applied: its tokens in `RULE`'s own body
+/// marked `A as IMPLIED`, each written `'A'` or a token kind `K` (a character's content, whose
+/// bytes the character's node spans). A token not written there is an error.
 fn apply_implied(body: &mut [Stmt]) -> Result<(), String> {
     fn mark(g: &mut Gram, tokens: &[String], found: &mut Vec<bool>) {
         match g {
@@ -585,8 +588,14 @@ fn apply_implied(body: &mut [Stmt]) -> Result<(), String> {
                     *g = Gram::As(IMPLIED.into(), Box::new(Gram::Lit(t.clone())));
                 }
             }
+            Gram::Sym(k) => {
+                if let Some(i) = tokens.iter().position(|x| x.strip_prefix(IMPLIED_KIND) == Some(k.as_str())) {
+                    found[i] = true;
+                    *g = Gram::As(IMPLIED.into(), Box::new(Gram::Sym(k.clone())));
+                }
+            }
             // A token given a kind of its own, or merged, is a node's: not implied.
-            Gram::Sym(_) | Gram::As(..) | Gram::Merge(..) | Gram::Balanced { .. } | Gram::Any(_) => {}
+            Gram::As(..) | Gram::Merge(..) | Gram::Balanced { .. } | Gram::Any(_) => {}
             Gram::Seq(gs) | Gram::Alt(gs) => gs.iter_mut().for_each(|g| mark(g, tokens, found)),
             Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) => mark(a, tokens, found),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => mark(body, tokens, found),
@@ -609,7 +618,7 @@ fn apply_implied(body: &mut [Stmt]) -> Result<(), String> {
             return Err(format!("implied {rule}: no such rule"));
         }
         if let Some(i) = found.iter().position(|f| !f) {
-            return Err(format!("implied {rule}: {:?} is not written in it", tokens[i]));
+            return Err(format!("implied {rule}: {:?} is not written in it", tokens[i].trim_start_matches(IMPLIED_KIND)));
         }
     }
     Ok(())
@@ -1487,12 +1496,16 @@ impl P {
             "implied" => {
                 let rule = self.ident()?;
                 let mut tokens = vec![];
-                while let Some(Tok::Str(s)) = self.peek() {
-                    tokens.push(String::from_utf8_lossy(s).into_owned());
+                loop {
+                    match self.peek() {
+                        Some(Tok::Str(s)) => tokens.push(String::from_utf8_lossy(s).into_owned()),
+                        Some(Tok::Ident(k)) => tokens.push(format!("{IMPLIED_KIND}{k}")),
+                        _ => break,
+                    }
                     self.i += 1;
                 }
                 if tokens.is_empty() {
-                    return self.err("implied RULE 'A' …");
+                    return self.err("implied RULE 'A' … K …");
                 }
                 Stmt::Implied { rule, tokens }
             }

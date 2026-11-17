@@ -105,12 +105,31 @@ fn strings_are_the_lean_parsers() {
     ]);
 }
 
+/// Step 4: characters and backtick names.
 #[test]
-fn what_step_3_does_not_read_is_refused() {
+fn characters_and_backtick_names_are_the_lean_parsers() {
+    same(&[
+        "val a = 'c'\n",
+        "val b = '\\n'\n",
+        "val c = '\\u0041'\n",
+        "val d = '\\''\n",
+        "val e = '\"'\n",
+        "val f = '$' // '\n",
+        "val g = '\\\\'\n",
+        "fun `a test`() {}\n",
+        "val h = `in`.`x y`\n",
+        "val i = \"a'b`c\" + 'd'\n",
+        "class `A B` : `C D`()\n",
+    ]);
+}
+
+#[test]
+fn what_step_4_does_not_read_is_refused() {
     refused(&[
         "package a; import b\n",
         "import a.b import c\n",
-        "val s = 'x'\n",
+        "val s = 'x\n",
+        "val s = \"a\nb\"\n",
         "val s = \"${x}\"\n",
         "val s = \"\"\"raw\"\"\"\n",
         "val s = \"open\n",
