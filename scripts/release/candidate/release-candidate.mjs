@@ -18,6 +18,7 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { actionComment, gitIn, runReleaseAction } from "./candidate.mjs";
+import { mergedReleaseHeads } from "./merged.mjs";
 import { ROOT } from "../packs.mjs";
 
 const [action, bodyPath, commentPath] = process.argv.slice(2);
@@ -29,17 +30,26 @@ const git = gitIn(ROOT);
 const installed = git(["rev-parse", "HEAD"]);
 
 /**
+ * This environment less what the install and the version script must not reach: the app's write token, the remote
+ * that embeds it, and the step's output, where release-version.mjs's own `releasable` would be read as this action's.
+ */
+function childEnv() {
+  const env = { ...process.env };
+  for (const name of ["GH_TOKEN", "GITHUB_TOKEN", "RELEASE_REMOTE", "GITHUB_OUTPUT"]) delete env[name];
+  return env;
+}
+
+/**
  * Writes the Release commit's changes into the checkout, which is at the candidate, with the candidate's own script,
  * releasing core as `setVersion` when one is set by hand. Returns core's version in the checkout afterwards.
  */
 function version(frozen, setVersion) {
-  // release-version.mjs runs `changeset version` and reads semver: the candidate's lockfile decides which.
+  // release-version.mjs runs `changeset version` and reads semver: the candidate's lockfile decides which. Neither
+  // needs an install script, so none runs.
   const sameDependencies = git(["diff", "--name-only", installed, "HEAD", "--", "package-lock.json"]) === "";
-  if (!sameDependencies) execFileSync("npm", ["ci"], { cwd: ROOT, stdio: "inherit" });
+  if (!sameDependencies) execFileSync("npm", ["ci", "--ignore-scripts"], { cwd: ROOT, stdio: "inherit", env: childEnv() });
   const frozenAt = frozen === null ? null : { ...frozen, baseSubject: git(["log", "-1", "--format=%s", frozen.base]) };
-  const env = { ...process.env, RELEASE_FROZEN: frozenAt === null ? "" : JSON.stringify(frozenAt), RELEASE_VERSION: setVersion };
-  // Its own `releasable` would be read as this action's.
-  delete env.GITHUB_OUTPUT;
+  const env = { ...childEnv(), RELEASE_FROZEN: frozenAt === null ? "" : JSON.stringify(frozenAt), RELEASE_VERSION: setVersion };
   execFileSync(process.execPath, ["scripts/release/release-version.mjs", bodyPath], { cwd: ROOT, stdio: "inherit", env });
   return JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version;
 }
@@ -53,7 +63,7 @@ function resolvePull(number) {
 
 let result;
 try {
-  result = runReleaseAction({ action, target, fixes, coreVersion: coreVersion.trim(), git, remote, version, resolvePull });
+  result = runReleaseAction({ action, target, fixes, coreVersion: coreVersion.trim(), git, remote, version, resolvePull, mergedHead: mergedReleaseHeads()[0]?.head ?? null });
 } catch (error) {
   // The reason alone, as an annotation on the run: every refusal says what to run next.
   console.error(`::error title=Release ${action} refused::${String(error.message).replaceAll("\n", " ")}`);

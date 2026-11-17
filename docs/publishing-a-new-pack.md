@@ -1,7 +1,7 @@
 # Runbook: publishing a new pack to npm
 
-Use this when `@neralabs/rerail-pack-<id>` has never been published: the Release packs run on `main` fails at
-**First publish needed** and names the pack.
+Use this when `@neralabs/rerail-pack-<id>` has never been published: the Release packs run on the `release-<commit>`
+tag, which merging the Release pull request starts, fails at **First publish needed** and names the pack.
 
 npm only allows a trusted publisher on an existing package, so you publish the first version by hand. The release
 workflow publishes the rest ("Release" in [pack-format.md](pack-format.md)). Allow about 30 minutes, mostly the
@@ -18,8 +18,8 @@ This runbook is the last step:
    code owner approves ([upstream.md, "Publishing pack data"](upstream.md#publishing-pack-data)).
 3. Ports start as candidates and are promoted into `rules/` once they pass the conformance check
    ([conformance/README.md](../conformance/README.md#candidates-and-promotion)).
-4. The pull request merges with its changeset, and the Release packs run on `main` asks for the first publish: this
-   runbook.
+4. The pull request merges with its changeset. Once the Release pull request that releases it merges, the Release
+   packs run on its `release-<commit>` tag asks for the first publish: this runbook.
 
 </details>
 

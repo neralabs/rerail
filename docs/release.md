@@ -138,6 +138,9 @@ Every action changes the release in one push or refuses, and a refusal says what
 - **The candidate holds only reviewed commits.** The pull request shows the Release commit alone, so the check
   rebuilds the candidate: it must be its base, cherry-picks that are commits on `main`, and a Release commit that does
   exactly what the pull request shows.
+- **Actions run at once never undo each other.** Each action run by hand runs on its own, so none waits in a queue a
+  newer one can drop it from. Each push is leased to what its run read: an action that lands second builds again on
+  what the first left, and a push to `main` that lands second leaves the release as the other run made it.
 - **A fix that doesn't apply changes nothing.** One that builds on later work is refused, naming it: cherry-pick what
   it builds on first, or freeze a newer commit.
 - **A version set by hand is checked.** It must be a plain version later than the latest release, and core must be
@@ -170,7 +173,8 @@ Every action changes the release in one push or refuses, and a refusal says what
 - **State** is the pull request's head commit, which names the candidate; the candidate's message names its base,
   its cherry-picks and a version set by hand (`scripts/release/candidate/candidate.mjs`). Following `main`, the head
   is the candidate, and carries the version itself.
-- **After the merge**, the tags hold the released commit and the candidate's branch is removed.
+- **After the merge**, the tags hold the released commit and the candidate's branch is removed. A pull request branch
+  that outlives the merge is never built on: the next release starts from `main`.
 
 </details>
 

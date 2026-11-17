@@ -292,6 +292,9 @@ export class ReleaseConflict extends Error {
   }
 }
 
+/** A push whose lease failed: the branch moved on the remote since this run read it, so another run landed first. */
+export class ReleaseMoved extends Error {}
+
 /** A git runner for the checkout at `cwd`: `git(args)` returns stdout trimmed, and throws with git's own message. */
 export function gitIn(cwd) {
   return (args, options = {}) => execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 1 << 28, stdio: ["ignore", "pipe", "pipe"], ...options }).trim();
@@ -332,13 +335,15 @@ function readFrozen(git, candidate) {
 /**
  * The release as the remote holds it: main's tip, the Release pull request's head (null without one), and, frozen,
  * the candidate with its base and cherry-picks. `broken` says why a frozen release can't be read, for the actions that
- * need it; freezing again or unfreezing repairs it.
+ * need it; freezing again or unfreezing repairs it. A head that `mergedHead`, the last merged Release pull request's
+ * head, names was released already: its branch outlived the merge, so the release starts again from main, and only a
+ * push's lease still reads that head.
  */
-export function readState(git) {
+export function readState(git, mergedHead = null) {
   const main = revParse(git, MAIN_REF);
   if (main === null) throw new Error("the remote has no main branch");
   const head = revParse(git, RELEASE_REF);
-  const named = head === null ? null : readReleaseMessage(messageOf(git, head));
+  const named = head === null || head === mergedHead ? null : readReleaseMessage(messageOf(git, head));
   // The version set by hand rides on the candidate's message: the head's own, while the release follows main.
   if (named?.candidate === undefined) return { main, head, frozen: false, coreVersion: named?.coreVersion ?? "" };
   return { main, head, frozen: true, coreVersion: "", ...readFrozen(git, named.candidate) };
@@ -445,6 +450,20 @@ const mergesCleanly = (git, main, head) => succeeds(git, ["merge-tree", "--write
 /** `refs/heads/<branch>` on the remote must still be at `expected` (must not exist, for null) for the push to land. */
 const lease = (branch, expected) => `--force-with-lease=refs/heads/${branch}:${expected ?? ""}`;
 
+/**
+ * Pushes `refs` (`[branch, commit]`, an empty commit deleting the branch) in one push, each one leased to where this
+ * run read it, so a run never overwrites one that landed meanwhile: that throws ReleaseMoved.
+ */
+function pushLeased({ git, state, push }, refs) {
+  const read = { [RELEASE_BRANCH]: state.head, [CANDIDATE_BRANCH]: revParse(git, CANDIDATE_REF) };
+  try {
+    push(["--atomic", ...refs.map(([branch]) => lease(branch, read[branch])), ...refs.map(([branch, commit]) => `${commit ?? ""}:refs/heads/${branch}`)]);
+  } catch (error) {
+    if (/stale info/u.test(String(error.stderr ?? error.message))) throw new ReleaseMoved("the release moved on the remote while this run was building");
+    throw workflowPushRefusal(error) ?? error;
+  }
+}
+
 /** The commit `text` names (parseTarget), or null for none. */
 function resolveCommit({ git, resolvePull }, text) {
   const named = parseTarget(text);
@@ -479,18 +498,17 @@ const frozenResult = ({ candidate, base, picks }, changed, dropped) => ({ releas
 
 /** Builds the frozen candidate and its pull request commit, and pushes both in one push. */
 function freezeAt(context, base, picks) {
-  const { git, state, push } = context;
+  const { git, state } = context;
   const ordered = inMainOrder(git, picks);
   const candidate = buildCandidate(context, { base, picks: ordered, frozen: true });
   if (candidate === null) throw new Error(`nothing is releasable at ${short(base)}: no pack has a changeset and nothing core ships changed since its last release. To ship a fix on top of a release, name the fix in the freeze action's fixes input. Nothing was changed.`);
   // Nothing is frozen yet when a first freeze meets a conflict, so there is nothing to cherry-pick onto.
   const advice = state.frozen ? undefined : "Name the commit that changed them in the freeze action's fixes input, or freeze a newer commit.";
   const { commit, dropped } = buildPullRequestCommit({ git, candidate, onto: state.main, advice });
-  try {
-    push(["--atomic", "--force", `${candidate}:refs/heads/${CANDIDATE_BRANCH}`, `${commit}:refs/heads/${RELEASE_BRANCH}`]);
-  } catch (error) {
-    throw workflowPushRefusal(error) ?? error;
-  }
+  pushLeased(context, [
+    [CANDIDATE_BRANCH, candidate],
+    [RELEASE_BRANCH, commit],
+  ]);
   return frozenResult({ candidate, base, picks: ordered }, true, dropped);
 }
 
@@ -531,12 +549,12 @@ function cherryPick(context) {
 }
 
 function unfreeze(context) {
-  const { git, state, push } = context;
+  const { git, state } = context;
   if (!state.frozen) return { releasable: state.head !== null, changed: false, frozen: false, notice: "No release is frozen: the Release pull request already follows main." };
   const candidate = buildCandidate(context, { base: state.main, picks: [], frozen: false });
-  const gone = revParse(git, CANDIDATE_REF) === null ? [] : [`:refs/heads/${CANDIDATE_BRANCH}`];
+  const gone = revParse(git, CANDIDATE_REF) === null ? [] : [[CANDIDATE_BRANCH, null]];
   // Nothing releasable on main: the Release pull request's branch goes too, and the workflow closes the pull request.
-  push(["--atomic", "--force", ...gone, `${candidate ?? ""}:refs/heads/${RELEASE_BRANCH}`]);
+  pushLeased(context, [...gone, [RELEASE_BRANCH, candidate]]);
   return { releasable: candidate !== null, changed: true, frozen: false };
 }
 
@@ -545,7 +563,8 @@ function unfreeze(context) {
  * checklist. Only when main has since changed a file the Release commit changes is that commit applied to main's tip
  * again, so the pull request stays mergeable; the candidate is the same, so the checklist stands.
  */
-function updateFrozen({ git, state, push }) {
+function updateFrozen(context) {
+  const { git, state } = context;
   assertReadable(state);
   if (mergesCleanly(git, state.main, state.head)) return frozenResult(state, false, []);
   let built;
@@ -557,22 +576,15 @@ function updateFrozen({ git, state, push }) {
     if (!(error instanceof ReleaseConflict)) throw error;
     return { ...frozenResult(state, false, []), conflicts: error.paths };
   }
-  push([lease(RELEASE_BRANCH, state.head), `${built.commit}:refs/heads/${RELEASE_BRANCH}`]);
+  pushLeased(context, [[RELEASE_BRANCH, built.commit]]);
   return frozenResult(state, false, built.dropped);
 }
 
-/** A push to main while the release follows main: the Release commit is rebuilt on main's tip. */
-function updateFollowing(context) {
-  const { state, push } = context;
-  const candidate = buildCandidate(context, { base: state.main, picks: [], frozen: false });
+/** The release following main: the Release commit is rebuilt on main's tip. */
+function rebuildFollowing(context) {
+  const candidate = buildCandidate(context, { base: context.state.main, picks: [], frozen: false });
   if (candidate === null) return { releasable: false, changed: false, frozen: false };
-  try {
-    push([lease(RELEASE_BRANCH, state.head), `${candidate}:refs/heads/${RELEASE_BRANCH}`]);
-  } catch (error) {
-    // The branch moved since it was read: an action run by hand or a newer push's run landed meanwhile, and it wins.
-    if (!/stale info|rejected/u.test(String(error.stderr ?? error.message))) throw error;
-    return { releasable: true, changed: false, frozen: false, notice: "The Release pull request changed while this run was building: left as it is." };
-  }
+  pushLeased(context, [[RELEASE_BRANCH, candidate]]);
   return { releasable: true, changed: true, frozen: false };
 }
 
@@ -583,10 +595,27 @@ function updateFollowing(context) {
 function setVersion(context) {
   const { state } = context;
   assertReadable(state);
-  return state.frozen ? freezeAt(context, state.base, state.picks) : updateFollowing(context);
+  return state.frozen ? freezeAt(context, state.base, state.picks) : rebuildFollowing(context);
 }
 
-const ACTIONS = { freeze, "cherry-pick": cherryPick, unfreeze, "set-version": setVersion, update: (context) => (context.state.frozen ? updateFrozen(context) : updateFollowing(context)) };
+/**
+ * A push to main. A run that loses the race to another, an action run by hand or a newer push's run, leaves the
+ * release as that run made it: each run rebuilds from what the remote holds, so the later one is the whole release.
+ */
+function update(context) {
+  try {
+    return context.state.frozen ? updateFrozen(context) : rebuildFollowing(context);
+  } catch (error) {
+    if (!(error instanceof ReleaseMoved)) throw error;
+    const unchanged = context.state.frozen ? frozenResult(context.state, false, []) : { releasable: true, changed: false, frozen: false };
+    return { ...unchanged, notice: "The Release pull request changed while this run was building: left as it is." };
+  }
+}
+
+const ACTIONS = { freeze, "cherry-pick": cherryPick, unfreeze, "set-version": setVersion, update };
+
+/** How many times an action run by hand builds and pushes, each from what the remote then holds, before refusing. */
+const ATTEMPTS = 3;
 
 /**
  * The version core releases as in this run, and whether this run sets it: the one asked for, by the set-version action
@@ -610,6 +639,8 @@ function coreVersionOf({ action, coreVersion, git, state }) {
  *   - `dropped`: consumed entries main changed after the freeze, released as frozen;
  *   - `notice`: a line for the run summary when the action had nothing to do.
  * Every action changes the remote in one push or not at all, and an action that can't run throws saying what to run.
+ * Each push is leased to what this run read, so runs never overwrite each other: an action run by hand that loses the
+ * race to another run builds again from what the remote then holds, up to ATTEMPTS times, and a push's run yields.
  *
  * `action` is `update` (a push to main), `freeze`, `cherry-pick`, `unfreeze` or `set-version`; `coreVersion` is the
  * version core releases as, set by hand (coreVersionOf), and the result carries the one in force. `target` is a commit, release tag or
@@ -618,15 +649,24 @@ function coreVersionOf({ action, coreVersion, git, state }) {
  * that release alone has nothing to release. `version(frozen)` writes the Release commit's changes into the checkout
  * (release-version.mjs), given `{ base, picks: [{ commit, subject }] }` for a frozen candidate and null otherwise, then
  * the version core releases as when one is set, and returns core's version in the checkout once it has run;
- * `resolvePull(number)` gives a merged pull request's commit on main.
+ * `resolvePull(number)` gives a merged pull request's commit on main; `mergedHead` is the last merged Release pull
+ * request's head, which a later release never builds on (readState).
  */
-export function runReleaseAction({ action, target = "", fixes = "", coreVersion = "", git, remote, version, resolvePull }) {
+export function runReleaseAction({ action, target = "", fixes = "", coreVersion = "", git, remote, version, resolvePull, mergedHead = null }) {
   const run = Object.hasOwn(ACTIONS, action) ? ACTIONS[action] : undefined;
   if (run === undefined) throw new Error(`unknown action "${action}": freeze, cherry-pick, unfreeze or set-version`);
   if (git(["status", "--porcelain"]) !== "") throw new Error("the checkout has changes: run this from a clean checkout, as release-pr.yml does");
-  fetchRelease(git, remote);
-  const state = readState(git);
-  const core = coreVersionOf({ action, coreVersion, git, state });
-  const result = run({ git, target, fixes, version, resolvePull, state, ...core, push: (args) => git(["push", "--quiet", remote, ...args]) });
-  return core.coreVersion === "" ? result : { ...result, coreVersion: core.coreVersion };
+  const push = (args) => git(["push", "--quiet", remote, ...args]);
+  for (let attempt = 1; ; attempt += 1) {
+    fetchRelease(git, remote);
+    const state = readState(git, mergedHead);
+    const core = coreVersionOf({ action, coreVersion, git, state });
+    try {
+      const result = run({ git, target, fixes, version, resolvePull, state, ...core, push });
+      return core.coreVersion === "" ? result : { ...result, coreVersion: core.coreVersion };
+    } catch (error) {
+      if (!(error instanceof ReleaseMoved)) throw error;
+      if (attempt === ATTEMPTS) throw new Error(`the Release pull request changed ${ATTEMPTS} times while this ran, as other release runs landed: run ${action} again. Nothing was changed.`);
+    }
+  }
 }

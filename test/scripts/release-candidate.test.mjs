@@ -252,7 +252,7 @@ describe("runReleaseAction", { timeout: 120_000 }, () => {
       work.git(["push", "--quiet", "origin", "HEAD:main"]);
       return work.git(["rev-parse", "HEAD"]);
     };
-    return { commit, run, tip, show, has, merge, remoteGit, work, ci };
+    return { commit, run, tip, show, has, merge, remoteGit, work, ci, version };
   }
 
   it("follows main until frozen: each push rebuilds the Release commit on main's tip", () => {
@@ -601,6 +601,69 @@ describe("runReleaseAction", { timeout: 120_000 }, () => {
     const result = runReleaseAction({ action: "update", git: racing, remote: "origin", version: () => writeFileSync(join(ci.folder, "version.txt"), "9\n"), resolvePull: () => "" });
     expect(result).toMatchObject({ changed: false, frozen: false, notice: expect.stringMatching(/changed while this run was building/u) });
     expect(tip(RELEASE_BRANCH)).toBe(moved());
+  });
+
+  /** `ci.git`, with `land` run once before each of the first `times` pushes: another run landing while this one builds. */
+  const racing = (ci, land, times = 1) => {
+    let raced = 0;
+    const git = (args, options) => {
+      if (args[0] === "push" && raced < times) {
+        raced += 1;
+        land();
+      }
+      return ci.git(args, options);
+    };
+    return { git, raced: () => raced };
+  };
+
+  it("cherry-picks run at once both land: the one that pushes second builds again on the first", () => {
+    const { commit, run, ci, version } = repository();
+    commit("Add a", { ".changelog/added-a.md": "A.\n" });
+    run("freeze");
+    const first = commit("First fix", { "src/first.txt": "first\n" });
+    const second = commit("Second fix", { "src/second.txt": "second\n" });
+    // The cherry-pick of the first fix lands while the second's run is building.
+    const race = racing(ci, () => run("cherry-pick", first));
+    const picked = runReleaseAction({ action: "cherry-pick", target: second, git: race.git, remote: "origin", version, resolvePull: () => "" });
+    expect(race.raced()).toBe(1);
+    expect(picked).toMatchObject({ changed: true, frozen: true, picks: [first, second] });
+  });
+
+  it("set-version that loses the race to a push's run builds again and sets the version, and refuses once it keeps losing", () => {
+    const { commit, run, tip, show, ci, version, remoteGit } = repository();
+    commit("Add a", { ".changelog/added-a.md": "A.\n" });
+    run("update");
+    // Each push's run lands a commit of its own.
+    let runs = 0;
+    const pushRun = () => {
+      runs += 1;
+      const landed = remoteGit(["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit-tree", "refs/heads/main^{tree}", "-p", "refs/heads/main", "-m", `A push's run ${runs}`]);
+      remoteGit(["update-ref", `refs/heads/${RELEASE_BRANCH}`, landed]);
+    };
+    const setVersion = (git) => runReleaseAction({ action: "set-version", coreVersion: "0.2.0", git, remote: "origin", version, resolvePull: () => "" });
+
+    const once = racing(ci, pushRun);
+    expect(setVersion(once.git)).toEqual({ releasable: true, changed: true, frozen: false, coreVersion: "0.2.0" });
+    expect(once.raced()).toBe(1);
+    expect(show(tip(RELEASE_BRANCH), "version.txt")).toBe("0.2.0");
+
+    const always = racing(ci, pushRun, Number.POSITIVE_INFINITY);
+    expect(() => setVersion(always.git)).toThrow(/changed 3 times while this ran.*run set-version again/u);
+    expect(always.raced()).toBe(3);
+  });
+
+  it("never builds on a Release pull request's branch that outlived its merge, nor keeps its version", () => {
+    const { commit, run, tip, ci, version, merge, remoteGit } = repository();
+    commit("Add a", { ".changelog/added-a.md": "A.\n" });
+    run("freeze", "", undefined, "", "0.2.0");
+    const released = tip(RELEASE_BRANCH);
+    merge();
+    // Both branches are still there: the repository keeps merged branches, and the tag job did not run.
+    expect(tip(CANDIDATE_BRANCH)).not.toBeNull();
+    const later = commit("Add b", { ".changelog/added-b.md": "B.\n" });
+    const result = runReleaseAction({ action: "update", git: ci.git, remote: "origin", version, resolvePull: () => "", mergedHead: released });
+    expect(result).toEqual({ releasable: true, changed: true, frozen: false });
+    expect(readReleaseMessage(remoteGit(["log", "-1", "--format=%B", tip(RELEASE_BRANCH)]))).toMatchObject({ base: later, picks: [] });
   });
 
   it("refuses to run in a checkout with changes, so it never discards anyone's work", () => {

@@ -150,7 +150,7 @@ for (const pack of packs) {
   writeFileSync(join(ROOT, path), releasedPackChangelog(changelog, pack.name, pack.version, today, packRuleNotes(changes), changesetNotes(changesets, pack.name)));
 }
 
-/** Why core's next version can't be released (release-pr.yml's tag-core would refuse its tag), or null. */
+/** Why core's next version can't be released (release-tag.mjs would refuse its tag), or null. */
 let coreRefusal = null;
 
 /** Core's bump, `{ from, version, notes, changes }`, or null when core is not released by this pull request. */
@@ -169,7 +169,7 @@ function versionCore() {
     return null;
   }
   const version = SET_VERSION === "" ? nextCoreVersion(current, readText("CHANGELOG.md")) : SET_VERSION;
-  // A version tag-core would refuse is left out, so the packs still release; the description says why.
+  // A version release-tag.mjs would refuse is left out, so the packs still release; the description says why.
   const tagRefusal = coreTagRefusal(version, tags);
   const pending = readChangelogEntries(ROOT);
   // So is one with a pending entry that has no type, from a pull request that merged without one: its notes have no heading for it.

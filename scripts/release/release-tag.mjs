@@ -4,7 +4,8 @@
 // the release followed main. Never main's merge commit: frozen, that holds everything merged since the freeze.
 //   - `v<version>`, when the released commit's package.json names a core version with no tag yet: its push starts
 //     release.yml, which builds and publishes core. A version that is not later than every released one is refused
-//     (coreTagRefusal in core.mjs), and the packs still release.
+//     (coreTagRefusal in core.mjs), and the packs still release. So do they when core's tag can't be made: every later
+//     run tries it again until it is, and fails saying why until then.
 //   - `release-<commit>` (releaseTrainTag): its push starts release-packs.yml, which publishes every pack whose version
 //     at that commit has no tag. One per release, so the packs take one run and one approval.
 // Then it removes the candidate's branch, which the tags have replaced.
@@ -30,12 +31,15 @@ const say = (line) => {
   if (process.env.GITHUB_STEP_SUMMARY !== undefined) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n\n`);
 };
 
-/** Tags core's version at `released`, unless it is tagged already; returns why it could not be, or null. */
-function tagCore(released) {
+/**
+ * Tags core's version at `released`, unless it is tagged already; returns why the version is refused, or null. A run
+ * after the packs' tag (`again`) says nothing in the run summary unless it tags.
+ */
+function tagCore(released, again) {
   const version = JSON.parse(api(`repos/{owner}/{repo}/contents/package.json?ref=${released}`, ["-H", "Accept: application/vnd.github.raw"])).version;
   const tags = tagsUnder("v");
   if (tags.includes(coreTag(version))) {
-    say(`Core ${version} is released already (\`${coreTag(version)}\` exists), so this release is the packs' alone.`);
+    if (!again) say(`Core ${version} is released already (\`${coreTag(version)}\` exists), so this release is the packs' alone.`);
     return null;
   }
   const refusal = coreTagRefusal(version, tags);
@@ -64,16 +68,24 @@ function main() {
   // Every push to main reaches the two lines below until the next release, so they stay out of the run summary.
   if (released === null) return console.log(`Release pull request ${merged.number}'s head ${short(head)} was not built by this workflow (it is from before it, or was changed by hand): nothing is tagged.`);
   const train = releaseTrainTag(released);
-  if (tagsUnder(train).includes(train)) {
-    console.log(`Release pull request ${merged.number} is released: ${train} exists.`);
-    // A run cancelled after tagging left the branch behind.
-    return removeCandidateBranch(released);
+  const again = tagsUnder(train).includes(train);
+  // Core's tag apart from the packs', so one that can't be made never holds the packs back.
+  let failure = null;
+  try {
+    const refusal = tagCore(released, again);
+    // A refused version stays refused: said once, by the run that tags the packs.
+    if (!again) failure = refusal;
+  } catch (error) {
+    failure = `could not tag core, so no core release has started; the next push to main tries again: ${error.message}`;
   }
-  const refusal = tagCore(released);
-  createReleaseTag(train, released);
-  say(`Tagged \`${train}\` at ${released} (Release pull request ${merged.number}): the Release packs workflow on that tag publishes the packs.`);
+  if (again) console.log(`Release pull request ${merged.number} is released: ${train} exists.`);
+  else {
+    createReleaseTag(train, released);
+    say(`Tagged \`${train}\` at ${released} (Release pull request ${merged.number}): the Release packs workflow on that tag publishes the packs.`);
+  }
+  // A run cancelled after tagging left the branch behind.
   removeCandidateBranch(released);
-  if (refusal !== null) throw new Error(refusal);
+  if (failure !== null) throw new Error(failure);
   return undefined;
 }
 

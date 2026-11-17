@@ -815,7 +815,10 @@ These are maintainer risks, not user risks. Actions are pinned by commit SHA, an
 <details>
 <summary>What remains</summary>
 
-- `release.yml` runs on any `v*` tag; the `release` environment approval is the only gate.
+- `release.yml` runs on any `v*` tag, and `release-packs.yml` publishes on any `release-*` tag, each with the tagged
+  commit's own workflow: a forged tag's commit can drop `release-train-check.mjs`, which stops a mistake, not an
+  attacker. Until a tag ruleset limits who may create them ([release.md](release.md#freezing-a-release)), the `release`
+  environment approval is the only gate, and a forged run's approval page looks like a real one.
 - An approval, the bot's included, survives later pushes: main's ruleset does not dismiss stale approvals, so a
   contributor can push to a branch after it is approved and merge it unreviewed.
 - `scripts/host/host-auth.ts` (developer smoke runs) copies an access-only OAuth token (no refresh token) into a

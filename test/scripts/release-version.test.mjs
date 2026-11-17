@@ -67,7 +67,10 @@ const commit = ({ git }, message) => {
 const NPM_RUNS = process.platform !== "win32";
 
 function releaseVersion({ root }, env = {}) {
-  execFileSync("node", ["scripts/release/release-version.mjs", join(root, "body.md")], { cwd: root, stdio: "pipe", env: { ...process.env, RELEASE_FROZEN: "", RELEASE_VERSION: "", ...env } });
+  // Without the runner's GITHUB_OUTPUT, so the script's `releasable` never lands in this job's own outputs.
+  const inherited = { ...process.env };
+  delete inherited.GITHUB_OUTPUT;
+  execFileSync("node", ["scripts/release/release-version.mjs", join(root, "body.md")], { cwd: root, stdio: "pipe", env: { ...inherited, RELEASE_FROZEN: "", RELEASE_VERSION: "", ...env } });
 }
 
 describe.runIf(NPM_RUNS)("release-version.mjs, the pull request's description", () => {

@@ -68,8 +68,8 @@ describe("release.yml", () => {
 describe("release-pr.yml", () => {
   const release = workflow("release-pr.yml");
 
-  it("never cancels an action run by hand, and lets only the latest push to main run", () => {
-    expect(release.concurrency.group).toBe("release-pr-${{ github.event_name }}");
+  it("gives each action run by hand its own group, so none is cancelled or dropped, and lets only the latest push to main run", () => {
+    expect(release.concurrency.group).toBe("release-pr-${{ github.event_name == 'push' && 'push' || github.run_id }}");
     expect(release.concurrency["cancel-in-progress"]).toBe("${{ github.event_name == 'push' }}");
   });
 

@@ -28,9 +28,11 @@ name: Release pull request
 # "Release candidate" check (ci.yml) passes only once CI has passed on that exact commit.
 #
 # Pushes to main share one group and the latest wins: each run rebuilds the whole pull request from main, so a newer
-# push cancels an older run, and a cancelled tag job loses nothing, since the next run tags the same commit. The
-# actions run by hand have their own group and are never cancelled; a push's run that loses the race to one leaves the
-# frozen release as it is (the lease in candidate.mjs).
+# push cancels an older run, and a cancelled tag job loses nothing, since the next run tags the same commit. Each
+# action run by hand is a group of its own, so none is ever cancelled or dropped from a queue: GitHub keeps one waiting
+# run per group, and a newer one cancels it. Runs at once never overwrite each other instead: each push is leased to
+# what its run read (candidate.mjs), an action that loses the race builds again from what then landed, and a push's
+# run that loses leaves the release as it is.
 
 on:
   push:
@@ -67,7 +69,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-pr-${{ github.event_name }}
+  group: release-pr-${{ github.event_name == 'push' && 'push' || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
 env:
@@ -173,9 +175,8 @@ jobs:
           FROZEN: ${{ steps.release.outputs.frozen }}
         run: |
           set -euo pipefail
-          # A push's run that an action run by hand overtook since it pushed must not write its description over the
-          # frozen one.
-          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$(gh api "repos/{owner}/{repo}/git/ref/heads/${RELEASE_BRANCH}" --jq .object.sha)" != "$(git rev-parse HEAD)" ]; then
+          # A run that another overtook since it pushed must not write its description over the later one.
+          if [ "$(gh api "repos/{owner}/{repo}/git/ref/heads/${RELEASE_BRANCH}" --jq .object.sha)" != "$(git rev-parse HEAD)" ]; then
             echo "::notice::The Release pull request changed while this run was building: its description is left as it is."
             exit 0
           fi

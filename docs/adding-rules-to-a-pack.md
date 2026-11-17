@@ -419,7 +419,8 @@ and approval.
   archive's copy lists earlier samples until a `replace` repack: note it, don't hand-edit it.
 - **Moving unchanged documents** between `rules/` and `candidates/` changes no verdict; cite the earlier run whose
   comment stands.
-- **First npm publish**: needed when the Release packs run on `main` fails at **First publish needed**.
+- **First npm publish**: needed when the Release packs run on the `release-<commit>` tag fails at **First publish
+  needed**.
 
 </details>
 
