@@ -232,6 +232,13 @@ pub struct DocTable {
 pub const MAX_SLABS: usize = 4;
 
 impl DocTable {
+    /// The format every view is in, or `None` for an empty or mixed batch: the label kernels are specialized to it
+    /// (the reads' format test made a constant, t41).
+    pub fn format(&self) -> Option<u32> {
+        let first = self.views.first()?.format;
+        self.views.iter().all(|view| view.format == first).then_some(first)
+    }
+
     /// The table of `documents`, in order, in one slab (`gather`): `None` when they cannot be.
     pub fn one_block(documents: Vec<Arc<Resident>>) -> Option<Self> {
         Self::new(gather(documents).ok()?)

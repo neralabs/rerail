@@ -4558,10 +4558,6 @@ dependencies = [
 name = "rerail-tape-format"
 version = "0.1.0"
 dependencies = [
- "cranelift-codegen",
- "cranelift-frontend",
- "cranelift-jit",
- "cranelift-module",
  "lz4-sys",
  "rerail-clif",
  "sha2 0.10.9",
