@@ -511,6 +511,20 @@ pass.
   - **the entries read** (lookup 0.3 s, decode 0.45 s, their rows handed on 0.34 s): every file is a partial hit and
     is read whole, so these are near what this edit must read.
 
+- **Measured again, and handed on** (2026-11-17, after 0323; ep2's B101 edit in a new process on the m3,
+  profiling build, profiled, from the profile of 2026-11-16's run, nothing new run): 2.5 s wall, 32.7 G. The
+  per-file side is gone (`local` 0.006 s, `parse` 0.04 s). `combine` (0.58 s wall) and `prepare` (0.95 s) are 61%
+  of the wall. All of it is whole-program passes:
+  - push 0.17 s, prune/simplify/demand 0.14 s, demand cut 0.06 s, factorize 0.06 s, merge 0.03 s, locate 0.03 s;
+  - hiding about 0.09 s, fact spaces 0.05 s, merging the relations that are one 0.05 s.
+
+  Rerunning these on the edit's delta in a new process is 0281's step P, decided as 0333 on Typing-support
+  (2026-11-17, the user's choice there: the last run and its analyses as stored facts), on top of its steps
+  6a–6e, 7a-1 and 7a-2 (9a67908a9). The user's call (2026-11-17): P stays there, not built here.
+- **Done when** (here): Typing-support's P is merged in, and ep2's edit is measured again against the numbers
+  above. Then the passes that 0333 §6 leaves whole (hiding's fixpoint, the fact spaces, prune) are made to cost
+  their delta, if the measurement shows them worth it.
+
 ### Q19. A new process reads every kept frame of the cross part, its own or not
 
 - **Found** (2026-11-15, ep2, while measuring Q18): an edit of one rule's body costs 82.9 G in a new process, of
