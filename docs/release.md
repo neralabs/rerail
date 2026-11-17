@@ -88,6 +88,13 @@ A push to `main` rewrites the description and clears the boxes, because what was
 releases. Nothing in CI reads them: the checklist is the merger's word (`BEFORE_MERGING` in
 `scripts/release/release-version.mjs`).
 
+### The reviewer's Rerail
+
+The same bump moves the version the automated reviewer's Rerail module installs (`rerail_package` in
+`.github/workflows/reviewer.yml`, `REVIEWER_PIN` in `scripts/release/core.mjs`), so it scans with the newest stable
+release. A preview (`-next.N`) leaves it where it is. Until the release is on npm, the module's install fails and
+the review goes on without the scan.
+
 ### Installer plugins
 
 The same bump re-pins the installer plugins (`plugins/claude`, `plugins/codex`, `plugins/cursor`) to the version just

@@ -232,6 +232,23 @@ export function setPluginVersion(text, version) {
 }
 
 /**
+ * The reviewer's Rerail module installs the newest stable core: `rerail_package` in this workflow. The Release pull
+ * request moves it with core's version, but not to a preview (`-next.N`), which npm publishes under `next`.
+ */
+export const REVIEWER_PIN = ".github/workflows/reviewer.yml";
+const REVIEWER_PACKAGE = /^( +rerail_package: "@neralabs\/rerail@)([^"]+)(")$/mu;
+
+/** The core version REVIEWER_PIN's `rerail_package` names, or undefined when it names none. */
+export function reviewerRerailVersion(text) {
+  return REVIEWER_PACKAGE.exec(text)?.[2];
+}
+
+/** REVIEWER_PIN's text with `rerail_package` at core `version`, or unchanged when `version` is a preview. */
+export function setReviewerRerailVersion(text, version) {
+  return semver.prerelease(version) === null ? text.replace(REVIEWER_PACKAGE, `$1${version}$3`) : text;
+}
+
+/**
  * Whether core `version` may be tagged for release, given the `v*` tags that exist: it must not be tagged yet and must
  * be later than every released version, so a version moved backwards by mistake is never published. Returns the
  * reason it may not, or null.
