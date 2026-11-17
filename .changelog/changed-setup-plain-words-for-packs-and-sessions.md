@@ -1,1 +1,0 @@
-Set-up explains rule packs in plain words: ready-made rules, mostly the ones linters use, suggested from what a repo is built with rather than from how its code is written. The sessions question says Rerail checks the coding agent's work, not you, and how to stop it.

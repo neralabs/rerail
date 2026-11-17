@@ -769,11 +769,11 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
   }
 
   interrupt(sessionId: string): void {
-    this.#database
-      .update(audits)
-      .set({ status: "interrupted", finishedAt: Date.now() })
-      .where(and(eq(audits.sessionId, sessionId), eq(audits.status, "running")))
-      .run();
+    const running = and(eq(audits.sessionId, sessionId), eq(audits.status, "running"));
+    // Read first: an update takes the write lock even when it matches no row, waiting up to 5 s for another process's,
+    // and every evaluator's open asks this of a session that mostly runs nothing.
+    if (this.#database.select({ auditId: audits.auditId }).from(audits).where(running).limit(1).get() === undefined) return;
+    this.#database.update(audits).set({ status: "interrupted", finishedAt: Date.now() }).where(running).run();
   }
 
   get(auditId: string): AuditRecord | undefined {
