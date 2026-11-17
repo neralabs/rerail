@@ -10,7 +10,7 @@ build = "build.rs"
 
 [features]
 default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache"]
-all-languages = ["lang-blade", "lang-csharp", "lang-css", "lang-html", "lang-java", "lang-javascript", "lang-json", "lang-markdown", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue"]
+all-languages = ["lang-blade", "lang-csharp", "lang-css", "lang-html", "lang-java", "lang-javascript", "lang-json", "lang-kotlin", "lang-markdown", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-scala", "lang-sql", "lang-swift", "lang-typescript", "lang-vue"]
 lang-blade = []
 lang-csharp = ["ast-grep-language/tree-sitter-c-sharp"]
 lang-css = ["ast-grep-language/tree-sitter-css"]
@@ -18,12 +18,15 @@ lang-html = ["ast-grep-language/tree-sitter-html"]
 lang-java = ["ast-grep-language/tree-sitter-java"]
 lang-javascript = []
 lang-json = ["ast-grep-language/tree-sitter-json"]
+lang-kotlin = ["ast-grep-language/tree-sitter-kotlin"]
 lang-markdown = []
 lang-php = ["ast-grep-language/tree-sitter-php"]
 lang-python = []
 lang-rr = []
 lang-rust = ["ast-grep-language/tree-sitter-rust"]
+lang-scala = ["ast-grep-language/tree-sitter-scala"]
 lang-sql = []
+lang-swift = ["ast-grep-language/tree-sitter-swift"]
 lang-typescript = []
 lang-vue = []
 headless = ["napi-derive/noop"]
@@ -98,6 +101,11 @@ rerail-rust-lean = { path = "../rust_lean" }
 rerail-java-lean = { path = "../java_lean" }
 # C#'s lean parser: tree-sitter-c-sharp's tape, written as the parse goes (`tape::csharp_lean`).
 rerail-csharp-lean = { path = "../csharp_lean" }
+# Kotlin's, Swift's and Scala's lean parsers: their tree-sitter tapes, written as the parse goes
+# (`tape::kotlin_lean`, `tape::swift_lean`, `tape::scala_lean`).
+rerail-kotlin-lean = { path = "../kotlin_lean" }
+rerail-swift-lean = { path = "../swift_lean" }
+rerail-scala-lean = { path = "../scala_lean" }
 # PHP's lean parser: tree-sitter-php's tape, written as the parse goes (`tape::php_lean`).
 rerail-php-lean = { path = "../php_lean" }
 # HTML's lean parser: tree-sitter-html's tape, written as the parse goes (`tape::html_lean`).

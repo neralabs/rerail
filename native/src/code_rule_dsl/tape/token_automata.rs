@@ -31,8 +31,9 @@ pub(crate) const GRAMMARS: [(&str, &str); 18] = [
 ];
 
 /// The grammars of `GRAMMARS` only tests parse (`GrammarDialect`'s test-only dialects): their arms are built
-/// under `cfg(any(test, feature = "test-hooks"))`, as the dialects are. Their lean parsers' oracles read them.
-pub(crate) const TEST_ONLY: [&str; 3] = ["Kotlin", "Swift", "Scala"];
+/// under `cfg(any(test, feature = "test-hooks"))`, as the dialects are. None now: Kotlin, Swift and Scala are
+/// product languages (decision 0326).
+pub(crate) const TEST_ONLY: [&str; 0] = [];
 
 /// An interned name (a kind or a field; 0 is "no field").
 pub(crate) type Sym = u32;

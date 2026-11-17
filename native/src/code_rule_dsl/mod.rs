@@ -1282,6 +1282,10 @@ mod language {
         // Java's and C#'s families: syntax only so far, their tapes from the lean parsers.
         pub mod csharp;
         pub mod java;
+        // Kotlin's, Swift's and Scala's families: syntax only so far, their tapes from the lean parsers.
+        pub mod kotlin;
+        pub mod scala;
+        pub mod swift;
         // HTML's, CSS's and Markdown's families: syntax only so far, read by tree-sitter.
         pub mod css;
         pub mod html;
@@ -4640,7 +4644,7 @@ pub(crate) use rule_api::CodeRuleDslEditor;
 pub(crate) fn install_languages() {
     use language::Family;
     use language::adapter::pack::{Pack, pack, register};
-    use language::adapter::{blade::Blade, css::Css, csharp::Csharp, ecma::Ecma, format::Format, html::Html, java::Java, json::Json, markdown::Markdown, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
+    use language::adapter::{blade::Blade, css::Css, csharp::Csharp, ecma::Ecma, format::Format, html::Html, java::Java, json::Json, kotlin::Kotlin, scala::Scala, swift::Swift, markdown::Markdown, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
     register(Family::Python, &Pack::<Python>::NEW);
     language::register_base(Family::Python, &Pack::<Python>::NEW);
     register(Family::Ecma, &Pack::<Ecma>::NEW);
@@ -4665,6 +4669,12 @@ pub(crate) fn install_languages() {
     language::register_base(Family::Java, &Pack::<Java>::NEW);
     register(Family::Csharp, &Pack::<Csharp>::NEW);
     language::register_base(Family::Csharp, &Pack::<Csharp>::NEW);
+    register(Family::Kotlin, &Pack::<Kotlin>::NEW);
+    language::register_base(Family::Kotlin, &Pack::<Kotlin>::NEW);
+    register(Family::Swift, &Pack::<Swift>::NEW);
+    language::register_base(Family::Swift, &Pack::<Swift>::NEW);
+    register(Family::Scala, &Pack::<Scala>::NEW);
+    language::register_base(Family::Scala, &Pack::<Scala>::NEW);
     register(Family::Html, &Pack::<Html>::NEW);
     language::register_base(Family::Html, &Pack::<Html>::NEW);
     register(Family::Css, &Pack::<Css>::NEW);
@@ -4843,6 +4853,17 @@ pub(crate) fn install_languages() {
             // The lean C# parser (`tape::csharp_lean`, decision 0196); a file it refuses goes to
             // tree-sitter-c-sharp.
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::CSharp, name: "lean C# parser", rank: 0, runs: true, parser: &tape::csharp_lean::Lean });
+        }
+        // The lean Kotlin, Swift and Scala parsers (`tape::kotlin_lean`, `swift_lean`, `scala_lean`,
+        // decisions 0305 and 0326); a file one refuses goes to its tree-sitter grammar.
+        if cfg!(feature = "lang-kotlin") {
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Kotlin, name: "lean Kotlin parser", rank: 0, runs: true, parser: &tape::kotlin_lean::Lean });
+        }
+        if cfg!(feature = "lang-swift") {
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Swift, name: "lean Swift parser", rank: 0, runs: true, parser: &tape::swift_lean::Lean });
+        }
+        if cfg!(feature = "lang-scala") {
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Scala, name: "lean Scala parser", rank: 0, runs: true, parser: &tape::scala_lean::Lean });
         }
         if cfg!(feature = "lang-php") {
             // The lean PHP parser (`tape::php_lean`, decision 0198); a file it refuses goes to

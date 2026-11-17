@@ -416,9 +416,6 @@ grammar_dialect! {
     Bash => SupportLang::Bash,
     Ruby => SupportLang::Ruby,
     TestRust => SupportLang::Rust,
-    Kotlin => SupportLang::Kotlin,
-    Scala => SupportLang::Scala,
-    Swift => SupportLang::Swift,
     TestHtml => SupportLang::Html,
     Lua => SupportLang::Lua,
     Go => SupportLang::Go,
@@ -442,7 +439,6 @@ const TEST_DIALECT_FAMILY: Family = Family::Ecma;
 /// Grammars only tests parse (tape round trips over other shapes); no file or code rule selects them.
 #[cfg(any(test, feature = "test-hooks"))]
 const TEST_TAPE_TAGS: &[(GrammarDialect, u8)] = &[
-    (GrammarDialect::Scala, 4),
     (GrammarDialect::Go, 5),
     (GrammarDialect::TestHtml, 250),
 ];
