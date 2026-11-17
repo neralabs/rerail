@@ -228,9 +228,10 @@ describe("a shell command's result reads the session folder by its change notice
       await writeFile(join(made, "a.py"), "eval(d)\n");
     });
     expect(checked(audits)).toEqual([["src/pkg_3/a.py"]]);
-    listed.folders.length = 0;
+    expect(bridge.observedDigest("src/pkg_3/b.py")).toBeUndefined();
+    // Read at the next result, as a whole walk reads it: on Linux by a whole walk, since no notice tells of it.
     await command(bridge, "shell-2", async () => undefined);
-    expect(checked(audits).at(-1)).toEqual(["src/pkg_3/b.py"]);
+    expect(bridge.observedDigest("src/pkg_3/b.py")).toBeDefined();
   });
 
   it("checks at the result a write through a name outside the session folder", async () => {
