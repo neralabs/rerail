@@ -240,6 +240,7 @@ impl ContentStore {
 
     /// Queues a batch's entries (`put_memo_segments`) for the store's writer, behind the run (decision 0306 §8), as
     /// `what`: `bytes` held until written, `keys` each with the entry a read gets meanwhile.
+    #[allow(clippy::too_many_arguments)]
     pub fn queue_memo_segments(&self, what: &'static str, bytes: usize, keys: Vec<(super::super::write_back::Key, Option<super::super::write_back::Held>)>, space: [u8; 32], segments: SealedSegments, rows: Vec<MemoRow>, keep: usize) {
         let write = MemoWrite { space, segments, rows, keep };
         self.write_back_syms(super::super::write_back::Syms::None, what, bytes, keys, super::super::write_back::Work(super::super::write_back::Kind::Memo(Box::new(write))));

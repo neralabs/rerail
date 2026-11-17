@@ -525,8 +525,8 @@ impl<'a> P<'a> {
                     }
                 }
                 // A generic type's constructor: `Name<…>(`.
-                if self.kind_at(1) == T::Lt && self.adjacent(0) {
-                    if let Some(close) = self.type_args_end(1) {
+                if self.kind_at(1) == T::Lt && self.adjacent(0)
+                    && let Some(close) = self.type_args_end(1) {
                         if self.kind_at(close + 1) == T::Dot && self.adjacent(close) && self.generic_member_is_type(1, close + 2) {
                             // `Name<…>.member`: the type a navigation's target.
                             self.u_end = self.peek_at(close + 2).end;
@@ -558,7 +558,6 @@ impl<'a> P<'a> {
                             return Ok(());
                         }
                     }
-                }
                 self.simple_identifier()?;
                 Ok(())
             }

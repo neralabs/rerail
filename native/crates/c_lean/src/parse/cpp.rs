@@ -228,8 +228,8 @@ impl<'a> P<'a> {
         self.kw(K::FriendDeclaration, w::FRIEND)?;
         // `friend class X;`, `friend X;`.
         let k = usize::from(self.is_word(w::CLASS) || self.is_word(w::STRUCT) || self.is_word(w::UNION));
-        if let Some(e) = self.class_name_end(k) {
-            if self.kind_at(e) == T::Semi {
+        if let Some(e) = self.class_name_end(k)
+            && self.kind_at(e) == T::Semi {
                 if k == 1 {
                     self.kw_any(K::FriendDeclaration)?;
                 }
@@ -238,7 +238,6 @@ impl<'a> P<'a> {
                 self.close(n);
                 return Ok(());
             }
-        }
         let _ = level;
         if self.ctor_ahead(Level::Top) {
             self.ctor(Level::Top)?;
@@ -848,14 +847,13 @@ impl<'a> P<'a> {
         loop {
             match self.kind_at(j) {
                 T::Lt => angles[depth] += 1,
-                T::Gt => {
-                    if angles[depth] > 0 {
+                T::Gt
+                    if angles[depth] > 0 => {
                         angles[depth] -= 1;
                         if depth == 0 && angles[0] == 0 {
                             return Some((j, false));
                         }
                     }
-                }
                 T::GtGt => {
                     if depth == 0 {
                         match angles[0] {
@@ -896,13 +894,11 @@ impl<'a> P<'a> {
             return true;
         }
         // A call's arguments then an operand (`a < b > (c) d`): comparisons.
-        if self.kind_at(e + 1) == T::LParen {
-            if let Some(p) = self.paren_end(e + 1) {
-                if matches!(self.kind_at(p + 1), T::Number | T::Str | T::Char) || self.is_ident_at(p + 1) {
+        if self.kind_at(e + 1) == T::LParen
+            && let Some(p) = self.paren_end(e + 1)
+                && (matches!(self.kind_at(p + 1), T::Number | T::Str | T::Char) || self.is_ident_at(p + 1)) {
                     return false;
                 }
-            }
-        }
         matches!(
             self.kind_at(e + 1),
             T::LParen | T::ColonColon | T::LBrace | T::Semi | T::Comma | T::RParen | T::RBracket | T::Gt | T::GtGt | T::Eq | T::DotDotDot | T::Colon | T::RBrace | T::Eof | T::EqEq | T::Ne | T::AmpAmp | T::PipePipe | T::Question
@@ -1437,7 +1433,7 @@ impl<'a> P<'a> {
             // `new (T)`: a parenthesized type.
             return self.refuse();
         }
-        while self.tok().kind == T::Name && matches!(self.tok().word, w::CONST | w::VOLATILE) {
+        if self.tok().kind == T::Name && matches!(self.tok().word, w::CONST | w::VOLATILE) {
             return self.refuse();
         }
         if !self.type_specifier(slot(f::TYPE, Ctx::Type))? {
@@ -1694,15 +1690,14 @@ impl<'a> P<'a> {
     /// A name in an expression: `T{…}` (a compound literal of a class), or a (qualified,
     /// template) name.
     fn name_expr(&mut self, s: Slot) -> R<N> {
-        if let Some(e) = self.class_name_end(0) {
-            if self.kind_at(e) == T::LBrace && !self.no_brace_literal() {
+        if let Some(e) = self.class_name_end(0)
+            && self.kind_at(e) == T::LBrace && !self.no_brace_literal() {
                 let n = self.open_in(K::CompoundLiteralExpression, s);
                 self.class_name(slot(f::TYPE, Ctx::Bare))?;
                 self.initializer_list(slot(f::VALUE, Ctx::Bare))?;
                 self.close(n);
                 return Ok(n);
             }
-        }
         if self.is_word(w::DECLTYPE) && !self.scope_ahead() {
             return self.decltype(s);
         }

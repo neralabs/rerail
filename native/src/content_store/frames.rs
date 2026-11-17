@@ -446,7 +446,7 @@ pub(super) struct FramesWrite {
     frames: Vec<Encoded>,
     delta_frames: Vec<Encoded>,
     retags: Vec<Retag>,
-    heads: Vec<(Rel, u64, Vec<(String, u64)>)>,
+    heads: Vec<Head>,
     gone: Vec<(Rel, i64)>,
     used: Option<Used>,
     segments: Option<super::segments::SealedSegments>,

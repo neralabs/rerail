@@ -418,7 +418,7 @@ mod tests {
         use crate::content_store::{ContentStore, MemoPut};
         let dir = tempfile::tempdir().unwrap();
         let space = crate::content_store::local_space(&[7u8; 32]);
-        let put = |part: i64, byte: u8| MemoPut { part, path: format!("{part}.py"), digest: [part as u8; 32], key: 1, bytes: vec![byte; 100], raw: 100, over: false };
+        let put = |part: i64, byte: u8| MemoPut { part, path: format!("{part}.py"), digest: [part as u8; 32], key: 1, bytes: vec![byte; 100], over: false };
         let staging = dir.path().join("staging.sqlite");
         ContentStore::open(&staging).unwrap().put_memo_entries(&space, (0..4).map(|p| put(p, 1)).collect(), 4).unwrap();
         let template = dir.path().join("template.sqlite");
@@ -431,7 +431,7 @@ mod tests {
         let read = store.memo_entries(&space, &(0..8).collect::<Vec<_>>(), true).unwrap();
         assert_eq!(read.len(), 8, "the template's entries and the copy's each find their bytes");
         for (part, blob) in read {
-            assert!(blob.bytes.iter().all(|&b| b == if part < 4 { 1 } else { 2 }), "part {part} reads the bytes it was put with");
+            assert!(blob.bytes.bytes().iter().all(|&b| b == if part < 4 { 1 } else { 2 }), "part {part} reads the bytes it was put with");
         }
     }
 }

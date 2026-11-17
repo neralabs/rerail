@@ -269,9 +269,6 @@ impl StatIndex {
     }
 }
 
-/// What gives a statistics blob with the store's ids (`queue_stat_blob_mapped`).
-pub type MapBlob = Box<dyn Fn(&ContentStore, &[u8]) -> StoreResult<Vec<u8>> + Send>;
-
 impl ContentStore {
     /// The stat index of `root`: entries whose mtime is over [`RACY_NS`] before their recording and whose source is
     /// still stored.

@@ -267,7 +267,7 @@ fn read_word(l: &mut Lx, cap: usize) -> Option<Vec<u8>> {
 }
 
 fn word_in(word: &Option<Vec<u8>>, words: &[&[u8]]) -> bool {
-    word.as_ref().is_some_and(|w| !w.is_empty() && words.iter().any(|x| *x == w.as_slice()))
+    word.as_ref().is_some_and(|w| !w.is_empty() && words.contains(&w.as_slice()))
 }
 
 fn skip_blanks_and_block_comments(l: &mut Lx) {
@@ -752,11 +752,10 @@ impl Scanner {
                         entry |= CASE_INDENT_FLAG;
                     }
                 }
-                Ok(b'|' | b'&') => {
-                    if !self.after_colon_eol && is_leading_infix_continuation(l) {
+                Ok(b'|' | b'&')
+                    if !self.after_colon_eol && is_leading_infix_continuation(l) => {
                         return None;
                     }
-                }
                 _ => {}
             }
             self.indents.push(entry);
@@ -885,8 +884,8 @@ impl Scanner {
                 return Some(Ext::Semi);
             }
             match u8::try_from(l.la()) {
-                Ok(b'e') => {
-                    if valid & (v::ELSE | v::EXTENDS | v::GATE) != 0 {
+                Ok(b'e')
+                    if valid & (v::ELSE | v::EXTENDS | v::GATE) != 0 => {
                         l.advance();
                         if valid & (v::ELSE | v::GATE) != 0 && scan_word(l, b"lse") {
                             if valid & v::GATE != 0 {
@@ -898,7 +897,6 @@ impl Scanner {
                             return None;
                         }
                     }
-                }
                 Ok(b'c') => {
                     let w = read_word(l, 6);
                     if let Some(w) = w.filter(|w| !w.is_empty()) {
@@ -916,34 +914,29 @@ impl Scanner {
                         }
                     }
                 }
-                Ok(b'f') => {
-                    if valid & (v::FINALLY | v::GATE) != 0 && scan_word(l, b"finally") {
+                Ok(b'f')
+                    if valid & (v::FINALLY | v::GATE) != 0 && scan_word(l, b"finally") => {
                         if valid & v::GATE != 0 {
                             return Some(Ext::Gate);
                         }
                         return None;
                     }
-                }
-                Ok(b'w') => {
-                    if valid & v::WITH != 0 && scan_word(l, b"with") {
+                Ok(b'w')
+                    if valid & v::WITH != 0 && scan_word(l, b"with") => {
                         return None;
                     }
-                }
-                Ok(b'd') => {
-                    if valid & v::DERIVES != 0 && scan_word(l, b"derives") {
+                Ok(b'd')
+                    if valid & v::DERIVES != 0 && scan_word(l, b"derives") => {
                         return None;
                     }
-                }
-                Ok(b'u') => {
-                    if valid & v::USES != 0 && scan_word(l, b"uses") {
+                Ok(b'u')
+                    if valid & v::USES != 0 && scan_word(l, b"uses") => {
                         return None;
                     }
-                }
-                Ok(b'm') => {
-                    if scan_word(l, b"match") {
+                Ok(b'm')
+                    if scan_word(l, b"match") => {
                         return None;
                     }
-                }
                 _ => {}
             }
             return Some(Ext::Semi);

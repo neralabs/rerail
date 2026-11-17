@@ -287,13 +287,11 @@ impl<'s> Lexer<'s> {
                     _ => break,
                 }
             }
-            if self.at(at) >= 0x80 {
-                if let Some((c, _)) = decode(self.src, at) {
-                    if c.is_whitespace() {
+            if self.at(at) >= 0x80
+                && let Some((c, _)) = decode(self.src, at)
+                    && c.is_whitespace() {
                         return Err(Refusal::Lex(at as u32));
                     }
-                }
-            }
             let Some((end, block)) = self.comment(at)? else { return Ok((at, nl)) };
             let kind = if block { crate::K::MultilineComment } else { crate::K::Comment };
             extras.push((crate::tw::key(kind, 0, true), at as u32, end as u32));
@@ -616,23 +614,21 @@ impl<'s> Lexer<'s> {
             if let Some(e) = self.digits(s + 2, |c| (b'0'..=b'7').contains(&c)) {
                 best = (T::Oct, e);
             }
-        } else if c0 == b'0' && matches!(c1, b'b' | b'B') {
-            if let Some(e) = self.digits(s + 2, |c| c == b'0' || c == b'1') {
+        } else if c0 == b'0' && matches!(c1, b'b' | b'B')
+            && let Some(e) = self.digits(s + 2, |c| c == b'0' || c == b'1') {
                 best = (T::Bin, e);
             }
-        }
         if best.1 == s {
             let e = self.digits(s, dec).expect("a digit");
             best = (T::Int, e);
             if let Some(x) = self.exponent(e, [b'e', b'E']) {
                 best = (T::Real, x);
             }
-            if self.at(e) == b'.' {
-                if let Some(f) = self.digits(e + 1, dec) {
+            if self.at(e) == b'.'
+                && let Some(f) = self.digits(e + 1, dec) {
                     let x = self.exponent(f, [b'e', b'E']).unwrap_or(f);
                     best = (T::Real, x);
                 }
-            }
         }
         // A word byte right after the number: the lexer reads another token there (refused).
         if wordc(self.at(best.1)) {

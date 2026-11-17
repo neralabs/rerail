@@ -251,13 +251,11 @@ impl<'s> Lexer<'s> {
                     _ => break,
                 }
             }
-            if self.at(at) >= 0x80 {
-                if let Some((c, _)) = decode(self.src, at) {
-                    if c.is_whitespace() {
+            if self.at(at) >= 0x80
+                && let Some((c, _)) = decode(self.src, at)
+                    && c.is_whitespace() {
                         return Err(Refusal::Lex(at as u32));
                     }
-                }
-            }
             match self.comment(at)? {
                 None => return Ok((at, nl)),
                 Some((end, true)) => {
@@ -552,13 +550,11 @@ impl<'s> Lexer<'s> {
                 break;
             }
         }
-        if self.at(e) >= 0x80 {
-            if let Some((ch, _)) = decode(self.src, e) {
-                if !ch.is_alphanumeric() && !ch.is_whitespace() {
+        if self.at(e) >= 0x80
+            && let Some((ch, _)) = decode(self.src, e)
+                && !ch.is_alphanumeric() && !ch.is_whitespace() {
                     return Err(Refusal::Lex(e as u32));
                 }
-            }
-        }
         Ok(e)
     }
 

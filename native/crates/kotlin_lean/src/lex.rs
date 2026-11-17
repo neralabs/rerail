@@ -261,11 +261,10 @@ impl<'s> Lexer<'s> {
             }
             if self.at(at) >= 0x80 {
                 // White space past ASCII (`\s` reads it): refused.
-                if let Some((c, _)) = decode(self.src, at) {
-                    if c.is_whitespace() {
+                if let Some((c, _)) = decode(self.src, at)
+                    && c.is_whitespace() {
                         return Err(Refusal::Lex(at as u32));
                     }
-                }
             }
             let Some(x) = self.comment(at)? else { return Ok((at, nl)) };
             let kind = if x.block { crate::K::MultilineComment } else { crate::K::LineComment };
@@ -389,13 +388,10 @@ impl<'s> Lexer<'s> {
                 Some(end) => return Ok((Char, end, 0, false)),
                 None => return refuse,
             },
-            b'#' if s == 0 || (s == 3 && self.src.starts_with("\u{feff}".as_bytes())) => {
-                if next == b'!' {
+            b'#' if (s == 0 || (s == 3 && self.src.starts_with("\u{feff}".as_bytes())))
+                && next == b'!' => {
                     (Shebang, 2)
-                } else {
-                    return refuse;
                 }
-            }
             b'(' => (LParen, 1),
             b')' => (RParen, 1),
             b'[' => (LBracket, 1),
@@ -545,16 +541,14 @@ impl<'s> Lexer<'s> {
     fn number(&self, s: usize) -> R<(T, usize, u8, bool)> {
         let dec = |c: u8| c.is_ascii_digit();
         let (c0, c1) = (self.at(s), self.at(s + 1));
-        if c0 == b'0' && matches!(c1, b'x' | b'X') {
-            if let Some(e) = self.digits(s + 2, |c| c.is_ascii_hexdigit()) {
+        if c0 == b'0' && matches!(c1, b'x' | b'X')
+            && let Some(e) = self.digits(s + 2, |c| c.is_ascii_hexdigit()) {
                 return Ok((T::Hex, e, 0, false));
             }
-        }
-        if c0 == b'0' && matches!(c1, b'b' | b'B') {
-            if let Some(e) = self.digits(s + 2, |c| c == b'0' || c == b'1') {
+        if c0 == b'0' && matches!(c1, b'b' | b'B')
+            && let Some(e) = self.digits(s + 2, |c| c == b'0' || c == b'1') {
                 return Ok((T::Bin, e, 0, false));
             }
-        }
         let mut best = (T::Int, s);
         let int = if c0 == b'.' { None } else { self.digits(s, dec) };
         if let Some(e) = int {
@@ -568,15 +562,14 @@ impl<'s> Lexer<'s> {
         }
         // `DEC_DIGITS? '.' DEC_DIGITS REAL_EXPONENT? [fF]?`.
         let dot = int.unwrap_or(s);
-        if self.at(dot) == b'.' {
-            if let Some(f) = self.digits(dot + 1, dec) {
+        if self.at(dot) == b'.'
+            && let Some(f) = self.digits(dot + 1, dec) {
                 let x = self.exponent(f).unwrap_or(f);
                 let x = if matches!(self.at(x), b'f' | b'F') { x + 1 } else { x };
                 if x > best.1 {
                     best = (T::Real, x);
                 }
             }
-        }
         if best.1 == s {
             return Err(Refusal::Lex(s as u32));
         }
@@ -914,25 +907,19 @@ impl<'s> Lexer<'s> {
                     _ => Asi::No,
                 },
                 b'+' | b'-' => return zero,
-                b'!' => {
-                    if self.at(i + 1) == b'=' {
+                b'!'
+                    if self.at(i + 1) == b'=' => {
                         Asi::No
-                    } else {
-                        return zero;
                     }
-                }
                 b'b' if cx.by && self.word_at(i, b"by") => Asi::No,
                 b'e' if self.word_at(i, b"else") && !self.else_arrow(i) => Asi::No,
                 b'a' if self.word_at(i, b"as") => Asi::No,
                 b'w' if self.word_at(i, b"where") => Asi::No,
                 b'i' | b'p' if cx.ctor && self.modifier_then_constructor(i) => Asi::No,
-                b'c' if cx.ctor => {
-                    if self.word_at(i, b"constructor") {
+                b'c' if cx.ctor
+                    && self.word_at(i, b"constructor") => {
                         Asi::Ctor
-                    } else {
-                        return zero;
                     }
-                }
                 b'c' if self.word_at(i, b"catch") => Asi::No,
                 b'f' if self.word_at(i, b"finally") => Asi::No,
                 b'@' if cx.ctor && self.annotation_then_constructor(i) => Asi::No,

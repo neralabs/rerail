@@ -700,11 +700,10 @@ impl<'a> P<'a> {
         if self.peek() == T::Lt {
             self.type_parameters()?;
         }
-        if !matches!(self.peek(), T::LParen | T::LBracket) {
-            if let Some(end) = self.receiver_end(false) {
+        if !matches!(self.peek(), T::LParen | T::LBracket)
+            && let Some(end) = self.receiver_end(false) {
                 self.receiver(end)?;
             }
-        }
         if matches!(self.peek(), T::LParen | T::LBracket) {
             self.multi_variable_declaration()?;
         } else {
@@ -726,8 +725,8 @@ impl<'a> P<'a> {
             self.close(n);
         }
         // Accessors on the same line.
-        if !self.ended() {
-            if let Some((d @ (Decl::Getter | Decl::Setter), k)) = self.declaration_ahead(true) {
+        if !self.ended()
+            && let Some((d @ (Decl::Getter | Decl::Setter), k)) = self.declaration_ahead(true) {
                 let first = d;
                 let n = self.open(if d == Decl::Getter { K::Getter } else { K::Setter });
                 if k > 0 {
@@ -735,9 +734,9 @@ impl<'a> P<'a> {
                 }
                 self.accessor_rest(d == Decl::Getter)?;
                 self.close(n);
-                if !self.ended() {
-                    if let Some((d2 @ (Decl::Getter | Decl::Setter), k)) = self.declaration_ahead(true) {
-                        if d2 != first {
+                if !self.ended()
+                    && let Some((d2 @ (Decl::Getter | Decl::Setter), k)) = self.declaration_ahead(true)
+                        && d2 != first {
                             let n = self.open(if d2 == Decl::Getter { K::Getter } else { K::Setter });
                             if k > 0 {
                                 self.modifiers(K::Modifiers, k)?;
@@ -745,10 +744,7 @@ impl<'a> P<'a> {
                             self.accessor_rest(d2 == Decl::Getter)?;
                             self.close(n);
                         }
-                    }
-                }
             }
-        }
         Ok(())
     }
 

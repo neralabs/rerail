@@ -24,8 +24,8 @@ fn oracle() {
     let diffs_path = std::env::var("RERAIL_C_DIFFS").ok().filter(|s| !s.is_empty());
     // Beside the differences, `<diffs>.snippet`: a text read on each run, its tape (or refusal and
     // the text there) written to `<diffs>.snippet.out`, for a construct's quick check.
-    if let Some(d) = &diffs_path {
-        if let Ok(text) = std::fs::read_to_string(format!("{d}.snippet")) {
+    if let Some(d) = &diffs_path
+        && let Ok(text) = std::fs::read_to_string(format!("{d}.snippet")) {
             // Texts apart by `----` lines, each read on its own.
             let mut out = String::new();
             for one in text.split("\n----\n") {
@@ -43,7 +43,6 @@ fn oracle() {
             }
             std::fs::write(format!("{d}.snippet.out"), out).unwrap();
         }
-    }
     let mut diffs = diffs_path.map(|p| std::fs::File::create(p).unwrap());
     // With `RERAIL_C_ONLY`, the oracle files whose names are in it (comma-separated) alone.
     let only: Option<Vec<String>> = std::env::var("RERAIL_C_ONLY").ok().filter(|s| !s.is_empty()).map(|s| s.split(',').map(str::to_owned).collect());

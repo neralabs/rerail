@@ -410,11 +410,10 @@ impl<'a> P<'a> {
         let valid = own | self.fol | v::BLOCK_COMMENT;
         // The token after the scanner's place is lexed first: its comments are in `extras`.
         self.tok();
-        if let Some((at, vv, r, _)) = &self.memo {
-            if *at == self.sp && *vv == valid {
+        if let Some((at, vv, r, _)) = &self.memo
+            && *at == self.sp && *vv == valid {
                 return Ok(r.map(|x| x.0));
             }
-        }
         loop {
             let mut sc = self.sc.clone();
             let pos = self.sp as usize;

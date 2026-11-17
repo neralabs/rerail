@@ -8,6 +8,9 @@
 //! reads the function reaches, and defines a cold read's body, itself through the pass, the first
 //! time a function calls it.
 
+// The module's errors are Cranelift's `ModuleError`, as `Module` returns them: large, and passed up as they are.
+#![allow(clippy::result_large_err)]
+
 use crate::reads::{self, READS, Read};
 use cranelift_codegen::Context;
 use cranelift_codegen::inline::{Inline, InlineCommand};

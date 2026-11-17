@@ -448,7 +448,7 @@ fn keyword(code: u8) -> Option<K> {
 /// Whether a word is one of C's keywords that start a statement or a declaration, never an
 /// identifier there.
 fn reserved(code: u8) -> bool {
-    code != w::NONE && code < w::TRUE && code >= w::SIGNED || is_primitive(code)
+    code != w::NONE && (w::SIGNED..w::TRUE).contains(&code) || is_primitive(code)
 }
 
 /// C++'s own keywords.
@@ -763,7 +763,7 @@ impl<'a> P<'a> {
     /// The node at `at` as kind `kind`, its field kept (a declaration found to be a definition).
     fn rekind_keep(&mut self, at: usize, kind: K) {
         let (_, field, _, _) = unkey(self.w.key(at));
-        self.w.set_key(at, key(kind, field as u8, class(kind, Ctx::Bare), false));
+        self.w.set_key(at, key(kind, field, class(kind, Ctx::Bare), false));
     }
 
     /// The node at `at` as kind `kind` in slot `s` (a name found to be a type's).

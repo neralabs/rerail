@@ -365,11 +365,10 @@ impl<'s> Lexer<'s> {
         let (kind, len) = match c {
             b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' => {
                 // A literal's prefix: `L`, `u`, `U`, `u8`, and C++'s `R`, `LR`, `uR`, `UR`, `u8R`.
-                if matches!(c, b'L' | b'u' | b'U' | b'R') {
-                    if let Some(t) = self.prefixed(s) {
+                if matches!(c, b'L' | b'u' | b'U' | b'R')
+                    && let Some(t) = self.prefixed(s) {
                         return t;
                     }
-                }
                 let end = self.name_end(s)?;
                 return Ok((Name, end, word(self.src, s, end)));
             }

@@ -535,11 +535,10 @@ impl<'a> P<'a> {
         if t.kind != T::Name {
             return self.refuse();
         }
-        if !t.tick {
-            if let Some(k) = contextual(t.word) {
+        if !t.tick
+            && let Some(k) = contextual(t.word) {
                 return self.wrap_tok(kind, field, k);
             }
-        }
         self.leaf(kind, field)
     }
 

@@ -1407,12 +1407,12 @@ mod tests {
         let path = old.database_path.clone();
         // The old store's writer holds its connection, on the old store's file, before the file goes: one it opened
         // after would be refused (the store at the path is another).
-        old.write_back("open", 0, vec![], Box::new(|_| Ok(())));
+        old.write_back("open", 0, vec![], job(|_| Ok(())));
         old.written().unwrap();
         let (go_tx, go_rx) = mpsc::channel::<()>();
         let order = Arc::new(Mutex::new(Vec::new()));
         let o = Arc::clone(&order);
-        old.write_back("old", 0, vec![], Box::new(move |_| {
+        old.write_back("old", 0, vec![], job(move |_| {
             go_rx.recv().unwrap();
             o.lock().unwrap().push("old");
             Ok(())
@@ -1423,7 +1423,7 @@ mod tests {
         let new = ContentStore::open(&path).unwrap();
         assert!(!Arc::ptr_eq(old.writer().unwrap(), new.writer().unwrap()));
         let (o, atoms) = (Arc::clone(&order), Arc::clone(&new.atoms));
-        new.write_back("new", 0, vec![], Box::new(move |s| {
+        new.write_back("new", 0, vec![], job(move |s| {
             assert!(Arc::ptr_eq(&s.atoms, &atoms), "the new store's atoms");
             o.lock().unwrap().push("new");
             Ok(())
