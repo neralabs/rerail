@@ -1,7 +1,10 @@
 # The measured figures
 
 One file per area: `build.json` (builds, test suites and trial merges), `linux.json` (the engine and the product on
-Linux x64), `windows.json` (the same on Windows 11). A file appears once its area has a figure. Each holds:
+Linux x64), `windows.json` (the same on Windows 11), `windows-tests.json` (the engine and daemon test files on
+Windows 11), `load.json` (the daemon under the same load, both systems) and `new-head.json` (the branch's head now,
+`f06640857`: the engine bar on Linux, its findings beside 0.1.5's, builds and trial merges). A file appears once its
+area has a figure. Each holds:
 
 | Field | Holds |
 |---|---|
@@ -17,7 +20,7 @@ A run:
 | Field | Holds |
 |---|---|
 | `id` | Unique within this folder; the README cites runs by it. |
-| `subject` | `N` the new version, `P` 0.1.5, `B` main + six fixes (README.md, "The three versions"). |
+| `subject` | `N` the new version, `P` 0.1.5, `B` main + six fixes (README.md, "The versions"); `commit` says which head of the new version. |
 | `commit` | The commit measured. |
 | `system`, `machine` | `Linux x64`, `Windows 11` or `any (git)`; the machine's `id`. |
 | `what`, `state`, `metric`, `unit` | What was measured, in which state (cold, warm, ...), the quantity and its unit. |
@@ -25,3 +28,4 @@ A run:
 | `series` | Where present: `[[seconds, value], ...]` for a measure over time. |
 | `files` | For a trial merge: the files in conflict. |
 | `command`, `at` | The command that made the run (local folders shown as `<dir>`) and when it ran (UTC). |
+| `comparisons[]` | In `new-head.json`: per pack, the findings of both heads against 0.1.5 key by key (rule, path, line, code), and each fix's trial merge at both heads. |

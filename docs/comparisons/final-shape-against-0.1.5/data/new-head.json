@@ -1,0 +1,3148 @@
+{
+ "area": "new-head",
+ "updated": "2026-11-17",
+ "subjects": {
+  "N": {
+   "what": "the new version at the branch's new head (tbelanger/final-rerail-shape-integration, pull request #508)",
+   "commit": "f06640857"
+  },
+  "N at aad1dd6ef": {
+   "what": "the head we published against",
+   "commit": "aad1dd6ef"
+  },
+  "P": {
+   "what": "Rerail 0.1.5 as published",
+   "commit": "9cad73564"
+  }
+ },
+ "machines": [
+  {
+   "id": "linux-build",
+   "what": "Linux x64 (Ubuntu 26.04, glibc 2.43), AMD Ryzen 9 9950X; shared with other work, so its times are not compared",
+   "system": "Linux x64",
+   "cores": "16 cores, 32 threads; held to 4 jobs at low priority",
+   "memory": "121 GB"
+  },
+  {
+   "id": "linux-tests",
+   "what": "Linux x64 (Debian 13, glibc 2.41), Intel Core i5-14400; shared with other work",
+   "system": "Linux x64",
+   "cores": "10 cores, 16 threads; held to 4 jobs",
+   "memory": "31 GB"
+  },
+  {
+   "id": "windows-check",
+   "what": "Windows 11 workstation, Intel Core i9-13900KF, no Rust toolchain; used to check the Windows bar's set-up only",
+   "system": "Windows 11",
+   "cores": "24 cores, 32 threads",
+   "memory": "64 GB"
+  },
+  {
+   "id": "linux-8c",
+   "what": "AMD Ryzen 7 8845HS, Ubuntu 26.04.1, the Linux measuring machine of the first bar (the bar at the new head is ready for it)",
+   "system": "Linux x64",
+   "cores": "8 cores, 16 threads",
+   "memory": "30 GB"
+  }
+ ],
+ "runs": [
+  {
+   "id": "nh/size-lx-cache/N",
+   "system": "Linux x64",
+   "machine": "linux-build",
+   "subject": "N",
+   "commit": "f06640857",
+   "part": "build",
+   "what": "the Linux x64 engine as `npm run build:native` builds it (napi build --platform --release, host toolchain, unstripped), at the new head",
+   "state": "measured",
+   "metric": "engine size",
+   "unit": "MB",
+   "n": 1,
+   "median": 142.726184,
+   "worst": 142.726184,
+   "values": [
+    142.726184
+   ],
+   "command": "npm run build:native (Rust 1.95.0, 4 jobs); published at aad1dd6ef: 135.14 MB, at 0.1.5: 53.04 MB",
+   "at": "2026-11-17"
+  },
+  {
+   "id": "nh/lx-release-cold/N",
+   "system": "Linux x64",
+   "machine": "linux-tests",
+   "subject": "N",
+   "commit": "f06640857",
+   "part": "build",
+   "what": "release-form build of the Linux x64 package, phase cold (failed, exit 1), cold, 4 jobs",
+   "state": "failed",
+   "metric": "wall time",
+   "unit": "s",
+   "n": 1,
+   "median": 995.1,
+   "worst": 995.1,
+   "values": [
+    995.1
+   ],
+   "command": "napi build --platform --release --target x86_64-unknown-linux-gnu --use-napi-cross --strip --manifest-path native/Cargo.toml --output-dir native (CARGO_BUILD_JOBS=4)",
+   "at": "2026-11-17"
+  },
+  {
+   "id": "nh/lx-release-link/N",
+   "system": "Linux x64",
+   "machine": "linux-tests",
+   "subject": "N",
+   "commit": "f06640857",
+   "part": "build",
+   "what": "release-form Linux build: the link's undefined references, by count and symbol",
+   "state": "failed",
+   "metric": "undefined references",
+   "unit": "",
+   "n": 0,
+   "median": null,
+   "worst": null,
+   "values": [],
+   "command": "grep of the cold build's log for undefined references",
+   "at": "2026-11-17",
+   "detail": [
+    "8 undefined reference to `operator delete(void*, unsigned long)'",
+    "5 undefined reference to `gettid'",
+    "2 undefined reference to `std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_create(unsigned long&, unsigned long)'",
+    "1 undefined reference to `fcntl64'"
+   ]
+  },
+  {
+   "id": "nh/rules-on/N",
+   "system": "Linux x64",
+   "machine": "linux-build",
+   "subject": "N",
+   "commit": "f06640857",
+   "part": "waits",
+   "what": "rules on at a session's start after set-up of a small Python and TypeScript repository with typescript 0.1.7, python 0.1.9, complexity 0.1.7 and javascript 0.1.8 (set-up reports 382 rules)",
+   "state": "measured",
+   "metric": "rules on",
+   "unit": "rules",
+   "n": 1,
+   "median": 370,
+   "worst": 370,
+   "values": [
+    370
+   ],
+   "command": "rerail start --repository with --packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, then a SessionStart hook",
+   "at": "2026-11-17"
+  },
+  {
+   "id": "nh/store-file/N",
+   "system": "Linux x64",
+   "machine": "linux-build",
+   "subject": "N",
+   "commit": "f06640857",
+   "part": "waits",
+   "what": "the content store file a repository gets at the new head, and the one 0.1.5 left after an upgrade from 0.1.5",
+   "state": "observed",
+   "metric": "store file",
+   "unit": "",
+   "n": 0,
+   "median": null,
+   "worst": null,
+   "values": [],
+   "command": "ls of the repository's .rerail folder after set-up, and after an upgrade from 0.1.5",
+   "at": "2026-11-17",
+   "detail": [
+    "content-v1.sqlite",
+    "content-v5.sqlite"
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/complexity/real/wall-cold/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the complexity pack (8 rules at the new version, 8 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 920,
+   "worst": 1160,
+   "values": [
+    1160,
+    920,
+    900
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/complexity/real/wall-cold/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the complexity pack (8 rules at the new version, 8 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 810,
+   "worst": 1050,
+   "values": [
+    1050,
+    810,
+    800
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/complexity/real/wall-warm/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the complexity pack (8 rules at the new version, 8 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 910,
+   "worst": 920,
+   "values": [
+    900,
+    910,
+    920
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/complexity/real/wall-warm/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the complexity pack (8 rules at the new version, 8 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 820,
+   "worst": 820,
+   "values": [
+    820,
+    810,
+    820
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/complexity/real/cpu-cold/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the complexity pack (8 rules at the new version, 8 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 1780,
+   "worst": 1960,
+   "values": [
+    1960,
+    1780,
+    1770
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/complexity/real/cpu-cold/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the complexity pack (8 rules at the new version, 8 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 1430,
+   "worst": 1620,
+   "values": [
+    1620,
+    1430,
+    1420
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/complexity/real/cpu-warm/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the complexity pack (8 rules at the new version, 8 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 1750,
+   "worst": 1780,
+   "values": [
+    1750,
+    1710,
+    1780
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/complexity/real/cpu-warm/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the complexity pack (8 rules at the new version, 8 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 1450,
+   "worst": 1460,
+   "values": [
+    1460,
+    1450,
+    1420
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/complexity/real/rss-cold/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the complexity pack (8 rules at the new version, 8 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 336.9,
+   "worst": 371,
+   "values": [
+    371,
+    336.9,
+    333
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/complexity/real/rss-cold/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the complexity pack (8 rules at the new version, 8 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 348.1,
+   "worst": 388.3,
+   "values": [
+    388.3,
+    348.1,
+    347.6
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/complexity/real/rss-warm/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the complexity pack (8 rules at the new version, 8 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 333.1,
+   "worst": 334.2,
+   "values": [
+    333.1,
+    330.5,
+    334.2
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/complexity/real/rss-warm/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the complexity pack (8 rules at the new version, 8 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 348.2,
+   "worst": 349.1,
+   "values": [
+    349.1,
+    347,
+    348.2
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/javascript/real/wall-cold/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the javascript pack (121 rules at the new version, 121 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 13240,
+   "worst": 13400,
+   "values": [
+    13400,
+    12900,
+    13240
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/javascript/real/wall-cold/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the javascript pack (121 rules at the new version, 121 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 11320,
+   "worst": 11350,
+   "values": [
+    11220,
+    11350,
+    11320
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/javascript/real/wall-warm/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the javascript pack (121 rules at the new version, 121 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 13100,
+   "worst": 13130,
+   "values": [
+    13100,
+    13130,
+    13010
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/javascript/real/wall-warm/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the javascript pack (121 rules at the new version, 121 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 11360,
+   "worst": 11420,
+   "values": [
+    11360,
+    11100,
+    11420
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/javascript/real/cpu-cold/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the javascript pack (121 rules at the new version, 121 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 35510,
+   "worst": 35610,
+   "values": [
+    35350,
+    35510,
+    35610
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/javascript/real/cpu-cold/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the javascript pack (121 rules at the new version, 121 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 30300,
+   "worst": 30550,
+   "values": [
+    30550,
+    30280,
+    30300
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/javascript/real/cpu-warm/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the javascript pack (121 rules at the new version, 121 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 35510,
+   "worst": 35770,
+   "values": [
+    35510,
+    35770,
+    35220
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/javascript/real/cpu-warm/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the javascript pack (121 rules at the new version, 121 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 30470,
+   "worst": 30700,
+   "values": [
+    30470,
+    30470,
+    30700
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/javascript/real/rss-cold/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the javascript pack (121 rules at the new version, 121 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 1228.3,
+   "worst": 1229.7,
+   "values": [
+    1228.3,
+    1229.7,
+    1227.1
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/javascript/real/rss-cold/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the javascript pack (121 rules at the new version, 121 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 861.3,
+   "worst": 863.2,
+   "values": [
+    861.3,
+    863.2,
+    854.1
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/javascript/real/rss-warm/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the javascript pack (121 rules at the new version, 121 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 1223.9,
+   "worst": 1238,
+   "values": [
+    1223.9,
+    1221.1,
+    1238
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/javascript/real/rss-warm/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the javascript pack (121 rules at the new version, 121 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 855.4,
+   "worst": 857.2,
+   "values": [
+    857.2,
+    853.6,
+    855.4
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/node/real/wall-cold/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 10980,
+   "worst": 11090,
+   "values": [
+    10980,
+    11090,
+    10800
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/node/real/wall-cold/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 26090,
+   "worst": 26350,
+   "values": [
+    26090,
+    26020,
+    26350
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/node/real/wall-warm/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 10760,
+   "worst": 10910,
+   "values": [
+    10760,
+    10910,
+    10670
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/node/real/wall-warm/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 25960,
+   "worst": 26330,
+   "values": [
+    26330,
+    25960,
+    25600
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/node/real/cpu-cold/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 24510,
+   "worst": 24670,
+   "values": [
+    24510,
+    24450,
+    24670
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/node/real/cpu-cold/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 50350,
+   "worst": 50410,
+   "values": [
+    50410,
+    50350,
+    50170
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/node/real/cpu-warm/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 24510,
+   "worst": 24650,
+   "values": [
+    24650,
+    24510,
+    24460
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/node/real/cpu-warm/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 50230,
+   "worst": 51080,
+   "values": [
+    51080,
+    49980,
+    50230
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/node/real/rss-cold/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 624.8,
+   "worst": 637.4,
+   "values": [
+    624.8,
+    637.4,
+    619.5
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/node/real/rss-cold/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 642.3,
+   "worst": 665.7,
+   "values": [
+    642.3,
+    665.7,
+    634.4
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/node/real/rss-warm/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 640.3,
+   "worst": 648.5,
+   "values": [
+    640.3,
+    648.5,
+    630.5
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/node/real/rss-warm/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 664.1,
+   "worst": 679.6,
+   "values": [
+    664.1,
+    679.6,
+    635.2
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/node/real/rule/n-no-unsupported-features-node-builtins/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): n-no-unsupported-features-node-builtins, the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "P",
+   "commit": "9cad73564",
+   "median": 5095,
+   "worst": null,
+   "values": [
+    5095
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/node/real/rule/n-no-unsupported-features-node-builtins/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): n-no-unsupported-features-node-builtins, the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "N",
+   "commit": "f06640857",
+   "median": 12329,
+   "worst": null,
+   "values": [
+    12329
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/node/real/rule/n-no-deprecated-api/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): n-no-deprecated-api, the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "P",
+   "commit": "9cad73564",
+   "median": 3000,
+   "worst": null,
+   "values": [
+    3000
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/node/real/rule/n-no-deprecated-api/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): n-no-deprecated-api, the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "N",
+   "commit": "f06640857",
+   "median": 9924,
+   "worst": null,
+   "values": [
+    9924
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/node/real/rule/n-no-unsupported-features-es-builtins/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): n-no-unsupported-features-es-builtins, the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "P",
+   "commit": "9cad73564",
+   "median": 45,
+   "worst": null,
+   "values": [
+    45
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/node/real/rule/n-no-unsupported-features-es-builtins/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): n-no-unsupported-features-es-builtins, the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "N",
+   "commit": "f06640857",
+   "median": 56,
+   "worst": null,
+   "values": [
+    56
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/node/real/rule/n-no-unpublished-require/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): n-no-unpublished-require, the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "P",
+   "commit": "9cad73564",
+   "median": 56,
+   "worst": null,
+   "values": [
+    56
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/node/real/rule/n-no-unpublished-require/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): n-no-unpublished-require, the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "N",
+   "commit": "f06640857",
+   "median": 64,
+   "worst": null,
+   "values": [
+    64
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/node/real/rule/n-no-top-level-await/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): n-no-top-level-await, the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "P",
+   "commit": "9cad73564",
+   "median": 53,
+   "worst": null,
+   "values": [
+    53
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/node/real/rule/n-no-top-level-await/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): n-no-top-level-await, the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "N",
+   "commit": "f06640857",
+   "median": 55,
+   "worst": null,
+   "values": [
+    55
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/node/real/rule/n-no-unpublished-bin/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): n-no-unpublished-bin, the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "P",
+   "commit": "9cad73564",
+   "median": 48,
+   "worst": null,
+   "values": [
+    48
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/node/real/rule/n-no-unpublished-bin/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): n-no-unpublished-bin, the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "N",
+   "commit": "f06640857",
+   "median": 47,
+   "worst": null,
+   "values": [
+    47
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/node/real/rule/n-no-unpublished-import/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): n-no-unpublished-import, the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "P",
+   "commit": "9cad73564",
+   "median": 58,
+   "worst": null,
+   "values": [
+    58
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/node/real/rule/n-no-unpublished-import/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): n-no-unpublished-import, the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "N",
+   "commit": "f06640857",
+   "median": 55,
+   "worst": null,
+   "values": [
+    55
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/node/real/rule/n-prefer-promises-fs/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): n-prefer-promises-fs, the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "P",
+   "commit": "9cad73564",
+   "median": 574,
+   "worst": null,
+   "values": [
+    574
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/node/real/rule/n-prefer-promises-fs/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): n-prefer-promises-fs, the node pack (37 rules at the new version, 37 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "N",
+   "commit": "f06640857",
+   "median": 443,
+   "worst": null,
+   "values": [
+    443
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/rerail/real/wall-cold/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the rerail pack (34 rules at the new version, 34 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 1720,
+   "worst": 1820,
+   "values": [
+    1820,
+    1710,
+    1720
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/rerail/real/wall-cold/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the rerail pack (34 rules at the new version, 34 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 1530,
+   "worst": 1550,
+   "values": [
+    1550,
+    1530,
+    1530
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/rerail/real/wall-warm/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the rerail pack (34 rules at the new version, 34 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 1730,
+   "worst": 1740,
+   "values": [
+    1740,
+    1700,
+    1730
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/rerail/real/wall-warm/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the rerail pack (34 rules at the new version, 34 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 1530,
+   "worst": 1540,
+   "values": [
+    1540,
+    1530,
+    1530
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/rerail/real/cpu-cold/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the rerail pack (34 rules at the new version, 34 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 3280,
+   "worst": 3380,
+   "values": [
+    3380,
+    3270,
+    3280
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/rerail/real/cpu-cold/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the rerail pack (34 rules at the new version, 34 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 2790,
+   "worst": 2800,
+   "values": [
+    2790,
+    2800,
+    2770
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/rerail/real/cpu-warm/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the rerail pack (34 rules at the new version, 34 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 3280,
+   "worst": 3300,
+   "values": [
+    3260,
+    3300,
+    3280
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/rerail/real/cpu-warm/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the rerail pack (34 rules at the new version, 34 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 2780,
+   "worst": 2790,
+   "values": [
+    2760,
+    2780,
+    2790
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/rerail/real/rss-cold/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the rerail pack (34 rules at the new version, 34 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 496.9,
+   "worst": 497.5,
+   "values": [
+    497.5,
+    496.6,
+    496.9
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/rerail/real/rss-cold/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the rerail pack (34 rules at the new version, 34 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 489.3,
+   "worst": 489.7,
+   "values": [
+    489.3,
+    489.2,
+    489.7
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/rerail/real/rss-warm/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the rerail pack (34 rules at the new version, 34 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 496.6,
+   "worst": 496.8,
+   "values": [
+    494.8,
+    496.8,
+    496.6
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/rerail/real/rss-warm/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the rerail pack (34 rules at the new version, 34 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 488.1,
+   "worst": 490.5,
+   "values": [
+    487.2,
+    488.1,
+    490.5
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/rust/real/wall-cold/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the rust pack (33 rules at the new version, 33 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 4810,
+   "worst": 4940,
+   "values": [
+    4940,
+    4810,
+    4780
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/rust/real/wall-cold/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the rust pack (33 rules at the new version, 33 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 3950,
+   "worst": 4040,
+   "values": [
+    3950,
+    4040,
+    3740
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/rust/real/wall-warm/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the rust pack (33 rules at the new version, 33 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 4880,
+   "worst": 5020,
+   "values": [
+    4710,
+    5020,
+    4880
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/rust/real/wall-warm/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the rust pack (33 rules at the new version, 33 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 3900,
+   "worst": 4010,
+   "values": [
+    3900,
+    4010,
+    3760
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/rust/real/cpu-cold/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the rust pack (33 rules at the new version, 33 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 13520,
+   "worst": 13560,
+   "values": [
+    13520,
+    13560,
+    13310
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/rust/real/cpu-cold/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the rust pack (33 rules at the new version, 33 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 10510,
+   "worst": 10710,
+   "values": [
+    10510,
+    10710,
+    10490
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/rust/real/cpu-warm/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the rust pack (33 rules at the new version, 33 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 13290,
+   "worst": 13620,
+   "values": [
+    13280,
+    13620,
+    13290
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/rust/real/cpu-warm/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the rust pack (33 rules at the new version, 33 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 10460,
+   "worst": 10560,
+   "values": [
+    10560,
+    10460,
+    10400
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/rust/real/rss-cold/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the rust pack (33 rules at the new version, 33 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 495.1,
+   "worst": 522.9,
+   "values": [
+    522.9,
+    477.1,
+    495.1
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/rust/real/rss-cold/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the rust pack (33 rules at the new version, 33 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 479.6,
+   "worst": 496.7,
+   "values": [
+    469.2,
+    479.6,
+    496.7
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/rust/real/rss-warm/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the rust pack (33 rules at the new version, 33 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 495.8,
+   "worst": 510.7,
+   "values": [
+    495.8,
+    477.8,
+    510.7
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/rust/real/rss-warm/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the rust pack (33 rules at the new version, 33 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 476.1,
+   "worst": 496.1,
+   "values": [
+    466.7,
+    476.1,
+    496.1
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/wall-cold/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 7190,
+   "worst": 7360,
+   "values": [
+    7120,
+    7190,
+    7360
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/wall-cold/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 8510,
+   "worst": 8540,
+   "values": [
+    8510,
+    8540,
+    8510
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/wall-warm/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 7260,
+   "worst": 7280,
+   "values": [
+    7260,
+    7280,
+    7210
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/wall-warm/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "wall time: the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "wall time",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 8500,
+   "worst": 8590,
+   "values": [
+    8500,
+    8590,
+    8460
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/cpu-cold/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 17900,
+   "worst": 18100,
+   "values": [
+    17900,
+    17740,
+    18100
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/cpu-cold/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 21400,
+   "worst": 21470,
+   "values": [
+    21400,
+    21470,
+    21210
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/cpu-warm/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 17710,
+   "worst": 17760,
+   "values": [
+    17680,
+    17710,
+    17760
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/cpu-warm/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "CPU time, user and system: the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "CPU time, user and system",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 21230,
+   "worst": 21260,
+   "values": [
+    21150,
+    21260,
+    21230
+   ],
+   "unit": "ms"
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/rss-cold/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 577.5,
+   "worst": 587.5,
+   "values": [
+    587.5,
+    577.5,
+    573.5
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/rss-cold/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "cold",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 648.6,
+   "worst": 678.4,
+   "values": [
+    631.3,
+    648.6,
+    678.4
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/rss-warm/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "P",
+   "commit": "9cad73564",
+   "n": 3,
+   "median": 567.8,
+   "worst": 570.5,
+   "values": [
+    570.5,
+    567.8,
+    565.6
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/rss-warm/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "what": "peak resident memory: the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "state": "warm",
+   "metric": "peak resident memory",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "part": "engine",
+   "subject": "N",
+   "commit": "f06640857",
+   "n": 3,
+   "median": 647.7,
+   "worst": 648.6,
+   "values": [
+    618.4,
+    648.6,
+    647.7
+   ],
+   "unit": "MB"
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/rule/vitest-no-disabled-tests/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): vitest-no-disabled-tests, the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "P",
+   "commit": "9cad73564",
+   "median": 739,
+   "worst": null,
+   "values": [
+    739
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/rule/vitest-no-disabled-tests/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): vitest-no-disabled-tests, the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "N",
+   "commit": "f06640857",
+   "median": 905,
+   "worst": null,
+   "values": [
+    905
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/rule/typescript-eslint-no-shadow/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): typescript-eslint-no-shadow, the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "P",
+   "commit": "9cad73564",
+   "median": 3255,
+   "worst": null,
+   "values": [
+    3255
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/rule/typescript-eslint-no-shadow/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): typescript-eslint-no-shadow, the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "N",
+   "commit": "f06640857",
+   "median": 3285,
+   "worst": null,
+   "values": [
+    3285
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/rule/vitest-expect-expect/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): vitest-expect-expect, the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "P",
+   "commit": "9cad73564",
+   "median": 486,
+   "worst": null,
+   "values": [
+    486
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/rule/vitest-expect-expect/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): vitest-expect-expect, the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "N",
+   "commit": "f06640857",
+   "median": 435,
+   "worst": null,
+   "values": [
+    435
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/rule/typescript-eslint-no-unused-private-class-members/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): typescript-eslint-no-unused-private-class-members, the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "P",
+   "commit": "9cad73564",
+   "median": 701,
+   "worst": null,
+   "values": [
+    701
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/rule/typescript-eslint-no-unused-private-class-members/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): typescript-eslint-no-unused-private-class-members, the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "N",
+   "commit": "f06640857",
+   "median": 648,
+   "worst": null,
+   "values": [
+    648
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/rule/typescript-eslint-no-use-before-define/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): typescript-eslint-no-use-before-define, the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "P",
+   "commit": "9cad73564",
+   "median": 1005,
+   "worst": null,
+   "values": [
+    1005
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/rule/typescript-eslint-no-use-before-define/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): typescript-eslint-no-use-before-define, the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "N",
+   "commit": "f06640857",
+   "median": 949,
+   "worst": null,
+   "values": [
+    949
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/rule/typescript-eslint-member-ordering/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): typescript-eslint-member-ordering, the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "P",
+   "commit": "9cad73564",
+   "median": 439,
+   "worst": null,
+   "values": [
+    439
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/rule/typescript-eslint-member-ordering/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): typescript-eslint-member-ordering, the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "N",
+   "commit": "f06640857",
+   "median": 335,
+   "worst": null,
+   "values": [
+    335
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/rule/typescript-eslint-no-redeclare/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): typescript-eslint-no-redeclare, the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "P",
+   "commit": "9cad73564",
+   "median": 768,
+   "worst": null,
+   "values": [
+    768
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/rule/typescript-eslint-no-redeclare/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): typescript-eslint-no-redeclare, the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "N",
+   "commit": "f06640857",
+   "median": 653,
+   "worst": null,
+   "values": [
+    653
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/rule/vitest-no-focused-tests/P",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): vitest-no-focused-tests, the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "P",
+   "commit": "9cad73564",
+   "median": 426,
+   "worst": null,
+   "values": [
+    426
+   ]
+  },
+  {
+   "id": "eng3-4c/ships/typescript/real/rule/vitest-no-focused-tests/N",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "state": "cold",
+   "part": "engine",
+   "what": "one rule alone (evaluate_ms): vitest-no-focused-tests, the typescript pack (65 rules at the new version, 65 at 0.1.5) on real code, 4 cores pinned (one thread per core), 3 runs a side, at the branch head f06640857",
+   "metric": "time of one rule alone (evaluate_ms)",
+   "unit": "ms",
+   "command": "npm run bench:ship -- run --baseline <0.1.5 checkout> --corpus real --mem-cap 24G --packs complexity,javascript,node,typescript,rerail,rust --runs 3 --confirm 3 --drill 1 --cpus 8-11",
+   "at": "2026-11-17T23:18:29.611Z",
+   "n": 1,
+   "subject": "N",
+   "commit": "f06640857",
+   "median": 311,
+   "worst": null,
+   "values": [
+    311
+   ]
+  }
+ ],
+ "comparisons": [
+  {
+   "id": "nh/findings/complexity",
+   "what": "findings of the complexity pack on its real-code corpus: 0.1.5 against the new head (one cold run a side, first cold run's findings, keys rule, path, line, code)",
+   "system": "Linux x64",
+   "machine": "linux-build",
+   "subject": "N",
+   "commit": "f06640857",
+   "P": 347,
+   "N": 347,
+   "rules": {
+    "P": 8,
+    "N": 8
+   },
+   "files": {
+    "P": 602,
+    "N": 602
+   },
+   "only_P": [],
+   "only_N": {
+    "count": 0,
+    "files": []
+   },
+   "only_P_at_aad1dd6ef": [],
+   "found_now_not_before": [],
+   "lost_now_found_before": []
+  },
+  {
+   "id": "nh/findings/javascript",
+   "what": "findings of the javascript pack on its real-code corpus: 0.1.5 against the new head (one cold run a side, first cold run's findings, keys rule, path, line, code)",
+   "system": "Linux x64",
+   "machine": "linux-build",
+   "subject": "N",
+   "commit": "f06640857",
+   "P": 36579,
+   "N": 36861,
+   "rules": {
+    "P": 121,
+    "N": 121
+   },
+   "files": {
+    "P": 602,
+    "N": 602
+   },
+   "only_P": [],
+   "only_N": {
+    "count": 282,
+    "files": [
+     "src/cli/rule-draft.ts"
+    ]
+   },
+   "only_P_at_aad1dd6ef": [],
+   "found_now_not_before": [],
+   "lost_now_found_before": []
+  },
+  {
+   "id": "nh/findings/node",
+   "what": "findings of the node pack on its real-code corpus: 0.1.5 against the new head (one cold run a side, first cold run's findings, keys rule, path, line, code)",
+   "system": "Linux x64",
+   "machine": "linux-build",
+   "subject": "N",
+   "commit": "f06640857",
+   "P": 2753,
+   "N": 2754,
+   "rules": {
+    "P": 37,
+    "N": 37
+   },
+   "files": {
+    "P": 602,
+    "N": 602
+   },
+   "only_P": [],
+   "only_N": {
+    "count": 1,
+    "files": [
+     "src/cli/rule-draft.ts"
+    ]
+   },
+   "only_P_at_aad1dd6ef": [],
+   "found_now_not_before": [],
+   "lost_now_found_before": []
+  },
+  {
+   "id": "nh/findings/rerail",
+   "what": "findings of the rerail pack on its real-code corpus: 0.1.5 against the new head (one cold run a side, first cold run's findings, keys rule, path, line, code)",
+   "system": "Linux x64",
+   "machine": "linux-build",
+   "subject": "N",
+   "commit": "f06640857",
+   "P": 7,
+   "N": 7,
+   "rules": {
+    "P": 34,
+    "N": 34
+   },
+   "files": {
+    "P": 2213,
+    "N": 2213
+   },
+   "only_P": [],
+   "only_N": {
+    "count": 0,
+    "files": []
+   },
+   "only_P_at_aad1dd6ef": [],
+   "found_now_not_before": [],
+   "lost_now_found_before": []
+  },
+  {
+   "id": "nh/findings/rust",
+   "what": "findings of the rust pack on its real-code corpus: 0.1.5 against the new head (one cold run a side, first cold run's findings, keys rule, path, line, code)",
+   "system": "Linux x64",
+   "machine": "linux-build",
+   "subject": "N",
+   "commit": "f06640857",
+   "P": 965,
+   "N": 965,
+   "rules": {
+    "P": 33,
+    "N": 33
+   },
+   "files": {
+    "P": 384,
+    "N": 384
+   },
+   "only_P": [],
+   "only_N": {
+    "count": 0,
+    "files": []
+   },
+   "only_P_at_aad1dd6ef": [],
+   "found_now_not_before": [],
+   "lost_now_found_before": []
+  },
+  {
+   "id": "nh/findings/typescript",
+   "what": "findings of the typescript pack on its real-code corpus: 0.1.5 against the new head (one cold run a side, first cold run's findings, keys rule, path, line, code)",
+   "system": "Linux x64",
+   "machine": "linux-build",
+   "subject": "N",
+   "commit": "f06640857",
+   "P": 10784,
+   "N": 10802,
+   "rules": {
+    "P": 65,
+    "N": 65
+   },
+   "files": {
+    "P": 602,
+    "N": 602
+   },
+   "only_P": [],
+   "only_N": {
+    "count": 18,
+    "files": [
+     "src/cli/rule-draft.ts"
+    ]
+   },
+   "only_P_at_aad1dd6ef": [
+    "typescript-eslint-no-shadow test/engine/code-rule/code-rule-bridge.test.ts:119",
+    "typescript-eslint-no-shadow test/engine/code-rule/code-rule-bridge.test.ts:160",
+    "typescript-eslint-no-shadow test/engine/code-rule/code-rule-bridge.test.ts:245",
+    "typescript-eslint-no-shadow test/engine/code-rule/code-rule-bridge.test.ts:447",
+    "typescript-eslint-no-shadow test/engine/native/native-code-rule-dsl-runtime.test.ts:3477",
+    "typescript-eslint-no-shadow test/scripts/pack-test-data.test.mjs:468"
+   ],
+   "found_now_not_before": [
+    "typescript-eslint-no-shadow test/engine/code-rule/code-rule-bridge.test.ts:119",
+    "typescript-eslint-no-shadow test/engine/code-rule/code-rule-bridge.test.ts:160",
+    "typescript-eslint-no-shadow test/engine/code-rule/code-rule-bridge.test.ts:245",
+    "typescript-eslint-no-shadow test/engine/code-rule/code-rule-bridge.test.ts:447",
+    "typescript-eslint-no-shadow test/engine/native/native-code-rule-dsl-runtime.test.ts:3477",
+    "typescript-eslint-no-shadow test/scripts/pack-test-data.test.mjs:468"
+   ],
+   "lost_now_found_before": []
+  },
+  {
+   "id": "nh/merge-fix-1",
+   "what": "trial merge into the new head: Placing worktrees asks Git once per question, not once per worktree for every session",
+   "system": "any",
+   "subject": "N",
+   "commit": "f06640857",
+   "fix_commit": "29bc262a5",
+   "at_aad1dd6ef": {
+    "clean": false,
+    "files": [
+     ".github/workflows/ci.yml",
+     "native/src/lib.rs",
+     "src/engine/native/native.ts"
+    ],
+    "hunks": 4
+   },
+   "at_f06640857": {
+    "clean": false,
+    "files": [
+     ".github/workflows/ci.yml",
+     "native/src/lib.rs",
+     "src/engine/catalog/repository-identity.ts",
+     "src/engine/native/native.ts"
+    ],
+    "hunks": 6
+   },
+   "on_main_39b59e9d7": {
+    "clean": false,
+    "files": [
+     "src/engine/catalog/repository-identity.ts"
+    ]
+   },
+   "command": "git merge-tree --write-tree --name-only <head> 29bc262a5"
+  },
+  {
+   "id": "nh/merge-fix-2",
+   "what": "trial merge into the new head: A folder outside any Git checkout is placed from the disk, with no Git process per hook event (issue #699)",
+   "system": "any",
+   "subject": "N",
+   "commit": "f06640857",
+   "fix_commit": "729ed32c0",
+   "at_aad1dd6ef": {
+    "clean": true,
+    "files": [],
+    "hunks": 0
+   },
+   "at_f06640857": {
+    "clean": true,
+    "files": [],
+    "hunks": 0
+   },
+   "on_main_39b59e9d7": {
+    "clean": true,
+    "files": []
+   },
+   "command": "git merge-tree --write-tree --name-only <head> 729ed32c0"
+  },
+  {
+   "id": "nh/merge-fix-3",
+   "what": "trial merge into the new head: With many worktrees, one read of the checkouts serves each event, and Git is asked again only when its files change",
+   "system": "any",
+   "subject": "N",
+   "commit": "f06640857",
+   "fix_commit": "b6b32f3aa",
+   "at_aad1dd6ef": {
+    "clean": false,
+    "files": [
+     "test/engine/code-rule/code-rule-dsl-catalog.test.ts"
+    ],
+    "hunks": 1
+   },
+   "at_f06640857": {
+    "clean": false,
+    "files": [
+     "src/engine/catalog/repository-registry.ts",
+     "test/engine/catalog/repository-registry.test.ts",
+     "test/engine/code-rule/code-rule-dsl-catalog.test.ts"
+    ],
+    "hunks": 3
+   },
+   "on_main_39b59e9d7": {
+    "clean": false,
+    "files": [
+     "src/engine/catalog/repository-registry.ts",
+     "test/engine/catalog/repository-registry.test.ts"
+    ]
+   },
+   "command": "git merge-tree --write-tree --name-only <head> b6b32f3aa"
+  },
+  {
+   "id": "nh/merge-fix-4",
+   "what": "trial merge into the new head: A first look at another worktree skips the files Git shows unchanged and already read elsewhere",
+   "system": "any",
+   "subject": "N",
+   "commit": "f06640857",
+   "fix_commit": "3e290652e",
+   "at_aad1dd6ef": {
+    "clean": true,
+    "files": [],
+    "hunks": 0
+   },
+   "at_f06640857": {
+    "clean": true,
+    "files": [],
+    "hunks": 0
+   },
+   "on_main_39b59e9d7": {
+    "clean": true,
+    "files": []
+   },
+   "command": "git merge-tree --write-tree --name-only <head> 3e290652e"
+  },
+  {
+   "id": "nh/merge-fix-5",
+   "what": "trial merge into the new head: A hook in a stopped checkout repeats the daemon's last answer when the daemon is late (#674)",
+   "system": "any",
+   "subject": "N",
+   "commit": "f06640857",
+   "fix_commit": "6c4da9132",
+   "at_aad1dd6ef": {
+    "clean": true,
+    "files": [],
+    "hunks": 0
+   },
+   "at_f06640857": {
+    "clean": false,
+    "files": [
+     "src/engine/catalog/repository-registry.ts"
+    ],
+    "hunks": 1
+   },
+   "on_main_39b59e9d7": {
+    "clean": false,
+    "files": [
+     "src/engine/catalog/repository-registry.ts"
+    ]
+   },
+   "command": "git merge-tree --write-tree --name-only <head> 6c4da9132"
+  },
+  {
+   "id": "nh/merge-fix-6",
+   "what": "trial merge into the new head: On Windows, Git for Windows' own git.exe runs directly: one process per Git call (issue #662)",
+   "system": "any",
+   "subject": "N",
+   "commit": "f06640857",
+   "fix_commit": "4847cc540",
+   "at_aad1dd6ef": {
+    "clean": true,
+    "files": [],
+    "hunks": 0
+   },
+   "at_f06640857": {
+    "clean": true,
+    "files": [],
+    "hunks": 0
+   },
+   "on_main_39b59e9d7": {
+    "clean": true,
+    "files": []
+   },
+   "command": "git merge-tree --write-tree --name-only <head> 4847cc540"
+  },
+  {
+   "id": "nh/merge-665",
+   "what": "trial merge into the new head: #665: an edit made while the rules open is checked at its result",
+   "system": "any",
+   "subject": "N",
+   "commit": "f06640857",
+   "fix_commit": "9e0059c26",
+   "at_aad1dd6ef": {
+    "clean": true,
+    "files": [],
+    "hunks": 0
+   },
+   "at_f06640857": {
+    "clean": false,
+    "files": [
+     "src/engine/code-rule/code-rule-bridge.ts",
+     "src/runtime/runtime.ts"
+    ],
+    "hunks": 2
+   },
+   "on_main_39b59e9d7": {
+    "clean": false,
+    "files": [
+     "src/engine/code-rule/code-rule-bridge.ts",
+     "src/runtime/runtime.ts"
+    ]
+   },
+   "command": "git merge-tree --write-tree --name-only <head> 9e0059c26"
+  },
+  {
+   "id": "nh/merge-676",
+   "what": "trial merge into the new head: #676: a folder's settings are kept under the spelling they were saved with",
+   "system": "any",
+   "subject": "N",
+   "commit": "f06640857",
+   "fix_commit": "bdf38a7b5",
+   "at_aad1dd6ef": {
+    "clean": true,
+    "files": [],
+    "hunks": 0
+   },
+   "at_f06640857": {
+    "clean": false,
+    "files": [
+     "src/engine/catalog/repository-registry.ts"
+    ],
+    "hunks": 2
+   },
+   "on_main_39b59e9d7": {
+    "clean": false,
+    "files": [
+     "src/engine/catalog/repository-registry.ts"
+    ]
+   },
+   "command": "git merge-tree --write-tree --name-only <head> bdf38a7b5"
+  },
+  {
+   "id": "nh/merge-677",
+   "what": "trial merge into the new head: #677: the engine proof on Windows ends within its bound",
+   "system": "any",
+   "subject": "N",
+   "commit": "f06640857",
+   "fix_commit": "70ea4819a",
+   "at_aad1dd6ef": {
+    "clean": false,
+    "files": [
+     "docs/privacy.md",
+     "docs/rule-packs.md",
+     "src/engine/catalog/rule-packs.ts"
+    ],
+    "hunks": 3
+   },
+   "at_f06640857": {
+    "clean": true,
+    "files": [],
+    "hunks": 0
+   },
+   "on_main_39b59e9d7": {
+    "clean": true,
+    "files": []
+   },
+   "command": "git merge-tree --write-tree --name-only <head> 70ea4819a"
+  },
+  {
+   "id": "nh/merge-B",
+   "what": "trial merge into the new head: All six fixes together (main + six fixes)",
+   "system": "any",
+   "subject": "N",
+   "commit": "f06640857",
+   "fix_commit": "58a435201",
+   "at_aad1dd6ef": {
+    "clean": false,
+    "files": [
+     ".github/workflows/ci.yml",
+     "native/src/lib.rs",
+     "src/engine/native/native.ts",
+     "test/engine/code-rule/code-rule-dsl-catalog.test.ts"
+    ],
+    "hunks": 5
+   },
+   "at_f06640857": {
+    "clean": false,
+    "files": [
+     ".github/workflows/ci.yml",
+     "native/src/lib.rs",
+     "src/engine/catalog/repository-identity.ts",
+     "src/engine/catalog/repository-registry.ts",
+     "src/engine/native/native.ts",
+     "test/engine/catalog/repository-registry.test.ts",
+     "test/engine/code-rule/code-rule-dsl-catalog.test.ts"
+    ],
+    "hunks": 10
+   },
+   "on_main_39b59e9d7": {
+    "clean": false,
+    "files": [
+     "src/engine/catalog/repository-identity.ts",
+     "src/engine/catalog/repository-registry.ts",
+     "test/engine/catalog/repository-registry.test.ts"
+    ]
+   },
+   "command": "git merge-tree --write-tree --name-only <head> 58a435201"
+  },
+  {
+   "id": "nh/merge-n-with-p",
+   "what": "trial merge into the new head: 0.1.5 merged into the new version",
+   "system": "any",
+   "subject": "N",
+   "commit": "f06640857",
+   "fix_commit": "9cad73564",
+   "at_aad1dd6ef": {
+    "clean": false,
+    "files": [
+     "docs/privacy.md",
+     "docs/rule-packs.md",
+     "src/engine/catalog/rule-packs.ts"
+    ],
+    "hunks": 3
+   },
+   "at_f06640857": {
+    "clean": true,
+    "files": [],
+    "hunks": 0
+   },
+   "on_main_39b59e9d7": null,
+   "command": "git merge-tree --write-tree --name-only <head> 9cad73564"
+  },
+  {
+   "id": "nh/findings-bar/complexity",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "f06640857",
+   "what": "findings of the complexity pack on its real-code corpus, key by key (rule, path, line, code), from the first cold run of each side of the two shippability bars on the measuring machine: 0.1.5, the head we published (aad1dd6ef) and the head now (f06640857)",
+   "findings": {
+    "P": 347,
+    "aad1dd6ef": 347,
+    "f06640857": 347
+   },
+   "P_same_in_both_bars": true,
+   "only_P": {
+    "aad1dd6ef": 0,
+    "f06640857": 0
+   },
+   "only_N_at_head": {
+    "count": 0,
+    "files": []
+   },
+   "found_now_not_before": [],
+   "lost_now_found_before": [],
+   "stopped_at_work_budget": {
+    "P": 0,
+    "aad1dd6ef": 0,
+    "f06640857": 0
+   }
+  },
+  {
+   "id": "nh/findings-bar/javascript",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "f06640857",
+   "what": "findings of the javascript pack on its real-code corpus, key by key (rule, path, line, code), from the first cold run of each side of the two shippability bars on the measuring machine: 0.1.5, the head we published (aad1dd6ef) and the head now (f06640857)",
+   "findings": {
+    "P": 36579,
+    "aad1dd6ef": 36579,
+    "f06640857": 36861
+   },
+   "P_same_in_both_bars": true,
+   "only_P": {
+    "aad1dd6ef": 0,
+    "f06640857": 0
+   },
+   "only_N_at_head": {
+    "count": 282,
+    "files": [
+     "src/cli/rule-draft.ts"
+    ]
+   },
+   "found_now_not_before": [],
+   "lost_now_found_before": [],
+   "stopped_at_work_budget": {
+    "P": 1,
+    "aad1dd6ef": 1,
+    "f06640857": 1
+   }
+  },
+  {
+   "id": "nh/findings-bar/node",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "f06640857",
+   "what": "findings of the node pack on its real-code corpus, key by key (rule, path, line, code), from the first cold run of each side of the two shippability bars on the measuring machine: 0.1.5, the head we published (aad1dd6ef) and the head now (f06640857)",
+   "findings": {
+    "P": 2753,
+    "aad1dd6ef": 2753,
+    "f06640857": 2754
+   },
+   "P_same_in_both_bars": true,
+   "only_P": {
+    "aad1dd6ef": 0,
+    "f06640857": 0
+   },
+   "only_N_at_head": {
+    "count": 1,
+    "files": [
+     "src/cli/rule-draft.ts"
+    ]
+   },
+   "found_now_not_before": [],
+   "lost_now_found_before": [],
+   "stopped_at_work_budget": {
+    "P": 7,
+    "aad1dd6ef": 7,
+    "f06640857": 7
+   }
+  },
+  {
+   "id": "nh/findings-bar/rerail",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "f06640857",
+   "what": "findings of the rerail pack on its real-code corpus, key by key (rule, path, line, code), from the first cold run of each side of the two shippability bars on the measuring machine: 0.1.5, the head we published (aad1dd6ef) and the head now (f06640857)",
+   "findings": {
+    "P": 7,
+    "aad1dd6ef": 7,
+    "f06640857": 7
+   },
+   "P_same_in_both_bars": true,
+   "only_P": {
+    "aad1dd6ef": 0,
+    "f06640857": 0
+   },
+   "only_N_at_head": {
+    "count": 0,
+    "files": []
+   },
+   "found_now_not_before": [],
+   "lost_now_found_before": [],
+   "stopped_at_work_budget": {
+    "P": 0,
+    "aad1dd6ef": 0,
+    "f06640857": 0
+   }
+  },
+  {
+   "id": "nh/findings-bar/rust",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "f06640857",
+   "what": "findings of the rust pack on its real-code corpus, key by key (rule, path, line, code), from the first cold run of each side of the two shippability bars on the measuring machine: 0.1.5, the head we published (aad1dd6ef) and the head now (f06640857)",
+   "findings": {
+    "P": 965,
+    "aad1dd6ef": 965,
+    "f06640857": 965
+   },
+   "P_same_in_both_bars": true,
+   "only_P": {
+    "aad1dd6ef": 0,
+    "f06640857": 0
+   },
+   "only_N_at_head": {
+    "count": 0,
+    "files": []
+   },
+   "found_now_not_before": [],
+   "lost_now_found_before": [],
+   "stopped_at_work_budget": {
+    "P": 0,
+    "aad1dd6ef": 0,
+    "f06640857": 0
+   }
+  },
+  {
+   "id": "nh/findings-bar/typescript",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "f06640857",
+   "what": "findings of the typescript pack on its real-code corpus, key by key (rule, path, line, code), from the first cold run of each side of the two shippability bars on the measuring machine: 0.1.5, the head we published (aad1dd6ef) and the head now (f06640857)",
+   "findings": {
+    "P": 10784,
+    "aad1dd6ef": 10778,
+    "f06640857": 10802
+   },
+   "P_same_in_both_bars": true,
+   "only_P": {
+    "aad1dd6ef": 6,
+    "f06640857": 0
+   },
+   "only_N_at_head": {
+    "count": 18,
+    "files": [
+     "src/cli/rule-draft.ts"
+    ]
+   },
+   "found_now_not_before": [
+    "typescript-eslint-no-shadow test/engine/code-rule/code-rule-bridge.test.ts:119",
+    "typescript-eslint-no-shadow test/engine/code-rule/code-rule-bridge.test.ts:160",
+    "typescript-eslint-no-shadow test/engine/code-rule/code-rule-bridge.test.ts:245",
+    "typescript-eslint-no-shadow test/engine/code-rule/code-rule-bridge.test.ts:447",
+    "typescript-eslint-no-shadow test/engine/native/native-code-rule-dsl-runtime.test.ts:3477",
+    "typescript-eslint-no-shadow test/scripts/pack-test-data.test.mjs:468"
+   ],
+   "lost_now_found_before": [],
+   "stopped_at_work_budget": {
+    "P": 0,
+    "aad1dd6ef": 5,
+    "f06640857": 0
+   }
+  }
+ ],
+ "findings": [
+  {
+   "title": "The new head finds the six no-shadow findings the head we published missed",
+   "what": "On the shippability bar's real-code corpus (602 TypeScript files at 53f5b92a1), the typescript pack at f06640857 reports every finding 0.1.5 reports, including the six typescript-eslint-no-shadow findings aad1dd6ef missed (code-rule-bridge.test.ts lines 119, 160, 245, 447; native-code-rule-dsl-runtime.test.ts:3477; pack-test-data.test.mjs:468). No rule run stops at its work budget (5 did at aad1dd6ef). The fix's commit (8df0e8092) names the cause: five files ran out of work.",
+   "evidence": [
+    "nh/findings/typescript"
+   ],
+   "severity": "positive: a finding we reported is fixed"
+  },
+  {
+   "title": "The new head adds 301 findings in one file 0.1.5 cannot parse, and loses none",
+   "what": "Over the six packs' real-code corpora, no finding of 0.1.5 is missing at the new head. It adds 282 javascript, 18 typescript and 1 node findings, all in src/cli/rule-draft.ts, which names a variable `using`: #735 (in main, merged into the branch) lets the new head parse it, where 0.1.5 records 'file has syntax errors' (599 rule runs over the six packs). A person upgrading sees these findings on such files.",
+   "evidence": [
+    "nh/findings/javascript",
+    "nh/findings/typescript",
+    "nh/findings/node"
+   ],
+   "severity": "informative"
+  },
+  {
+   "title": "Still 370 of 382 rules on with today's four common packs",
+   "what": "Set-up with typescript 0.1.7, python 0.1.9, complexity 0.1.7 and javascript 0.1.8 says 382 rules; a session's start at f06640857 says 370 rules are on. The same 12 token-test rules are skipped, with the same log line, as at aad1dd6ef.",
+   "evidence": [
+    "nh/rules-on/N"
+   ],
+   "severity": "medium: unchanged from what we published"
+  },
+  {
+   "title": "The content store is now content-v5.sqlite",
+   "what": "An upgrade from 0.1.5 (content-v1.sqlite) or from aad1dd6ef (content-v4.sqlite) starts every repository from an empty store at f06640857; 0.1.5's file stays on disk. The daemon started on a home 0.1.5 set up and answered.",
+   "evidence": [
+    "nh/store-file/N"
+   ],
+   "severity": "informative: our published text says content-v4.sqlite"
+  },
+  {
+   "title": "Five of our nine fixes now meet merge conflicts, all new ones from main's #708 and #680",
+   "what": "fix 2, fix 4, fix 6 and #677 merge into f06640857 as they are (#677 met 0.1.5's merge conflicts at aad1dd6ef; 0.1.5 is now an ancestor). fix 1, fix 3, fix 5 (#674), #665 and #676 meet merge conflicts in repository-identity.ts, repository-registry.ts and its test (#708) and in code-rule-bridge.ts and runtime.ts (#680). Each also meets them merging into main at 39b59e9d7 alone. The merge conflicts from the new engine (ci.yml, native/src/lib.rs, native.ts, one import line) are those we reported.",
+   "evidence": [
+    "nh/merge-fix-1",
+    "nh/merge-fix-3",
+    "nh/merge-fix-5",
+    "nh/merge-665",
+    "nh/merge-676",
+    "nh/merge-677",
+    "nh/merge-B"
+   ],
+   "severity": "medium: for whoever lands the fixes"
+  },
+  {
+   "title": "The Linux engine grew 5.6%",
+   "what": "npm run build:native at f06640857: 142.7 MB (135.1 MB at aad1dd6ef, 53.0 MB at 0.1.5, 2.69 times). The new head adds rerail-clif, the Go and C lean parsers and the Go, C and C++ grammars to the engine.",
+   "evidence": [
+    "nh/size-lx-cache/N"
+   ],
+   "severity": "low"
+  },
+  {
+   "title": "The release-form Linux build still fails to link",
+   "what": "package.yml's command (napi build --release --target x86_64-unknown-linux-gnu --use-napi-cross --strip, glibc 2.17) at f06640857 fails at the link of the rerail-engine program after 995 s cold with 4 jobs: undefined gettid (5 references), sized operator delete (8), std::__cxx11::basic_string::_M_create (2) and fcntl64 (1), the same symbols as at aad1dd6ef. None of the causes changed between the heads, and the pull request's checks still build with the host's toolchain only.",
+   "evidence": [
+    "nh/lx-release-cold/N",
+    "nh/lx-release-link/N"
+   ],
+   "severity": "high: the first release after the merge would fail on Linux"
+  }
+ ],
+ "not_measured": [
+  {
+   "what": "the six packs' speed, CPU and memory at the new head against 0.1.5 (the typescript 2.03 times we published, no-shadow alone, the node pack at 1.10)",
+   "why": "a fair measure needs the Linux measuring machine held alone; it was in use",
+   "would_take": "the shippability bar with our first run's arguments, about 15 to 20 minutes of that machine; the job is ready"
+  },
+  {
+   "what": "the same on Windows 11, both engines",
+   "why": "the Windows measuring machine was running the bar at aad1dd6ef, and no other Windows machine has a Rust toolchain to build the new head's engine",
+   "would_take": "the Windows bar job, which builds the engine first, about 2 to 2.5 hours of that machine"
+  },
+  {
+   "what": "the waits a person meets at the new head (daemon start, first hook, the 153-checkout repository's first tool call after an upgrade) and the database's growth there",
+   "why": "they need the Linux measuring machine alone",
+   "would_take": "the hook job's phases WT, CGSIZE and UPG for the new head and 0.1.5, about 36 minutes"
+  },
+  {
+   "what": "the Windows store's memory map through the new whole-VACUUM give-back",
+   "why": "it needs a Windows machine with the new head's engine",
+   "would_take": "the earlier probe at 10 to 20% free and past 20% free, about 30 minutes"
+  },
+  {
+   "what": "the test suites at the new head, and each fix's tests after its merge",
+   "why": "not in this check's scope",
+   "would_take": "a whole Linux suite (about 15 minutes on a test machine) and the fixes' test files"
+  }
+ ]
+}
