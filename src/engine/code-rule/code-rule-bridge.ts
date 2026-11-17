@@ -43,7 +43,7 @@ import { binaryPrefix } from "./binary-prefix.js";
 import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
-import { type CallPlace, type CallsCounted, ToolCallWindows } from "./tool-call-windows.js";
+import { type CallPlace, type CallsCounted, type CallWalkPlace, ToolCallWindows } from "./tool-call-windows.js";
 import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
 import {
   type WatcherWalk, type WorktreeFindings, type WorktreeScan, type WorktreeScanned, type WorktreeRecords, type WorktreeSnapshot, WorktreeView, type WorktreeWalk, WorktreeWalks,
@@ -505,6 +505,12 @@ interface WorktreeDiscovery {
    */
   unrecorded: Set<string>;
 }
+
+/**
+ * The place of a call's writes outside the session folder in its own checkout, which a walk of the other worktrees reads
+ * for the sessions watching it, and asks this session's claims of (`#callPlaces`). Not a path, so no worktree is it.
+ */
+const REST_OF_CHECKOUT = "\0checkout";
 
 function worktreeDiscovery(): WorktreeDiscovery {
   return {
@@ -2191,6 +2197,10 @@ export class CodeRuleBridge {
       const written = { stamp: change.after?.modifiedAt, deleted: change.after === undefined, since, until: findings.readFrom };
       if (await this.#callRanAsWritten(discovery, counted, path, written)) claimed.add(change.path);
     }
+    // The session's checkout outside its folder is read by this walk alone, which has answered for its calls there.
+    if (!watched && findings.failedRoots.size === 0) {
+      discovery.toolCalls.answered(findings.readFrom, { place: REST_OF_CHECKOUT, placesOf: call => this.#callPlaces(discovery, call) });
+    }
     return claimed;
   }
 
@@ -2547,19 +2557,22 @@ export class CodeRuleBridge {
     discovery.passedCheckouts = scan.checkouts;
     // A subtree it could not read may still hold writes made since the session opened, which its next walk judges. A call
     // that ran in another worktree, or named a file there, is that worktree's walk to answer for too (`#finishWorktreeWalk`).
-    if (scan.failedRoots.size === 0) discovery.toolCalls.answered(walk.observedAt, call => this.#callPlaces(discovery, call).every(place => place === undefined));
+    if (scan.failedRoots.size === 0) discovery.toolCalls.answered(walk.observedAt, { place: undefined, placesOf: call => this.#callPlaces(discovery, call) });
     this.#listLateAgain(discovery, scan.lateListings);
   }
 
   /**
-   * The places a call's writes are to be found in: the other worktree that holds the folder it ran in and each file it
-   * named, or undefined for the session's own checkout. A walk drops a call only once it reads all of them; one whose
-   * places two walks read stays until the oldest calls go (`MAX_FINISHED_CALLS`), which only costs its memory.
+   * The places a call's writes are to be found in, each answered for by the walk that reads it (`ToolCallWindows`): the
+   * other worktree that holds the folder it ran in, else the session folder (undefined); and for each file it named, the
+   * other worktree that holds it, else the rest of the session's checkout outside its folder (`REST_OF_CHECKOUT`), else
+   * the session folder. A shell write there is no claim of the session's (`#claimsIn`), so the folder needs no mark.
    */
-  #callPlaces(discovery: SourceDiscovery, call: CallPlace): Array<string | undefined> {
-    // Outside the session folder but in no other worktree: the session's checkout, which no walk of its reads, but whose
-    // shared walk asks it of the files a call named there (`#claimsIn`).
-    return [call.folder, ...call.paths].map(path => this.#worktreeHolding(discovery, path) ?? (path?.startsWith("..") === true ? ".." : undefined));
+  #callPlaces(discovery: SourceDiscovery, call: CallPlace): CallWalkPlace[] {
+    const outside = (path: string) => path === ".." || path.startsWith("../");
+    return [
+      this.#worktreeHolding(discovery, call.folder),
+      ...call.paths.map(path => this.#worktreeHolding(discovery, path) ?? (outside(path) ? REST_OF_CHECKOUT : undefined)),
+    ];
   }
 
   /** The other worktree that holds `path` (session-relative), or is it; undefined for one in the session's own checkout. */
@@ -2579,7 +2592,7 @@ export class CodeRuleBridge {
     // left a subtree unread, which may still hold their writes.
     for (const [worktree, readFrom] of walk.readFrom) {
       const unread = [...scan.failedRoots].some(failed => failed === worktree || failed.startsWith(`${worktree}/`)) || underBaselineRoot(scan.failedRoots, worktree);
-      if (!unread) discovery.toolCalls.answered(readFrom, call => this.#callPlaces(discovery, call).every(place => place === worktree));
+      if (!unread) discovery.toolCalls.answered(readFrom, { place: worktree, placesOf: call => this.#callPlaces(discovery, call) });
     }
     this.#listLateAgain(discovery, scan.lateListings);
   }

@@ -229,6 +229,14 @@ interface Watching {
   closed: boolean;
 }
 
+/** A session that stopped watching: its folder, the checkout holding it, and when it stopped once `known` settles. */
+interface Departed {
+  readonly checkout: string;
+  readonly folder: string;
+  closedAt: number;
+  readonly known: Promise<void>;
+}
+
 /** What the last read of a worktree found, kept to hand to sessions while nothing tells of a change there. */
 interface Kept {
   readonly findings: Omit<WorktreeFindings, "texts" | "listed" | "inner" | "changes">;
@@ -414,11 +422,11 @@ export class WorktreeWalks {
   /** Every session watching, in the order they started: a worktree is read through the first that watches it. */
   readonly #watching: Watching[] = [];
   /**
-   * The folders of sessions that closed, with the checkout each is in and when it closed on the filesystem's clock
-   * (unknown, so every change counts, until the clock answers): a change made there before is that session's folder
-   * walk's, which recorded it if it was the session's (`#judgedElsewhere`), until a read of the checkout sees past it.
+   * The folders of sessions that closed, with the checkout each is in and when it closed on the filesystem's clock, which
+   * `known` settles: a change made there before is that session's folder walk's, which recorded it if it was the
+   * session's (`#judgedElsewhere`), until a read of the checkout sees past it or no session watches the checkout.
    */
-  #departed: Array<{ readonly checkout: string; readonly folder: string; closedAt: number }> = [];
+  #departed: Departed[] = [];
   readonly #kept = new Map<string, Kept>();
   /** Worktrees a walk began to read and has not kept findings of: the next walk reads them whatever the notices say. */
   readonly #owed = new Set<string>();
@@ -651,14 +659,23 @@ export class WorktreeWalks {
     await git.stop();
   }
 
-  /** Keeps the folder of a session that stops watching, with when it stopped (`#departed`). */
+  /**
+   * Keeps the folder of a session that stops watching, with when it stopped (`#departed`), in place of an earlier
+   * session's of the same folder. A clock that cannot say leaves no entry: a change is then recorded twice at worst.
+   */
   #leave(watching: Watching): void {
-    if (watching.checkout === undefined || watching.folder === undefined) return;
-    const departed = { checkout: watching.checkout, folder: watching.folder, closedAt: Infinity };
+    const { checkout, folder } = watching;
+    if (checkout === undefined || folder === undefined) return;
+    this.#departed = this.#departed.filter(other => other.checkout !== checkout || other.folder !== folder);
+    const departed: Departed = {
+      checkout, folder, closedAt: Infinity,
+      known: watching.watcher.clock().then(at => {
+        departed.closedAt = at;
+      }, () => {
+        this.#departed = this.#departed.filter(other => other !== departed);
+      }),
+    };
     this.#departed.push(departed);
-    void watching.watcher.clock().then(at => {
-      departed.closedAt = at;
-    }, () => undefined);
   }
 
   /** Drops what was kept of each worktree no session watches, and stops watching it. */
@@ -666,6 +683,8 @@ export class WorktreeWalks {
     const roots = new Set(watched.flatMap(worktrees => [...worktrees]));
     for (const root of this.#kept.keys()) if (!roots.has(root)) this.#kept.delete(root);
     for (const root of this.#owed) if (!roots.has(root)) this.#owed.delete(root);
+    // No walk reads such a checkout now, and its next read, a first one, offers no change to judge.
+    this.#departed = this.#departed.filter(departed => roots.has(departed.checkout));
     this.#notices.retain(roots);
     this.#looks.retain(roots);
   }
@@ -699,12 +718,14 @@ export class WorktreeWalks {
     found: ReadonlyMap<string, WorktreeFindings>,
   ): Promise<Map<Watching, WorktreeRecords>> {
     const records = new Map<Watching, Map<string, ReadonlySet<string>>>();
+    // When each session that closed did: a change after it is no longer that session's to judge.
+    await Promise.all(this.#departed.map(departed => departed.known));
     for (const [root, findings] of found) {
       if (findings.changes.length === 0) continue;
       const recorder = [...walking].find(([, walk]) => walk.worktrees.has(root) && !walk.firstSight.has(root))?.[0];
       if (recorder === undefined) continue;
       const askable = [...starts.values()].filter(walk => walk.worktrees.has(root) || walk.checkout === root);
-      const judged = this.#judgedElsewhere(root, askable);
+      const judged = this.#judgedElsewhere(root);
       const claimed = new Set<string>();
       // A session that cannot say claims nothing: the change is still recorded, once, for the repository.
       for (const walk of askable) for (const path of await walk.claims(root, findings).catch(() => new Set<string>())) claimed.add(path);
@@ -717,11 +738,14 @@ export class WorktreeWalks {
 
   /**
    * Whether a session's own folder walk judges `change`, in the worktree at `root`: it is in the folder of a session open
-   * now, or in that of one that closed since, written before it closed. A removed file has no stamp to tell, so it is the
-   * closed session's too.
+   * now, as its last walk that could start named it (a session whose start failed this walk is still open), or in that
+   * of one that closed since, written before it closed. A removed file has no stamp to tell, so it is the closed
+   * session's too.
    */
-  #judgedElsewhere(root: string, open: readonly WatcherWalk[]): (change: WorktreeChange) => boolean {
-    const folders = open.filter(walk => walk.checkout === root).map(walk => ({ prefix: folderIn(root, walk.folder), closedAt: Infinity }));
+  #judgedElsewhere(root: string): (change: WorktreeChange) => boolean {
+    const folders = this.#watching
+      .filter(watching => !watching.closed && watching.checkout === root && watching.folder !== undefined)
+      .map(watching => ({ prefix: folderIn(root, watching.folder!), closedAt: Infinity }));
     for (const departed of this.#departed) if (departed.checkout === root) folders.push({ prefix: folderIn(root, departed.folder), closedAt: departed.closedAt });
     return change => folders.some(({ prefix, closedAt }) =>
       (prefix === "" || change.path === prefix || change.path.startsWith(`${prefix}/`))

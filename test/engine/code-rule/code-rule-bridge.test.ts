@@ -3303,24 +3303,25 @@ describe("ToolCallWindows", () => {
     expect(windows.ranDuring(MAX_FINISHED_CALLS * 10, MAX_FINISHED_CALLS * 10)).toBe(true);
   });
 
-  it("counts only the calls that ran or named a file where asked, and forgets only those every walk of their places answered for", () => {
+  it("counts only the calls that ran or named a file where asked, and forgets one once the walks of all its places answered for it", () => {
     const windows = new ToolCallWindows();
-    const inWorktree = (call: CallPlace) => call.folder === "../w" || call.paths.some(path => path.startsWith("../w/"));
+    const placesOf = (call: CallPlace) => [call.folder === "../w" ? "../w" : undefined, ...call.paths.map(path => (path.startsWith("../w/") ? "../w" : undefined))];
+    const inWorktree = (call: CallPlace) => placesOf(call).includes("../w");
     const ownOnly = (call: CallPlace) => !inWorktree(call);
     windows.begin("here", 10);
     windows.finish("here", 20);
     windows.begin("there", 10, { folder: "../w", paths: [] });
     windows.finish("there", 20);
-    // An edit tool run from the session folder that writes into the worktree.
+    // An edit tool run from the session folder that writes into the worktree: two places, two walks.
     windows.begin("edit", 22, { folder: ".", paths: ["../w/src/a.py"] });
     windows.finish("edit", 24);
     windows.begin("running", 30, { folder: ".", paths: [] });
     expect([windows.ranDuring(15, 15, inWorktree), windows.ranDuring(23, 23, inWorktree), windows.ranDuring(35, 35, inWorktree)]).toEqual([true, true, false]);
     expect(windows.ranDuring(35, 35)).toBe(true);
-    // The session folder's walk answers for its own calls; the others wait for the worktree's walk.
-    windows.answered(30, ownOnly);
-    expect([windows.ranDuring(15, 15, ownOnly), windows.ranDuring(15, 15, inWorktree), windows.ranDuring(23, 23, inWorktree)]).toEqual([false, true, true]);
-    windows.answered(30, inWorktree);
+    // The session folder's walk answers for its own place: the calls with a place in the worktree wait for its walk.
+    windows.answered(30, { place: undefined, placesOf });
+    expect([windows.ranDuring(15, 15, ownOnly), windows.ranDuring(15, 15, inWorktree), windows.ranDuring(23, 23)]).toEqual([false, true, true]);
+    windows.answered(30, { place: "../w", placesOf });
     expect(windows.ranDuring(15, 25)).toBe(false);
   });
 });

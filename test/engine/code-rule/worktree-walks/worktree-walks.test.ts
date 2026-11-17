@@ -10,7 +10,7 @@ import type * as WalkReads from "../../../../src/engine/code-rule/walk-read-buff
 import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/code-rule/code-rule.js";
 import { lookMoved, WorktreeLooks } from "../../../../src/engine/code-rule/worktree-look.js";
 import { WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
-import { RepositoryWorktreeWalks, WorktreeWalks, type WorktreeWatcher } from "../../../../src/engine/code-rule/worktree-walks.js";
+import { RepositoryWorktreeWalks, type WatcherWalk, WorktreeWalks, type WorktreeWatcher } from "../../../../src/engine/code-rule/worktree-walks.js";
 import { GitReads } from "../../../../src/engine/git.js";
 import type * as Git from "../../../../src/engine/git.js";
 import { StampTreeWatch } from "./support/stamp-tree-watch.js";
@@ -337,6 +337,38 @@ describe("WorktreeWalks", () => {
     // A later change there, which no session made, is recorded once.
     await writeFile(join(worktrees[0]!, "src", "a.py"), "old\nmine\ntheirs\n");
     await turn(watcher);
+    expect(owned(watcher)).toEqual([[["../w1/src/a.py"], "log", "repository"]]);
+  });
+
+  // Review of #738 (F4): a session whose start failed this walk is still open, in the folder its last start named.
+  it("leaves a session's folder to it in a walk its start failed, as its last start named it", async () => {
+    const { main, checkouts, worktrees } = await repository();
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const watcher = await session(main, checkouts, walks);
+    let failing = false;
+    walks.watch({ clock: async () => Date.now(), start: () => (failing ? undefined : quietWalk(worktrees[0]!)) });
+    await turn(watcher);
+    failing = true;
+    await writeFile(join(worktrees[0]!, "src", "a.py"), "old\nmine\n");
+    await turn(watcher);
+    expect(owned(watcher)).toEqual([]);
+  });
+
+  // Review of #738 (F6): until a closed session's close time is known, a walk cannot tell its writes from later ones.
+  it("records a change no session made after a session closed in its folder, once the walk knows when it closed", async () => {
+    const { main, checkouts, worktrees } = await repository();
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const watcher = await session(main, checkouts, walks);
+    const closedAt = Promise.withResolvers<number>();
+    const closing = walks.watch({ clock: () => closedAt.promise, start: () => quietWalk(worktrees[0]!) });
+    await turn(watcher);
+    const closed = closing.close();
+    await writeFile(join(worktrees[0]!, "src", "a.py"), "old\nmine\n");
+    const walked = turn(watcher);
+    // The close came before the write; its time answers only after the walk has read the write, as a slow clock can.
+    await new Promise(wake => setTimeout(wake, 1_000));
+    closedAt.resolve(0);
+    await Promise.all([walked, closed]);
     expect(owned(watcher)).toEqual([[["../w1/src/a.py"], "log", "repository"]]);
   });
 
@@ -953,6 +985,14 @@ describe("what a walk looks at in a watched worktree that no notice tells of", (
     expect(statsUnder(main, worktrees[1]!, w3)).toEqual([0, 0, 0]);
   });
 });
+
+/** A session's part in a walk where it watches no worktree, its folder the checkout at `folder`, and claims nothing. */
+function quietWalk(folder: string): WatcherWalk {
+  return {
+    worktrees: new Set(), checkout: folder, folder, firstSight: new Set(), startedAt: 0, heads: new Set(), unmerged: new Set(),
+    scan: async () => undefined, claims: async () => new Set(), take: async () => undefined,
+  };
+}
 
 /** A session watching `roots` whose reads find nothing, each read of a root put in `scans`, and which takes nothing. */
 function watcherOf(roots: readonly string[], scans: string[]): WorktreeWatcher {

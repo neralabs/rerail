@@ -7,10 +7,20 @@ export interface CallPlace {
   readonly paths: readonly string[];
 }
 
-/** A tool call's run on the filesystem's clock, from just before it started to just after it ended, and its place. */
+/**
+ * A place a call's writes are found in, as a walk reads it: the session folder (`undefined`), another worktree, or the
+ * rest of the session's checkout. Each is answered for by the walk that reads it.
+ */
+export type CallWalkPlace = string | undefined;
+
+/**
+ * A tool call's run on the filesystem's clock, from just before it started to just after it ended, its place, and the
+ * places whose walks have read past its end.
+ */
 interface ToolCallWindow extends CallPlace {
   readonly start: number;
   readonly end: number;
+  readonly answered: Set<CallWalkPlace>;
 }
 
 /** Which calls a question counts, by where each ran; every call by default. */
@@ -33,7 +43,7 @@ export const MAX_FINISHED_CALLS = 1_000;
  */
 export class ToolCallWindows {
   /** Each call still running, by its id, with when it started and where. */
-  readonly #running = new Map<string, Omit<ToolCallWindow, "end">>();
+  readonly #running = new Map<string, Omit<ToolCallWindow, "end" | "answered">>();
   /** The calls that ended, oldest first. */
   #finished: ToolCallWindow[] = [];
 
@@ -47,7 +57,7 @@ export class ToolCallWindows {
     const running = this.#running.get(toolCallId);
     if (running === undefined) return;
     this.#running.delete(toolCallId);
-    this.#finished.push({ ...running, end: at });
+    this.#finished.push({ ...running, end: at, answered: new Set() });
     if (this.#finished.length > MAX_FINISHED_CALLS) this.#finished.shift();
   }
 
@@ -60,11 +70,16 @@ export class ToolCallWindows {
   }
 
   /**
-   * A walk that began at `at` has seen every write of the calls that ended before it, of those `answers` says it reads
-   * all the places of: those go. A call that ran or wrote where another walk reads stays for that one.
+   * A walk of `place` that began at `at` has seen every write there of the calls that ended before it. A call goes once
+   * the walks of all its places (`placesOf`) have; without a place, every call that ended before `at` goes.
    */
-  answered(at: number, answers: CallsCounted = EVERY_CALL): void {
-    this.#finished = this.#finished.filter(window => window.end >= at || !answers(window));
+  answered(at: number, place?: { readonly place: CallWalkPlace; readonly placesOf: (call: CallPlace) => readonly CallWalkPlace[] }): void {
+    this.#finished = this.#finished.filter(window => {
+      if (window.end >= at) return true;
+      if (place === undefined) return false;
+      window.answered.add(place.place);
+      return !place.placesOf(window).every(each => window.answered.has(each));
+    });
   }
 
   /** Whether a call `counted` holds ran at some point from `from` to `to`; `from` equal to `to` asks about one stamp. */
