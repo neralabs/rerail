@@ -13,7 +13,7 @@
 //!   reductions leave it (a comment before a node's first child is its parent's).
 
 use crate::kinds::{self, K};
-use rerail_tape_format::{Widths, Writer};
+use rerail_tape_format::{Leaf, Widths, Writer};
 
 /// In an extras entry's key: its depth under the extra before it (0: an extra of its own; 1: its
 /// child, 2: a grandchild), as Scala's comment holds its `//` and a `using` directive.
@@ -141,16 +141,6 @@ struct Frame {
     any: bool,
 }
 
-/// A token whose fate waits for its parent (a mark's, a dynamic automaton's): its key, span, and its
-/// place in the writer (before the node there now).
-#[derive(Clone, Copy, Debug)]
-struct Held {
-    key: u32,
-    s: u32,
-    e: u32,
-    at: u32,
-}
-
 /// An open node: its frame.
 #[derive(Clone, Copy, Debug)]
 pub struct Node(u32);
@@ -175,7 +165,9 @@ pub struct Saved {
 pub struct Tw {
     pub w: Writer<Widths>,
     frames: Vec<Frame>,
-    held: Vec<Held>,
+    /// The tokens whose fate waits for their parent (a mark's, a dynamic automaton's): each
+    /// key, span and place in the writer (before the node there now).
+    held: Vec<Leaf>,
     /// Comments, in order: (key, start, end); those before `flushed` are written.
     pub extras: Vec<(u32, u32, u32)>,
     pub flushed: usize,
@@ -343,7 +335,7 @@ impl Tw {
         let (at, held) = (f.at as usize, f.held as usize);
         // Its start: its first child's, a held token's where one comes first.
         let start = match self.held.get(held) {
-            Some(h) if h.at as usize == at => h.s,
+            Some(h) if h.at as usize == at => h.start,
             _ if at < self.w.len() => self.w.start(at),
             _ => s,
         };
@@ -449,13 +441,19 @@ impl Tw {
                 self.keep.push(fate(a - 1, kind_of(t)) != Some(true));
             }
         }
-        let mut off = 0;
-        for (h, &keep) in self.held[from..].iter().zip(&self.keep) {
-            if keep {
-                self.w.insert_leaf(h.at as usize + off, h.key, h.s, h.e);
-                off += 1;
+        // The kept ones in one move, each at its place in the tape before any is put in (the
+        // ones left out taken out of the list first).
+        let mut k = self.held.len();
+        if self.keep.iter().any(|&x| !x) {
+            k = from;
+            for j in 0..n {
+                if self.keep[j] {
+                    self.held[k] = self.held[from + j];
+                    k += 1;
+                }
             }
         }
+        self.w.insert_leaves(&self.held[from..k]);
         self.held.truncate(from);
     }
 
@@ -499,7 +497,7 @@ impl Tw {
                 None => {}
             }
         }
-        self.held.push(Held { key: k, s, e, at: self.w.len() as u32 });
+        self.held.push(Leaf { key: k, start: s, end: e, at: self.w.len() as u32 });
     }
 
     /// Node `id` given `field`, where it has none: a field given inside a hidden rule wins over one

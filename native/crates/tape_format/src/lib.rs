@@ -267,6 +267,15 @@ struct Held {
     end: u32,
 }
 
+/// A closed leaf to put in before the node at `at` (`Writer::insert_leaves`).
+#[derive(Clone, Copy, Debug)]
+pub struct Leaf {
+    pub key: u32,
+    pub start: u32,
+    pub end: u32,
+    pub at: u32,
+}
+
 /// Where a writer was (`Writer::checkpoint`): its nodes, and its open chains and their wraps.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Checkpoint {
@@ -698,6 +707,68 @@ impl<L: Layout> Writer<L> {
         Self::put(&mut self.tail, at, ws.tail, tail);
     }
 
+    /// Closed leaves put in at once, as `insert_leaf` would put each in turn: `leaves[j]` before
+    /// the node at `leaves[j].at` of the tape as it is now (`at` not decreasing; leaves at one
+    /// place in their order). One backward pass: each node after the first place moves once, by
+    /// the leaves before it, where an insert each moved it once a leaf.
+    pub fn insert_leaves(&mut self, leaves: &[Leaf]) {
+        let k = leaves.len();
+        match k {
+            0 => return,
+            1 => {
+                let l = leaves[0];
+                return self.insert_leaf(l.at as usize, l.key, l.start, l.end);
+            }
+            _ => {}
+        }
+        debug_assert!(leaves.windows(2).all(|w| w[0].at <= w[1].at));
+        debug_assert!(leaves.iter().all(|l| l.at as usize != self.chain_at && l.at as usize <= self.n));
+        while self.n + k > self.cap {
+            self.grow();
+        }
+        let (n, ws) = (self.n, self.layout.widths());
+        let (wz, wt) = (usize::from(ws.size), usize::from(ws.tail));
+        // From the last place down: the nodes from leaf j's place to the next leaf's go up by
+        // j + 1, then leaf j goes at its place moved up by the j leaves before it.
+        let mut to = n;
+        for (j, l) in leaves.iter().enumerate().rev() {
+            let at = l.at as usize;
+            let by = j + 1;
+            if at < to && to == n {
+                // The top run: `shift_up`'s window may write past it, where nothing is yet.
+                shift_up::<u8, 16>(&mut self.size, at * wz, to * wz, by * wz);
+                shift_up::<u8, 16>(&mut self.tail, at * wt, to * wt, by * wt);
+                shift_up::<u32, 8>(&mut self.keys, at, to, by);
+                shift_up::<u32, 8>(&mut self.starts, at, to, by);
+            } else if at < to {
+                // A run below one already moved: exactly its nodes.
+                self.size.copy_within(at * wz..to * wz, (at + by) * wz);
+                self.tail.copy_within(at * wt..to * wt, (at + by) * wt);
+                self.keys.copy_within(at..to, at + by);
+                self.starts.copy_within(at..to, at + by);
+            }
+            to = at;
+        }
+        self.n = n + k;
+        self.uncode_from(leaves[0].at as usize);
+        // A mark's node moves up by the leaves at or before it.
+        for m in self.marks.iter_mut() {
+            m.0 += leaves.partition_point(|l| l.at <= m.0) as u32;
+        }
+        for (j, l) in leaves.iter().enumerate() {
+            let node = l.at as usize + j;
+            self.keys[node] = l.key;
+            self.starts[node] = l.start;
+            // A leaf is its own last descendant: its tail is from its start either way.
+            let tail = l.end.wrapping_sub(l.start);
+            if tail >= self.wide_from {
+                self.close_marks(node, l.end, l.start, l.start, tail);
+            }
+            Self::put(&mut self.size, node, ws.size, 1);
+            Self::put(&mut self.tail, node, ws.tail, tail);
+        }
+    }
+
     /// `node`'s start, given after it was pushed (a node put before its first child, whose start
     /// it takes; an empty node's). `node` is open: no closed node's tail is measured from it.
     #[inline]
@@ -1112,6 +1183,62 @@ mod tests {
             let want: Vec<u32> = nodes.iter().map(|n| n.1).collect();
             assert_eq!(starts, want);
             assert_eq!(decoded[20].end, far + 5);
+        }
+    }
+
+    /// Leaves put in at once (`insert_leaves`) give the tape an insert each gives, runs between
+    /// them long and short, leaves at one place, at the end, a wide tail among them.
+    #[test]
+    fn leaves_inserted_at_once_are_an_insert_each() {
+        let src = vec![b' '; 200_000];
+        let w = Widths::guess(src.len());
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for _ in 0..300 {
+            let n = 1 + (next() % 60) as usize;
+            let k = 1 + (next() % 8) as usize;
+            let mut places: Vec<u32> = (0..k).map(|_| 1 + (next() % n as u64) as u32).collect();
+            places.sort();
+            let leaves: Vec<Leaf> = places
+                .iter()
+                .enumerate()
+                .map(|(j, &at)| {
+                    let start = 10 * at + j as u32;
+                    let end = if next() % 9 == 0 { start + 70_000 } else { start + 1 };
+                    Leaf { key: key(4 + j as u16, 0, 0), start, end, at }
+                })
+                .collect();
+            let build = |batch: bool| {
+                let mut w = w;
+                loop {
+                    let mut o = Writer::new(1, w, 8);
+                    let r = o.push(key(1, 0, 0), 0);
+                    for i in 1..n {
+                        let x = o.push(key(2, 0, 0), 10 * i as u32);
+                        o.close(x, 10 * i as u32 + 1);
+                    }
+                    if batch {
+                        o.insert_leaves(&leaves);
+                    } else {
+                        for (j, l) in leaves.iter().enumerate() {
+                            o.insert_leaf(l.at as usize + j, l.key, l.start, l.end);
+                        }
+                    }
+                    o.close(r, 199_999);
+                    o.commit();
+                    match o.finish(&src) {
+                        Ok(t) => break decode(&t).unwrap(),
+                        // Wider columns where the guess was short (the wide tails).
+                        Err(Redo(wider)) => w = wider,
+                    }
+                }
+            };
+            assert_eq!(build(false), build(true), "{places:?} over {n}");
         }
     }
 
