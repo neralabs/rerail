@@ -2694,7 +2694,7 @@ describe("the hook start check", () => {
       const renames = traffic.renames.slice(renamesBefore);
       expect({
         answers, refused: renames.length > 0 && renames.every(code => WINDOWS_HOLDS.includes(code)),
-        repeated: host.proofs.found.slice(checksBefore), kept: readFileSync(keptAnswerFile(app), "utf8"), folder: readdirSync(dirname(keptAnswerFile(app))),
+        repeated: host.proofs.found.slice(checksBefore), kept: readFileSync(keptAnswerFile(app), "utf8"), folder: answersBeside(app),
       }).toEqual({
         answers: Array.from({ length: 20 }, () => false), refused: true, repeated: Array.from({ length: 10 }, () => true), kept,
         folder: [basename(keptAnswerFile(app))],
