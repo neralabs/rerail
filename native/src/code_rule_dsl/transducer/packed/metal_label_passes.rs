@@ -1114,7 +1114,7 @@ pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Resul
 }
 
 fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
-    let _evaluation = super::super::metal_backend::metal_execution_guard()?;
+    let _evaluation = super::super::metal_backend::evaluation_scope();
     let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     // A level's launches: the programs' dispatch and sink, the derived labels, the settle.
     let launches = |level: &Vec<Pass<'_>>| {

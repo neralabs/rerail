@@ -392,6 +392,17 @@ pub trait Pending {
     fn done(&self) -> bool {
         false
     }
+    /// [`finish`](Self::finish), with the CPU seconds it spent on threads the worker does not count (a submission
+    /// run on the lanes' pool while the worker begins the next: [`lane_spawn`]).
+    fn finish_counted(self: Box<Self>) -> (Result<Vec<Output>, String>, f64) {
+        (self.finish(), 0.0)
+    }
+    /// Whether its finish is host work (decoding, reading back) for the lanes' pool. One that only waits for a
+    /// result another thread makes ([`lane_spawn`]) is finished on the worker's own thread: a wait on a pool thread
+    /// can be stolen into the middle of the very job it waits for (a parallel loop's join), and neither moves.
+    fn finish_on_pool(&self) -> bool {
+        true
+    }
 }
 
 /// A submission that ran as it began.
@@ -572,11 +583,24 @@ struct Flight<'a> {
 }
 
 impl Flight<'_> {
+    /// [`end`](Self::end) on the lanes' pool where its finish is host work, else here ([`Pending::finish_on_pool`]).
+    fn end_on(self, board: &Scoreboard, lane: Lane) {
+        if self.pending.as_ref().is_ok_and(|p| p.finish_on_pool()) {
+            lane_host(lane, || self.end(board, lane));
+        } else {
+            self.end(board, lane);
+        }
+    }
+
     /// Waits for it and hands its outputs to the batch's waiter.
     fn end(self, board: &Scoreboard, lane: Lane) {
         let Flight { claims, ids, mut ticket, start, pending } = self;
         ticket.resume();
-        let r = pending.and_then(|p| std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| p.finish())).unwrap_or_else(|_| Err("its submission panicked".into())));
+        let r = pending.and_then(|p| {
+            let (r, elsewhere) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| p.finish_counted())).unwrap_or_else(|_| (Err("its submission panicked".into()), 0.0));
+            ticket.add_cpu(elsewhere);
+            r
+        });
         let (_, cpu) = board.finish(ticket, r.is_ok());
         claims.reply((lane, ids, (r, start, Instant::now(), cpu)));
     }
@@ -684,14 +708,14 @@ fn worker(backend: Arc<dyn Backend>, board: Arc<Scoreboard>) -> std::sync::mpsc:
                     // One that ran as it began (or failed to begin) is handed back now: kept in flight, its outputs
                     // would wait for the next submission's whole run.
                     if begun.pending.as_ref().map_or(true, |p| p.done()) {
-                        lane_host(lane, || begun.end(&board, lane));
+                        begun.end_on(&board, lane);
                     } else if let Some(f) = flight.replace(begun) {
-                        lane_host(lane, || f.end(&board, lane));
+                        f.end_on(&board, lane);
                     }
                     continue;
                 }
                 if let Some(f) = flight.take() {
-                    lane_host(lane, || f.end(&board, lane));
+                    f.end_on(&board, lane);
                     continue;
                 }
                 open.retain(|c| c.takeable_in(lane).is_some());
@@ -725,9 +749,7 @@ fn lane_host<R>(lane: Lane, f: impl FnOnce() -> R) -> R {
     struct Handed<T>(T);
     // SAFETY: see `Handed`: the caller is blocked for as long as the other thread holds it.
     unsafe impl<T> Send for Handed<T> {}
-    static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
-    let pool = POOL.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(|i| format!("rerail-lane-host {i}")).build().ok());
-    match pool {
+    match lanes_pool() {
         Some(pool) => {
             let f = Handed(f);
             pool.install(move || {
@@ -739,6 +761,58 @@ fn lane_host<R>(lane: Lane, f: impl FnOnce() -> R) -> R {
         None => f(),
     }
 }
+
+/// The device lanes' own pool ([`lane_host`]): `None` where it could not be made.
+fn lanes_pool() -> Option<&'static rayon::ThreadPool> {
+    static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
+    POOL.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(|i| format!("rerail-lane-host {i}")).build().ok())
+        .as_ref()
+}
+
+/// Runs a device lane's submission on a pool of its own and returns at once: its result, and the CPU seconds of the
+/// thread that ran it, come on the receiver. So a lane's worker begins its next submission while this one runs: one
+/// submission's host part (encoding, sizing, reading back) beside another's command buffers on the device (decision
+/// 0344). A panic is an error.
+///
+/// Each running submission has a slot: a pool that runs it alone, where its parallel loops stay. On one shared pool,
+/// a thread waiting in one submission's join stole the other submission and ran it inside, on the same thread: its
+/// thread-local evaluation (the launch budget, the profile's spans) was the first's, and the first waited for the
+/// whole of the second. With every slot busy (more in flight than [`SLOTS`]) it runs here.
+pub fn lane_spawn<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> std::sync::mpsc::Receiver<(std::thread::Result<R>, f64)> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static BUSY: [AtomicBool; SLOTS] = [const { AtomicBool::new(false) }; SLOTS];
+    static POOLS: [OnceLock<Option<rayon::ThreadPool>>; SLOTS] = [const { OnceLock::new() }; SLOTS];
+    let (send, take) = std::sync::mpsc::channel();
+    let job = move |slot: Option<usize>| {
+        let c0 = thread_cpu();
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+        let cpu = thread_cpu() - c0;
+        if let Some(slot) = slot {
+            BUSY[slot].store(false, Ordering::Release);
+        }
+        let _ = send.send((r, cpu));
+    };
+    let claimed = (0..SLOTS).find(|&i| BUSY[i].compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed).is_ok());
+    let pool = claimed.and_then(|i| {
+        POOLS[i]
+            .get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(move |t| format!("rerail-lane-slot {i}.{t}")).build().ok())
+            .as_ref()
+            .map(|pool| (i, pool))
+    });
+    match pool {
+        Some((i, pool)) => pool.spawn(move || job(Some(i))),
+        None => {
+            if let Some(i) = claimed {
+                BUSY[i].store(false, Ordering::Release);
+            }
+            job(None)
+        }
+    }
+    take
+}
+
+/// The submissions [`lane_spawn`] runs at once, each on its own pool: a device lane's worker keeps two in flight.
+const SLOTS: usize = 2;
 
 /// A batch's launches, claimed as the lanes reach them (decision 0100 §11).
 ///

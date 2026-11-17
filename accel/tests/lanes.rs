@@ -649,3 +649,49 @@ fn learned_rates_come_from_warm_samples_of_one_kernel() {
     assert_eq!((fitted[0].name.as_str(), fitted[0].lane, fitted[0].samples), ("test-learned-span", Lane::Gpu, MIN_SAMPLES));
     assert!((fitted[0].per_unit - 2e-9).abs() < 1e-12, "{}", fitted[0].per_unit);
 }
+
+/// A program that holds its lane's host for `hold` (a wave's encoding and its wait on the device), and says which
+/// thread ran it.
+struct Holds(std::time::Duration);
+
+impl rerail_accel::kernel::Program for Holds {
+    fn name(&self) -> &'static str {
+        "a test's holding program"
+    }
+    fn units(&self) -> f64 {
+        1.0
+    }
+    fn per_unit(&self, lane: Lane) -> Option<f64> {
+        matches!(lane, Lane::Gpu).then_some(1e-3)
+    }
+    fn run(&self, _: Lane) -> Result<rerail_accel::kernel::ProgramOutput, String> {
+        std::thread::sleep(self.0);
+        Ok(Arc::new(std::thread::current().id()))
+    }
+}
+
+/// Two batches of programs on the GPU lane run side by side (decision 0344): its worker begins the second while
+/// the first runs on the lanes' pool, so one's host part runs beside the other's command buffers. Before, a
+/// program ran as it began and the lane took one at a time.
+#[test]
+fn the_gpu_lane_runs_a_program_beside_the_one_before() {
+    let ex = Executor::new();
+    if !ex.lanes().contains(&Lane::Gpu) {
+        return;
+    }
+    let hold = std::time::Duration::from_millis(300);
+    let program = || Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(Holds(hold))));
+    let t0 = std::time::Instant::now();
+    let ra = ex.begin(Batch(vec![Launch::on(program(), Lane::Gpu)])).unwrap();
+    let rb = ex.begin(Batch(vec![Launch::on(program(), Lane::Gpu)])).unwrap();
+    let (da, _) = ra.wait().unwrap();
+    let (db, _) = rb.wait().unwrap();
+    let took = t0.elapsed();
+    assert!(da[0].lane == Lane::Gpu && db[0].lane == Lane::Gpu);
+    let thread = |d: &rerail_accel::exec::Done| match &d.out {
+        rerail_accel::kernel::Output::Program(r) => *r.0.downcast_ref::<std::thread::ThreadId>().expect("a thread id"),
+        other => panic!("not a program's result: {other:?}"),
+    };
+    assert_ne!(thread(&da[0]), thread(&db[0]), "each ran on a thread of the lanes' pool");
+    assert!(took < hold * 2 - hold / 3, "the two ran side by side: {took:?} for two of {hold:?}");
+}

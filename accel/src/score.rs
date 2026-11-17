@@ -424,6 +424,11 @@ impl Ticket {
     }
 
     /// The job runs on this thread from now: its clock is read here, and what the thread counted before is not its.
+    /// CPU seconds the job spent on a thread that did not resume it (its submission run on the lanes' pool).
+    pub fn add_cpu(&mut self, seconds: f64) {
+        self.cpu += seconds.max(0.0);
+    }
+
     pub fn resume(&mut self) {
         take_phases();
         self.cpu0 = Some((std::thread::current().id(), thread_cpu()));

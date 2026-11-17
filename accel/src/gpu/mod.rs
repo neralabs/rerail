@@ -226,6 +226,32 @@ impl Backend for GpuBackend {
             let started = objc::rc::autoreleasepool(|| space::start(&self.space, ks))?;
             return Ok(Box::new(started));
         }
+        // A batch of programs: each submits its own command buffers and waits for them, so it runs on the lanes'
+        // pool while the worker begins the next submission. One program's host part then runs beside another's on
+        // the device; each holds its own device memory (decision 0344: leases, no process-wide lock).
+        if !ks.is_empty() && ks.iter().all(|k| matches!(k, Kernel::Program(_))) {
+            let programs: Vec<_> = ks.iter().map(|k| match k {
+                Kernel::Program(p) => Arc::clone(&p.0),
+                _ => unreachable!("a program"),
+            }).collect();
+            let beside = RUNNING.fetch_add(1, std::sync::atomic::Ordering::AcqRel) > 0;
+            BEGUN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if beside {
+                BESIDE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            let take = crate::exec::lane_spawn(move || {
+                let _running = RunningCount;
+                programs
+                    .iter()
+                    .map(|p| {
+                        objc::rc::autoreleasepool(|| p.run(crate::lanes::Lane::Gpu))
+                            .map(|r| Output::Program(crate::kernel::ProgramResult(r)))
+                            .map_err(|e| format!("program {}: {e}", p.name()))
+                    })
+                    .collect::<Result<Vec<_>, String>>()
+            });
+            return Ok(Box::new(Running(take)));
+        }
         let outs = self.submit(ks);
         Ok(Box::new(Done(outs)))
     }
@@ -262,6 +288,44 @@ impl crate::exec::Pending for Done {
     }
     fn done(&self) -> bool {
         true
+    }
+}
+
+static RUNNING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static BEGUN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static BESIDE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The GPU lane's batches of programs begun in this process, and how many of them began while another still ran
+/// (decision 0344: one's host part beside another's command buffers).
+pub fn programs_begun() -> (usize, usize) {
+    (BEGUN.load(std::sync::atomic::Ordering::Relaxed), BESIDE.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// One running batch of programs, counted while it lives.
+struct RunningCount;
+
+impl Drop for RunningCount {
+    fn drop(&mut self) {
+        RUNNING.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
+/// A batch of programs running on the lanes' pool ([`crate::exec::lane_spawn`]).
+struct Running(std::sync::mpsc::Receiver<(std::thread::Result<Result<Vec<Output>, String>>, f64)>);
+
+impl crate::exec::Pending for Running {
+    fn finish(self: Box<Self>) -> Result<Vec<Output>, String> {
+        self.finish_counted().0
+    }
+    fn finish_counted(self: Box<Self>) -> (Result<Vec<Output>, String>, f64) {
+        match self.0.recv() {
+            Ok((Ok(r), cpu)) => (r, cpu),
+            Ok((Err(_), cpu)) => (Err("its submission panicked".into()), cpu),
+            Err(_) => (Err("its submission's thread ended without a result".into()), 0.0),
+        }
+    }
+    fn finish_on_pool(&self) -> bool {
+        false
     }
 }
 

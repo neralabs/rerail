@@ -735,7 +735,7 @@ pub fn execute_packed_with_result_limits(
     anchors: &[Vec<Vec<u32>>],
     result_limits: Option<&[u32]>,
 ) -> Result<PackedExecution, Error> {
-    let _evaluation = super::metal_backend::metal_execution_guard()?;
+    let _evaluation = super::metal_backend::evaluation_scope();
     if matches!(engine, Engine::Jit { programs: count, .. } if *count != programs.len()) {
         return Err(Error::InvalidAnchor);
     }
