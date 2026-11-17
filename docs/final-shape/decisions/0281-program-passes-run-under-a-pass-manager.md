@@ -1,7 +1,8 @@
 # 0281: Program passes run under a pass manager: rule rewriters and program edits over cached, maintained analyses
 
-Status: accepted (2026-11-15); steps 1–4 built (step 4, the run reads versions, done 2026-11-16); step 5 under way
-(see Path and Alignment).
+Status: accepted (2026-11-15); steps 1–4 built (step 4, the run reads versions, done 2026-11-16); step 5 under way:
+(a) and (b) done, step 5 (c) storage done (2026-11-16; §6's keyed steps), its use on the preparation path and the
+ep2 measurement after the remaining passes are ported (see Path and Alignment).
 Builds on 0173 §9 (a pass is an edit or a derivation, and a derived rule records its sources), 0225 §5 and 0246 §3
 (the whole-program questions are rules over the image), 0266 (blocks: a writer, a merged view, base + delta), 0269
 (a step's decisions are rows of what it made), 0275 (a step is rederived until its key hits) and 0276 (one form from
@@ -484,6 +485,37 @@ step 3 replaces what is under the writer.
        (`manager::carried`). That cut push's own time from 0.19 s to 0.13 s. The splits stay whole: round 1
        rewrites hundreds of rules, past what `maintain` keeps. Chaining each round on the last round's candidate
        would make rounds 2 and later cost their retries.
+   - (c), the storage (2026-11-16): §6's keyed steps, built in the manager.
+     - **The key.** `Pipeline::keyed(name, v, &steps)` keys each step by a chain: the input's identity
+       (`manager::identity`: its digest, size, and its rules' hashes in order, since the digest is blind to order
+       and `RuleOrder` changes only order), the pipeline's name and the engine build. Then for each step, its
+       pass's `NAME`, `VERSION` and `settings()`. Both pass traits gained `VERSION` (default 1, bumped when what the
+       pass makes changes) and `settings` (default none; `FactorizeExports` gives its switch). A step's input is the
+       step before's output, so the chain names it as that input's digest would, and every key is known before
+       anything runs.
+     - **A caller's key part.** `key_part(label, bytes)` adds a value to the key of every later step: what the passes
+       read that is not in the input version. 0298's general forms add their `olds_signature` this way, beside the
+       program's digest, which the chain's start already names.
+     - **Lookup.** A step whose key the store holds is not run. Its stage is `Ran::Stored`, its decisions are read
+       back, and its output is opened only when a later step runs, at `finish`, or on `current()`. So a pipeline
+       runs only the passes after the latest stored step, and one whose every step is stored opens one image. A
+       step that runs stores its output and decisions under its key. A skipped pass has not run, so what it returns
+       in itself, beside its output and decisions, is not there; `ran(i)` says which ran. A keyed pipeline is not
+       a kept one (`keeping`, `again`): one carries steps across processes by key, the other within a process by
+       place.
+     - **The store** (`program_text::StoredSteps`, behind the manager's `Steps` trait): a step is facts in 0103's
+       two-rule form: `pipeline_step_key(key, pass, version)`, the key with the pass's version as its tag, and
+       `pipeline_step(key, image, size, digest)`, the step it names, with `pipeline_step_decision(key, k, pass,
+       what, detail)` (0269). They are one source under the key's alias, and the output is a program image kept as
+       a prepared program's is (`store_image`, folded to a base first when it is a view or overlay). No cache store,
+       directive or memo map. A step whose image the store lost is not found, and runs again.
+     - **Test:** `a_new_process_reruns_only_the_passes_after_a_stored_step`: three passes, the store opened again
+       for each run. A changed setting on the last pass runs that pass alone, with the first two read back and
+       their decisions too. Nothing changed runs none. A caller's key part runs all, then none under the same part.
+       Each output is the unkeyed pipeline's, rules in order.
+     - **Not yet:** the preparation pipeline is not keyed. Its passes return results in themselves (the pushed
+       relations, the demand lines) that the run reads; they move to decisions first. ep2 is measured once the
+       remaining passes are ported.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.
 7. **The per-clause half of `rr::lower`** as `RulePass`es over the tape's clauses (0276 step 5), with `Domains`; the

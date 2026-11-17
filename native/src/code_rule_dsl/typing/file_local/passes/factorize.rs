@@ -148,6 +148,9 @@ fn relation_keys(v: &Version, f: Fields<'_>) -> Keys {
 
 impl ProgramPass for FactorizeExports {
     const NAME: &'static str = "factorize the exports";
+    fn settings(&self) -> Vec<u8> {
+        vec![u8::from(self.on)]
+    }
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         if !self.on {
             return Ok(());

@@ -1392,3 +1392,99 @@ fn a_rerun_runs_a_step_whole_when_the_edit_reaches_past_its_rules() {
         assert_eq!(v.analyses().computed("about"), 0);
     }
 }
+
+/// Drops the rule `r(k) :- f(k)` of its `k`, which is its setting (a keyed step's key holds it), and counts its runs.
+struct DropR {
+    k: i64,
+    runs: usize,
+}
+impl super::manager::ProgramPass for DropR {
+    const NAME: &'static str = "drop r";
+    fn settings(&self) -> Vec<u8> {
+        self.k.to_le_bytes().to_vec()
+    }
+    fn run(&mut self, cx: &super::manager::Cx<'_>, w: &mut super::manager::ProgramW<'_>) -> Result<(), String> {
+        self.runs += 1;
+        let v = cx.v().clone();
+        let k = self.k.to_string();
+        cx.decide("dropped r", || k.clone());
+        w.keep(|r| v.show_rule(r) != format!("r({k}) :- f({k})"))
+    }
+}
+
+/// Counts the runs of a pass in front of it.
+struct Counted<P> {
+    pass: P,
+    runs: usize,
+}
+impl<P: super::manager::ProgramPass> super::manager::ProgramPass for Counted<P> {
+    const NAME: &'static str = P::NAME;
+    fn run(&mut self, cx: &super::manager::Cx<'_>, w: &mut super::manager::ProgramW<'_>) -> Result<(), String> {
+        self.runs += 1;
+        self.pass.run(cx, w)
+    }
+}
+
+/// A keyed pipeline (0281 §6) stores each step under its key, and a new process (the store opened again, nothing of
+/// the last one held) runs only the passes after the latest step the store holds: a changed setting reruns its pass
+/// and the ones after it, a caller's key part changes every step after it, and the output is the unkeyed pipeline's.
+#[test]
+fn a_new_process_reruns_only_the_passes_after_a_stored_step() {
+    use super::manager::{Pipeline, Ran};
+    use crate::code_rule_dsl::logic::program_text::StoredSteps;
+    use crate::content_store::ContentStore;
+    let path = crate::code_rule_dsl::fixtures::temp();
+    let v = managed();
+    // One process: the store opened, the pipeline run, the store closed and forgotten.
+    let run = |k: i64, part: Option<&[u8]>| -> (Arc<Version>, Vec<Ran>, [usize; 3], Vec<String>) {
+        let store = ContentStore::open(&path).unwrap();
+        let steps = StoredSteps(&store);
+        let (mut a, mut b, mut c) = (Counted { pass: DropFacts, runs: 0 }, Counted { pass: DropQ, runs: 0 }, DropR { k, runs: 0 });
+        let mut p = Pipeline::keyed("test", v.clone(), &steps);
+        if let Some(part) = part {
+            p.key_part("olds", part);
+        }
+        p.program(&mut a).program(&mut b).program(&mut c);
+        let decided: Vec<String> = p.decisions().iter().map(|d| format!("{}: {}: {}", d.pass, d.what, d.detail)).collect();
+        let (out, stages) = p.finish().unwrap();
+        drop(store);
+        ContentStore::forget(&path);
+        (out, stages.iter().map(|s| s.ran).collect(), [a.runs, b.runs, c.runs], decided)
+    };
+    let unkeyed = |k: i64| -> Arc<Version> {
+        let mut p = Pipeline::new("test", v.clone());
+        p.program(&mut DropFacts).program(&mut DropQ).program(&mut DropR { k, runs: 0 });
+        p.finish().unwrap().0
+    };
+    let same = |a: &Arc<Version>, b: &Arc<Version>| {
+        assert_eq!((a.size(), a.digest()), (b.size(), b.digest()));
+        assert_eq!(super::manager::identity(a), super::manager::identity(b), "the same rules, in the same order");
+    };
+    let want = ["drop facts: dropped: f".to_owned()];
+
+    let (out, ran, runs, decided) = run(1, None);
+    assert_eq!(runs, [1, 1, 1], "a store holding nothing runs every pass");
+    assert_eq!(ran, [Ran::Whole; 3]);
+    same(&out, &unkeyed(1));
+    assert_eq!(decided[..1], want);
+
+    // A new process, the last pass's setting changed: the first two steps are read from the store, the last runs.
+    let (out, ran, runs, decided) = run(2, None);
+    assert_eq!(runs, [0, 0, 1], "only the pass after the stored steps runs");
+    assert_eq!(ran, [Ran::Stored, Ran::Stored, Ran::Whole]);
+    same(&out, &unkeyed(2));
+    assert_eq!(decided, [want[0].clone(), "drop r: dropped r: 2".to_owned()], "the stored steps' decisions read back");
+
+    // Again, nothing changed: every step is stored, and the output is opened from the last one's image.
+    let (out, ran, runs, _) = run(2, None);
+    assert_eq!(runs, [0, 0, 0]);
+    assert_eq!(ran, [Ran::Stored; 3]);
+    same(&out, &unkeyed(2));
+
+    // A caller's key part (0298's old rows' signature) in front of every step: none is found, each runs.
+    let (out, _, runs, _) = run(2, Some(&7u64.to_le_bytes()));
+    assert_eq!(runs, [1, 1, 1]);
+    same(&out, &unkeyed(2));
+    let (_, _, runs, _) = run(2, Some(&7u64.to_le_bytes()));
+    assert_eq!(runs, [0, 0, 0], "found again under the same part");
+}
