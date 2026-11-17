@@ -3,11 +3,25 @@
 # Per state: rows of recursive relations, and those on a cycle of the derivation graph. Per edit: what recheck alone
 # (no overdelete, no state) keeps wrongly; DRed's overdelete; and yes/no/maybe from the deltas, checked exact.
 import json,glob,os,sys,time
+sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)))
+import levels as LV
 from collections import defaultdict
 B=os.environ.get('REC_DIR','tmp/rec')
 meta=json.load(open(os.path.join(B,'meta.json')))
 comps=meta['comps']; drvs=meta['drv']
 own_of={r:i for i,c in enumerate(comps) for r in c}
+# A component is partitioned by its first column when every rule's own atoms read the head's first argument there
+# (the spike's `partition_col`): derived again, only the keys an edit reaches.
+def _parted(c):
+    ds=[d for d in drvs if d['comp']==c]
+    return bool(ds) and all(d['hargs'] and d['hargs'][0] is not None and all(l['args'] and l['args'][0]==d['hargs'][0]
+               for l in d['lits'] if not l['neg'] and l['rel'] in comps[c]) for d in ds)
+parted={c for c in range(len(comps)) if _parted(c)}
+CARRY={}
+# REC_CARRY=FILE: the carried levels from an earlier run of the steps before (a run under 2 minutes takes a few edits).
+import pickle
+if os.environ.get('REC_CARRY') and os.path.exists(os.environ['REC_CARRY']):
+    CARRY.update(pickle.load(open(os.environ['REC_CARRY'],'rb')))
 cache={}
 def load(s,r):
     # a relation's rows at step s: every run's dump of it (the chunks' and the cross part's), as one set
@@ -111,7 +125,12 @@ def state(s):
     # whole relations). The engine's dump is the same, except for `found`, which it derives by demand
     # (`.pragma "magic-transform"`), and a file-local relation the per-file memo kept: only the edited files' rows.
     # One store for every step: a store per step interns symbols and nodes apart, and rows do not compare.
-    assert dumped<=heads, (s,len(dumped-heads),sorted({r for r,_ in dumped-heads}),sorted(dumped-heads)[:3])
+    # REC_LAX=1: a dumped row with no derivation is reported, not refused (a chunked run's file-local dump; the
+    # rows measured are the heads either way).
+    if os.environ.get('REC_LAX') and not dumped<=heads:
+        print(f'  warning {s}: {len(dumped-heads)} dumped rows with no derivation in {sorted({r for r,_ in dumped-heads})}')
+    else:
+        assert dumped<=heads, (s,len(dumped-heads),sorted({r for r,_ in dumped-heads}),sorted(dumped-heads)[:3])
     R[s]=heads
     if os.environ.get('REC_SELFCHECK'):
         bad=[d for d in D[s] if not valid_in(s,d)]
@@ -238,6 +257,19 @@ for a,b in zip(steps,steps[1:]):
         for u in oldusers[x]:
             if u in Ro and u not in C2: C2.add(u); work.append(u)
     sound_err=len(gone2 ^ removed)
+    # Levels (0090, checked): minimal levels from the old state (fresh), and levels carried from the last edit.
+    old_d=[(d[1],d[2]) for d in D[a]]; new_d=[(d[1],d[2]) for d in M]; lost_h=[d[1] for d in lost]
+    dep=lambda x: oldusers[x]
+    LF=LV.least(old_d)
+    _,lf=LV.maintain(LF,Ro,Rn,new_d,lost_h,dep)
+    if not CARRY: CARRY.update(LF)
+    NL,lc=LV.maintain(CARRY,Ro,Rn,new_d,lost_h,dep)
+    drift=sum(CARRY.get(r,0)-LF.get(r,0) for r in Ro if r in LF)/max(1,len(Ro))
+    CARRY.clear(); CARRY.update(NL)
+    # Partitions: the keys an edit reaches in partitioned components, and the rows derived again for them.
+    keys={(own_of[x[0]],x[1][0]) for x in set(lost_h)|(Rn-Ro)|(Ro-Rn) if own_of[x[0]] in parted and x[1]}
+    prows=sum(1 for x in Rn if x[1] and (own_of[x[0]],x[1][0]) in keys)
+    lev_in_parted=sum(1 for x in lf['_seen'] if own_of[x[0]] in parted)
     ynm_back=len(opn & settled)
     rc=defaultdict(int)
     for x in removed: rc[own_of[x[0]]]+=1
@@ -246,4 +278,5 @@ for a,b in zip(steps,steps[1:]):
     print(f'edit {a}->{b}: removed {len(removed)} added {len(added)}; lost derivations {len(lost)}; '
           f'recheck-only keeps wrongly {len(wrong)} {dict(__import__('collections').Counter(r for r,_ in wrong))}; '
           f'DRed overdeletes {len(dele)} (true {len(dele-Rn)}); one probe: yes {yes} no {no} maybe {maybe} (of which kept {maybe_true}); '
-          f'removed in old cycles {len(removed & D[a+"cyc"])}; YNM: candidates {len(C)} (probes {probes}), yes at once {len(YES)}, open {len(opn)} (maybe {ynm_maybe}, no {ynm_no}), settled back {ynm_back}, final candidates {len(C)} in {rounds} rounds, errors {ynm_err}; on old cycles: candidates {len(C & D[a+"cyc"])}, kept {len(C & D[a+"cyc"] & settled)} (where one probe can keep a row wrongly, as on ynm_reach.py ring); sound: candidates {len(C2)}, proved {len(proved)}, refuted {len(refuted)}, errors {sound_err}; removed by comp {dict((name(c),n) for c,n in rc.items())}')
+          f'removed in old cycles {len(removed & D[a+"cyc"])}; YNM: candidates {len(C)} (probes {probes}), yes at once {len(YES)}, open {len(opn)} (maybe {ynm_maybe}, no {ynm_no}), settled back {ynm_back}, final candidates {len(C)} in {rounds} rounds, errors {ynm_err}; on old cycles: candidates {len(C & D[a+"cyc"])}, kept {len(C & D[a+"cyc"] & settled)} (where one probe can keep a row wrongly, as on ynm_reach.py ring); sound: candidates {len(C2)}, proved {len(proved)}, refuted {len(refuted)}, errors {sound_err}; levels fresh: candidates {lf['candidates']}, gone {lf['gone']}, rewrites {lf['back']}, added {lf['added']}, errors {lf['errors']}; levels carried: candidates {lc['candidates']}, gone {lc['gone']}, rewrites {lc['back']}, errors {lc['errors']}, mean drift {drift:.2f}; partitions: {len(parted)} of {len(comps)} components, keys {len(keys)}, rows {prows} (level candidates there {lev_in_parted}); removed by comp {dict((name(c),n) for c,n in rc.items())}')
+if os.environ.get('REC_CARRY'): pickle.dump(CARRY,open(os.environ['REC_CARRY'],'wb'))

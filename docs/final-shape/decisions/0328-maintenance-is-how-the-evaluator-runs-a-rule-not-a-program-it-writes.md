@@ -477,10 +477,10 @@ all in `name_reach`. Per edit (`conditional-architecture`; the others alike):
 | restore | 3,468 | 3,472 | 1 | 1 | 3,472 | 0 | 0 |
 
 **The Python pack** (`B-now`, 50 files): its cross part has 64 recursive components. The largest are `truth_of`
-(23 rules), `negate` + `number`, `p224_allows` (17), `literal` (17) and `imm_prefix` + `immutable_ann` (13). Every
-one recurses over the tree: children, parents, wrappers, type applications. A tree has no cycle, so none of these
-derivations can lean on themselves, and none can leave an unfounded row. Rows were not measured: a cold debug run
-of the pack takes more than 2 minutes. Getting the split at all fixed two engine bugs (`on_version::base_locations`
+(23 rules), `negate` + `number`, `p224_allows` (17), `literal` (17) and `imm_prefix` + `immutable_ann` (13). Most
+recurse over the tree: children, parents, wrappers, type applications. ~~Every one does.~~ Corrected below ("Levels
+on real data"): the library's module and class graphs (`reaches`, `exports`, `subclass`, `name_reach`,
+`pkg_above`) are in it too, and those can cycle. Getting the split at all fixed two engine bugs (`on_version::base_locations`
 on an undeclared axis; the version's guest hiding of negated kind sets, `preparation/hide.rs`).
 
 ### A correction: one probe is not sound
@@ -566,6 +566,148 @@ How it would go:
   nothing kept (about DRed's rows on `calls.rr`). Partitions remain where the rules are partitioned. The user
   decides (they kept levels against partitions aside, 2026-11-17).
 - The engine fixes found on the way are committed with this section.
+
+## Levels on real data (2026-11-17)
+
+The open points of the section above, measured in one hour from the dumps already taken. The tools are in
+`scripts/profiling/o125/recursion/`:
+- `levels.py`: 0090's *levels, checked*;
+- `rec.py` and `ynm_reach.py`: run it beside one probe, the proof and DRed;
+- `wf.py`: the static check.
+
+Levels here:
+- A row's level is the round in which it was first derived.
+- Candidates are taken in level order. One stays when a derivation reads only rows of lower levels that are
+  still present.
+- One that does not goes for now, and its dependents become candidates.
+- The rows gone and the rows added are then levelled from the rows present. A gone row derived again comes back
+  at a new level, which counts as a rewrite.
+- *Fresh*: minimal levels from the old state. *Carried*: levels kept from the last edit and never lowered.
+
+### Levels are exact everywhere, at about one probe's cost
+
+**`calls.rr`** (8 real edits). One probe is shown under seed 1, the order that breaks it.
+
+| Edit | Removed | One probe: candidates, errors | Levels: candidates, rewrites, errors | Proof: rows | DRed |
+|---|---|---|---|---|---|
+| 00→01 | 690 | 842, 0 | 897, 137, 0 | 1,593 | 962 |
+| 01→02 | 582 | 601, 0 | 602, 3, 0 | 1,662 | 3,817 |
+| 02→03 | 1,757 | 2,037, 0 | 2,155, 234, 0 | 6,139 | 6,149 |
+| 03→04 | 135 | 148, 0 | 156, 9, 0 | 167 | 167 |
+| 04→05 | 4,980 | 5,411, **33** | 5,651, 378, 0 | 12,141 | 11,592 |
+| 05→06 | 72 | 84, 0 | 93, 8, 0 | 1,124 | 3,609 |
+| 06→07 | 289 | 391, 0 | 397, 84, 0 | 5,363 | 6,660 |
+| 07→08 | 2,452 | 2,604, 0 | 2,617, 63, 0 | 8,924 | 8,597 |
+
+**The data layer's real history** (`l2060_query_builder`, 37 files, the last commits that touch it,
+`conditional-architecture`). A state has 477,000–480,000 recursive rows, 728–730 of them on a cycle
+(`name_reach`).
+
+| Commit | Removed | One probe: candidates (errors, seeds 1 and 2) | Levels: candidates, rewrites, errors | Proof: rows | DRed | Candidates on a cycle, kept |
+|---|---|---|---|---|---|---|
+| ca984ce8 (9 files) | 7,860 | 8,866 (0, 0) | 8,866, 0, 0 | 8,883 | 8,895 | 0, 0 |
+| 3471aab1 (6 files) | 2,778 | 3,500 (0, 0) | 3,500, 4, 0 | 3,513 | 3,585 | 1, 0 |
+| 49832032 (3 files) | 7,027 | 8,843 (0, 0) | 8,843, 34, 0 | 9,029 | 8,988 | 19, 17 |
+
+The last commit is where one probe can fail: 17 candidates on a cycle stay. It held under both seeds. The 85-file
+version of this ran over the 2-minute cap, and its first state's chunked run dumped 210 `dotted_expr` rows that
+no derivation holds (`REC_LAX`; an open item below).
+
+**`workload.rr`** (8 real edits): levels' candidates 12–707, 0–33 rewrites, 0 errors. **dl10** (3 made-up
+edits) and **the pack's `ruff-pyi001`** over the same trees (36 recursive components, 88,000 rows): levels'
+candidates equal one probe's, 0 rewrites, 0 errors.
+
+**The ring:** 12 candidates, 12 gone, 0 errors. **The dense reach:** levels' candidates are 54–1,820 and
+rewrites 0–2, except edit 1, levels' bad case (1,487 candidates, 680 rewrites), as in the spike. Errors 0.
+
+### Levels on added rows: keep them, never re-level
+
+The spike's edits only remove edges, and on real edits carried levels barely move (mean drift 0–0.03). So a
+sequence of edits on the dense graph that also adds shortcuts, 5 edges added and 5 removed in each
+(`tmp/ynm-drift`):
+
+| 15 edits | Candidates | Rewrites | Errors | Mean drift after 15 edits |
+|---|---|---|---|---|
+| Minimal levels, recomputed every edit | 33,575 | 1,950 | 0 | 0 |
+| Levels carried, never lowered | 28,564 | 1,035 | 0 | +3.35 |
+
+Carried levels drift, but they cost less: 15% fewer candidates and 47% fewer rewrites. They were worse on one
+edit (5,425 against 4,187). A level only has to be a witness, and a higher one seems to depend on fewer rows that
+change. **So: never re-level on added rows.** A stratum derived again by 0090 §4's threshold gets fresh levels
+for free.
+
+### The static check: what could skip levels
+
+`wf.py` proves a component cannot hold a row up by itself. It needs a node column per relation such that every
+recursive step goes the same way down (or up) the tree. Same-node steps are allowed if they have no cycle among
+them, and so is an index moved by `@add`/`@sub`. Tree helpers (`unparen`, `attr_of`, …) are summarized from their
+own rules. It is conservative.
+
+| Program | Recursive components | Proved well-founded |
+|---|---|---|
+| The Python pack (317 policies, components counted once) | 57 | 35 |
+| A data-layer policy (`conditional-architecture`) | 27 | 18 |
+| `calls.rr` | 13 | 5 |
+| `workload.rr` | 5 | 3 |
+
+What it does not prove:
+- **graphs that can cycle:** module and class graphs (`reaches`, `exports`, `subclass`, `name_reach`, `loads`),
+  calls (`reach_sync`), points-to;
+- **string chains:** `pkg_above`, `py_minor`, a package path made shorter each step, so well-founded by length,
+  which the check does not know;
+- **tree recursion through steps it cannot read:** `literal`, `list_item`, `union_down`, `same_pair`.
+
+The tree components it proves are mostly file-local anyway. The cross-file components that matter are the graphs,
+and they need levels.
+
+### Levels or partitions
+
+A component is partitioned when every recursive atom reads the head's first column there. That holds for 3 of
+`calls.rr`'s 13 components, 7 of the data layer's 27, 7 of `ruff-pyi001`'s 36 and none of `workload.rr`'s.
+Within those components, the rows derived again for the keys an edit reaches, against levels' candidates there:
+
+| | Partitions: rows derived again | Levels: candidates |
+|---|---|---|
+| `calls.rr`, 8 edits | 54–2,407 | 20–1,315 (1.0–4.7 times fewer) |
+| Data-layer history, 3 commits | 482–1,332 | 473–1,181 (about the same) |
+
+Partitions cover a minority of components, and cost the same as levels or more. Levels cover all of them.
+
+### Rewrites, and the blocks
+
+Rewrites per edit:
+- `calls.rr`: 3–378 (0.001–0.13% of its rows);
+- the data layer: 0–34;
+- `workload.rr`: 0–33;
+- the dense closure: up to 680.
+
+That is few enough for a rewrite to be the relation's kill and add in the edit's delta (0266). There is no need
+for an in-place update of the column.
+
+### Cross-file recursive lattices
+
+A scan of 2,046 programs found two recursive components with a lattice:
+- every rule set under `docs/rule-syntax` (expanded);
+- the 317 pack policies;
+- the engine's own programs.
+
+The two:
+- **`workload.rr`'s `cv`:** file-local.
+- **`hierarchy` (a `shortlex_min` route):** only in `internal_dead_code.hierarchy_unwidened.rr`, the variant the
+  engine refuses as an unbounded lattice (open items, the least-route item).
+
+No running program has a cross-file recursive lattice. Closing that item with a `min` lattice would make one, and
+it would then need its own handling.
+
+### Still open
+
+- **Instructions.** Every figure here is rows, candidates and probes. Instructions come with the evaluator's mode
+  (decision 3).
+- **The chunked dump.** A chunked first run dumped 210 `dotted_expr` rows that no `drv` rule derives. It is a
+  file-local relation, and the rows measured are the derivations' heads, but the cause is not known.
+- **The decision.** The data point to levels, carried and never re-levelled on added rows, as the recursive case
+  of decision 6, for every component the static check does not prove. Rewrites go as kills and adds. It is the
+  user's to take.
 
 ## Sizes, today against this decision (dl10)
 

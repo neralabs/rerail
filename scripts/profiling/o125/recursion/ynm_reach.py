@@ -5,6 +5,8 @@
 # candidate settled by a least fixpoint from the rows that never were, in rounds while a "yes" falls. Checked
 # against the closure derived again. Work: probes, and the derivations the settling fixpoint tries.
 import glob,os,sys
+sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)))
+import levels as LV
 from collections import defaultdict
 D=sys.argv[1]
 def edges(n): return {tuple(map(int,l.split())) for l in open(f'{D}/edge-{n:02d}.tsv') if l.strip()}
@@ -21,6 +23,14 @@ def closure(E):
     return R
 n=len(glob.glob(f'{D}/edge-*.tsv'))
 E=edges(0);R=closure(E)
+def derivs(Es,rows):
+    # reach's derivations over edges Es and rows: (head, own rows)
+    o=defaultdict(set)
+    for a,b in Es: o[a].add(b)
+    ds=[((a,b),()) for a,b in Es]
+    ds+=[((a,c),((a,b),)) for a,b in rows for c in o.get(b,())]
+    return ds
+CARRY=LV.least(derivs(E,R))
 print(f'state 00: {len(E)} edges, {len(R)} reach rows')
 for k in range(1,n):
     E2=edges(k);gone=E-E2;M=E-gone           # M: the edges kept; removals are maintained against M
@@ -106,4 +116,18 @@ for k in range(1,n):
           f'YNM candidates {len(C)} (yes at once {len(yes)}, open {len(opn)}: no {no}, maybe {len(opn)-no}), '
           f'settled back {len(back)-len(yes)}, rounds {rounds}, probes {probes}, settle tries {tried}; errors {errors}; '
           f'sound: candidates {len(C2)}, proved {len(proved)}, refuted {len(refuted)}, errors {sound_err}')
+    # Levels: fresh from the old state, and carried from the last edit.
+    Rn=closure(E2)
+    oldout=defaultdict(set)
+    for x,y in E: oldout[x].add(y)
+    lost_h=[(a,c) for a,c in gone]+[(x,c) for a,c in gone for x in byfirst if a in byfirst[x]]
+    dn=derivs(E2,R|Rn)
+    dep=lambda r: [(r[0],d) for d in oldout.get(r[1],())]
+    LF=LV.least(derivs(E,R))
+    _,lf=LV.maintain(LF,R,Rn,dn,lost_h,dep)
+    NL,lc=LV.maintain(CARRY,R,Rn,dn,lost_h,dep)
+    drift=sum(CARRY.get(r,0)-LF.get(r,0) for r in R if r in LF)/max(1,len(R))
+    CARRY=NL
+    print(f'    levels fresh: candidates {lf["candidates"]}, gone {lf["gone"]}, rewrites {lf["back"]}, errors {lf["errors"]}; '
+          f'carried: candidates {lc["candidates"]}, gone {lc["gone"]}, rewrites {lc["back"]}, errors {lc["errors"]}, mean drift {drift:.2f}')
     E=E2;R=closure(E2)

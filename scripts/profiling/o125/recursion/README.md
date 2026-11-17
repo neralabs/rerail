@@ -34,3 +34,11 @@ the probe order; run it under a few `PYTHONHASHSEED`s.
 - **a dense closure:** `MAINTAIN_EDGES=DIR target/profiling/examples/maintain 300 8` dumps the spike's `edge` per
   edit; `ynm_reach.py DIR` counts one probe, the proof and DRed on its `reach`. A ring that loses its entry, where
   one probe is wrong, is a two-file `DIR` by hand (decision 0328, "A correction").
+
+## Levels (2026-11-17)
+
+`levels.py` is 0090's *levels, checked* over derivations; `rec.py` and `ynm_reach.py` run it fresh (minimal
+levels from the old state) and carried (`REC_CARRY=FILE` keeps the carried levels between runs of a few steps
+each). `rec.py` also counts partitions (the keys an edit reaches in components partitioned by their first column).
+`wf.py PROGRAM.rr...` is the static check: which recursive components cannot hold a row up by themselves.
+`REC_LAX=1` reports dumped rows with no derivation instead of refusing them.
