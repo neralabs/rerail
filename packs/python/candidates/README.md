@@ -13,8 +13,8 @@ outside any declared divergence; 11 (B911, B912, FA100, FA102, RUF053, UP017, UP
 have no fixture finding to show they catch anything; four (B024, B027, E741 and INP001) do not apply to a file type
 `gates.yaml` says Ruff lints; and four (RET503, SIM110, SIM114 and SIM911) fail the compact check. Three rules #326
 promoted went back because they disagree with Ruff on this port's larger fixture set; their sections say where. Of the 26
-Bandit candidates, 22 disagree with Bandit on its tests and four miss a labelled line on its real-code samples. A pull
-request's Conformance comment names the check each candidate stops at.
+Bandit candidates, 19 disagree with Bandit on its tests, four miss a labelled line on its real-code samples, and three
+(B105, B202 and B607) pass every check. A pull request's Conformance comment names the check each candidate stops at.
 
 ### `bandit-b104-hardcoded-bind-all-interfaces`
 
