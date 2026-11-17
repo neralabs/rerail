@@ -340,7 +340,7 @@ fn instruction(
         let off = data.load_store_offset().unwrap_or(0);
         let address_low = dfg.inst_args(inst).first().is_some_and(|a| low.contains(&dfg.resolve_aliases(*a)));
         if off == 0 {
-            format!("{p}")
+            p.to_string()
         } else if address_low {
             format!("({p}+uint({}u))", off as i64 as u64 as u32)
         } else {

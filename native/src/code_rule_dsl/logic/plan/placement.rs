@@ -546,7 +546,7 @@ pub(in crate::code_rule_dsl) fn price_join(j: &JoinEst, sorted: bool) -> JoinCho
         PROBE_FIXED + j.input * (keys * UPLOAD_PER_VALUE + PROBE_PER_ROW) + j.output * PROBE_PER_PAIR + sort
     };
     let probe_s = (!j.range).then(|| probe(sorted));
-    let tile_s = j.range.then(|| TILE_FIXED + (j.input + j.relation) * keys * TILE_HOST_PER_VALUE + j.output * TILE_COMPARES_PER_PAIR * TILE_PER_COMPARE);
+    let tile_s = j.range.then_some(TILE_FIXED + (j.input + j.relation) * keys * TILE_HOST_PER_VALUE + j.output * TILE_COMPARES_PER_PAIR * TILE_PER_COMPARE);
     // The device's form is the cheaper of its own, and is taken over the CPU's index while under `GPU_BIAS` times it.
     let device = [(JoinForm::Probe, probe_s), (JoinForm::Tile, tile_s)].into_iter()
         .filter_map(|(f, p)| Some((f, p?))).min_by(|a, b| a.1.total_cmp(&b.1));

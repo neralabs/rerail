@@ -625,28 +625,6 @@ fn stages(r: &mut String) {
     }
 }
 
-// Its tests (the report over what a run recorded, and the projection's provenance over a parsed program) run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
-// engine registers as it loads (the languages, their `.rr` libraries).
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The span tree: each span under its recorded parent, children by CPU; a span whose parent was not recorded is
-    /// a root (`x/y`), and a span under 0.1% of the run below the roots is left out (`a/tiny`).
-    #[test]
-    fn the_span_tree_nests_children_by_cpu() {
-        let mut spans = BTreeMap::new();
-        for (path, cpu) in [("a", 10.0), ("a/b", 6.0), ("a/b/c", 5.0), ("a/d", 3.0), ("a/tiny", 0.001), ("x/y", 2.0), ("z", 1.0), ("z/e", 0.5)] {
-            spans.insert(path.to_owned(), SpanTotal { calls: 1, total: cpu, ..Default::default() });
-        }
-        let mut r = String::new();
-        super::span_tree(&mut r, &spans, 20.0);
-        let names: Vec<&str> = r.lines().map(|l| &l[38..]).collect();
-        assert_eq!(names, ["a", "  b", "    c", "  d", "y", "z", "  e"], "{r}");
-    }
-}
-
 /// A device run's summary, first: where the CPU went against what could run on the GPU. Each line names the section
 /// with its detail. Relational strata by where their runs ran and why; launches (matcher waves, joins) by lane, with
 /// the GPU's own time; the work that has no device form; and the grain (chunks the memory line cut).
@@ -722,5 +700,27 @@ fn metal_summary(r: &mut String, state: &State) {
     let cut: u64 = state.decisions.iter().filter(|((t, _), _)| t == "chunk cut by the run's memory line").map(|(_, n)| n).sum();
     if sized > 0 {
         let _ = writeln!(r, "Grain: {cut} of {sized} chunk sizings (every phase's) cut by the run's memory line; each stratum and matcher wave runs once a chunk (== Warnings)");
+    }
+}
+
+// Its tests (the report over what a run recorded, and the projection's provenance over a parsed program) run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
+// engine registers as it loads (the languages, their `.rr` libraries).
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The span tree: each span under its recorded parent, children by CPU; a span whose parent was not recorded is
+    /// a root (`x/y`), and a span under 0.1% of the run below the roots is left out (`a/tiny`).
+    #[test]
+    fn the_span_tree_nests_children_by_cpu() {
+        let mut spans = BTreeMap::new();
+        for (path, cpu) in [("a", 10.0), ("a/b", 6.0), ("a/b/c", 5.0), ("a/d", 3.0), ("a/tiny", 0.001), ("x/y", 2.0), ("z", 1.0), ("z/e", 0.5)] {
+            spans.insert(path.to_owned(), SpanTotal { calls: 1, total: cpu, ..Default::default() });
+        }
+        let mut r = String::new();
+        super::span_tree(&mut r, &spans, 20.0);
+        let names: Vec<&str> = r.lines().map(|l| &l[38..]).collect();
+        assert_eq!(names, ["a", "  b", "    c", "  d", "y", "z", "  e"], "{r}");
     }
 }

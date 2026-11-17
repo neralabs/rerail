@@ -49,7 +49,6 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/blocks/src/scratch.rs", "THREAD", Thread, "this thread's scratch region for a freeze's sort keys, emptied at each use"),
     ("crates/clif/src/rust.rs", "ADDRESSES", Thread, "this thread's scratch or counters in a backend"),
     ("crates/clif/src/rust.rs", "READS", Thread, "this thread's scratch or counters in a backend"),
-    ("crates/tape_format/src/f16.rs", "BLOCKS", Thread, "the 16z blocks this thread decoded last, keyed by their tape: correct on any thread"),
     ("crates/compiler/src/native_cpu_stream.rs", "IDS", Thread, "this thread's scratch or counters in a backend"),
     ("crates/metal/src/buffer_observation.rs", "ACTIVE", Thread, "this thread's scratch or counters in a backend"),
     ("crates/metal/src/launch.rs", "EVALUATION", Thread, "this thread's scratch or counters in a backend"),
@@ -88,6 +87,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/lanes.rs", "SUSPENDABLE", Thread, "this thread's device queue: what it issued, it flushes and waits for"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "GROWN", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "MIXED", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
+    ("src/code_rule_dsl/logic/native.rs", "OWN_LATTICES", Carried, ""),
     ("src/code_rule_dsl/logic/native/setfix.rs", "WALKS_WHOLE", Carried, ""),
     ("src/code_rule_dsl/logic/native/setfix.rs", "IN_MORSELS", Thread, "the walks this thread ran in morsels, read by tests"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "VARIANTS", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
@@ -299,6 +299,7 @@ const CARRIERS: &[fn(&mut Capture)] = &[
     super::plan::corpus::switches::carried,
     super::plan::corpus::session::carried,
     super::native::setfix::carried,
+    super::native::carried,
     #[cfg(any(test, feature = "test-hooks"))]
     super::plan::corpus::test_store::carried,
     carried_elsewhere,

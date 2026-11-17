@@ -246,56 +246,6 @@ pub fn relation_msl_source() -> Result<String, String> {
     ))
 }
 
-#[cfg(test)]
-mod tests {
-    /// The blocks crate's reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
-    #[test]
-    fn the_blocks_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../blocks/src/generated_reads.rs");
-        let source = super::relation_rust_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_reads_are_these");
-    }
-
-    /// The blocks crate's kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
-    #[test]
-    fn the_blocks_kernels_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../blocks/src/relation_reads.metal");
-        let source = super::relation_msl_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_kernels_reads_are_these");
-    }
-
-    /// The kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
-    #[test]
-    fn the_kernels_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/transducer/packed/metal_tape_reads.metal");
-        let source = super::msl_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_kernels_reads_are_these");
-    }
-
-    /// The tape crate's reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
-    #[test]
-    fn the_tape_crates_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tape_format/src/generated_reads.rs");
-        let source = super::rust_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_tape_crates_reads_are_these");
-    }
-}
 
 /// A body being built: the builder, the tape's base and view, the read's own parameters.
 pub struct B<'a, 'c> {
@@ -957,4 +907,55 @@ fn child(b: &mut B<'_, '_>) -> Value {
     b.f.ins().jump(head, &[c.into(), k.into()]);
     b.f.switch_to_block(done);
     b.f.block_params(done)[0]
+}
+
+#[cfg(test)]
+mod tests {
+    /// The blocks crate's reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_blocks_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../blocks/src/generated_reads.rs");
+        let source = super::relation_rust_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_reads_are_these");
+    }
+
+    /// The blocks crate's kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_blocks_kernels_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../blocks/src/relation_reads.metal");
+        let source = super::relation_msl_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_kernels_reads_are_these");
+    }
+
+    /// The kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_kernels_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/transducer/packed/metal_tape_reads.metal");
+        let source = super::msl_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_kernels_reads_are_these");
+    }
+
+    /// The tape crate's reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_tape_crates_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tape_format/src/generated_reads.rs");
+        let source = super::rust_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_tape_crates_reads_are_these");
+    }
 }

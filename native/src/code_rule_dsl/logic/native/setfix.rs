@@ -1006,7 +1006,7 @@ impl Fresh {
         let mut order: Vec<u32> = (settled as u32..n as u32).collect();
         runs::presorted::site(runs::presorted::FRESH, n - settled, |i| cmp((settled + i - 1) as u32, (settled + i) as u32).is_gt());
         let sort = |v: &mut [u32]| {
-            runs::sort_keyed(v, tagged, cols.len(), |q, i| data.value(q, k, cols[i]), &cmp);
+            runs::sort_keyed(v, tagged, cols.len(), |q, i| data.value(q, k, cols[i]), cmp);
         };
         if self.lost || !runs::known_beyond_runs() {
             sort(&mut order);
@@ -1040,7 +1040,7 @@ impl Fresh {
         let (mut s, mut kept) = (0, 0);
         for (&q, h) in order.iter().zip(held) {
             while s < settled && cmp(s as u32, q).is_lt() {
-                out.extend_from_slice(data.row(s as u32, k));
+                out.extend_from_slice(&data.row(s as u32, k));
                 (s, kept) = (s + 1, kept + 1);
             }
             if !(h || (s < settled && cmp(s as u32, q).is_eq())) {
@@ -1825,7 +1825,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         }
         let k = store.rels[0].k;
         store.rels[0].reserve(fresh[0].n);
-        for i in 0..fresh[0].n { store.rels[0].push(fresh[0].data.row(i as u32, k)); }
+        for i in 0..fresh[0].n { store.rels[0].push(&fresh[0].data.row(i as u32, k)); }
         let prep = closure::prepare(&cl, store, syms);
         match prep {
             None => closure_ran = Some(None),

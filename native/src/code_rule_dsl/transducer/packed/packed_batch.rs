@@ -238,8 +238,7 @@ impl PackedBatch {
         // source and line counters in place of the bytes.
         let mut documents = Vec::new();
         let (mut source_length, mut line_length) = (0usize, 0usize);
-        for file in 0..file_count {
-            let tape = &files[file];
+        for tape in files.iter() {
             if layout == Layout::Resident {
                 let source = tape.transducer_source();
                 let lines = 1 + source.iter().filter(|&&byte| byte == b'\n').count();

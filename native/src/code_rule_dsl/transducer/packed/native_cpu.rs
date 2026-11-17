@@ -437,7 +437,7 @@ fn reverse_pending(function: &mut FunctionBuilder<'_>, task: cranelift_codegen::
     };
     let last = function.ins().iadd_imm(high, -1);
     let (a, b) = (record(function, low), record(function, last));
-    const _: () = assert!(mem::size_of::<PendingRecord>() % 4 == 0);
+    const _: () = assert!(mem::size_of::<PendingRecord>().is_multiple_of(4));
     for word in 0..mem::size_of::<PendingRecord>() as i32 / 4 {
         let x = function.ins().load(types::I32, flags, a, 4 * word);
         let y = function.ins().load(types::I32, flags, b, 4 * word);
