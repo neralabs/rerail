@@ -562,6 +562,10 @@ pass.
     `text(i, x)`, and its run fails with `@rr_node_text without the run's long-text nodes bound`
     (`native/setfix.rs`, the function step's binding of `LONG_TEXT_NODES`). Some part of a phase's run evaluates a
     node's text before the run binds its long-text nodes.
+    **Fixed** (2026-11-16): the join was made before the run bound its nodes, and took the binding then. A node read
+    now holds the binding when there is one, or the connection's scope, and looks the binding up as it runs
+    (`setfix::NodeTexts`); with none bound it reads NULL, as the SQL function does. The 15 typing oracle tests,
+    `base_relations_read_are_inputs` and this test pass.
   - `corpus::tests::every_switch_lowering_reads_is_classified`: `RERAIL_EXPORT_IMAGES`, `RERAIL_IMAGE_STORE`,
     `RERAIL_SHIPPED_IMAGES` (`rr/images.rs`) and `RERAIL_MODULE_IMAGES` (`combine_read`) are read in combining but
     are in neither list. Each needs classifying: does it change a prepared program (`COMBINING`) or not?
