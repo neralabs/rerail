@@ -1538,7 +1538,8 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   - Unsorted, ranges barely help: rows are appended chunk by chunk, so each range spans the whole id space.
   - Of MLDB's other forms: factored packing (at most a third at some widths) and per-range predictor clusters with
     selectors (`MappedIntTable`) find no linear structure in ids or symbols here; not worth it for exports.
-- **Done: the exports held packed** (user, 2026-11-17; decision 0365): 198 → 54.4 MB; the cross part's most footprint 1,830 → 1,517 MB. Left: sorted indexes on packed columns built as arrays.
+- **Done: the exports held packed** (user, 2026-11-17; decision 0365): 198 → 54.4 MB; the cross part's most footprint 1,830 → 1,517 MB. Then (0365, "Then"): a column in order is its own index (sorted indexes 192 → 26 MB), and no set while the chunks add (66 MB, 0.8 s CPU); the run's peak 2,025 → 1,857 MB.
+- **Found, not mine: warm runs miss the whole-run cutoff** (2026-11-17): fr2, sr1 and sd1's warm runs look up a cutoff key no cold run wrote (px3's hit). Every run's key differs; the cold runs set `RERAIL_HEAP_SAMPLE`/`RERAIL_HEAP_AT`, the warm ones don't. To check whether an aid's setting enters the key.
 - **Was proposed:** freeze each export at `source()` into a packed relation
   (`rerail_blocks::packed`: canonical order, a column an `IntCol`), with two additions to the blocks crate's
   columns, shared with the sibling workstreams that use them: an `IntCol` per range of 4,096 rows with a range

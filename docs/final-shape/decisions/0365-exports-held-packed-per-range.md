@@ -40,9 +40,25 @@ with the encodings the blocks crate ported from MLDB.
 Findings 29,747, one hash, cold and warm. Instructions 2,872 G against 2,537 G (fr2); the old code's run at load 32
 (st1) took 2,934 G, so no difference is measurable at this load.
 
-## Left
+## Then (user, 2026-11-17)
 
-- A column's sorted index (`Sorted`) is still built as plain arrays, 30 MB for each 1.66 M-row column a
-  stratum probes. Column 0 of a packed export is already in order, so its index could be the column itself, a
-  range found by binary search (`rerail_blocks::packed`'s leading key).
-- The chunks' hash set is kept: an add reports how many rows were new, which the totals count.
+- **A column in order is its own index.** A packed export's first column is in canonical order. A probe of it is a
+  range of row ids found by two searches of the column (`Source::sorted_range`); its lookups, distinct values and
+  statistics read along it. No `Sorted` is built for it. The other in-memory table answers its columns pushed in
+  row order the same way, without the identity list it made. The sorted indexes the cross part built fell from 68
+  (192 MB) to 38 (26 MB).
+- **No set while the chunks add.** `add` appends; the rows are made distinct where the freeze sorts them. The
+  set was 66 MB and 0.8 s of CPU on PostHog, which gave no row twice (10,053,650 given, as many distinct). The
+  totals' row counts come from the frozen exports (`Exports::len`); a reader before the freeze (`snapshot`,
+  `rows_of`, the cone digests) makes its rows distinct itself. Memo hits' own rows no longer go a separate way
+  (`append_own` is gone).
+
+| | packed (px3) | in-order ranges (sr1) | no set (sd1) |
+|---|---|---|---|
+| sorted indexes built | 68, 192 MB | 38, 26 MB | 38, 26 MB |
+| holding the exports, CPU | 0.97 s | 0.90 s | 0.19 s (packing 0.23 s) |
+| the chunks' live heap at their most footprint | 1,585 MB | 1,506 MB | 1,455 MB |
+| the cross part's live heap | 824 MB | 788 MB | 769 MB |
+| the run's peak | 2,025 MB | 1,900 MB | 1,857 MB |
+
+Findings 29,747, one hash, cold and warm, in each.

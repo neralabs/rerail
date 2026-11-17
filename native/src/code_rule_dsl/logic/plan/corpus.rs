@@ -546,6 +546,8 @@ fn cone_digests<'a>(exports: &exports::Exports, per_file: &[String], locations: 
             }
         }
         rows.sort();
+        // Rows not yet frozen may come twice (`Exports::visit`): each once, as frozen.
+        rows.dedup();
         let mut h = Sha256::new();
         for (i, r) in &rows {
             h.update((*i as u64).to_le_bytes());
@@ -5914,8 +5916,8 @@ fn run_observed(
             Step::Hand(rel, rows) => {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "an export handed on".into());
                 let types: Vec<&str> = pf.types(&rel);
-                let inserted = exports.borrow_mut().add(&rel, types.len(), rows.as_ref());
-                totals.add_rows(&rel, inserted, rows.as_ref(), &types);
+                exports.borrow_mut().add(&rel, types.len(), rows.as_ref());
+                totals.add_rows(&rel, 0, rows.as_ref(), &types);
                 return Ok(None);
             }
             Step::Finish(ctx, ev) => (ctx, ev),
@@ -5958,8 +5960,7 @@ fn run_observed(
                     // With the statistics kept by file failed, every row goes through the set and is measured.
                     let unchecked = keeper.borrow().as_ref().is_some_and(|k| !k.failed());
                     let exported: std::collections::HashSet<&str> = split.exports.iter().map(String::as_str).collect();
-                    let mut batch: BTreeMap<String, (usize, Option<usize>, Vec<Vec<i64>>, Vec<Vec<i64>>)> = BTreeMap::new();
-                    let mut own_docs: Vec<i64> = Vec::new();
+                    let mut batch: BTreeMap<String, (usize, Vec<Vec<i64>>)> = BTreeMap::new();
                     for (path, entry, content) in hits {
                         // The statistics kept by file (decision 0096 §3): a content new to the keeper is counted in.
                         if let (Some(k), Some(memo)) = (keeper.borrow_mut().as_mut(), memo) {
@@ -5998,18 +5999,13 @@ fn run_observed(
                             // held"). They were also kept whole and measured again, so a memo hit's rows counted twice.
                         }
                         // Gathered by relation across the batch's hits: one statement per relation below, not one per row.
-                        own_docs.push(entry.key);
                         for (rel, (width, values)) in entry.rows {
                             if counted || values.is_empty() || !exported.contains(rel.as_str()) {
                                 continue;
                             }
-                            let at = split.locations.get(&rel).and_then(|l| l.first().copied()).filter(|a| *a < width && unchecked);
-                            let (_, _, own_cols, shared_cols) = batch.entry(rel).or_insert_with(|| (width, at, vec![Vec::new(); width], vec![Vec::new(); width]));
-                            for row in values.chunks_exact(width) {
-                                let cols = if at.is_some_and(|a| memo::document_of(row[a]) == entry.key) { &mut *own_cols } else { &mut *shared_cols };
-                                for (c, v) in row.iter().enumerate() {
-                                    cols[c].push(*v);
-                                }
+                            let (_, cols) = batch.entry(rel).or_insert_with(|| (width, vec![Vec::new(); width]));
+                            for (c, col) in cols.iter_mut().enumerate() {
+                                col.extend(values.iter().skip(c).step_by(width).copied());
                             }
                         }
                         for (rel, (columns, rows)) in entry.outputs.into_iter().filter(|(r, _)| !r.starts_with(memo::GUESTS)) {
@@ -6017,10 +6013,7 @@ fn run_observed(
                             node_columns.insert(rel, columns);
                         }
                     }
-                    for (rel, (width, at, own_cols, cols)) in batch {
-                        if let Some(at) = at {
-                            exports.borrow_mut().append_own(&rel, width, at, own_cols, own_docs.iter().copied());
-                        }
+                    for (rel, (width, cols)) in batch {
                         if cols.first().is_none_or(Vec::is_empty) {
                             hits_unmeasured |= unchecked;
                             continue;
@@ -6028,11 +6021,11 @@ fn run_observed(
                         let types: Vec<&str> = pf.types(&rel);
                         let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
                         let rows = crate::code_rule_dsl::logic::native::component::columns_source(names.clone(), cols.into_iter().map(Some).collect());
-                        let inserted = exports.borrow_mut().add(&rel, width, rows.as_ref());
+                        exports.borrow_mut().add(&rel, width, rows.as_ref());
                         if unchecked {
                             hits_unmeasured = true;
                         } else {
-                            totals.add_rows(&rel, inserted, rows.as_ref(), &types);
+                            totals.add_rows(&rel, 0, rows.as_ref(), &types);
                         }
                     }
                 }
@@ -6310,8 +6303,8 @@ fn run_observed(
         // file-local relation without a location column) are kept once; a kept export is measured in place.
         for (rel, rows) in &export_rows {
             let types: Vec<&str> = pf.types(rel);
-            let inserted = { let _s = crate::code_rule_dsl::logic::profile::span(|| "hold the export".into()); exports.borrow_mut().add(rel, types.len(), rows.as_ref()) };
-            { let _s = crate::code_rule_dsl::logic::profile::span(|| "totals".into()); totals.add_rows(rel, inserted, rows.as_ref(), &types); }
+            { let _s = crate::code_rule_dsl::logic::profile::span(|| "hold the export".into()); exports.borrow_mut().add(rel, types.len(), rows.as_ref()) };
+            { let _s = crate::code_rule_dsl::logic::profile::span(|| "totals".into()); totals.add_rows(rel, 0, rows.as_ref(), &types); }
             { let _s = crate::code_rule_dsl::logic::profile::span(|| "attribute to files".into()); attribute(rel, rows.as_ref()); }
             if !deferred.is_empty() {
                 mention(&mut mentioned, rows.as_ref());
@@ -6321,51 +6314,41 @@ fn run_observed(
         // file's are, and kept in its new entry (decision 0225 §2).
         if let Some(cone) = &cone {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the partial hits' rows".into());
-            // As a full hit's (`memo replay`): a row of its own document is appended unchecked, the others (a value
-            // document's, which each file that asked for it holds) kept once through the export's set.
+            // As a full hit's (`memo replay`): appended, a row a value document's that each file that asked for it
+            // holds kept once when the export is frozen.
             let unchecked = keeper.borrow().as_ref().is_some_and(|k| !k.failed());
             // In the chunk's order, as a hit's rows are: the export's rows, and so its digest, as an earlier run's.
             let docs: Vec<i64> = chunk_docs.iter().map(|(d, ..)| *d).filter(|d| chunk_partials.contains_key(d)).collect();
             for rel in split.exports.iter().filter(|r| !cone.contains(*r)) {
                 let types: Vec<&str> = pf.types(rel);
                 let width = types.len();
-                let at = split.locations.get(rel).and_then(|l| l.first().copied()).filter(|a| *a < width && unchecked);
-                let (mut own_cols, mut shared_cols): (Vec<Vec<i64>>, Vec<Vec<i64>>) = (vec![Vec::new(); width], vec![Vec::new(); width]);
+                let mut shared_cols: Vec<Vec<i64>> = vec![Vec::new(); width];
                 for (d, e) in docs.iter().map(|d| (d, &chunk_partials[d])) {
                     let Some((w, values)) = e.rows.get(rel) else { continue };
                     if *w != width {
                         return Err(Error::Plan(format!("{rel}: a memo entry's rows are {w} wide, its declaration {width}")));
                     }
-                    for row in values.chunks_exact(width.max(1)) {
-                        let cols = if at.is_some_and(|a| memo::document_of(row[a]) == *d) { &mut own_cols } else { &mut shared_cols };
-                        for (c, v) in row.iter().enumerate() {
-                            cols[c].push(*v);
-                        }
+                    for (c, col) in shared_cols.iter_mut().enumerate() {
+                        col.extend(values.iter().skip(c).step_by(width).copied());
                     }
                     if let Some(entry) = entries.get_mut(d) {
                         entry.rows.insert(rel.clone(), (width, values.clone()));
                     }
                 }
                 let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
-                if !deferred.is_empty() {
-                    for cols in [&own_cols, &shared_cols] {
-                        let rows = crate::code_rule_dsl::logic::native::component::columns_source(names.clone(), cols.iter().cloned().map(Some).collect());
-                        mention(&mut mentioned, rows.as_ref());
-                    }
-                }
-                if let Some(at) = at {
-                    exports.borrow_mut().append_own(rel, width, at, own_cols, docs.iter().copied());
-                }
                 if shared_cols.first().is_none_or(Vec::is_empty) {
                     hits_unmeasured |= unchecked;
                     continue;
                 }
                 let rows = crate::code_rule_dsl::logic::native::component::columns_source(names, shared_cols.into_iter().map(Some).collect());
-                let inserted = exports.borrow_mut().add(rel, width, rows.as_ref());
+                if !deferred.is_empty() {
+                    mention(&mut mentioned, rows.as_ref());
+                }
+                exports.borrow_mut().add(rel, width, rows.as_ref());
                 if unchecked {
                     hits_unmeasured = true;
                 } else {
-                    totals.add_rows(rel, inserted, rows.as_ref(), &types);
+                    totals.add_rows(rel, 0, rows.as_ref(), &types);
                 }
             }
             // Their outputs' rows, as a hit's are (`memo replay`): into the run's outputs, and kept in the new entries.
@@ -7660,7 +7643,7 @@ fn run_observed(
             let (mut from_kept, mut measured_held) = (0usize, Vec::<String>::new());
             for rel in &split.exports {
                 let types: Vec<&str> = pf.types(rel);
-                let held = exports.borrow().len(rel);
+                let held = exports.borrow_mut().len(rel);
                 match kept.as_ref().and_then(|m| m.get(rel)).filter(|r| r.rows() == held as i64) {
                     Some(r) => {
                         totals.forget(rel);
@@ -7760,6 +7743,13 @@ fn run_observed(
             let statistics = statistics.unwrap_or_else(|| syntax::statistics(source.as_ref()));
             totals.add(&rel, rows, &statistics);
             base_sources.insert(rel, source);
+        }
+    }
+    // Each export's rows: its distinct rows, counted where they are made distinct (its freeze, `Exports::len`); the
+    // chunks append theirs unchecked and add 0.
+    for rel in &split.exports {
+        if let Some(t) = totals.rels.get_mut(rel) {
+            t.0 = exports.borrow_mut().len(rel);
         }
     }
     // What the chunks handed on: each export's rows, summed over the chunks and the memo's hits (decision 0099's measure).
