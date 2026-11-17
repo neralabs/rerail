@@ -161,10 +161,9 @@ This record is steps 2, 3 and 4, and the API they need.
    flags, alias and classes are its code's entry in the table; its span, subtree and children are the tape's.
 
    - **ast-grep's node** (`TapeNode`, what the matchers walk) carries its parent where the step that reached it
-     knew it: a child's, a walk's (`dfs`: the subtrees open around it), an ancestor's. A climb (`ancestors`) past
-     the parent is one descent from the root (`Tape::path`: a step a sibling it passes, read from the subtree
-     ends), the whole path at the cost of one. A previous sibling is read forward from the parent's first child;
-     `prev_all` reads them once.
+     knew it: a child's, a walk's (`dfs`: the subtrees open around it), an ancestor's. Where no step knew it (a
+     node an anchor list or a binary search handed the matcher), it reads the document's kept parents (below). A
+     previous sibling is read forward from the parent's first child; `prev_all` reads them once.
    - **A pass over every node** that wanted each node's parent takes it from the subtrees open around it
      (`TapeDoc::transducer_parents`): the transducer's packed batch (each node's children set their parent and
      next siblings), the relational syntax columns, the prefilter's statistics, the label passes' nesting, the
@@ -173,6 +172,14 @@ This record is steps 2, 3 and 4, and the API they need.
    - **Format 15's parent** searches back at most 64 nodes, then descends from the root over the siblings' subtree
      ends: never longer than the path's siblings, where the search back alone read every node of the earlier
      siblings' subtrees.
+   - **The document keeps its parents once one is asked that no step knew** (`DocTape::parents`, 2026-11-17): one
+     pass of the subtrees open around each node, 4 bytes a node, read by `TapeNode` and
+     `TapeDoc::transducer_parent`; a climb (`ancestors`) is the parents in turn. The old matcher asks for a parent
+     at every step of a climb from a node it was handed (`NodeRef::find_near`, `inside`, a field's first child,
+     `nthChild`), and a format 15 search a step made the shipped Node.js built-in tables 2.4 to 3.1 times main's
+     time (28% of the cycles in the search); kept, as the projections keep theirs (§6), a step is a load. A lookup
+     of a node by its range on a tape (`NodeRef::find_near`) searches from the root by start byte, reading starts
+     only, rather than climbing from a nearby node.
 
    Checked (2026-11-16): the tape, embedding, Vue, Blade, prefilter, anchor, facts, syntax, matcher, transducer,
    workspace, findings, wave, residency and statistics tests (1,065) pass in 15, 16 and 16z, but for four that need

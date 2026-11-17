@@ -130,32 +130,6 @@ pub trait Tape {
             f(base, m);
         }
     }
-    /// `i`'s ancestors, the root first, into `out`: one descent from the root, a step a sibling it passes (read
-    /// from the subtree ends), so no parent is read. A climb's whole path at the cost of one.
-    fn path(&self, i: usize, out: &mut Vec<usize>) {
-        out.clear();
-        if i == 0 || i >= self.len() {
-            return;
-        }
-        let mut at = 0;
-        loop {
-            out.push(at);
-            let end = self.subtree_end(at);
-            let mut c = at + 1;
-            loop {
-                let e = self.subtree_end(c);
-                if i < e {
-                    break;
-                }
-                debug_assert!(e < end, "node {i} is in {at}'s subtree");
-                c = e;
-            }
-            if c == i {
-                return;
-            }
-            at = c;
-        }
-    }
     /// Every node's span, in preorder.
     fn spans(&self, out: &mut Vec<(u64, u64)>) {
         out.clear();
@@ -253,8 +227,8 @@ impl Tape for F15<'_> {
         i + reads::tape_size(self.bytes, &self.view, i as u32) as usize
     }
     /// Not stored: the nearest node before `i` whose subtree holds it, searched back over at most 64 nodes, else
-    /// found by descending from the root over the siblings' subtree ends (`Tape::path`): a search is never longer
-    /// than the path's siblings.
+    /// found by descending from the root over the siblings' subtree ends: a search is never longer than the path's
+    /// siblings.
     fn parent(&self, i: usize) -> Option<usize> {
         let p = reads::tape_parent(self.bytes, &self.view, i as u32);
         (p != u32::MAX).then_some(p as usize)
@@ -413,7 +387,22 @@ macro_rules! with_tape {
     };
 }
 
-/// A read at a time, dispatched on the format: for a caller that reads a node here and there (a matcher's node).
+/// A read at a time, dispatched on the format: format 15 first (the run's default, 0293 §4), its read inlined.
+/// Format 16's and 16z's reads are larger and stay behind a call, so the per-node reads of a caller that reads a
+/// node here and there (the matcher's node, `TapeNode`, in another crate) are a few loads where the run reads 15.
+macro_rules! fifteen_first {
+    ($tape:expr, |$t:ident| $body:expr) => {
+        match $tape {
+            AnyTape::F15($t) => $body,
+            other => other.not_fifteen(|tape| match tape {
+                AnyTape::F16($t) => $body,
+                AnyTape::F16Z($t) => $body,
+                AnyTape::F15(_) => unreachable!("format 15 reads inline"),
+            }),
+        }
+    };
+}
+
 /// A pass over many nodes dispatches once (`with_tape!`).
 impl Tape for AnyTape<'_> {
     #[inline]
@@ -424,33 +413,33 @@ impl Tape for AnyTape<'_> {
     fn table(&self) -> &CodeTable {
         with_tape!(self, |t| t.table())
     }
-    #[inline]
+    #[inline(always)]
     fn code(&self, i: usize) -> u32 {
-        with_tape!(self, |t| t.code(i))
+        fifteen_first!(self, |t| t.code(i))
     }
-    #[inline]
+    #[inline(always)]
     fn subtree_end(&self, i: usize) -> usize {
-        with_tape!(self, |t| t.subtree_end(i))
+        fifteen_first!(self, |t| t.subtree_end(i))
     }
-    #[inline]
+    #[inline(always)]
     fn first_child(&self, i: usize) -> Option<usize> {
-        with_tape!(self, |t| t.first_child(i))
+        fifteen_first!(self, |t| t.first_child(i))
     }
-    #[inline]
+    #[inline(always)]
     fn next_sibling(&self, i: usize, parent_end: usize) -> Option<usize> {
-        with_tape!(self, |t| t.next_sibling(i, parent_end))
+        fifteen_first!(self, |t| t.next_sibling(i, parent_end))
     }
     #[inline]
     fn parent(&self, i: usize) -> Option<usize> {
         with_tape!(self, |t| t.parent(i))
     }
-    #[inline]
+    #[inline(always)]
     fn start(&self, i: usize) -> u64 {
-        with_tape!(self, |t| t.start(i))
+        fifteen_first!(self, |t| t.start(i))
     }
-    #[inline]
+    #[inline(always)]
     fn end(&self, i: usize) -> u64 {
-        with_tape!(self, |t| t.end(i))
+        fifteen_first!(self, |t| t.end(i))
     }
     #[inline]
     fn start_next(&self, i: usize, prev_start: u64) -> u64 {
@@ -463,15 +452,18 @@ impl Tape for AnyTape<'_> {
     fn match_groups(&self, set: &CodeSet, f: impl FnMut(usize, u64)) {
         with_tape!(self, |t| t.match_groups(set, f))
     }
-    fn path(&self, i: usize, out: &mut Vec<usize>) {
-        with_tape!(self, |t| t.path(i, out))
-    }
     fn spans(&self, out: &mut Vec<(u64, u64)>) {
         with_tape!(self, |t| t.spans(out))
     }
 }
 
 impl AnyTape<'_> {
+    /// A read of format 16 or 16z, out of line (`fifteen_first!`).
+    #[inline(never)]
+    fn not_fifteen<R>(&self, read: impl FnOnce(&Self) -> R) -> R {
+        read(self)
+    }
+
     /// The format's name, as a run reports it.
     pub fn format(&self) -> &'static str {
         match self {
@@ -527,7 +519,7 @@ pub(crate) mod tests {
     }
 
     /// Format 15's parent past its back search (`BACK`): a root of 300 statements of two leaves each and one of 100
-    /// leaves, every parent found by the descent, as the tree has it, and every path the climb.
+    /// leaves, every parent found by the descent, as the tree has it.
     #[test]
     fn format_15_parent_descends_past_its_back_search() {
         let src = vec![b' '; 10_000];
@@ -554,12 +546,8 @@ pub(crate) mod tests {
             parents[i] = open.last().map(|&(p, _)| p);
             open.push((i, i + size as usize));
         }
-        let mut path = Vec::new();
         for (i, &p) in parents.iter().enumerate() {
             assert_eq!(t.parent(i), p, "parent of {i}");
-            t.path(i, &mut path);
-            assert_eq!(path.last().copied(), p, "path to {i}");
-            assert!(path.windows(2).all(|w| parents[w[1]] == Some(w[0])), "path to {i}");
         }
     }
 
@@ -584,16 +572,6 @@ pub(crate) mod tests {
         }
         for (i, &p) in parents.iter().enumerate() {
             assert_eq!(t.parent(i), p, "parent of {i}");
-            let mut path = Vec::new();
-            t.path(i, &mut path);
-            let mut climbed = Vec::new();
-            let mut q = p;
-            while let Some(a) = q {
-                climbed.push(a);
-                q = parents[a];
-            }
-            climbed.reverse();
-            assert_eq!(path, climbed, "path to {i}");
         }
         assert_eq!(children(&t, 0).count(), 8);
         assert_eq!(children(&t, 1).collect::<Vec<_>>(), vec![2, 3, 4, 5]);
