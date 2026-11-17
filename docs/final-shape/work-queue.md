@@ -1231,6 +1231,12 @@ pass.
   - a device test fails on a walk whose steps change (uncompilable MSL fails
     `the_label_kernels_compile_for_every_format` since 2026-11-16);
   - the label passes at s1000 match the hub tree's 292 ms or beat it.
+- **Progress** (2026-11-17):
+  - Format 16 is the default (0340).
+  - The generated MSL is structured control flow, not a dispatch loop (t41, "The generated code as structured
+    control flow"). That took the label passes from 710 to 349 ms, and `label_micro` from 355 to 159 ms, under the
+    hand-written reads' 211.
+  - Left: `label_micro_8`'s parent climbs (171 against the hub's 91), and the walk test.
 
 ### Q54. Oscar's engine stops on the data-layer corpus in `step_histograms` (to check on the merged tree)
 

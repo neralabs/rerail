@@ -245,3 +245,28 @@ What is left, by kernel:
   restore. The conformance tests and these runs caught both. `the_label_kernels_compile_for_every_format` (slow
   tier, 84 s on an M1 Max) now compiles every label kernel and the pattern kernel for formats 0, 15 and 16. A test
   for a walk whose steps change is still Q57's.
+
+### The generated code as structured control flow (2026-11-17)
+
+`rerail_clif::msl` emitted every function with more than one block as a dispatch loop: `switch (b)` inside a
+`while`, each jump a store to `b`. Metal's compiler keeps the loop's state live across the switch and does not merge
+the blocks, so every read cost a branch through the dispatch. The emitter now writes the CFG as structured code:
+
+- an `if`/`else` that rejoins at the branch's immediate post-dominator;
+- a natural loop as `while (true)` with `continue` and `break`, or a selector `e<h>` where a loop has several exits;
+- a block reached on two paths duplicated, up to a size cap (`STRUCTURED_MAX`) and a depth of 64;
+- the switch form kept only as the fallback, for a CFG that is not reducible. No kernel in the tree needs it;
+  `metal_tape_reads.metal` has no `switch (b)` left.
+
+Same run as above (s1000, the GPU pinned, 97,241,194 steps in both), format 16, load 33–41:
+
+| Engine | Label passes | `label_micro` | `label_micro_8` |
+|---|---|---|---|
+| merged, the dispatch loop | 710 ms | 355 | 315 |
+| + structured control flow | 349 ms | 159 | 171 |
+| hand-written format 15 reads (the diagnostic build) | | 211 | |
+| hub (61e9f383c), with its parent column | 292 ms | 169 | 91 |
+
+The generated reads now beat the hand-written ones (159 against 211 ms). The width branches were not the cost.
+What is left against the hub's tree is `label_micro_8`, the parent climbs (171 against 91). The format 16 parent is
+still a search where the hub's tree had a column.
