@@ -211,7 +211,7 @@ A steer never becomes your message, before or after the agent compacts its conte
 
 ### Edits made by shell commands and before rules are ready
 
-Rerail checks shell-written files when the command finishes. Edits made while a large repository indexes, or while a session idle for 30 minutes opens again, are checked in the first pass after.
+Rerail checks shell-written files when the command finishes. Edits made while a large repository indexes are checked in the first pass after. So is the first edit of a session that opens again after 30 quiet minutes, in OMP and Pi, and in Claude Code, Codex and Cursor when its rules take more than 20 seconds to open (below).
 
 <details>
 <summary>Shell edits and indexing</summary>
@@ -268,7 +268,7 @@ A hook never fails a tool call; the footer says `not running`.
 <details>
 <summary>Behaviour without a daemon</summary>
 
-- Only a session start may start the daemon. Other hooks that find none let the call go at once, so you get no `hook error` under every call.
+- Only a session start waits for the daemon to start. Any other hook that finds none lets the call go at once, so you get no `hook error` under every call, and starts the daemon in the background for the next event; with `RERAIL_AUTOSTART=0` or `false` it starts none.
 - In OMP and Pi, a Rerail tool hook releases the tool after 25 seconds regardless.
 - Codex, with no footer, shows `Rerail ✕ not running · start it with: rerail daemon start` once at session start.
 
