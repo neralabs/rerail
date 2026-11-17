@@ -7718,7 +7718,6 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
                 f.ins().iadd(pos_all, offset)
             })
             .collect();
-        let none = f.ins().icmp_imm(IntCC::Equal, blocks, 0);
         // The first block's carries and counts are zero, made here: the entry's zero, live across
         // every row, would be spilled and reloaded once per carried word.
         let zero = f.ins().iconst(types::I64, 0);
@@ -7776,10 +7775,14 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         // A body that makes nothing (every output the token loop's, from the bytes): no block
         // loop. The file goes to its end at once, and the token loop runs over it whole, as the
         // lean lexer's one loop.
+        // Else every way into the blocks' loop is its head (`head`, which sends a file with no
+        // block to its end): a jump into the loop past it (the file's end, or the token part's
+        // way back into the hot body) made a second entry, an irreducible graph, which the Rust
+        // translation can only write as a loop over a label switch.
         if bodiless {
             f.ins().jump(finish, &first);
         } else {
-            f.ins().brif(none, finish, &first, head, &first);
+            f.ins().jump(head, &first);
         }
 
         // The head: the end, or the next block's body.
@@ -7882,9 +7885,10 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
                 let go = f.create_block();
                 f.ins().brif(last, row_end, &st_args, go, &[]);
                 f.switch_to_block(go);
+                // Back by the head, the loop's one entry: it takes the hot body or the general
+                // one as it does for every block.
                 let args: Vec<BlockArg> = tp[..params].iter().chain(&st).map(|&v| v.into()).collect();
-                let more = f.ins().icmp(IntCC::UnsignedLessThan, tp[0], full_end);
-                f.ins().brif(more, body_block, &args, head, &args);
+                f.ins().jump(head, &args);
             }
 
             // The file's end: the loop's count and refusal for the end's function.

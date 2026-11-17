@@ -314,3 +314,4 @@ Numbers are tier 2's for `.rr`. Each step's commit is listed.
 | 0358: string arm reads 16 bytes first (short_words_carried), then the 64-byte window. Short strings 34.6→31.4 instructions a byte; corpus 15.99→15.96 |
 | 0360: refill bounded by `ready` (was the file's end: the first part walked the whole file); `rwait` keeps the next block as h[4], resume at `h[4] > qc` (old resume: ws 60.1 instr/byte, quadratic). Counts unchanged. Refill on an empty block ~110 (63 classify); the body ~178. Body-provided words not taken (~35 to save ~70) |
 | 0362: refill from the body's rows (skip, main run, rare word in a rowless total's slot; `cpu_form_keeping`, `Sinks::extra`). corpus 15.42, ws 3.98, numbers 26.76, short strings 30.98; long ASCII 4.28 → 4.77 (the body's 3 words) |
+| 0363: tier 1's Rust had 2 `loop { match d }` label switches (irreducible: row→finish, go→body_block entered the blocks' loop past its head). Every entry by `head` now; 0 switches; guard test |
