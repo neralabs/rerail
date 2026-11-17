@@ -277,57 +277,38 @@ impl Text {
     /// copied from the linked library (`with_cone`). `None` for a text that includes nothing. `store` holds it as a program
     /// image (decision 0246 §6) under its text `src` and its scope's keys: a store that holds it reads it, and the
     /// text is not lowered.
+    ///
+    /// The version's program decoded (`lower_in_version`): a key's image has one encoding, the version's. Lowered here
+    /// on the tree as well, a debug build's tree check and the run queued two images of one program under one key,
+    /// the encoded tree's bytes and the folded version's, and the store refused the second.
     pub fn lower_in(self, src: &str, library: &Library, scoped: &Scoped, store: Option<&crate::content_store::ContentStore>) -> Result<Option<Program>, Error> {
-        if !matches!(self.0, Read::Modular { .. }) {
-            return Ok(None);
-        }
-        let key = program_key(src, &scoped.keys);
-        if let Some((bytes, id)) = images::read(store, key)
-            && let Ok(program) = super::program_image::Version::open(&bytes).and_then(|v| v.program(&Default::default()))
-        {
-            if let (Some(store), Some(id)) = (store, id) {
-                renew_image(store, id);
-            }
-            crate::code_rule_dsl::prof::count("rr.program_image_read", 1);
-            return Ok(Some(program));
-        }
-        let Some(program) = self.lowered_in(library, scoped)? else { return Ok(None) };
-        if let Ok(bytes) = encode_program(&program)
-            && keep_image(store, "a program image", key, bytes)
-        {
-            crate::code_rule_dsl::prof::count("rr.program_image_written", 1);
-        }
-        Ok(Some(program))
+        let Some(v) = self.lower_in_version(src, library, scoped, store)? else { return Ok(None) };
+        v.program(&Default::default()).map(Some).map_err(Error::Syntax)
     }
 
-    /// `lower_in`'s lowering, for a text no store holds.
-    fn lowered_in(self, library: &Library, scoped: &Scoped) -> Result<Option<Program>, Error> {
-        let Some(Own { mut program, asked, declared }) = self.lowered_own(scoped)? else { return Ok(None) };
-        if !asked.is_empty() {
-            // The attributes on request made again over the program with its cone (decision 0174): its cone's readers
-            // ask too, through copies of their own.
-            lower::undo_on_request(&mut program);
-            with_cone(&mut program, library.program(), &asked, &declared);
-            for round in lower::ON_REQUEST {
-                lower::sources_on_request(&mut program, round);
-            }
-        }
-        Ok(Some(program))
-    }
-
-    /// `lowered_in` as a version. A text that asks nothing of the library is its own version; one that asks has its
-    /// cone copied on the tree (`lowered_in`): the on-request rewrite made again over it (decision 0174) reads a
-    /// tree, and a version has none (work queue Q52).
+    /// The text's own program as a version, with the library's cone it asks for. A text that asks nothing of the
+    /// library is its own version; one that asks has its cone copied on the version (`plan::corpus::cone_on_version`),
+    /// the library's tree never decoded. A debug build copies the tree's cone beside it (the attributes on request
+    /// undone, `with_cone`, made again over both, decision 0174) and checks the two images agree.
     fn lowered_in_version(self, library: &Library, scoped: &Scoped) -> Result<Option<std::sync::Arc<super::program_image::Version>>, Error> {
-        let Some(Own { mut program, asked, declared }) = self.lowered_own(scoped)? else { return Ok(None) };
-        if !asked.is_empty() {
-            lower::undo_on_request(&mut program);
-            with_cone(&mut program, library.program(), &asked, &declared);
-            for round in lower::ON_REQUEST {
-                lower::sources_on_request(&mut program, round);
-            }
+        let Some(Own { program, asked, declared }) = self.lowered_own(scoped)? else { return Ok(None) };
+        let own = version_of(&program)?;
+        if asked.is_empty() {
+            return Ok(Some(own));
         }
-        Ok(Some(version_of(&program)?))
+        let v = super::plan::corpus::cone_on_version(&own, &library.version, &asked, &declared).map_err(Error::Syntax)?;
+        #[cfg(debug_assertions)]
+        {
+            let mut tree = program;
+            lower::undo_on_request(&mut tree);
+            with_cone(&mut tree, library.program(), &asked, &declared);
+            for round in lower::ON_REQUEST {
+                lower::sources_on_request(&mut tree, round);
+            }
+            let t = version_of(&tree)?;
+            assert_eq!((t.size(), t.digest()), (v.size(), v.digest()), "the cone copied on the version is the tree's: {}", super::program_image::differences(&t, &v));
+        }
+        Ok(Some(v))
     }
 
     /// The text's own program, lowered and linked in its libraries' scope, and what it asks of the library: the
@@ -886,6 +867,58 @@ fn cone_of<'a>(heads_reads: &[(&'a str, Vec<&'a str>)], natives: &'a std::collec
 /// 0089 §3): the library relations reading `asked`, through any rule or native, with `asked` themselves; and the
 /// relations their rules read that no library file declares (lowering's helpers), with their own. Their rules,
 /// declarations, natives, facts and lattices, as the library has them.
+/// `with_cone` on versions (decision 0281's path, step 7b): the cone's relations by `cone_of` over the library
+/// version's heads and reads, its rules copied (`Builder::copy`), and their declarations, natives, facts and lattices
+/// set in the header.
+pub(crate) fn with_cone_version(program: &std::sync::Arc<super::program_image::Version>, library: &std::sync::Arc<super::program_image::Version>, asked: &BTreeSet<String>, declared: &BTreeSet<String>) -> Result<std::sync::Arc<super::program_image::Version>, String> {
+    use super::program_image::Lit;
+    let lists = super::front::Lists::default();
+    let lib = library.header(&lists)?;
+    // The library as written: the on-request rewrite's rules are the program's to make again over its cone (`with_cone`).
+    let written = |r: &super::program_image::RuleRef<'_>| !lower::on_request_rule(library.rel_name(r.head().rel()));
+    let heads_reads: Vec<(&str, Vec<&str>)> = library
+        .rules()
+        .filter(written)
+        .map(|r| {
+            (
+                library.rel_name(r.head().rel()),
+                r.body()
+                    .filter_map(|l| match l.view() {
+                        Lit::Atom(a) | Lit::Agg { atom: a, .. } => Some(library.rel_name(a.rel())),
+                        _ => None,
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+    let take = cone_of(&heads_reads, &lib.natives, asked, declared);
+    let mut b = super::program_image::Builder::on(program);
+    // A rule the program holds is not copied again: by its contents' hash (`RuleRef::hash`, of its texts), as
+    // `manager::rebase` matches rules, where the tree's `contains` compares them.
+    let mut held: std::collections::HashSet<u64> = program.rules().map(|r| r.hash()).collect();
+    for r in library.rules().filter(written).filter(|r| take.contains(library.rel_name(r.head().rel()))) {
+        if held.insert(r.hash()) {
+            b.copy(library, r);
+        }
+    }
+    let was = program.header(&lists)?;
+    let mut header = was.clone();
+    for (rel, cols) in lib.decls.iter().filter(|(r, _)| take.contains(r.as_str())) {
+        header.decls.entry(rel.clone()).or_insert_with(|| cols.clone());
+    }
+    for (rel, n) in lib.natives.iter().filter(|(r, _)| take.contains(*r)) {
+        header.natives.entry(rel.clone()).or_insert_with(|| n.clone());
+    }
+    for (rel, rows) in lib.facts.iter().filter(|(r, _)| take.contains(*r)) {
+        header.facts.entry(rel.clone()).or_insert_with(|| rows.clone());
+    }
+    for (rel, d) in lib.lattice.iter().filter(|(r, _)| take.contains(*r)) {
+        header.lattice.entry(rel.clone()).or_insert_with(|| d.clone());
+    }
+    b.set_header(&was, &header);
+    b.finish_overlay()
+}
+
 pub fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<String>, declared: &BTreeSet<String>) {
     use super::front::Literal;
     // The library as written: the on-request rewrite's rules are the program's to make again over its cone.

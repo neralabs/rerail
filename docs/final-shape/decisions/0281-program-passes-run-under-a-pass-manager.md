@@ -600,6 +600,14 @@ step 3 replaces what is under the writer.
      (`lowered_own`), makes its image, and copies the cone onto it: the library's tree is never decoded on the
      run's path. A debug build copies the tree's cone beside it. Test: `a_cone_copied_onto_the_version_is_the_trees`;
      ep2's 317 policies lowered on fresh stores under a debug build give the same 427 rows.
+     *Again (2026-11-17), after the merges of the hub and rr-align:* the merge had put the cone back on the tree, as
+     0174 makes the attributes on request again over a program with its cone, which then read a tree. Now on the
+     version: the program's answers undone (`link::undone_on_request`), the cone copied (`with_cone_version`, the
+     library's own on-request rules left out, as the hub's `with_cone` does), and `on_request::SourcesOnRequest` per
+     round over both (`corpus::cone_on_version`). The version pass had fallen behind the tree's (0291's narrowing, an
+     unread attribute left an input) and is level with it. `lower_in` is the version decoded, so a key's image has one
+     encoding (the debug build queued the tree's and the version's under one key, and the store refused the second).
+     ep2's 317 policies over 10 files, fresh stores, a debug build: every check passes, 0 rows, as before the slice.
    - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.

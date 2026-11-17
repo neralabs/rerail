@@ -3890,9 +3890,13 @@ fn a_cone_copied_onto_the_version_is_the_trees() {
     let files = super::read_text(src).unwrap().files().expect("a modular text");
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
+    // A debug build copies the tree's cone beside the version's and checks the two images agree (`lowered_in_version`).
+    assert!(cfg!(debug_assertions), "the check is a debug build's");
     let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
-    assert!(v.rules().any(|r| v.rel_name(r.head().rel()) == "cmp_same"), "the cone's rules are copied");
-    let tree = super::read_text(src).unwrap().lower_in(src, &library, &scoped, None).unwrap().expect("a modular text");
-    let (t, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).unwrap();
-    assert_eq!((t.size(), t.digest()), (v.size(), v.digest()), "{}", crate::code_rule_dsl::logic::program_image::differences(&t, &v));
+    let heads: Vec<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
+    assert!(heads.contains(&"cmp_same"), "the cone's rules are copied: {heads:?}");
+    // The attributes on request are made again over the cone: its readers ask (decision 0174), and the library's own
+    // requests are not copied.
+    assert!(heads.contains(&"rr_value_req") && heads.contains(&"value"), "{heads:?}");
+    assert!(!heads.contains(&"dunder_all"), "a library reader of `value` outside the cone is not copied: {heads:?}");
 }

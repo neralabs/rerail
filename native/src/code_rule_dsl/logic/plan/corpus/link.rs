@@ -266,6 +266,19 @@ impl Versioned {
     }
 }
 
+/// `rr::lower::undo_on_request` of version `v` (`Versioned::undo_on_request`, at once): each attribute it answered on
+/// request an input again, without its requests, answers, eager rows' rule and widened copies.
+pub(super) fn undone_on_request(v: &Arc<Version>) -> Result<Arc<Version>> {
+    let was = v.header(&Default::default()).map_err(plan)?;
+    let mut head = was.clone();
+    let mut dropped = BTreeSet::new();
+    crate::code_rule_dsl::logic::rr::lower::undo_on_request_in(&mut head, &mut Kept { v, dropped: &mut dropped });
+    let mut b = Builder::on(v);
+    b.set_header(&was, &head);
+    b.retain(|r| !dropped.contains(v.rel_name(r.head().rel())));
+    Ok(b.finish().map_err(plan)?.0)
+}
+
 /// A version part's rules as `undo_on_request` reads and drops them.
 struct Kept<'a> {
     v: &'a Version,

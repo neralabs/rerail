@@ -1390,6 +1390,29 @@ fn tail_version(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tai
     Ok(p.finish().map_err(Error::Plan)?.0)
 }
 
+/// A text's version with the library's cone it asks for (decision 0089 §3), as `rr::Text::lowered_in` makes it on
+/// the tree (decision 0281's path, step 7b): its answers on request undone (`link::undone_on_request`), the cone
+/// copied from the library's version (`rr::with_cone_version`), and the attributes on request made again over both
+/// (`on_request::SourcesOnRequest`, decision 0174), its cone's readers asking too. No tree is decoded.
+pub(crate) fn cone_on_version(
+    own: &Arc<crate::code_rule_dsl::logic::program_image::Version>,
+    library: &Arc<crate::code_rule_dsl::logic::program_image::Version>,
+    asked: &BTreeSet<String>,
+    declared: &BTreeSet<String>,
+) -> std::result::Result<Arc<crate::code_rule_dsl::logic::program_image::Version>, String> {
+    let undone = link::undone_on_request(own).map_err(|e| e.to_string())?;
+    let coned = crate::code_rule_dsl::logic::rr::with_cone_version(&undone, library, asked, declared)?;
+    let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("a text's cone", coned);
+    for round in crate::code_rule_dsl::logic::rr::lower::ON_REQUEST {
+        p.program(&mut preparation::on_request::SourcesOnRequest { round });
+    }
+    p.current()?;
+    for d in p.decisions() {
+        crate::code_rule_dsl::logic::profile::decision(&d.what, || d.detail.clone());
+    }
+    Ok(p.finish()?.0)
+}
+
 /// `requests_file_local` and `answers_where_documents_are` of the version `p` holds, through its tree: neither has a
 /// pass on the manager yet (work queue Q52), so a program that answers an attribute on request is decoded, the two
 /// run on the tree, and its image made again. One that answers none is left as it is.
