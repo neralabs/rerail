@@ -69,6 +69,8 @@ async function opened(root: string, watch: StampTreeWatch): Promise<{ bridge: Co
   // The session's first walk of the other worktrees, after its first passes, hands the folder its watch; the next pass
   // reads the folder whole with the watch up, and on Linux one more, once the watch took up the folders it walked.
   for (let pass = 0; pass < 3; pass += 1) await bridge.checkpoint("turn");
+  // The walk of the other worktrees takes the watch's notices too: none runs while a test's command writes.
+  await bridge.settleWorktreeWalk();
   listed.folders.length = 0;
   return { bridge, audits };
 }
