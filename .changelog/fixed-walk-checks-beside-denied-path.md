@@ -1,1 +1,1 @@
-On Windows, a file, folder, worktree or submodule of the repository that your account may not read, such as one behind a deny rule, no longer keeps Rerail from checking shell edits to the other files of the session's folder.
+On Windows, a file, folder, worktree or submodule of the repository that your account may not read, such as one behind a deny rule, no longer keeps Rerail from checking shell edits to the other files of the session's folder. In 0.1.4 only such a worktree did.
