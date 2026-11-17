@@ -303,6 +303,10 @@ describe("Rerail daemon CLI", () => {
     const env = { ...process.env, RERAIL_HOME: root };
     const others: ChildProcess[] = [];
     try {
+      // A home that is set up: its database is there, so rerail status reports on the daemon.
+      const workspace = join(root, "workspace");
+      await mkdir(workspace);
+      startTestRepository(workspace, join(root, "rerail.sqlite"));
       const daemon = spawn(process.execPath, [join(process.cwd(), ENTRY_POINTS.daemon), "--dev", "--port", "0", "--state-file", stateFile], { stdio: ["ignore", "pipe", "ignore"], env });
       others.push(daemon);
       await Promise.race([once(daemon.stdout!, "data"), once(daemon, "close").then(([code]) => { throw new Error(`daemon exited with code ${code}`); })]);
