@@ -40,6 +40,8 @@ pub enum TextFn {
     SqlSubstr,
     Slice,
     ToString,
+    /// C's `%0Nd` (`@printf`'s lowering): a number's digits zero-padded to a width, the sign first.
+    ZeroPad,
     Replace,
 }
 
@@ -100,6 +102,7 @@ pub fn device_fn(name: &str) -> Option<DeviceFn> {
         "sql_substr" => text(TextFn::SqlSubstr, 1, 2),
         "slice" => text(TextFn::Slice, 1, 2),
         "rr_to_string" => text(TextFn::ToString, 0, 1),
+        "zero_pad" => text(TextFn::ZeroPad, 0, 2),
         "sql_replace" => text(TextFn::Replace, 3, 0),
         "replace_all" | "rx_replace" => RegexReplace,
         _ => return None,
@@ -120,7 +123,7 @@ mod tests {
             assert!(device_fn(native(rr)).is_some(), "{rr}");
         }
         for name in ["rr_add", "rr_sub", "rr_mul", "rr_div", "mod", "rr_max", "rr_min", "rr_strlen", "lower", "sql_lower", "sql_upper", "head", "dir",
-                     "rr_substr", "sql_substr", "slice", "rr_to_string", "sql_replace", "replace_all", "rx_replace", "str_cmp"] {
+                     "rr_substr", "sql_substr", "slice", "rr_to_string", "zero_pad", "sql_replace", "replace_all", "rx_replace", "str_cmp"] {
             let f = device_fn(name).expect(name);
             if let Some((_, kinds, _)) = crate::code_rule_dsl::logic::strings::functions::signature(name) {
                 assert_eq!(kinds.len(), f.arity(), "{name}");

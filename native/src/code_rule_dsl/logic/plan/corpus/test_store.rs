@@ -36,6 +36,12 @@ thread_local! {
     static FILLING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// Whether this thread fills the template (`make`). What its runs keep for the process (phase 0's graphs) the process's
+/// own runs would find made, and skip the work a test of them compares (`phase0::graphs`).
+pub(super) fn filling() -> bool {
+    FILLING.with(std::cell::Cell::get)
+}
+
 /// The template made, before a test's thread takes the switches (`switches::reading`, `switches::set`): no thread waits
 /// for it while it holds them, so its runs never wait behind a thread that waits for it. Off a test's thread (`own`:
 /// a pool's, or a process the tests start) nothing reads the template, so nothing makes it.

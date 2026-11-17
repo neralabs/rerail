@@ -17,8 +17,8 @@ using namespace metal;
 struct Var { uint mode,a,from,n,multi; };
 // The item's document (decision 0032): nodes are the batch's numbering, read at `node - d.node_base`.
 struct Ctx { device const uchar* s; ChunkTape d; constant uchar* text; device atomic_uint* flags; };
-// A pattern pass (its roots: segments at `root` in `segs`, decision 0033) or a fact's root (`root`,
-// one thread); its threads from `threadStart`.
+// A pattern pass (its roots: its rule at `root` in `roots`, a thread a group of 64 nodes) or a
+// fact's root (`root`, one thread); its threads from `threadStart`.
 struct Item { uint pattern,target,root,constraintStart,constraintCount,threadStart; };
 struct Shape { uint nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount,steps; };
 inline uint c_local(Ctx c,uint node){return node-c.d.node_base;}
@@ -82,23 +82,30 @@ pub(super) fn source(patterns: &[&PackedPattern], first: usize) -> (String, Vec<
         pool.iter().map(|byte| byte.to_string()).collect::<Vec<_>>().join(",")
     );
     out.push_str(&bodies);
+    // Whether the item's pattern matches at `node` (`c.d` its document) with its constraints held.
     let _ = write!(
         out,
-        "kernel void {KERNEL}(device const ChunkTape* docs [[buffer(0)]],device const uint* labels [[buffer(1)]],device atomic_uint* scratch [[buffer(2)]],device atomic_uint* flags [[buffer(3)]],device const Item* items [[buffer(4)]],device const uint2* constraints [[buffer(5)]],device const uint4* segs [[buffer(6)]],constant Shape& shape [[buffer(7)]],device const uchar* chunk [[buffer(27)]],uint tid [[thread_position_in_grid]]){{\n  if(tid>=shape.itemCount||atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;\n  uint low=0u,high=shape.taskCount;while(high-low>1u){{uint middle=(low+high)/2u;if(items[middle].threadStart<=tid)low=middle;else high=middle;}}\n  Item item=items[low];Ctx c;c.s=chunk;c.text=TEXT;c.flags=flags;\n  if(item.pattern=={FACT}u)c.d=doc_of(docs,shape.fileCount,item.root);\n  else{{uint i=tid-item.threadStart;uint4 seg=segs[root_segment(segs,item.root,i)];c.d=docs[seg.x];item.root=c.d.node_base+root_local(c.s,c.d,segs,seg,i-seg.w);}}\n  switch(item.pattern){{\n"
+        "static bool item_matches(Ctx c,Item item,uint node,device const uint* labels,device const uint2* constraints,constant Shape& shape){{\n  switch(item.pattern){{\n"
     );
     for (index, vars) in names.iter().enumerate() {
         let index = first + index;
         let _ = write!(
             out,
-            "  case {index}u:{{B{index} b;for(uint v=0u;v<{};v++){{b.v[v].mode=0u;b.v[v].a=0u;b.v[v].from=0u;b.v[v].n=0u;b.v[v].multi=0u;}}if(p{index}_root(c,item.root,b)!=0)return;for(uint at=0u;at<item.constraintCount;at++){{uint2 constraint=constraints[item.constraintStart+at];Var v=b.v[constraint.x];if(v.mode!=0u&&v.multi==0u){{uint node=var_at(c,v,0u);if(((labels[constraint.y*shape.words+node/32u]>>(node%32u))&1u)==0u)return;}}}}break;}}\n",
+            "  case {index}u:{{B{index} b;for(uint v=0u;v<{};v++){{b.v[v].mode=0u;b.v[v].a=0u;b.v[v].from=0u;b.v[v].n=0u;b.v[v].multi=0u;}}if(p{index}_root(c,node,b)!=0)return false;for(uint at=0u;at<item.constraintCount;at++){{uint2 constraint=constraints[item.constraintStart+at];Var v=b.v[constraint.x];if(v.mode!=0u&&v.multi==0u){{uint n=var_at(c,v,0u);if(((labels[constraint.y*shape.words+n/32u]>>(n%32u))&1u)==0u)return false;}}}}return true;}}\n",
             vars.len().max(1)
         );
     }
     let _ = writeln!(
         out,
-        "  case {FACT}u:{{for(uint at=0u;at<item.constraintCount;at++){{uint2 constraint=constraints[item.constraintStart+at];uint node=constraint.x;if(((labels[constraint.y*shape.words+node/32u]>>(node%32u))&1u)==0u)return;}}break;}}"
+        "  case {FACT}u:{{for(uint at=0u;at<item.constraintCount;at++){{uint2 constraint=constraints[item.constraintStart+at];uint node=constraint.x;if(((labels[constraint.y*shape.words+node/32u]>>(node%32u))&1u)==0u)return false;}}return true;}}"
     );
-    out.push_str("  default:return;\n  }\n  atomic_fetch_or_explicit(&scratch[item.target*shape.words+item.root/32u],1u<<(item.root%32u),memory_order_relaxed);\n}\n");
+    out.push_str("  default:return false;\n  }\n}\n");
+    // A pattern pass's thread is a group of 64 of the batch's nodes: it tests each of the group's
+    // roots (`root_mask`); a fact's, its one root.
+    let _ = write!(
+        out,
+        "kernel void {KERNEL}(device const ChunkTape* docs [[buffer(0)]],device const uint* labels [[buffer(1)]],device atomic_uint* scratch [[buffer(2)]],device atomic_uint* flags [[buffer(3)]],device const Item* items [[buffer(4)]],device const uint2* constraints [[buffer(5)]],device const uint* roots [[buffer(6)]],constant Shape& shape [[buffer(7)]],device const uchar* chunk [[buffer(27)]],uint tid [[thread_position_in_grid]]){{\n  if(tid>=shape.itemCount||atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;\n  uint low=0u,high=shape.taskCount;while(high-low>1u){{uint middle=(low+high)/2u;if(items[middle].threadStart<=tid)low=middle;else high=middle;}}\n  Item item=items[low];Ctx c;c.s=chunk;c.text=TEXT;c.flags=flags;\n  uint base,group=0u;ulong mask=1ul;\n  if(item.pattern=={FACT}u){{c.d=doc_of(docs,shape.fileCount,item.root);base=item.root;}}\n  else{{group=tid-item.threadStart;uint file=roots_file(roots,group);c.d=docs[file];group-=roots_first_group(roots,file);mask=root_mask(c.s,c.d,roots,item.root,file,group);base=c.d.node_base;}}\n  ROOTS_EACH(mask,group,local){{uint node=base+local;if(item_matches(c,item,node,labels,constraints,shape))atomic_fetch_or_explicit(&scratch[item.target*shape.words+node/32u],1u<<(node%32u),memory_order_relaxed);}}\n}}\n"
+    );
     (out, names)
 }
 

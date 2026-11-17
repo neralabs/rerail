@@ -26,7 +26,6 @@ fn fresh_and_restored_programs_have_identical_relation_identities() {
         let snapshot: serde_json::Value = serde_json::from_slice(&std::fs::read(root.join(format!("{phase}.json"))).unwrap()).unwrap();
         snapshots.push(snapshot);
     }
-    // The rows `output::shown` gives (the run's outputs are an image, read as rows).
     assert!(!snapshots[0]["outputs"].as_array().unwrap().is_empty(), "the fixture must find a call");
     for next in &snapshots[1..] {
         assert_eq!(next["outputs"], snapshots[0]["outputs"]);

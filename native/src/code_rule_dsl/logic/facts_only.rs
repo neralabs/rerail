@@ -317,6 +317,19 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile/roofline.rs", "ROOFS"),
     ("code_rule_dsl/logic/rr.rs", "CORE"),
     ("code_rule_dsl/logic/rr.rs", "READS"),
+    // `core_names` less 0174's on-request relations: a set of the engine's own, as `CORE`, the same for every run.
+    ("code_rule_dsl/logic/rr.rs", "SHAPE"),
+    // The library images shipped beside the executable (0264), read once: an input, as `CORE`'s core.rr, no result.
+    ("code_rule_dsl/logic/rr/images.rs", "SHIPPED"),
+    // The rule files' entries a thread read before its run (0275), taken by the run's manifest: a queue.
+    ("code_rule_dsl/logic/plan/corpus/combined.rs", "READ_BEFORE"),
+    // rerail's own files the process names to its observers (0284): a registry.
+    ("content_store/observe.rs", "OWN"),
+    // Profiling (0288): the command's clocks, the process's start, the run thread's phases, each step's decisions.
+    ("code_rule_dsl/logic/profile.rs", "COMMAND"),
+    ("code_rule_dsl/logic/profile.rs", "DECIDING"),
+    ("code_rule_dsl/logic/profile.rs", "RUN_PHASES"),
+    ("code_rule_dsl/logic/profile/life.rs", "ENTERED"),
     ("content_store/atoms.rs", "CANONICAL"),
     // Each database file's identity, read once a file: a registry, as CANONICAL is.
     ("content_store/atoms.rs", "IDENTITIES"),

@@ -573,34 +573,49 @@ pub(super) fn queued(key: &[u8; 32]) -> crate::content_store::write_back::Key {
     crate::content_store::write_back::Key::of(&[b"facts_memo/prepared", key])
 }
 
-/// Stores `prepared` as the program `key` names under `source`: its two programs' texts, and the pointer to them with
-/// what preparing found; the texts' sources, which the run's manifest names so collection keeps them. `None` when a
-/// program does not read back from its text: it is not kept, and the next run prepares again.
-pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], prepared: &Prepared) -> StoreResult<Option<Vec<SourceId>>> {
+/// Keeps `prepared` as the program `key` names, in the run's record (decisions 0073, 0306): its two programs and the
+/// pointer to them with what preparing found, made here; written under `source` (else the source of `text`, stored)
+/// by the store's writer, which names the programs' sources so collection keeps them. Nothing when a program does not
+/// read back from its text: the next run prepares again.
+pub(super) fn record(store: &ContentStore, source: Option<SourceId>, text: String, key: &[u8; 32], prepared: &Prepared) {
     super::memo::off();
     let mut facts = rest_of(prepared);
-    let mut documents = Vec::new();
-    for (name, prog) in [("front", Some(&prepared.prog)), ("lowered", None)] {
-        // The lowered program's image is its version's, stored as it is (no encode of its tree). With images off
-        // (`RERAIL_PROGRAM_IMAGE=off`) it is not kept, as a version has no text form: the program is prepared again.
-        let stored = match prog {
-            Some(p) => program_text::store(store, p)?,
-            None => {
-                program_text::store_version(store, &prepared.lowered.version)?
-            }
+    let mut programs = Vec::new();
+    for name in ["front", "lowered"] {
+        // The lowered program's image is its version's, taken as it is (no encode of its tree, decision 0281). With
+        // images off (`RERAIL_PROGRAM_IMAGE=off`) it is not kept, as a version has no text form: the program is
+        // prepared again.
+        let encoded = match name {
+            "front" => program_text::encode(&prepared.prog),
+            _ => program_text::encode_version(&prepared.lowered.version),
         };
-        let Some((digest, sources)) = stored else { return Ok(None) };
-        facts.entry(PROGRAM.to_owned()).or_default().push([Value::Str(name.to_owned().into()), Value::Str(hex(&digest).into())].into());
-        documents.extend(sources);
+        let Some(encoded) = encoded else { return };
+        facts.entry(PROGRAM.to_owned()).or_default().push([Value::Str(name.to_owned().into()), Value::Str(hex(&encoded.digest).into())].into());
+        programs.push(encoded);
     }
     let entry = program_facts::encode(&facts);
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, entry.len() as u64);
     // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`, decision 0264) ships the pointer; its programs'
-    // images ship with `program_text::store`.
+    // images ship with `program_text::encode`.
     crate::code_rule_dsl::logic::rr::images::export(shipped_key(key), &entry);
-    let set = pointer_plan(key);
-    store.put_facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry }], &[])?;
-    Ok(Some(documents))
+    let (packed, bytes) = program_text::pack(programs, entry);
+    store.record("the prepared program", vec![queued(key)], &(source, text, *key, packed), Some(bytes), apply);
+}
+
+fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
+    let (source, text, key, packed): (Option<SourceId>, String, [u8; 32], program_text::Packed) = crate::content_store::record::codec::from_body("the prepared program", body)?;
+    let source = match source {
+        Some(id) => id,
+        None => {
+            let id = super::memo::source(cx.store, &text)?;
+            cx.name([id]);
+            id
+        }
+    };
+    let (documents, entry) = program_text::store_packed(cx.store, &packed, cx.bytes)?;
+    cx.name(documents);
+    let set = pointer_plan(&key);
+    cx.store.put_facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry: entry.to_vec() }], &[]).map(drop)
 }
 
 // Its tests run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the

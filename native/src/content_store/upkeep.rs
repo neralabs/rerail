@@ -312,8 +312,8 @@ pub fn interrupted(e: &rusqlite::Error) -> bool {
 pub struct Frames {
     path: PathBuf,
     name: String,
-    /// A read connection for `due`: a point read at each poll.
-    reader: Option<Connection>,
+    /// A read connection for `due` (a point read at each poll), and the identity of the file it opened.
+    reader: Option<(Connection, Option<FileIdentity>)>,
 }
 
 impl Frames {
@@ -336,18 +336,17 @@ impl Job for Frames {
 
     fn due(&mut self) -> Due {
         rerail_prof::code_rule_dsl::logic::profile::behind_the_run();
-        // A store whose file is gone (a test's, removed with its directory) has nothing to sweep. The reader still
-        // reads the removed file, whose last decision stays past its sweep: due for good, each step opened a new
-        // store at the path, swept that, and the old file's decision was still unswept (`finish_soon`'s hundred
-        // passes at every run's end, for every such store in the process).
-        if !self.path.exists() {
+        // The cached connection reads the file it opened: one deleted or replaced since (a test's store gone with
+        // its directory, a store the user removed) would say a sweep is wanted for ever. So it is dropped once the
+        // path names another file, or none.
+        let now = identity(&self.path);
+        if self.reader.as_ref().is_some_and(|(_, was)| now.is_none() || *was != now) {
             self.reader = None;
-            return Due::No;
         }
-        if self.reader.is_none() {
-            self.reader = Connection::open_with_flags(&self.path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX).ok();
+        if self.reader.is_none() && now.is_some() {
+            self.reader = Connection::open_with_flags(&self.path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX).ok().map(|c| (c, now));
         }
-        let wanted = self.reader.as_ref().is_some_and(|c| super::corpus_runs::frames_sweep_wanted(c).unwrap_or(false));
+        let wanted = self.reader.as_ref().is_some_and(|(c, _)| super::corpus_runs::frames_sweep_wanted(c).unwrap_or(false));
         if wanted { Due::Urgent } else { Due::No }
     }
 
@@ -364,8 +363,8 @@ impl Job for Frames {
         if slice.over() {
             return Ok(Step::More);
         }
-        // Gone since `due` (as there): a sweep would make a new store at the path.
-        if !self.path.exists() {
+        // A store gone since the job became due has nothing to sweep, and opening it would make a new one.
+        if identity(&self.path).is_none() {
             self.reader = None;
             return Ok(Step::Done);
         }
@@ -376,6 +375,23 @@ impl Job for Frames {
             format!("{} memo entries, {} maintained, {} programs' rows ({} of programs no manifest names), {:.3} s", u.memo, u.maintained, u.programs, u.unnamed, seconds)
         });
         Ok(Step::Done)
+    }
+}
+
+/// Which file a path names: its device and inode where the system has them, else its creation time.
+type FileIdentity = (u64, u64);
+
+fn identity(path: &Path) -> Option<FileIdentity> {
+    let m = std::fs::metadata(path).ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        Some((m.dev(), m.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        let t = m.created().or_else(|_| m.modified()).ok()?.duration_since(std::time::UNIX_EPOCH).ok()?;
+        Some((t.as_secs(), u64::from(t.subsec_nanos())))
     }
 }
 

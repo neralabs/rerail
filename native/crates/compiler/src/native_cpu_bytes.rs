@@ -1057,6 +1057,11 @@ impl<'a> Bytewise<'a> {
                 let ok = f.ins().uextend(types::I64, ok);
                 f.ins().band(bit, ok)
             }
+            // Whether the anchor's own byte is in the file (`i - d` is `p`): it is, where the
+            // answer counts. The callers (`bit_first`, `rest_after`) cut the bit by `p < len`,
+            // or `zero_kills` proves it false at a zero `p` without a `within`. A token's
+            // `-` not before a digit asks no bound, as lean's `b[pos + 1]` on padded bytes.
+            BlockInst::Within(d) if anchor == Some(back + i64::from(d)) => f.ins().iconst(types::I64, 1),
             BlockInst::Within(d) => {
                 let lo = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, i, i64::from(d));
                 let end = f.ins().iadd_imm(at.len, i64::from(d));

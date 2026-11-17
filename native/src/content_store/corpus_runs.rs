@@ -218,7 +218,7 @@ impl<'m> Protection<'m> {
 }
 
 /// A file's stat when its source was read: what the stat index keeps of it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FileStat {
     pub size: i64,
     pub mtime_ns: i64,
@@ -324,19 +324,15 @@ impl ContentStore {
         })
     }
 
-    /// `put_stat_blob`, queued behind the run (decision 0102).
+    /// `put_stat_blob`, behind the run (decision 0102), in its record (decision 0306): the blob in its byte area.
     pub fn queue_stat_blob(&self, plan: [u8; 32], blob: Vec<u8>) {
-        self.write_back("the kept statistics", blob.len(), vec![(stat_blob_key(&plan), None)], Box::new(move |store| store.put_stat_blob(plan, &blob)));
+        fn apply(cx: &super::record::Apply<'_>, body: super::record::codec::Body) -> StoreResult<()> {
+            let plan: [u8; 32] = super::record::codec::from_body("the kept statistics", body)?;
+            cx.store.put_stat_blob(plan, cx.bytes)
+        }
+        self.record("the kept statistics", vec![stat_blob_key(&plan)], &plan, Some(blob), apply);
     }
 
-    /// `queue_stat_blob` of statistics naming symbols: `map` gives the blob with the store's ids, in the writer's
-    /// transaction (decision 0170).
-    pub fn queue_stat_blob_mapped(&self, plan: [u8; 32], blob: Vec<u8>, map: MapBlob) {
-        self.write_back_syms(super::write_back::Syms::Mapped, "the kept statistics", blob.len(), vec![(stat_blob_key(&plan), None)], Box::new(move |store| {
-            let mapped = map(store, &blob)?;
-            store.put_stat_blob(plan, &mapped)
-        }));
-    }
 
     /// Memo plan `plan`'s kept statistics (`put_stat_blob`), if a run kept them; a queued write of them first.
     pub fn stat_blob(&self, plan: [u8; 32]) -> StoreResult<Option<Vec<u8>>> {
@@ -1007,8 +1003,8 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// What a write of plan `plan`'s statistics is queued under (`write_back`).
-fn stat_blob_key(plan: &[u8; 32]) -> super::write_back::Key {
+/// What a write of memo plan `plan`'s statistics is queued under (`stat_blob` settles it).
+pub fn stat_blob_key(plan: &[u8; 32]) -> super::write_back::Key {
     super::write_back::Key::of(&[b"stat_blob", plan])
 }
 

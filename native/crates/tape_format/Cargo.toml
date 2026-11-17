@@ -9,5 +9,15 @@ description = "The engine's tape as bytes: format 15 (v9np), its constants and a
 # As the engine's: sha2 0.11 runs SHA-256 on the CPU's SHA instructions by itself (0.10 needed `asm`, whose
 # `sha2-asm` builds neither with MSVC nor with every aarch64 cross C toolchain).
 sha2 = "0.11"
+# The view a tape's reads are told where it lies by (decision 0310), without the reads' IR.
+rerail-clif = { path = "../clif", default-features = false }
 # Format 16 in fixed blocks (16z), at the version the lab measured it with.
 lz4-sys = "=1.11.1"
+
+[dev-dependencies]
+# The reads in Cranelift's IR, run against this crate's readers (decision 0310).
+rerail-clif = { path = "../clif" }
+cranelift-codegen = "=0.125.4"
+cranelift-frontend = "=0.125.4"
+cranelift-module = "=0.125.4"
+cranelift-jit = "=0.125.4"

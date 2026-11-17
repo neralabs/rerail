@@ -264,11 +264,13 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     let work = |steps: &Vec<(u64, u64)>| super::plan_work(steps);
     let mut native: Vec<_> = state.native.iter().collect();
     native.sort_by_key(|(_, s)| std::cmp::Reverse(work(s)));
-    let mut native_tsv = String::from("span\twork\tsteps_in_out\tplan\tcpu_s\n");
+    let mut native_tsv = String::from("span\twork\tsteps_in_out\tplan\tcpu_s\tsteps_cpu_ms\n");
     for ((p, plan), steps) in &native {
         let s: Vec<String> = steps.iter().map(|(a, b)| format!("{a}:{b}")).collect();
         let cpu = state.native_cpu.get(&(p.clone(), plan.clone())).copied().unwrap_or(0.0);
-        let _ = writeln!(native_tsv, "{p}\t{}\t{}\t{plan}\t{cpu:.4}", work(steps), s.join(","));
+        // Per step, and last the head's rows made (`setfix::step_cpu`): empty where the steps were not timed.
+        let stepped: Vec<String> = state.native_step_cpu.get(&(p.clone(), plan.clone())).map_or_else(Vec::new, |c| c.iter().map(|c| format!("{:.3}", c * 1e3)).collect());
+        let _ = writeln!(native_tsv, "{p}\t{}\t{}\t{plan}\t{cpu:.4}\t{}", work(steps), s.join(","), stepped.join(","));
     }
     std::fs::write(dir.join("native.tsv"), native_tsv)?;
     let mut placement_tsv = String::from("stratum\truns\ton_gpu\tgpu_cheaper\tplanned_work\twork\tcpu_s\tcpu_estimate_s\tgpu_estimate_s\tforms\tmissing\tplanned_scanned\tsteps\n");
@@ -310,6 +312,8 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     kinds::searches(&mut r, &state.spans);
     let heads_tsv = kinds::by_head(&mut r, &native, &state.native_cpu);
     std::fs::write(dir.join("heads.tsv"), heads_tsv)?;
+    let sources_tsv = super::sources::by_source(&mut r, &state, crate::code_rule_dsl::logic::plan::placement::CPU_PER_WORK);
+    std::fs::write(dir.join("sources.tsv"), sources_tsv)?;
     memory_report(&mut r, &state.spans);
 
     let sql_ns: u64 = sql.iter().map(|(_, s)| s.ns).sum();

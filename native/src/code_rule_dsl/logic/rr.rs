@@ -659,7 +659,7 @@ pub(in crate::code_rule_dsl) fn image_store() -> Option<std::sync::Arc<crate::co
 
 /// How long a module's or program's image stays in the store after the last run that read or wrote it
 /// (`keep_image`): collection keeps a source while a pin's lease runs, as it keeps the combined program's entry before
-/// a run names it (`combined::remember`). Naming the images in the run's record is decision 0246 §6's.
+/// a run names it (`combined::record`). Naming the images in the run's record is decision 0246 §6's.
 const IMAGE_LEASE_SECS: i64 = 7 * 24 * 3600;
 
 /// The owner of the images' pins.
@@ -676,11 +676,14 @@ fn keep_image(store: Option<&crate::content_store::ContentStore>, what: &'static
     use crate::content_store::write_back::{Key, Syms};
     images::export(key, &bytes);
     let Some(store) = store else { return false };
-    let n = bytes.len();
-    store.write_back_unless_full(Syms::None, what, n, vec![(Key::of(&[what.as_bytes(), &key.sha256_bytes().unwrap_or_default()]), None)], Box::new(move |store| {
-        let id = store.put_source(&bytes, &[key])?;
-        store.pin_source(id, IMAGE_OWNER, image_lease())
-    }))
+    // A record of its own (decision 0306), dropped where the queue is full: the image in its byte area.
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+        let key: crate::content_store::HashKey = crate::content_store::record::codec::from_body("an image", body)?;
+        let id = cx.store.put_source(cx.bytes, &[key])?;
+        cx.store.pin_source(id, IMAGE_OWNER, image_lease())
+    }
+    let queued = Key::of(&[what.as_bytes(), &key.sha256_bytes().unwrap_or_default()]);
+    store.queue_record(Syms::None, what, vec![queued], &key, Some(bytes), apply, true)
 }
 
 /// The text tests' compiled groups of automata as images (decisions 0075, 0264): each under its key, read from the
@@ -738,14 +741,18 @@ pub(in crate::code_rule_dsl) fn keep_graph_image(store: Option<&crate::content_s
     const WHAT: &str = "phase 0's graph of a seed";
     images::export(key, &bytes);
     let Some(store) = store else { return false };
-    let n = bytes.len();
-    store.write_back_unless_full(Syms::None, WHAT, n, vec![(Key::of(&[WHAT.as_bytes(), &key.sha256_bytes().unwrap_or_default()]), None)], Box::new(move |store| {
-        if store.source_by_alias(key)?.is_some() {
+    // A record of its own (decision 0306), dropped where the queue is full, as `keep_image`'s: the graph in its byte
+    // area, the first kept under its key staying.
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+        let key: crate::content_store::HashKey = crate::content_store::record::codec::from_body(WHAT, body)?;
+        if cx.store.source_by_alias(key)?.is_some() {
             return Ok(());
         }
-        let id = store.put_source(&bytes, &[key])?;
-        store.pin_source(id, IMAGE_OWNER, image_lease())
-    }))
+        let id = cx.store.put_source(cx.bytes, &[key])?;
+        cx.store.pin_source(id, IMAGE_OWNER, image_lease())
+    }
+    let queued = Key::of(&[WHAT.as_bytes(), &key.sha256_bytes().unwrap_or_default()]);
+    store.queue_record(Syms::None, WHAT, vec![queued], &key, Some(bytes), apply, true)
 }
 
 /// The lease of image `id`, read by this run, renewed (`keep_image`) once more than half of it has run: a run that reads
@@ -757,7 +764,11 @@ fn renew_image(store: &crate::content_store::ContentStore, id: crate::content_st
     if store.source_lease(id, IMAGE_OWNER).ok().flatten().is_some_and(|until| until - now > IMAGE_LEASE_SECS / 2) {
         return;
     }
-    store.write_back_unless_full(Syms::None, "an image's lease", 0, Vec::new(), Box::new(move |store| store.pin_source(id, IMAGE_OWNER, image_lease())));
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+        let id: crate::content_store::SourceId = crate::content_store::record::codec::from_body("an image's lease", body)?;
+        cx.store.pin_source(id, IMAGE_OWNER, image_lease())
+    }
+    store.queue_record(Syms::None, "an image's lease", Vec::new(), &id, None, apply, true);
 }
 
 /// Adds to `program`, which derives library relations `asked`, the linked library's part a request copies (decision
@@ -1232,8 +1243,7 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     let program = lower_files_dropping(path, statements, false)?;
     // Kept behind the run (the store's writer), with what it read: the next run's check above.
     if let Some((entry, Some(store), None)) = kept {
-        let (read, program) = (files.clone(), program.clone());
-        store.write_back_syms(crate::content_store::write_back::Syms::None, "a rule file's program", 0, vec![(super::plan::corpus::combined::queued(&entry), None)], Box::new(move |store| super::plan::corpus::combined::remember(store, &entry, &read, &program, &[]).map(drop)));
+        super::plan::corpus::combined::record(&store, "a rule file's program", &entry, &files, &program, &[]);
         super::plan::corpus::combined::read_before_the_run(entry);
     }
     cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
@@ -1260,8 +1270,7 @@ pub fn text_header(src: &str) -> Result<Program, Error> {
     };
     let program = text.header()?;
     if let Some(store) = store {
-        let kept = program.clone();
-        store.write_back_syms(crate::content_store::write_back::Syms::None, "a text's header", 0, vec![(combined::queued(&key), None)], Box::new(move |store| combined::remember(store, &key, &read, &kept, &[]).map(drop)));
+        combined::record(&store, "a text's header", &key, &read, &program, &[]);
         combined::read_before_the_run(key);
     }
     Ok(program)

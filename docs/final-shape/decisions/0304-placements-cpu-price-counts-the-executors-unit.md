@@ -108,8 +108,9 @@ the planner's statistics: work queue Q44.
 - **The seeds' estimates** above (Q44).
 - **Some views' rows cost far more than a unit.** Two shapes were fixed after this record (Q36: a field probed by
   parent and field reads the tape; a column pushed in order is its own index). `attr_of`, `rdefn` and `fzk287`
-  are still priced at a fifth or less of their CPU. A per-view price needs each step's CPU, which the profile does
-  not split by step.
+  are still priced at a fifth or less of their CPU. The profile now gives each join step's CPU, summed by the
+  relation it reads (`sources.tsv`): a view's lookup costs 4 to 27 units, `within`'s 176 (Q36). Placement does not
+  price by relation yet.
 
 ## Tests
 

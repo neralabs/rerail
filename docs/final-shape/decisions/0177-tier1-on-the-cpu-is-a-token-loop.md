@@ -3300,3 +3300,322 @@ Numbers then 113.3 instructions, 17.1 cycles a token (lean 107.3,
 Tests: `native_cpu_shape::tests::only_a_run_of_bytes_is_a_bytes_loop`;
 `a_numbers_arm_is_leans_loop` (the generated Rust: two `loop`s, no
 vector load, one call, cold), which replaces `a_numbers_arm_reads_one_window`.
+
+## A token's end is lean's `max`
+
+**Intro.** In the run loop, lean takes a token's length as
+`words.max(n1)`: the run of word bits from its first byte (none at a
+punctuation's) and the table's length (1, or 2 for a pair). There is one
+branch, for a word that runs to the block's end. Ours branched on the
+entry's two fused-rule bits, made a pair's last and a run's last (the
+run from the byte after), branched again on "a run, past the block",
+and chose one last by a `select` on the pair bit.
+
+Where the loop's starts are lean's (`lean_starts`, `RecordTables::lean`),
+three things hold:
+
+- a run token's first byte is a run byte;
+- a pair's first byte is not;
+- the pair word's bit is set at a pair's first byte alone.
+
+Then lean's form is exact, and `rule_last` makes it:
+
+```rust
+let words = (!(word >> sh)).trailing_zeros();   // 0 at a punctuation
+let n1 = 1 + (pair >> sh & 1);                  // 2 at a pair's first byte
+if sh + words < 64 && entry_names_a_fused_rule {
+    end = s + words.max(n1);
+}
+```
+
+The common way is the branch's first target, so the emitted Rust lays
+the run-past-the-block code after the loop's, as lean's `word_end`.
+Elsewhere the old form stays.
+
+Measured, as information: instructions a token, words 98.8 → 93.7,
+punctuation 54.2 → 51.7, mixed code 55.6 → 52.9. Words' cycles are
+unchanged (20.3 against lean's 15.7): the end's dependency chain was
+not what holds words back.
+
+Test: `a_tokens_end_is_leans_max` (the generated Rust: one branch in the
+run loop before the token's end, a `ctz`, an unsigned `max`).
+
+## A word's lookup is lean's `word_code`
+
+**Intro.** Lean's `word_code` compares a token with its slot by the
+first eight bytes and the length. It compares the ninth byte only where
+the token has nine, because its one long word, `violation`, has nine.
+Ours took a 32-byte slot whenever every word fit 16 bytes. For each
+word, straight-line, it then:
+
+- loaded the token's bytes 8 to 16 from a selected address;
+- masked them to the length;
+- loaded the slot's second key;
+- compared the two.
+
+The compiler now sizes the compare by the table's longest word
+(`RecordTables::rest`, `WordRest`):
+
+| Longest word | Form | Slot | Compared past eight bytes |
+|---|---|---|---|
+| 8 bytes at most | `None` | 16 bytes | nothing |
+| 9 | `Ninth` | 16 bytes | the ninth byte, in the meta's top byte |
+| 16 at most | `Second` | 32 bytes | the second eight bytes |
+| longer | `Tails` | 16 bytes | the tail compare, out of the loop |
+
+rr's words are `Ninth`:
+
+```rust
+let (k, meta) = slot(key ^ len);
+let hit = (k == key) & (meta & 0xff == len)
+        & ((len != 9) | (b[s + 8] == (meta >> 56) as u8));
+let code = if hit { meta >> 8 & (1 << 48) - 1 } else { 0 };
+```
+
+The ninth byte is read past a shorter token, in the zeros after the
+file (`BACK`), as lean reads its window's.
+
+Measured, as information: words 93.7 → 87.6 instructions a token.
+Numbers rose 113.3 → 118.8 with their arm's Rust unchanged: rustc's
+code for the loop around it, not the arm's source.
+
+Test: `a_words_lookup_is_leans` (a 16-byte slot, no second key read,
+the ninth byte asked at nine); `the_word_multiplier_is_a_literal` now
+asserts `WordRest::Ninth`.
+
+## A token's record is written once, at its end
+
+**Intro.** Lean writes a token once it knows all of it:
+`out.add(len).write(Tok { start, end, kind, word })`. Ours stored the
+start at the token's head, the last once the rule had it, and the code
+at the tail. `write_record` now stores all three at the tail, adjacent,
+where rustc pairs them as it does lean's fields.
+
+First tried: the start and last packed into one 64-bit store
+(`l << 32 | s`). That cost the shift, mask and `or` that lean's struct
+write does not pay. Words went 87.6 → 90.8 instructions a token and
+comments 187.7 → 198.6. Plain adjacent stores left the pairing to rustc.
+
+Nothing reads the current record before its end. `after_last_start`
+reads the record before the cursor, or at the first token reads the
+cursor's and drops it by a `select`.
+
+Measured, as information (instructions a token, before → after):
+
+| Kind | Before | After |
+|---|---|---|
+| Words | 87.6 | 86.7 |
+| Punctuation | 51.3 | 50.2 |
+| Mixed code | 52.8 | 51.8 |
+| Numbers | 118.8 | 117.4 |
+
+Test: `a_tokens_record_is_written_once` (three adjacent stores in the run
+loop). `a_numbers_arm_is_leans_loop` now ends the arm where its whole
+rule's call joins it, not at the record's first store, which is past
+the tail now.
+
+## A block's bytes are classified as lean's window
+
+**Intro.** Lean classifies each 16 bytes of a block once: one lookup in
+its low-nibble and high-nibble tables gives eight bits, and SPACE, WORD
+and RARE are each a `vtst` of some of them (`micro.rs`). Its digits bit
+serves both a word and a number's first byte. Its pair mask makes the
+bytes after each 16 with `vextq_u8::<1>(x, v[k + 1])`, not a second load.
+
+Ours took two lookups a vector, the space set in a table of its own, and
+eight loads for the pair mask (`+0`, `+1`, `+16`, `+17`, …). Two causes,
+both in generic code:
+
+- **The packer (`class_pack::plan`) chose a set's range by the bytes it
+  covers,** not by the products the rest then needs. The word set's tie
+  between `A-Z` and `a-z` went to `A-Z`, which leaves four products
+  where `a-z` leaves three (`_` and `P-Z` share a row). The packer then
+  took the word set's complement, and the three sets needed nine
+  products, one more than a table holds. Now every longest run of
+  allowed bytes is tried (`ranges`), and the cover decides.
+- **Of forms adding as few products,** the packer now takes the one
+  whose new products the sets after it can share (`serves`). The word's
+  digits stay a product, not a range, so the rare set's digits reuse
+  it, as lean's `C_DIGIT`.
+
+Space 2 products, word 3 and a range, rare 3 more, the digits shared and
+a range: 8 products, one table, one lookup a vector.
+
+The pair mask (`pair_word`) loads the block's four vectors and one past
+it, and makes each next-byte vector by a `shuffle` of two of them.
+`clif_rust` emits a shuffle whose mask is sixteen bytes in a row as
+`vextq_u8::<N>`; any other is a `vqtbl2q_u8`, as before. The lanes'
+`prev` shuffles are rows too, so they become `ext` as well.
+
+Our rare set is larger than lean's. It also holds `$ ' \ ?`, the control
+bytes and `0x7f..`, as the grammar's rare starts are. Lean tests its
+non-ASCII bytes by `x >= 0xc0`; ours are in a range, and the word set
+has one too: two compares where lean has one.
+
+Measured, as information (instructions a token, before → after):
+
+| Kind | Before | After |
+|---|---|---|
+| Words | 86.7 | 85.0 |
+| Punctuation | 50.2 | 48.3 |
+| Mixed code | 51.8 | 49.9 |
+| Strings | 234.3 | 237.6 |
+| Numbers | 117.4 | 121.8 |
+| Comments | 186.9 | 189.7 |
+
+Tests: `class_pack::a_lexers_sets_are_one_table`;
+`the_refill_is_leans_window` (one table's lookups a vector, the pair's
+next bytes an `ext`, no vector load at a block's byte after).
+
+## A test of the byte after asks no bound
+
+**Intro.** Lean reads `b[pos + 1]` where the file's bytes after its end
+are zeros; it never compares with the length there. Ours tested a `-`
+not before a digit as `'-' & !(digit(b[s + 1]) & within(1))`. The
+`within(1)` at `s + 1` asks whether byte `s`, the token's own first
+byte, is in the file. It cost a reload of the length, a compare with
+it, and a guard against overflow.
+
+`native_cpu_bytes::scalar` now gives a `within` that asks about the
+anchor's own byte (`i - d` is `p`) as the constant 1. Its callers make
+this sound. `bit_first` and `rest_after` cut their bit by `p < len`,
+or `zero_kills` proves the output false at a zero `p`, and `zero_kills`
+never counts a `within`.
+
+The run loop's other leftovers from the earlier list are gone with the
+steps before. The pair bit is made once. The `mov` shuffle around the
+ninth byte's compare went with `WordRest::Ninth`. In the steady loop the
+marks reach the code by one `orr` of the test's hit. The pending marks'
+merge (`orr …, lsl #16`) is only in the loop's first, rotated copy. The
+`-` test's filter is one `tbz` on the entry's bit, as before.
+
+Measured, as information (instructions a token, before → after):
+
+| Kind | Before | After |
+|---|---|---|
+| Words | 85.0 | 86.7 |
+| Punctuation | 48.3 | 50.3 |
+| Mixed code | 49.9 | 51.8 |
+| Strings | 237.6 | 231.9 |
+| Numbers | 121.8 | 113.1 |
+| Comments | 189.7 | 185.0 |
+
+Only the `-` test's code changed. The other rows moved by rustc's code
+for `f0` as a whole, as before.
+
+Test: `a_tests_next_byte_asks_no_bound`.
+
+## The next block waits on no token
+
+**Intro.** Lean's next window is `base + 64` whatever its tokens did:
+only a rare token or a word across the block's end moves its cursor. So
+the core loads and classifies the next block while the current block's
+tokens are still being written. Ours chose the next block from the
+cursor, the end of the token before. Every refill's loads therefore
+waited for the end of the block's last token, and the token chain and
+the refill ran in series.
+
+**How it was found.** Words took 18.6 cycles a token against lean's 15.5,
+at fewer instructions.
+
+- **Not branches.** Instruments' CPU Counters (bottlenecks mode) showed
+  the same front-end and mispredict shares as lean (about 2% and 3%).
+  Ours had 48% "processing" (back-end) to lean's 34%.
+- **Per block, not per token.** On lines of exactly 64 bytes, so that
+  every block is the same, ours matched lean only where no word was
+  looked up. Lean without its lookup ran 13.1 cycles a token, ours 16.5
+  at the same instruction count: about 27 cycles a block.
+- **The cause.** In the assembly, the refill's block index was
+  `cinc x15, (end >> 6), eq`, from the last token's end, and its vector
+  loads used it.
+
+**Fix.** The IR already chose the block by a branch on `here` (the token
+ended in the block already read): `h[4]`, the spent block's next, held in
+a register, else the cursor's block. Built as a `select`, LLVM kept the
+data dependency. Built as a branch with a cold arm, LLVM folded it back
+into a `csel`: `cold_path` alone does not stop that.
+
+`clif_rust` now writes every cold block as `cold_path()` and an empty
+`asm!` (`COLD`). The `asm!` emits no instruction and touches no memory
+or flags, but LLVM does not speculate it, so the arm stays a branch, as
+the IR has it.
+
+This is what a cold block means in the compiler's IR: its work is off the
+hot way. A folded cold arm puts its inputs on the hot way. The marks'
+merge in the token tail was folded the same way, and is a branch now too.
+
+Measured, as information (cycles a token, lean in brackets):
+
+| Kind | Before | After |
+|---|---|---|
+| Words | 20.1 (15.7) | 17.8 (15.4) |
+| Punctuation | 9.1 (9.0) | 8.9 (8.8) |
+| Mixed code | 10.0 (9.0) | 9.3 (8.8) |
+| Strings | 65.4 (84.6) | 62.4 (84.0) |
+| Numbers | 17.9 (22.9) | 17.6 (22.6) |
+| Comments | 68.7 (68.8) | 64.8 (68.4) |
+
+Instructions a token fell by 1–8 (words 86.7 → 83.1). On a 64-byte line
+of words that look up nothing, ours is 14.8 against lean's 15.5.
+
+What is left of the words gap, about 2.4 cycles a token:
+
+- **The lookup.** It costs ours about 2.9 cycles a word and lean about
+  2.1. With the hash's multiply and slot load taken off the chain (an
+  experiment, wrong results), most of the difference went.
+- **The base loop.** Without lookups, ours is 14.8 cycles a token
+  against lean's 13.1.
+
+Test: `a_cold_block_stays_a_branch` (every cold block carries the
+`asm!`).
+
+## The word lookup's chain is lean's
+
+The lookup's chain, from a word's length to its hit, was two
+instructions longer than lean's. Each one was a form LLVM could not
+shorten.
+
+The key cut: `cut_to` shifted all ones down by `-(8 * n)`, mod 64.
+LLVM turns that into `(56 * n) & 56`, three instructions. Lean writes
+`u64::MAX >> (64 - 8 * len)`, which LLVM makes `lsl #3; neg`. The cut
+is now `64 - 8 * n` (`irsub_imm`), the same amount mod 64:
+
+```rust
+// before: let sh = f.ins().ineg(bits);
+let sh = f.ins().irsub_imm(bits, 64);
+```
+
+The slot's length and ninth byte were cut from the meta word after its
+load (`and #0xff`, `lsr #56`). Now each is a byte load of its own, as
+lean's `ldrb`s, ready as soon as the meta's load:
+
+```rust
+let mlen = f.ins().uload8(types::I64, ro, sa, 8);
+let want = f.ins().uload8(types::I64, ro, sa, 8 + (NINTH_SHIFT / 8) as i32);
+```
+
+Tried first and dropped: printing register shifts in 64 bits instead of
+`as u32`. The machine code stayed the same; the multiply comes from the
+negation.
+
+Measured, as information: a word's lookup costs 2.9 cycles, from
+3.1 (lean's: about 2.1). Words: 17.8 → 17.2 cycles a token (lean
+15.4–15.9). All-keyword lines: 17.7 → 16.9. Instructions a token: words
+83.1 → 82.5, the other kinds within 0.1.
+
+Test: `a_words_lookup_is_leans` (the slot's bytes loaded alone, no key
+cut by a negated shift).
+
+The base loop is still open: 14.3 cycles a token on a line of words
+that look up nothing, against lean's 13.1 without its lookup. Two
+leads were checked and are not the difference:
+
+- **The masks' reload.** The run loop's first copy reloads the
+  refill's two masks with one `ldp` from the stack. On this core, an
+  `ldp` of data just stored takes about 7 cycles from store to use, and
+  two `ldr`s about 2 (a 3-instruction asm loop: single loads are
+  forwarded almost free, pairs are not). But the next block's masks do
+  not wait on this block's, so the reload is not loop-carried, and lean
+  reloads a pair the same way.
+- **The first byte's entry.** It is two instructions and a load after
+  the token's bytes, as lean's.

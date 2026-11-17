@@ -68,10 +68,15 @@ Where the build departs from the proposal, and why:
   own plans (`OWN_PLANS`) and are published together as it ends (`RunPlans::publish`, one `rcu`; the old map's
   entries are shared, not copied). `stored` and `orders` are `ArcSwap`s of their own. `planned_now` is only
   counted for the profile, so it sits behind a mutex no planner reads under.
-- **Feedback:** one cell per entry, not two. `Entry::rest` is an `ArcSwap<Learnt>`, which holds a plan's work per
-  node, EXPLAIN, gap, `Priced` and `ran`. A change is an `rcu` of that cell (`Entry::update`), so two changes to
-  one plan at once both land. A job's `plans_put` of a plan whose order the run already holds sets its cell at
-  once; the job's map is not involved.
+- **Feedback:** first built as one cell per entry, not two: an `ArcSwap<Learnt>` changed by `rcu`. That was wrong.
+  Concurrent chunks run the same rules, so many threads change one plan's cell at once: the compare-and-swap
+  retried, and each retry copied the entry (2,774 samples of a cold run, `Entry::update`). Corrected (2026-11-16)
+  toward the proposal: each field a cell of its own, written by the last writer, with no read of the old value.
+  `ran` is an `AtomicU64` of the f64's bits. `Priced` is an `Option<Arc<Priced>>` behind a `parking_lot` mutex held
+  only to swap the pointer. An `ArcSwapOption`, as proposed, cost 942 samples in its store, settling the debts of
+  every thread that loads it, at 330,000 stores a run. The search's findings (work per node, EXPLAIN, gap) are a
+  third cell, replaced only when a put brings them. Planning hits (`plan_rule_reused`) went from 9,070 samples to
+  6,427 over a whole cold run, and the feedback's writes from 3,590 to 106. Same findings.
 - **Lines run:** a channel (`std::sync::mpsc`, whose sends take no lock), not a collector fed at each job's end.
   Each stratum sends its lines as it runs, and only `lines_take` receives them. Nothing reads the lines in
   between, so a job needs no buffer of its own.

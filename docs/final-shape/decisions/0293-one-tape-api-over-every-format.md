@@ -181,19 +181,70 @@ This record is steps 2, 3 and 4, and the API they need.
    byte-identical outputs in the three formats, cold and warm: the 23 Vue rules over 14 Blade, 9 Vue and 7
    TypeScript files (their programs embedded), and 178 ruff rules over 10 Python files.
 
+9. **The device reads the tape** (step 5, its resident half; built). A resident document is its tape where it is
+   placed, its source, its code table at a fixed width and its line starts: nothing per node beside the tape.
+   - **Placed as stored:** format 15's image, format 16's tape, or a 16z tape laid out as the format 16 tape it is
+     the blocks of (`Tape16Z::unblock_into`: each block decoded and its regions laid end to end, as format 16's
+     regions are its blocks'; no node is read). `f16::placement` says where a format 16 tape's arrays, side lists
+     and part starts lie, checked as `Tape16::from_bytes` checks them; the device's view (`DocView`) names them.
+   - **The device's reads** (`metal_tape.metal`) are format 16's `View`'s (a value too wide for its array read from
+     its side list; a start from its checkpoint and gaps), or format 15's columns. A parent is a search: format
+     16's back over the siblings' slots, format 15's back over at most 64 nodes and then a descent from the root,
+     as the CPU's. A child or a sibling is a hop over a subtree, bounded by the parent's end where the step knows
+     it (a walk's child frame keeps its parent; a following-siblings frame its parent's end, found once).
+   - **Gone:** the parent column, the child lists and the nodes by code the residency derived at admission
+     (16 bytes a node). The interpreter's children are hops in both its resident and packed builds; its node
+     record carries no parent or sibling links (`node_parent`, `node_next`). Where it pushed a node's later
+     matching children last-first, it pushes them in order and reverses the run it pushed: the stack is the same.
+   - **A pass's roots** were listed on the host from the tape's code bytes at first; §10 replaced the lists.
+
+   Checked (2026-11-16): the device reads every node of a batch (one document of several side-list parts, with
+   gaps and lengths past a byte) as its document does, in 15, 16 and 16z, admitted from a store
+   (`the_device_reads_every_format_as_the_document_does`: code, parent, siblings, children, subtree, span); the
+   combined graph and the rest of §8's set pass in the three formats, but for the same pack-data and format 15
+   tests; of the slow tier (which the default filter leaves out, and an earlier note here wrongly counted as run),
+   the micro walks equal the interpreter's labels, and with every walk spilling the device's roots equal the CPU's
+   on all 491 clauses (41 waves over 24 of the pack's files, from 236fc98d2~1), in the three formats (the spill
+   test's floor of 1,000 roots needs the packs' full test data: those files give 621); with `metal-tests`, the device's roots equal the
+   CPU's on every clause the resident interpreter takes alone, in the three formats, but for one clause past its
+   work limit, as at 6afcddb0a before this (work queue Q49, Q19 on oscar); the CLI's device run (`logic --metal`, the Vue rules
+   over the mixed files) gives the same findings in the three formats, cold and warm.
+
+10. **A pass's roots are a rule, not a list** (built, 2026-11-16, the user: "yes, please do that. It's a better
+    shape"). §9's lists (4 bytes a root, a run's at the median 20 bytes a node, 85 KB a wave over 24 files, built
+    on the host for every rule and run) are gone. The run's root table (`RootTable`, `root_mask` on the device)
+    holds the batch's file count and each file's first group of 64 nodes, and per distinct rule: over codes, a
+    bit per file it runs in and its test (kinds, then kind and class tests: the sweeps' `code_admits`); listed (a
+    clause's prefilter candidates), a row of bits over the batch's nodes. Nothing is kept per root.
+    - **A thread is a pass and a group of 64 of a document's nodes**: it reads the group's codes from the tape,
+      makes the group's roots a 64-bit mask, and walks from each (`ROOTS_EACH`). The micro walks, the fused
+      groups (a lane every `width`th group of its file), the pattern kernels and the resident interpreter's tasks
+      (a task a group; the lane runs each root in it) all take their roots so. A group's roots run one after
+      another in its thread: a long walk is still the spill queue's to split.
+    - **The host lists nothing**: a rule is a few words, sized from the batch's node counts. The CPU's readers
+      (`Roots::nodes`) still list a document's roots from the code bytes 64 at a time; the profile's per-depth
+      root counts do so only when profiling.
+    - **Not changed:** a wave's final root walks (`root_records`) take their starts from the wave's jobs, a list
+      the wave's prefilter made.
+
+    Checked (2026-11-16, on the build farm's M3 and M1 Max, 15, 16 and 16z): on the matcher's fixtures the
+    device's roots equal the CPU's on all 491 clauses, the resident interpreter's on 114 of 122 with the D416
+    clause past its work limit as before (Q49, Q19 on oscar); in 15 and 16, with the pack's files restored (618, from
+    236fc98d2~1), the micro walks, the combined graph, the widened-walk catch, the device conformance test and the
+    `waves::matches` tests pass, and with every walk spilling the device's roots equal the CPU's on all 491 clauses (the spill
+    test's floor of 1,000 roots still wants the full test data). The two per-clause tests over all 618 files run
+    past nextest's 240 s limit.
+
 ## Interim, until step 5
 
 - **What reads the image's tape through the API** in whichever format it is held: the checks a restore makes
   (`tape::validated`), the embedders' reading of the host (`embed::host`), the axes (§5), and the image's node
   counts and subtree sizes.
-- **What still copies it into nodes:** the transducer's packed batch (`PackedBatch::nodes`, the CPU and Metal
-  interpreters' node records, built from the tape in one pass), and what the residency derives for the device
-  beside a format 15 image (each node's parent, its child lists, the nodes by code). The device's half of step 5
-  replaces them.
+- **What still copies it into nodes:** the transducer's packed batch (`PackedBatch::nodes`, 44 bytes a node, and
+  its child lists, built from the tape in one pass): the roots' CPU JIT (`native_cpu`, a wave's roots run there,
+  `waves::matches`), the grid and register machines and the non-resident interpreter read it. The resident path
+  (§9) does not.
 - **The core facts' digest** serializes a format 15 image to hash it (format 16's bytes are hashed as held).
-- **The device's kernels read format 15 only** (`facts::nearest`'s Metal solve, the matcher's Metal runs): a
-  Metal run over a store of format 16 stops at the residency with the reason (`resident::header_counts`). The
-  lab's format-16 kernels (E30, E31) replace them in step 5.
 - **The tape tests** (`tape::tests`) are format 15's: they assert the run stores format 15, and fail under
   `RERAIL_TAPE=16`.
 

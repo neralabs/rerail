@@ -397,21 +397,17 @@ pub(super) fn source(store: &ContentStore, text: &str) -> StoreResult<SourceId> 
     off();
     let hash = HashKey::sha256(text.as_bytes());
     // Held (O95): a source the run finds is pinned with it, as one it stores is.
-    match store.held_source_by_hash(hash)? {
+    match store.source_by_hash(hash)? {
         Some(id) => Ok(id),
         None => store.put_source_hashed(text.as_bytes(), hash, &[]),
     }
 }
 
-/// The source of `text` when the store holds it: one read, and its pin (O95) queued on the store's writer (decision
-/// 0104). `None`: not stored yet; `source`, run on the writer, stores it.
+/// The source of `text` when the store holds it: one read, nothing written (the run's collection lease keeps it until
+/// the manifest names it, decision 0306 step 4). `None`: not stored yet; `source`, run on the writer, stores it.
 pub(super) fn stored_source(store: &ContentStore, text: &str) -> StoreResult<Option<SourceId>> {
     off();
-    let found = store.sources_by_hashes(&[HashKey::sha256(text.as_bytes())])?.pop().flatten();
-    if let Some(id) = found {
-        store.write_back_syms(crate::content_store::write_back::Syms::None, "a source's pin", 0, Vec::new(), Box::new(move |s| s.pin_held_sources(&[id])));
-    }
-    Ok(found)
+    Ok(store.sources_by_hashes(&[HashKey::sha256(text.as_bytes())])?.pop().flatten())
 }
 
 /// The source of `text` for the run's manifest (`late`, which the manifest reads as the writer runs it), all of it
@@ -429,48 +425,38 @@ pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, stor
     if !store && stored_by.is_some_and(|key| !cache.queued(key)) {
         return;
     }
-    let late = std::sync::Arc::clone(late);
-    cache.write_back_syms(
-        crate::content_store::write_back::Syms::None,
-        "a source the manifest names",
-        text.len(),
-        Vec::new(),
-        Box::new(move |s| {
-            let hash = HashKey::sha256(text.as_bytes());
-            let found = match s.held_source_by_hash(hash)? {
-                Some(id) => Some(id),
-                None if store => Some(s.put_source_hashed(text.as_bytes(), hash, &[])?),
-                None => None,
-            };
-            late.lock().expect("the late sources").extend(found);
-            Ok(())
-        }),
-    );
+    // In the run's record (decision 0306): found, or stored, as the writer applies it.
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
+        let (text, store): (String, bool) = crate::content_store::record::codec::from_body("a source the manifest names", body)?;
+        let hash = HashKey::sha256(text.as_bytes());
+        let found = match cx.store.source_by_hash(hash)? {
+            Some(id) => Some(id),
+            None if store => Some(cx.store.put_source_hashed(text.as_bytes(), hash, &[])?),
+            None => None,
+        };
+        cx.name(found);
+        Ok(())
+    }
+    cache.record("a source the manifest names", Vec::new(), &(text, store), None, apply);
 }
 
 /// The sources of contents the run named by their digests (`Content::Unstored`: read in the waves, where the store is
-/// not asked, by files the stat index does not trust yet), for the run's manifest (`late`): looked up together on the
-/// store's writer, behind the writes queued before (a new content's tape stores its source), and pinned as
-/// `stored_source` pins. A second run in one process finds those files' tapes held and writes none, so only this
-/// names them (Q24).
-pub(super) fn named_digests(cache: &ContentStore, digests: Vec<[u8; 32]>, late: &std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>) {
+/// not asked, by files the stat index does not trust yet), for the run's manifest: looked up together in the run's
+/// record (decision 0306), behind the writes queued before (a new content's tape stores its source), and named there
+/// (`Apply::name`), kept from collection by the run's lease until the manifest names them (0306 step 4). A second run
+/// in one process finds those files' tapes held and writes none, so only this names them (Q24).
+pub(super) fn named_digests(cache: &ContentStore, digests: Vec<[u8; 32]>) {
     if digests.is_empty() {
         return;
     }
-    let late = std::sync::Arc::clone(late);
-    cache.write_back_syms(
-        crate::content_store::write_back::Syms::None,
-        "the sources the manifest names by digest",
-        digests.len() * 32,
-        Vec::new(),
-        Box::new(move |s| {
-            let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
-            let found: Vec<SourceId> = s.sources_by_hashes(&hashes)?.into_iter().flatten().collect();
-            s.pin_held_sources(&found)?;
-            late.lock().expect("the late sources").extend(found);
-            Ok(())
-        }),
-    );
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
+        let digests: Vec<[u8; 32]> = crate::content_store::record::codec::from_body("the sources the manifest names by digest", body)?;
+        let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
+        let found: Vec<SourceId> = cx.store.sources_by_hashes(&hashes)?.into_iter().flatten().collect();
+        cx.name(found);
+        Ok(())
+    }
+    cache.record("the sources the manifest names by digest", Vec::new(), &digests, None, apply);
 }
 
 /// How many contents of one path the memo keeps (decision 0117): the newest, by their last use. Worktrees or
@@ -762,21 +748,16 @@ fn queued_content(content: Content, path: &str, program: &[u8; 32]) -> Option<cr
 pub(super) fn sources(store: &ContentStore, texts: &[&str]) -> StoreResult<Vec<SourceId>> {
     off();
     let hashes: Vec<HashKey> = texts.iter().map(|t| HashKey::sha256(t.as_bytes())).collect();
-    let found = store.held_sources_by_hash(&hashes)?;
+    let found = store.sources_by_hashes(&hashes)?;
     texts.iter().zip(hashes).zip(found).map(|((text, hash), id)| match id { Some(id) => Ok(id), None => store.put_source_hashed(text.as_bytes(), hash, &[]) }).collect()
 }
 
 /// The stored sources of many contents, by their SHA-256 digests, in their order: one read and nothing written (a
-/// lookup writes nothing, decision 0104). The sources found are pinned under the store's holder by its writer.
+/// lookup writes nothing, decision 0104; the run's collection lease keeps them, decision 0306 step 4).
 pub(super) fn found_sources(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<Vec<Option<SourceId>>> {
     off();
     let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
-    let found = store.sources_by_hashes(&hashes)?;
-    let pins: Vec<SourceId> = found.iter().flatten().copied().collect();
-    if !pins.is_empty() {
-        store.write_back_syms(crate::content_store::write_back::Syms::None, "the pins of the sources the run read", pins.len() * 8, Vec::new(), Box::new(move |store| store.pin_held_sources(&pins)));
-    }
-    Ok(found)
+    store.sources_by_hashes(&hashes)
 }
 
 /// Memoises many documents' entries at once, each `(content, path, key, entry)` under `program`: their bytes in one
@@ -864,7 +845,7 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
         rows.push(crate::content_store::MemoRow { part: part_of(&digest, &path), path, digest, key, over });
         contents.push(content);
     }
-    let mut segments = w.seal();
+    let segments = w.seal();
     if rows.is_empty() {
         return Ok(());
     }
@@ -890,15 +871,9 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
         .collect();
     // The queue's measure: what the job holds in memory, its rows; the images are the OS's pages.
     let bytes = rows.iter().map(|r| r.path.len() + 96).sum();
-    store.write_back_syms(
-        crate::content_store::write_back::Syms::None,
-        "the memo's entries",
-        bytes,
-        keys,
-        // A path's earlier contents: its newest `MEMO_CONTENTS` kept (an edited file's entry each edit, 15 MB for one
-        // file of the 20, was kept 32 runs: 450 MB of one space).
-        Box::new(move |store| store.put_memo_segments(&space, &mut segments, &rows, MEMO_CONTENTS)),
-    );
+    // A path's earlier contents: its newest `MEMO_CONTENTS` kept (an edited file's entry each edit, 15 MB for one file
+    // of the 20, was kept 32 runs: 450 MB of one space).
+    store.queue_memo_segments("the memo's entries", bytes, keys, space, segments, rows, MEMO_CONTENTS);
     Ok(())
 }
 
@@ -943,7 +918,7 @@ pub(super) type Held = std::sync::Mutex<std::collections::HashMap<([u8; 32], Str
 
 /// A file's content as the memo knows it: its stored source; a content the store does not hold yet, by its digest
 /// (its source is written by the store's writer, behind the run, with its tape: decision 0104); or (held) its digest.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(in crate::code_rule_dsl) enum Content {
     Stored(SourceId),
     Unstored([u8; 32]),

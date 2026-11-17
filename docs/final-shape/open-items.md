@@ -50,7 +50,7 @@ choosing the same one are writing about the same thing. Numbered items keep thei
 | O43 | Phase 10 (step 30) | Launch cost on the device: each chunk pays one GPU wake-up from idle (about 0.85 ms, 12 of 19–22 ms of host wait on async-sync-boundary at 1 in 8, decision 0040) because the GPU sits idle while the CPU runs the chunk's joins. The joins themselves are small (about 0.1 s of 7.7 s CPU, at most 245K rows into a step over the run), so the goal is not join speed: it is to keep the chunk on the device in one launch. Close by running a chunk's native joins on Metal in the same command buffer as its nearest ancestors (one command buffer, one wait a chunk): plan chosen on the host from statistics as now; each step a sort or hash join kernel over the shared relations, counting then writing (or writing into a reused block and retrying on overflow); negation as an anti-join; text tests as chunked matchers; aggregates and cross-file rounds stay as they are. Loading inputs, building indexes and the per-chunk statistics (about 2.8 s of CPU) are the same shape and move with it. Validated by the profile's device phases: one launch per chunk, schedule (GPU waking) no longer paid per chunk, findings unchanged | open |
 | O60 | Phase 6 / 11 | The matcher atom's captures, `ast($D, $N, {…}, NAME: $v)`: parsed, no executor (t17) | open |
 | O61 | Phase 6 / 11 | A builtin catalogue: the data-layer programs use 30 builtins, one built (t17) | open |
-| O62 | Phase 6 / 11 | One value lattice, the shortlex-least route: four data-layer recursions, no implementation, `widen` loses the witness (t17) | open |
+| O62 | Phase 6 / 11 | One value lattice, the shortlex-least route: four data-layer recursions (t17) | narrowed (2026-11-16): `hierarchy` runs on Metal in session runs (0307, 0311), with native's findings; the sinks' programs fail their types and `@id` has no executor |
 | O63 | Phase 6 / 11 | Tree built-ins beyond `nearest` are written as builtins (`@within`, `@depth`); two kind-filtered walks stay Datalog recursion (t17) | open, narrowed (2026-11-06): `.rr`'s `within(n, a)` is the engine's tree relation, read off the tape per looked-up node (decision 0050 §4); the `@within`/`@depth` programs and the two kind-filtered walks remain |
 | O64 | Phase 11 | The 113 regex forbid clauses of the data-layer rules have no logic form until rewritten as matcher atoms (PIAT §5.1, t17) | open |
 | O65 | Phase 11 | Two data-layer stages outside the fragment: `call_paths` (a value cycle) and `block_results` (`NotStratifiable` over the tree) (t17) | open |
@@ -1293,11 +1293,29 @@ exclusion needs that mark), with `@rx_*` on §16's regex path.
 ## O62. The shortlex-least route lattice
 
 Of the 70 recursions in the data-layer rules, 4 need a lattice beyond `set`, `flat`, `min` and `max`: `hierarchy`
-(internal-dead-code, public-api-triples) and the two sink searches (serverplan-state-tripwires), each the least
-route under (length, text). The native lattices are `i64`-valued, and `Min`'s widening jumps to its top, losing the
-route. Without `widen` the declaration fails `UnboundedLattice` (`internal_dead_code.hierarchy_unwidened.rdl`).
-**Closure:** a catalogue lattice bounded by its edge relation, or the length as a `min` lattice with the route in
-the findings layer (t17 § 6).
+(internal-dead-code, public-api-triples) and the two sink searches (serverplan-state-tripwires, `sink` and
+`project_sink`), each the least route under (length, text).
+
+**Built (decision 0124).** `.lattice shortlex_min<symbol>` is a lattice of the native set engine (`ShortlexMin`):
+a key keeps its shortest route, then the least by bytes. It is finite, so `widen 64` keeps the route (the witness is
+no longer lost). `hierarchy` runs natively as a lattice relation, 26,527 rows on public_api_triples, the same as
+SQLite's. The unwidened declaration still fails `UnboundedLattice` (`internal_dead_code.hierarchy_unwidened.rr`),
+as it should.
+
+**Built on Metal (decision 0307, 2026-11-16).** One device arena per recursive component, the shortlex fold
+(`lat_best`, `lat_merge`: characters, then bytes) and `zero_pad` (`@printf`'s `%0Nd`). The coverage gate's
+shortlex probes run on the device with SQLite's rows, hierarchy's shape among them.
+
+**Open.**
+
+Levels on the device (decision 0311, built 2026-11-16): each row's round is its level, so a session's leveled
+recursion runs on Metal. `hierarchy` ran as a device fixpoint in public_api_triples' and internal_dead_code's session
+runs, with native's findings.
+
+1. **The sinks.** `sink` and `project_sink`'s programs fail their types (`start` is not declared), and no executor
+   has `@id`. Their shape (`@concat(r0, <number as text>, "|")`) runs on the device.
+
+**Closure:** the four recursions run on Metal and give SQLite's rows.
 
 ## O63. Tree built-ins beyond `nearest`
 
@@ -5525,3 +5543,14 @@ past the start.
 function taking the max itself, off the hot path), so an arm whose exits all are needs no max.
 
 **Closed 2026-11-16.** No `max` where the rule's last is never below its start (`last_below_start`; a refusal leaves the loop).
+
+## O-kept-route-after-quiet-cold. An edit after a quiet cold run skips the kept route (2026-11-16, decision 0117)
+
+Answered (2026-11-16). The stat index trusts a file only when its mtime is over `RACY_NS` (2 s) before its recording
+(git's racy rule). A corpus written just before a cold run (a benchmark's fresh copy) leaves every file racy, so the
+next run read and hashed every file. The kept route took only files the index knew by their stat, so it closed:
+every hit was decoded whole, and the cross part read about 18 M kept rows more. A cold run under load, or the
+benchmark's own steps, started over 2 s after the copy, so there the route was taken. Now a file read for its stat's
+sake whose hashed content is the one the keeper counted is read for its outputs alone too. Quiet cold then edit, M3
+Max, 4 threads: 7.29 s CPU, 6.07 s wall -> 6.46 s, 5.10 s; 299 of 300 files outputs-only; outputs equal a
+from-scratch run (660 relations, 30,453 rows).

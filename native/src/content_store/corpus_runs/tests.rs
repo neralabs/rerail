@@ -240,29 +240,43 @@ fn a_held_plan_stays_live_until_its_run_releases_it() {
     assert_eq!(live(old), Some(0), "released, it is dead again");
 }
 
-/// O95: a handle holding its sources pins each one it stores or finds, in the same transaction; a collector cannot
-/// take them, or the tapes it stores of them, until the holder releases them.
+/// Decision 0306 step 4: a running run's collection lease alone keeps what it reads and writes from every collector
+/// (another handle's, as another process's): no hold, no pin. Once its manifest names its sources and plan and the
+/// lease goes, collection keeps what the manifest names and takes the rest.
 #[test]
-fn a_held_source_survives_collection_until_released() {
-    let (path, store) = store("corpus-held-source");
+fn a_runs_lease_keeps_its_sources_and_plan_from_collection_without_holds() {
+    let (path, store) = store("corpus-run-lease");
     let collector = ContentStore::open(&path).unwrap();
-    let passes = || {
+    let policy = CorpusPolicy { protected_runs: 1, high_water: 0, low_water: 0, backstop_secs: 86_400, decide_every_secs: 1, ..CorpusPolicy::default() };
+    let passes = |now: i64| {
         for _ in 0..3 {
-            collector.collect(1_000, MAX_COLLECTION_BATCH).unwrap();
+            collector.collect(now, MAX_COLLECTION_BATCH).unwrap();
+            collector.collect_corpus_pass(&policy, now).unwrap();
         }
     };
-    let found = noise(7, 256);
-    let old = store.put_source(&found, &[]).unwrap();
-    store.hold_sources("corpus-run:held", 2_000).unwrap();
-    let stored = noise(8, 256);
-    let (new, tape) = store.put_source_and_tape(&stored, crate::content_store::HashKey::sha256(&stored), 1, 7, 9, &noise(9, 256)).unwrap();
-    assert_eq!(store.held_source_by_hash(crate::content_store::HashKey::sha256(&found)).unwrap(), Some(old));
-    passes();
-    assert_eq!(store.tape_by_source(new, 1, 7, 9).unwrap(), Some(tape), "the stored source and its tape are held");
-    assert_eq!(store.source_by_hash(crate::content_store::HashKey::sha256(&found)).unwrap(), Some(old), "the found source is held");
-    store.release_pins("corpus-run:held").unwrap();
-    passes();
-    assert_eq!(store.source_by_hash(crate::content_store::HashKey::sha256(&found)).unwrap(), None, "released, it is collected");
+    let plan = [41u8; 32];
+    let rows = || -> i64 { store.connection.lock().unwrap().query_row("SELECT count(*) FROM facts_results WHERE plan_digest=?1", [&plan[..]], |r| r.get(0)).unwrap() };
+    // An earlier run's manifest, under another plan: what a collector decides from.
+    let earlier = store.put_source(&noise(20, 256), &[]).unwrap();
+    assert!(store.record_corpus_run_naming("/repo", &[earlier], 7, 9, [40u8; 32], &[], 1_000).unwrap());
+    let lease = store.hold_collection().unwrap();
+    let (named, unnamed) = (noise(21, 256), noise(22, 256));
+    let named_id = store.put_source(&named, &[]).unwrap();
+    store.put_source(&unnamed, &[]).unwrap();
+    let set = crate::content_store::FactsPlanSet::new(vec![plan]);
+    let result = crate::content_store::FactsResult { plan, path_dependent: true, entry: vec![1, 2, 3] };
+    store.put_facts_memo(crate::content_store::FactsMemoKey { source: named_id, fact_schema: live_fact_schema(150), path: "a.py" }, &set, &[result], &[]).unwrap();
+    passes(2_000);
+    let found = |bytes: &[u8]| store.source_by_hash(crate::content_store::HashKey::sha256(bytes)).unwrap();
+    assert!(found(&named).is_some() && found(&unnamed).is_some(), "the run's sources, neither held nor named, are kept while it runs");
+    assert_eq!(rows(), 1, "and its plan's rows");
+    // The run's record: its manifest names the one source and the plan; then the lease goes.
+    assert!(store.record_corpus_run_naming("/repo", &[named_id], 7, 9, plan, &[], 3_000).unwrap());
+    drop(lease);
+    passes(4_000);
+    assert_eq!(found(&named), Some(named_id), "named by the manifest, kept");
+    assert_eq!(rows(), 1, "the plan's rows, named, kept");
+    assert_eq!(found(&unnamed), None, "named by nothing, collected once the run is done");
 }
 
 /// Old memo rows of every writer go, while their source lives on: a prepared program's plans a later build replaced
@@ -510,6 +524,31 @@ fn a_keep_decision_leaves_its_sweep_to_the_frames_job() {
     assert_eq!(job.step(&rerail_accel::upkeep::Slice::for_test(std::time::Duration::from_millis(200), 64 << 20, &stop)).unwrap(), rerail_accel::upkeep::Step::Done);
     assert!(!store.frames_sweep_wanted().unwrap(), "swept");
     assert_eq!(job.due(), rerail_accel::upkeep::Due::No);
+}
+
+/// A frames job outlives its store (the process holds it): once the store is gone, the job reads no deleted file
+/// and is not due, and its step makes no new store at the path. Its cached connection had read the deleted file's
+/// last decision for ever, each `finish_soon` sweeping a store the step had made anew, a hundred passes over every
+/// gone store of a test process.
+#[test]
+fn a_frames_job_over_a_gone_store_is_not_due_and_makes_no_store() {
+    use rerail_accel::upkeep::Job as _;
+    let (path, store) = store("corpus-frames-gone");
+    let file = store.database_path().to_path_buf();
+    let policy = CorpusPolicy { protected_runs: 1, high_water: 0, low_water: 0, backstop_secs: 86_400, ..CorpusPolicy::default() };
+    let mut job = crate::content_store::upkeep::Frames::new(&file);
+    let source = store.put_source(&noise(9, 256), &[]).unwrap();
+    store.put_tape(source, 1, 7, 9, &noise(509, 256)).unwrap();
+    assert!(store.record_corpus_run("/repo", &[source], 7, 9, [9u8; 32], 1_000).unwrap());
+    store.keep_corpus_runs(&policy, 1_000).unwrap();
+    assert_eq!(job.due(), rerail_accel::upkeep::Due::Urgent);
+    drop(store);
+    drop(path);
+    assert!(!file.exists(), "the store's folder is gone with its binding");
+    assert_eq!(job.due(), rerail_accel::upkeep::Due::No, "a gone store has nothing to sweep");
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    assert_eq!(job.step(&rerail_accel::upkeep::Slice::for_test(std::time::Duration::from_millis(200), 64 << 20, &stop)).unwrap(), rerail_accel::upkeep::Step::Done);
+    assert!(!file.exists(), "the step made no store");
 }
 
 /// Decision 0190 §8: a sweep yields to a run that begins over its store, here another process's (its shared lock on

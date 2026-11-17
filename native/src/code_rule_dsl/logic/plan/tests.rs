@@ -953,9 +953,16 @@ fn a_second_corpus_run_deletes_and_creates_its_store_again() {
         .args(["--ignored", "--exact", "code_rule_dsl::logic::plan::tests::corpus_store_child", "--nocapture", "--test-threads=1"])
         .env(CORPUS_STORE_CHILD, &dir)
         .env("RERAIL_TAPE_CACHE", "off")
-        .status()
+        .output()
         .unwrap();
-    assert!(status.success() && dir.join("done").exists(), "the child failed: {status}");
+    // The child's own output, shown when it fails: a failure beside other tests says nothing without it (Q42).
+    assert!(
+        status.status.success() && dir.join("done").exists(),
+        "the child failed: {}\n--- stdout\n{}\n--- stderr\n{}",
+        status.status,
+        String::from_utf8_lossy(&status.stdout),
+        String::from_utf8_lossy(&status.stderr)
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

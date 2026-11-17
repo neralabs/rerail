@@ -64,12 +64,12 @@ pub(in crate::code_rule_dsl) enum Pass<'a> {
     Empty { target: u32 },
 }
 
-/// A pass's roots, as a rule over each document's codes (decision 0033): no node list is built.
-/// Every root test a pass's domain makes (its kinds, its program's leading kind and supertype
-/// tests, `matcher::Entry`) is a property of a node's code, so a pass's roots in a document are
-/// the nodes of the codes its rule admits, which the residency indexes (`ChunkTape::by_code`). The
-/// run hands the device each pass's (document, code) runs (`RootSeg`); the device reads its root
-/// in place. Listed roots (a clause's prefilter candidates, few and scattered) are a list.
+/// A pass's roots, as a rule over each document's codes (decision 0033): every root test a pass's
+/// domain makes (its kinds, its program's leading kind and supertype tests, `matcher::Entry`) is a
+/// property of a node's code. The device is handed the rule, not its roots (decision 0293 §10): a
+/// thread takes a pass and a group of 64 of a document's nodes and finds the group's roots from
+/// the tape's code bytes (`root_mask`). Listed roots (a clause's prefilter candidates, few and
+/// scattered) are a row of bits over the batch's nodes.
 #[derive(Debug)]
 pub(in crate::code_rule_dsl) enum Roots {
     /// The nodes whose kind is one of `kinds` (any where `None`) and whose code passes `entry`
@@ -80,10 +80,9 @@ pub(in crate::code_rule_dsl) enum Roots {
 }
 
 impl Roots {
-    fn admits(kinds: &Option<Vec<u16>>, entry: &[(u8, u16)], code: &crate::code_rule_dsl::tape::resident::DeviceCode) -> bool {
-        let class = |class: u16| code.classes[..usize::from(code.class_count)].contains(&class);
-        kinds.as_ref().is_none_or(|kinds| kinds.binary_search(&code.kind).is_ok())
-            && entry.iter().all(|&(op, arg)| if op == super::super::KIND { code.kind == arg } else { class(arg) })
+    fn admits(kinds: &Option<Vec<u16>>, entry: &[(u8, u16)], kind: u16, classes: &[u16]) -> bool {
+        kinds.as_ref().is_none_or(|kinds| kinds.binary_search(&kind).is_ok())
+            && entry.iter().all(|&(op, arg)| if op == super::super::KIND { kind == arg } else { classes.contains(&arg) })
     }
 
     /// This rule as the sweep tests it at a node's code (`sweep_admits`): {kind count or NONE,
@@ -107,96 +106,107 @@ impl Roots {
                 if !active.get(file).copied().unwrap_or(false) {
                     return Box::new(std::iter::empty());
                 }
-                Box::new((0..tape.transducer_len() as u32).filter(move |&node| {
-                    kinds.as_ref().is_none_or(|kinds| kinds.binary_search(&tape.transducer_kind(node)).is_ok())
-                        && entry.iter().all(|&(op, arg)| if op == super::super::KIND { tape.transducer_kind(node) == arg } else { tape.transducer_has_supertype(node, arg) })
-                }))
+                let mut nodes = Vec::new();
+                tape.transducer_nodes_where(|kind, classes| Self::admits(kinds, entry, kind, classes), &mut nodes);
+                Box::new(nodes.into_iter())
             }
         }
     }
 
-    /// This rule's segments over a batch's documents, appended to `segs` (in u32s, as `RootSeg`s
-    /// at 16-byte records): the header's index (in records) and the roots' count. Listed nodes go
-    /// after every segment, in `listed`, which the caller appends and offsets (`Segments`).
-    fn segments(&self, documents: &[std::sync::Arc<crate::code_rule_dsl::residency::slabs::Resident>], segs: &mut Segments) -> (u32, u32) {
-        let header = segs.records.len();
-        segs.records.push([0; 4]);
-        let mut total = 0_u32;
-        for (doc, resident) in documents.iter().enumerate() {
-            match self {
-                Self::Listed(lists) => {
-                    let Some(list) = lists.get(doc).filter(|list| !list.is_empty()) else { continue };
-                    segs.records.push([doc as u32, ROOT_LISTED | segs.listed.len() as u32, list.len() as u32, total]);
-                    segs.listed.extend_from_slice(list);
-                    total += list.len() as u32;
+    /// Whether this rule may have roots in file `file` (a rule over codes runs in the files
+    /// `active` marks; a list, where it has some).
+    fn runs_in(&self, file: usize) -> bool {
+        match self {
+            Self::Listed(lists) => lists.get(file).is_some_and(|list| !list.is_empty()),
+            Self::Codes { active, .. } => active.get(file).copied().unwrap_or(false),
+        }
+    }
+
+    /// This rule as the device reads it (`root_mask`), appended to `words`: its kind (0 over codes,
+    /// 1 listed); over codes, a bit per file it runs in, then its test (`device_rule`); listed,
+    /// its nodes as a row of bits over the batch's nodes (two words past the last, which a 64-bit
+    /// window at the end reads).
+    fn table(&self, files: &[TapeDoc], words: &mut Vec<u32>) -> Result<(), Error> {
+        match self {
+            Self::Codes { active, .. } => {
+                words.push(0);
+                let mut bits = vec![0_u32; files.len().div_ceil(32)];
+                for file in (0..files.len()).filter(|&file| active.get(file).copied().unwrap_or(false)) {
+                    bits[file / 32] |= 1 << (file % 32);
                 }
-                Self::Codes { kinds, entry, active } => {
-                    if !active.get(doc).copied().unwrap_or(false) {
-                        continue;
+                words.extend(bits);
+                words.extend(self.device_rule()?);
+            }
+            Self::Listed(lists) => {
+                words.push(1);
+                let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
+                let row = words.len();
+                words.resize(row + nodes.div_ceil(32) + 2, 0);
+                let mut base = 0;
+                for (file, tape) in files.iter().enumerate() {
+                    for &local in lists.get(file).into_iter().flatten() {
+                        let node = base + local as usize;
+                        words[row + node / 32] |= 1 << (node % 32);
                     }
-                    let starts = resident.code_starts();
-                    for (code, device) in resident.codes().iter().enumerate() {
-                        let count = starts[code + 1] - starts[code];
-                        if count > 0 && Self::admits(kinds, entry, device) {
-                            segs.records.push([doc as u32, starts[code], count, total]);
-                            total += count;
-                        }
-                    }
+                    base += tape.transducer_len();
                 }
             }
         }
-        segs.records[header] = [(segs.records.len() - header - 1) as u32, total, 0, 0];
-        (header as u32, total)
+        Ok(())
     }
 }
 
-/// Bit 31 of a segment's start: its nodes are listed (`Roots::Listed`), not a code's.
-const ROOT_LISTED: u32 = 1 << 31;
+/// A batch's groups of 64 nodes, each document's from its first node (`ROOT_GROUP`).
+const ROOT_GROUP: usize = 64;
 
-/// A run's root segments (`Roots::segments`): 16-byte records, then the listed nodes. One per
-/// distinct rule (by its `Arc`), so passes of one domain share them.
+/// A run's pass roots as the device reads them (`root_mask`): the batch's file count and each
+/// file's first group (and the total), then one rule per distinct `Roots` (by its `Arc`), so passes
+/// of one domain share it. Nothing a root: a rule is a few words, a list a bit a node.
 #[derive(Default)]
-struct Segments {
-    records: Vec<[u32; 4]>,
-    listed: Vec<u32>,
-    by_rule: HashMap<usize, (u32, u32)>,
+struct RootTable {
+    words: Vec<u32>,
+    by_rule: HashMap<usize, (u32, bool)>,
 }
 
-impl Segments {
-    fn of(&mut self, roots: &std::sync::Arc<Roots>, documents: &[std::sync::Arc<crate::code_rule_dsl::residency::slabs::Resident>]) -> (u32, u32) {
+impl RootTable {
+    fn prefix(&mut self, files: &[TapeDoc]) {
+        if self.words.is_empty() {
+            self.words.push(files.len() as u32);
+            let mut group = 0_u32;
+            for tape in files {
+                self.words.push(group);
+                group += tape.transducer_len().div_ceil(ROOT_GROUP) as u32;
+            }
+            self.words.push(group);
+        }
+    }
+
+    /// The batch's groups.
+    fn groups(&self) -> u32 {
+        if self.words.is_empty() { 0 } else { self.words[1 + self.words[0] as usize] }
+    }
+
+    /// A file's groups.
+    fn file_groups(files: &[TapeDoc], file: usize) -> u32 {
+        files[file].transducer_len().div_ceil(ROOT_GROUP) as u32
+    }
+
+    /// The rule's word in the table, and whether it may have roots anywhere in the batch.
+    fn of(&mut self, roots: &std::sync::Arc<Roots>, files: &[TapeDoc]) -> Result<(u32, bool), Error> {
+        self.prefix(files);
         if let Some(found) = self.by_rule.get(&(std::sync::Arc::as_ptr(roots) as usize)) {
-            return *found;
+            return Ok(*found);
         }
-        let found = roots.segments(documents, self);
+        let at = self.words.len() as u32;
+        roots.table(files, &mut self.words)?;
+        let found = (at, (0..files.len()).any(|file| roots.runs_in(file)));
         self.by_rule.insert(std::sync::Arc::as_ptr(roots) as usize, found);
-        found
+        Ok(found)
     }
 
-    /// A registered rule's header and, per document with roots, its first root's index in the
-    /// rule and how many.
-    fn by_doc(&self, roots: &std::sync::Arc<Roots>) -> Result<(u32, HashMap<u32, (u32, u32)>), Error> {
-        let &(header, _) = self.by_rule.get(&(std::sync::Arc::as_ptr(roots) as usize)).ok_or(Error::BackendFailure)?;
-        let count = self.records[header as usize][0] as usize;
-        let mut docs = HashMap::<u32, (u32, u32)>::new();
-        for record in &self.records[header as usize + 1..header as usize + 1 + count] {
-            docs.entry(record[0]).and_modify(|(_, total)| *total += record[2]).or_insert((record[3], record[2]));
-        }
-        Ok((header, docs))
-    }
-
-    /// As the device reads them: listed starts offset past the records.
-    fn words(&self) -> Vec<u32> {
-        let offset = 4 * self.records.len() as u32;
-        let mut words = Vec::with_capacity(4 * self.records.len() + self.listed.len());
-        for record in &self.records {
-            let from = if record[1] & ROOT_LISTED != 0 && record[2] > 0 { ROOT_LISTED | ((record[1] & !ROOT_LISTED) + offset) } else { record[1] };
-            words.extend([record[0], from, record[2], record[3]]);
-        }
-        words.extend_from_slice(&self.listed);
-        if words.is_empty() {
-            words.push(0);
-        }
-        words
+    /// A registered rule's word.
+    fn at(&self, roots: &std::sync::Arc<Roots>) -> Result<(u32, bool), Error> {
+        self.by_rule.get(&(std::sync::Arc::as_ptr(roots) as usize)).copied().ok_or(Error::BackendFailure)
     }
 }
 
@@ -1018,9 +1028,9 @@ struct Runner<'a> {
     /// Whether the loop tier runs with 128-frame stacks (`label_micro_deep`).
     deep: bool,
     walks: HashMap<usize, Walks>,
-    /// Every pass's roots as segments (`Roots::segments`), one buffer for the run (`segs`).
-    segments: Segments,
-    segs: Option<MappedBuffer>,
+    /// Every pass's roots as rules (`RootTable`), one buffer for the run (`root_words`).
+    root_table: RootTable,
+    root_words: Option<MappedBuffer>,
     /// The loop tier's stacks (`MICRO_POOL` of them), committed only as walks use them.
     stacks: Option<MappedBuffer>,
     /// The deep fused groups' stacks, one buffer for all of them: the groups run one after
@@ -1324,8 +1334,8 @@ fn encode(
         micro,
         deep,
         walks: HashMap::new(),
-        segments: Segments::default(),
-        segs: None,
+        root_table: RootTable::default(),
+        root_words: None,
         stacks: kept.as_mut().and_then(|kept| kept.stacks.as_ref().map(|stacks| MappedBuffer::wrap(stacks.buffer.clone()))),
         group_stacks: [None, None, None, None, None],
         encoded: false,
@@ -1694,16 +1704,15 @@ impl Runner<'_> {
     /// is encoded so the host never waits to grow it.
     fn size(&mut self, plan: &Plan<'_>) -> Result<(), Error> {
         let mut widest_seen: Option<(WorkspaceTotals, u32, u32, usize)> = None;
-        // Every pass's roots as segments, in one buffer for the run, before anything binds it.
-        let documents = self.tapes.table.documents.clone();
+        // Every pass's roots as rules, in one buffer for the run, before anything binds it.
         for pass in plan.steps.iter().flat_map(|(_, levels)| levels).flatten() {
             if let Pass::Program { roots, .. } | Pass::Count { roots, .. } | Pass::Pattern { roots, .. } = pass {
-                self.segments.of(roots, &documents);
+                self.root_table.of(roots, self.files)?;
             }
         }
-        let segs = self.segments.words();
-        crate::code_rule_dsl::prof::count("size.segment_words", segs.len());
-        self.segs = Some(MappedBuffer::from_slice(self.device, &segs)?);
+        self.root_table.prefix(self.files);
+        crate::code_rule_dsl::prof::count("size.root_words", self.root_table.words.len());
+        self.root_words = Some(MappedBuffer::from_slice(self.device, &self.root_table.words)?);
         // A sweeping group is one batch of all its programs, by its address; a level is one by
         // its own.
         let batches = plan.steps.iter().flat_map(|(recursive, levels)| {
@@ -1735,8 +1744,7 @@ impl Runner<'_> {
                 let files = self.files;
                 // Each distinct (value, kind)'s slot row, computed once for the run's levels.
                 let mut rows = HashMap::<String, Option<u32>>::new();
-                let documents = self.tapes.table.documents.clone();
-                let segments = &mut self.segments;
+                let root_table = &self.root_table;
                 // Threads: a pass's from its own start, over its (shared) item range.
                 let mut threads = [0_u32; 3];
                 let mut fused = Vec::new();
@@ -1769,14 +1777,16 @@ impl Runner<'_> {
                 };
                 let mut place = |program: &Program, roots: &std::sync::Arc<Roots>, mode: u32, target: u32, table: Option<Vec<u32>>| -> bool {
                     let Some(walk) = Micro::of(program) else { return true };
-                    // The rule's segments, shared by passes of its domain.
-                    let (start, count) = segments.of(roots, &documents);
+                    // The rule, shared by passes of its domain; a thread a group of the batch.
+                    let Ok((start, any)) = root_table.at(roots) else { return true };
+                    let count = if any { root_table.groups() } else { 0 };
                     if crate::code_rule_dsl::prof::on() {
+                        let count = (0..files.len()).map(|file| roots.nodes(file, &files[file]).count()).sum::<usize>();
                         let depth = walk.depth().map_or("loop".to_owned(), |depth| format!("{:02}", depth.min(64)));
                         if walk.depth().is_none() && std::env::var_os("RERAIL_DUMP_LOOP").is_some() {
                             eprintln!("LOOP {:?}", walk.ops());
                         }
-                        crate::code_rule_dsl::prof::count_named(format!("depth.{depth}"), count as usize);
+                        crate::code_rule_dsl::prof::count_named(format!("depth.{depth}"), count);
                     }
                     // The walk's slots as rows of `texts`, contiguous from `text_start`; a row
                     // already computed for another pass is copied.
@@ -1900,19 +1910,17 @@ impl Runner<'_> {
             let programs = passes.iter().map(|(program, ..)| (*program).clone()).collect::<Vec<_>>();
             // The level's programs over the resident documents: nothing of the tapes is packed,
             // and no task is a record (decision 0033). An evaluation per (file, program) with
-            // roots; its tasks are its roots, which the device takes from the rule's segments.
+            // roots; its tasks are its document's groups of 64 nodes, whose roots the device finds
+            // from the rule (`root_mask`).
             let no_anchors = vec![vec![Vec::<u32>::new(); programs.len()]; self.files.len()];
             let mut batch = crate::code_rule_dsl::prof::time("size.batch", || PackedBatch::new_resident(&programs, self.files, &no_anchors))?;
             let mut specs = Vec::new();
             {
-                let by_doc = passes
-                    .iter()
-                    .map(|(_, roots, ..)| self.segments.by_doc(roots))
-                    .collect::<Result<Vec<_>, Error>>()?;
+                let rules = passes.iter().map(|(_, roots, ..)| self.root_table.at(roots)).collect::<Result<Vec<_>, Error>>()?;
                 for file in 0..self.files.len() {
-                    for (program, (header, docs)) in by_doc.iter().enumerate() {
-                        if let Some(&(base, count)) = docs.get(&(file as u32)) {
-                            specs.push([program as u32, file as u32, *header, base, count]);
+                    for (program, ((_, roots, ..), (at, _))) in passes.iter().zip(&rules).enumerate() {
+                        if roots.runs_in(file) {
+                            specs.push([program as u32, file as u32, *at, 0, RootTable::file_groups(self.files, file)]);
                         }
                     }
                 }
@@ -1988,10 +1996,10 @@ impl Runner<'_> {
             });
             // Marking programs publish no results, so `label_sink` routes none.
             let routes = [[0_u32; 2]];
-            // In the tasks' place: a level's roots' segments (the run's), a sweep's table.
+            // In the tasks' place: the run's root rules, a sweep's table.
             let tasks = match &sweep_table {
                 Some(table) => MappedBuffer::from_slice(self.device, table)?,
-                None => MappedBuffer::wrap(self.segs.as_ref().ok_or(Error::BackendFailure)?.buffer.clone()),
+                None => MappedBuffer::wrap(self.root_words.as_ref().ok_or(Error::BackendFailure)?.buffer.clone()),
             };
             let prepared = Prepared {
                 tasks,
@@ -2070,12 +2078,13 @@ impl Runner<'_> {
                         }
                     }
                     let count = (constraints.len() / 2) as u32 - start;
-                    // One item for the pass: its threads find their roots in its segments.
-                    let (segment, roots) = self.segments.by_rule.get(&(std::sync::Arc::as_ptr(roots) as usize)).copied().ok_or(Error::BackendFailure)?;
-                    if roots > 0 {
+                    // One item for the pass: a thread a group of the batch's nodes, which finds its
+                    // roots from the rule.
+                    let (rule, any) = self.root_table.at(roots)?;
+                    if any {
                         let group = *pattern / patterns::GROUP;
-                        matches[group].extend([*pattern as u32, row, segment, start, count, pattern_threads[group]]);
-                        pattern_threads[group] += roots;
+                        matches[group].extend([*pattern as u32, row, rule, start, count, pattern_threads[group]]);
+                        pattern_threads[group] += self.root_table.groups();
                     }
                     Op {
                         target: place(target),
@@ -2114,7 +2123,7 @@ impl Runner<'_> {
             let task_count = (matches.len() / 6) as u32;
             let (items, constraints) = (self.upload(matches)?, self.upload(&constraints)?);
             let docs = self.tapes.docs.buffer.clone();
-            let segs = self.segs.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
+            let root_words = self.root_words.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
             let shape = Shape {
                 item_count: pattern_threads,
                 task_count,
@@ -2129,7 +2138,7 @@ impl Runner<'_> {
                     (&flags, 0),
                     (&items, 0),
                     (&constraints, 0),
-                    (&segs, 0),
+                    (&root_words, 0),
                 ],
                 shape,
             )?;
@@ -2339,7 +2348,7 @@ impl Runner<'_> {
         }
         crate::code_rule_dsl::prof::count("gpu.fused_groups", 1);
         let (passes, words) = (self.upload(&records)?, self.upload(&words)?);
-        let items = self.segs.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
+        let items = self.root_words.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
         let texts = if texts.is_empty() { self.upload(&[0_u32])? } else { self.upload(&texts)? };
         let (group_levels, ops) = (self.upload(&shape_levels)?, self.upload(&ops)?);
         let shape = Shape { target_count: shape_levels.len() as u32, steps, ..self.shape() };
@@ -2587,7 +2596,7 @@ impl Runner<'_> {
     fn walk(&mut self, level: usize) -> Result<(), Error> {
         let Some(walks) = self.walks.get(&level) else { return Ok(()) };
         let words = walks.words.buffer.clone();
-        let items = self.segs.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
+        let items = self.root_words.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
         let texts = walks.texts.buffer.clone();
         let steps = walks.steps;
         let tiers = walks.tiers.iter().map(|(tier, passes, count, threads)| (*tier, passes.buffer.clone(), *count, *threads)).collect::<Vec<_>>();

@@ -1,0 +1,16 @@
+[package]
+name = "rerail-clif"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Code written once in Cranelift's IR for several backends (decision 0310): the tape's reads, the JIT's inlining pass over them; and the view they read a tape by (no dependency)."
+
+[features]
+default = ["ir"]
+# The reads and the pass, in Cranelift's IR. Without it, the view alone (the tape crate's).
+ir = ["dep:cranelift-codegen", "dep:cranelift-frontend", "dep:cranelift-module"]
+
+[dependencies]
+cranelift-codegen = { version = "=0.125.4", optional = true }
+cranelift-frontend = { version = "=0.125.4", optional = true }
+cranelift-module = { version = "=0.125.4", optional = true }
