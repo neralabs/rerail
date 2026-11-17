@@ -442,15 +442,9 @@ failed, the coding agent and its version, the Rerail version and the reason, suc
 (it was busy, for example opening a large checkout; events are recorded again once it answers),
 `the Rerail daemon (pid …) refused the access capability in daemon.json` (`daemon.json` was edited or written by
 another daemon; run `rerail daemon stop`, then `rerail daemon start`) or a payload field the coding agent sent in a
-shape Rerail did not expect. The failures are kept in `hook-failures.jsonl` in the Rerail home; past 256 KB it moves
-to `hook-failures.jsonl.1`, replacing the one there. When `hook-failures.jsonl` is a link to a file kept elsewhere,
-hooks write through it until that file passes 256 KB; then the link itself moves to `hook-failures.jsonl.1`, the file
-stays as it was, and a new log begins in the Rerail home. From then on the line counts only the failures since that
-move: Rerail does not read the file through the moved link, since a read through a link can wait on a network share
-that stops answering, and a copy of the file could fill the disk of the Rerail home. A hook stopped while it moves the
-log leaves it as `hook-failures.jsonl.<pid>.<id>.old`, which the line still counts; a later move removes it once it has
-not changed for 24 hours, since no hook runs that long. Update Rerail with `rerail update`; if the line stays, report it
-with `rerail support-bundle`.
+shape Rerail did not expect. The failures are kept in `hook-failures.jsonl` in the Rerail home; past 256 KB one hook
+moves it to `hook-failures.jsonl.1`, replacing the one there, and the line counts both. Update Rerail with
+`rerail update`; if the line stays, report it with `rerail support-bundle`.
 
 The line leads with the first hook that failed after the last event Rerail recorded. When hooks also failed before
 that event, it goes on with the count of all of them: `K hook events failed, of N that could not be recorded in the
