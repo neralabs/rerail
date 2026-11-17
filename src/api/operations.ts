@@ -92,6 +92,9 @@ const auditFailureSchema: z.ZodType<AuditFailure> = z.object({
 
 // `ruleProvenance` is the audit's provenance wherever the database keeps it; the id of its stored copy stays inside.
 export const auditRecordSchema = createSelectSchema(audits).omit({ ruleProvenanceId: true }).extend({
+  sessionId: z.string().nullable().describe("The session the audit belongs to; null for an audit the repository owns, of a change in another worktree that no session made."),
+  repositoryId: z.string().nullable().describe("Of an audit the repository owns, the repository's key; null for a session's."),
+  recordedBy: z.string().nullable().describe("Of an audit the repository owns, the session whose evaluator ran it; null for a session's."),
   paths: z.array(z.string()),
   violations: z.array(codeRuleViolationSchema),
   failures: z.array(auditFailureSchema),
@@ -263,10 +266,10 @@ const violationRecordSchema = z.object({
   path: z.string().nullable(),
   span: codeRuleSourceSpanSchema.nullable(),
   fix: codeRuleViolationFixSchema.nullable(),
-  sessionId: z.string(),
+  sessionId: z.string().nullable().describe("The session whose work the violation is in; null for one the repository's own audit recorded: a change in another worktree that no session made."),
   auditId: z.string(),
   at: z.number().int().describe("Start time of the audit that reported the violation."),
-  host: z.string().nullable().describe("The coding agent of the violation's session; null when the session is not recorded."),
+  host: z.string().nullable().describe("The coding agent of the violation's session; null when the session is not recorded, or there is none."),
   logged: z.boolean().describe("Rerail recorded the violation without telling the coding agent: the audit ran in Log mode, or the rule was in Log mode then. `mode` is the rule's mode alone."),
 }).strict();
 

@@ -1,0 +1,1 @@
+An audit or violation that a change in another worktree, made by no session, produced now has `sessionId: null` in `GET /api/audits`, `GET /api/violations`, the `audits_list` and `violations_list` tools, and the remote sink. Audits name the repository in `repositoryId` (the remote sink's `repositoryKey`).

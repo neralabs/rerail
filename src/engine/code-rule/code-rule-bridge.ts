@@ -15,7 +15,7 @@ import type {
   IgnoredEditMatch,
   WalkView,
 } from "./code-rule.js";
-import type { AuditMode } from "../audit/audit.js";
+import type { AuditMode, AuditOwner } from "../audit/audit.js";
 import { fileStamp } from "../file-stamp.js";
 import {
   gitBranchTips,
@@ -3099,18 +3099,20 @@ export class CodeRuleBridge {
     checkpoints: CodeRuleCheckpoint[],
     uncaptured: ReadonlyMap<string, string>,
     mode?: AuditMode,
+    owner?: AuditOwner,
   ): Promise<CodeRuleResponse> {
     const sessionId = this.#requireSession();
     const edits = await this.#recoverPreimages(discovery, captured, uncaptured);
     for (const edit of edits) {
       this.#forgetText(edit.path);
-      if (edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText, "edit");
+      // The repository's record is no edit of the session's: its text is kept to measure the next change from.
+      if (edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText, owner === "repository" ? "other-writer" : "edit");
     }
     const paths = edits.map(edit => edit.path).sort(compareDeterministicStrings);
     this.#revision += 1;
     this.#onRevision?.(sessionId, this.#revision, paths);
     this.#lastResponse = await this.#auditor.auditGeneratedEdits(sessionId, {
-      revision: this.#revision, checkpoints, edits, ...(mode === undefined ? {} : { mode }),
+      revision: this.#revision, checkpoints, edits, ...(mode === undefined ? {} : { mode }), ...(owner === undefined ? {} : { owner }),
     });
     return this.#lastResponse;
   }

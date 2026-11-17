@@ -5,7 +5,7 @@
  * rule created by you a Delete in a footer at the end. A rule pack's contents render here too (`pack-panel.js`).
  */
 import { h, setAttr, setText, setContent, icon } from "../dom.js";
-import { fmt, whenLabel, clock, shortSessionId } from "../format.js";
+import { fmt, whenLabel, clock, violationOwner } from "../format.js";
 import { ruleMode, isLog, isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN, awaitingApproval, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
 import { data, ui, rangeLabel, fires, allFires, isMeasured, activityAllOf, ruleFindings, ruleFindingsTotal, titleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
 import { renderPackPanel } from "./pack-panel.js";
@@ -194,13 +194,17 @@ function agentSeesEdit(stored, message) {
       h("button.btn.sm.solid", { "data-act": "promptcopy" }, icon("copy"), "Copy prompt"))));
 }
 
+function ownerButton(owner) {
+  return h("button.open", { "data-act": "session", "data-i": owner.session, title: owner.title, disabled: owner.session === null }, owner.label);
+}
+
 /** One violation: what the agent was told (when it differs from the rule's text), the file and its folder, when, and its session. */
 function violationRow(x, said) {
   const { file, dir } = splitPath(x.path);
   return h("div.rrow", null,
     x.message && x.message !== said ? h("span.m", null, x.message) : null,
     file ? h("span.file.mono", { title: x.path }, file) : h("span.file.muted", null, "No path recorded"),
-    h("button.open", { "data-act": "session", "data-i": x.sessionId, title: "Open this session" }, shortSessionId(x.sessionId, x.host)),
+    ownerButton(violationOwner(x)),
     h("span.dir.mono", { title: dir }, dir),
     h("span.when", null, `${capitalize(whenLabel(x.at))} · ${clock(x.at)}`));
 }
