@@ -283,7 +283,7 @@ impl Drop for MetalWorkspaceLease {
 const BATCH_ENTRY: &str = include_str!("metal_batch_runtime.metal");
 /// The interpreter over resident tapes (decision 0032): `run_batch` reading the batch's documents
 /// in the slabs through the tape view, as the label passes bind it.
-const RESIDENT_PREFIX: &str = concat!("#define RERAIL_RESIDENT 1\n#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape.metal"));
+const RESIDENT_PREFIX: &str = concat!("#define RERAIL_RESIDENT 1\n#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape_reads.metal"), include_str!("metal_tape.metal"));
 
 #[derive(Clone, Eq, PartialEq)]
 pub(super) struct ProgramBufferKey {

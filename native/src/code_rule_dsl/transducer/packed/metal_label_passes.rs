@@ -760,9 +760,9 @@ fn scratch_rows(plan: &Plan<'_>) -> usize {
 }
 
 /// The device's tape view (decision 0032), which the label and pattern kernels read.
-const TAPE_VIEW: &str = concat!("#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape.metal"));
+const TAPE_VIEW: &str = concat!("#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape_reads.metal"), include_str!("metal_tape.metal"));
 /// The label kernels over the tape view.
-const SOURCE: &str = concat!("#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape.metal"), include_str!("metal_work_queue.metal"), include_str!("metal_label_passes.metal"));
+const SOURCE: &str = concat!("#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape_reads.metal"), include_str!("metal_tape.metal"), include_str!("metal_work_queue.metal"), include_str!("metal_label_passes.metal"));
 /// Where a label kernel binds the batch's four slabs (`Slabs`): past every other buffer.
 const SLAB_SLOT: u64 = 27;
 const KERNELS: [&str; 14] = [

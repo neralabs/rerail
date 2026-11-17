@@ -19,85 +19,32 @@ constant uint TAPE_NONE=0xffffffffu;
 struct Slabs{device const uchar* s0;device const uchar* s1;device const uchar* s2;device const uchar* s3;};
 inline device const uchar* tape_slab(thread const Slabs& slabs,uint slab){return slab==0u?slabs.s0:slab==1u?slabs.s1:slab==2u?slabs.s2:slabs.s3;}
 
-// ---- format 15's columns
-inline uint tape_cell(device const uchar* column,uint width,uint i){return width==2u?uint(((device const ushort*)column)[i]):((device const uint*)column)[i];}
-
-// ---- format 16's arrays: the reads `tape_format::f16::View` makes (K = 8, BLOCK = 256, PART = 1024;
-// a change there is a change here). A value too wide for its array is all ones, and is read from its
-// side list: the node's part, its 256-node block's offsets, a search for its low byte.
-constant uint F16_K=8u,F16_BLOCK=256u,F16_PART=1024u,F16_SUB=4u;
-inline ulong f16_word(device const uchar* a,uint at){ulong v=0ul;for(uint b=0u;b<8u;b++)v|=ulong(a[at+b])<<(8u*b);return v;}
-inline ulong f16_mask(uint w){return w>=8u?~0ul:((1ul<<(8u*w))-1ul);}
-// Width `k`: 0 slots, 1 gaps, 2 lengths, 3 checkpoints, 4 + j side list j's values.
-inline uint f16_width(DocView d,uint k){return (d.widths>>(4u*k))&15u;}
-inline uint f16_u16(device const uchar* b,uint at){return uint(b[at])|uint(b[at+1u])<<8u;}
-inline ulong f16_side(device const uchar* slab,DocView d,uint k,uint i){
-  device const uchar* b=slab+d.side[k];uint p=i/F16_PART,at=((device const uint*)(slab+d.parts[k]))[p];
-  uint blocks=(d.nodes+F16_BLOCK-1u)/F16_BLOCK,nsub=min(F16_SUB,blocks-p*F16_SUB),j=(i/F16_BLOCK)%F16_SUB;
-  uint lo=j==0u?0u:f16_u16(b,at+2u*(j-1u)),hi=f16_u16(b,at+2u*j),offs=at+2u*nsub;uchar low=uchar(i%F16_BLOCK);
-  while(lo<hi){uint m=(lo+hi)/2u;if(b[offs+m]<low)lo=m+1u;else hi=m;}
-  uint vw=f16_width(d,4u+k);
-  return f16_word(b,offs+f16_u16(b,at+2u*(nsub-1u))+lo*vw)&f16_mask(vw);
-}
-// Value `i` of array `a` (0 slots, 1 gaps, 2 lengths).
-inline ulong f16_get(device const uchar* slab,DocView d,uint a,uint i){
-  uint w=f16_width(d,a);device const uchar* arr=slab+d.col[1u+a];
-  ulong v=w==1u?ulong(arr[i]):(f16_word(arr,i*w)&f16_mask(w));
-  return v!=f16_mask(w)?v:f16_side(slab,d,a+1u,i);
-}
-
-// ---- either format
-inline uint tape_size(thread const Slabs& s,DocView d,uint i){
-  device const uchar* slab=tape_slab(s,d.slab);
-  if(d.format==16u){ulong v=f16_get(slab,d,0u,i);return (v&1ul)==0ul?uint(v>>1):1u;}
-  return max(tape_cell(slab+d.col[1],d.widths&15u,i),1u);
-}
+// ---- the reads (decision 0310): `metal_tape_reads.metal`, written from the tape's reads in CLIF, which the CPU's
+// JIT and the tape crate read through too; each takes the document's slab and its view.
+#define TAPE_READ(S,D) tape_slab(S,(D).slab),(thread const uint*)&(D)
+inline uint tape_size(thread const Slabs& s,DocView d,uint i){return clif_tape_size(TAPE_READ(s,d),i);}
 // The node's code's number in its document's (format 16: its language's) table.
-inline uint tape_number(device const uchar* slab,DocView d,uint i){
-  if(d.format==16u){uint b=slab[d.col[0]+i];return b<d.cut?b:d.cut+(b-d.cut)*d.per+uint(f16_side(slab,d,0u,i));}
-  return uint(((device const ushort*)(slab+d.col[0]))[i]);
-}
+inline uint tape_number(device const uchar* slab,DocView d,uint i){return clif_tape_number(slab,(thread const uint*)&d,i);}
 inline device const DeviceCode& tape_code(thread const Slabs& s,DocView d,uint i){device const uchar* slab=tape_slab(s,d.slab);return ((device const DeviceCode*)(slab+d.codes))[tape_number(slab,d,i)];}
 inline uint tape_kind(thread const Slabs& s,DocView d,uint i){return tape_code(s,d,i).kind;}
 inline uint tape_field(thread const Slabs& s,DocView d,uint i){return tape_code(s,d,i).field;}
 inline uint tape_flags(thread const Slabs& s,DocView d,uint i){return tape_code(s,d,i).flags;}
 inline bool tape_named(thread const Slabs& s,DocView d,uint i){return (tape_flags(s,d,i)&1u)!=0u;}
 inline bool tape_has_class(thread const Slabs& s,DocView d,uint i,uint kind){device const DeviceCode& c=tape_code(s,d,i);for(uint k=0u;k<c.classCount;k++){if(c.classes[k]==kind)return true;if(c.classes[k]>kind)return false;}return false;}
-inline uint tape_start(thread const Slabs& s,DocView d,uint i){
-  device const uchar* slab=tape_slab(s,d.slab);
-  if(d.format==16u){uint c=i/F16_K,cw=f16_width(d,3u);ulong at=f16_word(slab+d.col[4],c*cw)&f16_mask(cw);for(uint j=c*F16_K+1u;j<=i;j++)at+=f16_get(slab,d,1u,j);return uint(at);}
-  return ((device const uint*)(slab+d.col[2]))[i>>4]+tape_cell(slab+d.col[3],(d.widths>>4)&15u,i);
-}
-inline uint tape_end(thread const Slabs& s,DocView d,uint i){
-  device const uchar* slab=tape_slab(s,d.slab);
-  if(d.format==16u)return tape_start(s,d,i)+uint(f16_get(slab,d,2u,i));
-  uint from=(d.widths&4096u)!=0u?tape_start(s,d,i):tape_start(s,d,i+tape_size(s,d,i)-1u);return from+tape_cell(slab+d.col[4],(d.widths>>8)&15u,i);
-}
-// The parent. Format 16: the node before is the parent (an inner node), or a leaf naming the previous
-// sibling or, every K-th sibling, the parent. Format 15: the nearest node before whose subtree holds
-// `i`, back over at most 64 nodes, else by a descent from the root over the siblings' subtrees.
-inline uint tape_parent(thread const Slabs& s,DocView d,uint i){
-  if(i==0u)return TAPE_NONE;
-  if(d.format==16u){
-    device const uchar* slab=tape_slab(s,d.slab);uint j=i;
-    while(j>0u){ulong v=f16_get(slab,d,0u,j-1u);if((v&1ul)==0ul)return j-1u;if((v&2ul)!=0ul)return j-uint(v>>2);j-=uint(v>>2);}
-    return TAPE_NONE;
-  }
-  for(uint j=i,k=0u;j>0u&&k<64u;j--,k++)if(j-1u+tape_size(s,d,j-1u)>i)return j-1u;
-  uint at=0u;
-  while(true){uint c=at+1u;while(c+tape_size(s,d,c)<=i)c+=tape_size(s,d,c);if(c==i)return at;at=c;}
-}
+inline uint tape_start(thread const Slabs& s,DocView d,uint i){return clif_tape_start(TAPE_READ(s,d),i);}
+inline uint tape_end(thread const Slabs& s,DocView d,uint i){return clif_tape_end(TAPE_READ(s,d),i);}
+// The parent: a search (format 16 back over the siblings' slots; format 15 back over at most 64 nodes, else a descent
+// from the root over the siblings' subtrees).
+inline uint tape_parent(thread const Slabs& s,DocView d,uint i){return clif_tape_parent(TAPE_READ(s,d),i);}
 // The node after `i`'s subtree while it is before `end` (its parent's subtree's end).
-inline uint tape_next_in(thread const Slabs& s,DocView d,uint i,uint end){uint j=i+tape_size(s,d,i);return j<end?j:TAPE_NONE;}
-inline uint tape_end_of(thread const Slabs& s,DocView d,uint i){return i+tape_size(s,d,i);}
-// The node after `i`'s subtree, while it is inside `i`'s parent.
-inline uint tape_next(thread const Slabs& s,DocView d,uint i){uint p=tape_parent(s,d,i);if(p==TAPE_NONE)return TAPE_NONE;return tape_next_in(s,d,i,tape_end_of(s,d,p));}
+inline uint tape_next_in(thread const Slabs& s,DocView d,uint i,uint end){return clif_tape_next_in(TAPE_READ(s,d),i,end);}
+inline uint tape_end_of(thread const Slabs& s,DocView d,uint i){return clif_tape_end_of(TAPE_READ(s,d),i);}
+inline uint tape_next(thread const Slabs& s,DocView d,uint i){return clif_tape_next(TAPE_READ(s,d),i);}
 inline uint tape_next_named_in(thread const Slabs& s,DocView d,uint i,uint end){uint j=tape_next_in(s,d,i,end);while(j!=TAPE_NONE&&!tape_named(s,d,j))j=tape_next_in(s,d,j,end);return j;}
 inline uint tape_next_named(thread const Slabs& s,DocView d,uint i){uint p=tape_parent(s,d,i);if(p==TAPE_NONE)return TAPE_NONE;return tape_next_named_in(s,d,i,tape_end_of(s,d,p));}
-inline uint tape_first_child(thread const Slabs& s,DocView d,uint i){return tape_size(s,d,i)>1u?i+1u:TAPE_NONE;}
-inline uint tape_child_count(thread const Slabs& s,DocView d,uint i){uint n=0u,end=tape_end_of(s,d,i);for(uint c=i+1u;c<end;c+=tape_size(s,d,c))n++;return n;}
-// The `k`-th child (from 0), by hops over its elder siblings' subtrees.
-inline uint tape_child(thread const Slabs& s,DocView d,uint i,uint k){uint end=tape_end_of(s,d,i);for(uint c=i+1u;c<end;c+=tape_size(s,d,c)){if(k==0u)return c;k--;}return TAPE_NONE;}
+inline uint tape_first_child(thread const Slabs& s,DocView d,uint i){return clif_tape_first_child(TAPE_READ(s,d),i);}
+inline uint tape_child_count(thread const Slabs& s,DocView d,uint i){return clif_tape_child_count(TAPE_READ(s,d),i);}
+inline uint tape_child(thread const Slabs& s,DocView d,uint i,uint k){return clif_tape_child(TAPE_READ(s,d),i,k);}
 inline uchar tape_byte(thread const Slabs& s,DocView d,uint at){return (tape_slab(s,d.slab)+d.source)[at];}
 inline device const uchar* tape_source(thread const Slabs& s,DocView d){return tape_slab(s,d.slab)+d.source;}
 inline uint tape_line_start(thread const Slabs& s,DocView d,uint line){return ((device const uint*)(tape_slab(s,d.slab)+d.lines))[line];}
