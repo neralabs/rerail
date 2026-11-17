@@ -372,6 +372,29 @@ impl BlockNative {
         v
     }
 
+    /// The totals whose words no one reads from the rows where the CPU's token loop runs
+    /// (decision 0347): a total is read as one running word, its file's flag (`Batch::results`),
+    /// and only tier 2 (`masks`), a mark, or the token loop's own reads (the skip, the end
+    /// rules', the readers', the tests') read a row. simdjson keeps its error flags so: one
+    /// register, OR-ed a block, never stored a block.
+    pub fn rowless_totals(&self) -> Vec<usize> {
+        use crate::records::EndRule;
+        let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some()) else {
+            return Vec::new();
+        };
+        let mut read: Vec<usize> = self.masks.clone();
+        read.extend(r.skip.map(usize::from));
+        read.extend(r.marks.iter().filter(|m| m.0 != crate::records::WORD_ALONE).map(|m| usize::from(m.0)));
+        read.extend(r.rules.iter().filter_map(|x| match *x {
+            EndRule::Run(o) | EndRule::Pair(o) | EndRule::Last(o) => Some(usize::from(o)),
+            EndRule::Read(_) | EndRule::Next(_) => None,
+        }));
+        read.extend(r.readers.iter().flat_map(|rd| rd.arms.iter().flat_map(|a| [usize::from(a.opener), usize::from(a.closer)])));
+        read.extend(r.readers.iter().flat_map(|rd| rd.parts.iter().map(|p| usize::from(p.start))));
+        read.extend(r.checks.iter().map(|c| usize::from(c.o)));
+        self.totals.iter().copied().filter(|t| !read.contains(t)).collect()
+    }
+
     /// The outputs of the start masks the CPU's readers say instead (`Records::retags`): where
     /// its token loop runs, a reader gives its token's kind and marks, so it makes none of them.
     pub fn readers_tags(&self) -> Vec<usize> {

@@ -398,7 +398,7 @@ pub const BACK: usize = 256;
 ///
 /// A chain's carry (a `toggle`'s or a `fill`'s top bits, an `escaped`'s borrow: what the block
 /// after reads to go on) is `own`: a word of its own, as simdjson keeps `prev_in_string` and
-/// `prev_escaped` (0345). A top field's word is its value as made, the field its top `width`
+/// `prev_escaped` (0346). A top field's word is its value as made, the field its top `width`
 /// bits (`pos` is `64 - width`): no shift writes it, and the parity is one arithmetic shift. A
 /// flag's word is the borrow itself. The look-backs stay packed (0070).
 #[derive(Clone, Copy, Debug)]
@@ -562,7 +562,7 @@ pub(crate) fn prefix_xor(f: &mut FunctionBuilder<'_>, x: Value) -> Value {
 /// as `addp` leaves it (the vendored Cranelift's aarch64 `clmul` reads a vector's low lane in
 /// place), and the rounds of the quotes the terms take out, zero but where one is escaped or
 /// gated off. The rounds are off the path from the bytes to the toggle, as in
-/// `rerail-json-lean`'s `PMULL_RAW` (0345). Without the multiply, or with no lane under the
+/// `rerail-json-lean`'s `PMULL_RAW` (0346). Without the multiply, or with no lane under the
 /// terms, it is `prefix_xor` of the value.
 pub(crate) fn toggle(f: &mut FunctionBuilder<'_>, x: Value) -> Value {
     if !clmul() {
@@ -7264,7 +7264,8 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     let mut reads_back = 0;
     let (mut arms, mut known_entries) = (0, 0);
     // On the CPU, no row of an output the record pass makes (`records_made`).
-    let unmade = if records.is_some() && made.outputs.len() == native.outputs.len() { made.records_made() } else { Vec::new() };
+    // Nor of a total no one reads by its rows (`rowless_totals`): its running word is its flag.
+    let unmade = if records.is_some() && made.outputs.len() == native.outputs.len() { made.records_made().into_iter().chain(made.rowless_totals()).collect() } else { Vec::new() };
     let stored: Vec<bool> = (0..native.outputs.len()).map(|k| !unmade.contains(&k)).collect();
     let lp = Loop { native, state: &state, counted: &counted, early: &early, stored: &stored, stride: 8 * native.outputs.len() as i64, slot_of, slots, params, walks: Some(&walks) };
     general(general_context, &lp)?;

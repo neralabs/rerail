@@ -3251,6 +3251,28 @@ mod json_probe {
         }
     }
 
+    /// The split tier 1 stores a block's word only where a reader reads it from the rows (decision
+    /// 0347): tier 2's masks and the marks. Its totals are its refusals' flags, each one running
+    /// word (simdjson's `error` register), no row: the token loop makes the rest from the bytes.
+    #[test]
+    fn json_split_stores_only_what_rows_are_read_for() {
+        use rerail_compiler::records::Split;
+        let n = rerail_compiler::native_ir::lower(&json_split(Split::Tier2), 0, 0).expect("lowers");
+        let p = &n.block_programs[0];
+        let r = p.records.as_ref().expect("records");
+        let unstored: Vec<usize> = p.records_made().into_iter().chain(p.rowless_totals()).collect();
+        let marks: Vec<usize> = r.marks.iter().filter(|m| m.0 != rerail_compiler::records::WORD_ALONE).map(|m| usize::from(m.0)).collect();
+        let stored: Vec<usize> = (0..p.outputs.len()).filter(|k| !unstored.contains(k)).collect();
+        assert!(!p.totals.is_empty(), "the refusals' totals");
+        for k in &stored {
+            assert!(p.masks.contains(k) || marks.contains(k), "output {k} stored a block, read by no row's reader");
+        }
+        for t in &p.totals {
+            assert!(!stored.contains(t) || p.masks.contains(t) || marks.contains(t), "total {t} stored a block");
+        }
+        eprintln!("{} outputs; stored a block: {stored:?}; totals {:?}", p.outputs.len(), p.totals);
+    }
+
     /// JSON's tier 1 by pass (decision 0323's next measure): over JSON's corpus
     /// (`RERAIL_JSON_CORPUS`) under B, each pass's instructions and cycles a byte, the least of
     /// `RR_ROUNDS`, against simdjson's stage 1 on the same files. `RERAIL_JSON_RUST=<path>`:

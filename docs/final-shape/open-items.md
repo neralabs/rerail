@@ -4822,9 +4822,9 @@ function taking the max itself, off the hot path), so an arm whose exits all are
 
 ## O-json-tier2-own-calls. JSON's compiled path asserts tier 2 makes no call of its own; it makes 30
 
-Opened 2026-11-17 (found running 0345's checks). `parser_tests`'
+Opened 2026-11-17 (found running 0346's checks). `parser_tests`'
 `json_compiled_path_equals_the_interpreters` asserts `tier2.own_calls == 0` ("no pass over the
-table") before it runs a file; tier 2 now has 30. Tier 2's compile reads nothing 0345 changed,
+table") before it runs a file; tier 2 now has 30. Tier 2's compile reads nothing 0346 changed,
 so the count is older (tier 2's calls by rule, 0322–0323, are the likely source). The test's runs
 of tier 1 and tier 2 against the interpreters are not reached.
 

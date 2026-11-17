@@ -1,4 +1,6 @@
-# 0345: The string's state where simdjson keeps it
+# 0346: The string's state where simdjson keeps it
+
+Numbered 0345 when first written; renumbered past another worktree's 0345.
 
 Status: decided (the user, 2026-11-17: "we should take the faster form; also do the two
 state-placement fixes"; the carried state: "chains only"). Follows 0343 and 0341; amends 0070.
@@ -21,8 +23,8 @@ Tier 1 had two more differences from simdjson in where it keeps the string's sta
 - **The carries were packed.** The toggle's parity and the escape's borrow were bits of one
   packed word (0070): each block shifted them out and in again. simdjson keeps
   `prev_in_string` and `prev_escaped` in registers of their own.
-- **The outputs went through memory.** Each block wrote its outputs to a record, which the
-  token loop read back. This is left for the next step.
+- **The outputs went through memory.** Each block wrote its outputs to a record. Decision
+  0347 takes this up.
 
 ## The decisions
 
@@ -106,8 +108,7 @@ check carried words = ⌈packed bits / 64⌉ + the chains' words.
 
 ## Left
 
-- **The outputs in registers:** the per-block record the token loop reads back (0177's
-  boundary).
+- **The outputs in registers:** decision 0347.
 - **The all-ones multiplicand:** it is moved to the vector registers each block (one `fmov`
   that reads no data).
 - `json_compiled_path_equals_the_interpreters` was red before this decision (tier 2 makes 30

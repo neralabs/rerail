@@ -753,7 +753,7 @@ fn json_loop_keeps_values_in_registers() {
     }
     assert_eq!(mvn, 0, "json's loop inverts vectors");
     // The state is packed: one carried word per 64 state bits (decision 0070), but a chain's
-    // carry, in a word of its own as simdjson's (0345).
+    // carry, in a word of its own as simdjson's (0346).
     let bits = crate::block_tests::state_bits(&program.block_programs[0]);
     let state = native_cpu_block::State::of(&native);
     let (chains, chain_bits) = state.chains();
@@ -777,7 +777,7 @@ fn json_loop_keeps_values_in_registers() {
 /// and the regions called where it is free, 566 and 4. 690 with the records: every token's last
 /// byte an extract of its own, flattened as the starts are (simdjson writes one index; a record
 /// with no end for a one-byte token would save it). 699 and 6 after 0337–0341 (the string a
-/// toggle, the classes one lookup, the multiply), not raised then. 704 and 10 with 0345: the
+/// toggle, the classes one lookup, the multiply), not raised then. 704 and 10 with 0346: the
 /// toggle's multiply of the raw quotes adds the rounds of the escaped ones (+7), and the string's
 /// two chains in words of their own, as simdjson's (-2), hold two more registers across the loop,
 /// and Cranelift spills two values elsewhere.
