@@ -811,9 +811,9 @@ describe("gitStartEnvironment", () => {
     expect(gitStartEnvironment(ucrt, bare, install(ucrt))).toEqual({ ...bare, MSYSTEM: "UCRT64", PLINK_PROTOCOL: "ssh", Path: String.raw`C:\Program Files\Git\UCRT64\bin;C:\Program Files\Git\usr\bin;${bare.Path}` });
   });
 
-  it("gives any other Git the environment as it is: the launcher, a git.exe outside a Git for Windows install, a Git elsewhere", () => {
+  it("gives any other Git the environment as it is: the launchers, a git.exe in no build folder or outside a Git for Windows install, a Git elsewhere", () => {
     const env = { ...person, MSYSTEM: "MINGW64" };
-    for (const path of [win32.join(git, "cmd", "git.exe"), win32.join(git, "bin", "git.exe"), String.raw`C:\msys64\ucrt64\bin\git.exe`, "/usr/bin/git"]) {
+    for (const path of [win32.join(git, "cmd", "git.exe"), win32.join(git, "bin", "git.exe"), win32.join(git, "usr", "bin", "git.exe"), String.raw`C:\msys64\ucrt64\bin\git.exe`, "/usr/bin/git"]) {
       expect(gitStartEnvironment(path, env, install(ucrt)), path).toBe(env);
     }
     // A build's git.exe whose install has neither etc\gitconfig nor its share\git, or whose launcher is gone.
