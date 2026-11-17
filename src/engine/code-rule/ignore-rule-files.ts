@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
-import { gitConfigFiles, gitExcludeFiles, GitReads } from "../git.js";
+import { gitConfigFiles, gitExcludeFiles, GitReads, type GitReadOptions } from "../git.js";
 
 /**
  * A change to Git's ignore rules in a session that can make them ignore more. `ignoresMore` holds each pattern the file
@@ -124,7 +124,7 @@ export class IgnoreRuleFiles {
   async #followConfiguration(): Promise<void> {
     if (!(await this.#configurationChanged())) return;
     for (const checkout of this.#checkouts) {
-      for (const file of await this.#git.run(signal => gitExcludeFiles(checkout, { signal }))) this.#excludeFiles.add(file);
+      for (const file of await this.#named(gitExcludeFiles, checkout)) this.#excludeFiles.add(file);
     }
   }
 
@@ -145,8 +145,8 @@ export class IgnoreRuleFiles {
     for (const checkout of checkouts) {
       if (this.#checkouts.has(checkout)) continue;
       this.#checkouts.add(checkout);
-      for (const file of await this.#git.run(signal => gitExcludeFiles(checkout, { signal }))) await this.#watchExcludeFile(file);
-      for (const file of await this.#git.run(signal => gitConfigFiles(checkout, { signal }))) {
+      for (const file of await this.#named(gitExcludeFiles, checkout)) await this.#watchExcludeFile(file);
+      for (const file of await this.#named(gitConfigFiles, checkout)) {
         if (!this.#configStamps.has(file)) this.#configStamps.set(file, await stampOf(file));
       }
     }
@@ -157,6 +157,11 @@ export class IgnoreRuleFiles {
     if (this.#excludeFiles.has(file)) return;
     this.#excludeFiles.add(file);
     this.#patterns.set(file, await patternsOf(file));
+  }
+
+  /** The files `read` (`gitExcludeFiles`, `gitConfigFiles`) has Git name for `checkout`; none when Git does not name them. */
+  async #named(read: (cwd: string, options: GitReadOptions) => Promise<string[] | undefined>, checkout: string): Promise<readonly string[]> {
+    return await this.#git.run(signal => read(checkout, { signal })) ?? [];
   }
 }
 

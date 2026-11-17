@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -79,5 +79,83 @@ describe("CheckoutOwners", () => {
     expect(owners.ownerOf(lower(join(outer, "src", "a.py")))).toEqual({ checkoutRoot: outer, path: "src/a.py" });
     expect(owners.ownerOf(lower(outer))?.checkoutRoot).toBe(outer);
     expect(physicalPath(lower(outer).toUpperCase())).toBe(outer);
+  });
+
+  it("looks again above a file at a folder that became a checkout after a lookup passed it", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
+    cleanups.push(() => removeFolder(root));
+    const file = join(root, "later", "src", "a.py");
+    await mkdir(join(root, "later", "src"), { recursive: true });
+    await writeFile(file, "x = 1\n");
+    const owners = new CheckoutOwners();
+    expect(owners.ownerOf(file)).toBeUndefined();
+    expect(owners.lookAgainAt(file)).toBe(false);
+
+    const later = await repository(join(root, "later"));
+
+    // The answers kept from the first lookup name no checkout until something drops them.
+    expect(owners.ownerOf(file)).toBeUndefined();
+    expect(owners.lookAgainAt(file)).toBe(true);
+    expect(owners.ownerOf(file)).toEqual({ checkoutRoot: later, path: "src/a.py" });
+    expect(owners.lookAgainAt(file)).toBe(false);
+  });
+
+  it("finds the checkout a folder became after a lookup passed it once a lookup starts at that folder", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
+    cleanups.push(() => removeFolder(root));
+    const file = join(root, "later", "src", "a.py");
+    await mkdir(join(root, "later", "src"), { recursive: true });
+    await writeFile(file, "x = 1\n");
+    const owners = new CheckoutOwners();
+    expect(owners.ownerOf(file)).toBeUndefined();
+
+    const later = await repository(join(root, "later"));
+
+    // A walk asks for each folder before the files in it, so the folder's own lookup is where it finds the checkout.
+    expect(owners.ownerOf(join(root, "later"))).toEqual({ checkoutRoot: later, path: "" });
+    expect(owners.ownerOf(file)).toEqual({ checkoutRoot: later, path: "src/a.py" });
+  });
+
+  it("looks again once at a folder that gained a .git entry Git does not take for a checkout", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
+    cleanups.push(() => removeFolder(root));
+    const file = join(root, "stray", "a.py");
+    await mkdir(join(root, "stray"), { recursive: true });
+    await writeFile(file, "x = 1\n");
+    const owners = new CheckoutOwners();
+    expect(owners.ownerOf(file)).toBeUndefined();
+
+    // A worktree's `.git` file whose Git folder is gone: Git answers that it is no checkout, at a Git process each time.
+    await writeFile(join(root, "stray", ".git"), `gitdir: ${join(root, "gone")}\n`);
+
+    expect(owners.lookAgainAt(file)).toBe(true);
+    expect(owners.ownerOf(file)).toBeUndefined();
+    expect(owners.lookAgainAt(file)).toBe(false);
+  });
+
+  it("owns a worktree's files once Git finishes it, after a lookup landed between its .git file and its HEAD", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
+    cleanups.push(() => removeFolder(root));
+    const main = await repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "-b", "made", join(root, "made"));
+    const made = await realpath(join(root, "made"));
+    const file = join(made, "README.md");
+    // `git worktree add` writes the worktree's `.git` file before the HEAD in the Git folder it names.
+    const head = join(main, ".git", "worktrees", "made", "HEAD");
+    const contents = await readFile(head, "utf8");
+    await rm(head);
+    const owners = new CheckoutOwners();
+
+    // A walk's lookup of the folder lands in between: Git does not take it for a checkout yet.
+    expect(owners.ownerOf(made)).toBeUndefined();
+    expect(owners.lookAgainAt(file)).toBe(false);
+    expect(owners.ownerOf(file)).toBeUndefined();
+
+    await writeFile(head, contents);
+
+    // The next Write in it looks again and finds the worktree.
+    expect(owners.lookAgainAt(file)).toBe(true);
+    expect(owners.ownerOf(file)).toEqual({ checkoutRoot: made, path: "README.md" });
+    expect(owners.lookAgainAt(file)).toBe(false);
   });
 });

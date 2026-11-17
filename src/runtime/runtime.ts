@@ -21,12 +21,13 @@ import {
   CodeRuleBridge, generatedEditPaths, ledgerPreimage, type Preimage, type RewoundEdit, type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
 import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
+import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
 import {
   buildSteer, type AuditorCloseOptions, type CodeRuleAuditor, type AuditSettings, type CodeRuleViolation, type RuleSteerDelivery,
   type RepositoryAuditHooks, type SteerMetadata, type SteerSourceOf,
 } from "../engine/code-rule/code-rule.js";
 import type { AuditSettings as CheckoutAuditSettings } from "../engine/audit/audit-control-schema.js";
-import { firstRepositoryAuditEnabled, missedSteerDigestEnabled, steerStrategiesEnabled } from "../engine/experimental-features.js";
+import { conversationRulesEnabled, firstRepositoryAuditEnabled, missedSteerDigestEnabled, requireExperiment, steerStrategiesEnabled } from "../engine/experimental-features.js";
 import type { AuditRecorder, AuditRecord } from "../engine/audit/audit.js";
 import { SqliteAuditStore } from "../engine/audit/audit-store.js";
 import { SqliteAuditControlStore, type PolicyOwnerClaim } from "../engine/audit/audit-control.js";
@@ -519,6 +520,8 @@ interface PendingSteer {
   scope: string[];
   /** Called once the steer leaves the queue, with whether a delivery took it (a Merge Assist note records itself then). */
   settled?: (delivered: boolean) => void;
+  /** A Merge Assist note: the conflict store keeps it until a delivery takes it, so closing the session loses nothing. */
+  mergeAssistNote?: true;
 }
 
 /**
@@ -833,6 +836,11 @@ export interface RerailRuntimeOptions {
   } & AuditSettings) => CodeRuleAuditor;
   /** How long a turn end or command result waits for the session's shell-write walk; the bridge's default otherwise. */
   discoveryWaitMs?: number;
+  /**
+   * The walk of the other worktrees of each repository, shared by every session watching them: the engine service passes
+   * one to all its runtimes; a runtime makes its own otherwise, which its sessions share.
+   */
+  worktreeWalks?: RepositoryWorktreeWalks;
   /** Receives the timing lines of session start and slow turn ends (the daemon passes its log); without it they are not written. */
   timingLog?: (line: string) => void;
   nativeSession?: {
@@ -880,6 +888,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #autostart: boolean;
   readonly #ingestLanes = new SessionLanes();
   readonly #sourceObservations: SourceObservationCache = new Map();
+  readonly #worktreeWalks: RepositoryWorktreeWalks;
   readonly #discoveryWaitMs: number | undefined;
   readonly #timingLog: ((line: string) => void) | undefined;
   readonly #startWatch: RepositoryStartWatch | undefined;
@@ -902,6 +911,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#beforeSessionPublish = options.beforeSessionPublish;
     this.#auditSettings = { ...DEFAULT_AUDIT_SETTINGS, ...options.auditSettings };
     this.#discoveryWaitMs = options.discoveryWaitMs;
+    this.#worktreeWalks = options.worktreeWalks ?? new RepositoryWorktreeWalks();
     this.#timingLog = options.timingLog;
     this.#autostart = options.autostart ?? true;
     this.#createAuditor = options.createAuditor ?? ((auditorOptions) => new CheckoutCodeRuleRouter({
@@ -1104,7 +1114,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const calls = takeUnanswered(state.pendingCodeRuleCalls, sessionEnds);
     if (calls.length === 0) return;
     await state.codeRuleBridge?.finishUnanswered(calls.map(call => call.id));
-    for (const call of calls) await this.#append(state, { type: "policy-result", toolCallId: call.id });
+    for (const call of calls) {
+      state.mergeAssistEdits.delete(call.id);
+      await this.#append(state, { type: "policy-result", toolCallId: call.id });
+    }
   }
 
   /** Runs `wait` as a boundary waiting for the session's edit checks: the steers they produce meanwhile ride its answer. */
@@ -1345,7 +1358,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     return state.workspace.relate(left, right, spec);
   }
 
+  /** Internal testing: refused while conversation rules are off. */
   async testRule(sessionId: string, reference: string, text: string): Promise<{ similarity: number }> {
+    requireExperiment("CONVERSATION_RULES");
     this.#session(sessionId);
     const [left, right] = await this.#embedder.embed([reference, text]);
     if (left === undefined || right === undefined) {
@@ -1364,6 +1379,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       sample?: { source: string; boundary: (typeof SAMPLE_BOUNDARIES)[number]; text: string } | undefined;
     },
   ): Promise<unknown> {
+    // Internal testing: refused while conversation rules are off.
+    requireExperiment("CONVERSATION_RULES");
     const state = this.#session(sessionId);
     const registry = state.registry;
     if (registry === undefined) throw new Error("Rule management requires a configured native model");
@@ -1571,6 +1588,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       });
       bridge = new CodeRuleBridge(checkout.cwd, auditor, {
         observations: this.#sourceObservations,
+        // Every checkout of a clone has its clone id; a checkout the catalog does not know walks on its own. The walk is
+        // looked up at the session's first walk, as one dropped when its last session left is no longer the repository's.
+        worktreeWalks: () => this.#worktreeWalks.of(this.#catalogs.checkout(checkout.root)?.cloneId ?? checkout.root),
         ...(this.#discoveryWaitMs === undefined ? {} : { discoveryWaitMs: this.#discoveryWaitMs }),
         // A boundary that answered before its shell-write check finished leaves its session's history marked partial.
         onDiscoveryPending: boundary => this.#recordSessionFact(
@@ -1834,10 +1854,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /**
    * Whether the session still owes its agent something that closing it would lose, since its ledger does not hold it: a
    * tool call of its turn waiting for its result (a session opened again checks no edit the call makes), an edit check
-   * still running, a steer or held finding not yet delivered, or a scan the dashboard asked for.
+   * still running, a steer or held finding not yet delivered, or a scan the dashboard asked for. A Merge Assist note
+   * waiting is not owed: the session opened again is offered it at its first boundary.
    */
   #owesAgent(state: RuntimeSessionState): boolean {
-    return state.callsAwaitingResult.size > 0 || state.overdueEditChecks !== undefined || state.pendingSteers.length > 0
+    return state.callsAwaitingResult.size > 0 || state.overdueEditChecks !== undefined
+      || state.pendingSteers.some(pending => pending.mergeAssistNote !== true)
       || state.missedFindings.length > 0 || state.auditRequestWork !== undefined;
   }
 
@@ -1977,7 +1999,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     // A result stored without its output leaves its text out of the ledger as well; matching still reads it.
     await this.#append(state, { type: "sample", item: state.withheldResults.has(sample.eventId) ? { ...item, text: "" } : item });
     const registry = state.registry;
-    if (registry === undefined) return;
+    // Internal testing: no conversation rule is checked while they are off, a session's own included.
+    if (registry === undefined || !conversationRulesEnabled()) return;
     const matches = registry.match(sample, { turn: state.turn });
 
     if (matches.length === 0) return;
@@ -2184,6 +2207,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         // A note speaks for no source: no edit makes it stale.
         revision: Number.POSITIVE_INFINITY,
         scope: [],
+        mergeAssistNote: true,
         settled: delivered => {
           for (const mark of note.marks) state.mergeAssistNotesInFlight.delete(mark);
           if (!delivered) return;

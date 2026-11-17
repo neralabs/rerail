@@ -12,7 +12,6 @@ import { RULE_PACK_RULE_ID } from "../engine/catalog/rule-packs.js";
 import {
   AUDIT_MAX_FILES,
   AUDIT_MAX_SOURCE_BYTES,
-  IGNORED_DIRECTORIES,
   MAX_SOURCE_BYTES,
   languageFor,
   sourceFactsCache,
@@ -20,6 +19,7 @@ import {
   type SourceFactsCache,
   type SourceFileFacts,
 } from "../engine/code-rule/code-rule-enforcer.js";
+import { IGNORED_DIRECTORIES } from "../engine/code-rule/ignored-directories.js";
 import {
   encodeCodeRuleWorkspaceRequest,
   loadNativeBinding,
@@ -36,6 +36,7 @@ import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/re
 import { folderContains, normalizeFolder, type CheckoutContext, type EffectiveRule, type LibraryRule, type RuleCatalog } from "../engine/catalog/repository-model.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { BLOCK_STEERS_NOTE, type RuleMode } from "../engine/catalog/rule-mode.js";
+import { blockModeEnabled, conversationRulesEnabled, experimentOffMessage } from "../engine/experimental-features.js";
 import { checkoutStatus, followsGitignore, lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { addAttachment, listRepositoryRules, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import {
@@ -233,6 +234,24 @@ export function parseRuleDraft(value: unknown): RuleDraft {
 function asDraft(value: unknown): unknown {
   if (typeof value !== "object" || value === null || Array.isArray(value) || "kind" in value || "rule" in value) return value;
   return { kind: "format" in value && value.format === CODE_RULE_FORMAT ? "code" : "conversation", rule: value };
+}
+
+/**
+ * Internal testing: `rules test` and `rules add` take a conversation rule, or a rule on Block, only while its experiment
+ * is on in this process. A rule of yours already on Block keeps it, so a draft that edits one may stay on Block. Tools
+ * that check a pack's own rules parse drafts without this.
+ */
+function refuseExperimentsOff(draft: RuleDraft): RuleDraft {
+  if (draft.kind === "conversation" && !conversationRulesEnabled()) throw new RuleDraftError(experimentOffMessage("CONVERSATION_RULES"));
+  if (draft.rule.mode === "block" && !blockModeEnabled() && storedLibraryMode(draft.rule.id) !== "block") {
+    throw new RuleDraftError(`${experimentOffMessage("BLOCK_MODE")} ${BLOCK_STEERS_NOTE} Set its mode to steer.`);
+  }
+  return draft;
+}
+
+/** The mode of the library rule stored as `id`, read without recording anything; undefined where none is. */
+function storedLibraryMode(id: string): RuleMode | undefined {
+  return readRecorded(database => getLibraryRule(database, id)?.document.rule.mode, () => undefined);
 }
 
 /** The draft in `file`; with `bareRule`, a rule document on its own is read as a draft with no cases (`asDraft`). */
@@ -670,7 +689,7 @@ export async function testRuleDraft(draft: RuleDraft, repo: string): Promise<Rul
  */
 export async function testRuleDraftFile(file: string, repo: string): Promise<RuleDraftReport> {
   try {
-    return await testRuleDraft(readRuleDraft(file, { bareRule: true }), repo);
+    return await testRuleDraft(refuseExperimentsOff(readRuleDraft(file, { bareRule: true })), repo);
   } catch (error) {
     if (!(error instanceof RuleDraftError)) throw error;
     return { ok: false, valid: false, error: error.message, cases: [], repository: null };
@@ -1091,7 +1110,7 @@ function addedLines(added: AddedRule): string[] {
 async function runAdd(file: string, repo: string, stdout: CommandOutput, stderr: CommandOutput): Promise<number> {
   let added: AddedRule;
   try {
-    added = addRuleDraft(readRuleDraft(file), repo);
+    added = addRuleDraft(refuseExperimentsOff(readRuleDraft(file)), repo);
   } catch (error) {
     if (!(error instanceof RuleDraftError)) throw error;
     stderr.write(`● The rule was not added: ${error.message}\n`);

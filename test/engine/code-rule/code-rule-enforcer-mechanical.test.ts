@@ -666,6 +666,29 @@ describe("mechanical code rule regressions", () => {
     } finally { await enforcer.close(); }
   });
 
+  // The dashboard counts the session's own audits, never what someone's `rerail scan` found in the checkout.
+  it.each(["touched-files", "repository"] as const)("records the audits of edits as ongoing and those asked for as scans (%s scope)", async (scope) => {
+    const { recorder, audits } = recordingAudits();
+    const { root, enforcer } = await fixture({ audits: recorder, scope, mode: "steer" });
+    try {
+      await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
+      await enforcer.openWorkspace("audit-origin");
+      await enforcer.auditGeneratedEdits("audit-origin", {
+        revision: 1,
+        checkpoints: ["edit"],
+        edits: [{ path: "api/a.py", language: "python", generatedText: "NEEDLE\n" }],
+      });
+      await enforcer.settleGeneratedEdits();
+      const ongoing = [...audits.keys()];
+      const [repositoryScan] = await enforcer.audit("audit-origin", { scope: "repository", mode: "log" });
+      const [pathScan] = await enforcer.audit("audit-origin", { scope: "touched-files", mode: "log", paths: ["api/a.py"] });
+      expect(ongoing.length).toBeGreaterThan(0);
+      expect(ongoing.map(auditId => audits.get(auditId)?.origin)).toEqual(ongoing.map(() => "ongoing"));
+      expect([repositoryScan, pathScan].map(auditId => audits.get(auditId!)?.origin)).toEqual(["scan", "scan"]);
+      expect(audits.get(pathScan!)?.result?.violations).toEqual([expect.objectContaining({ path: "api/a.py", code: "NEEDLE" })]);
+    } finally { await enforcer.close(); }
+  });
+
   it("audits a Git checkout through the native repository index and records its clean directories for reuse", async () => {
     const { recorder, audits } = recordingAudits();
     const { root, enforcer } = await fixture({ audits: recorder });

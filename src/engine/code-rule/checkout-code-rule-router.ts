@@ -122,6 +122,16 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     }
   }
 
+  /**
+   * Has the owners look again at each of `paths`, a tool call's files, and the folders above it
+   * (`CheckoutOwners.lookAgainAt`). `git worktree add`, from any repository, can make a folder this session looked up
+   * while it was plain a checkout, and the answers kept from then would leave the call's edits there unchecked.
+   */
+  refreshOwners(paths: readonly string[]): void {
+    if (this.#closing) return;
+    for (const path of paths) this.#options.owners.lookAgainAt(resolve(this.#sessionRoot, path));
+  }
+
   updateSettings(settings: Required<AuditSettings>): void {
     this.#settings = settings;
     for (const lane of this.#lanes.values()) lane.enforcer.updateSettings(settings);

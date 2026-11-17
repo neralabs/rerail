@@ -1,0 +1,1 @@
+With many worktrees, Rerail's daemon rereads another worktree only when the system reports a change there, its folder, `HEAD`, conflicts or exclude files changed, or every 10 minutes, not on each walk or `git status`. Writes through hard links, memory maps, or a file another Windows program holds open can reach the Log up to 10 minutes late.
