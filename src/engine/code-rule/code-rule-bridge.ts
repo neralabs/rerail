@@ -2206,24 +2206,32 @@ export class CodeRuleBridge {
     return scan;
   }
 
-  /** Reads each of `paths` this session folder's walk answers for; false at the first that only a whole walk reads. */
+  /**
+   * Reads each of `paths` this session folder's walk answers for, in waves as the whole walk reads files
+   * (`#observeSources`); false when one of them only a whole walk reads.
+   */
   async #readNoticedPaths(discovery: SourceDiscovery, walk: WalkStart, traversal: SourceWalk, paths: ReadonlySet<string>): Promise<boolean> {
-    for (const path of paths) {
-      if (!walkAnswersFor(discovery, walk, path)) continue;
-      if (!(await this.#readNoticed(traversal, path))) return false;
+    const answered = [...paths].filter(path => walkAnswersFor(discovery, walk, path));
+    while (!discovery.cancelled && answered.length > 0) {
+      const wave = answered.splice(-OBSERVATION_CONCURRENCY);
+      const read = await Promise.all(wave.map(async path => await this.#readNoticed(traversal, path)));
+      if (read.includes(false)) return false;
     }
     // A folder that failed, or one found where a file was, is the whole walk's to read.
     return traversal.stack.length === 0 && traversal.scan.failedRoots.size === 0;
   }
 
-  /** Reads `path` (session-relative) as the whole walk reads a file it finds; false when only a whole walk reads it (`noticedEntry`). */
+  /**
+   * Reads `path` (session-relative) as the whole walk reads a file it finds, from the one look that found it
+   * (`noticedEntry`); false when only a whole walk reads it.
+   */
   async #readNoticed(walk: SourceWalk, path: string): Promise<boolean> {
     const absolute = resolve(walk.discovery.root, path);
     const entry = await noticedEntry(absolute, path);
     // Gone, as the whole walk would not find it: an edit when the last pass saw it.
     if (entry === "gone") return true;
     if (entry === undefined) return false;
-    await this.#observePath(walk, absolute);
+    await this.#observeFound(walk, absolute, entry);
     return true;
   }
 
@@ -3017,12 +3025,22 @@ export class CodeRuleBridge {
   }
 
   async #observePath(walk: SourceWalk, absolute: string): Promise<void> {
-    let info: Stats | undefined;
+    let info: Stats;
     try {
       info = await lstat(absolute);
+    } catch (error) {
+      if (!walk.discovery.cancelled) this.#recordObservationFailure(walk, absolute, error, false);
+      return;
+    }
+    await this.#observeFound(walk, absolute, info);
+  }
+
+  /** Observes what the walk found at `absolute` as `info`; a failure to read it is the walk's to record. */
+  async #observeFound(walk: SourceWalk, absolute: string, info: Stats): Promise<void> {
+    try {
       await this.#observeEntry(walk, absolute, info);
     } catch (error) {
-      if (!walk.discovery.cancelled) this.#recordObservationFailure(walk, absolute, error, info?.isFile() === true);
+      if (!walk.discovery.cancelled) this.#recordObservationFailure(walk, absolute, error, info.isFile());
     }
   }
 

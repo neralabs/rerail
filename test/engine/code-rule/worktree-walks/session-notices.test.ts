@@ -16,6 +16,8 @@ import { StampTreeWatch } from "./support/stamp-tree-watch.js";
  * by a folder's absolute path, what runs once the next listing of it was read to its end.
  */
 const listed = vi.hoisted(() => ({ folders: [] as string[], after: new Map<string, () => Promise<void>>() }));
+/** While `on`: each path looked at (lstat), by its absolute path, and the most looks in flight at once. */
+const looked = vi.hoisted(() => ({ on: false, paths: [] as string[], inFlight: 0, most: 0 }));
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof FileSystem>();
   return {
@@ -30,6 +32,16 @@ vi.mock("node:fs/promises", async importOriginal => {
       // Only the walk's `for await` reads the listing.
       return { async *[Symbol.asyncIterator]() { yield* listing; await after(); } } as unknown as Dir;
     },
+    lstat: async (...args: Parameters<typeof actual.lstat>) => {
+      if (!looked.on) return await actual.lstat(...args);
+      looked.paths.push(String(args[0]));
+      looked.most = Math.max(looked.most, (looked.inFlight += 1));
+      try {
+        return await actual.lstat(...args);
+      } finally {
+        looked.inFlight -= 1;
+      }
+    },
   };
 });
 
@@ -42,6 +54,7 @@ afterEach(async () => {
   await Promise.all(folders.splice(0).map(async folder => await removeFolder(folder)));
   listed.folders.length = 0;
   listed.after.clear();
+  Object.assign(looked, { on: false, paths: [], inFlight: 0, most: 0 });
 });
 
 /** A watch that tells what the platform's engine watch tells: on Linux the entries of each folder it is given, else the whole tree. */
@@ -140,6 +153,36 @@ describe("a shell command's result reads the session folder by its change notice
     expect(listed.folders).toEqual([]);
     expect(audits.at(-1)?.edits).toEqual([expect.objectContaining({ path: "src/pkg_0/m.py", deleted: true })]);
     expect(audits).toHaveLength(2);
+  });
+
+  it("reads the paths a notice named many at once, looking at each as often as the whole walk does", async () => {
+    const root = await workspace();
+    const watch = platformWatch();
+    const { bridge, audits } = await opened(root, watch);
+    const files = (name: string): string[] => Array.from({ length: 40 }, (_, index) => join(root, "src", "pkg_1", `${name}${index}.py`));
+    const looks = (paths: readonly string[]): number => looked.paths.filter(path => paths.includes(path)).length;
+    const noticed = files("noticed");
+    looked.on = true;
+    await command(bridge, "shell-1", async () => {
+      for (const path of noticed) await writeFile(path, "eval(x)\n");
+    });
+    expect(listed.folders).toEqual([]);
+    expect(checked(audits).flat()).toHaveLength(noticed.length);
+    // On a network or virtualised mount each look is a round trip: one at a time, a large write's result would wait
+    // longer than the whole walk, which looks at files in waves.
+    expect(looked.most).toBeGreaterThan(1);
+    const noticedLooks = looks(noticed);
+
+    // The same write as no notice tells of, which the turn's end reads by a whole walk.
+    const walked = files("walked");
+    await command(bridge, "shell-2", async () => {
+      for (const path of walked) await writeFile(path, "eval(x)\n");
+      watch.silence(root);
+    });
+    await bridge.checkpoint("turn");
+    expect(listed.folders.length).toBeGreaterThan(0);
+    expect(checked(audits).flat()).toHaveLength(noticed.length + walked.length);
+    expect(noticedLooks).toBe(looks(walked));
   });
 
   it("does not check again at the next result what an edit tool wrote and its own result checked", async () => {
