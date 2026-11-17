@@ -1588,6 +1588,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       });
       bridge = new CodeRuleBridge(checkout.cwd, auditor, {
         observations: this.#sourceObservations,
+        // A command's result reads the paths the session folder's change notices name, through the walks' engine watch.
+        treeWatch: () => this.#worktreeWalks.sessionWatch(),
         // Every checkout of a clone has its clone id; a checkout the catalog does not know walks on its own. The walk is
         // looked up at the session's first walk, as one dropped when its last session left is no longer the repository's.
         worktreeWalks: () => this.#worktreeWalks.of(this.#catalogs.checkout(checkout.root)?.cloneId ?? checkout.root),

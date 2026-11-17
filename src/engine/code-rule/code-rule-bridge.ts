@@ -43,7 +43,9 @@ import { binaryPrefix } from "./binary-prefix.js";
 import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
+import { SessionNotices, type SessionReads, type WorktreeRead } from "./worktree-notices.js";
 import { ToolCallWindows } from "./tool-call-windows.js";
+import type { TreeWatch } from "./tree-watch.js";
 import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
 import {
   type WatcherWalk, type WorktreeFindings, type WorktreeScan, type WorktreeScanned, type WorktreeSnapshot, WorktreeView, type WorktreeWalk, WorktreeWalks,
@@ -589,6 +591,8 @@ interface SourceDiscovery {
   readonly readUnmerged: ReturnType<typeof gitUnmergedReader>;
   /** When the session's tool calls ran: a change the session folder's walk finds is its own only when one ran then. */
   readonly toolCalls: ToolCallWindows;
+  /** The session folder's change notices: which paths a pass for a command's result reads, when not every file. */
+  readonly notices: SessionNotices;
 }
 
 /**
@@ -701,6 +705,8 @@ interface WalkStart {
   readonly unmerged: ReadonlyMap<string, ReadonlyMap<string, string>>;
   /** Filesystem-clock reading taken as the walk started. */
   readonly observedAt: number;
+  /** The session folder's paths this pass read, when it read only those change notices named (`SessionNotices`). */
+  readonly noticed?: ReadonlySet<string>;
 }
 /** A worktree whose walk a session takes: its root (physical), its path as the session names it, and what the walk found. */
 interface TakenWorktree {
@@ -727,6 +733,24 @@ function walkAnswersFor(discovery: SourceDiscovery, walk: WalkStart, path: strin
   const current = underBaselineRoot(discovery.worktrees.roots, path);
   if (!walk.inSession) return walked && current;
   return !walked && !current && path !== ".." && !path.startsWith("../");
+}
+/** The paths a walk weighs: each it or the walk before found, or only those a pass of noticed paths read. */
+function walkedPaths(walk: WalkStart, current: ReadonlyMap<string, Source>): ReadonlySet<string> {
+  return walk.noticed ?? new Set([...walk.previous.keys(), ...current.keys()]);
+}
+/**
+ * Whether a pass for `checkpoint` reads the whole session folder whatever its notices say: at a turn's end, which so
+ * finds within the turn a write no notice told of; and until a walk finished with nothing it could not read or check,
+ * which only a whole walk reads again.
+ */
+function readsWholeFolder(discovery: SourceDiscovery, checkpoint: DiscoveryCheckpoint): boolean {
+  return checkpoint !== "edit" || !discovery.baselineComplete || discovery.error !== undefined || discovery.baselineRoots.size > 0;
+}
+/** `unread` with each of `noticed` as a pass of those paths found it (`found`); the rest as the last walk found them. */
+function unreadAfter(unread: SourceDiscovery["unread"], noticed: ReadonlySet<string>, found: SourceScan["unread"]): SourceDiscovery["unread"] {
+  const after = new Map([...unread].filter(([path]) => !noticed.has(path)));
+  for (const [path, entry] of found) after.set(path, entry);
+  return after;
 }
 /** The digest a changed source was observed with before, when the walk found it changed and could not read what it was. */
 function uncapturedDigest(edit: CodeRuleEdit, before: ObservedSource | undefined, baseline: boolean): string | undefined {
@@ -1079,6 +1103,8 @@ export class CodeRuleBridge {
   /** The `.gitignore` files walks found new, changed or gone since the last look at the ignore rules, session-relative. */
   readonly #walkedIgnoreChanges = new Set<string>();
   readonly #worktreeWalkGapMs: number | undefined;
+  /** The engine's watch each workspace's change notices come from (`SessionNotices`). */
+  readonly #treeWatch: (() => TreeWatch | undefined) | undefined;
   /** The most of `#texts` first-sight text may take (`FIRST_SIGHT_TEXT_BYTES`), and how much it takes now. */
   readonly #firstSightTextBytes: number;
   #firstSightBytes = 0;
@@ -1105,6 +1131,11 @@ export class CodeRuleBridge {
        * watch it.
        */
       worktreeWalks?: WorktreeWalks | (() => WorktreeWalks);
+      /**
+       * A watch of the engine's for the session folder's change notices, asked for as each workspace opens: a command's
+       * result then reads the paths they name, not every file. Without one, every pass reads the whole folder.
+       */
+      treeWatch?: () => TreeWatch | undefined;
       /** `FIRST_SIGHT_TEXT_BYTES` by default. */
       firstSightTextBytes?: number;
     } = {},
@@ -1119,6 +1150,7 @@ export class CodeRuleBridge {
     this.#onIgnoreRulesChanged = options.onIgnoreRulesChanged;
     this.#worktreeWalkGapMs = options.worktreeWalkGapMs;
     this.#worktreeWalks = options.worktreeWalks;
+    this.#treeWatch = options.treeWatch;
     this.#firstSightTextBytes = options.firstSightTextBytes ?? FIRST_SIGHT_TEXT_BYTES;
   }
 
@@ -1128,6 +1160,7 @@ export class CodeRuleBridge {
       const startedAt = await filesystemClock();
       const previous = this.#discovery;
       if (previous !== undefined) previous.cancelled = true;
+      previous?.notices.close();
       const unwatched = previous?.worktrees.watch?.close();
       if (this.#sessionId !== undefined) {
         this.#sessionId = undefined;
@@ -1157,6 +1190,7 @@ export class CodeRuleBridge {
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
         heads: new Map(), git, unmerged: new Map(), passedCheckouts: new Set(), readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
         late: new Set(), askingAgain: new Map(), listingsAgain: new Set(), listingSlots: { free: LISTINGS_AGAIN_AT_ONCE, waiting: [] },
+        notices: new SessionNotices(root, this.#treeWatch?.()),
       };
       this.#unwatched = new ToolCallWindows();
       this.#discovery = discovery;
@@ -1517,6 +1551,7 @@ export class CodeRuleBridge {
     if (sessionWalkAbandoned(discovery) || worktreeWalkAbandoned(discovery)) this.#reportDiscoveryPending("close");
     // No walk of the other worktrees reads through this session, or reaches it, any more.
     const unwatched = discovery.worktrees.watch?.close();
+    discovery.notices.close();
     await this.#enqueue(async () => {
       if (this.#discovery !== discovery) return;
       this.#shareOwnObservations(discovery);
@@ -1686,7 +1721,7 @@ export class CodeRuleBridge {
   async #noteWalkedIgnoreFiles(discovery: SourceDiscovery, walk: WalkStart, current: ReadonlyMap<string, Source>): Promise<void> {
     if (this.#onIgnoreRulesChanged === undefined) return;
     const first: string[] = [];
-    for (const path of new Set([...walk.previous.keys(), ...current.keys()])) {
+    for (const path of walkedPaths(walk, current)) {
       const seen = this.#walkedIgnoreFile(discovery, walk, current, path);
       if (seen === undefined) continue;
       if (seen === "first" && !(await writtenThisSession(discovery, walk, path))) first.push(path);
@@ -1825,19 +1860,27 @@ export class CodeRuleBridge {
     await this.#walkSources(discovery, checkpoint);
   }
 
-  /** One walk of the session folder; the other worktrees' walk is shared (`#scheduleWorktreeWalk`), and neither changes what the other owns. */
+  /**
+   * One walk of the session folder; the other worktrees' walk is shared (`#scheduleWorktreeWalk`), and neither changes
+   * what the other owns. A pass for a command's result reads only the paths the folder's change notices named since the
+   * last pass when they vouch for the rest (`SessionNotices`); every other pass reads the whole folder.
+   */
   async #walkSources(discovery: SourceDiscovery, checkpoint: DiscoveryCheckpoint): Promise<void> {
+    // Taken first: a write made from here on is a notice for the next pass.
+    const reads = discovery.notices.begin(readsWholeFolder(discovery, checkpoint));
     const worktrees = this.#syncWorktrees(discovery);
-    const walk: WalkStart = {
+    const start: WalkStart = {
       inSession: true, baseline: !discovery.baselineComplete, checkpoint, worktrees: new Set(discovery.worktrees.roots),
       previous: new Map(this.#observed), versions: new Map(discovery.versions),
       // Read before the walk, so a move or conflict the walk only partly saw is still one to the next.
       ...await this.#readCheckouts(discovery),
       observedAt: await filesystemClock(),
     };
-    const scan = await this.#scanSources(discovery, walk, worktrees);
+    const { walk, scan, seen } = await this.#scanPass(discovery, start, worktrees, reads);
     if (this.#abandoned(discovery)) return;
     await this.#enqueue(() => this.#applyWalk(discovery, walk, scan));
+    // Only once applied: a pass whose audit failed leaves the next to read whole, which finds its changes again.
+    discovery.notices.ended(seen);
     // Reconcile changes to already-observed files made during the initial traversal.
     if (walk.baseline && discovery.requested === undefined) discovery.requested = checkpoint;
   }
@@ -1846,23 +1889,86 @@ export class CodeRuleBridge {
     return discovery.cancelled || this.#discovery !== discovery;
   }
 
-  async #scanSources(discovery: SourceDiscovery, walk: WalkStart, worktrees: readonly string[]): Promise<SourceScan> {
+  /**
+   * The scan of a pass: of the paths `reads` names, else, or when one of them is a folder now, of the whole folder,
+   * with what the whole walk walked into and left out (`seen`), which the next notices are weighed against.
+   */
+  async #scanPass(
+    discovery: SourceDiscovery,
+    walk: WalkStart,
+    worktrees: readonly string[],
+    reads: SessionReads,
+  ): Promise<{ walk: WalkStart; scan: SourceScan; seen?: WorktreeRead }> {
+    if (!reads.whole) {
+      const noticed = await this.#scanNoticed(discovery, walk, reads.paths);
+      if (noticed !== undefined) return { walk: { ...walk, noticed: reads.paths }, scan: noticed };
+    }
+    const scan = await this.#scanSources(discovery, walk, worktrees);
+    return { walk, scan, seen: scan.seen };
+  }
+
+  async #scanSources(discovery: SourceDiscovery, walk: WalkStart, worktrees: readonly string[]): Promise<SourceScan & { readonly seen: WorktreeRead }> {
     // An earlier session's baseline of this workspace lets unchanged sources skip the read.
     const seed = walk.baseline ? this.#observations?.get(this.#cwd) : undefined;
-    const scan = await this.#observeSources({
-      discovery, checkoutOf: path => this.#owningCheckout(discovery.root, path), observedAt: walk.observedAt,
+    const scan = { ...emptyScan(), seen: { folders: new Set<string>(), leftOut: new Set<string>() } };
+    await this.#observeSources({
+      ...this.#sessionTraversal(discovery, walk, scan),
       previousSources: seed === undefined ? walk.previous : new Map([...seed, ...walk.previous]),
-      captureChanges: !walk.baseline,
-      baselineRoots: discovery.baselineRoots,
-      buffers: new WalkReadBuffers(MAX_SOURCE_BYTES + 1),
-      scan: emptyScan(),
       stack: [discovery.root], roots: new Set([discovery.root, ...worktrees]),
-      view: this.#auditor.walkView?.() ?? this.#auditor,
     });
     // Read off the lane, as the scan is, so tool calls are not held up behind it.
     await this.#readFirstSeenTexts(discovery, walk, scan);
     await this.#readPassedCheckouts(discovery, walk, scan);
     return scan;
+  }
+
+  /** A traversal of the session folder for `walk` into `scan`, from no folder yet. */
+  #sessionTraversal(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): SourceWalk {
+    return {
+      discovery, checkoutOf: path => this.#owningCheckout(discovery.root, path), observedAt: walk.observedAt,
+      previousSources: walk.previous,
+      captureChanges: !walk.baseline,
+      baselineRoots: discovery.baselineRoots,
+      buffers: new WalkReadBuffers(MAX_SOURCE_BYTES + 1),
+      scan,
+      stack: [], roots: new Set([discovery.root]),
+      view: this.#auditor.walkView?.() ?? this.#auditor,
+    };
+  }
+
+  /**
+   * Reads only `paths`, which the session folder's change notices named since the last pass (`SessionNotices`), each as
+   * the whole walk reads a file: every file no notice named is as the last pass saw it. Undefined when one of them is
+   * a folder now or cannot be looked at, which only a whole walk reads.
+   */
+  async #scanNoticed(discovery: SourceDiscovery, walk: WalkStart, paths: ReadonlySet<string>): Promise<SourceScan | undefined> {
+    const traversal = this.#sessionTraversal(discovery, walk, emptyScan());
+    if (!(await this.#readNoticedPaths(discovery, walk, traversal, paths))) return undefined;
+    const { scan } = traversal;
+    for (const source of scan.sources.values()) recordReadError(scan, source);
+    await this.#readFirstSeenTexts(discovery, walk, scan);
+    return scan;
+  }
+
+  /** Reads each of `paths` this session folder's walk answers for; false at the first that only a whole walk reads. */
+  async #readNoticedPaths(discovery: SourceDiscovery, walk: WalkStart, traversal: SourceWalk, paths: ReadonlySet<string>): Promise<boolean> {
+    for (const path of paths) {
+      if (!walkAnswersFor(discovery, walk, path)) continue;
+      if (!(await this.#readNoticed(traversal, path))) return false;
+    }
+    // A folder that failed, or one found where a file was, is the whole walk's to read.
+    return traversal.stack.length === 0 && traversal.scan.failedRoots.size === 0;
+  }
+
+  /** Reads `path` (session-relative) as the whole walk reads a file it finds; false when it is a folder now or cannot be looked at. */
+  async #readNoticed(walk: SourceWalk, path: string): Promise<boolean> {
+    const absolute = resolve(walk.discovery.root, path);
+    // Gone, as the whole walk would not find it: an edit when the last pass saw it.
+    const info = await lstat(absolute).catch((error: unknown) => (hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR") ? "gone" : undefined));
+    if (info === "gone") return true;
+    if (info === undefined || info.isDirectory()) return false;
+    await this.#observePath(walk, absolute);
+    return true;
   }
 
   /**
@@ -2226,13 +2332,22 @@ export class CodeRuleBridge {
 
   #finishSessionWalk(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
     discovery.baselineComplete = true;
-    discovery.baselineRoots = scan.failedRoots;
     discovery.error = scanErrors(scan.errors);
+    if (walk.noticed === undefined) this.#finishWholeWalk(discovery, walk, scan);
+    else discovery.unread = unreadAfter(discovery.unread, walk.noticed, scan.unread);
+    this.#listLateAgain(discovery, scan.lateListings);
+  }
+
+  /**
+   * What only a walk of the whole folder answers. The tool calls it covered are let go of only then: a pass of noticed
+   * paths leaves them to the next whole walk, which judges by them a write no notice told of.
+   */
+  #finishWholeWalk(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
+    discovery.baselineRoots = scan.failedRoots;
     discovery.unread = scan.unread;
     discovery.passedCheckouts = scan.checkouts;
     // A subtree it could not read may still hold writes made since the session opened, which its next walk judges.
     if (scan.failedRoots.size === 0) discovery.toolCalls.answered(walk.observedAt);
-    this.#listLateAgain(discovery, scan.lateListings);
   }
 
   #finishWorktreeWalk(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
@@ -2334,7 +2449,7 @@ export class CodeRuleBridge {
   #discoverEdits(discovery: SourceDiscovery, walk: WalkStart, current: ReadonlyMap<string, Source>, uncaptured: Map<string, string>): CodeRuleEdit[] {
     const pendingPaths = this.#pendingPaths();
     const edits: CodeRuleEdit[] = [];
-    for (const path of [...new Set([...walk.previous.keys(), ...current.keys()])].sort(compareDeterministicStrings)) {
+    for (const path of [...walkedPaths(walk, current)].sort(compareDeterministicStrings)) {
       if (!walkAnswersFor(discovery, walk, path) || this.#toolChanged(discovery, walk, path, pendingPaths)) continue;
       const edit = this.#discoveredEdit(discovery, path, walk.previous.get(path), current.get(path), walk.baseline);
       if (edit === undefined) continue;

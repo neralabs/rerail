@@ -810,6 +810,14 @@ export class RepositoryWorktreeWalks {
   close(): void {
     this.#treeWatch?.close();
   }
+
+  /**
+   * A watch of one session folder through the same engine watch (`SessionNotices`): a root a walk of other worktrees
+   * also watches is watched once. Undefined without the engine's watch. Closing it lets go of the folder.
+   */
+  sessionWatch(): TreeWatch | undefined {
+    return this.#treeWatch?.user();
+  }
 }
 
 /**

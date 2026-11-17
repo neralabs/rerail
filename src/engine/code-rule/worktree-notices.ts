@@ -1,6 +1,8 @@
 /**
  * The operating system's change notices for the walk of a repository's other worktrees (`WorktreeWalks`): which
  * worktrees may hold a change since a walk last read them, so a walk reads only those and keeps what it saw of the rest.
+ * The session folder's own walk takes its notices the same way (`SessionNotices`): which of its paths changed since its
+ * last pass, so a command's result reads only those.
  *
  * The notices come from the engine's file-system watch (`TreeWatch`): one watch of each worktree's whole tree on macOS
  * (FSEvents) and Windows (ReadDirectoryChangesW, holding an oplock so a rename or removal of the worktree is never
@@ -405,4 +407,136 @@ function unionOf(users: ReadonlyMap<object, readonly string[]>): string[] {
 /** A notice that `root`'s queued notices were lost, and with `ended` that its watch ended. */
 function lostNotice(root: string, ended: boolean): TreeNotice {
   return { root, changed: [], renamed: [], lost: true, ended };
+}
+
+/** What a pass of the session folder reads: every file, or only the paths change notices named since the last pass. */
+export type SessionReads = { readonly whole: true } | { readonly whole: false; readonly paths: ReadonlySet<string> };
+
+/**
+ * The change notices of one session folder (`CodeRuleBridge`), taken at the start of each pass of its walk: which
+ * paths a shell command's result must read again, so the result reads those, in place of every file of the folder.
+ *
+ * The folder is watched from the session's first walk on, through the engine's watch the walks of the other worktrees
+ * take their notices from (`TreeWatch`): on Linux folder by folder, as the last whole walk walked them, elsewhere the
+ * whole tree. A pass reads the whole folder whenever the notices cannot vouch for what they leave out: until a whole
+ * walk finished with the watch up, when the folder cannot be watched (a network or WSL path, past Linux's watch budget),
+ * after the watch ended or lost notices, after Linux's watch took up folders the last walk found (a write in one before
+ * its watch is told by nothing), after a pass that did not finish, and when a notice names what changes which files a
+ * walk reads: a `.gitignore`, a `.git` entry, a folder that came or went, or a path in a folder no walk walked.
+ */
+export class SessionNotices {
+  readonly #root: string;
+  readonly #watch: TreeWatch | undefined;
+  /** Whether the watch follows the folders a walk walked (Linux), rather than the whole tree. */
+  readonly #byFolder: boolean;
+  /** Whether the watch holds the folder now. */
+  #watching = false;
+  /** The folders the watch follows (Linux), as last given to it. */
+  #folders: ReadonlySet<string> = new Set([""]);
+  /** What the last whole walk saw, which notices are weighed against; undefined until one finished with the watch up. */
+  #seen: WorktreeRead | undefined;
+  /** Whether the next pass reads the whole folder. */
+  #whole = true;
+  /** The paths notices named since the last pass began. */
+  #paths = new Set<string>();
+
+  /** `root`: the session folder (physical); `watch`: the engine's watch, none when the engine has none. */
+  constructor(root: string, watch: TreeWatch | undefined, platform: NodeJS.Platform = process.platform) {
+    this.#root = root;
+    this.#watch = watch;
+    this.#byFolder = platform === "linux";
+  }
+
+  /**
+   * What the pass that begins now reads: the whole folder when `whole` asks for it or the notices cannot vouch for the
+   * rest, else the paths notices named since the last pass. A whole pass watches the folder again first when its watch
+   * is down, so a write made while it runs is a notice. Until `ended`, the next pass reads whole: one that stops midway
+   * leaves unread what it took.
+   */
+  begin(whole: boolean): SessionReads {
+    this.#collect();
+    const vouched = !whole && !this.#whole && this.#seen !== undefined;
+    const reads: SessionReads = vouched ? { whole: false, paths: this.#paths } : { whole: true };
+    this.#paths = new Set();
+    this.#whole = true;
+    if (!vouched) {
+      this.#seen = undefined;
+      this.#open();
+    }
+    return reads;
+  }
+
+  /**
+   * The pass that began last finished: a whole one with what it `seen`, which notices are weighed against from now on
+   * (on Linux the watch follows its folders), one that read only noticed paths with nothing.
+   */
+  ended(seen: WorktreeRead | undefined): void {
+    if (seen === undefined) {
+      this.#whole = false;
+      return;
+    }
+    this.#seen = this.#watching ? seen : undefined;
+    this.#whole = this.#follow(seen.folders);
+  }
+
+  /** Lets go of the folder and of the watch. */
+  close(): void {
+    this.#watching = false;
+    this.#watch?.close();
+  }
+
+  #open(): void {
+    if (this.#watch === undefined || this.#watching) return;
+    this.#folders = new Set([""]);
+    this.#watching = this.#watch.watch(this.#root, [""]);
+  }
+
+  /**
+   * On Linux, watches the folders the whole walk walked into, in place of those before; true when one is new, or the
+   * watch refused them: a write made in it before its watch was told by nothing, so the next pass reads whole.
+   */
+  #follow(folders: ReadonlySet<string>): boolean {
+    if (!this.#watching) return true;
+    if (!this.#byFolder) return false;
+    const added = [...folders].some(folder => !this.#folders.has(folder));
+    if (!added && folders.size === this.#folders.size) return false;
+    this.#watching = this.#watch!.watch(this.#root, [...folders]);
+    this.#folders = folders;
+    return added || !this.#watching;
+  }
+
+  #collect(): void {
+    if (!this.#watching) return;
+    for (const notice of this.#watch!.take()) if (notice.root === this.#root) this.#notice(notice);
+  }
+
+  #notice(notice: TreeNotice): void {
+    if (notice.ended) this.#watching = false;
+    if (notice.ended || notice.lost || this.#seen === undefined) this.#whole = true;
+    else this.#named(this.#seen, notice);
+  }
+
+  /** Takes each path `notice` names, unless the last whole walk left it out (`noticeCounts`). */
+  #named(seen: WorktreeRead, notice: TreeNotice): void {
+    for (const path of notice.renamed) this.#take(seen, "rename", path);
+    for (const path of notice.changed) this.#take(seen, "change", path);
+  }
+
+  #take(seen: WorktreeRead, event: "change" | "rename", path: string): void {
+    if (!noticeCounts(seen, event, path)) return;
+    if (readsWhole(seen, event, path)) this.#whole = true;
+    else this.#paths.add(path);
+  }
+}
+
+/**
+ * Whether a notice of `event` for `path` changes which files a walk reads: a `.gitignore` or a `.git` entry, a folder
+ * the walk walked that came or went, or a path in a folder it did not walk.
+ */
+function readsWhole(seen: WorktreeRead, event: "change" | "rename", path: string): boolean {
+  const slash = path.lastIndexOf("/");
+  const name = path.slice(slash + 1);
+  if (name === ".gitignore" || name === ".git") return true;
+  if (event === "rename" && seen.folders.has(path)) return true;
+  return !seen.folders.has(slash < 0 ? "" : path.slice(0, slash));
 }
