@@ -147,7 +147,7 @@ impl Matcher {
     }
 
     /// How the patterns are matched (EXPLAIN): each plan's production, with the rewrites that led to it.
-    pub(in crate::code_rule_dsl) fn describe(&self) -> String {
+    pub fn describe(&self) -> String {
         let mut by: BTreeMap<String, usize> = BTreeMap::new();
         for p in &self.plans {
             let how = if p.rewrites.is_empty() { p.production.to_owned() } else { format!("{} after {}", p.production, p.rewrites.join(", ")) };
@@ -439,6 +439,12 @@ impl Vocabulary {
             compiled
         });
         made
+    }
+
+    /// A vocabulary of these tests (each relation and matcher), their specs, the regexes and the markers, nothing
+    /// compiled or tested yet: what `as_relations` makes, from its port on the version.
+    pub fn from_parts(tests: Vec<(String, Arc<Matcher>)>, specs: Vec<(String, Vec<String>)>, matches: Vec<Arc<regex::Regex>>, markers: Vec<String>) -> Vocabulary {
+        Vocabulary { tests, specs, matches, markers, ..Vocabulary::default() }
     }
 
     /// The tests `relations` and `specs` name, their matchers made again (a prepared program read from the store,

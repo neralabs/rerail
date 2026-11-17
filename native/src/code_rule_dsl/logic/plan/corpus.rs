@@ -3123,37 +3123,52 @@ fn run_observed(
                 crate::code_rule_dsl::logic::profile::decision("reach index (decision 0119)", || format!("{} made rows again after demand, in cycles: {}", undone.len(), undone.join(", ")));
             }
             drop(preparing);
-            // The `ast` atoms become relations the transducer's matchers fill per chunk (decision 0106).
-            // A Python program's tree-shaped parts become matchers first (decision 0106 §4), unless `RERAIL_AST_PARTS=off`.
-            if dialect == crate::code_rule_dsl::language::GrammarDialect::Python && !std::env::var("RERAIL_AST_PARTS").is_ok_and(|v| v == "off") {
-                // Parts whose field nodes the rule reads again join through the matcher's captures (decision 0107),
-                // unless `RERAIL_AST_PART_CAPTURES=off`.
-                let capture = !std::env::var("RERAIL_AST_PART_CAPTURES").is_ok_and(|v| v == "off");
-                let rewritten = matchers::absorb(&mut prog, capture);
-                if rewritten > 0 {
-                    crate::code_rule_dsl::logic::profile::decision("tree patterns as matchers (decision 0106)", || format!("{rewritten} rules' kind and field parts run as the transducer's matchers"));
-                }
-            }
-            let matchers = matchers::lower(&mut prog);
-            // Long text where no body fixes the node's kind: twin rules read it for the nodes they bind (decision 0109).
-            if prog.decls.contains_key("text") {
-                crate::code_rule_dsl::logic::strings::node_subject_tests(&mut prog);
-                let twins = syntax::long_text_twins(&mut prog, &matchers);
-                if twins > 0 {
-                    crate::code_rule_dsl::logic::profile::decision("long text twins (decision 0109)", || format!("{twins} rules read text past the inline bound for the nodes they bind"));
-                }
-            }
-            // Text tests over text relations become relations the batches fill from their vocabulary (decision 0037).
-            let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;
             // The prepared program's one image (decision 0281's path, step 6): made here, after the last pass that edits
-            // the tree; the passes after it run on the manager over the version (the program lowered for the dialect,
-            // `nearest` read from the transducer, the bound check, the file-local joins pushed, the exports factorized
-            // and cut to their demand, the rows located, the merges, the inputs the rules read, the rule order), and
-            // the run's readers read the version (`Lowered::placed`), the split's parts views of it. A program the
-            // image cannot hold is an error, not a run read from the tree.
-            let lowering = crate::code_rule_dsl::logic::profile::span(|| "lower the program".into());
+            // the tree; the passes after it run on the manager over the version (the text passes, step 6c; the program
+            // lowered for the dialect, `nearest` read from the transducer, the bound check, the file-local joins pushed,
+            // the exports factorized and cut to their demand, the rows located, the merges, the inputs the rules read,
+            // the rule order), and the run's readers read the version (`Lowered::placed`), the split's parts views of
+            // it. A program the image cannot hold is an error, not a run read from the tree.
             let (version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&prog).and_then(|b| b.finish()).map_err(Error::Plan)?;
-            let source = version.clone();
+            // The `ast` atoms as the matchers' relations, text tests as the vocabulary's (step 6c).
+            let (version, preparation::text::Found { matchers, vocabulary }) = preparation::text::run(version, dialect).map_err(Error::Plan)?;
+            // A debug build checks them against the tree's passes, which the checks below read on.
+            #[cfg(debug_assertions)]
+            {
+                // The `ast` atoms become relations the transducer's matchers fill per chunk (decision 0106).
+                // A Python program's tree-shaped parts become matchers first (decision 0106 §4), unless `RERAIL_AST_PARTS=off`.
+                if dialect == crate::code_rule_dsl::language::GrammarDialect::Python && !std::env::var("RERAIL_AST_PARTS").is_ok_and(|v| v == "off") {
+                    // Parts whose field nodes the rule reads again join through the matcher's captures (decision 0107),
+                    // unless `RERAIL_AST_PART_CAPTURES=off`.
+                    let capture = !std::env::var("RERAIL_AST_PART_CAPTURES").is_ok_and(|v| v == "off");
+                    let rewritten = matchers::absorb(&mut prog, capture);
+                    if rewritten > 0 {
+                        crate::code_rule_dsl::logic::profile::decision("tree patterns as matchers (decision 0106)", || format!("{rewritten} rules' kind and field parts run as the transducer's matchers"));
+                    }
+                }
+                let rewritten_matchers = matchers::lower(&mut prog);
+                // Long text where no body fixes the node's kind: twin rules read it for the nodes they bind (decision 0109).
+                if prog.decls.contains_key("text") {
+                    crate::code_rule_dsl::logic::strings::node_subject_tests(&mut prog);
+                    let twins = syntax::long_text_twins(&mut prog, &rewritten_matchers);
+                    if twins > 0 {
+                        crate::code_rule_dsl::logic::profile::decision("long text twins (decision 0109)", || format!("{twins} rules read text past the inline bound for the nodes they bind"));
+                    }
+                }
+                // Text tests over text relations become relations the batches fill from their vocabulary (decision 0037).
+                let tree_vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;
+                let (tree_version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&prog).and_then(|b| b.finish()).map_err(Error::Plan)?;
+                assert_eq!(rewritten_matchers, matchers, "the version's matchers are the tree's");
+                assert_eq!((&tree_vocabulary.specs, &tree_vocabulary.markers), (&vocabulary.specs, &vocabulary.markers), "the version's text tests are the tree's");
+                assert_eq!(tree_vocabulary.tests.iter().map(|t| &t.0).collect::<Vec<_>>(), vocabulary.tests.iter().map(|t| &t.0).collect::<Vec<_>>(), "the version's test relations are the tree's");
+                assert_eq!(tree_vocabulary.matches.iter().map(|m| m.as_str()).collect::<Vec<_>>(), vocabulary.matches.iter().map(|m| m.as_str()).collect::<Vec<_>>(), "the version's regexes are the tree's");
+                assert_eq!((tree_version.size(), tree_version.digest()), (version.size(), version.digest()), "the version's text passes are the tree's");
+            }
+            #[cfg(not(debug_assertions))]
+            drop(prog);
+            let lowering = crate::code_rule_dsl::logic::profile::span(|| "lower the program".into());
+            // One base, the run's and the store's: the text passes leave an overlay.
+            let source = if version.base_bytes().is_some() { version.clone() } else { version.fold().map_err(Error::Plan)? };
             let (version, domains, ops) = lower::lower_version(version, dialect, &mut |s| {
                 let atoms: Vec<u32> = store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))?.into_iter().map(u32::from).collect();
                 interned.push((s.iter().map(|x| (*x).to_owned()).collect(), atoms.clone()));
@@ -3235,6 +3250,7 @@ fn run_observed(
                 let ruleless = front::Program { rules: Vec::new(), ..prog.clone() };
                 assert_eq!(digest(&head), digest(&ruleless), "the source's header is the tree's fields");
             }
+            #[cfg(debug_assertions)]
             drop(prog);
             let prepared = Arc::new(Prepared { source, head, vocabulary: Arc::new(vocabulary), lowered, sets, matchers, demanded, pushed, factorized, located, merged, split, interned, cone: Default::default(), maintained: Default::default(), parts: Default::default() });
             if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {

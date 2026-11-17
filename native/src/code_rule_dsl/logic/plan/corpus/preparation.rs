@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 mod merge;
 mod nearest;
+pub mod text;
 pub use merge::{DropRepeated, MergeIdentical};
 pub use nearest::Nearest;
 

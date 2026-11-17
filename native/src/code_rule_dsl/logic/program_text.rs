@@ -313,12 +313,19 @@ pub fn read_stored(stored: &Stored, lists: &crate::code_rule_dsl::logic::front::
 /// run keeps it (O95): the digest, and the sources written, which the caller names so collection keeps them. With
 /// `RERAIL_PROGRAM_IMAGE=off`, as its text, checked to read back as `prog` (`None` when it does not: nothing is kept),
 /// alone.
-/// `store` of a program held as a base image already (a prepared program's version, `Version::base_bytes`): its
-/// bytes kept as they are, with no encode of a tree; `None` where images are off, and the caller stores the tree.
+/// `store` of a program's version: a base's bytes kept as they are, with no encode of a tree (a prepared program's
+/// version, `Version::base_bytes`), any other version folded into one first; `None` where images are off, and the
+/// caller stores the tree.
 pub fn store_version(store: &ContentStore, v: &crate::code_rule_dsl::logic::program_image::Version) -> StoreResult<Option<([u8; 32], Vec<SourceId>)>> {
+    if images() == "off" {
+        return Ok(None);
+    }
     match v.base_bytes() {
-        Some(bytes) if images() != "off" => store_image(store, bytes).map(Some),
-        _ => Ok(None),
+        Some(bytes) => store_image(store, bytes).map(Some),
+        None => {
+            let folded = v.fold().map_err(crate::content_store::StoreError::Invalid)?;
+            store_image(store, folded.base_bytes().expect("a folded version is a base")).map(Some)
+        }
     }
 }
 
