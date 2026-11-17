@@ -401,9 +401,10 @@ fn source_room(len: usize) -> usize {
     aligned(len.max(1) + SOURCE_MARGIN)
 }
 
-/// Readable bytes past each source in its slab: tier 2 reads its words in place, a token's text
-/// in 8-byte loads up to 64 bytes past the file's end (masked by its length).
-pub const SOURCE_MARGIN: usize = 64;
+/// Zero bytes past each source in its slab (a slab is mapped zeroed, and nothing else is written
+/// there): tier 2 reads its words in place, a window past the file's end reading zeros, as the
+/// batch's layout (`native_cpu_block::BACK`).
+pub const SOURCE_MARGIN: usize = rerail_compiler::native_cpu_block::BACK;
 
 /// Files' bytes resident as sources, in order: hits by SHA-256 from the residency, misses copied
 /// into slabs once (the one copy a file's bytes take on their way to the device). The slabs of

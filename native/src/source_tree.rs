@@ -17,6 +17,9 @@ use std::path::{Path, PathBuf};
 /// - one above the working directory.
 ///
 /// `None` outside a checkout: an installed engine has no source tree.
+///
+/// A search each call (the loader's lookup, a canonical path, a walk up the directories: 1.9 M instructions): a
+/// caller that makes many paths finds the directories once and hands them on (`phase0::Dirs`), not this.
 pub fn root() -> Option<PathBuf> {
     find()
 }

@@ -198,12 +198,22 @@ impl ContentStore {
             // (`RERAIL_LAB_FALLBACK`), whose relations read them through `nera_tree`.
             if std::env::var_os("RERAIL_CAPTURE_TAPES").is_some() {
                 connection.execute_batch(
-                    "INSERT INTO capture.tape_objects SELECT t.* FROM temp.capture_tapes c JOIN main.tape_objects t USING(tape_id);",
+                    "INSERT INTO capture.tape_objects SELECT t.* FROM temp.capture_tapes c JOIN main.tape_objects t USING(tape_id); \
+                     INSERT INTO capture.object_segments SELECT * FROM main.object_segments;",
                 )?;
+                // The segments the tapes are in (decision 0295 step 5), beside the capture as beside the store.
+                let (from, to) = (super::object_segments::object_dir(&self.database_path), super::object_segments::object_dir(path));
+                if let Ok(entries) = std::fs::read_dir(&from) {
+                    let io = |e: std::io::Error| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
+                    std::fs::create_dir_all(&to).map_err(io)?;
+                    for e in entries.flatten() {
+                        std::fs::copy(e.path(), to.join(e.file_name())).map_err(io)?;
+                    }
+                }
             } else {
                 connection.execute_batch(
                     "INSERT INTO capture.tape_objects SELECT t.tape_id, t.source_id, t.canonical_hash_id, t.grammar_id, \
-                       t.grammar_version, t.tape_format_version, t.codec_id, 0, x'', t.created_generation \
+                       t.grammar_version, t.tape_format_version, t.codec_id, 0, x'', t.created_generation, 0, 0, 0 \
                        FROM temp.capture_tapes c JOIN main.tape_objects t USING(tape_id);",
                 )?;
             }

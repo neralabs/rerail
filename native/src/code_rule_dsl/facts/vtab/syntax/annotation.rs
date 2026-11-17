@@ -99,7 +99,7 @@ impl Annotations {
             .iter()
             .enumerate()
             .filter(|&(_, &id)| HOSTS.contains(&dialect.name(f, id)))
-            .map(|(local, &id)| ((f.start[id as usize], f.end[id as usize]), p.global(local as u32)))
+            .map(|(local, &id)| ((f.start(id), f.end(id)), p.global(local as u32)))
             .collect();
         if let Some(g) = d.guest.as_deref() {
             if g.grammar == GRAMMAR {

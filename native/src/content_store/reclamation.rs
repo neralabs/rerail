@@ -220,6 +220,8 @@ impl ContentStore {
                 Err(error) => return Err(StoreError::Io(error)),
             }
         }
+        // The segments beside it (decision 0295): tapes and sources, frames, memo entries, uncompressed.
+        let bytes = bytes.saturating_add(super::segments::segment_bytes(&self.database_path));
         Ok(StoreCapacity {
             bytes,
             state: capacity_state(bytes),
@@ -259,10 +261,14 @@ impl ContentStore {
         let report = retry_busy(&mut BusyRetries::default(), || self.collect_held_once(now, batch))?;
         // Free pages back to the file system, a write of its own after the pass committed: a writer holding the
         // store past the retries leaves them to the next pass. Failing the pass for it failed a collector whose rows
-        // were already collected.
+        // were already collected. A file mostly free is the upkeep job's, vacuumed whole: an incremental vacuum's
+        // cost grows with the free list (ep2: 8.1 s for these 4,096 pages with 1.8M free, behind every run).
         match retry_busy(&mut BusyRetries::default(), || {
             let connection = self.connection.lock().expect("content store mutex poisoned");
             connection.query_row_cached("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()))?;
+            if super::upkeep::leaves_to_whole_vacuum(&connection, self.database_path())? {
+                return Ok(());
+            }
             incremental_vacuum(&connection, 4096)
         }) {
             Ok(()) | Err(StoreError::Busy) => {}

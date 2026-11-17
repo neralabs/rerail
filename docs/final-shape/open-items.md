@@ -5306,6 +5306,16 @@ The test is ignored with this item's name until the item is answered.
 It passes again with 0286 (the request narrowed to the node's document), merged into the hub with Native-and-GPU-strata
 (2026-11-16), and is no longer ignored.
 
+Two answers built on benchmarks-on-integration (2026-11-16) and left out when it was merged into the hub, which has
+both already: a node read whose node the pushed file-local join binds goes into the helper it makes (theirs'
+`node_read_of`, 3e6665763; the hub's `node_read`, decision 0292 §3, a7c429a4a, which also pushes such a component
+whatever else would leave it), and a request the split finds cross-file widened to its file-local literals (theirs'
+`localize_requests`, efd980fe1; the hub's `requests_file_local`, decision 0286, which also unfolds a cross-file atom
+holding the node). There, B010 with C414 over ten files of the bench corpus ran without the error, eager and on
+request, and the full pack over 300 files gave the same counts on every step of the three bench shapes (M3 Max). Open:
+the same B010 with C414 run under 0286's narrowing, and B010's findings eager against on request on files where it
+finds some.
+
 ## O-cold-seed-join. One seed join ends a cold 50-file data-layer run (2026-11-15)
 
 Status: closed by 0267 (2026-11-15). There were two causes. First, every climb (`inside`, `has`, a nearest
@@ -5429,3 +5439,75 @@ path's gaps (`RERAIL_STRATA_TRACE`'s `loop` lines and submit column).
 The direction: a job's end retires its members and issues their ready readers on the thread that ran it, under
 the board's lock. The loop then keeps only the program-order work: SQL strata, and what profile bookkeeping
 needs. Bound the loop's own jobs first, if that is enough: it helps only with jobs under a quantum.
+
+## O-tier2-large-file-refusal. The CPU's tier 2 refuses two large files the interpreter takes
+
+Found 2026-11-16, while making `json_bad`'s gap tier 2's (decision 0177). Two `.rr` files of the
+corpus, about 500 KB each, are refused by the CPU's tier 2 (`Parser::image`, "the compiled words
+refuse", at the program's fifth word). The interpreter (`stream::run`) takes them. With the old,
+eager `json_bad` the same two are refused, so the change did not cause it.
+
+Cutting the file down by lines keeps the refusal only at about this size: no single rule causes
+it. A refused file goes to the fallback, so the tapes stay right; only the fast path is lost.
+`corpus_tapes_are_the_engines` compares the files the CPU takes, so it does not see this.
+
+**Closure:** find what the fifth word tests that grows with the file (a node or stack bound, a
+record count). Then either the bound grows with the file, or the refusal is the planned
+fallback and is documented as such. A test takes a file of that size on the CPU's tier 2.
+
+## O-padding-width. Each file's zero padding: 256 bytes or 64
+
+Opened 2026-11-16 (decision 0177, "A padded window is not cut"). Every file now has `BACK` (256)
+zero bytes after its last one, in the CPU's batch and in a resident source's slab. A window that
+reads past the end then reads zeros, so an output false on a zero byte needs no cut.
+
+256 is the widest window: 64 bits a lane times Metal's 32 lanes. A CPU window starting at a block
+of the file, with its delay and its `prev`s, reaches about 223 bytes past the end at most. 64
+would be a block, as the slab's margin was. The user asked to look at 256 against 64 later.
+
+**Closure:** decide the width from what each backend reads past the end. Also:
+
+- Whether Metal's kernels can take the padding instead of their length cuts.
+- What a file read in place from an mmap needs: past its end, only the rest of its last page is
+  zeros, so a file ending near a page boundary needs a copy of that page, as simdjson checks.
+
+## O-refusal-leaves-loop. A refusal leaves the token loop, as lean's `break 'read`
+
+Opened 2026-11-16 (decision 0177, shape list item 4). On a refusal the lean lexer writes `BAD`
+and leaves its loop. Ours sets the file's flag (a load, an or, a store) and reads on. Jumping to
+the loop's `finish` with the refusal set was tried and reverted: two tests hold a refused file's
+records equal to the interpreter's and to Metal's, and Metal's blocks cannot stop early.
+
+**Closure:** the user decides whether a refused file's records are part of the contract (they go
+to the fallback, unread). If not, the tests compare only the flag on refused files, and the CPU
+leaves its loop.
+
+**Closed 2026-11-16.** The user: a refused file's records are a prefix up to its refusal. The CPU
+leaves its loop; Metal's record pass stops at the first token refused and its runs again drop a
+refused file's segments (decision 0177, "A refusal leaves the loop").
+
+## O-escape-carry-at-opener. A string's first window tests the byte before its quote
+
+Opened 2026-11-16 (decision 0177, shape list item 3). The string arm starts by testing whether
+the byte before the opening quote is a `\`, and on one calls the carry function. Lean's
+`string_end` starts with no carry. The grammar's escape is read one byte back (`a` at a position
+reads the byte before it), so `Bytewise::apart`, which proves "never both" at one offset only,
+cannot show the opener starts no run.
+
+**Closure:** decide what the carry into a string's first byte should be from the grammar (an
+opener is never escaped) and teach `apart` the escape's offset, or define the carry at an opener
+as none.
+
+**Closed 2026-11-16.** At a token's first byte the byte before is a gap byte or a token's last (`before_start`); no `\\` can be right before a `"`, so `escaped` there folds to none (decision 0177, "The string, `/` and number arms read like lean's").
+
+## O-reader-last-at-start. A reader's tail takes `max(last, start)`
+
+Opened 2026-11-16 (decision 0177, shape list item 3). Every walked token's next start is
+`max(last, start) + 1`: "a search that finds no last gives `start - 1`". In a reader's arm every
+found closer is after the start, but the long call's result may not be. Lean's cursor is always
+past the start.
+
+**Closure:** make each rule's exits carry whether their last is at the start at least (the long
+function taking the max itself, off the hot path), so an arm whose exits all are needs no max.
+
+**Closed 2026-11-16.** No `max` where the rule's last is never below its start (`last_below_start`; a refusal leaves the loop).

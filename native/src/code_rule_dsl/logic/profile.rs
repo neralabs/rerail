@@ -39,6 +39,7 @@ pub mod kinds;
 pub mod life;
 pub mod memory;
 pub mod roofline;
+pub mod sources;
 // cratify: `watch` is rerail-logic's (it mounts it)
 pub use roofline::Unit;
 // cratify: `report` is rerail-logic's (it mounts it)
@@ -119,6 +120,9 @@ pub struct State {
     pub native: BTreeMap<(String, String), Vec<(u64, u64)>>,
     /// By (span path, plan text): the CPU seconds its probes ran, as the native engine timed them.
     pub native_cpu: BTreeMap<(String, String), f64>,
+    /// By (span path, plan text): per step, and last its head's rows made, the CPU seconds its walks spent there
+    /// (`setfix::step_cpu`), where the engine timed them.
+    pub native_step_cpu: BTreeMap<(String, String), Vec<f64>>,
     pub notes: BTreeMap<String, String>,
     /// Run-level decisions by (topic, text): how many times made, or stated by a reused version that made them
     /// (`reused`, decision 0269).
@@ -156,6 +160,15 @@ fn add_steps(into: &mut Vec<(u64, u64)>, from: &[(u64, u64)]) {
     }
 }
 
+fn add_cpu(into: &mut Vec<f64>, from: &[f64]) {
+    if into.len() < from.len() {
+        into.resize(from.len(), 0.0);
+    }
+    for (a, b) in into.iter_mut().zip(from) {
+        *a += b;
+    }
+}
+
 impl State {
     /// Adds a thread's records (`merged`) as its calls would have added them here: sums summed, the first note,
     /// reason and refusal kept, a stratum's loops under its key (or its key with another engine, as `stratum` keeps).
@@ -185,6 +198,9 @@ impl State {
         }
         for (k, t) in o.native_cpu {
             *self.native_cpu.entry(k).or_default() += t;
+        }
+        for (k, t) in o.native_step_cpu {
+            add_cpu(self.native_step_cpu.entry(k).or_default(), &t);
         }
         for (k, t) in o.notes {
             self.notes.entry(k).or_insert(t);
@@ -219,6 +235,7 @@ impl State {
             s.replans += t.replans;
             s.measured |= t.measured;
             add_steps(&mut s.actual, &t.actual);
+            add_cpu(&mut s.cpu, &t.cpu);
             if let Some(n) = t.produced {
                 *s.produced.get_or_insert(0) += n;
             }
@@ -254,6 +271,8 @@ impl State {
             s.forms = t.forms;
             s.missing = t.missing;
             s.planned_work += t.planned_work;
+            s.planned_scanned += t.planned_scanned;
+            s.steps += t.steps;
             s.work += t.work;
             s.cpu_estimate += t.cpu_estimate;
             s.gpu_estimate += t.gpu_estimate;
@@ -303,6 +322,9 @@ pub struct PlacedTotal {
     pub forms: Vec<&'static str>,
     pub missing: Vec<&'static str>,
     pub planned_work: f64,
+    /// Of the planned work, the rows its scans read (`Shape::scanned`), and its rules' steps, over its runs.
+    pub planned_scanned: f64,
+    pub steps: u64,
     pub work: u64,
     pub cpu_estimate: f64,
     pub gpu_estimate: f64,
@@ -432,6 +454,13 @@ pub fn retired_instructions() -> u64 {
     0
 }
 
+/// A timeline's mark (dev, `RERAIL_TIMELINE`): a point outside every span, with the process's instructions retired.
+pub fn timeline_mark(what: &str) {
+    if std::env::var_os("RERAIL_TIMELINE").is_some() {
+        eprintln!("RERAIL_TIMELINE {what}: @{:.3} i={:.3}", timeline_clock(), retired_instructions() as f64 / 1e9);
+    }
+}
+
 /// The wall clock a timeline line carries (`RERAIL_TIMELINE`): seconds since the epoch, so the lines of nested
 /// runs and threads read on one axis.
 pub fn timeline_clock() -> f64 {
@@ -499,6 +528,8 @@ pub struct PlanTotal {
     pub planning: f64,
     replans: u64,
     pub actual: Vec<(u64, u64)>,
+    /// Per step, and last its head's rows made, the CPU seconds the walks spent there (`planned_cpu`).
+    pub cpu: Vec<f64>,
     pub measured: bool,
     produced: Option<u64>,
 }
@@ -1215,8 +1246,16 @@ fn open(path: String) -> Span {
                 *s.gaps.entry((after, path.clone())).or_default() += start - at;
             }
         }
-        // The heap sampler charges this thread's allocations to the span now (`rerail_prof::heap`).
-        let heap = if rerail_prof::heap::on() { rerail_prof::heap::intern(&path) } else { 0 };
+        // The heap sampler charges this thread's allocations to the span now (`rerail_prof::heap`), and names the
+        // thread for what it allocates with none open.
+        let heap = if rerail_prof::heap::on() {
+            if s.opens.is_empty() {
+                rerail_prof::heap::name_thread(std::thread::current().name().unwrap_or("an unnamed thread"));
+            }
+            rerail_prof::heap::intern(&path)
+        } else {
+            0
+        };
         rerail_prof::heap::set_span(heap);
         s.opens.push(Open { path, start, children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0, heap });
     });
@@ -1236,7 +1275,14 @@ impl Drop for Span {
             charge(&mut s.track, &s.opens, now);
             let (allocated, freed) = s.counters.read();
             let Some(open) = s.opens.pop() else { return };
-            rerail_prof::heap::set_span(s.opens.last().map_or(0, |o| o.heap));
+            // Its thread's outermost span closed: what it allocates until the next is charged to "between spans,
+            // after" it (as the CPU gaps are), not to no span at all.
+            let after = match s.opens.last() {
+                Some(o) => o.heap,
+                None if rerail_prof::heap::on() => rerail_prof::heap::intern(&format!("(between spans) after {}", open.path)),
+                None => 0,
+            };
+            rerail_prof::heap::set_span(after);
             let total = now - open.start;
             if s.opens.is_empty() {
                 s.covered += total;
@@ -1786,11 +1832,15 @@ pub fn plan_work(steps: &[(u64, u64)]) -> u64 {
     steps.iter().map(|(a, _)| a).sum::<u64>() + steps.last().map_or(0, |s| s.1)
 }
 
-/// Adds a native plan's rows in and out per step, and its probes' CPU seconds, to the current span.
-pub fn native(plan: String, steps: &[(u64, u64)], cpu_s: f64) {
+/// Adds a native plan's rows in and out per step, its probes' CPU seconds, and their CPU seconds per step and last
+/// its head's rows made (`step_cpu`, empty where not timed), to the current span.
+pub fn native(plan: String, steps: &[(u64, u64)], cpu_s: f64, step_cpu: &[f64]) {
     let path = current();
     let mut state = state();
     *state.native_cpu.entry((path.clone(), plan.clone())).or_default() += cpu_s;
+    if !step_cpu.is_empty() {
+        add_cpu(state.native_step_cpu.entry((path.clone(), plan.clone())).or_default(), step_cpu);
+    }
     let t = state.native.entry((path, plan)).or_default();
     if t.len() < steps.len() {
         t.resize(steps.len(), (0, 0));
@@ -2224,6 +2274,15 @@ pub fn planned(
     }
 }
 
+/// A plan's CPU seconds per step, and last its head's rows made, over the walks `planned`'s `actual` counted.
+pub fn planned_cpu(key: &str, kind: &str, plan: &RulePlan, cpu: &[f64]) {
+    if !on() || cpu.is_empty() {
+        return;
+    }
+    let text = plan.steps.iter().map(|s| s.literal.as_str()).collect::<Vec<_>>().join(" , ");
+    add_cpu(&mut state().plans.entry((key.to_owned(), kind.to_owned(), text)).or_default().cpu, cpu);
+}
+
 /// A device kernel's run in the current span: its launches, GPU seconds, the host's wall seconds waiting, its cells.
 pub fn device(kernel: &str, launches: u64, gpu: f64, wall: f64, cells: u64) {
     if !on() {
@@ -2373,11 +2432,21 @@ pub fn explain(r: &mut String, state: &State) {
                     String::new()
                 };
                 let basis = if st.basis.is_empty() { String::new() } else { format!("  [{}]", st.basis) };
-                let _ = writeln!(r, "       {:>2}. {:<44} {:<30} {:<20} est {:>11}  {actual}{basis}", i + 1, short(&st.literal, 44), short(&st.access, 30), short(&st.source, 20), rows(st.rows));
+                // Its CPU, and a row in's (Q36: a view's row can cost far more than a unit of work).
+                let cpu = match (t.cpu.get(i), t.actual.get(i)) {
+                    (Some(&c), Some(&(a, _))) if a > 0 => format!(" cpu {:.1} ms ({:.0} ns a row in)", c * 1e3, c * 1e9 / a as f64),
+                    (Some(&c), _) => format!(" cpu {:.1} ms", c * 1e3),
+                    _ => String::new(),
+                };
+                let _ = writeln!(r, "       {:>2}. {:<44} {:<30} {:<20} est {:>11}  {actual}{cpu}{basis}", i + 1, short(&st.literal, 44), short(&st.access, 30), short(&st.source, 20), rows(st.rows));
                 for (lit, per, why) in &st.passed {
                     let why = if why.is_empty() { String::new() } else { format!("  [{why}]") };
                     let _ = writeln!(r, "           passed over {:<44} {per:.1} rows a binding{why}", short(lit, 44));
                 }
+            }
+            // The head's rows made (each offered to its relation's new rows), after the last step's.
+            if t.cpu.len() == t.actual.len() + 1 && let Some(c) = t.cpu.last() {
+                let _ = writeln!(r, "           head's rows made: cpu {:.1} ms", c * 1e3);
             }
         }
     }

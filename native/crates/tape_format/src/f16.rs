@@ -133,41 +133,64 @@ mod tables {
     include!("../tables/index.rs");
 }
 
-/// One array's side list: its parts end to end, each part's start, and a value's bytes.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Side {
-    /// The parts, then 8 bytes of room for a value's unaligned load.
+/// One array's side list as the writer lays it: its parts end to end (8 bytes of room past them), each part's
+/// start (one more at the end), and a value's bytes.
+struct Side {
     bytes: Vec<u8>,
-    /// Where each part starts, one more at the end.
     base: Vec<u32>,
     vw: usize,
 }
 
-impl Side {
-    fn view(&self) -> Sv<'_> {
-        Sv { bytes: &self.bytes, base: &self.base, vw: self.vw }
-    }
-    /// The bytes it takes: its parts and their starts.
-    pub fn bytes(&self) -> usize {
-        self.bytes.len().saturating_sub(8) + 4 * self.base.len()
-    }
+/// A stored format 16 tape's magic (its first 6 bytes are every stored tape's: the store reads the language tag
+/// after them, `LANGUAGE`).
+pub const MAGIC16: &[u8; 8] = b"TMPTAP16";
+/// A stored 16z tape's magic.
+pub const MAGIC16Z: &[u8; 8] = b"TMPTAP6Z";
+
+/// Where a stored format 16 or 16z tape's header holds each value (format 15's `header` where they agree).
+mod head {
+    /// The language's tape tag, a byte; then the revision mark and the checkpoints' width.
+    pub const LANGUAGE: usize = 8;
+    pub const MARK: usize = 9;
+    pub const CW: usize = 10;
+    /// The source's length, u64; the node count, u64.
+    pub const SOURCE_LEN: usize = 16;
+    pub const NODES: usize = 24;
+    /// The side lists' value widths, a byte each; then (16z) the slot, gap and length widths.
+    pub const VW: usize = 32;
+    pub const WIDTHS: usize = 36;
+    /// Format 16: each region's length, u64. 16z: the compressed bytes' length, u64.
+    pub const LENGTHS: usize = 40;
+}
+const HEAD16: usize = head::LENGTHS + 8 * REGIONS;
+const HEAD16Z: usize = head::LENGTHS + 8;
+
+fn u64_at(b: &[u8], at: usize) -> Result<u64, String> {
+    Ok(u64::from_le_bytes(b.get(at..at + 8).ok_or("a short tape header")?.try_into().expect("8 bytes")))
 }
 
-/// One document's format 16 tape: the version mark, the node count, the arrays (each with 8 bytes of room past
-/// its end for a word's load) and their side lists.
+fn u32s(b: &[u8], at: usize, count: usize) -> Result<Vec<u32>, String> {
+    let bytes = b.get(at..at + 4 * count).ok_or("a short block index")?;
+    Ok(bytes.as_chunks::<4>().0.iter().map(|&w| u32::from_le_bytes(w)).collect())
+}
+
+/// One document's format 16 tape, held as stored (`as_bytes`) and read where it lies: the header, each side list's
+/// part starts, then the regions: codes, slots, gaps, lengths, checkpoints, and the four side lists (codes' low
+/// parts, then escaped slots, gaps, lengths), each followed by 8 bytes of room for a word's load. The part starts
+/// (a word a 1,024 nodes) are read into an index when the tape is read in.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tape16 {
     pub mark: u8,
     n: usize,
     /// The checkpoints' width in bytes, from the source's length.
     cw: usize,
-    codes: Vec<u8>,
-    slots: Vec<u8>,
-    gaps: Vec<u8>,
-    lengths: Vec<u8>,
-    ckpt: Vec<u8>,
-    /// Codes' low parts, then escaped slots, gaps, lengths.
-    side: [Side; 4],
+    source_len: u64,
+    buf: Vec<u8>,
+    /// Each region's start in `buf`, one more at the end.
+    at: [usize; REGIONS + 1],
+    /// Each side list's part starts in its region, one more at the end.
+    base: [Vec<u32>; 4],
+    vw: [usize; 4],
 }
 
 impl Tape16 {
@@ -177,25 +200,109 @@ impl Tape16 {
     pub fn is_empty(&self) -> bool {
         self.n == 0
     }
-    /// The bytes it takes in memory: its arrays, side lists and mark.
+    /// The bytes it takes in memory: as stored, and the part starts' index.
     pub fn bytes(&self) -> usize {
-        let arrays = [&self.codes, &self.slots, &self.gaps, &self.lengths, &self.ckpt].iter().map(|a| a.len().saturating_sub(8)).sum::<usize>();
-        1 + arrays + self.side.iter().map(Side::bytes).sum::<usize>()
+        self.buf.len() + self.base.iter().map(|b| 4 * b.len()).sum::<usize>()
     }
+    /// The source's length.
+    pub fn source_len(&self) -> u64 {
+        self.source_len
+    }
+    /// The language tag its header names (`set_tag`).
+    pub fn tag(&self) -> u8 {
+        self.buf[head::LANGUAGE]
+    }
+    /// Names the language's tape tag in its header: the writer does not know it.
+    pub fn set_tag(&mut self, tag: u8) {
+        self.buf[head::LANGUAGE] = tag;
+    }
+    /// The tape as stored.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.buf
+    }
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.buf
+    }
+    /// Region `r` with its 8 bytes of room.
+    fn region(&self, r: usize) -> &[u8] {
+        &self.buf[self.at[r]..self.at[r + 1]]
+    }
+
+    /// The stored tape, held as it is: its header and part starts are checked against its length.
+    pub fn from_bytes(buf: Vec<u8>) -> Result<Self, String> {
+        if buf.len() < HEAD16 || &buf[..8] != MAGIC16 {
+            return Err("not a format 16 tape".into());
+        }
+        let n = usize::try_from(u64_at(&buf, head::NODES)?).map_err(|_| "a tape length overflows")?;
+        let parts = n.div_ceil(PART) + 1;
+        let mut at = [0usize; REGIONS + 1];
+        let starts = HEAD16 + 4 * 4 * parts;
+        at[0] = starts.next_multiple_of(8);
+        for r in 0..REGIONS {
+            let len = usize::try_from(u64_at(&buf, head::LENGTHS + 8 * r)?).map_err(|_| "a tape length overflows")?;
+            at[r + 1] = at[r].checked_add(len + 8).ok_or("a tape length overflows")?;
+        }
+        if buf.len() != at[REGIONS] {
+            return Err(format!("a format 16 tape of {} bytes, its header says {}", buf.len(), at[REGIONS]));
+        }
+        let base: [Vec<u32>; 4] = [u32s(&buf, HEAD16, parts)?, u32s(&buf, HEAD16 + 4 * parts, parts)?, u32s(&buf, HEAD16 + 8 * parts, parts)?, u32s(&buf, HEAD16 + 12 * parts, parts)?];
+        for (k, b) in base.iter().enumerate() {
+            if b.windows(2).any(|w| w[0] > w[1]) || b.last().is_some_and(|&e| e as usize + 8 != at[6 + k] - at[5 + k]) {
+                return Err(format!("side list {k}'s part starts do not fit it"));
+            }
+        }
+        let vw = std::array::from_fn(|k| usize::from(buf[head::VW + k]));
+        Ok(Tape16 { mark: buf[head::MARK], n, cw: usize::from(buf[head::CW]), source_len: u64_at(&buf, head::SOURCE_LEN)?, buf, at, base, vw })
+    }
+
+    /// The tape from its regions (each with its 8 bytes of room) and side lists, laid as stored.
+    fn laid(mark: u8, n: usize, cw: usize, source_len: u64, arrays: [Vec<u8>; 5], side: [Side; 4]) -> Self {
+        let parts = n.div_ceil(PART) + 1;
+        let regions: Vec<&[u8]> = arrays.iter().map(Vec::as_slice).chain(side.iter().map(|s| s.bytes.as_slice())).collect();
+        let mut buf = vec![0u8; HEAD16];
+        buf[..8].copy_from_slice(MAGIC16);
+        buf[head::MARK] = mark;
+        buf[head::CW] = cw as u8;
+        buf[head::SOURCE_LEN..head::SOURCE_LEN + 8].copy_from_slice(&source_len.to_le_bytes());
+        buf[head::NODES..head::NODES + 8].copy_from_slice(&(n as u64).to_le_bytes());
+        for (k, s) in side.iter().enumerate() {
+            buf[head::VW + k] = s.vw as u8;
+        }
+        for (r, region) in regions.iter().enumerate() {
+            buf[head::LENGTHS + 8 * r..head::LENGTHS + 8 * r + 8].copy_from_slice(&((region.len() - 8) as u64).to_le_bytes());
+        }
+        for s in &side {
+            debug_assert_eq!(s.base.len(), parts);
+            for b in &s.base {
+                buf.extend_from_slice(&b.to_le_bytes());
+            }
+        }
+        buf.resize(buf.len().next_multiple_of(8), 0);
+        let mut at = [0usize; REGIONS + 1];
+        at[0] = buf.len();
+        for (r, region) in regions.iter().enumerate() {
+            buf.extend_from_slice(region);
+            at[r + 1] = buf.len();
+        }
+        let vw = std::array::from_fn(|k| side[k].vw);
+        let [a, b, c, d] = side;
+        Tape16 { mark, n, cw, source_len, buf, at, base: [a.base, b.base, c.base, d.base], vw }
+    }
+
     /// Read with `lang`'s choices: the tape's mark is `lang`'s revision, else it is rewritten before it is read.
     pub fn reader<'a>(&'a self, lang: &'a Lang) -> Result<F16<'a>, String> {
         if self.mark != lang.revision {
             return Err(format!("a tape of revision {}, read with revision {}", self.mark, lang.revision));
         }
-        let side = |k: usize| self.side[k].view();
+        let side = |k: usize| Sv { bytes: self.region(5 + k), base: &self.base[k], vw: self.vw[k] };
         let v = View {
             n: self.n,
             cw: self.cw,
-            codes: &self.codes,
-            slots: &self.slots,
-            gaps: &self.gaps,
-            lengths: &self.lengths,
-            ckpt: &self.ckpt,
+            codes: self.region(0),
+            slots: self.region(1),
+            gaps: self.region(2),
+            lengths: self.region(3),
+            ckpt: self.region(4),
             side: [side(0), side(1), side(2), side(3)],
         };
         Ok(F16 { v, lang })
@@ -219,197 +326,233 @@ fn mask(w: usize) -> u64 {
 
 // ---- the writer ------------------------------------------------------------------------------------------
 
-struct Open {
-    i: u32,
-    start: u64,
-    children: u32,
-    last: u32,
+/// A node's cells as `write` takes them: its code's number in the language's table, its span, and one past its
+/// subtree's last node.
+#[derive(Clone, Copy, Debug)]
+pub struct Node {
+    pub number: u32,
+    pub start: u64,
+    pub end: u64,
+    pub subtree_end: usize,
 }
 
-/// Format 16's writer (0156 §7): `open(number, start)` and `close(end)` as a parser makes nodes, in preorder, and
-/// `finish`. Every cell is written once, at its node's index: at `open` the code, the gap, every `K`-th node's
-/// checkpoint, and the slot of the leaf before it; at `close` the length and an inner node's slot.
-pub struct Writer<'a> {
-    lang: &'a Lang,
-    esc: [u64; 3],
-    cw: usize,
+/// A tape `write` made: format 16, or 16z.
+pub enum Written {
+    F16(Tape16),
+    F16Z(Tape16Z),
+}
+
+/// One block's cells as the pass writes them (`Z` nodes; the last block fewer): the five arrays, and each side
+/// list's entries as (node in the block, value), in node order.
+struct Cells {
     codes: Vec<u8>,
     arrays: [Vec<u8>; 3],
     ckpt: Vec<u8>,
-    /// Code low parts, then escaped slots, gaps, lengths, as (node, value).
     side: [Vec<(u32, u64)>; 4],
-    stack: Vec<Open>,
-    n: u32,
-    prev_start: u64,
+}
+
+/// Where `write` puts each finished block: format 16's regions and side lists, or 16z's compressed blocks.
+enum Out {
+    Plain { regions: [Vec<u8>; 5], side: [(Vec<u8>, Vec<u32>); 4] },
+    Blocks { comp: Vec<u8>, at: Vec<u32>, sides: Vec<[u32; 4]>, raw: Vec<u8> },
+}
+
+/// A block's side-list part as stored (`parts`, one part): for each of its `BLOCK`-node blocks a u16 end, then each
+/// entry's node offset in its block, then the values at `vw` bytes. Nothing for a part with no entries.
+fn part_into(out: &mut Vec<u8>, e: &[(u32, u64)], nb: usize, vw: usize) {
+    if e.is_empty() {
+        return;
+    }
+    let nsub = nb.div_ceil(BLOCK);
+    let mut k = 0;
+    for b in 0..nsub {
+        while k < e.len() && (e[k].0 as usize) / BLOCK == b {
+            k += 1;
+        }
+        out.extend_from_slice(&(k as u16).to_le_bytes());
+    }
+    out.extend(e.iter().map(|x| (x.0 as usize % BLOCK) as u8));
+    for x in e {
+        out.extend_from_slice(&x.1.to_le_bytes()[..vw]);
+    }
+}
+
+/// Format 16, or 16z where `z`, written in one pass over a document's `n` nodes in preorder (0156 §7; decision
+/// 0293): `node(i)` is node `i`'s cells, asked once each, in order. Each cell is written once: a node's code, gap,
+/// length, checkpoint and (an inner node's) slot as it is reached, a leaf's slot as the node after it is. A block's
+/// cells are final once the pass is past it: it is laid then (16z: compressed). No array of the nodes is made.
+///
+/// The side lists' value widths come from the document's bounds (a slot is at most `4n + 3`, a gap or a length the
+/// source's length), so they are known before the first block. `Err` where a node's values break them (a start
+/// before the one before it, a span past the source): no tape is made of it.
+pub fn write(lang: &Lang, n: usize, source_len: u64, tag: u8, z: bool, mut node: impl FnMut(usize) -> Node) -> Result<Written, String> {
+    let w = lang.widths;
+    let esc = [mask(w[0]), mask(w[1]), mask(w[2])];
+    let cw = bytes_for(source_len);
+    let vw = [lang.low_w, bytes_for(4 * n as u64 + 3), bytes_for(source_len), bytes_for(source_len)];
+    let new_cells = || Cells {
+        codes: Vec::with_capacity(Z),
+        arrays: [Vec::with_capacity(Z * w[0]), Vec::with_capacity(Z * w[1]), Vec::with_capacity(Z * w[2])],
+        ckpt: Vec::with_capacity(Z / K * cw),
+        side: Default::default(),
+    };
+    let mut out = if z {
+        Out::Blocks { comp: Vec::new(), at: vec![0], sides: Vec::with_capacity(n.div_ceil(Z)), raw: Vec::new() }
+    } else {
+        Out::Plain {
+            regions: [Vec::with_capacity(n + 8), Vec::with_capacity(n * w[0] + 8), Vec::with_capacity(n * w[1] + 8), Vec::with_capacity(n * w[2] + 8), Vec::with_capacity(n.div_ceil(K) * cw + 8)],
+            side: Default::default(),
+        }
+    };
+    // Value `v` of array `a` (0 slots, 1 gaps, 2 lengths) into the block's cell `j`, or its escape.
+    let put = |c: &mut Cells, a: usize, j: usize, v: u64| {
+        let v = if v >= esc[a] {
+            c.side[a + 1].push((j as u32, v));
+            esc[a]
+        } else {
+            v
+        };
+        c.arrays[a][j * w[a]..(j + 1) * w[a]].copy_from_slice(&v.to_le_bytes()[..w[a]]);
+    };
+    // A block's cells, laid where they go.
+    let lay = |out: &mut Out, c: &mut Cells, nb: usize| {
+        match out {
+            Out::Plain { regions, side } => {
+                regions[0].extend_from_slice(&c.codes);
+                for a in 0..3 {
+                    regions[1 + a].extend_from_slice(&c.arrays[a]);
+                }
+                regions[4].extend_from_slice(&c.ckpt);
+                for k in 0..4 {
+                    let (bytes, base) = &mut side[k];
+                    base.push(bytes.len() as u32);
+                    part_into(bytes, &c.side[k], nb, vw[k]);
+                }
+            }
+            Out::Blocks { comp, at, sides, raw } => {
+                raw.clear();
+                let mut region = |bytes: &[u8]| {
+                    raw.extend_from_slice(bytes);
+                    raw.extend_from_slice(&[0; 8]);
+                };
+                region(&c.codes);
+                for a in 0..3 {
+                    region(&c.arrays[a]);
+                }
+                region(&c.ckpt);
+                let mut lens = [0u32; 4];
+                let mut part = Vec::new();
+                for k in 0..4 {
+                    part.clear();
+                    part_into(&mut part, &c.side[k], nb, vw[k]);
+                    lens[k] = part.len() as u32;
+                    region(&part);
+                }
+                debug_assert_eq!(raw.len(), layout(nb, w, cw, lens)[REGIONS]);
+                comp.extend_from_slice(&lz4::compress(raw));
+                at.push(comp.len() as u32);
+                sides.push(lens);
+            }
+        }
+        c.codes.clear();
+        for a in &mut c.arrays {
+            a.clear();
+        }
+        c.ckpt.clear();
+        for s in &mut c.side {
+            s.clear();
+        }
+    };
+    let mut c = new_cells();
+    // The open nodes: each its index, its children so far, its last child, its subtree's end.
+    let mut open: Vec<(u32, u32, u32, usize)> = Vec::with_capacity(64);
+    let mut prev_start = 0u64;
+    for i in 0..n {
+        let x = node(i);
+        if x.start < prev_start || x.end < x.start || x.end > source_len || x.subtree_end <= i || x.subtree_end > n {
+            return Err(format!("node {i}'s cells break the tape's bounds"));
+        }
+        while open.last().is_some_and(|o| o.3 <= i) {
+            open.pop();
+        }
+        // The node before is a leaf unless it is the parent: its slot describes this node.
+        if let Some(top) = open.last_mut() {
+            let (idx, prev, p) = (top.1, top.2, top.0);
+            top.1 = idx + 1;
+            top.2 = i as u32;
+            let before = i - 1;
+            if before as u32 != p {
+                let v = if (idx as usize).is_multiple_of(K) { (u64::from(i as u32 - p) << 2) | 3 } else { (u64::from(i as u32 - prev) << 2) | 1 };
+                put(&mut c, 0, before % Z, v);
+            }
+        } else if i > 0 {
+            return Err(format!("node {i} lies outside the root's subtree"));
+        }
+        // The block before is final once its last node's slot is: laid, and this node starts the next.
+        if i > 0 && i.is_multiple_of(Z) {
+            lay(&mut out, &mut c, Z);
+        }
+        let j = i % Z;
+        let number = x.number;
+        if number < lang.cut {
+            c.codes.push(number as u8);
+        } else {
+            let t = number - lang.cut;
+            c.codes.push((lang.cut + t / lang.per) as u8);
+            c.side[0].push((j as u32, u64::from(t % lang.per)));
+        }
+        for a in 0..3 {
+            c.arrays[a].resize((j + 1) * w[a], 0);
+        }
+        put(&mut c, 1, j, if i == 0 { 0 } else { x.start - prev_start });
+        put(&mut c, 2, j, x.end - x.start);
+        prev_start = x.start;
+        if j.is_multiple_of(K) {
+            c.ckpt.extend_from_slice(&x.start.to_le_bytes()[..cw]);
+        }
+        let size = x.subtree_end - i;
+        if size > 1 {
+            put(&mut c, 0, j, (size as u64) << 1);
+        }
+        open.push((i as u32, 0, NONE, x.subtree_end));
+    }
+    if n > 0 {
+        // The last node in preorder is a leaf with nothing after it.
+        put(&mut c, 0, (n - 1) % Z, 1);
+        lay(&mut out, &mut c, n - (n - 1) / Z * Z);
+    }
+    let mark = lang.revision;
+    Ok(match out {
+        Out::Plain { regions, side } => {
+            let arrays = regions.map(|mut r| {
+                r.extend_from_slice(&[0; 8]);
+                r
+            });
+            let mut k = 0;
+            let side = side.map(|(mut bytes, mut base)| {
+                base.push(bytes.len() as u32);
+                bytes.extend_from_slice(&[0; 8]);
+                k += 1;
+                Side { bytes, base, vw: vw[k - 1] }
+            });
+            let mut t = Tape16::laid(mark, n, cw, source_len, arrays, side);
+            t.set_tag(tag);
+            Written::F16(t)
+        }
+        Out::Blocks { comp, at, sides, .. } => Written::F16Z(Tape16Z::laid(mark, tag, n, cw, source_len, w, vw, comp, at, sides)),
+    })
 }
 
 const NONE: u32 = u32::MAX;
 
-impl<'a> Writer<'a> {
-    /// A writer for one document of `source_len` bytes, with room for `nodes` nodes.
-    pub fn new(lang: &'a Lang, source_len: u64, nodes: usize) -> Self {
-        let w = lang.widths;
-        Writer {
-            lang,
-            esc: [mask(w[0]), mask(w[1]), mask(w[2])],
-            cw: bytes_for(source_len),
-            codes: Vec::with_capacity(nodes),
-            arrays: [Vec::with_capacity(nodes * w[0]), Vec::with_capacity(nodes * w[1]), Vec::with_capacity(nodes * w[2])],
-            ckpt: Vec::with_capacity(nodes.div_ceil(K) * 4),
-            side: Default::default(),
-            stack: Vec::with_capacity(64),
-            n: 0,
-            prev_start: 0,
-        }
-    }
-
-    /// Value `v` of array `a` (0 slots, 1 gaps, 2 lengths) into node `i`'s cell, or its escape.
-    #[inline(always)]
-    fn put(&mut self, a: usize, i: u32, v: u64) {
-        let w = self.lang.widths[a];
-        let v = if v >= self.esc[a] {
-            self.side[a + 1].push((i, v));
-            self.esc[a]
-        } else {
-            v
-        };
-        let at = i as usize * w;
-        let dst = &mut self.arrays[a];
-        if dst.len() < at + w {
-            dst.resize(at + w, 0);
-        }
-        dst[at..at + w].copy_from_slice(&v.to_le_bytes()[..w]);
-    }
-
-    /// A node opens: its code's number in the language's table, and its start.
-    pub fn open(&mut self, number: u32, start: u64) {
-        let i = self.n;
-        self.n += 1;
-        let lang = self.lang;
-        if number < lang.cut {
-            self.codes.push(number as u8);
-        } else {
-            let t = number - lang.cut;
-            self.codes.push((lang.cut + t / lang.per) as u8);
-            self.side[0].push((i, u64::from(t % lang.per)));
-        }
-        let gap = if i == 0 { 0 } else { start.wrapping_sub(self.prev_start) };
-        self.put(1, i, gap);
-        self.prev_start = start;
-        if (i as usize).is_multiple_of(K) {
-            self.ckpt.extend_from_slice(&start.to_le_bytes()[..self.cw]);
-        }
-        if let Some(top) = self.stack.last_mut() {
-            let (idx, prev, p) = (top.children, top.last, top.i);
-            top.children = idx + 1;
-            top.last = i;
-            // The node before is a leaf unless it is the parent: its slot describes this node.
-            let before = i - 1;
-            if before != p {
-                let v = if (idx as usize).is_multiple_of(K) { (u64::from(i - p) << 2) | 3 } else { (u64::from(i - prev) << 2) | 1 };
-                self.put(0, before, v);
-            }
-        }
-        self.stack.push(Open { i, start, children: 0, last: NONE });
-    }
-
-    /// The node opened last and not yet closed closes at `end`.
-    pub fn close(&mut self, end: u64) {
-        let o = self.stack.pop().expect("a node to close");
-        self.put(2, o.i, end.wrapping_sub(o.start));
-        let size = self.n - o.i;
-        if size > 1 {
-            self.put(0, o.i, u64::from(size) << 1);
-        }
-    }
-
-    /// The tape: the last node's slot, and each side list laid in parts.
-    pub fn finish(mut self) -> Tape16 {
-        assert!(self.stack.is_empty(), "every node closed");
-        let n = self.n as usize;
-        if n > 0 {
-            // The last node in preorder is a leaf with nothing after it.
-            self.put(0, self.n - 1, 1);
-        }
-        let low_w = self.lang.low_w;
-        let side = std::array::from_fn(|k| {
-            let e = &mut self.side[k];
-            // Codes and gaps arrive in order; slots and lengths of inner nodes at their close.
-            e.sort_unstable_by_key(|x| x.0);
-            let vw = if k == 0 { low_w } else { bytes_for(e.iter().map(|x| x.1).max().unwrap_or(0)) };
-            parts(e, vw, n)
-        });
-        let pad = |mut a: Vec<u8>, len: usize| {
-            a.resize(len + 8, 0);
-            a
-        };
-        let w = self.lang.widths;
-        let [s, g, l] = self.arrays;
-        Tape16 {
-            mark: self.lang.revision,
-            n,
-            cw: self.cw,
-            codes: pad(self.codes, n),
-            slots: pad(s, n * w[0]),
-            gaps: pad(g, n * w[1]),
-            lengths: pad(l, n * w[2]),
-            ckpt: pad(std::mem::take(&mut self.ckpt), n.div_ceil(K) * self.cw),
-            side,
-        }
-    }
-}
-
-/// A side list `e` (sorted by node) laid in parts of `PART` nodes: each part a u16 end for each of its
-/// `BLOCK`-node blocks, the offsets, then the values at `vw` bytes. A part with no entries is empty.
-fn parts(e: &[(u32, u64)], vw: usize, n: usize) -> Side {
-    let blocks = n.div_ceil(BLOCK);
-    let mut start = vec![0u32; blocks + 1];
-    for x in e {
-        start[x.0 as usize / BLOCK + 1] += 1;
-    }
-    for b in 0..blocks {
-        start[b + 1] += start[b];
-    }
-    let (mut bytes, mut base) = (Vec::new(), Vec::with_capacity(n.div_ceil(PART) + 1));
-    for p in 0..n.div_ceil(PART) {
-        base.push(bytes.len() as u32);
-        let (b0, b1) = (p * SUB, ((p + 1) * SUB).min(blocks));
-        let (e0, e1) = (start[b0] as usize, start[b1] as usize);
-        if e0 == e1 {
-            continue;
-        }
-        for b in b0..b1 {
-            bytes.extend_from_slice(&((start[b + 1] - start[b0]) as u16).to_le_bytes());
-        }
-        bytes.extend(e[e0..e1].iter().map(|x| (x.0 as usize % BLOCK) as u8));
-        for x in &e[e0..e1] {
-            bytes.extend_from_slice(&x.1.to_le_bytes()[..vw]);
-        }
-    }
-    base.push(bytes.len() as u32);
-    bytes.resize(bytes.len() + 8, 0);
-    Side { bytes, base, vw }
-}
-
-/// Format 16 written from another tape `t`, each node's code mapped to the language's number (`number`, by `t`'s
-/// code): the writer driven in preorder as a parser drives it (decision 0293's interim, until the parsers call it).
-pub fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source_len: u64) -> Tape16 {
-    let n = t.len();
-    let mut w = Writer::new(lang, source_len, n);
-    let mut ends: Vec<(usize, u64)> = Vec::with_capacity(64);
+/// Format 16 (or 16z where `z`) written from another tape `t`, each node's code mapped to the language's number
+/// (`number`, by `t`'s code), in one pass (`write`): a tape a parser did not write in format 16 (decision 0293).
+pub fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source_len: u64, tag: u8, z: bool) -> Result<Written, String> {
     let mut s = 0;
-    for i in 0..n {
-        while ends.last().is_some_and(|&(e, _)| e <= i) {
-            w.close(ends.pop().expect("an open node").1);
-        }
+    write(lang, t.len(), source_len, tag, z, |i| {
         s = t.start_next(i, s);
-        w.open(number[t.code(i) as usize], s);
-        ends.push((t.subtree_end(i), t.end_with_start(i, s)));
-    }
-    while let Some((_, end)) = ends.pop() {
-        w.close(end);
-    }
-    w.finish()
+        Node { number: number[t.code(i) as usize], start: s, end: t.end_with_start(i, s), subtree_end: t.subtree_end(i) }
+    })
 }
 
 /// Each of `table`'s codes as `lang`'s number: what `write_from` maps a tape's codes with. An error names a code the
@@ -636,18 +779,24 @@ fn layout(nb: usize, w: [usize; 3], cw: usize, sides: [u32; 4]) -> [usize; REGIO
     at
 }
 
-/// One document's format 16 tape in fixed LZ4 blocks of `Z` nodes (0156 §2.1), with the block index: each block's
-/// start in the compressed bytes and its side parts' lengths. A block decodes to the tape's own bytes for its nodes,
-/// read in place as format 16 is.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// One document's format 16 tape in fixed LZ4 blocks of `Z` nodes (0156 §2.1), held as stored (`as_bytes`): the
+/// header, the block index (each block's start in the compressed bytes, one more at the end; each block's side
+/// parts' lengths), then the compressed blocks. A block decodes to the tape's own bytes for its nodes, read in
+/// place as format 16 is. The index is read in when the tape is.
+#[derive(Clone, Debug)]
 pub struct Tape16Z {
+    /// Which tape its decoded blocks are, in the thread's cache (a clone holds the same bytes).
+    id: u64,
     pub mark: u8,
     n: usize,
     cw: usize,
+    source_len: u64,
     widths: [usize; 3],
     vw: [usize; 4],
-    comp: Vec<u8>,
-    /// Each block's start in `comp`, one more at the end.
+    buf: Vec<u8>,
+    /// Where the compressed blocks start in `buf`.
+    comp: usize,
+    /// Each block's start in the compressed bytes, one more at the end.
     at: Vec<u32>,
     /// Each block's side parts' lengths.
     sides: Vec<[u32; 4]>,
@@ -657,13 +806,14 @@ impl Tape16 {
     /// This tape in fixed blocks, each compressed alone (no dictionary yet: 0293, not done).
     pub fn blocks(&self, lang: &Lang) -> Tape16Z {
         let (n, w, cw) = (self.n, lang.widths, self.cw);
-        let (mut comp, mut at, mut sides) = (Vec::new(), vec![0u32], Vec::with_capacity(n.div_ceil(Z)));
+        let blocks = n.div_ceil(Z);
+        let (mut comp, mut at, mut sides) = (Vec::new(), vec![0u32], Vec::with_capacity(blocks));
         let mut raw = Vec::new();
-        for b in 0..n.div_ceil(Z) {
+        for b in 0..blocks {
             let (i0, nb) = (b * Z, Z.min(n - b * Z));
-            let part = |s: &Side| (s.base[b] as usize, s.base[b + 1] as usize);
+            let part = |k: usize| (self.base[k][b] as usize, self.base[k][b + 1] as usize);
             let lens: [u32; 4] = std::array::from_fn(|k| {
-                let (p0, p1) = part(&self.side[k]);
+                let (p0, p1) = part(k);
                 (p1 - p0) as u32
             });
             raw.clear();
@@ -671,22 +821,49 @@ impl Tape16 {
                 raw.extend_from_slice(bytes);
                 raw.extend_from_slice(&[0; 8]);
             };
-            region(&self.codes[i0..i0 + nb]);
-            region(&self.slots[i0 * w[0]..(i0 + nb) * w[0]]);
-            region(&self.gaps[i0 * w[1]..(i0 + nb) * w[1]]);
-            region(&self.lengths[i0 * w[2]..(i0 + nb) * w[2]]);
+            region(&self.region(0)[i0..i0 + nb]);
+            region(&self.region(1)[i0 * w[0]..(i0 + nb) * w[0]]);
+            region(&self.region(2)[i0 * w[1]..(i0 + nb) * w[1]]);
+            region(&self.region(3)[i0 * w[2]..(i0 + nb) * w[2]]);
             let c0 = i0 / K;
-            region(&self.ckpt[c0 * cw..(c0 + nb.div_ceil(K)) * cw]);
-            for s in &self.side {
-                let (p0, p1) = part(s);
-                region(&s.bytes[p0..p1]);
+            region(&self.region(4)[c0 * cw..(c0 + nb.div_ceil(K)) * cw]);
+            for k in 0..4 {
+                let (p0, p1) = part(k);
+                region(&self.region(5 + k)[p0..p1]);
             }
             debug_assert_eq!(raw.len(), layout(nb, w, cw, lens)[REGIONS]);
             comp.extend_from_slice(&lz4::compress(&raw));
             at.push(comp.len() as u32);
             sides.push(lens);
         }
-        Tape16Z { mark: self.mark, n, cw, widths: w, vw: std::array::from_fn(|k| self.side[k].vw), comp, at, sides }
+        Tape16Z::laid(self.mark, self.tag(), n, cw, self.source_len, w, self.vw, comp, at, sides)
+    }
+}
+
+impl Tape16Z {
+    /// The tape from its compressed blocks, its block index and its choices, laid as stored.
+    #[allow(clippy::too_many_arguments)]
+    fn laid(mark: u8, tag: u8, n: usize, cw: usize, source_len: u64, w: [usize; 3], vw: [usize; 4], comp: Vec<u8>, at: Vec<u32>, sides: Vec<[u32; 4]>) -> Self {
+        let mut buf = vec![0u8; HEAD16Z];
+        buf[..8].copy_from_slice(MAGIC16Z);
+        buf[head::LANGUAGE] = tag;
+        buf[head::MARK] = mark;
+        buf[head::CW] = cw as u8;
+        buf[head::SOURCE_LEN..head::SOURCE_LEN + 8].copy_from_slice(&source_len.to_le_bytes());
+        buf[head::NODES..head::NODES + 8].copy_from_slice(&(n as u64).to_le_bytes());
+        for k in 0..4 {
+            buf[head::VW + k] = vw[k] as u8;
+        }
+        for k in 0..3 {
+            buf[head::WIDTHS + k] = w[k] as u8;
+        }
+        buf[head::LENGTHS..head::LENGTHS + 8].copy_from_slice(&(comp.len() as u64).to_le_bytes());
+        for x in at.iter().chain(sides.iter().flatten()) {
+            buf.extend_from_slice(&x.to_le_bytes());
+        }
+        let start = buf.len();
+        buf.extend_from_slice(&comp);
+        Tape16Z { id: next_id(), mark, n, cw, source_len, widths: w, vw, buf, comp: start, at, sides }
     }
 }
 
@@ -697,23 +874,61 @@ impl Tape16Z {
     pub fn is_empty(&self) -> bool {
         self.n == 0
     }
-    /// The bytes it takes in memory: the compressed blocks and the block index.
+    /// The bytes it takes in memory: as stored, and the block index read in.
     pub fn bytes(&self) -> usize {
-        1 + self.comp.len() + 4 * self.at.len() + 16 * self.sides.len()
+        self.buf.len() + 4 * self.at.len() + 16 * self.sides.len()
     }
+    pub fn source_len(&self) -> u64 {
+        self.source_len
+    }
+    pub fn tag(&self) -> u8 {
+        self.buf[head::LANGUAGE]
+    }
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.buf
+    }
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.buf
+    }
+
+    /// The stored tape, held as it is: its header and block index are checked against its length.
+    pub fn from_bytes(buf: Vec<u8>) -> Result<Self, String> {
+        if buf.len() < HEAD16Z || &buf[..8] != MAGIC16Z {
+            return Err("not a 16z tape".into());
+        }
+        let n = usize::try_from(u64_at(&buf, head::NODES)?).map_err(|_| "a tape length overflows")?;
+        let blocks = n.div_ceil(Z);
+        let at = u32s(&buf, HEAD16Z, blocks + 1)?;
+        let sides: Vec<[u32; 4]> = u32s(&buf, HEAD16Z + 4 * (blocks + 1), 4 * blocks)?.as_chunks::<4>().0.to_vec();
+        let comp = HEAD16Z + 4 * (blocks + 1) + 16 * blocks;
+        let len = u64_at(&buf, head::LENGTHS)?;
+        if (buf.len() - comp.min(buf.len())) as u64 != len || at.first() != Some(&0) || at.last().map(|&e| u64::from(e)) != Some(len) || at.windows(2).any(|w| w[0] > w[1]) {
+            return Err("a 16z tape's block index does not fit it".into());
+        }
+        let widths = std::array::from_fn(|k| usize::from(buf[head::WIDTHS + k]));
+        let vw = std::array::from_fn(|k| usize::from(buf[head::VW + k]));
+        Ok(Tape16Z { id: next_id(), mark: buf[head::MARK], n, cw: usize::from(buf[head::CW]), source_len: u64_at(&buf, head::SOURCE_LEN)?, widths, vw, buf, comp, at, sides })
+    }
+
     /// Read with `lang`'s choices (its revision and widths).
     pub fn reader<'a>(&'a self, lang: &'a Lang) -> Result<F16Z<'a>, String> {
         if self.mark != lang.revision || self.widths != lang.widths {
             return Err(format!("a tape of revision {}, read with revision {}", self.mark, lang.revision));
         }
-        Ok(F16Z { t: self, lang, cache: Default::default() })
+        Ok(F16Z { t: self, lang })
     }
 }
 
-/// A decoded block: its bytes, where its regions start, and its side parts' starts (one part each).
+fn next_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A decoded block: its tape and number, its bytes, where its regions start, and its side parts' starts (one part
+/// each).
 #[derive(Clone, Default)]
 struct Slot {
-    b: Option<usize>,
+    b: Option<(u64, usize)>,
     raw: Vec<u8>,
     at: [usize; REGIONS + 1],
     base: [[u32; 2]; 4],
@@ -726,42 +941,49 @@ struct Cache {
     next: usize,
 }
 
-/// A 16z tape read a block at a time: the block a read falls in is decoded to the tape's own bytes for it (two kept,
-/// so a parent's sibling steps back over a block's start do not decode again) and read in place.
-#[derive(Clone)]
+thread_local! {
+    /// The blocks this thread decoded last, whichever tape they are of: a reader is made per read, and keeps none.
+    static BLOCKS: std::cell::RefCell<Cache> = std::cell::RefCell::default();
+}
+
+/// A 16z tape read a block at a time: the block a read falls in is decoded to the tape's own bytes for it (the
+/// thread keeps two, so a parent's sibling steps back over a block's start do not decode again) and read in place.
+#[derive(Clone, Copy)]
 pub struct F16Z<'a> {
     t: &'a Tape16Z,
     lang: &'a Lang,
-    cache: std::cell::RefCell<Cache>,
 }
 
 impl F16Z<'_> {
-    /// `f` over block `b`'s view, decoding it on a miss.
+    /// `f` over block `b`'s view, decoding it on a miss. `f` reads no other 16z tape.
     #[inline(always)]
     fn with<R>(&self, b: usize, f: impl FnOnce(View<'_>) -> R) -> R {
-        let mut c = self.cache.borrow_mut();
-        let s = if c.slots[0].b == Some(b) {
-            0
-        } else if c.slots[1].b == Some(b) {
-            1
-        } else {
-            let s = c.next;
-            self.decode(b, &mut c.slots[s]);
-            s
-        };
-        c.next = s ^ 1;
-        let slot = &c.slots[s];
-        let r = |k: usize| &slot.raw[slot.at[k]..slot.at[k + 1]];
-        let side = |k: usize| Sv { bytes: r(5 + k), base: &slot.base[k], vw: self.t.vw[k] };
-        f(View {
-            n: Z.min(self.t.n - b * Z),
-            cw: self.t.cw,
-            codes: r(0),
-            slots: r(1),
-            gaps: r(2),
-            lengths: r(3),
-            ckpt: r(4),
-            side: [side(0), side(1), side(2), side(3)],
+        BLOCKS.with(|cache| {
+            let mut c = cache.borrow_mut();
+            let key = Some((self.t.id, b));
+            let s = if c.slots[0].b == key {
+                0
+            } else if c.slots[1].b == key {
+                1
+            } else {
+                let s = c.next;
+                self.decode(b, &mut c.slots[s]);
+                s
+            };
+            c.next = s ^ 1;
+            let slot = &c.slots[s];
+            let r = |k: usize| &slot.raw[slot.at[k]..slot.at[k + 1]];
+            let side = |k: usize| Sv { bytes: r(5 + k), base: &slot.base[k], vw: self.t.vw[k] };
+            f(View {
+                n: Z.min(self.t.n - b * Z),
+                cw: self.t.cw,
+                codes: r(0),
+                slots: r(1),
+                gaps: r(2),
+                lengths: r(3),
+                ckpt: r(4),
+                side: [side(0), side(1), side(2), side(3)],
+            })
         })
     }
     #[cold]
@@ -771,9 +993,9 @@ impl F16Z<'_> {
         let nb = Z.min(t.n - b * Z);
         slot.at = layout(nb, t.widths, t.cw, t.sides[b]);
         slot.raw.resize(slot.at[REGIONS], 0);
-        lz4::decompress(&t.comp[t.at[b] as usize..t.at[b + 1] as usize], &mut slot.raw);
+        lz4::decompress(&t.buf[t.comp + t.at[b] as usize..t.comp + t.at[b + 1] as usize], &mut slot.raw);
         slot.base = std::array::from_fn(|k| [0, t.sides[b][k]]);
-        slot.b = Some(b);
+        slot.b = Some((t.id, b));
     }
 }
 
@@ -874,6 +1096,14 @@ mod tests {
     use super::*;
     use crate::tape::{F15, children, f15_columns};
 
+    /// Format 16 written from `t` in one pass, and 16z written the same way, which is the format 16 tape's blocks.
+    fn sixteen<T: Tape>(lang: &Lang, t: &T, number: &[u32], source_len: u64) -> Tape16 {
+        let Ok(Written::F16(plain)) = write_from(lang, t, number, source_len, 0, false) else { panic!("format 16") };
+        let Ok(Written::F16Z(z)) = write_from(lang, t, number, source_len, 0, true) else { panic!("16z") };
+        assert_eq!(z.as_bytes(), plain.blocks(lang).as_bytes(), "16z written directly is format 16's blocks");
+        plain
+    }
+
     /// A language whose table is the tape's own, numbered as it is, at one byte a value.
     fn lang_of(table: &CodeTable) -> Lang {
         Lang::new(table.clone(), [1, 1, 1], 1).unwrap()
@@ -902,9 +1132,21 @@ mod tests {
         let f15 = F15::new(columns, &table).unwrap();
         let lang = lang_of(&table);
         let number = numbers(&lang, &table).unwrap();
-        let t = write_from(&lang, &f15, &number, 2_000);
+        let t = sixteen(&lang, &f15, &number, 2_000);
         same(&f15, &t.reader(&lang).unwrap(), &number);
         same(&f15, &t.blocks(&lang).reader(&lang).unwrap(), &number);
+        // As stored, and read back where it lies.
+        let mut tagged = t.clone();
+        tagged.set_tag(7);
+        let back = Tape16::from_bytes(tagged.as_bytes().to_vec()).unwrap();
+        assert_eq!((back.tag(), back.source_len()), (7, 2_000));
+        same(&f15, &back.reader(&lang).unwrap(), &number);
+        let z = Tape16Z::from_bytes(tagged.blocks(&lang).into_bytes()).unwrap();
+        assert_eq!((z.tag(), z.source_len()), (7, 2_000));
+        same(&f15, &z.reader(&lang).unwrap(), &number);
+        let mut short = tagged.as_bytes().to_vec();
+        short.pop();
+        assert!(Tape16::from_bytes(short).is_err());
     }
 
     /// Wide values escape to the side lists, and codes past the cutoff keep their low parts there: a long, flat
@@ -961,8 +1203,8 @@ mod tests {
         }
         let plain = Plain(&nodes, &table);
         let number: Vec<u32> = (0..600).collect();
-        let t = write_from(&lang, &plain, &number, pos + 2);
-        assert!(t.side.iter().all(|s| s.base.last().copied().unwrap_or(0) > 0), "every side list has entries");
+        let t = sixteen(&lang, &plain, &number, pos + 2);
+        assert!(t.base.iter().all(|b| b.last().copied().unwrap_or(0) > 0), "every side list has entries");
         same(&plain, &t.reader(&lang).unwrap(), &number);
         let set = table.set(|e| e.kind % 97 == 3 || e.kind > 590);
         let (mut a, mut b) = (Vec::new(), Vec::new());
@@ -970,8 +1212,9 @@ mod tests {
         t.reader(&lang).unwrap().match_groups(&set, |base, m| b.push((base, m)));
         assert_eq!(a, b, "a set past the cutoff");
         // The same tape in fixed blocks: every read decodes the block it falls in.
-        let z = t.blocks(&lang);
+        let z = Tape16Z::from_bytes(t.blocks(&lang).into_bytes()).unwrap();
         assert!(z.len() > 6 * Z, "several blocks");
+        assert_eq!(Tape16::from_bytes(t.as_bytes().to_vec()).unwrap(), t);
         same(&plain, &z.reader(&lang).unwrap(), &number);
         let mut c = Vec::new();
         z.reader(&lang).unwrap().match_groups(&set, |base, m| c.push((base, m)));
@@ -1005,7 +1248,7 @@ mod tests {
         let (columns, table) = f15_columns(&image).unwrap();
         let f15 = F15::new(columns, &table).unwrap();
         let lang = lang_of(&table);
-        let t = write_from(&lang, &f15, &numbers(&lang, &table).unwrap(), 2_000);
+        let t = sixteen(&lang, &f15, &numbers(&lang, &table).unwrap(), 2_000);
         let other = Lang::new(table.clone(), [1, 1, 1], 2).unwrap();
         assert!(t.reader(&other).is_err());
     }

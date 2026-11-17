@@ -1129,6 +1129,8 @@ impl super::Rewrite for Rename {
 }
 impl super::manager::RulePass for Rename {
     const NAME: &'static str = "rename";
+    // It reads its rule alone: a rerun visits an edit's added rules (`seen` is the test's count, not a result).
+    const WHOLE: super::manager::Reads = super::manager::Reads::DECLS;
     fn begin(&mut self, _: &super::manager::Cx<'_>) -> Result<super::manager::Select, String> {
         Ok(super::manager::Select::Readers([self.from].into_iter().collect()))
     }
@@ -1256,4 +1258,140 @@ fn a_pass_that_writes_for_a_kept_rule_fails() {
     p.rules(&mut Liar);
     let e = p.finish().err().expect("refused");
     assert!(e.contains("liar") && e.contains("kept"), "{e}");
+}
+
+/// Renames the reads of `from` (by name) in every rule it is shown, keeping the rest: a pass over all rules, so its
+/// output is a derivation. Asks for `Needed` when `needs`, so a rerun compares it.
+struct RenameAll {
+    from: &'static str,
+    to: &'static str,
+    needs: bool,
+    seen: usize,
+}
+impl super::manager::RulePass for RenameAll {
+    const NAME: &'static str = "rename all";
+    const WHOLE: super::manager::Reads = super::manager::Reads::DECLS;
+    fn begin(&mut self, cx: &super::manager::Cx<'_>) -> Result<super::manager::Select, String> {
+        if self.needs {
+            cx.get::<super::analyses::Needed>()?;
+        }
+        Ok(super::manager::Select::All)
+    }
+    fn rule(&mut self, cx: &super::manager::Cx<'_>, r: super::RuleRef<'_>, out: &mut super::manager::RuleOut<'_, '_>) -> Result<super::manager::Step, String> {
+        self.seen += 1;
+        let from = cx.v().rel(self.from).unwrap();
+        if !r.reads().any(|a| a.rel() == from) {
+            return Ok(super::manager::Step::Keep);
+        }
+        out.rewrite(&mut Rename { from, to: self.to, seen: 0 })
+    }
+}
+
+/// `v` less rules `gone`, plus `add`: an overlay, as a session's edit of a program is.
+fn edited(v: &Arc<Version>, gone: &[RuleId], add: &[Rule]) -> Arc<Version> {
+    let mut b = Builder::on(v);
+    for &g in gone {
+        b.remove(g);
+    }
+    for r in add {
+        b.add(r).unwrap();
+    }
+    let (out, made) = b.finish().unwrap();
+    assert_eq!(made, Made::Overlay);
+    out
+}
+
+fn reads_e(head: &str) -> Rule {
+    Rule { head: atom(head, vec![v("x")]), body: vec![Literal::Atom(atom("e", vec![v("x"), Term::Wild]))].into() }
+}
+fn r_of_f(k: i64) -> Rule {
+    Rule { head: atom("r", vec![Term::Int(k)]), body: vec![Literal::Atom(atom("f", vec![Term::Int(k)]))].into() }
+}
+
+/// A rule pass run again over an edit of its input (0281 §3) visits the edit's added rules alone, drops what came
+/// from its removed ones, and makes the program a run from scratch makes, over two edits in a row: as an edit of
+/// its input (`Rename`, the readers of `e`) and as a derivation (`RenameAll`, every rule).
+#[test]
+fn a_rule_pass_run_again_visits_the_edits_rules_alone() {
+    use super::manager::{Form, Pipeline, Ran};
+    let v0 = managed();
+    let e = v0.rel("e").unwrap();
+    let readers: Vec<RuleId> = v0.readers(e).map(|(r, _)| r.id()).collect();
+    let r3 = v0.rules().nth(6).unwrap().id();
+    // Edit 1: one reader of `e` and one other rule out; one reader and one other rule in.
+    let v1 = edited(&v0, &[readers[0], r3], &[reads_e("q"), r_of_f(20)]);
+    let added1: Vec<RuleId> = super::manager::Delta::of(&v0, &v1).added;
+    // Edit 2: edit 1's added reader out, and one more reader in.
+    let v2 = edited(&v1, &[added1[0]], &[reads_e("p")]);
+
+    let scratch = |v: &Arc<Version>, by_rules: bool| {
+        let mut p = Pipeline::new("scratch", v.clone());
+        if by_rules {
+            p.rules(&mut Rename { from: v.rel("e").unwrap(), to: "e2", seen: 0 });
+        } else {
+            p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
+        }
+        p.finish().unwrap().0
+    };
+    for by_rules in [true, false] {
+        let mut p = Pipeline::keeping("test", v0.clone());
+        let run = |p: &mut Pipeline| -> usize {
+            if by_rules {
+                let mut pass = Rename { from: e, to: "e2", seen: 0 };
+                p.rules(&mut pass);
+                pass.seen
+            } else {
+                let mut pass = RenameAll { from: "e", to: "e2", needs: false, seen: 0 };
+                p.rules(&mut pass);
+                pass.seen
+            }
+        };
+        assert_eq!(run(&mut p), if by_rules { 2 } else { 12 });
+        let mut last = p.done().unwrap();
+        assert_eq!(last.stages()[0].form, if by_rules { Form::Overlay } else { Form::Derived });
+        for (v, visits) in [(&v1, if by_rules { 1 } else { 2 }), (&v2, 1)] {
+            let mut p = Pipeline::again(last, v.clone());
+            assert_eq!(run(&mut p), visits, "visits the edit's added rules alone");
+            last = p.done().unwrap();
+            let s = &last.stages()[0];
+            assert_eq!((s.ran, s.visited), (Ran::Delta, visits));
+            let want = scratch(v, by_rules);
+            let got = last.output();
+            assert_eq!((got.digest(), got.size()), (want.digest(), want.size()), "the program a run from scratch makes");
+            assert_eq!(got.readers(got.rel("e").unwrap()).count(), 0);
+        }
+        // The same input again: the step is reused.
+        let mut p = Pipeline::again(last, v2.clone());
+        let before = p.version().clone();
+        assert_eq!(run(&mut p), 0);
+        let again = p.done().unwrap();
+        assert_eq!(again.stages()[0].ran, Ran::Reused);
+        assert!(Arc::ptr_eq(&before, &v2));
+    }
+}
+
+/// A rerun runs a step whole when it cannot run on the edit alone: a program pass, a rule pass that keeps the
+/// default `WHOLE`, and a rule pass whose analyses the edit changed. Across the edit, the analyses the last input
+/// held are carried to the new input.
+#[test]
+fn a_rerun_runs_a_step_whole_when_the_edit_reaches_past_its_rules() {
+    use super::analyses::Strata;
+    use super::manager::{Pipeline, Ran};
+    let v0 = managed();
+    let mut p = Pipeline::keeping("test", v0.clone());
+    p.get::<Strata>().unwrap();
+    p.rules(&mut Keep).rules(&mut RenameAll { from: "f", to: "f2", needs: true, seen: 0 }).program(&mut DropQ);
+    let mut last = p.done().unwrap();
+    // `q` is read by an output's rule now: `Needed` changes, so the pass that asked for it runs whole.
+    let reads_q = Rule { head: atom("p", vec![v("x")]), body: vec![Literal::Atom(atom("q", vec![v("x")]))].into() };
+    for (add, ran) in [(r_of_f(30), Ran::Delta), (reads_q, Ran::Whole)] {
+        let v = edited(last.input(), &[], &[add]);
+        let mut p = Pipeline::again(last, v.clone());
+        p.rules(&mut Keep).rules(&mut RenameAll { from: "f", to: "f2", needs: true, seen: 0 }).program(&mut DropQ);
+        last = p.done().unwrap();
+        let ran_by: Vec<Ran> = last.stages().iter().map(|s| s.ran).collect();
+        assert_eq!(ran_by, [Ran::Whole, ran, Ran::Whole]);
+        assert!(v.analyses().holds::<super::About>(), "carried from the last input");
+        assert_eq!(v.analyses().computed("about"), 0);
+    }
 }

@@ -94,6 +94,37 @@ pub enum Syms {
 /// the store busy (`run_job`), so it writes what it holds without consuming it.
 pub type Job = Box<dyn FnMut(&ContentStore) -> StoreResult<()> + Send>;
 
+/// Writes a run gathers, many small ones made one job (decision 0295 step 5: a batch's bytes in one segment). Held
+/// beside the run's wave still being written, and closed (placed, then queued in that wave as one job) once it holds
+/// [`gather_cap`] bytes or the wave is sealed. A read finds a gathered write as it finds a queued one (`pending`).
+pub trait Gather: Any + Send {
+    /// The keys gathered, each with the value a read of it gets meanwhile.
+    fn keys(&self) -> Vec<(Key, Option<Held>)>;
+    /// The value a read of `key` gets, where it is gathered.
+    fn held(&self, key: &Key) -> Option<Held>;
+    /// The bytes it holds in memory.
+    fn bytes(&self) -> usize;
+    /// Placed and made one job; `None` when it gathered nothing.
+    fn close(self: Box<Self>) -> Option<Closed>;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+}
+
+/// A gather closed: the job its writes are, the bytes it holds until written, its keys' values for reads now, and the
+/// holder it pins its sources under.
+pub struct Closed {
+    pub what: &'static str,
+    pub bytes: usize,
+    pub keys: Vec<(Key, Option<Held>)>,
+    pub syms: Syms,
+    pub holder: Option<(String, i64)>,
+    pub job: Job,
+}
+
+/// The bytes a gather holds in memory before it is closed: 16 MB of the default 1 GB budget, scaled with it.
+pub(super) fn gather_cap() -> usize {
+    rerail_accel::budget::share(16 << 20)
+}
+
 /// Runs `job` until it does not find the store busy, waiting a jittered backoff between runs from
 /// [`JOB_BACKOFF_FIRST`], doubled each time up to [`JOB_BACKOFF_MAX`]; `Busy` once `deadline` has
 /// passed. Returns the outcome and the runs that found the store busy.
@@ -122,7 +153,7 @@ fn retried(store: &ContentStore, what: &str, job: &mut Job) -> StoreResult<()> {
     outcome.map_err(|e| StoreError::Invalid(format!("{what}: {e}{}", if busy > 0 { format!(" ({busy} runs found the store busy)") } else { String::new() })))
 }
 
-type Held = Arc<dyn Any + Send + Sync>;
+pub type Held = Arc<dyn Any + Send + Sync>;
 
 /// Where a run's wave of writes ends (decision 0259 §5). A wave is what the run queued between two boundaries that
 /// seal, and the store takes it in one transaction.
@@ -226,6 +257,33 @@ struct State {
     held: (usize, f64),
     /// Cache writes dropped for a full queue (`write_back_unless_full`): how many, and their bytes.
     dropped: (usize, usize),
+    /// Each run's gathers (`Gather`), by their type: closed into its wave once full or when it is sealed.
+    gathers: HashMap<(u64, std::any::TypeId), Box<dyn Gather>>,
+}
+
+impl State {
+    /// Takes `run`'s gathers (all, or the one of type `kind`) out, their keys queued in `run`'s wave: a read finds
+    /// them while they are placed (`Writer::close_gathers`).
+    fn take_gathers(&mut self, run: u64, kind: Option<std::any::TypeId>) -> Vec<(Vec<Key>, Box<dyn Gather>)> {
+        let ids: Vec<(u64, std::any::TypeId)> = self.gathers.keys().filter(|(r, k)| *r == run && kind.is_none_or(|t| t == *k)).copied().collect();
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            let g = self.gathers.remove(&id).expect("a gather");
+            let keys = g.keys();
+            for (key, held) in &keys {
+                let slot = self.keys.entry(*key).or_insert((0, None, run));
+                slot.0 += 1;
+                slot.1 = held.clone();
+                slot.2 = run;
+            }
+            out.push((keys.into_iter().map(|(k, _)| k).collect(), g));
+        }
+        out
+    }
+    /// The run whose gather holds `key`.
+    fn gathered(&self, key: &Key) -> Option<(u64, Held)> {
+        self.gathers.iter().find_map(|((run, _), g)| g.held(key).map(|h| (*run, h)))
+    }
 }
 
 #[derive(Default)]
@@ -253,6 +311,13 @@ struct Wave {
 }
 
 /// The bytes under which a job is queued past the cap (back-pressure holds only a job of this size or more).
+/// `RERAIL_WRITES` (a measurement aid): seconds since the writer's first use in this process, for its timeline.
+fn writes_trace() -> Option<f64> {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_WRITES").is_some());
+    static T0: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
+    (*ON).then(|| T0.elapsed().as_secs_f64())
+}
+
 fn small_job() -> usize {
     cap_bytes() / 64
 }
@@ -280,11 +345,17 @@ impl Writer {
     /// lane's lock, so two seals of a run send its waves in the order they were taken.
     fn seal(&self, run: u64) {
         let mut lane = self.lane.lock().expect("the writer");
+        // The run's gathers first, each placed and made one job of the wave.
+        let gathers = self.shared.state.lock().expect("the writer's state").take_gathers(run, None);
+        self.close_gathers(run, gathers);
         let jobs = {
             let mut s = self.shared.state.lock().expect("the writer's state");
             let Some(jobs) = s.open.remove(&run).filter(|j| !j.is_empty()) else { return };
             s.sealed_bytes += jobs.iter().map(|q| q.1).sum::<usize>();
             s.sealed += 1;
+            if let Some(t) = writes_trace() {
+                eprintln!("RERAIL_WRITES t={t:.2} seal {} jobs, {:.1} MB; queued {:.1} MB, sealed {:.1} MB", jobs.len(), jobs.iter().map(|q| q.1).sum::<usize>() as f64 / 1048576.0, s.bytes as f64 / 1048576.0, s.sealed_bytes as f64 / 1048576.0);
+            }
             jobs
         };
         // A writer with a wave open has its lane: the wave's first job started it (`queue`).
@@ -301,10 +372,54 @@ impl Writer {
 
     /// Seals every run's wave still being written (the store's last handle gone).
     fn seal_all(&self) {
-        let runs: Vec<u64> = self.shared.state.lock().expect("the writer's state").open.keys().copied().collect();
+        let runs: Vec<u64> = {
+            let s = self.shared.state.lock().expect("the writer's state");
+            let mut runs: Vec<u64> = s.open.keys().chain(s.gathers.keys().map(|(r, _)| r)).copied().collect();
+            runs.sort_unstable();
+            runs.dedup();
+            runs
+        };
         for run in runs {
             self.seal(run);
         }
+    }
+
+    /// Closes `gathers` (taken by `State::take_gathers`, their keys queued) and queues each in `run`'s wave still being
+    /// written, as one job. Called under the lane's lock, so a seal of the run takes them in its wave. A gather that
+    /// gathered nothing lets its keys go.
+    fn close_gathers(&self, run: u64, gathers: Vec<(Vec<Key>, Box<dyn Gather>)>) {
+        for (keys, g) in gathers {
+            match g.close() {
+                Some(c) => {
+                    let job = accounted(c.what, c.bytes, guarded(c.syms, c.job));
+                    let mut s = self.shared.state.lock().expect("the writer's state");
+                    s.bytes += c.bytes;
+                    s.jobs += 1;
+                    s.peak = s.peak.max(s.bytes);
+                    let entry = s.by_what.entry(c.what).or_default();
+                    entry.0 += 1;
+                    entry.1 += c.bytes;
+                    for (key, held) in c.keys {
+                        if let Some(slot) = s.keys.get_mut(&key) {
+                            slot.1 = held;
+                        }
+                    }
+                    s.open.entry(run).or_default().push((job, c.bytes, keys, c.holder, Run::InWave, c.what));
+                }
+                None => {
+                    let mut s = self.shared.state.lock().expect("the writer's state");
+                    for key in &keys {
+                        if let Some(slot) = s.keys.get_mut(key) {
+                            slot.0 -= 1;
+                            if slot.0 == 0 {
+                                s.keys.remove(key);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.shared.changed.notify_all();
     }
 
     /// A wave the writer cannot take (its thread is gone, though it catches each job's panic): failed, each job, as
@@ -459,6 +574,31 @@ impl ContentStore {
         self.writer().map_or((0, 0), |w| w.shared.state.lock().expect("the writer's state").dropped)
     }
 
+    /// Adds a write to this thread's run's gather of type `G` (`make` makes it, the run's first): closed and queued
+    /// in the run's wave once it holds [`gather_cap`] bytes, or when the wave is sealed. False, nothing added, outside
+    /// a run's waves, with no writer, or with no threads (the browser build): the caller queues the write itself.
+    pub fn gather<G: Gather>(&self, what: &'static str, make: impl FnOnce() -> G, add: impl FnOnce(&mut G)) -> bool {
+        let run = WAVES.with(std::cell::Cell::get);
+        let Some(w) = self.writer().filter(|_| run != 0 && !cfg!(target_family = "wasm")) else { return false };
+        if !super::hazards::warm_write_allowed(what) {
+            super::hazards::warm_fault("a write gathered for the store", || what.to_owned());
+        }
+        // The writer's lane, started: the gather is closed into a wave sealed from any thread.
+        w.lane.lock().expect("the writer").get_or_insert_with(|| self.start_writer(w));
+        let kind = std::any::TypeId::of::<G>();
+        let full = {
+            let mut s = w.shared.state.lock().expect("the writer's state");
+            let g = s.gathers.entry((run, kind)).or_insert_with(|| Box::new(make()));
+            add(g.as_any_mut().downcast_mut::<G>().expect("a gather of its type"));
+            if g.bytes() >= gather_cap() { s.take_gathers(run, Some(kind)) } else { Vec::new() }
+        };
+        if !full.is_empty() {
+            let _lane = w.lane.lock().expect("the writer");
+            w.close_gathers(run, full);
+        }
+        true
+    }
+
     fn queue(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job, run: Run, droppable: bool) -> bool {
         // A truly warm run computes nothing it would keep (`RERAIL_WARM`): its caller's stack is here, not on the writer.
         // Not a fault: the writes listed as allowed (locks, timestamps).
@@ -474,19 +614,7 @@ impl ContentStore {
             }
             return true;
         };
-        let mut job: Job = Box::new(move |store| {
-            // In the writer's transaction (`warm_scope`): whether its commit is one a warm run may make.
-            super::hazards::warm_job(what);
-            let (t0, e0) = (thread_cpu(), super::compression::encoded_here());
-            let out = retried(store, what, &mut job);
-            let mut by = BY_KIND.lock().expect("the writer's account");
-            let e = by.entry(what).or_default();
-            e.0 += 1;
-            e.1 += bytes;
-            e.2 += thread_cpu() - t0;
-            e.3 += super::compression::encoded_here() - e0;
-            out
-        });
+        let mut job = accounted(what, bytes, job);
         let wave = WAVES.with(std::cell::Cell::get);
         {
             let mut s = w.shared.state.lock().expect("the writer's state");
@@ -499,6 +627,9 @@ impl ContentStore {
             if droppable && s.jobs > 0 && s.bytes + bytes > cap_bytes() / 2 {
                 s.dropped = (s.dropped.0 + 1, s.dropped.1 + bytes);
                 return false;
+            }
+            if bytes >= small_job() && let Some(t) = writes_trace() {
+                eprintln!("RERAIL_WRITES t={t:.2} queue {what} {:.1} MB; queued {:.1} MB, sealed {:.1} MB", bytes as f64 / 1048576.0, s.bytes as f64 / 1048576.0, s.sealed_bytes as f64 / 1048576.0);
             }
             let t = full(&s).then(std::time::Instant::now);
             // The first hold says what fills the queue (a strict run ends at it).
@@ -686,8 +817,11 @@ impl ContentStore {
                     let started = Instant::now();
                     let mut backoff = JOB_BACKOFF_FIRST;
                     let mut forked_in = false;
+                    let mut tries = 0usize;
+                    let jobs_wall = std::cell::Cell::new(0.0f64);
                     let outcomes = loop {
-                        match store.in_one_transaction(|| run(&mut batch)) {
+                        tries += 1;
+                        match store.in_one_transaction(|| { let t = Instant::now(); let o = run(&mut batch); jobs_wall.set(jobs_wall.get() + t.elapsed().as_secs_f64()); o }) {
                             Ok(outcomes) => break outcomes,
                             Err(StoreError::Busy) if started.elapsed() < JOB_DEADLINE => {
                                 std::thread::sleep(super::connection::jittered(backoff));
@@ -701,6 +835,10 @@ impl ContentStore {
                     };
                     drop(warm_scope);
                     drop(batch_span);
+                    if let Some(t) = writes_trace() {
+                        let wall = started.elapsed().as_secs_f64();
+                        eprintln!("RERAIL_WRITES t={t:.2} wave {} jobs, {:.1} MB: {wall:.3} s wall, jobs {:.3} s, begin+commit {:.3} s, CPU {:.3} s, {tries} tries", batch.len(), batch.iter().map(|q| q.1).sum::<usize>() as f64 / 1048576.0, jobs_wall.get(), wall - jobs_wall.get(), thread_cpu() - before);
+                    }
                     let _ = told.send(());
                     let cpu = (thread_cpu() - before) / batch.len().max(1) as f64;
                     w.shared.state.lock().expect("the writer's state").batches += 1;
@@ -723,19 +861,29 @@ impl ContentStore {
     /// The value a queued job left for `key`, while the job is queued.
     pub fn pending<T: Any + Send + Sync>(&self, key: &Key) -> Option<Arc<T>> {
         let s = self.writer()?.shared.state.lock().expect("the writer's state");
-        s.keys.get(key).and_then(|(_, held, _)| held.clone()).and_then(|h| h.downcast::<T>().ok())
+        match s.keys.get(key) {
+            Some((_, held, _)) => held.clone(),
+            None => s.gathered(key).map(|(_, h)| h),
+        }
+        .and_then(|h| h.downcast::<T>().ok())
     }
 
     /// Whether a job that writes `key` is queued (not written yet).
     pub fn queued(&self, key: &Key) -> bool {
-        self.writer().is_some_and(|w| w.shared.state.lock().expect("the writer's state").keys.contains_key(key))
+        self.writer().is_some_and(|w| {
+            let s = w.shared.state.lock().expect("the writer's state");
+            s.keys.contains_key(key) || s.gathered(key).is_some()
+        })
     }
 
     /// Waits for the jobs that write `key`, if any is queued; a read of anything else never waits. A key in a wave
     /// still being written seals that wave: the read is of a value the run left no copy of in memory.
     pub fn settle(&self, key: &Key) {
         let Some(w) = self.writer() else { return };
-        let open = w.shared.state.lock().expect("the writer's state").keys.get(key).map(|k| k.2).filter(|&run| run != 0);
+        let open = {
+            let s = w.shared.state.lock().expect("the writer's state");
+            s.keys.get(key).map(|k| k.2).or_else(|| s.gathered(key).map(|(run, _)| run)).filter(|&run| run != 0)
+        };
         if let Some(run) = open {
             w.seal(run);
         }
@@ -799,6 +947,24 @@ impl ContentStore {
 
 /// `job` as its rows' `syms` allow after a fork (decision 0170): an unmapped one is not run, a mapped one runs as
 /// a write whose symbols are the store's (`atoms::mapped`).
+/// `job` run as the writer runs a queued one: again while it finds the store busy (`retried`), and counted by what it
+/// writes.
+fn accounted(what: &'static str, bytes: usize, mut job: Job) -> Job {
+    Box::new(move |store| {
+        // In the writer's transaction (`warm_scope`): whether its commit is one a warm run may make.
+        super::hazards::warm_job(what);
+        let (t0, e0) = (thread_cpu(), super::compression::encoded_here());
+        let out = retried(store, what, &mut job);
+        let mut by = BY_KIND.lock().expect("the writer's account");
+        let e = by.entry(what).or_default();
+        e.0 += 1;
+        e.1 += bytes;
+        e.2 += thread_cpu() - t0;
+        e.3 += super::compression::encoded_here() - e0;
+        out
+    })
+}
+
 fn guarded(syms: Syms, mut job: Job) -> Job {
     Box::new(move |store| {
         if syms == Syms::Unmapped && store.atoms.forked() {

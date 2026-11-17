@@ -87,7 +87,7 @@ pub(in crate::code_rule_dsl) fn run(
             q.remove("inline");
             q.insert("no_inline".to_owned());
         }
-    });
+    })?;
     drop(s);
     let s = span("bind and measure");
     let part = &maintained.program;

@@ -319,6 +319,76 @@
         assert_eq!(got[1], got[0], "the strata's rows after the wave are their own runs'");
     }
 
+    /// Q48: a stratum run on its own (its driver cannot wait) beside an open wave on its thread. The wave's stratum
+    /// made the relation's verdicts and its sort in the wave's batch, and the resident cache hands them to the next
+    /// stratum at once. The stratum run apart commits its own batch before the wave is flushed: unless the wave's
+    /// work goes first, it reads them unwritten (the verdicts all false: no rows).
+    #[test]
+    fn a_stratum_run_apart_beside_an_open_wave_reads_what_the_wave_made() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        use crate::code_rule_dsl::logic::lanes::wave;
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE n (c0, c1);").unwrap();
+        for k in 0..3000_i64 {
+            db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![format!("{}{}", ["foo", "bar", "baz"][(k % 3) as usize], k % 7), k]).unwrap();
+        }
+        let n = format!("t:x:{}:{}:si", hex("temp.n"), hex("c0, c1"));
+        let foo = format!("x:{}", hex("foo"));
+        // Both read `n`'s verdicts for one text test and its sort by `v0`.
+        let waved = format!("pos {n} v0 v1\ntest prefix v0 {foo} 1\npos {n} v0 v2\nlt v1 v2\nlt v2 i:200\nhead v1 v2");
+        let apart = format!("pos {n} v0 v1\ntest prefix v0 {foo} 1\npos {n} v0 v2\nlt v2 v1\nlt v1 i:300\nhead v1 v2");
+        fn rows(db: &Connection, h: &str) -> Vec<(i64, i64)> {
+            let mut r: Vec<(i64, i64)> = db.prepare(&format!("SELECT c0, c1 FROM temp.{h}")).unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+            r.sort_unstable();
+            r
+        }
+        fn open(db: &Connection, name: &str, h: &str, rule: &str) {
+            db.execute_batch(&format!("DROP TABLE IF EXISTS temp.{h}; CREATE TEMP TABLE {h} (c0, c1);")).unwrap();
+            super::super::open(db, &format!("name {name}\ndevice\nrel {h} si empty\nseed 0 {}", hex(rule))).unwrap();
+        }
+        // The stratum run apart, alone, on a thread of its own (the device's resident copies are a thread's): its
+        // rows.
+        let apart2 = apart.clone();
+        let (db, want) = std::thread::spawn(move || {
+            open(&db, "alone", "h1", &apart2);
+            super::super::run(&db, "alone", 0).unwrap();
+            assert!(super::take_report().is_some_and(|r| r.refused.is_none()));
+            super::super::close(&db, "alone").unwrap();
+            let want = rows(&db, "h1");
+            (db, want)
+        })
+        .join()
+        .unwrap();
+        assert!(want.len() > 100, "{} rows", want.len());
+        // Here no relation is resident yet: the wave's stratum makes the verdicts and the sort.
+        open(&db, "in_wave", "h0", &waved);
+        open(&db, "beside", "h2", &apart);
+        {
+            let _w = wave::suspendable();
+            let status = super::super::run(&db, "in_wave", 0).unwrap();
+            assert!(status.ends_with(" 3"), "it waits for its wave: {status}");
+        }
+        // Its driver cannot wait: it runs in a batch of its own, the wave still open.
+        let status = super::super::run(&db, "beside", 0).unwrap();
+        assert!(!status.ends_with(" 3"), "it ran apart: {status}");
+        let report = super::take_report().expect("a device report");
+        assert!(report.refused.is_none() && report.waved == 0 && report.resident_hits + report.sort_hits > 0, "it read the resident copy: {report:?}");
+        super::super::close(&db, "beside").unwrap();
+        wave::flush(1).unwrap();
+        super::super::run(&db, "in_wave", 0).unwrap();
+        super::super::close(&db, "in_wave").unwrap();
+        let got = rows(&db, "h2");
+        let waved_rows = rows(&db, "h0");
+        assert_eq!(got, want, "the stratum run apart reads the verdicts and the sort the wave made");
+        assert!(!waved_rows.is_empty());
+    }
+
     /// Text functions on the device: their texts made into the batch's arena (an arena too small run again in one
     /// as big as its texts asked), read by tests, `str_cmp`, `strlen` and other functions, stored as symbols in the
     /// head: the CPU's rows. `lower` of a name past ASCII is the host's: the stratum runs on the CPU.

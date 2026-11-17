@@ -33,6 +33,13 @@ pub(super) fn base_key(rel: &str) -> String {
 /// takes more of them kept over it (`identities_of`, decision 0280).
 pub(super) const COVERED: &str = "own:covered";
 
+/// What a hit read for its outputs alone decodes besides its outputs (decision 0117 step 1): its `own:` rows (its tree
+/// counts and `COVERED`), not its export or base rows, which the kept inputs hold. An entry is one image (decision
+/// 0240 §4), so it is held whole and only these are decoded; `Found::whole` decodes the rest if the kept inputs fail.
+pub(super) fn outputs_alone(rel: &str) -> bool {
+    rel.starts_with("own:")
+}
+
 /// The prefix of an entry's `lines` keys that hold its guests' requests (decision 0225 §2): the embed slice's output
 /// lines of each round that ask at a location of the file (`guests::asked_at`), under `guests:<round>:<relation>`. A
 /// chunk of partial hits whose entries hold them under the slice's identities makes its guests from them, without
@@ -441,6 +448,31 @@ pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, stor
     );
 }
 
+/// The sources of contents the run named by their digests (`Content::Unstored`: read in the waves, where the store is
+/// not asked, by files the stat index does not trust yet), for the run's manifest (`late`): looked up together on the
+/// store's writer, behind the writes queued before (a new content's tape stores its source), and pinned as
+/// `stored_source` pins. A second run in one process finds those files' tapes held and writes none, so only this
+/// names them (Q24).
+pub(super) fn named_digests(cache: &ContentStore, digests: Vec<[u8; 32]>, late: &std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>) {
+    if digests.is_empty() {
+        return;
+    }
+    let late = std::sync::Arc::clone(late);
+    cache.write_back_syms(
+        crate::content_store::write_back::Syms::None,
+        "the sources the manifest names by digest",
+        digests.len() * 32,
+        Vec::new(),
+        Box::new(move |s| {
+            let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
+            let found: Vec<SourceId> = s.sources_by_hashes(&hashes)?.into_iter().flatten().collect();
+            s.pin_held_sources(&found)?;
+            late.lock().expect("the late sources").extend(found);
+            Ok(())
+        }),
+    );
+}
+
 /// How many contents of one path the memo keeps (decision 0117): the newest, by their last use. Worktrees or
 /// branches that take turns at a file keep theirs (decision 0146 §4); an edited file's earlier contents go.
 const MEMO_CONTENTS: usize = 4;
@@ -558,11 +590,11 @@ impl Frame {
     }
 
     fn projected(&self, keep: &dyn Fn(&str) -> bool) -> StoreResult<Entry> {
-        let mut entry = Entry { key: self.key, ..image::decode(&self.blob.bytes, self.blob.raw, keep, &self.atoms)? };
+        let mut entry = Entry { key: self.key, ..image::decode(&self.blob.bytes, keep, &self.atoms)? };
         // The identities a later run found its rows hold (decision 0280), kept over it: with those it was made under,
         // all true while it stands. Bytes kept over it that do not decode add none: the relations are a partial hit's.
-        if let Some((bytes, raw)) = self.blob.over.as_ref().filter(|_| keep(COVERED))
-            && let Ok(more) = image::decode(bytes, *raw, &|k| k == COVERED, &self.atoms)
+        if let Some(bytes) = self.blob.over.as_ref().filter(|_| keep(COVERED))
+            && let Ok(more) = image::decode(bytes, &|k| k == COVERED, &self.atoms)
         {
             let held: Vec<[i64; 2]> = covered(&more).into_iter().collect();
             if !held.is_empty() {
@@ -578,7 +610,7 @@ impl Frame {
 
 /// Holds the atoms an entry's symbols name (`image::hold`), as it is read before a run's waves.
 pub(super) fn hold(store: &ContentStore, blob: &crate::content_store::MemoBlob) -> StoreResult<()> {
-    image::hold(&blob.bytes, blob.raw, &store.atoms_handle())
+    image::hold(&blob.bytes, &store.atoms_handle())
 }
 
 /// The newest corpus run of `root`: the relations its memo plan holds, by name, as recorded (`.decl` columns as
@@ -661,12 +693,13 @@ impl Found {
 /// lookup writes nothing, and marks nothing (decisions 0104, 0227).
 pub(super) fn found_all(store: &ContentStore, program: &Program, docs: &[(SourceId, &str)]) -> StoreResult<Vec<Option<Found>>> {
     off();
-    let held: Vec<Option<std::sync::Arc<Entry>>> = docs.iter().map(|(s, p)| store.pending::<Entry>(&queued(*s, p, program))).collect();
+    let atoms = store.atoms_handle();
+    let held: Vec<Option<Found>> = docs.iter().map(|(s, p)| pending(store, &queued(*s, p, program), &atoms)).collect();
     let asked: Vec<usize> = (0..docs.len()).filter(|i| held[*i].is_none()).collect();
     let digests = store.source_digests(&asked.iter().map(|i| docs[*i].0).collect::<Vec<_>>())?;
     let wanted: Vec<(usize, [u8; 32])> = asked.iter().zip(&digests).filter_map(|(i, d)| d.map(|d| (*i, d))).collect();
     let paths: Vec<&str> = docs.iter().map(|(_, p)| *p).collect();
-    let mut out: Vec<Option<Found>> = held.into_iter().map(|h| h.map(Found::Held)).collect();
+    let mut out: Vec<Option<Found>> = held;
     for (i, f) in by_digest(store, program, &paths, wanted)? {
         out[i] = Some(f);
     }
@@ -699,6 +732,11 @@ fn by_digest(store: &ContentStore, program: &Program, paths: &[&str], wanted: Ve
         }
     }
     Ok(out)
+}
+
+/// A queued entry, as its write left it for this process's readers: its image in the segment the run wrote.
+fn pending(store: &ContentStore, key: &crate::content_store::write_back::Key, atoms: &std::sync::Arc<crate::content_store::atoms::Atoms>) -> Option<Found> {
+    store.pending::<crate::content_store::MemoBlob>(key).map(|blob| Found::Frame(Frame::of(blob, std::sync::Arc::clone(atoms))))
 }
 
 /// What a memo entry's write is queued under (`write_back`): the row's source, path and program.
@@ -746,15 +784,17 @@ pub(super) fn found_sources(store: &ContentStore, digests: &[[u8; 32]]) -> Store
 /// writer, each entry read from memory until it is written. A content is keyed by its digest, so one the store
 /// does not hold yet is written with the others.
 pub(super) fn remember_all(store: &ContentStore, program: &Program, entries: Vec<(Content, String, i64, Entry)>) -> StoreResult<()> {
-    remember_all_but(store, program, entries.into_iter().map(|(c, p, k, e)| (c, p, k, e, false)).collect())
+    remember_all_but(store, program, entries.into_iter().map(|(c, p, k, e)| (c, p, k, e, false, None)).collect())
 }
 
 /// `remember_all`, each entry with whether its rows stand as stored (decision 0225 §2): its relations were derived
 /// again and found as they were, so only the identities they now hold are written, kept over the stored entry
-/// (decision 0280).
-pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries: Vec<(Content, String, i64, Entry, bool)>) -> StoreResult<()> {
+/// (decision 0280). Each with its content's digest where the run has it: in the waves, a stored source's digest
+/// is not read (decision 0104).
+pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries: Vec<(Content, String, i64, Entry, bool, Option<[u8; 32]>)>) -> StoreResult<()> {
     let standing: HashSet<(String, i64)> = entries.iter().filter(|e| e.4).map(|e| (e.1.clone(), e.2)).collect();
-    let entries: Vec<(Content, String, i64, Entry)> = entries.into_iter().map(|(c, p, k, e, _)| (c, p, k, e)).collect();
+    let known: HashMap<String, [u8; 32]> = entries.iter().filter_map(|e| Some((e.1.clone(), e.5?))).collect();
+    let entries: Vec<(Content, String, i64, Entry)> = entries.into_iter().map(|(c, p, k, e, _, _)| (c, p, k, e)).collect();
     off();
     let plan = plan_digest(program);
     // The atom table the entries' symbols are numbered by: the writer reads their strings from it.
@@ -767,16 +807,14 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
         let _t = crate::code_rule_dsl::logic::profile::span(|| "tally the entries (profiling)".into());
         tally(entries.iter().map(|e| &e.3));
     }
-    let _queue = crate::code_rule_dsl::logic::profile::span(|| "queue the entries to the store".into());
-    let held: Vec<(Content, String, std::sync::Arc<Entry>)> = entries.into_iter().filter(|e| e.0.in_store()).map(|(content, path, key, entry)| (content, path, std::sync::Arc::new(Entry { key, ..entry }))).collect();
+    let _queue = crate::code_rule_dsl::logic::profile::span(|| "write the entries into their segments".into());
+    let held: Vec<(Content, String, Entry)> = entries.into_iter().filter(|e| e.0.in_store()).map(|(content, path, key, entry)| (content, path, Entry { key, ..entry })).collect();
     // Nothing to keep is no job: an empty one still takes the writer's transaction (`RERAIL_WARM`).
     if held.is_empty() {
         return Ok(());
     }
-    // What the writer writes, the queue's measure: of an entry whose rows stand, its identities alone. The rest of it
-    // stays held for this process's readers (`pending`) until it is written; it was the chunk's already.
-    let bytes: usize = held.iter().map(|(_, path, e)| if standing.contains(&(path.clone(), e.key)) { identities_of(e).bytes() } else { e.bytes() }).sum();
-    if bytes > 32 << 20 && crate::code_rule_dsl::logic::profile::on() {
+    let estimate: usize = held.iter().map(|(_, path, e)| if standing.contains(&(path.clone(), e.key)) { identities_of(e).bytes() } else { e.bytes() } * 2 + 4096).sum();
+    if estimate > 64 << 20 && crate::code_rule_dsl::logic::profile::on() {
         let mut by: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
         for (_, _, e) in &held {
             for (r, (w, v)) in &e.rows {
@@ -791,39 +829,75 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
         let mut by: Vec<_> = by.into_iter().collect();
         by.sort_by(|a, b| b.1.1.cmp(&a.1.1));
         let top: Vec<String> = by.iter().take(12).map(|(r, (n, b))| format!("{r}: {n} rows, {:.1} MB", *b as f64 / 1048576.0)).collect();
-        eprintln!("rerail: the memo's entries: {:.1} MB over {} documents; by relation: {}", bytes as f64 / 1048576.0, held.len(), top.join("; "));
+        eprintln!("rerail: the memo's entries: {:.1} MB over {} documents; by relation: {}", estimate as f64 / 2097152.0, held.len(), top.join("; "));
     }
-    let keys = held.iter().filter_map(|(content, path, e)| Some((queued_content(*content, path, program)?, Some(std::sync::Arc::clone(e) as std::sync::Arc<dyn std::any::Any + Send + Sync>)))).collect();
-    let syms = program.syms.clone();
-    // Its rows hold no atom's id: each symbol is written as its string (decision 0240 §4).
+    // Each content's digest, which names its entry's part: the run's, else a stored source's read, in one statement
+    // (before the waves only). A source collected since the run found it leaves the entry unwritten: the next run
+    // misses it.
+    let ids: Vec<SourceId> = held.iter().filter(|(_, p, _)| !known.contains_key(p)).filter_map(|(c, _, _)| match c { Content::Stored(id) => Some(*id), _ => None }).collect();
+    let mut stored = store.source_digests(&ids)?.into_iter();
+    let digests: Vec<Option<[u8; 32]>> = held
+        .iter()
+        .map(|(c, p, _)| match c {
+            Content::Stored(_) => match known.get(p) {
+                Some(d) => Some(*d),
+                None => stored.next().flatten(),
+            },
+            Content::Unstored(d) => Some(*d),
+            Content::Held(_) => None,
+        })
+        .collect();
+    // Written here, by the run (decision 0295 §1): each entry's image made into the segment's mapped pages, its
+    // symbols as their strings, read from the table it was made under (no numbering to map, forked or not). Of an
+    // entry whose rows stand, only the identities it now holds, kept over the stored entry (decision 0280). The
+    // decoded entries go once written: the run's readers of a queued entry read its image (`Found::Frame`).
+    let mut w = crate::content_store::SegmentWriter::new(&store.memo_dir(), digests.iter().flatten().count(), estimate);
+    let mut rows: Vec<crate::content_store::MemoRow> = Vec::with_capacity(held.len());
+    let mut contents: Vec<Content> = Vec::with_capacity(held.len());
+    for ((content, path, e), digest) in held.into_iter().zip(digests) {
+        let Some(digest) = digest else { continue };
+        let over = standing.contains(&(path.clone(), e.key));
+        let key = e.key;
+        let image = if over { image::encode_parts(&identities_of(&e), &program.syms, &made_under)? } else { image::encode_parts(&e, &program.syms, &made_under)? };
+        drop(e);
+        w.put(image.len(), key, &digest, |out| image.write(out))?;
+        rows.push(crate::content_store::MemoRow { part: part_of(&digest, &path), path, digest, key, over });
+        contents.push(content);
+    }
+    let mut segments = w.seal();
+    if rows.is_empty() {
+        return Ok(());
+    }
+    // What a queued entry's readers find (`pending`): its image where it is. Of an entry kept over the stored one,
+    // the stored entry with the new identities over it, as the store reads it once written; where the stored entry
+    // is not found (collected meanwhile), nothing: the write is dropped, and a reader misses.
+    let space = crate::content_store::local_space(&plan);
+    let over_parts: Vec<i64> = rows.iter().filter(|r| r.over).map(|r| r.part).collect();
+    let mut under = if over_parts.is_empty() { HashMap::new() } else { store.memo_entries(&space, &over_parts, !crate::code_rule_dsl::logic::profile::inside_waves())? };
+    let keys: Vec<(crate::content_store::write_back::Key, Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>)> = rows
+        .iter()
+        .zip(&contents)
+        .enumerate()
+        .filter_map(|(i, (r, c))| {
+            let bytes = segments.entry(i);
+            let blob = if !r.over {
+                Some(crate::content_store::MemoBlob { path: r.path.clone(), digest: r.digest, key: r.key, bytes, over: None })
+            } else {
+                under.remove(&r.part).filter(|b| b.digest == r.digest && b.key == r.key && b.path == r.path).map(|b| crate::content_store::MemoBlob { path: b.path.clone(), digest: b.digest, key: b.key, bytes: b.bytes.clone(), over: Some(bytes) })
+            };
+            Some((queued_content(*c, &r.path, program)?, blob.map(|b| std::sync::Arc::new(b) as std::sync::Arc<dyn std::any::Any + Send + Sync>)))
+        })
+        .collect();
+    // The queue's measure: what the job holds in memory, its rows; the images are the OS's pages.
+    let bytes = rows.iter().map(|r| r.path.len() + 96).sum();
     store.write_back_syms(
         crate::content_store::write_back::Syms::None,
         "the memo's entries",
         bytes,
         keys,
-        Box::new(move |store| {
-            let ids: Vec<SourceId> = held.iter().filter_map(|(c, _, _)| match c { Content::Stored(id) => Some(*id), _ => None }).collect();
-            let mut stored = store.source_digests(&ids)?.into_iter();
-            let mut puts = Vec::with_capacity(held.len());
-            for (content, path, e) in &held {
-                let digest = match content {
-                    Content::Stored(_) => stored.next().flatten(),
-                    Content::Unstored(d) => Some(*d),
-                    Content::Held(_) => None,
-                };
-                // A source collected since the run found it leaves the entry unwritten: the next run misses it.
-                let Some(digest) = digest else { continue };
-                // Each symbol as its string, read from the table the entry was made under: no numbering to map,
-                // forked or not, and no other table of the store to misread it by. Of an entry whose rows stand, only
-                // the identities it now holds, kept over the stored entry (decision 0280).
-                let over = standing.contains(&(path.clone(), e.key));
-                let (bytes, raw) = if over { image::encode(&identities_of(e), &syms, &made_under)? } else { image::encode(e, &syms, &made_under)? };
-                puts.push(crate::content_store::MemoPut { part: part_of(&digest, path), path: path.clone(), digest, key: e.key, bytes, raw, over });
-            }
-            // A path's earlier contents: its newest `MEMO_CONTENTS` kept (an edited file's entry each edit, 15 MB for
-            // one file of the 20, was kept 32 runs: 450 MB of one space).
-            store.put_memo_entries(&crate::content_store::local_space(&plan), puts, MEMO_CONTENTS)
-        }),
+        // A path's earlier contents: its newest `MEMO_CONTENTS` kept (an edited file's entry each edit, 15 MB for one
+        // file of the 20, was kept 32 runs: 450 MB of one space).
+        Box::new(move |store| store.put_memo_segments(&space, &mut segments, &rows, MEMO_CONTENTS)),
     );
     Ok(())
 }
@@ -958,7 +1032,7 @@ impl Memo<'_> {
                 let mut by_frame = Vec::new();
                 for (i, (c, p)) in docs.iter().enumerate() {
                     if let Content::Unstored(d) = c {
-                        out[i] = store.pending::<Entry>(&queued_unstored(d, p, program)).map(Found::Held);
+                        out[i] = pending(store, &queued_unstored(d, p, program), &store.atoms_handle());
                         if out[i].is_none() {
                             by_frame.push((i, *d));
                         }
@@ -995,8 +1069,8 @@ impl Memo<'_> {
     pub(super) fn lookup(self, content: Content, path: &str, key: i64, program: &Program) -> StoreResult<Option<Entry>> {
         match (self, content) {
             (Memo::Stored(store), Content::Stored(id)) => lookup(store, id, path, key, program),
-            (Memo::Stored(store), Content::Unstored(d)) => match store.pending::<Entry>(&queued_unstored(&d, path, program)) {
-                Some(e) => Ok(Some((*e).clone()).filter(|e| e.key == key)),
+            (Memo::Stored(store), Content::Unstored(d)) => match pending(store, &queued_unstored(&d, path, program), &store.atoms_handle()) {
+                Some(found) => found.entry(key),
                 // Found in the waves by its digest (`by_digest`): its frame.
                 None => match by_digest(store, program, &[path], vec![(0, d)])?.pop() {
                     Some((_, found)) => found.entry(key),
@@ -1012,16 +1086,15 @@ impl Memo<'_> {
 
     /// `remember` of many documents, stored ones written as one wave (`remember_all`), behind the run.
     pub(super) fn remember_all(self, program: &Program, entries: Vec<(Content, String, i64, Entry)>) -> StoreResult<()> {
-        self.remember_all_but(program, entries.into_iter().map(|(c, p, k, e)| (c, p, k, e, false)).collect())
+        self.remember_all_but(program, entries.into_iter().map(|(c, p, k, e)| (c, p, k, e, false, None)).collect())
     }
 
     /// `remember_all`, each with whether its stored rows frame stands (`remember_all_but`).
-    pub(super) fn remember_all_but(self, program: &Program, entries: Vec<(Content, String, i64, Entry, bool)>) -> StoreResult<()> {
-        let entries: Vec<(Content, String, i64, Entry, bool)> = entries;
+    pub(super) fn remember_all_but(self, program: &Program, entries: Vec<(Content, String, i64, Entry, bool, Option<[u8; 32]>)>) -> StoreResult<()> {
         if let Memo::Stored(store) = self {
             return remember_all_but(store, program, entries);
         }
-        let entries: Vec<(Content, String, i64, Entry)> = entries.into_iter().map(|(c, p, k, e, _)| (c, p, k, e)).collect();
+        let entries: Vec<(Content, String, i64, Entry)> = entries.into_iter().map(|(c, p, k, e, _, _)| (c, p, k, e)).collect();
         match self {
             Memo::Stored(store) => remember_all(store, program, entries),
             Memo::Held(_) => {
@@ -1081,6 +1154,32 @@ pub mod tests {
         assert_eq!((projected.outputs, projected.nodes), (entry.outputs, 100));
         assert!(held.projected(6, &keep).unwrap().is_none());
         assert_ne!(with_tree_demand([0; 32], false), with_tree_demand([0; 32], true), "wider consumers cannot hit narrower frames");
+    }
+
+    /// Decision 0295 §1: the run writes its entries into their segment itself, and its readers of an entry still
+    /// queued read it there (no decoded copy is held for them); once written, the store's row finds the same.
+    #[test]
+    fn a_queued_entry_is_read_from_the_segment_the_run_wrote() {
+        use super::super::super::lower::Domain;
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
+        let domains: BTreeMap<String, Vec<Domain>> = [("r".to_owned(), vec![Domain::Int, Domain::Int])].into();
+        let program = Program::new([3; 32], &domains);
+        let mut entry = Entry { key: 4, nodes: 9, ..Entry::default() };
+        entry.rows.insert("r".into(), (2, vec![1, 2, 3, 4]));
+        entry.outputs.insert("diagnostic".into(), (vec![0], rows_of(&[col::NODE, col::TEXT], &[&[Cell::Int(5), Cell::Text("bad")]])));
+        let id = store.put_source(b"x = 1\n", &[]).unwrap();
+        let found = |store: &ContentStore| Memo::Stored(store).found_all(&program, &[(Content::Stored(id), "a.py")]).unwrap().pop().flatten();
+        let waves = crate::content_store::write_back::run_waves();
+        remember_all(&store, &program, vec![(Content::Stored(id), "a.py".into(), 4, entry.clone())]).unwrap();
+        let queued = found(&store).expect("queued, found");
+        assert!(matches!(queued, Found::Frame(_)), "read from its segment, not held decoded");
+        assert_eq!(queued.entry(4).unwrap(), Some(entry.clone()));
+        assert_eq!(store.memo_pack_bytes().unwrap().1, 0, "not written yet");
+        drop(waves);
+        store.written().unwrap();
+        assert!(store.memo_pack_bytes().unwrap().1 > 0, "its row written");
+        assert_eq!(found(&store).expect("written, found").entry(4).unwrap(), Some(entry));
     }
 
     /// An entry symbol past the process's atoms is refused where the entry is made (decision 0170): a read gave the

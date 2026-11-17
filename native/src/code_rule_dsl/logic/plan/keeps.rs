@@ -1278,7 +1278,8 @@ fn calibrated_rows_at(f: Fields<'_>, model: &Model, b: &Body<'_>, first: Option<
             before = st_rows;
             let factor = if i == 0 { st_rows } else { pattern(b, s.at, &bound).and_then(|p| seen(&p)).unwrap_or(estimated) };
             let out = rows * factor;
-            work += rows + out;
+            // The rows each step passes on, as the executor counts a line's work (decision 0297).
+            work += out;
             rows = out;
             if !b.plain_atom(s.at).is_some_and(|a| a.neg()) {
                 bound.extend(b.vars(s.at));
@@ -1636,9 +1637,10 @@ pub mod tests {
     /// `binding` 3, the comparison every row) makes the copy about 66 k rows of work against about 18 k stored, so
     /// `ctx` should stay stored. Before the measured key domains (2ab61d7b4, O148) the estimate priced the copy's
     /// probe of `look` as keeping a binding in a hundred and inlined it, and only the observed side took that back.
-    /// The estimate now bounds the bindings by their constant filters and applies containment to every probe, and
-    /// keeps `ctx` stored from the start; once the stored side has run, the copy is priced by those selectivities,
-    /// and `ctx` still stays stored. (`the_side_that_ran_is_believed` pins `weigh`'s taking an estimate back.)
+    /// The estimate then bounded the bindings by their constant filters and kept `ctx` stored from the start. Priced
+    /// as the executor counts (decision 0297: a step costs the rows it passes on, not its rows in as well), the
+    /// estimates inline it again: the build scans `load`. Once the stored side has run (its build made 2 k rows),
+    /// the copy is priced by those selectivities, and `ctx` stays stored. (`the_side_that_ran_is_believed` pins `weigh`'s taking an estimate back.)
     #[test]
     fn observed_selectivities_price_a_copy_that_never_ran() {
         use super::super::{Inputs, Stats, make_plan};
@@ -1684,7 +1686,9 @@ pub mod tests {
             got
         };
         let shown = priced(&mut model);
-        assert!(decided(&mut model).is_empty(), "estimated, the copy is priced above the stored side: {shown}");
+        // Priced as the executor counts (decision 0297), the build scans `load`'s 200 k rows and the copy, starting
+        // from `binding`, does 65 k: the estimates inline `ctx`.
+        assert_eq!(decided(&mut model), vec!["ctx".to_owned()], "estimated, the copy is priced under the stored side: {shown}");
         // The stored side ran: the reader and the build, with the rows each step made.
         let nodes = model.stats.nodes;
         let ran = |rule: &Rule, factors: &dyn Fn(&Literal) -> f64| -> Vec<(u64, u64)> {

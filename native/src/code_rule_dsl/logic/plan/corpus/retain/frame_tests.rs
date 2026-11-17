@@ -221,6 +221,30 @@ fn the_kept_inputs_are_known_before_the_waves_with_why_not() {
     kept_inputs_stored(&store, SPACE, KEY, &pl(&prog), &["input0".to_owned()]).unwrap().expect("the frames of its documents are stored");
 }
 
+/// Q20: a kept input is decoded where a run first reads it, not before the cross part runs: of 1208 inputs an edit
+/// read 26. Its row count is known from its documents' table; a granule whose rows are not its owners' is found when
+/// the input is read, and told through `failure`.
+#[test]
+fn a_kept_input_is_decoded_where_it_is_first_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
+    let (prog, _, frames) = fixture(&store, 2);
+    // input1's granule of document 2 holds document 7's row: as many rows as its owners', not theirs.
+    let bad = FramePut { rel: frames.names["input1"].clone(), part: granule(2, None), digest: 0, reads: vec![], rows: FrameRows { types: vec![b'i'], n: 1, rows: vec![(7 << 32) | 1] } };
+    store.keep_frames(&SPACE, &[bad], &[], None).unwrap();
+    store.written().unwrap();
+    let rels = ["input0".to_owned(), "input1".to_owned()];
+    let kept = kept_inputs(&store, SPACE, KEY, &pl(&prog), &Locations::new(), &rels).unwrap().expect("the inputs' tables and counts are as kept");
+    let (good, read_bad) = (&kept["input0"].source, &kept["input1"].source);
+    assert_eq!((good.len(), read_bad.len()), (3, 3), "each input's rows counted from its documents' table");
+    assert_eq!(good.failure(), None);
+    let mut rows: Vec<i64> = (0..3).map(|r| good.value(r, 0)).collect();
+    rows.sort_unstable();
+    assert_eq!(rows, (1..=3).map(|d| d << 32).collect::<Vec<i64>>(), "input0 read as kept");
+    let why = read_bad.failure().expect("input1's granule is found wrong when it is read");
+    assert!(why.contains("input1") && why.contains("not by owner"), "{why}");
+}
+
 /// Smoking gun 5 (t34, 2026-11-13): the retain budget is of memory, not of the store. A relation past it was neither
 /// held nor written to the frames, so every next process derived it again (an edit ran 3,758 of 4,087 strata, 1,546
 /// derived again). It is written, then let go.

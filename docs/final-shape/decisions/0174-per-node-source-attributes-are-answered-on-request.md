@@ -294,6 +294,16 @@ save less the analysis: 0.3 G on one file.
 Test: `an_attribute_a_cross_file_reader_asks_for_is_eager` (a cross-file reader and a file-local one of `value`,
 over two files; it fails, refused, without the first point).
 
+### An attribute no rule reads stays an input (2026-11-16)
+
+Answered with no reader, an attribute still got its answer rule and its eager rows' rule, and was taken out of the
+program's inputs: a derived relation nothing asks of. The corpus engine prunes it as unreached, but the SQL
+executor keeps every derived relation, and over a snapshot whose `value` is bound it refused the program
+(`value: SQL output already exists`, `rule_files_use_the_core_prelude_and_unused_inputs_need_no_binding`, red since
+step 2, 6f62434e9). Now an attribute with no request stays an input, as the decision log already said ("no rule
+reads it"): one that nothing reads is bound for no node. `made_on_request` and the core shape filter by name, so
+they hold either way.
+
 ## 9. Order
 
 1. `node_text` on request, checked by §5. Remove 330d9cc2c's demand.
