@@ -197,8 +197,20 @@ fn templates_are_the_lean_parsers() {
     ]);
 }
 
+/// Step 9: numbers.
 #[test]
-fn what_step_8_does_not_read_is_refused() {
+fn numbers_are_the_lean_parsers() {
+    same(&[
+        "val a = 1L + 2u + 3UL + 0xFF + 0b10 + 1.5 + 2f + 1e5 + .5 + 1_000 + 0xFFL + 1.0e-3f\n",
+        "val b = 1..2\n",
+        "val c = 1.toString() + 2.5.toInt()\n",
+        "val d = x[0] + -1 + 1E+2 + 0XAbu\n",
+        "val e = a / 2.0 + 255.0 + 1.5.toInt()\n",
+    ]);
+}
+
+#[test]
+fn what_step_9_does_not_read_is_refused() {
     refused(&[
         "val a = b to f<T>()\n",
         "val a = x + f<T>(1)\n",
@@ -217,7 +229,10 @@ fn what_step_8_does_not_read_is_refused() {
         "val f = { (a, b) -> a }\n",
         "val f = { a, -> a }\n",
         "val x = when (y) { else -> 1 }\n",
-        "val x = 1L\n",
+        "val x = 1d\n",
+        "val x = 1.5L\n",
+        "val x = 1_\n",
+        "val x = 0x\n",
         "val x = y as Z\n",
         "class A {\n    companion object\n}\n",
         "class A { val x = 1 }\n",
@@ -305,6 +320,18 @@ fn show() {
                     }
                     if let Some(r) = &c.program.block_programs[0].records {
                         // `RERAIL_KOTLIN_MASK=K`: mask K's output, from either tier 1.
+                        if std::env::var_os("RERAIL_KOTLIN_RULES").is_some() {
+                            let b = &c.program.block_programs[0];
+                            let run = b.run(text.as_bytes());
+                            let cpu = c.parser.tier1.extract(text.as_bytes());
+                            eprintln!("rules {:?}; ends {:?}; kind of 1 {} 0 {}", r.rules, r.ends, r.kinds[usize::from(b'1')], r.kinds[usize::from(b'0')]);
+                            for rule in &r.rules {
+                                if let rerail_compiler::records::EndRule::Last(o) = rule {
+                                    let w = |v: &Vec<Vec<u64>>| v.get(usize::from(*o)).and_then(|x| x.first()).map(|x| format!("{:016b}", x.reverse_bits() >> 48));
+                                    eprintln!("last {o}: interp {:?} cpu {:?}", w(&run.outputs), w(&cpu.outputs));
+                                }
+                            }
+                        }
                         if let Ok(m) = std::env::var("RERAIL_KOTLIN_MASK") {
                             let b = &c.program.block_programs[0];
                             let o = b.mask_outputs()[m.parse::<usize>().unwrap()];
@@ -334,6 +361,9 @@ fn show() {
                     eprintln!("== {p}: the same");
                 } else {
                     eprintln!("== {p}: DIFFERS\n-- lean\n{lean}-- grammar\n{got}");
+                    if std::env::var_os("RERAIL_KOTLIN_TOKENS").is_some() {
+                        eprintln!("-- words\n{}", c.explain(&text));
+                    }
                 }
             }
             Err(why) => {

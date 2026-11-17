@@ -207,6 +207,9 @@ struct Emit<'a> {
     /// A call's code, by what it does (`CallCode`): a call takes no token, so the arms of one
     /// call, one per token its callee may begin with, are one code.
     call_code: HashMap<CallCode, u16>,
+    /// The `ROW` tests at a byte, by their rule, rows, whether the last is untested, the
+    /// default and each row's target: a chain shared by the bytes alike (a number's ten digits).
+    row_chains: HashMap<(u16, Vec<usize>, bool, u16, Vec<u16>), u16>,
     /// The marks of one word, by order: their strings (`Lowered::mark_words`).
     mark_words: std::collections::BTreeMap<u8, u16>,
     /// Each keyword's leaf kind, by its string (`Words::word_kinds`): a leaf of a keyword's
@@ -930,9 +933,18 @@ impl Emit<'_> {
             let met: Vec<usize> = (0..self.rows.len()).filter(|&r| has(&self.rows[r].first, b) && self.meets[s][r]).collect();
             if met.len() > 1 {
                 let all = met.iter().all(|r| taken.contains(r));
+                let mut tos = Vec::new();
+                for &r in &taken {
+                    let these: Vec<Cand> = cs.iter().filter(|c| c.row == r).cloned().collect();
+                    tos.push(self.target(b, 0, these)?);
+                }
+                let key = (self.rule, taken.clone(), all, default, tos.clone());
+                if let Some(&at) = self.row_chains.get(&key) {
+                    self.switches[t].targets[usize::from(b)] = at;
+                    continue;
+                }
                 let at = self.pc();
-                let mut jumps = Vec::new();
-                for (i, &r) in taken.iter().enumerate() {
+                for (i, (&r, &to)) in taken.iter().zip(&tos).enumerate() {
                     if !(all && i + 1 == taken.len()) {
                         self.tested.insert(r);
                         let m = match self.rows[r].mask {
@@ -942,8 +954,11 @@ impl Emit<'_> {
                         };
                         self.push("ROW", 0, Arg::Num(m));
                     }
-                    jumps.push((self.pc(), r));
-                    self.push("GOTO", 0, Arg::Pc(0));
+                    if to == REFUSE {
+                        self.push("STOP", 0, Arg::None);
+                    } else {
+                        self.push("GOTO", 0, Arg::Pc(to));
+                    }
                 }
                 if !all {
                     if default == REFUSE {
@@ -952,11 +967,7 @@ impl Emit<'_> {
                         self.push("GOTO", 0, Arg::Pc(default));
                     }
                 }
-                for (jump, r) in jumps {
-                    let these: Vec<Cand> = cs.iter().filter(|c| c.row == r).cloned().collect();
-                    let to = self.target(b, 0, these)?;
-                    self.words[usize::from(jump)] = if to == REFUSE { ("STOP", 0, Arg::None) } else { ("GOTO", 0, Arg::Pc(to)) };
-                }
+                self.row_chains.insert(key, at);
                 self.switches[t].targets[usize::from(b)] = at;
                 continue;
             }
@@ -1067,6 +1078,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         at_switch: Vec::new(),
         arm_code: HashMap::new(),
         call_code: HashMap::new(),
+        row_chains: HashMap::new(),
         mark_words: Default::default(),
         word_kinds: Default::default(),
     };

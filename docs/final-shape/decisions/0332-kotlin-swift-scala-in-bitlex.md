@@ -224,6 +224,39 @@ Corpus: 62 the same, 429 refused, 0 differ. 25 files are refused for a template'
 comment or line break. Most of the 90 template files now fail on the features further down
 the ladder.
 
+## Kotlin, step 9 (`09-numbers.bitlex`)
+
+Step 9 reads every number the lean lexer reads:
+
+- decimal, hex (`0x`) and binary (`0b`) integers;
+- reals, with a fraction, an exponent, an `f`, or several (`.5`, `1.5e-3f`, `2f`).
+
+```text
+val a = 0xFFL + 1u
+  long_literal [8..13]          the `L` is no leaf
+    hex_literal [8..12]
+  unsigned_literal [16..18]
+    integer_literal [16..17]
+```
+
+Each part of a number is a mask: the integer digits, the fraction's dot and digits, the
+exponent's letter, sign and digits, and the `f`. Each kind is a token from its start to the
+number's last byte (`last`).
+
+A suffix (`L`, `u`, `U`, `uL`, `UL`) is a hard keyword of `simple_identifier`. The grammar
+wraps the integer in `long_literal` or `unsigned_literal` where one follows it. A mark could say
+the suffix touches the integer, but the marks and extras already fill a record's 16 mark bits.
+So these are refused instead:
+
+- a name with a suffix's text;
+- a word touching a number that is no suffix.
+
+After that, any suffix after an integer touches it.
+
+`/` was never in the operators' class: no file with a division had come this far.
+
+Corpus: 85 the same, 406 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
@@ -342,6 +375,15 @@ the ladder.
     other row now drops the moved bytes from its first bytes.
 20. **The size check runs before the return entries.** A saturated place (`pc`) read as a
     state with no `TOKEN`, which hid the real error.
+21. **Bytes alike share their `ROW` tests.** At a byte that several rows begin, tier 2 tests
+    each row's start mask (`ROW`) and jumps to its arm. Each byte had a chain of its own, so a
+    number's ten digits made ten. Chains are now shared by their rule, rows, default and
+    targets (`row_chains`). Without that, step 9 was past 64K words.
+22. **A `last` search waits for its first word to be final.** The CPU's token loop reads a
+    block's rows once the block is done. A delayed output's word for the newest block is still
+    unshifted (`delayed_store`), and the next block or the row's end shifts it in. The `Last`
+    rule read the token's own word unchecked, so a number at the file's end had its last
+    byte read `d` bytes late. Every word it reads is now checked against the ready blocks.
 
 Single-extra grammars compile as before: rr's tests and the compiler's targeted tests pass.
 
@@ -355,7 +397,7 @@ Single-extra grammars compile as before: rr's tests and the compiler's targeted 
 
 ## Next
 
-Kotlin's ladder goes on. Next: numbers, `init`, `companion object`, `super`,
+Kotlin's ladder goes on. Next: `init`, `companion object`, `super`,
 `when`, `try`, extension receivers (a region whose
 code nests: a count of braces), `::`, numbers, then lambdas, `when` and `try`, then enums,
 companions, accessors and the remaining operators. Swift and Scala start the same way, in their own crates: their step 1 is

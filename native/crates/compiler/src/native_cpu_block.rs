@@ -4285,39 +4285,32 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             }
             EndRule::Last(o) => {
                 let limit = rd.limit(o, limit);
-                // The mask's first bit at or after `s`: in its word, then the words after.
+                // The mask's first bit at or after `s`: in its word, then the words after. Each
+                // word read only when final (`bound`): a delayed output's newest word is not
+                // shifted yet, its bits `d` bytes late (`delayed_store`).
                 let (more, look) = (f.create_block(), f.create_block());
                 f.append_block_param(more, types::I64);
-                let x = word_at(f, q0, o, heads);
+                f.append_block_param(more, types::I64);
                 let ones = f.ins().iconst(types::I64, -1);
                 let from = f.ins().ishl(ones, sh);
-                let x = f.ins().band(x, from);
-                let base = f.ins().band_imm(s, !63);
-                let tz = f.ins().ctz(x);
-                let l = f.ins().iadd(base, tz);
-                let w1 = f.ins().iadd_imm(q0, 1);
-                let next = f.create_block();
-                f.ins().brif(x, ended, &[l.into(), untag.into(), nohits.into()], next, &[]);
-                f.switch_to_block(next);
-                f.set_cold_block(next);
-                f.ins().jump(more, &[w1.into()]);
+                f.ins().jump(more, &[q0.into(), from.into()]);
                 f.switch_to_block(more);
-                f.set_cold_block(more);
                 heads.push((more, Step::Word));
-                let w = f.block_params(more)[0];
+                let (w, m) = (f.block_params(more)[0], f.block_params(more)[1]);
                 let inside = f.ins().icmp(IntCC::UnsignedLessThan, w, bound(c, limit));
                 // None found: with the loop's starts (`records::walk`), the first byte alone;
                 // else `s - 1`, which the order check refuses.
                 let none = if r.skip.is_some() { s } else { f.ins().iadd_imm(s, -1) };
                 inside_or_past(f, inside, look, limit, ended, &[none.into(), untag.into(), nohits.into()]);
                 f.switch_to_block(look);
-                f.set_cold_block(look);
                 let x = word_at(f, w, o, heads);
+                let x = f.ins().band(x, m);
                 let w64 = f.ins().ishl_imm(w, 6);
                 let tz = f.ins().ctz(x);
                 let l = f.ins().iadd(w64, tz);
                 let w1 = f.ins().iadd_imm(w, 1);
-                f.ins().brif(x, ended, &[l.into(), untag.into(), nohits.into()], more, &[w1.into()]);
+                let ones = f.ins().iconst(types::I64, -1);
+                f.ins().brif(x, ended, &[l.into(), untag.into(), nohits.into()], more, &[w1.into(), ones.into()]);
             }
         }
     }
