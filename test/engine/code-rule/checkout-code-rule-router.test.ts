@@ -684,35 +684,83 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     expect(requestSteer).toHaveBeenCalledTimes(1);
   });
 
-  it("gives back the workspace a worktree's lane opened for Log batches once their audits settle, and records its next batch as before", async () => {
-    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+  it("judges a busy worktree's Log batches on one workspace while no other lane waits, and gives it back to the first that does", async () => {
+    const { databasePath, session, worktree, root } = await repositoryWithWorktree(outside);
+    const others: string[] = [];
+    for (let i = 1; i <= 4; i += 1) {
+      git(session, "worktree", "add", "--quiet", "-b", `waiting-${i}`, join(root, "elsewhere", `waiting-${i}`));
+      others.push(await realpath(join(root, "elsewhere", `waiting-${i}`)));
+    }
     const { recorder, audits } = recordingAudits();
     const auditor = router(session, databasePath, recorder);
-    const closed = vi.spyOn(loadNativeBinding().CodeRuleDslWorkspace.prototype, "close");
-    cleanups.push(async () => { closed.mockRestore(); });
-    await auditor.openWorkspace("log-lanes");
-    const logBatch = async (revision: number, name: string) => {
-      const edits = [{ path: join(worktree, "api", name), language: "python" as const, generatedText: "NEEDLE\n" }];
-      await auditor.auditGeneratedEdits("log-lanes", { revision, checkpoints: ["edit"], mode: "log", edits });
+    // Each workspace a lane prepares names its root once; one that goes closes.
+    const native = loadNativeBinding().CodeRuleDslWorkspace.prototype;
+    const prepared = vi.spyOn(native, "setRoot");
+    const closed = vi.spyOn(native, "close");
+    cleanups.push(async () => { prepared.mockRestore(); closed.mockRestore(); });
+    await auditor.openWorkspace("busy");
+    const logBatch = async (revision: number, paths: readonly string[]) => {
+      const edits = paths.map(path => ({ path, language: "python" as const, generatedText: "NEEDLE\n" }));
+      await auditor.auditGeneratedEdits("busy", { revision, checkpoints: ["edit"], mode: "log", edits });
       await auditor.settleGeneratedEdits();
     };
+    const preparedIn = (path: string) => prepared.mock.calls.filter(([named]) => named === path).length;
 
-    await logBatch(1, "x.py");
-    // A workspace holds its checkout's index: the worktree's goes once the batch's audit settles.
+    for (let revision = 1; revision <= 3; revision += 1) await logBatch(revision, [join(worktree, "api", `x${revision}.py`)]);
+    // Preparing a workspace again for each batch applied every edit the lane had applied: the cost grew with them.
+    expect(preparedIn(worktree)).toBe(1);
+    expect(closed).not.toHaveBeenCalled();
+    expect(violations(audits).map(found => found.path)).toEqual(["api/x1.py", "api/x2.py", "api/x3.py"]);
+
+    // Four worktrees more: three turns are free, and the fourth lane takes the idle one's, which gives its workspace back.
+    await logBatch(4, others.map(path => join(path, "api", "y.py")));
     expect(closed).toHaveBeenCalledTimes(1);
-    await logBatch(2, "y.py");
-    expect(closed).toHaveBeenCalledTimes(2);
-    expect(audits.map(audit => [audit.workspaceRoot, audit.mode, audit.paths])).toEqual([[worktree, "log", ["api/x.py"]], [worktree, "log", ["api/y.py"]]]);
-    expect(violations(audits)).toEqual([
-      { checkout: worktree, path: "api/x.py", code: "SESSION", mode: "block" },
-      { checkout: worktree, path: "api/y.py", code: "SESSION", mode: "block" },
+    expect(others.map(preparedIn)).toEqual([1, 1, 1, 1]);
+    await logBatch(5, [join(worktree, "api", "x5.py")]);
+    expect(preparedIn(worktree)).toBe(2);
+    expect(audits.map(audit => [audit.workspaceRoot, audit.mode, audit.paths])).toEqual([
+      ...[1, 2, 3].map(revision => [worktree, "log", [`api/x${revision}.py`]]),
+      ...others.map(path => [path, "log", ["api/y.py"]]),
+      [worktree, "log", ["api/x5.py"]],
     ]);
+    expect(violations(audits)).toHaveLength(8);
 
-    // A walk's questions there are answered by the session checkout's lane, at the same rules, and take no workspace.
+    // A walk's questions there are answered at the same rules, and take no workspace.
     const view = auditor.walkView();
     expect([view.acceptsPath(walked(session, worktree, "api/x.py")), view.acceptsPath(walked(session, worktree, "README.md"))]).toEqual([true, false]);
-    await auditor.close();
-    expect(closed).toHaveBeenCalledTimes(3);
+  });
+
+  it("gives back the workspace a worktree's lane opened with for a walk's question once a Log batch there settles, before the settle ends", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    // Rules of its own: a walk's question opens the worktree's lane with its workspace, and no turn.
+    await mkdir(join(worktree, ".rerail", "rules"), { recursive: true });
+    await writeFile(join(worktree, ".rerail", "rules", "notes.json"), JSON.stringify({ ...needle("worktree:notes", "NOTES"), scope: { include: ["**/*.md"], exclude: [] } }));
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+    const closed = vi.spyOn(loadNativeBinding().CodeRuleDslWorkspace.prototype, "close");
+    // The lane's own wait for its audit to settle, after which it gives its workspace back, ends a turn of the event loop
+    // after the router's settle has had both lanes settle: the router's settle ends only after the give-back.
+    const original = NativeCodeRuleEnforcer.prototype.settleGeneratedEdits;
+    const asked = Promise.withResolvers<void>();
+    let settled = 0;
+    const lanes = vi.spyOn(NativeCodeRuleEnforcer.prototype, "settleGeneratedEdits")
+      .mockImplementationOnce(async function (this: NativeCodeRuleEnforcer) {
+        await asked.promise;
+        await original.call(this);
+      })
+      .mockImplementation(async function (this: NativeCodeRuleEnforcer) {
+        await original.call(this);
+        settled += 1;
+        if (settled === 2) setImmediate(() => asked.resolve());
+      });
+    cleanups.push(async () => { closed.mockRestore(); lanes.mockRestore(); });
+    await auditor.openWorkspace("question-lane");
+    expect(auditor.walkView().acceptsPath(walked(session, worktree, "README.md"))).toBe(true);
+
+    const edits = [{ path: join(worktree, "api", "x.py"), language: "python" as const, generatedText: "NEEDLE\n" }];
+    await auditor.auditGeneratedEdits("question-lane", { revision: 1, checkpoints: ["edit"], mode: "log", edits });
+    await auditor.settleGeneratedEdits();
+    expect(closed).toHaveBeenCalledTimes(1);
   });
 
   it("holds at most four workspaces of other worktrees at once while it audits a Log batch across six, and records each in order", async () => {
