@@ -458,6 +458,12 @@ another daemon; run `rerail daemon stop`, then `rerail daemon start`) or a paylo
 shape Rerail did not expect. The failures are kept in `hook-failures.jsonl` in the Rerail home. Update Rerail with
 `rerail update`; if the line stays, report it with `rerail support-bundle`.
 
+A daemon that runs but does not answer costs one hook its 12 s wait, not every hook: that hook leaves its event in
+`untaken-events` in the Rerail home and answers, and while that event is still there each later hook leaves its own
+behind it at once without asking the daemon. A session's start still waits. The daemon records those events, in the
+order their hooks met them, as soon as it reads again and before any later event; it does not check them then, and a
+tool's output is not kept with them.
+
 With `RERAIL_AUTOSTART=0` (or `false`) hooks start no daemon, and a hook that finds none logs nothing, since that is
 what you asked for. A session that starts with no daemon running says so as it starts: Claude Code and Codex
 show the line under the session's start, and Cursor's agent is asked to begin its first reply with it. The line, which

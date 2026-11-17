@@ -1,18 +1,24 @@
-import type { AdapterEvent, AdapterSession, RerailEventLoop, RerailHost } from "../engine/adapter-contract.js";
+import type { AdapterDelivery, AdapterEvent, AdapterSession, RerailEventLoop, RerailHost } from "../engine/adapter-contract.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { readRepositoryState } from "../presentation/session-presentation.js";
 import { isRerailStarted } from "../runtime/repository-start.js";
 import { RerailRuntime } from "../runtime/runtime.js";
-import { ingestEngineEvent } from "../runtime/engine-service.js";
+import { engineRequestBody, ingestEngineEvent, type EngineRuntimeConfiguration } from "../runtime/engine-service.js";
+import { leaveUntaken } from "../runtime/untaken-events.js";
+import { scrubValue } from "../engine/secret-scrub.js";
+import { WITHHELD_OUTPUT, type Withheld } from "../engine/transcript-boundary.js";
+import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import {
   autostartDaemon,
   autostartOff,
   AutostartOffError,
   daemonEngineEndpoint,
+  daemonLeftEventUntaken,
   daemonNotRunningMessage,
   engineEndpointAt,
   HOOK_DAEMON_WAIT_MS,
   runningDaemonEngineEndpoint,
+  type DaemonState,
   type HookDaemon,
 } from "../runtime/daemon-control.js";
 import { recordHookFailure } from "./hook-failures.js";
@@ -60,10 +66,12 @@ function recordLocalReceipt(session: AdapterSession, databasePath: string): (rec
 /**
  * The check one-shot hooks make. A running daemon answers first, from its own environment and open
  * database; without one, the hook reads the database itself, which never starts a daemon. An
- * explicit database path (tests, embedded hosts) is always read directly.
+ * explicit database path (tests, embedded hosts) is always read directly, and so is the database while the daemon has
+ * left an earlier hook's event untaken (`daemonLeftEventUntaken`): it is not reading, and the read would wait out its
+ * limit for nothing.
  */
 export async function hookRerailStarted(host: RerailHost, workspace: string, databasePath?: string): Promise<boolean> {
-  if (databasePath === undefined) {
+  if (databasePath === undefined && await daemonLeftEventUntaken() === undefined) {
     const answered = await readRepositoryState(workspace, host);
     if (answered !== null) return rerailRunsIn(answered);
   }
@@ -82,6 +90,8 @@ export interface HookOptions {
    * and 10 s more from the endpoint lookup on.
    */
   daemonDeadline?: number;
+  /** Epoch ms the hook's event arrived (`withDaemonDeadline`): an event left untaken is ordered by it. */
+  arrivedAt?: number;
 }
 
 /**
@@ -90,7 +100,8 @@ export interface HookOptions {
  * hook 2 s for the start check and then 12 s more for the endpoint lookup.
  */
 export function withDaemonDeadline(options: HookOptions): HookOptions {
-  return { daemonDeadline: Date.now() + HOOK_DAEMON_WAIT_MS, ...options };
+  const arrivedAt = Date.now();
+  return { daemonDeadline: arrivedAt + HOOK_DAEMON_WAIT_MS, arrivedAt, ...options };
 }
 
 /** No Rerail daemon could be reached: none answered and none could start, or its socket refused the hook. */
@@ -135,7 +146,10 @@ export function answerAutostartOff<Output>(error: unknown, startsSession: boolea
  * Runs a normal package hook against the engine service, or an explicit local test runtime. Only the hook that starts
  * a session (`startsSession`) waits for a daemon to start; any other hook that finds none running answers `{}` at
  * once, so a daemon that is down never stalls a tool call or shows as a hook error (design N11), records the lost event
- * in the hook failure log and starts a daemon in the background. A daemon that cannot be reached throws
+ * in the hook failure log and starts a daemon in the background. One whose daemon runs but left its whole bounded wait
+ * unanswered leaves the event in the home's untaken folder for the daemon to record when it reads again, and so does
+ * every later hook while that event is still there, without asking the daemon (`leaveForDaemon`). A daemon that cannot
+ * be reached throws
  * `DaemonUnreachableError`, so a coding agent without a footer can say so. Every failure, `event` named as the coding
  * agent names it, goes to the hook failure log (`hook-failures.ts`), which `rerail status` reads. Under
  * `RERAIL_AUTOSTART=0` a hook that finds no daemon logs nothing and starts none, since the person runs it themselves;
@@ -183,40 +197,127 @@ async function runHostHookOnce(
       }
     });
   }
+  const hook: HookRun = {
+    host, session, event, storageRoot, databasePath, handle,
+    configuration: { storageRoot, databasePath, modelPath, workspaceRoot: workspace },
+    arrivedAt: options.arrivedAt ?? Date.now(),
+  };
+  // A daemon that left an earlier hook's event untaken has not read since that hook waited its whole wait for it: this
+  // hook leaves its event behind that one at once, and waits for nothing.
+  const untaken = await untakenDaemon(options, startsSession);
+  if (untaken !== undefined) return await leaveForDaemon(hook, untaken);
   // Found before the session's lock is taken: a session's hooks that arrive together (parallel tool calls, subagents)
   // wait out a busy daemon side by side. Under the lock, each hook would begin its wait only when the one before it
   // gave up.
-  const daemon = await hookDaemon(options, startsSession);
-  if (daemon.status !== "running") {
-    // This event is lost, so say so where `rerail status` looks. A daemon that is gone (it crashed, or was stopped)
-    // is started in the background for the next event; the start is handed to a detached process, so the tool call
-    // never waits on it (design N11). A daemon that is alive is left alone: a start would find it and refuse to
-    // replace it, after costing a Rerail process and, on Windows, loading the native engine to launch it.
-    // Under RERAIL_AUTOSTART=0 the person runs the daemon themselves, so finding none is no failure and starts none.
-    if (daemon.status === "absent" && autostartOff()) return {};
-    recordHookFailure({ host, event, reason: lostEventReason(daemon) });
-    if (daemon.status === "absent") autostartDaemon();
-    return {};
-  }
-  const { endpoint } = daemon;
-  const configuration = { storageRoot, databasePath, modelPath, workspaceRoot: workspace };
-  return withSessionLock(storageRoot, host, sessionId, async lock => {
+  return await answerWith(await hookDaemon(options, startsSession), hook);
+}
+
+/** What one hook run needs to hand its event on and answer its coding agent. */
+interface HookRun {
+  host: HookHost;
+  session: AdapterSession;
+  /** The hook's event as the coding agent names it, for the hook failure log. */
+  event: string;
+  storageRoot: string;
+  databasePath: string;
+  configuration: EngineRuntimeConfiguration;
+  /** Epoch ms the event arrived ({@link HookOptions.arrivedAt}). */
+  arrivedAt: number;
+  handle: (runtime: RerailEventLoop, storageRoot: string, lock: SessionLock) => Promise<HookOutput>;
+}
+
+/**
+ * The daemon a hook leaves its event for without asking it (`daemonLeftEventUntaken`). A session's start still asks:
+ * it is the hook that starts a daemon and tells the person when none runs. A socket named outright is asked as named.
+ */
+async function untakenDaemon(options: HookOptions, startsSession: boolean): Promise<DaemonState | undefined> {
+  if (startsSession || namedEngineSocket(options) !== undefined) return undefined;
+  return await daemonLeftEventUntaken();
+}
+
+function namedEngineSocket(options: HookOptions): string | undefined {
+  return options.kernelSocketPath ?? process.env.RERAIL_ENGINE_SOCKET;
+}
+
+/** The hook's answer once it has looked for its daemon: its event goes to the daemon, is left for it, or is lost. */
+async function answerWith(daemon: HookDaemon, hook: HookRun): Promise<HookOutput> {
+  if (daemon.status === "running") {
+    const { endpoint } = daemon;
     // The daemon orders a session's events itself, so the lock guards only the session's files: a hook lets go of it
     // while the daemon checks its event, unless it keeps it (`SessionLock.kept`), and the hooks of a session's parallel
     // subagents, which all carry the parent's session id, do not queue behind each other's checks until one gives up.
-    const ingest = (adapterEvent: AdapterEvent) => lock.released(() => ingestEngineEvent(endpoint, adapterEvent, configuration))
+    return await runWithIngest(hook, lock => async adapterEvent => await lock.released(() => ingestEngineEvent(endpoint, adapterEvent, hook.configuration))
       .catch((error: unknown) => {
         throw unreachable(error);
-      });
-    const output = await handle({ ingest }, storageRoot, lock);
-    return bindSteerReceipt(output, recordLocalReceipt(session, databasePath));
+      }));
+  }
+  // A daemon that runs but left the hook's whole wait unanswered takes the event when it reads again.
+  if (daemon.status === "unresponsive" && daemon.state.takesUntakenEvents === true) return await leaveForDaemon(hook, daemon.state);
+  return lostEvent(daemon, hook);
+}
+
+/**
+ * This event is lost, so say so where `rerail status` looks. A daemon that is gone (it crashed, or was stopped) is
+ * started in the background for the next event; the start is handed to a detached process, so the tool call never
+ * waits on it (design N11). A daemon that is alive is left alone: a start would find it and refuse to replace it, after
+ * costing a Rerail process and, on Windows, loading the native engine to launch it. Under RERAIL_AUTOSTART=0 the
+ * person runs the daemon themselves, so finding none is no failure and starts none.
+ */
+function lostEvent(daemon: Exclude<HookDaemon, { status: "running" }>, hook: HookRun): HookOutput {
+  if (daemon.status === "absent" && autostartOff()) return {};
+  recordHookFailure({ host: hook.host, event: hook.event, reason: lostEventReason(daemon) });
+  if (daemon.status === "absent") autostartDaemon();
+  return {};
+}
+
+/** Runs the hook's handler under its session's lock with the `ingest` that `ingestFor` makes for that lock. */
+async function runWithIngest(hook: HookRun, ingestFor: (lock: SessionLock) => RerailEventLoop["ingest"]): Promise<HookOutput> {
+  return withSessionLock(hook.storageRoot, hook.host, hook.session.sessionId, async lock => {
+    const output = await hook.handle({ ingest: ingestFor(lock) }, hook.storageRoot, lock);
+    return bindSteerReceipt(output, recordLocalReceipt(hook.session, hook.databasePath));
   });
+}
+
+/**
+ * Runs the hook's handler with an `ingest` that leaves each event in the home's untaken folder for the daemon `daemon`
+ * names, which runs but does not read (`untaken-events.ts`), and gives the coding agent what a daemon that holds
+ * nothing for the event gives: no delivery. The daemon records the event as it reads again, before any event sent to
+ * it after; it does not check it then, since the moment its finding could reach the agent has passed.
+ */
+async function leaveForDaemon(hook: HookRun, daemon: DaemonState): Promise<HookOutput> {
+  return await runWithIngest(hook, () => async adapterEvent => await leaveEvent(hook, daemon, adapterEvent));
+}
+
+/**
+ * Leaves `adapterEvent` for `daemon` as the daemon keeps what it records: its secrets scrubbed, and a tool's output
+ * withheld, since the hook cannot tell whether the call named a secret-like path, whose output the daemon never writes
+ * down. An event that cannot be left is lost, and the failure log says so.
+ */
+async function leaveEvent(hook: HookRun, daemon: DaemonState, adapterEvent: AdapterEvent): Promise<readonly AdapterDelivery[]> {
+  try {
+    await leaveUntaken(defaultRerailHome(), daemon.pid, engineRequestBody(untakenForm(adapterEvent), hook.configuration), hook.arrivedAt);
+  } catch {
+    recordHookFailure({ host: hook.host, event: hook.event, reason: lostEventReason({ status: "unresponsive", state: daemon }) });
+  }
+  return [];
+}
+
+/** What a tool's result keeps of its output in the untaken folder: none. */
+const UNTAKEN_OUTPUT: Readonly<Withheld> = {
+  ...WITHHELD_OUTPUT,
+  reason: "the daemon was not reading when the tool's result came, and Rerail writes no tool output to disk before the daemon has seen the call",
+};
+
+/** `event` as the untaken folder keeps it: scrubbed of secrets (`scrubValue`), and a result without its output. */
+function untakenForm(event: AdapterEvent): AdapterEvent {
+  const scrubbed = scrubValue(event);
+  return scrubbed.kind === "result" ? { ...scrubbed, output: UNTAKEN_OUTPUT } : scrubbed;
 }
 
 /** The engine a hook sends its event to: the socket named outright, else the daemon's, or why no daemon takes it. */
 async function hookDaemon(options: HookOptions, startsSession: boolean): Promise<HookDaemon> {
   try {
-    const named = options.kernelSocketPath ?? process.env.RERAIL_ENGINE_SOCKET;
+    const named = namedEngineSocket(options);
     if (named !== undefined) return { status: "running", endpoint: await engineEndpointAt(named) };
     const { daemonDeadline } = options;
     if (startsSession) return { status: "running", endpoint: await daemonEngineEndpoint(true, daemonDeadline) };

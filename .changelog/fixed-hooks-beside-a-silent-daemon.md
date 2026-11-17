@@ -1,0 +1,1 @@
+A daemon that runs but stops answering, for example while it opens a large checkout, now costs one hook its 12 s wait instead of every hook. Later hooks answer at once, and their events are recorded once the daemon answers again, in order, where they were lost before. A session's start still waits.

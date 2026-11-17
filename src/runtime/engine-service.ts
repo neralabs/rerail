@@ -81,14 +81,23 @@ const RequestSchema = z
   })
   .strict();
 
-interface EngineRequest {
+/** One event as a hook hands it to the engine service, with the configuration of the runtime that takes it. */
+export interface EngineRequest {
   event: AdapterEvent;
   configuration: EngineRuntimeConfiguration | undefined;
 }
 
-function parseEngineRequest(value: unknown): EngineRequest {
+/** `value`, read from a request's body or an untaken event's file, as a request the engine service takes; throws when it is not one. */
+export function parseEngineRequest(value: unknown): EngineRequest {
   const { event, configuration } = RequestSchema.parse(value);
   return { event, configuration };
+}
+
+/** The body that hands `event` to the engine service: over its socket, or left untaken in the home (`untaken-events.ts`). */
+export function engineRequestBody(event: AdapterEvent, configuration?: EngineRuntimeConfiguration): string {
+  const body = JSON.stringify(RequestSchema.parse({ event, configuration }));
+  if (Buffer.byteLength(body) > RERAIL_EVENT_MAX_FRAME_BYTES) throw new RangeError("Kernel event exceeds frame limit");
+  return body;
 }
 
 
@@ -194,6 +203,11 @@ type EngineServiceOptions = Omit<RerailRuntimeOptions, "workspaceRoot"> & {
   now?: () => number;
   /** How long a checkout's runtime stays open once no session uses it; {@link IDLE_RUNTIME_MS} by default. */
   idleRuntimeMs?: number;
+  /**
+   * Runs before each event sent on the socket is taken: the daemon records there the events hooks left untaken while it
+   * did not read (`untaken-events.ts`), so none of them is recorded after an event sent later.
+   */
+  beforeEvent?: () => void;
 };
 
 /**
@@ -699,7 +713,10 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     get socketPath() {
       return socketPath;
     },
-    ingest: (event, configuration) => routeEngineEvent(event, configuration, options, routing),
+    ingest: async (event, configuration) => {
+      options.beforeEvent?.();
+      return await routeEngineEvent(event, configuration, options, routing);
+    },
     openRuntimes: () => routing.runtimes.size,
     closeIdleSessions: sweepIdleSessions,
     async close() {
@@ -750,8 +767,7 @@ export async function ingestEngineEvent(
   event: AdapterEvent,
   configuration?: EngineRuntimeConfiguration,
 ): Promise<readonly AdapterDelivery[]> {
-  const body = JSON.stringify(RequestSchema.parse({ event, configuration }));
-  if (Buffer.byteLength(body) > RERAIL_EVENT_MAX_FRAME_BYTES) throw new RangeError("Kernel event exceeds frame limit");
+  const body = engineRequestBody(event, configuration);
   const { promise, resolve, reject } = Promise.withResolvers<readonly AdapterDelivery[]>();
   const outgoing = request(
     {

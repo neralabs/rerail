@@ -17,6 +17,7 @@ import { withHomeLock } from "../engine/native/file-lock.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
 import { engineCapabilityProof, type EngineProofAnswer } from "./engine-proof.js";
+import { untakenFor } from "./untaken-events.js";
 import { databasePipeListed, enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./engine-pipe.js";
 import { processState, type ProcessSignal } from "../engine/process-liveness.js";
 import {
@@ -69,6 +70,12 @@ export interface DaemonState {
    * the key, and this names it and the command that fixes it. Absent for every other daemon.
    */
   remoteRefused?: string;
+  /**
+   * True when the daemon takes the events hooks leave in the home's untaken folder as soon as its event loop runs (a
+   * watch of the folder; `untaken-events.ts`). Only then does a hook that finds an event left for it skip its wait.
+   * Absent in a state file an older daemon wrote, or where the watch could not start.
+   */
+  takesUntakenEvents?: boolean;
 }
 
 /** Header a Rerail process, and the dashboard page, send the daemon's {@link DaemonState.accessToken} in. */
@@ -996,6 +1003,25 @@ export async function runningDaemonEngineEndpoint(deadline?: number, machine: Da
     ? engineEndpointOf(lookup.state)
     : await daemonEngineEndpoint(true, deadline, machine);
   return { status: "running", endpoint };
+}
+
+/**
+ * The daemon the home records, when a hook already waited its whole wait for it and left an event it has not taken
+ * since (`untakenFor`): its event loop has not run since then, so a hook asks it nothing and leaves its event behind
+ * that one. Only a daemon that takes those events as its loop runs counts (`takesUntakenEvents`), and only while it may
+ * still run: its pid live, and on Windows its own engine pipe listed. Reads two files and waits for nothing.
+ */
+export async function daemonLeftEventUntaken(machine: DaemonMachine = THIS_MACHINE): Promise<DaemonState | undefined> {
+  const home = defaultRerailHome(machine.env);
+  const state = await readDaemonState(join(home, DAEMON_STATE_FILE), machine.platform);
+  if (state?.takesUntakenEvents !== true || !untakenFor(home, state.pid)) return undefined;
+  return recordedDaemonMayRun(state, machine) ? state : undefined;
+}
+
+/** Whether the daemon `state` records may still run, asked of the machine alone: its pid, and on Windows its own pipe. */
+function recordedDaemonMayRun(state: DaemonState, machine: DaemonMachine): boolean {
+  if (processState(state.pid, machine.kill) === "gone") return false;
+  return machine.platform !== "win32" || enginePipeExists(state, machine);
 }
 
 /** How long, in all, a hook's second health probe waits for a busy daemon to answer as itself. */

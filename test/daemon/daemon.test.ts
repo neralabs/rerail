@@ -19,9 +19,13 @@ import { NativeSessionServer } from "../../src/daemon/native-session-server.js";
 import {
   type DaemonHealth,
   type DaemonState,
+  engineRequestBody,
   ingestEngineEvent,
+  leaveUntaken,
+  SqliteSessionReader,
   SqliteSessionStore,
   SESSION_EVENT_PAGE_LIMIT,
+  UNTAKEN_EVENTS_DIR,
 } from "../../src/runtime/index.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
 import { openRerailDatabase, RepositoryWorktreeWalks, SqliteAuditStore, SqliteAuditControlStore } from "../../src/engine/index.js";
@@ -1120,6 +1124,32 @@ describe("Rerail daemon", () => {
     await daemon.close();
     expect(existsSync(stateFile)).toBe(false);
     await expect(fetch(daemon.url)).rejects.toThrow();
+  });
+
+  it("records the events hooks left untaken while it did not read before any event sent to it after, and says it takes them", async () => {
+    root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));
+    startTestRepository(root, join(root, "rerail.sqlite"));
+    const stateFile = join(root, "daemon.json");
+    const daemon = await start({ stateFile });
+    // Test boundary: the state file a hook reads, parsed and asserted right after.
+    const state = JSON.parse(await readFile(stateFile, "utf8")) as DaemonState;
+    expect(state.takesUntakenEvents).toBe(true);
+    const session = { host: "claude-code" as const, sessionId: "untaken-session", cwd: root };
+    const endpoint = { socketPath: daemon.kernelSocketPath, accessToken: ACCESS };
+    await ingestEngineEvent(endpoint, { kind: "session-start", eventId: "start", session });
+    const prompt = (eventId: string) => ({ kind: "user-prompt" as const, eventId, sessionId: session.sessionId, session, text: eventId });
+    await leaveUntaken(root, process.pid, engineRequestBody(prompt("second")), 2_000);
+    await leaveUntaken(root, process.pid, engineRequestBody(prompt("first")), 1_000);
+    await ingestEngineEvent(endpoint, prompt("third"));
+    const store = new SqliteSessionReader(join(root, "rerail.sqlite"));
+    try {
+      const recorded = store.events(session.sessionId).filter(event => ["session-start", "user-prompt"].includes(event.kind));
+      expect(recorded.map(event => event.eventId)).toEqual(["start", "first", "second", "third"]);
+      expect(recorded.slice(1, 3).map(event => event.observedAt)).toEqual([1_000, 2_000]);
+    } finally {
+      store.close();
+    }
+    expect(await readdir(join(root, UNTAKEN_EVENTS_DIR))).toEqual([]);
   });
 
   it("accepts API writes whose Origin is a known host on the requested port and refuses every other", async () => {

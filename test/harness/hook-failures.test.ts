@@ -1,6 +1,6 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
-import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,7 +13,8 @@ vi.mock("../../src/runtime/daemon-control.js", async () => {
 });
 
 import { HOOK_FAILURES_FILE, hookFailureLines, readHookFailures, recordHookFailure, type HookFailure } from "../../src/harness/hook-failures.js";
-import { DaemonUnreachableError, runHostHook } from "../../src/harness/hook-host.js";
+import { DaemonUnreachableError, hookRerailStarted, runHostHook } from "../../src/harness/hook-host.js";
+import { engineRequestBody, leaveUntaken, parseEngineRequest, UNTAKEN_EVENTS_DIR } from "../../src/runtime/index.js";
 import { listenAsEngine } from "../support/platform/engine-endpoint.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
@@ -153,5 +154,105 @@ describe("a hook that cannot record its event", () => {
     await expect(runHostHook("claude-code", rerailHome, "s", false, options, async () => { throw new Error("Claude hook omitted index"); }, "MessageDisplay"))
       .rejects.toThrow("Claude hook omitted index");
     expect(readHookFailures(rerailHome, 0)).toEqual([expect.objectContaining({ event: "MessageDisplay", reason: "Claude hook omitted index" })]);
+  });
+});
+
+describe("a hook beside a daemon that runs but does not read", () => {
+  /** A port nothing listens on: a probe there is refused at once, as a daemon whose pid lives but which does not answer. */
+  async function closedPort(): Promise<number> {
+    const server = createHttpServer();
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    await new Promise(resolve => server.close(resolve));
+    return port;
+  }
+
+  /**
+   * This process as the home's daemon, which takes untaken events: its engine socket proving the capability daemon.json
+   * records, and `port` at its URL. Returns what ends the engine.
+   */
+  async function recordedDaemon(rerailHome: string, port: number): Promise<() => Promise<void>> {
+    vi.stubEnv("RERAIL_HOME", rerailHome);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-untaken-${process.pid}-${Date.now()}` : join(rerailHome, "engine.sock");
+    const closeEngine = await listenAsEngine(socketPath, "token");
+    writeFileSync(join(rerailHome, "daemon.json"), JSON.stringify({
+      pid: process.pid, host: "127.0.0.1", port, url: `http://127.0.0.1:${port}/`, version: "test", ui: "bundled", startedAt: 1,
+      packageRoot: rerailHome, databasePath: join(rerailHome, "rerail.sqlite"), kernelSocketPath: socketPath, accessToken: "token",
+      takesUntakenEvents: true,
+    }));
+    return closeEngine;
+  }
+
+  /** A front at the daemon's URL that never answers, and counts what reaches it. */
+  async function silentFront(): Promise<{ server: Server; requests: () => number }> {
+    let requests = 0;
+    const server = createHttpServer(() => { requests += 1; });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    return { server, requests: () => requests };
+  }
+
+  async function closeFront(server: Server): Promise<void> {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+
+  const prompt = (eventId: string) => ({
+    kind: "user-prompt" as const, eventId, sessionId: "s", text: `${eventId}, with the key sk-ant-api03-${"a".repeat(90)}`,
+  });
+
+  /** The events left untaken in `rerailHome`, oldest first. */
+  function untaken(rerailHome: string): string[] {
+    const folder = join(rerailHome, UNTAKEN_EVENTS_DIR);
+    return readdirSync(folder).sort().map(name => parseEngineRequest(JSON.parse(readFileSync(join(folder, name), "utf8"))).event.eventId);
+  }
+
+  it("leaves its event for the daemon once it has waited out its whole wait, scrubbed, and logs nothing lost", async () => {
+    const rerailHome = await home();
+    const closeEngine = await recordedDaemon(rerailHome, await closedPort());
+    try {
+      const handle = vi.fn(async (runtime: { ingest: (event: ReturnType<typeof prompt>) => Promise<unknown> }) => ({ answered: await runtime.ingest(prompt("first")) }));
+      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now(), arrivedAt: 1_000 };
+      expect(await runHostHook("claude-code", rerailHome, "s", false, options, handle, "UserPromptSubmit")).toEqual({ answered: [] });
+      expect(untaken(rerailHome)).toEqual(["first"]);
+      expect(readFileSync(join(rerailHome, UNTAKEN_EVENTS_DIR, readdirSync(join(rerailHome, UNTAKEN_EVENTS_DIR))[0]!), "utf8")).not.toContain("sk-ant-api03-");
+      expect(readHookFailures(rerailHome, 0)).toEqual([]);
+    } finally {
+      await closeEngine();
+    }
+  });
+
+  it("asks a daemon that has left an earlier event untaken nothing, and leaves its own behind that one", async () => {
+    const rerailHome = await home();
+    const front = await silentFront();
+    const closeEngine = await recordedDaemon(rerailHome, (front.server.address() as AddressInfo).port);
+    try {
+      await leaveUntaken(rerailHome, process.pid, engineRequestBody(prompt("first")), 1_000);
+      const handle = vi.fn(async (runtime: { ingest: (event: ReturnType<typeof prompt>) => Promise<unknown> }) => ({ answered: await runtime.ingest(prompt("second")) }));
+      // A deadline far off: a hook that asked the daemon would wait for it.
+      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now() + 60_000, arrivedAt: 2_000 };
+      expect(await runHostHook("claude-code", rerailHome, "s", false, options, handle, "UserPromptSubmit")).toEqual({ answered: [] });
+      expect(await hookRerailStarted("claude-code", rerailHome)).toBe(false);
+      expect(front.requests()).toBe(0);
+      expect(untaken(rerailHome)).toEqual(["first", "second"]);
+      expect(readHookFailures(rerailHome, 0)).toEqual([]);
+    } finally {
+      await Promise.all([closeFront(front.server), closeEngine()]);
+    }
+  });
+
+  it("still asks the daemon at a session's start, which is the hook that tells the person when none answers", async () => {
+    const rerailHome = await home();
+    const closeEngine = await recordedDaemon(rerailHome, await closedPort());
+    try {
+      await leaveUntaken(rerailHome, process.pid, engineRequestBody(prompt("first")), 1_000);
+      const handle = vi.fn(async () => ({}));
+      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now() };
+      await expect(runHostHook("claude-code", rerailHome, "s", true, options, handle, "SessionStart")).rejects.toBeInstanceOf(DaemonUnreachableError);
+      expect(handle).not.toHaveBeenCalled();
+      expect(untaken(rerailHome)).toEqual(["first"]);
+    } finally {
+      await closeEngine();
+    }
   });
 });
