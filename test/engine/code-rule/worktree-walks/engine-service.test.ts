@@ -112,25 +112,35 @@ describe("the engine service and the other worktrees of a repository", () => {
     }
   });
 
-  it("opens one Git ignore matcher for a worktree that the live sessions' walks ask about, each session in a worktree of its own", { timeout: 60_000 }, async () => {
+  it("opens one Git ignore matcher for a worktree whose change the live sessions audit, each session in a worktree of its own", { timeout: 60_000 }, async () => {
     const root = await folder();
     const databasePath = join(root, "rerail.sqlite");
     const { worktrees } = repository(root, databasePath, ["w1", "w2", "w3", "w4"]);
     const opens = vi.spyOn(CodeRuleBridge.prototype, "openWorkspace");
+    const audits = vi.spyOn(CheckoutCodeRuleRouter.prototype, "auditGeneratedEdits");
     const matchers = vi.spyOn(loadNativeBinding(), "openGitIgnoreMatcher");
     const service = await startEngineService({ socketPath: socketPathIn(root, "shared-ignore"), storageRoot: join(root, "sessions"), databasePath, embedder: testEmbedder });
     const sessions = worktrees.slice(0, 3).map((cwd, index) => ({ host: "claude-code" as const, sessionId: `session-${index + 1}`, cwd }));
-    try {
-      for (const session of sessions) await service.ingest({ kind: "session-start", eventId: `${session.sessionId}:start`, session });
-      await vi.waitFor(() => expect(opens.mock.results).toHaveLength(sessions.length), { timeout: 30_000, interval: 20 });
-      await Promise.all(opens.mock.results.map(result => result.value));
+    const turns = async () => {
       for (const bridge of opens.mock.contexts as CodeRuleBridge[]) {
         await bridge.checkpoint("turn");
         await bridge.settleWorktreeWalk();
       }
+    };
+    try {
+      for (const session of sessions) await service.ingest({ kind: "session-start", eventId: `${session.sessionId}:start`, session });
+      await vi.waitFor(() => expect(opens.mock.results).toHaveLength(sessions.length), { timeout: 30_000, interval: 20 });
+      await Promise.all(opens.mock.results.map(result => result.value));
+      await turns();
+      // A change in `w4`, which no session works in: each session's runtime audits it in its own router, which asks
+      // Git's ignore rules there.
+      await writeFile(join(worktrees[3]!, "src", "x.py"), "print(1)\n");
+      await turns();
+      const audited = () => audits.mock.calls.filter(([, batch]) => batch.mode === "log" && batch.edits.some(edit => edit.path.endsWith("w4/src/x.py")));
+      await vi.waitFor(() => expect(audited()).toHaveLength(sessions.length), { timeout: 30_000, interval: 20 });
+      await Promise.all(audits.mock.results.map(result => result.value));
 
-      // Each session's runtime asks Git's ignore rules of `w4`; a matcher holds the worktree's index, and the runtimes
-      // share the daemon's one.
+      // A matcher holds the worktree's index: the runtimes share the daemon's one.
       expect(matchers.mock.calls.filter(([path]) => path === worktrees[3])).toHaveLength(1);
     } finally {
       await service.close();
