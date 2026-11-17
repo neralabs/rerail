@@ -1,0 +1,1 @@
+Edits in a worktree made while a session is open, where that session had written or walked, are checked by the worktree's rules, whichever started repository it belongs to, and a worktree of the session's repository joins its walk of the other worktrees. Before, Rerail skipped them or judged them by the checkout around them until its daemon restarted.

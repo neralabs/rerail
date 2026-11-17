@@ -1,0 +1,1 @@
+In a repository with many worktrees, Rerail's daemon walks the other worktrees once for all the sessions open in them, OMP and Pi sessions included, instead of once per session, and keeps one copy of what it read. Its memory and walking time grew with every open session until the daemon ran out and stopped.

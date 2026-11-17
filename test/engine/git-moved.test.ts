@@ -7,7 +7,7 @@
  * the next folder; Rerail's start of the path it kept then fails as the operating system fails it (`ENOENT`), and a
  * start of the stand-in that is there runs this machine's Git in its place.
  */
-import { execFile, execFileSync, spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -80,7 +80,6 @@ describe("the Git a process keeps, gone under it", () => {
     await placeStandIn(folders[0]!);
     vi.stubEnv("PATH", [earlier, ...folders, ...(process.env.PATH === undefined ? [] : [process.env.PATH])].join(delimiter));
     vi.mocked(spawnSync).mockImplementation((file, args, options) => actual.spawnSync(program(file), args, options));
-    vi.mocked(execFile).mockImplementation((file, args, options, callback) => actual.execFile(program(file), args, options, callback));
     vi.mocked(spawn).mockImplementation((file, args, options) => actual.spawn(program(file), args, options));
     expect(gitExecutable()).toBe(join(folders[0]!, GIT));
   });
@@ -101,10 +100,10 @@ describe("the Git a process keeps, gone under it", () => {
 
   it("runs a Git call that does not block once more with the Git found again", async () => {
     const [kept, now] = await moveKeptGit();
-    started(execFile);
+    started(spawn);
     const result = await runGitAsync(repository, ["rev-parse", "HEAD"]);
     expect([result.status, result.stdout.trim()]).toEqual([0, head]);
-    expect(started(execFile)).toEqual([kept, now]);
+    expect(started(spawn)).toEqual([kept, now]);
     expect(gitExecutable()).toBe(now);
   });
 

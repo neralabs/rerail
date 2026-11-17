@@ -1910,7 +1910,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => edit.path))).toEqual(["wt/src/a.py"]);
   });
 
-  it("leaves the other worktrees' sources, and files a tool wrote outside its folder, out of the observations it shares once it closes", async () => {
+  it("keeps no observation of its own of the other worktrees' sources while it lives, and of files a tool wrote outside its folder once it closes", async () => {
     const root = await twoBranches();
     const roots: string[] = [];
     for (const name of ["w1", "w2", "w3"]) {
@@ -1934,10 +1934,11 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.checkpoint("turn");
     await bridge.settleWorktreeWalk();
     const own = ["src/a.py", "src/gone.py"];
-    const others = roots.flatMap(worktree => ["a.py", "new.py"].map(file => relative(root, join(worktree, "src", file)).split(sep).join("/")));
     const outside = relative(root, join(sibling, "x.py")).split(sep).join("/");
-    // While the session walks them, a session opening in its folder starts from the worktrees' sources too.
-    expect([...observations.get(root)?.keys() ?? []].sort()).toEqual([...others, ...own, outside].sort());
+    // The bridge shares every observation it keeps of its own. The other worktrees' sources are the shared walk's: a
+    // live session that kept one of each held every file of every worktree, and the daemon's heap grew with the live
+    // sessions times the worktrees times their files.
+    expect([...observations.get(root)?.keys() ?? []].sort()).toEqual([...own, outside].sort());
     await bridge.close();
     // The daemon keeps a folder's observations while it serves the folder, so each folder sessions started in held every
     // file of every worktree: its heap grew with the folders times the files of all the repository's worktrees.
@@ -2034,8 +2035,8 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.checkpoint("turn");
     await bridge.settleWorktreeWalk();
     const own = ["src/a.py", "src/gone.py", "wt/w1-notes/a.py"];
-    const others = ["w1", "w2"].flatMap(name => ["a.py", "new.py"].map(file => `wt/${name}/src/${file}`));
-    expect([...observations.get(root)?.keys() ?? []].sort()).toEqual([...own, ...others].sort());
+    // The worktrees inside the folder are the shared walk's: the session keeps no observation of their sources.
+    expect([...observations.get(root)?.keys() ?? []].sort()).toEqual(own);
     await bridge.close();
     expect([...observations.get(root)?.keys() ?? []].sort()).toEqual(own);
   });
@@ -2239,7 +2240,9 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
       await requestDiscovery(bridge, walk);
       git(root, "worktree", "remove", worktree);
       roots.length = 0;
-      await vi.advanceTimersByTimeAsync(200);
+      // The walk is timed the gap or the last walk's length after that walk, whichever is longer: on a slow machine, as
+      // Git on Windows is, longer than the gap. The checkpoint's wait and Git's timeouts come later, so it is the next timer.
+      await vi.advanceTimersToNextTimerAsync();
       await bridge.settleWorktreeWalk();
       walk.release();
       await bridge.checkpoint("turn");
@@ -2266,7 +2269,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
 
-  it("records only the deletions of a worktree nested in another walked worktree and removed during its first walk", async () => {
+  it("records nothing of a worktree nested in another walked worktree and removed during its first walk", async () => {
     const root = await twoBranches();
     const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
     git(root, "worktree", "add", "--quiet", "-b", "nested", join(worktree, "nest"), "main");
@@ -2296,11 +2299,10 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.settleWorktreeWalk();
     await bridge.checkpoint("turn");
     await bridge.settleWorktreeWalk();
-    // No one wrote these files. A walk that kept their text recorded each one created, then deleted.
-    const deleted = { language: "python", previousReadError: "Source was deleted without a captured preimage", deleted: true };
-    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
-      [[{ path: `${nest}/src/a.py`, ...deleted }, { path: `${nest}/src/gone.py`, ...deleted }], "log"],
-    ]);
+    // No one wrote these files. A walk that kept their text recorded each one created, then deleted; a session that kept
+    // the removed worktree's first walk as its own observations recorded each one deleted. The shared walk's snapshot of
+    // a worktree gone before the session took it is never the session's, so a removed worktree stays silent.
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
 
   it("reports no deletions for a worktree removed while its own walk ran, with no other walk between", async () => {

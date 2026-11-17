@@ -14,7 +14,7 @@ import { endProcessTree } from "../../src/engine/child-process.js";
 import {
   findGit, gitBehindLauncher, gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitCrlfPaths, gitExcludeFiles, gitExecutable, gitHead, gitHome,
   gitInstalled, gitLook, gitModifiedOrUntrackedListing, gitModifiedOrUntrackedPaths, GitReads, GitUnavailableError, gitUnmergedReader,
-  headMovedOnlyByCommits, ProcessGit, readGitBlobIds, readGitBlobs, runGit, searchGitFrom,
+  headMovedOnlyByCommits, ProcessGit, readGitBlobIds, readGitBlobs, runGit, runGitAsync, searchGitFrom,
 } from "../../src/engine/git.js";
 import { processState } from "../../src/engine/process-liveness.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
@@ -160,6 +160,27 @@ describe("gitHead and headMovedOnlyByCommits", () => {
   });
 });
 
+/**
+ * A launcher, run with the file to write a pid to: it runs the real Git as its own child holding the output it was
+ * given, writes that child's pid, and waits for it, as Git for Windows' `cmd\git.exe` waits for the git.exe it starts.
+ * `detached` keeps the child out of the job object Node puts its children in, which would end it with the launcher;
+ * a launcher without one leaves its child running when it is killed.
+ */
+const LAUNCHER = [
+  "const git = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30_000)'], { stdio: 'inherit', windowsHide: true, detached: true });",
+  "require('node:fs').writeFileSync(process.argv[1], String(git.pid));",
+  "setTimeout(() => {}, 30_000);",
+].join(" ");
+
+/** The pid in `file`, once a launcher has written it there. */
+async function launchedGit(file: string): Promise<number> {
+  return await vi.waitFor(async () => {
+    const pid = Number(await readFile(file, "utf8"));
+    if (!(pid > 0)) throw new Error(`${file} holds no pid yet`);
+    return pid;
+  }, { timeout: 10_000, interval: 20 });
+}
+
 describe("GitReads", () => {
   it("answers a read it stopped as without Git, and starts no Git once stopped", async () => {
     const root = await repository({ "a.py": "1\n" });
@@ -205,27 +226,6 @@ describe("GitReads", () => {
     await expect(Promise.race([stopped, delay(3_000, "still running", { ref: false })])).resolves.toBe("stopped");
     await expect(read).resolves.toEqual(new Map([["HEAD:./a.py", Buffer.from("1\n")]]));
   });
-
-  /**
-   * A launcher, run with the file to write a pid to: it runs the real Git as its own child holding the output it was
-   * given, writes that child's pid, and waits for it, as Git for Windows' `cmd\git.exe` waits for the git.exe it starts.
-   * `detached` keeps the child out of the job object Node puts its children in, which would end it with the launcher;
-   * a launcher without one leaves its child running when it is killed.
-   */
-  const LAUNCHER = [
-    "const git = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30_000)'], { stdio: 'inherit', windowsHide: true, detached: true });",
-    "require('node:fs').writeFileSync(process.argv[1], String(git.pid));",
-    "setTimeout(() => {}, 30_000);",
-  ].join(" ");
-
-  /** The pid in `file`, once a launcher has written it there. */
-  async function launchedGit(file: string): Promise<number> {
-    return await vi.waitFor(async () => {
-      const pid = Number(await readFile(file, "utf8"));
-      if (!(pid > 0)) throw new Error(`${file} holds no pid yet`);
-      return pid;
-    }, { timeout: 10_000, interval: 20 });
-  }
 
   it.runIf(process.platform === "win32")("ends the Git behind a launcher with the launcher, and answers once both have exited", async () => {
     const root = await repository({ "a.py": "1\n" });
@@ -584,6 +584,77 @@ describe("Git reads and their time limit", () => {
   }, 30_000);
 });
 
+describe("runGitAsync", () => {
+  /** In Git's place: prints nothing and stays until it is ended, as a Git kept waiting does. */
+  const HANGS = "setTimeout(() => {}, 30_000)";
+
+  it("answers Git's status and what it printed, with `input` on its stdin", async () => {
+    const root = await repository({ "a.py": "print(1)\n" });
+    const head = git(root, "rev-parse", "HEAD").trim();
+    await expect(runGitAsync(root, ["cat-file", "--batch-check=%(objectname)"], { input: "HEAD\n" }))
+      .resolves.toEqual({ status: 0, stdout: `${head}\n`, stderr: "" });
+    const failed = await runGitAsync(root, ["rev-parse", "--verify", "no-such-ref"]);
+    expect(failed).toMatchObject({ status: 128, stdout: "" });
+    expect(failed.stderr).not.toBe("");
+    expect(failed.error).toBeUndefined();
+  });
+
+  it("answers a null status with an error once Git prints more than maxBuffer", async () => {
+    const root = await repository({ "a.py": "x".repeat(4_000) });
+    const result = await runGitAsync(root, ["cat-file", "blob", "HEAD:a.py"], { maxBuffer: 1_000 });
+    expect(result.status).toBeNull();
+    expect(result.error?.message).toMatch(/maxBuffer/u);
+  });
+
+  it("ends a Git that hangs at its timeout, with every process it started, and answers a null status once it has exited", async () => {
+    const root = await repository({ "a.py": "print(1)\n" });
+    vi.mocked(endProcessTree).mockClear();
+    const started = gitInPlace(HANGS);
+    const run = runGitAsync(root, ["status"], { timeout: 300 });
+    const child = await started;
+    const result = await Promise.race([run, stillWaiting(3_000)]);
+    expect(result).toMatchObject({ status: null, error: expect.objectContaining({ message: expect.stringMatching(/time limit/u) }) });
+    expect(endProcessTree).toHaveBeenCalledExactlyOnceWith(child);
+    expect(ending(child)).not.toEqual({ exitCode: null, signalCode: null });
+  }, 30_000);
+
+  it("ends a Git its signal stops, and starts none once the signal is aborted", async () => {
+    const root = await repository({ "a.py": "print(1)\n" });
+    vi.mocked(endProcessTree).mockClear();
+    const started = gitInPlace(HANGS);
+    const stopping = new AbortController();
+    // A timeout this long never ends the run here: only the signal does.
+    const run = runGitAsync(root, ["status"], { timeout: 60_000, signal: stopping.signal });
+    const child = await started;
+    stopping.abort();
+    const result = await Promise.race([run, stillWaiting(3_000)]);
+    expect(result).toMatchObject({ status: null, error: expect.objectContaining({ message: expect.stringMatching(/stopped/u) }) });
+    expect(endProcessTree).toHaveBeenCalledExactlyOnceWith(child);
+    expect(ending(child)).not.toEqual({ exitCode: null, signalCode: null });
+
+    const spawned = vi.mocked(spawn).mock.calls.length;
+    await expect(runGitAsync(root, ["status"], { signal: stopping.signal })).resolves.toMatchObject({ status: null, stdout: "" });
+    expect(vi.mocked(spawn).mock.calls.length).toBe(spawned);
+  }, 30_000);
+
+  it.runIf(process.platform === "win32")("ends the Git behind a launcher at its timeout, and answers once both have exited", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    const pids = await mkdtemp(join(tmpdir(), "rerail-git-launched-"));
+    roots.push(pids);
+    const pidFile = join(pids, "git");
+    vi.mocked(spawn).mockImplementationOnce((_git, args, options) =>
+      actualChildProcess.spawn(process.execPath, ["-e", LAUNCHER, "--", pidFile, ...args], options));
+    const run = runGitAsync(root, ["status"], { timeout: 300 });
+    const launched = await launchedGit(pidFile);
+    await expect(Promise.race([run, stillWaiting(5_000)])).resolves.toMatchObject({ status: null });
+
+    // The run settles only once the whole tree has exited, so the Git the launcher started is not waited for here.
+    const running = processState(launched) === "gone" ? [] : [launched];
+    for (const pid of running) process.kill(pid);
+    expect(running).toEqual([]);
+  }, 30_000);
+});
+
 describe("gitExcludeFiles", () => {
   afterEach(() => { vi.unstubAllEnvs(); });
 
@@ -606,7 +677,7 @@ describe("gitExcludeFiles", () => {
     const { root, home } = await isolatedRepository();
     expect(await gitExcludeFiles(root)).toEqual([join(root, ".git", "info", "exclude"), join(home, ".config", "git", "ignore")]);
     vi.stubEnv("XDG_CONFIG_HOME", join(home, "xdg"));
-    expect((await gitExcludeFiles(root))[1]).toBe(join(home, "xdg", "git", "ignore"));
+    expect((await gitExcludeFiles(root))?.[1]).toBe(join(home, "xdg", "git", "ignore"));
   });
 
   it("follows core.excludesFile, with `~` read as the home, and gives a linked worktree the common info/exclude", async () => {
@@ -616,9 +687,14 @@ describe("gitExcludeFiles", () => {
     expect(await gitExcludeFiles(join(home, "linked"))).toEqual([join(root, ".git", "info", "exclude"), join(home, "ignores")]);
   });
 
-  it("names none outside a Git checkout", async () => {
-    const { home } = await isolatedRepository();
-    expect(await gitExcludeFiles(home)).toEqual([]);
+  it("answers undefined outside a Git checkout, and when Git does not answer: no files is not its answer", async () => {
+    const { root, home } = await isolatedRepository();
+    expect(await gitExcludeFiles(home)).toBeUndefined();
+    expect(await gitConfigFiles(home)).toBeUndefined();
+    const stopped = new AbortController();
+    stopped.abort();
+    expect(await gitExcludeFiles(root, { signal: stopped.signal })).toBeUndefined();
+    expect(await gitConfigFiles(root, { signal: stopped.signal })).toBeUndefined();
   });
 
   it("names the configuration files that can set core.excludesFile: the repository's, the worktree's and the global ones", async () => {
@@ -628,8 +704,7 @@ describe("gitExcludeFiles", () => {
       join(root, ".git", "config"), join(root, ".git", "config.worktree"), join(home, ".gitconfig"), join(home, ".config", "git", "config"),
     ]);
     vi.stubEnv("GIT_CONFIG_GLOBAL", join(home, "global"));
-    expect((await gitConfigFiles(root)).slice(2)).toEqual([join(home, "global")]);
-    expect(await gitConfigFiles(home)).toEqual([]);
+    expect((await gitConfigFiles(root))?.slice(2)).toEqual([join(home, "global")]);
   });
 
   it("finds the global files in Git's own home, which on Windows without HOME is HOMEDRIVE and HOMEPATH", async () => {
@@ -639,11 +714,11 @@ describe("gitExcludeFiles", () => {
     await mkdir(share);
     const globals = [join(share, ".gitconfig"), join(share, ".config", "git", "config")];
     // Git's home, not the account's: HOME here names another folder than the one homedir() answers.
-    expect((await gitConfigFiles(root, { env: { ...process.env, HOME: share } })).slice(2)).toEqual(globals);
+    expect((await gitConfigFiles(root, { env: { ...process.env, HOME: share } }))?.slice(2)).toEqual(globals);
     if (process.platform === "win32") {
       const { HOME: _home, ...withoutHome } = process.env;
       const drive = share.slice(0, 2);
-      expect((await gitConfigFiles(root, { env: { ...withoutHome, HOMEDRIVE: drive, HOMEPATH: share.slice(2) }, platform: "win32" })).slice(2)).toEqual(globals);
+      expect((await gitConfigFiles(root, { env: { ...withoutHome, HOMEDRIVE: drive, HOMEPATH: share.slice(2) }, platform: "win32" }))?.slice(2)).toEqual(globals);
     }
   });
 });

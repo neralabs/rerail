@@ -1,5 +1,7 @@
 # Rerail rule pack: Python
 
+**Linter-equivalent to Ruff 0.16.9 and Bandit 1.9.4.** Each rule flags what the original flags, bar declared differences. [What this means](../../docs/rule-packs.md#linter-equivalent).
+
 537 code rules for Python, ported from Ruff 0.16.9 (488 rules) and Bandit 1.9.4 (49 tests). Each is scored against the
 tool's own findings on the tool's test fixtures, and against the labelled lines of the tool's real-code samples
 ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's production workspace path, with
@@ -8,7 +10,8 @@ fixtures and Rerail's probes, and B406 on a Django sample, where Bandit is wrong
 suppression comment, as the tool does: Ruff's `# noqa` (`suppress.noqa`) and Bandit's `# nosec` (`suppress.nosec`);
 PGH004, which reports `noqa` comments, is the one exception, as in Ruff (`suppressionExemptions` in
 `conformance.json`). 219 Ruff rules that Ruff's default selection leaves off ship off (`"on": false` in `pack.json`),
-and so do B009 and B010, which that selection keeps on (their sections say why).
+and so do B009 and B010, which that selection keeps on: a reviewer holds them off (`heldOff`; their sections say why),
+so set-up never turns them on from a repository's Ruff config.
 The conformance check ([conformance/README.md](../../conformance/README.md#the-gate)) gates the shipped rules. The
 rename variants that test the ECMAScript packs against fitting to their tests (`holds-under-rename`) do not exist for
 Python yet, so the real-code samples are the pack's only such evidence.

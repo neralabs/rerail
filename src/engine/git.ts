@@ -3,7 +3,7 @@ import { accessSync, constants, existsSync, realpathSync, statSync } from "node:
 import { stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { dirname, join, posix, resolve, win32 } from "node:path";
-import { endProcessTree, execFile, spawn, spawnSync } from "./child-process.js";
+import { endProcessTree, spawn, spawnSync } from "./child-process.js";
 import { fileStamp } from "./file-stamp.js";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
@@ -409,7 +409,7 @@ export interface GitResult {
   status: number | null;
   stdout: string;
   stderr: string;
-  /** Set when Git could not be started, timed out or overflowed `maxBuffer`. */
+  /** Set when Git could not be started, timed out, was stopped by a signal, or overflowed `maxBuffer`. */
   error?: Error;
 }
 
@@ -456,14 +456,17 @@ function runGitWith(executable: string, args: readonly string[], options: RunGit
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
 }
 
-/** What {@link runGitAsync} takes: {@link RunGitOptions}, and the text written to Git's stdin. */
-type RunGitAsyncOptions = RunGitOptions & { input?: string };
+/** What {@link runGitAsync} takes: {@link RunGitOptions}, {@link GitReadOptions}, and the text written to Git's stdin. */
+type RunGitAsyncOptions = RunGitOptions & GitReadOptions & { input?: string };
 
 /**
  * {@link runGit} without blocking: the same safe configuration, environment and timeout, and `input` written to Git's
  * stdin. Rejects with {@link GitUnavailableError} when Git is missing, never on a non-zero exit; a Git that could not
- * start, timed out or overflowed `maxBuffer` (1 MiB by default) answers a null status with its error. When the Git kept
- * for the process is gone, it runs once more with the Git found again ({@link ProcessGit.afterMissing}), as `runGit` does.
+ * start, timed out, was stopped by `signal` or overflowed `maxBuffer` (1 MiB by default, for stdout and stderr each)
+ * answers a null status with its error. The timeout and `signal` end Git as they end a batch read
+ * ({@link settleWhenDone}), with every process it started, and the answer comes once that Git has exited
+ * ({@link GitReadOptions}); once `signal` is aborted it starts no Git. When the Git kept for the process is gone, it
+ * runs once more with the Git found again ({@link ProcessGit.afterMissing}), as `runGit` does.
  */
 export async function runGitAsync(cwd: string, args: readonly string[], options: RunGitAsyncOptions = {}): Promise<GitResult> {
   const run = async (executable: string): Promise<GitResult> => await runGitAsyncWith(executable, [...SAFE_CONFIG, "-C", cwd, ...args], options);
@@ -475,25 +478,45 @@ export async function runGitAsync(cwd: string, args: readonly string[], options:
 
 /** One start of the Git at `executable` with `args`, as {@link runGitAsync} makes it. */
 async function runGitAsyncWith(executable: string, args: readonly string[], options: RunGitAsyncOptions): Promise<GitResult> {
+  const { maxBuffer = 1024 * 1024, timeout = DEFAULT_TIMEOUT_MS, signal } = options;
+  if (signal?.aborted === true) return { status: null, stdout: "", stderr: "", error: new Error("Git was not started: the read was stopped") };
   const { promise, resolve: settle } = Promise.withResolvers<GitResult>();
-  const child = startGit(() => execFile(
-    executable,
-    args,
-    { encoding: "utf8", maxBuffer: options.maxBuffer ?? 1024 * 1024, timeout: options.timeout ?? DEFAULT_TIMEOUT_MS, env: gitEnvironment() },
-    (error, stdout, stderr) => {
-      if (error === null) {
-        settle({ status: 0, stdout, stderr });
-        return;
-      }
-      const status = typeof error.code === "number" && error.killed !== true ? error.code : null;
-      settle({ status, stdout, stderr, ...(status === null ? { error } : {}) });
-    },
-  ));
+  const child = startGit(() => spawn(executable, args, { env: gitEnvironment(), stdio: ["pipe", "pipe", "pipe"] }));
   if (child instanceof Error) return { status: null, stdout: "", stderr: "", error: child };
+  const printed = { stdout: [] as string[], stderr: [] as string[] };
+  let failure: Error | undefined;
+  for (const stream of ["stdout", "stderr"] as const) {
+    let bytes = 0;
+    child[stream].setEncoding("utf8");
+    child[stream].on("data", (chunk: string) => {
+      bytes += Buffer.byteLength(chunk);
+      if (bytes <= maxBuffer) printed[stream].push(chunk);
+      else if (failure === undefined) {
+        failure = new Error(`Git printed more than maxBuffer (${maxBuffer} bytes) to ${stream}`);
+        endPastMaxBuffer(child);
+      }
+    });
+  }
+  // Registered before `settleWhenDone`'s listeners, so the answer below sees why Git ended.
+  child.on("error", error => {
+    failure ??= error;
+  });
+  settleWhenDone(child, ended => {
+    // Once answered, keeps no pipe open that a process Git started may still hold.
+    child.stderr.destroy();
+    const output = { stdout: printed.stdout.join(""), stderr: printed.stderr.join("") };
+    if (ended) {
+      const why = signal?.aborted === true ? "the read was stopped" : `it ran past its time limit of ${timeout} ms`;
+      settle({ status: null, ...output, error: new Error(`Git was ended: ${why}`) });
+    } else if (failure !== undefined || child.exitCode === null) {
+      settle({ status: null, ...output, error: failure ?? new Error(`Git was ended by ${child.signalCode ?? "a signal"}`) });
+    } else settle({ status: child.exitCode, ...output });
+  }, { timeoutMs: timeout, signal });
   // Git may exit before reading all of its input; the broken pipe is no failure of the read.
-  child.stdin?.on("error", () => undefined);
-  child.stdin?.end(options.input ?? "");
-  return await promise;
+  child.stdin.on("error", () => undefined);
+  child.stdin.end(options.input ?? "");
+  const [result] = await Promise.all([promise, exited(child)]);
+  return result;
 }
 
 /** Trimmed stdout of a successful `git -C <cwd> <args>`, or undefined when it fails. */
@@ -622,8 +645,11 @@ async function gitOutput(cwd: string, args: readonly string[], signal: AbortSign
   return (await gitStdout(cwd, args, signal))?.trim();
 }
 
+/** The most bytes of stdout `gitStdout` reads by default: past it, the read fails. */
+const GIT_OUTPUT_MAX_BYTES = 1024 * 1024;
+
 /** Stdout, as Git wrote it, of a successful Git command run as `gitOutput` runs one; undefined past `maxBuffer` bytes. */
-async function gitStdout(cwd: string, args: readonly string[], signal: AbortSignal | undefined, maxBuffer = 1024 * 1024): Promise<string | undefined> {
+async function gitStdout(cwd: string, args: readonly string[], signal: AbortSignal | undefined, maxBuffer = GIT_OUTPUT_MAX_BYTES): Promise<string | undefined> {
   const read = await readGit(cwd, args, signal, maxBuffer);
   return read.ended === "printed" ? read.stdout : undefined;
 }
@@ -695,14 +721,19 @@ export async function gitHead(cwd: string, options: GitReadOptions = {}): Promis
 /**
  * The exclude files of the Git checkout at `cwd` that no diff shows, absolute: its `info/exclude` (the common Git
  * folder's, which every worktree shares) and the file `core.excludesFile` names, else Git's default, `git/ignore` in
- * `XDG_CONFIG_HOME` or `~/.config`. Empty outside a Git checkout, or without Git.
+ * `XDG_CONFIG_HOME` or `~/.config`. Undefined when Git does not name them (outside a Git checkout, without Git, or a
+ * Git that failed, ran past its time limit or was stopped): none is not its answer.
  */
-export async function gitExcludeFiles(cwd: string, options: GitReadOptions = {}): Promise<string[]> {
+export async function gitExcludeFiles(cwd: string, options: GitReadOptions = {}): Promise<string[] | undefined> {
   // Git prints the path relative to `cwd` unless it is elsewhere; `--path-format` would need Git 2.31.
   const exclude = await gitOutput(cwd, ["rev-parse", "--git-path", "info/exclude"], options.signal);
-  if (exclude === undefined || exclude === "") return [];
-  const configured = await gitOutput(cwd, ["config", "--path", "--get", "core.excludesFile"], options.signal);
-  return [resolve(cwd, exclude), resolve(cwd, configured || defaultExcludesFile())];
+  if (exclude === undefined) return undefined;
+  if (exclude === "") return [];
+  // Git fails when `core.excludesFile` is unset: Git's default then holds.
+  const configured = await readGit(cwd, ["config", "--path", "--get", "core.excludesFile"], options.signal, GIT_OUTPUT_MAX_BYTES);
+  if (configured.ended === "timed-out") return undefined;
+  const named = configured.ended === "printed" ? configured.stdout.trim() : "";
+  return [resolve(cwd, exclude), resolve(cwd, named || defaultExcludesFile())];
 }
 
 /**
@@ -745,15 +776,16 @@ function defaultExcludesFile(env: NodeJS.ProcessEnv = process.env, platform: Nod
  * `config` and its worktree's `config.worktree`, and the global file, `GIT_CONFIG_GLOBAL` when set, else `.gitconfig`
  * in Git's home ({@link gitHome}, from `env` on `platform`, this process's by default) and `git/config` in
  * `XDG_CONFIG_HOME` or that home's `.config`. The system file, which only an administrator writes, and files
- * `include.path` pulls in are left out. Empty outside a Git checkout, or without Git.
+ * `include.path` pulls in are left out. Undefined when Git does not name them, as for {@link gitExcludeFiles}.
  */
 export async function gitConfigFiles(
   cwd: string,
   options: GitReadOptions & { env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform } = {},
-): Promise<string[]> {
+): Promise<string[] | undefined> {
   const { env = process.env, platform = process.platform } = options;
   const local = await gitOutput(cwd, ["rev-parse", "--git-path", "config", "--git-path", "config.worktree"], options.signal);
-  if (local === undefined || local === "") return [];
+  if (local === undefined) return undefined;
+  if (local === "") return [];
   const global = env.GIT_CONFIG_GLOBAL;
   const globals = global === undefined || global === ""
     ? [join(gitHome(env, platform), ".gitconfig"), join(dirname(defaultExcludesFile(env, platform)), "config")]
@@ -1122,16 +1154,21 @@ async function gitIndexPath(cwd: string, signal: AbortSignal | undefined): Promi
 }
 
 /**
- * Reads the index's unmerged entries under a folder ({@link unmergedEntries}), for a caller that asks every pass: it
- * starts a Git process only when the folder's index file changed since the last read, and otherwise costs one `stat`
- * (plus one Git process the first time, to find the file). Git replaces that file with a new one on every write, so a
- * write changes its inode even inside one clock tick. A folder whose file cannot be found or stamped is read every time,
- * so this can cost more, never answer with stale entries. When Git cannot list them (it failed, timed out or was
- * stopped), the answer is undefined and nothing is kept, so the next read asks Git again.
+ * Reads something of the index under a folder, for a caller that asks every pass: it starts a Git process only when the
+ * folder's index file changed since the last read, and otherwise costs one `stat` (plus one Git process the first time,
+ * to find the file). Git replaces that file with a new one on every write, so a write changes its inode even inside one
+ * clock tick. An index rewritten with nothing `same` changed, as `git status` does when it refreshes the files' stat
+ * data, answers with the value it held: the very object, so a caller that compares answers by identity sees no change.
+ * A folder whose file cannot be found or stamped is read every time, a new answer each time, so this can cost more,
+ * never answer stale. When Git cannot answer (it failed, timed out or was stopped), the answer is undefined and nothing
+ * is kept, so the next read asks Git again.
  */
-export function gitUnmergedReader(): (cwd: string, options?: GitReadOptions) => Promise<ReadonlyMap<string, string> | undefined> {
+function gitIndexReader<T>(
+  read: (cwd: string, signal: AbortSignal | undefined) => Promise<T | undefined>,
+  same: (held: T, now: T) => boolean,
+): (cwd: string, options?: GitReadOptions) => Promise<T | undefined> {
   const indexes = new Map<string, string>();
-  const held = new Map<string, { readonly stamp: string; readonly entries: ReadonlyMap<string, string> }>();
+  const held = new Map<string, { readonly stamp: string; readonly value: T }>();
   /** The stamp of `cwd`'s index file, found once and remembered; undefined when it cannot be found or stamped. */
   const indexStamp = async (cwd: string, signal: AbortSignal | undefined): Promise<string | undefined> => {
     const index = indexes.get(cwd) ?? await gitIndexPath(cwd, signal);
@@ -1147,12 +1184,31 @@ export function gitUnmergedReader(): (cwd: string, options?: GitReadOptions) => 
     // Stamped before the read: an index written between the two reads as changed next time.
     const stamp = await indexStamp(cwd, options.signal);
     const last = held.get(cwd);
-    if (last !== undefined && last.stamp === stamp) return last.entries;
+    if (last !== undefined && last.stamp === stamp) return last.value;
     held.delete(cwd);
-    const entries = await unmergedEntries(cwd, options.signal);
-    if (entries !== undefined && stamp !== undefined) held.set(cwd, { stamp, entries });
-    return entries;
+    const now = await read(cwd, options.signal);
+    if (now === undefined || stamp === undefined) return now;
+    const value = last !== undefined && same(last.value, now) ? last.value : now;
+    held.set(cwd, { stamp, value });
+    return value;
   };
+}
+
+/** The index's unmerged entries under a folder ({@link unmergedEntries}), read as {@link gitIndexReader} reads. */
+export function gitUnmergedReader(): (cwd: string, options?: GitReadOptions) => Promise<ReadonlyMap<string, string> | undefined> {
+  return gitIndexReader(unmergedEntries, (held, now) => held.size === now.size && [...now].every(([path, entry]) => held.get(path) === entry));
+}
+
+/**
+ * The files the index under a folder tracks though Git's ignore rules would ignore them, as `git add --force` makes
+ * them, `\0`-separated in Git's order; read as {@link gitIndexReader} reads. A path the index tracks is never ignored, so
+ * a walk that left such a file out reads it once this list names it.
+ */
+export function gitTrackedIgnoredReader(): (cwd: string, options?: GitReadOptions) => Promise<string | undefined> {
+  return gitIndexReader(
+    (cwd, signal) => gitStdout(cwd, ["ls-files", "--cached", "--ignored", "--exclude-standard", "-z"], signal, MAX_LISTED_PATH_BYTES),
+    (held, now) => held === now,
+  );
 }
 
 /** One object body of `git cat-file --batch` output being read: kept, or skipped as it streams past. */

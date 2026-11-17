@@ -3,7 +3,7 @@
   "id": "sql",
   "name": "SQL",
   "category": "language",
-  "covers": "SQLFluff rules for correct, consistent SQL.",
+  "covers": "Linter-equivalent to SQLFluff 4.4.0, for correct, consistent SQL.",
   "reason": "matches SQL",
   "match": {
     "any": [

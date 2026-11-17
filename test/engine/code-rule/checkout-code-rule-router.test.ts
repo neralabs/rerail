@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync } from "node:fs";
-import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -699,6 +699,41 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     await auditor.openWorkspace("roots");
 
     expect(auditor.worktreeRoots()).toEqual([worktree]);
+  });
+
+  it("names a worktree Git made, while the session is open, at a folder the session looked up while it was plain", async () => {
+    const { root, databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const later = join(root, "elsewhere", "later");
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+    await auditor.openWorkspace("later");
+    expect(auditor.worktreeRoots()).toEqual([worktree]);
+    await mkdir(join(later, "api"), { recursive: true });
+    expect(auditor.acceptsPath(join(later, "api", "x.py"))).toBe(false);
+    await removeFolder(later);
+
+    git(session, "worktree", "add", "--quiet", "-b", "later", later);
+
+    expect(auditor.worktreeRoots().toSorted()).toEqual([await realpath(later), worktree].toSorted());
+  });
+
+  it("names a worktree whose .git file Git wrote after a walk had found it listed", async () => {
+    const { root, databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const later = join(root, "elsewhere", "later");
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+    await auditor.openWorkspace("listed");
+    await mkdir(join(later, "api"), { recursive: true });
+    expect(auditor.acceptsPath(join(later, "api", "x.py"))).toBe(false);
+    await removeFolder(later);
+    git(session, "worktree", "add", "--quiet", "-b", "later", later);
+    // `git worktree add` lists the worktree before it writes the worktree's .git file: a walk in between finds a folder
+    // with none.
+    await rename(join(later, ".git"), join(later, ".git-pending"));
+    expect(auditor.worktreeRoots()).toEqual([worktree]);
+    await rename(join(later, ".git-pending"), join(later, ".git"));
+
+    expect(auditor.worktreeRoots().toSorted()).toEqual([await realpath(later), worktree].toSorted());
   });
 
   it.skipIf(!caseInsensitiveFilesystem())("names a worktree Git registered under a path typed in another case than the folder has", async () => {
