@@ -1,0 +1,1 @@
+A change in another worktree is no longer recorded when Rerail had not read that worktree before it, or when a session is open in that worktree and did not make it. Every open session used to record such a change in its own history.
