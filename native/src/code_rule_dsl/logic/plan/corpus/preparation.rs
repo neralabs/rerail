@@ -115,6 +115,14 @@ pub struct Front {
 /// The stages of `front`, in order, at which a debug build checks the version against the tree's passes.
 pub const STAGES: [&str; 9] = ["inputs", "prune", "simplify", "prune again", "reach", "negated demand", "demand", "undo", "text"];
 
+/// `version` pruned to the rules its outputs read (`front::prune`): what the bridged programs' check reads
+/// (`bridge::wanted`), before the run prepares the program.
+pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
+    let mut p = Pipeline::new("pruned", version);
+    p.program(&mut prune::Prune::default());
+    Ok(p.current()?.clone())
+}
+
 /// The passes before lowering, on the version (decision 0281's path, steps 6c–6e): the functors only CPython gives
 /// and the base relations as inputs, a prune, `simplify` and a prune again, the reach form, the demand for negated
 /// tests, the program's own demand (`RERAIL_DEMAND=off` computes the listed relations in full) and a prune after

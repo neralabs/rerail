@@ -74,6 +74,7 @@ pub mod constants;
 pub mod inputs;
 pub use inputs::parameters as input_parameters;
 pub mod world;
+mod shape;
 pub mod connections;
 pub mod reuse;
 
@@ -474,8 +475,8 @@ pub mod session;
 /// runs once, over the base relations held in memory and the exports read once from `x`, all bound in `main`. Memory
 /// is two chunks', the held base columns, and the cross-file part's own.
 /// Repository readers publish typed rows once, before file-local partitioning.
-fn external_inputs(prog: &mut front::Program, root: &Path) -> Result<()> {
-    inputs::populate(prog, root)?;
+fn external_inputs(prog: &mut front::Program, shape: &shape::Shape, root: &Path) -> Result<()> {
+    inputs::populate(prog, shape, root)?;
     // `core.rr` relations the engine does not make yet, read as empty, each named in the profile (open item O76).
     for (rel, what) in NOT_MADE {
         if prog.inputs.iter().any(|i| i == rel) {
@@ -632,6 +633,45 @@ fn combine_keyed(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>]
     }
     kept.insert(key, program.clone());
     Ok((program, key))
+}
+
+/// `combine_keyed`'s program as a version (decision 0281's path, step 7a): the image made once per combined program
+/// and kept for the process as the trees are, so a run that finds its program combined reads no tree.
+fn combine_version(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added, read: Option<&front::Program>, lists: &front::Lists) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, [u8; 32])> {
+    use std::sync::{Mutex, OnceLock};
+    type Versions = HashMap<[u8; 32], Arc<crate::code_rule_dsl::logic::program_image::Version>>;
+    static VERSIONS: OnceLock<Mutex<Versions>> = OnceLock::new();
+    const KEPT: usize = 32;
+    let key = texts_digest(masked, graphs, extra);
+    let cache = VERSIONS.get_or_init(Default::default);
+    if let Some(v) = cache.lock().expect("the combined versions").get(&key) {
+        return Ok((Arc::clone(v), key));
+    }
+    let (program, key) = combine_keyed(programs, masked, graphs, extra, read, lists)?;
+    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).and_then(|b| b.finish()).map_err(Error::Plan)?;
+    let mut kept = cache.lock().expect("the combined versions");
+    if kept.len() >= KEPT {
+        kept.clear();
+    }
+    kept.insert(key, Arc::clone(&v));
+    Ok((v, key))
+}
+
+/// The combined program as a tree, beside its version in a debug build (`run_typed`): each edit is made on both, and
+/// the two checked to agree before preparing.
+#[cfg(debug_assertions)]
+type Beside = front::Program;
+#[cfg(not(debug_assertions))]
+type Beside = ();
+
+/// The program's header (`Version::header`) edited by `edit`, and the version given the edit (`Builder::set_header`).
+fn edit_header(v: &mut Arc<crate::code_rule_dsl::logic::program_image::Version>, head: &mut front::Program, edit: impl FnOnce(&mut front::Program) -> Result<()>) -> Result<()> {
+    let was = head.clone();
+    edit(head)?;
+    let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(v);
+    b.set_header(&was, head);
+    *v = b.finish().map(|(v, _)| v).map_err(Error::Plan)?;
+    Ok(())
 }
 
 /// `combine_texts`, kept in the persistent store across processes for a pack of programs (`combined`, decision 0094
@@ -2605,7 +2645,16 @@ fn run_observed(
         crate::code_rule_dsl::logic::profile::reset();
     }
     let combining = crate::code_rule_dsl::logic::profile::span(|| "parse the program".into());
-    let (mut prog, mut texts) = combine_keyed(programs, masked, &given.graphs, &added, read, &lists)?;
+    // The combined program as a version (decision 0281's path, step 7a), and its header: what the readers before
+    // preparation read besides the rules (`shape::Shape`), edited as the header and given to the version.
+    let (mut v, mut texts) = combine_version(programs, masked, &given.graphs, &added, read, &lists)?;
+    let mut prog = v.header(&lists).map_err(Error::Plan)?;
+    // A debug build makes each edit on the tree beside it, and checks the two agree before preparing.
+    #[cfg(debug_assertions)]
+    let mut tree: Beside = combine_keyed(programs, masked, &given.graphs, &added, read, &lists)?.0;
+    #[cfg(not(debug_assertions))]
+    let mut tree: Beside = ();
+    let mut shape = shape::Shape::of(&v);
     drop(combining);
     // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
     // They run as a job on the pool beside phase 1 (decision 0192): neither reads the other's results, each writes in
@@ -2623,8 +2672,10 @@ fn run_observed(
     let mut phase_one_run = None;
     let phase_one = crate::threads::scope(|jobs| {
         let prog = &prog;
+        let v = &v;
         let bridged_slot = &bridged_slot;
-        jobs.spawn("typing programs", move |_| *bridged_slot.lock() = Some(bridge::facts(prog, root, out, modes, binding, chunk_nodes, typing)));
+        let pruned = move || preparation::pruned(Arc::clone(v)).map(|p| shape::Shape::of(&p)).map_err(Error::Plan);
+        jobs.spawn("typing programs", move |_| *bridged_slot.lock() = Some(bridge::facts(prog, &pruned, root, out, modes, binding, chunk_nodes, typing)));
         Ok::<_, Error>(if t_facts.is_none()
             && options.get("inputFiles").is_none()
             && phases::declared(&prog).is_none()
@@ -2673,7 +2724,7 @@ fn run_observed(
     let (phased, mut phase_runs) = if options.get(constants::OWN).is_some() {
         (Default::default(), Vec::new())
     } else {
-        phases::facts(&prog, root, out, modes, binding, chunk_nodes, typing, options)?
+        phases::facts(&prog, &shape, root, out, modes, binding, chunk_nodes, typing, options)?
     };
     phase_runs.splice(0..0, phase_one_run);
     // A phase's exports are the run's inputs, not its facts: their rows are bound as relations once the program is
@@ -2689,22 +2740,42 @@ fn run_observed(
             }
         }
     };
-    add_bridged(&mut prog);
+    edit_header(&mut v, &mut prog, |p| Ok(add_bridged(p)))?;
+    #[cfg(debug_assertions)]
+    add_bridged(&mut tree);
     // The Git functors answer from the repository holding this run's root (`strings::git`), for this run only.
     let _git = crate::code_rule_dsl::logic::strings::git::scope(root);
     // The run's constants (`constants`): derived first, over no documents, and given as facts. In the constants' own
     // run, its outputs are those relations.
-    let fold_constants = |prog: &mut front::Program, added: &added::Added| -> Result<(Vec<(String, String, String)>, Vec<[u8; 32]>)> {
+    // A debug build gives the tree the same edit: the constants' outputs, or the folded relations' rows as facts.
+    let fold_constants = |v: &mut Arc<crate::code_rule_dsl::logic::program_image::Version>, prog: &mut front::Program, tree: &mut Beside, added: &added::Added| -> Result<(Vec<(String, String, String)>, Vec<[u8; 32]>)> {
         match options.get(constants::OWN).and_then(|v| v.as_array()) {
             Some(wanted) => {
-                constants::as_outputs(prog, &wanted.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect::<Vec<_>>());
+                let wanted: Vec<String> = wanted.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect();
+                *v = constants::as_outputs_of(v, prog, &wanted)?;
+                #[cfg(debug_assertions)]
+                constants::as_outputs(tree, &wanted);
+                let _ = tree;
                 Ok(Default::default())
             }
-            None => constants::fold(prog, programs, read, added, root, out, modes, binding, chunk_nodes, typing, options),
+            None => {
+                let (consulted, plans, folded) = constants::fold(v, prog, programs, read, added, root, out, modes, binding, chunk_nodes, typing, options)?;
+                #[cfg(debug_assertions)]
+                {
+                    assert_eq!(folded, constants::foldable(tree), "the version's constants are the tree's");
+                    for rel in &folded {
+                        tree.facts.insert(rel.clone(), prog.facts[rel].clone());
+                    }
+                    tree.rules.retain(|r| !folded.contains(r.head.rel.as_str()));
+                }
+                let _ = (folded, tree);
+                Ok((consulted, plans))
+            }
         }
     };
     phase("combine", 0);
-    let (mut folded, mut constants_plans) = fold_constants(&mut prog, &added)?;
+    let (mut folded, mut constants_plans) = fold_constants(&mut v, &mut prog, &mut tree, &added)?;
+    shape = shape::Shape::of(&v);
     phase("constants", 0);
     let t = t_facts.map(|t_facts| Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)).transpose()?;
     // The program's `.language` (above) picks the corpus's files: `.rr` files only when it names `rr` (decision 0061).
@@ -2811,9 +2882,16 @@ fn run_observed(
         let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
         if !facts.is_empty() {
             added = added.with("declared_ret", facts.into_iter().map(|(q, t)| vec![front::Value::Str(q.into()), front::Value::Str(t.into())]));
-            (prog, texts) = combine_keyed(programs, masked, &given.graphs, &added, read, &lists)?;
-            add_bridged(&mut prog);
-            (folded, constants_plans) = fold_constants(&mut prog, &added)?;
+            (v, texts) = combine_version(programs, masked, &given.graphs, &added, read, &lists)?;
+            prog = v.header(&lists).map_err(Error::Plan)?;
+            edit_header(&mut v, &mut prog, |p| Ok(add_bridged(p)))?;
+            #[cfg(debug_assertions)]
+            {
+                tree = combine_keyed(programs, masked, &given.graphs, &added, read, &lists)?.0;
+                add_bridged(&mut tree);
+            }
+            (folded, constants_plans) = fold_constants(&mut v, &mut prog, &mut tree, &added)?;
+            shape = shape::Shape::of(&v);
         }
         declared = d;
     }
@@ -2829,7 +2907,14 @@ fn run_observed(
         p
     };
     // Typing may rebuild the combined program. Publish external facts after that rebuild.
-    external_inputs(&mut prog, root)?;
+    edit_header(&mut v, &mut prog, |p| external_inputs(p, &shape, root))?;
+    #[cfg(debug_assertions)]
+    {
+        // The tree's own edit, its consulted inputs dropped: the version's are the run's.
+        let of_tree = shape::Shape::of_tree(&tree);
+        external_inputs(&mut tree, &of_tree, root)?;
+        let _ = inputs::take_consulted();
+    }
     // The repository files, artifacts and base revision the readers read are consulted too (`inputs::still`).
     let read = inputs::take_consulted();
     if t.is_none() {
@@ -2840,17 +2925,33 @@ fn run_observed(
     let world_requests: Vec<&str> = WORLD.iter().map(|(_, req)| *req).chain([world::LOAD]).collect();
     // Only when a rule the outputs need reads a guest: a library's `parsed(…)` in rules nothing reads asks for no
     // parse (lazy-architecture's included name rules asked for every string annotation of the corpus).
-    let roots: Vec<String> = prog.outputs.iter().filter(|o| !guests::REQUESTS.contains(&o.as_str())).cloned().collect();
-    let reads_guests = front::needed(&prog, roots).iter().any(|rel| {
-        prog.rules.iter().filter(|r| &r.head.rel == rel).any(|r| r.body.iter().filter_map(front::Literal::atom).any(|a| guests::READS.contains(&a.rel.as_str())))
-    });
+    let roots: Vec<crate::code_rule_dsl::logic::program_image::RelId> = prog.outputs.iter().filter(|o| !guests::REQUESTS.contains(&o.as_str())).filter_map(|o| v.rel(o)).collect();
+    let need = crate::code_rule_dsl::logic::program_image::analyses::needed(&v, &crate::code_rule_dsl::logic::program_image::About::of(&v), roots);
+    let reads_guests = v.rules().any(|r| need[r.head().rel().index()] && r.reads().any(|a| guests::READS.contains(&v.rel_name(a.rel()))));
+    #[cfg(debug_assertions)]
+    {
+        let roots: Vec<String> = tree.outputs.iter().filter(|o| !guests::REQUESTS.contains(&o.as_str())).cloned().collect();
+        let tree_reads = front::needed(&tree, roots).iter().any(|rel| {
+            tree.rules.iter().filter(|r| &r.head.rel == rel).any(|r| r.body.iter().filter_map(front::Literal::atom).any(|a| guests::READS.contains(&a.rel.as_str())))
+        });
+        assert_eq!(reads_guests, tree_reads, "the version's rules read guests as the tree's");
+    }
     crate::code_rule_dsl::logic::profile::decision("guest requests", || {
         if reads_guests { "made: a rule the outputs need reads guests".into() } else { "none: no rule the outputs need reads a guest".into() }
     });
-    for rel in guests::LIBRARY.iter().copied().chain(guests::DEMANDS).filter(|_| reads_guests).chain(world_requests) {
-        if prog.rules.iter().any(|r| r.head.rel == rel) && !prog.outputs.iter().any(|o| o == rel) {
-            prog.outputs.push(rel.to_owned());
+    let requests: Vec<&str> = guests::LIBRARY.iter().copied().chain(guests::DEMANDS).filter(|_| reads_guests).chain(world_requests).collect();
+    let made_outputs = |prog: &mut front::Program, shape: &shape::Shape| {
+        for &rel in &requests {
+            if shape.made.contains(rel) && !prog.outputs.iter().any(|o| o == rel) {
+                prog.outputs.push(rel.to_owned());
+            }
         }
+    };
+    edit_header(&mut v, &mut prog, |p| Ok(made_outputs(p, &shape)))?;
+    #[cfg(debug_assertions)]
+    {
+        let of_tree = shape::Shape::of_tree(&tree);
+        made_outputs(&mut tree, &of_tree);
     }
     let dialect = crate::code_rule_dsl::language::dialect_by_label(label).ok_or_else(|| Error::Plan(format!("no dialect {label}")))?;
     if !dialect.built() {
@@ -2937,28 +3038,38 @@ fn run_observed(
     // The copies hiding made for guests in the run's own language, now that it is known (decision 0058).
     if prog.decls.keys().any(|r| r.starts_with("rr_in_")) {
         let _fold = crate::code_rule_dsl::logic::profile::span(|| "fold the copies of guests in the run's language".into());
-        let bound = hiding::bound(&prog);
-        let folded = hiding::fold_own(&mut prog, label, bound);
-        if folded > 0 {
-            let rules = prog.rules.len();
-            let (merged, _, repeated) = merge_and_drop_repeats(&mut prog);
-            crate::code_rule_dsl::logic::profile::decision("copies of guests in the run's language folded (decision 0058)", || format!("{folded} copies and kind sets of {label} guests; then {repeated} repeated rules dropped and {merged} relations merged, {rules} -> {} rules", prog.rules.len()));
+        let before = v.digest();
+        v = preparation::combining::fold_own_guests(v, label).map_err(Error::Plan)?;
+        if v.digest() != before {
+            prog = v.header(&lists).map_err(Error::Plan)?;
+            shape = shape::Shape::of(&v);
         }
+        #[cfg(debug_assertions)]
+        crate::code_rule_dsl::logic::profile::quiet(|| {
+            let bound = hiding::bound(&tree);
+            if hiding::fold_own(&mut tree, label, bound) > 0 {
+                merge_and_drop_repeats(&mut tree);
+            }
+        });
     }
-    let loading_run = world::wanted(&prog);
+    let loading_run = world::wanted(&prog, &shape);
     let cross_declared = cross_memo::declared(&prog).filter(|_| cross_mode != cross_memo::Mode::Off && label == "python");
     // A program that reads the components' relations itself (`rr_cx_reach`: a closure-local lookup) has them with or
     // without the memo.
-    let reads_components = prog.rules.iter().any(|r| r.body.iter().filter_map(|l| l.atom()).any(|a| a.rel.starts_with("rr_cx_")));
+    let reads_components = shape.read.iter().any(|rel| rel.starts_with("rr_cx_"));
     if reads_components && label != "python" {
         return Err(Error::Plan(format!("the import components' relations (`rr_cx_*`) are Python's; this run's documents are {label}")));
     }
     if cross_declared.is_some() || reads_components {
-        cross_memo::add(&mut prog)?;
+        v = cross_memo::add_to(&v, &mut prog)?;
+        #[cfg(debug_assertions)]
+        cross_memo::add(&mut tree)?;
         // The constants' own run outputs the constants alone (`constants::as_outputs`): it runs over no documents, so
         // it makes no components, and its prune drops their rules.
         if options.get(constants::OWN).is_some() {
-            prog.outputs.retain(|o| o != cross_memo::COMPONENT);
+            edit_header(&mut v, &mut prog, |p| Ok(p.outputs.retain(|o| o != cross_memo::COMPONENT)))?;
+            #[cfg(debug_assertions)]
+            tree.outputs.retain(|o| o != cross_memo::COMPONENT);
         }
     }
     // A run that reads the file system answers a load with the loaded documents' rows of each export its cone of
@@ -3073,7 +3184,7 @@ fn run_observed(
             crate::code_rule_dsl::prof::count("corpus.prepared_reused", 1);
             // The combined program is the prepared one's source only: the run reads the prepared forms from here on,
             // so it is not held through the run (a prepared run moves it into its `Prepared`).
-            drop(prog);
+            drop((v, prog, tree));
             if from == "store" {
                 keep_prepared(prepared_key, Arc::clone(&p));
             }
@@ -3088,9 +3199,17 @@ fn run_observed(
             // pushed, the exports factorized and cut to their demand, the rows located, the merges, the inputs the rules
             // read, the rule order), and the run's readers read the version (`Lowered::placed`), the split's parts views
             // of it. A program the image cannot hold is an error, not a run read from the tree.
-            let (version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&prog).and_then(|b| b.finish()).map_err(Error::Plan)?;
-            #[cfg(not(debug_assertions))]
+            let version = v;
             drop(prog);
+            // A debug build checks the tree's edits made the version.
+            #[cfg(debug_assertions)]
+            let mut prog = {
+                let (of_tree, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).map_err(Error::Plan)?;
+                assert_eq!((of_tree.size(), of_tree.digest()), (version.size(), version.digest()), "the combined program's version is the tree's, edited alike: {}", crate::code_rule_dsl::logic::program_image::differences(&of_tree, &version));
+                tree
+            };
+            #[cfg(not(debug_assertions))]
+            let _ = tree;
             // A debug build runs the tree's passes beside them, stage by stage, and checks each stage's version against
             // the tree's (their decisions are the version's passes' alone).
             #[cfg(debug_assertions)]

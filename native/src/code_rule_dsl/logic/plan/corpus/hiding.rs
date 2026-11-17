@@ -513,6 +513,8 @@ fn asking(prog: &Program) -> BTreeSet<String> {
 /// qualified kind of `label` is written plainly; a clone (O110) is then its rule again, dropped as a repeat by
 /// `merge_and_drop_repeats`. With guests not shown (`bound`, `.guests off`) nothing is folded. Gives the copies folded.
 /// `RERAIL_SHOWN_COPIES=on` keeps them (to measure what they cost).
+// The tree's edit, kept as a debug build's check of the version's (`run_typed`'s `Beside`).
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
 pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
     use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
     if bound != ANNOTATION_KEYS || std::env::var("RERAIL_SHOWN_COPIES").is_ok_and(|v| v == "on") {

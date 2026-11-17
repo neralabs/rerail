@@ -546,6 +546,15 @@ step 3 replaces what is under the writer.
        entry) keep the version, the store its image in place of the `.rr` text; the prepared path's edits before
        its image (`fold_own` and its merges, `cross_memo::add`, the components' output) run on it, and the
        prepared key reads it. The run holds no combined tree.
+       *First half done (2026-11-16):* the run takes the combined program as a version (`combine_version`, kept for
+       the process by the texts' digest) and its header. Every reader before preparation asks the header, or the
+       rules' shape (`corpus::shape::Shape`: what rules make and read): the bridged programs (over the version
+       pruned), the phases, the constants (`foldable_of`, the split's constants by the same fixpoint), the
+       repository inputs, the guests' requests (`analyses::needed`), the world and the components. The edits run
+       on the version: the bridged facts and phased inputs, the constants' rows and outputs, the inputs' rows, the
+       requests' outputs (each a header edit, `Builder::set_header`), `fold_own` and its merges
+       (`combining::fold_own_guests`), `cross_memo::add_to`. A debug build makes each edit on the tree beside it and
+       checks the two images agree before preparing. Left: the combine's tail on the version, and the store's entry.
      - 7a-2, the parts as versions: `lower_in` hands on the stored image unread (it decodes it today), the linked
        library's image likewise, and the per-part passes (`own_part`, the requests' units, `undo_on_request`, each
        part's hiding when the libraries are not held once) run on them; the link renames each part's version into

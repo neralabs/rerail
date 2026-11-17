@@ -301,6 +301,29 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) fn same_relations(p: &mut crat
     Ok(())
 }
 
+/// The copies of `label`'s own guests folded into their originals (`FoldOwn`), and then the rules that repeat another
+/// dropped and the relations that are one merged, as `merge_and_drop_repeats` (decision 0058): the run's edit, once
+/// its language is known.
+pub(in crate::code_rule_dsl::logic::plan::corpus) fn fold_own_guests(v: std::sync::Arc<Version>, label: &str) -> Result<std::sync::Arc<Version>> {
+    let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("fold own guests", v);
+    let mut fold = FoldOwn { label, folded: 0 };
+    p.program(&mut fold);
+    if fold.folded > 0 {
+        let rules = p.current()?.size();
+        let (mut repeated, mut merge, mut again) = (super::merge::DropRepeated::default(), super::merge::MergeIdentical::default(), super::merge::DropRepeated::default());
+        p.program(&mut repeated).program(&mut merge).program(&mut again);
+        let left = p.current()?.size();
+        let folded = fold.folded;
+        crate::code_rule_dsl::logic::profile::decision("copies of guests in the run's language folded (decision 0058)", || {
+            format!("{folded} copies and kind sets of {label} guests; then {} repeated rules dropped and {} relations merged, {rules} -> {left} rules", repeated.0 + again.0, merge.merged)
+        });
+    }
+    for d in p.decisions() {
+        crate::code_rule_dsl::logic::profile::decision(&d.what, || d.detail.clone());
+    }
+    Ok(p.finish()?.0)
+}
+
 /// `hiding::bound` on the version: the bound of the shown documents, files and the run language's guests unless
 /// `.guests off`.
 pub(in crate::code_rule_dsl::logic::plan::corpus) fn bound(v: &Version, f: Fields<'_>) -> u32 {
@@ -372,7 +395,8 @@ impl ProgramPass for FoldOwn<'_> {
         let mut rules = Folding { folded: &folded, sets: &sets, originals: &originals, narrow, wide, plain: &plain };
         w.derive()?;
         w.apply(cx, &mut rules, &crate::code_rule_dsl::logic::program_image::manager::Select::All)?;
-        let b = w.on()?;
+        // The fields edited in the same derivation.
+        let b = w.derive()?;
         for rel in folded.keys() {
             b.undeclare(rel);
         }
