@@ -6170,6 +6170,12 @@ fn run_observed(
             let next = if per_node > 0.0 { ((budget * 1048576.0 / per_node) as usize).clamp(MIN_CHUNK_NODES.min(chunk_nodes), chunk_nodes) } else { chunk_nodes.min(PROBE_NODES) };
             chunk_target.store(next, std::sync::atomic::Ordering::Relaxed);
             at_once_allowed.store(allowed, std::sync::atomic::Ordering::Relaxed);
+            // The device pool's share of the footprint the chunk was sized under: its blocks leased and idle.
+            #[cfg(target_os = "macos")]
+            crate::code_rule_dsl::logic::profile::decision("chunk size: the device pool", || {
+                let (live, idle) = rerail_accel::gpu::shared::held_bytes();
+                format!("{} MB leased, {} MB idle, under a footprint of {start_mb} MB", live >> 20, idle >> 20)
+            });
             crate::code_rule_dsl::logic::profile::decision("chunk size", || if credible {
                 format!("a chunk of {chunk_nodes_built} nodes added {added} MB ({measured:.0} bytes a node, {per_node:.0} the most this run); the next are about {next} nodes, {allowed} at once ({budget} MB a chunk: the least of {chunk} MB and three quarters of the run's headroom above {start_mb} MB shared by the chunks at once; at most {chunk_nodes})")
             } else {
