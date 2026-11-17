@@ -89,9 +89,12 @@ pub fn class_end(src: &[u8], from: usize, class: &Class) -> usize {
 /// them for an `i` past it).
 #[inline(always)]
 pub fn load8(src: &[u8], i: usize) -> u64 {
-    match src.get(i..i + 8) {
-        Some(w) => u64::from_le_bytes(w.try_into().expect("8")),
-        None => tail(src, i),
+    // One compare in a loop: `src.len() >= 8` is the loop's, and `i + 8` cannot overflow here.
+    if src.len() >= 8 && i <= src.len() - 8 {
+        // SAFETY: `i + 8 <= src.len()`.
+        u64::from_le(unsafe { src.as_ptr().add(i).cast::<u64>().read_unaligned() })
+    } else {
+        tail(src, i)
     }
 }
 

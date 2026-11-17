@@ -200,6 +200,9 @@ rerail_simd8::keyword_switch!(
     static WORDS = w::TEXT, fold: false
 );
 
+// The run's name path is timed on the direct shape: one multiply, no displacement.
+const _: () = assert!(WORDS.is_direct(), "the keywords' switch has the direct shape");
+
 /// The word `src[i..end]`'s code (0: none), in its case: one probe of the keyword switch.
 #[inline(always)]
 pub fn word(src: &[u8], i: usize, end: usize) -> u8 {
@@ -220,8 +223,12 @@ const GAP: u8 = 1;
 /// ...and what does not start an ASCII name with no literal's prefix (`L`, `u`, `U`, `R`), so
 /// that a 0 bit is such a name's first byte.
 const NAME: u8 = 2;
+/// ...a blank that may be a gap of one (`' '`, `'\t'`)...
+const BLANK1: u8 = 4;
+/// ...and a gap's byte that `token` reads (a comment's `/` or a `\\`).
+const SLASH: u8 = 8;
 
-/// A byte's `GAP` and `NAME` bits, by one load.
+/// A byte's `GAP`, `NAME`, `BLANK1` and `SLASH` bits, by one load.
 static FIRST: [u8; 256] = {
     let mut t = [NAME; 256];
     let mut c = 0;
@@ -232,6 +239,12 @@ static FIRST: [u8; 256] = {
         }
         if (b.is_ascii_alphabetic() || b == b'_' || b == b'$') && !matches!(b, b'L' | b'u' | b'U' | b'R') {
             t[c] &= !NAME;
+        }
+        if matches!(b, b' ' | b'\t') {
+            t[c] |= BLANK1;
+        }
+        if matches!(b, b'/' | b'\\') {
+            t[c] |= SLASH;
         }
         c += 1;
     }
@@ -432,15 +445,16 @@ impl<'s> Lexer<'s> {
         let mut k = 0;
         while k < n {
             let c0 = self.at(at);
-            let (s, c, nl) = if FIRST[usize::from(c0)] & GAP == 0 {
+            let f0 = FIRST[usize::from(c0)];
+            let (s, c, nl) = if f0 & GAP == 0 {
                 // No gap: a token right here, though it need be no start (after a number like
                 // C++'s `0x`, a name goes on inside a word run).
                 (at, c0, NO_NL)
-            } else if matches!(c0, b'/' | b'\\') {
+            } else if f0 & SLASH != 0 {
                 // A comment or a `\\`-newline in the gap: `token` reads from the gap's start (a 0
                 // byte's class).
                 (at, 0, NO_NL)
-            } else if matches!(c0, b' ' | b'\t') && FIRST[usize::from(self.at(at + 1))] & GAP == 0 {
+            } else if f0 & BLANK1 != 0 && FIRST[usize::from(self.at(at + 1))] & GAP == 0 {
                 // One blank, the most common gap: no walk and no line end to look for.
                 (at + 1, self.at(at + 1), NO_NL)
             } else if let Some((s, eols)) = self.blocks.gap(at) {
