@@ -1236,8 +1236,8 @@ type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "recordCh
  * the port and the other the one daemon.json names. Only the holder keeps daemon.json (`recordCheck`): two daemons
  * that each did would write over each other. The lock goes with the process however it ends; an exit also removes the
  * holder's record beside it. A loopback restart for a TLS key it may not serve with runs in this process and keeps the
- * lock. A restart at the heap ceiling launches the next daemon just before this one exits, and that one keeps trying
- * for the lock for a second.
+ * lock. A restart at the heap ceiling launches the next daemon just before this one exits, and that one waits for the
+ * lock, which the OS hands it as this one exits.
  */
 export async function runHomeDaemon(argv: readonly string[], services: Omit<RerailDaemonServices, "remoteRefused"> = {}): Promise<void> {
   const home = defaultRerailHome();
