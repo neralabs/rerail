@@ -1416,6 +1416,19 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
     control flow"). That took the label passes from 710 to 349 ms, and `label_micro` from 355 to 159 ms, under the
     hand-written reads' 211.
   - Left: `label_micro_8`'s parent climbs (171 against the hub's 91), and the walk test.
+  - **The parent climb, read** (2026-11-17): format 16's parent (`reads.rs`, `parent16`) is at most `K - 1 = 7`
+    sibling steps back, each a slot read whose address depends on the one before: a memory latency a step.
+    Every language's slots are one byte (`tables/*.tsv`, `widths 1 1 1`), so a step back over a sibling of 64
+    nodes or more escapes to the side list (`tape_f16_side`): a binary search of up to 8 dependent byte loads, then
+    the value. The view is a thread copy (`thread const uint* v`), so its loads are not the cost. The hub's 91 ms
+    read a parent column, a decoded structure the tape-in-place rule refuses.
+  - **Next, in shape**: a walk's thread runs one window of 64 consecutive nodes (0293 §10). The window's parents
+    come from one forward pass over its slots (8 slots a word load, a stack of open ancestors in thread memory),
+    and `parent` of a node in the window is a read of that, not a climb. That is the walk kernel's change Q53
+    asks for too (a group's roots as a SIMD group's), so it goes with Q53. The side lookup's search can be a word
+    compare (SWAR, the offsets 8 a load) for every escaped read, sizes and gaps included; worth it only if the
+    escapes are a large share, which the device does not count yet (a `walk_escapes` counter beside
+    `walk_steps`).
 
 ### Q63. (Q54 at 64ef54cb0) Oscar's engine stops on the data-layer corpus in `step_histograms` (to check on the merged tree)
 
