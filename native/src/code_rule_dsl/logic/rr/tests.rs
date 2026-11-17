@@ -4016,3 +4016,29 @@ fn finishs_rewrites_run_on_the_version() {
     let axis = owner.split(|c: char| !(c.is_alphanumeric() || c == '_')).find(|w| w.starts_with("rr_inside_")).unwrap_or_else(|| panic!("an axis read: {owner}"));
     assert!(head.inputs.iter().any(|i| i == axis) && head.decls.contains_key(axis), "the axis {axis} an input: {:?}", head.inputs);
 }
+
+/// `whole()`'s last passes before `front::finish` run on a modular text's version (decision 0281's path, step 7b): a
+/// nullary relation is a set of the unit (a column, a `1` in its atoms), the `.scope` settings set the globs, and a
+/// reader of `value` asks for it, as the tree's `lower::whole_back` makes them; a debug build checks the image against the tree's (`link_seeded_version`).
+#[test]
+fn nullary_relations_and_the_scope_are_made_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".scope include \"impl/**/*.py\"\n",
+        ".decl flag()\n.decl r(n: node)\n.decl q(n: node)\n.output r, q\n",
+        "flag() :- kind(_, \"module\").\n",
+        "r(n) :- flag(), kind(n, \"call\").\n",
+        "q(n) :- kind(n, \"string\"), value(n, _).\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
+    assert!(rules.iter().any(|x| x.starts_with("flag(1)")) && rules.iter().any(|x| x.starts_with("r(") && x.contains("flag(1)")), "{rules:#?}");
+    let head = v.header(&Default::default()).unwrap();
+    assert!(head.nullary.contains("flag") && head.decls["flag"].len() == 1, "{:?}", head.decls.get("flag"));
+    assert!(head.doc_scopes.as_ref().is_some_and(|s| s.iter().any(|(inc, _)| inc.iter().any(|g| g.contains("impl")))), "{:?}", head.doc_scopes);
+    // `value` is answered on request (decision 0174): its reader asks.
+    assert!(rules.iter().any(|x| x.starts_with("rr_value_req")), "{rules:#?}");
+}

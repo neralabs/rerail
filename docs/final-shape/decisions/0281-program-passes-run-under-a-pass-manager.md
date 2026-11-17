@@ -631,7 +631,13 @@ step 3 replaces what is under the writer.
      helper, with `RuleBuilder::agg` to write the helper's aggregate; `DeclareAxes`), its checks through a decoded
      tree for now (`front::finish_checks`; work queue Q83: `cycles::check` reads a tree). A text's version is made
      from the lowerer's program as `whole()` leaves it. Test: `finishs_rewrites_run_on_the_version` (each pass left
-     out fails it); ep2's 317 policies: 0 rows, every check passes. Next: the rest of `whole()`.
+     out fails it); ep2's 317 policies: 0 rows, every check passes. Then `whole()`'s last passes before `finish`
+     (`lower::whole_back` on the tree): `lowering_tail::BooleanRelations` (a nullary relation's unit column, through
+     a `Rewrite`'s `prefix`), `ScopeGlobs`, and `on_request::SourcesOnRequest` per round, so the version is made
+     right after the lowerer's analyses (`Lowerer::unit`). Test: `nullary_relations_and_the_scope_are_made_on_the_version`
+     (each of the three left out fails it); ep2's 317 policies: 0 rows, every check passes. Next: the lowerer's
+     analyses (`kind_sets`, the grammar names, the span patterns, projections, the core's declarations, findings,
+     three-valued relations), which read and write the lowerer's state beside its program.
    - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.

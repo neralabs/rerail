@@ -252,7 +252,7 @@ type HelperKey = (String, Vec<String>, Vec<String>);
 /// and `tests false` out. `None` for no scope and for `.scope given` (the files are a caller's, a test's, not found
 /// by walking a repository). `report dirs`, `text` and `embedded` say where findings land and how files are read, not
 /// which; an `option("…")` entry's value is a policy option's, not known here.
-pub(super) fn scope_globs(settings: &[(String, String)]) -> Option<(Vec<String>, Vec<String>)> {
+pub fn scope_globs(settings: &[(String, String)]) -> Option<(Vec<String>, Vec<String>)> {
     if settings.iter().any(|(k, t)| k == "scope" && t.trim() == "given") {
         return None;
     }
@@ -320,7 +320,7 @@ fn scope_list(settings: &[(String, String)], form: &[&str]) -> Vec<String> {
 }
 
 /// `.scope text "**/*.md", …`: documents read as text only (`front::Program::text_globs`).
-pub(super) fn scope_text_globs(settings: &[(String, String)]) -> Vec<String> {
+pub fn scope_text_globs(settings: &[(String, String)]) -> Vec<String> {
     scope_list(settings, &["text"])
 }
 
@@ -966,9 +966,10 @@ pub fn unseed(program: &mut Program, seeds: &Seeds, core: &BTreeSet<String>) {
     program.qualifiers.retain(|r, _| !(seeded.qualifiers.contains(r) && gone(r)));
 }
 
-/// `link_seeded` up to `front::finish` and `whole()`'s tail (aggregate demand, `unit`, `sets`,
+/// `link_seeded` up to `whole_back`, `front::finish` and `whole()`'s tail (aggregate demand, `unit`, `sets`,
 /// `widen_cyclic_contexts`): the program `rr::link_seeded_version`
-/// makes a version of, `declared` checked. `finish` declares only the axes (transduced, which `declared` passes)
+/// makes a version of, `declared` checked. `whole_back` adds a column to nullary relations, in their declarations
+/// and reads alike, and the requests' relations it declares. `finish` declares only the axes (transduced, which `declared` passes)
 /// and `node_order` with the helpers it reads. Aggregate demand adds only relations it declares. The tail drops repeats (a literal or rule another copy keeps), a rule
 /// whose body is its own head, and literals of relations the program derives, and adds `node` only where it is
 /// declared: the check before it refuses what the check after it does, but for a relation read only by its own
@@ -984,7 +985,9 @@ pub fn link_seeded_front(m: Module, seeds: &Seeds) -> Result<Program, Error> {
 
 /// The lowering's whole-program half (decision 0246 §1), over the modules appended into `l`.
 fn whole(l: Lowerer) -> Result<Program, Error> {
-    let mut program = crate::code_rule_dsl::logic::front::finish(whole_front(l)?)?;
+    let mut program = whole_front(l)?;
+    whole_back(&mut program);
+    let mut program = crate::code_rule_dsl::logic::front::finish(program)?;
     let demand = crate::code_rule_dsl::logic::profile::span(|| "aggregate demand and sets".to_owned());
     super::aggregate_demand::optimize(&mut program);
     // The demand's rules, and the rules whose aggregate it made an existence test, read no relation either.
@@ -1043,8 +1046,8 @@ pub fn sets(program: &mut Program) {
     }
 }
 
-/// `whole` up to `front::finish` and its tail (aggregate demand, `unit`, `sets`, `widen_cyclic_contexts`), which
-/// `rr::link_seeded_version` runs on the version.
+/// `whole` up to the lowerer's analyses: what `whole_back`, `front::finish` and the tail (aggregate demand, `unit`,
+/// `sets`, `widen_cyclic_contexts`) make of it `rr::link_seeded_version` makes on the version.
 fn whole_front(mut l: Lowerer) -> Result<Program, Error> {
     let analyses = crate::code_rule_dsl::logic::profile::span(|| "the program's analyses (findings, spans, kinds)".to_owned());
     l.three_valued();
@@ -1073,18 +1076,24 @@ fn whole_front(mut l: Lowerer) -> Result<Program, Error> {
     }
     l.kind_sets()?;
     l.unit();
-    lower_boolean_relations(&mut l.prog);
-    // A printed program (its findings already rules) is read again with its `.scope` settings: the documents it
-    // selects are the same.
-    l.prog.text_globs = scope_text_globs(&l.prog.settings);
-    if l.prog.doc_scopes.is_none() {
-        l.prog.doc_scopes = scope_globs(&l.prog.settings).map(|g| vec![g]);
-    }
-    for round in ON_REQUEST {
-        sources_on_request(&mut l.prog, round);
-    }
     drop(analyses);
     Ok(l.prog)
+}
+
+/// `whole()` after the lowerer's analyses, before `front::finish`: nullary relations as sets of the unit, the
+/// scope's globs, the attributes on request. `rr::link_seeded_version` runs them on the version
+/// (`preparation::lowering_tail`, `on_request::SourcesOnRequest`).
+pub fn whole_back(prog: &mut Program) {
+    lower_boolean_relations(prog);
+    // A printed program (its findings already rules) is read again with its `.scope` settings: the documents it
+    // selects are the same.
+    prog.text_globs = scope_text_globs(&prog.settings);
+    if prog.doc_scopes.is_none() {
+        prog.doc_scopes = scope_globs(&prog.settings).map(|g| vec![g]);
+    }
+    for round in ON_REQUEST {
+        sources_on_request(prog, round);
+    }
 }
 
 /// A context relation (`Lowerer::context`'s `rr_ctx<k>`) narrows where a helper is computed to the values its rule

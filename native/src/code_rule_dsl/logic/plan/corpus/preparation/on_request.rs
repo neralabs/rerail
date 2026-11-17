@@ -14,8 +14,8 @@ use std::collections::{BTreeMap, BTreeSet};
 type Result<T> = std::result::Result<T, String>;
 
 /// `sources_on_request` of one round of `ON_REQUEST`.
-pub(in crate::code_rule_dsl::logic::plan::corpus) struct SourcesOnRequest {
-    pub(in crate::code_rule_dsl::logic::plan::corpus) round: &'static [OnRequest],
+pub(crate) struct SourcesOnRequest {
+    pub(crate) round: &'static [OnRequest],
 }
 
 /// A literal of a rule made from a reader: one of the reader's own, or an atom read through its widened copy on

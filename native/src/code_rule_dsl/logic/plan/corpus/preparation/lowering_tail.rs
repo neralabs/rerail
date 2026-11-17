@@ -916,3 +916,81 @@ impl ProgramPass for DeclareAxes {
         Ok(())
     }
 }
+
+/// `lower_boolean_relations` on the version: a nullary relation is a Boolean set, its one tuple the integer unit, so
+/// it gains a column `rr_unit`, its facts a `1`, and each atom of it (a head, a read, an aggregate's) a `1`.
+pub struct BooleanRelations;
+
+/// Appends the unit to an atom of a nullary relation.
+struct Unit1<'a> {
+    v: &'a Version,
+    names: &'a BTreeSet<String>,
+}
+
+impl crate::code_rule_dsl::logic::program_image::build::Rewrite for Unit1<'_> {
+    fn prefix(&mut self, a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>, out: &mut Vec<T<'static>>) {
+        if self.names.contains(self.v.rel_name(a.rel())) && a.args().next().is_none() {
+            out.push(T::Int(1));
+        }
+    }
+}
+
+impl ProgramPass for BooleanRelations {
+    const NAME: &'static str = "nullary relations as sets of the unit";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        let v = cx.v();
+        let was = v.header(&Default::default())?;
+        let names: BTreeSet<String> = was.decls.iter().filter(|(_, cols)| cols.is_empty()).map(|(name, _)| name.to_string()).collect();
+        if names.is_empty() {
+            return Ok(());
+        }
+        let mut head = was.clone();
+        head.nullary.extend(names.iter().cloned());
+        for name in &names {
+            head.decls.get_mut(name.as_str()).expect("a declared relation").push(("rr_unit".into(), "int".into()));
+            if let Some(rows) = head.facts.get_mut(name.as_str()) {
+                for row in rows {
+                    row.push(crate::code_rule_dsl::logic::front::Value::Int(1));
+                }
+            }
+        }
+        let of = |a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>| names.contains(v.rel_name(a.rel())) && a.args().next().is_none();
+        let touched: BTreeSet<RuleId> = v
+            .rules()
+            .filter(|r| of(r.head()) || r.body().any(|l| matches!(l.view(), L::Atom(a) | L::Agg { atom: a, .. } if of(a))))
+            .map(|r| r.id())
+            .collect();
+        let input = std::sync::Arc::clone(w.input());
+        let b = w.derive()?;
+        b.set_header(&was, &head);
+        for r in input.rules() {
+            if touched.contains(&r.id()) {
+                b.rewrite(&input, r, &mut Unit1 { v: &input, names: &names }).finish()?;
+            } else {
+                b.keep(&input, r);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The documents and texts a program's `.scope` settings select (`lower::scope_text_globs`, `lower::scope_globs`),
+/// set in its header as `whole()` sets them: a printed program read again selects the same.
+pub struct ScopeGlobs;
+
+impl ProgramPass for ScopeGlobs {
+    const NAME: &'static str = "the scope's globs";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::logic::rr::lower::{scope_globs, scope_text_globs};
+        let was = cx.v().header(&Default::default())?;
+        let mut head = was.clone();
+        head.text_globs = scope_text_globs(&head.settings);
+        if head.doc_scopes.is_none() {
+            head.doc_scopes = scope_globs(&head.settings).map(|g| vec![g]);
+        }
+        if head.text_globs != was.text_globs || head.doc_scopes != was.doc_scopes {
+            w.on()?.set_header(&was, &head);
+        }
+        Ok(())
+    }
+}
